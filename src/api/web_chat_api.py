@@ -7998,25 +7998,14 @@ def api_action_form_followup_message():
             if session_id.isdigit():
                 session_id = f'db_session_{session_id}'
 
-        auth_user = None
-        try:
-            st = get_request_session_token()
-            if st:
-                auth_user = get_auth_db().verify_auth_session(st)
-        except Exception:
-            auth_user = None
-        if not auth_user:
-            return jsonify({'success': False, 'error': 'Not authenticated.'}), 401
-
-        from api.cuttle_ui_capabilities import numeric_chat_session_id
+        from api.http_authz import require_chat_session_access
         from api.project_actions import prepare_assistant_text_for_actions
         from api.action_forms import resolve_session_project_path
 
-        nid = numeric_chat_session_id(session_id)
-        if not nid:
-            return jsonify({'success': False, 'error': 'missing session'}), 400
-        if not get_auth_db().get_chat_session(nid, auth_user['id']):
-            return jsonify({'success': False, 'error': 'Session not found or access denied'}), 404
+        _user, nid, err = require_chat_session_access(session_id)
+        if err:
+            return err
+        session_id = f'db_session_{nid}'
 
         project_path = (data.get('project_path') or '').strip() or resolve_session_project_path(session_id) or ''
         blob = json.dumps(spec, ensure_ascii=False)

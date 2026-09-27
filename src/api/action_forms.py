@@ -26,6 +26,8 @@ from api.project_actions import (
     encode_inline_action_payload,
     execute_inline_action,
     find_project_action_resolved,
+    sign_action_form_spec,
+    verify_action_form_spec,
 )
 
 _FORM_OPEN_RE = re.compile(
@@ -604,6 +606,7 @@ def rewrite_action_forms(
             form_id=shared_id,
         )
         spec["id"] = form_id
+        spec["sig"] = sign_action_form_spec(spec)
         count += 1
         # Restart-safe without a huge fallback= attribute: body JSON is the
         # durable copy persisted in chat history (not a client-trusted spec).
@@ -650,7 +653,6 @@ def load_action_form_spec_from_history(
         )
     except Exception:
         return None
-    sid_canon = f"db_session_{nid}"
     for msg in msgs or []:
         content = str(msg.get("content") or "")
         for m in _PENDING_OPEN_RE.finditer(content):
@@ -661,13 +663,18 @@ def load_action_form_spec_from_history(
             obj, _ = _decode_leading_json_object(content, m.start(2))
             if not isinstance(obj, dict):
                 continue
+            if not verify_action_form_spec(obj):
+                continue
+            signed_sid = numeric_chat_session_id(obj.get("session_id"))
+            if signed_sid != nid:
+                continue
             spec = normalize_action_form_spec(
                 obj, project_path=str(obj.get("project_path") or "")
             )
             if not spec:
                 continue
             spec["id"] = fid
-            spec["session_id"] = sid_canon
+            spec["session_id"] = f"db_session_{nid}"
             return spec
     return None
 

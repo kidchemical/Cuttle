@@ -634,6 +634,47 @@ def _verify_action_hmac(body: Dict[str, Any], sig: str) -> bool:
     return hmac.compare_digest(expected, sig)
 
 
+_FORM_SPEC_SIGN_KEYS = (
+    "id",
+    "session_id",
+    "project_path",
+    "mode",
+    "options",
+    "fields",
+    "submit",
+    "resume",
+    "reusable",
+    "watch",
+    "lock",
+    "silent",
+    "title",
+    "content",
+    "restartFormGroup",
+)
+
+
+def action_form_spec_signing_body(spec: Dict[str, Any]) -> Dict[str, Any]:
+    """Stable subset of a form spec covered by HMAC (excludes lock/toast/sig)."""
+    body: Dict[str, Any] = {"kind": "__action_form_spec__"}
+    for key in _FORM_SPEC_SIGN_KEYS:
+        if key in spec:
+            body[key] = spec[key]
+    return body
+
+
+def sign_action_form_spec(spec: Dict[str, Any]) -> str:
+    return _sign_action_body(action_form_spec_signing_body(spec))
+
+
+def verify_action_form_spec(spec: Optional[Dict[str, Any]]) -> bool:
+    if not isinstance(spec, dict):
+        return False
+    sig = str(spec.get("sig") or "").strip()
+    if not sig:
+        return False
+    return _verify_action_hmac(action_form_spec_signing_body(spec), sig)
+
+
 def encode_inline_action_payload(
     *,
     action_name: str,
