@@ -77,7 +77,7 @@ Discord DMs still POST `/api/pipeline-trigger-discord` (legacy path name) which 
 | Layer | Path | Role |
 |---|---|---|
 | Daemon | `src/scripts/cuttle_daemon.py` | Spawns Flask + Discord bot, tray icon |
-| Flask API | `src/api/web_chat_api.py` | REST endpoints, web UI, chat dispatch |
+| Flask API | `src/api/web_chat_api.py` | REST endpoints, web UI, chat dispatch. Map: `docs/guides/WEB_CHAT_API.md` (read before adding imports or routes; do not extract unless product work is blocked). |
 | Discord Bot | `src/bots/discord_bot.py` | Bridges Discord DMs → Flask; channel posts via `discord.post` |
 | Cursor Agent CLI | `src/scripts/utilities/cursor_cli_tool.py` | Headless `agent -p` (stream-json, resume) — same adapter pattern as Codex |
 

@@ -4,7 +4,7 @@
 
 Cuttle is a **harness of harnesses**: a daemon + chat UI that hosts vendor agent CLIs (Cursor, Codex, Claude, Muse, Hermes, …), routes work, and fans jobs across a LAN mesh. The long 2026-08 architecture dump (OpenClaw comparison, old LOC counts, pipeline-era phases) lives on the install as `.cuttle/personal/docs/roadmap-2026.md` and is **not** the public plan.
 
-Day-to-day backlog: [`.cuttle/learnings/FEATURE_REQUESTS.md`](../.cuttle/learnings/FEATURE_REQUESTS.md). Socket thesis: [`guides/MODULARITY.md`](guides/MODULARITY.md).
+Day-to-day backlog: [`.cuttle/learnings/FEATURE_REQUESTS.md`](../.cuttle/learnings/FEATURE_REQUESTS.md). Socket thesis: [`guides/MODULARITY.md`](guides/MODULARITY.md). Flask composition root: [`guides/WEB_CHAT_API.md`](guides/WEB_CHAT_API.md) (map only — not a cue to extract).
 
 ## True today
 
@@ -21,6 +21,7 @@ Day-to-day backlog: [`.cuttle/learnings/FEATURE_REQUESTS.md`](../.cuttle/learnin
 - Finish Workers host-intent / steal-friendly jobs (see design doc)
 - Keep agent ops on `python -m api.*` — no product `cuttle` CLI
 - Public packaging: secrets hygiene, first-run OOBE, this docs set
+- Extracting `web_chat_api.py` is **backlog**, not a gate on product work — read the dependency map first
 
 ## Not on the table
 

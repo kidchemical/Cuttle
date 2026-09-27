@@ -37,7 +37,7 @@ Cuttle is a **Windows-native, cozy control plane** for a personal AI station: pi
 | Plugin sockets for agents, router brains, LLMs, knowledge, reasoning | A privileged `web_chat_api.py` core you patch for every vendor |
 | Cozy and rearrangable | A Creator-IDE for composing TypeScript plugins |
 
-The mascot already says this: each vendor harness is a tentacle; Cuttle is the cuttlefish. [`docs/ROUTER_RESEARCH_NOTES.md`](../ROUTER_RESEARCH_NOTES.md) has the economic version of the same thesis.
+The mascot already says this: each vendor harness is a tentacle; Cuttle is the cuttlefish. [`docs/ROUTER_RESEARCH_NOTES.md`](../ROUTER_RESEARCH_NOTES.md) has the economic version of the same thesis. Flask composition root (routes, reverse imports, extraction seams — **no refactor mandate**): [`WEB_CHAT_API.md`](WEB_CHAT_API.md).
 
 **DeepSeek Harness (dsh)** is a *different* product: an MIT-licensed in-process agent runtime where models, tools, sessions, sandboxes, the loop, and the UI are Cordis plugins. Cuttle **hosts** `dsh` (bundled connector: `src/api/agent_harness/agents/deepseek/`). Cuttle does **not** become dsh.
 

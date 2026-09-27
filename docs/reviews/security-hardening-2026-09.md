@@ -187,8 +187,8 @@ Uncommitted vs `8a783bb`:
 - Worker **runtime** loopback without device token.
 - LAN enroll without pairing.
 - Live `/cursor` turn, Electron window, production Flask recycle — **you** (see §6).
-- Extracting `web_chat_api.py`.
-- HMAC replay until `exp` (~1h) on reusable forms.
+- Extracting `web_chat_api.py` — deferred; map in `docs/guides/WEB_CHAT_API.md`.
+- HMAC `inline.*` replay until `exp`: **not automatically a bug** on deliberately reusable cards. Treat destructive/admin actions separately from harmless reusable picks.
 - `GET` sandbox/LAN settings still public.
 
 ---

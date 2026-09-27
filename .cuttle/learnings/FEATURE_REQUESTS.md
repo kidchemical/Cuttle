@@ -10,6 +10,15 @@ User-requested capabilities. Format: `[FEAT-YYYYMMDD-XXX] capability_name`
 ---
 <!-- Add entries below -->
 
+## [FEAT-20260927-001] web_chat_api_dependency_map
+
+- **Priority:** Low · **Status:** Done (map) / Backlog (extraction) · **Area:** architecture / flask
+- **Requested capability:** Permanent map of `web_chat_api.py` so agents do not duplicate routes or add reverse imports. Extraction of settings/workers then the chat-turn coordinator only when the monolith slows product work.
+- **User context:** CH-000743 — close security-hardening milestone; do not refactor 15k lines as the next product step.
+- **Notes:** Canonical doc `docs/guides/WEB_CHAT_API.md`. Do not extract in the same effort as feature work.
+- **Complexity:** XL (extraction) / S (map)
+- **Related:** `docs/ROADMAP.md`, `docs/guides/MODULARITY.md`, https://github.com/kidchemical/Cuttle/issues/6
+
 ## [FEAT-20260926-003] github_app_forge_parity
 
 - **Priority:** Medium · **Status:** Pending · **Area:** forge / cuttle-jobs / git
