@@ -210,8 +210,8 @@
                 
                 <div class="setting-item">
                     <div class="setting-label">
-                        <strong>Model Selection</strong>
-                        <div class="setting-description">Choose your preferred AI model</div>
+                        <strong>Cheap completion model</strong>
+                        <div class="setting-description">Used for chat titles, commit names, and prompt enhance — not for Cursor/Codex/Muse. Agent work uses those CLIs.</div>
                     </div>
                     <div class="setting-control">
                         <select id="modelSelect" class="setting-input" style="min-width: 250px;">
@@ -230,8 +230,8 @@
 
                 <div class="setting-item">
                     <div class="setting-label">
-                        <strong>Tool Calling Model (Local)</strong>
-                        <div class="setting-description">Local model used when MCP tools are invoked</div>
+                        <strong>Local model for cheap completions</strong>
+                        <div class="setting-description">When chat is in Local mode, titles/commits/enhance use this local model instead of OpenAI.</div>
                     </div>
                     <div class="setting-control">
                         <select id="toolOllamaModelSelect" class="setting-input" style="min-width: 250px;">
@@ -240,48 +240,6 @@
                             </optgroup>
                         </select>
                         <button class="control-button btn-start" onclick="saveToolModel()"><span class="emoji">💾</span> Save</button>
-                    </div>
-                </div>
-            </div>
-
-            <div class="settings-group">
-                <h3 class="settings-title"><span class="emoji">🔀</span> Inference routing (global)</h3>
-                <p style="font-size:0.85rem;color:var(--text-secondary);margin:0 0 12px 0;line-height:1.45;max-width:52rem">
-                    Node <strong>tool-remote-agent</strong> with <strong>codingBackend: global</strong> (default for bundled pipelines) tries each <strong>coding agent</strong> below until one succeeds.
-                    If the message is handled as plain LLM chat, providers are tried in <strong>LLM fallback</strong> order.
-                </p>
-                <div class="setting-item">
-                    <div class="setting-label">
-                        <strong>Coding agents</strong>
-                        <div class="setting-description">One per line: hermes, codex, claude, cursor, cursor_then_claude, cursor_cli, claw</div>
-                    </div>
-                    <div class="setting-control" style="flex-direction:column;align-items:stretch;max-width:100%">
-                        <textarea id="inferenceCodingChain" class="setting-input" rows="6" style="width:100%;max-width:36rem;font-family:ui-monospace,monospace;font-size:12px" spellcheck="false" placeholder="claude&#10;cursor"></textarea>
-                    </div>
-                </div>
-                <div class="setting-item">
-                    <div class="setting-label">
-                        <strong>LLM fallback</strong>
-                        <div class="setting-description">One per line: local (llama.cpp / Ollama), anthropic, openai</div>
-                    </div>
-                    <div class="setting-control" style="flex-direction:column;align-items:stretch;max-width:100%">
-                        <textarea id="inferenceLlmChain" class="setting-input" rows="4" style="width:100%;max-width:36rem;font-family:ui-monospace,monospace;font-size:12px" spellcheck="false" placeholder="local&#10;anthropic&#10;openai"></textarea>
-                    </div>
-                </div>
-                <div class="setting-item">
-                    <div class="setting-label">
-                        <strong>Optional model overrides</strong>
-                        <div class="setting-description">Leave blank to use your saved local / API preferences above</div>
-                    </div>
-                    <div class="setting-control" style="flex-wrap:wrap;gap:8px">
-                        <input type="text" id="inferenceLocalModel" class="setting-input" style="min-width:140px" placeholder="Local model (or empty)" />
-                        <input type="text" id="inferenceAnthropicModel" class="setting-input" style="min-width:160px" placeholder="Anthropic model id" />
-                        <input type="text" id="inferenceOpenaiModel" class="setting-input" style="min-width:140px" placeholder="OpenAI model id" />
-                    </div>
-                </div>
-                <div class="setting-item">
-                    <div class="setting-control">
-                        <button type="button" class="control-button btn-start" onclick="saveInferenceRouting()"><span class="emoji">💾</span> Save inference routing</button>
                     </div>
                 </div>
             </div>
@@ -380,8 +338,8 @@
                     <div class="setting-label">
                         <strong>Allow phones on home Wi‑Fi</strong>
                         <div class="setting-description">
-                            Lets phones reach Cuttle over LAN (ports 8000 HTTP / 8888 HTTPS).
-                            Already on if your phone browser works. Toggle requires a Flask restart.
+                            Lets phones reach Cuttle over LAN. Primary URL is HTTPS on port 8080
+                            (self-signed). Some clients still use HTTP 8000 as a fallback. Toggle requires a Flask restart.
                         </div>
                     </div>
                     <div class="setting-control">
@@ -425,7 +383,7 @@
                 <div class="setting-item">
                     <div class="setting-label">
                         <strong>Desktop Notifications</strong>
-                        <div class="setting-description">Get notified when tasks complete</div>
+                        <div class="setting-description">Desktop notifications from the Cuttle app</div>
                     </div>
                     <div class="setting-control">
                         <label class="toggle-switch active" id="notificationsToggle" onclick="toggleNotifications(event)">
@@ -745,55 +703,6 @@
                 if (d.success) {
                     (window.showToast || alert)('Chat voice settings saved.', 'success');
                     loadChatTtsSettings();
-                } else {
-                    (window.showToast || alert)(d.error || 'Save failed', 'error');
-                }
-            } catch (e) {
-                (window.showToast || alert)('Error: ' + (e.message || e), 'error');
-            }
-        }
-
-        async function loadInferenceRoutingFromServer() {
-            try {
-                const r = await fetch('/api/settings/inference-preferences');
-                const d = await r.json();
-                if (!d.success || !d.inference_preferences) return;
-                const p = d.inference_preferences;
-                const cc = document.getElementById('inferenceCodingChain');
-                const ll = document.getElementById('inferenceLlmChain');
-                if (cc && Array.isArray(p.coding_agent_chain)) cc.value = p.coding_agent_chain.join('\n');
-                if (ll && Array.isArray(p.llm_fallback_chain)) ll.value = p.llm_fallback_chain.join('\n');
-                const loc = document.getElementById('inferenceLocalModel');
-                const ant = document.getElementById('inferenceAnthropicModel');
-                const oai = document.getElementById('inferenceOpenaiModel');
-                if (loc) loc.value = p.local_model || '';
-                if (ant) ant.value = p.anthropic_model || '';
-                if (oai) oai.value = p.openai_model || '';
-            } catch (_) {}
-        }
-
-        async function saveInferenceRouting() {
-            const ccEl = document.getElementById('inferenceCodingChain');
-            const llEl = document.getElementById('inferenceLlmChain');
-            const coding_agent_chain = (ccEl && ccEl.value || '').split(/\r?\n/).map(function (s) { return s.trim(); }).filter(Boolean);
-            const llm_fallback_chain = (llEl && llEl.value || '').split(/\r?\n/).map(function (s) { return s.trim(); }).filter(Boolean);
-            const body = {
-                coding_agent_chain: coding_agent_chain,
-                llm_fallback_chain: llm_fallback_chain,
-                local_model: (document.getElementById('inferenceLocalModel') && document.getElementById('inferenceLocalModel').value) || '',
-                anthropic_model: (document.getElementById('inferenceAnthropicModel') && document.getElementById('inferenceAnthropicModel').value) || '',
-                openai_model: (document.getElementById('inferenceOpenaiModel') && document.getElementById('inferenceOpenaiModel').value) || ''
-            };
-            try {
-                const r = await fetch('/api/settings/inference-preferences', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(body)
-                });
-                const d = await r.json();
-                if (d.success) {
-                    (window.showToast || alert)('Inference routing saved.', 'success');
-                    loadInferenceRoutingFromServer();
                 } else {
                     (window.showToast || alert)(d.error || 'Save failed', 'error');
                 }
@@ -1610,7 +1519,6 @@
             if (chirpCb) chirpCb.checked = responseChirpEnabled;
             populateOllamaModelsInSettings();
             populateToolOllamaModelsInSettings();
-            await loadInferenceRoutingFromServer();
             await loadChatTtsSettings();
             await syncVideoBackgroundWithServer();
             loadVideoBackgroundEnabledToggle();

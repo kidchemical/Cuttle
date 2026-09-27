@@ -38,7 +38,7 @@ in `.cuttle/docs/`.
 8. One-shot CLI turn / long build-upload / no wait loop → `headless-turns.md`.
    Independent parallel agent turns → child chats via `python -m api.subagents`
    (`03-subagents.md` / `subagents.md`), not Cursor-CLI background subagents.
-9. Multi-device / LAN workers / render farm / mesh compute → `cuttle-workers.md` (hub) + `src/docs/guides/CUTTLE_WORKERS.md` (design).
+9. Multi-device / LAN workers / render farm / mesh compute → `cuttle-workers.md` (hub) + `docs/guides/CUTTLE_WORKERS.md` (design).
    Watch cards for mesh bakes: overall + per-worker `bars` (rule 3). Prefer
    `python -m api.device_workers.cli batch-watch` to write them.
    **Mesh work units:** prefer stealable small units over large sticky chunks when

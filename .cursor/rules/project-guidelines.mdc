@@ -1,7 +1,7 @@
-1. Place any documentation into the /src/docs directory
-2. Place any tests into the /src/tests/ directory
+1. Human docs go in `/docs` (guides under `/docs/guides`). Agent how-to goes in `/.cuttle/docs`. Do not create `/src/docs`.
+2. Place any tests into the `/src/tests/` directory
 3. Do not use && for powershell commands. Use | instead.
-4. Refer to /src/docs/ for documentation of various functionalities
+4. Refer to `/docs/` and `/.cuttle/docs/` for documentation of various functionalities
 5. Ignore the "electron" folder unless I request doing something with electron.
 ---
 alwaysApply: true

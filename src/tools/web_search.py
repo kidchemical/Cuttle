@@ -1,6 +1,5 @@
 """
-Web Search Tool - DuckDuckGo search for pipelines (no API key required)
-Used by Feed Agent and other pipelines that need web lookup.
+Web Search Tool - DuckDuckGo search (no API key required).
 """
 
 from typing import Dict, Any, List, Optional

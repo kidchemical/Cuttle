@@ -11,7 +11,7 @@ import time
 import re
 import queue as queue_module
 from datetime import datetime
-from flask import Flask, request, jsonify, send_from_directory, Response, stream_with_context, make_response
+from flask import Flask, request, jsonify, send_from_directory, Response, stream_with_context, make_response, redirect
 from flask_cors import CORS
 import sys
 import ntpath
@@ -2085,14 +2085,9 @@ def serve_landing_page():
     """Serve the landing/welcome page (loaded inside app shell iframe)"""
     return send_from_directory(project_root / 'web', 'landing_page.html')
 
-@app.route('/home_feed.html')
-def serve_home_feed():
-    """Serve the personalized home feed"""
-    return send_from_directory(project_root / 'web', 'home_feed.html')
-
 @app.route('/media_player.html')
 def serve_media_player():
-    """Thin overlay for feed media mode (playback uses shell video background)."""
+    """Thin overlay for media playback (uses shell video background)."""
     return send_from_directory(project_root / 'web', 'media_player.html')
 
 @app.route('/app_shell.html')
@@ -2100,31 +2095,16 @@ def serve_app_shell_direct():
     """Serve app shell directly"""
     return send_from_directory(project_root / 'web', 'app_shell.html')
 
-@app.route('/data_reports.html')
-def serve_data_reports():
-    """Serve the data reports page"""
-    return send_from_directory(project_root / 'web', 'data_reports.html')
-
 @app.route('/query_log.html')
 def serve_query_log():
     """In-pane / pop-out query inspector (JSON-backed)."""
     return send_from_directory(project_root / 'web', 'query_log.html')
 
 
-@app.route('/query_reports.html')
-def serve_query_reports():
-    """Serve the query reports page"""
-    return send_from_directory(project_root / 'web', 'query_reports.html')
-
 @app.route('/test_reports.html')
 def serve_test_reports():
     """Serve the test reports page"""
     return send_from_directory(project_root / 'web', 'test_reports.html')
-
-@app.route('/launch_reports.html')
-def serve_launch_reports():
-    """Serve the launch reports page"""
-    return send_from_directory(project_root / 'web', 'launch_reports.html')
 
 @app.route('/router_editor.html')
 def serve_router_editor():
@@ -2243,43 +2223,6 @@ def api_status():
         'discord_connected': discord_ok,
         'running_pipeline_count': len(running_pipelines),
     })
-
-@app.route('/api/feed', methods=['GET'])
-def get_feed():
-    """Return the personalized feed (populated by Feed Agent pipeline)."""
-    try:
-        feed_path = project_root / 'output' / 'feed' / 'feed.json'
-        if feed_path.exists():
-            with open(feed_path, 'r', encoding='utf-8') as f:
-                return jsonify(json.load(f))
-        return jsonify({'items': [], 'updated_at': None, 'source': None})
-    except Exception as e:
-        return jsonify({'items': [], 'error': str(e)})
-
-
-@app.route('/api/feed/preferences', methods=['GET', 'POST'])
-def feed_preferences_api():
-    """Load or update home-feed topic/source preferences (chips + interests). Used by home_feed.html and cuttle_feed_preferences tool."""
-    try:
-        from managers.feed_preferences import apply_patch, load_preferences
-
-        if request.method == 'GET':
-            prefs = load_preferences()
-            return jsonify({'success': True, **prefs})
-
-        data = request.get_json()
-        if not isinstance(data, dict):
-            data = {}
-        if data.get('action') == 'get':
-            prefs = load_preferences()
-            return jsonify({'success': True, **prefs})
-        if 'action' not in data:
-            data = {**data, 'action': 'patch'}
-        updated = apply_patch(data)
-        return jsonify({'success': True, **updated})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
 
 @app.route('/api/pipeline-chats', methods=['GET'])
 def api_pipeline_chats():
@@ -3130,7 +3073,7 @@ def query_live_status():
         return jsonify({'error': 'query_id required'}), 400
     try:
         from api.active_executions import is_query_executing
-        from reports.query_report_generator import get_query_tracker, get_shared_live_snapshot
+        from api.query_tracker import get_query_tracker, get_shared_live_snapshot
         executing = is_query_executing(qid)
         tracker = get_query_tracker(qid)
         stages = []
@@ -3661,11 +3604,6 @@ def serve_wizard_page():
     """Serve the setup wizard and doctor page"""
     return send_from_directory(project_root / 'web', 'wizard_page.html')
 
-@app.route('/skills_page.html')
-def serve_skills_page():
-    """Serve the skills registry / install skill page"""
-    return send_from_directory(project_root / 'web', 'skills_page.html')
-
 @app.route('/git_graph_page.html')
 def serve_git_graph_page():
     """Serve the vertical git topology visualizer."""
@@ -4056,30 +3994,15 @@ def serve_logs_directory():
 @app.route('/logs/<path:filename>')
 def serve_logs(filename):
     """Serve files from the web/logs directory"""
+    if filename.startswith('query_report_') and filename.endswith('.html'):
+        stem = filename[len('query_report_'):-5]
+        qid = (stem.split('_')[0] if stem else '').strip()
+        if qid:
+            return redirect(f'/query_log.html?id={qid}', code=302)
     resp = make_response(
         send_from_directory(project_root / 'web' / 'logs', filename)
     )
-    # Avoid stale live-placeholder HTML when the browser reloads after a run finishes
-    if filename.startswith('query_report_') and filename.endswith('.html'):
-        resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
-        resp.headers['Pragma'] = 'no-cache'
     return resp
-
-@app.route('/api/query-reports')
-def get_query_reports():
-    """Get list of recent query reports"""
-    try:
-        query_reports = get_reports_by_type('query_report', limit=100)
-        return jsonify({
-            'success': True,
-            'reports': query_reports,
-            'total': len(query_reports)
-        })
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
 
 @app.route('/api/test-reports')
 def get_test_reports():
@@ -4095,92 +4018,6 @@ def get_test_reports():
         return jsonify({
             'success': False,
             'error': str(e)
-        }), 500
-
-@app.route('/api/launch-reports')
-def get_launch_reports():
-    """Get list of launch reports"""
-    try:
-        launch_reports = get_reports_by_type('launch_report', limit=100)
-        return jsonify({
-            'success': True,
-            'reports': launch_reports,
-            'total': len(launch_reports)
-        })
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-@app.route('/api/generate-budget-report')
-def generate_budget_report_api():
-    """Generate a new budget report"""
-    try:
-        from budget_report_generator import generate_budget_report
-        print(f"[API] Generating budget report...")
-        
-        report_path = generate_budget_report()
-        print(f"[API] Budget report generation result: {report_path}")
-        
-        if report_path:
-            # Get just the filename for the response
-            report_filename = os.path.basename(report_path)
-            print(f"[API] Budget report generated successfully: {report_filename}")
-            return jsonify({
-                'success': True,
-                'report_path': report_path,
-                'report_filename': report_filename,
-                'report_url': f'/logs/{report_filename}'
-            })
-        else:
-            print("[API] Budget report generation returned None - no query reports found")
-            return jsonify({
-                'success': False,
-                'error': 'No query reports found to generate budget report. Please run some queries first.'
-            }), 400
-    except Exception as e:
-        print(f"[API] Error generating budget report: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({
-            'success': False,
-            'error': f'Failed to generate budget report: {str(e)}'
-        }), 500
-
-@app.route('/api/generate-data-report')
-def generate_data_report_api():
-    """Generate a new data report"""
-    try:
-        from data_report_generator import generate_data_report
-        print(f"[API] Generating data report...")
-        
-        report_path = generate_data_report()
-        print(f"[API] Data report generation result: {report_path}")
-        
-        if report_path:
-            # Get just the filename for the response
-            report_filename = os.path.basename(report_path)
-            print(f"[API] Data report generated successfully: {report_filename}")
-            return jsonify({
-                'success': True,
-                'report_path': report_path,
-                'report_filename': report_filename,
-                'report_url': f'/logs/{report_filename}'
-            })
-        else:
-            print("[API] Data report generation returned None")
-            return jsonify({
-                'success': False,
-                'error': 'Failed to generate data report. Please check the project structure.'
-            }), 400
-    except Exception as e:
-        print(f"[API] Error generating data report: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({
-            'success': False,
-            'error': f'Failed to generate data report: {str(e)}'
         }), 500
 
 @app.route('/api/test-api-key', methods=['POST'])
@@ -4516,36 +4353,6 @@ def load_api_keys():
             'message': str(e)
         }), 500
 
-def generate_recent_queries_html(recent_queries):
-    """Generate HTML for recent query reports section"""
-    if not recent_queries:
-        return '<p style="color: #888; font-style: italic;">No recent query reports found.</p>'
-    
-    html = '<div style="max-height: 300px; overflow-y: auto;">'
-    for query in recent_queries:
-        # Create a URL to the query report file via the web server
-        relative_path = f"/output/{query['filename']}"
-        
-        html += f'''
-        <div class="status-item" style="border-bottom: 1px solid rgba(255, 255, 255, 0.1); padding: 10px 0;">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-                <div>
-                    <a href="{relative_path}" class="query-link">
-                        Query {query['query_id']}
-                    </a>
-                    <div class="query-meta">
-                        {query['mod_time']}
-                    </div>
-                </div>
-                <div class="query-timestamp">
-                    {query['timestamp']}
-                </div>
-            </div>
-        </div>
-        '''
-    html += '</div>'
-    return html
-
 def get_reports_by_type(report_type, limit=100):
     """Get reports of a specific type"""
     try:
@@ -4604,225 +4411,34 @@ def get_reports_by_type(report_type, limit=100):
         print(f"Error getting {report_type} reports: {e}")
         return []
 
-def get_all_reports(limit=100):
-    """Get all report files with metadata"""
-    try:
-        import os
-        import glob
-        import re
-        from pathlib import Path
-        
-        # Look for all report files in the web/logs directory
-        logs_dir = project_root / 'web' / 'logs'
-        if not logs_dir.exists():
-            return []
-        
-        # Find all report HTML files
-        report_patterns = [
-            'query_report_*.html',
-            'data_report_*.html', 
-            'budget_report_*.html',
-            'test_report_*.html',
-            'launch_report_*.html'
-        ]
-        
-        all_files = []
-        for pattern in report_patterns:
-            all_files.extend(glob.glob(str(logs_dir / pattern)))
-        
-        # Sort by modification time (newest first) and limit
-        all_files.sort(key=os.path.getmtime, reverse=True)
-        all_files = all_files[:limit]
-        
-        reports = []
-        for file_path in all_files:
-            try:
-                filename = os.path.basename(file_path)
-                
-                # Get file modification time and size
-                mod_time = os.path.getmtime(file_path)
-                file_size = os.path.getsize(file_path)
-                import time
-                mod_time_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(mod_time))
-                
-                # Determine report type and extract metadata
-                report_type = get_report_type_from_filename(filename)
-                report_data = parse_report_html(file_path, report_type)
-                
-                # Create title from filename
-                title = create_report_title(filename, report_data)
-                
-                reports.append({
-                    'filename': filename,
-                    'title': title,
-                    'type': report_type,
-                    'date': mod_time_str,
-                    'size': file_size,
-                    'url': f'/logs/{filename}',
-                    'preview': report_data.get('preview', 'No preview available'),
-                    'success': report_data.get('success', True),
-                    'metadata': report_data
-                })
-            except Exception as e:
-                print(f"Error processing report file {file_path}: {e}")
-                continue
-        
-        return reports
-    except Exception as e:
-        print(f"Error getting all reports: {e}")
-        return []
 
-def get_recent_query_reports(limit=10):
-    """Get recent query report files with metadata"""
-    try:
-        import os
-        import glob
-        import re
-        from pathlib import Path
-        
-        # Look for query report files in the web/logs directory
-        logs_dir = project_root / 'web' / 'logs'
-        if not logs_dir.exists():
-            return []
-        
-        # Find all query report HTML files
-        query_files = glob.glob(str(logs_dir / 'query_report_*.html'))
-        
-        # Sort by modification time (newest first) and limit
-        query_files.sort(key=os.path.getmtime, reverse=True)
-        query_files = query_files[:limit]
-        
-        recent_queries = []
-        for file_path in query_files:
-            try:
-                # Extract query ID from filename
-                filename = os.path.basename(file_path)
-                # Format: query_report_<query_id>_<timestamp>.html
-                parts = filename.replace('query_report_', '').replace('.html', '').split('_')
-                if len(parts) >= 2:
-                    query_id = parts[0]
-                    timestamp = '_'.join(parts[1:])
-                    
-                    # Get file modification time
-                    mod_time = os.path.getmtime(file_path)
-                    import time
-                    mod_time_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(mod_time))
-                    
-                    # Try to parse the HTML file to extract report data
-                    report_data = parse_query_report_html(file_path)
-                    
-                    recent_queries.append({
-                        'query_id': query_id,
-                        'timestamp': timestamp,
-                        'mod_time': mod_time_str,
-                        'file_path': file_path,
-                        'filename': filename,
-                        'report_url': f'/logs/{filename}',
-                        'success': report_data.get('success', True),
-                        'user_input': report_data.get('user_input', 'No input data available'),
-                        'execution_time': report_data.get('execution_time', 0),
-                        'llm_calls': report_data.get('llm_calls', 0),
-                        'tool_calls': report_data.get('tool_calls', 0),
-                        'total_cost': report_data.get('total_cost', 0)
-                    })
-            except Exception as e:
-                print(f"Error processing query file {file_path}: {e}")
-                continue
-        
-        return recent_queries
-    except Exception as e:
-        print(f"Error getting recent query reports: {e}")
-        return []
 
 def get_report_type_from_filename(filename):
-    """Determine report type from filename"""
-    if 'query_report' in filename:
-        return 'Query Report'
-    elif 'data_report' in filename:
-        return 'Data Report'
-    elif 'budget_report' in filename:
-        return 'Budget Report'
-    elif 'test_report' in filename:
+    """Determine report type from filename (test reports only)."""
+    if 'test_report' in filename:
         return 'Test Report'
-    elif 'launch_report' in filename:
-        return 'Launch Report'
-    else:
-        return 'Report'
+    return 'Report'
+
 
 def create_report_title(filename, report_data):
-    """Create a human-readable title for the report"""
-    if 'query_report' in filename:
-        user_input = report_data.get('user_input', '')
-        if user_input and len(user_input) > 50:
-            return f"Query: {user_input[:50]}..."
-        elif user_input:
-            return f"Query: {user_input}"
-        else:
-            return f"Query Report - {filename.split('_')[2] if '_' in filename else 'Unknown'}"
-    elif 'data_report' in filename:
-        return "Project Data Analysis"
-    elif 'budget_report' in filename:
-        return "AI Usage Budget Report"
-    elif 'test_report' in filename:
+    """Create a human-readable title for the report."""
+    if 'test_report' in filename:
         return "System Test Results"
-    elif 'launch_report' in filename:
-        return "System Launch Report"
-    else:
-        return filename.replace('.html', '').replace('_', ' ').title()
+    return filename.replace('.html', '').replace('_', ' ').title()
+
 
 def parse_report_html(file_path, report_type):
-    """Parse HTML report to extract key data based on report type"""
+    """Parse HTML report to extract key data."""
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             content = f.read()
-        
-        data = {}
-        
-        if report_type == 'Query Report':
-            return parse_query_report_html(file_path)
-        elif report_type == 'Data Report':
-            return parse_data_report_html(content)
-        elif report_type == 'Budget Report':
-            return parse_budget_report_html(content)
-        elif report_type == 'Test Report':
+        if report_type == 'Test Report':
             return parse_test_report_html(content)
-        elif report_type == 'Launch Report':
-            return parse_launch_report_html(content)
-        else:
-            return {'preview': 'Report data available', 'success': True}
-            
+        return {'preview': 'Report data available', 'success': True}
     except Exception as e:
         print(f"Error parsing report HTML {file_path}: {e}")
         return {'preview': 'Error parsing report', 'success': False}
 
-def parse_data_report_html(content):
-    """Parse data report HTML"""
-    import re
-    data = {}
-    
-    # Extract summary information
-    summary_match = re.search(r'<div class="summary-content">(.*?)</div>', content, re.DOTALL)
-    if summary_match:
-        summary = summary_match.group(1).strip()
-        # Clean up HTML tags
-        summary = re.sub(r'<[^>]+>', '', summary)
-        data['preview'] = summary[:200] + '...' if len(summary) > 200 else summary
-    
-    return data
-
-def parse_budget_report_html(content):
-    """Parse budget report HTML"""
-    import re
-    data = {}
-    
-    # Extract cost information
-    cost_match = re.search(r'Total Cost.*?(\$[\d,]+\.?\d*)', content)
-    if cost_match:
-        data['preview'] = f"Total Cost: {cost_match.group(1)}"
-    else:
-        data['preview'] = "Budget analysis report"
-    
-    return data
 
 def parse_test_report_html(content):
     """Parse test report HTML"""
@@ -4911,444 +4527,6 @@ def parse_test_report_html(content):
     
     return data
 
-def parse_launch_report_html(content):
-    """Parse launch report HTML"""
-    import re
-    data = {}
-    
-    # Extract errors count (using actual format from launch reports)
-    errors_count = 0
-    errors_found_match = re.search(r'Errors Found:.*?<span class="status-value[^"]*">(\d+)</span>', content, re.DOTALL)
-    if errors_found_match:
-        errors_count = int(errors_found_match.group(1))
-    
-    # Extract warnings count
-    warnings_count = 0
-    warnings_found_match = re.search(r'Warnings Found:.*?<span class="status-value[^"]*">(\d+)</span>', content, re.DOTALL)
-    if warnings_found_match:
-        warnings_count = int(warnings_found_match.group(1))
-    
-    # Extract overall status
-    status_icon = "❌" if errors_count > 0 else "⚠️" if warnings_count > 0 else "✅"
-    status_text = "Issues" if errors_count > 0 else "Warnings" if warnings_count > 0 else "Healthy"
-    
-    # Extract bot status - check for various patterns
-    bot_offline = "❌ Offline" in content or "Bot.*?Offline" in content
-    bot_status = "❌ Offline" if bot_offline else "✅ Online"
-    
-    # Extract web API status
-    web_running = "✅ running" in content or "Web API:.*?running" in content
-    web_api_status = "✅ Running" if web_running else "❓ Unknown"
-    
-    # Extract memory usage if available
-    memory_usage = None
-    memory_available_match = re.search(r'Memory Available:.*?<span class="status-value[^"]*">([0-9.]+)\s*GB</span>', content, re.DOTALL)
-    memory_total_match = re.search(r'Memory Total:.*?<span class="status-value[^"]*">([0-9.]+)\s*GB</span>', content, re.DOTALL)
-    if memory_available_match and memory_total_match:
-        memory_available = float(memory_available_match.group(1))
-        memory_total = float(memory_total_match.group(1))
-        if memory_total > 0:
-            memory_usage = round(((memory_total - memory_available) / memory_total) * 100, 1)
-    
-    # Extract platform info for additional context
-    platform_match = re.search(r'Platform:.*?<span class="status-value[^"]*">(\w+)</span>', content, re.DOTALL)
-    platform = platform_match.group(1) if platform_match else None
-    
-    # Create comprehensive preview
-    preview_parts = [
-        f"{status_icon} {status_text}",
-        f"🖥️ {web_api_status}",
-        f"🤖 {bot_status}"
-    ]
-    
-    if errors_count > 0:
-        preview_parts.append(f"❌ {errors_count} errors")
-    if warnings_count > 0:
-        preview_parts.append(f"⚠️ {warnings_count} warnings")
-    if memory_usage is not None:
-        preview_parts.append(f"💾 {memory_usage}% RAM")
-    if platform:
-        preview_parts.append(f"🖥️ {platform}")
-    
-    data['preview'] = " | ".join(preview_parts)
-    data['success'] = errors_count == 0
-    data['errors'] = errors_count
-    data['warnings'] = warnings_count
-    
-    return data
-
-def parse_query_report_html(file_path):
-    """Parse HTML query report to extract key data"""
-    try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        # Extract data using regex patterns
-        data = {}
-        
-        # Extract success status
-        success_match = re.search(r'class="summary-card (success|error)"', content)
-        data['success'] = success_match.group(1) == 'success' if success_match else True
-        
-        # Extract user input - try multiple patterns to handle different formatting
-        user_input = None
-        
-        # Pattern 1: Standard div with class
-        user_input_match = re.search(r'<div class="user-input">\s*(.*?)\s*</div>', content, re.DOTALL)
-        if user_input_match:
-            user_input = user_input_match.group(1).strip()
-        
-        # Pattern 2: Alternative format if first doesn't work
-        if not user_input:
-            user_input_match = re.search(r'class="user-input">\s*(.*?)\s*</div>', content, re.DOTALL)
-            if user_input_match:
-                user_input = user_input_match.group(1).strip()
-        
-        # Pattern 3: Look for content between user-input div tags
-        if not user_input:
-            user_input_match = re.search(r'<div class="user-input">(.*?)</div>', content, re.DOTALL | re.MULTILINE)
-            if user_input_match:
-                user_input = user_input_match.group(1).strip()
-        
-        if user_input:
-            data['user_input'] = user_input
-        
-        # Extract execution stages count
-        stages_match = re.search(r'<span class="stat-number">(\d+)</span>\s*<span class="stat-label">Execution Stages</span>', content)
-        stages_count = int(stages_match.group(1)) if stages_match else 0
-        
-        # Extract execution time
-        exec_time_match = re.search(r'<span class="stat-number">([0-9.]+)s</span>', content)
-        exec_time = float(exec_time_match.group(1)) if exec_time_match else 0
-        
-        # Extract LLM calls count
-        llm_calls_match = re.search(r'<span class="stat-number">(\d+)</span>\s*<span class="stat-label">LLM Calls</span>', content)
-        llm_calls = int(llm_calls_match.group(1)) if llm_calls_match else 0
-        
-        # Extract tool calls count
-        tool_calls_match = re.search(r'<span class="stat-number">(\d+)</span>\s*<span class="stat-label">Tool Calls</span>', content)
-        tool_calls = int(tool_calls_match.group(1)) if tool_calls_match else 0
-        
-        # Extract total tokens
-        tokens_match = re.search(r'<span class="stat-number">(\d+)</span>\s*<span class="stat-label">Total Tokens</span>', content)
-        total_tokens = int(tokens_match.group(1)) if tokens_match else 0
-        
-        # Extract cost
-        cost_match = re.search(r'<span class="stat-number">\$([0-9.]+)</span>\s*<span class="stat-label">Estimated Cost</span>', content)
-        cost = float(cost_match.group(1)) if cost_match else 0.0
-        
-        # Store extracted data
-        data['execution_time'] = exec_time
-        data['llm_calls'] = llm_calls
-        data['tool_calls'] = tool_calls
-        data['total_tokens'] = total_tokens
-        data['cost'] = cost
-        data['stages'] = stages_count
-        
-        # Create a comprehensive preview with key insights
-        status_icon = "✅" if data['success'] else "❌"
-        preview_parts = [
-            f"{status_icon} Query executed in {exec_time:.1f}s",
-            f"💰 ${cost:.4f}",
-            f"🧠 {llm_calls} LLM calls",
-            f"🔧 {tool_calls} tool calls"
-        ]
-        
-        if total_tokens > 0:
-            preview_parts.append(f"📊 {total_tokens:,} tokens")
-        
-        data['preview'] = " | ".join(preview_parts)
-        
-        return data
-    except Exception as e:
-        print(f"Error parsing query report HTML {file_path}: {e}")
-        return {}
-
-@app.route('/launch-report')
-def launch_report():
-    """Generate and serve a launch report"""
-    try:
-        from reports.launch_report_generator import generate_launch_report
-        
-        # Generate the launch report using the new generator
-        report_path = generate_launch_report(
-            bot_available=PIPELINE_AVAILABLE,
-            active_sessions=len(chat_sessions)
-        )
-        
-        # Read the generated HTML content
-        with open(report_path, 'r', encoding='utf-8') as f:
-            html_content = f.read()
-        
-        return html_content
-        
-    except Exception as e:
-        return f"""
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>🚀 Cuttle Launch Report</title>
-            <link rel="stylesheet" href="/css/shared_navigation.css">
-            <link rel="stylesheet" href="/css/launch_report.css">
-                .container {{
-                    max-width: 800px;
-                    margin: 0 auto;
-                    background: rgba(255, 255, 255, 0.1);
-                    backdrop-filter: blur(10px);
-                    border-radius: 20px;
-                    padding: 30px;
-                    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-                }}
-                .header {{
-                    text-align: center;
-                    margin-bottom: 30px;
-                }}
-                .header h1 {{
-                    font-size: 2.5em;
-                    margin-bottom: 10px;
-                    background: linear-gradient(45deg, #fff, #f0f0f0);
-                    -webkit-background-clip: text;
-                    -webkit-text-fill-color: transparent;
-                }}
-                .status-grid {{
-                    display: grid;
-                    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-                    gap: 20px;
-                    margin-bottom: 30px;
-                }}
-                .status-card {{
-                    background: rgba(255, 255, 255, 0.1);
-                    border-radius: 15px;
-                    padding: 20px;
-                    border: 1px solid rgba(255, 255, 255, 0.2);
-                }}
-                .status-card h3 {{
-                    margin-top: 0;
-                    color: #f0f0f0;
-                }}
-                .status-item {{
-                    display: flex;
-                    justify-content: space-between;
-                    margin-bottom: 10px;
-                    padding: 5px 0;
-                    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-                }}
-                .status-value {{
-                    font-weight: bold;
-                    color: #4CAF50;
-                }}
-                .status-value.error {{
-                    color: #f44336;
-                }}
-                .status-value.warning {{
-                    color: #ff9800;
-                }}
-                .actions {{
-                    text-align: center;
-                    margin-top: 30px;
-                }}
-                .btn {{
-                    display: inline-block;
-                    padding: 12px 24px;
-                    background: linear-gradient(45deg, #4CAF50, #45a049);
-                    color: white;
-                    text-decoration: none;
-                    border-radius: 25px;
-                    margin: 0 10px;
-                    transition: transform 0.3s ease;
-                }}
-                .btn:hover {{
-                    transform: translateY(-2px);
-                }}
-                .btn.secondary {{
-                    background: linear-gradient(45deg, #2196F3, #1976D2);
-                }}
-                .query-link {{
-                    color: #4CAF50;
-                    text-decoration: none;
-                    font-weight: bold;
-                    transition: color 0.3s ease;
-                }}
-                .query-link:hover {{
-                    color: #66BB6A;
-                    text-decoration: underline;
-                }}
-                .query-meta {{
-                    font-size: 0.9em;
-                    color: #ccc;
-                    margin-top: 2px;
-                }}
-                .query-timestamp {{
-                    font-size: 0.8em;
-                    color: #888;
-                }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <div class="header">
-                    <h1>🚀 Cuttle Launch Report</h1>
-                    <p>System initialized successfully at {system_info['launch_time']}</p>
-                </div>
-                
-                <div class="status-grid">
-                    <div class="status-card">
-                        <h3>🖥️ System Information</h3>
-                        <div class="status-item">
-                            <span>Platform:</span>
-                            <span class="status-value">{system_info['platform']} {system_info['platform_version']}</span>
-                        </div>
-                        <div class="status-item">
-                            <span>Python Version:</span>
-                            <span class="status-value">{system_info['python_version']}</span>
-                        </div>
-                        <div class="status-item">
-                            <span>CPU Cores:</span>
-                            <span class="status-value">{system_info['cpu_count']}</span>
-                        </div>
-                        <div class="status-item">
-                            <span>Total Memory:</span>
-                            <span class="status-value">{system_info['memory_total']} GB</span>
-                        </div>
-                        <div class="status-item">
-                            <span>Available Memory:</span>
-                            <span class="status-value">{system_info['memory_available']} GB</span>
-                        </div>
-                    </div>
-                    
-                    <div class="status-card">
-                        <h3>🔧 Service Status</h3>
-                        <div class="status-item">
-                            <span>Web Chat API:</span>
-                            <span class="status-value">Running</span>
-                        </div>
-                        <div class="status-item">
-                            <span>Bot Backend:</span>
-                            <span class="status-value {'error' if not services_status['bot_available'] else ''}">
-                                {'Available' if services_status['bot_available'] else 'Not Available'}
-                            </span>
-                        </div>
-                        <div class="status-item">
-                            <span>Active Sessions:</span>
-                            <span class="status-value">{services_status['active_sessions']}</span>
-                        </div>
-                        <div class="status-item">
-                            <span>Port:</span>
-                            <span class="status-value">{services_status['port']}</span>
-                        </div>
-                        <div class="status-item">
-                            <span>Uptime:</span>
-                            <span class="status-value">{round(system_info['uptime'] / 3600, 1)} hours</span>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- Recent Query Reports -->
-                <div class="status-card" style="margin-bottom: 30px;">
-                    <h3>📊 Recent Query Reports</h3>
-                    {generate_recent_queries_html(recent_queries)}
-                </div>
-                
-                <div class="actions">
-                    <a href="/" class="btn">🏠 Go to Dashboard</a>
-                    <a href="/api/health" class="btn secondary">🔍 API Health Check</a>
-                </div>
-            </div>
-        </body>
-        </html>
-        """
-        
-        return html_content
-        
-    except Exception as e:
-        return f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Launch Report Error</title>
-            <style>
-                body {{ font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5; }}
-                .error {{ background: #ffebee; border: 1px solid #f44336; padding: 20px; border-radius: 5px; color: #c62828; }}
-            </style>
-        </head>
-        <body>
-            <div class="error">
-                <h2>❌ Launch Report Error</h2>
-                <p>Could not generate launch report: {str(e)}</p>
-                <a href="/">Go to Dashboard</a>
-            </div>
-        </body>
-        </html>
-        """, 500
-
-@app.route('/api/chat-stream', methods=['GET'])
-def chat_stream_endpoint():
-    """Streaming endpoint for /cursor commands"""
-    try:
-        message = request.args.get('message', '')
-        session_id = request.args.get('session_id')
-        project_path = _resolve_request_project_path({
-            'project_path': request.args.get('project_path'),
-            'project_id': request.args.get('project_id'),
-            'project_name': request.args.get('project_name'),
-        })
-        
-        if not message or not message.strip().startswith('/cursor '):
-            return jsonify({'success': False, 'error': 'Only /cursor commands support streaming'}), 400
-        
-        # Extract prompt
-        prompt = message[8:].strip().strip('"').strip("'")
-        
-        if not prompt:
-            return jsonify({'success': False, 'error': 'No prompt provided'}), 400
-        
-        from bots.cursor_agent_agentic import send_agentic_prompt_streaming
-        from flask import Response, stream_with_context
-        import json
-        import asyncio
-        
-        def generate():
-            """Generator for SSE"""
-            # Send start event
-            yield f"data: {json.dumps({'type': 'start', 'session_id': session_id})}\n\n"
-            
-            async def stream_updates():
-                async for update in send_agentic_prompt_streaming(prompt, project_path=project_path):
-                    yield update
-            
-            # Run async generator
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-            try:
-                async_gen = stream_updates()
-                while True:
-                    try:
-                        update = loop.run_until_complete(async_gen.__anext__())
-                        yield f"data: {json.dumps(update)}\n\n"
-                    except StopAsyncIteration:
-                        break
-            finally:
-                loop.close()
-            
-            # Send done event
-            yield f"data: {json.dumps({'type': 'done', 'session_id': session_id})}\n\n"
-        
-        return Response(
-            stream_with_context(generate()),
-            mimetype='text/event-stream',
-            headers={
-                'Cache-Control': 'no-cache',
-                'X-Accel-Buffering': 'no',
-                'Connection': 'keep-alive'
-            }
-        )
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({'success': False, 'error': str(e)}), 500
 
 def _parse_auth_db_session_id(chat_session_id):
     """Accept bare ints, ``db_session_<id>``, or ``CH-000155`` from clients."""
@@ -8070,11 +7248,6 @@ def schedule_trigger_endpoint():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-def _feed_agent_schedule_pipeline_names():
-    """Pipelines that should contribute cron triggers even when not started in Jobs UI."""
-    return ('Feed_Agent',)
-
-
 @app.route('/api/pipeline-schedule-triggers', methods=['GET'])
 def get_schedule_triggers():
     """No graph cron triggers."""
@@ -10676,30 +9849,6 @@ def clear_router_demotion_api():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@app.route('/api/settings/inference-preferences', methods=['GET'])
-def get_inference_preferences_api():
-    """Global coding-agent order + LLM fallback chain (tool-remote-agent codingBackend: global)."""
-    try:
-        from managers.inference_preferences import load_inference_preferences
-
-        return jsonify({'success': True, 'inference_preferences': load_inference_preferences()})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/settings/inference-preferences', methods=['POST'])
-def update_inference_preferences_api():
-    """Update inference preferences (partial body ok)."""
-    try:
-        from managers.inference_preferences import update_inference_preferences
-
-        data = request.get_json() or {}
-        merged = update_inference_preferences(data)
-        return jsonify({'success': True, 'inference_preferences': merged})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
 @app.route('/api/settings/ui-layout', methods=['GET'])
 def get_ui_layout():
     """Get persisted UI layout (rail item / footer order)."""
@@ -10986,16 +10135,6 @@ def sessions_send():
 # Skills Registry API
 # ============================================================================
 
-@app.route('/api/skills/markdown', methods=['GET'])
-def skills_markdown_list():
-    """List SKILL.md bundles under src/skills (core) and .cursor/skills (cursor)."""
-    try:
-        from api.markdown_skills import list_markdown_skills
-        return jsonify({'success': True, 'skills': list_markdown_skills()})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
 @app.route('/api/project-commands', methods=['GET'])
 def project_commands_list():
     """List ``.cuttle/commands/*.md`` for a registered project path / id."""
@@ -11054,261 +10193,6 @@ def project_commands_list():
         'commands': slim,
     })
 
-
-@app.route('/api/skills/markdown/<path:skill_ref>', methods=['GET'])
-def skills_markdown_detail(skill_ref):
-    """Full markdown skill: frontmatter, heading outline, body (for browser preview)."""
-    try:
-        from api.markdown_skills import get_markdown_skill
-        skill = get_markdown_skill(skill_ref)
-        if not skill:
-            return jsonify({'success': False, 'error': 'Skill not found'}), 404
-        return jsonify({'success': True, 'skill': skill})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/skills/list', methods=['GET'])
-def skills_list():
-    """List available skills (id, name, description, type)."""
-    try:
-        from api.skills_registry import list_skills
-        return jsonify({'success': True, 'skills': list_skills()})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-@app.route('/api/skills/<skill_id>', methods=['GET'])
-def skills_get(skill_id):
-    """Get full skill by id (for preview or install). ?structure=1 adds pipeline outline."""
-    try:
-        from api.skills_registry import get_skill
-        from api.markdown_skills import skill_structure_for_registry_entry
-        skill = get_skill(skill_id)
-        if not skill:
-            return jsonify({'success': False, 'error': 'Skill not found'}), 404
-        out = {'success': True, 'skill': skill}
-        if request.args.get('structure') == '1':
-            out['structure'] = skill_structure_for_registry_entry(skill)
-        return jsonify(out)
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-@app.route('/api/skills/install', methods=['POST'])
-def skills_install():
-    """Graph template install is gone with visual pipelines."""
-    return jsonify({
-        'success': False,
-        'error': 'graph_pipelines_removed',
-        'message': 'Skill templates that wrote pipeline graphs were removed.',
-    }), 410
-
-
-@app.route('/api/skills/system-addon', methods=['POST'])
-def skills_system_addon():
-    """Build markdown to append to LLM system prompt from tool-markdown-skillset config(s)."""
-    try:
-        data = request.get_json() or {}
-        prompt = data.get('userPrompt') or data.get('prompt') or ''
-        configs = data.get('configs') or data.get('skillsetConfigs') or []
-        if not isinstance(configs, list):
-            configs = []
-        from api.skillset_injection import build_skills_system_addon
-        addon, meta = build_skills_system_addon(str(prompt), configs)
-        return jsonify({'success': True, 'addon': addon, 'meta': meta})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-# ============================================================================
-# Remote Execution API Endpoints
-# ============================================================================
-
-@app.route('/api/remote/execute', methods=['POST'])
-def remote_execute_command():
-    """Execute a command remotely"""
-    try:
-        data = request.get_json()
-        command = data.get('command')
-        context = data.get('context', {})
-        
-        if not command:
-            return jsonify({
-                'success': False,
-                'error': 'No command provided'
-            }), 400
-        
-        # Create a session ID for remote execution
-        session_id = f"remote_{time.time()}"
-        
-        # Process the command using the bot
-        result = process_message_with_bot(command, session_id)
-        
-        return jsonify(result)
-        
-    except Exception as e:
-        print(f"Remote execution error: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-@app.route('/api/remote/execute-pipeline', methods=['POST'])
-def remote_execute_pipeline():
-    """Execute a pipeline remotely"""
-    try:
-        pipeline_data = request.get_json()
-        
-        if not pipeline_data:
-            return jsonify({
-                'success': False,
-                'error': 'No pipeline data provided'
-            }), 400
-        
-        # Save pipeline temporarily and execute it
-        # For now, return success (actual execution would happen via node executor)
-        return jsonify({
-            'success': True,
-            'message': 'Pipeline execution initiated',
-            'pipeline_id': pipeline_data.get('id', 'unknown')
-        })
-        
-    except Exception as e:
-        print(f"Remote pipeline execution error: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-@app.route('/api/remote/system-info', methods=['GET'])
-def remote_system_info():
-    """Get system information"""
-    try:
-        import platform
-        import psutil
-        
-        info = {
-            'success': True,
-            'hostname': os.environ.get('COMPUTERNAME', platform.node()),
-            'platform': platform.system(),
-            'platform_release': platform.release(),
-            'platform_version': platform.version(),
-            'architecture': platform.machine(),
-            'processor': platform.processor(),
-            'python_version': platform.python_version(),
-            'cpu_count': psutil.cpu_count(),
-            'cpu_percent': psutil.cpu_percent(interval=1),
-            'memory_total': psutil.virtual_memory().total,
-            'memory_available': psutil.virtual_memory().available,
-            'memory_percent': psutil.virtual_memory().percent,
-            'disk_usage': {
-                partition.mountpoint: {
-                    'total': psutil.disk_usage(partition.mountpoint).total,
-                    'used': psutil.disk_usage(partition.mountpoint).used,
-                    'free': psutil.disk_usage(partition.mountpoint).free,
-                    'percent': psutil.disk_usage(partition.mountpoint).percent
-                }
-                for partition in psutil.disk_partitions()
-            }
-        }
-        
-        return jsonify(info)
-        
-    except Exception as e:
-        print(f"System info error: {e}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-@app.route('/api/remote/hosts', methods=['GET'])
-def list_remote_hosts():
-    """List configured remote hosts"""
-    try:
-        from remote_executor import get_remote_executor
-        executor = get_remote_executor()
-        hosts = executor.list_hosts()
-        
-        return jsonify({
-            'success': True,
-            'hosts': hosts
-        })
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-@app.route('/api/remote/hosts', methods=['POST'])
-def add_remote_host():
-    """Add a remote host"""
-    try:
-        data = request.get_json()
-        name = data.get('name')
-        host = data.get('host')
-        port = data.get('port', 8080)
-        
-        if not name or not host:
-            return jsonify({
-                'success': False,
-                'error': 'Name and host are required'
-            }), 400
-        
-        from remote_executor import get_remote_executor
-        executor = get_remote_executor()
-        executor.add_host(name, host, port)
-        
-        return jsonify({
-            'success': True,
-            'message': f'Host {name} added successfully'
-        })
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-@app.route('/api/remote/hosts/<host_name>', methods=['DELETE'])
-def remove_remote_host(host_name):
-    """Remove a remote host"""
-    try:
-        from remote_executor import get_remote_executor
-        executor = get_remote_executor()
-        executor.remove_host(host_name)
-        
-        return jsonify({
-            'success': True,
-            'message': f'Host {host_name} removed successfully'
-        })
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-@app.route('/api/remote/discover', methods=['POST'])
-def discover_remote_hosts():
-    """Discover Cuttle instances on the network"""
-    try:
-        data = request.get_json() or {}
-        port = data.get('port', 8080)
-        
-        from remote_executor import get_remote_executor
-        executor = get_remote_executor()
-        discovered = executor.discover_hosts(port)
-        
-        return jsonify({
-            'success': True,
-            'discovered': discovered,
-            'count': len(discovered)
-        })
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
 
 @app.route('/api/sessions/<session_id>', methods=['GET'])
 def get_session_history(session_id):
@@ -11738,7 +10622,7 @@ def pipeline_execution_start():
         
         # Store pipeline config and graph structure in the query tracker
         try:
-            from reports.query_report_generator import get_query_tracker
+            from api.query_tracker import get_query_tracker
             tracker = get_query_tracker(query_id)
             if tracker.query_id == query_id and tracker.execution_data:
                 # Override agent_config with pipeline config for node editor
@@ -11789,7 +10673,7 @@ def pipeline_execution_finish():
         # Apply execution order mapping to graph nodes if provided
         if execution_order_map:
             try:
-                from reports.query_report_generator import get_query_tracker
+                from api.query_tracker import get_query_tracker
                 tracker = get_query_tracker()
                 print(f"[QUERY FINISH] Tracker exists: {tracker is not None}")
                 print(f"[QUERY FINISH] Tracker has execution_data: {tracker.execution_data is not None if tracker else False}")
@@ -11838,7 +10722,7 @@ def pipeline_execution_finish():
         
         # Unregister from active executions (Node Editor run) and finish query tracking
         try:
-            from reports.query_report_generator import get_query_tracker
+            from api.query_tracker import get_query_tracker
             from api.active_executions import unregister_execution
             tracker = get_query_tracker()
             if tracker and tracker.query_id:
@@ -11977,7 +10861,7 @@ def pipeline_run_now():
         import uuid as _uuid_mod
 
         query_id = str(_uuid_mod.uuid4())[:8]
-        report_url = f'/logs/query_report_{query_id}.html'
+        report_url = f'/query_log.html?id={query_id}'
 
         trigger_payload = {
             'message': message,
@@ -11988,10 +10872,10 @@ def pipeline_run_now():
         def _run_pipeline_async():
             """Run query tracking + pipeline on this thread so the global tracker cannot be stolen before execute_trigger (fixes stuck 'live' reports)."""
             try:
-                from reports.query_report_generator import start_query_tracking_with_id
+                from api.query_tracker import start_query_tracking_with_id
                 from api.pipeline_trigger_executor import apply_pipeline_graph_to_query_tracker
                 from api.active_executions import register_execution, unregister_execution
-                from reports.query_report_generator import finish_query_tracking
+                from api.query_tracker import finish_query_tracking
 
                 start_query_tracking_with_id(query_id, message, user_ctx)
                 register_execution(query_id, pipeline_name)
@@ -12009,7 +10893,7 @@ def pipeline_run_now():
                 import traceback
                 traceback.print_exc()
                 try:
-                    from reports.query_report_generator import finish_query_tracking
+                    from api.query_tracker import finish_query_tracking
                     finish_query_tracking(success=False, error_message=str(run_err))
                 except Exception:
                     pass
@@ -12372,7 +11256,7 @@ def record_node_execution():
         
         # Record node execution in the query tracker
         try:
-            from reports.query_report_generator import get_query_tracker
+            from api.query_tracker import get_query_tracker
             import time
             
             tracker = get_query_tracker(query_id)
@@ -12425,64 +11309,24 @@ def _normalize_tools_config(tools_config) -> Optional[dict]:
 
 
 def _mcp_cuttle_server_enabled() -> bool:
-    """Always off. Cuttle does not host an MCP tool server for LLM/pipeline/chat.
-
-    Cursor/Codex/Muse keep their own user MCP. In-process tools for agents are
-    ``python -m api.*`` CLIs, not ``run_cuttle_mcp.py``.
-    """
+    """Cuttle does not host an MCP tool server. Guest CLIs keep their own MCP."""
     return False
 
 
 def _fetch_mcp_tools_openai_format(mcp_config: Optional[dict]) -> list:
-    """MCP-only tools in OpenAI function format. mcp_config None/{} = no filter on tool names."""
-    import asyncio
-    mcp_config = mcp_config if mcp_config is not None else {}
-    if not _mcp_cuttle_server_enabled():
-        return []
-    try:
-        from api.mcp_client import get_mcp_client
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            client = loop.run_until_complete(get_mcp_client())
-        finally:
-            loop.close()
-        if not getattr(client, 'available_tools', None):
-            return []
-        enabled = (mcp_config or {}).get('enabledTools') or []
-        out = []
-        for t in client.available_tools:
-            name = getattr(t, 'name', None) or str(t)
-            if enabled and name not in enabled:
-                continue
-            desc = getattr(t, 'description', None) or ''
-            schema = getattr(t, 'inputSchema', None)
-            if not isinstance(schema, dict):
-                schema = {'type': 'object', 'properties': {}}
-            out.append({
-                'type': 'function',
-                'function': {
-                    'name': name,
-                    'description': desc,
-                    'parameters': schema
-                }
-            })
-        return out
-    except Exception as e:
-        print(f"[MCP] Could not get tools for LLM: {e}")
-        return []
+    """No in-process Cuttle MCP tools. Guest harnesses own MCP."""
+    return []
 
 
 def _get_mcp_tools_openai_format(tools_config=None):
-    """MCP-only list (OpenAI function format). Used by /api/mcp-tools; None = all MCP tools."""
+    """OpenAI-format tool list. Cuttle does not expose an MCP tool catalog."""
     return _fetch_mcp_tools_openai_format({} if tools_config is None else tools_config)
 
 
 def _get_combined_openai_tools(tools_config) -> list:
-    """MCP tools plus bundled CLI/API tools plus always-available home-feed preferences tool."""
+    """MCP tools plus bundled CLI/API tools."""
     norm = _normalize_tools_config(tools_config)
     from api.bundled_llm_tools import bundled_tool_specs_openai
-    from managers.feed_preferences import cuttle_feed_preferences_tool_specs
 
     out = []
     if norm:
@@ -12490,17 +11334,11 @@ def _get_combined_openai_tools(tools_config) -> list:
         if mcp is not None:
             out.extend(_fetch_mcp_tools_openai_format(mcp))
         out.extend(bundled_tool_specs_openai(norm.get('bundledCli'), norm.get('bundledApi')))
-    out.extend(cuttle_feed_preferences_tool_specs())
     return out
 
 
 def _invoke_llm_tool(name: str, arguments: dict, tools_config, session_id: Optional[str]) -> str:
     """Dispatch a single tool call from OpenAI/Anthropic/Ollama tool rounds."""
-    if name == 'cuttle_feed_preferences':
-        from managers.feed_preferences import invoke_feed_preferences_tool
-
-        return invoke_feed_preferences_tool(arguments or {})
-
     from api.bundled_llm_tools import BUNDLED_TOOL_NAMES, invoke_bundled_tool
     if name in BUNDLED_TOOL_NAMES:
         norm = _normalize_tools_config(tools_config)
@@ -12512,92 +11350,16 @@ def _invoke_llm_tool(name: str, arguments: dict, tools_config, session_id: Optio
             project_root=str(actual_project_root),
             session_id=session_id,
         )
-    norm = _normalize_tools_config(tools_config)
-    mcp_part = (norm or {}).get('mcp')
-    if mcp_part is None:
-        return f"Error: MCP tools are not enabled for this request (tool {name})."
-    if not _mcp_cuttle_server_enabled():
-        return f"Error: Cuttle MCP server is disabled (Tools → MCP Servers). Cannot run `{name}`."
-    import asyncio
-    try:
-        from api.mcp_client import get_mcp_client
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            mcp_client = loop.run_until_complete(get_mcp_client())
-            result = loop.run_until_complete(mcp_client.call_tool(name, arguments or {}))
-            return result.message if result.success else f"Error: {result.error}"
-        finally:
-            loop.close()
-    except Exception as e:
-        return f"Error: {str(e)}"
+    return f"Error: Cuttle does not host MCP tools (tool {name}). Use a guest harness MCP or python -m api.*."
 
 
 def _try_direct_file_tool_fulfillment(prompt: str) -> Optional[str]:
-    """Fallback for explicit file create/read prompts when a model narrates tool use instead of calling it."""
-    if not isinstance(prompt, str) or not prompt.strip():
-        return None
-    if not _mcp_cuttle_server_enabled():
-        return None
-
-    patterns = [
-        (r'create a file at\s+(?P<path>.+?)\s+with exactly this content:\s*(?P<content>.+?)(?:\.\s*then read|$)', False),
-        (r'create a file named\s+(?P<path>\S+)\s+in the project root\s+with exactly this content:\s*(?P<content>.+?)(?:\.\s*then read|$)', True),
-        # Greedy content to EOF — for local models that paste the file body after the magic line
-        (
-            r'create a file at\s+(?P<path>\S+)\s+with exactly this content:\s*(?P<content>[\s\S]+)\Z',
-            False,
-        ),
-    ]
-
-    match = None
-    for pattern, _use_root in patterns:
-        match = re.search(pattern, prompt.strip(), flags=re.IGNORECASE | re.DOTALL)
-        if match:
-            break
-    if not match:
-        return None
-
-    file_path = match.group('path').strip().strip('`').strip('"').strip("'")
-    content = match.group('content').strip()
-    if not os.path.isabs(file_path):
-        # Anchor relative paths to Cuttle repo root (avoid cwd under src/).
-        file_path = str((actual_project_root / file_path).resolve())
-
-    try:
-        from api.mcp_client import get_mcp_client
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            mcp_client = loop.run_until_complete(get_mcp_client())
-            write_result = loop.run_until_complete(mcp_client.call_tool("write_file", {
-                "file_path": file_path,
-                "content": content,
-                "encoding": "utf-8",
-                "create_dirs": True,
-            }))
-            if not write_result.success:
-                return f"Direct MCP file fulfillment failed to write `{file_path}`: {write_result.error or write_result.message or 'unknown error'}"
-
-            read_result = loop.run_until_complete(mcp_client.call_tool("read_file", {
-                "file_path": file_path,
-                "encoding": "utf-8",
-            }))
-            if not read_result.success:
-                return f"Direct MCP file fulfillment failed to read `{file_path}`: {read_result.error or read_result.message or 'unknown error'}"
-
-            read_payload = json.loads(read_result.message)
-            read_content = read_payload.get("content", "")
-            return f"The file `{file_path}` was created successfully.\n\nContents:\n\n{read_content}"
-        finally:
-            loop.close()
-    except Exception as e:
-        print(f"[MCP] Direct file fulfillment failed: {e}")
-        return f"Direct MCP file fulfillment exception: {e}"
+    """Was MCP write_file/read_file fallback. Cuttle does not host those tools."""
+    return None
 
 
 def _try_direct_file_tool_fulfillment_from_texts(*chunks: Optional[str]) -> Optional[str]:
-    """Try direct write+read MCP fallback on the first chunk that matches."""
+    """First matching chunk; file-tool fallback is disabled."""
     for c in chunks:
         if not c or not isinstance(c, str):
             continue
@@ -12615,7 +11377,7 @@ def _build_cuttle_trace_block(query_id: str) -> str:
     if not query_id:
         return ""
     try:
-        from reports.query_report_generator import get_query_tracker
+        from api.query_tracker import get_query_tracker
         t = get_query_tracker(query_id)
         if not t or t.query_id != query_id or not getattr(t, "execution_data", None):
             return ""
@@ -12625,7 +11387,7 @@ def _build_cuttle_trace_block(query_id: str) -> str:
     import html as html_mod
 
     lines = [
-        f"Query {query_id} — full report: /logs/query_report_{query_id}.html",
+        f"Query {query_id} — full report: /query_log.html?id={query_id}",
         "",
         "WHAT ACTUALLY RAN (query log; not the model’s story)",
     ]
@@ -12651,51 +11413,6 @@ def _build_cuttle_trace_block(query_id: str) -> str:
     return f"<cuttle_trace>\n{html_mod.escape(body)}\n</cuttle_trace>"
 
 
-@app.route('/api/mcp-servers', methods=['GET', 'POST'])
-def api_mcp_servers():
-    """Retired: Cuttle no longer hosts an MCP tool server."""
-    if request.method == 'POST':
-        return jsonify({
-            'success': False,
-            'deprecated': True,
-            'error': 'Cuttle MCP server is retired. Use python -m api.* for agent ops.',
-        }), 410
-    return jsonify({
-        'success': True,
-        'deprecated': True,
-        'servers': [],
-        'message': 'Cuttle-as-MCP-server is retired. Agent ops: python -m api.*',
-    })
-
-
-@app.route('/api/mcp-tools', methods=['GET'])
-def api_mcp_tools():
-    """Retired: no Cuttle MCP tool list."""
-    return jsonify({
-        'success': True,
-        'deprecated': True,
-        'tools': [],
-        'message': 'Cuttle-as-MCP-server is retired. Agent ops: python -m api.*',
-    })
-
-
-@app.route('/api/mcp-downloader/packs', methods=['GET', 'POST'])
-def api_mcp_downloader_packs():
-    """Retired: MCP downloader packs are not used."""
-    if request.method == 'POST':
-        return jsonify({
-            'success': False,
-            'deprecated': True,
-            'error': 'MCP downloader is retired.',
-        }), 410
-    return jsonify({
-        'success': True,
-        'deprecated': True,
-        'packs': [],
-        'message': 'MCP downloader is retired. Agent ops: python -m api.*',
-    })
-
-
 def _record_failed_llm_for_query(
     query_id,
     node_id,
@@ -12708,7 +11425,7 @@ def _record_failed_llm_for_query(
     if not query_id:
         return
     try:
-        from reports.query_report_generator import get_query_tracker
+        from api.query_tracker import get_query_tracker
         tracker = get_query_tracker(query_id)
         if not tracker or tracker.query_id != query_id or not tracker.execution_data:
             return
@@ -12748,17 +11465,6 @@ def llm_request():
         system_prompt = data.get('systemPrompt') or 'You are a helpful AI assistant.'
         tools_config = data.get('toolsConfig')
         knowledge_inputs = data.get('knowledgeInputs') if isinstance(data.get('knowledgeInputs'), list) else []
-        skills_cfg = data.get('skillsConfig')
-        if skills_cfg and isinstance(skills_cfg, list) and len(skills_cfg) > 0:
-            try:
-                from api.skillset_injection import build_skills_system_addon
-                addon, sk_meta = build_skills_system_addon(prompt or '', skills_cfg)
-                if sk_meta.get('files'):
-                    knowledge_inputs = list(knowledge_inputs) + list(sk_meta['files'])
-                if addon:
-                    system_prompt = (system_prompt or '').rstrip() + addon
-            except Exception as _ex:
-                print(f"[LLM] skillsConfig injection skipped: {_ex}")
         try:
             from api.cuttle_ui_capabilities import cuttle_ui_system_addon
 
@@ -12874,7 +11580,7 @@ def llm_request():
             # Track in query report if query_id provided
             if query_id:
                 try:
-                    from reports.query_report_generator import get_query_tracker
+                    from api.query_tracker import get_query_tracker
                     tracker = get_query_tracker(query_id)
                     if tracker and tracker.query_id == query_id:
                         usage = getattr(response, 'usage', None)
@@ -12973,7 +11679,7 @@ def llm_request():
                 emit_chat_status(session_id, "Finalizing...")
             if query_id:
                 try:
-                    from reports.query_report_generator import get_query_tracker
+                    from api.query_tracker import get_query_tracker
                     tracker = get_query_tracker(query_id)
                     if tracker and tracker.query_id == query_id:
                         tracker.add_llm_call(
@@ -13151,7 +11857,7 @@ def llm_request():
                 # Track in query report if query_id provided (Ollama may not return usage)
                 if query_id:
                     try:
-                        from reports.query_report_generator import get_query_tracker
+                        from api.query_tracker import get_query_tracker
                         tracker = get_query_tracker(query_id)
                         if tracker.query_id == query_id:
                             if usage:
@@ -13427,135 +12133,13 @@ def _execute_router_tool(inputs: dict, config: dict) -> dict:
     }
 
 
-def _remote_agent_llm_chain_fallback(
-    message: str,
-    system: str,
-    query_id: str = None,
-    node_id: str = None,
-    session_id: str = None,
-    inference_mode: str = 'auto',
-    knowledge_inputs: list = None,
-) -> dict:
-    """Try cloud/local LLMs in global preference order (Settings → inference preferences)."""
-    from managers.inference_preferences import load_inference_preferences
-    from api.inference_mode import llm_fallback_chain_for_mode
-
-    prefs = load_inference_preferences()
-    chain = llm_fallback_chain_for_mode(
-        inference_mode,
-        prefs.get('llm_fallback_chain') or ['local', 'anthropic', 'openai'],
-    )
-    errors = []
-    try:
-        cfg = get_config()
-    except Exception:
-        cfg = None
-
-    for prov in chain:
-        prov = str(prov).strip().lower()
-        if prov == 'ollama':
-            prov = 'local'
-        node_type = None
-        model = None
-        if prov == 'local':
-            # Auto: ask to launch llama.cpp when local is about to be invoked and down.
-            # If the user already declined, skip to the next provider.
-            if session_id and session_id in _declined_local_llm_sessions:
-                errors.append('local: skipped (user declined llama.cpp launch)')
-                continue
-            offer = _offer_local_llm_launch_if_needed(
-                session_id, message, inference_mode or 'auto'
-            )
-            if offer is not None:
-                return {
-                    'success': True,
-                    'output': offer.get('output') or offer.get('response') or '',
-                    'type': 'local_llm_launch_prompt',
-                }
-            from core.local_llm import get_local_label
-            local_label = get_local_label()
-            emit_pipeline_status(session_id, PHASE_LLM, f"Routing to local LLM ({local_label})...")
-            emit_pipeline_status(session_id, PHASE_LLM, "Thinking...")
-            node_type = 'llm-local'
-            lm = (prefs.get('local_model') or '').strip()
-            if not lm:
-                try:
-                    lm = (cfg.get_preferred_ollama_model() if cfg else '') or ''
-                except Exception:
-                    lm = ''
-            model = lm if lm else 'default'
-        elif prov == 'anthropic':
-            emit_pipeline_status(session_id, PHASE_LLM, "Routing to Anthropic API...")
-            emit_pipeline_status(session_id, PHASE_LLM, "Thinking...")
-            node_type = 'llm-anthropic'
-            model = (prefs.get('anthropic_model') or 'claude-sonnet-4-6').strip()
-        elif prov == 'openai':
-            emit_pipeline_status(session_id, PHASE_LLM, "Routing to OpenAI...")
-            emit_pipeline_status(session_id, PHASE_LLM, "Thinking...")
-            node_type = 'llm-openai'
-            model = (prefs.get('openai_model') or '').strip()
-            if not model:
-                try:
-                    model = (cfg.get_preferred_llm_model() if cfg else '') or 'gpt-4o-mini'
-                except Exception:
-                    model = 'gpt-4o-mini'
-        else:
-            continue
-
-        llm_payload = {
-            'nodeType': node_type,
-            'model': model,
-            'prompt': message,
-            'systemPrompt': system,
-            'maxTokens': 4000,
-        }
-        if knowledge_inputs:
-            llm_payload['knowledgeInputs'] = knowledge_inputs
-        if query_id:
-            llm_payload['queryId'] = query_id
-        if node_id:
-            llm_payload['nodeId'] = node_id
-        if session_id:
-            llm_payload['sessionId'] = session_id
-        err_msg = ''
-        try:
-            resp = _internal_app_post(
-                '/api/llm-request',
-                llm_payload,
-                LLM_INTERNAL_HTTP_TIMEOUT,
-            )
-            if _internal_response_ok(resp):
-                data = _internal_response_json(resp) or {}
-                if data.get('success') is False:
-                    err_msg = data.get('error') or 'LLM returned success=false'
-                else:
-                    out = data.get('response', '')
-                    return {'success': True, 'output': out if isinstance(out, str) else str(out)}
-            else:
-                code = getattr(resp, 'status_code', None)
-                data = _internal_response_json(resp)
-                if isinstance(data, dict) and data.get('error'):
-                    err_msg = str(data.get('error'))
-                else:
-                    err_msg = f'HTTP {code}' if code is not None else 'request failed'
-        except Exception as ex:
-            err_msg = str(ex)
-        errors.append(f'{prov}: {err_msg}')
-
-    return {
-        'success': False,
-        'error': 'All LLM fallbacks failed: ' + '; '.join(errors),
-        'output': '',
-    }
-
-
 def _execute_remote_agent_tool(inputs: dict, config: dict, query_id: str = None, node_id: str = None) -> dict:
     """
-    Top-level agent: owner coding tasks → harness CLIs (Cursor Agent, Codex, …), else LLM chat.
+    Top-level agent: owner coding tasks → harness CLIs (Cursor Agent, Codex, …).
 
     Config (tool-remote-agent):
       codingBackend: 'global' | 'claude' | 'cursor' | 'cursor_then_claude' | 'claw' | 'codex' | 'muse' | 'cursor_cli' (default global).
-        global uses Settings → inference_preferences.coding_agent_chain (try each until one succeeds).
+        global runs Cursor Agent CLI (no settings chain). Direct LLM chat is not used here.
         cursor / cursor_cli run Cursor Agent CLI (`agent -p`) via the harness adapter.
         cursor_then_claude tries that CLI first, then Claude Code.
         claw runs the vendored instructkr/claw-code Python harness (local bootstrap session, not the Anthropic CLI).
@@ -13631,12 +12215,6 @@ def _execute_remote_agent_tool(inputs: dict, config: dict, query_id: str = None,
     if ui_in_chat_request and not _explicit_agent:
         looks_like_coding = False
 
-    # Feed Agent: schedule/adhoc messages are not coding-heuristic shaped; still route through
-    # the node's codingBackend instead of Anthropic API fallback.
-    _feed_pipeline = str(user_context.get('pipeline_name') or '').strip()
-    if _feed_pipeline in ('Feed_Agent', 'Feed Agent'):
-        looks_like_coding = True
-    
     # Route: coding task + owner → Claude Code on Cuttle; else LLM chat
     project = config.get('project', 'pc_bot')  # Default: Cuttle
     project_map = _remote_agent_project_map()
@@ -13700,9 +12278,7 @@ def _execute_remote_agent_tool(inputs: dict, config: dict, query_id: str = None,
 
             raw_cb = (config.get('codingBackend') or 'global').strip().lower()
             if raw_cb in ('global', 'use_global', 'default', ''):
-                from managers.inference_preferences import get_coding_agent_chain
-
-                coding_chain = get_coding_agent_chain()
+                coding_chain = ['cursor']
             else:
                 coding_chain = [raw_cb]
 
@@ -13905,47 +12481,12 @@ def _execute_remote_agent_tool(inputs: dict, config: dict, query_id: str = None,
                     return last_coding
             return last_coding
         
-        # Fallback: LLM chat (pass query_id/node_id so it records to query report)
-        from api.cuttle_ui_capabilities import cuttle_ui_system_addon
-
-        system = (
-            "You are Cuttle, a helpful AI assistant. You can help with coding, development, "
-            "and general questions. When users ask for code execution (e.g. create cron job, "
-            "edit files), they can use a pipeline with remote execution enabled."
-            + cuttle_ui_system_addon()
-            + " Do not create or modify files/HTML for chat UI unless explicitly requested."
+        msg = (
+            "No slash agent was selected. Use /cursor, /codex, /muse, or another "
+            "harness command, or let the agent router pick one. Direct LLM chat "
+            "is not used for this path."
         )
-        try:
-            pane_addon = _build_shell_pane_prompt_addon(message)
-            if pane_addon:
-                system = system.rstrip() + '\n\n' + pane_addon
-        except Exception as _pane_err:
-            print(f"[RemoteAgent] Pane context (LLM) skipped: {_pane_err}")
-        # Inject agent memory (episodic + semantic + reflection)
-        knowledge_inputs = []
-        try:
-            from core.agent_memory import resolve_identity, get_context_with_sources
-            session_data = dict(session or {})
-            user_ctx = inputs.get('user_context') or {}
-            mem_identity = resolve_identity(session_data, user_ctx.get('pipeline_name'))
-            if mem_identity:
-                mem_ctx, mem_sources = get_context_with_sources(
-                    mem_identity,
-                    max_chars=2500,
-                    recent_turns=4,
-                    query=message[:2000] if isinstance(message, str) else None,
-                )
-                if mem_sources:
-                    knowledge_inputs.extend(mem_sources)
-                if mem_ctx:
-                    system = system.rstrip() + '\n\n---\n\n' + mem_ctx
-        except Exception as e:
-            print(f"[RemoteAgent] Agent memory load skipped: {e}")
-        return _remote_agent_llm_chain_fallback(
-            message, system, query_id=query_id, node_id=node_id, session_id=session_id,
-            inference_mode=chat_inference_mode,
-            knowledge_inputs=knowledge_inputs,
-        )
+        return {'success': False, 'error': msg, 'output': msg}
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -14021,49 +12562,10 @@ def execute_tool():
             tool_result = _execute_remote_agent_tool(inputs, config, query_id=query_id, node_id=node_id)
             
         elif node_type == 'tool-mcp-generic':
-            # Generic MCP tool execution
-            if not _mcp_cuttle_server_enabled():
-                tool_result = {
-                    'success': False,
-                    'error': 'Cuttle MCP server is disabled (Tools → MCP Servers).'
-                }
-            else:
-                try:
-                    from .mcp_tool_manager import get_tool_manager
-                    import asyncio
-
-                    tool_name_mcp = config.get('toolName', '')
-                    parameters = config.get('parameters', '{}')
-
-                    # Parse parameters JSON
-                    try:
-                        import json
-                        params = json.loads(parameters)
-                    except Exception:
-                        params = {}
-
-                    # Get MCP tool manager and execute
-                    async def execute_mcp():
-                        manager = await get_tool_manager()
-                        result = await manager.call_tool(tool_name_mcp, params)
-                        return result
-
-                    # Run async function
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    mcp_result = loop.run_until_complete(execute_mcp())
-                    loop.close()
-
-                    tool_result = {
-                        'success': mcp_result.success,
-                        'result': mcp_result.message,
-                        'data': mcp_result.data
-                    }
-                except Exception as e:
-                    tool_result = {
-                        'success': False,
-                        'error': f'MCP tool execution error: {str(e)}'
-                    }
+            tool_result = {
+                'success': False,
+                'error': 'Cuttle does not host an MCP tool server.',
+            }
 
         elif node_type == 'tool-web-search':
             from tools.web_search import search_web
@@ -14090,13 +12592,6 @@ def execute_tool():
             else:
                 err = raw.get('error', 'No results')
                 tool_result = {**raw, 'output': orig_msg, 'result': orig_msg}
-
-        elif node_type == 'tool-rss-ingest':
-            from managers.rss_feed_ingest import run_rss_ingest_node
-            ctx = inputs.get('input', inputs.get('message', ''))
-            if ctx is not None and not isinstance(ctx, str):
-                ctx = str(ctx)
-            tool_result = run_rss_ingest_node(config or {}, trigger_context=(ctx or '').strip())
 
         elif (
             node_type
@@ -14129,7 +12624,7 @@ def execute_tool():
         # Claude Code / Cursor CLI do not hit /api/llm-request — mirror into llm_calls for query reports.
         if query_id and node_type == 'tool-remote-agent' and isinstance(tool_result, dict):
             try:
-                from reports.query_report_generator import get_query_tracker
+                from api.query_tracker import get_query_tracker
                 tracker = get_query_tracker(query_id)
                 if tracker and tracker.query_id == query_id:
                     ui = tool_result.get('usage_info') or {}
@@ -14182,7 +12677,7 @@ def execute_tool():
         # Track tool call in query report if query_id provided
         if query_id and tool_result is not None:
             try:
-                from reports.query_report_generator import get_query_tracker
+                from api.query_tracker import get_query_tracker
                 tracker = get_query_tracker(query_id)
                 if tracker.query_id == query_id:
                     tool_ok = True
@@ -14361,38 +12856,6 @@ def execute_output():
                 'logUrl': log_url
             })
             
-        elif node_type == 'output-feed':
-            # Write feed items to JSON file (served by /api/feed)
-            feed_dir = project_root / 'output' / 'feed'
-            feed_dir.mkdir(parents=True, exist_ok=True)
-            feed_path = feed_dir / 'feed.json'
-            try:
-                raw = output_data
-                if isinstance(raw, str):
-                    s = raw.strip()
-                    # Strip markdown code blocks if present
-                    if '```' in s:
-                        import re
-                        m = re.search(r'```(?:json)?\s*([\s\S]*?)```', s)
-                        if m:
-                            s = m.group(1).strip()
-                    parsed = json.loads(s) if s.startswith(('{', '[')) else {'items': [], 'raw': raw[:500]}
-                else:
-                    parsed = raw if isinstance(raw, dict) else {'items': []}
-                items = parsed.get('items', parsed.get('feed', [parsed] if parsed else []))
-                if not isinstance(items, list):
-                    items = [items] if items else []
-                feed_data = {
-                    'updated_at': datetime.now().isoformat(),
-                    'items': items,
-                    'source': 'feed_agent_pipeline',
-                }
-                with open(feed_path, 'w', encoding='utf-8') as f:
-                    json.dump(feed_data, f, indent=2, ensure_ascii=False)
-                return jsonify({'success': True, 'path': str(feed_path), 'count': len(items)})
-            except Exception as e:
-                return jsonify({'success': False, 'error': str(e)}), 500
-
         elif node_type == 'output-file':
             file_path = config.get('filePath', './output.txt')
             file_format = config.get('format', 'text')
@@ -14470,7 +12933,7 @@ def execute_output():
                             {
                                 'pipeline': pipeline_name or None,
                                 'query_id': query_id or None,
-                                'report_url': f'/logs/query_report_{query_id}.html' if query_id else None,
+                                'report_url': f'/query_log.html?id={query_id}' if query_id else None,
                                 'response': out_text,
                             },
                         )

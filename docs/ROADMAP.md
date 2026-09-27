@@ -4,7 +4,7 @@
 
 Cuttle is a **harness of harnesses**: a daemon + chat UI that hosts vendor agent CLIs (Cursor, Codex, Claude, Muse, Hermes, …), routes work, and fans jobs across a LAN mesh. The long 2026-08 architecture dump (OpenClaw comparison, old LOC counts, pipeline-era phases) lives on the install as `.cuttle/personal/docs/roadmap-2026.md` and is **not** the public plan.
 
-Day-to-day backlog: [`.cuttle/learnings/FEATURE_REQUESTS.md`](../.cuttle/learnings/FEATURE_REQUESTS.md). Socket thesis: [`src/docs/guides/MODULARITY.md`](../src/docs/guides/MODULARITY.md).
+Day-to-day backlog: [`.cuttle/learnings/FEATURE_REQUESTS.md`](../.cuttle/learnings/FEATURE_REQUESTS.md). Socket thesis: [`guides/MODULARITY.md`](guides/MODULARITY.md).
 
 ## True today
 

@@ -400,7 +400,7 @@ Put the cheap id in `smoke_model` so a forgotten env still does not spend Pro.
 | `opencode` | `opencode run` | pilot + sync-auth action |
 | `antigravity` | `agy` | auto-install |
 | `hermes` | `hermes chat -Q -q` | local or OpenRouter via config.yaml; `requires_cloud: false`; per-chat `--resume` + state.db status poll |
-| `deepseek` | `dsh --profile headless` | Flash by default (`smoke_model` = Flash); no native per-chat resume; needs `DEEPSEEK_API_KEY`. Tentacle for DeepSeek Harness — steal kernel ideas separately ([`MODULARITY.md`](../../docs/guides/MODULARITY.md)); do not treat dsh as Cuttle’s core. |
+| `deepseek` | `dsh --profile headless` | Flash by default (`smoke_model` = Flash); no native per-chat resume; needs `DEEPSEEK_API_KEY`. Tentacle for DeepSeek Harness — steal kernel ideas separately ([`MODULARITY.md`](../../../docs/guides/MODULARITY.md)); do not treat dsh as Cuttle’s core. |
 
 ## After code changes
 

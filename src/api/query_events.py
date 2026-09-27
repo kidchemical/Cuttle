@@ -1,8 +1,9 @@
 """Structured query-log events for harness turns (Brain, sent prompt, tools, thinking).
 
-HTML reports remain a compatibility dump. The inspector reads JSON via
-``GET /api/query-log/<id>``. Bind ``query_id`` with :func:`bind_query_id` so CLI
-worker threads (``asyncio.to_thread``) can record without extra kwargs.
+Source of truth is JSON sidecars under ``web/logs/query_data_<id>.json``.
+The inspector reads ``GET /api/query-log/<id>``. Bind ``query_id`` with
+:func:`bind_query_id` so CLI worker threads (``asyncio.to_thread``) can record
+without extra kwargs.
 """
 
 from __future__ import annotations
@@ -42,6 +43,13 @@ def current_query_id() -> Optional[str]:
     return _current_query_id.get()
 
 
+def query_log_url(query_id: Optional[str]) -> Optional[str]:
+    qid = (query_id or "").strip()
+    if not qid:
+        return None
+    return f"/query_log.html?id={qid}"
+
+
 def _cap(text: Any, limit: int) -> str:
     s = "" if text is None else str(text)
     if len(s) <= limit:
@@ -51,7 +59,7 @@ def _cap(text: Any, limit: int) -> str:
 
 def _tracker(query_id: Optional[str] = None):
     try:
-        from reports.query_report_generator import get_query_tracker
+        from api.query_tracker import get_query_tracker
     except Exception:
         return None
     qid = (query_id or current_query_id() or "").strip()
@@ -315,7 +323,7 @@ def public_query_payload(data: Dict[str, Any], *, executing: bool) -> Dict[str, 
         "llm_calls": d.get("llm_calls") or [],
         "tool_calls": d.get("tool_calls") or [],
         "executing": executing,
-        "report_url": f"/logs/query_report_{d.get('query_id')}.html" if d.get("query_id") else None,
+        "report_url": query_log_url(d.get("query_id")),
     }
 
 
@@ -332,7 +340,7 @@ def build_query_log_response(query_id: str) -> Tuple[Optional[Dict[str, Any]], O
         executing = False
     data = None
     try:
-        from reports.query_report_generator import get_query_tracker, get_shared_live_snapshot
+        from api.query_tracker import get_query_tracker, get_shared_live_snapshot
 
         tracker = get_query_tracker(qid)
         if tracker and tracker.query_id == qid and tracker.execution_data:

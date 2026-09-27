@@ -137,64 +137,46 @@ def build_enhance_prompt(
 
 
 def _via_openai(prompt: str) -> Optional[str]:
-    api_key = os.getenv("OPENAI_API_KEY") or os.getenv("API_KEY")
-    if not api_key:
-        return None
-    from openai import OpenAI
+    from api.llm_complete import complete
 
-    client = OpenAI(api_key=api_key, timeout=45)
-    resp = client.chat.completions.create(
-        model=os.getenv("PROMPT_ENHANCE_OPENAI_MODEL") or _DEFAULT_OPENAI_MODEL,
-        messages=[
-            {"role": "system", "content": _SYSTEM},
-            {"role": "user", "content": prompt},
-        ],
-        temperature=0.4,
+    text = complete(
+        user=prompt,
+        system=_SYSTEM,
         max_tokens=900,
+        temperature=0.4,
+        openai_model=os.getenv("PROMPT_ENHANCE_OPENAI_MODEL") or _DEFAULT_OPENAI_MODEL,
+        timeout=45,
+        providers=("openai",),
     )
-    return clean_enhanced(resp.choices[0].message.content or "") or None
+    return clean_enhanced(text or "") or None
 
 
 def _via_anthropic(prompt: str) -> Optional[str]:
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        return None
-    from anthropic import Anthropic
+    from api.llm_complete import complete
 
-    client = Anthropic(api_key=api_key)
-    resp = client.messages.create(
-        model=os.getenv("PROMPT_ENHANCE_MODEL") or _DEFAULT_ANTHROPIC_MODEL,
+    text = complete(
+        user=prompt,
+        system=_SYSTEM,
         max_tokens=900,
         temperature=0.4,
-        system=_SYSTEM,
-        messages=[{"role": "user", "content": prompt}],
+        anthropic_model=os.getenv("PROMPT_ENHANCE_MODEL") or _DEFAULT_ANTHROPIC_MODEL,
+        providers=("anthropic",),
     )
-    text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
-    return clean_enhanced(text) or None
+    return clean_enhanced(text or "") or None
 
 
 def _via_local(prompt: str) -> Optional[str]:
-    from openai import OpenAI
-    from core.local_llm import (
-        get_local_api_key,
-        get_local_base_url,
-        local_reachable,
-        resolve_local_model,
-    )
+    from api.llm_complete import complete
 
-    if not local_reachable(timeout=1.5):
-        return None
-    client = OpenAI(base_url=get_local_base_url(), api_key=get_local_api_key(), timeout=90)
-    resp = client.chat.completions.create(
-        model=resolve_local_model(None),
-        messages=[
-            {"role": "system", "content": _SYSTEM},
-            {"role": "user", "content": prompt},
-        ],
-        temperature=0.4,
+    text = complete(
+        user=prompt,
+        system=_SYSTEM,
         max_tokens=900,
+        temperature=0.4,
+        timeout=90,
+        providers=("local",),
     )
-    return clean_enhanced(resp.choices[0].message.content or "") or None
+    return clean_enhanced(text or "") or None
 
 
 def enhance_prompt(

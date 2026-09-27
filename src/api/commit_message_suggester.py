@@ -391,66 +391,46 @@ def build_suggest_prompt(
 
 
 def _via_openai(prompt: str, *, file_count: int = 0, temperature: float = 0.3) -> Optional[str]:
-    api_key = os.getenv("OPENAI_API_KEY") or os.getenv("API_KEY")
-    if not api_key:
-        return None
-    from openai import OpenAI
+    from api.llm_complete import complete
 
-    client = OpenAI(api_key=api_key, timeout=60)
-    resp = client.chat.completions.create(
-        model=os.getenv("COMMIT_MSG_OPENAI_MODEL") or _DEFAULT_OPENAI_COMMIT_MODEL,
-        messages=[
-            {"role": "system", "content": _SYSTEM},
-            {"role": "user", "content": prompt},
-        ],
-        temperature=float(temperature),
+    text = complete(
+        user=prompt,
+        system=_SYSTEM,
         max_tokens=80,
+        temperature=float(temperature),
+        openai_model=os.getenv("COMMIT_MSG_OPENAI_MODEL") or _DEFAULT_OPENAI_COMMIT_MODEL,
+        timeout=60,
+        providers=("openai",),
     )
-    text = resp.choices[0].message.content or ""
-    return _usable_subject(text, file_count=file_count) or None
+    return _usable_subject(text or "", file_count=file_count) or None
 
 
 def _via_local(prompt: str, *, file_count: int = 0, temperature: float = 0.3) -> Optional[str]:
-    from openai import OpenAI
-    from core.local_llm import (
-        get_local_api_key,
-        get_local_base_url,
-        local_reachable,
-        resolve_local_model,
-    )
+    from api.llm_complete import complete
 
-    if not local_reachable(timeout=1.5):
-        return None
-    client = OpenAI(base_url=get_local_base_url(), api_key=get_local_api_key(), timeout=90)
-    resp = client.chat.completions.create(
-        model=resolve_local_model(None),
-        messages=[
-            {"role": "system", "content": _SYSTEM},
-            {"role": "user", "content": prompt},
-        ],
-        temperature=float(temperature),
+    text = complete(
+        user=prompt,
+        system=_SYSTEM,
         max_tokens=120,
+        temperature=float(temperature),
+        timeout=90,
+        providers=("local",),
     )
-    text = resp.choices[0].message.content or ""
-    return _usable_subject(text, file_count=file_count) or None
+    return _usable_subject(text or "", file_count=file_count) or None
 
 
 def _via_anthropic(prompt: str, *, file_count: int = 0, temperature: float = 0.3) -> Optional[str]:
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        return None
-    from anthropic import Anthropic
+    from api.llm_complete import complete
 
-    client = Anthropic(api_key=api_key)
-    resp = client.messages.create(
-        model=os.getenv("COMMIT_MSG_MODEL") or _DEFAULT_COMMIT_MODEL,
+    text = complete(
+        user=prompt,
+        system=_SYSTEM,
         max_tokens=80,
         temperature=float(temperature),
-        system=_SYSTEM,
-        messages=[{"role": "user", "content": prompt}],
+        anthropic_model=os.getenv("COMMIT_MSG_MODEL") or _DEFAULT_COMMIT_MODEL,
+        providers=("anthropic",),
     )
-    text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
-    return _usable_subject(text, file_count=file_count) or None
+    return _usable_subject(text or "", file_count=file_count) or None
 
 
 def _is_avoided_subject(message: str, avoid_messages: Optional[Sequence[str]]) -> bool:

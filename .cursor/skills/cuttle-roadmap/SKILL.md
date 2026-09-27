@@ -16,7 +16,7 @@ description: >-
 |---|---|
 | **Public / agents on a fresh clone** | `docs/ROADMAP.md` |
 | **This install only** (gitignored) | `.cuttle/personal/docs/roadmap-2026.md` — 2026-08 architecture dump |
-| Socket / DeepSeek thesis | `src/docs/guides/MODULARITY.md` |
+| Socket / DeepSeek thesis | `docs/guides/MODULARITY.md` |
 
 For **what to build next**, prefer `docs/ROADMAP.md` plus `.cuttle/learnings/FEATURE_REQUESTS.md`. Do not treat the 2026-08 dump as HEAD.
 
@@ -25,7 +25,7 @@ For **what to build next**, prefer `docs/ROADMAP.md` plus `.cuttle/learnings/FEA
 | Need | Where |
 |---|---|
 | Logged **feature requests** (`[FEAT-YYYYMMDD-XXX]`) | `.cuttle/learnings/FEATURE_REQUESTS.md` |
-| **Harness-of-harnesses / sockets / DeepSeek comparison** | `src/docs/guides/MODULARITY.md` |
+| **Harness-of-harnesses / sockets / DeepSeek comparison** | `docs/guides/MODULARITY.md` |
 | Agent router work items | `.cuttle/docs/agent-router-todo.md` |
 | Learnings / errors backlog | `.cuttle/learnings/LEARNINGS.md`, `.cuttle/learnings/ERRORS.md` |
 | Day-to-day repo conventions | `AGENTS.md` |

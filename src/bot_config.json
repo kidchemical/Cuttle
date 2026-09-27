@@ -1,0 +1,17 @@
+{
+  "mode": "default",
+  "thinking_response": true,
+  "auto_restart": false,
+  "debug_mode": false,
+  "llm_threshold": 0.7,
+  "cursor_agent_method": "native",
+  "agent_stage_mode": "multi-lite",
+  "preferred_llm_model": "gpt-4o-mini",
+  "preferred_ollama_model": "qwen3.5:latest",
+  "preferred_tools_llm_model": "gpt-4o-mini",
+  "preferred_tools_ollama_model": "qwen3.5:latest",
+  "agent_name": "Cuttle",
+  "llm_fallback_enabled": true,
+  "system_prompt_mode": "default",
+  "custom_system_prompt": ""
+}

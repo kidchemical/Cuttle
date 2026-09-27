@@ -231,7 +231,7 @@ def test_navigate_to_apps_and_grid_lists_apps(page):
     page.locator('.rail-items .rail-item[data-page="/apps_page.html"]').first.click()
     frame = page.frame_locator("#contentFrame")
     frame.locator("h1").filter(has_text="Apps").wait_for(state="visible", timeout=8000)
-    frame.locator('.apps-tile[data-id="nav-skills"]').wait_for(state="visible", timeout=8000)
+    frame.locator('.apps-tile[data-id="nav-git"]').wait_for(state="visible", timeout=8000)
 
 
 def test_rapid_navigation_panel_stable(page):
@@ -239,7 +239,7 @@ def test_rapid_navigation_panel_stable(page):
     page.goto(f"{API_BASE}/app_shell.html")
     page.wait_for_selector("#contentFrame", timeout=10000)
     # The rail is user-customizable, so any of these may be stashed out of view.
-    pages = ["/task_management.html", "/apps_page.html", "/home_feed.html", "/chat_page.html"]
+    pages = ["/task_management.html", "/apps_page.html", "/settings_page.html", "/chat_page.html"]
     for p in pages:
         btn = page.locator(f'.rail-items .rail-item[data-page="{p}"]').first
         if btn.count() == 0 or not btn.is_visible():
@@ -366,7 +366,7 @@ def test_chat_deeplink_paints_transcript_from_boot_prefetch(page):
 
 
 def test_tools_page_points_at_agent_ops_cli(page):
-    """Tools rail explains MCP retirement and lists python -m api.* verbs."""
+    """Tools rail lists python -m api.* verbs."""
     page.goto(f"{API_BASE}/app_shell.html")
     page.wait_for_selector("#contentFrame", timeout=10000)
     toggle = page.locator(".rail-panel-toggle")
@@ -382,7 +382,6 @@ def test_tools_page_points_at_agent_ops_cli(page):
     frame.locator("#agentOpsCli").wait_for(state="visible", timeout=10000)
     list_text = frame.locator("#agentOpsCli").inner_text()
     assert "python -m api.chat_cli" in list_text, f"Tools page should list chat_cli. Got: {list_text[:500]}"
-    assert "MCP" in frame.locator("body").inner_text()
 
 
 def test_chat_page_loads_after_tools_check(page):

@@ -1,7 +1,7 @@
 # TODO — Agent Router (adaptive quality routing)
 
 Living backlog for making Cuttle’s agent router **complete, measurable, adaptive, and OOB-useful**.  
-Canonical product roadmap remains [`docs/ROADMAP.md`](./docs/ROADMAP.md). Product / socket thesis: [`src/docs/guides/MODULARITY.md`](./src/docs/guides/MODULARITY.md). Day-to-day guide: [`src/docs/guides/AGENT_ROUTER.md`](./src/docs/guides/AGENT_ROUTER.md).
+Canonical product roadmap remains [`docs/ROADMAP.md`](../../docs/ROADMAP.md). Product / socket thesis: [`docs/guides/MODULARITY.md`](../../docs/guides/MODULARITY.md). Day-to-day guide: [`docs/guides/AGENT_ROUTER.md`](../../docs/guides/AGENT_ROUTER.md).
 
 **Doc strategy (decision):** keep **one** living file (`.cuttle/docs/agent-router-todo.md`) until the extractable package boundary is real. Do **not** spin up `ROADMAP_AGENT_ROUTER.md` + `DESIGNDOC_AGENT_ROUTER.md` yet — that triples maintenance for the same content. When (if) we cut a standalone repo, *then* promote:
 
@@ -9,7 +9,7 @@ Canonical product roadmap remains [`docs/ROADMAP.md`](./docs/ROADMAP.md). Produc
 |------|-------------|--------------------|
 | Work items + phases | this file | GitHub Issues + CHANGELOG |
 | Architecture / contracts | § Design sketch below | `DESIGN.md` in the package |
-| Multi-month product priority | one line under [`docs/ROADMAP.md`](./docs/ROADMAP.md) + [`MODULARITY.md`](./src/docs/guides/MODULARITY.md) | package README “vision” |
+| Multi-month product priority | one line under [`docs/ROADMAP.md`](../../docs/ROADMAP.md) + [`MODULARITY.md`](../../docs/guides/MODULARITY.md) | package README “vision” |
 
 ---
 
@@ -39,7 +39,7 @@ The plug can be:
 - a **programmatic / preference-table** policy
 - **another agent harness** used only as the routing brain (experimental; recursion-guarded)
 
-CuttleRouter is the default plug, not the only one. Same socket idea applies to Brain, knowledge, and reasoning — see [`MODULARITY.md`](./src/docs/guides/MODULARITY.md).
+CuttleRouter is the default plug, not the only one. Same socket idea applies to Brain, knowledge, and reasoning — see [`MODULARITY.md`](../../docs/guides/MODULARITY.md).
 
 The goal is not to compete with every router project. The goal is a clean plug:
 

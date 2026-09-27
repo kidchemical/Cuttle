@@ -136,3 +136,10 @@ docs/media/promo/
 
 # Opt-in third-party harness (clone locally; not redistributed)
 /vendor/claw-code/
+
+# Local debug dumps / Playwright screenshots (never product assets)
+/src/desktop.png
+/src/region.png
+/src/test_ws_copy.png
+/src/verify_nav_history.png
+/src/output.txt

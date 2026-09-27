@@ -26,7 +26,7 @@ def test_parse_chat_id_from_page():
 
     assert w._parse_chat_id_from_page('/chat_page.html?chat=42') == '42'
     assert w._parse_chat_id_from_page('/chat_page.html?session=99') == '99'
-    assert w._parse_chat_id_from_page('/home_feed.html') is None
+    assert w._parse_chat_id_from_page('/settings_page.html') is None
     assert w._parse_chat_id_from_page('') is None
 
 
@@ -51,7 +51,7 @@ def test_shell_panes_snapshot_empty():
         'columns': [
             {'page': '/chat_page.html?chat=10', 'flex': ''},
             {'page': '/chat_page.html?chat=20', 'flex': ''},
-            {'page': '/home_feed.html', 'flex': ''},
+            {'page': '/settings_page.html', 'flex': ''},
         ],
         'updated_at': 1.0,
     }

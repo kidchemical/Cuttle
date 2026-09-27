@@ -2,8 +2,10 @@
 Manager modules for the Cuttle project.
 
 This package contains:
+- Settings manager
 - Project manager
 - Task manager
-- Remote executor
+- Home automation
+- Project scaffold
 """
 

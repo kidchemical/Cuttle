@@ -4,75 +4,11 @@
 
 This directory contains utility scripts for testing, debugging, and automation.
 
-## Query Report Testing Scripts
+## Query logs
 
-### Automated Pipeline Test ⭐ Recommended
-
-**`automated_pipeline_test.py`**
-
-Automatically executes the TEST - Hello World (Parallelization) pipeline and verifies results.
-
-**Usage:**
-```bash
-cd /path/to/Cuttle
-python src/scripts/utilities/automated_pipeline_test.py
-```
-
-**What it does:**
-1. Loads the pipeline configuration
-2. Starts query tracking
-3. Executes coordinator, experts, and aggregator
-4. Verifies all 3 experts execute in parallel
-5. Runs consistency tests
-6. Reports pass/fail status
-
-**Expected output:**
-```
-✅ Pipeline execution successful!
-✅ SUCCESS! All tests passed!
-```
+Turn inspectors: `/query_log.html?id=<query_id>`. Source of truth is `src/web/logs/query_data_<id>.json` (SQLite chat rows store `query_id` as the index).
 
 ---
-
-### Verify Specific Report
-
-**`verify_specific_report.py`**
-
-Quick verification tool for a specific query report.
-
-**Usage:**
-```bash
-python src/scripts/utilities/verify_specific_report.py src/web/logs/query_report_XXXXX.html
-```
-
-**What it checks:**
-- All node IDs are unique
-- Executed node count matches LLM call count
-- Basic consistency validation
-
----
-
-### Run Test on Report
-
-**`run_test_on_report.py`**
-
-Runs focused consistency tests on a specific report.
-
-**Usage:**
-```bash
-python src/scripts/utilities/run_test_on_report.py
-```
-
-**Note:** Edit the script to change which report to test (line 12).
-
-**What it tests:**
-- Test 1: LLM call count matches graph
-- Test 6: No duplicate node IDs
-- Test 7: Executed nodes tracked properly
-
----
-
-## Other Utility Scripts
 
 ### Development Tools
 

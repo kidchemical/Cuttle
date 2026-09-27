@@ -1,0 +1,8 @@
+{
+  "mode": "default",
+  "thinking_response": true,
+  "auto_restart": false,
+  "debug_mode": false,
+  "llm_threshold": 0.7,
+  "cursor_agent_method": "native"
+}

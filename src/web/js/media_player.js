@@ -20,7 +20,7 @@
             if (window.CuttleVideoBackground && window.CuttleVideoBackground.exitMediaMode) {
                 window.CuttleVideoBackground.exitMediaMode();
             }
-            window.location.href = '/home_feed.html';
+            window.location.href = '/chat_page.html';
         }
     }
 

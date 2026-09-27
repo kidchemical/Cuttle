@@ -1,7 +1,7 @@
 """
 Cuttle Agent Router — select agent CLI + model above sticky-slash dispatch.
 
-See ``src/docs/guides/AGENT_ROUTER.md``.
+See ``docs/guides/AGENT_ROUTER.md``.
 """
 
 from __future__ import annotations

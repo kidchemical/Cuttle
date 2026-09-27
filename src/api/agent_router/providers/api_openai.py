@@ -100,32 +100,24 @@ class OpenAIApiRouterProvider:
         if not api_key:
             raise ProviderError("OPENAI_API_KEY not set", retryable=False)
 
-        try:
-            from openai import OpenAI
-        except ImportError as e:
-            raise ProviderError(f"openai package missing: {e}", retryable=False) from e
-
         prompts = build_routing_prompt(context, config)
         model = (config.provider.api_model or "gpt-4o-mini").strip()
-        client = OpenAI(api_key=api_key, timeout=30.0)
+        from api.llm_complete import complete
 
         last_err: Optional[Exception] = None
         for attempt in range(2):
             try:
-                resp = client.chat.completions.create(
-                    model=model,
-                    temperature=0,
+                content = complete(
+                    user=prompts["user"],
+                    system=prompts["system"],
                     max_tokens=300,
-                    response_format={"type": "json_object"},
-                    messages=[
-                        {"role": "system", "content": prompts["system"]},
-                        {"role": "user", "content": prompts["user"]},
-                    ],
+                    temperature=0,
+                    openai_model=model,
+                    timeout=30.0,
+                    json_object=True,
+                    providers=("openai",),
                 )
-                content = ""
-                if resp.choices:
-                    content = (resp.choices[0].message.content or "").strip()
-                payload = _extract_json(content)
+                payload = _extract_json(content or "")
                 if not payload:
                     raise ProviderError("Router response was not valid JSON", retryable=True)
                 return parse_and_validate_decision(payload, config)

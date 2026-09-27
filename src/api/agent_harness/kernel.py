@@ -101,7 +101,7 @@ def _cancelled_web_result(
     agent_id: str,
     label: str,
 ) -> Dict[str, Any]:
-    report_url = f"/logs/query_report_{query_id}.html" if query_id else None
+    report_url = f"/query_log.html?id={query_id}" if query_id else None
     out: Dict[str, Any] = {
         "success": True,
         "response": f"[CANCELLED] {label} run was cancelled (chat deleted or stopped).",
@@ -348,7 +348,7 @@ def run_agent_web_command(
     # Coerce once at the harness boundary (DB ints → opaque str). Adapters see Optional[str].
     sid = normalize_chat_session_id(chat_session_id)
 
-    from reports.query_report_generator import (
+    from api.query_tracker import (
         finish_query_tracking,
         get_query_tracker,
         start_query_tracking,
@@ -393,7 +393,7 @@ def run_agent_web_command(
                         "query_started",
                         {
                             "query_id": query_id,
-                            "report_url": f"/logs/query_report_{query_id}.html",
+                            "report_url": f"/query_log.html?id={query_id}",
                         },
                     )
                 )
@@ -419,7 +419,7 @@ def run_agent_web_command(
                 "session_id": chat_session_id,
                 "type": type_ok,
                 "query_id": query_id,
-                "report_url": f"/logs/query_report_{query_id}.html",
+                "report_url": f"/query_log.html?id={query_id}",
                 "agent_id": manifest.id,
                 "meta_command": True,
             }
@@ -454,7 +454,7 @@ def run_agent_web_command(
                     "session_id": chat_session_id,
                     "type": type_err,
                     "query_id": query_id,
-                    "report_url": f"/logs/query_report_{query_id}.html",
+                    "report_url": f"/query_log.html?id={query_id}",
                     "agent_id": manifest.id,
                     "setup_status": install.get("status"),
                 }
@@ -473,7 +473,7 @@ def run_agent_web_command(
                 "session_id": chat_session_id,
                 "type": type_err,
                 "query_id": query_id,
-                "report_url": f"/logs/query_report_{query_id}.html",
+                "report_url": f"/query_log.html?id={query_id}",
                 "agent_id": manifest.id,
             }
 
@@ -503,7 +503,7 @@ def run_agent_web_command(
                 "session_id": chat_session_id,
                 "type": type_ok,
                 "query_id": query_id,
-                "report_url": f"/logs/query_report_{query_id}.html",
+                "report_url": f"/query_log.html?id={query_id}",
                 "agent_id": manifest.id,
                 "agent_model": model or manifest.id,
                 "meta_command": True,
@@ -699,7 +699,7 @@ def run_agent_web_command(
         call_cost = float(usage_payload.get("cost") or 0) if usage_payload.get("cost") is not None else 0.0
         model_name = result.model or (model or manifest.id)
         preview = (result.output or "")[:8000]
-        report_url = f"/logs/query_report_{query_id}.html"
+        report_url = f"/query_log.html?id={query_id}"
         tool_params = {
             "prompt_preview": (prompt or "")[:2000],
             "cwd": cwd,
@@ -797,7 +797,7 @@ def run_agent_web_command(
                 finish_query_tracking(success=False, error_message=str(exc)[:500])
         except Exception:
             pass
-        report_url = f"/logs/query_report_{query_id}.html" if query_id else None
+        report_url = f"/query_log.html?id={query_id}" if query_id else None
         return {
             "success": True,
             "response": f"❌ **{label}:** {exc}",

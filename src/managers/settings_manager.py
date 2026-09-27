@@ -127,24 +127,6 @@ class SettingsManager:
                 "default_max_attempts": 2,
                 "no_requeue_types": [],
             },
-            "mcp_downloader": {
-                "enabled_packs": ["read_files", "write_files", "delete_files", "system_shell", "python", "playwright"]
-            },
-            "mcp_servers": {
-                "enabled_servers": []
-            },
-            "inference_preferences": {
-                "coding_agent_chain": [
-                    "claude",
-                    "cursor",
-                    "cursor_then_claude",
-                    "claw",
-                ],
-                "llm_fallback_chain": ["local", "anthropic", "openai"],
-                "local_model": "",
-                "anthropic_model": "claude-sonnet-4-6",
-                "openai_model": "gpt-4o-mini",
-            },
             "chat_tts": {
                 "enabled": True,
                 "tts_model": "gpt-4o-mini-tts",
@@ -406,40 +388,6 @@ class SettingsManager:
         if max_tool_nodes_per_execution is not None:
             self.settings["pipeline_limits"]["max_tool_nodes_per_execution"] = int(max_tool_nodes_per_execution)
         return self._save_settings(self.settings)
-
-    def get_mcp_downloader_config(self) -> Dict[str, Any]:
-        """Get MCP downloader config: enabled_packs list (default all packs on)."""
-        default = {"enabled_packs": ["read_files", "write_files", "delete_files", "system_shell", "python", "playwright"]}
-        return {**default, **(self.settings.get("mcp_downloader") or {})}
-
-    def set_mcp_downloader_pack_enabled(self, pack_id: str, enabled: bool) -> bool:
-        """Enable or disable a single pack. pack_id: read_files, write_files, delete_files, system_shell, python, playwright."""
-        if "mcp_downloader" not in self.settings:
-            self.settings["mcp_downloader"] = self.get_mcp_downloader_config()
-        packs = list(self.settings["mcp_downloader"].get("enabled_packs") or [])
-        if enabled and pack_id not in packs:
-            packs.append(pack_id)
-        elif not enabled and pack_id in packs:
-            packs.remove(pack_id)
-        self.settings["mcp_downloader"]["enabled_packs"] = packs
-        return self._save_settings(self.settings)
-
-    def get_mcp_servers_config(self) -> Dict[str, Any]:
-        """MCP server registry: enabled_servers lists server ids (e.g. 'default' for Cuttle tools)."""
-        default = {"enabled_servers": []}
-        return {**default, **(self.settings.get("mcp_servers") or {})}
-
-    def set_mcp_server_enabled(self, server_id: str, enabled: bool) -> bool:
-        if "mcp_servers" not in self.settings:
-            self.settings["mcp_servers"] = self.get_mcp_servers_config()
-        servers = list(self.settings["mcp_servers"].get("enabled_servers") or [])
-        if enabled and server_id not in servers:
-            servers.append(server_id)
-        elif not enabled and server_id in servers:
-            servers.remove(server_id)
-        self.settings["mcp_servers"]["enabled_servers"] = servers
-        return self._save_settings(self.settings)
-
 
 # Global instance
 _settings_manager = None

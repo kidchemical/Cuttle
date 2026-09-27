@@ -2,7 +2,6 @@
 
 from pathlib import Path
 import importlib
-import subprocess
 import sys
 
 import pytest
@@ -21,14 +20,6 @@ def test_agent_tools_import_is_gone():
         importlib.import_module("core.agent_tools")
 
 
-def test_run_cuttle_mcp_exits_retired():
+def test_run_cuttle_mcp_is_gone():
     script = Path(__file__).resolve().parents[1] / "run_cuttle_mcp.py"
-    proc = subprocess.run(
-        [sys.executable, str(script)],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    assert proc.returncode != 0
-    blob = (proc.stdout or "") + (proc.stderr or "")
-    assert "retired" in blob.lower()
+    assert not script.exists()

@@ -25,9 +25,9 @@ User-requested capabilities. Format: `[FEAT-YYYYMMDD-XXX] capability_name`
 - **Priority:** Medium · **Status:** In Progress · **Area:** chat / observability
 - **Requested capability:** Replace static per-turn HTML query reports (`web/logs/query_report_*.html`, `target=_blank`) with a structured turn inspector: event timeline (harness, tools, thinking, compiled context / “what was sent”), searchable index, open as an in-pane overlay. Storage: JSON/event rows (SQLite or sibling store), not HTML as source of truth. One viewer app; keep a rail index for search.
 - **User context:** CH-000715 — modernize prompt query logs for harness-of-harnesses (CLI adapters, Brain inject, thinking blocks); popup per viewport vs new window.
-- **Notes:** Slice 1: event stream + `GET /api/query-log/<id>` + in-pane overlay / pop-out. HTML reports still written for old links.
+- **Notes:** Slice 1: event stream + `GET /api/query-log/<id>` + in-pane overlay / pop-out. HTML dumps removed; JSON sidecars are source of truth.
 - **Complexity:** L
-- **Related:** `src/reports/query_report_generator.py`, `src/web/query_reports.html`, `src/api/agent_harness/kernel.py`, `[FEAT-20260926-001]` (local telemetry / dashboards)
+- **Related:** `src/api/query_events.py`, `src/api/query_tracker.py`, `src/web/query_log.html`, `src/api/agent_harness/kernel.py`, `[FEAT-20260926-001]` (local telemetry / dashboards)
 
 ## [FEAT-20260926-001] dashboards_model_benchmarks
 
@@ -45,7 +45,7 @@ User-requested capabilities. Format: `[FEAT-YYYYMMDD-XXX] capability_name`
 - **User context:** CH-000391 — run Cuttle on laptop + tower; Client mode should also run (or default) worker mode so tower can e.g. copy files from Yoga Desktop or farm Blender frames across GPUs. ChatGPT framing: one workspace / several computers; orchestrator + backends. Clarified: teach **Cuttle**, not sticky agents; smart batching when workers available.
 - **Complexity:** XL
 - **Progress:** W0–W2.5 done; W2b blender job/shard code done + JamBit v11 dogfood; **W2b+ work-steal chunks (default), per-frame result analytics, EWMA `render_profile`** code done. W2c Client daemon + `cuttle_self_update` / allowlisted `shell` recipes code done. Remaining: content-addressed staging, optional auto_mesh, weighted static plans using profiles, W4.
-- **Related:** `src/docs/guides/CUTTLE_WORKERS.md`, `.cuttle/docs/cuttle-workers.md`, `docs/ROADMAP.md`, `src/api/cuttle_jobs/`, `src/managers/remote_executor.py`, `src/api/discovery_mdns.py`, `.cuttle/docs/cuttle-jobs.md`
+- **Related:** `docs/guides/CUTTLE_WORKERS.md`, `.cuttle/docs/cuttle-workers.md`, `docs/ROADMAP.md`, `src/api/cuttle_jobs/`, `src/api/device_workers/`, `src/api/discovery_mdns.py`, `.cuttle/docs/cuttle-jobs.md`
 
 ## [FEAT-20260917-002] mobile_worker_sensor_edge
 
@@ -69,7 +69,7 @@ User-requested capabilities. Format: `[FEAT-YYYYMMDD-XXX] capability_name`
 - **Requested capability:** Treat bundled `/deepseek` (Flash) as a first-class cheap tentacle in CuttleRouter OOB discovery and the Phase 0 preference table — not only as a manual slash agent. Resume stays off until dsh headless supports it.
 - **User context:** Home-lab harness-of-harnesses; DeepSeek is a tentacle to host, not a rewrite of Cuttle (CH-000162). Adapter already exists; routing catalog does not list it yet.
 - **Complexity:** M
-- **Related:** `src/docs/guides/MODULARITY.md`, `.cuttle/docs/agent-router-todo.md` Phase D, `src/api/agent_harness/agents/deepseek/`
+- **Related:** `docs/guides/MODULARITY.md`, `.cuttle/docs/agent-router-todo.md` Phase D, `src/api/agent_harness/agents/deepseek/`
 
 ## [FEAT-20260819-002] programmatic_commands_with_watch
 
@@ -111,4 +111,4 @@ User-requested capabilities. Format: `[FEAT-YYYYMMDD-XXX] capability_name`
 - **User context:** Nice-to-have only; explicitly not a current interest. Daemon + web/Electron chat + Discord remain the product.
 - **Notes (2026-09-20):** Distinct from **agent ops** CLIs (`python -m api.chat_cli`, workers, brain). Those are the preferred pattern for agent-facing verbs — see `.cuttle/docs/agent-ops-cli.md`. This FEAT stays deferred for a product shell only.
 - **Complexity:** L
-- **Related:** `src/docs/guides/MODULARITY.md` goal 7, `docs/ROADMAP.md` “Not on the table”
+- **Related:** `docs/guides/MODULARITY.md` goal 7, `docs/ROADMAP.md` “Not on the table”

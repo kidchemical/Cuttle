@@ -1,5 +1,5 @@
 """
-Discover Cursor-style markdown skills (SKILL.md) under src/skills (core) and .cursor/skills (workspace).
+Discover Cursor-style markdown skills (SKILL.md) under `.cursor/skills`.
 """
 
 from __future__ import annotations
@@ -15,7 +15,6 @@ except ImportError:  # pragma: no cover
 
 SRC_DIR = Path(__file__).resolve().parent.parent
 REPO_ROOT = SRC_DIR.parent
-CORE_SKILLS_DIR = SRC_DIR / "skills"
 CURSOR_SKILLS_DIR = REPO_ROOT / ".cursor" / "skills"
 
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
@@ -59,41 +58,6 @@ def _outline(body: str) -> List[Dict[str, Any]]:
         title = m.group(2).strip()
         out.append({"level": level, "text": title, "slug": _slugify_heading(title)})
     return out
-
-
-def _summarize_registry_pipeline(skill: Dict[str, Any]) -> Dict[str, Any]:
-    pl = skill.get("pipeline") or {}
-    nodes = pl.get("nodes") or []
-    conns = pl.get("connections") or []
-    triggers = pl.get("triggers") or []
-    node_rows = []
-    for n in nodes:
-        if isinstance(n, dict):
-            node_rows.append(
-                {
-                    "id": n.get("id"),
-                    "type": n.get("type"),
-                    "name": n.get("name"),
-                }
-            )
-    return {
-        "pipeline_name": pl.get("name"),
-        "node_count": len(nodes),
-        "connection_count": len(conns),
-        "trigger_count": len(triggers),
-        "nodes": node_rows,
-        "connections": conns,
-        "triggers": triggers,
-    }
-
-
-def skill_structure_for_registry_entry(skill: Dict[str, Any]) -> Dict[str, Any]:
-    """JSON-friendly structure summary for pipeline_template registry skills."""
-    stype = skill.get("type", "pipeline_template")
-    base = {"type": stype, "id": skill.get("id")}
-    if stype == "pipeline_template":
-        base["pipeline"] = _summarize_registry_pipeline(skill)
-    return base
 
 
 def _read_skill_file(path: Path) -> Optional[str]:
@@ -141,23 +105,21 @@ def _scan_dir(root: Path, source: str) -> List[Dict[str, Any]]:
 
 
 def list_markdown_skills() -> List[Dict[str, Any]]:
-    """Lightweight list for the skills browser (no full body)."""
-    core = _scan_dir(CORE_SKILLS_DIR, "core")
-    cursor = _scan_dir(CURSOR_SKILLS_DIR, "cursor")
-    return core + cursor
+    """Lightweight list of workspace Cursor skills (no full body)."""
+    return _scan_dir(CURSOR_SKILLS_DIR, "cursor")
 
 
 def get_markdown_skill(skill_ref: str) -> Optional[Dict[str, Any]]:
     """
-    skill_ref is 'core/<dir>' or 'cursor/<dir>'.
+    skill_ref is 'cursor/<dir>'.
     """
     skill_ref = skill_ref.strip().strip("/")
     if "/" not in skill_ref:
         return None
     source, sid = skill_ref.split("/", 1)
-    if source not in ("core", "cursor") or not sid or "/" in sid or ".." in sid:
+    if source != "cursor" or not sid or "/" in sid or ".." in sid:
         return None
-    base = CORE_SKILLS_DIR if source == "core" else CURSOR_SKILLS_DIR
+    base = CURSOR_SKILLS_DIR
     path = (base / sid / "SKILL.md").resolve()
     try:
         path.relative_to(base.resolve())

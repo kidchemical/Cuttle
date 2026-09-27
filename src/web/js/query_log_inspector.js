@@ -349,7 +349,8 @@
         var href = a.getAttribute('href') || '';
         var qid = a.getAttribute('data-query-id') || '';
         if (!qid) {
-            var m = /query_report_([A-Za-z0-9_-]+)\.html/.exec(href);
+            var m = /[?&]id=([A-Za-z0-9_-]+)/.exec(href)
+                || /query_report_([A-Za-z0-9_-]+)\.html/.exec(href);
             qid = m ? m[1] : '';
         }
         if (!qid) return;

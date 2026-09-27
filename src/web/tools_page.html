@@ -50,17 +50,6 @@
                 <p>Agent ops CLIs — not an MCP tool server</p>
             </div>
 
-            <div class="tools-section">
-                <h3>Cuttle MCP packs are retired</h3>
-                <p class="setting-description">
-                    Cuttle used to expose filesystem/shell/pipeline tools through a built-in MCP server
-                    (<code>run_cuttle_mcp.py</code>) for pipeline LLM nodes and Ollama tool-calling.
-                    That dual tool plane is off. Guest harnesses (Cursor, Codex, Muse, …) keep
-                    <em>their</em> MCP configs. Cuttle-owned work for agents is
-                    <code>python -m api.&lt;module&gt;</code>.
-                </p>
-            </div>
-
             <div class="tools-section" id="agentOpsCli">
                 <h3>Agent ops (from the Cuttle venv)</h3>
                 <p class="setting-description">

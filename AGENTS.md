@@ -97,8 +97,8 @@ Cuttle does **not** host an MCP tool server. Guest CLIs keep their own MCP. Cutt
 
 ### Agent Router (execution harness selection)
 
-- **Thesis / sockets:** `src/docs/guides/MODULARITY.md` — Cuttle is a home-lab harness of harnesses; the router is a socket (cheap LLM, local LLM, or another harness as brain).
-- **Guide**: `src/docs/guides/AGENT_ROUTER.md`
+- **Thesis / sockets:** `docs/guides/MODULARITY.md` — Cuttle is a home-lab harness of harnesses; the router is a socket (cheap LLM, local LLM, or another harness as brain).
+- **Guide**: `docs/guides/AGENT_ROUTER.md`
 - **Package**: `src/api/agent_router/` — sits above sticky `/cursor`/`/codex`/`/deepseek`/… selection
 - **Config**: `settings.json` → `agent_router` (mode `api` default; OpenAI `gpt-4o-mini` routing brain)
 - Clean sessions with no sticky agent invoke the router; starred/manual sticky agents bypass it

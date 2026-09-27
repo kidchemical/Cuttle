@@ -36,7 +36,6 @@ def run_safe_tests():
         ("API Key Test", "unit.test_api_key"),
         ("OpenAI Connection", "unit.test_openai_connection"),
         ("Claude Code Integration", "unit.test_claude_code"),
-        ("RAG System", "unit.test_rag_system"),
         ("Security Tests", "unit.test_security"),
         ("Username Case Tests", "unit.test_username_case"),
     ]
@@ -106,7 +105,6 @@ def run_safe_individual_test_files():
         "test_api_key.py",
         "test_openai_connection.py", 
         "test_claude_code.py",
-        "test_rag_system.py",
         "test_security.py",
         "test_username_case.py",
     ]

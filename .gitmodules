@@ -1,0 +1,3 @@
+[submodule "vendor/mcp-govee"]
+	path = vendor/mcp-govee
+	url = https://github.com/danjam/mcp-govee.git

@@ -383,29 +383,6 @@ def test_watch_does_not_start_under_pytest():
     assert ensure_started() is False
 
 
-def test_skillset_jev_strategy_uses_rank(monkeypatch):
-    from api.skillset_injection import _pick_summaries
-
-    summaries = [
-        {"ref": "core/govee", "name": "Govee", "description": "lights"},
-        {"ref": "core/cuttle-roadmap", "name": "Roadmap", "description": "phases"},
-    ]
-    monkeypatch.setattr(
-        "api.jev.rank.rank_skill_refs",
-        lambda prompt, pool, max_skills=6, client=None: [pool[0]],
-    )
-    cfg = {
-        "skillScope": "all",
-        "selectionMode": "dynamic",
-        "dynamicStrategy": "jev",
-        "maxSkills": 2,
-        "skillFilterRegex": "",
-        "selectedRefs": [],
-    }
-    picked = _pick_summaries(cfg, "dim the bedroom lights", summaries)
-    assert picked[0]["ref"] == "core/govee"
-
-
 def test_cuttle_performance_from_outcomes(tmp_path, monkeypatch):
     from api.agent_router.outcomes import record_attempt
     from api.agent_router.types import ExecutionTarget, RoutingDecision

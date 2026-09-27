@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 import time
 
-from reports.query_report_generator import (
+from api.query_tracker import (
     _active_trackers,
     _registry_lock,
     finish_query_tracking,

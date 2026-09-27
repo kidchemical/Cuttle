@@ -104,7 +104,7 @@ def test_terminal_bubble_keeps_evidence_in_activity(supervised_env):
         findings=[
             {
                 "id": 1,
-                "file": "src/docs/guides/SUPERVISED_COORDINATOR.md",
+                "file": "docs/guides/SUPERVISED_COORDINATOR.md",
                 "symbol": "mode",
                 "impact": "Could look global",
             }

@@ -135,10 +135,10 @@ function showPage(pageName) {
             // Navigate to budget report if available
             break;
         case 'data':
-            window.location.href = '/data_reports.html';
+            window.location.href = '/query_log.html';
             break;
         case 'query':
-            // Navigate to query reports if available
+            window.location.href = '/query_log.html';
             break;
         case 'test':
             // Navigate to test reports if available
@@ -148,10 +148,10 @@ function showPage(pageName) {
     }
 }
 
-// Logo click handler — when inside app_shell iframe, ask parent to navigate to Home feed
+// Logo click handler — when inside app_shell iframe, ask parent to navigate to chat
 function goToHome() {
     if (window !== window.top && window.parent) {
-        window.parent.postMessage({ type: 'cuttle-navigate', page: '/home_feed.html' }, '*');
+        window.parent.postMessage({ type: 'cuttle-navigate', page: '/chat_page.html' }, '*');
     } else {
         window.location.href = '/';
     }

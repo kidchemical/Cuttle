@@ -910,7 +910,7 @@
             }).forEach(function (run) {
                 const name = run.pipeline_name || 'Pipeline';
                 const qid = run.query_id || '';
-                const reportUrl = qid ? '/logs/query_report_' + encodeURIComponent(qid) + '.html' : '';
+                const reportUrl = qid ? '/query_log.html?id=' + encodeURIComponent(qid) : '';
                 const insightUrl = '/job_insight.html?pipeline=' + encodeURIComponent(name);
                 const elapsed = elapsedFrom(run.start_time);
                 cards.push(

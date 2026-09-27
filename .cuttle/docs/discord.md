@@ -53,7 +53,6 @@ Channel aliases must match `{project}/.cuttle/actions/discord-post.yaml`.
 
 | Mechanism | Role |
 |---|---|
-| **Discord RAG** (`src/rag/discord_rag.py`) | In-Discord bot cache — **not** Cursor agent context |
 | **Context Compiler** | Lists doc names in inventory; agents open this runbook when Discord is mentioned |
 | **Per-project templates** | Not required — this hub doc + project's `discord-post.yaml` are enough |
 

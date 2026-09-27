@@ -41,7 +41,7 @@ The codebase is set up so an agent can do that well:
 - **No build step for the UI.** The web app is plain HTML, CSS, and vanilla JS served by Flask, so a refresh shows the change. Python changes go live with one click on the restart card.
 - **Agents arrive briefed.** `AGENTS.md`, Cursor rules and skills, and the `.cuttle/docs/` runbooks explain the architecture and conventions, so a fresh agent knows where things live and what not to break.
 - **Customize without forking.** A project's `.cuttle/` folder adds its own slash commands, clickable actions, rules, and docs. `.cuttle/personal/` keeps install-local tweaks out of git.
-- **Swap any part.** Harnesses, the router's brain, and local or cloud models are all sockets ([`MODULARITY.md`](src/docs/guides/MODULARITY.md)).
+- **Swap any part.** Harnesses, the router's brain, and local or cloud models are all sockets ([`MODULARITY.md`](docs/guides/MODULARITY.md)).
 
 ## Tour
 
@@ -196,19 +196,17 @@ flowchart LR
 
 | Topic | Start here |
 |----------|------------|
-| Overview and architecture | [`src/docs/README.md`](src/docs/README.md), [`src/docs/guides/MODULARITY.md`](src/docs/guides/MODULARITY.md) |
-| Agent router | [`src/docs/guides/AGENT_ROUTER.md`](src/docs/guides/AGENT_ROUTER.md) |
-| Workers mesh | [`src/docs/guides/CUTTLE_WORKERS.md`](src/docs/guides/CUTTLE_WORKERS.md), [`.cuttle/docs/cuttle-workers.md`](.cuttle/docs/cuttle-workers.md) |
+| Overview and architecture | [`docs/README.md`](docs/README.md), [`docs/guides/MODULARITY.md`](docs/guides/MODULARITY.md) |
+| Agent router | [`docs/guides/AGENT_ROUTER.md`](docs/guides/AGENT_ROUTER.md) |
+| Workers mesh | [`docs/guides/CUTTLE_WORKERS.md`](docs/guides/CUTTLE_WORKERS.md), [`.cuttle/docs/cuttle-workers.md`](.cuttle/docs/cuttle-workers.md) |
 | Action forms and commands | [`.cuttle/docs/action-forms.md`](.cuttle/docs/action-forms.md), [`.cuttle/docs/commands-and-actions.md`](.cuttle/docs/commands-and-actions.md) |
 | Agent ops CLIs (`python -m api.*`) | [`.cuttle/docs/agent-ops-cli.md`](.cuttle/docs/agent-ops-cli.md) |
 | Sub-agents | [`.cuttle/docs/subagents.md`](.cuttle/docs/subagents.md) |
-| Wizard and Doctor | [`src/docs/guides/WIZARD_AND_DOCTOR.md`](src/docs/guides/WIZARD_AND_DOCTOR.md) |
+| Pairing / LAN | [`docs/guides/PAIRING_AND_ALLOWLIST.md`](docs/guides/PAIRING_AND_ALLOWLIST.md), [`docs/guides/REMOTE_ACCESS.md`](docs/guides/REMOTE_ACCESS.md) |
 | Electron desktop | [`electron/README.md`](electron/README.md) |
 | Android app | [`apps/mobile/README.md`](apps/mobile/README.md) |
 | Roadmap | [`docs/ROADMAP.md`](docs/ROADMAP.md) |
 | Agent conventions (Cursor, Codex, Muse, …) | [`AGENTS.md`](AGENTS.md) |
-
-Setup notes under `src/docs/setup/` are being refreshed; prefer this README and the daemon entrypoint above over older `launcher.py` references.
 
 ## Development
 

@@ -7,7 +7,7 @@ agent turn). It is the first solid component under **Cuttle Brain**, the umbrell
 for agent-agnostic cognition sockets (context today; memory retrieval later).
 Do not treat "Brain" as a single CLI product or a second chat persona. Layers
 should become registered plugs the same way tentacles are folders — see
-[`MODULARITY.md`](../../docs/guides/MODULARITY.md). There is **no** product
+[`MODULARITY.md`](../../../docs/guides/MODULARITY.md). There is **no** product
 Cuttle CLI; `python -m api.cuttle_brain compile` is a debug aid only.
 
 ## What it is / is not

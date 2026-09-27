@@ -6,8 +6,8 @@ that the tracking infrastructure is properly set up.
 """
 
 import time
-from reports.query_report_generator import track_tool_call as _track_tool_call
-from reports.query_report_generator import start_query_tracking, finish_query_tracking
+from api.query_tracker import track_tool_call as _track_tool_call
+from api.query_tracker import start_query_tracking, finish_query_tracking
 
 def test_tool_call_with_tokens():
     """Test tracking a tool call with token information"""

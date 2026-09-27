@@ -216,55 +216,42 @@ def _build_prompt(
 
 
 def _title_via_openai(prompt: str, *, temperature: float = 0.3):
-    api_key = os.getenv("OPENAI_API_KEY") or os.getenv("API_KEY")
-    if not api_key:
-        return None
-    from openai import OpenAI
+    from api.llm_complete import complete
 
-    client = OpenAI(api_key=api_key, timeout=20)
-    resp = client.chat.completions.create(
-        model=os.getenv("CHAT_TITLE_OPENAI_MODEL") or _DEFAULT_OPENAI_TITLE_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=float(temperature),
+    text = complete(
+        user=prompt,
         max_tokens=40,
+        temperature=float(temperature),
+        openai_model=os.getenv("CHAT_TITLE_OPENAI_MODEL") or _DEFAULT_OPENAI_TITLE_MODEL,
+        timeout=20,
+        providers=("openai",),
     )
-    text = resp.choices[0].message.content or ""
     return sanitize_chat_title(text) or None
 
 
 def _title_via_local(prompt: str, *, temperature: float = 0.2):
-    from openai import OpenAI
-    from core.local_llm import (
-        get_local_base_url, get_local_api_key, resolve_local_model, local_reachable,
-    )
-    if not local_reachable(timeout=1.5):
-        return None
-    client = OpenAI(base_url=get_local_base_url(), api_key=get_local_api_key(), timeout=120)
-    resp = client.chat.completions.create(
-        model=resolve_local_model(None),
-        messages=[{"role": "user", "content": prompt}],
+    from api.llm_complete import complete
+
+    text = complete(
+        user=prompt,
+        max_tokens=200,
         temperature=float(temperature),
-        max_tokens=200,  # roomy: some local models burn tokens on <think> blocks
+        timeout=120,
+        providers=("local",),
     )
-    text = (resp.choices[0].message.content or "")
-    # Qwen3-style thinking models may emit <think>...</think> before the answer.
-    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
     return sanitize_chat_title(text) or None
 
 
 def _title_via_anthropic(prompt: str, *, temperature: float = 0.3):
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        return None
-    from anthropic import Anthropic
-    client = Anthropic(api_key=api_key)
-    resp = client.messages.create(
-        model=os.getenv("CHAT_TITLE_MODEL") or _DEFAULT_ANTHROPIC_TITLE_MODEL,
+    from api.llm_complete import complete
+
+    text = complete(
+        user=prompt,
         max_tokens=40,
         temperature=float(temperature),
-        messages=[{"role": "user", "content": prompt}],
+        anthropic_model=os.getenv("CHAT_TITLE_MODEL") or _DEFAULT_ANTHROPIC_TITLE_MODEL,
+        providers=("anthropic",),
     )
-    text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
     return sanitize_chat_title(text) or None
 
 

@@ -565,14 +565,12 @@ const splitContainer = document.getElementById('splitContainer');
 const CANONICAL_RAIL_ITEM_ORDER = [
     'nav-chat',
     'nav-editor',
-    'nav-skills',
     'nav-tasks',
     'nav-git',
     'nav-jobs',
     'nav-dashboards',
     'nav-tools',
     'nav-automation',
-    'nav-home',
     'nav-apps',
 ];
 // Footer may only contain these (do not put page nav buttons here — breaks reorder on load).
@@ -580,9 +578,9 @@ const CANONICAL_RAIL_FOOTER_ORDER = ['nav-account', 'nav-notifications', 'nav-wo
 // The Apps launcher is the way back to every stashed app, so it can never be removed.
 const RAIL_LOCKED_IDS = new Set(['nav-apps']);
 // Cuttle web apps that live in the Apps grid (not the blade bar) until the user pins them.
-const DEFAULT_RAIL_HIDDEN = ['nav-skills', 'nav-tasks', 'nav-automation'];
+const DEFAULT_RAIL_HIDDEN = ['nav-tasks', 'nav-automation'];
 // Bump when defaults change; saved layouts below this version get DEFAULT_RAIL_HIDDEN merged in once.
-const RAIL_LAYOUT_VERSION = 2;
+const RAIL_LAYOUT_VERSION = 4;
 
 const DEFAULT_LAYOUT = {
     rail_items: CANONICAL_RAIL_ITEM_ORDER.filter(id => !DEFAULT_RAIL_HIDDEN.includes(id)),
@@ -1297,7 +1295,7 @@ document.addEventListener('pointerdown', (e) => {
 // Initial page: restore from session; default to chat_page for immediate usability
 const getDefaultPage = () => {
     const skip = localStorage.getItem('cuttle_skip_welcome');
-    if (skip) return '/home_feed.html';
+    if (skip) return '/chat_page.html';
     // Prefer chat over landing so users land directly in the full chat UI
     return '/chat_page.html';
 };
@@ -1555,7 +1553,7 @@ window.addEventListener('message', function(e) {
         if (window.CuttleVideoBackground && window.CuttleVideoBackground.exitMediaMode) {
             window.CuttleVideoBackground.exitMediaMode();
         }
-        navigate(0, '/home_feed.html');
+        navigate(0, '/chat_page.html');
     } else if (e.data.type === 'cuttle-media-set-muted' && typeof e.data.muted === 'boolean') {
         if (window.CuttleVideoBackground && window.CuttleVideoBackground.setMediaMuted) {
             window.CuttleVideoBackground.setMediaMuted(e.data.muted);
@@ -1713,7 +1711,6 @@ window.addEventListener('message', function(e) {
 const PAGE_TITLES = {
     '/chat_page.html': 'Chat',
     '/router_editor.html': 'Router',
-    '/skills_page.html': 'Skills',
     '/task_management.html': 'Tasks',
     '/git_graph_page.html': 'Git',
     '/jobs_page.html': 'Jobs',
@@ -1724,12 +1721,11 @@ const PAGE_TITLES = {
     '/apps_page.html': 'Apps',
     '/settings_page.html': 'Settings',
     '/landing_page.html': 'Welcome',
-    '/home_feed.html': 'Home',
     '/home_automation.html': 'Home Automation',
     '/media_player.html': 'Media',
     '/about_page.html': 'About',
     '/git_ui.html': 'Git Ops',
-    '/data_reports.html': 'Reports',
+    '/query_log.html': 'Query log',
     '/terminal_page.html': 'Terminal',
 };
 
@@ -2281,7 +2277,7 @@ function attachFrameLoadListener(colIdx, frameEl) {
             const url = new URL(href);
             let path = url.pathname;
             if (path === '/' || path === '/index.html') {
-                // Root → redirect to welcome or home feed based on preference
+                // Root → redirect to welcome or chat based on preference
                 const target = getDefaultPage();
                 const newFrame = replaceFrame(colIdx, target);
                 attachFrameLoadListener(colIdx, newFrame);

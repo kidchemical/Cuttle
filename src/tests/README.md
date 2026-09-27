@@ -15,7 +15,7 @@ Pytest suite. Default entry (per AGENTS.md):
 ```
 src/tests/
 ├── test_*.py        # ~130 pytest files (chat, agents, jobs, restart, discord, …)
-├── unit/            # legacy tool tests (window focus, RAG, RSS, security, …)
+├── unit/            # legacy tool tests (window focus, security, …)
 ├── integration/     # live-server / content tests (pytest, skip when deps missing)
 │   ├── test_discord_api_e2e.py          # /api/health + pipeline-trigger-discord; skips if server down
 │   └── test_discord_remote_execution.py # mostly skips (pipeline graphs removed)

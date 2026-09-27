@@ -452,9 +452,8 @@
                 </div>`;
             });
             if (!bodyHtml && !isPending) bodyHtml = '<div class="log-entry"><div class="log-entry-detail">No stages recorded</div></div>';
-            const reportFn = exec.report_filename || (exec.query_id ? ('query_report_' + exec.query_id + '.html') : '');
-            const reportLink = reportFn
-                ? `<a href="/logs/${escapeHtml(reportFn)}" target="_blank" class="report-link" onclick="event.stopPropagation()">${isPending ? '📊 Live report' : '📊 View Query Report'}</a>`
+            const reportLink = exec.query_id
+                ? `<a href="/query_log.html?id=${encodeURIComponent(exec.query_id)}" target="_blank" class="report-link" onclick="event.stopPropagation()">${isPending ? '📊 Live query log' : '📊 View query log'}</a>`
                 : '';
             const queryIdBlock = exec.query_id
                 ? `<span class="query-id-badge" title="Query ID">${escapeHtml(exec.query_id)}</span>`

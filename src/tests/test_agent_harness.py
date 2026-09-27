@@ -526,13 +526,13 @@ def test_kernel_passes_str_session_id_to_resume(monkeypatch):
     )
     # Avoid query-report / run-registry side effects.
     monkeypatch.setattr(
-        "reports.query_report_generator.start_query_tracking", lambda *a, **k: "qid"
+        "api.query_tracker.start_query_tracking", lambda *a, **k: "qid"
     )
     monkeypatch.setattr(
-        "reports.query_report_generator.finish_query_tracking", lambda *a, **k: None
+        "api.query_tracker.finish_query_tracking", lambda *a, **k: None
     )
     monkeypatch.setattr(
-        "reports.query_report_generator.get_query_tracker", lambda *a, **k: None
+        "api.query_tracker.get_query_tracker", lambda *a, **k: None
     )
     monkeypatch.setattr("api.active_executions.register_execution", lambda *a, **k: None)
     monkeypatch.setattr("api.active_executions.unregister_execution", lambda *a, **k: None)
@@ -597,13 +597,13 @@ def test_kernel_attaches_usage_to_web_response(monkeypatch):
         kernel, "get_agent", lambda aid, project_path=None: (manifest, _FakeAdapter())
     )
     monkeypatch.setattr(
-        "reports.query_report_generator.start_query_tracking", lambda *a, **k: "qid"
+        "api.query_tracker.start_query_tracking", lambda *a, **k: "qid"
     )
     monkeypatch.setattr(
-        "reports.query_report_generator.finish_query_tracking", lambda *a, **k: None
+        "api.query_tracker.finish_query_tracking", lambda *a, **k: None
     )
     monkeypatch.setattr(
-        "reports.query_report_generator.get_query_tracker", lambda *a, **k: _FakeTracker()
+        "api.query_tracker.get_query_tracker", lambda *a, **k: _FakeTracker()
     )
     monkeypatch.setattr("api.active_executions.register_execution", lambda *a, **k: None)
     monkeypatch.setattr("api.active_executions.unregister_execution", lambda *a, **k: None)
@@ -949,13 +949,13 @@ def test_kernel_rejects_adapter_cwd_from_another_project(tmp_path, monkeypatch):
         kernel, "get_agent", lambda aid, project_path=None: (manifest, _PinToCuttle())
     )
     monkeypatch.setattr(
-        "reports.query_report_generator.start_query_tracking", lambda *a, **k: "qid"
+        "api.query_tracker.start_query_tracking", lambda *a, **k: "qid"
     )
     monkeypatch.setattr(
-        "reports.query_report_generator.finish_query_tracking", lambda *a, **k: None
+        "api.query_tracker.finish_query_tracking", lambda *a, **k: None
     )
     monkeypatch.setattr(
-        "reports.query_report_generator.get_query_tracker", lambda *a, **k: None
+        "api.query_tracker.get_query_tracker", lambda *a, **k: None
     )
     monkeypatch.setattr("api.active_executions.register_execution", lambda *a, **k: None)
     monkeypatch.setattr("api.active_executions.unregister_execution", lambda *a, **k: None)

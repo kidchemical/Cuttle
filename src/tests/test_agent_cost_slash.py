@@ -579,9 +579,9 @@ def test_refresh_arg_refreshes_rates_and_catalog(pricing_cache, no_pins, monkeyp
 
 
 def _quiet_kernel(monkeypatch):
-    monkeypatch.setattr("reports.query_report_generator.start_query_tracking", lambda *a, **k: "qid")
-    monkeypatch.setattr("reports.query_report_generator.finish_query_tracking", lambda *a, **k: None)
-    monkeypatch.setattr("reports.query_report_generator.get_query_tracker", lambda *a, **k: None)
+    monkeypatch.setattr("api.query_tracker.start_query_tracking", lambda *a, **k: "qid")
+    monkeypatch.setattr("api.query_tracker.finish_query_tracking", lambda *a, **k: None)
+    monkeypatch.setattr("api.query_tracker.get_query_tracker", lambda *a, **k: None)
     monkeypatch.setattr("api.active_executions.register_execution", lambda *a, **k: None)
     monkeypatch.setattr("api.active_executions.unregister_execution", lambda *a, **k: None)
 

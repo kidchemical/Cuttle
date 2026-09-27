@@ -935,16 +935,12 @@
     <!-- Menu Dropdown -->
     <div class="menu-dropdown" id="menuDropdown">
         <div class="menu-section-title">Navigation</div>
-        <a href="/home_feed.html" class="menu-item active">🏠 Home</a>
-        <a href="/chat_page.html" class="menu-item">💬 Chat Interface</a>
+        <a href="/chat_page.html" class="menu-item active">🏠 Home</a>
         <a href="/router_editor.html" class="menu-item">🔗 Router</a>
-        <a href="/skills_page.html" class="menu-item">🧩 Skills</a>
         <div class="menu-separator"></div>
         <div class="menu-section-title">Reports</div>
         <a href="/test_reports.html" class="menu-item">🧪 Test Reports</a>
-        <a href="/query_reports.html" class="menu-item">📊 Query Reports</a>
-        <a href="/launch_reports.html" class="menu-item">🚀 Launch Reports</a>
-        <a href="/data_reports.html" class="menu-item">📈 Data Reports</a>
+        <a href="/query_log.html" class="menu-item">📊 Query log</a>
         <div class="menu-separator"></div>
         <div class="menu-section-title">System</div>
         <a href="/control_panel.html" class="menu-item">🎛️ Control Panel</a>
@@ -2116,7 +2112,7 @@
             // Handle navigation to separate pages
             switch(pageName) {
                 case 'data':
-                    window.location.href = '/data_reports.html';
+                    window.location.href = '/query_log.html';
                     return;
                 case 'budget':
                     // Navigate to budget reports - could add this later
@@ -2345,36 +2341,7 @@
         
         // Budget Report functionality
         async function generateBudgetReport() {
-            try {
-                const button = event.target;
-                const originalText = button.textContent;
-                button.textContent = 'Generating...';
-                button.disabled = true;
-                
-                const response = await fetch('/api/generate-budget-report');
-                const data = await response.json();
-                
-                if (data.success) {
-                    // Open the budget report in a new tab
-                    window.open(data.report_url, '_blank');
-                    
-                    // Update the last generated time
-                    const lastGenerated = document.getElementById('budgetLastGenerated');
-                    if (lastGenerated) {
-                        lastGenerated.textContent = new Date().toLocaleString();
-                    }
-                    
-                    // Show success message
-                    showNotification('✅ Budget report generated successfully!', 'success');
-                } else {
-                    showNotification('❌ Failed to generate budget report: ' + data.error, 'error');
-                }
-            } catch (error) {
-                showNotification('❌ Error generating budget report: ' + error.message, 'error');
-            } finally {
-                button.textContent = originalText;
-                button.disabled = false;
-            }
+            showNotification('Budget HTML reports were removed. Use the query log and Dashboards.', 'info');
         }
         
         function showBudgetInfo() {
@@ -2386,21 +2353,7 @@
         
         // Query Reports functionality
         async function loadQueryReports() {
-            const reportsList = document.getElementById('reportsList');
-            reportsList.innerHTML = '<div class="loading-indicator"><div class="spinner"></div><p>Loading query reports...</p></div>';
-            
-            try {
-                const response = await fetch('/api/query-reports');
-                const data = await response.json();
-                
-                if (data.success) {
-                    displayQueryReports(data.reports);
-                } else {
-                    reportsList.innerHTML = '<div class="error-message">❌ Failed to load reports: ' + data.error + '</div>';
-                }
-            } catch (error) {
-                reportsList.innerHTML = '<div class="error-message">❌ Error loading reports: ' + error.message + '</div>';
-            }
+            window.location.href = '/query_log.html';
         }
         
         function displayQueryReports(reports) {
@@ -2499,20 +2452,8 @@
         // Budget Reports functionality
         async function refreshBudgetReports() {
             const reportsList = document.getElementById('budgetReportsList');
-            reportsList.innerHTML = '<div class="loading-indicator"><div class="spinner"></div><p>Loading budget reports...</p></div>';
-            
-            try {
-                // For now, just show available budget reports
-                const response = await fetch('/api/query-reports');
-                const data = await response.json();
-                
-                if (data.success) {
-                    displayBudgetReports(data.reports);
-                } else {
-                    reportsList.innerHTML = '<div class="error-message">❌ Failed to load reports: ' + data.error + '</div>';
-                }
-            } catch (error) {
-                reportsList.innerHTML = '<div class="error-message">❌ Error loading reports: ' + error.message + '</div>';
+            if (reportsList) {
+                reportsList.innerHTML = '<div class="no-reports">Budget HTML reports were removed. Use the query log inspector and Dashboards.</div>';
             }
         }
         
@@ -3612,7 +3553,7 @@
                 localStorage.setItem('cuttle_skip_welcome', '1');
             }
             if (window !== window.top && window.parent) {
-                window.parent.postMessage({ type: 'cuttle-navigate', page: '/home_feed.html' }, '*');
+                window.parent.postMessage({ type: 'cuttle-navigate', page: '/chat_page.html' }, '*');
             } else {
                 window.location.href = '/';
             }

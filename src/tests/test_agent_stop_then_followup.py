@@ -55,13 +55,13 @@ _RESUME_AGENT_IDS = [
 
 def _stub_kernel_side_channels(monkeypatch) -> None:
     monkeypatch.setattr(
-        "reports.query_report_generator.start_query_tracking", lambda *a, **k: "qid"
+        "api.query_tracker.start_query_tracking", lambda *a, **k: "qid"
     )
     monkeypatch.setattr(
-        "reports.query_report_generator.finish_query_tracking", lambda *a, **k: None
+        "api.query_tracker.finish_query_tracking", lambda *a, **k: None
     )
     monkeypatch.setattr(
-        "reports.query_report_generator.get_query_tracker", lambda *a, **k: None
+        "api.query_tracker.get_query_tracker", lambda *a, **k: None
     )
     monkeypatch.setattr("api.active_executions.register_execution", lambda *a, **k: None)
     monkeypatch.setattr("api.active_executions.unregister_execution", lambda *a, **k: None)

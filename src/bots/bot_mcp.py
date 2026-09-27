@@ -137,10 +137,7 @@ MCP_AVAILABLE = False
 
 # Import other modules
 try:
-    from core.ai_agent import plan_with_llm
-    from rag.discord_rag import initialize_discord_rag
-    from core.config import get_config, set_mode
-    from bots.cursor_agent_native import send_prompt_to_cursor_agent_native, start_cursor_agent_session_native
+    from core.config import get_config
 except ImportError as e:
     print(f"[ERROR] Failed to import required modules: {e}")
     print(f"[ERROR] Current working directory: {os.getcwd()}")
@@ -149,7 +146,7 @@ except ImportError as e:
 
 # Import query tracking
 try:
-    from reports.query_report_generator import get_query_tracker, start_query_tracking, finish_query_tracking
+    from api.query_tracker import get_query_tracker, start_query_tracking, finish_query_tracking
 except ImportError as e:
     print(f"[WARNING] Query tracking not available: {e}")
     # Provide dummy functions if not available
@@ -653,18 +650,6 @@ async def on_ready():
     
     # Cuttle MCP server is retired — no subprocess. OS slash tools are retired too.
     print("[INFO] Discord bot ready (posts/reads via discord.post + discord_cli; no OS slash tools)")
-    
-    # Initialize other components
-    try:
-        rag_instance = initialize_discord_rag()
-        if rag_instance:
-            print("[INFO] Discord RAG system initialized successfully")
-        else:
-            print("[WARNING] Discord RAG system not available")
-    except Exception as e:
-        print(f"[WARNING] Failed to initialize Discord RAG: {e}")
-        import traceback
-        traceback.print_exc()
 
 
 @client.event
@@ -790,8 +775,8 @@ async def handle_claude_command(message, prompt: str):
     try:
         # Import required modules
         from scripts.utilities.claude_code_tool import ClaudeCodeTool
-        from reports.query_report_generator import start_query_tracking, finish_query_tracking
-        from reports.query_report_generator import track_tool_call as _track_tool_call
+        from api.query_tracker import start_query_tracking, finish_query_tracking
+        from api.query_tracker import track_tool_call as _track_tool_call
         import time
         
         # Start query tracking for /claude commands
@@ -877,7 +862,7 @@ async def handle_claude_command(message, prompt: str):
             json_url = f"{API_BASE}/logs/{json_filename}"
             print(f"[QUERY] Query Report: {report_url}")
             print(f"[QUERY] Query Data: {json_url}")
-            print(f"[QUERY] View all reports: {API_BASE}/query_reports.html")
+            print(f"[QUERY] View query log: {API_BASE}/query_log.html")
         
     except ImportError as e:
         await message.channel.send(f"❌ **Claude Code tool not available.** Error: {e}")
@@ -1065,7 +1050,7 @@ async def handle_slash_command(message):
         print(f"[QUERY] Started tracking query {query_id} for: {message.content[:50]}...")
         
         # Track regex stage (command parsing)
-        from reports.query_report_generator import get_query_tracker
+        from api.query_tracker import get_query_tracker
         tracker = get_query_tracker()
         if tracker.query_id:
             import time

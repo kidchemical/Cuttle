@@ -13,7 +13,7 @@ from api.query_events import (
     record_thinking,
     reset_query_id,
 )
-from reports.query_report_generator import (
+from api.query_tracker import (
     finish_query_tracking,
     get_query_tracker,
     start_query_tracking,

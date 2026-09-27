@@ -62,12 +62,6 @@ except ImportError as e:
     print(f"WARNING: Could not import test_username_case: {e}")
 
 try:
-    from unit.test_rag_system import run_rag_tests_sync
-    unit_test_modules.append(("RAG System", run_rag_tests_sync))
-except ImportError as e:
-    print(f"WARNING: Could not import test_rag_system: {e}")
-
-try:
     from unit.test_claude_code import run_all_claude_tests
     unit_test_modules.append(("Claude Code Integration", run_all_claude_tests))
 except ImportError as e:

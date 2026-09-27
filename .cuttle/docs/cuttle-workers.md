@@ -2,7 +2,7 @@
 
 LAN **device worker** mesh: host coordinates; machines claim allowlisted jobs.
 
-Canonical design: `src/docs/guides/CUTTLE_WORKERS.md` (under the Cuttle install).
+Canonical design: `docs/guides/CUTTLE_WORKERS.md` (under the Cuttle install).
 Install-local LAN / SSH / hostname notes: `.cuttle/personal/docs/cuttle-workers.md`.
 
 ## When to use (intent)

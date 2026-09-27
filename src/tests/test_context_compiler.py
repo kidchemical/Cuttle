@@ -165,13 +165,13 @@ def test_kernel_same_agent_skips_handoff_but_uses_resume(monkeypatch, tmp_path):
         kernel, "get_agent", lambda aid, project_path=None: (manifest, _FakeAdapter())
     )
     monkeypatch.setattr(
-        "reports.query_report_generator.start_query_tracking", lambda *a, **k: "qid"
+        "api.query_tracker.start_query_tracking", lambda *a, **k: "qid"
     )
     monkeypatch.setattr(
-        "reports.query_report_generator.finish_query_tracking", lambda *a, **k: None
+        "api.query_tracker.finish_query_tracking", lambda *a, **k: None
     )
     monkeypatch.setattr(
-        "reports.query_report_generator.get_query_tracker", lambda *a, **k: None
+        "api.query_tracker.get_query_tracker", lambda *a, **k: None
     )
     monkeypatch.setattr("api.active_executions.register_execution", lambda *a, **k: None)
     monkeypatch.setattr("api.active_executions.unregister_execution", lambda *a, **k: None)
@@ -230,13 +230,13 @@ def test_kernel_switch_injects_handoff_and_keeps_target_resume(monkeypatch, tmp_
         kernel, "get_agent", lambda aid, project_path=None: (manifest, _FakeAdapter())
     )
     monkeypatch.setattr(
-        "reports.query_report_generator.start_query_tracking", lambda *a, **k: "qid"
+        "api.query_tracker.start_query_tracking", lambda *a, **k: "qid"
     )
     monkeypatch.setattr(
-        "reports.query_report_generator.finish_query_tracking", lambda *a, **k: None
+        "api.query_tracker.finish_query_tracking", lambda *a, **k: None
     )
     monkeypatch.setattr(
-        "reports.query_report_generator.get_query_tracker", lambda *a, **k: None
+        "api.query_tracker.get_query_tracker", lambda *a, **k: None
     )
     monkeypatch.setattr("api.active_executions.register_execution", lambda *a, **k: None)
     monkeypatch.setattr("api.active_executions.unregister_execution", lambda *a, **k: None)

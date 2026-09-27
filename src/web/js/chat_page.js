@@ -6408,37 +6408,20 @@
     function loadSlashPaletteSupplement() {
         if (slashPaletteSupplement.loading || slashPaletteSupplement.loaded) return;
         slashPaletteSupplement.loading = true;
-        const p1 = fetch('/api/list-pipelines')
-            .then((r) => r.json())
-            .then((j) => (j && j.success && Array.isArray(j.pipelines) ? j.pipelines : []))
-            .catch(() => []);
-        const p2 = fetch('/api/skills/markdown')
-            .then((r) => r.json())
-            .then((j) => (j && j.success && Array.isArray(j.skills) ? j.skills : []))
-            .catch(() => []);
-        Promise.all([p1, p2])
-            .then(([pipelines, skills]) => {
-                slashPaletteSupplement.pipelines = pipelines;
-                slashPaletteSupplement.skills = skills;
-            })
-            .catch(() => {
-                slashPaletteSupplement.pipelines = [];
-                slashPaletteSupplement.skills = [];
-            })
-            .finally(() => {
-                slashPaletteSupplement.loaded = true;
-                slashPaletteSupplement.loading = false;
-                loadProjectCommandsForPalette();
-                loadHarnessAgentsForPalette();
-                const welcomeInput = document.getElementById('welcomeChatInput');
-                const chatInput = document.getElementById('chatInput');
-                if (welcomeInput && document.activeElement === welcomeInput) {
-                    syncSlashMenuFromInput(welcomeInput);
-                }
-                if (chatInput && document.activeElement === chatInput) {
-                    syncSlashMenuFromInput(chatInput);
-                }
-            });
+        slashPaletteSupplement.pipelines = [];
+        slashPaletteSupplement.skills = [];
+        slashPaletteSupplement.loaded = true;
+        slashPaletteSupplement.loading = false;
+        loadProjectCommandsForPalette();
+        loadHarnessAgentsForPalette();
+        const welcomeInput = document.getElementById('welcomeChatInput');
+        const chatInput = document.getElementById('chatInput');
+        if (welcomeInput && document.activeElement === welcomeInput) {
+            syncSlashMenuFromInput(welcomeInput);
+        }
+        if (chatInput && document.activeElement === chatInput) {
+            syncSlashMenuFromInput(chatInput);
+        }
     }
 
     function loadProjectCommandsForPalette() {
@@ -7982,8 +7965,6 @@
         );
         const projs = buildProjectPaletteItems().filter((p) => slashPaletteItemMatches(p, f));
         const projCmds = buildProjectCommandPaletteItems().filter((p) => slashPaletteItemMatches(p, f));
-        const pipes = buildPipelinePaletteItems().filter((p) => slashPaletteItemMatches(p, f));
-        const skills = buildSkillPaletteItems().filter((sk) => slashPaletteItemMatches(sk, f));
         const cursorModels = buildCursorModelPaletteItems(f);
         const museModels = buildMuseModelPaletteItems(f);
         const museEfforts = buildMuseEffortPaletteItems(f);
@@ -8058,9 +8039,7 @@
                 .concat(sortGroup(cursorCmds))
                 .concat(sortGroup(harnessUsageCmds))
                 .concat(sortGroup(projCmds))
-                .concat(sortGroup(projs))
-                .concat(sortGroup(pipes))
-                .concat(sortGroup(skills));
+                .concat(sortGroup(projs));
         } else {
             merged = sortGroup(
                 cmds
@@ -8069,8 +8048,6 @@
                     .concat(harnessUsageCmds)
                     .concat(projCmds)
                     .concat(projs)
-                    .concat(pipes)
-                    .concat(skills)
                     .concat(cursorModels)
                     .concat(museModels)
                     .concat(museEfforts)
@@ -14349,7 +14326,7 @@
                 session.messages.forEach(msg => {
                     if (msg.role === 'assistant' && consumeCancelledAgentReply(msg.content, { announce: false })) return;
                     const reportUrl = msg.report_url || (
-                        msg.query_id ? `/logs/query_report_${msg.query_id}.html` : null
+                        msg.query_id ? `/query_log.html?id=${msg.query_id}` : null
                     );
                     addMessageToUI(msg.content, msg.role, {
                         report_url: reportUrl,
@@ -14873,7 +14850,7 @@
         if (!meta || typeof meta !== 'object') meta = {};
         const reportUrl = msg.report_url || meta.report_url || (
             (msg.query_id || meta.query_id)
-                ? `/logs/query_report_${msg.query_id || meta.query_id}.html`
+                ? `/query_log.html?id=${msg.query_id || meta.query_id}`
                 : null
         );
         // SQLite CURRENT_TIMESTAMP is UTC "YYYY-MM-DD HH:MM:SS". Raw Date.parse
@@ -15162,7 +15139,7 @@
                     </div>
                     <div class="typing-status" aria-live="polite" role="status">${escapeHtml(statusLabel)}</div>
                 </div>
-                ${getAssistantMessageFooterHtml('/query_reports.html', false)}
+                ${getAssistantMessageFooterHtml('/query_log.html', false)}
             </div>
         `;
         messagesContainer.appendChild(typingDiv);
@@ -21349,170 +21326,6 @@
         }
     }
     
-    async function processCursorCommandStreaming(message) {
-        const replySlash = slashCommandMetaFromUserMessage(message);
-        const boundStreamSessionId = canonicalizeChatSessionId(currentSessionId);
-        const streamHeaderChip = (() => {
-            const chips = replySlash && replySlash.chips
-                ? collapseCursorSlashChips(replySlash.chips)
-                : [];
-            return messageHeaderBadgesHtml(chips, false, currentProject);
-        })();
-
-        // Generating — keep composer usable for follow-ups; show Stop.
-        beginLocalGeneration();
-        const chatInput = document.getElementById('chatInput');
-        const sendButton = document.getElementById('sendButton');
-        const stopButton = document.getElementById('stopButton');
-        
-        if (chatInput) chatInput.disabled = false;
-        if (sendButton) sendButton.disabled = false;
-        if (stopButton) {
-            stopButton.style.display = 'flex';
-            stopButton.disabled = false;
-        }
-        
-        // Create streaming message container — only if we're still on this chat.
-        const messagesContainer = document.getElementById('chatMessages');
-        if (!messagesContainer || (boundStreamSessionId != null && !isViewingSession(boundStreamSessionId))) {
-            endLocalGeneration();
-            return;
-        }
-        const messageDiv = document.createElement('div');
-        const streamTs = Date.now();
-        messageDiv.className = 'message assistant';
-        const streamAgo = formatTimeAgo(streamTs);
-        const streamLabel = streamAgo === 'now' ? 'Just now' : 'Sent ' + streamAgo + ' ago';
-        messageDiv.innerHTML = `
-            <div class="message-avatar">${assistantAvatarInnerHtml()}</div>
-            <div class="message-content-wrapper">
-                <div class="message-header-row">
-                    <span class="message-sender-group">
-                        <span class="message-sender">${assistantDisplayName()}</span>
-                        ${streamHeaderChip}
-                        ${getTtsPlayButtonHtml()}
-                    </span>
-                    <span class="message-timestamp" data-ts="${streamTs}">${streamLabel}</span>
-                </div>
-                <div class="message-content streaming-content"></div>
-                ${getAssistantMessageFooterHtml('/query_reports.html', true)}
-            </div>
-        `;
-        messagesContainer.appendChild(messageDiv);
-        scheduleSlashChipCompactLabels(messageDiv);
-        updateMessageNav();
-        autoScrollChatToBottom();
-        
-        const contentDiv = messageDiv.querySelector('.streaming-content');
-        let fullResponse = '';
-        
-        try {
-            // Prepare request body
-            const requestBody = {
-                message: message,
-                session_id: boundStreamSessionId
-            };
-            
-            applyOutboundProjectToRequest(requestBody);
-            
-            // Use EventSource for SSE
-            const streamParams = {
-                message: message,
-                session_id: boundStreamSessionId || '',
-                project_path: requestBody.project_path || '',
-            };
-            if (requestBody.project_id != null) streamParams.project_id = String(requestBody.project_id);
-            if (requestBody.project_name) streamParams.project_name = requestBody.project_name;
-            activeEventSource = new EventSource('/api/chat-stream?' + new URLSearchParams(streamParams));
-            
-            activeEventSource.onmessage = function(event) {
-                if (boundStreamSessionId != null && !isViewingSession(boundStreamSessionId)) {
-                    // Switched away — stop painting; leave the bubble orphaned if
-                    // the DOM was cleared by loadChatSession. Do NOT chirp here:
-                    // status/start chunks used to fire Reply ready mid-run.
-                    try { activeEventSource.close(); } catch (_) {}
-                    activeEventSource = null;
-                    endLocalGeneration();
-                    if (boundStreamSessionId) {
-                        setHistorySessionRunning(boundStreamSessionId, true);
-                        watchDetachedSessionForCompletion(boundStreamSessionId);
-                    }
-                    return;
-                }
-                const data = JSON.parse(event.data);
-                
-                if (data.type === 'start') {
-                    fullResponse = '✅ **Cursor AI (Agentic Mode - Live)**\n\n';
-                    messageDiv.dataset.rawContent = fullResponse;
-                    contentDiv.innerHTML = formatMessage(fullResponse);
-                    activateEnhancements(contentDiv);
-                } else if (data.type === 'done') {
-                    activeEventSource.close();
-                    activeEventSource = null;
-                    messageDiv.dataset.rawContent = fullResponse;
-                    saveChatSession(fullResponse, 'assistant', {
-                        slash_command: replySlash || undefined,
-                    });
-                    notifyAssistantResponseReady(boundStreamSessionId || localGeneratingSessionId);
-                    
-                    // Re-enable inputs
-                    endLocalGeneration();
-                    if (chatInput) {
-                        chatInput.disabled = false;
-                        refocusChatInputIfAppropriate(chatInput);
-                    }
-                    if (sendButton) sendButton.disabled = false;
-                    if (stopButton) {
-                        stopButton.disabled = true;
-                        stopButton.style.display = 'none';
-                    }
-                } else {
-                    // Append the update
-                    fullResponse += data.message || '';
-                    messageDiv.dataset.rawContent = fullResponse;
-                    contentDiv.innerHTML = formatMessage(fullResponse);
-                    activateEnhancements(contentDiv);
-                    autoScrollChatToBottom();
-                }
-            };
-            
-            activeEventSource.onerror = function(error) {
-                console.error('SSE Error:', error);
-                activeEventSource.close();
-                activeEventSource = null;
-                contentDiv.innerHTML = formatMessage('❌ Error: Stream connection lost');
-                
-                // Re-enable inputs
-                endLocalGeneration();
-                if (chatInput) {
-                    chatInput.disabled = false;
-                    refocusChatInputIfAppropriate(chatInput);
-                }
-                if (sendButton) sendButton.disabled = false;
-                if (stopButton) {
-                    stopButton.disabled = true;
-                    stopButton.style.display = 'none';
-                }
-            };
-            
-        } catch (error) {
-            console.error('Error with cursor streaming:', error);
-            contentDiv.innerHTML = formatMessage('❌ Error: ' + error.message);
-            
-            // Re-enable inputs
-            endLocalGeneration();
-            if (chatInput) {
-                chatInput.disabled = false;
-                refocusChatInputIfAppropriate(chatInput);
-            }
-            if (sendButton) sendButton.disabled = false;
-            if (stopButton) {
-                stopButton.disabled = true;
-                stopButton.style.display = 'none';
-            }
-        }
-    }
-    
     async function sendMessage(opts) {
         LOG('sendMessage called');
         // opts.text: send this instead of the composer (form resume). The
@@ -22915,7 +22728,7 @@
     }
 
     function getQueryLogLinkHtml(reportUrl) {
-        const href = reportUrl || '/query_reports.html';
+        const href = reportUrl || '/query_log.html';
         const qid = queryIdFromReportUrl(reportUrl);
         const title = reportUrl ? 'View query log' : 'View query log index';
         const qAttr = qid ? ` data-query-id="${escapeHtmlInline(qid)}"` : '';
@@ -22936,7 +22749,10 @@
     }
 
     function queryIdFromReportUrl(reportUrl) {
-        const m = /query_report_([A-Za-z0-9_-]+)\.html/.exec(String(reportUrl || ''));
+        const s = String(reportUrl || '');
+        let m = /[?&]id=([A-Za-z0-9_-]+)/.exec(s);
+        if (m) return m[1];
+        m = /query_report_([A-Za-z0-9_-]+)\.html/.exec(s);
         return m ? m[1] : '';
     }
 
@@ -24107,7 +23923,7 @@
                     </div>
                     <div class="typing-status" id="typing-status" aria-live="polite" role="status">Connecting...</div>
                 </div>
-                ${getAssistantMessageFooterHtml('/query_reports.html', false)}
+                ${getAssistantMessageFooterHtml('/query_log.html', false)}
             </div>
         `;
         

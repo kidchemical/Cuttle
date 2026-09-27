@@ -763,7 +763,7 @@ def test_final_message_is_concise_by_default(supervised_env):
         findings=[
             {
                 "id": 1,
-                "file": "src/docs/guides/SUPERVISED_COORDINATOR.md",
+                "file": "docs/guides/SUPERVISED_COORDINATOR.md",
                 "symbol": "mode",
                 "evidence": "session",
                 "impact": "Could be mistaken for a global toggle",

@@ -19,7 +19,10 @@ from scripts.test_history_manager import TestHistoryManager
 
 # Import OpenAI for AI summarization
 try:
-    from ai_agent import client as openai_client
+    from openai import OpenAI
+    import os as _os
+    _k = _os.getenv("OPENAI_API_KEY")
+    openai_client = OpenAI(api_key=_k) if _k else None
 except ImportError:
     openai_client = None
 
