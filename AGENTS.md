@@ -6,7 +6,7 @@ Guidance for Cursor, Muse, Codex, Claude Code, Hermes, and other agents working 
 
 Cuttle’s Flask API and Discord bot are children of `cuttle_daemon`.
 
-- **Never** use `taskkill` / `Stop-Process` on `web_chat_api`, `cuttle_daemon`, or `bot_mcp` to restart them from an agent session.
+- **Never** use `taskkill` / `Stop-Process` on `web_chat_api`, `cuttle_daemon`, or `discord_bot` to restart them from an agent session.
 - Use `/restart graceful`, `/restart when-idle`, or `/restart force --yes` (or `POST /api/flask/restart`).
 - In Cuttle chat, propose the restart with the `flask.restart` action form (clickable choice card) rather than asking the user to type a slash command; the slash commands are the fallback.
 - Killing Flask from inside a chat destroys the delivery path for your own reply.
@@ -43,7 +43,7 @@ Project config lives under `.cuttle/` (commands, actions, docs, rules). Prefer t
 
 **Venv**: use `.venv/bin/python` (POSIX) or `.venv\Scripts\python.exe` (Windows).
 
-**Environment**: secrets (DISCORD_TOKEN, API keys) live in `src\.env`. The daemon loads this file before spawning subprocesses; bot_mcp.py also loads it on startup.
+**Environment**: secrets (DISCORD_TOKEN, API keys) live in `src/.env`. The daemon loads this file before spawning subprocesses; `discord_bot.py` also loads it on startup.
 
 ## Running Tests
 
@@ -65,7 +65,7 @@ Project config lives under `.cuttle/` (commands, actions, docs, rules). Prefer t
 
 ```
 User message (Discord DM / Web Chat)
-  → bot_mcp.py or web_chat_api.py
+  → discord_bot.py or web_chat_api.py
   → sticky/starred slash agent OR agent router
   → harness CLI (`/cursor`, `/codex`, …) or LLM fallback
 ```
@@ -78,7 +78,7 @@ Discord DMs still POST `/api/pipeline-trigger-discord` (legacy path name) which 
 |---|---|---|
 | Daemon | `src/scripts/cuttle_daemon.py` | Spawns Flask + Discord bot, tray icon |
 | Flask API | `src/api/web_chat_api.py` | REST endpoints, web UI, chat dispatch |
-| Discord Bot | `src/bots/bot_mcp.py` | Bridges Discord DMs → Flask; channel posts via `discord.post` |
+| Discord Bot | `src/bots/discord_bot.py` | Bridges Discord DMs → Flask; channel posts via `discord.post` |
 | Cursor Agent CLI | `src/scripts/utilities/cursor_cli_tool.py` | Headless `agent -p` (stream-json, resume) — same adapter pattern as Codex |
 
 ### Frontend

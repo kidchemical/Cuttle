@@ -59,7 +59,7 @@ Library (same semantics): `resolve_chat_handle_message`,
 
 | | |
 |---|---|
-| Default path | `{CuttleInstall}/src/api/data/cuttle_auth.db` (resolve via runtime / `api.auth_db.DB_PATH`) |
+| Default path | `{CuttleInstall}/src/data/db/cuttle_auth.db` (resolve via runtime / `api.auth_db.DB_PATH`) |
 | Not this file | `tasks.db` (uses `T0000XX` ids — wrong store) |
 
 Tables: `chat_sessions(id, user_id, session_name, last_activity, is_active)`,

@@ -259,4 +259,4 @@ def test_muse_execution_sends_the_enriched_prompt_to_the_cli(tmp_path, monkeypat
 
     assert res["success"] is True
     assert "Cuttle chat history" in seen["prompt"]
-    assert "chat_messages" in seen["prompt"]
+    assert "chat-history.md" in seen["prompt"] or "cuttle_auth.db" in seen["prompt"]

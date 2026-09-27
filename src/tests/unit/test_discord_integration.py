@@ -1,5 +1,5 @@
 """
-Unit tests for Discord integration - bot_mcp API error handling and pipeline trigger flow.
+Unit tests for Discord integration — discord_bot Flask error handling.
 """
 import os
 import sys
@@ -16,7 +16,7 @@ if str(src_root) not in sys.path:
 
 def test_should_ignore_guild_chatter_without_mention():
     """Guild messages that don't @mention / reply to the bot are ignored."""
-    from bots.bot_mcp import should_ignore_guild_message, strip_bot_mentions
+    from bots.discord_bot import should_ignore_guild_message, strip_bot_mentions
 
     me = Mock(id=999)
     guild_msg = Mock()
@@ -43,7 +43,7 @@ def test_should_ignore_guild_chatter_without_mention():
 
 def test_parse_api_error_404_no_agent():
     """Test _parse_api_error returns helpful message for 404 (no slash agent/router hit)."""
-    from bots.bot_mcp import _parse_api_error, API_BASE
+    from bots.discord_bot import _parse_api_error, API_BASE
 
     mock_resp = Mock()
     mock_resp.status_code = 404
@@ -55,7 +55,7 @@ def test_parse_api_error_404_no_agent():
 
 def test_parse_api_error_503():
     """Test _parse_api_error for 503 service unavailable."""
-    from bots.bot_mcp import _parse_api_error
+    from bots.discord_bot import _parse_api_error
 
     mock_resp = Mock()
     mock_resp.status_code = 503
@@ -66,7 +66,7 @@ def test_parse_api_error_503():
 
 def test_parse_api_error_custom_response():
     """Test _parse_api_error uses response body when present."""
-    from bots.bot_mcp import _parse_api_error
+    from bots.discord_bot import _parse_api_error
 
     mock_resp = Mock()
     mock_resp.status_code = 400
@@ -77,7 +77,7 @@ def test_parse_api_error_custom_response():
 
 def test_parse_api_error_uses_error_field():
     """Test _parse_api_error uses error field when response empty."""
-    from bots.bot_mcp import _parse_api_error
+    from bots.discord_bot import _parse_api_error
 
     mock_resp = Mock()
     mock_resp.status_code = 500
@@ -88,7 +88,7 @@ def test_parse_api_error_uses_error_field():
 
 def test_parse_api_error_non_json_fallback():
     """Test _parse_api_error falls back to HTTP status when JSON parse fails."""
-    from bots.bot_mcp import _parse_api_error, API_BASE
+    from bots.discord_bot import _parse_api_error, API_BASE
 
     mock_resp = Mock()
     mock_resp.status_code = 502
@@ -100,7 +100,7 @@ def test_parse_api_error_non_json_fallback():
 
 def test_api_base_format():
     """Test API_BASE is a valid URL with port 8080."""
-    from bots.bot_mcp import API_BASE
+    from bots.discord_bot import API_BASE
 
     assert "8080" in API_BASE
     assert API_BASE.startswith("http")
@@ -114,8 +114,8 @@ def test_pipeline_trigger_discord_endpoint_exists():
     assert "process_message_with_bot" in web_api
 
 
-def test_bot_mcp_posts_to_pipeline_trigger():
-    """Test bot_mcp uses pipeline-trigger-discord API."""
-    bot_content = (src_root / "bots" / "bot_mcp.py").read_text(encoding="utf-8")
+def test_discord_bot_posts_to_flask():
+    """Discord bot POSTs DMs to the Flask chat path."""
+    bot_content = (src_root / "bots" / "discord_bot.py").read_text(encoding="utf-8")
     assert "pipeline-trigger-discord" in bot_content
     assert "API_BASE" in bot_content or "127.0.0.1" in bot_content

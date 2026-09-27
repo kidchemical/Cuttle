@@ -90,7 +90,7 @@ def main():
     # Find the projects.db in the project root
     script_dir = Path(__file__).parent
     project_root = script_dir.parent.parent
-    db_path = project_root / "projects.db"
+    db_path = project_root / "src" / "data" / "db" / "projects.db"
     
     if not db_path.exists():
         print(f"❌ Error: Database not found at {db_path}")

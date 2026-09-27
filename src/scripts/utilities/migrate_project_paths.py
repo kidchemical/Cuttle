@@ -3,8 +3,8 @@
 Remap stored Cuttle project paths after a move (drive letter, UNC share, folder rename).
 
 Updates:
-  - src/projects.db  (registered projects)
-  - src/api/data/cuttle_auth.db  (chat_sessions.project_path, chat_messages.project_path)
+  - src/data/db/projects.db  (registered projects)
+  - src/data/db/cuttle_auth.db  (chat_sessions.project_path, chat_messages.project_path)
   - src/settings.json  (starred_project.path, when set)
 
 Examples:
@@ -31,8 +31,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[2]
-PROJECTS_DB = SRC / "projects.db"
-AUTH_DB = SRC / "api" / "data" / "cuttle_auth.db"
+PROJECTS_DB = SRC / "data" / "db" / "projects.db"
+AUTH_DB = SRC / "data" / "db" / "cuttle_auth.db"
 SETTINGS_JSON = SRC / "settings.json"
 
 

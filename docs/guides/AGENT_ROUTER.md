@@ -225,7 +225,7 @@ See [SUPERVISED_COORDINATOR.md](./SUPERVISED_COORDINATOR.md). Strategy type
 ## Limitations (v1)
 
 - `local` and `agent` router modes are configurable but not fully wired.
-- Routed attempts are stored locally in `src/data/router_outcomes.db`; `/router metrics summary`
+- Routed attempts are stored locally in `src/data/db/router_outcomes.db`; `/router metrics summary`
   shows current totals.
 - Drift detection is the **basic** version: fail-rate windows + temporary demotion.
   EWMA/CUSUM tuning, soft signals, and learned weights are not implemented yet.

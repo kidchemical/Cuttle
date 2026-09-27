@@ -584,6 +584,6 @@ class ProjectManager:
             'current_project': self.current_project['name'] if self.current_project else None
         }
 
-# Global project manager instance — always use src/projects.db (not cwd-relative).
-_PROJECTS_DB_PATH = Path(__file__).resolve().parents[1] / "projects.db"
+# Global project manager instance — always use src/data/db/projects.db (not cwd-relative).
+_PROJECTS_DB_PATH = Path(__file__).resolve().parents[1] / "data" / "db" / "projects.db"
 project_manager = ProjectManager(str(_PROJECTS_DB_PATH))

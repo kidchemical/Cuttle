@@ -61,5 +61,5 @@ def test_electron_discord_startup():
         if 'startDiscordBot' not in content:
             pytest.skip("Electron no longer starts Discord from main.js (daemon owns the bot)")
         assert 'startDiscordBot' in content
-        assert 'bot_mcp' in content
+        assert 'discord_bot' in content or 'bot_mcp' in content
         assert 'autoStartPipeline' in content

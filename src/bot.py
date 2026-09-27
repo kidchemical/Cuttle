@@ -1,11 +1,10 @@
 """
 Compatibility shim for tests that import from 'bot'.
-Exports is_owner and OWNER_ID from bots.bot_mcp.
 """
 import os
 
 try:
-    from bots.bot_mcp import OWNER_ID
+    from bots.discord_bot import OWNER_ID
 
     def is_owner(message) -> bool:
         """Check if message author is the bot owner."""

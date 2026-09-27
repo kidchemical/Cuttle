@@ -128,11 +128,9 @@ def cert_needs_regeneration(cert_file: Path, lan_ip: Optional[str] = None) -> bo
     except Exception:
         return not cert_file.is_file()
 
-# Load .env so API keys are available whether started by daemon or directly
+# Load src/.env so API keys are available whether started by daemon or directly
 _env_candidates = [
     actual_project_root / 'src' / '.env',
-    project_root / '.env',
-    actual_project_root / '.env',
 ]
 for _env_path in _env_candidates:
     if _env_path.exists():
@@ -4269,14 +4267,8 @@ def save_api_key():
                 'message': 'API type and key are required'
             }), 400
         
-        # Save to environment file or secure storage
-        # Try actual project root first, then src/ as fallback
-        env_file = actual_project_root / '.env'
-        env_file_fallback = project_root / '.env'
-        
-        # Check which .env file exists (prefer src/ if it already has data)
-        if env_file_fallback.exists() and not env_file.exists():
-            env_file = env_file_fallback
+        # Save to src/.env only
+        env_file = actual_project_root / 'src' / '.env'
         
         # Read existing .env file
         env_vars = {}
@@ -4320,13 +4312,7 @@ def save_api_key():
 def load_api_keys():
     """Load API keys from secure storage"""
     try:
-        # Try both locations (actual project root and src/)
-        env_file = actual_project_root / '.env'
-        env_file_fallback = project_root / '.env'
-        
-        # Use whichever exists
-        if not env_file.exists() and env_file_fallback.exists():
-            env_file = env_file_fallback
+        env_file = actual_project_root / 'src' / '.env'
         
         api_keys = {}
         

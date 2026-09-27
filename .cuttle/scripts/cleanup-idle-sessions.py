@@ -22,7 +22,7 @@ from pathlib import Path
 import os
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DB_PATH = REPO_ROOT / "src" / "api" / "data" / "cuttle_auth.db"
+DB_PATH = REPO_ROOT / "src" / "data" / "db" / "cuttle_auth.db"
 UPLOADS_ROOT = REPO_ROOT / "src" / "output" / "uploads"
 
 

@@ -16,6 +16,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from api.agent_router.outcomes import known_query_ids, record_turn, set_feedback_for_query
 from api.agent_router.policy import classify_failure, is_cancellation
+from core.runtime_paths import data_db_dir
 
 PINNED_SOURCE = "pinned"
 
@@ -313,7 +314,7 @@ def turn_contexts(
         return {}
     sessions = sorted({str(r["session_id"]) for r in rows if r.get("query_id") and r.get("session_id")})
     if auth_db_path is None:
-        auth_db_path = Path(__file__).resolve().parents[1] / "data" / "cuttle_auth.db"
+        auth_db_path = data_db_dir() / "cuttle_auth.db"
     out: Dict[str, Dict[str, Any]] = {}
     try:
         conn = sqlite3.connect(str(auth_db_path), timeout=10.0)
@@ -382,7 +383,7 @@ def backfill_from_history(
     ``query_id`` is already recorded (router or live pinned) are skipped.
     """
     if auth_db_path is None:
-        auth_db_path = Path(__file__).resolve().parents[1] / "data" / "cuttle_auth.db"
+        auth_db_path = data_db_dir() / "cuttle_auth.db"
     agents = _known_agents()
     seen_queries = known_query_ids(db_path=db_path)
     stats = {"scanned": 0, "inserted": 0, "already_recorded": 0, "skipped": 0, "dry_run": dry_run}

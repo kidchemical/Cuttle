@@ -28,10 +28,12 @@ def _bcrypt_mod():
         ) from e
     return _bcrypt
 
+from core.runtime_paths import data_db_dir
+
 _CHAT_HANDLE_RE = re.compile(r'^(?:ch[-\s]?)?0*(\d+)$', re.IGNORECASE)
 
 # Database path
-DB_PATH = Path(__file__).parent / 'data' / 'cuttle_auth.db'
+DB_PATH = data_db_dir() / 'cuttle_auth.db'
 
 class AuthDatabase:
     """Manages user authentication and chat session data"""

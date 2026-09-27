@@ -34,7 +34,7 @@ Idle = `COALESCE(last_message_time, last_activity, created_at)` older than `--ho
 Soft-delete only: `UPDATE chat_sessions SET is_active = 0` — same as
 `DELETE /api/auth/sessions/<id>`. Messages stay in DB; history UI hides them.
 
-DB: [file:////path/to/Cuttle/src/api/data/cuttle_auth.db](file:////path/to/Cuttle/src/api/data/cuttle_auth.db)
+DB: [file:////path/to/Cuttle/src/data/db/cuttle_auth.db](file:////path/to/Cuttle/src/data/db/cuttle_auth.db)
 
 Script: [file:////path/to/Cuttle/.cuttle/scripts/cleanup-idle-sessions.py](file:////path/to/Cuttle/.cuttle/scripts/cleanup-idle-sessions.py)
 

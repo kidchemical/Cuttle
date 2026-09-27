@@ -59,10 +59,8 @@ PROJECT_ROOT = SRC_ROOT.parent
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-# Load .env so DISCORD_TOKEN and other secrets are available to the daemon process
+# Load src/.env so DISCORD_TOKEN and other secrets are available to the daemon process
 _env_file = SRC_ROOT / ".env"
-if not _env_file.exists():
-    _env_file = PROJECT_ROOT / ".env"
 if _env_file.exists():
     try:
         from dotenv import load_dotenv
@@ -399,7 +397,7 @@ def start_discord_bot() -> bool:
     logf.write(f"\n--- Discord bot started {datetime.now().isoformat()} ---\n")
     logf.flush()
     proc = subprocess.Popen(
-        [get_python_cmd(), str(SRC_ROOT / "bots" / "bot_mcp.py")],
+        [get_python_cmd(), str(SRC_ROOT / "bots" / "discord_bot.py")],
         cwd=str(SRC_ROOT),
         env=env,
         stdout=logf,

@@ -11,7 +11,7 @@ Model Benchmarks supports DeepSWE, SWE-bench Verified, and Aider Polyglot. The A
 
 Each source has its own score definition: DeepSWE pass@1, SWE-bench Verified resolved percentage, and Aider Polyglot pass@1. Filters include provider, reasoning effort, and harness. **NEW** marks DeepSWE configs first seen by Cuttle in the last 48 hours.
 
-**My Cuttle Performance** (`?d=cuttle-performance`) uses the same 3D widget, one point per agent / model / reasoning effort, built from *your* turns in `src/data/router_outcomes.db`:
+**My Cuttle Performance** (`?d=cuttle-performance`) uses the same 3D widget, one point per agent / model / reasoning effort, built from *your* turns in `src/data/db/router_outcomes.db`:
 
 - **Router** turns are recorded by `agent_router.dispatch` (one row per attempt).
 - **Pinned** turns (starred agent, chip, `/cursor`, `/codex`, …) are recorded by `_run_pinned_harness_turn` in `web_chat_api.py` (`source=pinned`). Native controls (`/cost`, `/muse model …`, session clear) carry `meta_command` and are skipped.

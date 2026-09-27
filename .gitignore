@@ -2,6 +2,7 @@
 .env
 src/.env
 !.env.example
+!src/.env.example
 
 # Personal / home-lab dogfood (keep locally; omit from public trees)
 _personal/

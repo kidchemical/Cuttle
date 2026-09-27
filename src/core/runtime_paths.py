@@ -47,9 +47,17 @@ def venv_python(project_root: Path) -> Path:
 
 
 def env_file_candidates(project_root: Path, src_root: Optional[Path] = None) -> List[Path]:
-    root = Path(project_root)
-    src = Path(src_root) if src_root is not None else root / "src"
-    return [src / ".env", root / ".env"]
+    """Canonical secrets file is ``src/.env`` only."""
+    src = Path(src_root) if src_root is not None else Path(project_root) / "src"
+    return [src / ".env"]
+
+
+def data_db_dir(project_root: Optional[Path] = None) -> Path:
+    """SQLite store: ``src/data/db/*.db`` (gitignored)."""
+    root = Path(project_root) if project_root is not None else _repo_root()
+    d = root / "src" / "data" / "db"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 def electron_packaged_exe(project_root: Path) -> Optional[Path]:

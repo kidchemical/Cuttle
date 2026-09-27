@@ -92,7 +92,7 @@ Ubuntu / Linux:
 git clone <repo-url> cuttle && cd cuttle
 python3 -m venv .venv
 .venv/bin/pip install -r src/requirements/requirements.txt
-cp .env.example src/.env
+cp src/.env.example src/.env
 # Edit src/.env and add at least one LLM key if you want cloud agents
 ./start_cuttle.sh
 ```
@@ -103,7 +103,7 @@ Windows:
 git clone <repo-url> cuttle; cd cuttle
 python -m venv .venv
 .\.venv\Scripts\pip.exe install -r src\requirements\requirements.txt
-copy .env.example src\.env
+copy src\.env.example src\.env
 # Edit src\.env and add at least one LLM key if you want cloud agents
 .\.venv\Scripts\python.exe src\scripts\cuttle_daemon.py
 ```
@@ -181,7 +181,7 @@ flowchart LR
 
 | File | Purpose |
 |------|---------|
-| `src/.env` | Secrets (gitignored). Start from `.env.example`. |
+| `src/.env` | Secrets (gitignored). Start from `src/.env.example`. |
 | `src/settings.json` | Runtime preferences, agent router, steering toggles (local; often gitignored via `*.json` rules) |
 | `.cuttle/` | Hub commands, rules, actions, docs, scripts ([`.cuttle/README.md`](.cuttle/README.md)) |
 | `.cuttle/personal/` | Install-local overlay (gitignored); same subdirs, wins over tracked `.cuttle/` files |

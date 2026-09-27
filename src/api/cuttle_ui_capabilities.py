@@ -193,7 +193,7 @@ def cuttle_chat_store_addon(
         lines.append(f"- DB: `{read_path}`")
     else:
         lines.append(
-            "- DB: see chat-history.md (default `src/api/data/cuttle_auth.db` under Cuttle)."
+            "- DB: see chat-history.md (default `src/data/db/cuttle_auth.db` under Cuttle)."
         )
     current = numeric_chat_session_id(current_session_id)
     if current is not None:

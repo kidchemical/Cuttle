@@ -11,10 +11,14 @@ from datetime import datetime
 from typing import List, Dict, Optional, Any
 from pathlib import Path
 
+_TASKS_DB_PATH = str(Path(__file__).resolve().parents[1] / "data" / "db" / "tasks.db")
+
+
 class TaskManager:
-    def __init__(self, db_path: str = "tasks.db"):
+    def __init__(self, db_path: str = None):
         """Initialize the TaskManager with database connection"""
-        self.db_path = db_path
+        self.db_path = db_path or _TASKS_DB_PATH
+        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         self.init_database()
     
     def init_database(self):

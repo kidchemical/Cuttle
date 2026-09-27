@@ -11,7 +11,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-DEFAULT_DB_PATH = Path(__file__).resolve().parents[2] / "data" / "device_workers.db"
+DEFAULT_DB_PATH = Path(__file__).resolve().parents[2] / "data" / "db" / "device_workers.db"
 
 _lock = threading.RLock()
 

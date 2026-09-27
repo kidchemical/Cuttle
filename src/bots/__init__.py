@@ -1,10 +1,1 @@
-"""
-Bot implementations for the Cuttle project.
-
-This package contains different bot implementations:
-- Discord bots
-- WSL bots  
-- Interactive bots
-- Cursor agent implementations
-"""
-
+"""Discord bot package (``bots.discord_bot``)."""

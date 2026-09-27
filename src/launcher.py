@@ -468,7 +468,7 @@ class JamBitLauncher:
         print(f"{ROBOT} Starting Discord bot...")
         
         # Always use MCP bot (legacy bots removed)
-        bot_script = "bots/bot_mcp.py"
+        bot_script = "bots/discord_bot.py"
         
         try:
             # Set up environment to ensure proper imports
@@ -695,7 +695,7 @@ class JamBitLauncher:
                                 cmdline = proc.info['cmdline']
                                 if cmdline and len(cmdline) > 1:
                                     script_name = cmdline[-1].lower()
-                                    if any(bot_script in script_name for bot_script in ['bot_mcp.py', 'web_chat_api.py', 'bots/bot', 'api/web_chat', 'launcher.py']):
+                                    if any(bot_script in script_name for bot_script in ['discord_bot.py', 'bot_mcp.py', 'web_chat_api.py', 'bots/bot', 'api/web_chat', 'launcher.py']):
                                         print(f"Killing Python bot process: {proc.info['pid']} - {script_name}")
                                         proc.terminate()
                                         killed_count += 1
@@ -727,7 +727,7 @@ class JamBitLauncher:
                                 cmdline = proc.info['cmdline']
                                 if cmdline and len(cmdline) > 1:
                                     script_name = cmdline[-1].lower()
-                                    if any(bot_script in script_name for bot_script in ['bot_mcp.py', 'web_chat_api.py', 'bots/bot', 'api/web_chat', 'launcher.py']):
+                                    if any(bot_script in script_name for bot_script in ['discord_bot.py', 'bot_mcp.py', 'web_chat_api.py', 'bots/bot', 'api/web_chat', 'launcher.py']):
                                         print(f"Killing Pythonw bot process: {proc.info['pid']} - {script_name}")
                                         proc.terminate()
                                         killed_count += 1
@@ -759,7 +759,7 @@ class JamBitLauncher:
                                     
                                     # Check if the terminal is running bot commands
                                     cmdline = ' '.join(proc.info['cmdline']) if proc.info['cmdline'] else ""
-                                    if any(bot_script in cmdline.lower() for bot_script in ['bot_mcp.py', 'launcher.py']):
+                                    if any(bot_script in cmdline.lower() for bot_script in ['discord_bot.py', 'bot_mcp.py', 'launcher.py']):
                                         print(f"Killing terminal process running bot: {proc.info['pid']} - {proc.info['name']}")
                                         proc.terminate()
                                         killed_count += 1
@@ -796,7 +796,7 @@ class JamBitLauncher:
                             if cmdline and len(cmdline) > 1:
                                 # Check if it's running one of our bot scripts
                                 script_name = cmdline[-1].lower()
-                                if any(bot_script in script_name for bot_script in ['bot_mcp.py', 'web_chat_api.py', 'bots/bot', 'api/web_chat']):
+                                if any(bot_script in script_name for bot_script in ['discord_bot.py', 'bot_mcp.py', 'web_chat_api.py', 'bots/bot', 'api/web_chat']):
                                     # Check if it's running from our project directory
                                     if len(cmdline) > 2:
                                         working_dir = cmdline[1] if len(cmdline) > 1 else ""
@@ -827,7 +827,7 @@ class JamBitLauncher:
                                 
                             cmdline = ' '.join(proc.info['cmdline']) if proc.info['cmdline'] else ""
                             # Check if the terminal is running Python bot commands
-                            if any(bot_script in cmdline.lower() for bot_script in ['bot_mcp.py', 'launcher.py']):
+                            if any(bot_script in cmdline.lower() for bot_script in ['discord_bot.py', 'bot_mcp.py', 'launcher.py']):
                                 print(f"Killing terminal process running bot: {proc.info['pid']} - {proc.info['name']}")
                                 proc.terminate()
                                 killed_count += 1
@@ -976,7 +976,7 @@ def show_menu():
 def run_discord_bot_only():
     """Run Discord bot only"""
     try:
-        subprocess.run([sys.executable, "bots/bot_mcp.py"], cwd=Path(__file__).parent)
+        subprocess.run([sys.executable, "bots/discord_bot.py"], cwd=Path(__file__).parent)
         return True
     except Exception as e:
         print(f"{ERROR} Failed to start Discord bot: {e}")
