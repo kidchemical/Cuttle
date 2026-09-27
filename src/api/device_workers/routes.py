@@ -12,6 +12,7 @@ from api.device_workers.config import (
 )
 from api.device_workers.executor import validate_job_submission
 from api.device_workers.store import get_store
+from api.http_authz import require_ui_operator
 
 workers_bp = Blueprint("device_workers", __name__, url_prefix="/api/workers")
 
@@ -21,6 +22,19 @@ def _auth_or_401():
     if not ok:
         return jsonify({"success": False, "error": err or "unauthorized"}), 401
     return None
+
+
+def _ui_operator_or_401():
+    _user, err = require_ui_operator()
+    return err
+
+
+def _ui_or_worker_or_401():
+    """Job status: Host UI operator, or a valid worker token."""
+    denied = _ui_operator_or_401()
+    if denied is None:
+        return None
+    return _auth_or_401()
 
 
 @workers_bp.route("/enroll", methods=["POST"])
@@ -64,7 +78,10 @@ def enroll_worker():
 @workers_bp.route("", methods=["GET"])
 @workers_bp.route("/", methods=["GET"])
 def list_workers():
-    """List registered device workers (UI / agents). Session cookie OK; no bearer required."""
+    """List registered device workers (UI / agents). Owner session or loopback."""
+    denied = _ui_operator_or_401()
+    if denied:
+        return denied
     from api.device_workers import platform as plat
 
     result = plat.list_workers()
@@ -74,7 +91,10 @@ def list_workers():
 
 @workers_bp.route("/self-update", methods=["POST"])
 def self_update_worker():
-    """Enqueue cuttle_self_update for a Client worker (UI / session OK)."""
+    """Enqueue cuttle_self_update for a Client worker (owner / loopback)."""
+    denied = _ui_operator_or_401()
+    if denied:
+        return denied
     from api.device_workers import platform as plat
 
     data = request.get_json(silent=True) or {}
@@ -94,7 +114,10 @@ def self_update_worker():
 
 @workers_bp.route("/<worker_id>", methods=["DELETE"])
 def remove_worker_route(worker_id: str):
-    """Drop a worker from the registry (UI / session OK). Does not auto-expire."""
+    """Drop a worker from the registry (owner / loopback). Does not auto-expire."""
+    denied = _ui_operator_or_401()
+    if denied:
+        return denied
     from api.device_workers import platform as plat
 
     data = request.get_json(silent=True) or {}
@@ -146,6 +169,9 @@ def worker_heartbeat():
 
 @workers_bp.route("/jobs", methods=["GET"])
 def list_jobs():
+    denied = _ui_operator_or_401()
+    if denied:
+        return denied
     status = (request.args.get("status") or "").strip() or None
     try:
         limit = max(1, min(int(request.args.get("limit") or 50), 200))
@@ -158,7 +184,10 @@ def list_jobs():
 
 @workers_bp.route("/jobs", methods=["POST"])
 def submit_job():
-    """Submit a mesh job. UI/session may call without bearer; workers should not."""
+    """Submit a mesh job. Owner session or loopback — not a worker token."""
+    denied = _ui_operator_or_401()
+    if denied:
+        return denied
     from api.device_workers.executor import _normalize_job_type
 
     data = request.get_json(silent=True) or {}
@@ -227,6 +256,9 @@ def claim_jobs():
 
 @workers_bp.route("/jobs/<job_id>", methods=["GET"])
 def get_job(job_id: str):
+    denied = _ui_or_worker_or_401()
+    if denied:
+        return denied
     job = get_store().get_job(job_id)
     if not job:
         return jsonify({"success": False, "error": "not found"}), 404
@@ -269,7 +301,10 @@ def complete_job(job_id: str):
 
 @workers_bp.route("/jobs/<job_id>/cancel", methods=["POST"])
 def cancel_job(job_id: str):
-    """Cancel a queued/claimed/running mesh job (UI / platform verbs; session OK)."""
+    """Cancel a queued/claimed/running mesh job (owner / loopback)."""
+    denied = _ui_operator_or_401()
+    if denied:
+        return denied
     data = request.get_json(silent=True) or {}
     reason = str(data.get("reason") or "cancelled").strip() or "cancelled"
     job = get_store().cancel_job(job_id, reason=reason)
@@ -281,6 +316,9 @@ def cancel_job(job_id: str):
 @workers_bp.route("/plan", methods=["POST"])
 def plan_mesh():
     """Classify a message for mesh-worthiness (no enqueue)."""
+    denied = _ui_operator_or_401()
+    if denied:
+        return denied
     from api.device_workers.intent import plan_from_message
     from api.device_workers.platform import list_workers
 
@@ -298,6 +336,9 @@ def plan_mesh():
 @workers_bp.route("/<worker_id>/probe", methods=["POST"])
 def probe_worker_route(worker_id: str):
     """Targeted ping + measure RTT; stores last_rtt_ms on the worker."""
+    denied = _ui_operator_or_401()
+    if denied:
+        return denied
     from api.device_workers.platform import probe_worker
 
     data = request.get_json(silent=True) or {}
@@ -313,6 +354,9 @@ def probe_worker_route(worker_id: str):
 @workers_bp.route("/ssh-approval/pending", methods=["GET"])
 def ssh_approval_pending():
     """UI poll: pending human approvals for execute_shell_ssh."""
+    denied = _ui_operator_or_401()
+    if denied:
+        return denied
     from api.device_workers import ssh_approval as sa
 
     sa.expire_stale()
@@ -322,6 +366,9 @@ def ssh_approval_pending():
 @workers_bp.route("/ssh-approval/request", methods=["POST"])
 def ssh_approval_request():
     """Worker asks the UI to approve first SSH in this worker process."""
+    denied = _auth_or_401()
+    if denied:
+        return denied
     from api.device_workers import ssh_approval as sa
 
     data = request.get_json(silent=True) or {}
@@ -337,6 +384,9 @@ def ssh_approval_request():
 
 @workers_bp.route("/ssh-approval/<request_id>", methods=["GET"])
 def ssh_approval_get(request_id: str):
+    denied = _ui_or_worker_or_401()
+    if denied:
+        return denied
     from api.device_workers import ssh_approval as sa
 
     sa.expire_stale()
@@ -349,6 +399,9 @@ def ssh_approval_get(request_id: str):
 @workers_bp.route("/ssh-approval/<request_id>/decide", methods=["POST"])
 def ssh_approval_decide(request_id: str):
     """UI decision: once | session | deny."""
+    denied = _ui_operator_or_401()
+    if denied:
+        return denied
     from api.device_workers import ssh_approval as sa
 
     data = request.get_json(silent=True) or {}
@@ -362,6 +415,9 @@ def ssh_approval_decide(request_id: str):
 @workers_bp.route("/jobs/blender-shard", methods=["POST"])
 def blender_shard():
     """Enqueue blender_render shards across online blender workers."""
+    denied = _ui_operator_or_401()
+    if denied:
+        return denied
     from api.device_workers.platform import submit_blender_shards
 
     data = request.get_json(silent=True) or {}
@@ -392,6 +448,9 @@ def blender_shard():
 @workers_bp.route("/jobs/batch/<batch_id>", methods=["GET"])
 def blender_batch_status(batch_id: str):
     """Summarize a blender work-steal / shard batch by batch_id."""
+    denied = _ui_operator_or_401()
+    if denied:
+        return denied
     from api.device_workers.platform import batch_status
 
     result = batch_status(batch_id)

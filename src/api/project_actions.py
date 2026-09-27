@@ -9,9 +9,13 @@ executes when the user clicks — without another agent round-trip.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import html
 import json
 import os
 import re
+import secrets
 import subprocess
 import sys
 import threading
@@ -37,6 +41,8 @@ _ATTR_RE = re.compile(
 _PENDING_TTL_SEC = 3600
 _pending_lock = threading.RLock()
 _pending: Dict[str, Dict[str, Any]] = {}  # action_id -> record
+_HMAC_SECRET_PATH = Path(__file__).resolve().parents[1] / "data" / "db" / "action_hmac_secret"
+_hmac_secret_cache: Optional[bytes] = None
 
 _BUTTON_CONFIRM_PREFIX = "project-action-confirm"
 _BUTTON_CANCEL_PREFIX = "project-action-cancel"
@@ -487,6 +493,7 @@ def rewrite_cuttle_confirms(
             action_name=action_name,
             project_path=project_path or "",
             params=params,
+            session_id=str(session_id),
         )
         return (
             f'<cuttle_confirm_pending id="{action_id}" '
@@ -559,9 +566,12 @@ def parse_project_action_button(message: str) -> Optional[Tuple[str, str]]:
     if not token_a:
         return None
     kind = "confirm" if kind_raw.endswith("confirm") else "cancel"
-    # Prefer inline payload when both are present (restart-safe).
+    # Prefer HMAC-valid inline when both are present. Unsigned client tokens
+    # fall through to the pending id so history recovery can run.
     if token_b.lower().startswith("inline."):
-        return kind, token_b
+        if decode_inline_action_payload(token_b):
+            return kind, token_b
+        return kind, token_a
     if token_a.lower().startswith("inline."):
         return kind, token_a
     return kind, token_a
@@ -581,22 +591,71 @@ def _b64url_decode(token: str) -> bytes:
     return base64.urlsafe_b64decode(raw + pad)
 
 
+def _action_hmac_secret() -> bytes:
+    global _hmac_secret_cache
+    if _hmac_secret_cache:
+        return _hmac_secret_cache
+    env = (os.getenv("CUTTLE_ACTION_HMAC_SECRET") or "").strip()
+    if env:
+        _hmac_secret_cache = env.encode("utf-8")
+        return _hmac_secret_cache
+    try:
+        if _HMAC_SECRET_PATH.is_file():
+            raw = _HMAC_SECRET_PATH.read_bytes().strip()
+            if raw:
+                _hmac_secret_cache = raw
+                return _hmac_secret_cache
+        _HMAC_SECRET_PATH.parent.mkdir(parents=True, exist_ok=True)
+        raw = secrets.token_bytes(32)
+        _HMAC_SECRET_PATH.write_bytes(raw)
+        try:
+            os.chmod(_HMAC_SECRET_PATH, 0o600)
+        except OSError:
+            pass
+        _hmac_secret_cache = raw
+        return raw
+    except OSError as exc:
+        raise RuntimeError(
+            "Cuttle action HMAC secret is unavailable. Set CUTTLE_ACTION_HMAC_SECRET "
+            f"or make {_HMAC_SECRET_PATH} writable."
+        ) from exc
+
+
+def _sign_action_body(body: Dict[str, Any]) -> str:
+    canonical = json.dumps(body, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    return hmac.new(_action_hmac_secret(), canonical.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _verify_action_hmac(body: Dict[str, Any], sig: str) -> bool:
+    try:
+        expected = _sign_action_body(body)
+    except RuntimeError:
+        return False
+    return hmac.compare_digest(expected, sig)
+
+
 def encode_inline_action_payload(
     *,
     action_name: str,
     project_path: str,
     params: Dict[str, Any],
+    session_id: Optional[str] = None,
+    ttl_seconds: int = _PENDING_TTL_SEC,
 ) -> str:
-    """Self-contained confirm token: ``inline.<base64url(json)>``."""
-    blob = json.dumps(
-        {
-            "action": str(action_name or ""),
-            "project_path": str(project_path or ""),
-            "params": dict(params or {}),
-        },
-        ensure_ascii=False,
-        separators=(",", ":"),
-    ).encode("utf-8")
+    """Signed confirm token: ``inline.<base64url(json+hmac+exp)>``."""
+    now = int(time.time())
+    body: Dict[str, Any] = {
+        "action": str(action_name or ""),
+        "project_path": str(project_path or ""),
+        "params": dict(params or {}),
+        "iat": now,
+        "exp": now + max(60, int(ttl_seconds or _PENDING_TTL_SEC)),
+    }
+    if session_id:
+        body["session_id"] = str(session_id)
+    signed = dict(body)
+    signed["sig"] = _sign_action_body(body)
+    blob = json.dumps(signed, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     return "inline." + _b64url_encode(blob)
 
 
@@ -614,11 +673,33 @@ def decode_inline_action_payload(token: str) -> Optional[Dict[str, Any]]:
     if not action:
         return None
     params = data.get("params") if isinstance(data.get("params"), dict) else {}
-    return {
+    allow_unsigned = (os.getenv("CUTTLE_ALLOW_UNSIGNED_ACTION_TOKENS") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    sig = str(data.get("sig") or "").strip()
+    if not sig:
+        if not allow_unsigned:
+            return None
+    else:
+        body = {k: v for k, v in data.items() if k != "sig"}
+        if not _verify_action_hmac(body, sig):
+            return None
+        exp = body.get("exp")
+        try:
+            if exp is not None and int(exp) < int(time.time()):
+                return None
+        except (TypeError, ValueError):
+            return None
+    out: Dict[str, Any] = {
         "action": action,
         "project_path": str(data.get("project_path") or ""),
         "params": dict(params),
     }
+    if data.get("session_id"):
+        out["session_id"] = str(data.get("session_id"))
+    return out
 
 
 def execute_inline_action(
@@ -634,6 +715,25 @@ def execute_inline_action(
             "response": "That confirmation payload was invalid.",
             "type": "project_action",
         }
+    bound = parsed.get("session_id")
+    if bound and session_id:
+        from api.cuttle_ui_capabilities import numeric_chat_session_id
+
+        a = numeric_chat_session_id(bound)
+        b = numeric_chat_session_id(session_id)
+        if a is not None and b is not None:
+            if a != b:
+                return {
+                    "success": False,
+                    "response": "That confirmation belongs to a different chat.",
+                    "type": "project_action",
+                }
+        elif str(bound) != str(session_id):
+            return {
+                "success": False,
+                "response": "That confirmation belongs to a different chat.",
+                "type": "project_action",
+            }
     project_path = parsed.get("project_path") or ""
     action_name = parsed.get("action") or ""
     params = parsed.get("params") or {}
@@ -1195,6 +1295,43 @@ def cancel_pending_action(action_id: str, *, session_id: Optional[str] = None) -
     }
 
 
+def load_confirm_inline_from_history(
+    session_id: Optional[str],
+    pending_id: Optional[str],
+) -> Optional[str]:
+    """HMAC ``fallback=`` token from a persisted ``cuttle_confirm_pending`` tag."""
+    from api.cuttle_ui_capabilities import numeric_chat_session_id
+
+    nid = numeric_chat_session_id(session_id)
+    pid = str(pending_id or "").strip()
+    if not nid or not pid:
+        return None
+    try:
+        from api.auth_db import get_auth_db
+
+        msgs = get_auth_db().find_messages_containing(
+            int(nid), pid, role="assistant", limit=20
+        )
+    except Exception:
+        return None
+    id_re = re.compile(r'\bid=(["\'])([^"\']+)\1', re.I)
+    fb_re = re.compile(r'\bfallback=(["\'])([^"\']*)\1', re.I)
+    for msg in msgs or []:
+        content = str(msg.get("content") or "")
+        for m in re.finditer(r"<cuttle_confirm_pending\b([^>]*)>", content, re.I):
+            attrs = m.group(1) or ""
+            id_m = id_re.search(attrs)
+            if not id_m or id_m.group(2) != pid:
+                continue
+            fb_m = fb_re.search(attrs)
+            if not fb_m:
+                continue
+            token = html.unescape(fb_m.group(2) or "").strip()
+            if decode_inline_action_payload(token):
+                return token
+    return None
+
+
 def handle_project_action_button(
     message: str,
     *,
@@ -1208,7 +1345,6 @@ def handle_project_action_button(
     if not parsed:
         return None
     kind, token = parsed
-    # Prefer inline payload when present (restart-safe). Pending ids are optional.
     if token.lower().startswith("inline."):
         if kind == "cancel":
             return {
@@ -1218,14 +1354,22 @@ def handle_project_action_button(
             }
         return execute_inline_action(token, session_id=session_id)
 
+    rec = get_pending_action(token)
+    if rec:
+        if kind == "cancel":
+            return cancel_pending_action(token, session_id=session_id)
+        return execute_pending_action(token, session_id=session_id)
+
+    hist = load_confirm_inline_from_history(session_id, token)
+    if hist:
+        if kind == "cancel":
+            return {
+                "success": True,
+                "response": "Cancelled — action was not run.",
+                "type": "project_action",
+            }
+        return execute_inline_action(hist, session_id=session_id)
+
     if kind == "cancel":
         return cancel_pending_action(token, session_id=session_id)
-
-    # Pending id — if expired, caller may also send inline fallback as a second
-    # token; parse_project_action_button only keeps one token, so try pending
-    # then surface a clear error.
-    result = execute_pending_action(token, session_id=session_id)
-    if result.get("success"):
-        return result
-    # Soft-fail message already explains expiry; keep it.
-    return result
+    return execute_pending_action(token, session_id=session_id)

@@ -487,6 +487,10 @@ def test_flask_workers_routes(worker_db, monkeypatch):
     monkeypatch.setattr(
         "api.device_workers.auth.worker_token", lambda: ""
     )
+    monkeypatch.setattr(
+        "api.device_workers.routes.require_ui_operator",
+        lambda: ({"id": 1, "username": "test-owner", "auth_provider": "local"}, None),
+    )
 
     from api.device_workers.routes import workers_bp
     from flask import Flask
@@ -556,6 +560,10 @@ def test_cancel_and_plan_and_blender_validate(worker_db, monkeypatch):
     )
     monkeypatch.setattr(
         "api.device_workers.platform.worker_id", lambda: "kcstower"
+    )
+    monkeypatch.setattr(
+        "api.device_workers.routes.require_ui_operator",
+        lambda: ({"id": 1, "username": "test-owner", "auth_provider": "local"}, None),
     )
 
     from api.device_workers.routes import workers_bp

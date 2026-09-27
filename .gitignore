@@ -89,6 +89,7 @@ src/data/workspace/
 *.db-journal
 *.db-wal
 *.db-shm
+src/data/db/action_hmac_secret
 
 # Local agent memory / chroma indexes
 src/data/agent_memory/

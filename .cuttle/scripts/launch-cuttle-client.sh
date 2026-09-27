@@ -5,7 +5,7 @@ ELECTRON="$ROOT/electron/node_modules/electron/dist/electron"
 if [[ ! -x "$ELECTRON" ]]; then
   ELECTRON="$ROOT/electron/dist/linux-unpacked/cuttle-desktop"
 fi
-export ELECTRON_DISABLE_SANDBOX=1
 export PATH="$HOME/.local/opt/node/bin:$ROOT/.venv/bin:${PATH:-}"
+source "$ROOT/.cuttle/scripts/electron-sandbox.sh"
 cd "$ROOT/electron"
-exec "$ELECTRON" --no-sandbox --mode=client --class=CuttleClient "$ROOT/electron" "$@"
+exec "$ELECTRON" "${SANDBOX_ARGS[@]}" --mode=client --class=CuttleClient "$ROOT/electron" "$@"

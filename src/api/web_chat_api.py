@@ -350,6 +350,18 @@ session_counter = 0
 running_pipelines = {}  # {pipeline_name: {process_id, start_time, pipeline_data}}
 
 
+def _legacy_process_control_gone_response():
+    """HTTP 410 for unauthenticated start/stop/pkill process-control routes."""
+    return jsonify({
+        'success': False,
+        'error': 'legacy_process_control_removed',
+        'response': (
+            'Starting or stopping Flask/Discord via these endpoints was removed. '
+            'Use the daemon-owned Flask restart card or /restart.'
+        ),
+    }), 410
+
+
 def _graph_pipelines_gone_response():
     """HTTP 410 for graph start/stop/run-now and related Jobs/Node Editor calls."""
     return jsonify({
@@ -7186,53 +7198,6 @@ def _handle_external_trigger(trigger_type, data, channel_name):
 def schedule_trigger_endpoint():
     """Schedule graphs were removed; daemon cron is a no-op."""
     return _graph_pipelines_gone_response()
-    try:
-        data = request.get_json() or {}
-        message = data.get('message', '[Scheduled] Cuttle self-reflection triggered.')
-        channel_id = data.get('channel_id', '')
-        pipeline_name = data.get('pipeline_name', '')
-        trigger_node_id = data.get('trigger_node_id')
-
-        if not PIPELINE_AVAILABLE:
-            return jsonify({'success': False, 'error': 'Pipeline system not available'}), 503
-
-        executor = get_pipeline_executor()
-        executor.set_running_pipelines(running_pipelines)
-
-        session_data = {
-            'session_id': f'schedule_{int(time.time())}',
-            'session_kind': 'schedule',
-            'routing_key': 'schedule',
-            'channel_id': channel_id,
-        }
-        user_context = {'id': 'cuttle_system', 'is_owner': True, 'username': 'Cuttle'}  # schedule trigger: daemon, not a guest session
-
-        trigger_payload = {
-            'message': message,
-            'session': session_data,
-            'user_context': user_context,
-        }
-        if trigger_node_id is not None:
-            trigger_payload['trigger_node_id'] = trigger_node_id
-
-        result = executor.execute_trigger(
-            trigger_type='trigger-schedule',
-            trigger_data=trigger_payload,
-            pipeline_name=pipeline_name if pipeline_name else None,
-        )
-
-        if result.get('success'):
-            return jsonify({'success': True, 'response': result.get('response', '')})
-        return jsonify({
-            'success': False,
-            'error': result.get('error', 'No running pipeline with schedule trigger'),
-            'fallback': result.get('fallback_to_legacy', False)
-        }), 200
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({'success': False, 'error': str(e)}), 500
-
 
 @app.route('/api/pipeline-schedule-triggers', methods=['GET'])
 def get_schedule_triggers():
@@ -7765,6 +7730,11 @@ def api_settings_lan_access():
         discovery = dict(sm.get_setting('discovery') or {})
 
         if request.method == 'POST':
+            from api.http_authz import require_owner
+
+            _user, err = require_owner()
+            if err:
+                return err
             data = request.get_json(silent=True) or {}
             if 'lan_access_enabled' not in data:
                 return jsonify({'success': False, 'error': 'lan_access_enabled required'}), 400
@@ -8045,6 +8015,8 @@ def api_action_form_followup_message():
         nid = numeric_chat_session_id(session_id)
         if not nid:
             return jsonify({'success': False, 'error': 'missing session'}), 400
+        if not get_auth_db().get_chat_session(nid, auth_user['id']):
+            return jsonify({'success': False, 'error': 'Session not found or access denied'}), 404
 
         project_path = (data.get('project_path') or '').strip() or resolve_session_project_path(session_id) or ''
         blob = json.dumps(spec, ensure_ascii=False)
@@ -8092,15 +8064,12 @@ def api_action_form_dismiss():
             # All ids were flask-restart controllers (or empty) — nothing to lock.
             return jsonify({'success': True, 'locked': [], 'toast': toast, 'skipped': True})
 
-        auth_user = None
-        try:
-            st = get_request_session_token()
-            if st:
-                auth_user = get_auth_db().verify_auth_session(st)
-        except Exception:
-            auth_user = None
-        if not auth_user:
-            return jsonify({'success': False, 'error': 'Not authenticated.'}), 401
+        from api.http_authz import require_chat_session_access
+
+        _user, nid, err = require_chat_session_access(session_id)
+        if err:
+            return err
+        session_id = f'db_session_{nid}'
 
         from api.action_forms import mark_action_form_consumed_in_history
 
@@ -8127,6 +8096,7 @@ def api_action_form_run():
         token = (data.get('token') or data.get('form_token') or data.get('fallback') or '').strip()
         selection = data.get('selection') if isinstance(data.get('selection'), dict) else {}
         form_id_hint = (data.get('form_id') or '').strip() or None
+        spec_override = data.get('spec') if isinstance(data.get('spec'), dict) else None
         session_id = data.get('session_id') or data.get('session')
         if session_id is not None:
             session_id = str(session_id).strip()
@@ -8134,18 +8104,22 @@ def api_action_form_run():
                 session_id = f'db_session_{session_id}'
             elif not session_id.startswith('db_session_') and session_id:
                 pass
-        if not token:
+        if not token and not spec_override and not form_id_hint:
             return jsonify({'success': False, 'toast': 'Missing form token.', 'type': 'action_form'}), 400
 
-        auth_user = None
-        try:
-            st = get_request_session_token()
-            if st:
-                auth_user = get_auth_db().verify_auth_session(st)
-                if not auth_user:
-                    return jsonify({'success': False, 'toast': 'Not authenticated.', 'type': 'action_form'}), 401
-        except Exception:
-            pass
+        from api.http_authz import require_chat_session_access, require_authenticated
+
+        if session_id:
+            auth_user, _nid, err = require_chat_session_access(session_id)
+            if err:
+                toast_err = err[0].get_json() if hasattr(err[0], 'get_json') else None
+                msg = (toast_err or {}).get('error') or 'Not authenticated.'
+                code = err[1]
+                return jsonify({'success': False, 'toast': msg, 'type': 'action_form'}), code
+        else:
+            auth_user, err = require_authenticated()
+            if err:
+                return jsonify({'success': False, 'toast': 'Not authenticated.', 'type': 'action_form'}), 401
 
         from api.action_forms import (
             execute_action_form_submission,
@@ -8162,6 +8136,8 @@ def api_action_form_run():
             session_id=session_id,
             project_path_override=project_override or None,
             form_id_hint=form_id_hint,
+            owner_user_id=int(auth_user['id']),
+            spec_override=spec_override,
         )
         form_id = result.get('form_id') or form_id_hint
         result['form_id'] = form_id
@@ -8696,8 +8672,13 @@ def get_sandbox_settings():
 
 @app.route('/api/settings/sandbox', methods=['POST'])
 def update_sandbox_settings():
-    """Update sandbox config. Body: { enabled?, allowed_tools?, denied_tools?, denied_tool_prefixes?, allowed_pipelines?, restrict_for_session_kinds? }."""
+    """Update sandbox config. Owner only."""
     try:
+        from api.http_authz import require_owner
+
+        _user, err = require_owner()
+        if err:
+            return err
         data = request.get_json() or {}
         settings = get_settings_manager()
         settings.set_sandbox_config(
@@ -10239,410 +10220,50 @@ def clear_session(session_id):
 
 @app.route('/api/start-launcher', methods=['POST'])
 def start_launcher():
-    """Start the unified launcher"""
-    try:
-        import subprocess
-        import sys
-        from pathlib import Path
-        
-        project_root = Path(__file__).parent
-        
-        # Start launcher in background
-        process = subprocess.Popen([
-            sys.executable, "launcher.py"
-        ], cwd=project_root)
-        
-        return jsonify({
-            'success': True,
-            'message': 'Launcher started',
-            'pid': process.pid
-        })
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+    return _legacy_process_control_gone_response()
 
 @app.route('/api/start-webapi', methods=['POST'])
 def start_webapi():
-    """Start the web API server"""
-    try:
-        import subprocess
-        import sys
-        from pathlib import Path
-        
-        project_root = Path(__file__).parent
-        
-        # Start web API in background
-        process = subprocess.Popen([
-            sys.executable, "web_chat_api.py"
-        ], cwd=project_root)
-        
-        return jsonify({
-            'success': True,
-            'message': 'Web API started',
-            'pid': process.pid
-        })
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+    return _legacy_process_control_gone_response()
 
 @app.route('/api/start-discord', methods=['POST'])
 def start_discord():
-    """Start the Discord bot"""
-    try:
-        import subprocess
-        import sys
-        from pathlib import Path
-        
-        project_root = Path(__file__).parent
-        
-        # Start Discord bot in background
-        process = subprocess.Popen([
-            sys.executable, "bot_deprecated.py"
-        ], cwd=project_root)
-        
-        return jsonify({
-            'success': True,
-            'message': 'Discord bot started',
-            'pid': process.pid
-        })
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+    return _legacy_process_control_gone_response()
 
 @app.route('/api/stop-launcher', methods=['POST'])
 def stop_launcher():
-    """Stop the unified launcher"""
-    try:
-        import subprocess
-        import platform
-        
-        if platform.system() == "Windows":
-            subprocess.run(["taskkill", "/f", "/im", "python.exe", "/fi", "WINDOWTITLE eq launcher.py"], 
-                         capture_output=True)
-        else:
-            subprocess.run(["pkill", "-f", "launcher.py"], capture_output=True)
-        
-        return jsonify({
-            'success': True,
-            'message': 'Launcher stopped'
-        })
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+    return _legacy_process_control_gone_response()
 
 @app.route('/api/stop-webapi', methods=['POST'])
 def stop_webapi():
-    """Stop the web API server"""
-    try:
-        import subprocess
-        import platform
-        
-        if platform.system() == "Windows":
-            subprocess.run(["taskkill", "/f", "/im", "python.exe", "/fi", "WINDOWTITLE eq web_chat_api.py"], 
-                         capture_output=True)
-        else:
-            subprocess.run(["pkill", "-f", "web_chat_api.py"], capture_output=True)
-        
-        return jsonify({
-            'success': True,
-            'message': 'Web API stopped'
-        })
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+    return _legacy_process_control_gone_response()
 
 @app.route('/api/stop-discord', methods=['POST'])
 def stop_discord():
-    """Stop the Discord bot"""
-    try:
-        import subprocess
-        import platform
-        
-        if platform.system() == "Windows":
-            subprocess.run(["taskkill", "/f", "/im", "python.exe", "/fi", "WINDOWTITLE eq bot_deprecated.py"], 
-                         capture_output=True)
-        else:
-            subprocess.run(["pkill", "-f", "bot_deprecated.py"], capture_output=True)
-        
-        return jsonify({
-            'success': True,
-            'message': 'Discord bot stopped'
-        })
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+    return _legacy_process_control_gone_response()
 
 # ==================== NODE EDITOR API ENDPOINTS ====================
 
 @app.route('/api/save-pipeline', methods=['POST'])
 def save_pipeline():
     return _graph_pipelines_gone_response()
-    try:
-        data = request.get_json()
-        
-        if not data or 'name' not in data:
-            return jsonify({
-                'success': False,
-                'error': 'Pipeline name is required'
-            }), 400
-        
-        # Create pipelines directory if it doesn't exist
-        pipelines_dir = project_root / 'pipelines'
-        pipelines_dir.mkdir(exist_ok=True)
-        
-        # Generate filename from pipeline name
-        filename = re.sub(r'[^\w\s-]', '', data['name']).strip().replace(' ', '_')
-        filepath = pipelines_dir / f'{filename}.json'
-        
-        # Add ID if not present
-        if 'id' not in data:
-            data['id'] = filename
-        
-        # Save pipeline
-        with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=2)
-        
-        return jsonify({
-            'success': True,
-            'message': f'Pipeline saved: {filename}',
-            'id': filename,
-            'path': str(filepath)
-        })
-        
-    except Exception as e:
-        print(f"Error saving pipeline: {e}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
 
 @app.route('/api/list-pipelines', methods=['GET'])
 def list_pipelines():
     """Graphs no longer ship."""
     return jsonify({'success': True, 'pipelines': []})
-    try:
-        pipelines_dir = project_root / 'pipelines'
-        
-        if not pipelines_dir.exists():
-            return jsonify({
-                'success': True,
-                'pipelines': []
-            })
-        
-        pipelines = []
-        for filepath in pipelines_dir.glob('*.json'):
-            try:
-                with open(filepath, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    pipelines.append({
-                        'id': data.get('id', filepath.stem),
-                        'name': data.get('name', filepath.stem),
-                        'description': data.get('description', ''),
-                        'timestamp': data.get('timestamp', ''),
-                        'nodeCount': len(data.get('nodes', [])),
-                        'connectionCount': len(data.get('connections', []))
-                    })
-            except Exception as e:
-                print(f"Error reading pipeline {filepath}: {e}")
-                continue
-        
-        # Sort by timestamp descending
-        pipelines.sort(key=lambda p: p.get('timestamp', ''), reverse=True)
-        
-        # Add factory_default flag and nodes data for persistence detection
-        try:
-            from managers.settings_manager import get_settings_manager
-            settings_mgr = get_settings_manager()
-            
-            # Get the current default pipeline
-            default_pipeline_id = settings_mgr.get_default_pipeline()
-            
-            for pipeline in pipelines:
-                # Mark factory default
-                pipeline['is_factory_default'] = settings_mgr.is_factory_default(pipeline['id'])
-                
-                # Mark if this is the default pipeline
-                pipeline['is_default'] = (pipeline['id'] == default_pipeline_id)
-                
-                # Load full nodes data for persistence detection
-                try:
-                    pipeline_path = settings_mgr.get_pipeline_path(pipeline['id'])
-                    if pipeline_path:
-                        with open(pipeline_path, 'r', encoding='utf-8') as f:
-                            data = json.load(f)
-                            pipeline['nodes'] = data.get('nodes', [])
-                except:
-                    pass
-        except:
-            pass  # If settings manager fails, just return pipelines without extra data
-        
-        return jsonify({
-            'success': True,
-            'pipelines': pipelines
-        })
-        
-    except Exception as e:
-        print(f"Error listing pipelines: {e}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
 
 @app.route('/api/load-pipeline/<pipeline_id>', methods=['GET'])
 def load_pipeline(pipeline_id):
     return _graph_pipelines_gone_response()
-    try:
-        pipelines_dir = project_root / 'pipelines'
-        filepath = pipelines_dir / f'{pipeline_id}.json'
-        
-        if not filepath.exists():
-            return jsonify({
-                'success': False,
-                'error': 'Pipeline not found'
-            }), 404
-        
-        with open(filepath, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        
-        return jsonify({
-            'success': True,
-            'pipeline': data
-        })
-        
-    except Exception as e:
-        print(f"Error loading pipeline: {e}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
 
 @app.route('/api/delete-pipeline/<pipeline_id>', methods=['DELETE'])
 def delete_pipeline(pipeline_id):
     return _graph_pipelines_gone_response()
-    try:
-        pipelines_dir = project_root / 'pipelines'
-        filepath = pipelines_dir / f'{pipeline_id}.json'
-        
-        if not filepath.exists():
-            return jsonify({
-                'success': False,
-                'error': 'Pipeline not found'
-            }), 404
-        
-        filepath.unlink()
-        
-        return jsonify({
-            'success': True,
-            'message': 'Pipeline deleted'
-        })
-        
-    except Exception as e:
-        print(f"Error deleting pipeline: {e}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
 
 @app.route('/api/pipeline-execution-start', methods=['POST'])
 def pipeline_execution_start():
     return _graph_pipelines_gone_response()
-    try:
-        data = request.get_json()
-        pipeline_name = data.get('pipelineName', 'Untitled Pipeline')
-        node_count = data.get('nodeCount', 0)
-        pipeline_config = data.get('pipelineConfig', {})
-        graph_structure = data.get('graphStructure', {})
-        
-        # Extract actual prompt from trigger/input nodes
-        actual_prompt = None
-        if graph_structure and graph_structure.get('nodes'):
-            nodes = graph_structure.get('nodes', [])
-            for node in nodes:
-                # Look for trigger or input nodes
-                node_type = node.get('type', '')
-                if 'trigger' in node_type or 'input' in node_type or 'text-input' in node_type:
-                    # Try to get text from config
-                    config = node.get('config', {})
-                    if 'text' in config:
-                        actual_prompt = config['text']
-                        break
-                    elif 'prompt' in config:
-                        actual_prompt = config['prompt']
-                        break
-        
-        # Create user-friendly input display
-        if actual_prompt:
-            user_input = f"{actual_prompt}\n\n[Pipeline: {pipeline_name}]"
-        else:
-            user_input = f"Node Editor Pipeline: {pipeline_name}"
-        
-        # Create user context for node editor
-        user_context = {
-            'web_ui': True,
-            'node_editor': True,
-            'pipeline_name': pipeline_name,
-            'node_count': node_count,
-            'pipeline_config': pipeline_config
-        }
-        
-        # Start query tracking with pipeline configuration
-        query_id = start_query_tracking(user_input, user_context)
-        print(f"[QUERY] Started tracking pipeline execution {query_id}: {pipeline_name}")
-        try:
-            from api.active_executions import register_execution
-            register_execution(query_id, pipeline_name)
-        except Exception:
-            pass
-        
-        # Store pipeline config and graph structure in the query tracker
-        try:
-            from api.query_tracker import get_query_tracker
-            tracker = get_query_tracker(query_id)
-            if tracker.query_id == query_id and tracker.execution_data:
-                # Override agent_config with pipeline config for node editor
-                tracker.execution_data["agent_config"] = {
-                    "pipeline_name": pipeline_name,
-                    "node_count": node_count,
-                    "llm_nodes": pipeline_config.get('llmNodeCount', 0),
-                    "tool_nodes": pipeline_config.get('toolNodeCount', 0),
-                    "models_used": pipeline_config.get('modelsUsed', []),
-                    "pipeline_description": pipeline_config.get('pipelineDescription', ''),
-                    "execution_mode": "Node Editor Pipeline"
-                }
-                
-                # Set graph structure if provided
-                if graph_structure and graph_structure.get('nodes'):
-                    tracker.set_graph_structure(
-                        nodes=graph_structure.get('nodes', []),
-                        connections=graph_structure.get('connections', [])
-                    )
-                    print(f"[QUERY] Set graph structure: {len(graph_structure.get('nodes', []))} nodes, {len(graph_structure.get('connections', []))} connections")
-        except Exception as config_error:
-            print(f"[QUERY] Warning: Could not set pipeline config: {config_error}")
-        
-        return jsonify({
-            'success': True,
-            'query_id': query_id
-        })
-        
-    except Exception as e:
-        print(f"Error starting pipeline tracking: {e}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
 
 @app.route('/api/pipeline-execution-finish', methods=['POST'])
 def pipeline_execution_finish():
@@ -10787,276 +10408,18 @@ def pipeline_check_running():
 @app.route('/api/pipeline-run-now', methods=['POST'])
 def pipeline_run_now():
     return _graph_pipelines_gone_response()
-    try:
-        data = request.get_json() or {}
-        pipeline_name = data.get('pipelineName', '').strip()
-        message = data.get('message', '[Run Now] Manual execution triggered.')
-
-        if not pipeline_name:
-            return jsonify({'success': False, 'error': 'Pipeline name is required'}), 400
-
-        if not PIPELINE_AVAILABLE:
-            return jsonify({'success': False, 'error': 'Pipeline system not available'}), 503
-
-        try:
-            from managers.settings_manager import get_settings_manager
-            settings_mgr = get_settings_manager()
-            pipeline_path = settings_mgr.get_pipeline_path(pipeline_name)
-            if not pipeline_path or not Path(pipeline_path).exists():
-                return jsonify({'success': False, 'error': f'Pipeline not found: {pipeline_name}'}), 404
-            with open(pipeline_path, 'r', encoding='utf-8') as f:
-                pipeline_data = json.load(f)
-        except Exception as e:
-            return jsonify({'success': False, 'error': str(e)}), 500
-
-        executor = get_pipeline_executor()
-        executor.set_running_pipelines(running_pipelines)
-        trigger_type = executor.pick_adhoc_trigger_type(pipeline_data)
-
-        if not trigger_type:
-            return jsonify({
-                'success': False,
-                'error': f'Pipeline "{pipeline_name}" has no executable trigger (add Schedule, Manual, Web Chat, or Discord)'
-            }), 400
-
-        # Use trigger's config message when Run Now didn't pass a custom message
-        # (schedule/manual triggers have meaningful prompts like "[Play Pipeline] Every 8h: ...")
-        if message == '[Run Now] Manual execution triggered.':
-            trigger_node = executor.find_trigger_node(pipeline_data, trigger_type, allow_disabled=True)
-            if trigger_node:
-                trigger_msg = trigger_node.get('config', {}).get('message', '').strip()
-                if trigger_msg:
-                    message = trigger_msg
-
-        web_sid = (data.get('webChatSessionId') or data.get('replySessionId') or '').strip()
-        adhoc_sid = web_sid if web_sid else f'adhoc_{int(time.time())}'
-        session_data = {
-            'session_id': adhoc_sid,
-            'session_kind': 'adhoc',
-            'routing_key': 'adhoc',
-        }
-        base_user = {'id': 'cuttle_user', 'is_owner': True, 'username': 'Cuttle'}  # node-editor Run Now: local operator
-        user_ctx = {
-            **base_user,
-            'pipeline_name': pipeline_name,
-            'node_editor': False,
-            'session_kind': session_data['session_kind'],
-            'routing_key': session_data['routing_key'],
-        }
-
-        import uuid as _uuid_mod
-
-        query_id = str(_uuid_mod.uuid4())[:8]
-        report_url = f'/query_log.html?id={query_id}'
-
-        trigger_payload = {
-            'message': message,
-            'session': session_data,
-            'user_context': user_ctx,
-        }
-
-        def _run_pipeline_async():
-            """Run query tracking + pipeline on this thread so the global tracker cannot be stolen before execute_trigger (fixes stuck 'live' reports)."""
-            try:
-                from api.query_tracker import start_query_tracking_with_id
-                from api.pipeline_trigger_executor import apply_pipeline_graph_to_query_tracker
-                from api.active_executions import register_execution, unregister_execution
-                from api.query_tracker import finish_query_tracking
-
-                start_query_tracking_with_id(query_id, message, user_ctx)
-                register_execution(query_id, pipeline_name)
-                apply_pipeline_graph_to_query_tracker(pipeline_data)
-                ex = get_pipeline_executor()
-                ex.set_running_pipelines(running_pipelines)
-                ex.execute_trigger(
-                    trigger_type=trigger_type,
-                    trigger_data=trigger_payload,
-                    pipeline_name=pipeline_name,
-                    adhoc=True,
-                    existing_query_id=query_id,
-                )
-            except Exception as run_err:
-                import traceback
-                traceback.print_exc()
-                try:
-                    from api.query_tracker import finish_query_tracking
-                    finish_query_tracking(success=False, error_message=str(run_err))
-                except Exception:
-                    pass
-            finally:
-                try:
-                    from api.active_executions import unregister_execution
-                    unregister_execution(query_id)
-                except Exception:
-                    pass
-
-        threading.Thread(
-            target=_run_pipeline_async,
-            daemon=True,
-            name=f'pipeline-run-{query_id}',
-        ).start()
-
-        return jsonify({
-            'success': True,
-            'pending': True,
-            'query_id': query_id,
-            'report_url': report_url,
-            'message': f'Pipeline "{pipeline_name}" started — running in background',
-        })
-
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({'success': False, 'error': str(e)}), 500
-
 
 @app.route('/api/pipeline-schedule-toggle', methods=['POST'])
 def pipeline_schedule_toggle():
     return _graph_pipelines_gone_response()
-    try:
-        data = request.get_json() or {}
-        pipeline_name = data.get('pipelineName', '').strip()
-        node_id = data.get('nodeId')
-        enabled = data.get('enabled')
-
-        if not pipeline_name or node_id is None:
-            return jsonify({'success': False, 'error': 'pipelineName and nodeId required'}), 400
-
-        try:
-            from managers.settings_manager import get_settings_manager
-            settings_mgr = get_settings_manager()
-            pipeline_path = settings_mgr.get_pipeline_path(pipeline_name)
-            if not pipeline_path or not Path(pipeline_path).exists():
-                return jsonify({'success': False, 'error': f'Pipeline not found: {pipeline_name}'}), 404
-
-            with open(pipeline_path, 'r', encoding='utf-8') as f:
-                pipeline_data = json.load(f)
-
-            nodes = pipeline_data.get('nodes', [])
-            found = False
-            for node in nodes:
-                if node.get('id') == node_id and node.get('type') == 'trigger-schedule':
-                    node.setdefault('config', {})['enabled'] = bool(enabled)
-                    found = True
-                    break
-
-            if not found:
-                return jsonify({'success': False, 'error': f'Schedule node {node_id} not found'}), 404
-
-            with open(pipeline_path, 'w', encoding='utf-8') as f:
-                json.dump(pipeline_data, f, indent=2)
-
-            return jsonify({
-                'success': True,
-                'enabled': bool(enabled),
-                'message': f'Schedule {"enabled" if enabled else "disabled"}',
-            })
-        except Exception as e:
-            return jsonify({'success': False, 'error': str(e)}), 500
-
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
 
 @app.route('/api/pipeline-stop', methods=['POST'])
 def pipeline_stop():
     return _graph_pipelines_gone_response()
-    try:
-        data = request.get_json()
-        pipeline_name = data.get('pipelineName')
-        
-        if not pipeline_name:
-            return jsonify({
-                'success': False,
-                'error': 'Pipeline name is required'
-            }), 400
-        
-        if pipeline_name not in running_pipelines:
-            return jsonify({
-                'success': False,
-                'error': 'Pipeline is not running'
-            }), 404
-        
-        # Get pipeline info before stopping
-        pipeline_info = running_pipelines[pipeline_name]
-        process_id = pipeline_info.get('process_id')
-        
-        # Stop the pipeline by killing its process
-        try:
-            import psutil
-            if process_id:
-                try:
-                    process = psutil.Process(process_id)
-                    # Kill the process and all its children
-                    children = process.children(recursive=True)
-                    for child in children:
-                        child.terminate()
-                    process.terminate()
-                    
-                    # Wait for process to terminate
-                    gone, alive = psutil.wait_procs([process] + children, timeout=3)
-                    # Force kill any survivors
-                    for p in alive:
-                        p.kill()
-                    
-                    print(f"Successfully stopped pipeline '{pipeline_name}' (PID: {process_id})")
-                except psutil.NoSuchProcess:
-                    print(f"Process {process_id} already terminated")
-                except Exception as e:
-                    print(f"Error stopping process {process_id}: {e}")
-        except ImportError:
-            print("Warning: psutil not available, cannot stop process")
-        
-        # Remove from tracking
-        del running_pipelines[pipeline_name]
-        
-        return jsonify({
-            'success': True,
-            'message': f'Pipeline "{pipeline_name}" stopped successfully'
-        })
-        
-    except Exception as e:
-        print(f"Error stopping pipeline: {e}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
 
 @app.route('/api/pipeline-register-running', methods=['POST'])
 def pipeline_register_running():
     return _graph_pipelines_gone_response()
-    try:
-        data = request.get_json()
-        pipeline_name = data.get('pipelineName')
-        process_id = data.get('processId')
-        
-        if not pipeline_name:
-            return jsonify({
-                'success': False,
-                'error': 'Pipeline name is required'
-            }), 400
-        
-        running_pipelines[pipeline_name] = {
-            'process_id': process_id,
-            'start_time': datetime.now().isoformat(),
-            'pipeline_data': data.get('pipelineData', {}),
-            'status': 'listening',
-            'last_activity': datetime.now().isoformat()
-        }
-        
-        print(f"Registered pipeline '{pipeline_name}' as running (PID: {process_id})")
-        
-        return jsonify({
-            'success': True,
-            'message': f'Pipeline "{pipeline_name}" registered as running'
-        })
-        
-    except Exception as e:
-        print(f"Error registering running pipeline: {e}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
 
 @app.route('/api/pipeline-job-status', methods=['POST'])
 def get_pipeline_job_status():
@@ -11129,101 +10492,6 @@ def pipeline_reload():
 @app.route('/api/pipeline-start', methods=['POST'])
 def pipeline_start():
     return _graph_pipelines_gone_response()
-    try:
-        data = request.get_json()
-        pipeline_name = data.get('pipelineName')
-        
-        if not pipeline_name:
-            return jsonify({
-                'success': False,
-                'error': 'Pipeline name is required'
-            }), 400
-        
-        # Check if pipeline file exists
-        try:
-            from managers.settings_manager import get_settings_manager
-            settings_mgr = get_settings_manager()
-            pipeline_path = settings_mgr.get_pipeline_path(pipeline_name)
-            
-            if not pipeline_path or not Path(pipeline_path).exists():
-                return jsonify({
-                    'success': False,
-                    'error': f'Pipeline file not found: {pipeline_name}'
-                }), 404
-            
-            # Load pipeline data
-            with open(pipeline_path, 'r', encoding='utf-8') as f:
-                pipeline_data = json.load(f)
-            
-            # Check if pipeline is persistent (has listener triggers)
-            nodes = pipeline_data.get('nodes', [])
-            persistent_triggers = [
-                node for node in nodes 
-                if node.get('type', '').startswith('trigger-') and 
-                node.get('type') not in ['trigger-manual']
-            ]
-            
-            is_persistent = len(persistent_triggers) > 0
-            
-            if is_persistent:
-                # Check if already running
-                if pipeline_name in running_pipelines:
-                    return jsonify({
-                        'success': True,
-                        'already_running': True,
-                        'message': f'Pipeline "{pipeline_name}" is already running',
-                        'is_persistent': True,
-                        'triggers': [{'name': n.get('name'), 'type': n.get('type')} for n in persistent_triggers]
-                    })
-                
-                # Register as running for persistent pipelines
-                running_pipelines[pipeline_name] = {
-                    'process_id': os.getpid(),  # Use the web server's process ID
-                    'start_time': datetime.now().isoformat(),
-                    'pipeline_data': {
-                        'triggers': [{'name': n.get('name'), 'type': n.get('type')} for n in persistent_triggers],
-                        'nodes_count': len(nodes),
-                        'connections_count': len(pipeline_data.get('connections', []))
-                    },
-                    'status': 'listening',
-                    'last_activity': datetime.now().isoformat()
-                }
-                
-                print(f"✅ Registered persistent pipeline '{pipeline_name}' as running")
-                print(f"📡 Persistent triggers: {', '.join([n.get('name', n.get('type')) for n in persistent_triggers])}")
-                
-                return jsonify({
-                    'success': True,
-                    'message': f'Pipeline "{pipeline_name}" started successfully',
-                    'is_persistent': True,
-                    'triggers': [{'name': n.get('name'), 'type': n.get('type')} for n in persistent_triggers],
-                    'registered_as_running': True
-                })
-            else:
-                # One-shot pipeline - just indicate it's ready but not auto-executed
-                return jsonify({
-                    'success': True,
-                    'message': f'Pipeline "{pipeline_name}" loaded (one-shot mode)',
-                    'is_persistent': False,
-                    'requires_manual_execution': True,
-                    'nodes_count': len(nodes)
-                })
-                
-        except ImportError as e:
-            print(f"Error importing settings manager: {e}")
-            return jsonify({
-                'success': False,
-                'error': 'Settings manager not available'
-            }), 503
-            
-    except Exception as e:
-        print(f"Error starting pipeline: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
 
 @app.route('/api/record-node-execution', methods=['POST'])
 def record_node_execution():

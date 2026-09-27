@@ -42,8 +42,8 @@ def lan_access_enabled() -> bool:
         if isinstance(discovery, dict) and "lan_access_enabled" in discovery:
             return bool(discovery.get("lan_access_enabled"))
     except Exception:
-        pass
-    return True  # home-lab default: Client already reaches host over LAN
+        return False
+    return False
 
 
 def authorize_worker_request(request: Request) -> Tuple[bool, Optional[str]]:

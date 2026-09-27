@@ -999,8 +999,8 @@
             const statusEl = document.getElementById('devicesStatus');
             try {
                 const [wr, jr] = await Promise.all([
-                    fetch('/api/workers', { cache: 'no-store' }),
-                    fetch('/api/workers/jobs?limit=100', { cache: 'no-store' }),
+                    fetch('/api/workers', { cache: 'no-store', credentials: 'include' }),
+                    fetch('/api/workers/jobs?limit=100', { cache: 'no-store', credentials: 'include' }),
                 ]);
                 const wdata = wr.ok ? await wr.json() : { workers: [], enabled: false };
                 const jdata = jr.ok ? await jr.json() : { jobs: [] };

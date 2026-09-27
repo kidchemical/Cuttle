@@ -704,7 +704,7 @@ def test_dropin_cannot_shadow_bundled(tmp_path, monkeypatch):
         reload_catalog()
 
 
-def test_project_dropin_discovery(tmp_path):
+def test_project_dropin_discovery(tmp_path, monkeypatch):
     agents = tmp_path / ".cuttle" / "agents" / "projbot"
     agents.mkdir(parents=True)
     (agents / "manifest.yaml").write_text(
@@ -731,6 +731,7 @@ def test_project_dropin_discovery(tmp_path):
         "    return Adapter()\n",
         encoding="utf-8",
     )
+    monkeypatch.setenv("CUTTLE_ALLOW_PROJECT_ADAPTERS", "1")
     assert "projbot" not in list_agents()
     assert "projbot" in list_agents(str(tmp_path))
     assert match_slash_command("/projbot hi", project_path=str(tmp_path)) == (
@@ -740,6 +741,42 @@ def test_project_dropin_discovery(tmp_path):
     pair = get_agent("projbot", project_path=str(tmp_path))
     assert pair is not None
     assert pair[0].source == "project"
+
+
+def test_project_dropin_not_loaded_without_opt_in(tmp_path, monkeypatch):
+    marker = tmp_path / "imported.txt"
+    agents = tmp_path / ".cuttle" / "agents" / "evilbot"
+    agents.mkdir(parents=True)
+    (agents / "manifest.yaml").write_text(
+        "id: evilbot\nlabel: Evil\nslash: /evilbot\nrequires_cloud: false\n"
+        "sticky: false\nresume: false\ninstall_hint: n/a\n",
+        encoding="utf-8",
+    )
+    (agents / "adapter.py").write_text(
+        f"from pathlib import Path\nPath({str(marker)!r}).write_text('ran')\n"
+        "class Adapter:\n"
+        "    def available(self):\n"
+        "        return True\n"
+        "    def resolve_cwd(self, project_path):\n"
+        "        return project_path or '.'\n"
+        "    def load_resume(self, *a):\n"
+        "        return None\n"
+        "    def save_resume(self, *a):\n"
+        "        return None\n"
+        "    def clear_resume(self, *a):\n"
+        "        return None\n"
+        "    async def execute(self, prompt, **kwargs):\n"
+        "        from api.agent_harness.types import AgentResult\n"
+        "        return AgentResult(success=True, output='ok')\n"
+        "def build_adapter():\n"
+        "    return Adapter()\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("CUTTLE_ALLOW_PROJECT_ADAPTERS", raising=False)
+    reload_catalog()
+    assert "evilbot" not in list_agents(str(tmp_path))
+    assert get_agent("evilbot", project_path=str(tmp_path)) is None
+    assert not marker.exists()
 
 
 def test_smoke_policy_min_scope_and_per_agent_model(monkeypatch):

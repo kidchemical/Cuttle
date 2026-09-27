@@ -130,6 +130,15 @@ Install once with `cd electron && npm install`, then:
 | Windows | `start_electron.bat` | Installed Cuttle Desktop (`build_electron.bat`), then pick the Host on the first-run connect page or pass `--host <pc-ip>` |
 | Linux | `.cuttle/scripts/launch-cuttle-host.sh` | `.cuttle/scripts/launch-cuttle-client.sh` |
 
+On Ubuntu 24.04+ (AppArmor restricts unprivileged user namespaces), Electron's Chromium sandbox needs a setuid-root helper. The Linux launchers refuse to start without it. Run this once after each `npm install`:
+
+```bash
+sudo chown root:root electron/node_modules/electron/dist/chrome-sandbox
+sudo chmod 4755 electron/node_modules/electron/dist/chrome-sandbox
+```
+
+`CUTTLE_ELECTRON_NO_SANDBOX=1` launches without the sandbox (development only; logs a warning).
+
 Closing the Electron UI leaves the daemon and in-flight agent turns running; only tray **Exit** stops a daemon the Host spawned. Details: [`electron/README.md`](electron/README.md).
 
 ### Phone

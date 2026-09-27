@@ -48,7 +48,6 @@ if [[ -f "$pkg" ]]; then
   fi
 fi
 export CUTTLE_HOSTED_BY_DAEMON=1
-export ELECTRON_DISABLE_SANDBOX=1
 
 LAUNCH="$ROOT/.cuttle/scripts/launch-cuttle-host.sh"
 if [[ -x "$LAUNCH" ]]; then

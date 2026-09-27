@@ -416,16 +416,18 @@ def get_action_form(form_id: str) -> Optional[Dict[str, Any]]:
 
 
 def encode_form_fallback(spec: Dict[str, Any]) -> str:
-    """Build an ``inline.…`` token from a spec (API/tests / client rebuild).
+    """Build a server-signed ``inline.…`` token from a spec (API/tests).
 
     Not written into stored chat HTML — pending tags keep a short ``id`` plus
-    the JSON body; the client rebuilds this token from ``data-spec`` when the
-    in-memory id is gone after a Flask restart.
+    the JSON body. After Flask restart the server reloads that body from
+    persisted assistant history; the client must not mint unsigned tokens.
     """
+    sid = spec.get("session_id") or spec.get("session")
     return encode_inline_action_payload(
         action_name="__action_form__",
         project_path=str(spec.get("project_path") or ""),
         params={"spec": spec},
+        session_id=str(sid) if sid else None,
     )
 
 
@@ -601,10 +603,10 @@ def rewrite_action_forms(
             spec=spec,
             form_id=shared_id,
         )
+        spec["id"] = form_id
         count += 1
         # Restart-safe without a huge fallback= attribute: body JSON is the
-        # durable copy; client mirrors it into data-spec and rebuilds an
-        # inline token only when the in-memory id is gone after Flask restart.
+        # durable copy persisted in chat history (not a client-trusted spec).
         payload = json.dumps(spec, ensure_ascii=False)
         out_parts.append(
             f'<cuttle_action_form_pending id="{form_id}">\n'
@@ -617,6 +619,57 @@ def rewrite_action_forms(
         return text, 0
     out_parts.append(text[last:])
     return "".join(out_parts), count
+
+
+_PENDING_OPEN_RE = re.compile(
+    r"<cuttle_action_form_pending\b([^>]*)>\s*(\{)",
+    re.IGNORECASE,
+)
+
+
+def load_action_form_spec_from_history(
+    session_id: Optional[str],
+    form_id: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    """Canonical spec for ``form_id`` from this chat's persisted assistant HTML.
+
+    Matches the pending tag ``id`` attribute, not a coincidental substring in
+    another card's JSON. Client ``data-spec`` is never executed.
+    """
+    from api.cuttle_ui_capabilities import numeric_chat_session_id
+
+    nid = numeric_chat_session_id(session_id)
+    fid = str(form_id or "").strip()
+    if not nid or not fid:
+        return None
+    try:
+        from api.auth_db import get_auth_db
+
+        msgs = get_auth_db().find_messages_containing(
+            int(nid), fid, role="assistant", limit=20
+        )
+    except Exception:
+        return None
+    sid_canon = f"db_session_{nid}"
+    for msg in msgs or []:
+        content = str(msg.get("content") or "")
+        for m in _PENDING_OPEN_RE.finditer(content):
+            attrs = m.group(1) or ""
+            id_m = re.search(r'\bid=(["\'])([^"\']+)\1', attrs, re.I)
+            if not id_m or id_m.group(2) != fid:
+                continue
+            obj, _ = _decode_leading_json_object(content, m.start(2))
+            if not isinstance(obj, dict):
+                continue
+            spec = normalize_action_form_spec(
+                obj, project_path=str(obj.get("project_path") or "")
+            )
+            if not spec:
+                continue
+            spec["id"] = fid
+            spec["session_id"] = sid_canon
+            return spec
+    return None
 
 
 def _run_one(
@@ -632,6 +685,7 @@ def _run_one(
         action_name=action_name,
         project_path=project_path,
         params=params or {},
+        session_id=session_id,
     )
     return execute_inline_action(token, session_id=session_id)
 
@@ -1214,24 +1268,35 @@ def execute_action_form_submission(
     session_id: Optional[str] = None,
     project_path_override: Optional[str] = None,
     form_id_hint: Optional[str] = None,
+    owner_user_id: Optional[int] = None,
+    spec_override: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
-    Run a form submission. ``form_token`` is a pending form id or ``inline.…`` fallback.
+    Run a form submission. ``form_token`` is a pending form id or signed
+    ``inline.…`` token. After Flask restart the in-memory id is gone; recover
+    the canonical spec from persisted assistant history for this chat.
+    ``spec_override`` is a locator only (form id) — never executed.
     """
     token = (form_token or "").strip()
-    # Allow "pendingId inline.…" (client may send both); prefer inline.
+    # Allow "pendingId inline.…" — prefer HMAC-valid inline, else the pending id.
     parts = token.split()
     if len(parts) >= 2:
         inline = next((p for p in parts if p.lower().startswith("inline.")), None)
-        token = inline or parts[0]
+        pending = next(
+            (p for p in parts if not p.lower().startswith("inline.")),
+            parts[0],
+        )
+        token = inline if (inline and decode_form_fallback(inline)) else pending
     spec: Optional[Dict[str, Any]] = None
     form_id = None
     owner_session: str = ""
+    recovered_from_history = False
 
     if token.lower().startswith("inline."):
         spec = decode_form_fallback(token)
-    else:
-        form_id = token
+        if spec:
+            form_id = str(spec.get("id") or "").strip() or None
+    elif token:
         rec = get_action_form(token)
         if rec:
             owner_session = str(rec.get("session_id") or "")
@@ -1239,7 +1304,24 @@ def execute_action_form_submission(
                 rec.get("spec"),
                 project_path=str(rec.get("project_path") or ""),
             )
-            form_id = str(rec.get("id") or form_id)
+            form_id = str(rec.get("id") or token)
+
+    locator = (
+        (str(form_id_hint).strip() if form_id_hint else "")
+        or form_id
+        or (
+            str(spec_override.get("id") or "").strip()
+            if isinstance(spec_override, dict)
+            else ""
+        )
+        or (token if token and not token.lower().startswith("inline.") else "")
+    )
+    if spec is None and locator:
+        spec = load_action_form_spec_from_history(session_id, locator)
+        if spec:
+            form_id = locator
+            owner_session = str(spec.get("session_id") or "")
+            recovered_from_history = True
 
     if not spec:
         return {
@@ -1255,16 +1337,30 @@ def execute_action_form_submission(
     # restart ack — and the user — into an unrelated chat.
     owner_session = owner_session or str(spec.get("session_id") or "")
     session_id = owner_session or session_id
+    if owner_user_id is not None and session_id:
+        from api.auth_db import get_auth_db
+        from api.cuttle_ui_capabilities import numeric_chat_session_id
+
+        nid = numeric_chat_session_id(session_id)
+        if not nid or not get_auth_db().get_chat_session(nid, int(owner_user_id)):
+            return {
+                "success": False,
+                "silent": True,
+                "toast": "Session not found or access denied",
+                "type": "action_form",
+                "form_id": form_id,
+            }
     form_id = form_id or (str(form_id_hint).strip() if form_id_hint else "") or None
 
-    # Prefer the owning chat's project chip over agent cwd baked into the
-    # fallback, and over the caller's chip (which may be a different chat).
+    # Chat chip, then the canonical spec path. Never trust a client
+    # project_path override once we have a server-side spec (memory/HMAC/history).
     session_path = resolve_session_project_path(session_id)
-    override = session_path or (project_path_override or "").strip()
-    if override:
-        spec = apply_project_path_to_spec(spec, override)
-        # Refresh option params that need the project (lookup only).
-        spec = normalize_action_form_spec(spec, project_path=override) or spec
+    canonical_path = session_path or str(spec.get("project_path") or "").strip()
+    if not canonical_path and not (owner_session or recovered_from_history):
+        canonical_path = (project_path_override or "").strip()
+    if canonical_path:
+        spec = apply_project_path_to_spec(spec, canonical_path)
+        spec = normalize_action_form_spec(spec, project_path=canonical_path) or spec
 
     consumed = None
     if not spec.get("reusable"):

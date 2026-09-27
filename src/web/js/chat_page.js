@@ -11837,31 +11837,25 @@
                             }
                         } catch (_) {}
                         const tokenParts = tokenForCard().split(/\s+/).filter(Boolean);
-                        // API accepts a single token; prefer inline fallback.
+                        // Prefer a still-valid pending id or a server-signed
+                        // inline token. Never mint unsigned inline.* in the
+                        // browser — HMAC lives only on the server.
                         let token = tokenParts.find((t) => t.startsWith('inline.')) || tokenParts[0] || '';
-                        if (!token && !card.getAttribute('data-spec')) {
+                        let specFromCard = null;
+                        try {
+                            specFromCard = JSON.parse(card.getAttribute('data-spec') || 'null');
+                            if (specFromCard && typeof specFromCard !== 'object') specFromCard = null;
+                        } catch (_) {
+                            specFromCard = null;
+                        }
+                        if (specFromCard && !specFromCard.project_path && currentProject && currentProject.path) {
+                            specFromCard.project_path = String(currentProject.path);
+                        }
+                        if (!token && !specFromCard) {
                             const msg = 'Form token missing — refresh the chat or ask for a new restart card.';
                             setStatus(msg, false);
                             (window.showToast || function () {})(msg, 'error');
                             return;
-                        }
-                        // If only pending id remains and we have data-spec, rebuild inline.
-                        if ((!token || !token.startsWith('inline.')) && card.getAttribute('data-spec')) {
-                            try {
-                                const spec = JSON.parse(card.getAttribute('data-spec') || '{}');
-                                if (!spec.project_path && currentProject && currentProject.path) {
-                                    spec.project_path = String(currentProject.path);
-                                }
-                                const json = JSON.stringify({
-                                    action: '__action_form__',
-                                    project_path: spec.project_path || '',
-                                    params: { spec },
-                                });
-                                token = 'inline.' + btoa(unescape(encodeURIComponent(json)))
-                                    .replace(/\+/g, '-')
-                                    .replace(/\//g, '_')
-                                    .replace(/=+$/g, '');
-                            } catch (_) {}
                         }
                         // The card's own chat, not the pane's current one: a
                         // stale global used to send restart acks (and the user)
@@ -11877,6 +11871,7 @@
                                     ? String(currentProject.path)
                                     : undefined,
                         };
+                        if (specFromCard) body.spec = specFromCard;
                         const resp = await fetch('/api/action-form/run', {
                             method: 'POST',
                             credentials: 'include',
@@ -25229,20 +25224,8 @@
         );
 
         // Server-rewritten confirm cards (pending action id already registered).
-        // Also accept unre-written <cuttle_confirm> — never leave the user stuck
-        // on "Waiting for confirmation controls…".
-        const encodeInlineActionPayload = (obj) => {
-            try {
-                const json = JSON.stringify(obj);
-                const b64 = btoa(unescape(encodeURIComponent(json)))
-                    .replace(/\+/g, '-')
-                    .replace(/\//g, '_')
-                    .replace(/=+$/g, '');
-                return 'inline.' + b64;
-            } catch (_) {
-                return '';
-            }
-        };
+        // Also accept unre-written <cuttle_confirm> as a preview; Confirm still
+        // requires a server HMAC fallback or in-memory pending id.
         const buildConfirmCardHtml = (opts) => {
             const actionId = (opts.actionId || '').trim();
             const fallback = (opts.fallback || '').trim();
@@ -25289,13 +25272,11 @@
                 return placeholder;
             }
         );
-        // Agent-emitted confirms (rewrite missed / old Flask) — still show live
-        // Confirm/Cancel via inline payload (no LLM round-trip on click).
+        // Agent-emitted confirms (rewrite missed / old Flask) — show the card,
+        // but do not mint unsigned inline tokens. Confirm needs a server rewrite.
         text = text.replace(
             /<cuttle_confirm(?!_pending)\b([^>]*)>([\s\S]*?)<\/cuttle_confirm>/gi,
             function (_, attrs, inner) {
-                const action = parseAttr(attrs, 'action') || parseAttr(attrs, 'name') || '';
-                const channel = parseAttr(attrs, 'channel') || '';
                 const title =
                     parseAttr(attrs, 'confirm_label')
                     || parseAttr(attrs, 'title')
@@ -25304,41 +25285,11 @@
                 const cancelLabel = parseAttr(attrs, 'cancel_label') || 'Cancel';
                 const content = String(inner ?? '').trim();
                 const bodyHtml = formatMessage(content);
-                const params = { content };
-                if (channel) params.channel = channel;
-                // Copy other attrs (except UI labels) into params.
-                String(attrs || '').replace(
-                    /(\w+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g,
-                    function (__ , key, dq, sq) {
-                        const k = String(key || '').toLowerCase();
-                        if (
-                            k === 'action'
-                            || k === 'name'
-                            || k === 'confirm_label'
-                            || k === 'confirm'
-                            || k === 'cancel_label'
-                            || k === 'cancel'
-                            || k === 'title'
-                        ) {
-                            return '';
-                        }
-                        params[k] = dq != null ? dq : (sq || '');
-                        return '';
-                    }
-                );
-                const fallback = encodeInlineActionPayload({
-                    action,
-                    project_path:
-                        (currentProject && currentProject.path)
-                            ? String(currentProject.path)
-                            : '',
-                    params,
-                });
                 const placeholder = '{{CUTTLE_BTN_' + buttonBlocks.length + '}}';
                 buttonBlocks.push(
                     buildConfirmCardHtml({
                         actionId: '',
-                        fallback,
+                        fallback: '',
                         title,
                         confirmLabel,
                         cancelLabel,

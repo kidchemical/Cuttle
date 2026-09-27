@@ -1129,6 +1129,8 @@ def test_form_resume_has_a_single_bubble_writer():
     js = (root / "web" / "js" / "chat_page.js").read_text(encoding="utf-8")
     assert "send({ text: String(data.injected_user_message) })" in js
     assert "inp.value = String(data.injected_user_message)" not in js
+    assert "if (specFromCard) body.spec = specFromCard" in js
+    assert "token = 'inline.' + btoa(unescape(encodeURIComponent(json)))" not in js
 
 
 def test_qa_cancel_does_not_resume(tmp_path: Path):

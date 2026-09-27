@@ -182,6 +182,21 @@ def _import_external_adapter(agent_dir: Path, agent_id: str) -> AgentAdapter:
     return cls()
 
 
+def _project_adapters_allowed() -> bool:
+    env = (os.environ.get("CUTTLE_ALLOW_PROJECT_ADAPTERS") or "").strip().lower()
+    if env in ("1", "true", "yes", "on"):
+        return True
+    try:
+        from managers.settings_manager import get_settings_manager
+
+        cfg = get_settings_manager().get_setting("agent_harness") or {}
+        if isinstance(cfg, dict) and cfg.get("allow_project_adapters"):
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def _load_agent_dir(
     agent_dir: Path, *, source: str, bundled: bool
 ) -> Optional[_AgentEntry]:
@@ -313,6 +328,8 @@ def _discover(project_path: Optional[str] = None) -> Dict[str, _AgentEntry]:
                 continue
         except OSError:
             pass
+        if not _project_adapters_allowed():
+            continue
         for aid, entry in _scan_root(root, source="project", bundled=False).items():
             if aid in bundled_ids:
                 continue

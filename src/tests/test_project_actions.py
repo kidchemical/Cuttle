@@ -335,7 +335,11 @@ def test_gitea_issue_comment_mock(tmp_path: Path):
     )
 
 
-def test_rewrite_includes_inline_fallback(tmp_path: Path):
+def test_rewrite_includes_signed_inline_fallback(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("CUTTLE_ACTION_HMAC_SECRET", "confirm-hmac-test")
+    import api.project_actions as pa
+
+    pa._hmac_secret_cache = None
     clear_pending_for_tests()
     text = (
         '<cuttle_confirm action="discord.post" channel="feature-updates">'
@@ -343,10 +347,87 @@ def test_rewrite_includes_inline_fallback(tmp_path: Path):
         "</cuttle_confirm>"
     )
     out, n = rewrite_cuttle_confirms(
-        text, session_id="sess", project_path=str(tmp_path)
+        text, session_id="db_session_3", project_path=str(tmp_path)
     )
     assert n == 1
     assert 'fallback="inline.' in out
+    import re
+
+    from api.project_actions import decode_inline_action_payload
+
+    fb = re.search(r'fallback="([^"]+)"', out)
+    assert fb
+    decoded = decode_inline_action_payload(fb.group(1))
+    assert decoded and decoded["action"] == "discord.post"
+    assert decoded["session_id"] == "db_session_3"
+
+
+def test_unsigned_inline_does_not_override_pending_id(tmp_path: Path):
+    unsigned = "inline." + __import__("base64").urlsafe_b64encode(
+        b'{"action":"flask.restart","params":{}}'
+    ).decode("ascii").rstrip("=")
+    parsed = parse_project_action_button(
+        f"[button:project-action-confirm] abcdef123456 {unsigned}"
+    )
+    assert parsed == ("confirm", "abcdef123456")
+
+
+def test_confirm_recovers_hmac_from_history_after_pending_flush(tmp_path, monkeypatch):
+    from unittest.mock import patch
+
+    from api import auth_db as auth_db_mod
+    from api.project_actions import clear_pending_for_tests, handle_project_action_button
+
+    monkeypatch.setenv("CUTTLE_ACTION_HMAC_SECRET", "confirm-hist-hmac")
+    import api.project_actions as pa
+
+    pa._hmac_secret_cache = None
+    db_path = tmp_path / "confirm.db"
+    monkeypatch.setattr(auth_db_mod, "DB_PATH", db_path)
+    auth_db_mod._db_instance = None
+    db = auth_db_mod.AuthDatabase(db_path)
+    auth_db_mod._db_instance = db
+    monkeypatch.setattr("api.auth_db.get_auth_db", lambda: db)
+    owner = db.create_user("o@x", "O", "local", password="x")
+    sid = db.create_chat_session(owner, "c")
+    _write_action(
+        tmp_path,
+        "discord-post",
+        (
+            "name: discord.post\n"
+            "type: discord.post\n"
+            "guild_id: '1'\n"
+            "channels:\n"
+            "  feature-updates: '111'\n"
+        ),
+    )
+    clear_pending_for_tests()
+    text = (
+        '<cuttle_confirm action="discord.post" channel="feature-updates">'
+        "hello"
+        "</cuttle_confirm>"
+    )
+    out, n = rewrite_cuttle_confirms(
+        text, session_id=f"db_session_{sid}", project_path=str(tmp_path)
+    )
+    assert n == 1
+    db.add_message(sid, "assistant", out)
+    clear_pending_for_tests()
+    import re
+
+    action_id = re.search(r'id="([a-f0-9]+)"', out).group(1)
+    unsigned = "inline." + __import__("base64").urlsafe_b64encode(
+        b'{"action":"flask.restart","project_path":"/evil","params":{}}'
+    ).decode("ascii").rstrip("=")
+    with patch("api.project_actions._execute_discord_post") as mock_post:
+        mock_post.return_value = {"success": True, "response": "Posted", "url": "u"}
+        res = handle_project_action_button(
+            f"[button:project-action-confirm] {action_id} {unsigned}",
+            session_id=f"db_session_{sid}",
+        )
+    assert res and res["success"] is True
+    mock_post.assert_called_once()
+    assert mock_post.call_args[0][1].get("channel") == "feature-updates"
 
 
 def test_rewrite_posix_shell_recipe_maps_powershell_flask_restart():
