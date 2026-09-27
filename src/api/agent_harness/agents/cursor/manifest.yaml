@@ -1,0 +1,38 @@
+id: cursor
+label: Cursor Agent
+slash: /cursor
+requires_cloud: true
+sticky: true
+# Effort is baked into the Cursor model id — no separate effort control.
+supports_model_pin: true
+supports_effort: false
+default_model: auto
+models:
+  - auto
+  - grok-4.6
+  - cursor-grok-4.6-high
+  - composer-2.5-fast
+# /cost: Cursor exposes no per-model price API (AvailableModels has none), so
+# rates come from models.dev by the underlying vendor.
+pricing_source: models_dev
+pricing_providers: [anthropic, openai, google, xai]
+# Measured $/task: CursorBench is Cursor's own agent benchmark (incl. Composer).
+pricing_benchmark: cursorbench
+resume: true
+capabilities_inject: once_per_resume
+env_profile: native
+activity: jsonl
+hint: Run Cursor Agent CLI (`agent -p`) with per-chat resume (Auto/Cloud)
+missing_cli_hint: >-
+  Install the Cursor `agent` command (or legacy `cursor-agent`) and ensure it
+  is on PATH.
+install_hint: >-
+  Install Cursor Agent CLI from Cursor settings / docs, then ensure `agent` is
+  on PATH. Auth is the Cursor account already used by the IDE.
+executable_names:
+  - agent
+  - cursor-agent
+auto_install: false
+notes: >-
+  Bundled harness connector wrapping scripts.utilities.cursor_cli_tool.
+  Uses node+index.js on Windows to avoid .cmd %* truncation.

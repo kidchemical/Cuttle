@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <title>Cuttle</title>
+    <link rel="stylesheet" href="/css/ui_boot.css?v=20260926safeArea">
+    <script src="/js/ui_boot.js?v=20260926safeArea"></script>
+    <link rel="stylesheet" href="/css/app_shell.css?v=20260925spaces">
+    <link rel="stylesheet" href="/css/chat_lightbox.css?v=20260922imgCtxMenu">
+    <link rel="stylesheet" href="/css/video_background.css?v=20260726g">
+    <link rel="stylesheet" href="/css/auth_modal.css?v=20260926authLogin">
+</head>
+<body>
+<!-- Electron-only custom titlebar (frameless window) -->
+<div class="shell-titlebar" id="shellTitlebar" hidden>
+    <div class="shell-titlebar-drag" id="shellTitlebarDrag">
+        <span class="shell-titlebar-label">Cuttle</span>
+        <button type="button" class="shell-titlebar-host" id="shellTitlebarHost" hidden data-role="host">Host</button>
+        <button type="button" class="shell-titlebar-workers" id="shellTitlebarWorkers" hidden title="Device workers">0 workers</button>
+        <div class="shell-spaces" id="shellSpaces">
+            <div class="shell-spaces-tabs" id="shellSpacesTabs" role="tablist" aria-label="Spaces"></div>
+            <button type="button" class="shell-spaces-add" id="shellSpacesAdd" title="New space" aria-label="New space">
+                <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+                    <circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.2"/>
+                    <path d="M8 5v6M5 8h6" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                </svg>
+            </button>
+        </div>
+    </div>
+    <div class="shell-window-controls" role="group" aria-label="Window controls">
+        <button type="button" class="shell-win-btn shell-win-update" id="shellWinUpdate" hidden title="Update Cuttle desktop" aria-label="Update Cuttle desktop">
+            <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
+                <path d="M6 1.5v7M3.5 6.2L6 8.7 8.5 6.2" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M2 10.2h8" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+            </svg>
+            <span class="shell-win-update-label">Update</span>
+        </button>
+        <button type="button" class="shell-win-btn" id="shellWinReload" title="Reload" aria-label="Reload">
+            <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
+                <path d="M10 6a4 4 0 1 1-1.2-2.9" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+                <path d="M10 2.2V5H7.2" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+        </button>
+        <button type="button" class="shell-win-btn" id="shellWinFullscreen" title="Full screen" aria-label="Full screen">
+            <svg class="shell-win-fs-enter-icon" viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
+                <path d="M1.5 4.5V1.5H4.5M7.5 1.5H10.5V4.5M10.5 7.5V10.5H7.5M4.5 10.5H1.5V7.5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <svg class="shell-win-fs-exit-icon" viewBox="0 0 12 12" width="12" height="12" aria-hidden="true" hidden>
+                <path d="M4.5 1.5V4.5H1.5M10.5 4.5H7.5V1.5M7.5 10.5V7.5H10.5M1.5 7.5H4.5V10.5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+        </button>
+        <button type="button" class="shell-win-btn" id="shellWinMin" title="Minimize" aria-label="Minimize">
+            <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><rect x="1" y="5.5" width="10" height="1" fill="currentColor"/></svg>
+        </button>
+        <button type="button" class="shell-win-btn" id="shellWinMax" title="Maximize" aria-label="Maximize">
+            <svg class="shell-win-max-icon" viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><rect x="1.5" y="1.5" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1"/></svg>
+            <svg class="shell-win-restore-icon" viewBox="0 0 12 12" width="12" height="12" aria-hidden="true" hidden>
+                <rect x="3" y="1.5" width="7.5" height="7.5" fill="none" stroke="currentColor" stroke-width="1"/>
+                <rect x="1.5" y="3" width="7.5" height="7.5" fill="var(--rail-bg, #0d1117)" stroke="currentColor" stroke-width="1"/>
+            </svg>
+        </button>
+        <button type="button" class="shell-win-btn shell-win-close" id="shellWinClose" title="Close" aria-label="Close">
+            <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
+                <path d="M1.5 1.5l9 9M10.5 1.5l-9 9" stroke="currentColor" stroke-width="1.2" fill="none"/>
+            </svg>
+        </button>
+    </div>
+</div>
+<div class="app-shell" id="appShell">
+    <div class="split-container split-horizontal" id="splitContainer">
+    <!-- ═══════════════════════════════════════════
+         COLUMN 0 — rail + panel + content
+    ═══════════════════════════════════════════ -->
+    <div class="split-column" data-column="0" id="splitColumn0">
+    <nav class="icon-rail" id="iconRail">
+        <div class="rail-logo rail-logo-primary rail-logo-clickable" id="railLogo" data-action="add" data-tooltip="Add chat on the right · Shift horizontal · Alt vertical · Alt+Shift absolute vertical · Ctrl closes this pane">
+            <img src="/img/cuttle-mascot.png" alt="Cuttle" class="rail-logo-img"
+                 onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+            <span class="rail-logo-fallback" style="display:none">C</span>
+            <span class="rail-logo-plus rail-logo-face">
+                <svg class="rail-logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+            </span>
+            <span class="rail-logo-mod rail-logo-split-v" aria-hidden="true">
+                <svg class="rail-logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="4" y="3" width="16" height="7" rx="1.5"/><rect x="4" y="14" width="16" height="7" rx="1.5"/>
+                </svg>
+            </span>
+            <span class="rail-logo-mod rail-logo-split-h" aria-hidden="true">
+                <svg class="rail-logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="4" width="7" height="16" rx="1.5"/><rect x="14" y="4" width="7" height="16" rx="1.5"/>
+                </svg>
+            </span>
+        </div>
+        <button type="button" class="rail-pane-grip" data-tooltip="Drag to reorder pane" aria-label="Drag to reorder pane">
+            <svg viewBox="0 0 16 10" width="16" height="10" aria-hidden="true">
+                <circle cx="4" cy="2" r="1.2" fill="currentColor"/>
+                <circle cx="8" cy="2" r="1.2" fill="currentColor"/>
+                <circle cx="12" cy="2" r="1.2" fill="currentColor"/>
+                <circle cx="4" cy="8" r="1.2" fill="currentColor"/>
+                <circle cx="8" cy="8" r="1.2" fill="currentColor"/>
+                <circle cx="12" cy="8" r="1.2" fill="currentColor"/>
+            </svg>
+        </button>
+
+        <div class="rail-items" data-droppable="rail">
+            <button class="rail-item" data-page="/chat_page.html" data-tooltip="Chat" id="nav-chat" data-id="nav-chat" draggable="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                </svg>
+            </button>
+
+            <button class="rail-item" data-page="/router_editor.html" data-tooltip="Router" id="nav-editor" data-id="nav-editor" draggable="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="5" cy="12" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="19" cy="19" r="2"/>
+                    <path d="M7 12h10M17 7l-10 7"/>
+                </svg>
+            </button>
+
+            <button class="rail-item" data-page="/skills_page.html" data-tooltip="Skills" id="nav-skills" data-id="nav-skills" draggable="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 2l2.4 7.4H22l-6 4.6 2.3 7L12 16.8 5.7 21 8 14 2 9.4h7.6L12 2z"/>
+                </svg>
+            </button>
+
+            <button class="rail-item" data-page="/task_management.html" data-tooltip="Tasks" id="nav-tasks" data-id="nav-tasks" draggable="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+                </svg>
+            </button>
+
+            <button class="rail-item" data-page="/git_graph_page.html" data-tooltip="Git" id="nav-git" data-id="nav-git" draggable="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="12" r="2"/>
+                    <path d="M6 8v8"/><path d="M8 18h4a4 4 0 0 0 4-4v-2"/>
+                </svg>
+            </button>
+
+            <button class="rail-item" data-page="/jobs_page.html" data-tooltip="Jobs" id="nav-jobs" data-id="nav-jobs" draggable="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M6 20h12"/><path d="M6 16h12"/><rect x="5" y="8" width="14" height="12" rx="2" ry="2"/><path d="M9 8V6a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/>
+                </svg>
+                <span class="rail-badge rail-badge-jobs" id="navJobsBadge" style="display:none">0</span>
+            </button>
+
+            <button class="rail-item" data-page="/dashboards_page.html" data-tooltip="Dashboards" id="nav-dashboards" data-id="nav-dashboards" draggable="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="3" y="3" width="7" height="9" rx="1"/>
+                    <rect x="14" y="3" width="7" height="5" rx="1"/>
+                    <rect x="14" y="12" width="7" height="9" rx="1"/>
+                    <rect x="3" y="16" width="7" height="5" rx="1"/>
+                </svg>
+            </button>
+
+            <button class="rail-item" data-page="/tools_page.html" data-tooltip="Tools" id="nav-tools" data-id="nav-tools" draggable="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+                </svg>
+            </button>
+
+            <button class="rail-item" data-page="/home_automation.html" data-tooltip="Home Automation" id="nav-automation" data-id="nav-automation" draggable="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 2v2"/><path d="M12 20v2"/><path d="M4.93 4.93l1.41 1.41"/><path d="M17.66 17.66l1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="M6.34 17.66l-1.41 1.41"/><path d="M19.07 4.93l-1.41 1.41"/>
+                    <circle cx="12" cy="12" r="4"/>
+                </svg>
+            </button>
+
+            <button class="rail-item" data-page="/home_feed.html" data-tooltip="Home" id="nav-home" data-id="nav-home" draggable="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+                    <polyline points="9 22 9 12 15 12 15 22"/>
+                </svg>
+            </button>
+
+            <button class="rail-item" data-page="/apps_page.html" data-tooltip="Apps" id="nav-apps" data-id="nav-apps" draggable="true">
+                <svg viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true">
+                    <circle cx="5" cy="5" r="2"/><circle cx="12" cy="5" r="2"/><circle cx="19" cy="5" r="2"/>
+                    <circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/>
+                    <circle cx="5" cy="19" r="2"/><circle cx="12" cy="19" r="2"/><circle cx="19" cy="19" r="2"/>
+                </svg>
+            </button>
+        </div>
+        <div class="rail-stash" hidden></div>
+
+        <div class="rail-footer" data-droppable="rail-footer">
+            <button class="rail-item rail-account signed-out" data-tooltip="Account — signed out" id="nav-account" data-id="nav-account" type="button" aria-label="Account" draggable="true">
+                <span class="rail-account-avatar" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+                    </svg>
+                </span>
+                <span class="rail-account-dot" aria-hidden="true"></span>
+            </button>
+            <button class="rail-item" data-tooltip="Notifications" id="nav-notifications" data-id="nav-notifications" type="button" aria-label="Notifications" draggable="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+                    <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+                </svg>
+                <span class="rail-badge rail-badge-notifications" id="navNotificationsBadge" style="display:none">0</span>
+            </button>
+            <button class="rail-item" data-tooltip="Workspace" id="nav-workspace" data-id="nav-workspace" type="button" aria-label="Save or load workspace" draggable="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="3" y="4" width="7" height="16" rx="1.5"/>
+                    <rect x="14" y="4" width="7" height="16" rx="1.5"/>
+                </svg>
+            </button>
+            <button class="rail-item" data-page="/settings_page.html" data-tooltip="Settings" id="nav-settings" data-id="nav-settings" draggable="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="3"/>
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                </svg>
+            </button>
+
+            <!-- Collapse / expand the left blade (icon rail) -->
+            <button class="rail-item rail-panel-toggle" id="panelToggle" data-id="panelToggle" data-tooltip="Collapse sidebar" draggable="true" aria-label="Collapse sidebar">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/>
+                </svg>
+            </button>
+        </div>
+    </nav>
+
+    <!-- ═══════════════════════════════════════════
+         MAIN IFRAME — takes all remaining space
+    ═══════════════════════════════════════════ -->
+    <main class="shell-main" id="shellMain">
+        <iframe
+            id="contentFrame"
+            name="contentFrame"
+            frameborder="0"
+            allowfullscreen
+            allow="clipboard-read; clipboard-write"
+            title="Cuttle Content">
+        </iframe>
+    </main>
+    <!-- Visible when the left rail is collapsed -->
+    <button type="button" class="rail-expand-tab" id="railExpandTab" title="Show sidebar" aria-label="Show sidebar">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="9 18 15 12 9 6"/>
+        </svg>
+    </button>
+    <div class="pane-drop-overlay" aria-hidden="true"></div>
+    </div>
+    <!-- end split-column 0 -->
+    </div>
+    <!-- end split-container -->
+</div>
+
+<!-- Toast container (managed by toast.js) -->
+<div id="cuttle-toast-container" style="position:fixed;bottom:0;right:0;padding:24px;z-index:999998;pointer-events:none;display:flex;flex-direction:column;align-items:flex-end;gap:10px;"></div>
+
+<!-- Notifications panel (past toasts) -->
+<div class="notifications-popover" id="notificationsPopover" role="dialog" aria-label="Past notifications">
+    <div class="notifications-popover-header">
+        <span class="notifications-popover-title">Notifications</span>
+        <button type="button" class="notifications-popover-clear" id="notificationsClearBtn">Clear all</button>
+    </div>
+    <div class="notifications-popover-list" id="notificationsPopoverList"></div>
+    <div class="notifications-popover-empty" id="notificationsPopoverEmpty">No notifications yet.</div>
+</div>
+<div class="notifications-popover-backdrop" id="notificationsPopoverBackdrop" aria-hidden="true"></div>
+
+<!-- Save / load split workspace (panes + open chats) -->
+<div class="notifications-popover workspace-popover" id="workspacePopover" role="dialog" aria-label="Workspaces">
+    <div class="notifications-popover-header">
+        <span class="notifications-popover-title">Workspace</span>
+    </div>
+    <div class="workspace-popover-body">
+        <p class="workspace-popover-hint">Save this split — pane count, sizes, and open chats — then load it on another device. Default always restores a single viewport.</p>
+        <div class="workspace-current" id="workspaceCurrentSummary">1 pane</div>
+        <div class="workspace-save-row">
+            <input type="text" id="workspaceNameInput" class="workspace-name-input" maxlength="80" placeholder="Workspace name" aria-label="Workspace name">
+            <button type="button" class="workspace-btn workspace-btn-primary" id="workspaceSaveBtn">Save</button>
+        </div>
+        <div class="workspace-list-label">Saved</div>
+        <div class="workspace-list" id="workspaceList"></div>
+        <div class="workspace-empty" id="workspaceEmpty" style="display:none">No saved workspace yet.</div>
+    </div>
+</div>
+
+<!-- Sign-in / account modal (app-wide — not tied to chat) -->
+<div class="auth-modal-overlay" id="authModal">
+    <div class="auth-modal">
+        <button type="button" class="auth-modal-close" id="authModalClose" aria-label="Close">×</button>
+
+        <div class="auth-modal-header">
+            <img src="/img/cuttle-logo.png" alt="Cuttle" class="auth-modal-logo">
+            <h2 class="auth-modal-title">Welcome to Cuttle</h2>
+            <p class="auth-modal-subtitle">Sign in to sync your account across devices</p>
+        </div>
+
+        <div class="auth-error" id="authError"></div>
+        <div class="auth-success" id="authSuccess"></div>
+
+        <div class="auth-tabs">
+            <button type="button" class="auth-tab active" id="loginTab">Login</button>
+            <button type="button" class="auth-tab" id="signupTab">Sign Up</button>
+        </div>
+
+        <!-- No password fields in HTML (not even in <template>).
+             iPad Chrome indexes type=password during parse and then shows the
+             key/card/pin autofill bar on the chat composer. Forms are built in
+             auth.js only while the Sign in modal is open. -->
+        <div id="authFormsHost" data-include-oauth="1"></div>
+    </div>
+</div>
+
+<!-- Account panel (avatar / Connect Google / log out) -->
+<div class="auth-modal-overlay" id="logoutConfirmModal" role="dialog" aria-modal="true" aria-labelledby="logoutConfirmTitle" aria-describedby="logoutConfirmSubtitle">
+    <div class="auth-modal logout-confirm-modal">
+        <button type="button" class="auth-modal-close" id="logoutConfirmClose" aria-label="Close">×</button>
+        <div class="auth-modal-header">
+            <div class="logout-confirm-avatar" id="logoutConfirmAvatar" aria-hidden="true"></div>
+            <h2 class="auth-modal-title" id="logoutConfirmTitle">Account</h2>
+            <p class="auth-modal-subtitle" id="logoutConfirmSubtitle">Manage your Cuttle account.</p>
+        </div>
+        <div class="logout-confirm-actions" id="logoutConfirmActions">
+            <a class="logout-confirm-btn logout-confirm-google" id="logoutConfirmLinkGoogle" href="/api/auth/oauth/google?link=1" hidden>Continue with Google</a>
+            <button type="button" class="logout-confirm-btn logout-confirm-google" id="logoutConfirmRefreshGoogle" hidden>Refresh Google photo</button>
+            <p class="logout-confirm-linked" id="logoutConfirmGoogleStatus" hidden>Google linked</p>
+            <button type="button" class="logout-confirm-btn logout-confirm-cancel" id="logoutConfirmCancel">Cancel</button>
+            <button type="button" class="logout-confirm-btn logout-confirm-submit" id="logoutConfirmSubmit">Log out</button>
+        </div>
+    </div>
+</div>
+
+<!-- Device-worker unsafe-shell approval (first execute_shell_unsafe / execute_shell_ssh per worker process) -->
+<div class="auth-modal-overlay" id="sshApprovalModal" hidden role="dialog" aria-modal="true" aria-labelledby="sshApprovalTitle" aria-describedby="sshApprovalSubtitle">
+    <div class="auth-modal logout-confirm-modal" style="max-width:440px;">
+        <div class="auth-modal-header">
+            <h2 class="auth-modal-title" id="sshApprovalTitle">Unsafe shell approval</h2>
+            <p class="auth-modal-subtitle" id="sshApprovalSubtitle">A Cuttle worker wants to run an unsafe shell job.</p>
+            <p class="auth-modal-subtitle" id="sshApprovalMeta" style="opacity:.75;font-size:.85rem;margin-top:.5rem;"></p>
+        </div>
+        <div class="logout-confirm-actions" style="flex-direction:column;gap:8px;">
+            <button type="button" class="logout-confirm-btn logout-confirm-submit" id="sshApprovalOnce" style="width:100%;">Approve this request once</button>
+            <button type="button" class="logout-confirm-btn logout-confirm-submit" id="sshApprovalSession" style="width:100%;background:transparent;border:1px solid currentColor;">Approve for the rest of this worker session</button>
+            <button type="button" class="logout-confirm-btn logout-confirm-cancel" id="sshApprovalDeny" style="width:100%;">Deny</button>
+        </div>
+    </div>
+</div>
+
+<div id="railAddPicker" class="rail-add-picker" hidden role="menu" aria-label="Add page to sidebar">
+    <div class="rail-add-picker-title">Add to sidebar</div>
+    <div class="rail-add-picker-list"></div>
+</div>
+
+<div class="shell-zoom-hud" id="shellZoomHud" hidden aria-live="polite" aria-atomic="true">100%</div>
+
+<script src="/js/toast.js?v=20260921voiceMic"></script>
+<script src="/js/net_debug.js?v=20260810c"></script>
+<script src="/js/youtube_id.js"></script>
+<script src="/js/video_background.js?v=20260926playlists"></script>
+<script src="/js/auth.js?v=20260926authLogin"></script>
+<script src="/js/desktop_update_policy.js?v=20260819role"></script>
+<script src="/js/chat_find.js?v=20260819find"></script>
+<script src="/js/app_shell.js?v=20260926apps"></script>
+</body>
+</html>

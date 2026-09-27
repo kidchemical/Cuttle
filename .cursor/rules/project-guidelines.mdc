@@ -1,0 +1,8 @@
+1. Place any documentation into the /src/docs directory
+2. Place any tests into the /src/tests/ directory
+3. Do not use && for powershell commands. Use | instead.
+4. Refer to /src/docs/ for documentation of various functionalities
+5. Ignore the "electron" folder unless I request doing something with electron.
+---
+alwaysApply: true
+---

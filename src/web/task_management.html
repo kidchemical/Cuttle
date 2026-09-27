@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Task Management - Cuttle</title>
+    <link rel="stylesheet" href="/css/ui_boot.css?v=20260926safeArea">
+    <script src="/js/ui_boot.js?v=20260926safeArea"></script>
+    <link rel="stylesheet" href="css/shared_navigation.css?v=20260926lightBg">
+    <link rel="stylesheet" href="css/landing_page.css?v=20260926lightBg">
+    <link rel="stylesheet" href="css/task_management.css">
+    <link rel="stylesheet" href="css/compact_page.css">
+</head>
+<body class="compact-shell-page" data-page="task-management">
+    <div class="page-content">
+    <!-- Task Management Page -->
+    <div class="page-section active" id="taskManagementPage">
+        <div class="container">
+            <div class="compact-page-title">
+                <h1>Tasks</h1>
+                <p>Create, track, and manage development tasks</p>
+            </div>
+            
+            <!-- Task Controls -->
+            <div class="task-controls">
+                <div class="controls-left">
+                    <button class="btn btn-primary" onclick="showCreateTaskModal()">
+                        <span class="btn-icon emoji">➕</span>
+                        Create Task
+                    </button>
+                    <div class="filter-controls">
+                        <div class="status-filter-container">
+                            <div class="multiselect-dropdown" id="statusFilter">
+                                <div class="multiselect-trigger" onclick="toggleStatusDropdown()">
+                                    <span class="multiselect-text" id="statusFilterText">All Status</span>
+                                    <span class="multiselect-arrow">▼</span>
+                                </div>
+                                <div class="multiselect-options" id="statusFilterOptions">
+                                    <label class="multiselect-option">
+                                        <input type="checkbox" value="None" onchange="updateStatusFilter()" class="multiselect-toggle-input">
+                                        <span class="multiselect-toggle-track"><span class="multiselect-toggle-thumb"></span></span>
+                                        <span class="status-badge status-none">None</span>
+                                    </label>
+                                    <label class="multiselect-option">
+                                        <input type="checkbox" value="Planned" onchange="updateStatusFilter()" class="multiselect-toggle-input">
+                                        <span class="multiselect-toggle-track"><span class="multiselect-toggle-thumb"></span></span>
+                                        <span class="status-badge status-planned">Planned</span>
+                                    </label>
+                                    <label class="multiselect-option">
+                                        <input type="checkbox" value="In Progress" onchange="updateStatusFilter()" class="multiselect-toggle-input">
+                                        <span class="multiselect-toggle-track"><span class="multiselect-toggle-thumb"></span></span>
+                                        <span class="status-badge status-in-progress">In Progress</span>
+                                    </label>
+                                    <label class="multiselect-option">
+                                        <input type="checkbox" value="Blocked" onchange="updateStatusFilter()" class="multiselect-toggle-input">
+                                        <span class="multiselect-toggle-track"><span class="multiselect-toggle-thumb"></span></span>
+                                        <span class="status-badge status-blocked">Blocked</span>
+                                    </label>
+                                    <label class="multiselect-option">
+                                        <input type="checkbox" value="Closed" onchange="updateStatusFilter()" class="multiselect-toggle-input">
+                                        <span class="multiselect-toggle-track"><span class="multiselect-toggle-thumb"></span></span>
+                                        <span class="status-badge status-closed">Closed</span>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="owner-filter-container">
+                            <div class="multiselect-dropdown" id="ownerFilter">
+                                <div class="multiselect-trigger" onclick="toggleOwnerDropdown()">
+                                    <span class="multiselect-text" id="ownerFilterText">All Owners</span>
+                                    <span class="multiselect-arrow">▼</span>
+                                </div>
+                                <div class="multiselect-options" id="ownerFilterOptions">
+                                    <!-- Owner options will be populated dynamically -->
+                                </div>
+                            </div>
+                        </div>
+                        <div class="priority-filter-container">
+                            <div class="multiselect-dropdown" id="priorityFilter">
+                                <div class="multiselect-trigger" onclick="togglePriorityDropdown()">
+                                    <span class="multiselect-text" id="priorityFilterText">All Priorities</span>
+                                    <span class="multiselect-arrow">▼</span>
+                                </div>
+                                <div class="multiselect-options" id="priorityFilterOptions">
+                                    <label class="multiselect-option">
+                                        <input type="checkbox" value="Low" onchange="updatePriorityFilter()" class="multiselect-toggle-input">
+                                        <span class="multiselect-toggle-track"><span class="multiselect-toggle-thumb"></span></span>
+                                        <span class="priority-badge priority-low">Low</span>
+                                    </label>
+                                    <label class="multiselect-option">
+                                        <input type="checkbox" value="Medium" onchange="updatePriorityFilter()" class="multiselect-toggle-input">
+                                        <span class="multiselect-toggle-track"><span class="multiselect-toggle-thumb"></span></span>
+                                        <span class="priority-badge priority-medium">Medium</span>
+                                    </label>
+                                    <label class="multiselect-option">
+                                        <input type="checkbox" value="High" onchange="updatePriorityFilter()" class="multiselect-toggle-input">
+                                        <span class="multiselect-toggle-track"><span class="multiselect-toggle-thumb"></span></span>
+                                        <span class="priority-badge priority-high">High</span>
+                                    </label>
+                                    <label class="multiselect-option">
+                                        <input type="checkbox" value="Critical" onchange="updatePriorityFilter()" class="multiselect-toggle-input">
+                                        <span class="multiselect-toggle-track"><span class="multiselect-toggle-thumb"></span></span>
+                                        <span class="priority-badge priority-critical">Critical</span>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="controls-right">
+                    <div class="search-box">
+                        <input type="text" id="taskSearch" placeholder="Search tasks..." onkeyup="searchTasks()">
+                        <span class="search-icon emoji">🔍</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Task Statistics -->
+            <div class="task-stats">
+                <div class="stat-card">
+                    <div class="stat-number" id="openTasks">0</div>
+                    <div class="stat-label">Open Tasks</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="inProgressTasks">0</div>
+                    <div class="stat-label">In Progress</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="blockedTasks">0</div>
+                    <div class="stat-label">Blocked</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="closedTasks">0</div>
+                    <div class="stat-label">Closed</div>
+                </div>
+            </div>
+
+            <!-- Tasks List -->
+            <div class="tasks-container">
+                <div class="tasks-header">
+                    <h2>Tasks</h2>
+                    <div class="header-controls">
+                        <div class="sort-controls">
+                            <label for="sortSelect">Sort by:</label>
+                            <select id="sortSelect" onchange="changeSorting()">
+                                <option value="created-desc">Created Date (Newest)</option>
+                                <option value="created-asc">Created Date (Oldest)</option>
+                                <option value="priority-desc">Priority (High to Low)</option>
+                                <option value="priority-asc">Priority (Low to High)</option>
+                                <option value="title-asc">Title (A-Z)</option>
+                                <option value="title-desc">Title (Z-A)</option>
+                            </select>
+                        </div>
+                        <div class="view-controls">
+                            <button class="view-toggle active" onclick="toggleView('list')" data-view="list"><span class="emoji">📋</span> List</button>
+                            <button class="view-toggle" onclick="toggleView('kanban')" data-view="kanban"><span class="emoji">📊</span> Kanban</button>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- List View -->
+                <div class="tasks-list" id="tasksListView">
+                    <div class="loading-indicator" id="tasksLoading">
+                        <div class="spinner"></div>
+                        <p>Loading tasks...</p>
+                    </div>
+                    <div class="no-tasks" id="noTasks" style="display: none;">
+                        <div class="no-tasks-icon emoji">📝</div>
+                        <h3>No tasks found</h3>
+                        <p>Create your first task to get started!</p>
+                        <button class="btn btn-primary" onclick="showCreateTaskModal()">Create Task</button>
+                    </div>
+                    <div class="tasks-grid" id="tasksGrid"></div>
+                    
+                    <!-- Pagination -->
+                    <div class="pagination" id="pagination" style="display: none;">
+                        <button id="prevPage" onclick="changePage(-1)">← Previous</button>
+                        <div class="page-numbers" id="pageNumbers"></div>
+                        <button id="nextPage" onclick="changePage(1)">Next →</button>
+                        <div class="page-info" id="pageInfo">Page 1 of 1</div>
+                    </div>
+                </div>
+
+                <!-- Kanban View -->
+                <div class="tasks-kanban" id="tasksKanbanView" style="display: none;">
+                    <div class="kanban-columns">
+                        <div class="kanban-column" data-status="None"
+                             ondragover="taskManager.handleDragOver(event)"
+                             ondrop="taskManager.handleDrop(event)">
+                            <div class="column-header">
+                                <h3>None</h3>
+                                <span class="task-count">0</span>
+                            </div>
+                            <div class="column-tasks" id="kanbanNone"></div>
+                        </div>
+                        <div class="kanban-column" data-status="Planned"
+                             ondragover="taskManager.handleDragOver(event)"
+                             ondrop="taskManager.handleDrop(event)">
+                            <div class="column-header">
+                                <h3>Planned</h3>
+                                <span class="task-count">0</span>
+                            </div>
+                            <div class="column-tasks" id="kanbanPlanned"></div>
+                        </div>
+                        <div class="kanban-column" data-status="In Progress"
+                             ondragover="taskManager.handleDragOver(event)"
+                             ondrop="taskManager.handleDrop(event)">
+                            <div class="column-header">
+                                <h3>In Progress</h3>
+                                <span class="task-count">0</span>
+                            </div>
+                            <div class="column-tasks" id="kanbanInProgress"></div>
+                        </div>
+                        <div class="kanban-column" data-status="Blocked"
+                             ondragover="taskManager.handleDragOver(event)"
+                             ondrop="taskManager.handleDrop(event)">
+                            <div class="column-header">
+                                <h3>Blocked</h3>
+                                <span class="task-count">0</span>
+                            </div>
+                            <div class="column-tasks" id="kanbanBlocked"></div>
+                        </div>
+                        <div class="kanban-column" data-status="Closed"
+                             ondragover="taskManager.handleDragOver(event)"
+                             ondrop="taskManager.handleDrop(event)">
+                            <div class="column-header">
+                                <h3>Closed</h3>
+                                <span class="task-count">0</span>
+                            </div>
+                            <div class="column-tasks" id="kanbanClosed"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create/Edit Task Modal -->
+    <div class="modal" id="taskModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modalTitle">Create Task</h2>
+                <button class="modal-close" onclick="closeTaskModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="taskForm">
+                    <div class="form-group">
+                        <label for="taskTitle">Title *</label>
+                        <input type="text" id="taskTitle" name="title" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="taskDescription">Description</label>
+                        <textarea id="taskDescription" name="description" rows="4"></textarea>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="taskOwner">Owner</label>
+                            <input type="text" id="taskOwner" name="owner" placeholder="Enter owner name">
+                        </div>
+                        <div class="form-group">
+                            <label for="taskStatus">Status</label>
+                            <select id="taskStatus" name="status">
+                                <option value="None">None</option>
+                                <option value="Planned">Planned</option>
+                                <option value="In Progress">In Progress</option>
+                                <option value="Blocked">Blocked</option>
+                                <option value="Closed">Closed</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="taskPriority">Priority</label>
+                        <select id="taskPriority" name="priority">
+                            <option value="Low">Low</option>
+                            <option value="Medium">Medium</option>
+                            <option value="High">High</option>
+                            <option value="Critical">Critical</option>
+                        </select>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeTaskModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="saveTask()">Save Task</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Task Detail Modal -->
+    <div class="modal" id="taskDetailModal">
+        <div class="modal-content task-detail-modal">
+            <div class="modal-header">
+                <h2 id="taskDetailTitle">Task Details</h2>
+                <button class="modal-close" onclick="closeTaskDetailModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="task-detail-content">
+                    <div class="task-detail-main">
+                        <div class="task-detail-header">
+                            <div class="task-id" id="taskDetailId">TASK-001</div>
+                            <div class="task-status-badge" id="taskDetailStatus">In Progress</div>
+                        </div>
+                        <h3 id="taskDetailTitleText">Task Title</h3>
+                        <p id="taskDetailDescription">Task description goes here...</p>
+                        <div class="task-detail-meta">
+                            <div class="meta-item">
+                                <span class="meta-label">Owner:</span>
+                                <span class="meta-value" id="taskDetailOwner">John Doe</span>
+                            </div>
+                            <div class="meta-item">
+                                <span class="meta-label">Priority:</span>
+                                <span class="meta-value" id="taskDetailPriority">High</span>
+                            </div>
+                            <div class="meta-item">
+                                <span class="meta-label">Created:</span>
+                                <span class="meta-value" id="taskDetailCreated">2024-01-01</span>
+                            </div>
+                            <div class="meta-item">
+                                <span class="meta-label">Updated:</span>
+                                <span class="meta-value" id="taskDetailUpdated">2024-01-01</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="task-detail-actions">
+                        <button class="btn btn-primary" onclick="editCurrentTask()">Edit Task</button>
+                        <button class="btn btn-danger" onclick="deleteCurrentTask()">Delete Task</button>
+                        <button class="btn btn-success" onclick="closeTaskViaCommit()">Close via Commit</button>
+                    </div>
+
+                    <div class="task-comments">
+                        <h4>Activity & Comments</h4>
+                        <div class="comments-list" id="commentsList">
+                            <!-- Comments will be loaded here -->
+                        </div>
+                        <div class="comment-form">
+                            <textarea id="newComment" placeholder="Add a comment... (Press Enter to submit)" rows="3"></textarea>
+                            <button class="btn btn-primary" onclick="addComment()">Add Comment</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Commit Close Modal -->
+    <div class="modal" id="commitCloseModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Close Task via Commit</h2>
+                <button class="modal-close" onclick="closeCommitModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="commitMessage">Commit Message *</label>
+                    <textarea id="commitMessage" name="commitMessage" rows="3" required 
+                              placeholder="Enter commit message that references this task..."></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="commitFiles">Files to Commit</label>
+                    <input type="text" id="commitFiles" name="commitFiles" 
+                           placeholder="Enter file paths (optional)">
+                </div>
+                <div class="commit-preview">
+                    <h4>Preview:</h4>
+                    <div class="commit-preview-content" id="commitPreview"></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeCommitModal()">Cancel</button>
+                <button class="btn btn-success" onclick="executeCommitClose()">Commit & Close Task</button>
+            </div>
+        </div>
+    </div>
+
+    </div>
+
+    <script src="/js/shared_navigation.js"></script>
+    <script src="/js/background_effect_blend.js"></script>
+    <script src="/js/video_background.js"></script>
+    <script src="/js/toast.js"></script>
+    <script src="/js/task_management.js"></script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+name: electron.host-restart
+title: Restart Host Electron
+description: >-
+  Detached restart of Host Electron UI (banner/version + worker env).
+  Does not stop cuttle_daemon or Flask. Params: none required.
+  Prefer after electron/package.json bumps so Host badge matches mesh version.
+type: shell
+run: powershell -NoProfile -ExecutionPolicy Bypass -File .cuttle\scripts\host-electron-restart.ps1
+run_posix: bash .cuttle/scripts/host-electron-restart.sh
+workdir: .
+timeout: 60

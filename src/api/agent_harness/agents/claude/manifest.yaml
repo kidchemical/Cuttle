@@ -1,0 +1,33 @@
+id: claude
+label: Claude Code
+slash: /claude
+requires_cloud: true
+sticky: true
+# Empty — unpinned turns omit --model so the Claude CLI default wins.
+default_model: ""
+models:
+  - haiku
+  - sonnet
+  - opus
+pricing_source: models_dev
+pricing_providers: [anthropic]
+resume: true
+capabilities_inject: once_per_resume
+env_profile: either
+activity: heartbeat
+hint: Run Anthropic Claude Code CLI (`claude -p`) with per-chat resume (Auto/Cloud)
+missing_cli_hint: >-
+  Install Claude Code (`npm i -g @anthropic-ai/claude-code` or the native
+  installer) and ensure `claude` is on PATH. Authenticate with
+  `claude auth login` or `ANTHROPIC_API_KEY`.
+install_hint: >-
+  Install `@anthropic-ai/claude-code` (or the native build), then
+  `claude auth login` or set `ANTHROPIC_API_KEY` in `src/.env`.
+install_kind: npm_global
+install_package: "@anthropic-ai/claude-code"
+executable_names:
+  - claude
+auto_install: true
+notes: >-
+  Native `claude -p --output-format json` against the project cwd.
+  Resume via `--resume` + claude_cli_session_store. Compact via `/compact`.

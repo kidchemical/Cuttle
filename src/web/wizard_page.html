@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Setup Wizard & Doctor - Cuttle</title>
+    <link rel="stylesheet" href="/css/ui_boot.css?v=20260926safeArea">
+    <script src="/js/ui_boot.js?v=20260926safeArea"></script>
+    <link rel="stylesheet" href="css/shared_navigation.css?v=20260926lightBg">
+    <link rel="stylesheet" href="css/landing_page.css?v=20260926lightBg">
+    <style>
+        .wizard-section { margin: 1.5rem 0; padding: 1rem; border-radius: 8px; background: var(--card-bg, #2a2a2a); }
+        .wizard-step { display: flex; align-items: center; gap: 0.5rem; margin: 0.5rem 0; }
+        .wizard-step.done { color: #4ade80; }
+        .wizard-step.pending { color: #fbbf24; }
+        .doctor-check { margin: 0.25rem 0; padding: 0.25rem 0; }
+        .doctor-check.ok { color: #4ade80; }
+        .doctor-check.warn { color: #fbbf24; }
+        .doctor-check.fail { color: #f87171; }
+        .suggestions { margin-top: 1rem; padding-left: 1rem; }
+        .suggestions li { margin: 0.25rem 0; }
+    </style>
+</head>
+<body data-page="wizard">
+    <div class="page-content">
+    <header class="header">
+        <div class="container">
+            <nav class="nav">
+                <div class="logo">
+                    <a href="/"><img src="/img/cuttle-logo.png" alt="Cuttle" class="header-logo"></a>
+                </div>
+                <div class="nav-menu">
+                    <button class="menu-toggle" onclick="toggleMenu()"><span class="menu-icon">☰</span></button>
+                </div>
+            </nav>
+        </div>
+    </header>
+    <div class="menu-dropdown" id="menuDropdown">
+        <div class="menu-section-title">Navigation</div>
+        <a href="/" class="menu-item"><span class="emoji">🏠</span> Home</a>
+        <a href="/router_editor.html" class="menu-item"><span class="emoji">🔗</span> Router</a>
+        <a href="/wizard_page.html" class="menu-item active"><span class="emoji">🧙</span> Setup Wizard</a>
+        <div class="menu-separator"></div>
+        <div class="menu-section-title">System</div>
+        <a href="/settings_page.html" class="menu-item"><span class="emoji">⚙️</span> Settings</a>
+        <a href="/control_panel.html" class="menu-item"><span class="emoji">🎛️</span> Control Panel</a>
+        <a href="/about_page.html" class="menu-item"><span class="emoji">ℹ️</span> About</a>
+        <button class="menu-item" onclick="toggleTheme()"><span class="emoji">🌓</span> Toggle Theme</button>
+    </div>
+
+    <div class="page-section active">
+        <div class="container">
+            <div class="page-header">
+                <h1><span class="emoji">🧙</span> Setup Wizard & Doctor</h1>
+                <p>Check configuration and run health checks</p>
+            </div>
+
+            <div class="wizard-section">
+                <h3>Wizard Status</h3>
+                <div id="wizardStatus">Loading…</div>
+                <p><a href="/settings_page.html">Open Settings</a> to configure API keys, default pipeline, and channels.</p>
+            </div>
+
+            <div class="wizard-section">
+                <h3>Doctor (Health Checks)</h3>
+                <button class="control-button btn-info" onclick="runDoctor()">Run Doctor</button>
+                <div id="doctorResult" style="margin-top: 1rem;"></div>
+            </div>
+        </div>
+    </div>
+    </div>
+    <script src="js/background_effect_blend.js"></script>
+    <script src="js/shared_navigation.js"></script>
+    <script>
+        async function loadWizardStatus() {
+            const el = document.getElementById('wizardStatus');
+            try {
+                const r = await fetch('/api/wizard/status');
+                const d = await r.json();
+                if (!d.success) { el.innerHTML = 'Error: ' + (d.error || 'Unknown'); return; }
+                const steps = d.steps || {};
+                const next = d.next_step || 'done';
+                el.innerHTML = [
+                    '<div class="wizard-step ' + (steps.default_pipeline ? 'done' : 'pending') + '">' + (steps.default_pipeline ? '✅' : '⏳') + ' Default pipeline set</div>',
+                    '<div class="wizard-step ' + (steps.api_keys ? 'done' : 'pending') + '">' + (steps.api_keys ? '✅' : '⏳') + ' API keys configured</div>',
+                    '<div class="wizard-step ' + (steps.channels ? 'done' : 'pending') + '">' + (steps.channels ? '✅' : '⏳') + ' Channels configured</div>',
+                    '<p><strong>Next step:</strong> ' + next + '</p>'
+                ].join('');
+            } catch (e) {
+                el.innerHTML = 'Failed to load: ' + e.message;
+            }
+        }
+        async function runDoctor() {
+            const el = document.getElementById('doctorResult');
+            el.innerHTML = 'Running…';
+            try {
+                const r = await fetch('/api/doctor');
+                const d = await r.json();
+                let html = '<div class="doctor-checks">';
+                (d.checks || []).forEach(function(c) {
+                    html += '<div class="doctor-check ' + (c.status || '') + '">' + (c.status === 'ok' ? '✅' : c.status === 'warn' ? '⚠️' : '❌') + ' ' + (c.message || c.name) + '</div>';
+                });
+                html += '</div>';
+                if ((d.suggestions || []).length) {
+                    html += '<ul class="suggestions">';
+                    d.suggestions.forEach(function(s) { html += '<li>' + s + '</li>'; });
+                    html += '</ul>';
+                }
+                el.innerHTML = html;
+            } catch (e) {
+                el.innerHTML = 'Error: ' + e.message;
+            }
+        }
+        loadWizardStatus();
+    </script>
+</body>
+</html>

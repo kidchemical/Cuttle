@@ -1,0 +1,78 @@
+---
+description: When Cuttle is the open workspace but the user is talking about another project — detect, load that project's rules/skills, remind them to switch
+alwaysApply: true
+---
+
+# Multi-project awareness (Cuttle as hub)
+
+Cuttle is often the **open Cursor workspace** (and `/cursor` agent `--workspace` / cwd) even when the user is driving work on a **different** project via Discord `/cursor`, Cuttle chat, or habit. That project's `.cursor/rules/*.mdc` and `.cursor/skills/**/SKILL.md` **do not auto-load** unless that folder is the agent workspace (or those paths are explicitly read).
+
+## Two different “projects” (do not confuse them)
+
+| Concept | What it is | Does it load EP rules/skills? |
+|---|---|---|
+| **Cuttle chat project chip** | UI label / `project_path` sent with the chat request | Only if `/cursor` actually runs with that path as `--workspace` |
+| **Cursor Agent cwd / `--workspace`** | Shown in the reply banner as `cwd \`...\`` | **Yes** — this is what auto-loads rules/skills |
+
+If the chat chip says **Escape Purgatory** but the banner still shows `cwd /path/to/Cuttle`, the chip is not the problem the old “Wrong workspace” blurb implied — the agent run is still rooted on Cuttle. Prefer fixing cwd / opening the EP folder in Cursor over blaming the chip.
+
+## When the prompt doesn't fit Cuttle
+
+If the request is clearly about another codebase / game / product (e.g. Farmstead, Dark Forest, Unity interactables, Escape Purgatory Discord Feature Updates) and little/nothing in `/path/to/Cuttle` matches:
+
+1. **Don't invent Cuttle-only answers** — search/open the real project.
+2. **Read that project's always-on rules and relevant skills first** before coding or Discord posts.
+3. **Follow that project's conventions** (Discord runbooks, emojis, Unity paths, etc.).
+4. Remind only when appropriate (see below).
+
+## Known sibling projects
+
+| Clue in the prompt | Project root | Load first |
+|---|---|---|
+| Escape Purgatory, Farmstead, Dark Forest, Survival rounds, maze pig, EP Discord | `/path/to/Escape-Purgatory\` | `.cursor/rules/escape-purgatory.mdc`, `.cursor/skills/escape-purgatory/SKILL.md`, `.cuttle/docs/discord.md` |
+| Epochs, tribes, civilization, primitive survival, space colonization, transcendence | `E:\Game Dev\Epochs\` | `.cursor/rules/epochs.mdc`, `.cursor/skills/epochs/SKILL.md`, `.cuttle/rules/01-game-design.md`, `.cuttle/docs/game-overview.md` |
+| Take 27, friendslop, short movies, filmmaking FPS, chaos, havoc, comedic co-op | `E:\Game Dev\Take-27\` | `.cursor/rules/take-27.mdc`, `.cursor/skills/take-27/SKILL.md`, `.cuttle/rules/01-game-design.md`, `.cuttle/docs/game-overview.md` |
+
+Add rows here when new sibling projects are dogfooded through Cuttle.
+
+## Reminder — when to show it
+
+Show a short warning **if both of these are true**:
+
+1. This turn’s work is clearly for a sibling project (e.g. EP), **and**
+2. This agent run’s cwd / `--workspace` is **not** that project root (e.g. still `/path/to/Cuttle`).
+
+**Still warn even if** you manually read that project’s rules/skills this turn — loading them compensates for behavior, it does **not** fix cwd. The reminder is about the wrong workspace, not about whether you remembered to open the runbook.
+
+**Do not warn** when:
+
+- The reply banner already shows cwd under `Escape-Purgatory` (or the sibling root), **or**
+- The user is only asking about Cuttle itself.
+
+### Wording
+
+If the chat project chip is already the sibling project but agent cwd is still Cuttle:
+
+```markdown
+> [!WARNING]
+> **Agent cwd is still Cuttle** — the chat project chip may say Escape Purgatory, but this `/cursor` run used workspace `/path/to/Cuttle`, so EP rules/skills did not auto-load. Open `/path/to/Escape-Purgatory` in Cursor (or confirm the chat is sending that `project_path`).
+```
+
+Only if the chip/cwd situation is unknown / clearly Cuttle-only:
+
+```markdown
+> [!WARNING]
+> **Cursor workspace is Cuttle** — Escape Purgatory rules/skills did not auto-load for this run. Open `/path/to/Escape-Purgatory` for EP sessions when you want them by default.
+```
+
+Keep it to 1–2 short lines. Aliases: `[!WORKSPACE]` / `[!CAUTION]` (same amber style).
+
+## Don'ts
+
+- Don't assume missing skills mean the feature doesn't exist — check sibling project roots.
+- Don't skip Discord/format runbooks for EP just because Cuttle is open.
+- Don't leave the user thinking Cuttle rules alone govern EP (or other) work.
+- Don't tell the user their **Cuttle chat project chip** is “wrong” when it already says Escape Purgatory.
+- Don't paste the warning on every EP reply out of habit — only when agent cwd is not the sibling project root.
+- Don't skip the warning just because you manually opened EP rules this turn — still warn when cwd is Cuttle.
+- Don't use a plain gray `>` quote for this reminder — use `[!WARNING]` / `[!WORKSPACE]`.

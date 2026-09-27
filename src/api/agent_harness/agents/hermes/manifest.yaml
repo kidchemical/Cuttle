@@ -1,0 +1,32 @@
+id: hermes
+label: Hermes Agent
+slash: /hermes
+requires_cloud: false
+sticky: true
+# Empty — runtime model comes from Hermes config.yaml (local Qwen or OpenRouter GLM, etc.).
+default_model: ""
+models: []
+# Per-model provider from Hermes config wins; openrouter is the cloud default.
+pricing_source: models_dev
+pricing_providers: [openrouter]
+resume: true
+capabilities_inject: once_per_resume
+env_profile: native
+activity: heartbeat
+hint: Run NousResearch Hermes (local llama.cpp or cloud via Hermes config)
+missing_cli_hint: >-
+  Install hermes-agent or set `HERMES_CLI_PATH`. Expected at
+  `%LOCALAPPDATA%\hermes\hermes-agent\venv\Scripts\hermes.exe`.
+install_hint: >-
+  Install NousResearch hermes-agent (Python venv install), then ensure
+  `hermes` is on PATH or set `HERMES_CLI_PATH`. For local backends, llama-server
+  must be up (Cuttle offers to launch it). Cloud backends use Hermes config.yaml.
+executable_names:
+  - hermes
+auto_install: false
+notes: >-
+  Bundled harness connector wrapping scripts.utilities.hermes_cli_tool.
+  Uses `hermes chat -Q -q` (not bare `-z`) so per-chat `--resume` works and
+  `session_id:` is parsed from stderr. Live status mirrors Cursor via state.db
+  polling (quiet mode suppresses token stream callbacks). Model/provider from
+  config.yaml or per-chat palette pins; effort via config rewrite for the turn.

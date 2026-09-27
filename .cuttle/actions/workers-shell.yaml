@@ -1,0 +1,10 @@
+name: workers.shell
+title: Allowlisted shell recipe
+description: >-
+  Run a named shell recipe on a worker (git_status, git_pull, git_fetch, git_rev_parse).
+  Params: target, recipe, repo?
+type: shell
+run: powershell -NoProfile -ExecutionPolicy Bypass -File .cuttle\scripts\workers-cli.ps1 submit
+run_posix: .venv/bin/python -m api.device_workers.cli submit
+workdir: .
+timeout: 180

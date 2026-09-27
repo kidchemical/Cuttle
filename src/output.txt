@@ -1,0 +1,1 @@
+{'response': "Hello! I'm here to help you with any questions or tasks you have. What do you need assistance with today?", 'usage': {'completion_tokens': 23, 'prompt_tokens': 36, 'total_tokens': 59}}

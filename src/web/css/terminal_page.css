@@ -1,0 +1,552 @@
+/* Cuttle Web Terminal — multi-tab PTY sessions (chat-matched chrome) */
+
+:root {
+    --bg-primary: #0d1117;
+    --bg-secondary: #161b22;
+    --bg-tertiary: #21262d;
+    --bg-hover: #30363d;
+    --text-primary: #e6edf3;
+    --text-secondary: #8b949e;
+    --text-tertiary: #6e7681;
+    --border-color: #30363d;
+    --accent-color: #667eea;
+    --accent-hover: #7c93f0;
+    --tab-active-bg: rgba(22, 27, 34, 0.92);
+    --danger: #f85149;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    overflow: hidden;
+    font-family: 'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+}
+
+.terminal-layout {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    height: 100dvh;
+}
+
+/* —— Corner chrome (mirrors chat_page) —— */
+
+.corner-chat-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: fixed;
+    top: 14px;
+    z-index: 150;
+    width: 40px;
+    height: 40px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    border-radius: 50%;
+    cursor: pointer;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.18);
+    transition: background 0.2s, border-color 0.2s, color 0.2s, transform 0.08s;
+}
+
+.new-chat-corner-button {
+    left: 14px;
+    font-size: 26px;
+    font-weight: 300;
+    line-height: 1;
+}
+
+.chat-history-panel-button {
+    left: 62px;
+}
+
+.corner-chat-button:hover {
+    background: var(--bg-hover);
+    border-color: var(--accent-color);
+    color: var(--text-primary);
+}
+
+.corner-chat-button:active {
+    transform: translateY(1px);
+}
+
+.chat-history-panel-button svg {
+    width: 18px;
+    height: 18px;
+}
+
+.chat-id-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: fixed;
+    top: 14px;
+    left: 110px;
+    z-index: 150;
+    height: 40px;
+    padding: 0 12px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    border-radius: 20px;
+    cursor: pointer;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.18);
+    transition: background 0.2s, border-color 0.2s, color 0.2s, transform 0.08s;
+    font-family: ui-monospace, 'Cascadia Code', 'Segoe UI Mono', Menlo, Consolas, monospace;
+    font-size: 0.72em;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    line-height: 1;
+    user-select: none;
+}
+
+.chat-id-badge:hover {
+    background: var(--bg-hover);
+    border-color: var(--accent-color);
+    color: var(--text-primary);
+}
+
+.chat-id-badge:active {
+    transform: translateY(1px);
+}
+
+.chat-id-badge.copied {
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+}
+
+.chat-id-badge-label {
+    white-space: nowrap;
+}
+
+.chat-id-badge[hidden] {
+    display: none !important;
+}
+
+/* Chat / terminal view toggle (top-right) — same footprint as chat's terminal button */
+.view-switch-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: fixed;
+    top: 14px;
+    right: 14px;
+    z-index: 150;
+    width: 40px;
+    height: 40px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    border-radius: 11px;
+    cursor: pointer;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.18);
+    transition: background 0.2s, border-color 0.2s, color 0.2s, transform 0.08s;
+    text-decoration: none;
+}
+
+.view-switch-button:hover {
+    background: var(--bg-hover);
+    border-color: var(--accent-color);
+    color: var(--text-primary);
+}
+
+.view-switch-button:active {
+    transform: translateY(1px);
+}
+
+.view-switch-button svg {
+    width: 18px;
+    height: 18px;
+}
+
+/* —— Floating session tabs (no full-width toolbar) —— */
+
+.terminal-tab-strip {
+    position: absolute;
+    top: 14px;
+    left: 110px;
+    right: 62px;
+    z-index: 140;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    pointer-events: none;
+}
+
+.terminal-tab-strip[hidden] {
+    display: none !important;
+}
+
+.terminal-tab-strip > * {
+    pointer-events: auto;
+}
+
+.terminal-layout.has-chat-id .terminal-tab-strip {
+    left: 210px;
+}
+
+.tab-bar {
+    display: flex;
+    align-items: stretch;
+    gap: 2px;
+    flex: 1;
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.18);
+    padding: 4px;
+}
+
+.tab-bar::-webkit-scrollbar {
+    height: 4px;
+}
+
+.tab-new-button {
+    position: static;
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
+    font-size: 22px;
+    font-weight: 300;
+    line-height: 1;
+}
+
+.tab-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 180px;
+    padding: 0 8px 0 10px;
+    height: 32px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 12px;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.tab-item:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.tab-item.active {
+    background: var(--tab-active-bg);
+    border-color: var(--border-color);
+    color: var(--text-primary);
+}
+
+.tab-item .tab-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tab-item .tab-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
+    font-size: 14px;
+    line-height: 1;
+    opacity: 0.6;
+}
+
+.tab-item .tab-close:hover {
+    opacity: 1;
+    background: rgba(248, 81, 73, 0.2);
+    color: var(--danger);
+}
+
+.primary-btn {
+    padding: 10px 18px;
+    border: none;
+    border-radius: 8px;
+    background: var(--accent-color);
+    color: white;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+}
+
+.primary-btn:hover {
+    background: var(--accent-hover);
+}
+
+.primary-btn.secondary {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+}
+
+.primary-btn.secondary:hover {
+    background: var(--bg-hover);
+    border-color: var(--accent-color);
+}
+
+.terminal-main {
+    flex: 1;
+    min-height: 0;
+    position: relative;
+    background: #0d1117;
+}
+
+/* Wallpaper: clear opaque fills so shell video shows through. */
+html.has-video-background .terminal-layout,
+html.has-video-background .terminal-main,
+html.has-video-background .terminal-pane,
+body.has-video-background .terminal-layout,
+body.has-video-background .terminal-main,
+body.has-video-background .terminal-pane {
+    background: transparent !important;
+}
+
+html.has-video-background .corner-chat-button,
+html.has-video-background .chat-id-badge,
+html.has-video-background .view-switch-button,
+html.has-video-background .tab-bar,
+html.has-video-background .terminal-status,
+body.has-video-background .corner-chat-button,
+body.has-video-background .chat-id-badge,
+body.has-video-background .view-switch-button,
+body.has-video-background .tab-bar,
+body.has-video-background .terminal-status {
+    background: rgba(22, 27, 34, 0.55);
+    backdrop-filter: blur(14px) saturate(1.15);
+    -webkit-backdrop-filter: blur(14px) saturate(1.15);
+}
+
+html.has-video-background .tab-item.active,
+body.has-video-background .tab-item.active {
+    background: rgba(13, 17, 23, 0.45);
+}
+
+/* Frosted glass under the PTY — video stays visible; xterm cells stay transparent (JS theme).
+   Keep padding off .xterm-host (FitAddon measures it with border-box); inset via .xterm. */
+html.has-video-background .xterm-host,
+body.has-video-background .xterm-host {
+    background: rgba(8, 12, 18, 0.08);
+    backdrop-filter: blur(16px) saturate(1.2);
+    -webkit-backdrop-filter: blur(16px) saturate(1.2);
+    border-radius: 10px;
+    margin: 6px 8px 8px;
+    padding: 0;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+html.has-video-background .xterm-host .xterm,
+body.has-video-background .xterm-host .xterm {
+    padding: 8px 10px;
+}
+
+html.has-video-background .xterm-viewport,
+html.has-video-background .xterm-screen,
+html.has-video-background .xterm-helpers,
+body.has-video-background .xterm-viewport,
+body.has-video-background .xterm-screen,
+body.has-video-background .xterm-helpers {
+    background-color: transparent !important;
+}
+
+html.has-video-background.light-mode .corner-chat-button,
+html.has-video-background.light-mode .chat-id-badge,
+html.has-video-background.light-mode .view-switch-button,
+html.has-video-background.light-mode .tab-bar,
+html.has-video-background.light-mode .terminal-status,
+body.has-video-background.light-mode .corner-chat-button,
+body.has-video-background.light-mode .chat-id-badge,
+body.has-video-background.light-mode .view-switch-button,
+body.has-video-background.light-mode .tab-bar,
+body.has-video-background.light-mode .terminal-status {
+    background: rgba(247, 247, 248, 0.72);
+}
+
+html.has-video-background.light-mode .xterm-host,
+body.has-video-background.light-mode .xterm-host {
+    background: rgba(247, 247, 248, 0.10);
+}
+
+html.has-video-background.midnight-mode .corner-chat-button,
+html.has-video-background.midnight-mode .chat-id-badge,
+html.has-video-background.midnight-mode .view-switch-button,
+html.has-video-background.midnight-mode .tab-bar,
+html.has-video-background.midnight-mode .terminal-status,
+body.has-video-background.midnight-mode .corner-chat-button,
+body.has-video-background.midnight-mode .chat-id-badge,
+body.has-video-background.midnight-mode .view-switch-button,
+body.has-video-background.midnight-mode .tab-bar,
+body.has-video-background.midnight-mode .terminal-status {
+    background: rgba(15, 15, 21, 0.6);
+}
+
+.terminal-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    gap: 16px;
+    color: var(--text-secondary);
+    padding-top: 56px;
+}
+
+.terminal-empty-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    justify-content: center;
+}
+
+.terminal-blocked {
+    max-width: 28rem;
+    padding: 0 1.25rem;
+    text-align: center;
+}
+
+.terminal-blocked-title {
+    margin: 0 0 0.75rem;
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.terminal-blocked-body,
+.terminal-blocked-hint {
+    margin: 0 0 0.75rem;
+    line-height: 1.5;
+}
+
+.terminal-blocked-link {
+    display: inline-flex;
+    margin-top: 0.5rem;
+    text-decoration: none;
+}
+
+.terminal-pane {
+    display: none;
+    flex-direction: column;
+    height: 100%;
+    /* Leave room for floating corner chrome + tab strip */
+    padding-top: 56px;
+}
+
+.terminal-pane.active {
+    display: flex;
+}
+
+/* Padding must live on .xterm (not the host): FitAddon reads the host's
+   border-box width and only subtracts the terminal element's own padding.
+   Host padding over-counts cols → canvas wider than the content box →
+   glyphs stay horizontally squashed after shrink→expand (esp. Electron). */
+.xterm-host {
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+    padding: 0;
+    overflow: hidden;
+}
+
+.xterm-host .xterm {
+    height: 100%;
+    padding: 4px 6px;
+}
+
+/* Match chat-messages scrollbar (chat_page.css) */
+.xterm-viewport {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-color) transparent;
+}
+
+.xterm-viewport::-webkit-scrollbar {
+    width: 8px;
+}
+
+.xterm-viewport::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.xterm-viewport::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 4px;
+}
+
+.xterm-viewport::-webkit-scrollbar-thumb:hover {
+    background: var(--text-tertiary);
+}
+
+.xterm-viewport::-webkit-scrollbar-corner {
+    background: transparent;
+}
+
+/* Status only surfaces for errors (hidden otherwise) */
+.terminal-status {
+    position: absolute;
+    left: 14px;
+    right: 14px;
+    bottom: 10px;
+    z-index: 130;
+    min-height: 0;
+    padding: 8px 12px;
+    display: none;
+    align-items: center;
+    font-size: 12px;
+    color: var(--text-secondary);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.18);
+}
+
+.terminal-status.error {
+    display: flex;
+    color: var(--danger);
+    border-color: rgba(248, 81, 73, 0.45);
+}
+
+.terminal-status[hidden] {
+    display: none !important;
+}
+
+.terminal-status.connected {
+    color: #3fb950;
+}
+
+@media (max-width: 720px) {
+    .terminal-tab-strip {
+        left: 110px;
+        right: 62px;
+        top: 62px;
+    }
+
+    .terminal-layout.has-chat-id .terminal-tab-strip {
+        left: 14px;
+        right: 14px;
+    }
+
+    .terminal-pane,
+    .terminal-empty {
+        padding-top: 104px;
+    }
+
+    .tab-item {
+        max-width: 120px;
+    }
+}

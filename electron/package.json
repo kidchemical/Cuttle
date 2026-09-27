@@ -1,0 +1,127 @@
+{
+    "name":  "cuttle-desktop",
+    "version":  "0.2.26",
+    "description":  "Cuttle - AI Agent Framework Desktop Application",
+    "main":  "main.js",
+    "author":  "Ian McCambridge",
+    "license":  "MIT",
+    "scripts":  {
+                    "start":  "electron .",
+                    "build":  "electron-builder build --win --publish never",
+                    "build:dir":  "electron-builder build --win --dir",
+                    "build:linux":  "electron-builder build --linux AppImage --publish never",
+                    "build:linux:dir":  "electron-builder build --linux --dir",
+                    "build:portable":  "electron-builder build --win portable",
+                    "dist":  "electron-builder",
+                    "postinstall":  "electron-builder install-app-deps"
+                },
+    "dependencies":  {
+                         "electron-squirrel-startup":  "^1.0.0"
+                     },
+    "devDependencies":  {
+                            "electron":  "^28.1.0",
+                            "electron-builder":  "^24.9.1"
+                        },
+    "build":  {
+                  "appId":  "com.cuttle.desktop",
+                  "productName":  "Cuttle",
+                  "directories":  {
+                                      "output":  "dist",
+                                      "buildResources":  "build"
+                                  },
+                  "files":  [
+                                "main.js",
+                                "preload.js",
+                                "connect.html",
+                                "package.json",
+                                "assets/**/*",
+                                "device-worker/**/*"
+                            ],
+                  "extraResources":  [
+                                         {
+                                             "from":  "../src",
+                                             "to":  "app/src",
+                                             "filter":  [
+                                                            "**/*",
+                                                            "!**/.pytest_cache",
+                                                            "!**/.pytest_cache/**",
+                                                            "!**/__pycache__/**",
+                                                            "!**/*.pyc",
+                                                            "!**/*.pyo",
+                                                            "!**/*.pyd",
+                                                            "!**/venv/**",
+                                                            "!**/.venv/**",
+                                                            "!**/.venv_*/**",
+                                                            "!**/venv_*/**",
+                                                            "!**/.env",
+                                                            "!**/.env.*",
+                                                            "!**/node_modules/**",
+                                                            "!**/.git/**",
+                                                            "!**/.gitignore",
+                                                            "!**/.vscode/**",
+                                                            "!**/.idea/**",
+                                                            "!**/test_*.py",
+                                                            "!**/tests/**",
+                                                            "!**/*.db-journal",
+                                                            "!**/temp_*.png",
+                                                            "!**/Thumbs.db",
+                                                            "!**/.DS_Store",
+                                                            "!**/output/**",
+                                                            "!**/logs/**",
+                                                            "!**/.pytest_cache/**",
+                                                            "!**/*.egg-info/**",
+                                                            "!**/.mypy_cache/**"
+                                                        ]
+                                         }
+                                     ],
+                  "linux":  {
+                              "target":  [
+                                             {
+                                                 "target":  "AppImage",
+                                                 "arch":  [
+                                                              "x64"
+                                                          ]
+                                             },
+                                             {
+                                                 "target":  "dir",
+                                                 "arch":  [
+                                                              "x64"
+                                                          ]
+                                             }
+                                         ],
+                              "category":  "Utility",
+                              "artifactName":  "${productName}-${version}-${arch}.${ext}"
+                          },
+                  "win":  {
+                              "target":  [
+                                             {
+                                                 "target":  "nsis",
+                                                 "arch":  [
+                                                              "x64"
+                                                          ]
+                                             },
+                                             {
+                                                 "target":  "portable",
+                                                 "arch":  [
+                                                              "x64"
+                                                          ]
+                                             }
+                                         ],
+                              "icon":  "../src/img/cuttle_logo.ico",
+                              "artifactName":  "${productName}-${version}-${arch}.${ext}"
+                          },
+                  "nsis":  {
+                               "oneClick":  false,
+                               "allowToChangeInstallationDirectory":  true,
+                               "createDesktopShortcut":  true,
+                               "createStartMenuShortcut":  true,
+                               "shortcutName":  "Cuttle",
+                               "installerIcon":  "../src/img/cuttle_logo.ico",
+                               "uninstallerIcon":  "../src/img/cuttle_logo.ico",
+                               "license":  "../LICENSE.txt"
+                           },
+                  "portable":  {
+                                   "artifactName":  "${productName}-${version}-portable.${ext}"
+                               }
+              }
+}

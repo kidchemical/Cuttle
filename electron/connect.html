@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <title>Connect to Cuttle</title>
+    <style>
+        :root {
+            --bg: #12141a;
+            --panel: #1a1d27;
+            --border: #2a2f3d;
+            --text: #d7dbe6;
+            --dim: #8b93a7;
+            --accent: #667eea;
+            --accent-hover: #7b93f0;
+            --err: #f85149;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body {
+            height: 100%;
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            overflow: hidden;
+        }
+        body { display: flex; flex-direction: column; }
+        .titlebar {
+            display: flex;
+            height: 36px;
+            flex-shrink: 0;
+            background: #0d1117;
+            border-bottom: 1px solid #1c2333;
+            user-select: none;
+        }
+        .titlebar-drag {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            padding: 0 14px;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+            opacity: 0.85;
+            -webkit-app-region: drag;
+        }
+        .win-btns { display: flex; -webkit-app-region: no-drag; }
+        .win-btn {
+            width: 46px; height: 36px; border: none; background: transparent;
+            color: #8b949e; cursor: pointer;
+        }
+        .win-btn:hover { background: rgba(255,255,255,0.08); color: #c9d1d9; }
+        .win-btn.close:hover { background: #e81123; color: #fff; }
+        .wrap {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 28px 20px;
+        }
+        .card {
+            width: min(440px, 100%);
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 28px 26px 24px;
+        }
+        h1 { font-size: 20px; font-weight: 650; margin-bottom: 6px; }
+        .lead { color: var(--dim); font-size: 13px; line-height: 1.45; margin-bottom: 22px; }
+        label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 6px; color: var(--dim); }
+        input {
+            width: 100%;
+            background: #12141a;
+            border: 1px solid var(--border);
+            color: var(--text);
+            border-radius: 8px;
+            padding: 10px 12px;
+            font-size: 14px;
+            outline: none;
+        }
+        input:focus { border-color: var(--accent); }
+        .row { display: flex; gap: 10px; margin-top: 14px; }
+        button.primary, button.ghost {
+            border: none; border-radius: 8px; padding: 10px 14px;
+            font-size: 13px; font-weight: 600; cursor: pointer;
+        }
+        button.primary {
+            flex: 1;
+            background: var(--accent);
+            color: #fff;
+        }
+        button.primary:hover { background: var(--accent-hover); }
+        button.primary:disabled { opacity: 0.55; cursor: wait; }
+        button.ghost {
+            background: transparent;
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+        button.ghost:hover { background: rgba(255,255,255,0.05); }
+        .status {
+            min-height: 18px;
+            margin-top: 12px;
+            font-size: 12px;
+            color: var(--dim);
+        }
+        .status.err { color: var(--err); }
+        .hint { margin-top: 18px; font-size: 11px; color: var(--dim); line-height: 1.4; }
+    </style>
+</head>
+<body>
+    <div class="titlebar">
+        <div class="titlebar-drag">Cuttle</div>
+        <div class="win-btns">
+            <button type="button" class="win-btn" id="minBtn" aria-label="Minimize">─</button>
+            <button type="button" class="win-btn" id="maxBtn" aria-label="Maximize">☐</button>
+            <button type="button" class="win-btn close" id="closeBtn" aria-label="Close">✕</button>
+        </div>
+    </div>
+    <div class="wrap">
+        <div class="card">
+            <h1>Connect to Cuttle</h1>
+            <p class="lead">This app is a window onto the Cuttle host — the same daemon your phone and Chrome already use. Do not start a second copy on this laptop.</p>
+            <label for="hostInput">Host address</label>
+            <input id="hostInput" type="text" spellcheck="false" placeholder="192.168.x.x or http://192.168.x.x:8000" autofocus>
+            <div class="row">
+                <button type="button" class="primary" id="connectBtn">Connect</button>
+                <button type="button" class="ghost" id="localBtn">This PC hosts Cuttle</button>
+            </div>
+            <div class="status" id="status"></div>
+            <p class="hint">Use the same LAN address as Chrome. Tray menu → Change Cuttle host if you need to switch later.</p>
+        </div>
+    </div>
+    <script>
+        const api = window.electron;
+        const hostInput = document.getElementById('hostInput');
+        const statusEl = document.getElementById('status');
+        const connectBtn = document.getElementById('connectBtn');
+        const localBtn = document.getElementById('localBtn');
+
+        function setStatus(msg, err) {
+            statusEl.textContent = msg || '';
+            statusEl.classList.toggle('err', !!err);
+        }
+
+        if (api?.windowControls) {
+            document.getElementById('minBtn').onclick = () => api.windowControls.minimize();
+            document.getElementById('maxBtn').onclick = () => api.windowControls.maximize();
+            document.getElementById('closeBtn').onclick = () => api.windowControls.close();
+        }
+
+        api?.desktop?.getConfig?.().then((cfg) => {
+            if (cfg && cfg.host && cfg.host !== '127.0.0.1' && cfg.host !== 'localhost') {
+                hostInput.value = cfg.httpPort && cfg.httpPort !== 8000
+                    ? `${cfg.host}:${cfg.httpPort}`
+                    : cfg.host;
+            }
+            if (cfg && cfg.lastError) setStatus(cfg.lastError, true);
+        }).catch(() => {});
+
+        async function connect() {
+            const raw = hostInput.value.trim();
+            if (!raw) {
+                setStatus('Enter the host IP you use in Chrome.', true);
+                hostInput.focus();
+                return;
+            }
+            connectBtn.disabled = true;
+            setStatus('Connecting…');
+            try {
+                const result = await api.desktop.connectHost(raw);
+                if (!result || !result.ok) {
+                    setStatus((result && result.error) || 'Could not reach Cuttle on that host.', true);
+                    connectBtn.disabled = false;
+                    return;
+                }
+                setStatus('Connected. Loading…');
+            } catch (err) {
+                setStatus(err.message || String(err), true);
+                connectBtn.disabled = false;
+            }
+        }
+
+        connectBtn.onclick = connect;
+        hostInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') connect();
+        });
+        localBtn.onclick = async () => {
+            localBtn.disabled = true;
+            connectBtn.disabled = true;
+            setStatus('Starting Cuttle on this PC…');
+            try {
+                const result = await api.desktop.useLocal();
+                if (!result || !result.ok) {
+                    setStatus((result && result.error) || 'Flask did not start on this PC.', true);
+                    localBtn.disabled = false;
+                    connectBtn.disabled = false;
+                }
+            } catch (err) {
+                setStatus(err.message || String(err), true);
+                localBtn.disabled = false;
+                connectBtn.disabled = false;
+            }
+        };
+    </script>
+</body>
+</html>

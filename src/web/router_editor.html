@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cuttle - Router</title>
+    <link rel="stylesheet" href="/css/ui_boot.css?v=20260926safeArea">
+    <script src="/js/ui_boot.js?v=20260926safeArea"></script>
+    <link rel="stylesheet" href="/css/shared_navigation.css?v=20260926lightBg">
+    <link rel="stylesheet" href="/css/router_editor.css?v=20260830g">
+</head>
+<body class="compact-shell-page">
+    <header class="re-header">
+        <div class="re-header-left">
+            <span class="re-logo">🔀</span>
+            <h1>Cuttle Router</h1>
+            <span class="re-mode-chip" id="mode-chip" title="Routing brain mode">…</span>
+            <span class="re-dirty-chip" id="dirty-chip" hidden>unsaved</span>
+        </div>
+        <div class="re-header-right">
+            <button class="re-btn" id="btn-refresh" title="Reload from settings.json">↻ Reload</button>
+            <button class="re-btn primary" id="btn-save" title="Save config + use cases">💾 Save</button>
+        </div>
+    </header>
+
+    <main class="re-page">
+        <!-- ── Core routing ─────────────────────────────────────── -->
+        <section class="re-card" id="core-card">
+            <div class="re-card-title">
+                <h2>Core routing</h2>
+                <p class="re-hint">How the routing brain is invoked and where unmatched turns go.</p>
+            </div>
+
+            <div class="re-row">
+                <label class="re-label" for="router-mode">Brain mode</label>
+                <select id="router-mode" class="re-input narrow">
+                    <option value="off">off — router disabled</option>
+                    <option value="api">api — OpenAI brain</option>
+                    <option value="local">local — OpenAI-compatible endpoint</option>
+                    <option value="agent">agent — agent CLI as brain</option>
+                </select>
+                <select id="router-api-model" class="re-input narrow" data-provider="api" hidden></select>
+                <input id="router-local-endpoint" class="re-input wide" data-provider="local"
+                       placeholder="http://localhost:8080/v1" hidden>
+                <input id="router-local-model" class="re-input narrow" data-provider="local"
+                       placeholder="local model id" hidden>
+                <input id="router-agent-id" class="re-input narrow" data-provider="agent"
+                       placeholder="agent id (cursor)" hidden>
+                <input id="router-agent-model" class="re-input narrow" data-provider="agent"
+                       placeholder="agent model (auto)" hidden>
+            </div>
+
+            <div class="re-row">
+                <label class="re-label">Default target</label>
+                <div class="re-target" data-role="default_target"></div>
+            </div>
+            <div class="re-row">
+                <label class="re-label">Escalation target</label>
+                <div class="re-target" data-role="escalation_target"></div>
+            </div>
+
+            <div class="re-row align-top">
+                <label class="re-label">Fallback chain</label>
+                <div class="re-fallbacks">
+                    <div id="fallback-list" class="re-fallback-list"></div>
+                    <button class="re-btn small" id="btn-add-fallback">+ Add fallback</button>
+                </div>
+            </div>
+
+            <p class="re-footnote" id="config-path-hint">
+                Source of truth: <code>src/settings.json → agent_router</code>.
+                Agents can edit the same JSON directly — this page reloads it from disk.
+            </p>
+        </section>
+
+        <!-- ── Use cases ────────────────────────────────────────── -->
+        <section class="re-card" id="usecase-card">
+            <div class="re-card-title">
+                <h2>Use cases</h2>
+                <p class="re-hint">
+                    Declared routing table — when a turn matches a use case, its targets override the
+                    brain. Sorted simple → complex by priority (lower = matched first); the first
+                    matching enabled block is applied.
+                </p>
+            </div>
+            <div id="usecase-list" class="re-usecase-list"></div>
+            <button class="re-btn" id="btn-add-usecase">+ Add use case</button>
+        </section>
+
+        <!-- ── Target health ────────────────────────────────────── -->
+        <section class="re-card" id="health-card">
+            <div class="re-card-title">
+                <h2>Target health</h2>
+                <p class="re-hint">
+                    7-day outcomes per target, plus the quality-regression check ("is it sucking?").
+                    A flagged target is demoted for 30 min and routed around automatically.
+                    Computed locally from outcomes your real routed turns already recorded —
+                    no scheduled job, no extra tokens, no LLM judge.
+                </p>
+                <button class="re-btn" id="btn-recheck" title="Re-evaluate drift + apply demotions">🩺 Recheck</button>
+            </div>
+            <div id="health-summary" class="re-health-summary"></div>
+            <div class="re-table-wrap">
+                <table class="re-table" id="health-table">
+                    <thead>
+                        <tr>
+                            <th>Target</th>
+                            <th>Attempts</th>
+                            <th>Success</th>
+                            <th>Task fails</th>
+                            <th>Transport</th>
+                            <th>Avg ms</th>
+                            <th>Feedback</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <p class="re-footnote">
+                Cancellations are never counted as quality evidence. Demotions expire on their own —
+                a target recovers by simply not failing again.
+            </p>
+
+            <div class="re-rage">
+                <div class="re-row">
+                    <label class="re-label" for="rage-enabled">Frustration analysis</label>
+                    <label class="re-toggle">
+                        <input type="checkbox" id="rage-enabled">
+                        <span>watch for "still broken" / "you said you fixed it" complaints</span>
+                    </label>
+                </div>
+                <div class="re-row">
+                    <label class="re-label" for="rage-agent">Investigator agent</label>
+                    <select id="rage-agent" class="re-input narrow"></select>
+                    <select id="rage-model" class="re-input narrow"></select>
+                    <label class="re-inline-label" for="rage-timeout" title="Max seconds for the background investigation">timeout</label>
+                    <input id="rage-timeout" class="re-input narrow" type="number" min="30" max="1800" step="30">
+                </div>
+                <p class="re-footnote">
+                    When a frustration phrase is detected, matching prior attempts are flagged locally
+                    (free), and this agent re-analyzes the full evidence in the background — in
+                    parallel, so your escalated task never waits for it.
+                </p>
+            </div>
+        </section>
+    </main>
+
+    <div class="re-toast" id="re-toast" hidden></div>
+
+    <script src="/js/toast.js"></script>
+    <script src="/js/router_editor.js?v=20260926jev"></script>
+</body>
+</html>

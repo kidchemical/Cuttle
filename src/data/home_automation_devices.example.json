@@ -1,0 +1,14 @@
+[
+  {
+    "device_id": "AA:BB:CC:DD:EE:FF:00:01",
+    "model": "H6008",
+    "name": "Bedroom lamp",
+    "zone": "bedroom"
+  },
+  {
+    "device_id": "AA:BB:CC:DD:EE:FF:00:02",
+    "model": "H6003",
+    "name": "Desk strip",
+    "zone": "living"
+  }
+]

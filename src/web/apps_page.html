@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Apps - Cuttle</title>
+    <link rel="stylesheet" href="/css/ui_boot.css?v=20260926safeArea">
+    <script src="/js/ui_boot.js?v=20260926safeArea"></script>
+    <link rel="stylesheet" href="css/shared_navigation.css?v=20260926lightBg">
+    <link rel="stylesheet" href="css/landing_page.css?v=20260926lightBg">
+    <link rel="stylesheet" href="css/compact_page.css?v=20260917bgFix2">
+    <link rel="stylesheet" href="css/apps_page.css?v=20260926apps1">
+</head>
+<body class="compact-shell-page" data-page="apps">
+    <script>
+        (function () {
+            if (window.CuttleUiBoot) return;
+            var t = localStorage.getItem('theme') || 'dark';
+            document.body.classList.remove('dark-mode', 'midnight-mode', 'light-mode');
+            document.body.classList.add(t === 'light' ? 'light-mode' : (t === 'midnight' ? 'midnight-mode' : 'dark-mode'));
+        })();
+    </script>
+    <div class="apps-page">
+        <div class="apps-bar">
+            <div class="compact-page-title">
+                <h1>Apps</h1>
+                <p id="appsSummary">Cuttle web apps</p>
+            </div>
+            <input type="search" class="apps-search" id="appsSearch" placeholder="Search apps" aria-label="Search apps" autocomplete="off">
+        </div>
+        <p class="apps-hint">Tap to open. Long-press or right-click to add an app to the blade bar or remove it.</p>
+        <div class="apps-grid" id="appsGrid" role="list"></div>
+        <p class="apps-empty" id="appsEmpty" hidden></p>
+    </div>
+    <div class="apps-menu" id="appsMenu" role="menu" hidden></div>
+    <div class="apps-status" id="appsStatus" role="status" aria-live="polite"></div>
+    <script src="/js/apps_page.js?v=20260926apps1"></script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+---
+description: Apply the Cuttle Electron CDP debug skill when desktop UI freezes or Electron-only bugs need reproduction
+alwaysApply: false
+---
+
+# Cuttle Electron debug
+
+When the user reports Cuttle **desktop / Electron** freezes, Chat→Git wedges, or
+browser-OK / Electron-bad UI bugs, read and follow:
+
+`/path/to/Cuttle/.cursor/skills/cuttle-electron-debug/SKILL.md`
+
+Attach CDP to the running app and drive it directly — do not only use browser Playwright.

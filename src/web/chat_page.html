@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en" data-cuttle-safe-area="self">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content, viewport-fit=cover">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <title>Chat - Cuttle AI Assistant</title>
+    <link rel="stylesheet" href="/css/ui_boot.css?v=20260926safeArea">
+    <script src="/js/ui_boot.js?v=20260926safeArea"></script>
+    <!-- Fonts are optional: never block first paint / DOMContentLoaded offline. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+    <noscript><link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet"></noscript>
+    <link rel="stylesheet" href="css/shared_navigation.css?v=20260926lightBg">
+    <link rel="stylesheet" href="css/auth_modal.css?v=20260926authLogin">
+    <link rel="stylesheet" href="css/chat_page.css?v=20260927qlFit">
+    <link rel="stylesheet" href="/css/query_log_inspector.css?v=20260927qlJson">
+    <link rel="stylesheet" href="/css/chat_lightbox.css?v=20260922imgCtxMenu">
+    <link rel="stylesheet" href="/css/pending_changes.css?v=20260920multiRepo">
+    <link rel="stylesheet" href="/css/git_commit_viewer.css?v=20260926commitModal">
+    <!-- Deep-linked chat (?chat=): flag the restore before first paint so the
+         welcome splash never flashes, and start the transcript fetch right here.
+         chat_page.js can't ask for it until auth.js has finished /api/auth/me
+         plus the whole session list, which is what made reopening feel slow. -->
+    <script>
+    (function () {
+        try {
+            var params = new URLSearchParams(window.location.search);
+            var chat = params.get('chat') || params.get('session');
+            if (!chat) return;
+            document.documentElement.setAttribute('data-chat-restoring', '1');
+            // Failsafe independent of chat_page.js: a script that never loads must
+            // not leave the pane spinning forever.
+            setTimeout(function () {
+                document.documentElement.removeAttribute('data-chat-restoring');
+            }, 12000);
+            var bare = String(chat).trim();
+            if (bare.indexOf('db_session_') === 0) bare = bare.slice('db_session_'.length);
+            if (!bare) return;
+            window.__cuttleChatPrefetch = {
+                id: String(chat),
+                startedAt: Date.now(),
+                promise: fetch(
+                    '/api/auth/sessions/' + encodeURIComponent(bare) + '/messages?limit=10',
+                    { credentials: 'include', cache: 'no-store' }
+                ).then(function (r) {
+                    return r.ok ? r.json() : null;
+                }).catch(function () {
+                    return null;
+                })
+            };
+        } catch (_) {}
+    })();
+    </script>
+</head>
+<body>
+    <!-- Chat Container -->
+    <div class="chat-layout">
+        <!-- Overlay must live inside .chat-layout: when the composer pins the
+             layout to position:fixed, children form a stacking context and an
+             outside overlay would cover the panel (stuck blur, dead close btn). -->
+        <div class="chat-history-panel-overlay" id="chatHistoryPanelOverlay" onclick="window.closeChatHistoryPanel()"></div>
+        <!-- Chat history panel -->
+        <aside class="chat-history-panel" id="chatHistoryPanel">
+            <div class="chat-history-panel-top">
+                <div class="search-container history-search-wrap">
+                    <input type="text" class="search-input" id="searchInput" placeholder="Search or /project /agent…" autocomplete="off" spellcheck="false" oninput="window.onHistorySearchInput(event)" onkeydown="window.onHistorySearchKeydown(event)">
+                    <span class="search-icon">🔍</span>
+                    <div class="history-search-filter-chips" id="historySearchFilterChips" hidden></div>
+                    <div class="history-search-slash-palette" id="historySearchSlashPalette" hidden role="listbox" aria-label="History filter commands"></div>
+                </div>
+                <button class="chat-history-panel-close" id="chatHistoryPanelClose" onclick="window.closeChatHistoryPanel()" title="Close chat history" aria-label="Close chat history panel">
+                    <span>×</span>
+                </button>
+            </div>
+
+            <div class="chat-history" id="chatHistory">
+                <div class="loading-spinner">Loading chats...</div>
+            </div>
+        </aside>
+        
+        <!-- Main Chat Area -->
+        <main class="chat-main">
+            <!-- Corner chat controls -->
+            <button class="corner-chat-button new-chat-corner-button" onclick="window.createNewChat()" title="New chat" aria-label="New chat">
+                <span aria-hidden="true">+</span>
+            </button>
+            <button class="corner-chat-button chat-history-panel-button" id="chatHistoryPanelButton" onclick="window.toggleChatHistoryPanel()" title="Chat history" aria-label="Chat history">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                    <path d="M12 8v4l3 2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M3.05 11a9 9 0 1 1 .5 4M3 16v-5H8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </button>
+            <div class="chat-session-title" id="chatSessionTitle" hidden>
+                <span class="chat-session-running-icon history-running-icon" id="chatSessionRunningIcon" hidden title="Generating…" aria-label="Generating"></span>
+                <span class="chat-session-unread-icon" id="chatSessionUnreadIcon" hidden title="Unread" aria-label="Unread"></span>
+                <span class="chat-session-queued-icon" id="chatSessionQueuedIcon" hidden title="Queued prompt" aria-label="Queued prompt"></span>
+                <span class="chat-session-paused-icon" id="chatSessionPausedIcon" hidden title="Paused queue" aria-label="Paused queued prompt"></span>
+                <button type="button" class="chat-session-title-star" id="chatSessionStarBtn" hidden title="Unstar chat" aria-label="Unstar chat" aria-pressed="false" onclick="window.chatPageToggleCurrentStar(event)">
+                    <svg class="chat-star-icon chat-star-icon--outline" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <path d="M12 3.5l2.6 5.3 5.9.9-4.2 4.1 1 5.8L12 16.8 6.7 19.6l1-5.8-4.2-4.1 5.9-.9L12 3.5z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+                    </svg>
+                    <svg class="chat-star-icon chat-star-icon--filled" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                        <path d="M12 3.5l2.6 5.3 5.9.9-4.2 4.1 1 5.8L12 16.8 6.7 19.6l1-5.8-4.2-4.1 5.9-.9L12 3.5z"/>
+                    </svg>
+                </button>
+                <span class="chat-session-title-text" id="chatSessionTitleText"></span>
+            </div>
+            <div class="chat-chrome-menu" id="chatChromeMenu">
+                <button type="button" class="corner-chat-button chat-chrome-menu-button" id="chatChromeMenuBtn" title="Menu" aria-label="Chat menu" aria-haspopup="menu" aria-expanded="false" aria-controls="chatChromeMenuDropdown">
+                    <span class="chat-chrome-hamburger" aria-hidden="true"><span></span><span></span><span></span></span>
+                </button>
+                <!-- Items filled by buildSessionMenuHTML() so chrome + history stay in sync -->
+                <div class="chat-chrome-menu-dropdown" id="chatChromeMenuDropdown" role="menu" hidden></div>
+            </div>
+            <!-- Outside the voice overlay so fixed + safe-area match the chrome menu -->
+            <button type="button" class="corner-chat-button voice-mode-exit-btn" id="voiceModeExitBtn" hidden title="Back to chat" aria-label="Back to chat">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </button>
+
+            <!-- Voice mode: full-stage orbit + mic; same session as the open chat -->
+            <div class="voice-mode-overlay" id="voiceModeOverlay" hidden aria-hidden="true">
+                <div class="voice-mode-stage">
+                    <div class="voice-mode-orbit-wrap" id="voiceModeOrbitWrap" aria-hidden="true">
+                        <div class="typing-orbit voice-mode-orbit">
+                            <span class="typing-orbit-ring"></span>
+                            <span class="typing-orbit-ring typing-orbit-ring--inner"></span>
+                            <span class="typing-orbit-core"></span>
+                            <span class="typing-orbit-sat typing-orbit-sat--1"></span>
+                            <span class="typing-orbit-sat typing-orbit-sat--2"></span>
+                            <span class="typing-orbit-sat typing-orbit-sat--3"></span>
+                            <span class="typing-orbit-beam"></span>
+                        </div>
+                    </div>
+                    <div class="voice-mode-status" id="voiceModeStatus" aria-live="polite" role="status">Tap the mic to talk</div>
+                    <div class="voice-mode-interim" id="voiceModeInterim" hidden aria-live="polite"></div>
+                    <div class="voice-mode-transcript" id="voiceModeTranscript" aria-label="Voice transcript"></div>
+                    <button type="button" class="voice-mode-mic-btn" id="voiceModeMicBtn" title="Tap to talk" aria-label="Tap to talk" aria-pressed="false">
+                        <svg class="voice-mic-icon" width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            <path d="M19 10v2a7 7 0 0 1-14 0v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            <line x1="12" y1="19" x2="12" y2="23" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                            <line x1="8" y1="23" x2="16" y2="23" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                        </svg>
+                    </button>
+                    <p class="voice-mode-hint" id="voiceModeHint">Same chat — replies stay in history</p>
+                </div>
+            </div>
+            
+            <!-- Restore veil for ?chat= deep links. Visible only while the
+                 transcript is in flight; chat_page.js clears the html flag when
+                 the chat paints or when the 10s fallback drops to the splash. -->
+            <div class="chat-restore-loader" id="chatRestoreLoader" aria-hidden="true">
+                <div class="chat-restore-spinner"></div>
+            </div>
+
+            <!-- Welcome Screen (shown when no chat is active) -->
+            <div class="welcome-screen" id="welcomeScreen">
+                <div class="welcome-content">
+                    <div class="welcome-logo">
+                        <img src="/img/cuttle-logo.png" alt="Cuttle">
+                    </div>
+                    <!-- Temporarily hidden: restore by removing hidden when branding is wanted again -->
+                    <h1 class="welcome-title" hidden>
+                        <span id="welcomeAgentName">Cuttle</span> AI Assistant
+                    </h1>
+                    <p class="welcome-subtitle">How can I help you today?</p>
+                    
+                    <div class="welcome-input-container">
+                        <div class="input-wrapper welcome-composer-wrap">
+                            <div class="chat-composer-inner">
+                                <div class="composer-top-row">
+                                    <div id="welcomeSlashChipsRow" class="slash-chips-row" hidden></div>
+                                    <div class="composer-actions">
+                                        <button type="button" class="context-gauge-btn" id="welcomeContextGauge" hidden title="Context usage" aria-label="Agent context usage" aria-haspopup="dialog" aria-expanded="false">
+                                            <svg class="context-gauge-svg" viewBox="0 0 36 36" width="18" height="18" aria-hidden="true">
+                                                <circle class="context-gauge-track" cx="18" cy="18" r="14" fill="none" stroke-width="3"/>
+                                                <circle class="context-gauge-arc" cx="18" cy="18" r="14" fill="none" stroke-width="3" stroke-linecap="round" pathLength="100" stroke-dasharray="0 100"/>
+                                            </svg>
+                                            <span class="context-gauge-pct" aria-hidden="true"></span>
+                                        </button>
+                                        <button type="button" class="attach-button enhance-button" id="welcomeEnhanceButton" title="Enhance prompt (rewrite with AI)" aria-label="Enhance prompt">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                                <path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72Z"/>
+                                                <path d="m14 7 3 3"/><path d="M5 6v4"/><path d="M19 14v4"/><path d="M10 2v2"/><path d="M7 8H3"/><path d="M21 16h-4"/>
+                                            </svg>
+                                            <span class="enhance-spinner" aria-hidden="true"></span>
+                                        </button>
+                                        <button type="button" class="attach-button" id="welcomeAttachButton" title="Attach image or PDF" aria-label="Attach image or PDF">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                                <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                            </svg>
+                                        </button>
+                                        <button type="button" class="send-button" id="welcomeSendButton">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                                                <path d="M22 2L11 13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                                <path d="M22 2L15 22L11 13L2 9L22 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                            </svg>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div id="welcomeAttachChipsRow" class="attach-chips-row" hidden></div>
+                                <div class="textarea-with-slash-menu">
+                                    <div id="welcomeSlashCommandMenu" class="slash-command-menu" role="listbox" hidden aria-label="Commands, pipelines, and skills"></div>
+                                    <textarea 
+                                        class="chat-input" 
+                                        id="welcomeChatInput" 
+                                        name="cuttle-composer-input-02"
+                                        autocomplete="off"
+                                        autocorrect="off"
+                                        autocapitalize="off"
+                                        spellcheck="false"
+                                        enterkeyhint="send"
+                                        inputmode="text"
+                                        readonly
+                                        aria-autocomplete="none"
+                                        data-lpignore="true"
+                                        data-1p-ignore="true"
+                                        data-bwignore="true"
+                                        data-form-type="other"
+                                        data-chrome-autofill="off"
+                                        placeholder="Type your message here… Type / for commands, pipelines & skills" 
+                                        rows="1"
+                                        oninput="window.autoResizeWelcomeTextarea()"
+                                    ></textarea>
+                                </div>
+                            </div>
+                        </div>
+                        <input type="file" id="welcomeFileInput" class="chat-file-input" accept="image/*,.pdf,application/pdf" multiple hidden>
+                        <div class="input-footer">
+                            <div class="inference-mode-bar">
+                                <div class="inference-mode-toggle" role="group" aria-label="Inference mode">
+                                    <button type="button" class="inference-mode-btn" data-mode="auto" title="Use pipeline default">Auto</button>
+                                    <button type="button" class="inference-mode-btn" data-mode="local" title="Force local LLM (Ollama / llama.cpp)">Local</button>
+                                    <button type="button" class="inference-mode-btn" data-mode="cloud" title="Force cloud APIs (Anthropic / OpenAI)">Cloud</button>
+                                </div>
+                            </div>
+                            <span class="input-hint">Enter to send · Shift+Enter for new line · ↑ recalls past prompts · paperclip for images/PDFs</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Chat Area (shown when a chat is active) -->
+            <div class="chat-area" id="chatArea" style="display: none;">
+                <div class="chat-messages-wrapper">
+                    <div class="chat-messages" id="chatMessages">
+                        <!-- Messages will be added here dynamically -->
+                    </div>
+                    <div class="message-nav" id="messageNav" aria-label="Jump to message">
+                        <!-- Message dots/numbers rendered by JS -->
+                    </div>
+                    <button type="button" class="chat-jump-bottom" id="chatJumpBottom" hidden title="Jump to latest" aria-label="Jump to latest messages">
+                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M12 5v14"/><path d="m19 12-7 7-7-7"/>
+                        </svg>
+                    </button>
+                </div>
+                
+                <div class="chat-input-container">
+                    <!-- Durable agent widgets (Tasks, …) — top-most above queue + pending changes -->
+                    <div class="chat-widgets" id="chatWidgetsStrip" hidden aria-label="Chat widgets"></div>
+                    <!-- Pending-prompt queue only — never used for supervised worker activity -->
+                    <div class="followup-queue" id="followupQueue" hidden aria-label="Queued follow-up messages"></div>
+                    <div class="pending-changes-host" id="pendingChangesHost" aria-label="Pending git changes"></div>
+                    <div class="input-wrapper">
+                        <div class="chat-composer-inner">
+                            <div class="composer-top-row">
+                                <div id="chatSlashChipsRow" class="slash-chips-row" hidden></div>
+                                <div class="composer-actions">
+                                    <button type="button" class="context-gauge-btn" id="chatContextGauge" hidden title="Context usage" aria-label="Agent context usage" aria-haspopup="dialog" aria-expanded="false">
+                                        <svg class="context-gauge-svg" viewBox="0 0 36 36" width="18" height="18" aria-hidden="true">
+                                            <circle class="context-gauge-track" cx="18" cy="18" r="14" fill="none" stroke-width="3"/>
+                                            <circle class="context-gauge-arc" cx="18" cy="18" r="14" fill="none" stroke-width="3" stroke-linecap="round" pathLength="100" stroke-dasharray="0 100"/>
+                                        </svg>
+                                        <span class="context-gauge-pct" aria-hidden="true"></span>
+                                    </button>
+                                    <button type="button" class="attach-button enhance-button" id="enhanceButton" title="Enhance prompt (rewrite with AI)" aria-label="Enhance prompt">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                            <path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72Z"/>
+                                            <path d="m14 7 3 3"/><path d="M5 6v4"/><path d="M19 14v4"/><path d="M10 2v2"/><path d="M7 8H3"/><path d="M21 16h-4"/>
+                                        </svg>
+                                        <span class="enhance-spinner" aria-hidden="true"></span>
+                                    </button>
+                                    <button type="button" class="attach-button" id="attachButton" title="Attach image or PDF" aria-label="Attach image or PDF">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                            <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                        </svg>
+                                    </button>
+                                    <button type="button" class="stop-button" id="stopButton" title="Stop generating" aria-label="Stop generating" style="display: none;">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                                            <rect x="6" y="6" width="12" height="12" rx="2"/>
+                                        </svg>
+                                    </button>
+                                    <button type="button" class="send-button" id="sendButton" title="Send" aria-label="Send">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                                            <path d="M22 2L11 13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                            <path d="M22 2L15 22L11 13L2 9L22 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                            <div id="chatAttachChipsRow" class="attach-chips-row" hidden></div>
+                            <div class="textarea-with-slash-menu">
+                                <div id="chatSlashCommandMenu" class="slash-command-menu" role="listbox" hidden aria-label="Commands, pipelines, and skills"></div>
+                                <textarea 
+                                    class="chat-input" 
+                                    id="chatInput" 
+                                    name="cuttle-composer-input-01"
+                                    autocomplete="off"
+                                    autocorrect="off"
+                                    autocapitalize="off"
+                                    spellcheck="false"
+                                    enterkeyhint="send"
+                                    inputmode="text"
+                                    readonly
+                                    aria-autocomplete="none"
+                                    data-lpignore="true"
+                                    data-1p-ignore="true"
+                                    data-bwignore="true"
+                                    data-form-type="other"
+                                    data-chrome-autofill="off"
+                                    placeholder="Type your message here… Type / for commands, pipelines & skills" 
+                                    rows="1"
+                                    oninput="window.autoResizeTextarea()"
+                                ></textarea>
+                            </div>
+                        </div>
+                    </div>
+                    <input type="file" id="chatFileInput" class="chat-file-input" accept="image/*,.pdf,application/pdf" multiple hidden>
+                    <div class="input-footer">
+                        <div class="inference-mode-bar">
+                            <div class="inference-mode-toggle" role="group" aria-label="Inference mode">
+                                <button type="button" class="inference-mode-btn" data-mode="auto" title="Use pipeline default">Auto</button>
+                                <button type="button" class="inference-mode-btn" data-mode="local" title="Force local LLM (Ollama / llama.cpp)">Local</button>
+                                <button type="button" class="inference-mode-btn" data-mode="cloud" title="Force cloud APIs (Anthropic / OpenAI)">Cloud</button>
+                            </div>
+                        </div>
+                        <span class="input-hint" title="Enter to send · Send while generating queues follow-ups (they are sent together once idle) · Stop cancels · paperclip attaches images/PDFs · wand rewrites your prompt">Enter to send · Send queues follow-ups · Stop cancels</span>
+                    </div>
+                </div>
+            </div>
+        </main>
+        <!-- Pane overlay: stay outside the transformed history sidebar so
+             position:fixed centers in the current viewport pane. -->
+        <div class="history-delete-modal" id="gitPushConfirmModal" hidden role="dialog" aria-modal="true" aria-labelledby="gitPushConfirmTitle">
+            <div class="history-delete-modal-card git-push-confirm-card">
+                <h2 class="history-delete-modal-title" id="gitPushConfirmTitle">Push to remote?</h2>
+                <p class="history-delete-modal-subtitle" id="gitPushConfirmSubtitle">Are you sure you want to push this project?</p>
+                <div class="history-delete-modal-actions">
+                    <button type="button" class="history-delete-modal-btn history-delete-modal-cancel" id="gitPushConfirmCancel">Cancel</button>
+                    <button type="button" class="history-delete-modal-btn git-push-confirm-accept" id="gitPushConfirmAccept">Accept</button>
+                </div>
+            </div>
+        </div>
+        <div class="history-delete-modal" id="historyDeleteModal" hidden role="dialog" aria-modal="true" aria-labelledby="historyDeleteTitle" aria-describedby="historyDeleteSubtitle">
+            <div class="history-delete-modal-card">
+                <h2 class="history-delete-modal-title" id="historyDeleteTitle">Delete chat?</h2>
+                <p class="history-delete-modal-subtitle" id="historyDeleteSubtitle">This cannot be undone.</p>
+                <div class="history-delete-modal-actions">
+                    <button type="button" class="history-delete-modal-btn history-delete-modal-cancel" id="historyDeleteCancel">Cancel</button>
+                    <button type="button" class="history-delete-modal-btn history-delete-modal-confirm" id="historyDeleteConfirm">Delete</button>
+                </div>
+            </div>
+        </div>
+        <div class="history-rename-modal" id="historyRenameModal" hidden role="dialog" aria-modal="true" aria-labelledby="historyRenameTitle">
+            <div class="history-rename-modal-card">
+                <h2 class="history-rename-modal-title" id="historyRenameTitle">Rename chat</h2>
+                <div class="history-rename-chips" id="historyRenameChips" hidden></div>
+                <div class="history-rename-header">
+                    <span class="history-rename-label" id="historyRenameLabel">Chat name</span>
+                    <button type="button" class="history-rename-edit" id="historyRenameEdit" title="Edit name" aria-label="Edit chat name" hidden>
+                        <svg class="history-rename-edit-pencil" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/>
+                        </svg>
+                        <svg class="history-rename-edit-check" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" hidden>
+                            <polyline points="20 6 9 17 4 12"/>
+                        </svg>
+                    </button>
+                </div>
+                <div class="history-rename-preview-wrap" id="historyRenamePreviewWrap">
+                    <div class="history-rename-loading" id="historyRenameLoading" hidden>
+                        <span class="history-rename-spinner" aria-hidden="true"></span>
+                        <span>Suggesting name…</span>
+                    </div>
+                    <div class="history-rename-preview" id="historyRenamePreview" hidden></div>
+                </div>
+                <input type="text" id="historyRenameInput" class="history-rename-input" maxlength="80" placeholder="Chat name…" hidden autocomplete="off" spellcheck="false" />
+                <div class="history-rename-actions">
+                    <button type="button" class="history-rename-btn history-rename-cancel" id="historyRenameCancel">Cancel</button>
+                    <button type="button" class="history-rename-btn history-rename-resuggest" id="historyRenameResuggest" title="Regenerate from chat transcript" hidden>Re-suggest</button>
+                    <button type="button" class="history-rename-btn history-rename-save" id="historyRenameSave">Save</button>
+                </div>
+                <div class="history-rename-status" id="historyRenameStatus" hidden></div>
+            </div>
+        </div>
+        <div class="pending-diff-modal" id="pendingDiffModal" hidden role="dialog" aria-modal="true" aria-labelledby="pendingDiffTitle">
+            <button type="button" class="pending-diff-side-nav is-prev" id="pendingDiffSidePrev" title="Previous file (←)" aria-label="Previous file" hidden>‹</button>
+            <div class="pending-diff-modal-card">
+                <header class="pending-diff-modal-header">
+                    <div class="pending-diff-modal-heading">
+                        <h2 class="pending-diff-modal-title" id="pendingDiffTitle">File diff</h2>
+                        <div class="pending-diff-modal-meta">
+                            <span class="pending-diff-modal-badge" id="pendingDiffStatus"></span>
+                            <span class="pending-diff-modal-stats" id="pendingDiffStats"></span>
+                            <div class="pending-diff-view-toggle" id="pendingDiffViewToggle" role="group" aria-label="Diff view mode">
+                                <button type="button" class="pending-diff-view-btn" data-pending-diff-view="split" aria-pressed="true" title="Separate Added and Removed sections">Split</button>
+                                <button type="button" class="pending-diff-view-btn" data-pending-diff-view="unified" aria-pressed="false" title="Preserve hunk line order (adds and removes interleaved)">Unified</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="pending-diff-file-nav" id="pendingDiffFileNav" hidden>
+                        <button type="button" class="pending-diff-file-nav-btn" id="pendingDiffPrev" title="Previous file (←)" aria-label="Previous file">‹</button>
+                        <span class="pending-diff-file-nav-pos" id="pendingDiffNavPos" aria-live="polite"></span>
+                        <button type="button" class="pending-diff-file-nav-btn" id="pendingDiffNext" title="Next file (→)" aria-label="Next file">›</button>
+                    </div>
+                    <button type="button" class="pending-diff-modal-close" id="pendingDiffClose" title="Close diff" aria-label="Close diff">×</button>
+                </header>
+                <div class="pending-diff-modal-body" id="pendingDiffBody">
+                    <div class="pending-diff-modal-loading" id="pendingDiffLoading" hidden>
+                        <span class="pending-diff-modal-spinner" aria-hidden="true"></span>
+                        <span>Loading diff…</span>
+                    </div>
+                    <div class="pending-diff-modal-empty" id="pendingDiffEmpty" hidden></div>
+                    <div class="pending-diff-modal-hunks" id="pendingDiffHunks" hidden></div>
+                </div>
+            </div>
+            <button type="button" class="pending-diff-side-nav is-next" id="pendingDiffSideNext" title="Next file (→)" aria-label="Next file" hidden>›</button>
+        </div>
+        <dialog class="pending-diff-modal git-commit-modal" id="gitCommitModal" aria-labelledby="gitCommitModalTitle">
+            <div class="pending-diff-modal-card git-commit-modal-card">
+                <header class="pending-diff-modal-header git-commit-modal-header">
+                    <h2 class="pending-diff-modal-title" id="gitCommitModalTitle">Commit</h2>
+                    <button type="button" class="pending-diff-modal-close" id="gitCommitModalClose" title="Close commit" aria-label="Close commit">×</button>
+                </header>
+                <div class="pending-diff-modal-body git-graph-drawer-body" id="gitCommitModalBody">
+                    <p class="git-graph-muted">Select a commit.</p>
+                </div>
+            </div>
+        </dialog>
+        <dialog class="pending-diff-modal" id="gitDiffModal" aria-labelledby="gitDiffTitle">
+            <div class="pending-diff-modal-card">
+                <header class="pending-diff-modal-header">
+                    <div class="pending-diff-modal-heading">
+                        <label class="git-diff-file-label" for="gitDiffFileSelect">
+                            <span class="pending-diff-modal-title sr-only" id="gitDiffTitle">File diff</span>
+                            <select id="gitDiffFileSelect" class="git-diff-file-select" aria-label="Changed file"></select>
+                        </label>
+                        <div class="pending-diff-modal-meta">
+                            <span class="pending-diff-modal-badge" id="gitDiffStatus"></span>
+                            <span class="pending-diff-modal-stats" id="gitDiffStats"></span>
+                            <span class="git-diff-commit" id="gitDiffCommit"></span>
+                        </div>
+                    </div>
+                    <button type="button" class="pending-diff-modal-close" id="gitDiffClose" title="Close diff" aria-label="Close diff">×</button>
+                </header>
+                <div class="pending-diff-modal-body" id="gitDiffBody">
+                    <div class="pending-diff-modal-loading" id="gitDiffLoading" hidden>
+                        <span class="pending-diff-modal-spinner" aria-hidden="true"></span>
+                        <span>Loading diff…</span>
+                    </div>
+                    <div class="pending-diff-modal-empty" id="gitDiffEmpty" hidden></div>
+                    <div class="pending-diff-modal-hunks" id="gitDiffHunks" hidden></div>
+                </div>
+            </div>
+        </dialog>
+    </div>
+    
+    <!-- Auth modal lives on the app shell only. A duplicate here (even hidden)
+         makes iPad Chrome show the key/card/pin autofill bar on the composer. -->
+    
+    <script src="/js/emoticons.js?v=20260807b"></script>
+    <script src="/js/toast.js?v=20260921voiceMic"></script>
+    <script src="/js/net_debug.js?v=20260810c"></script>
+    <script src="/js/video_background.js?v=20260926playlists"></script>
+    <script src="/js/background_effect_blend.js"></script>
+    <script src="/js/auth.js?v=20260926authLogin"></script>
+    <script src="/js/supervised_control.js?v=20260816bubble1"></script>
+    <script src="/js/chat_find.js?v=20260819find"></script>
+    <script src="/js/chat_widgets.js?v=20260922widgetstrip"></script>
+    <script src="/js/pending_changes_panel.js?v=20260920multiRepo"></script>
+    <script src="/js/git_commit_viewer.js?v=20260926commitModal"></script>
+    <script src="/js/query_log_inspector.js?v=20260927qlJson"></script>
+    <script src="/js/chat_page.js?v=20260927graphsGone"></script>
+    <!-- highlight.js / Vega: load after boot so offline WAN never blocks the chat UI -->
+    <script src="/js/optional_cdn.js?v=20260815vegaReady"></script>
+</body>
+</html>

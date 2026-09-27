@@ -1,0 +1,460 @@
+/* ================================================================
+   Cuttle extra themes
+
+   Imported by ui_boot.css, so every page gets it. ui_boot.js puts each
+   extra theme on top of a base class (dark-mode / midnight-mode /
+   light-mode) plus `theme-custom theme-<id>`. Base-class rules keep
+   styling components; this file only swaps the palette.
+
+   Each theme sets a handful of --t-* seeds; the `theme-custom` block maps
+   them onto the variable names each page family uses (chat_page.css,
+   shared_navigation.css / landing_page.css, app_shell.css, ui_boot.css).
+
+   Selectors use `:root.theme-x` / `:root.theme-x body` so they outrank the
+   base `html.light-mode` / `body.light-mode` blocks regardless of load order.
+
+   Full-screen overlays (scanlines, glitch bands, RGB bar) only render in the
+   top-level document (`:not(.in-shell)`): framed pages would stack a second,
+   misaligned copy under the shell's.
+   ================================================================ */
+
+/* ── Seed → page variables ─────────────────────────────────────── */
+:root.theme-custom,
+:root.theme-custom body {
+    --bg-primary: var(--t-bg);
+    --bg-secondary: var(--t-surface);
+    --bg-tertiary: var(--t-surface-2);
+    --bg-hover: color-mix(in srgb, var(--t-surface-2) 86%, var(--t-accent));
+    --text-primary: var(--t-text);
+    --text-secondary: var(--t-muted);
+    --text-tertiary: color-mix(in srgb, var(--t-muted) 72%, var(--t-bg));
+    --text-inverse: var(--t-on-accent);
+    --border-color: var(--t-border);
+    --accent-color: var(--t-accent);
+    --accent-hover: var(--t-accent-2);
+    --input-bg: var(--t-input, var(--t-surface));
+    --message-user-bg: var(--t-user-bubble, var(--t-accent));
+    --message-assistant-bg: var(--t-assistant-bubble, var(--t-surface));
+    --bubble-border: color-mix(in srgb, var(--t-border) 80%, transparent);
+    --bubble-shadow: var(--t-shadow);
+
+    --header-bg: linear-gradient(135deg, var(--t-accent) 0%, var(--t-accent-2) 100%);
+    --footer-bg: var(--header-bg);
+    --section-bg: color-mix(in srgb, var(--t-surface) 90%, transparent);
+    --card-shadow: color-mix(in srgb, var(--t-accent) 22%, transparent);
+    --stat-bg: color-mix(in srgb, var(--t-surface) 85%, transparent);
+    --env-bg: color-mix(in srgb, var(--t-surface) 92%, transparent);
+    --test-bg: color-mix(in srgb, var(--t-surface) 88%, transparent);
+
+    --scrollbar-track: color-mix(in srgb, var(--t-text) 6%, transparent);
+    --scrollbar-thumb: color-mix(in srgb, var(--t-accent) 40%, transparent);
+    --scrollbar-thumb-hover: color-mix(in srgb, var(--t-accent) 62%, transparent);
+
+    --rail-bg: var(--t-rail);
+    --rail-border: var(--t-border);
+    --rail-icon: var(--t-muted);
+    --rail-icon-hover: var(--t-text);
+    --rail-active-bg: color-mix(in srgb, var(--t-accent) 16%, transparent);
+    --rail-active-border: var(--t-accent);
+    --panel-bg: var(--t-surface);
+    --panel-header: var(--t-rail);
+    --panel-border: var(--t-border);
+    --panel-text: color-mix(in srgb, var(--t-text) 82%, var(--t-muted));
+    --panel-dim: var(--t-muted);
+    --panel-hover: color-mix(in srgb, var(--t-text) 6%, transparent);
+    --accent: var(--t-accent);
+    --accent-glow: color-mix(in srgb, var(--t-accent) 25%, transparent);
+
+    --cuttle-tip-bg: var(--t-rail);
+    --cuttle-tip-fg: var(--t-text);
+    --cuttle-tip-border: var(--t-border);
+}
+
+/* Page glow layer (shared_navigation.css body::before). */
+:root.theme-custom body::before {
+    background:
+        radial-gradient(circle at 20% 80%, var(--t-glow-1, transparent) 0%, transparent 50%),
+        radial-gradient(circle at 80% 20%, var(--t-glow-2, transparent) 0%, transparent 50%),
+        radial-gradient(circle at 40% 40%, var(--t-glow-3, transparent) 0%, transparent 50%);
+    background-size: 200% 200%;
+    background-repeat: no-repeat;
+    opacity: var(--cuttle-bg-effect-blend, 1);
+}
+
+/* chat_page.css hardcodes #fff on the user bubble. */
+:root.theme-custom .message.user .message-content {
+    background: linear-gradient(135deg, var(--message-user-bg), var(--t-user-bubble-2, var(--accent-hover)));
+    color: var(--t-user-text, #fff);
+}
+
+/* Wallpaper on: translucent surfaces tinted by the theme, not the base. */
+:root.theme-custom body.has-video-background .message.user .message-content {
+    background: linear-gradient(135deg,
+        color-mix(in srgb, var(--message-user-bg) 92%, transparent),
+        color-mix(in srgb, var(--t-user-bubble-2, var(--accent-hover)) 92%, transparent));
+}
+:root.theme-custom body.has-video-background .message.assistant .message-content {
+    background: color-mix(in srgb, var(--message-assistant-bg) 78%, transparent);
+}
+:root.theme-custom body.has-video-background .chat-history-panel {
+    background: color-mix(in srgb, var(--t-surface) 80%, transparent);
+}
+:root.theme-custom body.has-video-background .suggestion-card {
+    background: color-mix(in srgb, var(--t-surface) 75%, transparent);
+}
+:root.theme-custom body.has-video-background .settings-group,
+:root.theme-custom body.has-video-background .service-card,
+:root.theme-custom body.has-video-background .task-controls,
+:root.theme-custom body.has-video-background .tasks-container,
+:root.theme-custom body.has-video-background .task-stats,
+:root.theme-custom body.has-video-background .job-card,
+:root.theme-custom body.has-video-background .server-item,
+:root.theme-custom body.has-video-background .tool-item,
+:root.theme-custom body.has-video-background .downloader-item,
+:root.theme-custom body.has-video-background .page-header,
+:root.theme-custom body.has-video-background .jobs-header,
+:root.theme-custom body.has-video-background .ha-section {
+    background: color-mix(in srgb, var(--t-surface) 76%, transparent);
+}
+
+:root.theme-custom ::selection {
+    background: color-mix(in srgb, var(--t-accent) 35%, transparent);
+}
+
+/* ── Pastel ───────────────────────────────────────────────────── */
+:root.theme-sakura,
+:root.theme-sakura body {
+    --t-bg: #fff5f8;
+    --t-surface: #ffffff;
+    --t-surface-2: #ffe6ef;
+    --t-rail: #ffeef4;
+    --t-text: #4a2b3a;
+    --t-muted: #8c6477;
+    --t-border: #f5d2df;
+    --t-accent: #e0669a;
+    --t-accent-2: #c8508a;
+    --t-on-accent: #ffffff;
+    --t-shadow: rgba(224, 102, 154, 0.14);
+    --t-glow-1: rgba(255, 182, 213, 0.45);
+    --t-glow-2: rgba(255, 222, 236, 0.55);
+    --t-glow-3: rgba(255, 238, 205, 0.35);
+}
+
+:root.theme-mint,
+:root.theme-mint body {
+    --t-bg: #f1fbf6;
+    --t-surface: #ffffff;
+    --t-surface-2: #dcf4e8;
+    --t-rail: #e8f7ef;
+    --t-text: #1f3d33;
+    --t-muted: #5b7d70;
+    --t-border: #c6e9d8;
+    --t-accent: #2fa37a;
+    --t-accent-2: #238a66;
+    --t-on-accent: #ffffff;
+    --t-shadow: rgba(47, 163, 122, 0.14);
+    --t-glow-1: rgba(170, 240, 210, 0.45);
+    --t-glow-2: rgba(200, 235, 255, 0.4);
+    --t-glow-3: rgba(255, 250, 200, 0.3);
+}
+
+:root.theme-lavender,
+:root.theme-lavender body {
+    --t-bg: #f7f4ff;
+    --t-surface: #ffffff;
+    --t-surface-2: #ece5ff;
+    --t-rail: #f0ebff;
+    --t-text: #2e2750;
+    --t-muted: #6e6690;
+    --t-border: #ddd3fb;
+    --t-accent: #8a6cf0;
+    --t-accent-2: #d17bb8;
+    --t-on-accent: #ffffff;
+    --t-shadow: rgba(138, 108, 240, 0.15);
+    --t-glow-1: rgba(200, 180, 255, 0.5);
+    --t-glow-2: rgba(255, 200, 230, 0.42);
+    --t-glow-3: rgba(180, 220, 255, 0.4);
+}
+
+/* ── Minimal ──────────────────────────────────────────────────── */
+:root.theme-paper,
+:root.theme-paper body {
+    --t-bg: #faf8f4;
+    --t-surface: #fffefb;
+    --t-surface-2: #f1ede5;
+    --t-rail: #f4f1ea;
+    --t-text: #222220;
+    --t-muted: #6b6860;
+    --t-border: #e4dfd4;
+    --t-accent: #2b2b2b;
+    --t-accent-2: #4a4a48;
+    --t-on-accent: #faf8f4;
+    --t-shadow: rgba(0, 0, 0, 0.06);
+}
+
+:root.theme-graphite,
+:root.theme-graphite body {
+    --t-bg: #141414;
+    --t-surface: #1b1b1b;
+    --t-surface-2: #242424;
+    --t-rail: #101010;
+    --t-text: #e8e8e8;
+    --t-muted: #9a9a9a;
+    --t-border: #2c2c2c;
+    --t-accent: #d6d6d6;
+    --t-accent-2: #a8a8a8;
+    --t-on-accent: #111111;
+    --t-user-text: #111111;
+    --t-shadow: rgba(0, 0, 0, 0.4);
+}
+
+:root.theme-nord,
+:root.theme-nord body {
+    --t-bg: #2e3440;
+    --t-surface: #3b4252;
+    --t-surface-2: #434c5e;
+    --t-rail: #272c36;
+    --t-text: #eceff4;
+    --t-muted: #a9b3c4;
+    --t-border: #4c566a;
+    --t-accent: #88c0d0;
+    --t-accent-2: #81a1c1;
+    --t-on-accent: #2e3440;
+    --t-user-text: #2e3440;
+    --t-shadow: rgba(0, 0, 0, 0.3);
+    --t-glow-1: rgba(136, 192, 208, 0.12);
+    --t-glow-2: rgba(129, 161, 193, 0.1);
+    --t-glow-3: rgba(180, 142, 173, 0.08);
+}
+
+/* ── RGB ──────────────────────────────────────────────────────── */
+@property --cuttle-rgb-hue {
+    syntax: '<number>';
+    inherits: true;
+    initial-value: 0;
+}
+
+@keyframes cuttle-rgb-hue {
+    from { --cuttle-rgb-hue: 0; }
+    to { --cuttle-rgb-hue: 360; }
+}
+
+@keyframes cuttle-rgb-slide {
+    from { background-position: 0% 0; }
+    to { background-position: 200% 0; }
+}
+
+:root.theme-rgb,
+:root.theme-rgb body {
+    --t-bg: #07070b;
+    --t-surface: #0e0e14;
+    --t-surface-2: #17171f;
+    --t-rail: #050508;
+    --t-text: #f2f2ff;
+    --t-muted: #9a9ab5;
+    --t-border: hsl(var(--cuttle-rgb-hue) 70% 45% / 0.4);
+    --t-accent: hsl(var(--cuttle-rgb-hue) 95% 58%);
+    --t-accent-2: hsl(calc(var(--cuttle-rgb-hue) + 60) 95% 58%);
+    --t-on-accent: #07070b;
+    /* Accent sweeps through yellow/cyan, where white text dies — keep the
+       bubble dark and let its edge carry the colour. */
+    --t-user-bubble: #1b1b28;
+    --t-user-bubble-2: #121220;
+    --t-user-text: #f2f2ff;
+    --t-shadow: hsl(var(--cuttle-rgb-hue) 90% 50% / 0.22);
+    --t-glow-1: hsl(var(--cuttle-rgb-hue) 90% 55% / 0.16);
+    --t-glow-2: hsl(calc(var(--cuttle-rgb-hue) + 120) 90% 55% / 0.14);
+    --t-glow-3: hsl(calc(var(--cuttle-rgb-hue) + 240) 90% 55% / 0.1);
+    /* Stepped: each tick restyles the whole tree via the inherited hue. */
+    animation: cuttle-rgb-hue 18s steps(120) infinite;
+    animation-delay: var(--cuttle-theme-phase, 0ms);
+}
+
+:root.theme-rgb .message.user .message-content {
+    border: 1px solid var(--t-accent);
+    box-shadow: 0 0 14px var(--accent-glow);
+}
+
+:root.theme-rgb:not(.in-shell) body::after {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    z-index: 2147481000;
+    pointer-events: none;
+    background: linear-gradient(90deg, #ff0040, #ff9900, #ffee00, #33ff66, #00ccff, #6644ff, #ff00cc, #ff0040);
+    background-size: 200% 100%;
+    animation: cuttle-rgb-slide 6s linear infinite;
+}
+
+/* ── Synthwave ────────────────────────────────────────────────── */
+:root.theme-synthwave,
+:root.theme-synthwave body {
+    --t-bg: #1a1033;
+    --t-surface: #241546;
+    --t-surface-2: #2f1b5a;
+    --t-rail: #140b28;
+    --t-text: #fdf0ff;
+    --t-muted: #b9a3d6;
+    --t-border: #45297d;
+    --t-accent: #ff4fa3;
+    --t-accent-2: #9d4dff;
+    --t-on-accent: #ffffff;
+    --t-shadow: rgba(255, 79, 163, 0.22);
+    --t-glow-1: rgba(255, 79, 163, 0.22);
+    --t-glow-2: rgba(45, 226, 230, 0.16);
+    --t-glow-3: rgba(255, 179, 71, 0.12);
+}
+
+/* Sun glow on the horizon + grid across the lower third of the page fill. */
+:root.theme-synthwave body::before {
+    background:
+        linear-gradient(to bottom, rgba(255, 79, 163, 0.35), transparent 3px) bottom / 100% 40% no-repeat,
+        repeating-linear-gradient(90deg, rgba(45, 226, 230, 0.12) 0 1px, transparent 1px 64px) bottom / 100% 40% no-repeat,
+        repeating-linear-gradient(0deg, rgba(255, 79, 163, 0.12) 0 1px, transparent 1px 28px) bottom / 100% 40% no-repeat,
+        radial-gradient(ellipse at 50% 60%, rgba(255, 120, 90, 0.26) 0%, transparent 38%) center / 100% 100% no-repeat,
+        radial-gradient(circle at 82% 16%, var(--t-glow-2) 0%, transparent 45%) center / 100% 100% no-repeat;
+}
+
+:root.theme-synthwave h1 {
+    text-shadow: 0 0 12px rgba(255, 79, 163, 0.45);
+}
+
+/* ── Glitch ───────────────────────────────────────────────────── */
+:root.theme-glitch,
+:root.theme-glitch body {
+    --t-bg: #0b0b10;
+    --t-surface: #12121a;
+    --t-surface-2: #1a1a25;
+    --t-rail: #08080c;
+    --t-text: #eaeaf5;
+    --t-muted: #8e8ea8;
+    --t-border: #2a2a3c;
+    --t-accent: #ff2a6d;
+    --t-accent-2: #05b8c8;
+    --t-on-accent: #ffffff;
+    --t-shadow: rgba(255, 42, 109, 0.2);
+    --t-glow-1: rgba(255, 42, 109, 0.12);
+    --t-glow-2: rgba(5, 217, 232, 0.12);
+}
+
+/* Chromatic split on headings. drop-shadow (not text-shadow) so it also
+   works on gradient-clipped titles with a transparent text fill. */
+:root.theme-glitch h1,
+:root.theme-glitch h2 {
+    filter: drop-shadow(-1.5px 0 rgba(255, 42, 109, 0.75)) drop-shadow(1.5px 0 rgba(5, 217, 232, 0.75));
+    animation: cuttle-glitch-jitter 7s steps(1) infinite;
+}
+
+@keyframes cuttle-glitch-jitter {
+    0%, 91%, 100% { transform: none; }
+    92% { transform: translate(-2px, 1px) skewX(-6deg); }
+    93% { transform: translate(2px, -1px); }
+    94% { transform: translate(-1px, 0) skewX(4deg); }
+    95% { transform: none; }
+    97% { transform: translate(1px, 1px); }
+}
+
+@keyframes cuttle-glitch-bands {
+    0%, 88%, 100% { opacity: 0; transform: translateY(0); }
+    89% { opacity: 1; transform: translateY(12vh); }
+    90% { opacity: 0.7; transform: translateY(47vh); }
+    91% { opacity: 1; transform: translateY(29vh); }
+    92% { opacity: 0; transform: translateY(71vh); }
+    96% { opacity: 0.8; transform: translateY(58vh); }
+    97% { opacity: 0; }
+}
+
+/* Scanlines (static) + tearing bands (brief bursts), top-level only. */
+:root.theme-glitch:not(.in-shell) body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 2147481000;
+    pointer-events: none;
+    background:
+        repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.03) 0 1px, transparent 1px 3px);
+}
+
+:root.theme-glitch:not(.in-shell)::after {
+    content: '';
+    position: fixed;
+    left: 0;
+    right: 0;
+    top: 0;
+    height: 14px;
+    z-index: 2147481001;
+    pointer-events: none;
+    mix-blend-mode: screen;
+    background:
+        linear-gradient(90deg, transparent 0 8%, rgba(255, 42, 109, 0.55) 8% 36%, transparent 36% 52%,
+            rgba(5, 217, 232, 0.55) 52% 81%, transparent 81%);
+    opacity: 0;
+    animation: cuttle-glitch-bands 5.5s steps(1) infinite;
+}
+
+/* ── Matrix ───────────────────────────────────────────────────── */
+:root.theme-matrix,
+:root.theme-matrix body {
+    --t-bg: #000a02;
+    --t-surface: #021006;
+    --t-surface-2: #06200e;
+    --t-rail: #000600;
+    --t-text: #4dff88;
+    --t-muted: #22a84e;
+    --t-border: #0e4420;
+    --t-accent: #00ff41;
+    --t-accent-2: #00b82f;
+    --t-on-accent: #001a07;
+    --t-user-bubble: #073d17;
+    --t-user-bubble-2: #0a5c22;
+    --t-user-text: #b6ffcb;
+    --t-input: #010d04;
+    --t-shadow: rgba(0, 255, 65, 0.16);
+    --t-glow-1: rgba(0, 255, 65, 0.08);
+    --t-glow-2: rgba(0, 180, 50, 0.06);
+    --t-mono: 'Cascadia Code', 'Cascadia Mono', 'Fira Code', 'JetBrains Mono', Consolas, 'Courier New', monospace;
+}
+
+:root.theme-matrix body,
+:root.theme-matrix body :is(button, input, textarea, select, h1, h2, h3, h4, .message-content) {
+    font-family: var(--t-mono) !important;
+}
+
+:root.theme-matrix body {
+    text-shadow: 0 0 5px rgba(0, 255, 65, 0.3);
+}
+
+:root.theme-matrix:not(.in-shell) body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 2147481000;
+    pointer-events: none;
+    background:
+        repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.18) 0 1px, transparent 1px 3px),
+        radial-gradient(ellipse at center, transparent 60%, rgba(0, 0, 0, 0.45) 100%);
+}
+
+/* ── Motion off ───────────────────────────────────────────────── */
+:root.cuttle-bg-paused.theme-custom,
+:root.cuttle-bg-paused.theme-custom::after,
+:root.cuttle-bg-paused.theme-custom body,
+:root.cuttle-bg-paused.theme-custom body::after,
+:root.cuttle-bg-paused.theme-custom h1,
+:root.cuttle-bg-paused.theme-custom h2 {
+    animation-play-state: paused;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    :root.theme-custom,
+    :root.theme-custom::after,
+    :root.theme-custom body,
+    :root.theme-custom body::after,
+    :root.theme-custom h1,
+    :root.theme-custom h2 {
+        animation: none !important;
+    }
+}

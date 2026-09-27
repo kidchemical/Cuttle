@@ -1,0 +1,13 @@
+name: flask.restart
+title: Restart Flask
+description: >-
+  Request a daemon-owned Flask restart via /api/flask/restart (persists an ack,
+  then the daemon replaces web_chat_api). Does not kill Flask from inside the
+  request. Does not restart the daemon or llama-server.
+  Params: mode = graceful | when-idle | force | status (default graceful).
+  The chat session id is passed automatically so the ack/completion lands in
+  the chat that clicked the button.
+type: shell
+run: powershell -NoProfile -ExecutionPolicy Bypass -File .cuttle\scripts\restart-flask.ps1
+run_posix: .venv/bin/python .cuttle/scripts/restart-flask.py
+workdir: .

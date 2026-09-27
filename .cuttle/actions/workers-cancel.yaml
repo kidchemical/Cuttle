@@ -1,0 +1,8 @@
+name: workers.cancel
+title: Cancel mesh job
+description: Cancel a queued/claimed/running mesh job. Params: job_id, reason.
+type: shell
+run: powershell -NoProfile -ExecutionPolicy Bypass -File .cuttle\scripts\workers-cli.ps1 cancel
+run_posix: .venv/bin/python -m api.device_workers.cli cancel
+workdir: .
+timeout: 60

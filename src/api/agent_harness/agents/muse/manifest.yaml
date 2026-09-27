@@ -1,0 +1,51 @@
+id: muse
+label: Muse Code
+slash: /muse
+requires_cloud: true
+sticky: true
+# Empty — unpinned turns omit --model so the Muse CLI default wins
+# (often Contributor). Cuttle must never force Standard here.
+default_model: ""
+smoke_model: muse-spark-1.3-contributor
+models:
+  - muse-spark-1.3
+  - muse-spark-1.3-contributor
+  - muse-spark-1.2
+  - muse-spark-1.2-contributor
+  - muse-spark-1.1
+# Discrete --reasoning-effort levels the Muse CLI accepts with --provider meta.
+# "none" is NOT a level: unpinned turns omit the flag (the CLI rejects
+# `--reasoning-effort none`). Historic "none" pins mean "unpinned".
+efforts:
+  - minimal
+  - low
+  - medium
+  - high
+  - xhigh
+  - max
+  - ultra
+pricing_source: models_dev
+pricing_providers: [meta]
+resume: true
+capabilities_inject: once_per_resume
+env_profile: native
+activity: heartbeat
+hint: Run Meta Muse Code CLI (`muse exec`) with per-chat resume (Auto/Cloud)
+missing_cli_hint: >-
+  Install the native Muse Code build and ensure `muse` is on PATH, or set
+  `MUSE_CLI_PATH`. Legacy WSL install
+  (`curl -fsSL https://dev.meta.ai/install.sh | bash`, `MUSE_WSL_BIN`) is
+  deprecated but still works as a fallback.
+install_hint: >-
+  Install native Muse Code, set `META_API_KEY` in `src/.env`, or run
+  `muse login`. Optional: `MUSE_CLI_PATH` (native). `MUSE_WSL_BIN` (WSL) is
+  deprecated.
+executable_names:
+  - muse
+auto_install: false
+notes: >-
+  Bundled harness connector wrapping scripts.utilities.muse_cli_tool.
+  Native-first on Windows (Meta install: `%LOCALAPPDATA%\Programs\muse\muse-bin-*.exe`
+  via PATH / MUSE_CLI_PATH). WSL-forwarding muse.cmd shims are rejected. WSL kept only as
+  a deprecated fallback. Long prompts use --prompt-file (no silent argv
+  truncation).

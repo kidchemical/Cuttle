@@ -1,0 +1,34 @@
+id: deepseek
+label: DeepSeek Harness
+slash: /deepseek
+requires_cloud: true
+sticky: true
+# Empty — unpinned turns use the dsh CLI default (no model patch).
+default_model: ""
+smoke_model: deepseek-v4-flash
+models:
+  - deepseek-v4-flash
+  - deepseek-v4-pro
+pricing_source: models_dev
+pricing_providers: [deepseek]
+resume: false
+capabilities_inject: once_per_resume
+env_profile: native
+activity: heartbeat
+hint: Run DeepSeek Harness CLI (`dsh --profile headless`) — Flash by default
+missing_cli_hint: >-
+  Install `@deepseek-ai/dsh` (`npm i -g @deepseek-ai/dsh`) and set
+  `DEEPSEEK_API_KEY` in `src/.env`.
+install_hint: >-
+  Cuttle can install `@deepseek-ai/dsh` with npm. Then set `DEEPSEEK_API_KEY`
+  in `src/.env` (or the daemon env) and restart Flask. Smoke uses Flash, not Pro.
+install_kind: npm_global
+install_package: "@deepseek-ai/dsh"
+executable_names:
+  - dsh
+auto_install: true
+notes: >-
+  Bundled connector for DeepSeek Harness developer preview (`dsh`).
+  Headless one-shot has no native per-chat resume (official docs). Invokes
+  node+bin.js on Windows to avoid .cmd %* truncation. Long prompts go through
+  a temp file. Context gauge is last-turn only; Compact is unavailable.

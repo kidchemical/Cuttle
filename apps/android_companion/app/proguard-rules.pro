@@ -1,0 +1,1 @@
+# Keep simple JSON usage

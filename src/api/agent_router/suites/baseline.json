@@ -1,0 +1,258 @@
+{
+  "name": "baseline",
+  "version": "1",
+  "description": "Representative Cuttle router prompts for policy tuning (decision-only).",
+  "cases": [
+    {
+      "id": "basic_what_router_does",
+      "category": "basic_ask",
+      "prompt": "What does the router currently do?",
+      "allowed_task_types": ["basic_ask", "research", "other"],
+      "allowed_difficulties": ["low", "medium"],
+      "allowed_targets": [{"agent": "cursor", "model": "auto"}],
+      "preferred_target": {"agent": "cursor", "model": "auto"},
+      "notes": "Conceptual question"
+    },
+    {
+      "id": "basic_fallback_vs_escalation",
+      "category": "basic_ask",
+      "prompt": "Explain the difference between a fallback and an escalation.",
+      "allowed_task_types": ["basic_ask", "research", "other"],
+      "allowed_difficulties": ["low", "medium"],
+      "allowed_targets": [{"agent": "cursor", "model": "auto"}],
+      "preferred_target": {"agent": "cursor", "model": "auto"}
+    },
+    {
+      "id": "basic_active_agent_command",
+      "category": "basic_ask",
+      "prompt": "Which command shows the active Cuttle agent?",
+      "allowed_task_types": ["basic_ask", "research", "other"],
+      "allowed_difficulties": ["low"],
+      "allowed_targets": [{"agent": "cursor", "model": "auto"}],
+      "preferred_target": {"agent": "cursor", "model": "auto"}
+    },
+    {
+      "id": "basic_summarize_project",
+      "category": "basic_ask",
+      "prompt": "Summarize the purpose of this project.",
+      "allowed_task_types": ["basic_ask", "research", "other"],
+      "allowed_difficulties": ["low", "medium"],
+      "allowed_targets": [{"agent": "cursor", "model": "auto"}],
+      "preferred_target": {"agent": "cursor", "model": "auto"}
+    },
+    {
+      "id": "trivial_hello_log",
+      "category": "trivial_coding",
+      "prompt": "Add a Hello World log when the application starts.",
+      "allowed_task_types": ["coding"],
+      "allowed_difficulties": ["low"],
+      "allowed_targets": [{"agent": "cursor", "model": "auto"}],
+      "preferred_target": {"agent": "cursor", "model": "auto"}
+    },
+    {
+      "id": "trivial_rename_enum",
+      "category": "trivial_coding",
+      "prompt": "Rename RouterMode.API to RouterMode.Api.",
+      "allowed_task_types": ["coding"],
+      "allowed_difficulties": ["low"],
+      "allowed_targets": [{"agent": "cursor", "model": "auto"}],
+      "preferred_target": {"agent": "cursor", "model": "auto"}
+    },
+    {
+      "id": "trivial_typo_docs",
+      "category": "trivial_coding",
+      "prompt": "Fix the typo 'Auo' in the router documentation.",
+      "allowed_task_types": ["coding", "other"],
+      "allowed_difficulties": ["low"],
+      "allowed_targets": [{"agent": "cursor", "model": "auto"}],
+      "preferred_target": {"agent": "cursor", "model": "auto"}
+    },
+    {
+      "id": "trivial_docstring_classify",
+      "category": "trivial_coding",
+      "prompt": "Add a short docstring to classify_failure.",
+      "allowed_task_types": ["coding"],
+      "allowed_difficulties": ["low"],
+      "allowed_targets": [{"agent": "cursor", "model": "auto"}],
+      "preferred_target": {"agent": "cursor", "model": "auto"}
+    },
+    {
+      "id": "trivial_status_heading",
+      "category": "trivial_coding",
+      "prompt": "Update the router status heading.",
+      "allowed_task_types": ["coding", "other"],
+      "allowed_difficulties": ["low"],
+      "allowed_targets": [{"agent": "cursor", "model": "auto"}],
+      "preferred_target": {"agent": "cursor", "model": "auto"}
+    },
+    {
+      "id": "normal_slash_print_agent",
+      "category": "coding",
+      "prompt": "Add a slash command that prints the currently selected agent and model.",
+      "allowed_task_types": ["coding"],
+      "allowed_difficulties": ["low", "medium"],
+      "allowed_targets": [{"agent": "cursor", "model": "auto"}],
+      "preferred_target": {"agent": "cursor", "model": "auto"}
+    },
+    {
+      "id": "normal_unit_tests_persistence",
+      "category": "coding",
+      "prompt": "Add unit tests for router configuration persistence.",
+      "allowed_task_types": ["coding"],
+      "allowed_difficulties": ["low", "medium"],
+      "allowed_targets": [{"agent": "cursor", "model": "auto"}],
+      "preferred_target": {"agent": "cursor", "model": "auto"}
+    },
+    {
+      "id": "normal_api_timeout_setting",
+      "category": "coding",
+      "prompt": "Add a setting to control the router API timeout.",
+      "allowed_task_types": ["coding"],
+      "allowed_difficulties": ["low", "medium"],
+      "allowed_targets": [{"agent": "cursor", "model": "auto"}],
+      "preferred_target": {"agent": "cursor", "model": "auto"}
+    },
+    {
+      "id": "normal_refactor_status_helper",
+      "category": "coding",
+      "prompt": "Refactor duplicate router status formatting into a helper.",
+      "allowed_task_types": ["coding"],
+      "allowed_difficulties": ["low", "medium"],
+      "allowed_targets": [{"agent": "cursor", "model": "auto"}],
+      "preferred_target": {"agent": "cursor", "model": "auto"}
+    },
+    {
+      "id": "normal_project_override",
+      "category": "coding",
+      "prompt": "Add an optional project-level router configuration override.",
+      "allowed_task_types": ["coding"],
+      "allowed_difficulties": ["low", "medium"],
+      "allowed_targets": [{"agent": "cursor", "model": "auto"}],
+      "preferred_target": {"agent": "cursor", "model": "auto"}
+    },
+    {
+      "id": "debug_cursor_models_hang",
+      "category": "debugging",
+      "prompt": "Investigate why the Cursor CLI occasionally hangs while listing models.",
+      "allowed_task_types": ["debugging", "coding"],
+      "allowed_difficulties": ["medium", "high"],
+      "allowed_targets": [
+        {"agent": "cursor", "model": "auto"},
+        {"agent": "cursor", "model": "grok-4.6"}
+      ],
+      "preferred_target": {"agent": "cursor", "model": "auto"},
+      "notes": "Contained investigation — Auto acceptable"
+    },
+    {
+      "id": "debug_session_race",
+      "category": "debugging",
+      "prompt": "Fix an intermittent race where two messages can initialize the same session.",
+      "allowed_task_types": ["debugging", "coding"],
+      "allowed_difficulties": ["medium", "high"],
+      "allowed_targets": [
+        {"agent": "cursor", "model": "auto"},
+        {"agent": "cursor", "model": "grok-4.6"}
+      ],
+      "preferred_target": {"agent": "cursor", "model": "auto"}
+    },
+    {
+      "id": "debug_starred_after_restart",
+      "category": "debugging",
+      "prompt": "Determine why starred slash commands sometimes fail to apply after restarting Flask.",
+      "allowed_task_types": ["debugging", "coding"],
+      "allowed_difficulties": ["medium", "high"],
+      "allowed_targets": [
+        {"agent": "cursor", "model": "auto"},
+        {"agent": "cursor", "model": "grok-4.6"}
+      ],
+      "preferred_target": {"agent": "cursor", "model": "auto"}
+    },
+    {
+      "id": "debug_unsupported_model_selection",
+      "category": "debugging",
+      "prompt": "The router occasionally selects a model that the target agent does not support. Diagnose and fix it.",
+      "allowed_task_types": ["debugging", "coding"],
+      "allowed_difficulties": ["medium", "high"],
+      "allowed_targets": [
+        {"agent": "cursor", "model": "auto"},
+        {"agent": "cursor", "model": "grok-4.6"}
+      ],
+      "preferred_target": {"agent": "cursor", "model": "grok-4.6"},
+      "notes": "Cross-cutting validation — Grok preferred but Auto allowed"
+    },
+    {
+      "id": "arch_parallel_worktrees",
+      "category": "architecture",
+      "prompt": "Redesign Cuttle so multiple agent CLIs can work in parallel in isolated git worktrees and safely merge their changes.",
+      "allowed_task_types": ["architecture", "coding"],
+      "allowed_difficulties": ["high"],
+      "allowed_targets": [{"agent": "cursor", "model": "grok-4.6"}],
+      "preferred_target": {"agent": "cursor", "model": "grok-4.6"},
+      "notes": "Cross-cutting and high-risk — Auto should be flagged"
+    },
+    {
+      "id": "arch_self_adjusting_policy",
+      "category": "architecture",
+      "prompt": "Implement a self-adjusting routing policy based on cost, latency, task success, and recent model-performance degradation.",
+      "allowed_task_types": ["architecture", "coding"],
+      "allowed_difficulties": ["high"],
+      "allowed_targets": [{"agent": "cursor", "model": "grok-4.6"}],
+      "preferred_target": {"agent": "cursor", "model": "grok-4.6"}
+    },
+    {
+      "id": "arch_session_management_rewrite",
+      "category": "architecture",
+      "prompt": "Replace the current session-management architecture while preserving all existing Discord, web, and starred-command behavior.",
+      "allowed_task_types": ["architecture", "coding"],
+      "allowed_difficulties": ["high"],
+      "allowed_targets": [{"agent": "cursor", "model": "grok-4.6"}],
+      "preferred_target": {"agent": "cursor", "model": "grok-4.6"}
+    },
+    {
+      "id": "arch_ep_fishnet_multiplayer",
+      "category": "architecture",
+      "prompt": "Design and implement end-to-end multiplayer state authority for Escape Purgatory using FishNet, including reconnects and host migration.",
+      "allowed_task_types": ["architecture", "coding"],
+      "allowed_difficulties": ["high"],
+      "allowed_targets": [{"agent": "cursor", "model": "grok-4.6"}],
+      "preferred_target": {"agent": "cursor", "model": "grok-4.6"}
+    },
+    {
+      "id": "ambiguous_make_better",
+      "category": "ambiguous",
+      "prompt": "Make the agent system better.",
+      "allowed_task_types": ["architecture", "coding", "other", "research"],
+      "allowed_difficulties": ["medium", "high"],
+      "allowed_targets": [
+        {"agent": "cursor", "model": "auto"},
+        {"agent": "cursor", "model": "grok-4.6"}
+      ],
+      "manual_review": true,
+      "notes": "Underspecified — inspect difficulty/confidence manually"
+    },
+    {
+      "id": "ambiguous_fix_multiplayer",
+      "category": "ambiguous",
+      "prompt": "Fix multiplayer.",
+      "allowed_task_types": ["debugging", "coding", "architecture", "other"],
+      "allowed_difficulties": ["medium", "high"],
+      "allowed_targets": [
+        {"agent": "cursor", "model": "auto"},
+        {"agent": "cursor", "model": "grok-4.6"}
+      ],
+      "manual_review": true
+    },
+    {
+      "id": "ambiguous_improve_performance",
+      "category": "ambiguous",
+      "prompt": "Improve performance everywhere.",
+      "allowed_task_types": ["architecture", "coding", "other", "research"],
+      "allowed_difficulties": ["medium", "high"],
+      "allowed_targets": [
+        {"agent": "cursor", "model": "auto"},
+        {"agent": "cursor", "model": "grok-4.6"}
+      ],
+      "manual_review": true
+    }
+  ]
+}

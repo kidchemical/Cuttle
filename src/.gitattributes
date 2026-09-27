@@ -1,0 +1,8 @@
+# Default: use LF in repo
+* text=auto eol=lf
+
+# Python files always LF
+*.py text eol=lf
+
+# Windows batch files always CRLF
+*.bat text eol=crlf

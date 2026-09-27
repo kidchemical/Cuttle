@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Query log — Cuttle</title>
+    <link rel="stylesheet" href="/css/ui_boot.css?v=20260926safeArea">
+    <link rel="stylesheet" href="/css/chat_page.css?v=20260926turnFeedback">
+    <link rel="stylesheet" href="/css/query_log_inspector.css?v=20260927qlJson">
+</head>
+<body class="query-log-standalone dark-mode">
+    <script src="/js/optional_cdn.js?v=20260926cdnQueue"></script>
+    <script src="/js/query_log_inspector.js?v=20260927qlJson"></script>
+    <script>
+    (function () {
+        var id = new URLSearchParams(location.search).get('id') || '';
+        if (window.openQueryLogInspector) window.openQueryLogInspector(id);
+    })();
+    </script>
+</body>
+</html>

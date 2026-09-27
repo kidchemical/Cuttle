@@ -1,0 +1,136 @@
+╔════════════════════════════════════════════════════════════════╗
+║                                                                ║
+║     CUTTLE DESKTOP - ELECTRON QUICK START                     ║
+║                                                                ║
+╚════════════════════════════════════════════════════════════════╝
+
+🎯 THREE STEPS TO GET STARTED:
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ STEP 1: INSTALL NODE.JS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Download from: https://nodejs.org/
+Choose the "LTS" version (recommended)
+
+Verify installation:
+  node --version
+  npm --version
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ STEP 2: INSTALL DEPENDENCIES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Just double-click:
+  ► start_electron.bat
+
+OR manually:
+  cd electron
+  npm install
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ STEP 3: RUN THE APPLICATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Double-click:
+  ► start_electron.bat
+
+OR manually:
+  cd electron
+  npm start
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ BUILDING AN INSTALLER
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+To create a Windows installer:
+
+Double-click:
+  ► build_electron.bat
+
+Choose your build option:
+  1. Full Installer (NSIS) - Professional installer
+  2. Portable Version - Single .exe file
+  3. Both - Create both versions
+  4. Directory - Unpacked files for testing
+
+Output location:
+  electron/dist/
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ WHAT YOU GET
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✓ Native Windows application
+✓ Professional installer with wizard
+✓ Portable .exe (no installation required)
+✓ Desktop and Start menu shortcuts
+✓ Custom application icon
+✓ Menu bar with navigation
+✓ Keyboard shortcuts
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ TROUBLESHOOTING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚠ Python not found?
+  → Ensure Python 3.8+ is installed and in PATH
+  → Run: python --version
+
+⚠ Port 8080 in use?
+  → Close other applications using port 8080
+  → Or run: python src/kill_bots.py
+
+⚠ Build fails?
+  → Delete electron/node_modules
+  → Run: npm cache clean --force
+  → Run: npm install
+  → Try again
+
+⚠ Blank window?
+  → Check console for errors
+  → Press Ctrl+Shift+I to open DevTools
+  → Check if Flask server started
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ FILE LOCATIONS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📁 electron/              - Electron application files
+📁 electron/dist/         - Built installers (after build)
+📄 start_electron.bat     - Quick launcher
+📄 build_electron.bat     - Build wizard
+📄 ELECTRON_SETUP.md      - Detailed documentation
+📄 LICENSE.txt            - MIT License
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ KEYBOARD SHORTCUTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Ctrl+R             Reload page
+Ctrl+Shift+R       Force reload
+Ctrl+Shift+I       Toggle DevTools (for debugging)
+Ctrl+0             Reset zoom
+Ctrl++             Zoom in
+Ctrl+-             Zoom out
+F11                Toggle fullscreen
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ NEED MORE HELP?
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Read the full guide:
+  ► ELECTRON_SETUP.md
+
+Read electron documentation:
+  ► electron/README.md
+
+Electron docs:
+  → https://www.electronjs.org/docs
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+That's it! You're ready to build your Windows application! 🚀
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+

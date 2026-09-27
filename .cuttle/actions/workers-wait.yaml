@@ -1,0 +1,10 @@
+name: workers.wait
+title: Wait for mesh jobs
+description: >-
+  Block until job_ids finish (comma-separated) or timeout.
+  Params: job_ids, timeout (seconds), poll.
+type: shell
+run: powershell -NoProfile -ExecutionPolicy Bypass -File .cuttle\scripts\workers-cli.ps1 wait
+run_posix: .venv/bin/python -m api.device_workers.cli wait
+workdir: .
+timeout: 900

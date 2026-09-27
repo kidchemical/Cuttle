@@ -1,0 +1,879 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Home Automation — Cuttle</title>
+  <link rel="stylesheet" href="/css/ui_boot.css?v=20260926safeArea">
+  <script src="/js/ui_boot.js?v=20260926safeArea"></script>
+  <link rel="stylesheet" href="/css/shared_navigation.css?v=20260926lightBg">
+  <link rel="stylesheet" href="/css/landing_page.css?v=20260926lightBg">
+  <style>
+    .ha-wrap { max-width: 760px; margin: 0 auto; padding: 1.25rem 1.5rem 3rem; }
+    .ha-wrap h1 { font-size: 1.35rem; margin-bottom: 0.35rem; }
+    .ha-sub { color: var(--muted, #94a3b8); font-size: 0.9rem; margin-bottom: 1.5rem; }
+    .ha-section { background: rgba(30, 41, 59, 0.6); border: 1px solid rgba(148, 163, 184, 0.15); border-radius: 12px; padding: 1rem 1.15rem; margin-bottom: 1.25rem; }
+    .ha-section h2 { font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.06em; color: #a5b4fc; margin: 0 0 0.85rem; }
+    /* landing_page.css sets * { overflow-x: hidden }, which forces overflow-y: auto and causes stray scrollbars on emoji rows */
+    .ha-themes { display: grid; grid-template-columns: repeat(auto-fill, minmax(152px, 1fr)); gap: 0.75rem; overflow: visible !important; }
+    .ha-theme-card {
+      display: flex; flex-direction: column; align-items: stretch; text-align: left; padding: 0.85rem 0.75rem 0.75rem;
+      border-radius: 10px; border: 1px solid rgba(129, 140, 248, 0.28);
+      background: linear-gradient(160deg, rgba(49, 46, 129, 0.35) 0%, rgba(15, 23, 42, 0.65) 100%);
+      color: #e0e7ff; font-size: 0.88rem; cursor: pointer;
+      transition: border-color 0.15s ease, transform 0.12s ease, box-shadow 0.15s ease;
+      overflow: visible !important;
+    }
+    .ha-theme-card:hover:not(:disabled) {
+      border-color: rgba(165, 180, 252, 0.55);
+      box-shadow: 0 4px 20px rgba(99, 102, 241, 0.15);
+      transform: translateY(-1px);
+    }
+    .ha-theme-card:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+    .ha-theme-card .ha-theme-emoji {
+      font-size: 1.85rem; line-height: 1; margin-bottom: 0.45rem;
+      overflow: visible !important;
+      /* text-shadow avoids filter paint bounds that can interact badly with overflow */
+      text-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+    }
+    .ha-theme-card strong { font-size: 0.92rem; font-weight: 600; color: #f1f5f9; }
+    .ha-theme-card .ha-theme-desc { display: block; color: #94a3b8; font-size: 0.72rem; margin-top: 0.35rem; line-height: 1.35; font-weight: normal; }
+    .ha-btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem;
+      padding: 0.65rem 1.1rem; border-radius: 8px; border: 1px solid rgba(129, 140, 248, 0.4);
+      background: rgba(67, 56, 202, 0.35); color: #e0e7ff; font-size: 0.88rem; font-weight: 600; cursor: pointer;
+    }
+    .ha-btn:hover { background: rgba(99, 102, 241, 0.45); border-color: rgba(165, 180, 252, 0.55); }
+    .ha-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .ha-btn-primary { width: 100%; padding: 0.75rem 1.25rem; font-size: 0.95rem; margin-top: 1rem; }
+    .ha-row { display: flex; align-items: center; justify-content: flex-start; gap: 0.65rem 1rem; margin-bottom: 0.65rem; flex-wrap: wrap; }
+    .ha-row label { font-size: 0.85rem; color: #cbd5e1; }
+    .ha-row select, .ha-row input[type="time"] { background: #0f172a; border: 1px solid #334155; color: #e2e8f0; border-radius: 6px; padding: 0.35rem 0.5rem; font-size: 0.85rem; }
+    .ha-banner { padding: 0.6rem 0.75rem; border-radius: 8px; font-size: 0.82rem; margin-top: 0.75rem; display: none; }
+    .ha-banner.ok { display: block; background: rgba(22, 163, 74, 0.2); border: 1px solid rgba(34, 197, 94, 0.4); color: #86efac; }
+    .ha-banner.err { display: block; background: rgba(220, 38, 38, 0.15); border: 1px solid rgba(248, 113, 113, 0.35); color: #fecaca; }
+    .ha-banner.ha-banner-rate.err {
+      background: rgba(180, 83, 9, 0.18); border-color: rgba(251, 191, 36, 0.45); color: #fde68a;
+    }
+    .ha-banner .ha-banner-msg { font-weight: 600; margin-bottom: 0.35rem; line-height: 1.35; }
+    .ha-banner .ha-banner-count { font-size: 0.9rem; font-variant-numeric: tabular-nums; color: #fcd34d; }
+    .ha-period-head { display: flex; align-items: center; gap: 0.45rem; min-width: 8.5rem; }
+    .ha-period-emoji { font-size: 1.1rem; line-height: 1; opacity: 0.95; }
+    .ha-period-name { font-weight: 600; color: #f1f5f9; font-size: 0.85rem; text-transform: capitalize; }
+    .ha-schedule-toggle-row { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+    .ha-mode-label { font-size: 0.9rem; font-weight: 600; color: #94a3b8; min-width: 2.25rem; }
+    .ha-mode-label.on { color: var(--accent-color, #818cf8); }
+    .ha-save-footer { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid rgba(51, 65, 85, 0.45); }
+    .ha-save-actions { display: flex; flex-wrap: wrap; gap: 0.65rem; align-items: center; }
+    .ha-save-actions .ha-btn-primary { flex: 1 1 10rem; }
+    .ha-devices-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; margin-top: 0.5rem; }
+    .ha-devices-table th, .ha-devices-table td { text-align: left; padding: 0.45rem 0.5rem; border-bottom: 1px solid rgba(51, 65, 85, 0.55); vertical-align: top; }
+    .ha-devices-table th { color: #94a3b8; font-weight: 600; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; }
+    .ha-devices-table code { font-size: 0.72rem; color: #cbd5e1; word-break: break-all; }
+    .ha-pill { display: inline-block; padding: 0.12rem 0.45rem; border-radius: 999px; font-size: 0.72rem; font-weight: 600; }
+    .ha-pill.on { background: rgba(34, 197, 94, 0.2); color: #86efac; border: 1px solid rgba(34, 197, 94, 0.35); }
+    .ha-pill.off { background: rgba(71, 85, 105, 0.35); color: #cbd5e1; border: 1px solid rgba(100, 116, 139, 0.4); }
+    .ha-pill.unk { background: rgba(100, 116, 139, 0.25); color: #94a3b8; border: 1px solid rgba(100, 116, 139, 0.35); }
+    .ha-heartbeat { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.75rem 1.25rem; margin-top: 0.65rem; padding: 0.85rem 1rem; border-radius: 10px; background: rgba(15, 23, 42, 0.55); border: 1px solid rgba(99, 102, 241, 0.22); }
+    .ha-heartbeat .ha-hb-big { font-size: 1.65rem; font-weight: 700; font-variant-numeric: tabular-nums; color: #e0e7ff; letter-spacing: 0.02em; }
+    .ha-heartbeat .ha-hb-sub { font-size: 0.78rem; color: #94a3b8; max-width: 28rem; line-height: 1.45; }
+    .ha-heartbeat-warn { border-color: rgba(251, 191, 36, 0.4); background: rgba(180, 83, 9, 0.12); }
+    .ha-heartbeat-warn .ha-hb-big { color: #fde68a; }
+    .ha-muted { font-size: 0.78rem; color: #64748b; margin-top: 0.35rem; }
+    @keyframes ha-spin { to { transform: rotate(360deg); } }
+    .ha-spin {
+      display: inline-block; width: 1em; height: 1em; vertical-align: -0.15em;
+      border: 2px solid rgba(224, 231, 255, 0.25); border-top-color: #c7d2fe; border-radius: 50%;
+      animation: ha-spin 0.7s linear infinite; flex-shrink: 0;
+    }
+    .ha-spin-sm { width: 0.85em; height: 0.85em; border-width: 2px; vertical-align: -0.12em; }
+    .ha-btn.ha-btn-loading { gap: 0.5rem; opacity: 0.92; }
+    .ha-inline-wait { display: inline-flex; align-items: center; gap: 0.35rem; color: #a5b4fc; font-size: 0.75rem; line-height: 1.35; max-width: 14rem; }
+    .ha-apply-inner .ha-ok { color: #86efac; font-size: 0.75rem; }
+    .ha-apply-inner .ha-err { color: #fca5a5; font-size: 0.72rem; word-break: break-word; }
+    .ha-cell-apply { min-width: 7.5rem; }
+    #applyRunPhase { margin-top: 0.5rem; font-size: 0.8rem; color: #a5b4fc; min-height: 1.25em; }
+    .ha-theme-card.ha-theme-loading { pointer-events: none; opacity: 0.55; position: relative; }
+    .ha-theme-card.ha-theme-loading::after {
+      content: ''; position: absolute; inset: 0.5rem; margin: auto; width: 1.5rem; height: 1.5rem;
+      border: 2px solid rgba(199, 210, 254, 0.25); border-top-color: #c7d2fe; border-radius: 50%;
+      animation: ha-spin 0.7s linear infinite;
+    }
+  </style>
+</head>
+<body data-page="home-automation">
+  <div class="page-content">
+  <div class="ha-wrap">
+    <h1>Home automation</h1>
+    <p class="ha-sub">Govee lights — quick themes below always work manually. The daemon only auto-applies the time-of-day schedule when <strong>Automatic lighting</strong> is on.</p>
+
+    <div id="noKey" class="ha-section" style="display:none;border-color:#b45309;background:rgba(180,83,9,0.12);">
+      <strong style="color:#fdba74">GOVEE_API_KEY missing</strong>
+      <p style="margin:0.5rem 0 0;font-size:0.85rem;color:#cbd5e1">Add your key to <code>src/.env</code> and restart Flask.</p>
+    </div>
+
+    <div class="ha-section" id="masterSwitchSection" style="border-color:rgba(165,180,252,0.35);background:rgba(99,102,241,0.08);">
+      <div class="setting-item" style="margin:0;border:none;padding:0;">
+        <div class="setting-label">
+          <strong style="font-size:1.05rem">Automatic lighting</strong>
+          <div class="setting-description">Master on/off for the daemon schedule. Saves immediately when you toggle — no need to click Save schedule. Off stops all automatic Govee theme applies (manual themes and Apply schedule now still work).</div>
+        </div>
+        <div class="setting-control ha-schedule-toggle-row">
+          <label class="toggle-switch" id="masterAutoToggle" role="switch" aria-checked="false" tabindex="0" onclick="toggleAutomaticLighting()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleAutomaticLighting();}">
+            <input type="checkbox" id="scheduleModeEnabled" style="display: none;">
+            <span class="slider"></span>
+          </label>
+          <span class="ha-mode-label" id="scheduleModeText">Off</span>
+        </div>
+      </div>
+      <div id="masterBanner" class="ha-banner" style="margin-top:0.75rem"></div>
+    </div>
+
+    <div class="ha-section">
+      <h2>Lights — quick themes</h2>
+      <div class="ha-themes" id="themeGrid"></div>
+      <div id="applyBanner" class="ha-banner"></div>
+    </div>
+
+    <div class="ha-section" id="devicesSection">
+      <h2>Your lights</h2>
+      <p class="ha-sub" style="margin-bottom:0.65rem">From your Govee account — online / power / brightness (refreshed periodically). The <strong>This run</strong> column updates live when you use Apply schedule now.</p>
+      <div id="applyRunPhase" style="display:none" aria-live="polite"></div>
+      <div id="devicesLoading" class="ha-muted" style="display:none">Loading devices…</div>
+      <div id="devicesError" class="ha-banner err" style="display:none;margin-top:0.5rem"></div>
+      <div style="overflow-x:auto">
+        <table class="ha-devices-table" id="devicesTable" style="display:none">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Zone</th>
+              <th>Model</th>
+              <th>Online</th>
+              <th>Power</th>
+              <th>Brightness</th>
+              <th>This run</th>
+            </tr>
+          </thead>
+          <tbody id="devicesTbody"></tbody>
+        </table>
+      </div>
+      <button type="button" class="ha-btn" id="refreshDevices" style="margin-top:0.75rem">↻ Refresh devices</button>
+    </div>
+
+    <div class="ha-section">
+      <h2>Time-of-day schedule</h2>
+      <p class="ha-sub" style="margin-bottom:1rem">Edit windows and themes below, then <strong>Save schedule</strong>. Automatic lighting (top of page) must be On for the daemon to use this.</p>
+
+      <div class="setting-item" style="margin-bottom:1rem;border-bottom:1px solid rgba(51,65,85,0.4);padding-bottom:1rem;">
+        <div class="setting-label">
+          <strong>Re-apply same theme every</strong>
+          <div class="setting-description">While you stay in the same time window, run a full theme apply again after this many minutes (default 15). Use 0 only if you want the old behavior (apply once per window, never refresh). Only applies when Automatic lighting is On.</div>
+        </div>
+        <div class="setting-control ha-row" style="margin-bottom:0">
+          <input type="number" id="reassertThemeMinutes" min="0" max="1440" step="1" value="15" style="width:4.5rem" title="Minutes between full re-applies">
+          <label for="reassertThemeMinutes" style="margin:0">minutes</label>
+        </div>
+      </div>
+
+      <div id="heartbeatPanel" style="display:none;margin-bottom:1rem">
+        <h3 style="font-size:0.8rem;text-transform:uppercase;letter-spacing:0.06em;color:#a5b4fc;margin:0 0 0.5rem">Next scheduled check</h3>
+        <div class="ha-heartbeat" id="heartbeatBox">
+          <div>
+            <div class="ha-hb-big" id="haCountdown">—</div>
+            <div class="ha-hb-sub" id="haHeartbeatDetail"></div>
+          </div>
+        </div>
+        <p class="ha-muted" id="haHeartbeatFootnote"></p>
+      </div>
+
+      <p style="font-size:0.78rem;color:#64748b;margin:0 0 0.75rem">Evening → Firelit, Night → Cinematic, Midnight / Morning / Noon → Off (defaults). Edit times and theme per row.</p>
+      <div id="periodRows"></div>
+      <div id="schedBanner" class="ha-banner"></div>
+      <div class="ha-save-footer ha-save-actions">
+        <button type="button" class="ha-btn" id="applyScheduleNow" title="Run the theme for the current time window now (does not require Automatic lighting)">⏱ Apply schedule now</button>
+        <button type="button" class="ha-btn ha-btn-primary" id="saveSchedule">💾 Save schedule</button>
+      </div>
+    </div>
+  </div>
+  </div>
+
+  <script src="/js/shared_navigation.js"></script>
+  <script src="/js/background_effect_blend.js"></script>
+  <script src="/js/video_background.js"></script>
+  <script>
+    const PERIODS = ['midnight','morning','noon','evening','night'];
+    const PERIOD_EMOJI = { midnight: '🌙', morning: '🌅', noon: '☀️', evening: '🌆', night: '🌃' };
+    const THEME_OPTIONS = [
+      { id: 'off', label: 'Off', icon: '🌑' },
+      { id: 'firelit', label: 'Firelit', icon: '🔥' },
+      { id: 'cinematic', label: 'Cinematic', icon: '🎬' },
+      { id: 'warm', label: 'Warm', icon: '🕯️' },
+      { id: 'aurora', label: 'Aurora', icon: '🌌' },
+    ];
+    const THEME_ICON_BY_ID = Object.fromEntries(THEME_OPTIONS.map(o => [o.id, o.icon]));
+
+    function setScheduleModeUi(enabled) {
+      const cb = document.getElementById('scheduleModeEnabled');
+      const t = document.getElementById('masterAutoToggle');
+      const txt = document.getElementById('scheduleModeText');
+      cb.checked = !!enabled;
+      if (enabled) {
+        t.classList.add('active');
+        txt.textContent = 'On';
+        txt.classList.add('on');
+        t.setAttribute('aria-checked', 'true');
+      } else {
+        t.classList.remove('active');
+        txt.textContent = 'Off';
+        txt.classList.remove('on');
+        t.setAttribute('aria-checked', 'false');
+      }
+    }
+
+    let autoApplyPersistInFlight = false;
+
+    async function persistAutomaticLighting(enabled) {
+      const banner = document.getElementById('masterBanner');
+      autoApplyPersistInFlight = true;
+      try {
+        const r = await fetch('/api/home-automation/schedule', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ schedule: { autoApplyEnabled: !!enabled } }),
+        });
+        const j = await r.json();
+        if (j.success) {
+          const on = !!(j.schedule && j.schedule.autoApplyEnabled);
+          setScheduleModeUi(on);
+          showBanner(banner, true, on
+            ? 'Automatic lighting On — daemon will apply the schedule.'
+            : 'Automatic lighting Off — daemon will not change lights.');
+          loadStatus(false);
+          return true;
+        }
+        showBanner(banner, false, j.error || 'Could not save automatic lighting');
+        setScheduleModeUi(!enabled);
+        return false;
+      } catch (e) {
+        showBanner(banner, false, String(e));
+        setScheduleModeUi(!enabled);
+        return false;
+      } finally {
+        autoApplyPersistInFlight = false;
+      }
+    }
+
+    function toggleAutomaticLighting() {
+      if (autoApplyPersistInFlight) return;
+      const cb = document.getElementById('scheduleModeEnabled');
+      const next = !cb.checked;
+      setScheduleModeUi(next);
+      persistAutomaticLighting(next);
+    }
+
+    // Back-compat for any leftover handlers
+    function toggleScheduleMode() {
+      toggleAutomaticLighting();
+    }
+
+    const haBannerTimers = {};
+
+    function clearHaBannerTimersFor(el) {
+      const id = el.id;
+      const t = haBannerTimers[id];
+      if (!t) return;
+      if (t.hide) clearTimeout(t.hide);
+      if (t.tick) clearInterval(t.tick);
+      delete haBannerTimers[id];
+    }
+
+    /**
+     * opts.rateLimited + retryAfterAt (ISO) or retryAfterSeconds — live countdown; stays visible until ~8s after zero.
+     * opts.retryAfterEstimate — true when server used a default (Govee often omits Retry-After on 429).
+     */
+    function showBanner(el, ok, text, opts) {
+      opts = opts || {};
+      clearHaBannerTimersFor(el);
+      var baseClass = 'ha-banner ' + (ok ? 'ok' : 'err');
+      if (opts.rateLimited) baseClass += ' ha-banner-rate';
+      el.className = baseClass;
+      el.style.display = 'block';
+
+      if (opts.rateLimited && (opts.retryAfterAt || opts.retryAfterSeconds != null)) {
+        var msgEl = document.createElement('div');
+        msgEl.className = 'ha-banner-msg';
+        msgEl.textContent = text;
+        var countEl = document.createElement('div');
+        countEl.className = 'ha-banner-count';
+        el.replaceChildren(msgEl, countEl);
+        var endMs = opts.retryAfterAt
+          ? Date.parse(opts.retryAfterAt)
+          : (Date.now() + (Number(opts.retryAfterSeconds) || 60) * 1000);
+        function updateCount() {
+          var sec = Math.max(0, Math.ceil((endMs - Date.now()) / 1000));
+          var estHint = opts.retryAfterEstimate ? ' (estimate — API did not send a wait time)' : '';
+          countEl.textContent = sec > 0
+            ? ('Try again in ' + sec + 's' + estHint + '.')
+            : ('You can try again now.' + estHint);
+        }
+        updateCount();
+        var state = { tick: setInterval(updateCount, 250), hide: null };
+        state.hide = setTimeout(function () {
+          el.style.display = 'none';
+          clearHaBannerTimersFor(el);
+        }, Math.max(0, endMs - Date.now()) + 8000);
+        haBannerTimers[el.id] = state;
+        return;
+      }
+
+      el.textContent = text;
+      haBannerTimers[el.id] = {
+        tick: null,
+        hide: setTimeout(function () {
+          el.style.display = 'none';
+          clearHaBannerTimersFor(el);
+        }, ok ? 5000 : 12000),
+      };
+    }
+
+    async function loadData() {
+      const r = await fetch('/api/home-automation/themes');
+      const j = await r.json();
+      if (!j.success) throw new Error(j.error || 'load failed');
+      document.getElementById('noKey').style.display = j.hasApiKey ? 'none' : 'block';
+      const grid = document.getElementById('themeGrid');
+      grid.innerHTML = '';
+      (j.quickThemes || []).forEach(t => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'ha-theme-card';
+        b.disabled = !j.hasApiKey;
+        const icon = (t.icon && String(t.icon).trim()) || THEME_ICON_BY_ID[t.id] || '✨';
+        b.innerHTML =
+          '<span class="ha-theme-emoji" aria-hidden="true">' + escapeHtml(icon) + '</span>' +
+          '<strong>' + escapeHtml(t.label) + '</strong>' +
+          '<span class="ha-theme-desc">' + escapeHtml(t.description || '') + '</span>';
+        b.onclick = () => applyTheme(t.id, b);
+        grid.appendChild(b);
+      });
+      renderSchedule(j.schedule || {});
+      document.getElementById('applyScheduleNow').disabled = !j.hasApiKey;
+    }
+
+    function escapeHtml(s) {
+      const d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    function normDid(id) {
+      return String(id || '').toLowerCase();
+    }
+
+    function setApplyRunPhase(msg) {
+      var el = document.getElementById('applyRunPhase');
+      if (!el) return;
+      if (msg) {
+        el.style.display = 'block';
+        el.textContent = msg;
+      } else {
+        el.style.display = 'none';
+        el.textContent = '';
+      }
+    }
+
+    function resetApplyColumn(waitText) {
+      var t = waitText != null ? waitText : 'Waiting…';
+      document.querySelectorAll('.ha-cell-apply .ha-apply-inner').forEach(function (el) {
+        el.innerHTML =
+          '<span class="ha-inline-wait"><span class="ha-spin ha-spin-sm" aria-hidden="true"></span> ' +
+          escapeHtml(t) +
+          '</span>';
+      });
+    }
+
+    function clearApplyColumn() {
+      document.querySelectorAll('.ha-cell-apply .ha-apply-inner').forEach(function (el) {
+        el.innerHTML = '—';
+      });
+    }
+
+    function updateApplyCell(deviceId, html) {
+      var key = normDid(deviceId);
+      var cell = document.querySelector('.ha-cell-apply[data-did="' + key + '"] .ha-apply-inner');
+      if (cell) cell.innerHTML = html;
+    }
+
+    function reenableHomeAutomationActions() {
+      var hasKey = document.getElementById('noKey').style.display === 'none';
+      document.querySelectorAll('.ha-theme-card').forEach(function (b) {
+        b.disabled = !hasKey;
+      });
+      document.getElementById('refreshDevices').disabled = !hasKey;
+      document.getElementById('applyScheduleNow').disabled = !hasKey;
+    }
+
+    async function applyTheme(id, btn) {
+      const banner = document.getElementById('applyBanner');
+      var tableVisible = document.getElementById('devicesTable').style.display === 'table';
+      if (btn) {
+        btn.disabled = true;
+        btn.classList.add('ha-theme-loading');
+      }
+      setApplyRunPhase('Applying theme: ' + id + '…');
+      if (tableVisible) resetApplyColumn('Queued…');
+
+      var finalResult = null;
+      try {
+        const r = await fetch('/api/home-automation/apply-theme-stream', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/x-ndjson' },
+          body: JSON.stringify({ theme: id }),
+        });
+        if (!r.ok) {
+          var errText = await r.text();
+          var errJ = {};
+          try { errJ = JSON.parse(errText); } catch (y) {}
+          throw new Error(errJ.error || errText || 'Request failed');
+        }
+        if (!r.body || !r.body.getReader) {
+          throw new Error('Streaming is not supported in this browser');
+        }
+        var reader = r.body.getReader();
+        var dec = new TextDecoder();
+        var buf = '';
+        while (true) {
+          var ch = await reader.read();
+          if (ch.done) break;
+          buf += dec.decode(ch.value, { stream: true });
+          var ix;
+          while ((ix = buf.indexOf('\n')) >= 0) {
+            var line = buf.slice(0, ix).strip();
+            buf = buf.slice(ix + 1);
+            if (!line) continue;
+            var ev;
+            try { ev = JSON.parse(line); } catch (z) { continue; }
+            if (ev.type === 'phase') {
+              setApplyRunPhase(ev.message || '');
+            } else if (ev.type === 'device') {
+              if (ev.phase === 'running') {
+                updateApplyCell(
+                  ev.device_id,
+                  '<span class="ha-inline-wait"><span class="ha-spin ha-spin-sm" aria-hidden="true"></span> ' +
+                    escapeHtml(ev.detail || '') +
+                    '</span>'
+                );
+              } else if (ev.phase === 'retry') {
+                updateApplyCell(
+                  ev.device_id,
+                  '<span class="ha-err" style="color:#fbbe24">⚠️ Retrying in ' + (ev.retryAfter || 60) + 's (#' + (ev.attempt || 1) + ')</span>'
+                );
+              } else if (ev.phase === 'done') {
+                updateApplyCell(ev.device_id, '<span class="ha-ok">✓ ' + escapeHtml(ev.detail || 'OK') + '</span>');
+              } else if (ev.phase === 'error') {
+                updateApplyCell(
+                  ev.device_id,
+                  '<span class="ha-err">✗ ' + escapeHtml(String(ev.message || '').slice(0, 160)) + '</span>'
+                );
+              }
+            } else if (ev.type === 'final') {
+              finalResult = ev.result;
+            }
+          }
+        }
+
+        if (finalResult) {
+          if (finalResult.success) {
+            showBanner(banner, true, 'Applied: ' + id + (finalResult.log ? ' — ' + finalResult.log.slice(0, 3).join('; ') : ''));
+          } else {
+            const msg = (finalResult.errors && finalResult.errors[0]) || finalResult.error || 'Apply failed';
+            if (finalResult.rateLimited) {
+              showBanner(banner, false, msg, {
+                rateLimited: true,
+                retryAfterAt: finalResult.retryAfterAt,
+                retryAfterSeconds: finalResult.retryAfterSeconds,
+                retryAfterEstimate: !!finalResult.retryAfterEstimate,
+              });
+            } else {
+              showBanner(banner, false, msg);
+            }
+          }
+          loadStatus(false);
+        }
+      } catch (e) {
+        showBanner(banner, false, String(e));
+        if (tableVisible) clearApplyColumn();
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.classList.remove('ha-theme-loading');
+        }
+        setApplyRunPhase('');
+      }
+    }
+
+    function renderSchedule(sched) {
+      setScheduleModeUi(!!sched.autoApplyEnabled);
+      var re = document.getElementById('reassertThemeMinutes');
+      if (re) {
+        var rm = sched.reassertThemeMinutes;
+        re.value = (rm !== undefined && rm !== null && String(rm) !== '') ? String(rm) : '15';
+      }
+      const periods = sched.periods || {};
+      const host = document.getElementById('periodRows');
+      host.innerHTML = '';
+      PERIODS.forEach(pk => {
+        const cfg = periods[pk] || { start: '00:00', end: '06:00', theme: 'off' };
+        const row = document.createElement('div');
+        row.className = 'ha-row';
+        row.style.borderBottom = '1px solid rgba(51,65,85,0.5)';
+        row.style.paddingBottom = '0.5rem';
+        const pe = PERIOD_EMOJI[pk] || '•';
+        row.innerHTML =
+          '<span class="ha-period-head"><span class="ha-period-emoji" aria-hidden="true">' + escapeHtml(pe) + '</span><span class="ha-period-name">' + pk + '</span></span>' +
+          '<label>Start <input type="text" data-k="' + pk + '" data-f="start" value="' + escapeHtml(cfg.start || '00:00') + '" size="6" style="font-family:monospace"></label>' +
+          '<label>End <input type="text" data-k="' + pk + '" data-f="end" value="' + escapeHtml(cfg.end || '06:00') + '" size="6" style="font-family:monospace" title="Use 24:00 for midnight end"></label>' +
+          '<label>Theme <select data-k="' + pk + '" data-f="theme">' +
+          THEME_OPTIONS.map(o => {
+            const optLabel = o.icon + ' ' + o.label;
+            return '<option value="' + o.id + '"' + (cfg.theme === o.id ? ' selected' : '') + '>' + escapeHtml(optLabel) + '</option>';
+          }).join('') +
+          '</select></label>';
+        host.appendChild(row);
+      });
+    }
+
+    async function saveSchedule() {
+      const banner = document.getElementById('schedBanner');
+      const periods = {};
+      document.querySelectorAll('#periodRows [data-k]').forEach(el => {
+        const pk = el.getAttribute('data-k');
+        const f = el.getAttribute('data-f');
+        if (!periods[pk]) periods[pk] = {};
+        periods[pk][f] = (el.value || '').trim();
+      });
+      var reassertRaw = document.getElementById('reassertThemeMinutes').value;
+      var reassertNum = parseInt(reassertRaw, 10);
+      if (isNaN(reassertNum) || reassertNum < 0) reassertNum = 15;
+      if (reassertNum > 1440) reassertNum = 1440;
+      const body = {
+        schedule: {
+          autoApplyEnabled: document.getElementById('scheduleModeEnabled').checked,
+          reassertThemeMinutes: reassertNum,
+          periods,
+        },
+      };
+      try {
+        const r = await fetch('/api/home-automation/schedule', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const j = await r.json();
+        if (j.success) {
+          if (j.schedule) setScheduleModeUi(!!j.schedule.autoApplyEnabled);
+          showBanner(banner, true, 'Schedule saved.');
+        } else showBanner(banner, false, j.error || 'Save failed');
+      } catch (e) {
+        showBanner(banner, false, String(e));
+      }
+    }
+
+    document.getElementById('saveSchedule').onclick = saveSchedule;
+
+    async function applyScheduleNow() {
+      var banner = document.getElementById('schedBanner');
+      var btn = document.getElementById('applyScheduleNow');
+      var saveBtn = document.getElementById('saveSchedule');
+      var refBtn = document.getElementById('refreshDevices');
+      var btnLabel = '⏱ Apply schedule now';
+      var tableVisible = document.getElementById('devicesTable').style.display === 'table';
+      btn.disabled = true;
+      saveBtn.disabled = true;
+      refBtn.disabled = true;
+      document.querySelectorAll('.ha-theme-card').forEach(function (b) {
+        b.disabled = true;
+      });
+      btn.classList.add('ha-btn-loading');
+      btn.innerHTML = '<span class="ha-spin" aria-hidden="true"></span><span>Applying…</span>';
+      setApplyRunPhase('');
+      if (tableVisible) resetApplyColumn('Queued…');
+
+      var finalResult = null;
+      try {
+        var r = await fetch('/api/home-automation/apply-schedule-now-stream', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/x-ndjson' },
+          body: '{}',
+        });
+        if (!r.ok) {
+          var errText = await r.text();
+          var errJ = {};
+          try {
+            errJ = JSON.parse(errText);
+          } catch (y) {}
+          throw new Error(errJ.error || errText || 'Request failed');
+        }
+        if (!r.body || !r.body.getReader) {
+          throw new Error('Streaming is not supported in this browser');
+        }
+        var reader = r.body.getReader();
+        var dec = new TextDecoder();
+        var buf = '';
+        while (true) {
+          var ch = await reader.read();
+          if (ch.done) break;
+          buf += dec.decode(ch.value, { stream: true });
+          var ix;
+          while ((ix = buf.indexOf('\n')) >= 0) {
+            var line = buf.slice(0, ix).trim();
+            buf = buf.slice(ix + 1);
+            if (!line) continue;
+            var ev;
+            try {
+              ev = JSON.parse(line);
+            } catch (z) {
+              continue;
+            }
+            if (ev.type === 'schedule_start') {
+              setApplyRunPhase('Period: ' + ev.period + ' → theme “' + (ev.theme || '') + '”');
+            } else if (ev.type === 'phase') {
+              setApplyRunPhase(ev.message || '');
+            } else if (ev.type === 'device') {
+              if (ev.phase === 'running') {
+                updateApplyCell(
+                  ev.device_id,
+                  '<span class="ha-inline-wait"><span class="ha-spin ha-spin-sm" aria-hidden="true"></span> ' +
+                    escapeHtml(ev.detail || '') +
+                    '</span>'
+                );
+              } else if (ev.phase === 'done') {
+                updateApplyCell(ev.device_id, '<span class="ha-ok">✓ ' + escapeHtml(ev.detail || 'OK') + '</span>');
+              } else if (ev.phase === 'error') {
+                updateApplyCell(
+                  ev.device_id,
+                  '<span class="ha-err">✗ ' + escapeHtml(String(ev.message || '').slice(0, 160)) + '</span>'
+                );
+              }
+            } else if (ev.type === 'final') {
+              finalResult = ev.result;
+            }
+          }
+        }
+
+        if (finalResult) {
+          if (finalResult.success) {
+            var p = finalResult.period ? ' (' + finalResult.period + ' → ' + (finalResult.theme || '') + ')' : '';
+            showBanner(
+              banner,
+              true,
+              'Applied scheduled theme' + p + (finalResult.log ? ' — ' + finalResult.log.slice(0, 3).join('; ') : '')
+            );
+          } else {
+            var msg = (finalResult.errors && finalResult.errors[0]) || finalResult.error || 'Apply failed';
+            if (finalResult.rateLimited) {
+              showBanner(banner, false, msg, {
+                rateLimited: true,
+                retryAfterAt: finalResult.retryAfterAt,
+                retryAfterSeconds: finalResult.retryAfterSeconds,
+                retryAfterEstimate: !!finalResult.retryAfterEstimate,
+              });
+            } else {
+              showBanner(banner, false, msg);
+            }
+          }
+          loadStatus(false);
+        } else {
+          showBanner(banner, false, 'No result from apply stream');
+          if (tableVisible) clearApplyColumn();
+          setApplyRunPhase('');
+        }
+      } catch (e) {
+        showBanner(banner, false, String(e));
+        setApplyRunPhase('');
+        if (tableVisible) clearApplyColumn();
+      } finally {
+        btn.classList.remove('ha-btn-loading');
+        btn.innerHTML = btnLabel;
+        reenableHomeAutomationActions();
+        saveBtn.disabled = false;
+      }
+    }
+
+    document.getElementById('applyScheduleNow').onclick = applyScheduleNow;
+
+    var _haNextTickAt = null;
+    var _haTickInterval = null;
+
+    function formatHMS(totalSec) {
+      totalSec = Math.max(0, Math.floor(totalSec));
+      var h = Math.floor(totalSec / 3600);
+      var m = Math.floor((totalSec % 3600) / 60);
+      var s = totalSec % 60;
+      if (h > 0) return h + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+      return m + ':' + String(s).padStart(2, '0');
+    }
+
+    function pillOnline(online) {
+      if (online === true) return '<span class="ha-pill on">Online</span>';
+      if (online === false) return '<span class="ha-pill off">Offline</span>';
+      return '<span class="ha-pill unk">Unknown</span>';
+    }
+
+    function pillPower(p) {
+      if (!p) return '<span class="ha-pill unk">—</span>';
+      var low = String(p).toLowerCase();
+      if (low === 'on') return '<span class="ha-pill on">On</span>';
+      if (low === 'off') return '<span class="ha-pill off">Off</span>';
+      return '<span class="ha-pill unk">' + escapeHtml(String(p)) + '</span>';
+    }
+
+    function updateCountdownOnly() {
+      var el = document.getElementById('haCountdown');
+      if (!el || !_haNextTickAt) return;
+      var sec = Math.max(0, Math.ceil((Date.parse(_haNextTickAt) - Date.now()) / 1000));
+      el.textContent = formatHMS(sec);
+    }
+
+    function startHeartbeatTicker() {
+      if (_haTickInterval) clearInterval(_haTickInterval);
+      _haTickInterval = setInterval(updateCountdownOnly, 250);
+    }
+
+    function renderDevices(devices, err, rateLimited, hasApiKey) {
+      var loadEl = document.getElementById('devicesLoading');
+      var errEl = document.getElementById('devicesError');
+      var table = document.getElementById('devicesTable');
+      var tbody = document.getElementById('devicesTbody');
+      loadEl.style.display = 'none';
+      errEl.style.display = 'none';
+      errEl.className = 'ha-banner err';
+      if (!hasApiKey) {
+        table.style.display = 'none';
+        tbody.innerHTML = '';
+        return;
+      }
+      if (err) {
+        errEl.style.display = 'block';
+        errEl.textContent = err + (rateLimited ? ' (rate limited — wait and refresh.)' : '');
+        table.style.display = 'none';
+        return;
+      }
+      if (!devices || !devices.length) {
+        table.style.display = 'none';
+        errEl.style.display = 'block';
+        errEl.className = 'ha-banner';
+        errEl.style.background = 'rgba(51, 65, 85, 0.35)';
+        errEl.style.border = '1px solid rgba(100, 116, 139, 0.4)';
+        errEl.style.color = '#94a3b8';
+        errEl.textContent = 'No controllable devices returned. Check your API key or Govee account.';
+        return;
+      }
+      tbody.innerHTML = '';
+      devices.forEach(function (d) {
+        var tr = document.createElement('tr');
+        var br = d.brightness != null ? String(d.brightness) + '%' : '—';
+        var zone = d.zone ? escapeHtml(d.zone) : '—';
+        var name = escapeHtml(d.name || d.device_id || '');
+        var se = d.stateError ? '<div style="font-size:0.7rem;color:#f87171;margin-top:0.2rem">' + escapeHtml(d.stateError) + '</div>' : '';
+        var didAttr = escapeHtml(normDid(d.device_id));
+        tr.innerHTML =
+          '<td><strong style="color:#f1f5f9">' + name + '</strong>' + se + '<div><code>' + escapeHtml(d.device_id || '') + '</code></div></td>' +
+          '<td>' + zone + '</td>' +
+          '<td><code>' + escapeHtml(d.model || '') + '</code></td>' +
+          '<td>' + pillOnline(d.online) + '</td>' +
+          '<td>' + pillPower(d.powerState) + '</td>' +
+          '<td>' + escapeHtml(br) + '</td>' +
+          '<td class="ha-cell-apply" data-did="' + didAttr + '"><span class="ha-apply-inner">—</span></td>';
+        tbody.appendChild(tr);
+      });
+      table.style.display = 'table';
+    }
+
+    function renderHeartbeat(hb, scheduleAutoApply, hasKey) {
+      var panel = document.getElementById('heartbeatPanel');
+      var box = document.getElementById('heartbeatBox');
+      var detail = document.getElementById('haHeartbeatDetail');
+      var foot = document.getElementById('haHeartbeatFootnote');
+      panel.style.display = 'block';
+      box.classList.remove('ha-heartbeat-warn');
+      var iv = (hb && hb.intervalSeconds) || 60;
+      foot.textContent =
+        'The daemon wakes every ' + iv + 's to see if the active time window or theme changed. ' +
+        'If Automatic lighting is off, it skips applying (no API theme push). Govee online status can lag briefly.';
+
+      if (!hb || !hb.hasHeartbeat) {
+        _haNextTickAt = null;
+        document.getElementById('haCountdown').textContent = '—';
+        detail.innerHTML =
+          (hb && hb.hint ? escapeHtml(hb.hint) : 'Start the Cuttle daemon (tray app). The first check runs after a short startup delay, then about every ' + iv + ' seconds.') +
+          (scheduleAutoApply ? '' : ' <strong>Automatic lighting is off</strong> — turn it on at the top of this page to apply themes automatically.');
+        if (_haTickInterval) clearInterval(_haTickInterval);
+        return;
+      }
+
+      _haNextTickAt = hb.nextTickAt || null;
+      updateCountdownOnly();
+      startHeartbeatTicker();
+
+      var parts = [];
+      parts.push('Last check: <strong>' + escapeHtml(hb.lastTickAt || '') + '</strong> (UTC).');
+      if (hb.secondsPastDue > 0) {
+        parts.push('Next tick was due <strong>' + hb.secondsPastDue + 's</strong> ago — daemon may be stopped or busy.');
+        box.classList.add('ha-heartbeat-warn');
+      } else {
+        parts.push('Next check (estimate): <strong>' + escapeHtml(hb.nextTickAt || '') + '</strong>.');
+      }
+      if (hb.daemonLikelyRunning === false) {
+        box.classList.add('ha-heartbeat-warn');
+        parts.push('Heartbeat looks stale — confirm the Cuttle daemon is running.');
+      }
+      detail.innerHTML = parts.join(' ');
+      if (!scheduleAutoApply) {
+        foot.innerHTML =
+          '<strong>Automatic lighting is off</strong> — the daemon still runs its check every ' +
+          iv +
+          's but will not push a theme until you enable Automatic lighting at the top of this page.';
+      }
+    }
+
+    async function loadStatus(showLoading) {
+      if (showLoading) document.getElementById('devicesLoading').style.display = 'block';
+      try {
+        var r = await fetch('/api/home-automation/status');
+        var j = await r.json();
+        if (!j.success) throw new Error(j.error || 'status failed');
+        renderDevices(j.devices, j.devicesError, j.devicesRateLimited, j.hasApiKey);
+        renderHeartbeat(j.heartbeat, j.scheduleAutoApply, j.hasApiKey);
+        if (!j.hasApiKey) {
+          document.getElementById('devicesSection').style.opacity = '0.5';
+          document.getElementById('refreshDevices').disabled = true;
+          document.getElementById('applyScheduleNow').disabled = true;
+        } else {
+          document.getElementById('devicesSection').style.opacity = '1';
+          reenableHomeAutomationActions();
+        }
+      } catch (e) {
+        document.getElementById('devicesLoading').style.display = 'none';
+        renderDevices([], String(e), false, true);
+      }
+    }
+
+    document.getElementById('refreshDevices').onclick = function () {
+      loadStatus(true);
+    };
+
+    loadData()
+      .then(function () {
+        return loadStatus(true);
+      })
+      .catch(function (e) {
+        console.error(e);
+      });
+
+    setInterval(function () {
+      loadStatus(false);
+    }, 12000);
+  </script>
+</body>
+</html>

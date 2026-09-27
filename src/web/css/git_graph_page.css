@@ -1,0 +1,1288 @@
+/* Git visualizer — vertical commit topology
+ *
+ * Intentionally does NOT load landing_page.css (transform + height:auto break
+ * overlays). Fonts/theme match chat. Diff preview uses a native <dialog>
+ * top-layer popup with the same pending-diff-* chrome as chat.
+ */
+
+:root {
+    --bg-primary: #0f172a;
+    --bg-secondary: #1e293b;
+    --bg-tertiary: #334155;
+    --bg-hover: #334155;
+    --text-primary: #e2e8f0;
+    --text-secondary: #94a3b8;
+    --text-tertiary: #64748b;
+    --text-inverse: #ffffff;
+    --border-color: #334155;
+    --section-bg: rgba(15, 23, 42, 0.55);
+    --accent-color: #3b82f6;
+    --input-bg: #0f172a;
+    /* Match shared_navigation.css themed scrollbars (chat pending-diff uses these) */
+    --scrollbar-size: 10px;
+    --scrollbar-track: rgba(0, 0, 0, 0.32);
+    --scrollbar-thumb: rgba(167, 139, 250, 0.35);
+    --scrollbar-thumb-hover: rgba(196, 181, 253, 0.55);
+}
+
+html.light-mode {
+    --bg-primary: #ffffff;
+    --bg-secondary: #f7f7f8;
+    --bg-tertiary: #ececf1;
+    --bg-hover: #e8e8ed;
+    --text-primary: #1a1a2e;
+    --text-secondary: #4a4a5a;
+    --text-tertiary: #8a8a9a;
+    --text-inverse: #ffffff;
+    --border-color: #d9d9e3;
+    --section-bg: rgba(247, 247, 248, 0.95);
+    --accent-color: #667eea;
+    --input-bg: #ffffff;
+    --scrollbar-track: rgba(0, 0, 0, 0.06);
+    --scrollbar-thumb: rgba(124, 58, 237, 0.38);
+    --scrollbar-thumb-hover: rgba(124, 58, 237, 0.58);
+}
+
+html.midnight-mode {
+    --bg-primary: #0a0a0f;
+    --bg-secondary: #0f0f15;
+    --bg-tertiary: #15151f;
+    --bg-hover: #1a1a28;
+    --text-primary: #e0e0f0;
+    --text-secondary: #a0a0b0;
+    --text-tertiary: #707080;
+    --text-inverse: #ffffff;
+    --border-color: #1a1a25;
+    --section-bg: rgba(15, 15, 21, 0.9);
+    --accent-color: #7c3aed;
+    --input-bg: #15151f;
+    --scrollbar-track: rgba(255, 255, 255, 0.06);
+    --scrollbar-thumb: rgba(255, 255, 255, 0.22);
+    --scrollbar-thumb-hover: rgba(255, 255, 255, 0.34);
+}
+
+html.git-graph-root {
+    height: 100%;
+    height: 100dvh;
+    overflow: hidden;
+    background: var(--bg-primary);
+}
+
+/* Lock like chat body — iframe viewport owns the frame; list scrolls inside. */
+body.git-graph-body {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    height: 100dvh;
+    margin: 0;
+    padding: 0 !important;
+    overflow: hidden;
+    overscroll-behavior: none;
+    font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+}
+
+.git-graph-page {
+    display: flex !important;
+    flex-direction: column !important;
+    height: 100% !important;
+    max-height: 100% !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 10px 12px 0 !important;
+    box-sizing: border-box !important;
+}
+
+.git-graph-pending-wrap {
+    flex-shrink: 0;
+    max-height: min(42vh, 420px);
+    overflow: auto;
+    padding: 0 0 10px;
+    margin-top: 8px;
+}
+
+.git-graph-pending-wrap .pending-changes {
+    max-width: none;
+    margin: 0;
+}
+
+.git-graph-pending-wrap .pending-changes-body {
+    max-height: min(32vh, 320px);
+    overflow: auto;
+}
+
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+.git-graph-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 10px 16px;
+    margin-bottom: 10px;
+    flex-shrink: 0;
+}
+
+.git-graph-page .compact-page-title {
+    margin-bottom: 0;
+    align-items: baseline;
+}
+
+.git-graph-page .compact-page-subtitle {
+    margin: 0;
+    font-size: 0.68rem;
+    font-weight: 400;
+    color: var(--text-tertiary, #64748b);
+    line-height: 1.2;
+    letter-spacing: 0.01em;
+    max-width: none;
+    opacity: 0.85;
+}
+
+.git-graph-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 10px 12px;
+}
+
+.git-graph-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--text-secondary, #94a3b8);
+}
+
+.git-graph-field select,
+.git-graph-field input[type="search"] {
+    min-width: 180px;
+    max-width: min(280px, 42vw);
+    padding: 6px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--border-color, #334155);
+    background: var(--section-bg, #1e293b);
+    color: var(--text-primary, #e2e8f0);
+    font-size: 13px;
+}
+
+.git-graph-field[hidden] {
+    display: none !important;
+}
+
+.git-graph-filter input {
+    min-width: 200px;
+}
+
+.git-graph-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-secondary, #94a3b8);
+    padding-bottom: 6px;
+    user-select: none;
+}
+
+.git-graph-btn {
+    padding: 6px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--border-color, #334155);
+    background: var(--accent-color, #3b82f6);
+    color: var(--text-inverse, #fff);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.git-graph-btn:hover {
+    filter: brightness(1.08);
+}
+
+.git-graph-btn.ghost {
+    background: transparent;
+    color: var(--text-primary, #e2e8f0);
+}
+
+.git-graph-layout {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: 1fr minmax(280px, 360px);
+    grid-template-rows: auto 1fr;
+    gap: 0;
+    border: 1px solid var(--border-color, #334155);
+    border-radius: 10px 10px 0 0;
+    overflow: hidden;
+    background: var(--section-bg, rgba(15, 23, 42, 0.55));
+}
+
+.git-graph-layout.drawer-closed {
+    grid-template-columns: 1fr;
+}
+
+.git-graph-branches {
+    grid-column: 1 / -1;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    border-right: none;
+    border-bottom: 1px solid var(--border-color, #334155);
+    background: rgba(15, 23, 42, 0.35);
+    overflow: visible;
+    padding: 6px 8px;
+    position: relative;
+    z-index: 5;
+}
+
+.git-graph-branches-head {
+    flex-shrink: 0;
+    padding: 0 4px 0 2px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-secondary, #94a3b8);
+}
+
+.git-graph-branches-list {
+    flex: 1;
+    min-width: 0;
+    overflow: visible;
+    padding: 0;
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 6px;
+}
+
+.git-graph-branch {
+    display: inline-flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    flex: 0 0 auto;
+    width: auto;
+    max-width: none;
+    text-align: left;
+    padding: 5px 10px;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    border-radius: 999px;
+    background: rgba(15, 23, 42, 0.45);
+    color: var(--text-primary, #e2e8f0);
+    cursor: pointer;
+    font: inherit;
+    box-sizing: border-box;
+    white-space: nowrap;
+}
+
+.git-graph-branch:hover {
+    background: rgba(148, 163, 184, 0.14);
+}
+
+.git-graph-branch.is-active {
+    background: rgba(59, 130, 246, 0.22);
+    border-color: rgba(59, 130, 246, 0.55);
+}
+
+.git-graph-branch-name {
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.25;
+    overflow: visible;
+    text-overflow: clip;
+    white-space: nowrap;
+    max-width: none;
+}
+
+.git-graph-branch-name .is-head-mark {
+    color: #67e8f9;
+    font-weight: 700;
+    margin-right: 4px;
+}
+
+.git-graph-branch-meta {
+    font-size: 10px;
+    color: var(--text-secondary, #94a3b8);
+    overflow: visible;
+    text-overflow: clip;
+    white-space: nowrap;
+    max-width: none;
+}
+
+/* Primary chips hide the long subject meta; keep short Current (branch) note. */
+.git-graph-branches-list > .git-graph-branch > .git-graph-branch-meta {
+    display: none;
+}
+
+.git-graph-branches-list > .git-graph-branch[data-mode="current"] .git-graph-branch-name .git-graph-branch-meta {
+    display: inline;
+    font-size: 11px;
+    font-weight: 400;
+    margin-left: 2px;
+}
+
+.git-graph-branches-more {
+    position: relative;
+    flex: 0 0 auto;
+    margin-left: auto;
+}
+
+.git-graph-branches-menu-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 28px;
+    padding: 0;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    border-radius: 8px;
+    background: rgba(15, 23, 42, 0.45);
+    color: var(--text-primary, #e2e8f0);
+    cursor: pointer;
+    font: inherit;
+    line-height: 1;
+}
+
+.git-graph-branches-menu-btn:hover,
+.git-graph-branches-menu-btn[aria-expanded="true"] {
+    background: rgba(148, 163, 184, 0.14);
+    border-color: rgba(148, 163, 184, 0.4);
+}
+
+.git-graph-branches-menu-btn .git-graph-hamburger {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    width: 14px;
+}
+
+.git-graph-branches-menu-btn .git-graph-hamburger span {
+    display: block;
+    height: 2px;
+    border-radius: 1px;
+    background: currentColor;
+}
+
+.git-graph-branches-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    min-width: 220px;
+    max-width: min(360px, 80vw);
+    max-height: min(50vh, 360px);
+    overflow: auto;
+    padding: 6px;
+    border: 1px solid var(--border-color, #334155);
+    border-radius: 10px;
+    background: var(--bg-secondary, #1e293b);
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    z-index: 40;
+}
+
+.git-graph-branches-menu[hidden] {
+    display: none !important;
+}
+
+.git-graph-branches-menu .git-graph-branch {
+    width: 100%;
+    max-width: none;
+    border-radius: 8px;
+    border-color: transparent;
+    background: transparent;
+    justify-content: flex-start;
+}
+
+.git-graph-branches-menu .git-graph-branch-meta {
+    display: inline;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+}
+
+.git-graph-branches-menu .git-graph-branch {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    white-space: normal;
+}
+
+.git-graph-branches-menu .git-graph-branch-name {
+    white-space: nowrap;
+}
+
+.git-graph-main {
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    grid-row: 2;
+    grid-column: 1;
+}
+
+.git-graph-drawer {
+    border-left: 1px solid var(--border-color, #334155);
+    background: rgba(2, 6, 23, 0.45);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    grid-row: 2;
+    grid-column: 2;
+}
+
+.git-graph-status {
+    padding: 24px 16px;
+    font-size: 13px;
+    color: var(--text-secondary, #94a3b8);
+}
+
+.git-graph-status.is-error {
+    color: #f87171;
+}
+
+.git-graph-scroll {
+    flex: 1;
+    min-height: 0;
+    /* overflow-x:auto + absolute SVG used to toggle a horizontal scrollbar in
+       narrow Electron split panes → clientHeight flicker → paint storm. */
+    overflow-x: hidden;
+    overflow-y: auto;
+    position: relative;
+}
+
+.git-graph-drawer-body {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 12px;
+    font-size: 13px;
+}
+
+/* shared_navigation.css global themed scrollbars (chat pending-diff inherits these) */
+html.git-graph-root,
+html.git-graph-root body,
+html.git-graph-root * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+html.git-graph-root *::-webkit-scrollbar {
+    width: var(--scrollbar-size, 10px);
+    height: var(--scrollbar-size, 10px);
+}
+
+html.git-graph-root *::-webkit-scrollbar-track {
+    background: var(--scrollbar-track);
+    border-radius: 999px;
+}
+
+html.git-graph-root *::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+}
+
+html.git-graph-root *::-webkit-scrollbar-thumb:hover {
+    background: var(--scrollbar-thumb-hover);
+}
+
+html.git-graph-root *::-webkit-scrollbar-corner {
+    background: transparent;
+}
+
+.git-graph-svg {
+    /* Overlay the row gutters — must stay out of document flow or it
+       pushes every commit row down by one viewport (sticky + height). */
+    position: absolute;
+    left: 0;
+    top: 0;
+    /* Hits only on edges/nodes (see .git-graph-edge-hit); rows keep clicks. */
+    pointer-events: none;
+    overflow: visible;
+    z-index: 2;
+}
+
+.git-graph-svg .git-graph-edge-hit,
+.git-graph-svg .git-graph-node {
+    pointer-events: stroke;
+}
+
+.git-graph-svg .git-graph-node {
+    pointer-events: auto;
+    cursor: default;
+}
+
+.git-graph-svg .git-graph-edge-hit {
+    cursor: default;
+}
+
+.git-graph-svg.has-lane-hot .git-graph-edge:not(.is-lane-hot) {
+    opacity: 0.22;
+}
+
+.git-graph-svg.has-lane-hot .git-graph-node:not(.is-lane-hot) {
+    opacity: 0.35;
+}
+
+.git-graph-svg .git-graph-edge.is-lane-hot {
+    stroke-width: 3.5;
+    opacity: 1;
+    filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.55))
+            drop-shadow(0 0 10px rgba(56, 189, 248, 0.65));
+}
+
+.git-graph-svg .git-graph-node.is-lane-hot {
+    filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.7))
+            drop-shadow(0 0 10px rgba(56, 189, 248, 0.75));
+}
+
+.git-graph-lane-tip {
+    position: fixed;
+    z-index: 80;
+    pointer-events: none;
+    padding: 4px 8px;
+    border-radius: 6px;
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    background: rgba(15, 23, 42, 0.96);
+    color: var(--text-primary, #e2e8f0);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.3;
+    white-space: nowrap;
+    max-width: min(60vw, 280px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+    transform: translate(12px, 12px);
+}
+
+.git-graph-lane-tip[hidden] {
+    display: none !important;
+}
+
+.git-graph-rows {
+    position: relative;
+    z-index: 1;
+    padding: 0;
+}
+
+.git-graph-row {
+    display: block;
+    align-items: center;
+    min-height: var(--row-h, 52px);
+    height: var(--row-h, 52px);
+    cursor: pointer;
+    border-radius: 6px;
+    padding-right: 8px;
+    position: absolute;
+    left: 0;
+    right: 0;
+    box-sizing: border-box;
+    overflow: hidden;
+}
+
+.git-graph-row:hover {
+    background: rgba(148, 163, 184, 0.08);
+}
+
+.git-graph-row.is-selected {
+    background: rgba(59, 130, 246, 0.14);
+}
+
+.git-graph-row-body {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+    min-width: 0;
+    min-height: 0;
+    max-height: 100%;
+    height: 100%;
+    padding: 6px 0;
+    /* Per-commit: sits just right of that row's node (see --text-inset). */
+    padding-left: var(--text-inset, 24px);
+    overflow: hidden;
+    box-sizing: border-box;
+}
+
+.git-graph-row-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    flex-wrap: nowrap;
+    overflow: hidden;
+}
+
+.git-graph-hash {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    color: #67e8f9;
+    flex-shrink: 0;
+    line-height: 1.2;
+}
+
+.git-graph-subject {
+    flex: 1 1 0;
+    min-width: 3rem;
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 1.25;
+    color: var(--text-primary, #e2e8f0);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.git-graph-meta {
+    font-size: 11px;
+    line-height: 1.2;
+    color: var(--text-secondary, #94a3b8);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.git-graph-refs {
+    display: inline-flex;
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 4px;
+    max-width: none;
+    min-width: 0;
+    overflow: visible;
+}
+
+.git-graph-ref {
+    flex: 0 0 auto;
+    min-width: 0;
+    max-width: none;
+    font-size: 10px;
+    line-height: 1.2;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: rgba(52, 211, 153, 0.18);
+    color: #6ee7b7;
+    border: 1px solid rgba(52, 211, 153, 0.35);
+    white-space: nowrap;
+    overflow: visible;
+    text-overflow: clip;
+}
+
+.git-graph-ref.is-head {
+    background: rgba(251, 191, 36, 0.2);
+    color: #fcd34d;
+    border-color: rgba(251, 191, 36, 0.45);
+}
+
+/* Author `display:flex` otherwise overrides the UA [hidden] rule, so the
+   drawer stayed visible (and wrapped under the graph) with no commit selected. */
+.git-graph-drawer[hidden] {
+    display: none !important;
+}
+
+.git-graph-drawer-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border-color, #334155);
+    flex-shrink: 0;
+}
+
+.git-graph-drawer-head h2 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.git-graph-muted {
+    color: var(--text-secondary, #94a3b8);
+    font-size: 12px;
+}
+
+.git-graph-detail-subject {
+    font-size: 15px;
+    font-weight: 600;
+    margin: 0 0 8px;
+    line-height: 1.35;
+}
+
+.git-graph-detail-kv {
+    display: grid;
+    grid-template-columns: 72px 1fr;
+    gap: 4px 8px;
+    margin-bottom: 12px;
+    font-size: 12px;
+}
+
+.git-graph-detail-kv dt {
+    color: var(--text-secondary, #94a3b8);
+}
+
+.git-graph-detail-kv dd {
+    margin: 0;
+    word-break: break-all;
+}
+
+.git-graph-file-list {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 12px;
+}
+
+.git-graph-file-list li {
+    display: flex;
+    gap: 8px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px;
+    padding: 0;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+}
+
+.git-graph-file-btn {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    width: 100%;
+    margin: 0;
+    padding: 5px 4px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.git-graph-file-btn:hover {
+    background: rgba(56, 189, 248, 0.12);
+}
+
+.git-graph-file-btn:focus-visible {
+    outline: 2px solid rgba(56, 189, 248, 0.55);
+    outline-offset: 1px;
+}
+
+.git-graph-file-path {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.git-graph-file-st {
+    flex-shrink: 0;
+    width: 1.5rem;
+    color: #67e8f9;
+}
+
+.git-graph-patch {
+    margin: 0;
+    padding: 10px;
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.35);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 40vh;
+    overflow: auto;
+}
+
+@media (max-width: 900px) {
+    .git-graph-page {
+        padding: 8px 8px 0 !important;
+    }
+    .git-graph-toolbar {
+        gap: 8px;
+    }
+    .git-graph-field select,
+    .git-graph-field input[type="search"],
+    .git-graph-filter input {
+        min-width: 0;
+        width: 100%;
+        max-width: 100%;
+    }
+    .git-graph-layout,
+    .git-graph-layout.drawer-closed {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto 1fr;
+    }
+    .git-graph-layout:not(.drawer-closed) {
+        grid-template-rows: auto 1fr minmax(160px, 36%);
+    }
+    .git-graph-branches-head {
+        display: none;
+    }
+    .git-graph-main {
+        grid-column: 1;
+        grid-row: 2;
+    }
+    .git-graph-drawer {
+        grid-column: 1;
+        grid-row: 3;
+        border-left: none;
+        border-top: 1px solid var(--border-color, #334155);
+    }
+    .git-graph-hash {
+        display: none;
+    }
+    .git-graph-ref {
+        padding: 1px 5px;
+    }
+}
+
+@media (max-width: 520px) {
+    .git-graph-subject {
+        font-size: 12px;
+        /* Keep a sliver of title so chips stay readable; title yields first. */
+        min-width: 2.5rem;
+    }
+}
+
+/* Native <dialog> top-layer popup — visual match for chat pending-diff-modal */
+dialog.pending-diff-modal {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    max-height: none;
+    margin: 0;
+    padding: 20px;
+    border: none;
+    background: transparent;
+    color: var(--text-primary);
+    box-sizing: border-box;
+}
+
+dialog.pending-diff-modal[open] {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+dialog.pending-diff-modal:not([open]) {
+    display: none;
+}
+
+dialog.pending-diff-modal::backdrop {
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+}
+
+.pending-diff-modal-card {
+    display: flex;
+    flex-direction: column;
+    width: min(960px, 96vw);
+    max-height: min(88vh, 920px);
+    border-radius: 14px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-primary);
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.42), 0 0 0 1px rgba(255, 255, 255, 0.04);
+    overflow: hidden;
+}
+
+.pending-diff-modal-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px 16px 12px;
+    border-bottom: 1px solid var(--border-color);
+    background: color-mix(in srgb, var(--bg-secondary) 70%, transparent);
+}
+
+.pending-diff-modal-heading {
+    flex: 1;
+    min-width: 0;
+}
+
+.pending-diff-modal-title {
+    margin: 0;
+    font-size: 0.72rem;
+    font-weight: 650;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.git-diff-file-label {
+    display: block;
+    min-width: 0;
+}
+
+select.git-diff-file-select {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    margin: 0;
+    padding: 8px 32px 8px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background-color: var(--bg-secondary);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    background-size: 12px;
+    color: var(--text-primary);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.78rem;
+    font-weight: 500;
+    line-height: 1.35;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    cursor: pointer;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+select.git-diff-file-select:hover {
+    border-color: color-mix(in srgb, var(--accent-color) 55%, var(--border-color));
+}
+
+select.git-diff-file-select:focus {
+    outline: none;
+}
+
+select.git-diff-file-select:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--accent-color) 70%, transparent);
+    outline-offset: 1px;
+    border-color: var(--accent-color);
+}
+
+select.git-diff-file-select:disabled {
+    opacity: 0.75;
+    cursor: default;
+}
+
+html.light-mode select.git-diff-file-select {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%234a4a5a' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+}
+
+select.git-diff-file-select option {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+}
+
+.pending-diff-modal-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+}
+
+.pending-diff-modal-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 6px;
+    border-radius: 999px;
+    font-size: 0.62rem;
+    font-weight: 650;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    background: color-mix(in srgb, var(--bg-tertiary) 80%, transparent);
+    color: var(--text-secondary);
+}
+
+.pending-diff-modal-badge[data-status="added"],
+.pending-diff-modal-badge[data-status="untracked"] {
+    color: #3fb950;
+}
+
+.pending-diff-modal-badge[data-status="deleted"] {
+    color: #f85149;
+}
+
+.pending-diff-modal-badge[data-status="modified"],
+.pending-diff-modal-badge[data-status="renamed"],
+.pending-diff-modal-badge[data-status="copied"] {
+    color: #d29922;
+}
+
+.pending-diff-modal-stats {
+    font-size: 0.68rem;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+}
+
+.pending-changes-add {
+    color: #3fb950;
+    margin-right: 6px;
+}
+
+.pending-changes-del {
+    color: #f85149;
+}
+
+.git-diff-commit {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.68rem;
+    color: var(--text-secondary);
+}
+
+.pending-diff-modal-close {
+    flex-shrink: 0;
+    width: 34px;
+    height: 34px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 1.35rem;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.pending-diff-modal-close:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.pending-diff-modal-body {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 12px 14px 16px;
+    background: color-mix(in srgb, var(--input-bg) 55%, transparent);
+}
+
+.pending-diff-modal-loading,
+.pending-diff-modal-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    min-height: 160px;
+    color: var(--text-secondary);
+    font-size: 0.86rem;
+    text-align: center;
+    padding: 12px;
+}
+
+.pending-diff-modal-loading[hidden],
+.pending-diff-modal-empty[hidden],
+.pending-diff-modal-hunks[hidden] {
+    display: none !important;
+}
+
+.pending-diff-modal-spinner {
+    width: 18px;
+    height: 18px;
+    border: 2px solid color-mix(in srgb, var(--text-secondary) 35%, transparent);
+    border-top-color: var(--text-primary);
+    border-radius: 50%;
+    animation: pending-diff-spin 0.7s linear infinite;
+}
+
+@keyframes pending-diff-spin {
+    to { transform: rotate(360deg); }
+}
+
+.pending-diff-hunk {
+    margin-bottom: 14px;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--bg-primary);
+}
+
+.pending-diff-hunk:last-child {
+    margin-bottom: 0;
+}
+
+.pending-diff-hunk-header {
+    padding: 4px 8px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.62rem;
+    color: var(--text-secondary);
+    background: color-mix(in srgb, var(--bg-secondary) 75%, transparent);
+    border-bottom: 1px solid var(--border-color);
+    overflow-x: auto;
+    white-space: nowrap;
+}
+
+.pending-diff-lines {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px;
+    line-height: 1.3;
+}
+
+.pending-diff-line {
+    display: grid;
+    grid-template-columns: 6ch 1.1em minmax(0, 1fr);
+    gap: 0 4px;
+    padding: 0 6px 0 4px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.pending-diff-line .pending-diff-ln {
+    text-align: right;
+    color: var(--text-tertiary);
+    user-select: none;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+.pending-diff-line .pending-diff-ch {
+    text-align: center;
+    user-select: none;
+    opacity: 0.75;
+}
+
+.pending-diff-line .pending-diff-txt {
+    padding: 0 6px 0 0;
+}
+
+.pending-diff-line.is-context {
+    background: transparent;
+    color: var(--text-primary);
+}
+
+.pending-diff-line.is-add {
+    background: rgba(46, 160, 67, 0.16);
+    color: #aff5b4;
+}
+
+.pending-diff-line.is-del {
+    background: rgba(248, 81, 73, 0.16);
+    color: #ffb1af;
+}
+
+.pending-diff-line.is-meta {
+    display: block;
+    padding: 4px 10px;
+    color: var(--text-secondary);
+    font-style: italic;
+    background: color-mix(in srgb, var(--bg-secondary) 60%, transparent);
+}
+
+html.light-mode .pending-diff-line.is-add {
+    color: #116329;
+    background: rgba(46, 160, 67, 0.14);
+}
+
+html.light-mode .pending-diff-line.is-del {
+    color: #82071e;
+    background: rgba(248, 81, 73, 0.12);
+}
+
+.pending-diff-truncated-note {
+    margin-top: 10px;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    text-align: center;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 8px 12px;
+}
+
+.pending-diff-truncate-actions {
+    display: inline-flex;
+    gap: 8px;
+}
+
+.pending-diff-expand-btn {
+    appearance: none;
+    border: 1px solid var(--border-color);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-primary);
+    border-radius: 6px;
+    padding: 3px 10px;
+    font-size: 0.72rem;
+    cursor: pointer;
+}
+
+.pending-diff-expand-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.pending-diff-side {
+    margin-bottom: 14px;
+}
+
+.pending-diff-side:last-child {
+    margin-bottom: 0;
+}
+
+.pending-diff-side-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 6px;
+    padding: 0 2px;
+}
+
+.pending-diff-side-title {
+    font-size: 0.78rem;
+    font-weight: 650;
+    letter-spacing: 0.02em;
+}
+
+.pending-diff-side.is-added .pending-diff-side-title {
+    color: #3fb950;
+}
+
+.pending-diff-side.is-removed .pending-diff-side-title {
+    color: #f85149;
+}
+
+html.light-mode .pending-diff-side.is-added .pending-diff-side-title {
+    color: #1a7f37;
+}
+
+html.light-mode .pending-diff-side.is-removed .pending-diff-side-title {
+    color: #cf222e;
+}
+
+.pending-diff-side-count {
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+}
+
+.pending-diff-side-empty {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    padding: 8px 10px;
+}
+
+.pending-diff-side .pending-diff-hunk {
+    margin-bottom: 8px;
+}

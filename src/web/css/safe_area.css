@@ -1,0 +1,216 @@
+/* ================================================================
+   Safe area insets — Cuttle Mobile (Capacitor) + any viewport-fit=cover
+   client. env() is 0px on desktop Chrome/Electron; rules are gated with
+   .is-cuttle-mobile so narrow desktop windows / iPad Safari are unaffected.
+
+   --safe-area-inset-* may be set by ui_boot.js (parent → iframe sync, or
+   native Android insets when Chromium env() is wrong). Fall back to env().
+   ================================================================ */
+
+:root {
+    --cuttle-safe-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+    --cuttle-safe-right: var(--safe-area-inset-right, env(safe-area-inset-right, 0px));
+    --cuttle-safe-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+    --cuttle-safe-left: var(--safe-area-inset-left, env(safe-area-inset-left, 0px));
+}
+
+/* ── App shell (native mobile WebView loads app_shell from PC) ── */
+html.is-cuttle-mobile .icon-rail {
+    /* Top only — footer owns the bottom inset (avoid double-padding the
+       five rail-footer icons away from the home indicator). */
+    padding-top: var(--cuttle-safe-top);
+    padding-bottom: 0;
+}
+
+html.is-cuttle-mobile .rail-footer {
+    /* Bottom button box lands on the same line as .mobile-change-pc-btn
+       (flush to the safe-area edge) — never lower. */
+    padding-bottom: var(--cuttle-safe-bottom);
+}
+
+/* Collapsed blade tab: center in the *usable* viewport (between status +
+   nav bars). The max-width:768 rule pins this near the bottom; override it.
+   Keep it slim on phones so it doesn't cover chat bubbles. */
+html.is-cuttle-mobile .rail-expand-tab {
+    top: calc(50% + (var(--cuttle-safe-top) - var(--cuttle-safe-bottom)) / 2);
+    bottom: auto;
+    transform: translateY(-50%);
+    width: 18px;
+    height: 48px;
+    border-radius: 0 8px 8px 0;
+}
+
+/* Non-chat pages: ui_boot.js in the child tags its iframe with
+   .shell-safe-inset, so the page sits between the status bar and nav bar
+   without per-page rules. Chat opts out (data-cuttle-safe-area="self") and
+   insets its own chrome below. Explicit height: an absolutely positioned
+   iframe with height:auto collapses to its 150px intrinsic height instead of
+   stretching between top and bottom. */
+html.is-cuttle-mobile .shell-main iframe.shell-safe-inset {
+    top: var(--cuttle-safe-top);
+    height: calc(100% - var(--cuttle-safe-top) - var(--cuttle-safe-bottom));
+}
+
+html.is-cuttle-mobile .mobile-change-pc-btn {
+    right: calc(12px + var(--cuttle-safe-right));
+    /* Flush to the safe-area edge (no extra lift into the composer). */
+    bottom: var(--cuttle-safe-bottom);
+}
+
+html.is-cuttle-mobile .mobile-apk-update-modal {
+    padding:
+        calc(24px + var(--cuttle-safe-top))
+        calc(24px + var(--cuttle-safe-right))
+        calc(24px + var(--cuttle-safe-bottom))
+        calc(24px + var(--cuttle-safe-left));
+}
+
+/* ── Chat (iframe inside shell on phone) ──
+   Only *fixed* corner controls get a top inset. The hamburger lives inside
+   .chat-chrome-menu (position:fixed); its inner .corner-chat-button is
+   position:relative — do NOT set top on all .corner-chat-button or the
+   menu button drifts below the left icons. */
+html.is-cuttle-mobile .new-chat-corner-button,
+html.is-cuttle-mobile .chat-history-panel-button {
+    top: calc(14px + var(--cuttle-safe-top));
+}
+
+html.is-cuttle-mobile .new-chat-corner-button {
+    left: calc(14px + var(--cuttle-safe-left));
+}
+
+html.is-cuttle-mobile .chat-history-panel-button {
+    left: calc(54px + var(--cuttle-safe-left));
+}
+
+html.is-cuttle-mobile .chat-session-title {
+    top: calc(14px + var(--cuttle-safe-top));
+    left: calc(96px + var(--cuttle-safe-left));
+    max-width: calc(100% - 96px - 54px - 12px - var(--cuttle-safe-left) - var(--cuttle-safe-right));
+}
+
+html.is-cuttle-mobile .chat-chrome-menu {
+    top: calc(14px + var(--cuttle-safe-top));
+    right: calc(14px + var(--cuttle-safe-right));
+}
+
+/* Voice exit: same row as chrome hamburger (outside overlay so fixed works) */
+html.is-cuttle-mobile .voice-mode-exit-btn {
+    top: calc(14px + var(--cuttle-safe-top));
+    right: calc(54px + var(--cuttle-safe-right));
+}
+
+html.is-cuttle-mobile .chat-history-panel {
+    padding-top: var(--cuttle-safe-top);
+    padding-bottom: var(--cuttle-safe-bottom);
+}
+
+html.is-cuttle-mobile .chat-history-panel-overlay {
+    padding-top: var(--cuttle-safe-top);
+    padding-bottom: var(--cuttle-safe-bottom);
+}
+
+html.is-cuttle-mobile .message-nav {
+    top: calc(70px + var(--cuttle-safe-top));
+    right: calc(8px + var(--cuttle-safe-right));
+}
+
+html.is-cuttle-mobile .chat-input-container {
+    /* Shorthand beats the max-width:768 `padding:15px` reset and keeps the
+       composer above the Android gesture / 3-button nav bar. */
+    padding:
+        15px
+        calc(15px + var(--cuttle-safe-right))
+        calc(15px + var(--cuttle-safe-bottom))
+        calc(15px + var(--cuttle-safe-left));
+}
+
+html.is-cuttle-mobile .chat-messages {
+    padding-left: calc(15px + var(--cuttle-safe-left));
+    padding-right: calc(15px + var(--cuttle-safe-right));
+}
+
+@media (max-width: 768px) {
+    html.is-cuttle-mobile .chat-messages {
+        padding-top: calc(80px + var(--cuttle-safe-top));
+        padding-bottom: calc(24px + var(--cuttle-safe-bottom));
+    }
+}
+
+html.is-cuttle-mobile .welcome-screen {
+    padding:
+        calc(20px + var(--cuttle-safe-top))
+        calc(20px + var(--cuttle-safe-right))
+        calc(20px + var(--cuttle-safe-bottom))
+        calc(20px + var(--cuttle-safe-left));
+}
+
+html.is-cuttle-mobile .pending-diff-modal {
+    padding:
+        calc(20px + var(--cuttle-safe-top))
+        calc(20px + var(--cuttle-safe-right))
+        calc(20px + var(--cuttle-safe-bottom))
+        calc(20px + var(--cuttle-safe-left));
+}
+
+/* Chat media lightbox (fixed overlay in the chat iframe) — keep close / nav /
+   caption+download clear of status bar + Android gesture / 3-button nav. */
+html.is-cuttle-mobile .cuttle-lightbox-stage {
+    top: calc(48px + var(--cuttle-safe-top));
+    right: calc(56px + var(--cuttle-safe-right));
+    bottom: calc(64px + var(--cuttle-safe-bottom));
+    left: calc(56px + var(--cuttle-safe-left));
+}
+
+html.is-cuttle-mobile .cuttle-lightbox-close {
+    top: calc(14px + var(--cuttle-safe-top));
+    right: calc(14px + var(--cuttle-safe-right));
+}
+
+html.is-cuttle-mobile .cuttle-lightbox-prev {
+    left: calc(12px + var(--cuttle-safe-left));
+    top: calc(50% + (var(--cuttle-safe-top) - var(--cuttle-safe-bottom)) / 2);
+}
+
+html.is-cuttle-mobile .cuttle-lightbox-next {
+    right: calc(12px + var(--cuttle-safe-right));
+    top: calc(50% + (var(--cuttle-safe-top) - var(--cuttle-safe-bottom)) / 2);
+}
+
+html.is-cuttle-mobile .cuttle-lightbox-bar {
+    padding:
+        12px
+        calc(18px + var(--cuttle-safe-right))
+        calc(12px + var(--cuttle-safe-bottom))
+        calc(18px + var(--cuttle-safe-left));
+}
+
+@media (max-width: 640px) {
+    html.is-cuttle-mobile .cuttle-lightbox-stage {
+        top: calc(52px + var(--cuttle-safe-top));
+        right: calc(8px + var(--cuttle-safe-right));
+        bottom: calc(120px + var(--cuttle-safe-bottom));
+        left: calc(8px + var(--cuttle-safe-left));
+    }
+
+    html.is-cuttle-mobile .cuttle-lightbox-close {
+        top: calc(10px + var(--cuttle-safe-top));
+        right: calc(10px + var(--cuttle-safe-right));
+    }
+
+    html.is-cuttle-mobile .cuttle-lightbox-prev {
+        left: calc(6px + var(--cuttle-safe-left));
+    }
+
+    html.is-cuttle-mobile .cuttle-lightbox-next {
+        right: calc(6px + var(--cuttle-safe-right));
+    }
+
+    html.is-cuttle-mobile .cuttle-lightbox-bar {
+        padding:
+            14px
+            calc(14px + var(--cuttle-safe-right))
+            calc(14px + var(--cuttle-safe-bottom))
+            calc(14px + var(--cuttle-safe-left));
+    }
+}

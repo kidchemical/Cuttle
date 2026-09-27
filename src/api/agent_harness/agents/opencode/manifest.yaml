@@ -1,0 +1,48 @@
+id: opencode
+label: OpenCode
+slash: /opencode
+requires_cloud: true
+sticky: true
+# Empty — unpinned turns omit --model so opencode.json wins.
+default_model: ""
+smoke_model: openrouter/z-ai/glm-5.3-flash
+models:
+  - openrouter/z-ai/glm-5.3-flash
+  - openai/gpt-4o-mini
+  - openai/gpt-4o
+  - openai/gpt-4.1-mini
+  - anthropic/claude-sonnet-4
+# /cost: first-class — `opencode models --verbose` reports per-model cost.
+pricing_source: cli
+# Optional CLI bug overrides only. Per-model ``supports_variant`` is baked from
+# ``opencode models --verbose`` (variants map) on catalog refresh. Add rules here
+# only when the live catalog is wrong and the CLI still rejects ``--variant``.
+# model_capabilities:
+#   - id: openrouter/example/broken-model
+#     supports_variant: false
+resume: true
+capabilities_inject: once_per_resume
+env_profile: native
+activity: jsonl
+hint: Run OpenCode CLI (`opencode run`) — OpenRouter GLM 5.3 Flash by default
+install_hint: >-
+  Cuttle can install OpenCode with `npm install -g opencode-ai`. Set
+  OPENROUTER_API_KEY in src/.env, then run the allowlisted opencode.sync-auth
+  action (provider openrouter) to copy the key into OpenCode without the LLM
+  seeing it. Also supports OPENAI_API_KEY / ANTHROPIC_API_KEY, or
+  `opencode auth login`.
+missing_cli_hint: >-
+  Install OpenCode and ensure `opencode` is on PATH
+  (see https://opencode.ai/docs/ — `opencode run "…"`).
+install_kind: npm_global
+install_package: opencode-ai
+executable_names:
+  - opencode
+auto_install: true
+notes: >-
+  Bundled harness connector. Default model is OpenRouter GLM 5.3 Flash.
+  Pin per chat with `/opencode model <id>` or `/opencode effort <level>`
+  (maps to CLI ``--variant``). The chat `/` palette loads ``opencode models
+  --verbose`` (models.dev); `/opencode model refresh` re-fetches and bakes
+  supports_variant from each model's variants map. Optional model_capabilities
+  overlays override the catalog for known CLI bugs.

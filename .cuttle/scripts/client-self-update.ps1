@@ -1,0 +1,138 @@
+﻿# Client deploy updater. ASCII only (Windows PowerShell 5.1 safe).
+param(
+    [Parameter(Mandatory = $true)][string]$Repo,
+    [string]$HostName = '',
+    [switch]$RestartElectron,
+    [switch]$RestartDaemon,
+    [switch]$NoElectron,
+    [switch]$NoDaemon,
+    [switch]$SkipPull,
+    [string]$LogPath = ''
+)
+
+$ErrorActionPreference = 'Continue'
+if (-not $LogPath) {
+    $LogPath = Join-Path $env:LOCALAPPDATA 'cuttle-desktop\client-self-update.log'
+}
+New-Item -ItemType Directory -Force -Path (Split-Path $LogPath) | Out-Null
+function Log([string]$m) {
+    $line = "$(Get-Date -Format o) $m"
+    Add-Content -Path $LogPath -Value $line
+    Write-Output $line
+}
+
+$doElectron = -not $NoElectron
+$doDaemon = -not $NoDaemon
+Log "self-update start repo=$Repo host=$HostName electron=$doElectron daemon=$doDaemon skipPull=$SkipPull"
+Start-Sleep -Seconds 2
+
+if (-not (Test-Path -LiteralPath $Repo)) {
+    Log "ERROR repo missing: $Repo"
+    exit 2
+}
+
+if (-not $SkipPull) {
+    Push-Location $Repo
+    try {
+        Log "git fetch --all --prune"
+        & git fetch --all --prune 2>&1 | ForEach-Object { Log "$_" }
+        if ($LASTEXITCODE -ne 0) { Log "ERROR fetch exit=$LASTEXITCODE"; exit $LASTEXITCODE }
+
+        $branch = (& git rev-parse --abbrev-ref HEAD 2>$null | Out-String).Trim()
+        if (-not $branch) { $branch = 'master' }
+        $upstream = (& git rev-parse --abbrev-ref '@{u}' 2>$null | Out-String).Trim()
+        if (-not $upstream) { $upstream = "origin/$branch" }
+
+        Log "git reset --hard $upstream"
+        & git reset --hard $upstream 2>&1 | ForEach-Object { Log "$_" }
+        if ($LASTEXITCODE -ne 0) { Log "ERROR reset exit=$LASTEXITCODE"; exit $LASTEXITCODE }
+
+        Log "git clean -fd"
+        & git clean -fd 2>&1 | ForEach-Object { Log "$_" }
+        Log "git status"
+        & git status -sb 2>&1 | ForEach-Object { Log "$_" }
+    } finally {
+        Pop-Location
+    }
+} else {
+    Log "SkipPull set"
+}
+
+# Stop client UI / sidecar / client-daemon only (never host flask daemon).
+Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+    $cmd = [string]$_.CommandLine
+    $name = [string]$_.Name
+    if ($cmd -match 'cuttle_daemon\.py|web_chat_api') { return $false }
+    if ($cmd -match 'cuttle_client_daemon\.py|cuttle_device_worker\.py') { return $true }
+    if ($name -match '^(electron|Cuttle)\.exe$') { return $true }
+    if ($cmd -match 'Cuttle\.exe') { return $true }
+    if ($cmd -match 'electron\.exe' -and ($cmd -match [regex]::Escape($Repo) -or $cmd -match 'cuttle\\electron|\\Cuttle\\')) { return $true }
+    return $false
+} | ForEach-Object {
+    Log "stopping pid=$($_.ProcessId) name=$($_.Name)"
+    try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {}
+}
+Start-Sleep -Seconds 3
+
+$electronDir = Join-Path $Repo 'electron'
+$py = Join-Path $Repo '.venv\Scripts\python.exe'
+if (-not (Test-Path -LiteralPath $py)) { $py = 'python' }
+
+$pkgJson = Join-Path $electronDir 'package.json'
+if (Test-Path -LiteralPath $pkgJson) {
+    try {
+        $pkg = Get-Content -LiteralPath $pkgJson -Raw | ConvertFrom-Json
+        if ($pkg.version) {
+            $env:CUTTLE_PACKAGE_VERSION = [string]$pkg.version
+            Log "CUTTLE_PACKAGE_VERSION=$($env:CUTTLE_PACKAGE_VERSION)"
+        }
+    } catch {}
+}
+
+if ($doDaemon) {
+    $daemonScript = Join-Path $Repo 'src\scripts\cuttle_client_daemon.py'
+    if (Test-Path -LiteralPath $daemonScript) {
+        Log "starting client-daemon"
+        Start-Process -FilePath $py -ArgumentList @($daemonScript) -WorkingDirectory $Repo -WindowStyle Hidden
+    }
+}
+
+if ($doElectron) {
+    $started = $false
+    $electronBin = Join-Path $electronDir 'node_modules\electron\dist\electron.exe'
+    if (Test-Path -LiteralPath $electronBin) {
+        $args = @('.')
+        if ($HostName) { $args += "--host=$HostName" }
+        Log "starting electron.exe"
+        Start-Process -FilePath $electronBin -ArgumentList $args -WorkingDirectory $electronDir
+        $started = $true
+    }
+    if (-not $started) {
+        $npmCmd = $null
+        $c = Get-Command npm.cmd -ErrorAction SilentlyContinue
+        if ($c) { $npmCmd = [string]$c.Source }
+        if ($npmCmd) {
+            $line = if ($HostName) { "/c `"$npmCmd`" start -- --host=$HostName" } else { "/c `"$npmCmd`" start" }
+            Log "starting via npm.cmd"
+            Start-Process -FilePath 'cmd.exe' -ArgumentList $line -WorkingDirectory $electronDir
+            $started = $true
+        }
+    }
+    if (-not $started) {
+        $exe = Join-Path $Repo 'electron\dist\win-unpacked\Cuttle.exe'
+        if (Test-Path -LiteralPath $exe) {
+            $args = @()
+            if ($HostName) { $args += "--host=$HostName" }
+            Log "starting packaged Cuttle.exe"
+            Start-Process -FilePath $exe -ArgumentList $args -WorkingDirectory (Split-Path $exe)
+            $started = $true
+        }
+    }
+    if (-not $started) { Log "ERROR no Electron launch path" } else { Log "Electron start requested" }
+}
+
+try {
+    Copy-Item -LiteralPath $LogPath -Destination (Join-Path $env:USERPROFILE 'Desktop\cuttle-self-update-last.log') -Force -ErrorAction SilentlyContinue
+} catch {}
+Log "self-update done"
+exit 0

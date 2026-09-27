@@ -1,0 +1,49 @@
+# Cuttle Dependencies
+# Core Discord bot functionality
+discord.py>=2.3.0
+python-dotenv>=1.0.0
+
+# AI and LLM functionality
+openai>=1.0.0
+anthropic>=0.68.0
+cursor-agent-tools>=0.1.39
+
+# Image processing and OCR
+pillow>=10.0.0
+pytesseract>=0.3.10
+opencv-python>=4.8.0
+pypdfium2>=4.30.0
+
+# System monitoring and automation
+psutil>=5.9.0
+mss>=9.0.0
+
+# Windows automation (not required on Linux; ignored by default pytest)
+pygetwindow>=0.0.9; sys_platform == "win32"
+pyautogui>=0.9.54; sys_platform == "win32"
+
+# System tray (daemon mode)
+pystray>=0.19.0
+
+# Agent memory (optional: semantic/vector memory)
+chromadb>=0.4.0
+sentence-transformers>=2.2.0
+
+# Additional utilities
+requests>=2.31.0
+duckduckgo-search>=6.0.0
+aiohttp>=3.8.0
+asyncio-mqtt>=0.13.0
+flask>=2.3.0
+flask-cors>=4.0.0
+flask-limiter>=4.0.0
+flask-sock>=0.7.0
+pywinpty>=3.0.0; sys_platform == "win32"
+bcrypt>=4.0.0
+cryptography>=42.0.0
+PyYAML>=6.0.0
+
+# Development and testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0,<1.0
+playwright>=1.40.0

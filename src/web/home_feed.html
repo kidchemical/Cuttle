@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Home - Cuttle</title>
+    <link rel="stylesheet" href="/css/ui_boot.css?v=20260926safeArea">
+    <script src="/js/ui_boot.js?v=20260926safeArea"></script>
+    <link rel="stylesheet" href="css/shared_navigation.css?v=20260926lightBg">
+    <link rel="stylesheet" href="css/landing_page.css?v=20260926lightBg">
+    <link rel="stylesheet" href="css/compact_page.css?v=20260917bgFix2">
+    <link rel="stylesheet" href="css/home_feed.css?v=20260917bgFix2">
+</head>
+<body class="compact-shell-page" data-page="home">
+    <div class="page-content home-overview-page">
+        <div class="compact-page-title">
+            <h1>Home</h1>
+            <p>Overview of Cuttle — services, listening pipelines, and active jobs</p>
+        </div>
+
+        <div class="home-view-tabs" role="tablist" aria-label="Home views">
+            <button type="button" class="home-view-tab active" role="tab" aria-selected="true" data-view="overview" id="tabOverview">Overview</button>
+            <button type="button" class="home-view-tab" role="tab" aria-selected="false" data-view="feed" id="tabFeed">Feed</button>
+        </div>
+
+        <!-- ═══ Overview (default) ═══ -->
+        <div class="home-view" id="viewOverview" role="tabpanel" aria-labelledby="tabOverview">
+            <section class="home-section" aria-labelledby="svcHeading">
+                <div class="home-section-head">
+                    <h2 class="home-section-title" id="svcHeading">Services</h2>
+                    <button type="button" class="home-link-btn" data-nav="/control_panel.html">Control Panel</button>
+                </div>
+                <div class="home-stat-grid" id="servicesGrid">
+                    <div class="home-stat-card" data-service="flask">
+                        <div class="home-stat-top">
+                            <span class="home-stat-name">Web API</span>
+                            <span class="home-pill home-pill--unknown" id="flaskPill">…</span>
+                        </div>
+                        <p class="home-stat-meta" id="flaskMeta">Port 8080</p>
+                    </div>
+                    <div class="home-stat-card" data-service="discord">
+                        <div class="home-stat-top">
+                            <span class="home-stat-name">Discord bot</span>
+                            <span class="home-pill home-pill--unknown" id="discordPill">…</span>
+                        </div>
+                        <p class="home-stat-meta" id="discordMeta">Gateway</p>
+                    </div>
+                    <div class="home-stat-card" data-service="local-llm">
+                        <div class="home-stat-top">
+                            <span class="home-stat-name">Local LLM</span>
+                            <span class="home-pill home-pill--unknown" id="llmPill">…</span>
+                        </div>
+                        <p class="home-stat-meta" id="llmMeta">—</p>
+                    </div>
+                </div>
+            </section>
+
+            <section class="home-section" aria-labelledby="pipeHeading">
+                <div class="home-section-head">
+                    <h2 class="home-section-title" id="pipeHeading">Listening pipelines</h2>
+                    <button type="button" class="home-link-btn" data-nav="/jobs_page.html">Jobs</button>
+                </div>
+                <div class="home-list" id="pipelinesList">
+                    <p class="home-empty">Loading…</p>
+                </div>
+            </section>
+
+            <section class="home-section" aria-labelledby="jobsHeading">
+                <div class="home-section-head">
+                    <h2 class="home-section-title" id="jobsHeading">Active runs</h2>
+                    <span class="home-count-badge" id="activeCount" hidden>0</span>
+                </div>
+                <div class="home-list" id="activeJobsList">
+                    <p class="home-empty">Loading…</p>
+                </div>
+            </section>
+
+            <p class="home-refresh-hint" id="homeRefreshHint" aria-live="polite">Refreshing…</p>
+        </div>
+
+        <!-- ═══ Feed prototype (kept, not default) ═══ -->
+        <div class="home-view" id="viewFeed" role="tabpanel" aria-labelledby="tabFeed" hidden>
+            <div class="feed-page">
+                <main class="feed-main">
+                    <div class="feed-toolbar">
+                        <div class="feed-filters-scroll">
+                            <div class="feed-filters-inline">
+                                <button class="filter-badge active" data-source="all">All</button>
+                                <button class="filter-badge" data-source="article">Articles</button>
+                                <button class="filter-badge" data-source="image">Images & art</button>
+                                <button class="filter-badge" data-source="youtube">YouTube</button>
+                                <button class="filter-badge" data-source="soundcloud">SoundCloud</button>
+                                <button class="filter-badge disabled" data-source="social" disabled>Social</button>
+                                <button class="filter-badge disabled" data-source="3d" disabled>3D</button>
+                            </div>
+                        </div>
+                        <div class="feed-toolbar-actions">
+                            <button type="button" class="feed-icon-btn" id="feedEditBtn" title="Edit feed sources and topics" aria-label="Edit feed" aria-expanded="false" aria-controls="feedEditPanel">
+                                <span class="feed-icon-btn-symbol" aria-hidden="true">✏️</span>
+                            </button>
+                            <button type="button" class="feed-icon-btn" id="refreshBtn" title="Run Feed Agent pipeline and reload items" aria-label="Refresh feed">
+                                <span class="feed-icon-btn-symbol" aria-hidden="true">🔄</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <p class="feed-refresh-status" id="feedRefreshStatus" hidden aria-live="polite"></p>
+
+                    <section class="feed-edit-panel" id="feedEditPanel" hidden aria-label="Feed topics and sources">
+                        <div class="feed-edit-panel-header">
+                            <h2 class="feed-edit-panel-title">Edit feed</h2>
+                            <button type="button" class="feed-edit-panel-close" id="feedEditCloseBtn" title="Close" aria-label="Close edit panel">×</button>
+                        </div>
+                        <div class="feed-preferences">
+                            <div class="feed-pref-row">
+                                <span class="feed-pref-label">Topics</span>
+                                <div class="feed-chip-list" id="keywordChips"></div>
+                                <div class="feed-pref-input-row">
+                                    <input type="text" id="keywordInput" placeholder="Add a topic (e.g. quantum, indie games)" maxlength="120" autocomplete="off" />
+                                    <button type="button" class="feed-chip-add" id="keywordAddBtn">Add</button>
+                                </div>
+                            </div>
+                            <div class="feed-pref-row">
+                                <span class="feed-pref-label">Sources</span>
+                                <div class="feed-chip-list" id="sourceChips"></div>
+                                <div class="feed-pref-input-row">
+                                    <input type="text" id="sourceInput" placeholder="Add a source (e.g. New York Times)" maxlength="120" autocomplete="off" />
+                                    <button type="button" class="feed-chip-add" id="sourceAddBtn">Add</button>
+                                </div>
+                            </div>
+                            <div class="feed-pref-row">
+                                <span class="feed-pref-label">RSS / Atom feeds</span>
+                                <p class="feed-pref-sublabel">YouTube channel: <code>https://www.youtube.com/feeds/videos.xml?channel_id=…</code> · NYT: Technology RSS, etc.</p>
+                                <div class="feed-chip-list feed-chip-list--rss" id="rssFeedChips"></div>
+                                <div class="feed-pref-input-row">
+                                    <input type="url" id="rssFeedInput" placeholder="https://…" maxlength="500" autocomplete="off" class="feed-rss-input" />
+                                    <button type="button" class="feed-chip-add" id="rssFeedAddBtn">Add feed</button>
+                                </div>
+                            </div>
+                            <div class="feed-pref-row feed-pref-row--notes">
+                                <label class="feed-pref-label" for="interestsField">Notes for the Feed Agent</label>
+                                <textarea class="feed-interests" id="interestsField" rows="2" maxlength="4000" placeholder="Freeform instructions (e.g. more UFO YouTube, less politics). Saved separately from topics."></textarea>
+                                <button type="button" class="feed-notes-save" id="interestsSaveBtn">Save notes</button>
+                            </div>
+                            <p class="feed-pref-hint">Preferences are merged into the next Feed Agent run (Refresh or scheduled). RSS URLs are fetched first; the agent curates titles, excerpts, and <strong>thumbnails</strong> (especially for YouTube). You can also change preferences in chat via <strong>cuttle_feed_preferences</strong> (add_rss_feeds).</p>
+                        </div>
+                    </section>
+
+                    <div class="feed-tiles" id="feedStream" aria-live="polite">
+                        <p class="feed-empty">Loading feed...</p>
+                    </div>
+                </main>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/youtube_id.js"></script>
+    <script src="/js/shared_navigation.js"></script>
+    <script src="/js/background_effect_blend.js"></script>
+    <script src="/js/video_background.js"></script>
+    <script src="/js/home_overview.js?v=20260727a"></script>
+    <script src="/js/home_feed.js"></script>
+</body>
+</html>

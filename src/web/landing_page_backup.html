@@ -1,0 +1,1538 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cuttle - AI-Powered Development Assistant</title>
+    <link rel="stylesheet" href="css/landing_page.css?v=20260926lightBg">
+</head>
+<body class="dark-mode">
+    <div class="page-content">
+    <!-- Header -->
+    <header class="header">
+        <div class="container">
+            <nav class="nav">
+                <div class="logo">
+                    <img src="./img/cuttle-logo.png" alt="Cuttle" class="header-logo">
+                </div>
+                <div class="nav-menu">
+                    <button class="menu-toggle" onclick="toggleMenu()">
+                        <span class="menu-icon">?</span>
+                    </button>
+                    <div class="menu-dropdown" id="menuDropdown">
+                        <button class="menu-item active" onclick="showPage('home')">
+                            🏠 Home
+                        </button>
+                        <button class="menu-item" onclick="showPage('control')">
+                            ???� Control Panel
+                        </button>
+                        <button class="menu-item" onclick="showPage('settings')">
+                            ⚙️ Settings
+                        </button>
+                        <div class="menu-separator"></div>
+                        <button class="menu-item" onclick="toggleTheme()">
+                            <span class="theme-icon">??</span> Theme
+                        </button>
+                    </div>
+                </div>
+            </nav>
+        </div>
+    </header>
+
+    <!-- Home Page -->
+    <div class="page-section active" id="homePage">
+        <!-- Hero Section -->
+        <section class="hero">
+            <div class="container">
+                <!-- Main Logo -->
+                <div class="main-logo">
+                    <div class="main-logo-container">
+                        <img src="./img/cuttle-logo.png" alt="Cuttle" class="logo-image">
+                    </div>
+                </div>
+                
+                <div class="hero-content">
+                    <p>Your AI-powered development assistant that understands your codebase, automates tasks, and helps you build better software faster.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Chat Interface -->
+        <section class="container">
+            <div class="chat-container">
+                <div class="chat-header">
+                    <h2>🦑 Chat with Cuttle</h2>
+                    <p>Ask me anything about your code, request automation tasks, or get help with development!</p>
+                </div>
+                
+                <div class="chat-messages" id="chatMessages">
+                    <div class="message assistant" id="initialMessage">
+                        <strong>🦑 Cuttle:</strong><br><span class="message-content"></span><span class="typing-cursor"></span>
+                    </div>
+                </div>
+                
+                <div class="chat-input-container">
+                    <input type="text" class="chat-input" id="chatInput" placeholder="Type your message here..." onkeypress="handleKeyPress(event)">
+                    <button class="send-button" onclick="sendMessage()" id="sendButton">
+                        Send ?
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Features Section -->
+        <section class="features">
+            <div class="container">
+                <h2>?? Powerful Features</h2>
+                <div class="features-grid">
+                    <div class="feature-card">
+                        <div class="feature-icon">??</div>
+                        <h3>Intelligent Code Analysis</h3>
+                        <p>Understand your codebase structure, identify patterns, and provide intelligent suggestions for improvements.</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">?</div>
+                        <h3>Automation Tasks</h3>
+                        <p>Automate repetitive development tasks, file operations, and system interactions to boost your productivity.</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">??</div>
+                        <h3>Development Tools</h3>
+                        <p>Access powerful tools for debugging, testing, project management, and code generation.</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">??</div>
+                        <h3>Context-Aware</h3>
+                        <p>Understands your project context, remembers previous conversations, and provides relevant suggestions.</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">🛡️</div>
+                        <h3>Secure & Private</h3>
+                        <p>Your code and conversations stay private. All interactions are processed securely on your local system.</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">??</div>
+                        <h3>Analytics & Insights</h3>
+                        <p>Get detailed analytics about your codebase, test results, and development progress with beautiful reports.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <div class="container">
+                <p>� 2024 Cuttle - AI-Powered Development Assistant | Built with ?? for developers</p>��️ for developers</p>
+            </div>
+        </footer>
+    </div>
+
+    <!-- Control Panel Page -->
+    <div class="page-section" id="controlPage">
+        <div class="container">
+            <div class="page-header">
+                <h1>???� Control Panel</h1>
+                <p>Manage your Cuttle services and monitor their status</p>
+            </div>
+            
+            <div class="service-card">
+                <div class="service-header">
+                    <div class="service-title">🦑 Discord Bot</div>
+                    <div class="service-status status-stopped" id="discordStatus">Stopped</div>
+                </div>
+                <div class="service-controls">
+                    <button class="control-button btn-start" onclick="startService('discord')">Start</button>
+                    <button class="control-button btn-stop" onclick="stopService('discord')" disabled>Stop</button>
+                    <button class="control-button btn-restart" onclick="restartService('discord')" disabled>Restart</button>
+                    <button class="control-button btn-info" onclick="showServiceInfo('discord')">Info</button>
+                </div>
+                <div class="service-info" id="discordInfo" style="display: none;">
+                    <div class="info-row">
+                        <span class="info-label">Status:</span>
+                        <span class="info-value" id="discordStatusDetail">Stopped</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Port:</span>
+                        <span class="info-value">Discord Gateway</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Uptime:</span>
+                        <span class="info-value" id="discordUptime">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Last Activity:</span>
+                        <span class="info-value" id="discordLastActivity">-</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="service-card">
+                <div class="service-header">
+                    <div class="service-title">🌐 Web Chat API</div>
+                    <div class="service-status status-stopped" id="webApiStatus">Stopped</div>
+                </div>
+                <div class="service-controls">
+                    <button class="control-button btn-start" onclick="startService('webapi')">Start</button>
+                    <button class="control-button btn-stop" onclick="stopService('webapi')" disabled>Stop</button>
+                    <button class="control-button btn-restart" onclick="restartService('webapi')" disabled>Restart</button>
+                    <button class="control-button btn-info" onclick="showServiceInfo('webapi')">Info</button>
+                </div>
+                <div class="service-info" id="webApiInfo" style="display: none;">
+                    <div class="info-row">
+                        <span class="info-label">Status:</span>
+                        <span class="info-value" id="webApiStatusDetail">Stopped</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Port:</span>
+                        <span class="info-value">8080</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">URL:</span>
+                        <span class="info-value">http://localhost:8080</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Uptime:</span>
+                        <span class="info-value" id="webApiUptime">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Last Activity:</span>
+                        <span class="info-value" id="webApiLastActivity">-</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="service-card">
+                <div class="service-header">
+                    <div class="service-title">🚀 Unified Launcher</div>
+                    <div class="service-status status-stopped" id="launcherStatus">Stopped</div>
+                </div>
+                <div class="service-controls">
+                    <button class="control-button btn-start" onclick="startService('launcher')">Start All</button>
+                    <button class="control-button btn-stop" onclick="stopService('launcher')" disabled>Stop All</button>
+                    <button class="control-button btn-restart" onclick="restartService('launcher')" disabled>Restart All</button>
+                    <button class="control-button btn-info" onclick="showServiceInfo('launcher')">Info</button>
+                </div>
+                <div class="service-info" id="launcherInfo" style="display: none;">
+                    <div class="info-row">
+                        <span class="info-label">Status:</span>
+                        <span class="info-value" id="launcherStatusDetail">Stopped</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Services:</span>
+                        <span class="info-value">Discord Bot + Web Chat API</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Uptime:</span>
+                        <span class="info-value" id="launcherUptime">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Last Activity:</span>
+                        <span class="info-value" id="launcherLastActivity">-</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Page -->
+    <div class="page-section" id="settingsPage">
+        <div class="container">
+            <div class="page-header">
+                <h1>⚙️ Settings</h1>
+                <p>Configure your Cuttle preferences and behavior</p>
+            </div>
+            
+            <div class="settings-group">
+                <div class="settings-title">🎨 Appearance</div>
+                <div class="setting-item">
+                    <div>
+                        <div class="setting-label">Dark Mode</div>
+                        <div class="setting-description">Use dark theme for the interface</div>
+                    </div>
+                    <div class="setting-control">
+                        <div class="toggle-switch active" id="darkModeToggle" onclick="toggleDarkMode()"></div>
+                    </div>
+                </div>
+                <div class="setting-item">
+                    <div>
+                        <div class="setting-label">Auto-start Services</div>
+                        <div class="setting-description">Automatically start services when launcher starts</div>
+                    </div>
+                    <div class="setting-control">
+                        <div class="toggle-switch" id="autoStartToggle" onclick="toggleAutoStart()"></div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="settings-group">
+                <div class="settings-title">🔧 Service Configuration</div>
+                <div class="setting-item">
+                    <div>
+                        <div class="setting-label">Web Chat Port</div>
+                        <div class="setting-description">Port for the web chat API server</div>
+                    </div>
+                    <div class="setting-control">
+                        <input type="number" class="setting-input" id="webChatPort" value="8080" min="1024" max="65535">
+                    </div>
+                </div>
+                <div class="setting-item">
+                    <div>
+                        <div class="setting-label">API Timeout (seconds)</div>
+                        <div class="setting-description">Timeout for API requests</div>
+                    </div>
+                    <div class="setting-control">
+                        <input type="number" class="setting-input" id="apiTimeout" value="30" min="5" max="300">
+                    </div>
+                </div>
+            </div>
+            
+            <div class="settings-group">
+                <div class="settings-title">?? Monitoring</div>
+                <div class="setting-item">
+                    <div>
+                        <div class="setting-label">Auto-refresh Status</div>
+                        <div class="setting-description">Automatically refresh service status</div>
+                    </div>
+                    <div class="setting-control">
+                        <div class="toggle-switch active" id="autoRefreshToggle" onclick="toggleAutoRefresh()"></div>
+                    </div>
+                </div>
+                <div class="setting-item">
+                    <div>
+                        <div class="setting-label">Refresh Interval (seconds)</div>
+                        <div class="setting-description">How often to refresh service status</div>
+                    </div>
+                    <div class="setting-control">
+                        <input type="number" class="setting-input" id="refreshInterval" value="5" min="1" max="60">
+                    </div>
+                </div>
+            </div>
+            
+            <div class="settings-group">
+                <div class="settings-title">💾 Data Management</div>
+                <div class="setting-item">
+                    <div>
+                        <div class="setting-label">Clear Chat History</div>
+                        <div class="setting-description">Remove all chat messages and sessions</div>
+                    </div>
+                    <div class="setting-control">
+                        <button class="control-button btn-stop" onclick="clearChatHistory()">Clear</button>
+                    </div>
+                </div>
+                <div class="setting-item">
+                    <div>
+                        <div class="setting-label">Export Settings</div>
+                        <div class="setting-description">Download your current settings</div>
+                    </div>
+                    <div class="setting-control">
+                        <button class="control-button btn-info" onclick="exportSettings()">Export</button>
+                    </div>
+                </div>
+                <div class="setting-item">
+                    <div>
+                        <div class="setting-label">Import Settings</div>
+                        <div class="setting-description">Load settings from a file</div>
+                    </div>
+                    <div class="setting-control">
+                        <input type="file" class="setting-input" id="importFile" accept=".json" onchange="importSettings()">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Full Screen Chat View -->
+    <div class="fullscreen-chat" id="fullscreenChat">
+        <div class="fullscreen-header">
+            <div class="mini-logo">
+                <img src="./img/cuttle-logo.png" alt="Cuttle" class="mini-logo-image">
+            </div>
+            <button class="close-chat" onclick="closeFullscreenChat()">? Close</button>
+        </div>
+        
+        <div class="fullscreen-chat-content">
+            <div class="fullscreen-chat-messages" id="fullscreenChatMessages">
+                <div class="message assistant">
+                    <strong>?? Cuttle:</strong> Welcome to the full-screen chat! I'm ready to help you with your development tasks. What would you like to work on?
+                </div>
+            </div>
+            
+            <div class="fullscreen-chat-input-container">
+                <input type="text" class="fullscreen-chat-input" id="fullscreenChatInput" placeholder="Type your message here..." onkeypress="handleFullscreenKeyPress(event)">
+                <button class="fullscreen-send-button" onclick="sendFullscreenMessage()" id="fullscreenSendButton">
+                    Send ?
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Theme management
+        function initializeTheme() {
+            const savedTheme = localStorage.getItem('theme') || 'dark';
+            const body = document.body;
+            const themeIcon = document.querySelector('.theme-icon');
+            
+            if (savedTheme === 'light') {
+                body.classList.add('light-mode');
+                body.classList.remove('dark-mode');
+                themeIcon.textContent = '??�';
+            } else {
+                body.classList.add('dark-mode');
+                body.classList.remove('light-mode');
+                themeIcon.textContent = '??';
+            }
+        }
+        
+        function toggleTheme() {
+            const body = document.body;
+            const themeIcon = document.querySelector('.theme-icon');
+            
+            if (body.classList.contains('dark-mode')) {
+                body.classList.remove('dark-mode');
+                body.classList.add('light-mode');
+                themeIcon.textContent = '??�';
+                localStorage.setItem('theme', 'light');
+            } else {
+                body.classList.remove('light-mode');
+                body.classList.add('dark-mode');
+                themeIcon.textContent = '??';
+                localStorage.setItem('theme', 'dark');
+            }
+        }
+        
+        // Chat functionality
+        let isFirstMessage = true;
+        let currentSessionId = null;
+        let apiTimeout = 30000; // 30 seconds timeout
+        let isOffline = false;
+        
+        function handleKeyPress(event) {
+            if (event.key === 'Enter') {
+                sendMessage();
+            }
+        }
+        
+        function handleFullscreenKeyPress(event) {
+            if (event.key === 'Enter') {
+                sendFullscreenMessage();
+            }
+        }
+        
+        // Check if API server is available
+        async function checkApiHealth() {
+            try {
+                const response = await fetch('/api/health', {
+                    method: 'GET',
+                    timeout: 5000
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    isOffline = !data.bot_available;
+                    return data.bot_available;
+                } else {
+                    isOffline = true;
+                    return false;
+                }
+            } catch (error) {
+                console.log('API server not available:', error);
+                isOffline = true;
+                return false;
+            }
+        }
+        
+        // Send message to API with timeout
+        async function sendMessageToApi(message, sessionId = null) {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), apiTimeout);
+            
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: message,
+                        session_id: sessionId
+                    }),
+                    signal: controller.signal
+                });
+                
+                clearTimeout(timeoutId);
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.success) {
+                        currentSessionId = data.session_id;
+                        return {
+                            success: true,
+                            response: data.response,
+                            type: data.type
+                        };
+                    } else {
+                        return {
+                            success: false,
+                            error: data.error || 'Unknown error',
+                            response: data.response || 'I encountered an error. Please try again.'
+                        };
+                    }
+                } else {
+                    return {
+                        success: false,
+                        error: `HTTP ${response.status}`,
+                        response: 'Looks like we are offline, try again later!'
+                    };
+                }
+            } catch (error) {
+                clearTimeout(timeoutId);
+                
+                if (error.name === 'AbortError') {
+                    return {
+                        success: false,
+                        error: 'Request timeout',
+                        response: 'Looks like we are offline, try again later!'
+                    };
+                } else {
+                    return {
+                        success: false,
+                        error: error.message,
+                        response: 'Looks like we are offline, try again later!'
+                    };
+                }
+            }
+        }
+        
+        async function sendMessage() {
+            const input = document.getElementById('chatInput');
+            const message = input.value.trim();
+            
+            if (!message) return;
+            
+            // If this is the first message, transition to fullscreen chat
+            if (isFirstMessage) {
+                openFullscreenChat(message);
+                input.value = '';
+                isFirstMessage = false;
+                return;
+            }
+            
+            // Add user message
+            addMessage(message, 'user');
+            input.value = '';
+            
+            // Disable send button
+            const sendButton = document.getElementById('sendButton');
+            sendButton.disabled = true;
+            sendButton.textContent = 'Thinking...';
+            
+            // Add thinking indicator
+            addThinkingIndicator('chatMessages');
+            
+            // Send message to API
+            try {
+                const result = await sendMessageToApi(message, currentSessionId);
+                
+                // Remove thinking indicator
+                removeThinkingIndicator();
+                
+                if (result.success) {
+                    typeMessage(result.response, 'chatMessages', 'assistant');
+                } else {
+                    typeMessage(result.response, 'chatMessages', 'assistant');
+                    console.error('API Error:', result.error);
+                }
+            } catch (error) {
+                removeThinkingIndicator();
+                typeMessage('Looks like we are offline, try again later!', 'chatMessages', 'assistant');
+                console.error('Network Error:', error);
+            } finally {
+                // Re-enable send button
+                sendButton.disabled = false;
+                sendButton.textContent = 'Send ?';
+            }
+        }
+        
+        async function sendFullscreenMessage() {
+            const input = document.getElementById('fullscreenChatInput');
+            const message = input.value.trim();
+            
+            if (!message) return;
+            
+            // Add user message
+            addFullscreenMessage(message, 'user');
+            input.value = '';
+            
+            // Disable send button
+            const sendButton = document.getElementById('fullscreenSendButton');
+            sendButton.disabled = true;
+            sendButton.textContent = 'Thinking...';
+            
+            // Add thinking indicator
+            addThinkingIndicator('fullscreenChatMessages');
+            
+            // Send message to API
+            try {
+                const result = await sendMessageToApi(message, currentSessionId);
+                
+                // Remove thinking indicator
+                removeThinkingIndicator();
+                
+                if (result.success) {
+                    typeFullscreenMessage(result.response, 'assistant');
+                } else {
+                    typeFullscreenMessage(result.response, 'assistant');
+                    console.error('API Error:', result.error);
+                }
+            } catch (error) {
+                removeThinkingIndicator();
+                typeFullscreenMessage('Looks like we are offline, try again later!', 'assistant');
+                console.error('Network Error:', error);
+            } finally {
+                // Re-enable send button
+                sendButton.disabled = false;
+                sendButton.textContent = 'Send ?';
+            }
+        }
+        
+        async function openFullscreenChat(firstMessage) {
+            const fullscreenChat = document.getElementById('fullscreenChat');
+            fullscreenChat.classList.add('active');
+            
+            // Add the first message to fullscreen chat
+            addFullscreenMessage(firstMessage, 'user');
+            
+            // Disable send button
+            const sendButton = document.getElementById('fullscreenSendButton');
+            sendButton.disabled = true;
+            sendButton.textContent = 'Thinking...';
+            
+            // Add thinking indicator
+            addThinkingIndicator('fullscreenChatMessages');
+            
+            // Send first message to API
+            try {
+                const result = await sendMessageToApi(firstMessage, currentSessionId);
+                
+                // Remove thinking indicator
+                removeThinkingIndicator();
+                
+                if (result.success) {
+                    typeFullscreenMessage(result.response, 'assistant');
+                } else {
+                    typeFullscreenMessage(result.response, 'assistant');
+                    console.error('API Error:', result.error);
+                }
+            } catch (error) {
+                removeThinkingIndicator();
+                typeFullscreenMessage('Looks like we are offline, try again later!', 'assistant');
+                console.error('Network Error:', error);
+            } finally {
+                // Re-enable send button
+                sendButton.disabled = false;
+                sendButton.textContent = 'Send ?';
+            }
+            
+            // Focus on the fullscreen input
+            setTimeout(() => {
+                document.getElementById('fullscreenChatInput').focus();
+            }, 100);
+        }
+        
+        function closeFullscreenChat() {
+            const fullscreenChat = document.getElementById('fullscreenChat');
+            fullscreenChat.classList.remove('active');
+        }
+        
+        function addMessage(text, sender) {
+            const chatMessages = document.getElementById('chatMessages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${sender}`;
+            
+            const prefix = sender === 'user' ? '?? You:' : '?? Cuttle:';
+            messageDiv.innerHTML = `<strong>${prefix}</strong><br>${text.replace(/\n/g, '<br>')}`;
+            
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+        
+        function addThinkingIndicator(containerId) {
+            const chatMessages = document.getElementById(containerId);
+            const thinkingDiv = document.createElement('div');
+            thinkingDiv.className = 'thinking-indicator';
+            thinkingDiv.id = 'thinking-indicator';
+            thinkingDiv.innerHTML = '<strong>?? Cuttle:</strong><br>Cuttle is thinking...';
+            
+            chatMessages.appendChild(thinkingDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+            return thinkingDiv;
+        }
+        
+        function removeThinkingIndicator() {
+            const thinkingDiv = document.getElementById('thinking-indicator');
+            if (thinkingDiv) {
+                thinkingDiv.remove();
+            }
+        }
+        
+        function typeMessage(text, containerId, sender = 'assistant') {
+            const chatMessages = document.getElementById(containerId);
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${sender}`;
+            
+            const prefix = sender === 'user' ? '?? You:' : '?? Cuttle:';
+            messageDiv.innerHTML = `<strong>${prefix}</strong><br><span class="message-content"></span><span class="typing-cursor"></span>`;
+            
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+            
+            const contentSpan = messageDiv.querySelector('.message-content');
+            const cursorSpan = messageDiv.querySelector('.typing-cursor');
+            
+            // Convert text to HTML format
+            const htmlText = text.replace(/\n/g, '<br>');
+            
+            let index = 0;
+            const typeInterval = setInterval(() => {
+                if (index < htmlText.length) {
+                    const char = htmlText[index];
+                    if (char === '<' && htmlText.substring(index, index + 4) === '<br>') {
+                        contentSpan.innerHTML += '<br>';
+                        index += 4; // Skip the '<br>' characters
+                    } else {
+                        contentSpan.innerHTML += char;
+                        index++;
+                    }
+                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                } else {
+                    cursorSpan.remove();
+                    clearInterval(typeInterval);
+                }
+            }, 30); // 30ms delay between characters
+            
+            return messageDiv;
+        }
+        
+        function typeHtmlMessage(htmlText, containerId, sender = 'assistant') {
+            const chatMessages = document.getElementById(containerId);
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${sender}`;
+            
+            const prefix = sender === 'user' ? '?? You:' : '?? Cuttle:';
+            messageDiv.innerHTML = `<strong>${prefix}</strong><br><span class="message-content"></span><span class="typing-cursor"></span>`;
+            
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+            
+            const contentSpan = messageDiv.querySelector('.message-content');
+            const cursorSpan = messageDiv.querySelector('.typing-cursor');
+            
+            let index = 0;
+            const typeInterval = setInterval(() => {
+                if (index < htmlText.length) {
+                    const char = htmlText[index];
+                    if (char === '<' && htmlText.substring(index, index + 4) === '<br>') {
+                        contentSpan.innerHTML += '<br>';
+                        index += 4; // Skip the '<br>' characters
+                    } else {
+                        contentSpan.innerHTML += char;
+                        index++;
+                    }
+                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                } else {
+                    cursorSpan.remove();
+                    clearInterval(typeInterval);
+                }
+            }, 30); // 30ms delay between characters
+            
+            return messageDiv;
+        }
+        
+        function addFullscreenMessage(text, sender) {
+            const chatMessages = document.getElementById('fullscreenChatMessages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${sender}`;
+            
+            const prefix = sender === 'user' ? '?? You:' : '?? Cuttle:';
+            messageDiv.innerHTML = `<strong>${prefix}</strong><br>${text.replace(/\n/g, '<br>')}`;
+            
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+        
+        function typeFullscreenMessage(text, sender = 'assistant') {
+            const chatMessages = document.getElementById('fullscreenChatMessages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${sender}`;
+            
+            const prefix = sender === 'user' ? '?? You:' : '?? Cuttle:';
+            messageDiv.innerHTML = `<strong>${prefix}</strong><br><span class="message-content"></span><span class="typing-cursor"></span>`;
+            
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+            
+            const contentSpan = messageDiv.querySelector('.message-content');
+            const cursorSpan = messageDiv.querySelector('.typing-cursor');
+            
+            // Convert text to HTML format
+            const htmlText = text.replace(/\n/g, '<br>');
+            
+            let index = 0;
+            const typeInterval = setInterval(() => {
+                if (index < htmlText.length) {
+                    const char = htmlText[index];
+                    if (char === '<' && htmlText.substring(index, index + 4) === '<br>') {
+                        contentSpan.innerHTML += '<br>';
+                        index += 4; // Skip the '<br>' characters
+                    } else {
+                        contentSpan.innerHTML += char;
+                        index++;
+                    }
+                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                } else {
+                    cursorSpan.remove();
+                    clearInterval(typeInterval);
+                }
+            }, 30); // 30ms delay between characters
+            
+            return messageDiv;
+        }
+        
+        // Enhanced Particle Effects
+        function createShootingStar() {
+            const star = document.createElement('div');
+            star.className = 'shooting-star';
+            star.id = `shooting-star-${Date.now()}-${Math.random()}`;
+            
+            // Random starting position from top-right area (like the example)
+            const startPositions = [
+                { top: '0', right: '0', left: 'initial' },
+                { top: '0', right: '80px', left: 'initial' },
+                { top: '80px', right: '0px', left: 'initial' },
+                { top: '0', right: '180px', left: 'initial' },
+                { top: '0', right: '400px', left: 'initial' },
+                { top: '0', right: '600px', left: 'initial' },
+                { top: '300px', right: '0px', left: 'initial' },
+                { top: '0px', right: '700px', left: 'initial' },
+                { top: '0px', right: '1000px', left: 'initial' },
+                { top: '0px', right: '1000px', left: 'initial' }
+            ];
+            
+            const position = startPositions[Math.floor(Math.random() * startPositions.length)];
+            star.style.top = position.top;
+            star.style.right = position.right;
+            star.style.left = position.left;
+            
+            // Random delay and duration
+            const delay = Math.random() * 2;
+            const duration = 2 + Math.random() * 2; // 2-4 seconds for more visible twinkling
+            
+            star.style.animationDelay = delay + 's';
+            star.style.animationDuration = duration + 's';
+            
+            // Start with invisible state for smooth twinkling
+            star.style.opacity = '0';
+            star.style.filter = 'brightness(0)';
+            
+            document.body.appendChild(star);
+            
+            // Add animation class immediately - the animation handles the twinkling
+            star.classList.add('animate');
+            
+            // Remove after animation completes
+            setTimeout(() => {
+                if (star.parentNode) {
+                    star.parentNode.removeChild(star);
+                }
+            }, (delay + duration) * 1000 + 100);
+        }
+        
+        function createSatellite() {
+            console.log('Creating satellite...');
+            const satellite = document.createElement('div');
+            satellite.className = 'satellite';
+            satellite.id = `satellite-${Date.now()}-${Math.random()}`;
+            
+            // Choose random orbital direction
+            const animationTypes = ['animate', 'animate-reverse'];
+            const animationType = animationTypes[Math.floor(Math.random() * animationTypes.length)];
+            console.log('Satellite animation type:', animationType);
+            
+            // Random delay and duration
+            const delay = Math.random() * 3;
+            const duration = 10 + Math.random() * 6; // 10-16 seconds for realistic orbital speed
+            
+            satellite.style.animationDelay = delay + 's';
+            satellite.style.animationDuration = duration + 's';
+            
+            document.body.appendChild(satellite);
+            console.log('Satellite added to DOM:', satellite.id);
+            
+            // Add animation class immediately
+            satellite.classList.add(animationType);
+            console.log('Satellite animation class added:', animationType);
+            
+            // Remove after animation completes
+            setTimeout(() => {
+                if (satellite.parentNode) {
+                    satellite.parentNode.removeChild(satellite);
+                }
+            }, (delay + duration) * 1000 + 500);
+        }
+        
+        function createFloatingParticle() {
+            const particle = document.createElement('div');
+            particle.className = 'floating-particle';
+            
+            // Random position
+            const x = Math.random() * window.innerWidth;
+            const y = Math.random() * window.innerHeight;
+            
+            particle.style.left = x + 'px';
+            particle.style.top = y + 'px';
+            
+            // Random animation delay
+            const delay = Math.random() * 4;
+            particle.style.animationDelay = delay + 's';
+            
+            document.body.appendChild(particle);
+            
+            // Remove after a while to prevent too many particles
+            setTimeout(() => {
+                if (particle.parentNode) {
+                    particle.parentNode.removeChild(particle);
+                }
+            }, 10000);
+        }
+        
+        function startParticleEffects() {
+            // Create initial floating particles
+            for (let i = 0; i < 20; i++) {
+                setTimeout(() => createFloatingParticle(), i * 300);
+            }
+            
+            // Create shooting stars at realistic intervals
+            setInterval(() => {
+                if (Math.random() < 0.4) { // 40% chance every interval
+                    createShootingStar();
+                }
+                // Occasionally create meteor showers (multiple stars)
+                if (Math.random() < 0.1) {
+                    setTimeout(() => createShootingStar(), 200);
+                    setTimeout(() => createShootingStar(), 400);
+                    setTimeout(() => createShootingStar(), 600);
+                }
+            }, 3000);
+            
+            // Create satellites occasionally
+            setInterval(() => {
+                if (Math.random() < 0.6) { // 60% chance every interval for testing
+                    createSatellite();
+                }
+            }, 3000); // Every 3 seconds instead of 8
+            
+            // Create new floating particles periodically
+            setInterval(() => {
+                createFloatingParticle();
+            }, 1500);
+        }
+        
+        // Planet Ground Effect
+        function initializePlanetGround() {
+            const planetGround = document.createElement('div');
+            planetGround.className = 'planet-ground';
+            planetGround.id = 'planetGround';
+            document.body.appendChild(planetGround);
+            
+            // Show planet ground when scrolling near bottom
+            let isPlanetVisible = false;
+            window.addEventListener('scroll', () => {
+                const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+                const windowHeight = window.innerHeight;
+                const documentHeight = document.documentElement.scrollHeight;
+                const scrollPercentage = (scrollTop + windowHeight) / documentHeight;
+                
+                if (scrollPercentage > 0.85 && !isPlanetVisible) {
+                    planetGround.classList.add('visible');
+                    isPlanetVisible = true;
+                } else if (scrollPercentage <= 0.85 && isPlanetVisible) {
+                    planetGround.classList.remove('visible');
+                    isPlanetVisible = false;
+                }
+            });
+        }
+        
+        // Cloud Effects
+        function initializeClouds() {
+            const clouds = [];
+            
+            // Create cloud elements (8 clouds total)
+            for (let i = 1; i <= 8; i++) {
+                const cloud = document.createElement('div');
+                cloud.className = `cloud cloud-${i}`;
+                cloud.id = `cloud-${i}`;
+                
+                // Alternate between left and right sides
+                if (i % 2 === 1) {
+                    cloud.classList.add('left');
+                } else {
+                    cloud.classList.add('right');
+                }
+                
+                document.body.appendChild(cloud);
+                clouds.push(cloud);
+            }
+            
+            // Show clouds when scrolling to chat area
+            let cloudsVisible = false;
+            window.addEventListener('scroll', () => {
+                const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+                const windowHeight = window.innerHeight;
+                const documentHeight = document.documentElement.scrollHeight;
+                const scrollPercentage = scrollTop / (documentHeight - windowHeight);
+                
+                // Show clouds when scrolling past 10% and hide when past 90%
+                if (scrollPercentage > 0.1 && scrollPercentage < 0.9 && !cloudsVisible) {
+                    clouds.forEach(cloud => {
+                        cloud.classList.add('visible');
+                    });
+                    cloudsVisible = true;
+                } else if ((scrollPercentage <= 0.1 || scrollPercentage >= 0.9) && cloudsVisible) {
+                    clouds.forEach(cloud => {
+                        cloud.classList.remove('visible');
+                    });
+                    cloudsVisible = false;
+                }
+            });
+        }
+        
+        // Navigation functionality
+        let currentPage = 'home';
+        let menuOpen = false;
+        
+        function toggleMenu() {
+            const dropdown = document.getElementById('menuDropdown');
+            menuOpen = !menuOpen;
+            dropdown.classList.toggle('active', menuOpen);
+        }
+        
+        function showPage(pageName) {
+            // Hide all pages
+            document.querySelectorAll('.page-section').forEach(page => {
+                page.classList.remove('active');
+            });
+            
+            // Show selected page
+            const targetPage = document.getElementById(pageName + 'Page');
+            if (targetPage) {
+                targetPage.classList.add('active');
+                currentPage = pageName;
+            }
+            
+            // Update menu items
+            document.querySelectorAll('.menu-item').forEach(item => {
+                item.classList.remove('active');
+            });
+            
+            // Mark current page as active
+            const activeItem = document.querySelector(`[onclick="showPage('${pageName}')"]`);
+            if (activeItem) {
+                activeItem.classList.add('active');
+            }
+            
+            // Close menu
+            menuOpen = false;
+            document.getElementById('menuDropdown').classList.remove('active');
+            
+            // Load page-specific data
+            if (pageName === 'control') {
+                loadServiceStatus();
+            }
+        }
+        
+        // Service control functionality
+        let serviceStatus = {
+            discord: 'stopped',
+            webapi: 'stopped',
+            launcher: 'stopped'
+        };
+        
+        let statusInterval = null;
+        
+        async function loadServiceStatus() {
+            try {
+                // Check Discord bot status
+                const discordStatus = await checkServiceStatus('discord');
+                updateServiceStatus('discord', discordStatus);
+                
+                // Check Web API status
+                const webApiStatus = await checkServiceStatus('webapi');
+                updateServiceStatus('webapi', webApiStatus);
+                
+                // Check Launcher status
+                const launcherStatus = await checkServiceStatus('launcher');
+                updateServiceStatus('launcher', launcherStatus);
+                
+            } catch (error) {
+                console.error('Error loading service status:', error);
+            }
+        }
+        
+        async function checkServiceStatus(service) {
+            try {
+                if (service === 'webapi') {
+                    const response = await fetch('/api/health', {
+                        method: 'GET',
+                        timeout: 5000
+                    });
+                    return response.ok ? 'running' : 'stopped';
+                } else if (service === 'discord') {
+                    // Check if Discord bot is responding
+                    const response = await fetch('/api/health', {
+                        method: 'GET',
+                        timeout: 5000
+                    });
+                    if (response.ok) {
+                        const data = await response.json();
+                        return data.bot_available ? 'running' : 'stopped';
+                    }
+                    return 'stopped';
+                } else if (service === 'launcher') {
+                    // Check if both services are running
+                    const webApiStatus = await checkServiceStatus('webapi');
+                    const discordStatus = await checkServiceStatus('discord');
+                    return (webApiStatus === 'running' && discordStatus === 'running') ? 'running' : 'stopped';
+                }
+            } catch (error) {
+                console.error(`Error checking ${service} status:`, error);
+                return 'stopped';
+            }
+        }
+        
+        function updateServiceStatus(service, status) {
+            serviceStatus[service] = status;
+            
+            const statusElement = document.getElementById(service + 'Status');
+            const statusDetailElement = document.getElementById(service + 'StatusDetail');
+            
+            if (statusElement) {
+                statusElement.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+                statusElement.className = `service-status status-${status}`;
+            }
+            
+            if (statusDetailElement) {
+                statusDetailElement.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+            }
+            
+            // Update button states
+            updateServiceButtons(service, status);
+        }
+        
+        function updateServiceButtons(service, status) {
+            const startBtn = document.querySelector(`[onclick="startService('${service}')"]`);
+            const stopBtn = document.querySelector(`[onclick="stopService('${service}')"]`);
+            const restartBtn = document.querySelector(`[onclick="restartService('${service}')"]`);
+            
+            if (startBtn) startBtn.disabled = status === 'running';
+            if (stopBtn) stopBtn.disabled = status === 'stopped';
+            if (restartBtn) restartBtn.disabled = status === 'stopped';
+        }
+        
+        async function startService(service) {
+            try {
+                updateServiceStatus(service, 'starting');
+                
+                if (service === 'launcher') {
+                    // Start the unified launcher
+                    const response = await fetch('/api/start-launcher', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                    
+                    if (response.ok) {
+                        updateServiceStatus(service, 'running');
+                    } else {
+                        updateServiceStatus(service, 'stopped');
+                    }
+                } else if (service === 'webapi') {
+                    // Start web API
+                    const response = await fetch('/api/start-webapi', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                    
+                    if (response.ok) {
+                        updateServiceStatus(service, 'running');
+                    } else {
+                        updateServiceStatus(service, 'stopped');
+                    }
+                } else if (service === 'discord') {
+                    // Start Discord bot
+                    const response = await fetch('/api/start-discord', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                    
+                    if (response.ok) {
+                        updateServiceStatus(service, 'running');
+                    } else {
+                        updateServiceStatus(service, 'stopped');
+                    }
+                }
+                
+                // Refresh status after a delay
+                setTimeout(() => loadServiceStatus(), 2000);
+                
+            } catch (error) {
+                console.error(`Error starting ${service}:`, error);
+                updateServiceStatus(service, 'stopped');
+            }
+        }
+        
+        async function stopService(service) {
+            try {
+                updateServiceStatus(service, 'stopping');
+                
+                const response = await fetch(`/api/stop-${service}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                
+                if (response.ok) {
+                    updateServiceStatus(service, 'stopped');
+                }
+                
+                // Refresh status after a delay
+                setTimeout(() => loadServiceStatus(), 2000);
+                
+            } catch (error) {
+                console.error(`Error stopping ${service}:`, error);
+                updateServiceStatus(service, 'stopped');
+            }
+        }
+        
+        async function restartService(service) {
+            await stopService(service);
+            setTimeout(() => startService(service), 1000);
+        }
+        
+        function showServiceInfo(service) {
+            const infoElement = document.getElementById(service + 'Info');
+            if (infoElement) {
+                infoElement.style.display = infoElement.style.display === 'none' ? 'block' : 'none';
+            }
+        }
+        
+        // Settings functionality
+        function toggleDarkMode() {
+            const toggle = document.getElementById('darkModeToggle');
+            const body = document.body;
+            
+            if (body.classList.contains('dark-mode')) {
+                body.classList.remove('dark-mode');
+                body.classList.add('light-mode');
+                toggle.classList.remove('active');
+                localStorage.setItem('theme', 'light');
+            } else {
+                body.classList.remove('light-mode');
+                body.classList.add('dark-mode');
+                toggle.classList.add('active');
+                localStorage.setItem('theme', 'dark');
+            }
+        }
+        
+        function toggleAutoStart() {
+            const toggle = document.getElementById('autoStartToggle');
+            toggle.classList.toggle('active');
+            localStorage.setItem('autoStart', toggle.classList.contains('active'));
+        }
+        
+        function toggleAutoRefresh() {
+            const toggle = document.getElementById('autoRefreshToggle');
+            toggle.classList.toggle('active');
+            
+            if (toggle.classList.contains('active')) {
+                startStatusMonitoring();
+            } else {
+                stopStatusMonitoring();
+            }
+            
+            localStorage.setItem('autoRefresh', toggle.classList.contains('active'));
+        }
+        
+        function startStatusMonitoring() {
+            if (statusInterval) return;
+            
+            const interval = parseInt(document.getElementById('refreshInterval').value) * 1000;
+            statusInterval = setInterval(() => {
+                if (currentPage === 'control') {
+                    loadServiceStatus();
+                }
+            }, interval);
+        }
+        
+        function stopStatusMonitoring() {
+            if (statusInterval) {
+                clearInterval(statusInterval);
+                statusInterval = null;
+            }
+        }
+        
+        function clearChatHistory() {
+            if (confirm('Are you sure you want to clear all chat history? This cannot be undone.')) {
+                // Clear chat messages
+                document.getElementById('chatMessages').innerHTML = `
+                    <div class="message assistant">
+                        <strong>🦑 Cuttle:</strong> Hello! I'm your AI development assistant. I can help you with:
+                        <br>� Code analysis and debugging
+                        <br>� Automation tasks
+                        <br>� Project management
+                        <br>� Technical questions
+                        <br><br>What would you like to work on today?
+                    </div>
+                `;
+                
+                // Clear fullscreen chat
+                document.getElementById('fullscreenChatMessages').innerHTML = `
+                    <div class="message assistant">
+                        <strong>🦑 Cuttle:</strong> Welcome to the full-screen chat! I'm ready to help you with your development tasks. What would you like to work on?
+                    </div>
+                `;
+                
+                // Reset session
+                currentSessionId = null;
+                
+                // Clear API sessions
+                fetch('/api/clear-session/all', { method: 'POST' }).catch(console.error);
+                
+                alert('Chat history cleared successfully!');
+            }
+        }
+        
+        function exportSettings() {
+            const settings = {
+                theme: localStorage.getItem('theme') || 'dark',
+                autoStart: localStorage.getItem('autoStart') === 'true',
+                autoRefresh: localStorage.getItem('autoRefresh') === 'true',
+                webChatPort: document.getElementById('webChatPort').value,
+                apiTimeout: document.getElementById('apiTimeout').value,
+                refreshInterval: document.getElementById('refreshInterval').value
+            };
+            
+            const blob = new Blob([JSON.stringify(settings, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'cuttle-settings.json';
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+        
+        function importSettings() {
+            const fileInput = document.getElementById('importFile');
+            const file = fileInput.files[0];
+            
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    try {
+                        const settings = JSON.parse(e.target.result);
+                        
+                        // Apply settings
+                        if (settings.theme) {
+                            localStorage.setItem('theme', settings.theme);
+                            initializeTheme();
+                        }
+                        
+                        if (settings.autoStart !== undefined) {
+                            localStorage.setItem('autoStart', settings.autoStart);
+                            document.getElementById('autoStartToggle').classList.toggle('active', settings.autoStart);
+                        }
+                        
+                        if (settings.autoRefresh !== undefined) {
+                            localStorage.setItem('autoRefresh', settings.autoRefresh);
+                            document.getElementById('autoRefreshToggle').classList.toggle('active', settings.autoRefresh);
+                        }
+                        
+                        if (settings.webChatPort) {
+                            document.getElementById('webChatPort').value = settings.webChatPort;
+                        }
+                        
+                        if (settings.apiTimeout) {
+                            document.getElementById('apiTimeout').value = settings.apiTimeout;
+                            apiTimeout = settings.apiTimeout * 1000;
+                        }
+                        
+                        if (settings.refreshInterval) {
+                            document.getElementById('refreshInterval').value = settings.refreshInterval;
+                        }
+                        
+                        alert('Settings imported successfully!');
+                        
+                    } catch (error) {
+                        alert('Error importing settings: Invalid file format');
+                    }
+                };
+                reader.readAsText(file);
+            }
+        }
+        
+        // Close menu when clicking outside
+        document.addEventListener('click', function(event) {
+            const menu = document.querySelector('.nav-menu');
+            if (menu && !menu.contains(event.target) && menuOpen) {
+                toggleMenu();
+            }
+        });
+        
+        // Initialize typing animation for initial message when chat comes into view
+        function initializeChatAnimation() {
+            const chatContainer = document.querySelector('.chat-container');
+            const initialMessage = document.getElementById('initialMessage');
+            
+            if (!chatContainer || !initialMessage) return;
+            
+            // The full HTML content to type
+            const fullHtml = `Hello! I'm your AI development assistant. I can help you with:<br>� Code analysis and debugging<br>� Automation tasks<br>� Project management<br>� Technical questions<br><br>What would you like to work on today?`;
+            
+            const observer = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        // Chat is in view, start typing animation
+                        const contentSpan = initialMessage.querySelector('.message-content');
+                        const cursorSpan = initialMessage.querySelector('.typing-cursor');
+                        
+                        let index = 0;
+                        const typeInterval = setInterval(() => {
+                            if (index < fullHtml.length) {
+                                const char = fullHtml[index];
+                                if (char === '<' && fullHtml.substring(index, index + 4) === '<br>') {
+                                    contentSpan.innerHTML += '<br>';
+                                    index += 4; // Skip the '<br>' characters
+                                } else {
+                                    contentSpan.innerHTML += char;
+                                    index++;
+                                }
+                            } else {
+                                cursorSpan.remove();
+                                clearInterval(typeInterval);
+                            }
+                        }, 30);
+                        
+                        observer.disconnect(); // Stop observing after animation starts
+                    }
+                });
+            }, { threshold: 0.3 });
+            
+            observer.observe(chatContainer);
+        }
+        
+        // Parallax Effects
+        function initializeParallax() {
+            window.addEventListener('scroll', () => {
+                const scrolled = window.pageYOffset;
+                const parallax = scrolled * 0.5;
+                
+                // Apply parallax to background
+                const backgroundElement = document.querySelector('body::before');
+                if (backgroundElement) {
+                    backgroundElement.style.transform = `translateY(${parallax}px)`;
+                }
+                
+                // Apply parallax to clouds (only when they're visible)
+                const clouds = document.querySelectorAll('.cloud');
+                clouds.forEach((cloud, index) => {
+                    if (cloud.classList.contains('visible')) {
+                        const speed = 0.15 + (index * 0.03); // Subtle parallax for depth
+                        let baseTransform = '';
+                        
+                        // Preserve the side positioning
+                        if (cloud.classList.contains('left')) {
+                            baseTransform = 'translateX(0)';
+                        } else if (cloud.classList.contains('right')) {
+                            baseTransform = 'translateX(0)';
+                        }
+                        
+                        // Apply transform directly to the cloud element
+                        cloud.style.transform = `${baseTransform} translateY(${scrolled * speed}px)`;
+                    }
+                });
+                
+                // Apply parallax to floating particles
+                const particles = document.querySelectorAll('.floating-particle');
+                particles.forEach((particle, index) => {
+                    const speed = 0.2 + (index % 3 * 0.05); // Subtle parallax
+                    particle.style.transform = `translateY(${scrolled * speed}px)`;
+                });
+                
+                // Apply parallax to shooting stars
+                const shootingStars = document.querySelectorAll('.shooting-star');
+                shootingStars.forEach((star, index) => {
+                    const speed = 0.1 + (index % 5 * 0.02); // Very subtle parallax for depth
+                    star.style.setProperty('--parallax-y', `${scrolled * speed}px`);
+                });
+                
+                // Apply parallax to satellites
+                const satellites = document.querySelectorAll('.satellite');
+                satellites.forEach((satellite, index) => {
+                    const speed = 0.05 + (index % 3 * 0.01); // Very subtle parallax for depth
+                    satellite.style.setProperty('--parallax-y', `${scrolled * speed}px`);
+                });
+            });
+        }
+        
+        // Initialize
+        // Debug function to force create effects
+        function debugCreateEffects() {
+            console.log('Creating test satellite...');
+            createSatellite();
+            console.log('Creating test cloud...');
+            // Force show clouds
+            const clouds = document.querySelectorAll('.cloud');
+            clouds.forEach(cloud => {
+                cloud.classList.add('visible');
+                console.log('Cloud made visible:', cloud.id);
+            });
+        }
+        
+        document.addEventListener('DOMContentLoaded', async function() {
+            initializeTheme();
+            startParticleEffects();
+            initializePlanetGround();
+            initializeClouds();
+            initializeParallax();
+            
+            // Debug: Create effects after 2 seconds (disabled for production)
+            // setTimeout(() => {
+            //     debugCreateEffects();
+            // }, 2000);
+            
+            // Initialize chat typing animation
+            setTimeout(() => {
+                initializeChatAnimation();
+            }, 1000); // Delay to ensure page is fully loaded
+            
+            // Load saved settings
+            const savedAutoStart = localStorage.getItem('autoStart') === 'true';
+            const savedAutoRefresh = localStorage.getItem('autoRefresh') === 'true';
+            
+            if (savedAutoStart) {
+                document.getElementById('autoStartToggle').classList.add('active');
+            }
+            
+            if (savedAutoRefresh) {
+                document.getElementById('autoRefreshToggle').classList.add('active');
+                startStatusMonitoring();
+            }
+            
+            // Check API health on page load
+            const isHealthy = await checkApiHealth();
+            if (!isHealthy) {
+                console.log('Bot backend not available - showing offline mode');
+            }
+        });
+    </script>
+    </div> <!-- End page-content -->
+</body>
+</html>

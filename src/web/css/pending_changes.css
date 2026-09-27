@@ -1,0 +1,584 @@
+/* Shared Pending Changes strip — used by chat and Git pages */
+
+.pending-changes {
+    max-width: 820px;
+    margin: 0 auto 8px;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--input-bg) 88%, transparent);
+    box-shadow: 0 1px 10px rgba(0, 0, 0, 0.12);
+    overflow: hidden;
+}
+
+.pending-changes[hidden] {
+    display: none !important;
+}
+
+.pending-changes-header {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    min-width: 0;
+}
+
+.pending-changes-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+    width: auto;
+    border: none;
+    background: transparent;
+    color: var(--text-primary);
+    padding: 8px 12px;
+    cursor: pointer;
+    text-align: left;
+    font: inherit;
+}
+
+.pending-changes-toggle:hover {
+    background: color-mix(in srgb, var(--bg-tertiary) 55%, transparent);
+}
+
+.pending-changes-commit-quick {
+    flex-shrink: 0;
+    margin-right: 8px;
+    padding: 4px 8px;
+}
+
+.pending-changes.is-expanded .pending-changes-commit-quick {
+    display: none !important;
+}
+
+.pending-changes-commit-btn:disabled {
+    opacity: 0.55;
+    cursor: default;
+}
+
+.pending-changes-chevron {
+    width: 0;
+    height: 0;
+    border-left: 5px solid var(--text-secondary);
+    border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent;
+    flex-shrink: 0;
+    transition: transform 0.15s ease;
+}
+
+.pending-changes.is-expanded .pending-changes-chevron {
+    transform: rotate(90deg);
+}
+
+.pending-changes-title {
+    font-size: 0.78rem;
+    font-weight: 650;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+}
+
+.pending-changes-host {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-width: 820px;
+    margin: 0 auto 8px;
+}
+
+.pending-changes-host .pending-changes {
+    margin: 0;
+}
+
+.pending-changes-repo-chip {
+    display: inline-flex;
+    align-items: center;
+    max-width: 160px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    border: 1px solid var(--border-color);
+    background: color-mix(in srgb, var(--bg-tertiary) 70%, transparent);
+    color: var(--text-secondary);
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex-shrink: 1;
+}
+
+.pending-changes-repo-chip[hidden] {
+    display: none !important;
+}
+
+.pending-changes-meta {
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.pending-changes-stats {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.75rem;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+}
+
+.pending-changes-add {
+    color: #3fb950;
+}
+
+.pending-changes-del {
+    color: #f85149;
+}
+
+.pending-changes-body {
+    border-top: 1px solid var(--border-color);
+    max-height: 240px;
+    display: flex;
+    flex-direction: column;
+}
+
+.pending-changes-body[hidden] {
+    display: none !important;
+}
+
+.pending-changes-select-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px 2px;
+    flex-shrink: 0;
+}
+
+.pending-changes-select-btn {
+    border: 1px solid var(--border-color, #334155);
+    border-radius: 5px;
+    background: transparent;
+    color: var(--text-secondary, #94a3b8);
+    font-size: 0.68rem;
+    font-weight: 600;
+    padding: 2px 8px;
+    cursor: pointer;
+    line-height: 1.4;
+}
+
+.pending-changes-select-btn:hover {
+    color: var(--text-primary, #e2e8f0);
+    border-color: color-mix(in srgb, var(--accent-color, #3b82f6) 45%, var(--border-color));
+}
+
+.pending-changes-select-hint {
+    margin-left: auto;
+    font-size: 0.62rem;
+    color: var(--text-secondary, #64748b);
+    opacity: 0.85;
+}
+
+.pending-changes-list {
+    list-style: none;
+    margin: 0;
+    padding: 4px 0;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
+}
+
+.pending-changes-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 8px 5px 0;
+    font-family: inherit;
+    font-size: 0.68rem;
+    font-weight: inherit;
+    line-height: inherit;
+    color: var(--text-primary);
+    text-decoration: none;
+    min-width: 0;
+    flex: 1;
+    border: none;
+    background: transparent;
+    text-align: left;
+    cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+}
+
+.pending-changes-item:hover {
+    background: color-mix(in srgb, var(--bg-tertiary) 70%, transparent);
+}
+
+.pending-changes-row {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    min-width: 0;
+    padding-left: 4px;
+}
+
+.pending-changes-row.is-excluded {
+    opacity: 0.48;
+}
+
+.pending-changes-row.is-more {
+    margin-top: 2px;
+    padding-top: 6px;
+    padding-bottom: 4px;
+    border-top: 1px solid color-mix(in srgb, var(--text-primary) 12%, transparent);
+}
+
+.pending-changes-more-label {
+    flex: 1;
+    min-width: 0;
+    padding: 5px 8px 5px 0;
+    font-size: 0.68rem;
+    font-style: italic;
+    color: var(--text-secondary, var(--text-primary));
+    opacity: 0.9;
+    user-select: none;
+}
+
+.pending-changes-include-more {
+    flex-shrink: 0;
+    margin: 0 2px 0 0;
+    accent-color: var(--accent, #6c8cff);
+}
+
+.pending-changes-include {
+    flex-shrink: 0;
+    width: 15px;
+    height: 15px;
+    margin: 0 2px 0 4px;
+    accent-color: var(--accent-color, #3b82f6);
+    cursor: pointer;
+}
+
+.pending-changes-ignore-btn {
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    margin-right: 4px;
+    border: 1px solid var(--border-color, #334155);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-secondary, #94a3b8);
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.pending-changes-ignore-btn:hover {
+    color: #f87171;
+    border-color: color-mix(in srgb, #f87171 55%, var(--border-color));
+    background: color-mix(in srgb, #f87171 12%, transparent);
+}
+
+.pending-changes-diff-btn {
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    margin-right: 6px;
+    border: 1px solid var(--border-color, #334155);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-secondary, #94a3b8);
+    font-size: 0.85rem;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.pending-changes-diff-btn:hover {
+    color: var(--text-primary, #e2e8f0);
+    background: color-mix(in srgb, var(--bg-tertiary) 70%, transparent);
+    border-color: color-mix(in srgb, var(--accent-color, #3b82f6) 50%, var(--border-color));
+}
+
+.pending-changes-file {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.68rem;
+}
+
+.pending-changes-badge {
+    flex-shrink: 0;
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 1px 5px;
+    border-radius: 4px;
+    color: var(--text-secondary);
+    background: color-mix(in srgb, var(--bg-tertiary) 80%, transparent);
+}
+
+.pending-changes-badge[data-status="added"],
+.pending-changes-badge[data-status="untracked"] {
+    color: #3fb950;
+}
+
+.pending-changes-badge[data-status="deleted"] {
+    color: #f85149;
+}
+
+.pending-changes-badge[data-status="modified"],
+.pending-changes-badge[data-status="renamed"] {
+    color: #d29922;
+}
+
+.pending-changes-badge[data-status="conflict"] {
+    color: #f85149;
+    background: color-mix(in srgb, #f85149 18%, transparent);
+}
+
+.pending-changes-item-stats {
+    flex-shrink: 0;
+    display: inline-flex;
+    gap: 6px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+}
+
+.pending-changes-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 4px 10px 6px;
+    border-top: 1px solid color-mix(in srgb, var(--border-color) 70%, transparent);
+}
+
+.pending-changes-footer-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.pending-changes-refresh,
+.pending-changes-commit-btn {
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 0.7rem;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+.pending-changes-refresh:hover,
+.pending-changes-commit-btn:hover {
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+}
+
+.pending-changes-commit-btn {
+    color: color-mix(in srgb, #34d399 70%, var(--text-secondary));
+}
+
+.pending-changes-commit-btn:hover {
+    color: #34d399;
+}
+
+.pending-changes-commit {
+    padding: 6px 10px 4px;
+    border-top: 1px solid color-mix(in srgb, var(--border-color) 70%, transparent);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.pending-changes-commit[hidden] {
+    display: none !important;
+}
+
+.pending-changes-commit-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.pending-changes-commit-label {
+    font-size: 0.68rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.pending-changes-commit-edit {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.pending-changes-commit-edit:hover {
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+    border-color: var(--border-color);
+}
+
+.pending-changes-commit-edit.is-editing {
+    color: #34d399;
+    border-color: color-mix(in srgb, #34d399 40%, var(--border-color));
+    background: color-mix(in srgb, #34d399 12%, transparent);
+}
+
+.pending-changes-commit-edit[hidden] {
+    display: none !important;
+}
+
+.pending-changes-commit-preview-wrap {
+    min-height: 44px;
+}
+
+.pending-changes-commit-preview-wrap[hidden] {
+    display: none !important;
+}
+
+.pending-changes-commit-loading {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 44px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px dashed color-mix(in srgb, var(--border-color) 80%, transparent);
+    background: color-mix(in srgb, var(--bg-secondary, var(--bg-tertiary)) 70%, transparent);
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+}
+
+.pending-changes-commit-loading[hidden] {
+    display: none !important;
+}
+
+.pending-changes-commit-spinner {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid color-mix(in srgb, var(--text-secondary) 28%, transparent);
+    border-top-color: #34d399;
+    flex-shrink: 0;
+    animation: pending-commit-spin 0.7s linear infinite;
+}
+
+@keyframes pending-commit-spin {
+    to { transform: rotate(360deg); }
+}
+
+.pending-changes-commit-preview {
+    margin: 0;
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-secondary, var(--bg-tertiary));
+    color: var(--text-primary);
+    font-size: 0.78rem;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    max-height: 120px;
+    overflow-y: auto;
+}
+
+.pending-changes-commit-preview[hidden] {
+    display: none !important;
+}
+
+.pending-changes-commit-preview:empty::before {
+    content: 'No message yet';
+    color: var(--text-tertiary);
+    font-style: italic;
+}
+
+.pending-changes-commit-message {
+    width: 100%;
+    resize: vertical;
+    min-height: 44px;
+    max-height: 120px;
+    box-sizing: border-box;
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-secondary, var(--bg-tertiary));
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 0.78rem;
+    line-height: 1.35;
+    padding: 6px 8px;
+}
+
+.pending-changes-commit-message[hidden] {
+    display: none !important;
+}
+
+.pending-changes-commit-message:focus {
+    outline: none;
+    border-color: color-mix(in srgb, #34d399 45%, var(--border-color));
+}
+
+.pending-changes-commit-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+}
+
+.pending-changes-commit-submit {
+    border: none;
+    border-radius: 5px;
+    padding: 4px 10px;
+    font-size: 0.72rem;
+    font-weight: 650;
+    cursor: pointer;
+    background: color-mix(in srgb, #34d399 22%, transparent);
+    color: #34d399;
+}
+
+.pending-changes-commit-submit:hover:not(:disabled) {
+    background: color-mix(in srgb, #34d399 32%, transparent);
+}
+
+.pending-changes-commit-submit:disabled {
+    opacity: 0.55;
+    cursor: default;
+}
+
+.pending-changes-commit-status {
+    font-size: 0.68rem;
+    color: var(--text-secondary);
+}
+
+.pending-changes-commit-status.is-error {
+    color: #f87171;
+}
+
+.pending-changes-branch {
+    font-size: 0.68rem;
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 70%;
+}

@@ -1,0 +1,361 @@
+/* Compact in-shell pages (Control Panel, Settings, Tools, Tasks, Skills, Jobs, Dashboards).
+   App shell already provides nav — these pages should stay dense and chrome-free. */
+
+body.compact-shell-page {
+    padding: 0;
+    /* Fill the iframe/viewport cell — min-height:100% collapses when <html>
+       has no explicit height and the theme gradient then tiles below content. */
+    min-height: 100vh;
+    min-height: 100dvh;
+}
+
+body.compact-shell-page .page-content {
+    padding: 10px 12px 16px;
+    max-width: 1180px;
+    margin: 0 auto;
+}
+
+body.compact-shell-page .page-section,
+body.compact-shell-page .page-section.active {
+    display: block;
+    background: transparent;
+    border: none;
+    padding: 0;
+    margin: 0;
+    box-shadow: none;
+}
+
+body.compact-shell-page .container {
+    max-width: none;
+    width: 100%;
+    padding: 0;
+    margin: 0;
+    background: transparent;
+    box-shadow: none;
+    border-radius: 0;
+}
+
+/* Small page title — replaces giant centered hero headers */
+.compact-page-title {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 6px 10px;
+    margin: 0 0 12px 0;
+    padding: 0;
+}
+
+.compact-page-title h1 {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    color: var(--text-primary);
+    background: none;
+    -webkit-text-fill-color: currentColor;
+}
+
+.compact-page-title h1 .emoji {
+    font-size: 0.95em;
+}
+
+.compact-page-title p,
+.compact-page-title .subtitle {
+    margin: 0;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    line-height: 1.35;
+    max-width: 62ch;
+}
+
+/* Override legacy giant page-header if still present */
+body.compact-shell-page .page-header {
+    text-align: left;
+    margin: 0 0 12px 0;
+    padding: 0;
+}
+
+body.compact-shell-page .page-header h1 {
+    font-size: 1.05rem;
+    font-weight: 650;
+    margin: 0 0 4px 0;
+    background: none;
+    -webkit-text-fill-color: currentColor;
+    color: var(--text-primary);
+}
+
+body.compact-shell-page .page-header p,
+body.compact-shell-page .page-header .page-hint {
+    font-size: 0.78rem;
+    margin: 0;
+    max-width: 70ch;
+    line-height: 1.35;
+}
+
+/* ── Control Panel tiles ─────────────────────────────────────── */
+.compact-tile-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 8px;
+}
+
+body.compact-shell-page .service-card {
+    background: var(--section-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 10px 11px;
+    margin: 0;
+    backdrop-filter: none;
+    box-shadow: none;
+    transition: border-color 0.15s, background 0.15s;
+}
+
+body.compact-shell-page .service-card:hover {
+    transform: none;
+    box-shadow: none;
+    border-color: var(--accent-color);
+}
+
+body.compact-shell-page .service-header {
+    margin-bottom: 8px;
+    gap: 6px;
+}
+
+body.compact-shell-page .service-title {
+    font-size: 0.88rem;
+    font-weight: 600;
+}
+
+body.compact-shell-page .service-status {
+    padding: 2px 7px;
+    font-size: 0.68rem;
+    border-radius: 999px;
+}
+
+body.compact-shell-page .service-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+}
+
+body.compact-shell-page .control-button {
+    padding: 4px 8px;
+    font-size: 0.72rem;
+    border-radius: 6px;
+    min-height: 0;
+}
+
+body.compact-shell-page .video-list-item .video-play-btn {
+    min-width: 32px;
+    padding: 4px 9px;
+}
+
+body.compact-shell-page .service-info {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border-color);
+    font-size: 0.75rem;
+}
+
+body.compact-shell-page .info-row {
+    padding: 2px 0;
+    font-size: 0.74rem;
+}
+
+/* ── Settings compact rows ───────────────────────────────────── */
+body.compact-shell-page .settings-group {
+    background: var(--section-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    backdrop-filter: none;
+}
+
+body.compact-shell-page .settings-title {
+    font-size: 0.82rem;
+    font-weight: 650;
+    margin: 0 0 6px 0;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-secondary);
+}
+
+body.compact-shell-page .setting-item {
+    padding: 8px 0;
+    gap: 10px;
+    align-items: flex-start;
+}
+
+body.compact-shell-page .setting-label strong {
+    font-size: 0.86rem;
+}
+
+body.compact-shell-page .setting-description {
+    font-size: 0.72rem;
+    margin-top: 2px;
+    line-height: 1.35;
+}
+
+body.compact-shell-page .setting-control {
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+body.compact-shell-page .setting-input,
+body.compact-shell-page select.setting-input {
+    min-width: 0 !important;
+    font-size: 0.8rem;
+    padding: 4px 8px;
+}
+
+/* ── Tools / Skills list denser ──────────────────────────────── */
+body.compact-shell-page .tools-section {
+    margin-bottom: 12px;
+}
+
+body.compact-shell-page .tools-section h3 {
+    font-size: 0.82rem;
+    margin: 0 0 6px 0;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-secondary);
+}
+
+body.compact-shell-page .server-item,
+body.compact-shell-page .tool-item,
+body.compact-shell-page .downloader-item {
+    padding: 7px 9px;
+    margin-bottom: 5px;
+    border-radius: 7px;
+}
+
+body.compact-shell-page .tool-desc,
+body.compact-shell-page .setting-description {
+    font-size: 0.72rem;
+}
+
+body.compact-shell-page .skills-tabs {
+    margin-bottom: 10px;
+    gap: 4px;
+}
+
+body.compact-shell-page .skills-tab {
+    padding: 4px 10px;
+    font-size: 0.78rem;
+    border-radius: 6px;
+}
+
+body.compact-shell-page .skill-row {
+    padding: 7px 9px;
+    margin-bottom: 5px;
+    border-radius: 7px;
+}
+
+body.compact-shell-page .skills-split {
+    min-height: 320px;
+    gap: 8px;
+}
+
+body.compact-shell-page .skill-card {
+    margin: 6px 0;
+    padding: 8px 10px;
+}
+
+/* ── Tasks denser chrome ─────────────────────────────────────── */
+body.compact-shell-page .task-controls {
+    margin-bottom: 10px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    box-shadow: none;
+}
+
+body.compact-shell-page .controls-left,
+body.compact-shell-page .controls-right {
+    gap: 8px;
+}
+
+body.compact-shell-page .btn {
+    padding: 5px 10px;
+    font-size: 0.78rem;
+    border-radius: 6px;
+}
+
+body.compact-shell-page .multiselect-trigger {
+    padding: 5px 8px;
+    font-size: 0.78rem;
+    border-radius: 6px;
+}
+
+/* ── Jobs denser ─────────────────────────────────────────────── */
+body.compact-shell-page .jobs-page {
+    padding: 10px 12px 16px;
+    max-width: 1180px;
+    min-width: 0;
+    width: 100%;
+    box-sizing: border-box;
+    overflow-x: hidden;
+}
+
+body.compact-shell-page .jobs-header {
+    margin-bottom: 10px;
+}
+
+body.compact-shell-page .jobs-header h1 {
+    font-size: 1.05rem;
+    margin: 0 0 3px 0;
+}
+
+body.compact-shell-page .jobs-header p {
+    font-size: 0.74rem;
+    line-height: 1.35;
+    max-width: 72ch;
+}
+
+body.compact-shell-page .job-stats {
+    gap: 6px;
+    margin-bottom: 10px;
+}
+
+body.compact-shell-page .job-stat-card {
+    padding: 8px 10px;
+    border-radius: 7px;
+}
+
+body.compact-shell-page .job-stat-value {
+    font-size: 1rem;
+    margin-bottom: 1px;
+}
+
+body.compact-shell-page .job-stat-label {
+    font-size: 0.7rem;
+}
+
+body.compact-shell-page .jobs-section {
+    margin-bottom: 14px;
+}
+
+body.compact-shell-page .jobs-section-title {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-secondary);
+    margin: 0 0 6px 0;
+}
+
+body.compact-shell-page .job-card,
+body.compact-shell-page .running-now-card {
+    padding: 8px 10px;
+    margin-bottom: 5px;
+    border-radius: 7px;
+}
+
+@media (max-width: 640px) {
+    .compact-tile-grid {
+        grid-template-columns: 1fr;
+    }
+    body.compact-shell-page .setting-item {
+        flex-direction: column;
+        align-items: stretch;
+    }
+}

@@ -1,0 +1,1105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Project & Git Management - Cuttle</title>
+    <link rel="stylesheet" href="/css/ui_boot.css?v=20260926safeArea">
+    <script src="/js/ui_boot.js?v=20260926safeArea"></script>
+    <link rel="stylesheet" href="css/shared_navigation.css?v=20260926lightBg">
+    <link rel="stylesheet" href="css/landing_page.css?v=20260926lightBg">
+    <style>
+        /* Commit Diff Styles */
+        .commit-diff-header {
+            background: var(--bg-tertiary);
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border-left: 4px solid var(--accent-color);
+        }
+        
+        .commit-info {
+            margin-bottom: 10px;
+            color: var(--text-primary);
+        }
+        
+        .commit-hash {
+            font-family: 'Courier New', monospace;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+        
+        .files-changed {
+            margin: 20px 0;
+        }
+        
+        .file-change {
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            margin-bottom: 8px;
+            overflow: hidden;
+        }
+        
+        .file-change-header {
+            display: flex;
+            align-items: center;
+            padding: 10px 15px;
+            cursor: pointer;
+            background: var(--bg-tertiary);
+            transition: background-color 0.3s ease;
+        }
+        
+        .file-change-header:hover {
+            background: var(--border-color);
+        }
+        
+        .file-status {
+            width: 20px;
+            text-align: center;
+            margin-right: 10px;
+            font-weight: bold;
+        }
+        
+        .file-status.added { color: #38b2ac; }
+        .file-status.modified { color: #ed8936; }
+        .file-status.deleted { color: #f56565; }
+        
+        .file-name {
+            flex: 1;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            color: var(--text-primary);
+        }
+        
+        .file-expand-icon {
+            margin-left: 10px;
+            transition: transform 0.3s ease;
+            color: var(--text-secondary);
+        }
+        
+        .file-change.expanded .file-expand-icon {
+            transform: rotate(90deg);
+        }
+        
+        .file-diff-content {
+            display: none;
+            border-top: 1px solid var(--border-color);
+            background: var(--bg-secondary);
+        }
+        
+        .file-change.expanded .file-diff-content {
+            display: block;
+        }
+        
+        .file-diff-header {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            padding: 8px 15px;
+            font-weight: bold;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .diff-content {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            overflow: auto;
+            max-height: 500px;
+            position: relative;
+        }
+
+        .diff-content.virtual-scroll {
+            height: 500px;
+        }
+        
+        .diff-line {
+            font-family: 'Courier New', monospace;
+            font-size: 0.85em;
+            line-height: 1.4;
+            padding: 2px 10px;
+            margin: 0;
+            white-space: pre-wrap;
+            border-left: 3px solid transparent;
+            color: var(--text-primary);
+            position: relative;
+        }
+
+        .diff-line:hover {
+            background-color: rgba(102, 126, 234, 0.05);
+        }
+        
+        .diff-line.added {
+            background-color: rgba(56, 178, 172, 0.1);
+            border-left-color: #38b2ac;
+        }
+        
+        .diff-line.removed {
+            background-color: rgba(245, 101, 101, 0.1);
+            border-left-color: #f56565;
+        }
+        
+        .diff-line.context {
+            background-color: var(--bg-secondary);
+        }
+        
+        .diff-line.header {
+            background-color: var(--bg-tertiary);
+            font-weight: bold;
+            border-left-color: var(--border-color);
+        }
+        
+        .diff-file-header {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            padding: 8px 15px;
+            font-weight: bold;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            color: var(--text-secondary);
+        }
+        
+        .error {
+            background: var(--error-bg);
+            border: 1px solid var(--error-border);
+            color: var(--error-border);
+            padding: 15px;
+            border-radius: 8px;
+            margin: 10px 0;
+        }
+
+        /* Git file toggle switch */
+        .git-file-toggle-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            user-select: none;
+        }
+        .git-file-toggle-input { position: absolute; opacity: 0; width: 0; height: 0; }
+        .git-file-toggle-track {
+            position: relative;
+            width: 40px;
+            height: 22px;
+            background: var(--border-color);
+            border-radius: 11px;
+            flex-shrink: 0;
+            transition: background 0.25s ease;
+        }
+        .git-file-toggle-thumb {
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 18px;
+            height: 18px;
+            background: var(--text-secondary);
+            border-radius: 50%;
+            transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), background 0.25s ease;
+        }
+        .git-file-toggle-input:checked + .git-file-toggle-track {
+            background: rgba(139, 92, 246, 0.5);
+        }
+        .git-file-toggle-input:checked + .git-file-toggle-track .git-file-toggle-thumb {
+            transform: translateX(18px);
+            background: var(--accent-color);
+        }
+    </style>
+    <style>
+        /* Git UI Specific Styles */
+        .git-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .git-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: var(--section-bg);
+            backdrop-filter: blur(10px);
+            border-radius: 16px;
+            border: 1px solid var(--border-color);
+        }
+
+        .git-header-left {
+            flex: 1;
+        }
+
+        .current-project-info {
+            margin-top: 15px;
+        }
+
+        .project-selector {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .project-selector select {
+            padding: 8px 12px;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            font-size: 0.9em;
+            min-width: 200px;
+        }
+
+        .project-selector select:focus {
+            outline: none;
+            border-color: var(--accent-color);
+        }
+
+        .git-title {
+            font-size: 2em;
+            font-weight: 700;
+            background: linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .git-title .emoji {
+            -webkit-text-fill-color: initial;
+            background: none;
+            -webkit-background-clip: initial;
+            background-clip: initial;
+        }
+
+        .git-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .git-btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.9em;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .git-btn-primary {
+            background: linear-gradient(135deg, var(--accent-color) 0%, var(--accent-hover) 100%);
+            color: white;
+        }
+
+        .git-btn-secondary {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+        }
+
+        .git-btn-success {
+            background: linear-gradient(135deg, #38b2ac 0%, #319795 100%);
+            color: white;
+        }
+
+        .git-btn-warning {
+            background: linear-gradient(135deg, #ed8936 0%, #dd6b20 100%);
+            color: white;
+        }
+
+        .git-btn-danger {
+            background: linear-gradient(135deg, #f56565 0%, #e53e3e 100%);
+            color: white;
+        }
+
+        .git-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        .git-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .git-main-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .git-panel {
+            background: var(--section-bg);
+            backdrop-filter: blur(10px);
+            border-radius: 16px;
+            padding: 20px;
+            border: 1px solid var(--border-color);
+            transition: all 0.3s ease;
+        }
+
+        .git-panel:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.15);
+        }
+
+        .git-panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .git-panel-title {
+            font-size: 1.3em;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .git-panel-content {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .git-status {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 15px;
+            padding: 10px;
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+        }
+
+        .git-status-icon {
+            font-size: 1.2em;
+        }
+
+        .git-status-text {
+            flex: 1;
+            font-family: monospace;
+            font-size: 0.9em;
+            color: var(--text-primary);
+        }
+
+        .git-branch-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .git-branch-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            margin-bottom: 8px;
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            transition: all 0.3s ease;
+        }
+
+        .git-branch-item:hover {
+            background: var(--border-color);
+        }
+
+        .git-branch-item.current {
+            border-left: 4px solid var(--accent-color);
+            background: rgba(139, 92, 246, 0.1);
+        }
+
+        .git-branch-name {
+            font-family: monospace;
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+
+        .git-branch-actions {
+            display: flex;
+            gap: 5px;
+        }
+
+        .git-branch-btn {
+            padding: 5px 10px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.8em;
+            transition: all 0.3s ease;
+        }
+
+        .git-commit-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .git-commit-item {
+            padding: 15px;
+            margin-bottom: 10px;
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            transition: all 0.3s ease;
+        }
+
+        .git-commit-item:hover {
+            background: var(--border-color);
+        }
+
+        .git-commit-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .git-commit-hash {
+            font-family: monospace;
+            font-size: 0.9em;
+            color: var(--accent-color);
+            background: var(--bg-secondary);
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+
+        .git-commit-date {
+            font-size: 0.8em;
+            color: var(--text-secondary);
+        }
+
+        .git-commit-message {
+            color: var(--text-primary);
+            margin-bottom: 5px;
+            line-height: 1.4;
+        }
+
+        .git-commit-author {
+            font-size: 0.8em;
+            color: var(--text-secondary);
+        }
+
+        .git-file-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .git-file-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 12px;
+            margin-bottom: 5px;
+            background: var(--bg-tertiary);
+            border-radius: 6px;
+            border: 1px solid var(--border-color);
+            transition: all 0.3s ease;
+        }
+
+        .git-file-item:hover {
+            background: var(--border-color);
+        }
+
+        .git-file-name {
+            font-family: monospace;
+            font-size: 0.9em;
+            color: var(--text-primary);
+            flex: 1;
+        }
+
+        .git-file-status {
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.8em;
+            font-weight: 500;
+        }
+
+        .git-file-status.added {
+            background: rgba(56, 178, 172, 0.1);
+            color: #38b2ac;
+            border: 1px solid #38b2ac;
+        }
+
+        .git-file-status.modified {
+            background: rgba(237, 137, 54, 0.1);
+            color: #ed8936;
+            border: 1px solid #ed8936;
+        }
+
+        .git-file-status.deleted {
+            background: rgba(245, 101, 101, 0.1);
+            color: #f56565;
+            border: 1px solid #f56565;
+        }
+
+        .git-file-status.untracked {
+            background: rgba(102, 126, 234, 0.1);
+            color: #8B5CF6;
+            border: 1px solid #8B5CF6;
+        }
+
+        .git-input-group {
+            margin-bottom: 15px;
+        }
+
+        .git-input-label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+
+        .git-input {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            font-size: 0.9em;
+            transition: all 0.3s ease;
+        }
+
+        .git-input:focus {
+            outline: none;
+            border-color: var(--accent-color);
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .git-textarea {
+            min-height: 100px;
+            resize: vertical;
+            font-family: inherit;
+        }
+
+        .git-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            backdrop-filter: blur(5px);
+        }
+
+        .git-modal.active {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .git-modal-content {
+            background: var(--section-bg);
+            backdrop-filter: blur(10px);
+            border-radius: 16px;
+            padding: 30px;
+            max-width: 500px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+            border: 1px solid var(--border-color);
+            box-shadow: 0 25px 50px rgba(0, 0, 0, 0.3);
+        }
+
+        .git-modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .git-modal-title {
+            font-size: 1.4em;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .git-modal-close {
+            background: none;
+            border: none;
+            font-size: 1.5em;
+            cursor: pointer;
+            color: var(--text-secondary);
+            transition: color 0.3s ease;
+        }
+
+        .git-modal-close:hover {
+            color: var(--text-primary);
+        }
+
+        .git-modal-footer {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            margin-top: 20px;
+            padding-top: 15px;
+            border-top: 1px solid var(--border-color);
+        }
+
+        .git-loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            color: var(--text-secondary);
+        }
+
+        .git-spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid var(--border-color);
+            border-top: 2px solid var(--accent-color);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+        }
+
+        .git-error {
+            background: var(--error-bg);
+            border: 1px solid var(--error-border);
+            color: var(--error-border);
+            padding: 15px;
+            border-radius: 8px;
+            margin: 10px 0;
+        }
+
+        .git-success {
+            background: var(--success-bg);
+            border: 1px solid var(--success-border);
+            color: var(--success-border);
+            padding: 15px;
+            border-radius: 8px;
+            margin: 10px 0;
+        }
+
+        .git-warning {
+            background: var(--warning-bg);
+            border: 1px solid var(--warning-border);
+            color: var(--warning-border);
+            padding: 15px;
+            border-radius: 8px;
+            margin: 10px 0;
+        }
+
+        /* Pagination Styles */
+        .git-pagination {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 15px;
+            padding: 10px;
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            font-size: 0.9em;
+        }
+
+        .pagination-info {
+            color: var(--text-secondary);
+            font-size: 0.9em;
+        }
+
+        .pagination-controls {
+            display: flex;
+            gap: 5px;
+            align-items: center;
+        }
+
+        .pagination-controls .git-btn {
+            padding: 5px 10px;
+            font-size: 0.8em;
+            min-width: auto;
+        }
+
+        .git-filter-controls {
+            margin-bottom: 15px;
+        }
+
+        .git-filter-controls select {
+            padding: 5px;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            font-size: 0.9em;
+        }
+
+        .git-filter-controls select:focus {
+            outline: none;
+            border-color: var(--accent-color);
+        }
+
+        @media (max-width: 768px) {
+            .git-main-content {
+                grid-template-columns: 1fr;
+            }
+            
+            .git-header {
+                flex-direction: column;
+                gap: 15px;
+                align-items: stretch;
+            }
+            
+            .git-actions {
+                justify-content: center;
+            }
+            
+            .git-modal-content {
+                margin: 20px;
+                padding: 20px;
+            }
+            
+            .git-pagination {
+                flex-direction: column;
+                gap: 10px;
+                align-items: stretch;
+            }
+            
+            .pagination-controls {
+                justify-content: center;
+                flex-wrap: wrap;
+            }
+        }
+    </style>
+</head>
+<body data-page="git-ui">
+    <div class="page-content">
+        <!-- Header -->
+        <header class="header">
+            <div class="container">
+                <nav class="nav">
+                    <div class="logo">
+                        <a href="/">
+                            <img src="/img/cuttle-logo.png" alt="Cuttle" class="header-logo">
+                        </a>
+                    </div>
+                    <div class="nav-menu">
+                        <button class="menu-toggle" onclick="toggleMenu()">
+                            <span class="menu-icon">☰</span>
+                        </button>
+                    </div>
+                </nav>
+            </div>
+        </header>
+
+        <!-- Menu Dropdown -->
+        <div class="menu-dropdown" id="menuDropdown">
+            <div class="menu-section-title">Navigation</div>
+            <a href="/" class="menu-item">🏠 Home</a>
+            <a href="/router_editor.html" class="menu-item">🔗 Router</a>
+            <div class="menu-separator"></div>
+            <div class="menu-section-title">Reports</div>
+            <a href="/test_reports.html" class="menu-item">🧪 Test Reports</a>
+            <a href="/query_reports.html" class="menu-item">📊 Query Reports</a>
+            <a href="/launch_reports.html" class="menu-item">🚀 Launch Reports</a>
+            <a href="/data_reports.html" class="menu-item">📈 Data Reports</a>
+            <div class="menu-separator"></div>
+            <div class="menu-section-title">System</div>
+            <a href="/control_panel.html" class="menu-item">🎛️ Control Panel</a>
+            <a href="/git_ui.html" class="menu-item active">📁 Git UI</a>
+            <a href="/settings_page.html" class="menu-item">⚙️ Settings</a>
+            <a href="/about_page.html" class="menu-item">ℹ️ About</a>
+            <div class="menu-separator"></div>
+            <button class="menu-item" onclick="toggleTheme()">🌓 Toggle Theme</button>
+        </div>
+
+        <!-- Git UI Page -->
+        <div class="page-section active" id="gitPage">
+            <div class="git-container">
+                <div class="git-header">
+                    <div class="git-header-left">
+                        <h1 class="git-title">📁 Project & Git Management</h1>
+                        <div class="current-project-info" id="currentProjectInfo">
+                            <div class="project-selector">
+                                <select id="projectSelect" onchange="switchProject()">
+                                    <option value="">Select Project...</option>
+                                </select>
+                                <button class="git-btn git-btn-secondary" onclick="showModal('addProjectModal')">
+                                    ➕ Add Project
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="git-actions">
+                        <button class="git-btn git-btn-primary" onclick="refreshGitStatus()">
+                            🔄 Refresh
+                        </button>
+                        <button class="git-btn git-btn-secondary" onclick="showModal('pullModal')">
+                            ⬇️ Pull
+                        </button>
+                        <button class="git-btn git-btn-success" onclick="showModal('commitModal')">
+                            ✅ Commit
+                        </button>
+                        <button class="git-btn git-btn-warning" onclick="showModal('pushModal')">
+                            ⬆️ Push
+                        </button>
+                    </div>
+                </div>
+
+                <div class="git-main-content">
+                    <!-- Repository Status -->
+                    <div class="git-panel">
+                        <div class="git-panel-header">
+                            <h3 class="git-panel-title">📊 Repository Status</h3>
+                        </div>
+                        <div class="git-panel-content" id="gitStatusContent">
+                            <div class="git-loading">
+                                <div class="git-spinner"></div>
+                                Loading repository status...
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Current Branch -->
+                    <div class="git-panel">
+                        <div class="git-panel-header">
+                            <h3 class="git-panel-title">🌿 Current Branch</h3>
+                            <button class="git-btn git-btn-secondary" onclick="showModal('branchModal')">
+                                🔀 Switch
+                            </button>
+                        </div>
+                        <div class="git-panel-content" id="gitBranchContent">
+                            <div class="git-loading">
+                                <div class="git-spinner"></div>
+                                Loading branch information...
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Recent Commits -->
+                    <div class="git-panel">
+                        <div class="git-panel-header">
+                            <h3 class="git-panel-title">📝 Recent Commits</h3>
+                        </div>
+                        <div class="git-panel-content" id="gitCommitsContent">
+                            <div class="git-loading">
+                                <div class="git-spinner"></div>
+                                Loading recent commits...
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Working Directory -->
+                    <div class="git-panel">
+                        <div class="git-panel-header">
+                            <h3 class="git-panel-title">📂 Working Directory</h3>
+                        </div>
+                        <div class="git-panel-content" id="gitFilesContent">
+                            <div class="git-loading">
+                                <div class="git-spinner"></div>
+                                Loading working directory...
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Commit Modal -->
+        <div class="git-modal" id="commitModal">
+            <div class="git-modal-content">
+                <div class="git-modal-header">
+                    <h3 class="git-modal-title">✅ Commit Changes</h3>
+                    <button class="git-modal-close" onclick="hideModal('commitModal')">&times;</button>
+                </div>
+                <div class="git-input-group">
+                    <label class="git-input-label" for="commitMessage">Commit Message</label>
+                    <textarea class="git-input git-textarea" id="commitMessage" placeholder="Enter your commit message..."></textarea>
+                </div>
+                <div class="git-input-group">
+                    <label class="git-input-label" for="commitFiles">Files to Commit</label>
+                    <div id="commitFilesList">
+                        <!-- Files will be populated here -->
+                    </div>
+                </div>
+                <div class="git-modal-footer">
+                    <button class="git-btn git-btn-secondary" onclick="hideModal('commitModal')">Cancel</button>
+                    <button class="git-btn git-btn-success" onclick="performCommit()">Commit</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Pull Modal -->
+        <div class="git-modal" id="pullModal">
+            <div class="git-modal-content">
+                <div class="git-modal-header">
+                    <h3 class="git-modal-title">⬇️ Pull Changes</h3>
+                    <button class="git-modal-close" onclick="hideModal('pullModal')">&times;</button>
+                </div>
+                <div class="git-input-group">
+                    <label class="git-input-label" for="pullRemote">Remote</label>
+                    <select class="git-input" id="pullRemote">
+                        <option value="origin">origin</option>
+                    </select>
+                </div>
+                <div class="git-input-group">
+                    <label class="git-input-label" for="pullBranch">Branch</label>
+                    <input class="git-input" id="pullBranch" placeholder="main" value="main">
+                </div>
+                <div class="git-modal-footer">
+                    <button class="git-btn git-btn-secondary" onclick="hideModal('pullModal')">Cancel</button>
+                    <button class="git-btn git-btn-primary" onclick="performPull()">Pull</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Push Modal -->
+        <div class="git-modal" id="pushModal">
+            <div class="git-modal-content">
+                <div class="git-modal-header">
+                    <h3 class="git-modal-title">⬆️ Push Changes</h3>
+                    <button class="git-modal-close" onclick="hideModal('pushModal')">&times;</button>
+                </div>
+                <div class="git-input-group">
+                    <label class="git-input-label" for="pushRemote">Remote</label>
+                    <select class="git-input" id="pushRemote">
+                        <option value="origin">origin</option>
+                    </select>
+                </div>
+                <div class="git-input-group">
+                    <label class="git-input-label" for="pushBranch">Branch</label>
+                    <input class="git-input" id="pushBranch" placeholder="main" value="main">
+                </div>
+                <div class="git-modal-footer">
+                    <button class="git-btn git-btn-secondary" onclick="hideModal('pushModal')">Cancel</button>
+                    <button class="git-btn git-btn-warning" onclick="performPush()">Push</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Branch Modal -->
+        <div class="git-modal" id="branchModal">
+            <div class="git-modal-content">
+                <div class="git-modal-header">
+                    <h3 class="git-modal-title">🔀 Switch Branch</h3>
+                    <button class="git-modal-close" onclick="hideModal('branchModal')">&times;</button>
+                </div>
+                <div class="git-input-group">
+                    <label class="git-input-label" for="branchSelect">Select Branch</label>
+                    <select class="git-input" id="branchSelect">
+                        <!-- Branches will be populated here -->
+                    </select>
+                </div>
+                <div class="git-input-group">
+                    <label class="git-input-label" for="newBranchName">Or Create New Branch</label>
+                    <input class="git-input" id="newBranchName" placeholder="Enter new branch name...">
+                </div>
+                <div class="git-modal-footer">
+                    <button class="git-btn git-btn-secondary" onclick="hideModal('branchModal')">Cancel</button>
+                    <button class="git-btn git-btn-primary" onclick="switchBranch()">Switch</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Add Project Modal -->
+        <div class="git-modal" id="addProjectModal">
+            <div class="git-modal-content">
+                <div class="git-modal-header">
+                    <h3 class="git-modal-title">➕ Add New Project</h3>
+                    <button class="git-modal-close" onclick="hideModal('addProjectModal')">&times;</button>
+                </div>
+                <div class="git-input-group">
+                    <label class="git-input-label" for="projectName">Project Name</label>
+                    <input class="git-input" id="projectName" placeholder="Enter project name...">
+                </div>
+                <div class="git-input-group">
+                    <label class="git-input-label" for="projectType">Project Type</label>
+                    <select class="git-input" id="projectType" onchange="toggleProjectTypeFields()">
+                        <option value="local">Local Project</option>
+                        <option value="github">GitHub Repository</option>
+                        <option value="gitlab">GitLab Repository</option>
+                    </select>
+                </div>
+                <div class="git-input-group" id="localPathGroup">
+                    <label class="git-input-label" for="localPath">Local Path</label>
+                    <input class="git-input" id="localPath" placeholder="Enter local project path..." value="F:\Dev\Cuttle\src">
+                </div>
+                <div class="git-input-group" id="repoUrlGroup" style="display: none;">
+                    <label class="git-input-label" for="repoUrl">Repository URL</label>
+                    <input class="git-input" id="repoUrl" placeholder="https://github.com/username/repo.git">
+                </div>
+                <div class="git-input-group" id="localClonePathGroup" style="display: none;">
+                    <label class="git-input-label" for="localClonePath">Local Clone Path (optional)</label>
+                    <input class="git-input" id="localClonePath" placeholder="Leave empty for auto-generated path...">
+                </div>
+                <div class="git-input-group">
+                    <label class="git-input-label" for="projectDescription">Description (optional)</label>
+                    <textarea class="git-input git-textarea" id="projectDescription" placeholder="Enter project description..."></textarea>
+                </div>
+                <div class="git-input-group">
+                    <label class="git-input-label" for="projectTags">Tags (comma-separated, optional)</label>
+                    <input class="git-input" id="projectTags" placeholder="web, python, api...">
+                </div>
+                <div class="git-modal-footer">
+                    <button class="git-btn git-btn-secondary" onclick="hideModal('addProjectModal')">Cancel</button>
+                    <button class="git-btn git-btn-primary" onclick="addProject()">Add Project</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Project Management Modal -->
+        <div class="git-modal" id="projectManagementModal">
+            <div class="git-modal-content">
+                <div class="git-modal-header">
+                    <h3 class="git-modal-title">📁 Project Management</h3>
+                    <button class="git-modal-close" onclick="hideModal('projectManagementModal')">&times;</button>
+                </div>
+                <div class="git-panel-content" id="projectManagementContent">
+                    <div class="git-loading">
+                        <div class="git-spinner"></div>
+                        Loading projects...
+                    </div>
+                </div>
+                <div class="git-modal-footer">
+                    <button class="git-btn git-btn-secondary" onclick="hideModal('projectManagementModal')">Close</button>
+                    <button class="git-btn git-btn-primary" onclick="showModal('addProjectModal'); hideModal('projectManagementModal')">Add Project</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Commit Diff Modal -->
+    <div class="git-modal" id="commitDiffModal">
+        <div class="git-modal-content" style="max-width: 90%; width: 1200px;">
+            <div class="git-modal-header">
+                <h3 class="git-modal-title" id="commitDiffTitle">📋 Commit Diff</h3>
+                <button class="git-modal-close" onclick="hideModal('commitDiffModal')">&times;</button>
+            </div>
+            <div class="git-modal-body">
+                <div id="commitDiffContent">
+                    <div class="loading">Loading commit diff...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/background_effect_blend.js"></script>
+    <script src="/js/shared_navigation.js"></script>
+    <script src="/js/git_ui.js"></script>
+</body>
+</html>

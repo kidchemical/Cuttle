@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tools - Cuttle</title>
+    <link rel="stylesheet" href="/css/ui_boot.css?v=20260926safeArea">
+    <script src="/js/ui_boot.js?v=20260926safeArea"></script>
+    <link rel="stylesheet" href="/css/shared_navigation.css?v=20260926lightBg">
+    <link rel="stylesheet" href="/css/landing_page.css?v=20260926lightBg">
+    <link rel="stylesheet" href="/css/compact_page.css">
+    <style>
+        .tools-section { margin-bottom: 2rem; max-width: 44rem; }
+        .tools-section h3 { margin-bottom: 0.75rem; color: var(--text-primary, #e2e8f0); }
+        .tools-section code {
+            font-size: 0.9em;
+            padding: 0.1em 0.35em;
+            border-radius: 4px;
+            background: color-mix(in srgb, var(--text-primary, #e2e8f0) 10%, transparent);
+        }
+        .cli-list { list-style: none; padding: 0; margin: 0.75rem 0 0; }
+        .cli-list li {
+            padding: 0.65rem 0.85rem;
+            margin-bottom: 0.4rem;
+            background: var(--bg-secondary, rgba(30,41,59,0.6));
+            border: 1px solid var(--border-color, transparent);
+            border-radius: 8px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 0.88rem;
+        }
+        body.has-video-background[data-page="tools"] .page-section.active {
+            background: transparent;
+        }
+    </style>
+</head>
+<body class="compact-shell-page" data-page="tools">
+    <script>
+        (function () {
+            if (window.CuttleUiBoot) return;
+            var t = localStorage.getItem('theme') || 'dark';
+            document.body.classList.remove('dark-mode', 'midnight-mode', 'light-mode');
+            document.body.classList.add(t === 'light' ? 'light-mode' : (t === 'midnight' ? 'midnight-mode' : 'dark-mode'));
+        })();
+    </script>
+    <div class="page-content">
+    <div class="page-section active">
+        <div class="container">
+            <div class="compact-page-title">
+                <h1>Tools</h1>
+                <p>Agent ops CLIs — not an MCP tool server</p>
+            </div>
+
+            <div class="tools-section">
+                <h3>Cuttle MCP packs are retired</h3>
+                <p class="setting-description">
+                    Cuttle used to expose filesystem/shell/pipeline tools through a built-in MCP server
+                    (<code>run_cuttle_mcp.py</code>) for pipeline LLM nodes and Ollama tool-calling.
+                    That dual tool plane is off. Guest harnesses (Cursor, Codex, Muse, …) keep
+                    <em>their</em> MCP configs. Cuttle-owned work for agents is
+                    <code>python -m api.&lt;module&gt;</code>.
+                </p>
+            </div>
+
+            <div class="tools-section" id="agentOpsCli">
+                <h3>Agent ops (from the Cuttle venv)</h3>
+                <p class="setting-description">
+                    Runbook: <code>.cuttle/docs/agent-ops-cli.md</code>.
+                    Working directory should resolve the <code>api</code> package
+                    (repo root with <code>src</code> on <code>PYTHONPATH</code>, or Flask’s <code>cwd=src</code>).
+                </p>
+                <ul class="cli-list">
+                    <li>python -m api.chat_cli get CH-000577 --json</li>
+                    <li>python -m api.panes_cli list --json</li>
+                    <li>python -m api.discord_cli …</li>
+                    <li>python -m api.gitea …</li>
+                    <li>python -m api.device_workers.cli …</li>
+                    <li>python -m api.subagents …</li>
+                    <li>python -m api.widgets_cli …</li>
+                    <li>python -m api.cuttle_brain …</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+    </div>
+    <script src="/js/shared_navigation.js"></script>
+    <script src="/js/background_effect_blend.js"></script>
+    <script src="/js/video_background.js"></script>
+</body>
+</html>

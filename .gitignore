@@ -1,0 +1,138 @@
+# Environment variables (contains sensitive tokens)
+.env
+src/.env
+!.env.example
+
+# Personal / home-lab dogfood (keep locally; omit from public trees)
+_personal/
+INSTACART_PURCHASE_LOG.md
+INSTACART_CORE_SHOPPING_LIST.md
+INSTACART_CREDENTIALS.md
+.vapi_cuttle_assistant_id
+
+# Local home-automation device inventory (MAC / device ids)
+src/data/home_automation_devices.json
+!src/data/home_automation_devices.example.json
+
+# Local/generated JSON — keep source-of-truth configs tracked via negations below
+*.json
+!bot_config.json
+!electron/package.json
+!electron/package-lock.json
+!.cursor/mcp.json
+!src/pipelines/*.json
+!src/api/agent_router/suites/*.json
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.pytest_cache/
+src/.pytest_cache/
+
+# Virtual environment
+.venv/
+venv/
+env/
+.venv_wsl/
+.secret_DONOTSHIP/
+
+# Output directory
+output/
+src/output/
+
+# Cache directory
+cache/
+src/cache/
+
+# Temporary files
+temp_*
+*.tmp
+*.log
+logs/
+cuttle_notify_queue.jsonl
+cuttle_ui_toasts.jsonl
+cuttle_flask_restart_status.json
+cuttle_flask_restart_request.json
+cuttle_flask_restart_status.json.tmp
+cuttle_flask_restart_request.json.tmp
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Certs and keys (never commit)
+src/data/certs/
+.cuttle/certs/
+
+# Install-local Cuttle overlay (machine paths, LAN hosts, guild notes) — never ship
+.cuttle/personal/*
+!.cuttle/personal/README.md
+
+# Hub config lives at repo-root `.cuttle/` — ignore accidental scaffold under src/
+src/.cuttle/
+
+# Workspace data (user/session data — never commit)
+src/data/workspace/
+
+# Local runtime DBs
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Local agent memory / chroma indexes
+src/data/agent_memory/
+
+# Transient Govee API serialization lock (Cuttle home automation)
+src/data/govee_api_batch.lock
+
+# Playwright browser profiles (contain cookies/session data — never commit)
+.playwright-*/
+**/.playwright-cuttle-profile/
+*.playwright-secrets
+.instacart-playwright-secrets
+playwright-chat-test*.txt
+
+# Electron CDP debug profiles (Chromium user-data — Local Storage, cookies, etc.)
+.tmp_electron_cdp_profile/
+.tmp_electron_*/
+electron/.cdp-profile*/
+**/.cdp-profile*/
+
+# Scratch / probe artifacts
+.scratch/
+_tmp/
+helloworld.md
+src/scripts/_tmp_*
+src/src/
+
+# Local Claude / Cursor IDE settings
+.claude/settings.local.json
+
+# Node modules
+node_modules/
+
+# Electron build output
+electron/dist/
+electron/out/
+
+# Cuttle install-local overlay
+.cuttle/personal/
+
+# Cuttle agent scratch
+/temp/
+
+# Generated YouTube/promo renders (rebuild via src/scripts/utilities/promo_video.py)
+docs/media/promo/
+
+# Opt-in third-party harness (clone locally; not redistributed)
+/vendor/claw-code/

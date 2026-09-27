@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en" class="git-graph-root">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Git — Cuttle</title>
+    <link rel="stylesheet" href="/css/ui_boot.css?v=20260926safeArea">
+    <script src="/js/ui_boot.js?v=20260926safeArea"></script>
+    <!-- Same font stack as chat / other shell pages (do not load landing_page.css —
+         its transform + height:auto break fixed overlays). -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;650;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+    <noscript><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"></noscript>
+    <link rel="stylesheet" href="/css/compact_page.css">
+    <link rel="stylesheet" href="/css/pending_changes.css?v=20260920multiRepo">
+    <link rel="stylesheet" href="/css/git_commit_viewer.css?v=20260926commitModal">
+    <link rel="stylesheet" href="/css/git_graph_page.css?v=20260920multiRepo">
+    <script src="/js/toast.js"></script>
+</head>
+<body class="compact-shell-page git-graph-body">
+    <div class="page-content git-graph-page">
+        <header class="git-graph-toolbar">
+            <div class="compact-page-title">
+                <h1>Git</h1>
+                <span class="compact-page-subtitle" id="gitGraphSubtitle"></span>
+            </div>
+            <div class="git-graph-controls">
+                <label class="git-graph-field">
+                    <span>Project</span>
+                    <select id="gitGraphProject" aria-label="Project"></select>
+                </label>
+                <label class="git-graph-field" id="gitGraphRepoField" hidden>
+                    <span>Repo</span>
+                    <select id="gitGraphRepo" aria-label="Git repository"></select>
+                </label>
+                <label class="git-graph-field git-graph-filter">
+                    <span>Filter</span>
+                    <input type="search" id="gitGraphFilter" placeholder="hash or subject…" autocomplete="off">
+                </label>
+                <button type="button" class="git-graph-btn" id="gitGraphRefresh">Refresh</button>
+            </div>
+        </header>
+
+        <div class="git-graph-layout drawer-closed" id="gitGraphLayout">
+            <aside class="git-graph-branches" id="gitGraphBranches" aria-label="Branches">
+                <div class="git-graph-branches-head">Branches</div>
+                <div class="git-graph-branches-list" id="gitGraphBranchesList"></div>
+            </aside>
+            <section class="git-graph-main" aria-label="Commit graph">
+                <div class="git-graph-status" id="gitGraphStatus">Loading projects…</div>
+                <div class="git-graph-scroll" id="gitGraphScroll" hidden>
+                    <svg class="git-graph-svg" id="gitGraphSvg" xmlns="http://www.w3.org/2000/svg"></svg>
+                    <div class="git-graph-rows" id="gitGraphRows"></div>
+                </div>
+            </section>
+
+            <aside class="git-graph-drawer" id="gitGraphDrawer" hidden aria-label="Commit detail">
+                <div class="git-graph-drawer-head">
+                    <h2 id="gitGraphDetailTitle">Commit</h2>
+                    <button type="button" class="git-graph-btn ghost" id="gitGraphDrawerClose" aria-label="Close">Close</button>
+                </div>
+                <div class="git-graph-drawer-body" id="gitGraphDetailBody">
+                    <p class="git-graph-muted">Select a commit on the graph.</p>
+                </div>
+            </aside>
+        </div>
+
+        <div class="git-graph-lane-tip" id="gitGraphLaneTip" hidden role="tooltip"></div>
+
+        <div class="git-graph-pending-wrap" id="gitGraphPendingWrap">
+            <div class="pending-changes-host" id="pendingChangesHost" aria-label="Pending git changes"></div>
+        </div>
+    </div>
+
+    <!-- Native <dialog> top-layer popup — same chrome as chat pending-diff-modal -->
+    <dialog class="pending-diff-modal" id="gitDiffModal" aria-labelledby="gitDiffTitle">
+        <div class="pending-diff-modal-card">
+            <header class="pending-diff-modal-header">
+                <div class="pending-diff-modal-heading">
+                    <label class="git-diff-file-label" for="gitDiffFileSelect">
+                        <span class="pending-diff-modal-title sr-only" id="gitDiffTitle">File diff</span>
+                        <select id="gitDiffFileSelect" class="git-diff-file-select" aria-label="Changed file"></select>
+                    </label>
+                    <div class="pending-diff-modal-meta">
+                        <span class="pending-diff-modal-badge" id="gitDiffStatus"></span>
+                        <span class="pending-diff-modal-stats" id="gitDiffStats"></span>
+                        <span class="git-diff-commit" id="gitDiffCommit"></span>
+                    </div>
+                </div>
+                <button type="button" class="pending-diff-modal-close" id="gitDiffClose" title="Close diff" aria-label="Close diff">×</button>
+            </header>
+            <div class="pending-diff-modal-body" id="gitDiffBody">
+                <div class="pending-diff-modal-loading" id="gitDiffLoading" hidden>
+                    <span class="pending-diff-modal-spinner" aria-hidden="true"></span>
+                    <span>Loading diff…</span>
+                </div>
+                <div class="pending-diff-modal-empty" id="gitDiffEmpty" hidden></div>
+                <div class="pending-diff-modal-hunks" id="gitDiffHunks" hidden></div>
+            </div>
+        </div>
+    </dialog>
+
+    <script src="/js/pending_changes_panel.js?v=20260920multiRepo"></script>
+    <script src="/js/git_commit_viewer.js?v=20260926commitModal"></script>
+    <script src="/js/git_graph_page.js?v=20260926commitModal"></script>
+</body>
+</html>

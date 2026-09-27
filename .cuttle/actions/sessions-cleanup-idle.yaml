@@ -1,0 +1,11 @@
+name: sessions.cleanup-idle
+title: Cleanup idle chat sessions
+description: >-
+  Soft-delete Cuttle web chat sessions idle longer than N hours (default 24).
+  Keeps starred sessions unless include_starred is true. Runs
+  .cuttle/scripts/cleanup-idle-sessions.ps1.
+  Params: hours (number), dry_run (bool), include_starred (bool).
+type: shell
+run: powershell -NoProfile -ExecutionPolicy Bypass -File .cuttle\scripts\cleanup-idle-sessions.ps1
+run_posix: .venv/bin/python .cuttle/scripts/cleanup-idle-sessions.py
+workdir: .

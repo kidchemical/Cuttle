@@ -1,0 +1,86 @@
+apply plugin: 'com.android.application'
+
+android {
+    namespace "com.cuttle.mobile"
+    compileSdk rootProject.ext.compileSdkVersion
+    defaultConfig {
+        applicationId "com.cuttle.mobile"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode ((int) (System.currentTimeMillis() / 1000L))
+        versionName "1.0"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation project(':capacitor-android')
+    implementation "com.squareup.okhttp3:okhttp:4.12.0"
+    implementation "com.squareup.okhttp3:okhttp-sse:4.12.0"
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+apply from: 'capacitor.build.gradle'
+
+def repoRoot = file("${rootProject.projectDir}/../../..")
+def srcDir = new File(repoRoot, "src")
+def venvPy = new File(repoRoot, ".venv/Scripts/python.exe")
+def pythonExec = venvPy.exists() ? venvPy.absolutePath : "python"
+
+tasks.register("writeCuttleShellHash", Exec) {
+    workingDir repoRoot
+    environment "PYTHONPATH", srcDir.absolutePath
+    commandLine pythonExec, "-m", "api.mobile_android_update", "write-hash"
+}
+
+tasks.named("preBuild").configure {
+    dependsOn "writeCuttleShellHash"
+}
+
+android.applicationVariants.configureEach { variant ->
+    if (variant.buildType.name != "debug") {
+        return
+    }
+    variant.assembleProvider.configure {
+        doLast {
+            exec {
+                workingDir repoRoot
+                environment "PYTHONPATH", srcDir.absolutePath
+                commandLine pythonExec, "-m", "api.mobile_android_update", "publish"
+            }
+        }
+    }
+}
+
+try {
+    def servicesJSON = file('google-services.json')
+    if (servicesJSON.text) {
+        apply plugin: 'com.google.gms.google-services'
+    }
+} catch(Exception e) {
+    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}

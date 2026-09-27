@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="viewport-fit=cover, width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="color-scheme" content="dark">
+  <title>Cuttle</title>
+</head>
+<body>
+  <main class="page">
+    <header class="hero">
+      <div class="logo" aria-hidden="true">🦑</div>
+      <h1>Cuttle</h1>
+      <p class="tagline">Native client for your PC (LAN or Tailscale)</p>
+    </header>
+
+    <form id="setup-form" class="card" autocomplete="off">
+      <label class="field">
+        <span>PC address</span>
+        <input id="host" name="host" type="text" inputmode="text" autocomplete="off"
+          placeholder="192.168.1.50 or 100.x / hostname" required>
+      </label>
+
+      <div id="recent-hosts" class="recent-hosts" hidden>
+        <span class="recent-label">Saved addresses</span>
+        <div id="recent-hosts-list" class="recent-hosts-list" role="list"></div>
+      </div>
+
+      <label class="field">
+        <span>Port</span>
+        <select id="port-preset" name="portPreset">
+          <option value="8000">8000 — HTTP (recommended)</option>
+          <option value="8888">8888 — HTTPS (phone portal)</option>
+          <option value="custom">Custom…</option>
+        </select>
+      </label>
+
+      <label class="field hidden" id="custom-port-wrap">
+        <span>Custom port</span>
+        <input id="port-custom" name="portCustom" type="number" min="1" max="65535" placeholder="8000">
+      </label>
+
+      <label class="field checkbox">
+        <input id="use-https" name="useHttps" type="checkbox">
+        <span>Use HTTPS (required for port 8888)</span>
+      </label>
+
+      <p class="hint" id="scheme-hint">Using <strong>http</strong> on your home LAN.</p>
+
+      <label class="field checkbox">
+        <input id="notify-enabled" name="notifyEnabled" type="checkbox" checked>
+        <span>Native notifications for chat replies</span>
+      </label>
+
+      <label class="field" id="token-wrap">
+        <span>Mobile token (optional)</span>
+        <input id="mobile-token" name="mobileToken" type="text" autocomplete="off" placeholder="Same as CUTTLE_MOBILE_TOKEN">
+      </label>
+      <p class="hint" id="notify-hint">
+        Same APK — a small <strong>Cuttle</strong> status stays in the Android shade while listening.
+        iOS delivers while the app is open or recently in the background.
+      </p>
+
+      <button type="submit" class="btn primary" id="btn-connect">Open Cuttle</button>
+      <button type="button" class="btn secondary" id="btn-test">Test connection</button>
+      <button type="button" class="btn secondary" id="btn-update">Check for app update</button>
+    </form>
+
+    <section id="offline-login" class="card offline-login" hidden>
+      <h2>Sign in</h2>
+      <p class="hint" id="offline-login-text">
+        Cuttle on your PC is not reachable. Turn the PC on (tray icon), then retry — or open Server to change the address.
+      </p>
+      <button type="button" class="btn primary" id="btn-offline-retry">Retry</button>
+    </section>
+
+    <section id="status" class="status" hidden>
+      <p id="status-text"></p>
+    </section>
+
+    <section class="help card">
+      <h2>Like the Windows app</h2>
+      <p class="hint" style="margin-top:0">
+        This is a native shell (same idea as Electron on your PC): it loads the Cuttle UI
+        inside the app. Your PC still runs the daemon — the phone is the remote window.
+      </p>
+      <ol>
+        <li>Cuttle running on the PC (tray icon)</li>
+        <li><strong>Phone / LAN access</strong> on in Cuttle Settings</li>
+        <li>Same Wi‑Fi <strong>or</strong> Tailscale (use the <code>100.x</code> / MagicDNS address)</li>
+        <li>Saved addresses appear above after Test / Open — tap to switch</li>
+      </ol>
+    </section>
+  </main>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

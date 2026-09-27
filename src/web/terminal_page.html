@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Terminal - Cuttle</title>
+    <link rel="stylesheet" href="/css/ui_boot.css?v=20260926safeArea">
+    <script src="/js/ui_boot.js?v=20260926safeArea"></script>
+    <link rel="stylesheet" href="/css/terminal_page.css?v=20260727pty2">
+</head>
+<body>
+    <div class="terminal-layout" id="terminalLayout">
+        <!-- Same corner chrome as chat_page -->
+        <button type="button" class="corner-chat-button new-chat-corner-button" id="newChatBtn" title="New chat" aria-label="New chat">
+            <span aria-hidden="true">+</span>
+        </button>
+        <button type="button" class="corner-chat-button chat-history-panel-button" id="chatHistoryPanelButton" title="Chat history" aria-label="Chat history">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M12 8v4l3 2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M3.05 11a9 9 0 1 1 .5 4M3 16v-5H8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+        </button>
+        <button type="button" class="chat-id-badge" id="chatIdBadge" hidden title="Copy chat ID" aria-label="Copy chat ID" onclick="window.copyChatIdBadge()">
+            <span class="chat-id-badge-label" id="chatIdBadgeLabel"></span>
+        </button>
+        <a class="view-switch-button" href="/chat_page.html" title="Open chat" aria-label="Open chat" id="chatViewBtn">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+        </a>
+
+        <div class="terminal-tab-strip" id="terminalTabStrip" hidden>
+            <div class="tab-bar" id="tabBar" role="tablist" aria-label="Terminal sessions"></div>
+            <button type="button" class="corner-chat-button tab-new-button" id="newTabBtn" title="New session (Ctrl+Shift+T)" aria-label="New terminal session">
+                <span aria-hidden="true">+</span>
+            </button>
+        </div>
+
+        <main class="terminal-main" id="terminalMain">
+            <div class="terminal-empty" id="terminalEmpty">
+                <p>No sessions yet.</p>
+                <div class="terminal-empty-actions" id="terminalEmptyActions">
+                    <button type="button" class="primary-btn" id="startFirstBtn" data-shell="powershell">Start PowerShell</button>
+                </div>
+            </div>
+        </main>
+        <footer class="terminal-status" id="terminalStatus" hidden></footer>
+    </div>
+
+    <template id="tabTemplate">
+        <button type="button" class="tab-item" role="tab" draggable="true" title="Double-click to reconnect">
+            <span class="tab-icon"></span>
+            <span class="tab-label"></span>
+            <span class="tab-close" title="Close" aria-label="Close tab">×</span>
+        </button>
+    </template>
+
+    <template id="paneTemplate">
+        <div class="terminal-pane">
+            <div class="xterm-host"></div>
+        </div>
+    </template>
+
+    <script src="/js/optional_cdn.js?v=20260813vegaOrder"></script>
+    <script src="/js/terminal_page.js?v=20260811offline"></script>
+</body>
+</html>

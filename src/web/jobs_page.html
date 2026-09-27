@@ -1,0 +1,1764 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jobs - Cuttle</title>
+    <link rel="stylesheet" href="/css/ui_boot.css?v=20260926safeArea">
+    <script src="/js/ui_boot.js?v=20260926safeArea"></script>
+    <link rel="stylesheet" href="css/shared_navigation.css?v=20260926lightBg">
+    <link rel="stylesheet" href="css/landing_page.css?v=20260926lightBg">
+    <link rel="stylesheet" href="css/compact_page.css?v=20260917bgFix2">
+    <style>
+        .jobs-page { padding: 16px; max-width: 1100px; margin: 0 auto; }
+        .jobs-header { margin-bottom: 12px; }
+        .jobs-header h1 { font-size: 1.25rem; margin-bottom: 4px; }
+        .jobs-header p { color: var(--text-secondary); font-size: 0.8rem; line-height: 1.35; margin: 0; }
+        .job-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
+        .job-stat-card {
+            padding: 12px 14px; border-radius: 8px;
+            background: var(--section-bg); border: 1px solid var(--border-color);
+        }
+        .job-stat-value { font-size: 1.35rem; font-weight: 650; letter-spacing: -0.02em; }
+        .job-stat-label { font-size: 0.72rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.04em; margin-top: 2px; }
+        .jobs-tabs {
+            display: inline-flex; gap: 2px; padding: 3px; margin-bottom: 14px;
+            border-radius: 8px; background: var(--section-bg); border: 1px solid var(--border-color);
+        }
+        .jobs-tab {
+            padding: 6px 14px; border: none; border-radius: 6px; cursor: pointer;
+            background: transparent; color: var(--text-secondary); font-size: 13px; font-weight: 500;
+        }
+        .jobs-tab:hover { color: var(--text-primary); }
+        .jobs-tab.active { background: var(--accent-color); color: var(--text-inverse, #fff); }
+        .jobs-panel { display: none; }
+        .jobs-panel.active { display: block; }
+        .jobs-section-title { font-size: 0.95rem; font-weight: 600; margin: 0 0 10px 0; color: var(--text-primary); }
+        .jobs-filter { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; align-items: center; }
+        .jobs-filter button, .hist-filter button {
+            padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border-color);
+            background: var(--section-bg); color: var(--text-primary); cursor: pointer;
+            font-size: 12px;
+        }
+        .jobs-filter button:hover, .hist-filter button:hover { background: var(--panel-hover); }
+        .jobs-filter button.active, .hist-filter button.active {
+            background: var(--accent-color); border-color: var(--accent-color); color: var(--text-inverse, #fff);
+        }
+        .hist-source { font-size: 11px; color: var(--text-tertiary); margin-left: auto; }
+        .active-grid {
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px;
+        }
+        .active-card {
+            padding: 12px 14px; border-radius: 10px;
+            background: var(--section-bg); border: 1px solid var(--border-color);
+            display: flex; flex-direction: column; gap: 8px; min-height: 110px;
+        }
+        .active-card.gitea { border-left: 3px solid #38bdf8; }
+        .active-card.pipeline { border-left: 3px solid #4ade80; }
+        .active-card-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+        .active-title { font-weight: 600; font-size: 13px; line-height: 1.3; word-break: break-word; }
+        .active-meta { font-size: 11px; color: var(--text-secondary); line-height: 1.4; }
+        .active-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; }
+        .active-actions a {
+            font-size: 12px; color: var(--accent-color); text-decoration: none; font-weight: 500;
+        }
+        .active-actions a:hover { text-decoration: underline; }
+        .cmd-badge, .job-type-badge, .status-pill {
+            font-size: 10px; padding: 2px 6px; border-radius: 4px; text-transform: uppercase;
+            flex-shrink: 0; font-weight: 600; letter-spacing: 0.02em;
+        }
+        .cmd-badge.investigate { background: rgba(56, 189, 248, 0.2); color: #38bdf8; }
+        .cmd-badge.solve { background: rgba(74, 222, 128, 0.2); color: #4ade80; }
+        .cmd-badge.converse { background: rgba(250, 204, 21, 0.2); color: #facc15; }
+        .cmd-badge.decline { background: rgba(148, 163, 184, 0.25); color: #94a3b8; }
+        .cmd-badge.pipeline { background: rgba(74, 222, 128, 0.2); color: #4ade80; }
+        .status-pill.queued { background: rgba(250, 204, 21, 0.18); color: #facc15; }
+        .status-pill.claimed { background: rgba(56, 189, 248, 0.18); color: #38bdf8; }
+        .status-pill.running { background: rgba(56, 189, 248, 0.18); color: #38bdf8; }
+        .status-pill.processing { background: rgba(56, 189, 248, 0.18); color: #38bdf8; }
+        .status-pill.pending { background: rgba(250, 204, 21, 0.18); color: #facc15; }
+        .status-pill.completed,
+        .status-pill.succeeded { background: rgba(74, 222, 128, 0.18); color: #4ade80; }
+        .status-pill.cancelled { background: rgba(148, 163, 184, 0.25); color: #94a3b8; }
+        .status-pill.failed { background: rgba(248, 113, 113, 0.18); color: #f87171; }
+        .status-pill.expired { background: rgba(148, 163, 184, 0.25); color: #94a3b8; }
+        .live-dot {
+            display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+            background: #38bdf8; margin-right: 5px; vertical-align: middle;
+            box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.5);
+            animation: livePulse 1.4s ease-out infinite;
+        }
+        @keyframes livePulse {
+            0% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.45); }
+            70% { box-shadow: 0 0 0 6px rgba(56, 189, 248, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); }
+        }
+        .running-now-empty, .jobs-empty, .jobs-loading {
+            font-size: 12px; color: var(--text-secondary); padding: 18px 14px;
+            border-radius: 8px; background: var(--section-bg); border: 1px dashed var(--border-color);
+            text-align: center;
+        }
+        .hist-table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: auto; }
+        .hist-table th {
+            text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+            color: var(--text-tertiary); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--border-color);
+            white-space: nowrap;
+        }
+        .hist-table td {
+            padding: 9px 8px; border-bottom: 1px solid var(--border-color);
+            vertical-align: top; color: var(--text-primary);
+        }
+        .jobs-table-scroll {
+            display: block;
+            width: fit-content;
+            max-width: 100%;
+            overflow-x: auto;
+            overflow-y: visible;
+            -webkit-overflow-scrolling: touch;
+            overscroll-behavior-x: contain;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            background: var(--section-bg);
+        }
+        .jobs-table-scroll--capped {
+            max-height: min(42vh, 420px);
+            overflow-y: auto;
+            overscroll-behavior: contain;
+            /* never force full panel width — match uncapped workers table */
+            width: fit-content;
+            max-width: 100%;
+        }
+        .jobs-table-block {
+            display: inline-flex;
+            flex-direction: column;
+            align-items: stretch;
+            width: max-content;
+            max-width: 100%;
+            vertical-align: top;
+        }
+        .jobs-table-pager {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 8px;
+            box-sizing: border-box;
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+        .jobs-table-pager-meta {
+            color: var(--text-tertiary);
+        }
+        .jobs-table-pager-actions {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .jobs-pager-btn {
+            padding: 4px 10px;
+            border-radius: 6px;
+            border: 1px solid var(--border-color);
+            background: var(--section-bg);
+            color: var(--text-primary);
+            cursor: pointer;
+            font-size: 12px;
+            font-family: inherit;
+            line-height: 1.2;
+        }
+        .jobs-pager-btn:hover:not(:disabled) {
+            background: var(--panel-hover);
+        }
+        .jobs-pager-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+        .jobs-pager-page {
+            min-width: 4.5em;
+            text-align: center;
+            color: var(--text-tertiary);
+            font-variant-numeric: tabular-nums;
+        }
+        #devicesList,
+        #meshJobsList,
+        #historyList {
+            min-width: 0;
+            max-width: 100%;
+            overflow: hidden;
+        }
+        .jobs-panel {
+            min-width: 0;
+            max-width: 100%;
+        }
+        .jobs-table-scroll .hist-table {
+            margin: 0;
+            border-collapse: separate;
+            border-spacing: 0;
+            width: max-content;
+            min-width: 0;
+        }
+        .jobs-table-scroll .hist-table th,
+        .jobs-table-scroll .hist-table td {
+            border-bottom: 1px solid var(--border-color);
+            white-space: nowrap;
+        }
+        .jobs-table-scroll .hist-table td.jobs-cell-wrap {
+            white-space: normal;
+            min-width: 140px;
+            max-width: 280px;
+            word-break: break-word;
+        }
+        .jobs-table-scroll .hist-table tr:last-child td {
+            border-bottom: none;
+        }
+        .jobs-table-scroll .hist-table thead th {
+            position: sticky;
+            top: 0;
+            background: var(--section-bg);
+            z-index: 1;
+        }
+        .jobs-table-scroll .hist-table th.device-actions-cell,
+        .jobs-table-scroll .hist-table td.device-actions-cell {
+            position: sticky;
+            right: 0;
+            z-index: 2;
+            width: 44px;
+            min-width: 44px;
+            max-width: 44px;
+            text-align: right;
+            padding-left: 6px;
+            padding-right: 8px;
+            background: var(--section-bg);
+            box-shadow: -8px 0 10px -8px rgba(0, 0, 0, 0.45);
+        }
+        .jobs-table-scroll .hist-table thead th.device-actions-cell {
+            z-index: 3;
+        }
+        .jobs-table-scroll .hist-table tr.device-row-you td.device-actions-cell {
+            background: color-mix(in srgb, rgba(63, 185, 80, 0.06) 100%, var(--section-bg));
+        }
+        .jobs-table-scroll .hist-table tr:hover td.device-actions-cell {
+            background: var(--panel-hover, rgba(255,255,255,0.04));
+        }
+        .jobs-table-scroll .hist-table tr.device-row-you:hover td.device-actions-cell {
+            background: color-mix(in srgb, rgba(63, 185, 80, 0.1) 100%, var(--section-bg));
+        }
+        .hist-table tr.clickable { cursor: pointer; }
+        .hist-table tr.clickable:hover td { background: var(--panel-hover, rgba(255,255,255,0.04)); }
+        .device-role {
+            display: inline-block; font-size: 10px; font-weight: 650; letter-spacing: 0.03em;
+            text-transform: uppercase; padding: 2px 6px; border-radius: 4px;
+            background: rgba(148, 163, 184, 0.2); color: var(--text-secondary, #94a3b8);
+            margin-right: 4px;
+        }
+        .device-role-host {
+            background: rgba(56, 189, 248, 0.2); color: #38bdf8;
+        }
+        .device-role-you {
+            background: rgba(63, 185, 80, 0.22); color: #3fb950;
+        }
+        .device-role-stale {
+            background: rgba(210, 153, 34, 0.22); color: #d29922;
+        }
+        .device-row-you td { background: rgba(63, 185, 80, 0.06); }
+        .device-slot-cell {
+            width: 2.25rem;
+            text-align: center;
+            font-variant-numeric: tabular-nums;
+            opacity: 0.75;
+            font-weight: 600;
+        }
+        .device-actions-cell {
+            width: 44px; text-align: right; white-space: nowrap;
+        }
+        .device-menu-btn {
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 28px; height: 26px; padding: 0;
+            border: 1px solid rgba(148, 163, 184, 0.22);
+            border-radius: 6px;
+            background: transparent;
+            color: var(--text-secondary, #94a3b8);
+            cursor: pointer; font: inherit; line-height: 1;
+        }
+        .device-menu-btn:hover,
+        .device-menu-btn[aria-expanded="true"] {
+            background: rgba(148, 163, 184, 0.14);
+            border-color: rgba(148, 163, 184, 0.4);
+            color: var(--text-primary, #e2e8f0);
+        }
+        .device-menu-btn .device-hamburger {
+            display: flex; flex-direction: column; gap: 2.5px; width: 12px;
+        }
+        .device-menu-btn .device-hamburger span {
+            display: block; height: 1.5px; border-radius: 1px; background: currentColor;
+        }
+        .device-row-menu {
+            position: fixed;
+            min-width: 160px;
+            padding: 4px;
+            border: 1px solid var(--border-color, #334155);
+            border-radius: 8px;
+            background: var(--bg-secondary, #1e293b);
+            box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
+            display: flex; flex-direction: column; gap: 1px;
+            z-index: 80;
+        }
+        .device-row-menu[hidden] { display: none !important; }
+        .device-row-menu button {
+            display: block; width: 100%; text-align: left;
+            padding: 8px 10px; border: none; border-radius: 6px;
+            background: transparent; color: var(--text-primary, #e2e8f0);
+            font: inherit; font-size: 12px; cursor: pointer;
+        }
+        .device-row-menu button:hover:not(:disabled) {
+            background: rgba(148, 163, 184, 0.14);
+        }
+        .device-row-menu button:disabled {
+            opacity: 0.4; cursor: not-allowed;
+        }
+        .device-row-menu button.danger { color: #f87171; }
+        .device-row-menu button.danger:hover:not(:disabled) {
+            background: rgba(248, 113, 113, 0.12);
+        }
+        .hist-error {
+            color: #f87171; font-size: 11px; margin-top: 3px;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px;
+        }
+        .hist-pr { color: var(--accent-color); text-decoration: none; font-size: 11px; }
+        .hist-pr:hover { text-decoration: underline; }
+        .job-card {
+            display: flex; align-items: flex-start; gap: 10px;
+            padding: 12px 14px; margin-bottom: 8px; border-radius: 8px;
+            background: var(--section-bg); border: 1px solid var(--border-color);
+        }
+        .job-card.running { border-left: 3px solid var(--success-border); }
+        .job-card.clickable { cursor: pointer; }
+        .job-card.clickable:hover { background: var(--panel-hover, rgba(255,255,255,0.06)); }
+        .job-main { flex: 1; min-width: 0; }
+        .job-row-top {
+            display: flex; align-items: center; justify-content: space-between; gap: 10px;
+            margin-bottom: 6px; min-height: 30px; flex-wrap: wrap;
+        }
+        .job-title-compact {
+            font-weight: 600; font-size: 14px;
+            display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1;
+        }
+        .job-title-compact .job-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .job-type-badge.work { background: rgba(59, 130, 246, 0.3); color: #60a5fa; }
+        .job-type-badge.think { background: rgba(168, 85, 247, 0.3); color: #c084fc; }
+        .job-type-badge.play { background: rgba(34, 197, 94, 0.3); color: #4ade80; }
+        .job-type-badge.pipeline { background: rgba(100, 116, 139, 0.3); color: #94a3b8; }
+        .job-desc {
+            font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; line-height: 1.4;
+            overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+        }
+        .job-meta { display: flex; flex-wrap: wrap; gap: 10px 12px; font-size: 11px; color: var(--text-secondary); line-height: 1.25; }
+        .job-meta span { display: inline-flex; align-items: center; gap: 4px; }
+        .job-actions {
+            display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+            overflow: visible; min-height: 28px;
+        }
+        .job-btn {
+            padding: 6px 10px; border-radius: 6px; font-size: 12px; cursor: pointer; border: none;
+        }
+        .job-btn-run-now { background: var(--accent-color); color: var(--text-inverse, #fff); font-weight: 600; }
+        .job-btn-edit { background: var(--border-color); color: var(--text-primary); }
+        .job-toggle-wrap { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; }
+        .job-toggle-wrap .job-toggle-label { font-size: 11px; color: var(--text-secondary); white-space: nowrap; }
+        .job-switch {
+            position: relative; display: inline-block; width: 36px; height: 22px;
+            flex-shrink: 0; vertical-align: middle; overflow: visible; box-sizing: border-box;
+        }
+        .job-switch input { opacity: 0; width: 0; height: 0; position: absolute; margin: 0; }
+        .job-switch-slider {
+            position: absolute; cursor: pointer; inset: 0;
+            background: var(--border-color); border-radius: 11px; transition: background 0.2s;
+        }
+        .job-switch-slider::before {
+            content: ''; position: absolute; width: 16px; height: 16px; left: 3px; top: 50%;
+            margin-top: -8px; background: #fff; border-radius: 50%; transition: transform 0.2s;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+        }
+        .job-switch input:checked + .job-switch-slider { background: var(--success-border); }
+        .job-switch input:checked + .job-switch-slider::before { transform: translateX(14px); }
+        .schedule-enabler { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; flex-wrap: wrap; }
+        .schedule-countdown { color: var(--text-tertiary); font-size: 10px; margin-left: 4px; }
+        .status-indicator { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+        .status-running { background-color: #4ade80; }
+        .pipe-stats { display: flex; gap: 12px; margin-bottom: 12px; }
+        .pipe-stats .job-stat-card { flex: 1; }
+        @media (max-width: 768px) {
+            .jobs-page { padding: 10px 8px; max-width: 100%; }
+            .job-stats { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+            .job-card { flex-direction: column; }
+            .job-actions { align-self: flex-end; }
+            .jobs-tabs { width: 100%; display: flex; overflow-x: auto; }
+            .jobs-tab { flex: 1 0 auto; text-align: center; padding: 6px 10px; }
+            .hist-source { margin-left: 0; width: 100%; }
+            .pipe-stats { flex-wrap: wrap; }
+            .jobs-table-scroll {
+                margin-left: -2px;
+                margin-right: -2px;
+                max-width: calc(100% + 4px);
+            }
+        }
+    </style>
+</head>
+<body class="compact-shell-page" data-page="jobs">
+    <script>
+        (function () {
+            if (window.CuttleUiBoot) return;
+            var t = localStorage.getItem('theme') || 'dark';
+            document.body.classList.remove('dark-mode', 'midnight-mode', 'light-mode');
+            document.body.classList.add(t === 'light' ? 'light-mode' : (t === 'midnight' ? 'midnight-mode' : 'dark-mode'));
+        })();
+    </script>
+    <div class="jobs-page">
+        <div class="compact-page-title jobs-header">
+            <h1>Jobs</h1>
+            <p>Cockpit for Gitea <strong>@cuttle</strong> worker jobs — active runs, history, and mesh workers.</p>
+        </div>
+
+        <div class="job-stats">
+            <div class="job-stat-card">
+                <div class="job-stat-value" id="statRunning">0</div>
+                <div class="job-stat-label">Running</div>
+            </div>
+            <div class="job-stat-card">
+                <div class="job-stat-value" id="statPending">0</div>
+                <div class="job-stat-label">Pending</div>
+            </div>
+            <div class="job-stat-card">
+                <div class="job-stat-value" id="statCompleted">0</div>
+                <div class="job-stat-label">Done today</div>
+            </div>
+            <div class="job-stat-card">
+                <div class="job-stat-value" id="statFailed">0</div>
+                <div class="job-stat-label">Failed</div>
+            </div>
+        </div>
+
+        <div class="jobs-tabs" role="tablist">
+            <button type="button" class="jobs-tab active" data-tab="active" role="tab">Active</button>
+            <button type="button" class="jobs-tab" data-tab="history" role="tab">History</button>
+            <button type="button" class="jobs-tab" data-tab="devices" role="tab">Devices</button>
+            <button type="button" class="jobs-tab" data-tab="pipelines" role="tab">Pipelines</button>
+        </div>
+
+        <section class="jobs-panel active" id="panel-active" aria-label="Active jobs">
+            <h2 class="jobs-section-title">In flight</h2>
+            <div id="activeList" class="active-grid"></div>
+        </section>
+
+        <section class="jobs-panel" id="panel-history" aria-label="Job history">
+            <div class="jobs-filter hist-filter">
+                <button type="button" class="hist-btn active" data-hist="all">All</button>
+                <button type="button" class="hist-btn" data-hist="completed">Completed</button>
+                <button type="button" class="hist-btn" data-hist="failed">Failed</button>
+                <button type="button" class="hist-btn" data-hist="pending">Pending</button>
+                <span class="hist-source" id="histSource"></span>
+            </div>
+            <div id="historyList"></div>
+        </section>
+
+        <section class="jobs-panel" id="panel-devices" aria-label="Device workers">
+            <div class="jobs-filter hist-filter" style="margin-bottom:12px;">
+                <button type="button" class="hist-btn" id="btnPingWorker">Ping local worker</button>
+                <span class="hist-source" id="devicesStatus"></span>
+            </div>
+            <h2 class="jobs-section-title">Workers</h2>
+            <div id="devicesList"></div>
+            <h2 class="jobs-section-title" style="margin-top:1.25rem;">Mesh jobs</h2>
+            <div id="meshJobsList"></div>
+        </section>
+
+        <section class="jobs-panel" id="panel-pipelines" aria-label="Pipelines">
+            <p>Visual pipeline graphs were removed. This page is the mesh/worker cockpit. Use slash agents in chat for coding turns.</p>
+        </section>
+    </div>
+    <script src="/js/shared_navigation.js"></script>
+    <script src="/js/background_effect_blend.js"></script>
+    <script src="/js/video_background.js"></script>
+    <script src="/js/toast.js"></script>
+    <script src="/js/cron_countdown.js"></script>
+    <script>
+        let allJobs = [];
+        let executingJobs = [];
+        let cuttleActive = [];
+        let cuttleHistory = [];
+        let deviceWorkers = [];
+        let meshJobs = [];
+        let meshJobsPage = 0;
+        const MESH_JOBS_PAGE_SIZE = 25;
+        let devicesEnabled = true;
+        let selfWorkerId = '';
+        let hostCuttleVersion = '';
+        let viewingWorkerId = '';
+
+        async function getDesktopViewerConfig() {
+            // Explicit identity from shell navigate(?me=&client=) — most reliable for iframes.
+            try {
+                const qs = new URLSearchParams(window.location.search || '');
+                const me = String(qs.get('me') || '').trim().toLowerCase();
+                const clientFlag = qs.get('client');
+                if (me || clientFlag === '1') {
+                    return {
+                        clientMode: clientFlag === '1' || clientFlag === 'true',
+                        workerId: me,
+                        hostname: String(qs.get('host') || '').trim(),
+                    };
+                }
+            } catch (_) {}
+            // Jobs loads in a shell iframe — preload `window.electron` is on the parent only.
+            const bridges = [];
+            try { if (window.electron?.desktop) bridges.push(window.electron.desktop); } catch (_) {}
+            try { if (window.parent && window.parent !== window && window.parent.electron?.desktop) bridges.push(window.parent.electron.desktop); } catch (_) {}
+            try { if (window.top && window.top !== window && window.top.electron?.desktop) bridges.push(window.top.electron.desktop); } catch (_) {}
+            for (const desktop of bridges) {
+                try {
+                    if (typeof desktop.getConfig === 'function') {
+                        const cfg = await desktop.getConfig();
+                        if (cfg && typeof cfg === 'object') return cfg;
+                    }
+                } catch (_) {}
+            }
+            try {
+                const clientMode = sessionStorage.getItem('cuttle_client_mode') === '1';
+                const workerId = String(sessionStorage.getItem('cuttle_viewer_worker_id') || '').trim();
+                if (workerId || clientMode) {
+                    return { clientMode: clientMode, workerId: workerId };
+                }
+            } catch (_) {}
+            // Ask parent shell (works once app_shell.js with the poster is loaded).
+            try {
+                if (window.parent && window.parent !== window) {
+                    window.parent.postMessage({ type: 'cuttle-viewer-identity-request' }, '*');
+                }
+            } catch (_) {}
+            return null;
+        }
+
+        window.addEventListener('message', (ev) => {
+            const d = ev && ev.data;
+            if (!d || d.type !== 'cuttle-viewer-identity') return;
+            try {
+                const wid = String(d.workerId || '').trim().toLowerCase();
+                if (d.clientMode) sessionStorage.setItem('cuttle_client_mode', '1');
+                else if (d.clientMode === false) sessionStorage.setItem('cuttle_client_mode', '0');
+                if (wid) sessionStorage.setItem('cuttle_viewer_worker_id', wid);
+                if (d.hostname) sessionStorage.setItem('cuttle_viewer_hostname', String(d.hostname).toLowerCase());
+                loadDevices();
+            } catch (_) {}
+        });
+
+        async function resolveViewingWorkerId(hostSelfId) {
+            const cfg = await getDesktopViewerConfig();
+            const fromDesktop = String(cfg?.workerId || '').trim().toLowerCase();
+            const hostname = String(
+                cfg?.hostname ||
+                (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('cuttle_viewer_hostname')) ||
+                ''
+            ).trim().toLowerCase();
+            // Client UI: never treat the coordinator's self_worker_id as "you"
+            if (cfg && cfg.clientMode) {
+                if (fromDesktop) return fromDesktop;
+                if (hostname && Array.isArray(deviceWorkers) && deviceWorkers.length) {
+                    const byHost = deviceWorkers.find((w) => {
+                        const hn = String(w.hostname || '').trim().toLowerCase();
+                        const id = String(w.worker_id || '').trim().toLowerCase();
+                        return hn === hostname || id === hostname;
+                    });
+                    if (byHost) return String(byHost.worker_id || '').toLowerCase();
+                }
+                return '';
+            }
+            if (fromDesktop) return fromDesktop;
+            if (cfg && cfg.clientMode === false && hostSelfId) {
+                return String(hostSelfId).toLowerCase();
+            }
+            // Bare browser on the host machine (no Electron bridge at all)
+            const hasElectronBridge = !!(
+                window.electron ||
+                (window.parent && window.parent !== window && window.parent.electron) ||
+                (window.top && window.top !== window && window.top.electron)
+            );
+            if (!hasElectronBridge && !cfg) {
+                return hostSelfId ? String(hostSelfId).toLowerCase() : '';
+            }
+            return '';
+        }
+
+        function workerRoleTags(w) {
+            const id = String(w.worker_id || '').toLowerCase();
+            const tags = [];
+            if (w.is_self) tags.push('host');
+            else tags.push('worker');
+            if (viewingWorkerId && id === viewingWorkerId) tags.push('you');
+            return tags;
+        }
+        let currentFilter = 'all';
+        let histFilter = 'all';
+        const VALID_JOBS_TABS = { active: 1, history: 1, devices: 1, pipelines: 1 };
+        function readInitialJobsTab() {
+            try {
+                const fromUrl = String(
+                    new URLSearchParams(window.location.search || '').get('tab') || ''
+                ).trim().toLowerCase();
+                if (VALID_JOBS_TABS[fromUrl]) return fromUrl;
+            } catch (_) {}
+            try {
+                const fromLs = String(localStorage.getItem('jobsPageTab') || '').trim().toLowerCase();
+                if (VALID_JOBS_TABS[fromLs]) return fromLs;
+            } catch (_) {}
+            return 'active';
+        }
+        let currentTab = readInitialJobsTab();
+        let initialLoad = true;
+        let pollTimer = null;
+
+        function setHtmlIfChanged(el, html) {
+            if (!el) return;
+            if (el.innerHTML !== html) el.innerHTML = html;
+        }
+
+        let openDeviceMenuKey = null;
+        let suppressDeviceMenuClose = 0;
+
+        function cssEsc(value) {
+            const s = String(value == null ? '' : value);
+            if (window.CSS && typeof CSS.escape === 'function') return CSS.escape(s);
+            return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        }
+
+        function deviceMenuKeyFromBtn(btn) {
+            if (!btn) return null;
+            const jid = String(btn.getAttribute('data-job-id') || '').trim();
+            if (jid) return 'job:' + jid;
+            const wid = String(btn.getAttribute('data-worker-id') || '').trim();
+            if (wid) return 'worker:' + wid;
+            return null;
+        }
+
+        function findDeviceMenuButton(key) {
+            if (!key) return null;
+            if (key.indexOf('job:') === 0) {
+                const id = key.slice(4);
+                return document.querySelector('.device-menu-btn[data-job-id="' + cssEsc(id) + '"]');
+            }
+            if (key.indexOf('worker:') === 0) {
+                const id = key.slice(7);
+                return document.querySelector('.device-menu-btn[data-worker-id="' + cssEsc(id) + '"]');
+            }
+            return null;
+        }
+
+        function fillDeviceMenuFromBtn(menu, btn) {
+            if (!menu || !btn) return false;
+            const jobId = String(btn.getAttribute('data-job-id') || '').trim();
+            if (jobId) {
+                const canCancel = btn.getAttribute('data-can-cancel') === '1';
+                menu.innerHTML =
+                    '<button type="button" role="menuitem" class="danger" data-action="cancel-job" data-job-id="' +
+                    escapeHtml(jobId) + '"' + (canCancel ? '' : ' disabled') +
+                    (canCancel ? '' : ' title="Only queued/claimed/running jobs can be cancelled"') +
+                    '>Cancel</button>';
+                return true;
+            }
+            const wid = String(btn.getAttribute('data-worker-id') || '').trim();
+            if (!wid) return false;
+            const online = btn.getAttribute('data-online') === '1';
+            const canUpdate = btn.getAttribute('data-can-update') === '1';
+            const canRemove = btn.getAttribute('data-can-remove') === '1';
+            menu.innerHTML =
+                '<button type="button" role="menuitem" data-action="ping" data-worker-id="' +
+                escapeHtml(wid) + '"' + (online ? '' : ' disabled') + '>Ping</button>' +
+                '<button type="button" role="menuitem" data-action="update" data-worker-id="' +
+                escapeHtml(wid) + '"' + (canUpdate ? '' : ' disabled') +
+                (canUpdate ? '' : ' title="No update needed or not available"') + '>Update</button>' +
+                '<button type="button" role="menuitem" class="danger" data-action="remove" data-worker-id="' +
+                escapeHtml(wid) + '"' + (canRemove ? '' : ' disabled') +
+                (canRemove ? '' : ' title="Host worker cannot be removed"') + '>Remove</button>';
+            return true;
+        }
+
+        function positionDeviceMenu(btn) {
+            const menu = document.getElementById('deviceRowMenu');
+            if (!menu || !btn || menu.hidden) return;
+            const rect = btn.getBoundingClientRect();
+            const mw = menu.offsetWidth || 160;
+            const mh = menu.offsetHeight || 120;
+            let left = rect.right - mw;
+            let top = rect.bottom + 4;
+            if (left < 8) left = 8;
+            if (left + mw > window.innerWidth - 8) left = Math.max(8, window.innerWidth - mw - 8);
+            if (top + mh > window.innerHeight - 8) top = Math.max(8, rect.top - mh - 4);
+            menu.style.left = left + 'px';
+            menu.style.top = top + 'px';
+        }
+
+        function restoreDeviceMenu(key) {
+            if (!key) return;
+            const btn = findDeviceMenuButton(key);
+            if (!btn) {
+                closeDeviceMenu();
+                return;
+            }
+            const menu = ensureDeviceMenu();
+            if (!fillDeviceMenuFromBtn(menu, btn)) {
+                closeDeviceMenu();
+                return;
+            }
+            openDeviceMenuKey = key;
+            document.querySelectorAll('.device-menu-btn[aria-expanded="true"]').forEach(function (b) {
+                if (b !== btn) b.setAttribute('aria-expanded', 'false');
+            });
+            btn.setAttribute('aria-expanded', 'true');
+            menu.hidden = false;
+            positionDeviceMenu(btn);
+        }
+
+        /** Replace table HTML but keep scroll + open row menu across poll refreshes. */
+        function setJobsTableHtml(el, html) {
+            if (!el) return;
+            if (el.innerHTML === html) return;
+            const prev = el.querySelector('.jobs-table-scroll');
+            const left = prev ? prev.scrollLeft : 0;
+            const top = prev ? prev.scrollTop : 0;
+            const keepKey = openDeviceMenuKey;
+            suppressDeviceMenuClose += 1;
+            try {
+                el.innerHTML = html;
+                const next = el.querySelector('.jobs-table-scroll');
+                if (next) {
+                    next.scrollLeft = left;
+                    next.scrollTop = top;
+                }
+                if (keepKey) {
+                    openDeviceMenuKey = keepKey;
+                    restoreDeviceMenu(keepKey);
+                    requestAnimationFrame(function () {
+                        restoreDeviceMenu(keepKey);
+                        if (next && next.isConnected) {
+                            next.scrollLeft = left;
+                            next.scrollTop = top;
+                        }
+                    });
+                }
+            } finally {
+                requestAnimationFrame(function () {
+                    suppressDeviceMenuClose = Math.max(0, suppressDeviceMenuClose - 1);
+                });
+            }
+        }
+
+        function escapeHtml(s) {
+            return String(s == null ? '' : s)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        function wrapJobsTable(tableHtml, opts) {
+            opts = opts || {};
+            const cls = 'jobs-table-scroll' + (opts.capped ? ' jobs-table-scroll--capped' : '');
+            return '<div class="' + cls + '" data-jobs-table="1">' +
+                String(tableHtml || '') +
+                '</div>';
+        }
+
+        function formatTime(iso) {
+            if (iso == null || iso === '') return '';
+            let d;
+            if (typeof iso === 'number' && Number.isFinite(iso)) {
+                // Unix seconds vs ms
+                d = new Date(iso < 1e12 ? iso * 1000 : iso);
+            } else {
+                const s = String(iso).trim();
+                if (/^\d+(\.\d+)?$/.test(s)) {
+                    const n = Number(s);
+                    d = new Date(n < 1e12 ? n * 1000 : n);
+                } else {
+                    d = new Date(s);
+                }
+            }
+            if (isNaN(d.getTime())) return '';
+            const now = new Date();
+            const diff = Math.floor((now - d) / 1000);
+            if (diff < 0) return 'just now';
+            if (diff < 60) return diff + 's ago';
+            if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+            if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+            return d.toLocaleDateString();
+        }
+
+        function formatTimeAbsolute(iso) {
+            if (iso == null || iso === '') return '';
+            let d;
+            if (typeof iso === 'number' && Number.isFinite(iso)) {
+                d = new Date(iso < 1e12 ? iso * 1000 : iso);
+            } else {
+                const s = String(iso).trim();
+                if (/^\d+(\.\d+)?$/.test(s)) {
+                    const n = Number(s);
+                    d = new Date(n < 1e12 ? n * 1000 : n);
+                } else {
+                    d = new Date(s);
+                }
+            }
+            if (isNaN(d.getTime())) return '';
+            return d.toLocaleString();
+        }
+
+        function meshJobWhen(j) {
+            const st = String((j && j.status) || '').toLowerCase();
+            if (st === 'succeeded' || st === 'failed' || st === 'cancelled') {
+                return j.completed_at || j.updated_at || j.started_at || j.created_at;
+            }
+            if (st === 'running' || st === 'claimed') {
+                return j.started_at || j.updated_at || j.created_at;
+            }
+            return j.created_at || j.updated_at || j.started_at;
+        }
+
+        function formatDuration(sec) {
+            if (sec == null || sec === '') return '';
+            const n = Number(sec);
+            if (!Number.isFinite(n) || n < 0) return '';
+            if (n < 60) return Math.round(n) + 's';
+            if (n < 3600) return Math.floor(n / 60) + 'm ' + Math.round(n % 60) + 's';
+            return Math.floor(n / 3600) + 'h ' + Math.floor((n % 3600) / 60) + 'm';
+        }
+
+        function elapsedFrom(iso) {
+            if (!iso) return '';
+            const d = new Date(iso);
+            if (isNaN(d.getTime())) return '';
+            return formatDuration(Math.floor((Date.now() - d.getTime()) / 1000));
+        }
+
+        function notifyShellJobsTab(tab) {
+            try {
+                if (window.parent && window.parent !== window) {
+                    window.parent.postMessage({ type: 'cuttle-jobs-tab', tab: tab }, '*');
+                }
+            } catch (_) {}
+        }
+
+        /** Keep ?tab= on this iframe URL and in the shell split layout (per pane). */
+        function syncJobsTabUrl(tab) {
+            try {
+                const u = new URL(window.location.href);
+                if (u.searchParams.get('tab') !== tab) {
+                    u.searchParams.set('tab', tab);
+                    history.replaceState(null, '', u.pathname + u.search + u.hash);
+                }
+            } catch (_) {}
+            notifyShellJobsTab(tab);
+        }
+
+        function setTab(tab) {
+            tab = String(tab || '').trim().toLowerCase();
+            if (!VALID_JOBS_TABS[tab]) tab = 'active';
+            currentTab = tab;
+            try { localStorage.setItem('jobsPageTab', tab); } catch (_) {}
+            syncJobsTabUrl(tab);
+            document.querySelectorAll('.jobs-tab').forEach(b => {
+                b.classList.toggle('active', b.dataset.tab === tab);
+            });
+            document.querySelectorAll('.jobs-panel').forEach(p => {
+                p.classList.toggle('active', p.id === 'panel-' + tab);
+            });
+            schedulePoll();
+        }
+
+        function schedulePoll() {
+            if (pollTimer) clearInterval(pollTimer);
+            const ms = currentTab === 'history' ? 15000 : 4000;
+            pollTimer = setInterval(loadAll, ms);
+        }
+
+        function renderActive() {
+            const el = document.getElementById('activeList');
+            if (!el) return;
+            const cards = [];
+
+            (cuttleActive || []).forEach(function (job) {
+                const cmd = String(job.command || 'job');
+                const repo = job.repository || '';
+                const issue = job.issue_number != null ? '#' + job.issue_number : '';
+                const title = job.issue_title || (repo + issue) || ('Job ' + (job.job_id || ''));
+                const elapsed = elapsedFrom(job.start_time);
+                cards.push(
+                    '<div class="active-card gitea">' +
+                    '<div class="active-card-top">' +
+                    '<div class="active-title"><span class="live-dot"></span>' + escapeHtml(title) + '</div>' +
+                    '<span class="cmd-badge ' + escapeHtml(cmd) + '">' + escapeHtml(cmd) + '</span>' +
+                    '</div>' +
+                    '<div class="active-meta">' +
+                    escapeHtml(repo) + (issue ? ' ' + escapeHtml(issue) : '') +
+                    (job.triggering_user ? ' · @' + escapeHtml(job.triggering_user) : '') +
+                    (elapsed ? ' · ' + escapeHtml(elapsed) : '') +
+                    (job.job_id != null ? ' · job ' + escapeHtml(String(job.job_id)) : '') +
+                    '</div>' +
+                    '<div class="active-actions">' +
+                    (job.gitea_url ? '<a href="' + escapeHtml(job.gitea_url) + '" target="_blank" rel="noopener">Open issue</a>' : '') +
+                    '</div></div>'
+                );
+            });
+
+            (executingJobs || []).filter(function (run) {
+                return run.source !== 'cuttle_jobs';
+            }).forEach(function (run) {
+                const name = run.pipeline_name || 'Pipeline';
+                const qid = run.query_id || '';
+                const reportUrl = qid ? '/logs/query_report_' + encodeURIComponent(qid) + '.html' : '';
+                const insightUrl = '/job_insight.html?pipeline=' + encodeURIComponent(name);
+                const elapsed = elapsedFrom(run.start_time);
+                cards.push(
+                    '<div class="active-card pipeline">' +
+                    '<div class="active-card-top">' +
+                    '<div class="active-title"><span class="live-dot"></span>' + escapeHtml(name) + '</div>' +
+                    '<span class="cmd-badge pipeline">pipeline</span>' +
+                    '</div>' +
+                    '<div class="active-meta">Started ' + escapeHtml(formatTime(run.start_time)) +
+                    (elapsed ? ' · ' + escapeHtml(elapsed) : '') +
+                    (qid ? ' · id ' + escapeHtml(qid.slice(0, 8)) + '…' : '') +
+                    '</div>' +
+                    '<div class="active-actions">' +
+                    (reportUrl ? '<a href="' + reportUrl + '">Live query log</a>' : '') +
+                    '<a href="' + insightUrl + '">Job insight</a>' +
+                    '</div></div>'
+                );
+            });
+
+            if (!cards.length) {
+                setHtmlIfChanged(el,
+                    '<div class="running-now-empty" style="grid-column:1/-1">' +
+                    'Nothing running. Comment <strong>@cuttle investigate</strong> or <strong>@cuttle solve</strong> on a Gitea issue.' +
+                    '</div>');
+                return;
+            }
+            setHtmlIfChanged(el, cards.join(''));
+        }
+
+        function renderHistory() {
+            const el = document.getElementById('historyList');
+            if (!el) return;
+            let rows = cuttleHistory || [];
+            if (histFilter !== 'all') {
+                rows = rows.filter(function (j) {
+                    return String(j.status || '').toLowerCase() === histFilter;
+                });
+            }
+            if (!rows.length) {
+                setHtmlIfChanged(el, '<div class="jobs-empty">No jobs in history yet' +
+                    (histFilter !== 'all' ? ' for this filter' : '') +
+                    '. Finished @cuttle jobs will appear here.</div>');
+                return;
+            }
+            const body = rows.map(function (j) {
+                const st = String(j.status || 'unknown').toLowerCase();
+                const when = j.completed_at || j.end_time || j.claimed_at || j.created_at || j.start_time;
+                const repoIssue = (j.repository || '') + (j.issue_number != null ? '#' + j.issue_number : '');
+                const err = j.error || j.last_error || '';
+                const pr = j.pr_url || (j.result && j.result.pr_url) || '';
+                const dur = formatDuration(j.duration_sec);
+                const href = j.gitea_url || '';
+                return (
+                    '<tr class="' + (href ? 'clickable' : '') + '" data-href="' + escapeHtml(href) + '">' +
+                    '<td>' + escapeHtml(formatTime(when)) + (dur ? '<div style="color:var(--text-tertiary);font-size:10px">' + escapeHtml(dur) + '</div>' : '') + '</td>' +
+                    '<td><span class="cmd-badge ' + escapeHtml(j.command || '') + '">' + escapeHtml(j.command || '—') + '</span></td>' +
+                    '<td>' + escapeHtml(repoIssue) +
+                    (j.issue_title ? '<div style="color:var(--text-secondary);font-size:11px;margin-top:2px">' + escapeHtml(String(j.issue_title).slice(0, 80)) + '</div>' : '') +
+                    '</td>' +
+                    '<td><span class="status-pill ' + escapeHtml(st) + '">' + escapeHtml(st) + '</span>' +
+                    (err ? '<div class="hist-error" title="' + escapeHtml(err) + '">' + escapeHtml(String(err).slice(0, 120)) + '</div>' : '') +
+                    (pr ? '<div><a class="hist-pr" href="' + escapeHtml(pr) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">PR</a></div>' : '') +
+                    '</td>' +
+                    '<td style="color:var(--text-tertiary)">' + (j.job_id != null ? escapeHtml(String(j.job_id)) : '') + '</td>' +
+                    '</tr>'
+                );
+            }).join('');
+            setJobsTableHtml(el, wrapJobsTable(
+                '<table class="hist-table"><thead><tr>' +
+                '<th>When</th><th>Command</th><th>Issue</th><th>Status</th><th>Id</th>' +
+                '</tr></thead><tbody>' + body + '</tbody></table>'
+            ));
+        }
+
+        function updateCuttleStats(stats) {
+            const s = stats || {};
+            document.getElementById('statRunning').textContent = s.running != null ? s.running : (cuttleActive || []).length;
+            document.getElementById('statPending').textContent = s.pending != null ? s.pending : 0;
+            document.getElementById('statCompleted').textContent = s.completed_today != null ? s.completed_today : 0;
+            document.getElementById('statFailed').textContent = s.failed_recent != null ? s.failed_recent : 0;
+        }
+
+        async function loadDevices() {
+            const listEl = document.getElementById('devicesList');
+            const jobsEl = document.getElementById('meshJobsList');
+            const statusEl = document.getElementById('devicesStatus');
+            try {
+                const [wr, jr] = await Promise.all([
+                    fetch('/api/workers', { cache: 'no-store' }),
+                    fetch('/api/workers/jobs?limit=100', { cache: 'no-store' }),
+                ]);
+                const wdata = wr.ok ? await wr.json() : { workers: [], enabled: false };
+                const jdata = jr.ok ? await jr.json() : { jobs: [] };
+                deviceWorkers = wdata.workers || [];
+                devicesEnabled = wdata.enabled !== false;
+                selfWorkerId = String(wdata.self_worker_id || '').trim();
+                hostCuttleVersion = String(wdata.host_cuttle_version || '').trim();
+                viewingWorkerId = await resolveViewingWorkerId(selfWorkerId);
+                meshJobs = jdata.jobs || [];
+                const pageCount = Math.max(1, Math.ceil(meshJobs.length / MESH_JOBS_PAGE_SIZE));
+                if (meshJobsPage >= pageCount) meshJobsPage = pageCount - 1;
+                if (meshJobsPage < 0) meshJobsPage = 0;
+                if (statusEl) {
+                    const online = deviceWorkers.filter(w => w.online).length;
+                    const outdated = (wdata.outdated_workers || []).length;
+                    let msg = devicesEnabled
+                        ? (online + ' online / ' + deviceWorkers.length + ' registered')
+                        : 'Device workers disabled';
+                    if (hostCuttleVersion) msg += ' · host ' + hostCuttleVersion;
+                    if (outdated) msg += ' · ' + outdated + ' outdated';
+                    statusEl.textContent = msg;
+                }
+                renderDevices();
+                renderMeshJobs();
+            } catch (e) {
+                if (statusEl) statusEl.textContent = 'Error: ' + (e.message || e);
+                if (listEl && initialLoad) {
+                    setHtmlIfChanged(listEl, '<div class="jobs-empty" style="grid-column:1/-1">Could not load devices.</div>');
+                }
+            }
+        }
+
+        function renderDevices() {
+            const el = document.getElementById('devicesList');
+            if (!el) return;
+            if (!deviceWorkers.length) {
+                const empty = '<div class="jobs-empty">No workers registered yet. Host daemon local worker should appear within a few seconds after restart.</div>';
+                if (el.innerHTML !== empty) {
+                    if (openDeviceMenuKey && openDeviceMenuKey.indexOf('worker:') === 0) closeDeviceMenu();
+                    el.innerHTML = empty;
+                }
+                return;
+            }
+            const ordered = deviceWorkers.slice().sort(function (a, b) {
+                const sa = (a.slot != null) ? Number(a.slot) : 9999;
+                const sb = (b.slot != null) ? Number(b.slot) : 9999;
+                if (sa !== sb) return sa - sb;
+                // Fallback if API has no slot yet: host first, then registered_at.
+                const ha = a.is_self ? 0 : 1;
+                const hb = b.is_self ? 0 : 1;
+                if (ha !== hb) return ha - hb;
+                return String(a.worker_id || '').localeCompare(String(b.worker_id || ''));
+            });
+            const rows = ordered.map(function (w) {
+                const roles = workerRoleTags(w);
+                if (w.stale_process && roles.indexOf('stale') < 0) roles.push('stale');
+                const roleHtml = roles.map(function (t) {
+                    let cls = 'device-role';
+                    if (t === 'you') cls += ' device-role-you';
+                    else if (t === 'host') cls += ' device-role-host';
+                    else if (t === 'stale') cls += ' device-role-stale';
+                    return '<span class="' + cls + '">' + escapeHtml(t) + '</span>';
+                }).join(' ');
+                const caps = w.capabilities || {};
+                const load = w.load || {};
+                const capBits = ['filesystem', 'blender', 'ffmpeg', 'python', 'cuttle_self_update']
+                    .filter(function (k) { return caps[k]; })
+                    .join(', ') || '—';
+                const cpu = load.cpu_pct != null ? Math.round(load.cpu_pct) + '%' : '—';
+                const gpu = load.gpu_pct != null ? Math.round(load.gpu_pct) + '%' : '—';
+                const ver = String(w.cuttle_version || (w.meta && w.meta.cuttle_version) || '').trim() || '—';
+                const mismatch = !!w.version_mismatch || !!w.needs_update || !!w.stale_process;
+                let verHtml = escapeHtml(ver);
+                if (mismatch && ver !== '—') {
+                    const why = w.stale_process
+                        ? 'Running worker process is older than on-disk git (needs reload/Update)'
+                        : ('Host is ' + (hostCuttleVersion || '?'));
+                    verHtml = '<span style="color:var(--warning, #d29922)" title="' +
+                        escapeHtml(why) + '">' + escapeHtml(ver) + ' ⚠</span>';
+                }
+                let latency = '—';
+                if (w.last_rtt_ms != null && isFinite(Number(w.last_rtt_ms))) {
+                    latency = Math.round(Number(w.last_rtt_ms)) + ' ms';
+                    if (w.last_rtt_at) {
+                        // Coarse age so poll refreshes don't rewrite the table every tick.
+                        const age = Math.max(0, Math.floor((Date.now() / 1000) - Number(w.last_rtt_at)));
+                        if (age < 60) latency += ' · <1m';
+                        else if (age < 7200) latency += ' · ' + Math.floor(age / 60) + 'm ago';
+                    }
+                }
+                const wid = String(w.worker_id || '');
+                const slot = (w.slot != null && isFinite(Number(w.slot)))
+                    ? String(Math.trunc(Number(w.slot)))
+                    : '—';
+                const canUpdate = !!(w.needs_update || (mismatch && w.online && caps.cuttle_self_update && !w.is_self));
+                const canRemove = !w.is_self && !!wid;
+                const menuBtn = wid
+                    ? '<button type="button" class="device-menu-btn" data-worker-id="' +
+                        escapeHtml(wid) + '"' +
+                        ' data-online="' + (w.online ? '1' : '0') + '"' +
+                        ' data-can-update="' + (canUpdate ? '1' : '0') + '"' +
+                        ' data-can-remove="' + (canRemove ? '1' : '0') + '"' +
+                        ' aria-haspopup="menu" aria-expanded="false" title="Actions"' +
+                        '><span class="device-hamburger" aria-hidden="true"><span></span><span></span><span></span></span></button>'
+                    : '—';
+                const rowCls = roles.indexOf('you') >= 0 ? ' class="device-row-you"' : '';
+                return '<tr' + rowCls + '>' +
+                    '<td class="device-slot-cell">' + escapeHtml(slot) + '</td>' +
+                    '<td>' + escapeHtml(w.worker_id || '?') + '</td>' +
+                    '<td>' + roleHtml + '</td>' +
+                    '<td>' + (w.online
+                        ? '<span style="color:var(--success, #3fb950)">online</span>'
+                        : '<span style="opacity:.55">offline</span>') + '</td>' +
+                    '<td>' + verHtml + '</td>' +
+                    '<td>' + escapeHtml(latency) + '</td>' +
+                    '<td>' + escapeHtml(w.hostname || '') + '</td>' +
+                    '<td>' + escapeHtml(capBits) + '</td>' +
+                    '<td>' + escapeHtml(cpu + ' / ' + gpu) + '</td>' +
+                    '<td class="device-actions-cell">' + menuBtn + '</td>' +
+                    '</tr>';
+            }).join('');
+            const html = wrapJobsTable(
+                '<table class="hist-table"><thead><tr>' +
+                '<th class="device-slot-cell" title="Stable mesh slot (#1 = host)">#</th>' +
+                '<th>Worker</th><th>Role</th><th>Status</th><th>Version</th><th>Latency</th>' +
+                '<th>Hostname</th><th>Caps</th><th>CPU / GPU</th>' +
+                '<th class="device-actions-cell" aria-label="Actions"></th>' +
+                '</tr></thead><tbody>' + rows + '</tbody></table>'
+            );
+            setJobsTableHtml(el, html);
+        }
+
+        function ensureDeviceMenu() {
+            let menu = document.getElementById('deviceRowMenu');
+            if (menu) return menu;
+            menu = document.createElement('div');
+            menu.id = 'deviceRowMenu';
+            menu.className = 'device-row-menu';
+            menu.setAttribute('role', 'menu');
+            menu.hidden = true;
+            document.body.appendChild(menu);
+            return menu;
+        }
+
+        function closeDeviceMenu() {
+            const menu = document.getElementById('deviceRowMenu');
+            if (menu) menu.hidden = true;
+            openDeviceMenuKey = null;
+            document.querySelectorAll('.device-menu-btn[aria-expanded="true"]').forEach(function (b) {
+                b.setAttribute('aria-expanded', 'false');
+            });
+        }
+
+        function openDeviceMenu(btn) {
+            const menu = ensureDeviceMenu();
+            const key = deviceMenuKeyFromBtn(btn);
+            const open = btn.getAttribute('aria-expanded') === 'true' && openDeviceMenuKey === key;
+            closeDeviceMenu();
+            if (open || !key) return;
+            if (!fillDeviceMenuFromBtn(menu, btn)) return;
+            menu.hidden = false;
+            openDeviceMenuKey = key;
+            btn.setAttribute('aria-expanded', 'true');
+            positionDeviceMenu(btn);
+        }
+
+        async function removeWorker(workerId) {
+            const wid = String(workerId || '').trim();
+            if (!wid) return;
+            const ok = window.confirm(
+                'Remove "' + wid + '" from the mesh registry?\n\n' +
+                'This clears the Jobs → Devices entry and revokes its enroll token. ' +
+                'A live Client will reappear after it reconnects.'
+            );
+            if (!ok) return;
+            try {
+                const r = await fetch('/api/workers/' + encodeURIComponent(wid), {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ revoke_enroll: true }),
+                });
+                const data = await r.json().catch(function () { return {}; });
+                if (!r.ok || !data.success) {
+                    throw new Error(data.error || ('HTTP ' + r.status));
+                }
+                if (window.showToast) {
+                    window.showToast('Removed ' + wid, 'success');
+                }
+                await loadDevices();
+            } catch (e) {
+                if (window.showToast) window.showToast(String(e.message || e), 'error');
+            }
+        }
+
+        async function requestWorkerSelfUpdate(workerId, btn) {
+            const wid = String(workerId || '').trim();
+            if (!wid) return;
+            const label = btn ? btn.textContent : '';
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = '…';
+            }
+            try {
+                const r = await fetch('/api/workers/self-update', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ target: wid, submitted_by: 'jobs-ui' }),
+                });
+                const data = await r.json().catch(function () { return {}; });
+                if (!r.ok || !data.success) {
+                    throw new Error(data.error || ('HTTP ' + r.status));
+                }
+                if (window.showToast) {
+                    window.showToast('Self-update queued for ' + wid, 'success');
+                }
+                await loadDevices();
+            } catch (e) {
+                if (window.showToast) window.showToast(String(e.message || e), 'error');
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = label || 'Update';
+                }
+            }
+        }
+
+        async function probeWorker(workerId, btn) {
+            const wid = String(workerId || '').trim();
+            if (!wid) return;
+            const label = btn ? btn.textContent : '';
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = '…';
+            }
+            try {
+                const r = await fetch('/api/workers/' + encodeURIComponent(wid) + '/probe', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ timeout_seconds: 25 }),
+                });
+                const data = await r.json().catch(function () { return {}; });
+                if (!r.ok || !data.success) {
+                    throw new Error(data.error || ('HTTP ' + r.status));
+                }
+                if (window.showToast) {
+                    window.showToast(wid + ': ' + Math.round(data.rtt_ms) + ' ms', 'success');
+                }
+                await loadDevices();
+            } catch (e) {
+                if (window.showToast) window.showToast(String(e.message || e), 'error');
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = label || 'Ping';
+                }
+            }
+        }
+
+        async function pingLocalWorker() {
+            const target = viewingWorkerId || selfWorkerId;
+            if (!target) {
+                if (window.showToast) window.showToast('No local worker id yet', 'error');
+                return;
+            }
+            await probeWorker(target, document.getElementById('btnPingWorker'));
+        }
+
+        function renderMeshJobs() {
+            const el = document.getElementById('meshJobsList');
+            if (!el) return;
+            if (!meshJobs.length) {
+                meshJobsPage = 0;
+                if (openDeviceMenuKey && openDeviceMenuKey.indexOf('job:') === 0) closeDeviceMenu();
+                setHtmlIfChanged(el, '<div class="jobs-empty">No mesh jobs yet.</div>');
+                return;
+            }
+            const pageSize = MESH_JOBS_PAGE_SIZE;
+            const total = meshJobs.length;
+            const pageCount = Math.max(1, Math.ceil(total / pageSize));
+            if (meshJobsPage >= pageCount) meshJobsPage = pageCount - 1;
+            if (meshJobsPage < 0) meshJobsPage = 0;
+            const start = meshJobsPage * pageSize;
+            const pageRows = meshJobs.slice(start, start + pageSize);
+            const end = start + pageRows.length;
+            const rows = pageRows.map(function (j) {
+                const st = String(j.status || '');
+                const sender = String(j.submitted_by || '').trim() || '—';
+                const worker = String(j.claimed_by || j.target_worker_id || '').trim() || '—';
+                const params = j.params || {};
+                let detail = '';
+                if (j.type === 'blender_render') {
+                    const fs = params.frame_start;
+                    const fe = params.frame_end;
+                    detail = (fs != null && fe != null) ? ('frames ' + fs + '–' + fe) : '';
+                    if (params.dry_run) detail = (detail ? detail + ' · ' : '') + 'dry-run';
+                    if (j.result && j.result.frames_written != null) {
+                        detail += (detail ? ' · ' : '') + j.result.frames_written + ' files';
+                    }
+                    if (j.result && j.result.elapsed_seconds != null) {
+                        detail += (detail ? ' · ' : '') + j.result.elapsed_seconds + 's';
+                    }
+                } else if (j.type === 'file_copy') {
+                    detail = (params.dest || params.source || '') + '';
+                } else if (j.type === 'shell') {
+                    detail = params.recipe || '';
+                } else if (j.result && j.result.echo != null) {
+                    detail = String(j.result.echo);
+                }
+                if (j.error) detail = String(j.error);
+                const when = meshJobWhen(j);
+                const whenRel = formatTime(when) || '—';
+                const whenAbs = formatTimeAbsolute(when);
+                const whenHtml = whenAbs
+                    ? ('<span title="' + escapeHtml(whenAbs) + '">' + escapeHtml(whenRel) + '</span>')
+                    : escapeHtml(whenRel);
+                const jid = String(j.id || '');
+                const canCancel = st === 'queued' || st === 'claimed' || st === 'running';
+                const stCls = st.toLowerCase().replace(/[^a-z0-9_-]/g, '');
+                const statusHtml = st
+                    ? '<span class="status-pill ' + escapeHtml(stCls) + '">' + escapeHtml(st) + '</span>'
+                    : '—';
+                const menuBtn = jid
+                    ? '<button type="button" class="device-menu-btn mesh-job-menu-btn" data-job-id="' +
+                        escapeHtml(jid) + '"' +
+                        ' data-can-cancel="' + (canCancel ? '1' : '0') + '"' +
+                        ' aria-haspopup="menu" aria-expanded="false" title="Actions"' +
+                        '><span class="device-hamburger" aria-hidden="true"><span></span><span></span><span></span></span></button>'
+                    : '—';
+                return '<tr>' +
+                    '<td>' + whenHtml + '</td>' +
+                    '<td>' + escapeHtml(jid.slice(0, 8)) + '</td>' +
+                    '<td>' + escapeHtml(j.type || '') + '</td>' +
+                    '<td>' + statusHtml + '</td>' +
+                    '<td>' + escapeHtml(sender) + '</td>' +
+                    '<td>' + escapeHtml(worker) + '</td>' +
+                    '<td class="jobs-cell-wrap">' + escapeHtml(detail) + '</td>' +
+                    '<td class="device-actions-cell">' + menuBtn + '</td>' +
+                    '</tr>';
+            }).join('');
+            const pager = ('<div class="jobs-table-pager">' +
+                '<span class="jobs-table-pager-meta">' +
+                (pageCount > 1
+                    ? ('Showing ' + (start + 1) + '–' + end + ' of ' + total)
+                    : (total + ' job' + (total === 1 ? '' : 's'))) +
+                '</span>' +
+                (pageCount > 1
+                    ? ('<div class="jobs-table-pager-actions">' +
+                        '<button type="button" class="jobs-pager-btn" data-mesh-page="prev"' +
+                        (meshJobsPage <= 0 ? ' disabled' : '') + '>Prev</button>' +
+                        '<span class="jobs-pager-page">' + (meshJobsPage + 1) + ' / ' + pageCount + '</span>' +
+                        '<button type="button" class="jobs-pager-btn" data-mesh-page="next"' +
+                        (meshJobsPage >= pageCount - 1 ? ' disabled' : '') + '>Next</button>' +
+                        '</div>')
+                    : '') +
+                '</div>');
+            const meshHtml =
+                '<div class="jobs-table-block">' +
+                wrapJobsTable(
+                    '<table class="hist-table"><thead><tr>' +
+                    '<th>When</th><th>Id</th><th>Type</th><th>Status</th><th>Sender</th><th>Worker</th><th>Detail</th>' +
+                    '<th class="device-actions-cell" aria-label="Actions"></th>' +
+                    '</tr></thead><tbody>' + rows + '</tbody></table>',
+                    { capped: true }
+                ) +
+                pager +
+                '</div>';
+            setJobsTableHtml(el, meshHtml);
+        }
+
+        async function cancelMeshJob(jobId, btn) {
+            const jid = String(jobId || '').trim();
+            if (!jid) return;
+            if (btn) btn.disabled = true;
+            try {
+                const r = await fetch('/api/workers/jobs/' + encodeURIComponent(jid) + '/cancel', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ reason: 'cancelled from Jobs UI' }),
+                });
+                const data = await r.json().catch(function () { return {}; });
+                if (!r.ok || !data.success) throw new Error(data.error || ('HTTP ' + r.status));
+                if (window.showToast) window.showToast('Cancelled ' + jid.slice(0, 8), 'success');
+                await loadDevices();
+            } catch (e) {
+                if (window.showToast) window.showToast(String(e.message || e), 'error');
+                if (btn) btn.disabled = false;
+            }
+        }
+
+        async function loadCuttleJobs() {
+            try {
+                const r = await fetch('/api/cuttle-jobs?view=all&limit=50', { cache: 'no-store' });
+                if (!r.ok) throw new Error('cuttle-jobs ' + r.status);
+                const data = await r.json();
+                cuttleActive = data.active || [];
+                cuttleHistory = data.history || [];
+                updateCuttleStats(data.stats);
+                const src = document.getElementById('histSource');
+                if (src) {
+                    src.textContent = data.remote_ok
+                        ? 'Source: queue server'
+                        : 'Source: local log' + (data.history_source ? '' : '');
+                }
+                renderActive();
+                renderHistory();
+            } catch (e) {
+                if (initialLoad) {
+                    const el = document.getElementById('activeList');
+                    if (el) setHtmlIfChanged(el, '<div class="jobs-empty" style="grid-column:1/-1">Could not load Gitea jobs. ' + escapeHtml(e.message || e) + '</div>');
+                }
+            }
+        }
+
+        async function loadPipelines() {
+            allJobs = [];
+            executingJobs = [];
+        }
+
+        async function loadAll() {
+            await Promise.all([loadCuttleJobs(), loadPipelines(), loadDevices()]);
+            initialLoad = false;
+        }
+
+        function updatePipelineStats() {}
+
+        function renderJobsBrowse() {
+            const el = document.getElementById('jobsBrowseList');
+            let jobs = allJobs;
+            if (currentFilter === 'running') jobs = jobs.filter(j => j.is_running || j.is_executing);
+            else if (currentFilter === 'work') jobs = jobs.filter(j => j.type === 'work');
+            else if (currentFilter === 'think') jobs = jobs.filter(j => j.type === 'think');
+            else if (currentFilter === 'play') jobs = jobs.filter(j => j.type === 'play');
+            else if (currentFilter === 'scheduled') jobs = jobs.filter(j => (j.schedules || []).length > 0);
+
+            if (!jobs.length) {
+                setHtmlIfChanged(el, '<div class="jobs-empty">No pipelines match this filter.</div>');
+                return;
+            }
+
+            setHtmlIfChanged(el, jobs.map(job => {
+                const desc = (job.description || job.name).slice(0, 120);
+                const schedules = job.schedules || [];
+                const safeName = escapeHtml(job.name).replace(/'/g, "\\'");
+                const schedHtml = schedules.map(sc => {
+                    const cronEsc = escapeHtml(sc.cron || '').replace(/"/g, '&quot;');
+                    const countdown = sc.enabled && window.CronCountdown ? (window.CronCountdown.getCronCountdown(sc.cron, true) || '') : '';
+                    return `<span class="schedule-enabler"><span>⏰ ${formatCron(sc.cron)}</span>
+                        <label class="job-switch" title="Schedule ${sc.enabled ? 'on' : 'off'}" onclick="event.stopPropagation()">
+                            <input type="checkbox" class="schedule-toggle-input" data-pipeline="${escapeHtml(job.name).replace(/"/g, '&quot;')}" data-node-id="${sc.node_id}" ${sc.enabled ? 'checked' : ''} />
+                            <span class="job-switch-slider"></span>
+                        </label>
+                        <span class="schedule-countdown" data-cron="${cronEsc}" data-enabled="${sc.enabled}">${countdown ? ' · Next ' + countdown : ''}</span></span>`;
+                }).join(' ');
+                const execBadge = job.is_executing ? '<span class="job-type-badge work" title="Pipeline has an in-flight run">exec</span>' : '';
+                let executionInfo = '';
+                if (job.active_runs && job.active_runs.length > 0) {
+                    executionInfo = `<span>In progress (${job.active_runs.length} run${job.active_runs.length > 1 ? 's' : ''})</span>`;
+                } else if (job.executions && job.executions.length > 0) {
+                    const latest = job.executions[0];
+                    executionInfo = `<span>${latest.success === true ? '✓' : (latest.success === false ? '✗' : '?')} ${formatTime(latest.timestamp)}</span>`;
+                }
+                return `
+                    <div class="job-card clickable ${job.is_running || job.is_executing ? 'running' : ''}" data-name="${escapeHtml(job.name)}" data-pipeline="${escapeHtml(job.name)}">
+                        <div class="job-main">
+                            <div class="job-row-top">
+                                <div class="job-title-compact">
+                                    <span class="job-name">${escapeHtml(job.name)}</span>
+                                    <span class="job-type-badge ${job.type}">${job.type}</span>
+                                    ${execBadge}
+                                </div>
+                                <div class="job-actions" onclick="event.stopPropagation()">
+                                    <button class="job-btn job-btn-run-now" onclick="runNow('${safeName}')" title="Run once now (adhoc)">Run</button>
+                                    <div class="job-toggle-wrap" title="Listen for triggers">
+                                        <span class="job-toggle-label">Listen</span>
+                                        <label class="job-switch">
+                                            <input type="checkbox" class="job-toggle-input" ${job.is_running ? 'checked' : ''} />
+                                            <span class="job-switch-slider"></span>
+                                        </label>
+                                    </div>
+                                    <button class="job-btn job-btn-edit" onclick="editPipeline('${safeName}')">Edit</button>
+                                </div>
+                            </div>
+                            <div class="job-desc">${escapeHtml(desc)}${desc.length >= 120 ? '…' : ''}</div>
+                            <div class="job-meta">
+                                ${executionInfo}
+                                ${job.is_running && job.start_time ? `<span><span class="status-indicator status-running"></span>Listen since ${formatTime(job.start_time)}</span>` : ''}
+                                ${schedHtml}
+                                ${(job.triggers || []).length ? `<span>Triggers: ${job.triggers.map(t => t.name || t.type).join(', ')}</span>` : ''}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join(''));
+        }
+
+        function formatCron(cron) {
+            if (!cron) return '';
+            const parts = cron.trim().split(/\s+/);
+            if (parts.length < 5) return cron;
+            const [min, hr, dom, mon, dow] = parts;
+            if (min === '*') return 'every minute';
+            if (min.startsWith('*/')) {
+                const n = min.slice(2);
+                if (hr === '*' && dom === '*' && mon === '*' && dow === '*') return `every ${n} min`;
+            }
+            if (hr.startsWith('*/') && min === '0') return `every ${hr.slice(2)} hrs`;
+            if (hr === '0' && min === '0') return 'hourly';
+            if (hr === '*' && min === '0') return 'every hour';
+            return cron;
+        }
+
+        async function startJob(name) {
+            try {
+                const r = await fetch('/api/pipeline-start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pipelineName: name })
+                });
+                const data = await r.json();
+                if (data.success) {
+                    (window.showToast || alert)('Started ' + name, 'success');
+                    loadPipelines();
+                    return true;
+                }
+                (window.showToast || alert)(data.error || 'Failed to start', 'error');
+                return false;
+            } catch (e) {
+                (window.showToast || alert)('Error: ' + (e.message || e), 'error');
+                return false;
+            }
+        }
+
+        async function stopJob(name) {
+            try {
+                const r = await fetch('/api/pipeline-stop', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pipelineName: name })
+                });
+                const data = await r.json();
+                if (data.success) {
+                    (window.showToast || alert)('Stopped ' + name, 'success');
+                    loadPipelines();
+                    return true;
+                }
+                (window.showToast || alert)(data.error || 'Failed to stop', 'error');
+                return false;
+            } catch (e) {
+                (window.showToast || alert)('Error: ' + (e.message || e), 'error');
+                return false;
+            }
+        }
+
+        async function runNow(name) {
+            try {
+                const webChatSessionId = (typeof localStorage !== 'undefined' && localStorage.getItem('lastChatSessionId')) || '';
+                const r = await fetch('/api/pipeline-run-now', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pipelineName: name, webChatSessionId })
+                });
+                const contentType = r.headers.get('content-type') || '';
+                let data;
+                if (contentType.includes('application/json')) {
+                    data = await r.json();
+                } else {
+                    (window.showToast || alert)('Server returned ' + r.status + '. Restart Cuttle daemon if you just updated.', 'error');
+                    return;
+                }
+                if (data.success) {
+                    if (data.pending && data.report_url) {
+                        (window.showToast || alert)('Run started — ' + name, 'info', { linkUrl: data.report_url, linkText: 'Live query report' });
+                    } else {
+                        const opts = data.report_url ? { linkUrl: data.report_url, linkText: 'View query log' } : {};
+                        (window.showToast || alert)('Ran ' + name, 'success', opts);
+                    }
+                    loadPipelines();
+                } else {
+                    (window.showToast || alert)(data.error || 'Run failed', 'error');
+                }
+            } catch (e) {
+                (window.showToast || alert)('Error: ' + (e.message || e), 'error');
+            }
+        }
+
+        async function toggleSchedule(pipelineName, nodeId, newEnabled) {
+            try {
+                const r = await fetch('/api/pipeline-schedule-toggle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pipelineName, nodeId, enabled: newEnabled })
+                });
+                const data = await r.json();
+                if (data.success) {
+                    (window.showToast || alert)(data.message, 'success');
+                    loadPipelines();
+                    return true;
+                }
+                (window.showToast || alert)(data.error || 'Failed', 'error');
+                return false;
+            } catch (e) {
+                (window.showToast || alert)('Error: ' + (e.message || e), 'error');
+                return false;
+            }
+        }
+
+        function editPipeline(name) {
+            window.top.location.href = '/node_editor.html?pipeline=' + encodeURIComponent(name);
+        }
+
+        document.querySelectorAll('.jobs-tab').forEach(btn => {
+            btn.addEventListener('click', () => setTab(btn.dataset.tab));
+        });
+
+        const btnPing = document.getElementById('btnPingWorker');
+        if (btnPing) btnPing.addEventListener('click', pingLocalWorker);
+
+        const devicesListEl = document.getElementById('devicesList');
+        if (devicesListEl) {
+            devicesListEl.addEventListener('click', function (ev) {
+                const menuBtn = ev.target && ev.target.closest && ev.target.closest('.device-menu-btn');
+                if (menuBtn) {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                    openDeviceMenu(menuBtn);
+                    return;
+                }
+            });
+        }
+
+        const meshJobsEl = document.getElementById('meshJobsList');
+        if (meshJobsEl) {
+            meshJobsEl.addEventListener('click', function (ev) {
+                const pageBtn = ev.target && ev.target.closest && ev.target.closest('[data-mesh-page]');
+                if (pageBtn && !pageBtn.disabled) {
+                    ev.preventDefault();
+                    const dir = pageBtn.getAttribute('data-mesh-page');
+                    if (dir === 'prev') meshJobsPage = Math.max(0, meshJobsPage - 1);
+                    else if (dir === 'next') meshJobsPage += 1;
+                    renderMeshJobs();
+                    return;
+                }
+                const menuBtn = ev.target && ev.target.closest && ev.target.closest('.device-menu-btn');
+                if (menuBtn) {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                    openDeviceMenu(menuBtn);
+                }
+            });
+        }
+
+        document.addEventListener('click', function (ev) {
+            const menu = document.getElementById('deviceRowMenu');
+            if (!menu || menu.hidden) return;
+            const t = ev.target;
+            if (menu.contains(t)) {
+                const item = t.closest && t.closest('button[data-action]');
+                if (!item || item.disabled) return;
+                ev.preventDefault();
+                const action = item.getAttribute('data-action');
+                const wid = item.getAttribute('data-worker-id');
+                const jid = item.getAttribute('data-job-id');
+                closeDeviceMenu();
+                if (action === 'ping') probeWorker(wid, null);
+                else if (action === 'update') requestWorkerSelfUpdate(wid, null);
+                else if (action === 'remove') removeWorker(wid);
+                else if (action === 'cancel-job') cancelMeshJob(jid, null);
+                return;
+            }
+            if (t.closest && t.closest('.device-menu-btn')) return;
+            closeDeviceMenu();
+        });
+        window.addEventListener('scroll', function (ev) {
+            if (suppressDeviceMenuClose) return;
+            const menu = document.getElementById('deviceRowMenu');
+            if (!menu || menu.hidden || !openDeviceMenuKey) return;
+            const t = ev.target;
+            // Table scroll: keep the menu, just re-anchor it to the sticky ☰.
+            if (t && t.closest && t.closest('.jobs-table-scroll')) {
+                restoreDeviceMenu(openDeviceMenuKey);
+                return;
+            }
+            closeDeviceMenu();
+        }, true);
+        window.addEventListener('resize', function () {
+            if (suppressDeviceMenuClose) return;
+            if (openDeviceMenuKey) restoreDeviceMenu(openDeviceMenuKey);
+            else closeDeviceMenu();
+        });
+
+        document.querySelectorAll('.hist-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.hist-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                histFilter = btn.dataset.hist;
+                renderHistory();
+            });
+        });
+
+        document.querySelectorAll('.filter-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                currentFilter = btn.dataset.filter;
+                renderJobsBrowse();
+            });
+        });
+
+        document.getElementById('historyList').addEventListener('click', (e) => {
+            const tr = e.target.closest('tr.clickable');
+            if (!tr) return;
+            const href = tr.getAttribute('data-href');
+            if (href) window.open(href, '_blank', 'noopener');
+        });
+
+        const jobsBrowseList = document.getElementById('jobsBrowseList');
+        if (jobsBrowseList) {
+            jobsBrowseList.addEventListener('click', (e) => {
+                const card = e.target.closest('.job-card.clickable');
+                if (card && !e.target.closest('.job-actions')) {
+                    const name = card.dataset.pipeline;
+                    if (name) window.location.href = '/job_insight.html?pipeline=' + encodeURIComponent(name);
+                }
+            });
+            jobsBrowseList.addEventListener('change', async (e) => {
+                const t = e.target;
+                if (t.classList.contains('job-toggle-input')) {
+                    e.stopPropagation();
+                    const card = t.closest('.job-card');
+                    const name = card && card.dataset.pipeline;
+                    if (!name) return;
+                    const wantOn = t.checked;
+                    if (wantOn) {
+                        const ok = await startJob(name);
+                        if (!ok) t.checked = false;
+                    } else {
+                        const ok = await stopJob(name);
+                        if (!ok) t.checked = true;
+                    }
+                    return;
+                }
+                if (t.classList.contains('schedule-toggle-input')) {
+                    e.stopPropagation();
+                    const pipelineName = t.getAttribute('data-pipeline');
+                    const nodeId = parseInt(t.getAttribute('data-node-id'), 10);
+                    if (!pipelineName || Number.isNaN(nodeId)) return;
+                    const newEnabled = t.checked;
+                    const ok = await toggleSchedule(pipelineName, nodeId, newEnabled);
+                    if (!ok) t.checked = !newEnabled;
+                }
+            });
+        }
+
+        setTab(currentTab);
+        loadAll();
+        schedulePoll();
+        setInterval(function () {
+            if (window.CronCountdown) window.CronCountdown.updateAllCountdowns();
+            if (currentTab === 'active') renderActive();
+        }, 1000);
+    </script>
+</body>
+</html>

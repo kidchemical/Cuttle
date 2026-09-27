@@ -1,0 +1,78 @@
+/* Video background (Wallpaper Engine style) - shared by app shell and standalone pages */
+#cuttle-video-background-root {
+    z-index: -10;
+}
+html.has-video-background {
+    transform: none;
+}
+.cuttle-video-background {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: -10;
+    overflow: hidden;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 1.2s ease;
+    /* Solid underlay while media warms up — prevents purple page fill flashing through */
+    background: #0a0a12;
+}
+.cuttle-video-background.visible {
+    opacity: 1;
+}
+.cuttle-video-background.cuttle-video-warming .cuttle-video-background-media {
+    opacity: 0;
+}
+.cuttle-video-background:not(.cuttle-video-warming) .cuttle-video-background-media {
+    opacity: 1;
+    transition: opacity 0.6s ease;
+}
+.cuttle-video-background-media {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    min-width: 100%;
+    min-height: 100%;
+    width: auto;
+    height: auto;
+    transform: translate(-50%, -50%);
+    object-fit: cover;
+}
+.cuttle-video-background iframe.cuttle-video-background-media {
+    width: 100vw;
+    height: 56.25vw;
+    min-height: 100vh;
+    min-width: 177.78vh;
+}
+.cuttle-video-background-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+}
+body.has-video-background {
+    background: transparent;
+}
+/* App shell: iframe must be transparent so video shows through content area */
+body.has-video-background .shell-main iframe {
+    background: transparent;
+}
+
+/* Media mode: full-bleed playback behind the shell; main iframe stays transparent */
+body.cuttle-media-mode .app-shell {
+    position: relative;
+    z-index: 1;
+}
+body.cuttle-media-mode #cuttle-video-background-root {
+    z-index: 0;
+}
+.cuttle-video-background--media .cuttle-video-background-overlay {
+    pointer-events: none;
+}
+.cuttle-video-background.cuttle-video-background--media {
+    z-index: 1;
+}

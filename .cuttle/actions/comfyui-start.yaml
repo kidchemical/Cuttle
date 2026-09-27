@@ -1,0 +1,7 @@
+name: comfyui.start
+title: Start ComfyUI (TRELLIS.2)
+description: Launch local ComfyUI in low-VRAM mode on http://127.0.0.1:8188
+type: shell
+run: powershell -NoProfile -ExecutionPolicy Bypass -File .cuttle\scripts\comfyui-start.ps1
+run_posix: bash .cuttle/scripts/comfyui-start.sh
+workdir: .

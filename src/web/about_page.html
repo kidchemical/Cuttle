@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>About - Cuttle</title>
+    <link rel="stylesheet" href="/css/ui_boot.css?v=20260926safeArea">
+    <script src="/js/ui_boot.js?v=20260926safeArea"></script>
+    <link rel="stylesheet" href="css/shared_navigation.css?v=20260926lightBg">
+    <link rel="stylesheet" href="css/landing_page.css?v=20260926lightBg">
+</head>
+<body data-page="about">
+    <div class="page-content">
+    <!-- Header -->
+    <header class="header">
+        <div class="container">
+            <nav class="nav">
+                <div class="logo">
+                    <a href="/">
+                        <img src="/img/cuttle-logo.png" alt="Cuttle" class="header-logo">
+                    </a>
+                </div>
+                <div class="nav-menu">
+                    <button class="menu-toggle" onclick="toggleMenu()">
+                        <span class="menu-icon">☰</span>
+                    </button>
+                </div>
+            </nav>
+        </div>
+    </header>
+
+    <!-- Menu Dropdown -->
+    <div class="menu-dropdown" id="menuDropdown">
+        <div class="menu-section-title">Navigation</div>
+        <a href="/" class="menu-item"><span class="emoji">🏠</span> Home</a>
+        <a href="/router_editor.html" class="menu-item"><span class="emoji">🔗</span> Router</a>
+        <div class="menu-separator"></div>
+        <div class="menu-section-title">Reports</div>
+        <a href="/test_reports.html" class="menu-item"><span class="emoji">🧪</span> Test Reports</a>
+        <a href="/query_reports.html" class="menu-item"><span class="emoji">📊</span> Query Reports</a>
+        <a href="/launch_reports.html" class="menu-item"><span class="emoji">🚀</span> Launch Reports</a>
+        <a href="/data_reports.html" class="menu-item"><span class="emoji">📈</span> Data Reports</a>
+        <div class="menu-separator"></div>
+        <div class="menu-section-title">System</div>
+        <a href="/control_panel.html" class="menu-item"><span class="emoji">🎛️</span> Control Panel</a>
+        <a href="/settings_page.html" class="menu-item"><span class="emoji">⚙️</span> Settings</a>
+        <a href="/about_page.html" class="menu-item active"><span class="emoji">ℹ️</span> About</a>
+        <div class="menu-separator"></div>
+        <button class="menu-item" onclick="toggleTheme()"><span class="emoji">🌓</span> Toggle Theme</button>
+    </div>
+
+    <!-- About Page -->
+    <div class="page-section active">
+        <div class="container">
+            <div class="page-header">
+                <h1><span class="emoji">ℹ️</span> About Cuttle</h1>
+                <p>Your AI-powered development assistant</p>
+            </div>
+            
+            <div class="about-section">
+                <h2><span class="emoji">🦑</span> What is Cuttle?</h2>
+                <p>Cuttle is an intelligent development assistant that combines the power of AI with deep system integration. It helps developers automate tasks, analyze code, and build better software faster.</p>
+            </div>
+            
+            <div class="about-section">
+                <h2><span class="emoji">✨</span> Key Features</h2>
+                <div class="features-list">
+                    <div class="feature-item">
+                        <div class="feature-icon">🧠</div>
+                        <div class="feature-content">
+                            <h3>AI-Powered Intelligence</h3>
+                            <p>Advanced language models for code understanding and intelligent suggestions</p>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon">🔧</div>
+                        <div class="feature-content">
+                            <h3>System Integration</h3>
+                            <p>Direct control over your development environment</p>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon">🤖</div>
+                        <div class="feature-content">
+                            <h3>Task Automation</h3>
+                            <p>Automate repetitive development workflows</p>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon">📊</div>
+                        <div class="feature-content">
+                            <h3>Analytics & Reports</h3>
+                            <p>Comprehensive testing and query analytics</p>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon">🔗</div>
+                        <div class="feature-content">
+                            <h3>Node-Based Workflows</h3>
+                            <p>Visual pipeline editor for complex automations</p>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon">💬</div>
+                        <div class="feature-content">
+                            <h3>Discord Integration</h3>
+                            <p>Control your system from Discord</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="about-section">
+                <h2><span class="emoji">🛠️</span> Technology Stack</h2>
+                <ul class="interface-features">
+                    <li>🤖 <strong>AI Models:</strong> OpenAI GPT-4, GPT-4o-mini, Anthropic Claude</li>
+                    <li>🐍 <strong>Backend:</strong> Python 3.9+, FastAPI, Discord.py</li>
+                    <li>🎨 <strong>Frontend:</strong> HTML5, CSS3, Vanilla JavaScript</li>
+                    <li>🔧 <strong>Tools:</strong> OCR, Screenshot, Process Management, Window Control</li>
+                    <li>💻 <strong>Platform:</strong> Windows with WSL support</li>
+                </ul>
+            </div>
+            
+            <div class="about-section">
+                <h2>📝 Version Information</h2>
+                <div class="service-info">
+                    <div class="info-row">
+                        <span class="info-label">Version:</span>
+                        <span class="info-value">1.0.0</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Build:</span>
+                        <span class="info-value">2025.09.30</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Platform:</span>
+                        <span class="info-value">Windows 10/11</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">License:</span>
+                        <span class="info-value">Proprietary</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="about-section">
+                <h2><span class="emoji">🚀</span> Getting Started</h2>
+                <ol class="getting-started">
+                    <li>Configure your API keys in the Settings page</li>
+                    <li>Start the services from the Control Panel</li>
+                    <li>Chat with Cuttle or use the Node Editor</li>
+                    <li>Check Reports for analytics and insights</li>
+                </ol>
+            </div>
+            
+            <div class="about-section">
+                <h2>📚 Documentation</h2>
+                <p>For detailed documentation, guides, and tutorials:</p>
+                <div class="tips-grid">
+                    <div class="tip-card">
+                        <h3><span class="emoji">📁</span> Directory Structure</h3>
+                        <p>Learn about the project organization and file structure</p>
+                    </div>
+                    <div class="tip-card">
+                        <h3><span class="emoji">🔗</span> Node Editor Guide</h3>
+                        <p>Master the visual workflow pipeline editor</p>
+                    </div>
+                    <div class="tip-card">
+                        <h3><span class="emoji">📈</span> Time Series Dashboard</h3>
+                        <p>Explore data visualization and reporting features</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    </div>
+
+    <script src="/js/background_effect_blend.js"></script>
+    <script src="/js/shared_navigation.js"></script>
+</body>
+</html>
