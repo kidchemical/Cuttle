@@ -3,7 +3,7 @@
 Living backlog for making Cuttle’s agent router **complete, measurable, adaptive, and OOB-useful**.  
 Canonical product roadmap remains [`docs/ROADMAP.md`](./docs/ROADMAP.md). Product / socket thesis: [`src/docs/guides/MODULARITY.md`](./src/docs/guides/MODULARITY.md). Day-to-day guide: [`src/docs/guides/AGENT_ROUTER.md`](./src/docs/guides/AGENT_ROUTER.md).
 
-**Doc strategy (decision):** keep **one** living file (`TODO_AGENT_ROUTER.md`) until the extractable package boundary is real. Do **not** spin up `ROADMAP_AGENT_ROUTER.md` + `DESIGNDOC_AGENT_ROUTER.md` yet — that triples maintenance for the same content. When (if) we cut a standalone repo, *then* promote:
+**Doc strategy (decision):** keep **one** living file (`.cuttle/docs/agent-router-todo.md`) until the extractable package boundary is real. Do **not** spin up `ROADMAP_AGENT_ROUTER.md` + `DESIGNDOC_AGENT_ROUTER.md` yet — that triples maintenance for the same content. When (if) we cut a standalone repo, *then* promote:
 
 | Need | Where (now) | Later (standalone) |
 |------|-------------|--------------------|

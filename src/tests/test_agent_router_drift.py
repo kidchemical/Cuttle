@@ -1,6 +1,6 @@
 """Phase B (basic) drift detection: spike → demotion → recovery.
 
-Exit criteria from TODO_AGENT_ROUTER.md: "injecting synthetic fail spike
+Exit criteria from .cuttle/docs/agent-router-todo.md: "injecting synthetic fail spike
 demotes a target in tests; recovering clears demotion."
 """
 

@@ -4,7 +4,7 @@
 **Started:** 2026-08-16  
 **Purpose:** Preserve the reasoning, economic assumptions, research findings, experiments, and design direction behind Cuttle's agent-routing system.
 
-**Product / socket thesis (home lab, cozy, DeepSeek as tentacle, no Cuttle CLI for now):** [`src/docs/guides/MODULARITY.md`](../src/docs/guides/MODULARITY.md). Work items: [`TODO_AGENT_ROUTER.md`](../TODO_AGENT_ROUTER.md).
+**Product / socket thesis (home lab, cozy, DeepSeek as tentacle, no Cuttle CLI for now):** [`src/docs/guides/MODULARITY.md`](../src/docs/guides/MODULARITY.md). Work items: [`.cuttle/docs/agent-router-todo.md`](../.cuttle/docs/agent-router-todo.md).
 
 ## 1. Project Thesis
 

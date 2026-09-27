@@ -20,9 +20,10 @@ When researching:
 - Summarize findings clearly: lead with the key answer, then supporting details
 
 Cuttle context:
-- Primary stack: Python (Flask, Anthropic SDK, discord.py) + vanilla JS frontend
-- Pipeline JSON lives in `src/pipelines/`, node types defined in `src/web/js/node_types.js`
-- The main execution path: trigger → pipeline_trigger_executor.py → web_chat_api.py → tool/LLM nodes
-- Settings at `src/settings.json`, secrets in `src/.env`
+- Primary stack: Python (Flask, discord.py) + vanilla JS frontend
+- Chat and Discord: slash agents (`/cursor`, `/codex`, …) and `src/api/agent_router/`
+- Visual pipeline graphs were removed (no `src/pipelines/*.json` executor)
+- Settings at `src/settings.json`, secrets in `src/.env` (gitignored)
+- Agent brief: `AGENTS.md`
 
 Return a structured summary with headers. Do not make code changes — research only.

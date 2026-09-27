@@ -2,7 +2,7 @@
 
 **Status:** Product + architecture thesis (locked 2026-08-17, CH-000162)  
 **Canonical strategy:** [`docs/ROADMAP.md`](../../../docs/ROADMAP.md)  
-**Router backlog:** [`TODO_AGENT_ROUTER.md`](../../../TODO_AGENT_ROUTER.md)  
+**Router backlog:** [`.cuttle/docs/agent-router-todo.md`](../../../.cuttle/docs/agent-router-todo.md)  
 **Router research / economics:** [`docs/ROUTER_RESEARCH_NOTES.md`](../../../docs/ROUTER_RESEARCH_NOTES.md)
 
 This file is the home for *what Cuttle is*, *how plugins/sockets should feel*, and *what to steal from DeepSeek Harness without becoming it*. Day-to-day how-to for adding a CLI still lives in [`src/api/agent_harness/ADDING_AN_AGENT.md`](../../api/agent_harness/ADDING_AN_AGENT.md).
@@ -60,7 +60,7 @@ A **socket** is that definition plus discovery (“what is plugged in?”) plus 
 | Socket | Today | Target |
 |---|---|---|
 | **Agent / tentacle** | Folder-per-CLI: `manifest.yaml` + `adapter.py`; catalog + shared kernel | Done for chat slash. Finish pipeline `tool-remote-agent` and inference-mode lists so they cannot bypass the catalog. |
-| **Router** | `api` / `local` / `agent` modes; runners still late-bind Flask | A socket: task + available tentacles in; chosen tentacle + reason out. Plug = cheap LLM, local LLM, preference table, or another harness as brain. See [`TODO_AGENT_ROUTER.md`](../../../TODO_AGENT_ROUTER.md). |
+| **Router** | `api` / `local` / `agent` modes; runners still late-bind Flask | A socket: task + available tentacles in; chosen tentacle + reason out. Plug = cheap LLM, local LLM, preference table, or another harness as brain. See [`.cuttle/docs/agent-router-todo.md`](../../../.cuttle/docs/agent-router-todo.md). |
 | **LLM (API calling)** | `ai_agent.py`, `/api/llm-request`, Ollama lock, hardcoded Anthropic/OpenAI | Same shape as agents: `llm_providers/<id>/`. Pipeline `llm-*` nodes and the router brain consume the catalog. |
 | **Brain / context** | Context Compiler layers are a function with a fixed order | Layers become registered plugs (contract, rules, profile, inventory, handoff, later retrieval). Kernel stays the consumer. |
 | **Knowledge / memory** | Context Compiler (Brain) + optional `agent_memory` on LLM fallback | A knowledge socket: retrieve snippets for the compiler; do not dump files. Swap BM25 / Chroma / none. |
@@ -149,7 +149,7 @@ Security in [`docs/ROADMAP.md`](../../../docs/ROADMAP.md) still comes first when
 
 **Router after the catalog is honest**
 
-8. Phase 0 preference table + CuttleRouter as a pin-able harness agent ([`TODO_AGENT_ROUTER.md`](../../../TODO_AGENT_ROUTER.md)). Include DeepSeek Flash as a cheap tentacle in OOB discovery once the CLI is installed and keyed.
+8. Phase 0 preference table + CuttleRouter as a pin-able harness agent ([`.cuttle/docs/agent-router-todo.md`](../../../.cuttle/docs/agent-router-todo.md)). Include DeepSeek Flash as a cheap tentacle in OOB discovery once the CLI is installed and keyed.
 9. Do not extract a standalone router package until runners do not touch Flask.
 10. Prefer growing **agent ops** `python -m api.<module>` verbs (chat, workers, brain) over a product `cuttle` shell. See `.cuttle/docs/agent-ops-cli.md`.
 
@@ -175,7 +175,7 @@ When dsh grows native resume or a stable non-preview CLI, upgrade the adapter in
 | Need | Where |
 |---|---|
 | Phases, security, OpenClaw, what not to build | `docs/ROADMAP.md` (public); `.cuttle/personal/docs/roadmap-2026.md` (this install) |
-| Router work items, CuttleRouter-as-agent, authority order | `TODO_AGENT_ROUTER.md` |
+| Router work items, CuttleRouter-as-agent, authority order | `.cuttle/docs/agent-router-todo.md` |
 | Router economics, backends-as-black-boxes, eval notes | `docs/ROUTER_RESEARCH_NOTES.md` |
 | How routing works in chat | `src/docs/guides/AGENT_ROUTER.md` |
 | How to add a tentacle | `src/api/agent_harness/ADDING_AN_AGENT.md` |

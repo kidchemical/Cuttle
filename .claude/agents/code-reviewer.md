@@ -14,13 +14,12 @@ Review focus areas:
 1. **Correctness** — Logic errors, off-by-one, unhandled edge cases
 2. **Security** — Injection risks, secrets exposure, unvalidated inputs (especially in Flask endpoints and Discord message handlers)
 3. **Consistency** — Does this follow patterns already established in the codebase?
-4. **Pipeline integrity** — For JSON pipeline changes, verify node IDs are unique, connection port indices are valid, and required config keys are present
 
 Cuttle-specific things to watch:
 - Flask endpoints in `web_chat_api.py` must validate input before use
-- Pipeline executor is semi-linear: only directly-connected nodes execute — check connection wiring
-- `_execute_remote_agent_tool()` runs arbitrary prompts as Claude Code commands — verify `is_owner` checks are intact
-- Cron expressions use a custom 5-field parser in `cuttle_daemon.py` — standard cron tools won't validate them
+- `_execute_remote_agent_tool()` runs guest CLIs — verify `is_owner` / sandbox checks are intact
+- Visual pipeline graphs and `pipeline_trigger_executor.py` are gone; do not review as if they still exist
+- Chat is slash agents + the agent router (`src/api/agent_router/`)
 
 Output format:
 - **CRITICAL** / **WARNING** / **NOTE** severity labels

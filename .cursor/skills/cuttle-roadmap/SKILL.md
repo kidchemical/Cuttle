@@ -26,7 +26,7 @@ For **what to build next**, prefer `docs/ROADMAP.md` plus `.cuttle/learnings/FEA
 |---|---|
 | Logged **feature requests** (`[FEAT-YYYYMMDD-XXX]`) | `.cuttle/learnings/FEATURE_REQUESTS.md` |
 | **Harness-of-harnesses / sockets / DeepSeek comparison** | `src/docs/guides/MODULARITY.md` |
-| Agent router work items | `TODO_AGENT_ROUTER.md` |
+| Agent router work items | `.cuttle/docs/agent-router-todo.md` |
 | Learnings / errors backlog | `.cuttle/learnings/LEARNINGS.md`, `.cuttle/learnings/ERRORS.md` |
 | Day-to-day repo conventions | `AGENTS.md` |
 

@@ -2,7 +2,7 @@
 
 Cuttle’s **agent router** sits above sticky-slash agent selection. When a chat has no selected agent/model, the router picks which agent CLI and model should run the task.
 
-The router is a **socket**: the plug can be a cheap cloud LLM, a local LLM, a preference table, or another harness used only as the routing brain. Product thesis: [`MODULARITY.md`](./MODULARITY.md). Work items: [`TODO_AGENT_ROUTER.md`](../../../TODO_AGENT_ROUTER.md).
+The router is a **socket**: the plug can be a cheap cloud LLM, a local LLM, a preference table, or another harness used only as the routing brain. Product thesis: [`MODULARITY.md`](./MODULARITY.md). Work items: [`.cuttle/docs/agent-router-todo.md`](../../../.cuttle/docs/agent-router-todo.md).
 
 This is **not** the pipeline `tool-router` node (that chooses LLM backends inside a pipeline). The agent router chooses **execution harnesses** such as Cursor Agent CLI, Codex, or DeepSeek Harness.
 

@@ -69,7 +69,7 @@ User-requested capabilities. Format: `[FEAT-YYYYMMDD-XXX] capability_name`
 - **Requested capability:** Treat bundled `/deepseek` (Flash) as a first-class cheap tentacle in CuttleRouter OOB discovery and the Phase 0 preference table — not only as a manual slash agent. Resume stays off until dsh headless supports it.
 - **User context:** Home-lab harness-of-harnesses; DeepSeek is a tentacle to host, not a rewrite of Cuttle (CH-000162). Adapter already exists; routing catalog does not list it yet.
 - **Complexity:** M
-- **Related:** `src/docs/guides/MODULARITY.md`, `TODO_AGENT_ROUTER.md` Phase D, `src/api/agent_harness/agents/deepseek/`
+- **Related:** `src/docs/guides/MODULARITY.md`, `.cuttle/docs/agent-router-todo.md` Phase D, `src/api/agent_harness/agents/deepseek/`
 
 ## [FEAT-20260819-002] programmatic_commands_with_watch
 

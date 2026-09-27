@@ -13,4 +13,4 @@ Do not add graphs under `src/pipelines/`, Node Editor UI, or
 
 Chat and Discord: starred slash agents (`/cursor`, `/codex`, …) and the
 agent router. Recover old graphs from git/Gitea history. See
-`DEPRECATE_PIPELINE.md`.
+`docs/PIPELINES_REMOVED.md`.

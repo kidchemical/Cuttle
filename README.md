@@ -209,7 +209,7 @@ flowchart LR
 | Android app | [`apps/mobile/README.md`](apps/mobile/README.md) |
 | Roadmap | [`docs/ROADMAP.md`](docs/ROADMAP.md) |
 | Agent conventions (Cursor, Codex, Muse, …) | [`AGENTS.md`](AGENTS.md) |
-| Removed graphs (history) | git/Gitea; see `DEPRECATE_PIPELINE.md` |
+| Removed graphs (history) | git history; see [`docs/PIPELINES_REMOVED.md`](docs/PIPELINES_REMOVED.md) |
 
 Setup notes under `src/docs/setup/` are being refreshed; prefer this README and the daemon entrypoint above over older `launcher.py` references.
 
