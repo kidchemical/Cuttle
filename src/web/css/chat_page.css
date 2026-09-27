@@ -3360,6 +3360,69 @@ body.midnight-mode .message.assistant .message-sender-group .slash-command-chip-
     box-sizing: border-box;
 }
 
+/* Per-block copy button (attachCodeCopyButtons in chat_page.js) */
+pre.has-code-copy {
+    position: relative;
+    padding-right: 40px;
+}
+
+.code-copy-btn {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 28px;
+    height: 28px;
+    padding: 5px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.35);
+    color: var(--text-secondary, #bbb);
+    cursor: pointer;
+    opacity: 0.55;
+    transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
+    user-select: none;
+}
+
+.code-copy-btn svg {
+    width: 16px;
+    height: 16px;
+}
+
+pre.has-code-copy:hover .code-copy-btn,
+.code-copy-btn:focus-visible {
+    opacity: 1;
+}
+
+.code-copy-btn:hover {
+    background: rgba(0, 0, 0, 0.55);
+    color: var(--text-primary, #fff);
+}
+
+.code-copy-btn.is-copied {
+    opacity: 1;
+    color: #4ade80;
+}
+
+@media (hover: none) {
+    .code-copy-btn {
+        opacity: 0.85;
+    }
+}
+
+.light-mode .code-copy-btn {
+    background: rgba(255, 255, 255, 0.8);
+    border-color: #d9d9e3;
+    color: #555;
+}
+
+.light-mode .code-copy-btn:hover {
+    background: #fff;
+    color: #111;
+}
+
 /* Horizontal rule (markdown ---) — use text tone, not --border-color
    (midnight border is ~#1a1a25 and disappears on assistant bubbles). */
 .message-content .message-hr {

@@ -25,7 +25,7 @@ Details: `.cursor/rules/restart-cuttle.mdc`, `src/api/flask_restart.py`, `src/ap
 
 ## What is Cuttle
 
-Cuttle is a persistent, autonomous AI agent framework. It runs as a system-tray (or headless) daemon that manages a Flask API (port 8080), a Discord bot, and vendor agent CLIs. Web chat and Discord use starred slash agents (`/cursor`, …) and the agent router. Visual pipeline graphs and the Node Editor were removed.
+Cuttle is a persistent, autonomous AI agent framework. It runs as a system-tray (or headless) daemon that manages a Flask API (port 8080), a Discord bot, and vendor agent CLIs. Web chat and Discord use starred slash agents (`/cursor`, …) and the agent router.
 
 Project config lives under `.cuttle/` (commands, actions, docs, rules). Prefer that over inventing parallel paths.
 
@@ -85,19 +85,15 @@ Discord DMs still POST `/api/pipeline-trigger-discord` (legacy path name) which 
 
 The web UI is vanilla JS served by Flask at port 8080. Key files:
 - `src/web/landing_page.html` / chat shell — main web chat UI
-- `src/web/router_editor.html` — agent router editor (`/node_editor.html` redirects here)
+- `src/web/router_editor.html` — agent router editor
 
 ### Settings & Routing
 
-`src/settings.json` + `src/managers/settings_manager.py` handle starred slash agents, sandbox mode, and LAN/auth settings. Graph `default_pipeline` is unused.
+`src/settings.json` + `src/managers/settings_manager.py` handle starred slash agents, sandbox mode, and LAN/auth settings.
 
 ### Tools for agents
 
 Cuttle does **not** host an MCP tool server. Guest CLIs keep their own MCP. Cuttle-owned verbs for agents are `python -m api.<module>` (see `.cuttle/docs/agent-ops-cli.md`). **`/cursor`** runs `scripts.utilities.cursor_cli_tool` via the Cursor harness adapter. Discord feature posts use `discord.post` + `python -m api.discord_cli`. Live `src/tools/` is ComfyUI, Govee, OCR (chat vision fallback), and web search.
-
-## Pipelines
-
-Visual graphs, the executor, and the Node Editor were **removed**. Chat does not run graphs. Recover old JSON from git/Gitea history.
 
 ### Agent Router (execution harness selection)
 
@@ -125,6 +121,12 @@ Visual graphs, the executor, and the Node Editor were **removed**. Chat does not
 - Daemon helper: `.cuttle/scripts/restart-daemon.sh` (POSIX) or `.cuttle/scripts/restart-daemon.ps1` (Windows).
 - Drain-first: graceful waits/rejects when busy; `when-idle` schedules; force requires confirm.
 - **Cursor hard gate:** `.cursor/hooks.json` `beforeShellExecution` (Cuttle workspace).
+
+### Git push (Cuttle chat)
+
+- **Never** `git push` from the agent shell in Cuttle chat (including `--force`).
+- The user pushing from the Git pending-changes UI is allowed.
+- In chat, emit the `git.push` action form (status / push / don’t) and stop. See `.cuttle/docs/git.md`. Do not ask “OK to push?” in prose.
 
 ### Asking the user questions (Cuttle chat)
 

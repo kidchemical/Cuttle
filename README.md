@@ -76,8 +76,6 @@ The codebase is set up so an agent can do that well:
 | **Local models** | Ollama and llama.cpp paths for cloud-off work. |
 | **Agent ops CLIs** | Agents drive Cuttle through `python -m api.<module>` verbs (chats, widgets, Discord, workers, brain) instead of raw SQL ([`agent-ops-cli.md`](.cuttle/docs/agent-ops-cli.md)). |
 
-> Pipeline graphs and the visual Node Editor were **removed**. Chat and Discord run through slash agents and the router. Old graphs live in git/Gitea history.
-
 ## Quick start
 
 ### Requirements
@@ -209,7 +207,6 @@ flowchart LR
 | Android app | [`apps/mobile/README.md`](apps/mobile/README.md) |
 | Roadmap | [`docs/ROADMAP.md`](docs/ROADMAP.md) |
 | Agent conventions (Cursor, Codex, Muse, …) | [`AGENTS.md`](AGENTS.md) |
-| Removed graphs (history) | git history; see [`docs/PIPELINES_REMOVED.md`](docs/PIPELINES_REMOVED.md) |
 
 Setup notes under `src/docs/setup/` are being refreshed; prefer this README and the daemon entrypoint above over older `launcher.py` references.
 

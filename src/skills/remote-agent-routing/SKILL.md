@@ -17,13 +17,12 @@ and surrounding helpers. That code:
 - Handles timeouts, errors, and streaming status back to the UI where applicable.
 
 When the user says “remote agent always uses X” or “never invokes Cursor,” start
-by reading that function and the slash-agent / router path — not a graph node.
+by reading that function and the slash-agent / router path.
 
 ## Chat / Discord context
 
 - Web chat: `/api/chat` plus starred sticky prefixes and the agent router.
-- Discord: `bot_mcp.py` POSTs `/api/pipeline-trigger-discord` (legacy URL) →
-  `process_message_with_bot`.
+- Discord: `bot_mcp.py` → `/api/pipeline-trigger-discord` → `process_message_with_bot`.
 - **Sandbox / non-owner** sessions may restrict tools; see `settings_manager`.
 
 ## Related layers
@@ -39,6 +38,5 @@ by reading that function and the slash-agent / router path — not a graph node.
 
 1. Confirm the turn actually hit a slash agent or the router (star, sticky chip, or clean session).
 2. Log or trace `_execute_remote_agent_tool` arguments: prompt length, project key, session flags.
-3. Do not look for `pipeline_trigger_executor.py` — graphs were removed.
 
 Do not duplicate routing logic in new code paths; extend the existing helper so behavior stays consistent across web and Discord.

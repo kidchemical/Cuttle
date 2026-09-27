@@ -1,4 +1,5 @@
-/* Video background (Wallpaper Engine style) - shared by app shell and standalone pages */
+/* Video background (Wallpaper Engine style) - shared by app shell and standalone pages.
+   Overlay/underlay colours (blend target) live in ui_boot.css so every page gets them. */
 #cuttle-video-background-root {
     z-index: -10;
 }

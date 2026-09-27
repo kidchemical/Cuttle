@@ -11532,6 +11532,49 @@
         });
     }
 
+    // Invisible characters that survive a rendered-text copy and show up as
+    // garbage in terminals: zero-width/BOM/soft hyphen dropped, exotic spaces
+    // flattened to ASCII space.
+    function cleanCodeCopyText(raw) {
+        return String(raw ?? '')
+            .replace(/\r\n?/g, '\n')
+            .replace(/[\u200B-\u200D\u2060\uFEFF\u00AD]/g, '')
+            .replace(/[\u00A0\u2007\u202F]/g, ' ')
+            .replace(/\n+$/, '');
+    }
+
+    function attachCodeCopyButtons(containerEl) {
+        containerEl.querySelectorAll('pre > code').forEach((codeEl) => {
+            const pre = codeEl.parentElement;
+            if (!pre || pre.querySelector(':scope > .code-copy-btn')) return;
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'code-copy-btn';
+            btn.title = 'Copy code';
+            btn.setAttribute('aria-label', 'Copy code');
+            btn.innerHTML = COPY_ICON;
+            btn.addEventListener('click', async (ev) => {
+                ev.preventDefault();
+                ev.stopPropagation();
+                const ok = await copyTextToClipboard(cleanCodeCopyText(codeEl.textContent));
+                btn.classList.toggle('is-copied', ok);
+                btn.title = ok ? 'Copied!' : 'Copy failed';
+                if (ok) {
+                    btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>';
+                } else {
+                    (window.showToast || function () {})('Could not copy code block', 'error');
+                }
+                setTimeout(() => {
+                    btn.classList.remove('is-copied');
+                    btn.innerHTML = COPY_ICON;
+                    btn.title = 'Copy code';
+                }, 1500);
+            });
+            pre.classList.add('has-code-copy');
+            pre.appendChild(btn);
+        });
+    }
+
     function activateEnhancements(containerEl) {
         // Syntax highlight (best-effort). Re-seat as textContent first so hljs
         // never sees element children from a mangled innerHTML parse.
@@ -11545,6 +11588,10 @@
                     } catch (_) {}
                 });
             }
+        } catch (_) {}
+
+        try {
+            attachCodeCopyButtons(containerEl);
         } catch (_) {}
 
         // Vega embeds (may load after first paint via optional_cdn)

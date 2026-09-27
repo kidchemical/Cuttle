@@ -15,6 +15,7 @@ import base64
 import bisect
 import io
 import json
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -126,6 +127,27 @@ OVERLAY_JS = r"""
 """
 
 
+def write_webm(path: Path, frames: list[Image.Image], fps: int, hold: int = 0) -> None:
+    """Unframed constant-fps WebM (VP8) plus a poster PNG, for the product site."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Playwright's bundled ffmpeg has no rawvideo demuxer or pipe: protocol, so feed it an
+    # MJPEG stream from a file.
+    stream = path.with_suffix(".mjpeg")
+    with stream.open("wb") as fh:
+        for im in frames + [frames[-1]] * hold:
+            im.convert("RGB").save(fh, "JPEG", quality=95)
+    try:
+        subprocess.run(
+            ["ffmpeg", "-v", "error", "-y", "-f", "image2pipe", "-c:v", "mjpeg", "-framerate", str(fps),
+             "-i", str(stream), "-c:v", "libvpx", "-b:v", "0", "-crf", "12", "-qmin", "4", "-qmax", "30",
+             "-auto-alt-ref", "0", "-pix_fmt", "yuv420p", str(path)],
+            check=True)
+    finally:
+        stream.unlink(missing_ok=True)
+    frames[0].save(path.with_suffix(".png"))
+    print(f"wrote {path.relative_to(rs.REPO)} ({path.stat().st_size // 1024} KB)")
+
+
 class Recorder:
     """Screencast frames plus the wall-clock windows that make it into the output."""
 
@@ -152,7 +174,8 @@ class Recorder:
             self.windows.append((self._start, time.time()))
         self._start = None
 
-    def save(self, path: Path, *, crossfade: int = 0, quality: int = 72, backdrop=None) -> None:
+    def save(self, path: Path, *, crossfade: int = 0, quality: int = 72, backdrop=None,
+             raw_video: Path | None = None) -> None:
         self.cdp.send("Page.stopScreencast")
         times = [t for t, _ in self.frames]
         segments = []
@@ -179,6 +202,9 @@ class Recorder:
                     out.append((("blend", si, fi), Image.blend(prev, img(idx), alpha)))
                 else:
                     out.append((idx, img(idx)))
+
+        if raw_video is not None:
+            write_webm(raw_video, [im for _, im in out], self.fps, hold=round(1.2 * self.fps))
 
         images, durations = [], []
         frame_ms = round(1000 / self.fps)
@@ -329,6 +355,7 @@ def record_customize(browser, auth_state: dict, base: str, chats: dict) -> None:
             "cuttleVideoBackgroundEnabled": "1",
             "cuttleVideoBackgroundList": json.dumps(DEMO_VIDEOS),
             "cuttleVideoBackgroundOpacity": "40",
+            "cuttleVideoBackgroundBlendTarget": "black",
             "cuttleVideoBackgroundDuration": "600",
         },
     )
@@ -359,7 +386,8 @@ def record_customize(browser, auth_state: dict, base: str, chats: dict) -> None:
         select.select_option(theme)
         demo.wait(1.6)
         rec.stop()
-    rec.save(OUT / "customize.webp", crossfade=3, quality=58, backdrop=backdrop(browser, "customize"))
+    rec.save(OUT / "customize.webp", crossfade=3, quality=58, backdrop=backdrop(browser, "customize"),
+             raw_video=rs.RAW / "customize.webm")
     page.context.close()
 
 
@@ -429,7 +457,8 @@ def record_multiplex(browser, auth_state: dict, base: str, chats: dict) -> None:
     demo.caption(None)
     demo.wait(0.4)
     rec.stop()
-    rec.save(OUT / "multiplex.webp", crossfade=2, quality=75, backdrop=backdrop(browser, "multiplex"))
+    rec.save(OUT / "multiplex.webp", crossfade=2, quality=75, backdrop=backdrop(browser, "multiplex"),
+             raw_video=rs.RAW / "multiplex.webm")
     page.context.close()
 
 

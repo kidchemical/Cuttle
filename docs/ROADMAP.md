@@ -12,7 +12,7 @@ Day-to-day backlog: [`.cuttle/learnings/FEATURE_REQUESTS.md`](../.cuttle/learnin
 - **Agent catalog** — `/cursor`, `/codex`, `/claude`, `/muse`, `/hermes`, `/deepseek`, `/opencode`, …
 - **Router** — picks a tentacle on clean sessions; starred/sticky agents bypass it
 - **Workers** — LAN mesh (file copy, shell recipes, Blender shards, self-update). Intent scheduling (`workers.plan`) is partial
-- **Pipelines / Node Editor** — **removed**. Chat is slash agents + router. Jobs UI is mesh/workers only
+- **Jobs** — mesh/worker cockpit (Gitea `@cuttle` jobs, devices). Chat is slash agents + router
 - **Auth** — bcrypt passwords, CORS origin allowlist, Flask-Limiter on login/register/pairing/OAuth, `Secure` cookies on HTTPS
 - **Owner** — `/api/chat` uses `OWNER_USER_EMAIL` (or any local account if unset). Remaining `is_owner: True` values are daemon/operator internals (sessions-send), not anonymous guests
 
@@ -25,8 +25,7 @@ Day-to-day backlog: [`.cuttle/learnings/FEATURE_REQUESTS.md`](../.cuttle/learnin
 ## Not on the table
 
 - Docker-as-the-sandbox story, a public skills marketplace, 20-chat-platform parity, a Node/TypeScript rewrite, or competing with Cursor/Codex **inside** Cuttle
-- Treating the visual pipeline editor as the product. Graphs were removed; if a debugger comes back it is not the chat path
 
 ## Security notes (public)
 
-Do not expose Cuttle past your LAN without reviewing CORS, pairing, and `OWNER_USER_EMAIL`. Cuttle Brain (Context Compiler) is the knowledge path for CLI harnesses. Pipeline-era per-identity `MEMORY.md` was removed.
+Do not expose Cuttle past your LAN without reviewing CORS, pairing, and `OWNER_USER_EMAIL`. Cuttle Brain (Context Compiler) is the knowledge path for CLI harnesses.

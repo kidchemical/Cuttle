@@ -2,7 +2,8 @@
  * Video Background for Cuttle
  * Wallpaper-Engine style: YouTube playlist with configurable duration before transition
  * Reads from localStorage: cuttleVideoBackgroundList, cuttleVideoBackgroundDuration,
- * cuttleVideoBackgroundOpacity, cuttleVideoBackgroundEnabled; named playlists in
+ * cuttleVideoBackgroundOpacity, cuttleVideoBackgroundBlendTarget ('theme' | 'black'),
+ * cuttleVideoBackgroundEnabled; named playlists in
  * cuttleVideoBackgroundPlaylists / cuttleVideoBackgroundActivePlaylist (List mirrors the active one).
  * When embedded in app shell iframe: forwards init to parent; parent owns the video (persists across navigation).
  */
@@ -13,6 +14,7 @@
     const DURATION_KEY = 'cuttleVideoBackgroundDuration';
     const OPACITY_KEY = 'cuttleVideoBackgroundOpacity';
     const ENABLED_KEY = 'cuttleVideoBackgroundEnabled';
+    const BLEND_TARGET_KEY = 'cuttleVideoBackgroundBlendTarget';
     const DEFAULT_OPACITY = 45;
     const DEFAULT_DURATION = 60;
     const FADE_MS = 1200;
@@ -232,6 +234,7 @@
             getListKey: () => LIST_KEY,
             getDurationKey: () => DURATION_KEY,
             getOpacityKey: () => OPACITY_KEY,
+            getBlendTargetKey: () => BLEND_TARGET_KEY,
             getEnabledKey: () => ENABLED_KEY
         };
         return;
@@ -296,6 +299,23 @@
         const v = localStorage.getItem(OPACITY_KEY);
         const n = parseInt(v, 10);
         return (isNaN(n) || n < 0 || n > 100) ? DEFAULT_OPACITY / 100 : n / 100;
+    }
+
+    /** 'theme' fades the video toward the theme's page fill; 'black' is the classic dimmer. */
+    function getBlendTarget() {
+        try {
+            return localStorage.getItem(BLEND_TARGET_KEY) === 'black' ? 'black' : 'theme';
+        } catch (_) {
+            return 'theme';
+        }
+    }
+
+    /* Media mode is for watching, so it always dims toward black and caps at 35%. */
+    function styleOverlay(container, alpha) {
+        const media = container.classList.contains('cuttle-video-background--media');
+        container.setAttribute('data-blend', media ? 'black' : getBlendTarget());
+        const overlay = container.querySelector('.cuttle-video-background-overlay');
+        if (overlay) overlay.style.opacity = String(media ? Math.min(alpha, 0.35) : alpha);
     }
 
     function buildMediaForUrl(url, mode) {
@@ -415,8 +435,8 @@
         container.appendChild(media);
         const overlay = document.createElement('div');
         overlay.className = 'cuttle-video-background-overlay';
-        overlay.style.background = 'rgba(0, 0, 0, ' + getOverlayOpacity() + ')';
         container.appendChild(overlay);
+        styleOverlay(container, getOverlayOpacity());
         return container;
     }
 
@@ -428,9 +448,8 @@
         container.appendChild(media);
         const overlay = document.createElement('div');
         overlay.className = 'cuttle-video-background-overlay';
-        const o = getOverlayOpacity();
-        overlay.style.background = 'rgba(0, 0, 0, ' + Math.min(o, 0.35) + ')';
         container.appendChild(overlay);
+        styleOverlay(container, getOverlayOpacity());
         return container;
     }
 
@@ -681,10 +700,11 @@
         serverHydrateAndSync();
     }
 
+    /** Also re-reads the blend target, so settings can call this after changing it. */
     function updateOverlayOpacity(val) {
         const alpha = Math.max(0, Math.min(100, Number(val))) / 100;
-        document.querySelectorAll('.cuttle-video-background-overlay').forEach(function (overlay) {
-            overlay.style.background = 'rgba(0, 0, 0, ' + alpha + ')';
+        document.querySelectorAll('.cuttle-video-background').forEach(function (container) {
+            styleOverlay(container, alpha);
         });
         try { localStorage.setItem(OPACITY_KEY, String(Math.max(0, Math.min(100, Math.round(Number(val)))))); } catch (_) {}
     }
@@ -702,6 +722,7 @@
         getListKey: () => LIST_KEY,
         getDurationKey: () => DURATION_KEY,
         getOpacityKey: () => OPACITY_KEY,
+        getBlendTargetKey: () => BLEND_TARGET_KEY,
         getEnabledKey: () => ENABLED_KEY
     };
 })();

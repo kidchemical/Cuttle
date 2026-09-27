@@ -41,6 +41,30 @@ html.has-video-background body {
     background: transparent !important;
 }
 
+/* Wallpaper blend target. The overlay's opacity is "Video Blend Amount"
+   (video_background.js); data-blend picks what it fades toward. "theme" uses
+   the page fill each theme shows with the wallpaper off (shared_navigation.css
+   --bg-primary), mirrored here because the shell doesn't load that sheet. */
+:root {
+    --cuttle-video-blend-fill: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%);
+}
+html.midnight-mode {
+    --cuttle-video-blend-fill: linear-gradient(135deg, #000000 0%, #1a1a1a 50%, #2d2d2d 100%);
+}
+html.light-mode {
+    --cuttle-video-blend-fill: #f5f6f8;
+}
+:root.theme-custom {
+    --cuttle-video-blend-fill: var(--t-bg);
+}
+.cuttle-video-background-overlay {
+    background: #000;
+}
+.cuttle-video-background[data-blend="theme"],
+.cuttle-video-background[data-blend="theme"] .cuttle-video-background-overlay {
+    background: var(--cuttle-video-blend-fill);
+}
+
 /* Theme class is applied to <html> before <body> exists. Mirror body::before
    theme overrides so the purple radial overlay never flashes the wrong theme. */
 html.midnight-mode body::before {

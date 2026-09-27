@@ -116,7 +116,7 @@ Server-side, those sentinel strings are now coerced to “no action” (same as 
 ## Side effects (Discord, restart, shell)
 
 Every option (or `submit.action`) needs a **real** allowlisted action name —
-e.g. `discord.post`, `flask.restart`, `flask.health`.
+e.g. `discord.post`, `flask.restart`, `flask.health`, `git.push`.
 
 **Never invent** actions like `__agent_reply__` or `none`. Unknown ids fail at click time.
 

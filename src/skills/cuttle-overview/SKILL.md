@@ -9,10 +9,10 @@ description: >-
 
 ## What Cuttle is
 
-Cuttle is a persistent AI agent control-plane: a Windows tray daemon runs Flask
+Cuttle is a persistent AI agent control-plane: a tray (or headless) daemon runs Flask
 (default port **8080**), optional Discord, Electron Host/Client UI, and mesh
-workers. **Chat and Discord** use starred slash agents (`/cursor`, …) and the
-agent router — **not** a default pipeline graph.
+workers. Chat and Discord use starred slash agents (`/cursor`, …) and the
+agent router.
 
 ## Main code paths
 
@@ -21,15 +21,13 @@ agent router — **not** a default pipeline graph.
 | Daemon (spawns API, bot, cron, tray) | `src/scripts/cuttle_daemon.py` |
 | HTTP API, web UI, chat | `src/api/web_chat_api.py` |
 | Agent harness / slash agents | `src/api/agent_harness/` |
+| Agent router | `src/api/agent_router/` |
 | Context Compiler (Brain) | `src/api/cuttle_brain/` |
 | Discord → API bridge | `src/bots/bot_mcp.py` |
 | Hub/project config | `.cuttle/` (+ `.cuttle/personal/` overlay) |
 
-## Graphs — removed
-
-Visual pipelines, the trigger executor, and the Node Editor were deleted.
-Old JSON: git/Gitea history. Discord still uses the URL
-`/api/pipeline-trigger-discord` as chat ingress only.
+Discord DMs POST `/api/pipeline-trigger-discord` (legacy URL name) into
+`process_message_with_bot` — same chat path as the web UI.
 
 ## Configuration
 

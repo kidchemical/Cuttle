@@ -264,6 +264,7 @@ def record_ui(browser, auth_state, base, chats) -> tuple[Path, Path]:
         "cuttleVideoBackgroundEnabled": "0",
         "cuttleVideoBackgroundList": json.dumps(gifs.DEMO_VIDEOS),
         "cuttleVideoBackgroundOpacity": "28",
+        "cuttleVideoBackgroundBlendTarget": "black",
         "cuttleVideoBackgroundDuration": "600",
     })
     page = open_shell(browser, auth_state, base, seed)

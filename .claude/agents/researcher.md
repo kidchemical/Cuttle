@@ -22,7 +22,6 @@ When researching:
 Cuttle context:
 - Primary stack: Python (Flask, discord.py) + vanilla JS frontend
 - Chat and Discord: slash agents (`/cursor`, `/codex`, …) and `src/api/agent_router/`
-- Visual pipeline graphs were removed (no `src/pipelines/*.json` executor)
 - Settings at `src/settings.json`, secrets in `src/.env` (gitignored)
 - Agent brief: `AGENTS.md`
 

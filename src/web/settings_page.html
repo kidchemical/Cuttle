@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Settings - Cuttle</title>
-    <link rel="stylesheet" href="/css/ui_boot.css?v=20260926safeArea">
+    <link rel="stylesheet" href="/css/ui_boot.css?v=20260927blendTarget">
     <script src="/js/ui_boot.js?v=20260926safeArea"></script>
     <link rel="stylesheet" href="css/shared_navigation.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/landing_page.css?v=20260926lightBg">
@@ -124,8 +124,20 @@
                 </div>
                 <div class="setting-item">
                     <div class="setting-label">
+                        <strong>Video Blend Target</strong>
+                        <div class="setting-description">What the video fades toward: the theme's normal background (100% looks like video off), or black (classic dimmer).</div>
+                    </div>
+                    <div class="setting-control">
+                        <select id="videoBlendTarget" class="setting-input" style="min-width: 200px;" onchange="applyVideoBlendTargetLive()">
+                            <option value="theme">Theme background</option>
+                            <option value="black">Black dimmer</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="setting-item">
+                    <div class="setting-label">
                         <strong>Video Blend Amount</strong>
-                        <div class="setting-description">Dark dimmer over the video (0 = video undimmed, 100 = mostly black). Separate from the color effect below.</div>
+                        <div class="setting-description">How far the video fades toward the blend target (0 = video untouched, 100 = fully covered). Separate from the color effect below.</div>
                     </div>
                     <div class="setting-control">
                         <input type="range" id="videoBackgroundOpacity" min="0" max="100" value="45" style="width: 160px; vertical-align: middle;" oninput="applyVideoBackgroundOpacityLive()">
@@ -466,7 +478,7 @@
     <script src="/js/shared_navigation.js"></script>
     <script src="/js/background_effect_blend.js"></script>
     <script src="/js/toast.js"></script>
-    <script src="/js/video_background.js?v=20260926playlists"></script>
+    <script src="/js/video_background.js?v=20260927blendTarget"></script>
     <script>
         // Settings functions
         function changeTheme() {
@@ -1219,10 +1231,23 @@
                 window.CuttleVideoBackground.updateOverlayOpacity(clamped);
             } else {
                 document.querySelectorAll('.cuttle-video-background-overlay').forEach(function (overlay) {
-                    overlay.style.background = 'rgba(0, 0, 0, ' + (clamped / 100) + ')';
+                    overlay.style.opacity = String(clamped / 100);
                 });
             }
             scheduleVideoBackgroundServerSave();
+        }
+
+        function readVideoBlendTarget() {
+            return localStorage.getItem('cuttleVideoBackgroundBlendTarget') === 'black' ? 'black' : 'theme';
+        }
+
+        function applyVideoBlendTargetLive() {
+            const select = document.getElementById('videoBlendTarget');
+            const target = select && select.value === 'black' ? 'black' : 'theme';
+            try { localStorage.setItem('cuttleVideoBackgroundBlendTarget', target); } catch (_) {}
+            if (window.CuttleVideoBackground && window.CuttleVideoBackground.updateOverlayOpacity) {
+                window.CuttleVideoBackground.updateOverlayOpacity(readVideoOpacityFromUiOrStorage());
+            }
         }
 
         function applyBackgroundEffectBlendLive() {
@@ -1375,6 +1400,7 @@
                 videoBackgroundActivePlaylist: currentVideoPlaylistState().active,
                 videoBackgroundDuration: parseInt(localStorage.getItem('cuttleVideoBackgroundDuration') || '60', 10),
                 videoBackgroundOpacity: parseVideoOpacity(localStorage.getItem('cuttleVideoBackgroundOpacity'), 45),
+                videoBackgroundBlendTarget: readVideoBlendTarget(),
                 videoBackgroundEnabled: localStorage.getItem('cuttleVideoBackgroundEnabled') !== '0',
                 backgroundEffectBlend: (() => {
                     const n = parseInt(localStorage.getItem('cuttleBackgroundEffectBlend'), 10);
@@ -1440,6 +1466,9 @@
                         }
                         if (settings.videoBackgroundOpacity !== undefined) {
                             localStorage.setItem('cuttleVideoBackgroundOpacity', String(settings.videoBackgroundOpacity));
+                        }
+                        if (settings.videoBackgroundBlendTarget !== undefined) {
+                            localStorage.setItem('cuttleVideoBackgroundBlendTarget', settings.videoBackgroundBlendTarget === 'black' ? 'black' : 'theme');
                         }
                         if (settings.backgroundEffectBlend !== undefined) {
                             localStorage.setItem('cuttleBackgroundEffectBlend', String(settings.backgroundEffectBlend));
@@ -1594,6 +1623,8 @@
             const opacityLabel = document.getElementById('videoBackgroundOpacityLabel');
             if (opacityInput) opacityInput.value = String(opacity);
             if (opacityLabel) opacityLabel.textContent = opacity + '%';
+            const blendTargetSelect = document.getElementById('videoBlendTarget');
+            if (blendTargetSelect) blendTargetSelect.value = readVideoBlendTarget();
 
             const blendVal = localStorage.getItem('cuttleBackgroundEffectBlend');
             const blendRaw = blendVal !== null && blendVal !== '' ? parseInt(blendVal, 10) : 100;

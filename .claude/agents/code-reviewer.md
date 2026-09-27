@@ -18,7 +18,6 @@ Review focus areas:
 Cuttle-specific things to watch:
 - Flask endpoints in `web_chat_api.py` must validate input before use
 - `_execute_remote_agent_tool()` runs guest CLIs — verify `is_owner` / sandbox checks are intact
-- Visual pipeline graphs and `pipeline_trigger_executor.py` are gone; do not review as if they still exist
 - Chat is slash agents + the agent router (`src/api/agent_router/`)
 
 Output format:
