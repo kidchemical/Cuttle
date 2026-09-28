@@ -1,6 +1,6 @@
 # Cuttle architecture map (repository-wide)
 
-**Date:** 2026-09-27 · **HEAD:** `9ecd388` · **Code:** not modified in this audit.
+**Date:** 2026-09-27 (continued) · **HEAD:** `4f2880c` · **Code:** not modified. Inventory review status: [`../reviews/repository-inventory.md`](../reviews/repository-inventory.md).
 
 Companion: [`docs/guides/WEB_CHAT_API.md`](../guides/WEB_CHAT_API.md) (Flask composition root only), [`docs/guides/MODULARITY.md`](../guides/MODULARITY.md), this audit’s [`../reviews/repository-audit.md`](../reviews/repository-audit.md).
 
@@ -25,9 +25,11 @@ start_cuttle.sh | src/scripts/cuttle_daemon.py
 
 **Android:** `apps/mobile` Capacitor shell; `apps/android_companion` / `apps/android_bt_voice` are additional native surfaces.
 
-**Flask-alone:** intended `python src/api/web_chat_api.py`. README currently names `src/scripts/start_api_server.py`, which starts a **different** Flask on **:5000** (`time_series_api.py`). Documented vs actual diverge.
+**Flask-alone:** `python src/api/web_chat_api.py` (repo root; same as the daemon child). README currently names `src/scripts/start_api_server.py`, which starts a **different** Flask on **:5000** (`time_series_api.py`).
 
-**Legacy parallel launcher:** `src/launcher.py` still starts bot+API without the daemon restart protocol — overlapping, not the supported path (`AGENTS.md` / README daemon).
+**Do not use** `src/scripts/launchers/start_web_chat.py` (or the other three files in that folder): they `chdir`/`sys.path` to `launchers/` and import `web_chat_api.py` / `project_manager` from the wrong directory. **Confirmed broken** by source, not by running.
+
+**Legacy parallel launcher:** `src/launcher.py` still starts bot+API **from `src/`** (`api/web_chat_api.py`) without the daemon restart protocol — overlapping, not the supported path.
 
 ---
 
@@ -127,7 +129,7 @@ Canonical: `python -m api.*` (`.cuttle/docs/agent-ops-cli.md`). Hub actions: `.c
 
 ## Legacy / superseded (see audit)
 
-Graph pipelines (JSON graphs, node editor file): **removed**; many HTTP 410s remain; some handlers still have **live bodies** (`pipeline-reload`, `pipeline-job-status`, `pipeline-execution-finish`, `running_pipelines` dict). Jobs UI still POSTs `/api/pipeline-run-now`.
+Graph JSON pipelines and the node-editor **page** are gone. Many `/api/pipeline-*` routes **410**. Jobs UI still POSTs `/api/pipeline-run-now` (410). `running_pipelines` is **never written** at runtime (`pipeline-reload` mutates it only after an unconditional `return`; register-running is 410). Readers (`/api/status`, job-status, sessions/list, job-insight) always see empty. `api_jobs` returns `{jobs: []}` then has an **unreachable** graph-listing body. `pipeline-execution-finish` still has a **reachable** large body — callers not fully traced. Discord **`/api/pipeline-trigger-discord`** is the live DM path (legacy name). `active_executions` is used by the agent kernel, not only graphs.
 
 `src/launcher.py` vs daemon. Port-5000 time-series stack. `landing_page_backup.html`. Control panel HTML still linked.
 

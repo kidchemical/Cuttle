@@ -20,7 +20,7 @@ Auth (bcrypt, LAN) is in [`ROADMAP.md`](ROADMAP.md). Desktop version lives in `e
 ## Reviews
 
 - [Security hardening 2026-09](reviews/security-hardening-2026-09.md)
-- [Repository audit](reviews/repository-audit.md) · [inventory](reviews/repository-inventory.md) · [cleanup plan](reviews/cleanup-plan.md)
+- [Repository audit](reviews/repository-audit.md) · [inventory](reviews/repository-inventory.md) · [coverage ledger](reviews/coverage-ledger.md) · [cleanup plan](reviews/cleanup-plan.md)
 
 ## Start
 

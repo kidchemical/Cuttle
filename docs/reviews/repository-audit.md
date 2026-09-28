@@ -1,164 +1,185 @@
 # Repository-wide technical-debt audit
 
-**Date:** 2026-09-27 · **HEAD:** `9ecd388` · **Application code:** not modified.
+**Date:** 2026-09-27 (continued pass) · **HEAD:** `4f2880c` · **Application code:** not modified.
 
-**Baselines** (must match [`repository-inventory.md`](repository-inventory.md)):
+Companion: [`repository-inventory.md`](repository-inventory.md) (file-level class/owner/purpose/review), [`coverage-ledger.md`](coverage-ledger.md) (resume state), [`cleanup-plan.md`](cleanup-plan.md) (**investigation first**; implementation streams are gated).
 
-| Metric | Count |
+**Baselines**
+
+| Metric | `9ecd388` (first pass) | `4f2880c` (this pass) |
+|---|---|---|
+| Tracked files | 914 | **918** (four audit docs committed) |
+| Inventory data rows | 914 path bullets | **918** table rows; `set(git ls-files)` matches |
+| Untracked (not ignored) | 0 | 0 |
+| Ignored paths | 72628 (dir-classed, not re-walked) | same assumption |
+| `git status --short --untracked-files=all` | 0 | dirty only if this continuation’s docs are uncommitted |
+
+**Cleanliness vs reproducibility**
+
+Ignored trees on this machine (venv, DBs, certs, `settings.json`, `_personal/`, `temp/`) are **legitimate local state**, not repository dirt. A clone does **not** need them.
+
+A clone **can** fail to match *documented* Flask-alone: README names `src/scripts/start_api_server.py`, which starts **:5000** `time_series_api.py`. Canonical Flask-alone (what the daemon runs) is `python src/api/web_chat_api.py` from repo root.
+
+`src/scripts/launchers/start_web_chat.py` is **not** a substitute: it `chdir`s to `src/scripts/launchers/` and `subprocess.run([python, "web_chat_api.py"])`. That basename is `src/api/web_chat_api.py`, not under `launchers/`. **Confirmed broken** by reading the launcher; not executed (would fail `FileNotFoundError`).
+
+**Clean-install run:** still **not** performed in an empty clone. Daemon boot is inferred from `cuttle_daemon.py` + `start_cuttle.sh`, not observed.
+
+---
+
+## Coverage (this pass vs original acceptance)
+
+| Criterion | Status |
 |---|---|
-| Tracked files | **914** |
-| Untracked (not ignored) | **0** |
-| Ignored file paths | **72628** (mostly `.venv` / `node_modules` / Gradle / `temp`) |
-| `git status --short --untracked-files=all` | **0 lines** |
+| Every tracked path listed with class, owner, purpose, review | **Yes** — inventory table, 918 rows |
+| Inventoried ≠ reviewed | **Yes** — review column: `inventoried` / `structure` / `execution` / `partial-execution` |
+| Every maintained `.py` inspected | **AST parse of all 505** (0 syntax failures) = `structure`. **Not** every function body. Oversized modules are `partial-execution`. |
+| Every maintained `.js` inspected | **Header/prefix read of all 35**; `chat_page.js` / `app_shell.js` partial-execution |
+| Dynamic HTTP/JS/subprocess | Graph HTTP, Jobs fetch, Discord `pipeline-trigger-discord`, daemon spawn, launchers — traced. Not every `@app.route`. |
+| Android Java/Gradle, Electron `node_modules` | Inventoried; not line-reviewed |
+| Vendor `claw-code` / `mcp-govee` internals | Not line-reviewed |
+| Fresh clone install | **Not run** |
 
-**Cleanliness vs reproducibility:** ignored files on this machine are largely legitimate runtime/cache. A **fresh clone** can boot using README venv + `src/.env.example` **if** operators do not follow the README line that starts Flask via `start_api_server.py` (that script is the port-5000 time-series app). `settings.json` is gitignored but **created with defaults** — not a silent hard dependency on this host’s 13k file.
-
-**Coverage (honest):**
-
-| Scope | Status |
-|---|---|
-| Every tracked path listed | **Yes** — inventory appendix |
-| Ignored trees | **Directory classification**, not 72k file reads |
-| Every `.py` / `.js` line | **No** — 505 Python + 35 JS files; reviewed by tree + execution traces + targeted grep |
-| Dynamic HTTP/JS/subprocess | **Sampled** (chat path, workers blueprint, graph HTTP, Jobs UI fetch) |
-| Vendor `claw-code` / `mcp-govee` internals | **Not** line-reviewed |
-
-Incomplete work is called out as **uncertain** rather than confirmed dead.
+Histogram (HEAD `4f2880c`): inventoried 375 · structure 525 · execution 13 · partial-execution 5 (plus a few review promotions in the inventory after the generator).
 
 ---
 
 ## Findings (by subsystem)
 
-Confidence: **H** high (trace + missing callers) · **M** medium · **L** low / needs runtime.
+Confidence: **H** high · **M** medium · **L** low.
 
-### A. Graph / node-editor era (legacy)
+### A. Graph / node-editor era
 
-| ID | Finding | Evidence | Confidence | Action |
+| ID | Finding | Evidence | Confidence | Dead vs live |
 |---|---|---|---|---|
-| A1 | Graph JSON pipelines no longer ship | `git ls-files src/pipelines` empty; tests skip “pipeline graphs removed” | H | Keep 410/empty list until Jobs UI stops calling graph APIs |
-| A2 | `POST /api/pipeline-run-now` still used by Jobs UI | `src/web/jobs_page.html` ~1558; `job_insight.html` ~312; handler in `web_chat_api.py` ~10397 — mix of 410 vs leftover `running_pipelines` mutation nearby | H | Either wire Jobs to workers/cuttle-jobs **or** stop fetching; then delete dict + handlers |
-| A3 | `/api/execute-tool` and `/api/execute-output` have **no JS callers** | Grep `src/web` only DOM `nodeType`; Python: `execute_tool` → `_execute_remote_agent_tool` only | H (HTTP unused) | **Suspected** dead HTTP; `_execute_remote_agent_tool` still **calls** `_run_harness_web_command` — do not delete helper until chat/tests confirmed unused |
-| A4 | `running_pipelines` in-memory dict still updated | `web_chat_api.py` ~350, ~10452 `pipeline-reload` still writes it | M | Remnant of graphs; `/api/status` still exposes `running_pipeline_count` |
-| A5 | `pipeline-execution-finish`, `pipeline-job-status`, `pipeline-reload` not reduced to 410 | Security review 2026-09 already noted leftover bodies | H | Tombstone or delete after A2 |
-| A6 | `/pipeline_chat.html` redirects to Jobs | Route ~2166; **file absent** (intentional redirect) | H | Fine as compatibility URL |
-| A7 | `/node_editor.html` redirects to Router | Route ~2124; **file absent** | H | Fine; tray “Open Router” still named `on_node_editor` in `cuttle_daemon.py` ~1272 |
-| A8 | Integration tests still talk about Discord_Remote_Code.json | `src/tests/integration/test_discord_remote_execution.py` skips if missing | H | Update tests when graphs stay gone |
-| A9 | `query_tracker.py` still has `node_editor` context | ~220 | M | Rename/dead branch after UI gone |
-| A10 | Settings defaults still mention `OOBE_Welcome` pipeline / `show_node_ids` | `settings_manager.py` FACTORY_DEFAULT_PIPELINE | M | Config debt, not runtime crash (defaults empty `default_pipeline`) |
+| A1 | Graph JSON pipelines no longer ship | `git ls-files src/pipelines` empty | H | Confirmed gone as product |
+| A2 | Jobs UI still POSTs `/api/pipeline-run-now` | `jobs_page.html` ~1558; `job_insight.html` ~312 | H | **Live client**; handler **returns 410** (`pipeline_run_now` → `_graph_pipelines_gone_response()` at ~10397) |
+| A3 | `/api/execute-tool` has no JS callers | Grep `src/web`: no `/api/execute-tool`. Handler ~11739 still implements node types | H HTTP unused from UI | **Suspected** dead HTTP. Discord `execute_tool_command` is a **retired stub** (returns string; does not POST this route). `internal_http._internal_app_post` is **never called**. Tests: `test_discord_remote_execution.py` string-asserts `_execute_remote_agent_tool` exists. **Do not delete** `_execute_remote_agent_tool` until chat/local-LLM confirmed unused — it is still defined and used **from** `execute_tool()`. |
+| A4 | `running_pipelines` **writes** | Module dict `{}` at ~350. Only assignment to keys is in `pipeline_reload()` **after** `return jsonify(...)` at ~10454. `pipeline-register-running` is 410. **No reachable writer.** | H | **Confirmed:** dict stays empty. **Readers still live:** `/api/status` `running_pipeline_count`; `/api/running-pipelines`; `/api/jobs` **dead tail** after empty return (~2308); `/api/job-insight` ~3194; `/api/sessions/list` ~9883; `/api/pipeline-check-running`; `/api/pipeline-job-status`. They always observe empty/stopped. |
+| A5 | Tombstone remnants (unreachable bodies) | `pipeline_reload` ~10454–10478 unreachable. `api_jobs` ~2308 returns empty then ~88 lines of graph listing (~2309–2396) unreachable. | H | **Confirmed dead statements** inside live functions. Compatibility **response** is the early return. |
+| A6 | `/pipeline_chat.html` redirect | Route exists; file absent | H | Intentional compatibility |
+| A7 | `/node_editor.html` redirect; tray `on_node_editor` | `cuttle_daemon.py` | H | Intentional name debt |
+| A8 | Integration tests mention missing graph JSON | `test_discord_remote_execution.py` skips | H | Stale test surface |
+| A9 | `query_tracker` `node_editor` context | ~220 | M | Suspected leftover branch |
+| A10 | Settings `OOBE_Welcome` / `show_node_ids` | `settings_manager.py` | M | Config debt |
+| A11 | `/api/job-insight` still loads graph JSON from settings path | ~3164–3178; 404 if file missing | H | **Live handler**, empty product data |
+| A12 | Telegram/Slack `pipeline-trigger-*` | Call `_handle_external_trigger` → `process_message_with_bot` (~7152). **Not** graph execution. Names are legacy. | H | **Live** chat adapters if anything POSTs them |
+| A13 | `active_executions` | `register_execution` from `agent_harness/kernel.py` | H | **Live** — must **preserve** if graph HTTP dies |
+| A14 | `pipeline-execution-finish` | Route ~10257; still has a large live body (query tracker / reports), not an early 410 | M | **Uncertain** callers; Jobs/query-log era. Trace JS before 410. |
 
-**Replacement:** Agent harness + Jobs/workers/cuttle-jobs. **Cannot remove entire graph HTTP** until Jobs + `running_pipelines` consumers are traced in the browser.
+**Replacement:** harness + `/api/cuttle-jobs` / workers. Graph **HTTP names** remain. Entire graph subsystem **cannot** be deleted as one unit: Discord still uses `/api/pipeline-trigger-discord`; kernel still uses `active_executions`.
 
-### B. Launchers and docs drift (reproducibility)
+### B. Launchers and docs (reproducibility)
 
-| ID | Finding | Evidence | Confidence | Action |
+| ID | Finding | Evidence | Confidence | Dead vs live |
 |---|---|---|---|---|
-| B1 | README “Flask alone” → `start_api_server.py` | README ~113; script docstring + body starts **:5000** `time_series_api.py` | H | **Architectural/docs bug.** Flask-alone is `src/api/web_chat_api.py` or `src/scripts/launchers/start_web_chat.py` |
-| B2 | `src/launcher.py` duplicates daemon | ~1100 lines start bot+API; daemon is canonical | M | Compatibility; confirm no Windows shortcut still uses it (`create_desktop_shortcuts.ps1`) |
-| B3 | `start_web_chat.py` `chdir` is `Path(__file__).parent` = `launchers/` | ~18 | M | May be wrong cwd vs `src/` — **uncertain** without running |
-| B4 | `AGENTS.md` names `_execute_remote_agent_tool` as core dispatch | AGENTS.md ~161; chat uses `_run_harness_web_command` / kernel | H | Doc fix; not a clone-breaker |
-| B5 | e2e comment repeats start_api_server | `test_app_shell_navigation.py` ~12 | M | Comment-only |
+| B1 | README Flask-alone → `start_api_server.py` | README ~113; script starts `scripts/time_series_api.py` :5000 | H | **Docs bug.** Correct command: `python src/api/web_chat_api.py`. **Do not** recommend `start_web_chat.py`. |
+| B2 | `src/launcher.py` vs daemon | Starts `api/web_chat_api.py` with cwd `src/` (~517) | M | Overlapping supervisor; no daemon restart protocol |
+| B3 | `start_web_chat.py` broken | `Path(__file__).parent` = `launchers/`; runs `"web_chat_api.py"` | H | **Confirmed broken launcher** (not uncertain) |
+| B3b | `start_router_editor.py` broken | `from web_chat_api import app` after inserting `launchers/` on `sys.path` | H | Confirmed broken |
+| B3c | `start_ungit.py` broken | `from project_manager import project_manager`; real module `src/managers/project_manager.py` | H | Confirmed broken |
+| B3d | `launcher_debug.py` broken | Looks for `launchers/web_chat_api.py`; class still named `JamBitDebugLauncher` | H | Confirmed broken |
+| B4 | `AGENTS.md` core dispatch | Names `_execute_remote_agent_tool`; chat uses `_run_harness_web_command` / kernel | H | Doc only |
+| B5 | e2e comment `start_api_server.py` | `test_app_shell_navigation.py` ~12 | M | Comment-only |
+| B6 | Electron README `python ../src/kill_bots.py` | File is `src/scripts/utilities/kill_bots.py`; that script `from launcher import JamBitLauncher` with `sys.path` = `utilities/` | H | Stale doc + **broken script** |
+| B7 | `debug_cursor_location.py` | `from tool_manager import find_cursor_exe`; **no** `tool_manager.py` in repo | H | Confirmed broken |
+| B8 | `hello_world.py` | Prints Hello World; utilities README lists it as test script | H | Abandoned sample |
+| B9 | No product UI caller of `/api/timeseries` | No matches in `src/web` or `src/api/dashboards`. `run_tests_with_logging.py` + `tests/html_reporter.py` use `test_history_manager.get_time_series_data` **in-process**, not port 5000. | H unused **HTTP :5000**; M whether anyone still starts that process by habit |
 
 ### C. Duplicate / overlapping config
 
 | ID | Finding | Evidence | Confidence | Action |
 |---|---|---|---|---|
-| C1 | Five `bot_config.json` copies | root, `src/`, `electron/`, two test fixtures; sizes 502/518/358/159 | H | Trace `BotConfig` cwd (`src/core/config.py` `Path("bot_config.json")`) |
-| C2 | `*.json` gitignore + allowlist | Easy to omit new source JSON | M | Document allowlist; `settings.json` correctly local |
-| C3 | Hub `.cuttle/docs` vs `docs/guides` overlap | e.g. workers, discord | M | Intentional (agent runbooks vs public docs) — not dead |
+| C1 | Five `bot_config.json` copies | root, `src/`, `electron/`, test fixtures; `BotConfig` uses `Path("bot_config.json")` cwd-relative | H | Trace cwd at Discord vs Flask start |
+| C2 | `*.json` gitignore + allowlist | Easy to omit new source JSON | M | Document; not a current untracked miss |
+| C3 | Hub `.cuttle/docs` vs `docs/guides` | Intentional split | H | Keep |
 
 ### D. Frontend leftovers
 
-| ID | Finding | Evidence | Confidence | Action |
-|---|---|---|---|---|
-| D1 | `landing_page_backup.html` tracked | 1538 lines; no route found serving it | H | **Suspected** unused backup |
-| D2 | `control_panel.html` still in nav | `shared_navigation.js`, `app_shell.js`, landing menus | H | **Live** old surface — product decision to keep or fold into Settings |
-| D3 | Jobs page still graph-oriented copy | “pipelines/scheduled jobs” in `serve_jobs_page` docstring | M | UX debt |
+| ID | Finding | Evidence | Confidence |
+|---|---|---|---|
+| D1 | `landing_page_backup.html` | No route | H **suspected** unused backup |
+| D2 | `control_panel.html` in landing + `app_shell` title map + `shared_navigation.js` | Live links | H **live** old surface |
+| D3 | Jobs copy still graph-oriented | serve_jobs docstring / UI | M UX |
 
-### E. Auth / security residuals (not milestone reopen)
+### E. Auth / security
 
-Tracked as GitHub **#1–#5**. Loopback worker runtime, LAN enroll, settings GET, TLS pin, HMAC replay **per action**.
+GitHub **#1–#5**. Not reopened here.
 
 ### F. Oversized / coupling
 
-| ID | Finding | Evidence | Confidence | Action |
-|---|---|---|---|---|
-| F1 | `web_chat_api.py` ~15k lines | Map already exists; GitHub **#6** | H | Extract when blocked; not next product |
-| F2 | Reverse imports into composition root | `dispatch.py`, `chat_delivery.py`, `auth_api.py`, `kernel.py` | H | Listed in WEB_CHAT_API.md |
-| F3 | `chat_page.js` ~26k lines | Same class of bottleneck as Flask file | H | Separate from Python extract |
+| ID | Finding | Evidence | Confidence |
+|---|---|---|---|
+| F1 | `web_chat_api.py` ~15k lines | WEB_CHAT_API.md | H |
+| F2 | Reverse imports into composition root | dispatch, chat_delivery, kernel | H |
+| F3 | `chat_page.js` ~26k | Partial review only | H |
+| F4 | `internal_http` helpers unused | Import in `web_chat_api` ~168 sets `PIPELINE_AVAILABLE`; `_internal_app_post` never referenced again in repo | H | **Live import / dead functions.** Deleting the module without moving the flag would set `PIPELINE_AVAILABLE = False` and 503 chat. |
 
-### G. Tests referencing removed behavior
+### G. Tests
 
-| ID | Finding | Evidence | Confidence | Action |
-|---|---|---|---|---|
-| G1 | Graph-skipping tests | `test_discord_remote_execution.py` | H | Keep skip or delete with graphs |
-| G2 | `src/bot.py` shim only for unit tests | `test_security.py`, `test_username_case.py` import `bot` | H | Keep until tests migrate to `discord_bot` |
+| ID | Finding | Evidence | Confidence |
+|---|---|---|---|
+| G1 | Graph-skipping tests | `test_discord_remote_execution.py` | H |
+| G2 | `src/bot.py` test shim | `test_security.py` etc. | H keep |
 
 ### H. Tools / MCP
 
-| ID | Finding | Evidence | Confidence | Action |
-|---|---|---|---|---|
-| H1 | `src/tools/` still ComfyUI, Govee, OCR, web_search | Matches AGENTS.md | H | **Live** |
-| H2 | `src/core/mcp_tool_coaching.py` | Coaching for MCP; Cuttle does not host MCP server | M | May still inject into prompts — **not traced to runtime this pass** |
-| H3 | `vendor/mcp-govee` submodule | `.gitmodules` | H | Optional; `git submodule update --init` |
-| H4 | `vendor/claw-code` gitlink + gitignore of contents | README: opt-in clone | M | Clean clone has empty/unpopulated tree unless submodule protocol documented |
+| ID | Finding | Evidence | Confidence |
+|---|---|---|---|
+| H1 | `src/tools/` ComfyUI, Govee, OCR, web_search | AGENTS.md | H live |
+| H2 | `mcp_tool_coaching.py` | Called from `web_chat_api.py` ~10720 | H **live** prompt suffix (name is leftover “MCP”) |
+| H3 | `vendor/mcp-govee` | `.gitmodules` | H optional |
+| H4 | `vendor/claw-code` gitignore contents | README opt-in | M |
 
-### I. Apps
+### I. Apps / J. Electron
 
-| ID | Finding | Evidence | Confidence | Action |
-|---|---|---|---|---|
-| I1 | Three Android trees | `apps/mobile` (94), `android_companion` (16), `android_bt_voice` (37) | M | Confirm which APKs are shipping vs experiments |
-| I2 | Mobile Gradle build dirs ignored | Regenerable | H | Fine |
+Unchanged: three Android trees inventoried, not APK-provenance traced. Electron 16 tracked files.
 
-### J. Electron
+### K. Local-only (Phase 1B)
 
-Tracked 16 files; `node_modules` ignored. Sandbox helper required on Ubuntu. TLS pin is **#2**, not sandbox.
+Unchanged directory classes. No secrets quoted.
 
-### K. Local-only / scratch (Phase 1B)
+### L. Independently found this continuation
 
-| Path | Class | Reproducibility |
-|---|---|---|
-| `temp/WAG-EMS-original-backup.git` | 5 | Not needed for Cuttle |
-| `temp/promo`, `readme_raw`, png dumps | 4+5 | README media rebuild scripts |
-| `_personal/` Instacart credential **filenames** | 6 | Must never be committed |
-| This host `src/settings.json` | 2 | Clone uses defaults |
-
-### L. Independently found (not from user’s earlier examples)
-
-1. README → `start_api_server.py` is the **wrong process** for Flask-alone (**B1**).
-2. `/api/execute-tool` HTTP has **zero** frontend callers (**A3**).
-3. Jobs UI still drives **removed** graph run API (**A2**).
-4. Five `bot_config.json` files + cwd-relative load (**C1**).
-5. `landing_page_backup.html` with no route (**D1**).
-6. `AGENTS.md` core-dispatch sentence is **stale** (**B4**).
-7. Daemon tray callback still named node editor (**A7**).
-8. `*.json` blanket ignore vs allowlist — risk of missing templates (**C2**).
+1. **A4 correction:** `pipeline-reload` does **not** update `running_pipelines` at runtime (unreachable). Prior audit was wrong.
+2. **`api_jobs` same tombstone pattern** as reload (empty return, then dead graph listing).
+3. **Four `src/scripts/launchers/` files all broken** (cwd/`sys.path`), not just `start_web_chat.py` “uncertain”.
+4. **`internal_http` load-bearing unused import.**
+5. **`tool_manager` missing** — `debug_cursor_location.py` cannot import.
+6. **`kill_bots` / Electron README path drift.**
+7. **Telegram/Slack routes are chat, not graphs** — do not 410 them with graph cleanup.
+8. **`active_executions` is harness-live** — not a graph-only helper.
 
 ---
 
-## Intentional compatibility (do not treat as junk)
+## Intentional compatibility (not junk)
 
-- `/node_editor.html` and `/pipeline_chat.html` **redirects**
-- Process start/stop **410** JSON
-- Many `/api/save-pipeline` etc. **410**
+- HTML redirects for removed pages
+- Process-control **410**
+- Many `/api/*pipeline*` **410** with `_graph_pipelines_gone_response`
 - `src/bot.py` test shim
-- Unsigned historical action cards **fail closed** (hardening)
+- Unsigned historical action cards fail closed
 
 ---
 
-## Shared dependencies to preserve if graphs die
+## Shared dependencies to preserve if graph HTTP is slimmed
 
-- `_run_harness_web_command` / `agent_harness` — **chat**
-- `query_tracker` — query log inspector (product)
-- Discord bot — **not** graph-only
-- `running_pipelines` — only if something still displays it (`/api/status`, Jobs)
+- `_run_harness_web_command` / `agent_harness` — chat
+- `active_executions` — kernel + `/api/executing-jobs` (`app_shell.js` ~6081)
+- `process_message_with_bot` / `/api/pipeline-trigger-discord` — Discord
+- `_handle_external_trigger` — Telegram/Slack names
+- `query_tracker` — query log inspector (product; overlapping graph leftovers)
+- `PIPELINE_AVAILABLE` flag semantics
 
 ---
 
-## Coverage gaps (next session)
+## Incomplete investigations (explicit)
 
-- Line-level review of `src/scripts/utilities/*.py` (33 files)
-- Whether `control_panel.html` is reachable from **app_shell** primary nav vs leftover landing
-- Whether `execute_tool` is hit by Discord or internal HTTP (`internal_http.py`)
-- `src/launcher.py` consumers (shortcuts, docs)
-- Android app which is canonical
-- Full `src/web/js/chat_page.js` dead functions — not done
+- Not every `@app.route` body in `web_chat_api.py`
+- Not every function in `chat_page.js`
+- Control Panel contents vs Settings (D2 live links; page not fully walked)
+- `src/api/dashboards` has **no** timeseries/5000 refs; B9 still not a process-list on this host
+- Which `bot_config.json` wins for daemon vs `launcher.py` vs tests
+- Which Android app is shipping
+- `pipeline-execution-finish` JS callers
+- Full consumer graph of `src/scripts/utilities/*_cli_tool.py` (structure only except known harness adapters)
+- Fresh-clone install
