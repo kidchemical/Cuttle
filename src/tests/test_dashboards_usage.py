@@ -123,3 +123,20 @@ def test_usage_route(tmp_path: Path, monkeypatch):
     assert body["selected_group_by"] == "harness"
     assert len(body["buckets"]) == 14
     assert body["totals"]["turns"] == 3
+
+
+def test_one_and_three_day_ranges(tmp_path: Path):
+    db = tmp_path / "outcomes.db"
+    _seed(db)
+    ids = [r["id"] for r in usage.RANGES]
+    assert ids[:3] == ["1d", "3d", "7d"]
+    one = usage.cuttle_usage(range_id="1d", tz_offset_minutes=0, db_path=db, now=NOW)
+    assert one["selected_range"] == "1d"
+    assert one["start"] == one["end"] == "2026-09-26"
+    assert len(one["buckets"]) == 1
+    assert one["stats"]["turns"] == 1
+    three = usage.cuttle_usage(range_id="3d", tz_offset_minutes=0, db_path=db, now=NOW)
+    assert three["selected_range"] == "3d"
+    assert (three["start"], three["end"]) == ("2026-09-24", "2026-09-26")
+    assert len(three["buckets"]) == 3
+    assert three["stats"]["turns"] == 3

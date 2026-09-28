@@ -2564,7 +2564,12 @@
                     type: 'bar',
                     name: g.label,
                     x: labels,
-                    y: g.series[metric.id],
+                    // Zero buckets carry no bar segment; null them so the
+                    // unified hover lists only groups with an actual value.
+                    y: (g.series[metric.id] || []).map((v) => {
+                        const n = Number(v);
+                        return (v == null || !Number.isFinite(n) || n === 0) ? null : v;
+                    }),
                     marker: { color },
                     hovertemplate: `%{fullData.name}: %{y:${fmt.hover}}${suffix}<extra></extra>`,
                 }));

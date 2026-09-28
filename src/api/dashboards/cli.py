@@ -30,7 +30,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     )
     p_get.add_argument("--days", type=int, default=30, help="cuttle-performance window; 0 = all time")
     p_get.add_argument("--range", dest="range_id", default="30d",
-                       help="cuttle-usage range: 7d, 14d, 30d, 90d, 1y, all")
+                       help="cuttle-usage range: 1d, 3d, 7d, 14d, 30d, 90d, 1y, all")
     p_get.add_argument("--start", default=None, help="cuttle-usage custom start (YYYY-MM-DD)")
     p_get.add_argument("--end", default=None, help="cuttle-usage custom end (YYYY-MM-DD)")
     p_get.add_argument("--group", choices=("model", "harness", "none"), default="model")

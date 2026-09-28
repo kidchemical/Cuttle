@@ -1785,6 +1785,7 @@
         if (sessionId == null || sessionId === '') return;
         const isError = !!(opts && opts.isError);
         updateSessionPrefs(sessionId, { hasUnread: true, unreadIsError: isError });
+        try { scheduleChatActivityBroadcast(); } catch (_) {}
     }
 
     /** Manual "Mark as unread" while still viewing — don't let focus/visibility clear it. */
@@ -1803,6 +1804,7 @@
             unreadIsError: false,
             lastReadAt: Date.now(),
         });
+        try { scheduleChatActivityBroadcast(); } catch (_) {}
     }
 
     function releaseManualUnreadHoldIfLeaving(nextSessionId) {
@@ -1978,6 +1980,7 @@
     function syncChatAttentionIndicators() {
         updateJumpToBottomVisibility();
         updateSessionTitleUnreadDot();
+        try { scheduleChatActivityBroadcast(); } catch (_) {}
     }
 
     function setupChatAttentionListeners() {
@@ -3033,6 +3036,7 @@
         syncHistoryProjectAttentionIndicators();
         syncHistorySubagentAttention();
         updateSessionTitleUnreadDot();
+        try { scheduleChatActivityBroadcast(); } catch (_) {}
     }
 
     function syncHistoryProjectAttentionIndicators() {
@@ -18570,6 +18574,58 @@
         });
         syncHistorySubagentAttention();
         updateSessionTitleRunningIcon();
+        scheduleChatActivityBroadcast();
+    }
+
+    /** Space tabs (app shell) mirror these dots — push a compact snapshot so
+     *  the shell can show one indicator per space (priority: running >
+     *  error > unread > queued > paused). Same classes the history panel
+     *  already maintains; the shell poll covers spaces with no live iframe. */
+    let _chatActivityBroadcastTimer = null;
+    function collectChatActivitySnapshot() {
+        const out = new Map();
+        document.querySelectorAll('.chat-history-item').forEach((item) => {
+            const sid = item.dataset && item.dataset.sessionId;
+            if (sid == null || sid === '') return;
+            const running = item.classList.contains('is-running');
+            let activity = '';
+            if (item.classList.contains('has-unread-error')) activity = 'error';
+            else if (item.classList.contains('has-unread')) activity = 'unread';
+            else if (item.classList.contains('has-queued')) activity = 'queued';
+            else if (item.classList.contains('has-paused-queue')) activity = 'paused';
+            if (running || activity) out.set(String(sid), { id: String(sid), activity, running });
+        });
+        if (currentSessionId != null && currentSessionId !== '') {
+            const key = String(currentSessionId);
+            if (!out.has(key)) {
+                const running = sessionShowsHistorySpinner(currentSessionId);
+                let activity = '';
+                try {
+                    if (typeof sessionHistoryAttentionKind === 'function') {
+                        const kind = sessionHistoryAttentionKind(currentSessionId, null);
+                        if (kind === 'error' || kind === 'unread'
+                            || kind === 'queued' || kind === 'paused') {
+                            activity = kind;
+                        }
+                    }
+                } catch (_) {}
+                if (running || activity) out.set(key, { id: key, activity, running });
+            }
+        }
+        return [...out.values()].slice(0, 120);
+    }
+    function scheduleChatActivityBroadcast() {
+        if (!inAppShell) return;
+        if (_chatActivityBroadcastTimer) return;
+        _chatActivityBroadcastTimer = setTimeout(() => {
+            _chatActivityBroadcastTimer = null;
+            try {
+                window.parent.postMessage({
+                    type: 'cuttle-chat-activity',
+                    sessions: collectChatActivitySnapshot(),
+                }, '*');
+            } catch (_) {}
+        }, 150);
     }
 
     // Chat History Management
@@ -20027,6 +20083,7 @@
         if (pendingFollowups.some((x) => !x.paused) && !isSessionGenerating() && !editingFollowupId) {
             scheduleFollowupDrain(250);
         }
+        try { scheduleChatActivityBroadcast(); } catch (_) {}
     }
 
     async function persistFollowupAppend(item) {
@@ -26184,6 +26241,7 @@
                 window.parent.postMessage({ type: 'cuttle-pane-activity' }, '*');
                 window.parent.postMessage({ type: 'cuttle-open-panes-request' }, '*');
             } catch (_) {}
+            try { scheduleChatActivityBroadcast(); } catch (_) {}
         }
 
         initPendingChangesPanel();

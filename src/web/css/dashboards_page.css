@@ -89,7 +89,7 @@
 .dash-hamburger:hover { background: var(--panel-hover); }
 .dash-hamburger svg { width: 18px; height: 18px; }
 
-.dash-menu-wrap { position: relative; }
+.dash-menu-wrap { position: relative; overflow: visible; }
 .dash-menu {
     position: absolute; right: 0; top: calc(100% + 6px); z-index: 40;
     min-width: 240px; max-width: min(92vw, 340px); max-height: min(70vh, 520px);

@@ -121,3 +121,48 @@ User-requested capabilities. Format: `[FEAT-YYYYMMDD-XXX] capability_name`
 - **Notes (2026-09-20):** Distinct from **agent ops** CLIs (`python -m api.chat_cli`, workers, brain). Those are the preferred pattern for agent-facing verbs — see `.cuttle/docs/agent-ops-cli.md`. This FEAT stays deferred for a product shell only.
 - **Complexity:** L
 - **Related:** `docs/guides/MODULARITY.md` goal 7, `docs/ROADMAP.md` “Not on the table”
+
+## [FEAT-20260928-001] oobe_first_owner
+
+- **Priority:** Medium · **Status:** Proposed · **Area:** auth / onboarding
+- **Requested capability:** First account created during first-run OOBE becomes Owner (persisted `role` on the users row). `OWNER_USER_EMAIL` drops to lockout-recovery override only. Eliminates ownerless deployments where the env names an identity that never signs in.
+- **User context:** CH-000764 — operator locked out of commit/restart by env pointing at an unused Google address; required manual `.env` edit + Flask restart to restore.
+- **Notes:** Guests never owners (unchanged). Distinct Owner vs Admin roles deferred until two admins exist.
+- **Complexity:** S
+- **Related:** `src/api/http_authz.py`, `src/.env.example`, `docs/ROADMAP.md` Auth bullet
+
+## [FEAT-20260928-002] per_user_project_scoping
+
+- **Priority:** Low · **Status:** Proposed · **Area:** auth / projects / git
+- **Requested capability:** Projects owned per user (`user_projects` membership; owner sees all). All project reads/writes and git endpoints scoped to membership; path containment per user root. Trigger: first genuinely shared host — not before.
+- **User context:** CH-000764 — solo + own-hosts model needs none of this; household/shared-box scenario would.
+- **Notes:** Auth decorator is ~5%; per-user path sandboxing, quotas, and commit authorship are the real work. No quotas/audit until requested twice.
+- **Complexity:** XL
+- **Related:** `[FEAT-20260928-001]`, `src/data/db/projects.db` (no user column today), `src/scripts/utilities/git_pending_changes.py`
+
+## [FEAT-20260928-003] scoped_project_grants
+
+- **Priority:** Low · **Status:** Proposed · **Area:** auth / projects
+- **Requested capability:** Share exactly one owned project with exactly one user (roommate/contractor pattern). Thin slice of per-user scoping: single grant row, same enforcement points.
+- **User context:** CH-000764 — "grant friend roommate access to a project that I own, and just that."
+- **Notes:** Depends on `[FEAT-20260928-002]` machinery; shippable first as the minimal version of it.
+- **Complexity:** M
+- **Related:** `[FEAT-20260928-002]`
+
+## [FEAT-20260928-004] supervisor_parental_controls
+
+- **Priority:** Medium · **Status:** Proposed · **Area:** auth / observability / chat
+- **Requested capability:** Supervisor levers per account: spend caps, model allowlists, time windows, read-only activity view. Raw material already exists (per-user transcripts, per-session accounting, query-log spend). No competitor does supervised kid access with real logs.
+- **User context:** CH-000764 — home-lab dad pattern: kid uses AI on their phone, parent monitors and caps usage.
+- **Notes:** Read-only supervisor must be enforced server-side, not just hidden in UI.
+- **Complexity:** L
+- **Related:** `src/api/query_tracker.py`, `src/api/cuttle_brain.py`, `[FEAT-20260928-001]`
+
+## [FEAT-20260928-005] shared_farm_queue_multihost
+
+- **Priority:** Low · **Status:** Proposed · **Area:** workers / cuttle-jobs / mesh
+- **Requested capability:** Share one render/compute farm across many per-teammate Hosts. Decided direction: shared `cuttle-jobs` queue (Gitea-backed) as the commons — hosts submit, farm polls — not mesh multihoming. Worker loops stay single-homed (one coordinator URL + token per process); mesh membership remains per-host for personal devices.
+- **User context:** CH-000764 — JamBit HQ model: every employee runs a Host, one farm serves all. Explicitly rejected: N worker registrations per machine (static split, uncoordinated contention) and manual coordinator re-pointing.
+- **Notes:** Claim protocol already has capability ads, leases, heartbeats; multihoming would still need cross-coordinator capacity accounting to avoid double-booking a GPU. Queue beats mesh gossip on fairness, persistence, debuggability. Do not build until a second Host needs the farm.
+- **Complexity:** M (shared queue posture) / XL (true multihoming — not recommended)
+- **Related:** `.cuttle/docs/cuttle-workers.md`, `src/api/cuttle_jobs/`, `src/api/device_workers/worker_loop.py`, `[FEAT-20260928-002]`

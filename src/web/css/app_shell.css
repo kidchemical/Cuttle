@@ -374,6 +374,63 @@ body.is-electron.fullscreen .shell-zoom-hud {
     background: rgba(255, 255, 255, 0.12);
 }
 
+/* Space-tab activity: same five states as chat history dots. */
+.shell-space-activity {
+    flex-shrink: 0;
+    width: 7px;
+    height: 7px;
+    margin-right: 1px;
+    border-radius: 50%;
+    pointer-events: none;
+}
+
+.shell-space-activity[hidden] {
+    display: none !important;
+}
+
+.shell-space-activity.is-unread {
+    background: #22c55e;
+    box-shadow: 0 0 5px rgba(34, 197, 94, 0.7);
+}
+
+.shell-space-activity.is-error {
+    background: #ef4444;
+    box-shadow: 0 0 5px rgba(239, 68, 68, 0.7);
+}
+
+.shell-space-activity.is-queued {
+    background: #f59e0b;
+    box-shadow: 0 0 5px rgba(245, 158, 11, 0.7);
+}
+
+.shell-space-activity.is-paused {
+    background: #eab308;
+    box-shadow: 0 0 5px rgba(234, 179, 8, 0.7);
+}
+
+.shell-space-activity.is-running {
+    width: 8px;
+    height: 8px;
+    background: transparent;
+    border: 2px solid rgba(102, 126, 234, 0.3);
+    border-top-color: #667eea;
+    border-radius: 50%;
+    box-shadow: none;
+    animation: shell-space-spin 0.75s linear infinite;
+}
+
+@keyframes shell-space-spin {
+    to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .shell-space-activity.is-running {
+        animation: none;
+        border-top-color: rgba(102, 126, 234, 0.3);
+        border-color: #667eea;
+    }
+}
+
 .shell-spaces-tabs[data-count="1"] .shell-space-close {
     display: none;
 }

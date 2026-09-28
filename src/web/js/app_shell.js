@@ -941,6 +941,8 @@ function persistSplitLayout() {
             }).catch(() => {});
         } catch (_) {}
         scheduleBroadcastOpenPanes();
+        try { syncSpaceActivityTabs(); } catch (_) {}
+        try { scheduleSpaceActivityPoll(false); } catch (_) {}
     } catch (_) {}
 }
 
@@ -1692,6 +1694,17 @@ window.addEventListener('message', function(e) {
         } catch (_) {}
     } else if (e.data.type === 'cuttle-pane-activity') {
         setFocusedColumn(findColumnIndexForSource(e.source));
+    } else if (e.data.type === 'cuttle-chat-activity') {
+        // Per-chat dot/spinner snapshot from a chat iframe (immediate) —
+        // the poll fallback covers inactive spaces with no live iframe.
+        try {
+            const list = Array.isArray(e.data.sessions) ? e.data.sessions : [];
+            list.forEach((entry) => {
+                if (!entry || entry.id == null || entry.id === '') return;
+                noteSpaceSessionActivity(entry.id, entry.activity || '', entry.running);
+            });
+            syncSpaceActivityTabs();
+        } catch (_) {}
     } else if (
         e.data.type === 'cuttle-terminal-delete'
         || e.data.type === 'cuttle-terminal-rename'
@@ -5125,6 +5138,8 @@ function switchSpace(id) {
     applyWorkspaceColumns(null, null, target.root || getBuiltinDefaultWorkspace().root);
     hideOutgoingSpaceFrames();
     syncActiveSpaceTab();
+    syncSpaceActivityTabs();
+    scheduleSpaceActivityPoll(true);
 }
 
 /** A reused pane crossfades from its old iframe once the new page paints —
@@ -5163,6 +5178,7 @@ function closeSpace(id) {
     list.splice(list.findIndex((s) => s.id === id), 1);
     persistSpacesState();
     renderSpaceTabs();
+    scheduleSpaceActivityPoll(true);
 }
 
 function renameSpace(id, name) {
@@ -5216,11 +5232,13 @@ function renderSpaceTabs() {
             + ' aria-selected="' + (active ? 'true' : 'false') + '"'
             + ' data-space-id="' + escapeHtml(s.id) + '"'
             + ' title="' + name + ' — drag to reorder, double-click to rename">'
+            + '<span class="shell-space-activity" aria-hidden="true" hidden></span>'
             + '<span class="shell-space-name">' + name + '</span>'
             + '<button type="button" class="shell-space-close" tabindex="-1" aria-label="Close space ' + name + '">×</button>'
             + '</div>';
     }).join('');
     syncActiveSpaceTab();
+    syncSpaceActivityTabs();
 }
 
 /** Toggle the active tab in place — re-rendering would eat the second click of a dblclick. */
@@ -5231,6 +5249,351 @@ function syncActiveSpaceTab() {
         tab.setAttribute('aria-selected', active ? 'true' : 'false');
         if (active) tab.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     });
+}
+
+// ── Spaces activity (one indicator per tab) ─────────────────────
+// Same five states as chat history/title dots: running (spinner),
+// error (red), unread (green), queued/active (orange), paused (yellow).
+// A space shows the highest-priority state across its chats:
+// running > error > unread > queued > paused > none.
+const SPACE_ACTIVITY_RANK = { running: 5, error: 4, unread: 3, queued: 2, paused: 1 };
+const SPACE_ACTIVITY_LABEL = {
+    running: 'Active',
+    error: 'Unread error',
+    unread: 'Unread',
+    queued: 'Queued prompt',
+    paused: 'Paused queued prompt',
+};
+/** sessionId variants -> { activity:'', running:false, at:number } */
+const spaceActivityBySession = new Map();
+let spaceActivityPollInFlight = false;
+let spaceActivityLastPollAt = 0;
+let spaceActivitySig = '';
+
+function spaceSidVariants(sid) {
+    const raw = String(sid == null ? '' : sid).trim();
+    if (!raw) return [];
+    const out = [raw];
+    const bare = raw.startsWith('db_session_') ? raw.slice('db_session_'.length) : raw;
+    if (bare && bare !== raw) out.push(bare);
+    if (bare && 'db_session_' + bare !== raw) out.push('db_session_' + bare);
+    return out;
+}
+
+function noteSpaceSessionActivity(sid, activity, running) {
+    const clean = activity === 'error' || activity === 'unread' || activity === 'queued' || activity === 'paused'
+        ? activity
+        : '';
+    const entry = { activity: clean, running: !!running, at: Date.now() };
+    spaceSidVariants(sid).forEach((key) => { spaceActivityBySession.set(key, entry); });
+}
+
+function lookupSpaceSessionActivity(sid) {
+    const keys = spaceSidVariants(sid);
+    for (let i = 0; i < keys.length; i++) {
+        const hit = spaceActivityBySession.get(keys[i]);
+        if (hit) return hit;
+    }
+    return null;
+}
+
+/** Chat session ids belonging to a space. Active space reads live panes;
+ *  inactive spaces parse their stored layout tree. Terminals have no dots. */
+function spaceChatIds(space) {
+    if (!space) return [];
+    if (space.id === spacesState.active) {
+        try {
+            return getOpenPaneSessions()
+                .filter((p) => p && p.kind === 'chat' && p.sessionId)
+                .map((p) => String(p.sessionId));
+        } catch (_) {
+            return [];
+        }
+    }
+    const ids = [];
+    try {
+        flattenLayoutLeaves(space.root || null).forEach((leaf) => {
+            if (!leaf) return;
+            try {
+                const url = new URL(leaf.page || '/chat_page.html', window.location.origin);
+                // Terminals have no activity dots — only chat surfaces count.
+                if (chatSurfaceKind(url.pathname) !== 'chat') return;
+                const handle = url.searchParams.get('chat') || url.searchParams.get('session')
+                    || leaf.chat || null;
+                if (handle) ids.push(String(handle));
+            } catch (_) {}
+        });
+    } catch (_) {}
+    return [...new Set(ids)];
+}
+
+/** Currently visible chat ids — unread there is already seen, so it never
+ *  raises the active tab (running / queued dots still do). */
+function visibleActiveSpaceChatIds() {
+    try {
+        return new Set(
+            getOpenPaneSessions()
+                .filter((p) => p && p.kind === 'chat' && p.sessionId)
+                .map((p) => String(p.sessionId))
+        );
+    } catch (_) {
+        return new Set();
+    }
+}
+
+function spaceActivityFor(space) {
+    const ids = spaceChatIds(space);
+    if (!ids.length) return '';
+    const isActive = space.id === spacesState.active;
+    const visible = isActive ? visibleActiveSpaceChatIds() : new Set();
+    const visibleBare = new Set([...visible].map((s) => {
+        const v = spaceSidVariants(s);
+        return v.length > 1 ? v[1] : s;
+    }));
+    let best = '';
+    let bestRank = 0;
+    ids.forEach((sid) => {
+        const hit = lookupSpaceSessionActivity(sid);
+        if (!hit) return;
+        if (hit.running) {
+            if (SPACE_ACTIVITY_RANK.running > bestRank) {
+                best = 'running';
+                bestRank = SPACE_ACTIVITY_RANK.running;
+            }
+            return;
+        }
+        let kind = hit.activity || '';
+        if (!kind) return;
+        // Unread/error on a chat you are currently looking at is already seen.
+        if (isActive && (kind === 'unread' || kind === 'error')) {
+            const variants = spaceSidVariants(sid);
+            if (variants.some((v) => visible.has(v) || visibleBare.has(v))) return;
+        }
+        const rank = SPACE_ACTIVITY_RANK[kind] || 0;
+        if (rank > bestRank) {
+            best = kind;
+            bestRank = rank;
+        }
+    });
+    return best;
+}
+
+/** Patch tab dots in place (no re-render — preserves dblclick rename). */
+function syncSpaceActivityTabs() {
+    const tabs = document.querySelectorAll('.shell-space-tab');
+    if (!tabs.length) return;
+    const sigParts = [];
+    tabs.forEach((tab) => {
+        const space = spacesState.spaces.find((s) => s.id === tab.dataset.spaceId);
+        const kind = space ? spaceActivityFor(space) : '';
+        sigParts.push(tab.dataset.spaceId + ':' + kind);
+        let dot = tab.querySelector('.shell-space-activity');
+        if (!dot) {
+            dot = document.createElement('span');
+            dot.className = 'shell-space-activity';
+            dot.setAttribute('aria-hidden', 'true');
+            tab.insertBefore(dot, tab.firstChild);
+        }
+        const prev = dot.dataset.kind || '';
+        if (prev !== kind) {
+            dot.dataset.kind = kind;
+            dot.className = 'shell-space-activity' + (kind ? ' is-' + kind : '');
+            if (kind) {
+                dot.hidden = false;
+                const label = SPACE_ACTIVITY_LABEL[kind] || kind;
+                dot.title = label;
+                dot.setAttribute('aria-label', label);
+            } else {
+                dot.hidden = true;
+                dot.removeAttribute('title');
+                dot.removeAttribute('aria-label');
+            }
+            const spaceName = space ? space.name : '';
+            tab.title = spaceName + ' — drag to reorder, double-click to rename'
+                + (kind ? ' · ' + (SPACE_ACTIVITY_LABEL[kind] || kind) : '');
+        }
+    });
+    spaceActivitySig = sigParts.join('|');
+}
+
+function allSpaceChatIds() {
+    const out = new Set();
+    try {
+        spacesState.spaces.forEach((space) => {
+            spaceChatIds(space).forEach((id) => out.add(String(id)));
+        });
+    } catch (_) {}
+    // Live panes may know fresher ids than the stored tree right after nav.
+    try {
+        getOpenPaneSessions().forEach((p) => {
+            if (p && p.kind === 'chat' && p.sessionId) out.add(String(p.sessionId));
+        });
+    } catch (_) {}
+    return [...out].filter(Boolean).slice(0, 60);
+}
+
+function readChatPrefsMap() {
+    try {
+        return JSON.parse(localStorage.getItem('cuttleChatSessionPrefs') || '{}') || {};
+    } catch (_) {
+        return {};
+    }
+}
+
+function readLocalChatSessions() {
+    try {
+        return JSON.parse(localStorage.getItem('chatSessions') || '{}') || {};
+    } catch (_) {
+        return {};
+    }
+}
+
+function followupKind(items) {
+    let active = false;
+    let paused = false;
+    (Array.isArray(items) ? items : []).forEach((x) => {
+        if (!x) return;
+        if (x.paused) paused = true;
+        else active = true;
+    });
+    if (active) return 'queued';
+    if (paused) return 'paused';
+    return '';
+}
+
+/** Poll fallback so inactive spaces (no live iframe) still show dots.
+ *  Push messages from chat iframes give immediacy; this gives coverage. */
+async function refreshSpaceActivityFromServer() {
+    if (spaceActivityPollInFlight) return;
+    const ids = allSpaceChatIds();
+    // Unread prefs are local-only but same-origin — always refresh them.
+    try {
+        const prefs = readChatPrefsMap();
+        Object.keys(prefs || {}).forEach((sid) => {
+            const p = prefs[sid];
+            if (!p || typeof p !== 'object') return;
+            if (p.hasUnread) {
+                const prev = lookupSpaceSessionActivity(sid);
+                noteSpaceSessionActivity(sid, p.unreadIsError ? 'error' : 'unread', !!(prev && prev.running));
+            } else if (prev && (prev.activity === 'unread' || prev.activity === 'error') && !prev.running) {
+                // Cleared elsewhere (chat opened) with no fresh push yet.
+                spaceSidVariants(sid).forEach((key) => { spaceActivityBySession.delete(key); });
+            }
+        });
+    } catch (_) {}
+    // Local-mode followups live in localStorage.
+    try {
+        const local = readLocalChatSessions();
+        Object.keys(local || {}).forEach((sid) => {
+            const obj = local[sid];
+            if (!obj || typeof obj !== 'object') return;
+            const kind = followupKind(obj.followup_queue != null ? obj.followup_queue : obj.followups);
+            if (kind) {
+                const prev = lookupSpaceSessionActivity(sid);
+                if (!prev || (!prev.running && (!prev.activity || SPACE_ACTIVITY_RANK[kind] > (SPACE_ACTIVITY_RANK[prev.activity] || 0)))) {
+                    noteSpaceSessionActivity(sid, kind, !!(prev && prev.running));
+                }
+            }
+        });
+    } catch (_) {}
+    if (!ids.length) {
+        syncSpaceActivityTabs();
+        return;
+    }
+    spaceActivityPollInFlight = true;
+    try {
+        // One sessions fetch covers generating + followup_queue in auth mode.
+        let sessionsByBare = null;
+        try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 6000);
+            let data = null;
+            try {
+                const r = await fetch('/api/auth/sessions', {
+                    cache: 'no-store', credentials: 'same-origin', signal: controller.signal,
+                });
+                if (r.ok) data = await r.json().catch(() => null);
+            } finally {
+                clearTimeout(timeout);
+            }
+            if (data && data.success && Array.isArray(data.sessions)) {
+                sessionsByBare = new Map();
+                data.sessions.forEach((s) => {
+                    if (!s || s.id == null) return;
+                    sessionsByBare.set(String(s.id), s);
+                });
+            }
+        } catch (_) {
+            sessionsByBare = null;
+        }
+        if (sessionsByBare) {
+            ids.forEach((sid) => {
+                const variants = spaceSidVariants(sid);
+                const bare = variants.length > 1 ? variants[1] : variants[0];
+                const s = sessionsByBare.get(bare) || sessionsByBare.get(variants[0]);
+                if (!s) return;
+                const running = !!(s.generating || s.awaiting_action);
+                let kind = followupKind(s.followup_queue != null ? s.followup_queue : s.followups);
+                const prev = lookupSpaceSessionActivity(sid);
+                // A pushed unread/error outranks a polled queue state.
+                if (prev && (prev.activity === 'unread' || prev.activity === 'error')) {
+                    kind = prev.activity;
+                }
+                if (running || kind) {
+                    noteSpaceSessionActivity(sid, kind, running);
+                } else if (prev && prev.running) {
+                    spaceSidVariants(sid).forEach((key) => { spaceActivityBySession.delete(key); });
+                }
+            });
+        } else {
+            // Not authenticated (or fetch failed) — ask live-status for running.
+            const chunks = [];
+            for (let i = 0; i < ids.length; i += 12) chunks.push(ids.slice(i, i + 12));
+            for (const chunk of chunks) {
+                try {
+                    const controller = new AbortController();
+                    const timeout = setTimeout(() => controller.abort(), 5000);
+                    let data = null;
+                    try {
+                        const r = await fetch(
+                            '/api/chat-live-status-batch?session_ids=' + encodeURIComponent(chunk.join(',')),
+                            { credentials: 'include', cache: 'no-store', signal: controller.signal }
+                        );
+                        if (r.ok) data = await r.json();
+                    } finally {
+                        clearTimeout(timeout);
+                    }
+                    const statuses = (data && data.statuses) || {};
+                    chunk.forEach((sid) => {
+                        const st = statuses[String(sid)] || statuses[spaceSidVariants(sid)[1]] || null;
+                        if (st && st.generating) {
+                            const prev = lookupSpaceSessionActivity(sid);
+                            noteSpaceSessionActivity(sid, (prev && prev.activity) || '', true);
+                        } else {
+                            const prev = lookupSpaceSessionActivity(sid);
+                            if (prev && prev.running) {
+                                if (prev.activity) noteSpaceSessionActivity(sid, prev.activity, false);
+                                else spaceSidVariants(sid).forEach((key) => { spaceActivityBySession.delete(key); });
+                            }
+                        }
+                    });
+                } catch (_) {}
+            }
+        }
+    } finally {
+        spaceActivityPollInFlight = false;
+        spaceActivityLastPollAt = Date.now();
+        syncSpaceActivityTabs();
+    }
+}
+
+function scheduleSpaceActivityPoll(immediate) {
+    const since = Date.now() - spaceActivityLastPollAt;
+    if (!immediate && since < 8000) {
+        syncSpaceActivityTabs();
+        return;
+    }
+    refreshSpaceActivityFromServer();
 }
 
 (function setupSpaces() {
@@ -5273,6 +5636,15 @@ function syncActiveSpaceTab() {
     addBtn?.addEventListener('click', () => addSpace());
     addBtn?.addEventListener('dblclick', (e) => e.stopPropagation());
     setupSpaceTabDrag(host);
+    // Chat iframes write unread prefs + followups to the same localStorage —
+    // refresh dots without waiting for the next heartbeat.
+    window.addEventListener('storage', (e) => {
+        if (!e || !e.key) return;
+        if (e.key === 'cuttleChatSessionPrefs' || e.key === 'chatSessions') {
+            scheduleSpaceActivityPoll(false);
+        }
+    });
+    scheduleSpaceActivityPoll(true);
 })();
 
 function reorderSpaces(ids) {
@@ -6138,6 +6510,7 @@ async function runShellHeartbeat() {
         if (paneSessionByColumn.size > 0) {
             tasks.push(pollLiveStatusHub());
         }
+        tasks.push(refreshSpaceActivityFromServer());
         await Promise.all(tasks);
     } catch (_) {
     } finally {

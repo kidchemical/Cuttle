@@ -9,6 +9,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 USAGE_ID = "cuttle-usage"
 RANGES = [
+    {"id": "1d", "days": 1, "label": "1d"},
+    {"id": "3d", "days": 3, "label": "3d"},
     {"id": "7d", "days": 7, "label": "7d"},
     {"id": "14d", "days": 14, "label": "14d"},
     {"id": "30d", "days": 30, "label": "30d"},
