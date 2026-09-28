@@ -26034,7 +26034,7 @@
         document.addEventListener('keydown', function delegatedKeydown(e) {
             const t = e.target;
             if (!t || (t.id !== 'welcomeChatInput' && t.id !== 'chatInput')) return;
-            if (e.key !== 'Enter' || e.shiftKey) return;
+            if (!composerEnterSends(e)) return;
             if (e.defaultPrevented) return;
             e.preventDefault();
             LOG('Delegated keydown: Enter on', t.id);
