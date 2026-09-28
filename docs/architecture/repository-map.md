@@ -1,0 +1,141 @@
+# Cuttle architecture map (repository-wide)
+
+**Date:** 2026-09-27 · **HEAD:** `9ecd388` · **Code:** not modified in this audit.
+
+Companion: [`docs/guides/WEB_CHAT_API.md`](../guides/WEB_CHAT_API.md) (Flask composition root only), [`docs/guides/MODULARITY.md`](../guides/MODULARITY.md), this audit’s [`../reviews/repository-audit.md`](../reviews/repository-audit.md).
+
+This map describes **what exists and how it boots**, not a mandate to extract `web_chat_api.py`.
+
+---
+
+## Boot sequence
+
+```
+start_cuttle.sh | src/scripts/cuttle_daemon.py
+  → load src/.env
+  → spawn Flask: python src/api/web_chat_api.py  (HTTPS :8080)
+  → spawn Discord: python src/bots/discord_bot.py  (optional token)
+  → tray / cron / local worker loop (platform-dependent)
+  → Flask restart: daemon reads cuttle_flask_restart_request.json (not agent taskkill)
+```
+
+**Electron Host:** `.cuttle/scripts/launch-cuttle-host.sh` → `electron/main.js` `--mode=host` (Chromium sandbox via `electron-sandbox.sh`). Host talks to local Flask.
+
+**Electron Client:** LAN thin client; enrolls as a **device worker** (`electron/device-worker/cuttle_device_worker.py` + `src/scripts/cuttle_device_worker.py`).
+
+**Android:** `apps/mobile` Capacitor shell; `apps/android_companion` / `apps/android_bt_voice` are additional native surfaces.
+
+**Flask-alone:** intended `python src/api/web_chat_api.py`. README currently names `src/scripts/start_api_server.py`, which starts a **different** Flask on **:5000** (`time_series_api.py`). Documented vs actual diverge.
+
+**Legacy parallel launcher:** `src/launcher.py` still starts bot+API without the daemon restart protocol — overlapping, not the supported path (`AGENTS.md` / README daemon).
+
+---
+
+## Process and HTTP composition root
+
+`src/api/web_chat_api.py` owns `Flask app`, HTML routes, chat-turn HTTP, many leftover graph/process routes, TLS helper, and **registers**:
+
+| Blueprint / register | Package |
+|---|---|
+| `auth_bp` | `api.auth_api` |
+| `workers_bp` | `api.device_workers.routes` |
+| `dashboards_bp` | `api.dashboards.routes` |
+| widgets, TTS, terminal, Electron, Android APK | `register_*_routes(app)` |
+
+**Bottleneck:** anything that needs live status, harness cwd, or assistant metadata often **lazy-imports** `web_chat_api` (`chat_delivery`, `auth_api`, `agent_router.dispatch`, `subagents`, `kernel._default_chat_cwd`).
+
+Daemon liveness is `GET /api/status`. `GET /api/health` is a heavier diagnostic (CLI probes) — do not confuse them.
+
+---
+
+## Chat turn (web + Discord)
+
+```
+User (web / Discord DM)
+  → POST /api/chat  or  POST /api/pipeline-trigger-discord
+  → sticky/starred slash, vision pre-pass
+  → native /restart
+  → process_message_with_bot
+       → local LLM launch gate
+       → catalog slash → _run_harness_web_command → api.agent_harness.kernel
+       → api.agent_router (clean sessions)
+  → SSE + persist + action-form rewrite
+```
+
+**Live turn:** `api.chat_delivery` + `api.chat_run_registry` + `/api/chat-steer` / `/api/chat-cancel`.
+
+**History:** `api.auth_db` SQLite (`src/data/db/`, gitignored). Pairing store for **users** is separate from **worker** enroll.
+
+---
+
+## Agent subsystem
+
+| Piece | Location |
+|---|---|
+| Catalog / adapters | `src/api/agent_harness/agents/*` |
+| Kernel | `src/api/agent_harness/kernel.py` |
+| Router | `src/api/agent_router/` |
+| CLI wrappers | `src/scripts/utilities/*_cli_tool.py` |
+| Project commands/actions | `{project}/.cuttle/` + hub `.cuttle/` |
+| Brain / context compile | `src/api/cuttle_brain/` |
+
+Graph-era **HTTP** `POST /api/execute-tool` still wraps `_execute_remote_agent_tool`, which internally calls `_run_harness_web_command`. No first-party JS caller of `/api/execute-tool` was found. Chat does **not** go through that HTTP route.
+
+---
+
+## Workers mesh
+
+Coordinator HTTP: `/api/workers/*` (`device_workers`). Store: gitignored SQLite via `CUTTLE_DEVICE_WORKERS_DB` / default path. Enroll is LAN/RFC1918 + setting (see GitHub #1). Runtime claim/complete still loopback-friendly.
+
+---
+
+## AuthZ
+
+`api.http_authz` (owner / session / UI operator). `api.auth_api` sessions, OAuth, guest. Worker tokens in `device_workers.auth`. Action forms HMAC in `project_actions`.
+
+---
+
+## Settings
+
+`src/managers/settings_manager.py` → `src/settings.json` (**gitignored** `*.json`). Defaults created if absent. HTTP `/api/settings/*` still on `web_chat_api`. `bot_config.json` duplicated at repo root, `src/`, `electron/`, tests — `src/core/config.py` looks for `bot_config.json` relative cwd (**uncertain** which copy wins).
+
+---
+
+## Persistence
+
+| Store | Tracked? |
+|---|---|
+| `cuttle_auth.db` chat/auth | ignored |
+| HMAC secret file | ignored |
+| Certs | ignored |
+| Pairing JSON | likely ignored `*.json` |
+| Query logs / uploads | `src/output`, `src/web/logs` ignored or generated |
+
+---
+
+## Frontend
+
+Vanilla JS: `src/web/js/app_shell.js` (shell), `chat_page.js` (chat). No bundler. Electron loads the same HTTPS origin.
+
+---
+
+## CLI / automation
+
+Canonical: `python -m api.*` (`.cuttle/docs/agent-ops-cli.md`). Hub actions: `.cuttle/actions/*.yaml`. POSIX launchers: `.cuttle/scripts/*.sh`. Windows `.bat`/`.ps1` still present for mixed hosts.
+
+---
+
+## Legacy / superseded (see audit)
+
+Graph pipelines (JSON graphs, node editor file): **removed**; many HTTP 410s remain; some handlers still have **live bodies** (`pipeline-reload`, `pipeline-job-status`, `pipeline-execution-finish`, `running_pipelines` dict). Jobs UI still POSTs `/api/pipeline-run-now`.
+
+`src/launcher.py` vs daemon. Port-5000 time-series stack. `landing_page_backup.html`. Control panel HTML still linked.
+
+---
+
+## Important invariants
+
+- Never kill Flask from an agent it hosts; use daemon `/restart`.
+- Action-form recovery: HMAC on persisted specs (`action_forms` / `project_actions`).
+- `project_key = "pc_bot"` still documented as Claude Code project root in `AGENTS.md`.
+- Electron sandbox: no automatic `--no-sandbox`.

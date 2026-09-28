@@ -12,9 +12,15 @@ Canonical briefs: [`AGENTS.md`](../AGENTS.md), [`ROADMAP.md`](ROADMAP.md), [`.cu
 - [Supervised coordinator](guides/SUPERVISED_COORDINATOR.md)
 - [Pairing and allowlist](guides/PAIRING_AND_ALLOWLIST.md)
 - [Remote access](guides/REMOTE_ACCESS.md)
-- [Sessions API](guides/SESSIONS_API.md)
+- [Flask `web_chat_api.py` map](guides/WEB_CHAT_API.md) — composition root (not a refactor license)
+- [Repository architecture map](architecture/repository-map.md) — whole-repo boot/deps (2026-09 audit)
 
 Auth (bcrypt, LAN) is in [`ROADMAP.md`](ROADMAP.md). Desktop version lives in `electron/package.json`. Agent runbooks stay under `.cuttle/docs/`.
+
+## Reviews
+
+- [Security hardening 2026-09](reviews/security-hardening-2026-09.md)
+- [Repository audit](reviews/repository-audit.md) · [inventory](reviews/repository-inventory.md) · [cleanup plan](reviews/cleanup-plan.md)
 
 ## Start
 
