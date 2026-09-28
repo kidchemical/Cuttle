@@ -177,10 +177,7 @@ If the Python process remains after closing:
 2. Find `python.exe` processes
 3. End processes manually
 
-Or use the included kill script:
-```bash
-python ../src/kill_bots.py
-```
+If a leftover Python helper is still running after you close the desktop app, stop it from Task Manager (or the Cuttle tray **Exit** / daemon stop). Do not use retired `kill_bots.py` launchers.
 
 ## 🌟 Features
 

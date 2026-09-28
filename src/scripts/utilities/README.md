@@ -21,7 +21,6 @@ Turn inspectors: `/query_log.html?id=<query_id>`. Source of truth is `src/web/lo
 
 ### System Utilities
 
-- `kill_bots.py` - Kill running bot processes
 - `example_project_setup.py` - Project setup example
 
 ---

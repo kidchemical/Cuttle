@@ -180,12 +180,18 @@ official distribution path:
 
 ```yaml
 install_kind: npm_global          # or script_url
-install_package: opencode-ai      # npm_global
+install_package: opencode-ai      # npm_global (plain [@scope/]name[@version])
 install_url_windows: https://…/install.ps1
 install_url_posix: https://…/install.sh
+install_sha256_windows: "<64-hex>"  # optional pin; mismatch refuses to execute
+install_sha256_posix: "<64-hex>"
 executable_names: [tool-name]
 auto_install: true
 ```
+
+Script downloads are size-capped and sha256-logged (`script_sha256` in the
+install result). A declared pin is enforced fail-closed; `install_package`
+must be a plain npm spec (no flags, URLs, or whitespace).
 
 When an explicitly selected agent is missing, the kernel installs it once, refreshes the
 Windows process PATH, verifies `available()` again, and then continues the original request.

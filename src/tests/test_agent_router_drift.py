@@ -260,9 +260,13 @@ def test_dispatch_skips_demoted_fallback(router_settings, db, monkeypatch):
 
 
 def test_health_api_round_trip(router_settings):
+    import uuid
     from api import web_chat_api as w
 
     with w.app.test_client() as client:
+        user = "rt_" + uuid.uuid4().hex[:10]
+        reg = client.post("/api/auth/register", json={"username": user, "password": "password1"})
+        assert reg.status_code == 200, reg.get_json()
         resp = client.get("/api/router/config")
         assert resp.status_code == 200
         data = resp.get_json()

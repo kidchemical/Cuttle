@@ -73,6 +73,11 @@ class AgentManifest:
     install_package: str = ""
     install_url_windows: str = ""
     install_url_posix: str = ""
+    # Optional sha256 pins for script_url installers (hex, per OS). When a pin
+    # is declared the installer refuses to execute on mismatch. No bundled
+    # manifest pins one yet — see installer.py.
+    install_sha256_windows: str = ""
+    install_sha256_posix: str = ""
     executable_names: List[str] = field(default_factory=list)
     auto_install: bool = False
     schema_version: int = 1

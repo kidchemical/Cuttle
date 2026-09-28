@@ -137,6 +137,8 @@ def _manifest_from_dict(
         install_package=str(data.get("install_package") or "").strip(),
         install_url_windows=str(data.get("install_url_windows") or "").strip(),
         install_url_posix=str(data.get("install_url_posix") or "").strip(),
+        install_sha256_windows=str(data.get("install_sha256_windows") or "").strip().lower(),
+        install_sha256_posix=str(data.get("install_sha256_posix") or "").strip().lower(),
         executable_names=executable_names,
         auto_install=bool(data.get("auto_install", False)),
         schema_version=schema_version,
@@ -168,8 +170,9 @@ def _import_external_adapter(agent_dir: Path, agent_id: str) -> AgentAdapter:
     # Ensure sibling imports inside the drop-in resolve if they add agent_dir to path.
     sys.modules[mod_name] = mod
     agent_dir_str = str(agent_dir.resolve())
+    # Append, never insert(0): a drop-in named json.py must not shadow stdlib.
     if agent_dir_str not in sys.path:
-        sys.path.insert(0, agent_dir_str)
+        sys.path.append(agent_dir_str)
     spec.loader.exec_module(mod)
     factory = getattr(mod, "build_adapter", None)
     if callable(factory):

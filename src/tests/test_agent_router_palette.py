@@ -94,16 +94,25 @@ def test_harness_usage_palette_gated_per_agent():
     assert "prefix: '/usage'" not in base
 
 
-def test_agent_router_options_endpoint_still_serves_router_editor():
-    """Palette no longer calls it; Router page still can."""
+def test_agent_router_options_endpoint_requires_owner():
+    """Owner-only: payload carries live `current` provider config.
+
+    Palette no longer calls it; the Router page sends the owner cookie.
+    Owner-200 + payload shape is covered in test_http_authz.py.
+    """
     from api import web_chat_api as w
 
     with w.app.test_client() as client:
-        resp = client.get("/api/agent-router/options")
-        assert resp.status_code == 200
-        data = resp.get_json()
-        assert data["success"] is True
-        assert set(data["modes"]) >= {"off", "api", "local", "agent"}
+        anon = client.get(
+            "/api/agent-router/options",
+            environ_base={"REMOTE_ADDR": "192.168.1.77"},
+        )
+        assert anon.status_code == 401
+        loop = client.get(
+            "/api/agent-router/options",
+            environ_base={"REMOTE_ADDR": "127.0.0.1"},
+        )
+        assert loop.status_code == 401
 
 
 def test_chat_page_html_cache_buster_present():

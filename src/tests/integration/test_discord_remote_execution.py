@@ -24,4 +24,4 @@ def test_electron_does_not_start_discord_gateway():
 
 def test_chat_still_has_harness_dispatch():
     web_chat_content = (src_root / "api" / "web_chat_api.py").read_text(encoding="utf-8")
-    assert "_execute_remote_agent_tool" in web_chat_content or "_run_harness_web_command" in web_chat_content
+    assert "_run_harness_web_command" in web_chat_content

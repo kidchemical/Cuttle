@@ -13,6 +13,8 @@ from typing import Any, Dict, Optional, Tuple
 
 from flask import Flask, jsonify, request
 
+from api.http_authz import authenticated_required, owner_required
+
 # OpenAI speech models we expose in Settings / API overrides.
 TTS_MODELS = frozenset({"tts-1", "tts-1-hd", "gpt-4o-mini-tts"})
 
@@ -273,6 +275,7 @@ def prepare_spoken_text(
 
 def register_chat_tts_routes(app: Flask) -> None:
     @app.route("/api/settings/chat-tts", methods=["GET"])
+    @authenticated_required
     def get_chat_tts_settings_api():
         try:
             return jsonify({"success": True, "chat_tts": load_chat_tts_settings()})
@@ -280,6 +283,7 @@ def register_chat_tts_routes(app: Flask) -> None:
             return jsonify({"success": False, "error": str(e)}), 500
 
     @app.route("/api/settings/chat-tts", methods=["POST"])
+    @owner_required
     def update_chat_tts_settings_api():
         try:
             data = request.get_json(silent=True) or {}
@@ -293,6 +297,7 @@ def register_chat_tts_routes(app: Flask) -> None:
             return jsonify({"success": False, "error": str(e)}), 500
 
     @app.route("/api/chat/tts", methods=["POST"])
+    @authenticated_required
     def chat_tts_speak():
         """Summarize (optional) + synthesize. Body: {text, tts_model?, voice?, summarize?}."""
         try:

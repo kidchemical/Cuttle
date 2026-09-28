@@ -1127,6 +1127,23 @@ def handle_restart_slash(
     if not parsed:
         return None
     mode, opts = parsed
+    if mode != "status":
+        try:
+            from flask import has_request_context
+
+            if has_request_context():
+                from api.http_authz import require_owner as _require_owner
+
+                _user, err = _require_owner()
+                if err:
+                    return {
+                        "success": False,
+                        "type": "flask_restart",
+                        "error": "Owner privileges required.",
+                        "response": "Owner privileges required to restart Flask.",
+                    }
+        except Exception:
+            pass
     if mode == "status":
         snap = status_snapshot(exclude_session_id=session_id)
         st = snap.get("status") or {}

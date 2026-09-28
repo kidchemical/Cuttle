@@ -266,6 +266,33 @@ def _no_cache_ui_assets(response):
 from api.limiter import limiter
 limiter.init_app(app)
 
+from api.http_authz import (
+    authenticated_required,
+    current_user,
+    is_owner_user,
+    loopback_or_authenticated,
+    loopback_or_owner,
+    loopback_required,
+    owner_required,
+    request_is_loopback,
+    require_authenticated,
+    require_chat_session_access,
+    require_owner,
+)
+
+
+def _require_session_actor(session_id):
+    """Signed-in caller; numeric chat ids must be owned by that user."""
+    from api.cuttle_ui_capabilities import numeric_chat_session_id
+
+    nid = numeric_chat_session_id(session_id)
+    if nid is not None:
+        return require_chat_session_access(nid)
+    user, err = require_authenticated()
+    if err:
+        return None, None, err
+    return user, session_id, None
+
 # Register authentication blueprint
 app.register_blueprint(auth_bp)
 
@@ -2262,6 +2289,7 @@ def api_running_pipelines():
 
 
 @app.route('/api/executing-jobs', methods=['GET'])
+@owner_required
 def api_executing_jobs():
     """Return list of pipeline runs currently executing (not merely listening). Used by Jobs panel."""
     try:
@@ -2278,94 +2306,6 @@ def api_executing_jobs():
 def api_jobs():
     """Graph Jobs list is empty. Mesh/worker jobs use /api/cuttle-jobs."""
     return jsonify({'success': True, 'jobs': [], 'executing_jobs': []})
-    settings_mgr = None
-    try:
-        from managers.settings_manager import get_settings_manager
-        settings_mgr = get_settings_manager()
-        available = settings_mgr.list_available_pipelines()
-    except Exception:
-        available = []
-    try:
-        from api.active_executions import get_executing_jobs
-        executing_all = get_executing_jobs()
-    except Exception:
-        executing_all = []
-    executing_by_pipeline = {}
-    for ej in executing_all:
-        pn = ej.get('pipeline_name')
-        if not pn:
-            continue
-        executing_by_pipeline.setdefault(pn, []).append(ej)
-    logs_dir = project_root / 'web' / 'logs'
-    executions_index = _build_pipeline_executions_index(logs_dir, limit_per_pipeline=10)
-    jobs = []
-    for name in available:
-        pipeline_path = settings_mgr.get_pipeline_path(name) if settings_mgr else None
-        if not pipeline_path or not pipeline_path.exists():
-            src_root = Path(__file__).resolve().parent.parent
-            pipeline_path = src_root / 'pipelines' / f'{name}.json'
-        try:
-            with open(pipeline_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-        except Exception:
-            data = {}
-        description = data.get('description', '')
-        nodes = data.get('nodes', [])
-        triggers = [n for n in nodes if n.get('type', '').startswith('trigger-') and n.get('type') != 'trigger-manual']
-        schedule_nodes = [n for n in nodes if n.get('type') == 'trigger-schedule']
-        schedules = []
-        for sn in schedule_nodes:
-            cfg = sn.get('config', {})
-            schedules.append({
-                'cron': cfg.get('schedule', ''),
-                'name': sn.get('name', ''),
-                'enabled': cfg.get('enabled', True),
-                'node_id': sn.get('id'),
-            })
-        # Infer type: Work (frequent), Think (medium), Play (rare), Self Improvement, or generic
-        job_type = 'pipeline'
-        if 'Self_Improvement' in name or 'Self Improvement' in name:
-            job_type = 'think'  # reflective/learning pipeline, same category as Think
-        elif schedules:
-            for s in schedules:
-                cron = s.get('cron', '')
-                if '*/10' in cron or '*/5' in cron:  # every 5-10 min
-                    job_type = 'work'
-                    break
-                elif '*/2' in cron or '0 *' in cron:  # every 2h or hourly
-                    job_type = 'think'
-                    break
-                elif '0 */8' in cron or '0 */6' in cron:  # every 6-8h
-                    job_type = 'play'
-                    break
-                elif '0 9' in cron:  # daily at 9am
-                    job_type = 'think'
-                    break
-        info = running_pipelines.get(name, {})
-        is_running = name in running_pipelines
-        start_time = info.get('start_time') if is_running else None
-        status = info.get('status', 'stopped') if is_running else 'stopped'
-        aruns = executing_by_pipeline.get(name, [])
-
-        executions = _merge_pending_job_executions(
-            executions_index.get(name, []),
-            aruns,
-        )
-
-        jobs.append({
-            'name': name,
-            'description': description or name,
-            'type': job_type,
-            'is_running': is_running,
-            'is_executing': len(aruns) > 0,
-            'active_runs': aruns,
-            'status': status,
-            'start_time': start_time,
-            'triggers': [{'name': t.get('name'), 'type': t.get('type')} for t in triggers],
-            'schedules': schedules,
-            'executions': executions,
-        })
-    return jsonify({'jobs': jobs, 'executing_jobs': executing_all})
 
 
 def _enrich_cuttle_job_row(job: dict) -> dict:
@@ -2433,6 +2373,7 @@ def _enrich_cuttle_job_row(job: dict) -> dict:
 
 
 @app.route('/api/cuttle-jobs', methods=['GET'])
+@owner_required
 def api_cuttle_jobs():
     """Gitea @cuttle worker jobs: active snapshot + remote/local history for Jobs cockpit."""
     view = (request.args.get('view') or 'all').strip().lower()
@@ -2542,61 +2483,6 @@ def _pipeline_name_from_query_log(data: dict) -> Optional[str]:
     return None
 
 
-def _lightweight_execution_from_query_log(data: dict) -> dict:
-    """Jobs list payload: enough for stats + per-card badges, not full query reports."""
-    return {
-        'query_id': data.get('query_id'),
-        'report_filename': data.get('report_filename'),
-        'timestamp': data.get('timestamp'),
-        'success': _effective_query_success_for_job_insight(data),
-        'pending': False,
-    }
-
-
-def _build_pipeline_executions_index(logs_dir: Path, limit_per_pipeline: int = 10) -> dict:
-    """Scan query logs once; return pipeline_name -> recent executions (newest first)."""
-    from collections import defaultdict
-    import glob
-
-    by_pipeline: dict = defaultdict(list)
-    if not logs_dir.exists():
-        return {}
-    for path in glob.glob(str(logs_dir / 'query_data_*.json')):
-        try:
-            with open(path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            pname = _pipeline_name_from_query_log(data)
-            if not pname:
-                continue
-            by_pipeline[pname].append(_lightweight_execution_from_query_log(data))
-        except Exception:
-            continue
-    out = {}
-    for pname, execs in by_pipeline.items():
-        execs.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
-        out[pname] = execs[:limit_per_pipeline]
-    return out
-
-
-def _merge_pending_job_executions(executions: list, pending_runs: list) -> list:
-    """Prepend in-flight runs; dedupe by query_id; keep newest first."""
-    merged = list(executions)
-    seen = {e['query_id'] for e in merged if e.get('query_id')}
-    for ej in pending_runs or []:
-        qid = ej.get('query_id')
-        if not qid or qid in seen:
-            continue
-        seen.add(qid)
-        merged.insert(0, {
-            'query_id': qid,
-            'report_filename': f'query_report_{qid}.html',
-            'timestamp': ej.get('start_time'),
-            'success': None,
-            'pending': True,
-        })
-    return merged[:10]
-
-
 def _effective_query_success_for_job_insight(data: dict) -> bool:
     """True only if the query actually succeeded end-to-end.
 
@@ -2632,22 +2518,19 @@ def chat_cancel():
     if sid is None or str(sid).strip() == '':
         return jsonify({'success': False, 'error': 'session_id required'}), 400
 
-    # Auth DB sessions: verify ownership when cookie present
     from api.cuttle_ui_capabilities import numeric_chat_session_id
 
     db_sid = numeric_chat_session_id(sid)
 
     if db_sid is not None:
-        session_token = get_request_session_token()
-        if session_token:
-            try:
-                db = get_auth_db()
-                user = db.verify_auth_session(session_token)
-                if not user or not db.get_chat_session(db_sid, user['id']):
-                    return jsonify({'success': False, 'error': 'Session not found or access denied'}), 404
-            except Exception as e:
-                print(f"[CHAT] cancel auth check failed: {e}")
-                return jsonify({'success': False, 'error': 'Unauthorized'}), 401
+        _user, nid, err = require_chat_session_access(db_sid)
+        if err:
+            return err
+        db_sid = nid
+    else:
+        _user, err = require_authenticated()
+        if err:
+            return err
 
     cancel_sid = db_sid if db_sid is not None else sid
     try:
@@ -2725,16 +2608,14 @@ def chat_steer():
 
     db_sid = numeric_chat_session_id(sid)
     if db_sid is not None:
-        session_token = get_request_session_token()
-        if session_token:
-            try:
-                db = get_auth_db()
-                user = db.verify_auth_session(session_token)
-                if not user or not db.get_chat_session(db_sid, user['id']):
-                    return jsonify({'success': False, 'error': 'Session not found or access denied'}), 404
-            except Exception as e:
-                print(f"[CHAT] steer auth check failed: {e}")
-                return jsonify({'success': False, 'error': 'Unauthorized'}), 401
+        _user, nid, err = require_chat_session_access(db_sid)
+        if err:
+            return err
+        db_sid = nid
+    else:
+        _user, err = require_authenticated()
+        if err:
+            return err
 
     from api.agent_harness.steer import steer as steer_live_turn
 
@@ -2757,25 +2638,17 @@ def job_watch_cancel():
     if not job_id:
         return jsonify({'success': False, 'error': 'id required'}), 400
 
-    if sid is not None and str(sid).strip() != '':
-        bare = str(sid)
-        if bare.startswith('db_session_'):
-            bare = bare[len('db_session_'):]
-        try:
-            db_sid = int(bare)
-        except (TypeError, ValueError):
-            db_sid = None
-        if db_sid is not None:
-            session_token = get_request_session_token()
-            if session_token:
-                try:
-                    db = get_auth_db()
-                    user = db.verify_auth_session(session_token)
-                    if not user or not db.get_chat_session(db_sid, user['id']):
-                        return jsonify({'success': False, 'error': 'Session not found or access denied'}), 404
-                except Exception as e:
-                    print(f"[CHAT] job-watch cancel auth failed: {e}")
-                    return jsonify({'success': False, 'error': 'Unauthorized'}), 401
+    from api.cuttle_ui_capabilities import numeric_chat_session_id
+
+    db_sid = numeric_chat_session_id(sid) if sid is not None else None
+    if db_sid is not None:
+        _user, nid, err = require_chat_session_access(db_sid)
+        if err:
+            return err
+    else:
+        _user, err = require_authenticated()
+        if err:
+            return err
 
     try:
         from api.job_watch import cancel_job
@@ -2809,24 +2682,15 @@ def chat_live_status():
     if not sid:
         return jsonify({'success': False, 'error': 'session_id required'}), 400
 
-    # If this looks like an auth DB session, require ownership when a cookie is present.
+    _user, _actor, err = _require_session_actor(sid)
+    if err:
+        return err
+
     bare = sid[len('db_session_'):] if sid.startswith('db_session_') else sid
     try:
         db_sid = int(bare)
     except (TypeError, ValueError):
         db_sid = None
-
-    if db_sid is not None:
-        session_token = get_request_session_token()
-        if session_token:
-            try:
-                db = get_auth_db()
-                user = db.verify_auth_session(session_token)
-                if not user or not db.get_chat_session(db_sid, user['id']):
-                    return jsonify({'success': False, 'error': 'Session not found or access denied'}), 404
-            except Exception as e:
-                print(f"[CHAT] live-status auth check failed: {e}")
-                return jsonify({'success': False, 'error': 'Unauthorized'}), 401
 
     live = get_chat_live_status(sid)
     generating, live_active, cancelled, live = _public_live_generating(sid, live)
@@ -2895,15 +2759,10 @@ def chat_live_status_batch():
     if len(parts) > 12:
         parts = parts[:12]
 
-    session_token = get_request_session_token()
-    user = None
-    db = None
-    if session_token:
-        try:
-            db = get_auth_db()
-            user = db.verify_auth_session(session_token)
-        except Exception:
-            user = None
+    user, err = require_authenticated()
+    if err:
+        return err
+    db = get_auth_db()
 
     out = {}
     for sid in parts:
@@ -2985,23 +2844,15 @@ def chat_pending_result():
     consume_raw = (request.args.get('consume') or '0').strip().lower()
     consume = consume_raw in ('1', 'true', 'yes', 'on')
 
+    _user, _actor, err = _require_session_actor(sid)
+    if err:
+        return err
+
     bare = sid[len('db_session_'):] if sid.startswith('db_session_') else sid
     try:
         db_sid = int(bare)
     except (TypeError, ValueError):
         db_sid = None
-
-    if db_sid is not None:
-        session_token = get_request_session_token()
-        if session_token:
-            try:
-                db = get_auth_db()
-                user = db.verify_auth_session(session_token)
-                if not user or not db.get_chat_session(db_sid, user['id']):
-                    return jsonify({'success': False, 'error': 'Session not found or access denied'}), 404
-            except Exception as e:
-                print(f"[CHAT] pending-result auth check failed: {e}")
-                return jsonify({'success': False, 'error': 'Unauthorized'}), 401
 
     from api import chat_delivery
     # Never hand over a parked reply while this chat is still generating —
@@ -3048,6 +2899,7 @@ def chat_pending_result():
 
 
 @app.route('/api/query-live-status', methods=['GET'])
+@authenticated_required
 def query_live_status():
     """Live execution snapshot for in-progress query reports (poll from placeholder HTML or UI)."""
     qid = (request.args.get('query_id') or '').strip()
@@ -3123,6 +2975,7 @@ def query_live_status():
 
 
 @app.route('/api/query-log/<query_id>', methods=['GET'])
+@authenticated_required
 def api_query_log(query_id):
     """Structured harness turn log for the in-pane inspector."""
     from api.query_events import build_query_log_response
@@ -3134,6 +2987,7 @@ def api_query_log(query_id):
 
 
 @app.route('/api/job-insight', methods=['GET'])
+@owner_required
 def api_job_insight():
     """Return job insight for a specific pipeline: metadata, live status, and recent execution feed."""
     pipeline_name = request.args.get('pipeline', '').strip()
@@ -3557,6 +3411,7 @@ def _build_shell_pane_prompt_addon(user_message: str, history_limit: int = 40) -
 
 
 @app.route('/api/toast', methods=['POST'])
+@authenticated_required
 def api_toast():
     """Queue tray + in-app UI toast (Electron/app_shell polls /api/ui-toasts)."""
     try:
@@ -3575,6 +3430,9 @@ def api_toast():
 @app.route('/api/ui-toasts', methods=['GET'])
 def api_ui_toasts():
     """Pull+clear pending UI toasts for Electron/app_shell (Gitea jobs, etc.)."""
+    _user, err = loopback_or_authenticated()
+    if err:
+        return err
     try:
         from api.cuttle_jobs.status_store import pull_ui_toasts
         return jsonify({'toasts': pull_ui_toasts()})
@@ -3771,6 +3629,7 @@ def serve_git_webui():
         """, 500
 
 @app.route('/api/start-ungit', methods=['POST'])
+@owner_required
 def start_ungit():
     """Start Ungit with the current project"""
     try:
@@ -3900,6 +3759,7 @@ def serve_output(filename):
 
 
 @app.route('/api/shared-media/stage', methods=['POST'])
+@owner_required
 def api_shared_media_stage():
     """Copy a local image/video into /output/shared/ for chat previews (LAN-safe)."""
     try:
@@ -3918,6 +3778,7 @@ def api_shared_media_stage():
 
 
 @app.route('/api/shared-media/poster', methods=['POST', 'GET'])
+@authenticated_required
 def api_shared_media_poster():
     """Ensure a mid-frame poster exists for a staged /output/shared video."""
     try:
@@ -3938,6 +3799,7 @@ def api_shared_media_poster():
 
 
 @app.route('/api/shared-media/meta', methods=['GET', 'POST'])
+@authenticated_required
 def api_shared_media_meta():
     """Return original filename/path for a staged /output/shared media URL."""
     try:
@@ -3960,6 +3822,9 @@ def api_shared_media_meta():
 @app.route('/api/shared-media/purge', methods=['POST', 'GET'])
 def api_shared_media_purge():
     """Delete staged shared-media files older than TTL (default 7 days)."""
+    _user, err = loopback_or_owner()
+    if err:
+        return err
     try:
         from api.shared_media import purge_expired
 
@@ -3987,6 +3852,7 @@ def serve_logs(filename):
     return resp
 
 @app.route('/api/test-reports')
+@owner_required
 def get_test_reports():
     """Get list of test reports"""
     try:
@@ -4003,6 +3869,7 @@ def get_test_reports():
         }), 500
 
 @app.route('/api/test-api-key', methods=['POST'])
+@owner_required
 def test_api_key():
     """Test an API key for validity"""
     try:
@@ -4238,6 +4105,7 @@ def test_discord_key(token):
         })
 
 @app.route('/api/save-api-key', methods=['POST'])
+@owner_required
 def save_api_key():
     """Save an API key securely"""
     try:
@@ -4293,6 +4161,7 @@ def save_api_key():
         }), 500
 
 @app.route('/api/load-api-keys')
+@owner_required
 def load_api_keys():
     """Load API keys from secure storage"""
     try:
@@ -5553,11 +5422,22 @@ def upload_attachments():
     try:
         from werkzeug.utils import secure_filename
 
+        _user, err = require_authenticated()
+        if err:
+            return err
+
         files = request.files.getlist('files')
         if not files:
             return jsonify({'success': False, 'error': 'No files provided'}), 400
 
         session_id = (request.form.get('session_id') or 'anon').strip() or 'anon'
+        from api.cuttle_ui_capabilities import numeric_chat_session_id
+        nid = numeric_chat_session_id(session_id)
+        if nid:
+            _owner_user, _nid, sess_err = require_chat_session_access(nid)
+            if sess_err:
+                return sess_err
+            session_id = str(_nid)
         # Keep session folder name filesystem-safe
         safe_session = secure_filename(session_id) or 'anon'
         upload_dir = actual_project_root / 'src' / 'output' / 'uploads' / safe_session
@@ -5644,6 +5524,10 @@ def chat_endpoint():
                 'error': 'Empty message'
             }), 400
 
+        _auth_user_early, auth_err = require_authenticated()
+        if auth_err:
+            return auth_err
+
         # Native Cuttle control command. Handled before sticky/starred agent
         # prefixing, the router, and any agent dispatch so it never becomes a
         # model turn (and never registers as active work against itself).
@@ -5655,6 +5539,9 @@ def chat_endpoint():
             )
 
             if parse_restart_slash(message_content) is not None:
+                _owner, owner_err = require_owner()
+                if owner_err:
+                    return owner_err
                 message_content = strip_sticky_agent_prefix(message_content)
                 _rr = handle_restart_slash(
                     message_content,
@@ -6758,92 +6645,9 @@ def chat_endpoint():
                 headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no', 'Connection': 'keep-alive'}
             )
         
-        # Not authenticated - use legacy in-memory sessions
-        print("[API] POST /api/chat: anonymous session, processing message")
-        session = get_or_create_session(chat_session_id)
-        from api import chat_delivery as _chat_delivery
-        if _chat_delivery.is_busy(session.session_id):
-            return jsonify({
-                'success': False,
-                'error': 'busy',
-                'busy': True,
-                'session_id': session.session_id,
-                'response': (
-                    '⏳ Still working on your previous message in this chat. '
-                    'Wait for it to finish, or stop it first.'
-                ),
-            }), 409
-
-        if not wants_stream:
-            if not _chat_delivery.try_begin(session.session_id):
-                return jsonify({
-                    'success': False,
-                    'error': 'busy',
-                    'busy': True,
-                    'session_id': session.session_id,
-                    'response': (
-                        '⏳ Still working on your previous message in this chat. '
-                        'Wait for it to finish, or stop it first.'
-                    ),
-                }), 409
-            _turn_token = _chat_delivery.current_turn(session.session_id)
-            try:
-                session.add_message('user', history_message)
-                res = process_message_with_bot(
-                    message_content, session.session_id,
-                    session_kind='web_anon', routing_key=f'web_anon_{session.session_id}',
-                    is_owner=False, status_queue=None,
-                    inference_mode=chat_inference_mode,
-                )
-                if res.get('success') and not (
-                    _chat_delivery.is_stale_turn(session.session_id, _turn_token)
-                    or _chat_delivery.is_turn_cancelled(session.session_id)
-                ):
-                    session.add_message('assistant', res.get('response', ''))
-                body = {
-                    'success': bool(res.get('success')),
-                    'response': res.get('response', '') or '',
-                    'session_id': session.session_id,
-                    'type': res.get('type', 'pipeline_execution'),
-                }
-                if res.get('query_id'):
-                    body['query_id'] = res['query_id']
-                if res.get('report_url'):
-                    body['report_url'] = res['report_url']
-                try:
-                    _usage = _usage_meta_from_assistant_result(res)
-                    if _usage:
-                        body['usage'] = _usage
-                except Exception:
-                    pass
-                return jsonify(body)
-            finally:
-                try:
-                    _chat_delivery.end(session.session_id, turn=_turn_token)
-                except Exception:
-                    pass
-
-        _process_fn = lambda status_queue: process_message_with_bot(
-            message_content, session.session_id,
-            session_kind='web_anon', routing_key=f'web_anon_{session.session_id}',
-            is_owner=False, status_queue=status_queue,
-            inference_mode=chat_inference_mode,
-        )
-        def on_save(res):
-            session.add_message('assistant', res.get('response', ''))
-        def on_claimed_anon():
-            session.add_message('user', history_message)
-        def stream_gen():
-            yield _sse_session_event(session.session_id)
-            for chunk in _generate_chat_stream(
-                _process_fn, session.session_id, on_result=on_save, on_claimed=on_claimed_anon
-            ):
-                yield chunk
-        return Response(
-            stream_with_context(stream_gen()),
-            mimetype='text/event-stream',
-            headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no', 'Connection': 'keep-alive'}
-        )
+        # Cookie was required above; missing resolve must not run a harness turn.
+        print("[API] POST /api/chat: authenticated session missing after resolve")
+        return jsonify({'success': False, 'error': 'Not authenticated.'}), 401
             
     except Exception as e:
         print(f"Chat endpoint error: {e}")
@@ -6871,54 +6675,9 @@ def _no_pipeline_chat_result():
 
 
 def _ensure_default_pipeline_registered(trigger_type: str):
-    """If no pipeline is running with the requested trigger, register the first loadable pipeline that has it."""
-    _register_first_pipeline_with_trigger(trigger_type)
+    """Graph auto-register was removed with visual pipelines."""
+    return False
 
-
-def _handle_external_trigger(trigger_type, data, channel_name):
-    """Shared handler for Telegram/Slack: pairing, then the same chat path as web."""
-    if not PIPELINE_AVAILABLE:
-        return jsonify({'success': False, 'error': 'Chat backend not available'}), 503
-    message_content = (data.get('message') or '').strip()
-    user_context = data.get('user_context', {})
-    session_data = dict(data.get('session', {}))
-    if not message_content:
-        return jsonify({'success': False, 'error': 'Empty message'}), 400
-    if PAIRING_AVAILABLE:
-        try:
-            settings = get_settings_manager()
-            channel_cfg = settings.get_channel_config(channel_name)
-            dm_policy = channel_cfg.get('dmPolicy', 'open')
-            allow_from = channel_cfg.get('allowFrom') or ['*']
-            identity = str(user_context.get('id') or session_data.get('user_id') or 'anon')
-            pm = get_pairing_manager()
-            access = pm.check_access(channel_name, identity, dm_policy, allow_from, meta=user_context)
-            if not access['allowed']:
-                return jsonify({
-                    'success': False, 'error': 'pairing_required',
-                    'response': access['message'], 'pairing_code': access.get('pairing_code')
-                }), 403
-        except Exception as e:
-            print(f"[PAIRING] {channel_name} check error: {e}")
-    session_data['session_kind'] = f'{channel_name}_user'
-    session_data['routing_key'] = f'{channel_name}_{session_data.get("user_id", "anon")}'
-    sid = session_data.get('session_id') or f'{channel_name}_{session_data.get("user_id", "anon")}'
-    result = process_message_with_bot(
-        message_content,
-        sid,
-        session_kind=session_data.get('session_kind'),
-        routing_key=session_data.get('routing_key'),
-        is_owner=bool(user_context.get('is_owner')),
-    )
-    if result.get('success'):
-        return jsonify({
-            'success': True, 'response': result.get('response', ''),
-            'type': result.get('type') or 'chat',
-        })
-    return jsonify({
-        'success': False, 'error': result.get('error', 'Unknown error'),
-        'response': result.get('response') or 'No agent handled this message.',
-    }), 404
 
 @app.route('/api/pipeline-trigger-schedule', methods=['POST'])
 def schedule_trigger_endpoint():
@@ -6933,27 +6692,16 @@ def get_schedule_triggers():
 
 @app.route('/api/pipeline-trigger-telegram', methods=['POST'])
 def telegram_trigger_endpoint():
-    """Handle Telegram bot messages via pipeline. POST from your Telegram webhook or bot."""
-    try:
-        data = request.get_json() or {}
-        return _handle_external_trigger('trigger-telegram', data, 'telegram')
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({'success': False, 'error': str(e), 'response': str(e)}), 500
+    """Telegram webhook ingress was removed with graph pipelines."""
+    return _graph_pipelines_gone_response()
 
 @app.route('/api/pipeline-trigger-slack', methods=['POST'])
 def slack_trigger_endpoint():
-    """Handle Slack bot messages via pipeline. POST from your Slack app (events or slash)."""
-    try:
-        data = request.get_json() or {}
-        return _handle_external_trigger('trigger-slack', data, 'slack')
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({'success': False, 'error': str(e), 'response': str(e)}), 500
+    """Slack Events ingress was removed with graph pipelines."""
+    return _graph_pipelines_gone_response()
 
 @app.route('/api/local-llm/status', methods=['GET'])
+@authenticated_required
 def local_llm_status():
     """Status of the local LLM backend (llama.cpp / Ollama)."""
     from core.local_llm import get_local_backend, get_local_base_url, local_reachable, list_local_models
@@ -6968,6 +6716,7 @@ def local_llm_status():
 
 
 @app.route('/api/local-llm/start', methods=['POST'])
+@owner_required
 def local_llm_start():
     """Launch llama-server on demand (detached; survives Flask restarts)."""
     from core.local_llm import launch_llamacpp_detached, local_reachable
@@ -6980,6 +6729,7 @@ def local_llm_start():
 
 
 @app.route('/api/local-llm/stop', methods=['POST'])
+@owner_required
 def local_llm_stop():
     """Stop llama-server (e.g. when the user asks Cuttle to close the local model)."""
     from core.local_llm import stop_llamacpp, local_reachable
@@ -7047,7 +6797,7 @@ def health_check():
     except Exception:
         plimits = {"max_tool_nodes_per_execution": 64}
 
-    return jsonify({
+    payload = {
         'status': 'healthy',
         'service': 'cuttle',
         'bot_available': PIPELINE_AVAILABLE,
@@ -7068,7 +6818,13 @@ def health_check():
         'local_llm_backend': local_llm_backend,
         'local_llm_label': local_llm_label,
         'pipeline_limits': plimits,
-    })
+    }
+    if not (request_is_loopback() or is_owner_user(current_user())):
+        payload.pop('cwd', None)
+        payload.pop('pipeline_limits', None)
+        payload['env'] = {'redacted': True}
+        payload['active_sessions'] = None
+    return jsonify(payload)
 
 
 @app.route('/api/supervised/tasks/<task_id>/control', methods=['POST'])
@@ -7210,6 +6966,9 @@ def supervised_task_raw_artifact(task_id, run_id):
 @app.route('/api/flask/restart/status', methods=['GET'])
 def api_flask_restart_status():
     """Durable restart status + active work (survives Flask replacement)."""
+    _user, err = loopback_or_authenticated()
+    if err:
+        return err
     try:
         from api.flask_restart import status_snapshot, mark_outcome_visible, build_completion_message
 
@@ -7238,6 +6997,7 @@ def api_flask_restart_status():
 
 
 @app.route('/api/flask/restart', methods=['POST'])
+@owner_required
 def api_flask_restart():
     """Request a daemon-owned Flask restart (drain-first)."""
     try:
@@ -7273,6 +7033,7 @@ def api_flask_restart():
 
 
 @app.route('/api/flask/restart/notify', methods=['POST'])
+@loopback_required
 def api_flask_restart_notify():
     """Daemon → new Flask: persist post-restart completion into the requesting chat once."""
     try:
@@ -7321,6 +7082,7 @@ def api_flask_restart_notify():
 
 
 @app.route('/api/restart', methods=['POST'])
+@owner_required
 def api_restart_legacy():
     """Legacy UI endpoint → graceful Flask restart (daemon-owned)."""
     try:
@@ -7439,6 +7201,7 @@ def api_network_info():
 
 
 @app.route('/api/settings/lan-access', methods=['GET', 'POST'])
+@owner_required
 def api_settings_lan_access():
     """Read/update discovery.lan_access_enabled (phone/LAN portal). Restart Flask after changes."""
     try:
@@ -7499,6 +7262,7 @@ def api_settings_lan_access():
 # --- Home automation (provider socket + Govee lighting) -----------------------
 
 @app.route('/api/home-automation/providers', methods=['GET'])
+@owner_required
 def api_home_automation_providers():
     """Catalog of home-automation plugs (Govee live, Nest stub, …). No secrets."""
     try:
@@ -7518,6 +7282,7 @@ def api_home_automation_providers():
 
 
 @app.route('/api/home-automation/themes', methods=['GET'])
+@owner_required
 def api_home_automation_themes():
     try:
         from managers.home_automation import THEME_QUICK, GOVEE_DEVICES, load_schedule
@@ -7537,6 +7302,7 @@ def api_home_automation_themes():
 
 
 @app.route('/api/home-automation/apply-theme', methods=['POST'])
+@owner_required
 def api_home_automation_apply_theme():
     try:
         from managers.home_automation import apply_theme
@@ -7556,6 +7322,7 @@ def api_home_automation_apply_theme():
 
 
 @app.route('/api/home-automation/apply-theme-stream', methods=['POST'])
+@owner_required
 def api_home_automation_apply_theme_stream():
     """NDJSON stream of theme apply progress + final result."""
     import json as json_lib
@@ -7586,6 +7353,7 @@ def api_home_automation_apply_theme_stream():
 
 
 @app.route('/api/home-automation/apply-schedule-now', methods=['POST'])
+@owner_required
 def api_home_automation_apply_schedule_now():
     """Apply the theme for the current time-of-day window immediately (same as daemon would, no skip)."""
     try:
@@ -7604,6 +7372,7 @@ def api_home_automation_apply_schedule_now():
 
 
 @app.route('/api/home-automation/apply-schedule-now-stream', methods=['POST'])
+@owner_required
 def api_home_automation_apply_schedule_now_stream():
     """NDJSON stream of schedule apply progress + final result (same outcome as apply-schedule-now)."""
     import json as json_lib
@@ -7629,6 +7398,7 @@ def api_home_automation_apply_schedule_now_stream():
 
 
 @app.route('/api/home-automation/schedule', methods=['GET', 'POST'])
+@owner_required
 def api_home_automation_schedule():
     try:
         from managers.home_automation import load_schedule, save_schedule, default_schedule
@@ -7662,6 +7432,7 @@ def api_home_automation_schedule():
 
 
 @app.route('/api/home-automation/auto-tick', methods=['POST'])
+@owner_required
 def api_home_automation_auto_tick():
     """Optional: run scheduled lighting check (daemon calls in-process instead)."""
     try:
@@ -7673,6 +7444,7 @@ def api_home_automation_auto_tick():
 
 
 @app.route('/api/home-automation/status', methods=['GET'])
+@owner_required
 def api_home_automation_status():
     """Live schedule heartbeat (daemon) + Govee device list with online/power/brightness."""
     try:
@@ -8086,6 +7858,7 @@ def api_cursor_agent_models():
 
 
 @app.route('/api/agent-context', methods=['GET'])
+@authenticated_required
 def api_agent_context_status():
     """Context-window fill estimate for Cursor / Muse / OpenCode composer radial."""
     try:
@@ -8147,6 +7920,9 @@ def api_agent_context_compact():
             or ''
         )
         session = str(session).strip()
+        _user, _sid, err = _require_session_actor(session)
+        if err:
+            return err
         path = (data.get('path') or data.get('project_path') or '').strip()
         if not path:
             try:
@@ -8193,6 +7969,7 @@ def ollama_models():
 # ============================================================================
 
 @app.route('/api/doctor', methods=['GET'])
+@owner_required
 def doctor_endpoint():
     """Run config and health checks; return checks and suggestions."""
     try:
@@ -8208,6 +7985,7 @@ def doctor_endpoint():
         }), 500
 
 @app.route('/api/wizard/status', methods=['GET'])
+@owner_required
 def wizard_status():
     """Return setup wizard status: which steps are done (default pipeline, API keys, channels)."""
     try:
@@ -8243,6 +8021,7 @@ def wizard_status():
 
 @app.route('/api/pairing/approve', methods=['POST'])
 @limiter.limit("5 per minute")
+@owner_required
 def pairing_approve():
     """Approve a pairing code. Adds identity to allowlist."""
     if not PAIRING_AVAILABLE:
@@ -8262,6 +8041,7 @@ def pairing_approve():
 
 @app.route('/api/pairing/pending', methods=['GET'])
 @limiter.limit("5 per minute")
+@owner_required
 def pairing_pending():
     """List pending pairing requests (for admin UI)."""
     if not PAIRING_AVAILABLE:
@@ -8273,6 +8053,7 @@ def pairing_pending():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/pairing/status', methods=['GET'])
+@owner_required
 def pairing_status():
     """Get pairing/allowlist status for current channel (query: channel, identity)."""
     if not PAIRING_AVAILABLE:
@@ -8297,6 +8078,7 @@ def pairing_status():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/settings/channels', methods=['GET'])
+@owner_required
 def get_channel_settings():
     """Get channel security config (dmPolicy, allowFrom) for webchat and discord."""
     if not PAIRING_AVAILABLE:
@@ -8304,13 +8086,14 @@ def get_channel_settings():
     try:
         settings = get_settings_manager()
         channels = {}
-        for ch in ('webchat', 'discord', 'telegram', 'slack'):
+        for ch in ('webchat', 'discord'):
             channels[ch] = settings.get_channel_config(ch)
         return jsonify({'success': True, 'channels': channels})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/settings/channels', methods=['POST'])
+@owner_required
 def update_channel_settings():
     """Update channel security config. Body: { channel, dmPolicy?, allowFrom? }."""
     if not PAIRING_AVAILABLE:
@@ -8318,7 +8101,7 @@ def update_channel_settings():
     try:
         data = request.get_json() or {}
         channel = data.get('channel')
-        if channel not in ('webchat', 'discord', 'telegram', 'slack'):
+        if channel not in ('webchat', 'discord'):
             return jsonify({'success': False, 'error': 'Invalid channel'}), 400
         settings = get_settings_manager()
         dm_policy = data.get('dmPolicy')
@@ -8329,53 +8112,18 @@ def update_channel_settings():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
-@app.route('/api/settings/pipeline-routing', methods=['GET'])
+@app.route('/api/settings/pipeline-routing', methods=['GET', 'POST'])
 def get_pipeline_routing():
-    """Get pipeline routing map (routing_key -> pipeline_name)."""
-    try:
-        settings = get_settings_manager()
-        return jsonify({'success': True, 'pipeline_routing': settings.get_pipeline_routing()})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+    return _graph_pipelines_gone_response()
 
-@app.route('/api/settings/pipeline-routing', methods=['POST'])
-def update_pipeline_routing():
-    """Set or clear pipeline for a routing key. Body: { routing_key, pipeline_name? }. pipeline_name null clears."""
-    try:
-        data = request.get_json() or {}
-        routing_key = data.get('routing_key')
-        pipeline_name = data.get('pipeline_name')
-        if not routing_key:
-            return jsonify({'success': False, 'error': 'routing_key required'}), 400
-        settings = get_settings_manager()
-        settings.set_pipeline_route(routing_key, pipeline_name if pipeline_name else None)
-        return jsonify({'success': True, 'pipeline_routing': settings.get_pipeline_routing()})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
 
-@app.route('/api/settings/pipeline-limits', methods=['GET'])
+@app.route('/api/settings/pipeline-limits', methods=['GET', 'POST'])
 def get_pipeline_limits_settings():
-    """Get pipeline execution limits (e.g. max tool nodes per run)."""
-    try:
-        settings = get_settings_manager()
-        return jsonify({'success': True, 'pipeline_limits': settings.get_pipeline_limits()})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/settings/pipeline-limits', methods=['POST'])
-def update_pipeline_limits_settings():
-    """Body: { max_tool_nodes_per_execution?: number }."""
-    try:
-        data = request.get_json() or {}
-        settings = get_settings_manager()
-        settings.set_pipeline_limits(max_tool_nodes_per_execution=data.get('max_tool_nodes_per_execution'))
-        return jsonify({'success': True, 'pipeline_limits': settings.get_pipeline_limits()})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+    return _graph_pipelines_gone_response()
 
 
 @app.route('/api/settings/sandbox', methods=['GET'])
+@authenticated_required
 def get_sandbox_settings():
     """Get sandbox config (enabled, restrict_for_session_kinds, allowed/denied tools, allowed_pipelines)."""
     try:
@@ -8385,6 +8133,7 @@ def get_sandbox_settings():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/settings/sandbox', methods=['POST'])
+@owner_required
 def update_sandbox_settings():
     """Update sandbox config. Owner only."""
     try:
@@ -8409,6 +8158,7 @@ def update_sandbox_settings():
 
 
 @app.route('/api/settings/starred-slash', methods=['GET'])
+@authenticated_required
 def get_starred_slash_api():
     """Starred sticky agent for new Cuttle chats."""
     try:
@@ -8419,6 +8169,7 @@ def get_starred_slash_api():
 
 
 @app.route('/api/settings/starred-slash', methods=['POST'])
+@owner_required
 def update_starred_slash_api():
     """Body: { prefixes: ["/cursor "] } — empty list clears the default."""
     try:
@@ -8434,6 +8185,7 @@ def update_starred_slash_api():
 
 
 @app.route('/api/settings/starred-project', methods=['GET'])
+@authenticated_required
 def get_starred_project_api():
     """Exclusive starred default project for new Cuttle chats."""
     try:
@@ -8444,6 +8196,7 @@ def get_starred_project_api():
 
 
 @app.route('/api/settings/starred-project', methods=['POST'])
+@owner_required
 def update_starred_project_api():
     """Body: { project: {id, path, name} } or { project: null } to clear.
 
@@ -8530,6 +8283,9 @@ def api_set_muse_model():
         session = str(data.get('session') or data.get('session_id') or '').strip()
         if not session:
             return jsonify({'success': False, 'error': 'session is required'}), 400
+        _user, _sid, err = _require_session_actor(session)
+        if err:
+            return err
         model = str(data.get('model') or '').strip()
         if model.lower() in ('default', 'reset', 'clear'):
             model = ''
@@ -8584,6 +8340,9 @@ def api_set_muse_effort():
         session = str(data.get('session') or data.get('session_id') or '').strip()
         if not session:
             return jsonify({'success': False, 'error': 'session is required'}), 400
+        _user, _sid, err = _require_session_actor(session)
+        if err:
+            return err
         effort = str(data.get('effort') or '').strip().lower()
         known = [str(e) for e in MUSE_REASONING_EFFORTS]
         if effort.lower() in ('default', 'reset', 'clear', 'none'):
@@ -8664,6 +8423,9 @@ def api_set_hermes_model():
         session = str(data.get('session') or data.get('session_id') or '').strip()
         if not session:
             return jsonify({'success': False, 'error': 'session is required'}), 400
+        _user, _sid, err = _require_session_actor(session)
+        if err:
+            return err
         model = str(data.get('model') or '').strip()
         if model.lower() in ('default', 'reset', 'clear'):
             model = ''
@@ -8718,6 +8480,9 @@ def api_set_hermes_effort():
         session = str(data.get('session') or data.get('session_id') or '').strip()
         if not session:
             return jsonify({'success': False, 'error': 'session is required'}), 400
+        _user, _sid, err = _require_session_actor(session)
+        if err:
+            return err
         effort = str(data.get('effort') or '').strip().lower()
         known = [str(e) for e in HERMES_REASONING_EFFORTS]
         if effort.lower() in ('default', 'reset', 'clear'):
@@ -8810,6 +8575,9 @@ def api_set_codex_model():
         session = str(data.get('session') or data.get('session_id') or '').strip()
         if not session:
             return jsonify({'success': False, 'error': 'session is required'}), 400
+        _user, _sid, err = _require_session_actor(session)
+        if err:
+            return err
         model = str(data.get('model') or '').strip()
         if model.lower() in ('default', 'reset', 'clear'):
             model = ''
@@ -8880,6 +8648,9 @@ def api_set_codex_effort():
         session = str(data.get('session') or data.get('session_id') or '').strip()
         if not session:
             return jsonify({'success': False, 'error': 'session is required'}), 400
+        _user, _sid, err = _require_session_actor(session)
+        if err:
+            return err
         effort = str(data.get('effort') or '').strip().lower()
         if effort.lower() in ('default', 'reset', 'clear', 'none'):
             effort = ''
@@ -9004,6 +8775,9 @@ def api_set_opencode_model():
         session = str(data.get('session') or data.get('session_id') or '').strip()
         if not session:
             return jsonify({'success': False, 'error': 'session is required'}), 400
+        _user, _sid, err = _require_session_actor(session)
+        if err:
+            return err
         model = str(data.get('model') or '').strip()
         if model.lower() in ('default', 'reset', 'clear'):
             model = ''
@@ -9058,6 +8832,9 @@ def api_set_opencode_effort():
         session = str(data.get('session') or data.get('session_id') or '').strip()
         if not session:
             return jsonify({'success': False, 'error': 'session is required'}), 400
+        _user, _sid, err = _require_session_actor(session)
+        if err:
+            return err
         effort = str(data.get('effort') or '').strip().lower()
         known = [str(e) for e in OPENCODE_REASONING_EFFORTS]
         if effort.lower() in ('default', 'reset', 'clear'):
@@ -9166,6 +8943,7 @@ def get_agent_defaults_api(agent_id):
 
 
 @app.route('/api/agent-defaults/<agent_id>', methods=['POST'])
+@owner_required
 def set_agent_defaults_api(agent_id):
     """Star (or clear) the global model/effort default for one agent.
 
@@ -9255,6 +9033,9 @@ def get_chat_warnings_api():
         session = (request.args.get('session') or '').strip()
         if not session:
             return jsonify({'success': False, 'error': 'session is required'}), 400
+        _user, _sid, err = _require_session_actor(session)
+        if err:
+            return err
         return jsonify({'success': True, 'warnings': get_warnings(session)})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -9269,15 +9050,24 @@ def clear_chat_warnings_api():
         session = str(data.get('session') or request.args.get('session') or '').strip()
         if not session:
             return jsonify({'success': False, 'error': 'session is required'}), 400
-        clear_warnings(session)
+        _user, nid, err = require_chat_session_access(session)
+        if err:
+            return err
+        clear_warnings(str(nid))
         return jsonify({'success': True})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/api/agent-router/options', methods=['GET'])
+@owner_required
 def get_agent_router_options_api():
-    """Modes, models and agents for the chat `/router` palette (no CLI calls)."""
+    """Modes, models and agents for the Router editor page (no CLI calls).
+
+    Owner-only: the payload includes the live ``current`` provider config
+    (endpoints, targets, fallbacks), same sensitivity class as
+    ``GET /api/router/config``.
+    """
     try:
         from api.agent_router.config import load_router_config
         from api.agent_router.registry import (
@@ -9335,6 +9125,7 @@ def get_agent_router_options_api():
 
 
 @app.route('/api/router/config', methods=['GET'])
+@owner_required
 def get_router_config_api():
     """Full router state for the Router editor page (config + use cases + demotions + rage)."""
     try:
@@ -9356,6 +9147,7 @@ def get_router_config_api():
 
 
 @app.route('/api/router/config', methods=['PUT'])
+@owner_required
 def put_router_config_api():
     """Update router config and/or the use-case table (same settings the agents edit)."""
     try:
@@ -9487,6 +9279,7 @@ def turn_feedback_api():
 
 
 @app.route('/api/router/health', methods=['GET'])
+@owner_required
 def get_router_health_api():
     """7d metrics + current drift report + active demotions (read-only)."""
     try:
@@ -9502,6 +9295,7 @@ def get_router_health_api():
 
 
 @app.route('/api/router/health/refresh', methods=['POST'])
+@owner_required
 def refresh_router_health_api():
     """Re-evaluate drift and apply/clear temporary demotions."""
     try:
@@ -9514,6 +9308,7 @@ def refresh_router_health_api():
 
 
 @app.route('/api/router/demotion/clear', methods=['POST'])
+@owner_required
 def clear_router_demotion_api():
     """Manually re-promote a demoted target."""
     try:
@@ -9531,6 +9326,7 @@ def clear_router_demotion_api():
 
 
 @app.route('/api/settings/ui-layout', methods=['GET'])
+@authenticated_required
 def get_ui_layout():
     """Get persisted UI layout (rail item / footer order)."""
     try:
@@ -9543,6 +9339,7 @@ def get_ui_layout():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/settings/ui-layout', methods=['POST'])
+@owner_required
 def update_ui_layout():
     """Save UI layout. Body: { rail_items?, rail_footer?, rail_hidden?, layout_version? }.
 
@@ -9568,6 +9365,7 @@ def update_ui_layout():
 
 
 @app.route('/api/settings/video-background', methods=['GET'])
+@authenticated_required
 def get_video_background_setting():
     """Persisted wallpaper playlists (mirrors localStorage; restores after data clear)."""
     try:
@@ -9580,6 +9378,7 @@ def get_video_background_setting():
 
 
 @app.route('/api/settings/video-background', methods=['POST'])
+@owner_required
 def update_video_background_setting():
     """Save wallpaper prefs to settings.json. Body: { playlists?, active_playlist?, urls?, duration?, opacity?, enabled? }.
 
@@ -9601,6 +9400,7 @@ def update_video_background_setting():
 # ============================================================================
 
 @app.route('/api/sessions/list', methods=['GET'])
+@owner_required
 def sessions_list():
     """List active pipelines (running) and session IDs (chat_sessions). For agent-to-agent orchestration."""
     try:
@@ -9628,6 +9428,9 @@ def api_shell_panes():
     global _shell_pane_layout
     try:
         if request.method == 'POST':
+            _user, err = require_owner()
+            if err:
+                return err
             data = request.get_json(silent=True) or {}
             columns = data.get('columns')
             if not isinstance(columns, list):
@@ -9653,6 +9456,9 @@ def api_shell_panes():
                 'orientation': orientation,
                 'panes': _shell_panes_snapshot(),
             })
+        _user, err = loopback_or_authenticated()
+        if err:
+            return err
         return jsonify({
             'success': True,
             'orientation': _normalize_shell_orientation(_shell_pane_layout.get('orientation')),
@@ -9667,6 +9473,9 @@ def api_shell_panes():
 def api_shell_workspaces():
     """Named split-pane snapshots (pane count, pages, open chats) for cross-device load."""
     try:
+        _user, err = require_owner()
+        if err:
+            return err
         items = _load_shell_workspaces()
         if request.method == 'GET':
             return jsonify({
@@ -9719,6 +9528,7 @@ def api_shell_workspaces():
 
 
 @app.route('/api/shell/workspaces/<workspace_id>', methods=['DELETE'])
+@owner_required
 def api_shell_workspace_delete(workspace_id):
     try:
         wid = str(workspace_id or '').strip()[:40]
@@ -9740,8 +9550,11 @@ def api_shell_pane_messages(pane_number):
     """
     Read chat history for the Nth open pane (1 = leftmost).
     Query: limit (default 40, max 200).
-    Intended for agents ("read 1st pane") — no cookie required on the Cuttle host.
+    Host agents call this over loopback; signed-in UI may call it too.
     """
+    _user, err = loopback_or_authenticated()
+    if err:
+        return err
     try:
         limit = request.args.get('limit', 40, type=int) or 40
         limit = max(1, min(200, limit))
@@ -9804,6 +9617,9 @@ def sessions_send():
         if target_pipeline:
             return _graph_pipelines_gone_response()
         if target_session:
+            _user, _sid, err = _require_session_actor(target_session)
+            if err:
+                return err
             res = process_message_with_bot(message, target_session, session_kind='sessions_send', routing_key='sessions_send')
             if res.get('success'):
                 return jsonify({'success': True, 'response': res.get('response', ''), 'session_id': target_session})
@@ -9817,6 +9633,7 @@ def sessions_send():
 # ============================================================================
 
 @app.route('/api/project-commands', methods=['GET'])
+@authenticated_required
 def project_commands_list():
     """List ``.cuttle/commands/*.md`` for a registered project path / id."""
     try:
@@ -9876,6 +9693,7 @@ def project_commands_list():
 
 
 @app.route('/api/sessions/<session_id>', methods=['GET'])
+@owner_required
 def get_session_history(session_id):
     """Get chat history for a session"""
     session = chat_sessions.get(session_id)
@@ -9894,6 +9712,7 @@ def get_session_history(session_id):
     })
 
 @app.route('/api/sessions', methods=['GET'])
+@owner_required
 def list_sessions():
     """List all active sessions"""
     sessions_info = []
@@ -9912,6 +9731,7 @@ def list_sessions():
     })
 
 @app.route('/api/clear-session/<session_id>', methods=['POST'])
+@owner_required
 def clear_session(session_id):
     """Clear a specific session"""
     if session_id == 'all':
@@ -9981,143 +9801,11 @@ def pipeline_execution_start():
 
 @app.route('/api/pipeline-execution-finish', methods=['POST'])
 def pipeline_execution_finish():
-    """Finish query tracking for pipeline execution"""
-    try:
-        data = request.get_json()
-        success = data.get('success', True)
-        error_message = data.get('errorMessage', None)
-        execution_order_map = data.get('executionOrderMap', {})
-        
-        print(f"[QUERY FINISH] Received request - success: {success}, error: {error_message}")
-        print(f"[QUERY FINISH] Execution order map size: {len(execution_order_map)}")
-        
-        # Apply execution order mapping to graph nodes if provided
-        if execution_order_map:
-            try:
-                from api.query_tracker import get_query_tracker
-                tracker = get_query_tracker()
-                print(f"[QUERY FINISH] Tracker exists: {tracker is not None}")
-                print(f"[QUERY FINISH] Tracker has execution_data: {tracker.execution_data is not None if tracker else False}")
-                
-                if tracker and tracker.execution_data:
-                    # Update graph nodes with execution order IDs
-                    nodes_updated = 0
-                    graph_nodes = tracker.execution_data.get('graph_structure', {}).get('nodes', [])
-                    print(f"\n[EXEC ORDER MAP APPLY] Received map with {len(execution_order_map)} entries")
-                    print(f"[EXEC ORDER MAP APPLY] Graph has {len(graph_nodes)} nodes")
-                    
-                    # Log all entries in the map
-                    for node_id, exec_order in execution_order_map.items():
-                        print(f"[EXEC ORDER MAP APPLY] Map entry: {node_id} (type: {type(node_id).__name__}) -> {exec_order}")
-                    
-                    # Log all graph node IDs
-                    print(f"\n[EXEC ORDER MAP APPLY] Graph node IDs:")
-                    for node in graph_nodes:
-                        node_id = node['id']
-                        node_name = node.get('name', 'Unknown')
-                        print(f"[EXEC ORDER MAP APPLY]   Graph node: {node_name} (ID: {node_id}, type: {type(node_id).__name__})")
-                    
-                    print(f"\n[EXEC ORDER MAP APPLY] Applying mapping...")
-                    for node in graph_nodes:
-                        node_id = node['id']
-                        node_name = node.get('name', 'Unknown')
-                        
-                        # Try both the node_id directly and as a string (in case of type mismatch)
-                        exec_order = execution_order_map.get(node_id) or execution_order_map.get(str(node_id))
-                        
-                        if exec_order:
-                            node['execution_order'] = exec_order
-                            node['display_id'] = exec_order
-                            nodes_updated += 1
-                            print(f"[EXEC ORDER MAP APPLY]   [OK] Updated {node_name} (ID: {node_id}) -> {exec_order}")
-                        else:
-                            print(f"[EXEC ORDER MAP APPLY]   [SKIP] Node {node_name} (ID: {node_id}) not found in execution order map")
-                    
-                    print(f"\n[EXEC ORDER MAP APPLY] Successfully updated {nodes_updated}/{len(graph_nodes)} graph nodes\n")
-                else:
-                    print(f"[QUERY FINISH] WARNING: Tracker or execution_data is None, skipping execution order map")
-            except Exception as map_error:
-                print(f"[QUERY] Warning: Failed to apply execution order map: {map_error}")
-                import traceback
-                traceback.print_exc()
-        
-        # Unregister from active executions (Node Editor run) and finish query tracking
-        try:
-            from api.query_tracker import get_query_tracker
-            from api.active_executions import unregister_execution
-            tracker = get_query_tracker()
-            if tracker and tracker.query_id:
-                unregister_execution(tracker.query_id)
-        except Exception:
-            pass
-        print(f"[QUERY FINISH] Calling finish_query_tracking...")
-        try:
-            report_path, json_path = finish_query_tracking(success=success, error_message=error_message)
-            print(f"[QUERY FINISH] finish_query_tracking returned: report_path={report_path}, json_path={json_path}")
-        except Exception as finish_error:
-            print(f"[QUERY FINISH] ERROR in finish_query_tracking: {finish_error}")
-            import traceback
-            traceback.print_exc()
-            return jsonify({
-                'success': False,
-                'error': f'Error generating report: {str(finish_error)}'
-            }), 500
-        
-        if report_path:
-            # Get the filename and create localhost URL
-            report_filename = os.path.basename(report_path)
-            report_url = f"http://localhost:8080/logs/{report_filename}"
-            
-            print(f"[QUERY] Pipeline execution finished. Report: {report_url}")
-            
-            return jsonify({
-                'success': True,
-                'report_url': report_url,
-                'report_file': report_filename
-            })
-        else:
-            print(f"[QUERY FINISH] ERROR: report_path is None")
-            return jsonify({
-                'success': False,
-                'error': 'Failed to generate query report - report_path is None'
-            }), 500
-            
-    except Exception as e:
-        print(f"[QUERY FINISH] UNEXPECTED ERROR: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+    return _graph_pipelines_gone_response()
 
 @app.route('/api/pipeline-check-running', methods=['POST'])
 def pipeline_check_running():
-    """Check if a pipeline is currently running"""
-    try:
-        data = request.get_json()
-        pipeline_name = data.get('pipelineName')
-        
-        if not pipeline_name:
-            return jsonify({
-                'success': False,
-                'error': 'Pipeline name is required'
-            }), 400
-        
-        is_running = pipeline_name in running_pipelines
-        
-        return jsonify({
-            'success': True,
-            'is_running': is_running,
-            'pipeline_data': running_pipelines.get(pipeline_name) if is_running else None
-        })
-        
-    except Exception as e:
-        print(f"Error checking pipeline status: {e}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+    return _graph_pipelines_gone_response()
 
 @app.route('/api/pipeline-run-now', methods=['POST'])
 def pipeline_run_now():
@@ -10137,71 +9825,11 @@ def pipeline_register_running():
 
 @app.route('/api/pipeline-job-status', methods=['POST'])
 def get_pipeline_job_status():
-    """Get real-time status of a pipeline job"""
-    try:
-        data = request.get_json()
-        pipeline_name = data.get('pipelineName')
-        
-        if not pipeline_name:
-            return jsonify({
-                'success': False,
-                'error': 'Pipeline name is required'
-            }), 400
-        
-        is_running = pipeline_name in running_pipelines
-        
-        if is_running:
-            pipeline_info = running_pipelines[pipeline_name]
-            return jsonify({
-                'success': True,
-                'is_running': True,
-                'status': pipeline_info.get('status', 'listening'),
-                'start_time': pipeline_info.get('start_time'),
-                'last_activity': pipeline_info.get('last_activity'),
-                'triggers': pipeline_info.get('pipeline_data', {}).get('triggers', [])
-            })
-        else:
-            return jsonify({
-                'success': True,
-                'is_running': False,
-                'status': 'stopped'
-            })
-        
-    except Exception as e:
-        print(f"Error getting pipeline job status: {e}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+    return _graph_pipelines_gone_response()
 
 @app.route('/api/pipeline-reload', methods=['POST'])
 def pipeline_reload():
     return jsonify({'success': True, 'reloaded': [], 'error': 'graph_pipelines_removed'})
-    try:
-        from managers.settings_manager import get_settings_manager
-        settings_mgr = get_settings_manager()
-        reloaded = []
-        for pipeline_name in list(running_pipelines.keys()):
-            pipeline_path = settings_mgr.get_pipeline_path(pipeline_name)
-            if pipeline_path and Path(pipeline_path).exists():
-                with open(pipeline_path, 'r', encoding='utf-8') as f:
-                    pipeline_data = json.load(f)
-                nodes = pipeline_data.get('nodes', [])
-                persistent_triggers = [
-                    n for n in nodes
-                    if n.get('type', '').startswith('trigger-') and n.get('type') != 'trigger-manual'
-                ]
-                running_pipelines[pipeline_name]['pipeline_data'] = {
-                    'triggers': [{'name': n.get('name'), 'type': n.get('type')} for n in persistent_triggers],
-                    'nodes_count': len(nodes),
-                    'connections_count': len(pipeline_data.get('connections', []))
-                }
-                running_pipelines[pipeline_name]['last_reload'] = datetime.now().isoformat()
-                reloaded.append(pipeline_name)
-        return jsonify({'success': True, 'reloaded': reloaded})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
 
 @app.route('/api/pipeline-start', methods=['POST'])
 def pipeline_start():
@@ -10209,56 +9837,7 @@ def pipeline_start():
 
 @app.route('/api/record-node-execution', methods=['POST'])
 def record_node_execution():
-    """Record when a node in the pipeline is executed"""
-    try:
-        data = request.get_json()
-        query_id = data.get('queryId')
-        node_id = data.get('nodeId')
-        success = data.get('success', True)
-        
-        if not query_id or not node_id:
-            return jsonify({
-                'success': False,
-                'error': 'Missing queryId or nodeId'
-            }), 400
-        
-        # Record node execution in the query tracker
-        try:
-            from api.query_tracker import get_query_tracker
-            import time
-            
-            tracker = get_query_tracker(query_id)
-            print(f"[QUERY API] record-node-execution called: node_id={node_id}, query_id={query_id}, success={success}")
-            print(f"[QUERY API] Current tracker query_id: {tracker.query_id}")
-            
-            if tracker.query_id == query_id:
-                # Record the node execution with current timestamp
-                end_time = time.time()
-                start_time = end_time - 0.001  # Assume very short duration for now
-                
-                # Check if node exists in graph structure
-                if tracker.execution_data and "graph_structure" in tracker.execution_data:
-                    node_ids = [str(n.get("id")) for n in tracker.execution_data["graph_structure"].get("nodes", [])]
-                    print(f"[QUERY API] Available node IDs in graph: {node_ids}")
-                    print(f"[QUERY API] Looking for node ID: {node_id} (type: {type(node_id).__name__})")
-                
-                tracker.record_node_execution(node_id, start_time, end_time, success)
-                print(f"[QUERY API] Successfully recorded node execution: {node_id} (success: {success})")
-            else:
-                print(f"[QUERY API] Warning: Query ID mismatch ({tracker.query_id} != {query_id})")
-        except Exception as track_error:
-            print(f"[QUERY] Error recording node execution: {track_error}")
-        
-        return jsonify({
-            'success': True
-        })
-        
-    except Exception as e:
-        print(f"Error recording node execution: {e}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+    return _graph_pipelines_gone_response()
 
 
 def _normalize_tools_config(tools_config) -> Optional[dict]:
@@ -10418,6 +9997,7 @@ def _record_failed_llm_for_query(
 
 
 @app.route('/api/llm-request', methods=['POST'])
+@owner_required
 def llm_request():
     """Execute an LLM request. Supports toolsConfig from MCP toolset for tool-calling."""
     import time
@@ -10928,1065 +10508,17 @@ def _message_is_slash_remote_agent(msg: str) -> bool:
     return False
 
 
-def _execute_router_tool(inputs: dict, config: dict) -> dict:
-    """Classify an incoming message and select the appropriate AI backend.
-
-    Returns selected_port and selected_ports in the output so the pipeline
-    executor can conditionally follow the matching downstream branch, with
-    optional fallback to other ports if the primary fails:
-      port 0 → tool-remote-agent (Cursor IDE / Claude Code per node codingBackend)
-      port 1 → llm-anthropic (Claude API)            — analysis / complex reasoning
-      port 2 → llm-openai (OpenAI)                   — conversational / cost-efficient
-      port 3 → llm-local (Ollama)                     — local fallback when APIs fail
-
-    When localLlmOnly=True, only port 3 is used. Otherwise, the primary port
-    is tried first. Ollama (port 3) is only included as a fallback when
-    fallbackToLocalLlm=True; disabling "Local LLM Only" does not imply Ollama
-    fallback (that was confusing and produced Ollama errors when Ollama was down).
-    """
-    raw = inputs.get('input', '') or inputs.get('message', '')
-    # Normalize: may be list when multiple triggers feed the router (e.g. Web Chat + Discord + Schedule)
-    if isinstance(raw, list):
-        parts = [str(x).strip() for x in raw if x is not None and str(x).strip()]
-        message = parts[0] if parts else ''
-    elif isinstance(raw, str):
-        message = raw
-    else:
-        message = str(raw) if raw else ''
-    if isinstance(message, str):
-        message = _strip_invisible_leading(message)
-    msg_lower = (message or '').lower()
-    user_context = inputs.get('user_context', {})
-    session = inputs.get('session', {}) or {}
-    session_kind = str(session.get('session_kind', '') or '')
-    is_owner = user_context.get('is_owner', False)
-    from api.inference_mode import inference_mode_from_context
-
-    chat_inference_mode = inference_mode_from_context(session, user_context)
-    local_llm_only = config.get('localLlmOnly', False)
-    # Default True: when cloud/API path fails, try Ollama (port 3). Disable on the router node to opt out.
-    fallback_to_local_llm = bool(config.get('fallbackToLocalLlm', True))
-
-    if chat_inference_mode == 'local':
-        selected_port = 3
-        route = 'local_llm'
-        selected_ports = [3]
-        print(f"[ROUTER] inference_mode=local → {route} (port 3)")
-        return {
-            'success': True,
-            'output': message,
-            'selected_port': selected_port,
-            'selected_ports': selected_ports,
-            'route': route,
-        }
-
-    if chat_inference_mode == 'cloud':
-        fallback_to_local_llm = False
-
-    # Self Improvement pipeline: needs repo work (roadmap, .cuttle/learnings, tests)—route like a coding session.
-    pn = str(user_context.get('pipeline_name') or '').lower().replace(' ', '_').replace('-', '_')
-    if pn == 'self_improvement':
-        if local_llm_only:
-            selected_port = 3
-            route = 'local_llm'
-            selected_ports = [3]
-            print(f"[ROUTER] Self_Improvement → {route} (port 3) [localLlmOnly]")
-            return {
-                'success': True,
-                'output': message,
-                'selected_port': selected_port,
-                'selected_ports': selected_ports,
-                'route': route,
-            }
-        if is_owner:
-            selected_port = 0
-            route = 'claude_code'
-            if fallback_to_local_llm:
-                selected_ports = [0, 3]
-                print(f"[ROUTER] Self_Improvement (owner) → {route} (port 0) [fallback: local_llm]")
-            else:
-                selected_ports = [0]
-                print(f"[ROUTER] Self_Improvement (owner) → {route} (port 0)")
-            return {
-                'success': True,
-                'output': message,
-                'selected_port': selected_port,
-                'selected_ports': selected_ports,
-                'route': route,
-            }
-        selected_port = 2
-        route = 'openai'
-        selected_ports = [2, 3] if fallback_to_local_llm else [2]
-        print(f"[ROUTER] Self_Improvement (non-owner) → {route} (port 2)")
-        return {
-            'success': True,
-            'output': message,
-            'selected_port': selected_port,
-            'selected_ports': selected_ports,
-            'route': route,
-        }
-
-    if local_llm_only:
-        selected_port = 3  # Local LLM only
-        route = 'local_llm'
-        selected_ports = [3]
-        print(f"[ROUTER] '{message[:60]}...' → {route} (port {selected_port}) [local only]")
-        return {
-            'success': True,
-            'output': message,
-            'selected_port': selected_port,
-            'selected_ports': selected_ports,
-            'route': route
-        }
-
-    coding_keywords = [
-        'create', 'make', 'add', 'build', 'write', 'edit', 'fix', 'implement',
-        'cron', 'job', 'schedule', 'file', 'files', 'folder', 'directory',
-        'code', 'script', 'function', 'module', 'package', 'setup', 'skill',
-        'automate', 'run', 'execute', 'install', 'deploy', 'pipeline', 'node',
-        'complete', 'roadmap', 'refactor', 'merge', 'commit', 'resolve', 'promote',
-        'learnings', 'backlog', 'pytest', 'test', 'todo', 'feature request',
-    ]
-    creative_keywords = [
-        'doodle', 'poem', 'art', 'music', 'game', 'browse', 'explore', 'media',
-        'draw', 'play', 'creative', 'curious', 'wonder', 'experiment'
-    ]
-    analysis_keywords = [
-        'analyze', 'analyse', 'explain', 'summarize', 'summarise', 'compare',
-        'review', 'brainstorm', 'plan', 'design', 'think', 'reason', 'strategy',
-        'architecture', 'research', 'investigate', 'what is', 'how does', 'why'
-    ]
-
-    is_coding = any(kw in msg_lower for kw in coding_keywords)
-    is_creative = any(kw in msg_lower for kw in creative_keywords)
-    is_analysis = any(kw in msg_lower for kw in analysis_keywords)
-
-    # Explicit Cuttle slash commands must hit tool-remote-agent (same as Discord), not OpenAI.
-    # Otherwise "/cursor-cli open ..." has no coding keywords and was routed to conversational LLM.
-    # Do not require is_owner here: authenticated users often fail OWNER_USER_EMAIL match; the
-    # remote agent still enforces owner for generic coding, but allows /claude / /cursor* explicitly.
-    is_slash_remote_agent = _message_is_slash_remote_agent(message)
-
-    # Owner web + coding → remote agent (Cursor IDE / Claude Code per node config).
-    # Non-owner web + coding → OpenAI+MCP (no repo execution on host).
-    if is_slash_remote_agent:
-        selected_port = 0
-        route = 'claude_code'
-    elif session_kind.startswith('web_') and is_coding and not is_owner:
-        selected_port = 2  # OpenAI with MCP tools
-        route = 'openai'
-    elif (is_coding or is_creative) and is_owner:
-        selected_port = 0  # tool-remote-agent (codingBackend: cursor / claude / …)
-        route = 'claude_code'
-    elif is_analysis or (is_coding and not is_owner):
-        selected_port = 1  # Claude API
-        route = 'claude_api'
-    else:
-        selected_port = 2  # OpenAI — default conversational
-        route = 'openai'
-
-    # selected_ports: primary only unless user opts into Ollama fallback on failure
-    if fallback_to_local_llm and chat_inference_mode != 'cloud':
-        selected_ports = [selected_port, 3]
-        print(f"[ROUTER] '{message[:60]}...' → {route} (port {selected_port}) [fallback: local_llm]")
-    else:
-        selected_ports = [selected_port]
-        print(f"[ROUTER] '{message[:60]}...' → {route} (port {selected_port})")
-    return {
-        'success': True,
-        'output': message,
-        'selected_port': selected_port,
-        'selected_ports': selected_ports,
-        'route': route
-    }
-
-
-def _execute_remote_agent_tool(inputs: dict, config: dict, query_id: str = None, node_id: str = None) -> dict:
-    """
-    Top-level agent: owner coding tasks → harness CLIs (Cursor Agent, Codex, …).
-
-    Config (tool-remote-agent):
-      codingBackend: 'global' | 'claude' | 'cursor' | 'cursor_then_claude' | 'claw' | 'codex' | 'muse' | 'cursor_cli' (default global).
-        global runs Cursor Agent CLI (no settings chain). Direct LLM chat is not used here.
-        cursor / cursor_cli run Cursor Agent CLI (`agent -p`) via the harness adapter.
-        cursor_then_claude tries that CLI first, then Claude Code.
-        claw runs the vendored instructkr/claw-code Python harness (local bootstrap session, not the Anthropic CLI).
-        codex runs OpenAI Codex CLI (`codex exec`) headless with per-chat resume.
-        muse runs Meta Muse Code CLI (`muse exec`) headless with per-chat resume (native Windows / macOS / Linux; WSL deprecated fallback).
-      codexModel: optional model for Codex CLI when codingBackend is codex (default: Codex config).
-      museModel: optional model for Muse Code when codingBackend is muse (default: CLI settings / muse-spark-1.3).
-    Explicit: /claude … → Claude Code; /codex … → Codex CLI;
-    /muse … → Muse Code; /cursor … → Cursor Agent CLI (`agent -p`).
-    Legacy alias: /cursor-cli … → same as /cursor.
-    """
-    message = inputs.get('input', inputs.get('message', ''))
-    user_context = inputs.get('user_context', {})
-    session = inputs.get('session', {})
-    session_id = (session or {}).get('session_id', '')
-    status_queue = inputs.get('_status_queue')
-    if status_queue is None and session_id:
-        status_queue = _chat_status_queues.get(session_id)
-
-    if not message or not isinstance(message, str):
-        return {'success': False, 'error': 'No message provided', 'output': ''}
-
-    message = _strip_invisible_leading(message)
-    msg_lower = message.strip().lower()
-    is_owner = user_context.get('is_owner', False)
-    user_id = str(user_context.get('id', ''))
-    from api.inference_mode import inference_mode_from_context
-
-    chat_inference_mode = inference_mode_from_context(session, user_context)
-
-    # Local mode: cloud CLI slash commands are not available (use /hermes instead).
-    from api.inference_mode import is_cloud_cli_slash_command, cloud_cli_slash_blocked_message
-    if is_cloud_cli_slash_command(message):
-        blocked = cloud_cli_slash_blocked_message(chat_inference_mode)
-        if blocked:
-            return {'success': False, 'error': blocked, 'output': blocked}
-    
-    # Coding task heuristics (owner or contains coding keywords)
-    coding_keywords = [
-        'create', 'make', 'add', 'build', 'write', 'edit', 'fix', 'implement',
-        'cron', 'job', 'schedule', 'file', 'files', 'folder', 'directory',
-        'code', 'script', 'function', 'module', 'package', 'setup',
-        'personalized news', 'news', 'automate', 'run', 'execute',
-        'complete', 'roadmap', 'refactor', 'merge', 'commit', 'resolve', 'promote',
-        'learnings', 'backlog', 'pytest', 'test', 'todo', 'feature request', 'investigate',
-        'pane', 'panes', 'viewport', 'split',
-    ]
-    looks_like_coding = any(kw in msg_lower for kw in coding_keywords)
-    
-    # Explicit commands: /claude, /hermes, /codex, /muse, /cursor (legacy alias: /cursor-cli)
-    is_claude_cmd = bool(re.match(r'^/claude(\s|$)', msg_lower)) or msg_lower.startswith('claude ')
-    is_opencode_cmd = bool(re.match(r'^/opencode(\s|$)', msg_lower))
-    is_hermes_cmd = bool(re.match(r'^/hermes(\s|$)', msg_lower))
-    is_codex_cmd = bool(re.match(r'^/codex(\s|$)', msg_lower))
-    is_muse_cmd = bool(re.match(r'^/muse(\s|$)', msg_lower))
-    is_cursor_cli_cmd = bool(re.match(r'^/cursor-cli(\s|$)', msg_lower))
-    is_cursor_cmd = is_cursor_cli_cmd or bool(re.match(r'^/cursor(\s|$)', msg_lower))
-    
-    # UI-in-chat requests (button/forms/etc) should not go through code/file tools.
-    # Otherwise the agent tends to "create HTML files" instead of rendering in-chat controls.
-    ui_keywords = [
-        'button', 'click', 'toggle', 'checkbox', 'radio', 'slider', 'knob',
-        'form', 'progress', 'progress bar', 'media', 'image', 'video', 'audio',
-        'vega', 'chart'
-    ]
-    ui_in_chat_request = ('chat' in msg_lower or 'in the chat' in msg_lower or 'within the chat' in msg_lower) and any(
-        kw in msg_lower for kw in ui_keywords
-    )
-    _explicit_agent = (
-        is_claude_cmd or is_cursor_cmd or is_opencode_cmd
-        or is_hermes_cmd or is_codex_cmd or is_muse_cmd
-    )
-    if ui_in_chat_request and not _explicit_agent:
-        looks_like_coding = False
-
-    # Route: coding task + owner → Claude Code on Cuttle; else LLM chat
-    project = config.get('project', 'pc_bot')  # Default: Cuttle
-    project_map = _remote_agent_project_map()
-    project_path = project_map.get(project, str(project_map['pc_bot']))
-    
-    try:
-        explicit_coding_cmd = _explicit_agent
-        if chat_inference_mode == 'local' and not explicit_coding_cmd:
-            looks_like_coding = False
-
-        if (is_owner or _explicit_agent) and (looks_like_coding or _explicit_agent):
-            # Extract prompt (strip command prefix if present)
-            prompt = message
-            if msg_lower.startswith('/claude '):
-                prompt = message[8:].strip()
-            elif msg_lower.startswith('/opencode '):
-                prompt = message[10:].strip()
-            elif msg_lower.startswith('/hermes '):
-                prompt = message[8:].strip()
-            elif msg_lower.startswith('/codex '):
-                prompt = message[7:].strip()
-            elif msg_lower.startswith('/muse '):
-                prompt = message[6:].strip()
-            elif is_cursor_cli_cmd:
-                prompt = message[11:].lstrip()
-            elif re.match(r'^/cursor(\s|$)', msg_lower):
-                # Canonical /cursor → Cursor Agent CLI (`agent -p`)
-                prompt = message[7:].lstrip() if msg_lower.startswith('/cursor') else message
-
-            ipfx = (config.get('instructionPrefix') or '').strip()
-            if ipfx:
-                prompt = f"{ipfx}\n\n---\n\n{prompt}"
-
-            # Multi-pane shell: map "1st pane" → session + attach named pane histories
-            try:
-                pane_addon = _build_shell_pane_prompt_addon(prompt)
-                if pane_addon:
-                    prompt = f"{pane_addon}\n\n---\n\n{prompt}"
-            except Exception as _pane_err:
-                print(f"[RemoteAgent] Pane context skipped: {_pane_err}")
-
-            # Explicit /cursor (and legacy /cursor-cli) → harness connector
-            if is_cursor_cmd and not is_claude_cmd:
-                emit_pipeline_status(session_id, PHASE_ROUTE, "Routing to Cursor Agent CLI...")
-                body = _run_harness_web_command(
-                    "cursor",
-                    prompt,
-                    session_id,
-                    status_queue=status_queue,
-                    project_path=str(project_path),
-                )
-                text_out = (body or {}).get("response") or ""
-                if (body or {}).get("type") == "cursor_error":
-                    return {"success": False, "error": text_out[:500], "output": text_out}
-                out = {"success": True, "output": text_out}
-                for key in ("preferred_model", "ui", "notice", "cursor_run"):
-                    if body and key in body:
-                        out[key] = body[key]
-                return out
-
-
-            raw_cb = (config.get('codingBackend') or 'global').strip().lower()
-            if raw_cb in ('global', 'use_global', 'default', ''):
-                coding_chain = ['cursor']
-            else:
-                coding_chain = [raw_cb]
-
-            def _agent_prompt(*, inject: bool = True) -> str:
-                """CLI backends get invisible UI-capability coaching; Cursor IDE typing does not."""
-                try:
-                    from api.cuttle_ui_capabilities import with_cuttle_ui_capabilities
-
-                    return with_cuttle_ui_capabilities(prompt, inject=inject)
-                except Exception:
-                    return prompt
-
-            def _run_claw_harness_branch() -> dict:
-                emit_pipeline_status(session_id, PHASE_TOOL, "Routing to Claw harness (Python port)...")
-                emit_pipeline_status(session_id, PHASE_LLM, "Thinking...")
-                from scripts.utilities.claw_code_harness import run_claw_bootstrap
-                out = run_claw_bootstrap(_agent_prompt())
-                return {'success': True, 'output': out}
-
-            def _run_claude_code_branch() -> dict:
-                emit_pipeline_status(session_id, PHASE_TOOL, "Routing to Claude Code...")
-                emit_pipeline_status(session_id, PHASE_LLM, "Thinking...")
-                cl_model = (config.get('model') or 'haiku').strip()
-                body = _run_harness_web_command(
-                    'claude',
-                    prompt,
-                    session_id,
-                    status_queue=status_queue,
-                    project_path=str(project_path),
-                    model_override=cl_model,
-                )
-                text_out = (body or {}).get('response') or ''
-                if (body or {}).get('type') == 'claude_error':
-                    return {'success': False, 'error': text_out[:500], 'output': text_out}
-                return {'success': True, 'output': text_out}
-
-            def _run_opencode_branch() -> dict:
-                emit_pipeline_status(session_id, PHASE_TOOL, "Routing to OpenCode...")
-                emit_pipeline_status(session_id, PHASE_LLM, "Thinking...")
-                oc_model = (config.get('opencodeModel') or '').strip() or None
-                body = _run_harness_web_command(
-                    'opencode',
-                    prompt,
-                    session_id,
-                    status_queue=status_queue,
-                    project_path=str(project_path),
-                    model_override=oc_model,
-                )
-                text = (body or {}).get('response') or ''
-                if (body or {}).get('type') == 'opencode_error':
-                    return {'success': False, 'error': text[:500], 'output': text}
-                return {'success': True, 'output': text}
-
-            def _run_codex_branch() -> dict:
-                emit_pipeline_status(session_id, PHASE_TOOL, "Routing to Codex CLI...")
-                emit_pipeline_status(session_id, PHASE_LLM, "Thinking...")
-                cx_model = (config.get('codexModel') or '').strip() or None
-                body = _run_harness_web_command(
-                    'codex',
-                    prompt,
-                    session_id,
-                    status_queue=status_queue,
-                    project_path=str(project_path),
-                    model_override=cx_model,
-                )
-                text_out = (body or {}).get('response') or ''
-                if (body or {}).get('type') == 'codex_error':
-                    return {'success': False, 'error': text_out[:500], 'output': text_out}
-                return {'success': True, 'output': text_out}
-
-            def _run_muse_branch() -> dict:
-                emit_pipeline_status(session_id, PHASE_TOOL, "Routing to Muse Code...")
-                emit_pipeline_status(session_id, PHASE_LLM, "Thinking...")
-                muse_model = (config.get('museModel') or '').strip() or None
-                body = _run_harness_web_command(
-                    'muse',
-                    prompt,
-                    session_id,
-                    status_queue=status_queue,
-                    project_path=str(project_path),
-                    model_override=muse_model,
-                )
-                text_out = (body or {}).get('response') or ''
-                if (body or {}).get('type') == 'muse_error':
-                    return {'success': False, 'error': text_out[:500], 'output': text_out}
-                return {'success': True, 'output': text_out}
-
-            def _run_hermes_branch() -> dict:
-                """Run NousResearch Hermes Agent (one-shot).
-
-                Model/provider come from Hermes config.yaml (or node overrides
-                hermesModel / hermesProvider / hermesToolsets). Local backends
-                may still prompt to launch llama.cpp; cloud providers skip it.
-                """
-                hermes_msg = message if _is_hermes_slash_command(message) else f'/hermes {prompt}'
-                offer = _offer_local_llm_launch_if_needed(
-                    session_id, hermes_msg, chat_inference_mode
-                )
-                if offer is not None:
-                    return {
-                        'success': True,
-                        'output': offer.get('output') or offer.get('response') or '',
-                        'type': 'local_llm_launch_prompt',
-                    }
-                from scripts.utilities.hermes_cli_tool import (
-                    resolve_hermes_runtime,
-                    usage_for_query_report,
-                )
-                hm_model = (config.get('hermesModel') or '').strip() or None
-                hm_provider = (config.get('hermesProvider') or '').strip() or None
-                runtime = resolve_hermes_runtime(hm_model, hm_provider)
-                emit_pipeline_status(
-                    session_id,
-                    PHASE_TOOL,
-                    f"Routing to Hermes Agent ({runtime['provider']}/{runtime['model']})...",
-                )
-                hm_toolsets = (config.get('hermesToolsets') or '').strip() or None
-                body = _run_harness_web_command(
-                    'hermes',
-                    prompt,
-                    session_id,
-                    status_queue=status_queue,
-                    project_path=str(project_path),
-                    model_override=runtime['model'],
-                    execute_kwargs={'provider': runtime['provider'], 'toolsets': hm_toolsets},
-                )
-                text_out = (body or {}).get('response') or ''
-                if (body or {}).get('type') == 'hermes_error':
-                    return {'success': False, 'error': text_out[:500], 'output': text_out}
-                return {
-                    'success': True,
-                    'output': text_out,
-                    'usage_info': usage_for_query_report(hm_model),
-                }
-
-            def _run_cursor_ide_branch() -> dict:
-                """Headless Cursor Agent CLI via the harness adapter (IDE send-keys retired)."""
-                emit_pipeline_status(session_id, PHASE_ROUTE, "Routing to Cursor Agent CLI...")
-                try:
-                    body = _run_harness_web_command(
-                        "cursor",
-                        prompt,
-                        session_id,
-                        status_queue=status_queue,
-                        project_path=str(project_path),
-                    )
-                    text_out = (body or {}).get("response") or ""
-                    if (body or {}).get("type") == "cursor_error":
-                        return {"success": False, "error": text_out[:500], "output": text_out}
-                    out = {"success": True, "output": text_out or "Cursor Agent finished."}
-                    for key in ("preferred_model", "ui", "notice", "cursor_run"):
-                        if body and key in body:
-                            out[key] = body[key]
-                    return out
-                except Exception as e:
-                    return {"success": False, "error": str(e), "output": f"Cursor Agent error: {e}"}
-
-            def _dispatch_coding_backend(be: str) -> dict:
-                be = (be or '').strip().lower()
-                if be == 'claw':
-                    return _run_claw_harness_branch()
-                if be == 'opencode':
-                    return _run_opencode_branch()
-                if be == 'codex':
-                    return _run_codex_branch()
-                if be == 'muse':
-                    return _run_muse_branch()
-                if be == 'hermes':
-                    return _run_hermes_branch()
-                if be == 'claude':
-                    return _run_claude_code_branch()
-                if be == 'cursor':
-                    return _run_cursor_ide_branch()
-                if be == 'cursor_then_claude':
-                    cr = _run_cursor_ide_branch()
-                    if cr.get('success'):
-                        return cr
-                    emit_pipeline_status(session_id, PHASE_ROUTE, "Cursor IDE unavailable; falling back to Claude Code...")
-                    return _run_claude_code_branch()
-                if be == 'cursor_cli':
-                    return _run_cursor_ide_branch()
-                return {'success': False, 'error': f'Unknown coding backend: {be}', 'output': ''}
-
-            if is_opencode_cmd:
-                return _run_opencode_branch()
-
-            if is_codex_cmd:
-                return _run_codex_branch()
-
-            if is_muse_cmd:
-                return _run_muse_branch()
-
-            if is_hermes_cmd:
-                return _run_hermes_branch()
-
-            last_coding = {'success': False, 'error': 'No coding backends in chain', 'output': ''}
-            for be in coding_chain:
-                last_coding = _dispatch_coding_backend(be)
-                if last_coding.get('success'):
-                    return last_coding
-            return last_coding
-        
-        msg = (
-            "No slash agent was selected. Use /cursor, /codex, /muse, or another "
-            "harness command, or let the agent router pick one. Direct LLM chat "
-            "is not used for this path."
-        )
-        return {'success': False, 'error': msg, 'output': msg}
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return {'success': False, 'error': str(e), 'output': f'Remote agent error: {e}'}
-
-
 @app.route('/api/execute-tool', methods=['POST'])
 def execute_tool():
-    """Execute a tool node"""
-    import time
-    start_time = time.time()
-    
-    try:
-        data = request.get_json()
-        
-        node_type = data.get('nodeType')
-        config = data.get('config', {})
-        inputs = data.get('inputs', {})
-        query_id = data.get('queryId', None)  # Optional query ID for tracking
-        
-        # Map node types to tool functions
-        tool_result = None
-        tool_name = node_type
-        
-        # Handle MCP Tools
-        if node_type == 'tool-claude-code':
-            from scripts.utilities.claude_code_tool import ClaudeCodeTool
-            
-            prompt = inputs.get('prompt') or inputs.get('input', '') or config.get('prompt', '')
-            model = config.get('model', 'haiku')
-            project = config.get('project', 'sandbox')
-            
-            # Map project names to paths if needed
-            project_path = None
-            if project == 'custom':
-                project_path = config.get('customPath')
-            elif project != 'sandbox' and project != 'current':
-                # Map named projects to actual paths
-                # You can extend this based on your project structure
-                pass
-            
-            # Create Claude tool with session
-            import hashlib
-            import asyncio
-            session_id = hashlib.md5(f"{project}_{model}".encode()).hexdigest()[:8]
-            claude_tool = ClaudeCodeTool(session_id=session_id, model=model)
-            
-            # Execute the prompt (async method, need to run in event loop)
-            result = asyncio.run(claude_tool.execute_claude_command(prompt, project_path))
-            
-            tool_result = {
-                'success': result.get('success', False),
-                'output': result.get('output', ''),
-                'error': result.get('error'),
-                'usage_info': result.get('usage_info', {})
-            }
-
-        elif node_type == 'tool-cursor':
-            from scripts.utilities.cursor_cli_tool import handle_cursor_cli_command
-
-            command = inputs.get('command', config.get('command', ''))
-            result = handle_cursor_cli_command(command or '')
-            tool_result = {'result': result}
-            
-        elif node_type == 'tool-router':
-            # Top-level router: classifies message and selects AI backend port
-            tool_result = _execute_router_tool(inputs, config)
-
-        elif node_type == 'tool-remote-agent':
-            # Toplevel agent: route Discord messages to Claude Code or Cursor CLI
-            # Enables remote code execution from Discord (owner sessions)
-            node_id = data.get('nodeId', None)
-            tool_result = _execute_remote_agent_tool(inputs, config, query_id=query_id, node_id=node_id)
-            
-        elif node_type == 'tool-mcp-generic':
-            tool_result = {
-                'success': False,
-                'error': 'Cuttle does not host an MCP tool server.',
-            }
-
-        elif node_type == 'tool-web-search':
-            from tools.web_search import search_web
-            query = inputs.get('input', config.get('query', ''))
-            if isinstance(query, dict):
-                query = query.get('query', '')
-            if isinstance(query, list):
-                query = query[0] if query else ''
-            orig_msg = str(query).strip()
-            # Use first ~80 chars as search query, or explicit config query
-            search_query = str(config.get('query', '') or orig_msg[:120]).strip()
-            max_results = int(config.get('maxResults', 10))
-            raw = search_web(search_query, max_results=max_results)
-            # Augment original message with web context for downstream LLM
-            if raw.get('success') and raw.get('results'):
-                lines = [f"[Web research for: {search_query}]"]
-                for r in raw['results'][:max_results]:
-                    lines.append(f"- {r.get('title', '')}: {r.get('href', '')}")
-                    if r.get('body'):
-                        lines.append(f"  {r.get('body', '')[:300]}")
-                web_ctx = '\n'.join(lines)
-                out_str = f"{orig_msg}\n\n---\n{web_ctx}"
-                tool_result = {**raw, 'output': out_str, 'result': out_str}
-            else:
-                err = raw.get('error', 'No results')
-                tool_result = {**raw, 'output': orig_msg, 'result': orig_msg}
-
-        elif (
-            node_type
-            in (
-                "tool-screenshot",
-                "tool-input",
-                "tool-process",
-                "tool-window",
-                "tool-ocr",
-            )
-            or str(node_type).startswith("tool-fs-")
-            or str(node_type).startswith("tool-shell-")
-        ):
-            tool_result = {
-                "success": False,
-                "error": (
-                    "OS / filesystem / shell pipeline nodes are retired. "
-                    "Use a guest agent CLI (/cursor, /codex, …)."
-                ),
-            }
-
-        else:
-            return jsonify({
-                'success': False,
-                'error': f'Unknown tool type: {node_type}'
-            }), 400
-        
-        end_time = time.time()
-
-        # Claude Code / Cursor CLI do not hit /api/llm-request — mirror into llm_calls for query reports.
-        if query_id and node_type == 'tool-remote-agent' and isinstance(tool_result, dict):
-            try:
-                from api.query_tracker import get_query_tracker
-                tracker = get_query_tracker(query_id)
-                if tracker and tracker.query_id == query_id:
-                    ui = tool_result.get('usage_info') or {}
-                    pt = int(ui.get('input_tokens') or 0)
-                    ct = int(ui.get('output_tokens') or 0)
-                    tt = int(ui.get('total_tokens') or 0)
-                    tt = max(tt, pt + ct)
-                    cfg_model = config.get('model') or 'haiku'
-                    parsed_model = ui.get('model')
-                    model_for_cost = f'Claude Code ({parsed_model or cfg_model})'
-                    actual_cost = None
-                    if ui.get('cost') is not None:
-                        try:
-                            c = float(ui['cost'])
-                            if c > 0:
-                                actual_cost = c
-                        except (TypeError, ValueError):
-                            pass
-                    notes = (
-                        'Runs on your PC via the Claude Code CLI (or Cursor). Reasoning and tool use happen '
-                        'inside that session — they are not separate Cuttle llm-* pipeline nodes.'
-                    )
-                    prompt_preview = ''
-                    raw_in = inputs.get('message') or inputs.get('input') or ''
-                    if isinstance(raw_in, str):
-                        prompt_preview = raw_in[:2000]
-                    elif raw_in is not None:
-                        prompt_preview = str(raw_in)[:2000]
-                    out_preview = tool_result.get('output') or ui.get('result_text') or ''
-                    if not isinstance(out_preview, str):
-                        out_preview = str(out_preview)
-                    tracker.add_llm_call(
-                        model=model_for_cost,
-                        prompt_tokens=pt,
-                        completion_tokens=ct,
-                        total_tokens=tt,
-                        start_time=start_time,
-                        end_time=end_time,
-                        success=bool(tool_result.get('success', True)),
-                        response_preview=out_preview[:4000],
-                        actual_cost=actual_cost,
-                        node_id=data.get('nodeId'),
-                        prompt_preview=prompt_preview,
-                        notes=notes,
-                    )
-            except Exception as track_llm_err:
-                print(f"[QUERY] Coding-agent LLM mirror: {track_llm_err}")
-
-
-        # Track tool call in query report if query_id provided
-        if query_id and tool_result is not None:
-            try:
-                from api.query_tracker import get_query_tracker
-                tracker = get_query_tracker(query_id)
-                if tracker.query_id == query_id:
-                    tool_ok = True
-                    rpv = ''
-                    if isinstance(tool_result, dict):
-                        tool_ok = bool(tool_result.get('success', True))
-                        if tool_result.get('output') not in (None, ''):
-                            rpv = str(tool_result['output'])
-                        elif tool_result.get('error') not in (None, ''):
-                            rpv = 'Error: ' + str(tool_result['error'])
-                        else:
-                            rpv = str(tool_result)
-                    else:
-                        rpv = str(tool_result)
-                    rpv = (rpv or '')[:500]
-                    report_tool_label = (
-                        'Coding agent (Claude Code / Cursor)' if node_type == 'tool-remote-agent'
-                        else tool_name
-                    )
-                    tracker.add_tool_call(
-                        tool_name=report_tool_label,
-                        parameters=config,
-                        start_time=start_time,
-                        end_time=end_time,
-                        success=tool_ok,
-                        result_preview=rpv
-                    )
-            except Exception as track_error:
-                print(f"[QUERY] Error tracking tool call: {track_error}")
-        
-        return jsonify({'success': True, 'data': tool_result})
-            
-    except Exception as e:
-        print(f"Tool execution error: {e}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+    return _graph_pipelines_gone_response()
 
 @app.route('/api/execute-output', methods=['POST'])
 def execute_output():
-    """Execute an output node"""
-    try:
-        data = request.get_json()
-        
-        node_type = data.get('nodeType')
-        config = data.get('config', {})
-        output_data = data.get('data', '')
-        
-        if node_type == 'output-log':
-            log_level = config.get('logLevel', 'info')
-            
-            # Create HTML log file with absolute path
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            log_filename = f"pipeline_log_{timestamp}.html"
-            # Use project_root to ensure we write to the same directory we serve from
-            log_path = project_root / 'web' / 'logs' / log_filename
-            log_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            # Determine log level styling
-            level_colors = {
-                'debug': '#9ca3af',
-                'info': '#60a5fa',
-                'warning': '#fbbf24',
-                'error': '#f87171'
-            }
-            level_color = level_colors.get(log_level, '#60a5fa')
-            
-            # Format output data
-            if isinstance(output_data, dict):
-                formatted_data = json.dumps(output_data, indent=2)
-            else:
-                formatted_data = str(output_data)
-            
-            # Create HTML content
-            html_content = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pipeline Log - {timestamp}</title>
-    <style>
-        * {{
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }}
-        body {{
-            font-family: 'Courier New', monospace;
-            background: linear-gradient(135deg, #0f1419 0%, #1a1a2e 100%);
-            color: #e0e0e0;
-            padding: 40px 20px;
-            min-height: 100vh;
-        }}
-        .container {{
-            max-width: 1200px;
-            margin: 0 auto;
-            background: rgba(22, 33, 62, 0.9);
-            border-radius: 12px;
-            padding: 30px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-        }}
-        .header {{
-            display: flex;
-            align-items: center;
-            gap: 15px;
-            margin-bottom: 30px;
-            padding-bottom: 20px;
-            border-bottom: 2px solid rgba(255, 255, 255, 0.1);
-        }}
-        .header h1 {{
-            font-size: 28px;
-            color: #00d9ff;
-        }}
-        .log-level {{
-            display: inline-block;
-            padding: 8px 16px;
-            background: {level_color};
-            color: #000;
-            border-radius: 6px;
-            font-weight: bold;
-            text-transform: uppercase;
-            font-size: 14px;
-        }}
-        .timestamp {{
-            color: #9ca3af;
-            font-size: 14px;
-        }}
-        .content {{
-            background: #0a0a0a;
-            padding: 25px;
-            border-radius: 8px;
-            border-left: 4px solid {level_color};
-            white-space: pre-wrap;
-            word-wrap: break-word;
-            font-size: 14px;
-            line-height: 1.6;
-        }}
-        .footer {{
-            margin-top: 30px;
-            padding-top: 20px;
-            border-top: 2px solid rgba(255, 255, 255, 0.1);
-            text-align: center;
-            color: #6b7280;
-            font-size: 12px;
-        }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>📋 Pipeline Log</h1>
-            <span class="log-level">{log_level}</span>
-            <span class="timestamp">{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</span>
-        </div>
-        <div class="content">{formatted_data}</div>
-        <div class="footer">
-            Generated by Cuttle Pipeline • {timestamp}
-        </div>
-    </div>
-</body>
-</html>"""
-            
-            # Write HTML file
-            with open(log_path, 'w', encoding='utf-8') as f:
-                f.write(html_content)
-            
-            # Also print to console
-            print(f"[{log_level.upper()}] {output_data}")
-            
-            # Return success with log URL
-            log_url = f"/logs/{log_filename}"
-            return jsonify({
-                'success': True,
-                'logFile': log_filename,
-                'logUrl': log_url
-            })
-            
-        elif node_type == 'output-file':
-            file_path = config.get('filePath', './output.txt')
-            file_format = config.get('format', 'text')
-            
-            # Create directory if needed
-            Path(file_path).parent.mkdir(parents=True, exist_ok=True)
-            
-            with open(file_path, 'w', encoding='utf-8') as f:
-                if file_format == 'json':
-                    json.dump(output_data, f, indent=2)
-                else:
-                    f.write(str(output_data))
-            
-            return jsonify({'success': True, 'path': file_path})
-            
-        elif node_type == 'output-webchat':
-            # Web Chat output - send response to session
-            # Session from sessionData (JS executor) or inputs.session (Python executor)
-            session_data = data.get('sessionData') or data.get('inputs', {}).get('session') or {}
-            session_data = session_data if isinstance(session_data, dict) else {}
-            session_id = session_data.get('session_id')
-            pipeline_name = session_data.get('_pipeline_name', '').strip()
-            trigger_message = session_data.get('_trigger_message', '')
-            query_id = data.get('queryId', '')
-            
-            out_text = str(output_data)
-            trace = _build_cuttle_trace_block(query_id) if query_id else ""
-            if trace:
-                out_text = out_text.rstrip() + "\n\n" + trace
-            
-            # Persist to pipeline chat (Cuttle - Play, Cuttle - Think, etc.) for scheduled/running pipelines
-            if pipeline_name:
-                try:
-                    chat_dir = project_root / 'output' / 'pipeline_chats'
-                    chat_dir.mkdir(parents=True, exist_ok=True)
-                    safe_name = "".join(c for c in pipeline_name if c.isalnum() or c in (' ', '-', '_')).strip().replace(' ', '_') or 'unknown'
-                    chat_path = chat_dir / f"{safe_name}.json"
-                    entries = []
-                    if chat_path.exists():
-                        try:
-                            with open(chat_path, 'r', encoding='utf-8') as f:
-                                entries = json.load(f)
-                        except Exception:
-                            entries = []
-                    import time
-                    ts = time.time()
-                    if trigger_message:
-                        entries.append({
-                            'role': 'user',
-                            'content': trigger_message,
-                            'timestamp': ts,
-                            'query_id': query_id,
-                            'iso': datetime.now().isoformat(),
-                        })
-                    entries.append({
-                        'role': 'assistant',
-                        'content': out_text,
-                        'timestamp': ts,
-                        'query_id': query_id,
-                        'iso': datetime.now().isoformat(),
-                    })
-                    with open(chat_path, 'w', encoding='utf-8') as f:
-                        json.dump(entries, f, indent=2, ensure_ascii=False)
-                except Exception as e:
-                    print(f"[Pipeline Chat] Error appending to {pipeline_name}: {e}")
-            
-            if session_id:
-                # Send response to the web chat session (create in-memory session if missing, e.g. Run Now adhoc)
-                try:
-                    session = get_or_create_session(session_id)
-                    session.add_message('assistant', out_text)
-                    try:
-                        _emit_chat_complete_mobile(
-                            session_id,
-                            {
-                                'pipeline': pipeline_name or None,
-                                'query_id': query_id or None,
-                                'report_url': f'/query_log.html?id={query_id}' if query_id else None,
-                                'response': out_text,
-                            },
-                        )
-                    except Exception:
-                        pass
-                    return jsonify({
-                        'success': True,
-                        'message': 'Response sent to web chat session',
-                        'pipeline_chat_url': f'/pipeline_chat.html?pipeline={pipeline_name.replace(" ", "_")}' if pipeline_name else None,
-                    })
-                except Exception as e:
-                    print(f"Error sending to web chat: {e}")
-                    return jsonify({
-                        'success': False,
-                        'error': f'Failed to send to web chat: {str(e)}'
-                    }), 500
-            else:
-                # No session data - this is normal during initial pipeline deployment
-                return jsonify({
-                    'success': True,
-                    'message': 'Web chat output configured - waiting for incoming messages',
-                    'pipeline_chat_url': f'/pipeline_chat.html?pipeline={pipeline_name.replace(" ", "_")}' if pipeline_name else None,
-                    'note': 'This output will activate when a user sends a message' if not pipeline_name else 'Appended to pipeline chat',
-                })
-            
-        elif node_type == 'output-discord':
-            # Discord output - send response to Discord channel/DM
-            session_data = data.get('sessionData') or data.get('inputs', {}).get('session') or {}
-            channel_id = session_data.get('channel_id') if isinstance(session_data, dict) else None
-            
-            if channel_id:
-                # Would send via Discord bot if integrated
-                # For now, just acknowledge
-                print(f"[Discord Output] Would send to channel {channel_id}: {output_data}")
-                return jsonify({
-                    'success': True,
-                    'message': 'Discord output processed',
-                    'note': 'Full Discord integration pending'
-                })
-            else:
-                # No session data - this is normal during initial pipeline deployment
-                print(f"[Discord Output] No session data - pipeline is deployed and waiting for triggers")
-                return jsonify({
-                    'success': True,
-                    'message': 'Discord output configured - waiting for incoming messages',
-                    'note': 'This output will activate when a Discord message triggers the pipeline'
-                })
-            
-        elif node_type == 'output-webhook':
-            import requests
-            url = config.get('url', '')
-            method = config.get('method', 'POST')
-            
-            if not url:
-                return jsonify({
-                    'success': False,
-                    'error': 'Webhook URL is required'
-                }), 400
-            
-            response = requests.request(
-                method,
-                url,
-                json={'data': output_data},
-                timeout=10
-            )
-            
-            return jsonify({
-                'success': True,
-                'status': response.status_code
-            })
-            
-        else:
-            return jsonify({
-                'success': False,
-                'error': f'Unknown output type: {node_type}'
-            }), 400
-            
-    except Exception as e:
-        print(f"Output execution error: {e}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+    return _graph_pipelines_gone_response()
+
 
 @app.route('/api/settings', methods=['GET'])
+@owner_required
 def get_settings():
     """Get current bot settings"""
     try:
@@ -12018,6 +10550,7 @@ def get_settings():
         }), 500
 
 @app.route('/api/settings', methods=['POST'])
+@owner_required
 def update_settings():
     """Update bot settings"""
     try:
@@ -12144,6 +10677,7 @@ def update_settings():
 
 # Git API endpoints
 @app.route('/api/git/status', methods=['GET'])
+@authenticated_required
 def git_status():
     """Get Git repository status"""
     try:
@@ -12228,6 +10762,7 @@ def git_status():
 
 
 @app.route('/api/git/repos', methods=['GET'])
+@authenticated_required
 def git_repos_list():
     """List git work trees under a registered Cuttle project path.
 
@@ -12298,6 +10833,7 @@ def git_repos_list():
 
 
 @app.route('/api/git/pending-changes', methods=['GET'])
+@authenticated_required
 def git_pending_changes():
     """Uncommitted changes for a chat project (files + line add/remove counts).
 
@@ -12386,6 +10922,7 @@ def git_pending_changes():
 
 
 @app.route('/api/fs/reveal', methods=['POST'])
+@owner_required
 def fs_reveal_in_explorer():
     """Reveal a local file/folder in the host OS file manager (selected when possible).
 
@@ -12412,6 +10949,7 @@ def fs_reveal_in_explorer():
 
 
 @app.route('/api/git/open-diff', methods=['POST'])
+@owner_required
 def git_open_diff():
     """Open HEAD vs working-tree diff in Cursor/VS Code for one pending file.
 
@@ -12475,6 +11013,7 @@ def git_open_diff():
 
 
 @app.route('/api/git/pending-diff', methods=['GET'])
+@authenticated_required
 def git_pending_diff():
     """Return structured diff hunks for one pending file (in-app preview).
 
@@ -12550,6 +11089,7 @@ def git_pending_diff():
 
 
 @app.route('/api/git/commit', methods=['POST'])
+@owner_required
 def git_commit_pending():
     """Stage pending changes for a registered project and create a commit.
 
@@ -12660,6 +11200,7 @@ def git_commit_pending():
 
 
 @app.route('/api/git/ignore', methods=['POST'])
+@owner_required
 def git_ignore_pending_path():
     """Add a pending path to .gitignore (and untrack from index if needed).
 
@@ -12732,6 +11273,7 @@ def git_ignore_pending_path():
 
 
 @app.route('/api/git/suggest-commit-message', methods=['POST'])
+@owner_required
 def git_suggest_commit_message():
     """Suggest a commit message from pending diffs + optional chat prompts.
 
@@ -12844,6 +11386,7 @@ def git_suggest_commit_message():
 
 
 @app.route('/api/prompt/enhance', methods=['POST'])
+@authenticated_required
 def prompt_enhance():
     """Rewrite a rough composer prompt into a clearer one (composer wand button).
 
@@ -12913,6 +11456,7 @@ def prompt_enhance():
 
 
 @app.route('/api/git/graph', methods=['GET'])
+@authenticated_required
 def git_graph():
     """Commit graph for the visualizer (allowlisted project path).
 
@@ -12986,6 +11530,7 @@ def git_graph():
 
 
 @app.route('/api/git/commit/<commit_hash>/detail', methods=['GET'])
+@authenticated_required
 def git_commit_detail(commit_hash):
     """Commit metadata + files + capped patch for an allowlisted project path."""
     try:
@@ -13041,6 +11586,7 @@ def git_commit_detail(commit_hash):
 
 
 @app.route('/api/git/commit/<commit_hash>/file-diff', methods=['GET'])
+@authenticated_required
 def git_commit_file_diff(commit_hash):
     """Structured diff hunks for one file in a commit (Git page modal).
 
@@ -13117,6 +11663,7 @@ def git_commit_file_diff(commit_hash):
 
 
 @app.route('/api/git/branches', methods=['GET'])
+@authenticated_required
 def git_branches():
     """Get Git branches"""
     try:
@@ -13183,6 +11730,7 @@ def git_branches():
         }), 500
 
 @app.route('/api/git/commits', methods=['GET'])
+@authenticated_required
 def git_commits():
     """Get recent Git commits with pagination"""
     try:
@@ -13257,6 +11805,7 @@ def git_commits():
         }), 500
 
 @app.route('/api/git/files', methods=['GET'])
+@authenticated_required
 def git_files():
     """Get Git working directory files with pagination"""
     try:
@@ -13371,6 +11920,7 @@ def git_files():
         }), 500
 
 @app.route('/api/git/commit/<commit_hash>/diff', methods=['GET'])
+@authenticated_required
 def git_commit_diff(commit_hash):
     """Get diff for a specific commit with pagination"""
     try:
@@ -13514,6 +12064,7 @@ def git_commit_diff(commit_hash):
         }), 500
 
 @app.route('/api/git/commit', methods=['POST'])
+@owner_required
 def git_commit():
     """Legacy git UI commit — same identity rules as pending-changes."""
     try:
@@ -13577,6 +12128,7 @@ def git_commit():
         }), 500
 
 @app.route('/api/git/pull', methods=['POST'])
+@owner_required
 def git_pull():
     """Pull changes from remote"""
     try:
@@ -13616,6 +12168,7 @@ def git_pull():
         }), 500
 
 @app.route('/api/git/push', methods=['POST'])
+@owner_required
 def git_push():
     """Push the current branch to its upstream (or optional remote/branch).
 
@@ -13747,6 +12300,7 @@ def git_push():
         }), 500
 
 @app.route('/api/git/branch', methods=['POST'])
+@owner_required
 def git_branch():
     """Create, switch, or delete branches"""
     try:
@@ -13813,6 +12367,7 @@ def git_branch():
 # Project Management API endpoints
 @app.route('/api/projects', methods=['GET'])
 @requires_project_manager
+@authenticated_required
 def get_projects():
     """Get all projects"""
     try:
@@ -13831,6 +12386,7 @@ def get_projects():
 
 @app.route('/api/projects/<int:project_id>', methods=['GET'])
 @requires_project_manager
+@authenticated_required
 def get_project(project_id):
     """Get a specific project"""
     try:
@@ -13853,6 +12409,7 @@ def get_project(project_id):
 
 @app.route('/api/projects/current', methods=['GET'])
 @requires_project_manager
+@authenticated_required
 def get_current_project():
     """Get the currently active project"""
     try:
@@ -13871,6 +12428,7 @@ def get_current_project():
 
 @app.route('/api/projects', methods=['POST'])
 @requires_project_manager
+@owner_required
 def create_project():
     """Create a new project"""
     try:
@@ -13954,6 +12512,7 @@ def create_project():
 
 @app.route('/api/projects/<int:project_id>', methods=['PUT'])
 @requires_project_manager
+@owner_required
 def update_project(project_id):
     """Update a project"""
     try:
@@ -13985,6 +12544,7 @@ def update_project(project_id):
 
 @app.route('/api/projects/<int:project_id>', methods=['DELETE'])
 @requires_project_manager
+@owner_required
 def delete_project(project_id):
     """Delete a project"""
     try:
@@ -14009,6 +12569,7 @@ def delete_project(project_id):
 
 @app.route('/api/projects/<int:project_id>/switch', methods=['POST'])
 @requires_project_manager
+@owner_required
 def switch_project(project_id):
     """Switch to a specific project"""
     try:
@@ -14038,6 +12599,7 @@ def switch_project(project_id):
 
 @app.route('/api/projects/<int:project_id>/sync', methods=['POST'])
 @requires_project_manager
+@owner_required
 def sync_project(project_id):
     """Sync a remote project"""
     try:
@@ -14062,6 +12624,7 @@ def sync_project(project_id):
 
 @app.route('/api/projects/history', methods=['GET'])
 @requires_project_manager
+@authenticated_required
 def get_project_history():
     """Get project history"""
     try:
@@ -14082,6 +12645,7 @@ def get_project_history():
 
 @app.route('/api/projects/stats', methods=['GET'])
 @requires_project_manager
+@authenticated_required
 def get_project_stats():
     """Get project statistics"""
     try:
@@ -14098,6 +12662,7 @@ def get_project_stats():
 
 # Task Management API Endpoints
 @app.route('/api/tasks', methods=['GET'])
+@owner_required
 def get_tasks():
     """Get all tasks"""
     try:
@@ -14111,6 +12676,7 @@ def get_tasks():
         }), 500
 
 @app.route('/api/tasks', methods=['POST'])
+@owner_required
 def create_task():
     """Create a new task"""
     try:
@@ -14160,6 +12726,7 @@ def get_task(task_id):
         }), 500
 
 @app.route('/api/tasks/<int:task_id>', methods=['PUT'])
+@owner_required
 def update_task(task_id):
     """Update a task"""
     try:
@@ -14196,6 +12763,7 @@ def update_task(task_id):
         }), 500
 
 @app.route('/api/tasks/<int:task_id>', methods=['DELETE'])
+@owner_required
 def delete_task(task_id):
     """Delete a task"""
     try:
@@ -14216,6 +12784,7 @@ def delete_task(task_id):
         }), 500
 
 @app.route('/api/tasks/<int:task_id>/comments', methods=['POST'])
+@owner_required
 def add_task_comment(task_id):
     """Add a comment to a task"""
     try:
@@ -14248,6 +12817,7 @@ def add_task_comment(task_id):
         }), 500
 
 @app.route('/api/tasks/<int:task_id>/comments/<int:comment_id>', methods=['DELETE'])
+@owner_required
 def delete_task_comment(task_id, comment_id):
     """Delete a comment from a task"""
     try:
@@ -14275,6 +12845,7 @@ def delete_task_comment(task_id, comment_id):
         }), 500
 
 @app.route('/api/tasks/<int:task_id>/close-via-commit', methods=['POST'])
+@owner_required
 def close_task_via_commit(task_id):
     """Close a task via commit"""
     try:
@@ -14370,159 +12941,22 @@ def get_all_app_settings():
             'error': str(e)
         }), 500
 
-@app.route('/api/pipeline-settings/default', methods=['GET'])
+@app.route('/api/pipeline-settings/default', methods=['GET', 'POST'])
 def get_default_pipeline_info():
-    """Get the current default pipeline"""
-    try:
-        from managers.settings_manager import get_settings_manager
-        settings_mgr = get_settings_manager()
-        
-        default_pipeline = settings_mgr.get_default_pipeline()
-        factory_default = settings_mgr.get_factory_default_pipeline()
-        auto_start = settings_mgr.should_auto_start()
-        
-        return jsonify({
-            'success': True,
-            'default_pipeline': default_pipeline,
-            'factory_default_pipeline': factory_default,
-            'auto_start_enabled': auto_start,
-            'is_factory_default': (default_pipeline == factory_default)
-        })
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-@app.route('/api/pipeline-settings/default', methods=['POST'])
-def update_default_pipeline():
-    """Set the default pipeline"""
-    try:
-        from managers.settings_manager import get_settings_manager
-        settings_mgr = get_settings_manager()
-        
-        data = request.get_json()
-        pipeline_name = data.get('pipeline_name')
-        
-        if not pipeline_name:
-            return jsonify({
-                'success': False,
-                'error': 'pipeline_name is required'
-            }), 400
-        
-        success = settings_mgr.set_default_pipeline(pipeline_name)
-        
-        if not success:
-            return jsonify({
-                'success': False,
-                'error': f'Failed to set default pipeline to {pipeline_name}'
-            }), 400
-        
-        return jsonify({
-            'success': True,
-            'message': f'Default pipeline set to {pipeline_name}'
-        })
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+    return _graph_pipelines_gone_response()
 
 @app.route('/api/pipeline-settings/default/reset', methods=['POST'])
 def reset_default_pipeline_to_factory():
-    """Reset default pipeline to factory default"""
-    try:
-        from managers.settings_manager import get_settings_manager
-        settings_mgr = get_settings_manager()
-        
-        success = settings_mgr.reset_to_factory_default()
-        factory_default = settings_mgr.get_factory_default_pipeline()
-        
-        if not success:
-            return jsonify({
-                'success': False,
-                'error': 'Failed to reset to factory default'
-            }), 500
-        
-        return jsonify({
-            'success': True,
-            'message': f'Default pipeline reset to factory default: {factory_default}'
-        })
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+    return _graph_pipelines_gone_response()
 
 @app.route('/api/pipeline-settings/auto-start', methods=['POST'])
 def update_auto_start_setting():
-    """Enable or disable auto-start of default pipeline"""
-    try:
-        from managers.settings_manager import get_settings_manager
-        settings_mgr = get_settings_manager()
-        
-        data = request.get_json()
-        enabled = data.get('enabled', True)
-        
-        success = settings_mgr.set_auto_start(enabled)
-        
-        if not success:
-            return jsonify({
-                'success': False,
-                'error': 'Failed to update auto-start setting'
-            }), 500
-        
-        return jsonify({
-            'success': True,
-            'message': f'Auto-start {"enabled" if enabled else "disabled"}'
-        })
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+    return _graph_pipelines_gone_response()
 
 @app.route('/api/pipeline-delete/<pipeline_id>', methods=['DELETE'])
 def delete_pipeline_protected(pipeline_id):
-    """Delete a pipeline (cannot delete factory default)"""
-    try:
-        from managers.settings_manager import get_settings_manager
-        settings_mgr = get_settings_manager()
-        
-        # Check if this is the factory default
-        if settings_mgr.is_factory_default(pipeline_id):
-            return jsonify({
-                'success': False,
-                'error': 'Cannot delete factory default pipeline (OOBE_Welcome)',
-                'is_factory_default': True
-            }), 403
-        
-        # Get pipeline path
-        pipeline_path = settings_mgr.get_pipeline_path(pipeline_id)
-        
-        if not pipeline_path:
-            return jsonify({
-                'success': False,
-                'error': 'Pipeline not found'
-            }), 404
-        
-        # Delete the file
-        import os
-        os.remove(pipeline_path)
-        
-        # If this was the default pipeline, reset to factory default
-        if settings_mgr.get_default_pipeline() == pipeline_id:
-            settings_mgr.reset_to_factory_default()
-        
-        return jsonify({
-            'success': True,
-            'message': f'Pipeline {pipeline_id} deleted successfully'
-        })
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+    return _graph_pipelines_gone_response()
+
 
 # Slow request logging (ms). Set CUTTLE_SLOW_REQUEST_MS=0 to disable.
 _SLOW_REQ_MS = int(os.environ.get('CUTTLE_SLOW_REQUEST_MS', '800') or '800')
@@ -14531,6 +12965,7 @@ NAV_LOG_PATH = os.path.join(os.path.expanduser('~'), 'cuttle_nav_debug.log')
 NET_LOG_PATH = os.path.join(os.path.expanduser('~'), 'cuttle_net_debug.log')
 
 @app.route('/api/debug-log', methods=['POST'])
+@owner_required
 def debug_log():
     try:
         payload = request.json or {}
@@ -14547,6 +12982,9 @@ def debug_log():
 @app.route('/api/net-insight', methods=['GET'])
 def net_insight():
     """Server-side snapshot for Electron pool / chat delivery debugging."""
+    _user, err = loopback_or_owner()
+    if err:
+        return err
     busy = []
     pending = 0
     live = []

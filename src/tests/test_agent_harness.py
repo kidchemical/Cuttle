@@ -290,6 +290,198 @@ def test_trusted_bundled_installer_verifies_cli_after_install(monkeypatch):
     assert result["status"] == "installed"
 
 
+def _script_manifest(**over):
+    from api.agent_harness.types import AgentManifest
+
+    base = dict(
+        id="scripted",
+        label="Scripted",
+        slash="/scripted",
+        source="bundled",
+        install_kind="script_url",
+        install_url_posix="https://antigravity.google/cli/install.sh",
+        install_url_windows="https://antigravity.google/cli/install.ps1",
+        auto_install=True,
+    )
+    base.update(over)
+    return AgentManifest(**base)
+
+
+class _FakeResponse:
+    def __init__(self, payload: bytes):
+        self._buf = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def read(self, size=-1):
+        if size is None or size < 0:
+            size = len(self._buf)
+        chunk, self._buf = self._buf[:size], self._buf[size:]
+        return chunk
+
+
+def _serve_script(monkeypatch, payload: bytes):
+    import urllib.request
+    from api.agent_harness import installer
+
+    monkeypatch.setattr(
+        urllib.request, "urlopen", lambda url, timeout=30: _FakeResponse(payload)
+    )
+    calls = {"ran": False}
+
+    def _fake_run(argv):
+        import subprocess
+
+        calls["ran"] = True
+        return subprocess.CompletedProcess(argv, 0, "ok", "")
+
+    monkeypatch.setattr(installer, "_run", _fake_run)
+    return calls
+
+
+def test_script_installer_checksum_mismatch_never_executes(monkeypatch):
+    import hashlib
+    from api.agent_harness import installer
+
+    payload = b"echo compromised"
+    manifest = _script_manifest(
+        install_sha256_posix=hashlib.sha256(b"something-else").hexdigest()
+    )
+
+    class _Adapter:
+        def available(self):
+            return False
+
+    monkeypatch.setattr(installer, "get_agent", lambda *a, **k: (manifest, _Adapter()))
+    calls = _serve_script(monkeypatch, payload)
+    result = installer.install_agent_cli("scripted", automatic=True)
+    assert result["success"] is False
+    assert result["status"] == "checksum_mismatch"
+    assert calls["ran"] is False
+
+
+def test_script_installer_matching_pin_executes_and_reports_hash(monkeypatch):
+    import hashlib
+    from api.agent_harness import installer
+
+    payload = b"echo hi"
+    digest = hashlib.sha256(payload).hexdigest()
+    manifest = _script_manifest(install_sha256_posix=digest)
+    state = {"installed": False}
+
+    class _Adapter:
+        def available(self):
+            return state["installed"]
+
+    monkeypatch.setattr(installer, "get_agent", lambda *a, **k: (manifest, _Adapter()))
+    _serve_script(monkeypatch, payload)
+    inner_run = installer._run  # fake from _serve_script (records execution)
+
+    def _flip(argv):
+        state["installed"] = True
+        return inner_run(argv)
+
+    monkeypatch.setattr(installer, "_run", _flip)
+    result = installer.install_agent_cli("scripted", automatic=True)
+    assert result["success"] is True, result
+    assert result["status"] == "installed"
+    assert result["script_sha256"] == digest
+    assert result["script_bytes"] == len(payload)
+
+
+def test_script_installer_unpinned_reports_hash_for_audit(monkeypatch):
+    import hashlib
+    from api.agent_harness import installer
+
+    payload = b"echo hi"
+    manifest = _script_manifest()
+    state = {"installed": False}
+
+    class _Adapter:
+        def available(self):
+            return state["installed"]
+
+    monkeypatch.setattr(installer, "get_agent", lambda *a, **k: (manifest, _Adapter()))
+
+    import subprocess
+
+    def _flip(argv):
+        state["installed"] = True
+        return subprocess.CompletedProcess(argv, 0, "ok", "")
+
+    monkeypatch.setattr(installer, "_run", _flip)
+    monkeypatch.setattr(
+        installer.urllib.request,
+        "urlopen",
+        lambda url, timeout=30: _FakeResponse(payload),
+    )
+    result = installer.install_agent_cli("scripted", automatic=True)
+    assert result["success"] is True, result
+    assert result["script_sha256"] == hashlib.sha256(payload).hexdigest()
+    assert result["script_bytes"] == len(payload)
+
+
+def test_script_installer_refuses_oversize_and_empty(monkeypatch):
+    from api.agent_harness import installer
+
+    class _Adapter:
+        def available(self):
+            return False
+
+    manifest = _script_manifest()
+    monkeypatch.setattr(installer, "get_agent", lambda *a, **k: (manifest, _Adapter()))
+    monkeypatch.setattr(installer, "_MAX_SCRIPT_BYTES", 16)
+
+    calls = _serve_script(monkeypatch, b"x" * 32)
+    big = installer.install_agent_cli("scripted", automatic=True)
+    assert big["success"] is False
+    assert big["status"] == "installer_too_large"
+    assert calls["ran"] is False
+
+    calls = _serve_script(monkeypatch, b"")
+    empty = installer.install_agent_cli("scripted", automatic=True)
+    assert empty["success"] is False
+    assert empty["status"] == "installer_empty"
+    assert calls["ran"] is False
+
+
+def test_npm_spec_validation_rejects_flags_and_urls(monkeypatch):
+    import pytest
+    from api.agent_harness import installer
+    from api.agent_harness.types import AgentManifest
+
+    assert installer._validate_npm_spec("@anthropic-ai/claude-code") == (
+        "@anthropic-ai/claude-code"
+    )
+    assert installer._validate_npm_spec("opencode-ai@1.2.3") == "opencode-ai@1.2.3"
+    for bad in ("--prefix=/evil", "https://x/y.tgz", "pkg name", "", "-g", "@scope/"):
+        with pytest.raises(installer._InstallerRefused) as exc:
+            installer._validate_npm_spec(bad)
+        assert exc.value.status == "invalid_installer"
+
+    class _Adapter:
+        def available(self):
+            return False
+
+    manifest = AgentManifest(
+        id="badnpm",
+        label="Bad",
+        slash="/bad",
+        source="bundled",
+        install_kind="npm_global",
+        install_package="--prefix=/evil",
+        auto_install=True,
+    )
+    monkeypatch.setattr(installer, "get_agent", lambda *a, **k: (manifest, _Adapter()))
+    result = installer.install_agent_cli("badnpm", automatic=True)
+    assert result["success"] is False
+    assert result["status"] == "invalid_installer"
+
+
 
 
 def test_normalize_chat_session_id():
@@ -699,6 +891,50 @@ def test_dropin_cannot_shadow_bundled(tmp_path, monkeypatch):
         assert pair is not None
         assert pair[0].source == "bundled"
         assert pair[0].label != "Fake OpenCode"
+    finally:
+        monkeypatch.delenv("CUTTLE_AGENTS_DIR", raising=False)
+        reload_catalog()
+
+
+def test_dropin_does_not_prepend_sys_path(tmp_path, monkeypatch):
+    """Drop-in dirs must not sit at sys.path[0] (stdlib / Cuttle shadowing)."""
+    import sys
+
+    agent_dir = tmp_path / "pathagent"
+    agent_dir.mkdir()
+    (agent_dir / "json.py").write_text("shadow = True\n", encoding="utf-8")
+    (agent_dir / "manifest.yaml").write_text(
+        "id: pathagent\nlabel: Path\nslash: /pathagent\ninstall_hint: n/a\n",
+        encoding="utf-8",
+    )
+    (agent_dir / "adapter.py").write_text(
+        "from api.agent_harness.types import AgentResult\n"
+        "class Adapter:\n"
+        "    def available(self):\n"
+        "        return True\n"
+        "    def resolve_cwd(self, project_path):\n"
+        "        return project_path or '.'\n"
+        "    def load_resume(self, cwd, chat_session_id):\n"
+        "        return None\n"
+        "    def save_resume(self, cwd, chat_session_id, cli_session_id):\n"
+        "        return None\n"
+        "    def clear_resume(self, cwd, chat_session_id):\n"
+        "        return None\n"
+        "    async def execute(self, prompt, **kwargs):\n"
+        "        return AgentResult(success=True, output=prompt or '')\n"
+        "def build_adapter():\n"
+        "    return Adapter()\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CUTTLE_AGENTS_DIR", str(tmp_path))
+    before0 = sys.path[0]
+    reload_catalog()
+    try:
+        assert "pathagent" in list_agents()
+        assert sys.path[0] == before0
+        import json as json_mod
+
+        assert not hasattr(json_mod, "shadow")
     finally:
         monkeypatch.delenv("CUTTLE_AGENTS_DIR", raising=False)
         reload_catalog()

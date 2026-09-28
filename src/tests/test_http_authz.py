@@ -647,3 +647,423 @@ def test_action_form_dismiss_requires_chat_ownership(tmp_path, monkeypatch):
     assert ok.status_code == 200
     assert ok.get_json()["success"] is True
 
+
+LAN = {"REMOTE_ADDR": "192.168.1.77"}
+LOOP = {"REMOTE_ADDR": "127.0.0.1"}
+
+
+def _lan_post(client, path, payload=None):
+    kw = {"environ_base": LAN}
+    if payload is None:
+        return client.post(path, **kw)
+    return client.post(path, json=payload, **kw)
+
+
+def test_lan_anonymous_cannot_mutate_admin_or_git():
+    from api import web_chat_api as wca
+
+    client = wca.app.test_client()
+    cases = [
+        ("/api/settings/channels", {"channel": "webchat", "dmPolicy": "open"}),
+        ("/api/settings/starred-slash", {"prefixes": ["/cursor "]}),
+        ("/api/settings/starred-project", {"project": None}),
+        ("/api/router/demotion/clear", {"agent": "cursor", "model": "auto"}),
+        ("/api/git/push", {"path": "/tmp"}),
+        ("/api/git/pull", {"remote": "origin", "branch": "main"}),
+        ("/api/git/commit", {"message": "x"}),
+        ("/api/flask/restart", {"mode": "status"}),
+        ("/api/save-api-key", {"api_type": "openai", "api_key": "sk-test"}),
+        ("/api/projects", {"name": "x", "type": "local"}),
+        ("/api/chat", {"message": "/cursor hi", "stream": False}),
+        ("/api/clear-session/all", {}),
+    ]
+    for path, payload in cases:
+        res = _lan_post(client, path, payload)
+        assert res.status_code == 401, (path, res.status_code, res.get_json())
+
+
+def test_guest_cannot_mutate_owner_admin(tmp_path, monkeypatch):
+    from api import web_chat_api as wca
+
+    client = wca.app.test_client()
+    guest = client.post("/api/auth/guest", json={})
+    assert guest.status_code == 200
+    res = client.post(
+        "/api/settings/starred-slash",
+        json={"prefixes": ["/cursor "]},
+        environ_base=LAN,
+    )
+    assert res.status_code == 403
+    res = client.post("/api/git/push", json={}, environ_base=LAN)
+    assert res.status_code == 403
+    res = client.post("/api/flask/restart", json={"mode": "graceful"}, environ_base=LAN)
+    assert res.status_code == 403
+    res = client.post(
+        "/api/settings/channels",
+        json={"channel": "webchat", "dmPolicy": "open"},
+        environ_base=LAN,
+    )
+    assert res.status_code == 403
+
+
+def test_owner_can_update_starred_slash(tmp_path, monkeypatch):
+    ctx = _auth_client(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "api.starred_slash.set_starred_prefixes", lambda prefixes: ["/cursor "]
+    )
+    ctx["client"].set_cookie("session_token", ctx["token"])
+    res = ctx["client"].post(
+        "/api/settings/starred-slash",
+        json={"prefixes": ["/cursor "]},
+        environ_base=LAN,
+    )
+    assert res.status_code == 200, res.get_json()
+    assert res.get_json()["success"] is True
+
+
+def test_owner_can_clear_router_demotion(tmp_path, monkeypatch):
+    ctx = _auth_client(tmp_path, monkeypatch)
+    monkeypatch.setattr("api.agent_router.drift.clear_demotion", lambda *a, **k: True)
+    ctx["client"].set_cookie("session_token", ctx["token"])
+    res = ctx["client"].post(
+        "/api/router/demotion/clear",
+        json={"agent": "cursor", "model": "auto"},
+        environ_base=LAN,
+    )
+    assert res.status_code == 200, res.get_json()
+    assert res.get_json()["removed"] is True
+
+
+def test_worker_bearer_cannot_use_owner_routes(tmp_path, monkeypatch):
+    from api import web_chat_api as wca
+
+    client = wca.app.test_client()
+    res = client.post(
+        "/api/git/push",
+        json={},
+        headers={"Authorization": "Bearer worker-device-token"},
+        environ_base=LAN,
+    )
+    assert res.status_code == 401
+    res = client.post(
+        "/api/flask/restart",
+        json={"mode": "status"},
+        headers={"Authorization": "Bearer worker-device-token"},
+        environ_base=LAN,
+    )
+    assert res.status_code == 401
+
+
+def test_telegram_slack_triggers_are_gone():
+    from api import web_chat_api as wca
+
+    client = wca.app.test_client()
+    for path in (
+        "/api/pipeline-trigger-telegram",
+        "/api/pipeline-trigger-slack",
+        "/api/execute-tool",
+        "/api/execute-output",
+    ):
+        res = client.post(path, json={"message": "hi"}, environ_base=LAN)
+        assert res.status_code == 410, path
+        assert res.get_json()["error"] == "graph_pipelines_removed"
+
+
+def test_loopback_restart_status_allowed_without_cookie():
+    from api import web_chat_api as wca
+
+    client = wca.app.test_client()
+    res = client.get("/api/flask/restart/status", environ_base=LOOP)
+    assert res.status_code == 200
+
+
+def test_lan_anonymous_restart_status_rejected():
+    from api import web_chat_api as wca
+
+    client = wca.app.test_client()
+    res = client.get("/api/flask/restart/status", environ_base=LAN)
+    assert res.status_code == 401
+
+
+def test_lan_anonymous_restart_notify_rejected():
+    from api import web_chat_api as wca
+
+    client = wca.app.test_client()
+    res = client.post(
+        "/api/flask/restart/notify",
+        json={"restart_id": "x"},
+        environ_base=LAN,
+    )
+    assert res.status_code == 403
+
+
+def test_guest_can_read_starred_slash_but_not_set_it():
+    from api import web_chat_api as wca
+
+    client = wca.app.test_client()
+    guest = client.post("/api/auth/guest", json={})
+    assert guest.status_code == 200
+    res = client.get("/api/settings/starred-slash", environ_base=LAN)
+    assert res.status_code == 200
+    assert res.get_json()["success"] is True
+
+
+def test_other_user_cannot_cancel_foreign_chat(tmp_path, monkeypatch):
+    ctx = _auth_client(tmp_path, monkeypatch)
+    ctx["client"].set_cookie("session_token", ctx["other_token"])
+    res = ctx["client"].post(
+        "/api/chat-cancel",
+        json={"session_id": ctx["sid"]},
+        environ_base=LAN,
+    )
+    assert res.status_code == 404
+
+
+def test_anonymous_cannot_cancel_chat(tmp_path, monkeypatch):
+    ctx = _auth_client(tmp_path, monkeypatch)
+    res = ctx["client"].post(
+        "/api/chat-cancel",
+        json={"session_id": ctx["sid"]},
+        environ_base=LAN,
+    )
+    assert res.status_code == 401
+
+
+def test_clear_session_requires_owner(tmp_path, monkeypatch):
+    ctx = _auth_client(tmp_path, monkeypatch)
+    res = ctx["client"].post("/api/clear-session/all", json={}, environ_base=LAN)
+    assert res.status_code == 401
+    ctx["client"].set_cookie("session_token", ctx["token"])
+    ok = ctx["client"].post("/api/clear-session/all", json={}, environ_base=LAN)
+    assert ok.status_code == 200
+
+
+def test_agent_router_options_requires_owner(tmp_path, monkeypatch):
+    """GET /api/agent-router/options exposes live `current` provider config."""
+    from api import web_chat_api as wca
+
+    anon = wca.app.test_client()
+    assert anon.get("/api/agent-router/options", environ_base=LAN).status_code == 401
+    assert anon.get("/api/agent-router/options", environ_base=LOOP).status_code == 401
+
+    guest = wca.app.test_client()
+    assert guest.post("/api/auth/guest", json={}).status_code == 200
+    assert guest.get("/api/agent-router/options", environ_base=LAN).status_code == 403
+
+    ctx = _auth_client(tmp_path, monkeypatch)
+    ctx["client"].set_cookie("session_token", ctx["other_token"])
+    other = ctx["client"].get("/api/agent-router/options", environ_base=LAN)
+    # Single-user mode (no OWNER_USER_EMAIL): any non-guest is an owner.
+    assert other.status_code == 200
+
+    monkeypatch.setenv("OWNER_USER_EMAIL", "owner@local")
+    denied = ctx["client"].get("/api/agent-router/options", environ_base=LAN)
+    assert denied.status_code == 403
+
+    ctx["client"].set_cookie("session_token", ctx["token"])
+    res = ctx["client"].get("/api/agent-router/options", environ_base=LAN)
+    assert res.status_code == 200, res.get_json()
+    data = res.get_json()
+    assert data["success"] is True
+    assert set(data["modes"]) >= {"off", "api", "local", "agent"}
+    assert "current" in data
+    ids = {a["id"] for a in data["agents"]}
+    assert "jev" in ids
+    assert "jev-latest" in data["api_models"]
+    assert data["agent_models"]["jev"] == ["jev-latest"]
+
+
+def test_worker_bearer_cannot_read_router_options(tmp_path, monkeypatch):
+    from api import web_chat_api as wca
+
+    monkeypatch.setenv("CUTTLE_DEVICE_WORKERS_TOKEN", "shared")
+    client = wca.app.test_client()
+    res = client.get(
+        "/api/agent-router/options",
+        headers={"Authorization": "Bearer [REDACTED]"},
+        environ_base=LAN,
+    )
+    assert res.status_code == 401
+
+
+def _stub_project_registry(monkeypatch, projects, current=None):
+    from api import web_chat_api as wca
+
+    class _StubPM:
+        def get_projects(self):
+            return list(projects)
+
+        def get_current_project(self):
+            if current is not None:
+                return current
+            return projects[0] if projects else None
+
+        def get_project_history(self, project_id=None, limit=50):
+            return []
+
+        def get_project_stats(self):
+            return {}
+
+        def get_project(self, project_id):
+            for p in projects:
+                try:
+                    if int(p.get("id")) == int(project_id):
+                        return p
+                except (TypeError, ValueError):
+                    continue
+            return None
+
+    monkeypatch.setattr(wca, "project_manager", _StubPM())
+
+
+def _init_git_repo(path, dirty):
+    import subprocess
+
+    path.mkdir(parents=True, exist_ok=True)
+    env = {
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "HOME": str(path),
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@t",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@t",
+    }
+
+    def _git(*args):
+        subprocess.run(["git", *args], cwd=str(path), check=True,
+                       capture_output=True, env={**dict(__import__("os").environ), **env})
+
+    _git("init")
+    (path / "file.txt").write_text("one\n", encoding="utf-8")
+    _git("add", "file.txt")
+    _git("commit", "-m", "init")
+    if dirty:
+        (path / "file.txt").write_text("one\ntwo\n", encoding="utf-8")
+    return str(path)
+
+
+def test_non_owner_can_read_projects_and_pending_changes(tmp_path, monkeypatch):
+    """Core UI reads work for authenticated non-owners (multi-user mode).
+
+    Regression: project/git GETs were owner-gated, so an operator whose
+    identity does not match OWNER_USER_EMAIL got 403 on /api/projects and
+    /api/git/pending-changes — empty /project palette, no Pending Changes.
+    """
+    from api import web_chat_api as wca
+
+    dirty = _init_git_repo(tmp_path / "proj-dirty", dirty=True)
+    _init_git_repo(tmp_path / "proj-clean", dirty=False)
+    registry = [
+        {"id": 101, "name": "Dirty", "path": dirty, "type": "local"},
+        {"id": 102, "name": "Clean", "path": str(tmp_path / "proj-clean"), "type": "local"},
+    ]
+    _stub_project_registry(monkeypatch, registry)
+
+    anon = wca.app.test_client()
+    assert anon.get("/api/projects", environ_base=LAN).status_code == 401
+    assert anon.get("/api/git/pending-changes", query_string={"project_id": 101},
+                    environ_base=LAN).status_code == 401
+
+    guest = wca.app.test_client()
+    assert guest.post("/api/auth/guest", json={}).status_code == 200
+    res = guest.get("/api/projects", environ_base=LAN)
+    assert res.status_code == 200, res.get_json()
+    res = guest.get("/api/git/pending-changes", query_string={"project_id": 101},
+                    environ_base=LAN)
+    assert res.status_code == 200, res.get_json()
+
+    ctx = _auth_client(tmp_path, monkeypatch)
+    monkeypatch.setenv("OWNER_USER_EMAIL", "owner@local")
+    ctx["client"].set_cookie("session_token", ctx["other_token"])
+    res = ctx["client"].get("/api/projects", environ_base=LAN)
+    assert res.status_code == 200, res.get_json()
+    assert {p["id"] for p in res.get_json()["data"]} >= {101, 102}
+    res = ctx["client"].get("/api/projects/current", environ_base=LAN)
+    assert res.status_code == 200, res.get_json()
+    assert res.get_json()["data"]["id"] == 101
+    for route in ("/api/projects/history", "/api/projects/stats"):
+        assert ctx["client"].get(route, environ_base=LAN).status_code == 200, route
+    res = ctx["client"].get("/api/projects/101", environ_base=LAN)
+    assert res.status_code == 200, res.get_json()
+    res = ctx["client"].get("/api/git/pending-changes", query_string={"project_id": 101},
+                            environ_base=LAN)
+    assert res.status_code == 200, res.get_json()
+    repos = res.get_json()["repos"]
+    assert repos and sum(len(r.get("files", [])) for r in repos) > 0
+
+
+def test_non_owner_cannot_mutate_projects_or_git(tmp_path, monkeypatch):
+    from api import web_chat_api as wca
+
+    _stub_project_registry(monkeypatch, [])
+    ctx = _auth_client(tmp_path, monkeypatch)
+    monkeypatch.setenv("OWNER_USER_EMAIL", "owner@local")
+    ctx["client"].set_cookie("session_token", ctx["other_token"])
+    for method, path, payload in [
+        ("POST", "/api/projects", {"name": "x", "type": "local"}),
+        ("PUT", "/api/projects/101", {"name": "y"}),
+        ("DELETE", "/api/projects/101", None),
+        ("POST", "/api/projects/101/switch", {}),
+        ("POST", "/api/projects/101/sync", {}),
+        ("POST", "/api/git/commit", {"message": "x"}),
+        ("POST", "/api/git/push", {}),
+        ("POST", "/api/git/pull", {"remote": "origin", "branch": "main"}),
+        ("POST", "/api/git/ignore", {"path": "f"}),
+    ]:
+        res = ctx["client"].open(path, method=method, json=payload, environ_base=LAN)
+        assert res.status_code == 403, (method, path, res.status_code)
+    guest = wca.app.test_client()
+    assert guest.post("/api/auth/guest", json={}).status_code == 200
+    res = guest.post("/api/projects/101/switch", json={}, environ_base=LAN)
+    assert res.status_code == 403
+    res = guest.post("/api/git/commit", json={"message": "x"}, environ_base=LAN)
+    assert res.status_code == 403
+
+
+def test_pending_changes_isolation_and_clean_tree(tmp_path, monkeypatch):
+    """Switching projects never shows the previous project's changes."""
+    dirty = _init_git_repo(tmp_path / "repo-a", dirty=True)
+    clean = _init_git_repo(tmp_path / "repo-b", dirty=False)
+    registry = [
+        {"id": 201, "name": "A", "path": dirty, "type": "local"},
+        {"id": 202, "name": "B", "path": clean, "type": "local"},
+    ]
+    _stub_project_registry(monkeypatch, registry)
+    ctx = _auth_client(tmp_path, monkeypatch)
+    ctx["client"].set_cookie("session_token", ctx["token"])
+
+    res = ctx["client"].get("/api/git/pending-changes", query_string={"project_id": 201})
+    assert res.status_code == 200, res.get_json()
+    repos = res.get_json()["repos"]
+    assert len(repos) == 1 and repos[0]["clean"] is False
+    assert all(clean not in f.get("path", "") for r in repos for f in r.get("files", []))
+
+    res = ctx["client"].get("/api/git/pending-changes", query_string={"project_id": 202})
+    assert res.status_code == 200, res.get_json()
+    repos = res.get_json()["repos"]
+    assert len(repos) == 1 and repos[0]["clean"] is True
+    assert repos[0]["totals"]["files"] == 0
+
+
+def test_session_project_persist_and_isolation(tmp_path, monkeypatch):
+    """Project selection persists per chat session and is user-scoped."""
+    from api.auth_db import get_auth_db
+
+    ctx = _auth_client(tmp_path, monkeypatch)
+    ctx["client"].set_cookie("session_token", ctx["other_token"])
+    res = ctx["client"].patch(
+        f"/api/auth/sessions/{ctx['other_sid']}",
+        json={"project_id": 7, "project_name": "Epochs", "project_path": "E:\\Game Dev\\Epochs"},
+        environ_base=LAN,
+    )
+    assert res.status_code == 200, res.get_json()
+    stored = get_auth_db().get_session_project(ctx["other_sid"])
+    assert stored and stored.get("project_id") == 7
+    assert stored.get("project_name") == "Epochs"
+    res = ctx["client"].patch(
+        f"/api/auth/sessions/{ctx['sid']}",
+        json={"project_id": 9},
+        environ_base=LAN,
+    )
+    assert res.status_code == 404
+

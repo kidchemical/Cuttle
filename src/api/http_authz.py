@@ -36,7 +36,8 @@ Roles used by tests and routes:
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, Optional, Tuple
+from functools import wraps
+from typing import Any, Callable, Dict, Optional, Tuple, TypeVar
 
 from flask import Request, jsonify, request
 
@@ -151,3 +152,66 @@ def require_chat_session_access(
     if not sess:
         return None, None, _err("Session not found or access denied", 404)
     return user, nid, None
+
+
+def require_loopback() -> Optional[JsonError]:
+    """Daemon → Flask and Host Electron loopback callers."""
+    if not request_is_loopback():
+        return _err("Loopback only.", 403)
+    return None
+
+
+def loopback_or_authenticated() -> Tuple[Optional[Dict[str, Any]], Optional[JsonError]]:
+    """Read-only Host probes (restart status) plus signed-in UI."""
+    if request_is_loopback():
+        return {"loopback": True}, None
+    return require_authenticated()
+
+
+def loopback_or_owner() -> Tuple[Optional[Dict[str, Any]], Optional[JsonError]]:
+    """Host-local maintenance (shared-media purge) or an owner session."""
+    if request_is_loopback():
+        return {"loopback": True}, None
+    return require_owner()
+
+
+F = TypeVar("F", bound=Callable[..., Any])
+
+
+def owner_required(view_fn: F) -> F:
+    """Flask view decorator: cookie/Bearer owner session required."""
+
+    @wraps(view_fn)
+    def wrapped(*args: Any, **kwargs: Any):
+        _user, err = require_owner()
+        if err:
+            return err
+        return view_fn(*args, **kwargs)
+
+    return wrapped  # type: ignore[return-value]
+
+
+def authenticated_required(view_fn: F) -> F:
+    """Flask view decorator: any signed-in account (including guest)."""
+
+    @wraps(view_fn)
+    def wrapped(*args: Any, **kwargs: Any):
+        _user, err = require_authenticated()
+        if err:
+            return err
+        return view_fn(*args, **kwargs)
+
+    return wrapped  # type: ignore[return-value]
+
+
+def loopback_required(view_fn: F) -> F:
+    """Flask view decorator: peer must be loopback."""
+
+    @wraps(view_fn)
+    def wrapped(*args: Any, **kwargs: Any):
+        err = require_loopback()
+        if err:
+            return err
+        return view_fn(*args, **kwargs)
+
+    return wrapped  # type: ignore[return-value]

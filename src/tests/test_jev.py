@@ -427,14 +427,18 @@ def test_cli_status(capsys):
 
 
 def test_options_include_jev():
+    """Owner-only endpoint (live `current` config); anonymous is rejected.
+
+    Owner-200 payload shape (jev ids/models) is asserted in test_http_authz.py.
+    """
     from api import web_chat_api as w
 
     with w.app.test_client() as client:
-        data = client.get("/api/agent-router/options").get_json()
-    ids = {a["id"] for a in data["agents"]}
-    assert "jev" in ids
-    assert "jev-latest" in data["api_models"]
-    assert data["agent_models"]["jev"] == ["jev-latest"]
+        res = client.get(
+            "/api/agent-router/options",
+            environ_base={"REMOTE_ADDR": "192.168.1.77"},
+        )
+        assert res.status_code == 401
 
 
 def test_dashboards_catalog_performance_is_live():

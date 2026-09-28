@@ -96,11 +96,15 @@ def main() -> int:
     if mode == "force":
         body["confirm"] = True
     data = json.dumps(body).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    token = _first_env("CUTTLE_SESSION_TOKEN", "CUTTLE_AUTH_SESSION_TOKEN")
+    if token:
+        headers["Authorization"] = "Bearer " + token
     req = urllib.request.Request(
         API,
         data=data,
         method="POST",
-        headers={"Content-Type": "application/json"},
+        headers=headers,
     )
     try:
         with urllib.request.urlopen(req, timeout=20, context=_ssl_ctx()) as resp:

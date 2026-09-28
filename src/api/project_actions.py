@@ -1100,6 +1100,14 @@ def _execute_shell(
     env.update(_param_env_vars(params))
     if session_id:
         env["CUTTLE_SESSION_ID"] = str(session_id)
+    try:
+        from api.auth_session import get_request_session_token
+
+        token = get_request_session_token()
+        if token:
+            env["CUTTLE_SESSION_TOKEN"] = str(token)
+    except Exception:
+        pass
 
     creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
     try:

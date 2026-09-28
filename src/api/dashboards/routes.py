@@ -5,17 +5,20 @@ from __future__ import annotations
 from flask import Blueprint, jsonify, request
 
 from api.dashboards import catalog, service, usage
+from api.http_authz import owner_required
 
 dashboards_bp = Blueprint("dashboards", __name__, url_prefix="/api/dashboards")
 
 
 @dashboards_bp.route("", methods=["GET"])
 @dashboards_bp.route("/", methods=["GET"])
+@owner_required
 def list_dashboards():
     return jsonify(service.hub())
 
 
 @dashboards_bp.route("/<dash_id>", methods=["GET"])
+@owner_required
 def get_dashboard(dash_id: str):
     meta = catalog.get_dashboard(dash_id)
     if not meta:

@@ -40,11 +40,15 @@ def test_remote_agent_project_root():
     assert (cuttle_root / 'src').exists()
 
 
-def test_remote_agent_tool_exists():
-    """tool-remote-agent lives on the chat API, not a graph executor."""
+def test_remote_agent_tool_route_is_gone():
+    """Graph execute-tool / remote-agent HTTP path is a 410 tombstone."""
     from api import web_chat_api as wca
 
-    assert hasattr(wca, "_execute_remote_agent_tool")
+    assert not hasattr(wca, "_execute_remote_agent_tool")
+    client = wca.app.test_client()
+    res = client.post("/api/execute-tool", json={"nodeType": "tool-remote-agent"})
+    assert res.status_code == 410
+    assert res.get_json()["error"] == "graph_pipelines_removed"
 
 
 def test_claude_code_direct_path():

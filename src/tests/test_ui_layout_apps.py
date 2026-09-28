@@ -14,6 +14,11 @@ def client(tmp_path, monkeypatch):
 
 
 def test_ui_layout_persists_rail_hidden_and_version(client):
+    import uuid
+
+    user = "lo_" + uuid.uuid4().hex[:10]
+    reg = client.post("/api/auth/register", json={"username": user, "password": "password1"})
+    assert reg.status_code == 200, reg.get_json()
     payload = {
         "rail_items": ["nav-chat", "nav-git", "nav-apps"],
         "rail_footer": ["nav-account", "nav-settings", "panelToggle"],
@@ -30,6 +35,11 @@ def test_ui_layout_persists_rail_hidden_and_version(client):
 
 
 def test_ui_layout_pinning_an_app_clears_it_from_hidden(client):
+    import uuid
+
+    user = "lp_" + uuid.uuid4().hex[:10]
+    reg = client.post("/api/auth/register", json={"username": user, "password": "password1"})
+    assert reg.status_code == 200, reg.get_json()
     client.post("/api/settings/ui-layout", json={
         "rail_items": ["nav-chat", "nav-apps"],
         "rail_hidden": ["nav-tasks", "nav-automation"],

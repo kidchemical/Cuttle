@@ -78,7 +78,13 @@ function Format-RestartResult([string]$json) {
 }
 
 try {
-    $r = Invoke-WebRequest -Uri $api -Method POST -Body $body -ContentType 'application/json' `
+    $headers = @{ 'Content-Type' = 'application/json' }
+    $token = @($env:CUTTLE_SESSION_TOKEN, $env:CUTTLE_AUTH_SESSION_TOKEN) |
+        Where-Object { $_ } | Select-Object -First 1
+    if ($token) {
+        $headers['Authorization'] = 'Bearer ' + $token
+    }
+    $r = Invoke-WebRequest -Uri $api -Method POST -Body $body -Headers $headers `
         -TimeoutSec 20 -UseBasicParsing
     Write-Output (Format-RestartResult $r.Content)
     exit 0
