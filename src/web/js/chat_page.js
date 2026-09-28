@@ -13802,7 +13802,7 @@
             event.stopPropagation();
             return;
         }
-        if (event.key === 'Enter' && !event.shiftKey) {
+        if (composerEnterSends(event)) {
             LOG('handleWelcomeInputKeyDown: Enter pressed, preventing default and sending');
             event.preventDefault();
             sendWelcomeMessage();
@@ -25765,6 +25765,24 @@
     }
     
     // Input Handling
+    // Touch keyboards have no Shift+Enter, so Enter must stay a newline there; Send button sends.
+    const composerTouchMq = window.matchMedia ? window.matchMedia('(hover: none) and (pointer: coarse)') : null;
+    function isTouchComposer() {
+        return !!(composerTouchMq && composerTouchMq.matches) || /CuttleMobile/.test(navigator.userAgent || '');
+    }
+    function composerEnterSends(event) {
+        if (event.key !== 'Enter' || event.shiftKey) return false;
+        if (isTouchComposer()) return event.ctrlKey || event.metaKey;
+        return true;
+    }
+    function syncComposerEnterKeyHint() {
+        const hint = isTouchComposer() ? 'enter' : 'send';
+        ['welcomeChatInput', 'chatInput'].forEach((id) => {
+            const el = document.getElementById(id);
+            if (el) el.setAttribute('enterkeyhint', hint);
+        });
+    }
+
     function handleInputKeyDown(event) {
         const input = document.getElementById('chatInput');
         if (input && handleSlashKeyDown(event, input)) {
@@ -25775,7 +25793,7 @@
             event.stopPropagation();
             return;
         }
-        if (event.key === 'Enter' && !event.shiftKey) {
+        if (composerEnterSends(event)) {
             LOG('handleInputKeyDown: Enter pressed, preventing default and sending');
             event.preventDefault();
             sendMessage();
@@ -25962,6 +25980,10 @@
         [welcomeInput, chatInput].forEach((el) => {
             if (el && el.hasAttribute('readonly')) el.removeAttribute('readonly');
         });
+        syncComposerEnterKeyHint();
+        if (composerTouchMq && composerTouchMq.addEventListener) {
+            composerTouchMq.addEventListener('change', syncComposerEnterKeyHint);
+        }
 
         wireAttachControls();
         wireEnhanceControls();
