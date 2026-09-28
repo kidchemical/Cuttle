@@ -754,7 +754,12 @@ def test_worker_bearer_cannot_use_owner_routes(tmp_path, monkeypatch):
     assert res.status_code == 401
 
 
-def test_telegram_slack_triggers_are_gone():
+def test_telegram_slack_triggers_are_removed():
+    """Retired graph ingress routes are gone (404), not tombstoned (410).
+
+    Workstream 1 deleted the 410 tombstones: deleting an obsolete route and
+    getting 404 afterward is intentional removal, not a regression.
+    """
     from api import web_chat_api as wca
 
     client = wca.app.test_client()
@@ -763,10 +768,20 @@ def test_telegram_slack_triggers_are_gone():
         "/api/pipeline-trigger-slack",
         "/api/execute-tool",
         "/api/execute-output",
+        "/api/pipeline-trigger-schedule",
+        "/api/save-pipeline",
+        "/api/list-pipelines",
+        "/api/pipeline-run-now",
+        "/api/pipeline-stop",
+        "/api/pipeline-start",
+        "/api/pipeline-reload",
+        "/api/pipeline-settings/default",
+        "/api/jobs",
+        "/api/running-pipelines",
+        "/api/pipeline-chats",
     ):
         res = client.post(path, json={"message": "hi"}, environ_base=LAN)
-        assert res.status_code == 410, path
-        assert res.get_json()["error"] == "graph_pipelines_removed"
+        assert res.status_code == 404, path
 
 
 def test_loopback_restart_status_allowed_without_cookie():

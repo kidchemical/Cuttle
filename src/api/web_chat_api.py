@@ -374,7 +374,7 @@ chat_sessions = {}
 session_counter = 0
 
 # Track running persistent pipelines (always empty — graph runtime removed)
-running_pipelines = {}  # {pipeline_name: {process_id, start_time, pipeline_data}}
+retired_pipeline_registry = {}  # Graph era ended: always empty. Kept so health/sessions payloads keep their shape.
 
 
 def _legacy_process_control_gone_response():
@@ -388,17 +388,6 @@ def _legacy_process_control_gone_response():
         ),
     }), 410
 
-
-def _graph_pipelines_gone_response():
-    """HTTP 410 for graph start/stop/run-now and related Jobs/Node Editor calls."""
-    return jsonify({
-        'success': False,
-        'error': 'graph_pipelines_removed',
-        'response': (
-            'Visual pipeline graphs were removed. Use a slash agent '
-            '(`/cursor`, `/codex`, …) or the agent router.'
-        ),
-    }), 410
 
 class ChatSession:
     def __init__(self, session_id):
@@ -700,27 +689,6 @@ def _parse_webchat_shorthand_pipeline_command(message: str, load_pipeline_file_f
     body = (m.group(2) or '').strip()
     task = body if body else message
     return pname, task
-
-
-def _webchat_fallback_pipeline_names():
-    """Ordered list of pipeline files to try for web chat when nothing is registered."""
-    try:
-        from managers.settings_manager import get_settings_manager
-        sm = get_settings_manager()
-        out = []
-        seen = set()
-        for n in (
-            sm.get_default_pipeline(),
-            sm.get_factory_default_pipeline(),
-            "OOBE_Welcome",
-            "Default_Pipeline",
-        ):
-            if n and n not in seen:
-                seen.add(n)
-                out.append(n)
-        return out
-    except Exception:
-        return ["OOBE_Welcome", "Default_Pipeline"]
 
 
 def _register_first_pipeline_with_trigger(trigger_type: str) -> bool:
@@ -2230,63 +2198,8 @@ def api_status():
         'status': 'ok',
         'flask': True,
         'discord_connected': False,
-        'running_pipeline_count': len(running_pipelines),
+        'running_pipeline_count': len(retired_pipeline_registry),
     })
-
-@app.route('/api/pipeline-chats', methods=['GET'])
-def api_pipeline_chats():
-    """List pipeline chat sessions (Cuttle - Play, Cuttle - Think, etc.) with message counts."""
-    try:
-        chat_dir = project_root / 'output' / 'pipeline_chats'
-        if not chat_dir.exists():
-            return jsonify({'chats': []})
-        chats = []
-        for p in chat_dir.glob('*.json'):
-            try:
-                with open(p, 'r', encoding='utf-8') as f:
-                    entries = json.load(f)
-                name = p.stem.replace('_', ' ')
-                chats.append({
-                    'id': p.stem,
-                    'name': f'Cuttle - {name}',
-                    'pipeline': name,
-                    'message_count': len(entries),
-                    'updated_at': entries[-1]['iso'] if entries else None,
-                })
-            except Exception:
-                continue
-        chats.sort(key=lambda x: (x['updated_at'] or ''), reverse=True)
-        return jsonify({'chats': chats})
-    except Exception as e:
-        return jsonify({'chats': [], 'error': str(e)})
-
-
-@app.route('/api/pipeline-chats/<pipeline_id>', methods=['GET'])
-def api_pipeline_chat_messages(pipeline_id):
-    """Get full message history for a pipeline chat (read-only)."""
-    try:
-        safe = "".join(c for c in pipeline_id if c.isalnum() or c in (' ', '-', '_')).strip().replace(' ', '_') or 'unknown'
-        chat_path = project_root / 'output' / 'pipeline_chats' / f"{safe}.json"
-        if not chat_path.exists():
-            return jsonify({'messages': [], 'error': 'Pipeline chat not found'}), 404
-        with open(chat_path, 'r', encoding='utf-8') as f:
-            messages = json.load(f)
-        return jsonify({
-            'pipeline': pipeline_id.replace('_', ' '),
-            'messages': messages,
-            'read_only': True,
-        })
-    except Exception as e:
-        return jsonify({'messages': [], 'error': str(e)}), 500
-
-
-@app.route('/api/running-pipelines', methods=['GET'])
-def api_running_pipelines():
-    """Return list of currently running pipeline names for the app shell"""
-    return jsonify({
-        'running_pipelines': list(running_pipelines.keys())
-    })
-
 
 @app.route('/api/executing-jobs', methods=['GET'])
 @owner_required
@@ -2300,12 +2213,6 @@ def api_executing_jobs():
         })
     except ImportError:
         return jsonify({'executing_jobs': []})
-
-
-@app.route('/api/jobs', methods=['GET'])
-def api_jobs():
-    """Graph Jobs list is empty. Mesh/worker jobs use /api/cuttle-jobs."""
-    return jsonify({'success': True, 'jobs': [], 'executing_jobs': []})
 
 
 def _enrich_cuttle_job_row(job: dict) -> dict:
@@ -3017,8 +2924,8 @@ def api_job_insight():
                 'enabled': cfg.get('enabled', True),
                 'node_id': n.get('id'),
             })
-    info = running_pipelines.get(pipeline_name, {})
-    is_running = pipeline_name in running_pipelines
+    info = retired_pipeline_registry.get(pipeline_name, {})
+    is_running = pipeline_name in retired_pipeline_registry
     executions = []
     logs_dir = project_root / 'web' / 'logs'
     if logs_dir.exists():
@@ -6674,32 +6581,6 @@ def _no_pipeline_chat_result():
     }
 
 
-def _ensure_default_pipeline_registered(trigger_type: str):
-    """Graph auto-register was removed with visual pipelines."""
-    return False
-
-
-@app.route('/api/pipeline-trigger-schedule', methods=['POST'])
-def schedule_trigger_endpoint():
-    """Schedule graphs were removed; daemon cron is a no-op."""
-    return _graph_pipelines_gone_response()
-
-@app.route('/api/pipeline-schedule-triggers', methods=['GET'])
-def get_schedule_triggers():
-    """No graph cron triggers."""
-    return jsonify({'success': True, 'triggers': []})
-
-
-@app.route('/api/pipeline-trigger-telegram', methods=['POST'])
-def telegram_trigger_endpoint():
-    """Telegram webhook ingress was removed with graph pipelines."""
-    return _graph_pipelines_gone_response()
-
-@app.route('/api/pipeline-trigger-slack', methods=['POST'])
-def slack_trigger_endpoint():
-    """Slack Events ingress was removed with graph pipelines."""
-    return _graph_pipelines_gone_response()
-
 @app.route('/api/local-llm/status', methods=['GET'])
 @authenticated_required
 def local_llm_status():
@@ -8112,16 +7993,6 @@ def update_channel_settings():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
-@app.route('/api/settings/pipeline-routing', methods=['GET', 'POST'])
-def get_pipeline_routing():
-    return _graph_pipelines_gone_response()
-
-
-@app.route('/api/settings/pipeline-limits', methods=['GET', 'POST'])
-def get_pipeline_limits_settings():
-    return _graph_pipelines_gone_response()
-
-
 @app.route('/api/settings/sandbox', methods=['GET'])
 @authenticated_required
 def get_sandbox_settings():
@@ -9405,7 +9276,7 @@ def sessions_list():
     """List active pipelines (running) and session IDs (chat_sessions). For agent-to-agent orchestration."""
     try:
         pipelines = []
-        for name, info in running_pipelines.items():
+        for name, info in retired_pipeline_registry.items():
             triggers = info.get('pipeline_data', {}).get('triggers', [])
             pipelines.append({'name': name, 'triggers': [t.get('type') for t in triggers]})
         sessions = list(chat_sessions.keys())
@@ -9610,12 +9481,9 @@ def sessions_send():
     try:
         data = request.get_json() or {}
         message = (data.get('message') or '').strip()
-        target_pipeline = data.get('target_pipeline')
         target_session = data.get('target_session')
         if not message:
             return jsonify({'success': False, 'error': 'message required'}), 400
-        if target_pipeline:
-            return _graph_pipelines_gone_response()
         if target_session:
             _user, _sid, err = _require_session_actor(target_session)
             if err:
@@ -9624,7 +9492,7 @@ def sessions_send():
             if res.get('success'):
                 return jsonify({'success': True, 'response': res.get('response', ''), 'session_id': target_session})
             return jsonify({'success': False, 'error': res.get('error', 'Unknown')}), 500
-        return jsonify({'success': False, 'error': 'target_pipeline or target_session required'}), 400
+        return jsonify({'success': False, 'error': 'target_session required'}), 400
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -9777,68 +9645,6 @@ def stop_discord():
     return _legacy_process_control_gone_response()
 
 # ==================== NODE EDITOR API ENDPOINTS ====================
-
-@app.route('/api/save-pipeline', methods=['POST'])
-def save_pipeline():
-    return _graph_pipelines_gone_response()
-
-@app.route('/api/list-pipelines', methods=['GET'])
-def list_pipelines():
-    """Graphs no longer ship."""
-    return jsonify({'success': True, 'pipelines': []})
-
-@app.route('/api/load-pipeline/<pipeline_id>', methods=['GET'])
-def load_pipeline(pipeline_id):
-    return _graph_pipelines_gone_response()
-
-@app.route('/api/delete-pipeline/<pipeline_id>', methods=['DELETE'])
-def delete_pipeline(pipeline_id):
-    return _graph_pipelines_gone_response()
-
-@app.route('/api/pipeline-execution-start', methods=['POST'])
-def pipeline_execution_start():
-    return _graph_pipelines_gone_response()
-
-@app.route('/api/pipeline-execution-finish', methods=['POST'])
-def pipeline_execution_finish():
-    return _graph_pipelines_gone_response()
-
-@app.route('/api/pipeline-check-running', methods=['POST'])
-def pipeline_check_running():
-    return _graph_pipelines_gone_response()
-
-@app.route('/api/pipeline-run-now', methods=['POST'])
-def pipeline_run_now():
-    return _graph_pipelines_gone_response()
-
-@app.route('/api/pipeline-schedule-toggle', methods=['POST'])
-def pipeline_schedule_toggle():
-    return _graph_pipelines_gone_response()
-
-@app.route('/api/pipeline-stop', methods=['POST'])
-def pipeline_stop():
-    return _graph_pipelines_gone_response()
-
-@app.route('/api/pipeline-register-running', methods=['POST'])
-def pipeline_register_running():
-    return _graph_pipelines_gone_response()
-
-@app.route('/api/pipeline-job-status', methods=['POST'])
-def get_pipeline_job_status():
-    return _graph_pipelines_gone_response()
-
-@app.route('/api/pipeline-reload', methods=['POST'])
-def pipeline_reload():
-    return jsonify({'success': True, 'reloaded': [], 'error': 'graph_pipelines_removed'})
-
-@app.route('/api/pipeline-start', methods=['POST'])
-def pipeline_start():
-    return _graph_pipelines_gone_response()
-
-@app.route('/api/record-node-execution', methods=['POST'])
-def record_node_execution():
-    return _graph_pipelines_gone_response()
-
 
 def _normalize_tools_config(tools_config) -> Optional[dict]:
     """Split unified tools payload: MCP section vs bundled CLI/API toolsets."""
@@ -10506,15 +10312,6 @@ def _message_is_slash_remote_agent(msg: str) -> bool:
     if low.startswith('claude '):
         return True
     return False
-
-
-@app.route('/api/execute-tool', methods=['POST'])
-def execute_tool():
-    return _graph_pipelines_gone_response()
-
-@app.route('/api/execute-output', methods=['POST'])
-def execute_output():
-    return _graph_pipelines_gone_response()
 
 
 @app.route('/api/settings', methods=['GET'])
@@ -12940,23 +12737,6 @@ def get_all_app_settings():
             'success': False,
             'error': str(e)
         }), 500
-
-@app.route('/api/pipeline-settings/default', methods=['GET', 'POST'])
-def get_default_pipeline_info():
-    return _graph_pipelines_gone_response()
-
-@app.route('/api/pipeline-settings/default/reset', methods=['POST'])
-def reset_default_pipeline_to_factory():
-    return _graph_pipelines_gone_response()
-
-@app.route('/api/pipeline-settings/auto-start', methods=['POST'])
-def update_auto_start_setting():
-    return _graph_pipelines_gone_response()
-
-@app.route('/api/pipeline-delete/<pipeline_id>', methods=['DELETE'])
-def delete_pipeline_protected(pipeline_id):
-    return _graph_pipelines_gone_response()
-
 
 # Slow request logging (ms). Set CUTTLE_SLOW_REQUEST_MS=0 to disable.
 _SLOW_REQ_MS = int(os.environ.get('CUTTLE_SLOW_REQUEST_MS', '800') or '800')

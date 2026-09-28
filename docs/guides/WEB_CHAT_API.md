@@ -90,7 +90,7 @@ Counts are `@app.route` entries on this file only (blueprints extra).
 
 | Prefix / cluster | ~N | Prefer existing owner |
 |---|---|---|
-| `/api/settings`, `/api/app-settings`, `/api/pipeline-settings` | 19+ | `settings_manager` / future settings blueprint |
+| `/api/settings`, `/api/app-settings` | 19+ | `settings_manager` / future settings blueprint |
 | `/api/git`, Ungit HTML | 19+ | git UI; keep restart-safe |
 | `/api/projects` | 10 | project chip / `project_manager` |
 | `/api/home-automation` | 9 | `managers.home_automation` |

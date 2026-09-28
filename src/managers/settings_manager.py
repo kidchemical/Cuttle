@@ -54,9 +54,6 @@ class SettingsManager:
             "version": "1.0.0",
             "default_pipeline": "",
             "factory_default_pipeline": self.FACTORY_DEFAULT_PIPELINE,
-            "auto_start_default": False,
-            "last_opened_pipeline": None,
-            "recent_pipelines": [],
             "user_preferences": {
                 "theme": "dark",
                 "auto_save": True,
@@ -70,22 +67,13 @@ class SettingsManager:
                 "discord": {
                     "dmPolicy": "open",
                     "allowFrom": ["*"]
-                },
-                "telegram": {
-                    "dmPolicy": "open",
-                    "allowFrom": ["*"]
-                },
-                "slack": {
-                    "dmPolicy": "open",
-                    "allowFrom": ["*"]
                 }
             },
-            "pipeline_routing": {},
             "starred_slash_commands": [],
             "starred_project": None,
             "sandbox": {
                 "enabled": False,
-                "restrict_for_session_kinds": ["web_anon", "discord_guild", "discord_dm", "telegram_user", "slack_user"],
+                "restrict_for_session_kinds": ["web_anon", "discord_guild", "discord_dm"],
                 "allowed_tools": ["tool-remote-agent", "llm", "llm-prompt"],
                 "denied_tools": [],
                 "denied_tool_prefixes": [],
@@ -324,25 +312,11 @@ class SettingsManager:
             self.settings["channels"][channel]["allowFrom"] = allow_from
         return self._save_settings(self.settings)
 
-    def get_pipeline_routing(self) -> Dict[str, str]:
-        """Get pipeline routing map: routing_key -> pipeline_name. Empty means use first running pipeline with trigger."""
-        return dict(self.settings.get("pipeline_routing") or {})
-
-    def set_pipeline_route(self, routing_key: str, pipeline_name: Optional[str]) -> bool:
-        """Set or clear pipeline for a routing key (e.g. discord_guild_123, web_user_456, main). None clears."""
-        if "pipeline_routing" not in self.settings:
-            self.settings["pipeline_routing"] = {}
-        if pipeline_name is None:
-            self.settings["pipeline_routing"].pop(routing_key, None)
-        else:
-            self.settings["pipeline_routing"][routing_key] = pipeline_name
-        return self._save_settings(self.settings)
-
     def get_sandbox_config(self) -> Dict[str, Any]:
         """Get sandbox config (enabled, restrict_for_session_kinds, allowed/denied tools, allowed_pipelines)."""
         default = {
             "enabled": False,
-            "restrict_for_session_kinds": ["web_anon", "discord_guild", "discord_dm", "telegram_user", "slack_user"],
+            "restrict_for_session_kinds": ["web_anon", "discord_guild", "discord_dm"],
             "allowed_tools": ["tool-remote-agent", "llm", "llm-prompt"],
             "denied_tools": [],
             "denied_tool_prefixes": [],
@@ -380,14 +354,6 @@ class SettingsManager:
         """Limits for pipeline execution (e.g. max tool nodes per run)."""
         default = {"max_tool_nodes_per_execution": 64}
         return {**default, **(self.settings.get("pipeline_limits") or {})}
-
-    def set_pipeline_limits(self, max_tool_nodes_per_execution: Optional[int] = None) -> bool:
-        """Update pipeline_limits. None leaves existing value unchanged."""
-        if "pipeline_limits" not in self.settings:
-            self.settings["pipeline_limits"] = self.get_pipeline_limits()
-        if max_tool_nodes_per_execution is not None:
-            self.settings["pipeline_limits"]["max_tool_nodes_per_execution"] = int(max_tool_nodes_per_execution)
-        return self._save_settings(self.settings)
 
 # Global instance
 _settings_manager = None

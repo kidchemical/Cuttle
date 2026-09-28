@@ -917,85 +917,6 @@ def watch_flask_restart_requests():
         time.sleep(1.0)
 
 
-def reload_pipelines() -> Dict:
-    """Graph hot-reload removed."""
-    return {"success": False, "error": "graph_pipelines_removed"}
-
-
-def _parse_cron_field(field: str, value: int) -> bool:
-    """Check if a single cron field matches a numeric value."""
-    if field == '*':
-        return True
-    if '/' in field:
-        parts = field.split('/', 1)
-        start = 0 if parts[0] == '*' else int(parts[0])
-        step = int(parts[1])
-        return value >= start and (value - start) % step == 0
-    if ',' in field:
-        return value in [int(x) for x in field.split(',')]
-    if '-' in field:
-        a, b = field.split('-', 1)
-        return int(a) <= value <= int(b)
-    return value == int(field)
-
-
-def cron_matches(cron_expr: str, dt: datetime) -> bool:
-    """Return True if datetime matches a 5-field cron expression (min hr dom mon dow)."""
-    try:
-        parts = cron_expr.strip().split()
-        if len(parts) != 5:
-            return False
-        return (
-            _parse_cron_field(parts[0], dt.minute) and
-            _parse_cron_field(parts[1], dt.hour) and
-            _parse_cron_field(parts[2], dt.day) and
-            _parse_cron_field(parts[3], dt.month) and
-            _parse_cron_field(parts[4], dt.weekday())
-        )
-    except Exception:
-        return False
-
-
-def _get_schedule_triggers() -> list:
-    """Ask Flask for all active schedule trigger configs from running pipelines."""
-    try:
-        import urllib.request as _ur
-        req = _ur.Request(
-            _flask_url("/api/pipeline-schedule-triggers"),
-            method="GET",
-        )
-        with _urlopen_flask(req, timeout=5) as resp:
-            return json.loads(resp.read().decode()).get('triggers', [])
-    except Exception:
-        return []
-
-
-def _fire_schedule_trigger(
-    message: str,
-    channel_id: str = '',
-    pipeline_name: str = '',
-    trigger_node_id=None,
-) -> Dict:
-    """POST to Flask to fire the trigger-schedule pipeline path."""
-    import urllib.request
-    try:
-        payload = {'message': message, 'channel_id': channel_id}
-        if pipeline_name:
-            payload['pipeline_name'] = pipeline_name
-        if trigger_node_id is not None:
-            payload['trigger_node_id'] = trigger_node_id
-        req = urllib.request.Request(
-            _flask_url("/api/pipeline-trigger-schedule"),
-            data=json.dumps(payload).encode(),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with _urlopen_flask(req, timeout=60) as resp:
-            return json.loads(resp.read().decode())
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-
 def run_home_automation_loop():
     """Apply Govee schedule when the active period changes (cadence from home_automation constants)."""
     from managers.home_automation import (
@@ -1053,47 +974,6 @@ def run_device_workers_loop():
         print(f"[DAEMON] Device worker exited: {e}")
 
 
-def run_schedule_loop():
-    """Check cron schedules every 60 s and fire due triggers via Flask API."""
-    last_fired: Dict[tuple, tuple] = {}  # (cron, pipeline, node_id) → (year, month, day, hour, minute)
-    # Sleep briefly on startup so Flask has time to register pipelines
-    time.sleep(90)
-    while daemon_running:
-        now = datetime.now()
-        now_key = (now.year, now.month, now.day, now.hour, now.minute)
-        triggers = _get_schedule_triggers()
-        for t in triggers:
-            cron_expr = t.get('schedule', '')
-            pipeline_name = t.get('pipeline', '')
-            if not cron_expr:
-                continue
-            node_id = t.get('node_id')
-            fire_key = (cron_expr, pipeline_name, node_id)
-            if last_fired.get(fire_key) == now_key:
-                continue  # Already fired this minute for this pipeline
-            if cron_matches(cron_expr, now):
-                message = t.get('message') or (
-                    '[Cuttle Self-Reflection] Review memory files at '
-                    'C:\\Users\\MainUser\\.claude\\projects\\E--dev\\memory\\, '
-                    'check ongoing tasks and project files in E:\\dev, '
-                    'update the roadmap if needed, and write a brief status update summary.'
-                )
-                channel_id = t.get('discord_channel_id', '')
-                print(f"[DAEMON] Firing schedule trigger '{cron_expr}' for pipeline '{pipeline_name}'")
-                result = _fire_schedule_trigger(message, channel_id, pipeline_name, node_id)
-                if result.get('success'):
-                    print(f"[DAEMON] Schedule trigger fired OK")
-                else:
-                    print(f"[DAEMON] Schedule trigger failed: {result.get('error')}")
-                last_fired[fire_key] = now_key
-        # Sleep until the start of the next minute
-        sleep_secs = 60 - datetime.now().second
-        for _ in range(sleep_secs):
-            if not daemon_running:
-                return
-            time.sleep(1)
-
-
 def _flask_health_check() -> bool:
     """Liveness: Flask must answer /api/status within 5 seconds over HTTPS :8080.
 
@@ -1149,11 +1029,6 @@ def watch_flask_health():
             )
             last_restart = now
             time.sleep(5)  # Give Flask time to bind before next check
-
-
-def watch_pipelines_and_reload():
-    """Graph hot-reload removed."""
-    return
 
 
 def _load_tray_icon_image():
@@ -1308,11 +1183,6 @@ def _watch_notify_queue():
         except Exception:
             pass
         time.sleep(1.5)
-
-
-def _auto_start_default_pipeline():
-    """Graph auto-start removed; chat uses slash agents + router."""
-    return
 
 
 def _emit_daemon_line(stream, line: str, color: bool) -> None:
@@ -1475,16 +1345,6 @@ def run_daemon():
         pass
     print("[DAEMON] Discord inbound gateway is not started (optional REST agent-ops only).")
 
-    # Auto-start default pipeline (graph era no-op)
-    _auto_start_default_pipeline()
-
-    # Start pipeline watcher thread (hot-swap)
-    watcher = threading.Thread(target=watch_pipelines_and_reload, daemon=True)
-    watcher.start()
-
-    # Start cron scheduler thread (fires trigger-schedule nodes in running pipelines)
-    scheduler = threading.Thread(target=run_schedule_loop, daemon=True)
-    scheduler.start()
 
     # Start notify queue watcher (shows tray toasts when app window is closed)
     notify_watcher = threading.Thread(target=_watch_notify_queue, daemon=True)

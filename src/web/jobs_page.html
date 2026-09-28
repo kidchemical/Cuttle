@@ -442,7 +442,6 @@
             <button type="button" class="jobs-tab active" data-tab="active" role="tab">Active</button>
             <button type="button" class="jobs-tab" data-tab="history" role="tab">History</button>
             <button type="button" class="jobs-tab" data-tab="devices" role="tab">Devices</button>
-            <button type="button" class="jobs-tab" data-tab="pipelines" role="tab">Pipelines</button>
         </div>
 
         <section class="jobs-panel active" id="panel-active" aria-label="Active jobs">
@@ -472,9 +471,6 @@
             <div id="meshJobsList"></div>
         </section>
 
-        <section class="jobs-panel" id="panel-pipelines" aria-label="Pipelines">
-            <p>Visual pipeline graphs were removed. This page is the mesh/worker cockpit. Use slash agents in chat for coding turns.</p>
-        </section>
     </div>
     <script src="/js/shared_navigation.js"></script>
     <script src="/js/background_effect_blend.js"></script>
@@ -482,7 +478,6 @@
     <script src="/js/toast.js"></script>
     <script src="/js/cron_countdown.js"></script>
     <script>
-        let allJobs = [];
         let executingJobs = [];
         let cuttleActive = [];
         let cuttleHistory = [];
@@ -596,9 +591,8 @@
             if (viewingWorkerId && id === viewingWorkerId) tags.push('you');
             return tags;
         }
-        let currentFilter = 'all';
         let histFilter = 'all';
-        const VALID_JOBS_TABS = { active: 1, history: 1, devices: 1, pipelines: 1 };
+        const VALID_JOBS_TABS = { active: 1, history: 1, devices: 1 };
         function readInitialJobsTab() {
             try {
                 const fromUrl = String(
@@ -1412,201 +1406,9 @@
             }
         }
 
-        async function loadPipelines() {
-            allJobs = [];
-            executingJobs = [];
-        }
-
         async function loadAll() {
-            await Promise.all([loadCuttleJobs(), loadPipelines(), loadDevices()]);
+            await Promise.all([loadCuttleJobs(), loadDevices()]);
             initialLoad = false;
-        }
-
-        function updatePipelineStats() {}
-
-        function renderJobsBrowse() {
-            const el = document.getElementById('jobsBrowseList');
-            let jobs = allJobs;
-            if (currentFilter === 'running') jobs = jobs.filter(j => j.is_running || j.is_executing);
-            else if (currentFilter === 'work') jobs = jobs.filter(j => j.type === 'work');
-            else if (currentFilter === 'think') jobs = jobs.filter(j => j.type === 'think');
-            else if (currentFilter === 'play') jobs = jobs.filter(j => j.type === 'play');
-            else if (currentFilter === 'scheduled') jobs = jobs.filter(j => (j.schedules || []).length > 0);
-
-            if (!jobs.length) {
-                setHtmlIfChanged(el, '<div class="jobs-empty">No pipelines match this filter.</div>');
-                return;
-            }
-
-            setHtmlIfChanged(el, jobs.map(job => {
-                const desc = (job.description || job.name).slice(0, 120);
-                const schedules = job.schedules || [];
-                const safeName = escapeHtml(job.name).replace(/'/g, "\\'");
-                const schedHtml = schedules.map(sc => {
-                    const cronEsc = escapeHtml(sc.cron || '').replace(/"/g, '&quot;');
-                    const countdown = sc.enabled && window.CronCountdown ? (window.CronCountdown.getCronCountdown(sc.cron, true) || '') : '';
-                    return `<span class="schedule-enabler"><span>⏰ ${formatCron(sc.cron)}</span>
-                        <label class="job-switch" title="Schedule ${sc.enabled ? 'on' : 'off'}" onclick="event.stopPropagation()">
-                            <input type="checkbox" class="schedule-toggle-input" data-pipeline="${escapeHtml(job.name).replace(/"/g, '&quot;')}" data-node-id="${sc.node_id}" ${sc.enabled ? 'checked' : ''} />
-                            <span class="job-switch-slider"></span>
-                        </label>
-                        <span class="schedule-countdown" data-cron="${cronEsc}" data-enabled="${sc.enabled}">${countdown ? ' · Next ' + countdown : ''}</span></span>`;
-                }).join(' ');
-                const execBadge = job.is_executing ? '<span class="job-type-badge work" title="Pipeline has an in-flight run">exec</span>' : '';
-                let executionInfo = '';
-                if (job.active_runs && job.active_runs.length > 0) {
-                    executionInfo = `<span>In progress (${job.active_runs.length} run${job.active_runs.length > 1 ? 's' : ''})</span>`;
-                } else if (job.executions && job.executions.length > 0) {
-                    const latest = job.executions[0];
-                    executionInfo = `<span>${latest.success === true ? '✓' : (latest.success === false ? '✗' : '?')} ${formatTime(latest.timestamp)}</span>`;
-                }
-                return `
-                    <div class="job-card clickable ${job.is_running || job.is_executing ? 'running' : ''}" data-name="${escapeHtml(job.name)}" data-pipeline="${escapeHtml(job.name)}">
-                        <div class="job-main">
-                            <div class="job-row-top">
-                                <div class="job-title-compact">
-                                    <span class="job-name">${escapeHtml(job.name)}</span>
-                                    <span class="job-type-badge ${job.type}">${job.type}</span>
-                                    ${execBadge}
-                                </div>
-                                <div class="job-actions" onclick="event.stopPropagation()">
-                                    <button class="job-btn job-btn-run-now" onclick="runNow('${safeName}')" title="Run once now (adhoc)">Run</button>
-                                    <div class="job-toggle-wrap" title="Listen for triggers">
-                                        <span class="job-toggle-label">Listen</span>
-                                        <label class="job-switch">
-                                            <input type="checkbox" class="job-toggle-input" ${job.is_running ? 'checked' : ''} />
-                                            <span class="job-switch-slider"></span>
-                                        </label>
-                                    </div>
-                                    <button class="job-btn job-btn-edit" onclick="editPipeline('${safeName}')">Edit</button>
-                                </div>
-                            </div>
-                            <div class="job-desc">${escapeHtml(desc)}${desc.length >= 120 ? '…' : ''}</div>
-                            <div class="job-meta">
-                                ${executionInfo}
-                                ${job.is_running && job.start_time ? `<span><span class="status-indicator status-running"></span>Listen since ${formatTime(job.start_time)}</span>` : ''}
-                                ${schedHtml}
-                                ${(job.triggers || []).length ? `<span>Triggers: ${job.triggers.map(t => t.name || t.type).join(', ')}</span>` : ''}
-                            </div>
-                        </div>
-                    </div>
-                `;
-            }).join(''));
-        }
-
-        function formatCron(cron) {
-            if (!cron) return '';
-            const parts = cron.trim().split(/\s+/);
-            if (parts.length < 5) return cron;
-            const [min, hr, dom, mon, dow] = parts;
-            if (min === '*') return 'every minute';
-            if (min.startsWith('*/')) {
-                const n = min.slice(2);
-                if (hr === '*' && dom === '*' && mon === '*' && dow === '*') return `every ${n} min`;
-            }
-            if (hr.startsWith('*/') && min === '0') return `every ${hr.slice(2)} hrs`;
-            if (hr === '0' && min === '0') return 'hourly';
-            if (hr === '*' && min === '0') return 'every hour';
-            return cron;
-        }
-
-        async function startJob(name) {
-            try {
-                const r = await fetch('/api/pipeline-start', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ pipelineName: name })
-                });
-                const data = await r.json();
-                if (data.success) {
-                    (window.showToast || alert)('Started ' + name, 'success');
-                    loadPipelines();
-                    return true;
-                }
-                (window.showToast || alert)(data.error || 'Failed to start', 'error');
-                return false;
-            } catch (e) {
-                (window.showToast || alert)('Error: ' + (e.message || e), 'error');
-                return false;
-            }
-        }
-
-        async function stopJob(name) {
-            try {
-                const r = await fetch('/api/pipeline-stop', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ pipelineName: name })
-                });
-                const data = await r.json();
-                if (data.success) {
-                    (window.showToast || alert)('Stopped ' + name, 'success');
-                    loadPipelines();
-                    return true;
-                }
-                (window.showToast || alert)(data.error || 'Failed to stop', 'error');
-                return false;
-            } catch (e) {
-                (window.showToast || alert)('Error: ' + (e.message || e), 'error');
-                return false;
-            }
-        }
-
-        async function runNow(name) {
-            try {
-                const webChatSessionId = (typeof localStorage !== 'undefined' && localStorage.getItem('lastChatSessionId')) || '';
-                const r = await fetch('/api/pipeline-run-now', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ pipelineName: name, webChatSessionId })
-                });
-                const contentType = r.headers.get('content-type') || '';
-                let data;
-                if (contentType.includes('application/json')) {
-                    data = await r.json();
-                } else {
-                    (window.showToast || alert)('Server returned ' + r.status + '. Restart Cuttle daemon if you just updated.', 'error');
-                    return;
-                }
-                if (data.success) {
-                    if (data.pending && data.report_url) {
-                        (window.showToast || alert)('Run started — ' + name, 'info', { linkUrl: data.report_url, linkText: 'Live query report' });
-                    } else {
-                        const opts = data.report_url ? { linkUrl: data.report_url, linkText: 'View query log' } : {};
-                        (window.showToast || alert)('Ran ' + name, 'success', opts);
-                    }
-                    loadPipelines();
-                } else {
-                    (window.showToast || alert)(data.error || 'Run failed', 'error');
-                }
-            } catch (e) {
-                (window.showToast || alert)('Error: ' + (e.message || e), 'error');
-            }
-        }
-
-        async function toggleSchedule(pipelineName, nodeId, newEnabled) {
-            try {
-                const r = await fetch('/api/pipeline-schedule-toggle', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ pipelineName, nodeId, enabled: newEnabled })
-                });
-                const data = await r.json();
-                if (data.success) {
-                    (window.showToast || alert)(data.message, 'success');
-                    loadPipelines();
-                    return true;
-                }
-                (window.showToast || alert)(data.error || 'Failed', 'error');
-                return false;
-            } catch (e) {
-                (window.showToast || alert)('Error: ' + (e.message || e), 'error');
-                return false;
-            }
-        }
-
-        function editPipeline(name) {
-            window.top.location.href = '/node_editor.html?pipeline=' + encodeURIComponent(name);
         }
 
         document.querySelectorAll('.jobs-tab').forEach(btn => {
@@ -1698,59 +1500,12 @@
             });
         });
 
-        document.querySelectorAll('.filter-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
-                currentFilter = btn.dataset.filter;
-                renderJobsBrowse();
-            });
-        });
-
         document.getElementById('historyList').addEventListener('click', (e) => {
             const tr = e.target.closest('tr.clickable');
             if (!tr) return;
             const href = tr.getAttribute('data-href');
             if (href) window.open(href, '_blank', 'noopener');
         });
-
-        const jobsBrowseList = document.getElementById('jobsBrowseList');
-        if (jobsBrowseList) {
-            jobsBrowseList.addEventListener('click', (e) => {
-                const card = e.target.closest('.job-card.clickable');
-                if (card && !e.target.closest('.job-actions')) {
-                    const name = card.dataset.pipeline;
-                    if (name) window.location.href = '/job_insight.html?pipeline=' + encodeURIComponent(name);
-                }
-            });
-            jobsBrowseList.addEventListener('change', async (e) => {
-                const t = e.target;
-                if (t.classList.contains('job-toggle-input')) {
-                    e.stopPropagation();
-                    const card = t.closest('.job-card');
-                    const name = card && card.dataset.pipeline;
-                    if (!name) return;
-                    const wantOn = t.checked;
-                    if (wantOn) {
-                        const ok = await startJob(name);
-                        if (!ok) t.checked = false;
-                    } else {
-                        const ok = await stopJob(name);
-                        if (!ok) t.checked = true;
-                    }
-                    return;
-                }
-                if (t.classList.contains('schedule-toggle-input')) {
-                    e.stopPropagation();
-                    const pipelineName = t.getAttribute('data-pipeline');
-                    const nodeId = parseInt(t.getAttribute('data-node-id'), 10);
-                    if (!pipelineName || Number.isNaN(nodeId)) return;
-                    const newEnabled = t.checked;
-                    const ok = await toggleSchedule(pipelineName, nodeId, newEnabled);
-                    if (!ok) t.checked = !newEnabled;
-                }
-            });
-        }
 
         setTab(currentTab);
         loadAll();

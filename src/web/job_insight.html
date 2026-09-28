@@ -39,7 +39,7 @@
         .job-insight-actions .btn-start { background: #22c55e; color: #fff; }
         .job-insight-actions .btn-stop { background: #ef4444; color: #fff; }
         .schedule-toggle { display: inline-flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 12px; }
-        .schedule-toggle .tag { padding: 2px 8px; border-radius: 4px; cursor: pointer; font-weight: 600; }
+        .schedule-toggle .tag { padding: 2px 8px; border-radius: 4px; font-weight: 600; }
         .schedule-toggle .tag.on { background: rgba(74, 222, 128, 0.2); color: #4ade80; }
         .schedule-toggle .tag.off { background: rgba(100, 116, 139, 0.3); color: #94a3b8; }
         .schedule-next { font-size: 11px; color: var(--text-tertiary); margin-top: 4px; }
@@ -219,21 +219,13 @@
             updateScheduleCountdown(schedules);
             const togglesEl = document.getElementById('widgetScheduleToggles');
             togglesEl.innerHTML = schedules.map(sc => {
-                const enc = (pipelineName || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
                 return `<div class="schedule-toggle">${formatCron(sc.cron)}
-                    <span class="tag ${sc.enabled ? 'on' : 'off'}" onclick="toggleSchedule('${enc}', ${sc.node_id}, ${!sc.enabled})">${sc.enabled ? 'On' : 'Off'}</span>
+                    <span class="tag ${sc.enabled ? 'on' : 'off'}">${sc.enabled ? 'On' : 'Off'}</span>
                 </div>`;
             }).join('');
 
             const actionsEl = document.getElementById('jobInsightActions');
-            const enc = (pipelineName || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-            actionsEl.innerHTML = `
-                <button class="btn btn-run-now" onclick="runNow('${enc}')">▶ Run Now</button>
-                ${d.is_running
-                    ? `<button class="btn btn-stop" onclick="stopJob('${enc}')">⏹ Stop</button>`
-                    : `<button class="btn btn-start" onclick="startJob('${enc}')">▶ Start</button>`
-                }
-            `;
+            actionsEl.innerHTML = `<span style="opacity:.6">Graph controls were retired; this view is read-only. Use slash agents in chat for new work.</span>`;
 
             document.getElementById('widgetExecutions').textContent = (d.executions || []).length;
             const totalCost = (d.executions || []).reduce((s, e) => s + (e.total_cost || 0), 0);
@@ -304,56 +296,6 @@
             }
             tick();
             window._insightLiveIv = setInterval(tick, 2800);
-        }
-
-        async function runNow(name) {
-            try {
-                const webChatSessionId = (typeof localStorage !== 'undefined' && localStorage.getItem('lastChatSessionId')) || '';
-                const r = await fetch('/api/pipeline-run-now', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pipelineName: name, webChatSessionId }) });
-                const ct = r.headers.get('content-type') || '';
-                let data;
-                if (ct.includes('application/json')) {
-                    data = await r.json();
-                } else {
-                    (window.showToast || alert)('Server returned ' + r.status + '. Restart Cuttle daemon if you just updated.', 'error');
-                    return;
-                }
-                if (data.success) {
-                    if (data.pending && data.report_url) {
-                        (window.showToast || alert)('Run started — live report updating', 'info', { linkUrl: data.report_url, linkText: 'Open live report' });
-                    } else {
-                        const opts = data.report_url ? { linkUrl: data.report_url, linkText: 'View query log' } : {};
-                        (window.showToast || alert)('Ran successfully', 'success', opts);
-                    }
-                    await loadInsight();
-                } else (window.showToast || alert)(data.error || 'Failed', 'error');
-            } catch (e) { (window.showToast || alert)('Error: ' + e.message, 'error'); }
-        }
-        async function startJob(name) {
-            try {
-                const r = await fetch('/api/pipeline-start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pipelineName: name }) });
-                const data = await r.json();
-                if (data.success) (window.showToast || alert)('Started', 'success');
-                else (window.showToast || alert)(data.error || 'Failed', 'error');
-                loadInsight();
-            } catch (e) { (window.showToast || alert)('Error: ' + e.message, 'error'); }
-        }
-        async function stopJob(name) {
-            try {
-                const r = await fetch('/api/pipeline-stop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pipelineName: name }) });
-                const data = await r.json();
-                if (data.success) (window.showToast || alert)('Stopped', 'success');
-                else (window.showToast || alert)(data.error || 'Failed', 'error');
-                loadInsight();
-            } catch (e) { (window.showToast || alert)('Error: ' + e.message, 'error'); }
-        }
-        async function toggleSchedule(pipelineName, nodeId, newEnabled) {
-            try {
-                const r = await fetch('/api/pipeline-schedule-toggle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pipelineName, nodeId, enabled: newEnabled }) });
-                const data = await r.json();
-                if (data.success) { (window.showToast || alert)(data.message, 'success'); loadInsight(); }
-                else (window.showToast || alert)(data.error || 'Failed', 'error');
-            } catch (e) { (window.showToast || alert)('Error: ' + e.message, 'error'); }
         }
 
         function formatCron(c) {
