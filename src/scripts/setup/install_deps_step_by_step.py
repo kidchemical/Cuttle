@@ -95,7 +95,7 @@ def main():
         "flask>=2.3.0",
         "flask-cors>=4.0.0",
         "python-dotenv",
-        "discord.py>=2.3.0"
+        "requests>=2.31.0",
     ]
     
     # Additional packages (heavier)
@@ -136,7 +136,7 @@ def main():
     try:
         result = subprocess.run([
             python_cmd, "-c", 
-            "import discord, flask, flask_cors, dotenv; print('[OK] All essential imports successful')"
+            "import flask, flask_cors, dotenv, requests; print('[OK] All essential imports successful')"
         ], capture_output=True, text=True, timeout=30)
         
         if result.returncode == 0:

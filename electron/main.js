@@ -493,7 +493,7 @@ async function resolveUiBaseUrl() {
 }
 
 // Spawn the Cuttle daemon (detached so it survives Electron being closed).
-// The daemon manages Flask, Discord bot, cron, hot-reload, and its own tray icon.
+// The daemon manages Flask, cron, hot-reload, and its own tray icon.
 function startDaemon() {
     if (process.env.CUTTLE_HOSTED_BY_DAEMON === '1') {
         console.log('Already launched from the Cuttle daemon — not spawning another Python process.');

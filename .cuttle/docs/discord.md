@@ -1,9 +1,10 @@
 # Discord (Cuttle hub — all projects)
 
-Native runbook for **reading** and **posting** via the Discord bot configured for
-this Cuttle install. Every registered project shares this doc; per-project guild /
-channel IDs live in that project's `.cuttle/actions/discord-post.yaml` (and optional
-project `.cuttle/docs/discord.md`).
+Native runbook for **optional Discord agent operations** (REST). Cuttle Core is
+not a Discord bot and does not start an inbound gateway when `DISCORD_TOKEN` is set.
+Every registered project shares this doc; per-project guild / channel IDs live in
+that project's `.cuttle/actions/discord-post.yaml` (and optional project
+`.cuttle/docs/discord.md`).
 
 **Do not** reverse-engineer Cuttle's Discord stack or hunt for tokens when this file exists.
 Install-local path notes may live in `.cuttle/personal/docs/discord.md`.
@@ -34,7 +35,10 @@ cd <CuttleInstall>
 ```
 
 - `--project` loads aliases + `guild_id` from that project's `discord-post.yaml`.
-- `messages` accepts an **alias** or a channel snowflake.
+- With `--project`, `messages` accepts an **alias** or a snowflake that appears as a
+  value in that yaml (arbitrary channel IDs are rejected).
+- Without `--project`, a raw snowflake is allowed for **read-only** fetches (the bot
+  token's Discord permissions still apply). Posts never use this path.
 - This CLI is **read-only**. Outbound posts stay on confirm forms (below).
 
 Summarize into `{project}/.cuttle/docs/` only when the user wants persistent mirrored context.
@@ -47,7 +51,9 @@ Summarize into `{project}/.cuttle/docs/` only when the user wants persistent mir
 2. End with `<cuttle_confirm action="discord.post" channel="<alias>">` or `<cuttle_action_form>` with `"action": "discord.post"`.
 3. Human clicks Post → Flask runs the allowlisted `{project}` action — **no LLM**, no second agent turn.
 
-Channel aliases must match `{project}/.cuttle/actions/discord-post.yaml`.
+Channel aliases (or allowlisted snowflake **values**) must match
+`{project}/.cuttle/actions/discord-post.yaml`. Arbitrary numeric channel IDs cannot
+bypass that map.
 
 ## What Cuttle does *not* inject automatically
 
@@ -59,5 +65,5 @@ Channel aliases must match `{project}/.cuttle/actions/discord-post.yaml`.
 ## Notes
 
 - Retries help on Windows (`WinError 10054` TLS resets).
-- Never force-kill the Discord bot from an agent hosted by Flask — use `/restart` commands.
+- There is no daemon Discord gateway process. Flask restart uses `/restart`, not process kill.
 - Message links: `https://discord.com/channels/<guild_id>/<channel_id>/<message_id>`

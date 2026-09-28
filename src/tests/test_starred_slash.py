@@ -1,4 +1,4 @@
-"""Starred sticky slash default (Cuttle chat + Discord DMs)."""
+"""Starred sticky slash default (Cuttle chat)."""
 
 from __future__ import annotations
 

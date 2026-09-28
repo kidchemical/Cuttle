@@ -23,18 +23,12 @@ def create_env_file():
     print("This script will help you create the .env file with necessary configuration.")
     print()
     
-    # Get Discord Bot Token
-    print("1. Discord Bot Configuration")
-    print("   - Go to https://discord.com/developers/applications")
-    print("   - Create a new application or select existing one")
-    print("   - Go to 'Bot' section and copy the token")
-    discord_token = input("   Enter your Discord Bot Token: ").strip()
+    print("1. Discord agent-ops token (optional — REST read/post only; does not start a gateway)")
+    print("   Press Enter to skip.")
+    discord_token = input("   DISCORD_TOKEN: ").strip()
     
-    # Get Owner ID
-    print("\n2. Owner ID Configuration")
-    print("   - In Discord, enable Developer Mode (User Settings > Advanced > Developer Mode)")
-    print("   - Right-click your username and select 'Copy User ID'")
-    owner_id = input("   Enter your Discord User ID: ").strip()
+    print("\n2. OWNER_ID (optional; used by some tests)")
+    owner_id = input("   OWNER_ID: ").strip()
     
     # Get OpenAI API Key (Optional)
     print("\n3. OpenAI API Configuration (Optional)")

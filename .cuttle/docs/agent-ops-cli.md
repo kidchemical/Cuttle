@@ -1,7 +1,7 @@
 # Agent ops CLIs (hub)
 
-Cuttle’s product UI is the daemon + web/Electron chat + Discord. Separately, agents
-need **stable shell verbs** for local ops (transcripts, workers, brain, …).
+Cuttle’s product UI is the daemon + web/Electron chat. Separately, agents
+need **stable shell verbs** for local ops (transcripts, workers, brain, Discord REST, …).
 
 ## Pattern
 

@@ -17,8 +17,8 @@ src/tests/
 ├── test_*.py        # ~130 pytest files (chat, agents, jobs, restart, discord, …)
 ├── unit/            # legacy tool tests (window focus, security, …)
 ├── integration/     # live-server / content tests (pytest, skip when deps missing)
-│   ├── test_discord_api_e2e.py          # /api/health + pipeline-trigger-discord; skips if server down
-│   └── test_discord_remote_execution.py # mostly skips (pipeline graphs removed)
+│   ├── test_discord_api_e2e.py          # /api/health; asserts pipeline-trigger-discord is 404 if server up
+│   └── test_discord_remote_execution.py # gateway files absent; Electron does not start Discord
 ├── e2e/             # Playwright-style browser tests (app shell, badges, history)
 ├── deprecated/      # archaeology only (Self Improvement); do not add cases
 ├── fixtures/        # shared fixtures + leftover self-improvement samples

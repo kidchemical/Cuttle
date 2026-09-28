@@ -2,8 +2,10 @@
 """
 Cuttle Daemon - Process manager for hot-swap and restarts.
 
-Manages Flask web server and Discord bot processes. llama.cpp (when
-LOCAL_LLM_BACKEND=llamacpp) is NOT started at boot: it launches on demand when a
+Manages the Flask web server (and on-demand llama.cpp). Discord is **not**
+a daemon child: optional REST agent-ops (``python -m api.discord_cli``,
+``discord.post``) use a token without an inbound gateway.
+LOCAL_LLM_BACKEND=llamacpp is NOT started at boot: it launches on demand when a
 Local-mode chat asks for it (Yes/No prompt), via POST /api/local-llm/start, or
 from the tray menu — and then stays running until stopped. Supports:
 - Start/stop/restart services
@@ -59,7 +61,7 @@ PROJECT_ROOT = SRC_ROOT.parent
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-# Load src/.env so DISCORD_TOKEN and other secrets are available to the daemon process
+# Load src/.env so API keys and optional REST tokens (e.g. DISCORD_TOKEN for agent-ops) are available
 _env_file = SRC_ROOT / ".env"
 if _env_file.exists():
     try:
@@ -102,7 +104,7 @@ NOTIFY_QUEUE_PATH = PROJECT_ROOT / "cuttle_notify_queue.jsonl"
 FLASK_RESTART_REQUEST_PATH = PROJECT_ROOT / "cuttle_flask_restart_request.json"
 FLASK_RESTART_STATUS_PATH = PROJECT_ROOT / "cuttle_flask_restart_status.json"
 
-# Daemon/Flask/Discord logs (in user home for easy access, gitignore-safe)
+# Daemon/Flask logs (in user home for easy access, gitignore-safe)
 LOGS_DIR = Path.home() / "cuttle_logs"
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -115,11 +117,6 @@ tray_icon = None  # Set by setup_tray, used by Exit handler
 _flask_restart_lock = threading.Lock()
 _flask_generation = 0
 _flask_restart_in_progress = False
-# Discord often dies at boot (DNS not ready). Back off respawns so the console
-# is not flooded with "discord exited … restarting" every 5 seconds.
-_discord_restart_delay_s = 5.0
-_discord_restart_not_before = 0.0
-_discord_live_since = 0.0
 
 
 def get_python_cmd() -> str:
@@ -380,34 +377,6 @@ def start_flask() -> bool:
     return True
 
 
-def start_discord_bot() -> bool:
-    """Start Discord bot."""
-    global _discord_live_since
-    if "discord" in processes and processes["discord"].poll() is None:
-        return True
-    _reload_env_file()
-    if not os.getenv("DISCORD_TOKEN"):
-        print("[DAEMON] DISCORD_TOKEN not set - skipping Discord bot")
-        return False
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(SRC_ROOT)
-    log_path = LOGS_DIR / "discord.log"
-    logf = open(log_path, "a", encoding="utf-8")
-    _process_log_handles.append(logf)
-    logf.write(f"\n--- Discord bot started {datetime.now().isoformat()} ---\n")
-    logf.flush()
-    proc = subprocess.Popen(
-        [get_python_cmd(), str(SRC_ROOT / "bots" / "discord_bot.py")],
-        cwd=str(SRC_ROOT),
-        env=env,
-        stdout=logf,
-        stderr=subprocess.STDOUT,
-    )
-    processes["discord"] = proc
-    _discord_live_since = time.time()
-    return True
-
-
 def _llamacpp_enabled() -> bool:
     try:
         from core.local_llm import is_llamacpp
@@ -634,7 +603,7 @@ def stop_process(name: str) -> bool:
 
 
 def stop_all_processes():
-    """Stop all managed processes (Flask, llama-server, Discord)."""
+    """Stop all managed processes (Flask, llama-server)."""
     for name in list(processes.keys()):
         stop_process(name)
 
@@ -649,8 +618,6 @@ def restart_process(name: str) -> bool:
         time.sleep(1.0)
         return start_llamacpp()
     stop_process(name)
-    if name == "discord":
-        return start_discord_bot()
     if name == "llamacpp":
         return start_llamacpp()
     return False
@@ -1275,10 +1242,6 @@ def _setup_tray():
     def on_home_automation(icon, item):
         webbrowser.open(_flask_url("/home_automation.html"))
 
-    def on_restart_bot(icon, item):
-        print("[DAEMON] Tray: restarting Discord bot...")
-        restart_process("discord")
-
     def on_restart_flask(icon, item):
         print("[DAEMON] Tray: restarting Flask server...")
         restart_process("flask")
@@ -1307,7 +1270,6 @@ def _setup_tray():
         pystray.MenuItem("Home Automation…", on_home_automation),
         pystray.MenuItem("Lights", lights_menu),
         pystray.Menu.SEPARATOR,
-        pystray.MenuItem("Restart Bot", on_restart_bot),
         pystray.MenuItem("Restart Flask", on_restart_flask),
     ]
     if _llamacpp_enabled():
@@ -1450,7 +1412,7 @@ class _Tee:
 
 def run_daemon():
     """Run daemon loop: start services, watch pipelines for hot-reload, system tray."""
-    global daemon_running, _discord_restart_delay_s, _discord_restart_not_before
+    global daemon_running
 
     _enable_windows_ansi()
 
@@ -1511,9 +1473,9 @@ def run_daemon():
                 print(f"[DAEMON] Phone test:  {url}/api/lan-ping")
     except Exception:
         pass
-    start_discord_bot()
+    print("[DAEMON] Discord inbound gateway is not started (optional REST agent-ops only).")
 
-    # Auto-start default pipeline (so Discord/Web Chat triggers work)
+    # Auto-start default pipeline (graph era no-op)
     _auto_start_default_pipeline()
 
     # Start pipeline watcher thread (hot-swap)
@@ -1559,14 +1521,6 @@ def run_daemon():
         for name in list(processes.keys()):
             proc = processes[name]
             if proc.poll() is None:
-                # Healthy long enough → reset Discord respawn backoff
-                if (
-                    name == "discord"
-                    and _discord_live_since
-                    and (time.time() - _discord_live_since) >= 60
-                    and _discord_restart_delay_s > 5.0
-                ):
-                    _discord_restart_delay_s = 5.0
                 continue
             if name == "llamacpp":
                 # On-demand model server: don't auto-respawn. The user (or a
@@ -1575,20 +1529,6 @@ def run_daemon():
                 del processes[name]
                 continue
             if name == "flask" and _flask_restart_in_progress:
-                continue
-            if name == "discord":
-                now = time.time()
-                if now < _discord_restart_not_before:
-                    continue
-                delay = _discord_restart_delay_s
-                print(
-                    f"[DAEMON] discord exited (code {proc.returncode}), "
-                    f"restarting (next backoff {delay:.0f}s if it dies again) — "
-                    f"see {LOGS_DIR / 'discord.log'}"
-                )
-                start_discord_bot()
-                _discord_restart_not_before = time.time() + delay
-                _discord_restart_delay_s = min(delay * 2, 60.0)
                 continue
             print(f"[DAEMON] {name} exited (code {proc.returncode}), restarting...")
             if name == "flask":

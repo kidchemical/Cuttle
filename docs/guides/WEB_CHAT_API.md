@@ -64,10 +64,10 @@ JEV regress watcher is started as a side effect of importing this app (`api.jev.
 Inbound:
 
 ```
-POST /api/chat  (and Discord via POST /api/pipeline-trigger-discord)
+POST /api/chat
   → starred/sticky prefix, attachment vision pre-pass
   → native /restart (before router)
-  → process_message_with_bot  (also used by Discord)
+  → process_message_with_bot
        → local-LLM launch gate
        → harness slash match → _run_harness_web_command / _run_pinned_harness_turn
        → agent router (api.agent_router)
@@ -75,6 +75,8 @@ POST /api/chat  (and Discord via POST /api/pipeline-trigger-discord)
   → SSE (_generate_chat_stream) + persist (_make_auth_assistant_saver)
   → prepare_assistant_text_for_actions (confirms / action forms)
 ```
+
+Inbound Discord DM chat (`POST /api/pipeline-trigger-discord`) is **retired**. Optional Discord REST agent-ops do not use this coordinator. Future surfaces should share one authenticated ingress (see [`../architecture/extension-boundaries.md`](../architecture/extension-boundaries.md)).
 
 Siblings that **must stay consistent** with this path: `api.chat_delivery` (turn tokens, pending results), `api.chat_run_registry` (busy/cancel), `api.starred_slash`, `api.vision_prepass`, `api.flask_restart`, `api.agent_harness.kernel`.
 
@@ -144,7 +146,7 @@ Order if you ever extract — **preserve routes, JSON shapes, and Flask restart*
 3. **Action-form HTTP** — thin wrappers over `action_forms` / `project_actions`.
 4. **Live-status helpers** — move `set/get/clear_chat_live_status` next to `chat_delivery` so supervised/auth stop importing this module.
 5. **Harness web command shims** (`_run_harness_web_command`) — already thin; router should depend on `agent_harness`, not this file.
-6. **Chat-turn coordinator last** — `chat_endpoint` + `process_message_with_bot` + SSE. Highest risk to daemon restart and Discord.
+6. **Chat-turn coordinator last** — `chat_endpoint` + `process_message_with_bot` + SSE. Highest risk to daemon restart.
 
 Do not extract “a thousand lines” without a failing product reason and a dedicated PR series.
 

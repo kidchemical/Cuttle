@@ -5249,13 +5249,6 @@
             keywords: 'restart flask daemon reload graceful when-idle force status',
         },
         { prefix: '/help', label: 'Help', hint: 'Show command help', category: 'command' },
-        {
-            prefix: '/invite ',
-            label: 'Invite Discord',
-            hint: 'Bind a Discord person to this chat (same Cursor Agent)',
-            category: 'command',
-            keywords: 'discord invite dm joey jambit',
-        },
     ];
 
     /**
@@ -5625,7 +5618,7 @@
         }).catch(() => {});
     }
 
-    /** Server copy is what Discord DMs use; migrate localStorage on first load. */
+    /** Server copy is what new chats use; migrate localStorage on first load. */
     function hydrateStarredSlashFromServer() {
         fetch('/api/settings/starred-slash')
             .then((r) => r.json())
@@ -8587,7 +8580,7 @@
                 const safeLabel = escapeHtmlInline(displayLabel);
                 const starred = isSlashCommandStarred(chip.prefix);
                 let tipBase = starred
-                    ? chip.prefix + ' — starred default for new chats and Discord DMs'
+                    ? chip.prefix + ' — starred default for new chats'
                     : chip.prefix;
                 if (isCursor) {
                     tipBase +=
@@ -8783,7 +8776,7 @@
                                     : 'Star — default working project for new chats (only one)')
                                 : (starred
                                     ? 'Unstar — stop applying to new chats'
-                                    : 'Star — apply to new Cuttle chats and Discord DMs')) +
+                                    : 'Star — apply to new Cuttle chats')) +
                             '" aria-label="' +
                             (starred
                                 ? (cat === 'project' ? 'Unstar project' : 'Unstar command')

@@ -264,7 +264,6 @@ def should_invoke_router(
         "/help",
         "/pipelines",
         "/pipeline ",
-        "/invite",
         "/cmd ",
         "[button:",
         "[action-form:",

@@ -14,7 +14,6 @@ This map describes **what exists and how it boots**, not a mandate to extract `w
 start_cuttle.sh | src/scripts/cuttle_daemon.py
   → load src/.env
   → spawn Flask: python src/api/web_chat_api.py  (HTTPS :8080)
-  → spawn Discord: python src/bots/discord_bot.py  (optional token)
   → tray / cron / local worker loop (platform-dependent)
   → Flask restart: daemon reads cuttle_flask_restart_request.json (not agent taskkill)
 ```
@@ -25,7 +24,7 @@ start_cuttle.sh | src/scripts/cuttle_daemon.py
 
 **Android:** `apps/mobile` Capacitor shell; `apps/android_companion` / `apps/android_bt_voice` are additional native surfaces.
 
-**Flask-alone:** `python src/api/web_chat_api.py` (repo root; same as the daemon child). README currently names `src/scripts/start_api_server.py`, which starts a **different** Flask on **:5000** (`time_series_api.py`).
+**Flask-alone:** `python src/api/web_chat_api.py` (repo root; same as the daemon child). Do not use `src/scripts/start_api_server.py` (different Flask on **:5000**, `time_series_api.py`).
 
 **Do not use** `src/scripts/launchers/start_web_chat.py` (or the other three files in that folder): they `chdir`/`sys.path` to `launchers/` and import `web_chat_api.py` / `project_manager` from the wrong directory. **Confirmed broken** by source, not by running.
 
@@ -50,19 +49,20 @@ Daemon liveness is `GET /api/status`. `GET /api/health` is a heavier diagnostic 
 
 ---
 
-## Chat turn (web + Discord)
+## Chat turn (web)
 
 ```
-User (web / Discord DM)
-  → POST /api/chat  or  POST /api/pipeline-trigger-discord
+User (web)
+  → POST /api/chat
   → sticky/starred slash, vision pre-pass
   → native /restart
-  → process_message_with_bot
-       → local LLM launch gate
-       → catalog slash → _run_harness_web_command → api.agent_harness.kernel
-       → api.agent_router (clean sessions)
+  → process_message_with_bot → harness kernel / agent router
   → SSE + persist + action-form rewrite
 ```
+
+**Discord inbound chat gateway:** retired (2026-09). See [`extension-boundaries.md`](extension-boundaries.md) and [`../reviews/discord-cleanup-2026-09.md`](../reviews/discord-cleanup-2026-09.md).
+
+**Discord channel read/post (keep; no gateway required):** `python -m api.discord_cli` (REST GET) and `discord.post` (REST POST via `api.discord_ops` / `project_actions`). Token from `src/.env` does not start a gateway. Per-project aliases: `{project}/.cuttle/actions/discord-post.yaml`. Arbitrary snowflakes cannot bypass the post allowlist.
 
 **Live turn:** `api.chat_delivery` + `api.chat_run_registry` + `/api/chat-steer` / `/api/chat-cancel`.
 
@@ -129,7 +129,7 @@ Canonical: `python -m api.*` (`.cuttle/docs/agent-ops-cli.md`). Hub actions: `.c
 
 ## Legacy / superseded (see audit)
 
-Graph JSON pipelines and the node-editor **page** are gone. Many `/api/pipeline-*` routes **410**. Jobs UI still POSTs `/api/pipeline-run-now` (410). `running_pipelines` is **never written** at runtime (`pipeline-reload` mutates it only after an unconditional `return`; register-running is 410). Readers (`/api/status`, job-status, sessions/list, job-insight) always see empty. `api_jobs` returns `{jobs: []}` then has an **unreachable** graph-listing body. `pipeline-execution-finish` still has a **reachable** large body — callers not fully traced. Discord **`/api/pipeline-trigger-discord`** is the live DM path (legacy name). `active_executions` is used by the agent kernel, not only graphs.
+Graph JSON pipelines and the node editor are **retired**. Jobs live path: `/api/cuttle-jobs` + workers. Graph `fetch` leftovers remain in `jobs_page.html` / `job_insight.html` until stream 1. Telegram/Slack HTTP is **unwanted**. Discord REST read/post does **not** use a gateway process. Extension map: [`extension-boundaries.md`](extension-boundaries.md). Historical consumer tables: [`../reviews/graph-discord-consumers.md`](../reviews/graph-discord-consumers.md).
 
 `src/launcher.py` vs daemon. Port-5000 time-series stack. `landing_page_backup.html`. Control panel HTML still linked.
 

@@ -8,7 +8,7 @@ Day-to-day backlog: [`.cuttle/learnings/FEATURE_REQUESTS.md`](../.cuttle/learnin
 
 ## True today
 
-- **Chat control plane** — web, Electron Host/Client, Discord DMs
+- **Chat control plane** — web, Electron Host/Client (Discord DMs retired; optional Discord REST agent-ops)
 - **Agent catalog** — `/cursor`, `/codex`, `/claude`, `/muse`, `/hermes`, `/deepseek`, `/opencode`, …
 - **Router** — picks a tentacle on clean sessions; starred/sticky agents bypass it
 - **Workers** — LAN mesh (file copy, shell recipes, Blender shards, self-update). Intent scheduling (`workers.plan`) is partial

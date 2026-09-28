@@ -238,12 +238,12 @@ def generate_test_summary(unit_results, integration_results, individual_results)
     except:
         print(f"   [FAIL] WSL not available - WSL integration tests will fail")
     
-    # Check for Discord.py
+    # Check for requests (Discord REST agent-ops)
     try:
-        import discord
-        print(f"   [PASS] discord.py is available")
+        import requests
+        print(f"   [PASS] requests is available")
     except ImportError:
-        print(f"   [FAIL] discord.py not available - Discord bot tests will fail")
+        print(f"   [FAIL] requests not available")
     
     # Check for OpenAI
     try:

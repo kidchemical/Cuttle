@@ -18,7 +18,8 @@ This file is the home for *what Cuttle is*, *how plugins/sockets should feel*, a
 5. **The router is a socket.** The plug can be a cheap cloud LLM, a local LLM, a programmatic table, or **another agent harness** used as the routing brain. CuttleRouter is the default plug, not the only one.
 6. **Same socket idea everywhere it matters.** Knowledge, Brain (context / memory / retrieval), and reasoning / coordination components should be swappable the same way — definition + provider + consumer — so the host does not care which implementation is mounted.
 7. **Agent ops CLIs (`python -m api…`) are encouraged; a product `cuttle` shell is not.**
-   The home experience remains daemon + web/Electron chat + Discord. Do not spend design
+   The home experience remains daemon + web/Electron chat. Discord read/post are
+   optional agent-ops, not a default gateway. Do not spend design
    budget on a user-facing `cuttle.exe`. Do ship thin **agent toolkit** modules
    (`python -m api.chat_cli`, `api.device_workers.cli`, `api.cuttle_brain`, …) so agents
    stop inventing SQL. See `.cuttle/docs/agent-ops-cli.md`.
@@ -51,7 +52,7 @@ Every swappable capability should have three roles, stolen from dsh’s “capab
 |---|---|
 | **Definition** | A small Python protocol / dataclass. Stable. |
 | **Provider** | One folder (or config row) that implements it. |
-| **Consumer** | Chat, Discord, router — talks only to the definition. |
+| **Consumer** | Chat UI / future surface adapters, router — talks only to the definition. |
 
 A **socket** is that definition plus discovery (“what is plugged in?”) plus a default plug so a fresh home station works.
 

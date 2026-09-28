@@ -2191,25 +2191,6 @@ def serve_about_page():
     """Serve the about page"""
     return send_from_directory(project_root / 'web', 'about_page.html')
 
-DISCORD_STATUS_PATH = Path.home() / "cuttle_logs" / "discord_status.json"
-
-
-@app.route('/api/bot-status', methods=['GET'])
-def api_bot_status():
-    """Return Discord bot connection status (written by bot on connect/disconnect)."""
-    try:
-        if DISCORD_STATUS_PATH.exists():
-            data = json.loads(DISCORD_STATUS_PATH.read_text(encoding='utf-8'))
-            ts = data.get('timestamp', 0)
-            if time.time() - ts < 120:  # Consider stale after 2 min
-                return jsonify({
-                    'connected': data.get('connected', False),
-                    'status': 'online' if data.get('connected') else 'offline',
-                })
-    except Exception:
-        pass
-    return jsonify({'connected': False, 'status': 'offline'})
-
 
 @app.route('/api/status', methods=['GET'])
 def api_status():
@@ -2218,19 +2199,10 @@ def api_status():
     Keep this cheap: no subprocesses, no outbound probes. Diagnostic checks
     belong on GET /api/health (claude CLI, WSL, local LLM).
     """
-    discord_ok = None
-    try:
-        if DISCORD_STATUS_PATH.exists():
-            data = json.loads(DISCORD_STATUS_PATH.read_text(encoding='utf-8'))
-            ts = data.get('timestamp', 0)
-            if time.time() - ts < 120:
-                discord_ok = data.get('connected', False)
-    except Exception:
-        pass
     return jsonify({
         'status': 'ok',
         'flask': True,
-        'discord_connected': discord_ok,
+        'discord_connected': False,
         'running_pipeline_count': len(running_pipelines),
     })
 
@@ -6040,10 +6012,6 @@ def chat_endpoint():
 • `/build`, `/deploy`, … — names come from each project
 • `/cmd <name>` — same, explicit form
 
-**Discord:**
-• `/invite` — list Discord people who have DMed JamBit OS
-• `/invite <name|id>` — bind them to this chat (same Cursor Agent resume)
-
 **Tips:**
 • Results show directly in chat; executions are logged in Query Reports"""
             
@@ -6152,48 +6120,6 @@ def chat_endpoint():
                 _attachment_history_text(message_content, _att_note),
                 metadata=_turn_meta or None,
             )
-
-        # /invite [name] — bind a Discord identity to this CH (same Cursor resume).
-        try:
-            from api.discord_chat_bridge import parse_invite_slash, handle_invite_command
-            _invite_query = parse_invite_slash(message_content)
-        except Exception as _inv_err:
-            print(f"[CHAT] invite parse failed: {_inv_err}", flush=True)
-            _invite_query = None
-        if _invite_query is not None:
-            if not _auth_user or chat_session_id is None:
-                return jsonify({
-                    'success': True,
-                    'response': (
-                        'Sign in and open a chat first, then `/invite <name>` '
-                        'to bind their Discord DMs to this session.'
-                    ),
-                    'session_id': chat_session_id,
-                    'type': 'invite',
-                })
-            try:
-                _invite_body = handle_invite_command(int(chat_session_id), _invite_query)
-            except Exception as _inv_err:
-                print(f"[CHAT] invite failed: {_inv_err}", flush=True)
-                _invite_body = {
-                    'success': True,
-                    'response': f'❌ Invite failed: {_inv_err}',
-                    'type': 'invite',
-                    'invited': False,
-                }
-            _invite_body['session_id'] = chat_session_id
-            if _invite_query:
-                _persist_user_turn(chat_session_id)
-                try:
-                    get_auth_db().add_message(
-                        chat_session_id,
-                        'assistant',
-                        _invite_body.get('response') or '',
-                        metadata={'origin': 'invite'},
-                    )
-                except Exception as _pe:
-                    print(f"[CHAT] persist invite reply failed: {_pe}")
-            return jsonify(_invite_body)
 
         # On-demand llama.cpp for /hermes and launch Yes/No buttons (before slash handlers).
         # Local-mode prompts still run in process_message_with_bot (after the user message is saved).
@@ -6948,206 +6874,6 @@ def _ensure_default_pipeline_registered(trigger_type: str):
     """If no pipeline is running with the requested trigger, register the first loadable pipeline that has it."""
     _register_first_pipeline_with_trigger(trigger_type)
 
-
-@app.route('/api/pipeline-trigger-discord', methods=['POST'])
-def discord_trigger_endpoint():
-    """Handle Discord bot messages via pipeline system"""
-    try:
-        if not PIPELINE_AVAILABLE:
-            return jsonify({
-                'success': False,
-                'error': 'Chat backend not available'
-            }), 503
-        
-        data = request.get_json()
-        
-        if not data or 'message' not in data:
-            return jsonify({
-                'success': False,
-                'error': 'No message provided'
-            }), 400
-        
-        message_content = (data.get('message') or '').strip()
-        raw_attachments = data.get('attachments') or []
-        user_context = data.get('user_context', {})
-        session_data = data.get('session', {})
-        
-        if not message_content and not raw_attachments:
-            return jsonify({
-                'success': False,
-                'error': 'Empty message'
-            }), 400
-
-        if raw_attachments:
-            try:
-                from api.vision_prepass import augment_message_with_attachments
-
-                # Discord may pass url/mime/filename and optional local path/data
-                cleaned = []
-                for a in raw_attachments:
-                    if not isinstance(a, dict):
-                        continue
-                    cleaned.append({
-                        'filename': a.get('filename') or 'file',
-                        'mime': a.get('mime') or a.get('content_type') or '',
-                        'url': a.get('url'),
-                        'path': a.get('path'),
-                        'data': a.get('data'),
-                    })
-                if cleaned:
-                    message_content = augment_message_with_attachments(message_content, cleaned)
-                    print(f"[VISION] discord pre-pass ok for {len(cleaned)} file(s)")
-            except Exception as _vp_err:
-                print(f"[VISION] discord pre-pass failed: {_vp_err}")
-        
-        # Channel-level security: pairing / allowFrom for Discord
-        if PAIRING_AVAILABLE:
-            try:
-                settings = get_settings_manager()
-                channel_cfg = settings.get_channel_config("discord")
-                dm_policy = channel_cfg.get("dmPolicy", "open")
-                allow_from = channel_cfg.get("allowFrom") or ["*"]
-                user_id = str(user_context.get("id") or session_data.get("user_id") or "")
-                identity = user_id or "discord_anon"
-                pm = get_pairing_manager()
-                access = pm.check_access(
-                    "discord", identity, dm_policy, allow_from,
-                    meta={"user_id": user_id, "guild_id": user_context.get("guild_id"), "username": user_context.get("username")}
-                )
-                if not access["allowed"]:
-                    return jsonify({
-                        "success": False,
-                        "error": "pairing_required",
-                        "response": access["message"],
-                        "pairing_code": access.get("pairing_code"),
-                    }), 403
-            except Exception as e:
-                print(f"[PAIRING] Discord check error: {e}")
-
-        # Session kind and routing for per-channel pipeline routing
-        user_id = str(user_context.get('id') or session_data.get('user_id') or '')
-        guild_id = str(user_context.get('guild_id') or '')
-        channel_type = (user_context.get('channel_type') or 'text').lower()
-        if channel_type == 'private' or not guild_id:
-            session_kind = 'discord_dm'
-            routing_key = f'discord_dm_{user_id}' if user_id else 'discord_dm'
-        else:
-            session_kind = 'discord_guild'
-            routing_key = f'discord_guild_{guild_id}'
-        session_data = dict(session_data)
-        session_data['session_kind'] = session_kind
-        session_data['routing_key'] = routing_key
-
-        db_sid = None
-        try:
-            from api.discord_chat_bridge import (
-                persist_discord_assistant_turn,
-                persist_discord_user_turn,
-                resolve_discord_chat_session,
-            )
-            db_sid, _created = resolve_discord_chat_session(user_context, session_data)
-        except Exception as e:
-            print(f"[DISCORD-CH] bridge attach failed: {e}")
-            db_sid = None
-
-        # DMs follow the Cuttle-app starred sticky agent (and this CH's last
-        # /cursor|/claude|… turn). Plain "hi" must not fall through with no agent.
-        if session_kind == 'discord_dm':
-            try:
-                from api.starred_slash import apply_default_sticky_prefix
-                message_content = apply_default_sticky_prefix(message_content, db_sid)
-            except Exception as e:
-                print(f"[DISCORD-CH] sticky prefix failed: {e}")
-
-        from api import chat_delivery as _chat_delivery
-        if db_sid is not None:
-            if _chat_delivery.is_busy(db_sid):
-                return jsonify({
-                    'success': False,
-                    'error': 'busy',
-                    'busy': True,
-                    'session_id': db_sid,
-                    'response': (
-                        '⏳ Still working on your previous message in this chat. '
-                        'Wait for it to finish, or stop it first.'
-                    ),
-                }), 409
-            if not _chat_delivery.try_begin(db_sid):
-                return jsonify({
-                    'success': False,
-                    'error': 'busy',
-                    'busy': True,
-                    'session_id': db_sid,
-                    'response': (
-                        '⏳ Still working on your previous message in this chat. '
-                        'Wait for it to finish, or stop it first.'
-                    ),
-                }), 409
-            persist_discord_user_turn(db_sid, message_content, user_context)
-            _turn_token = _chat_delivery.current_turn(db_sid)
-        else:
-            _turn_token = None
-
-        result = None
-        try:
-            # Same path as web chat: sticky/harness slash → router.
-            sid = session_data.get('session_id') or (
-                f'db_session_{db_sid}' if db_sid is not None else f'discord_{user_id}'
-            )
-            result = process_message_with_bot(
-                message_content,
-                sid,
-                session_kind=session_kind,
-                routing_key=routing_key,
-                is_owner=bool(user_context.get('is_owner')),
-            )
-            if result.get('success') and db_sid is not None:
-                if _chat_delivery.is_stale_turn(db_sid, _turn_token) or _chat_delivery.is_turn_cancelled(db_sid):
-                    print(
-                        f"[DISCORD-CH] discarding late reply for session {db_sid}: "
-                        f"turn {_turn_token} was superseded",
-                        flush=True,
-                    )
-                else:
-                    persist_discord_assistant_turn(db_sid, result)
-        finally:
-            if db_sid is not None:
-                try:
-                    _chat_delivery.end(db_sid, turn=_turn_token)
-                except Exception:
-                    pass
-
-        if result.get('success'):
-            response = result.get('response', 'I processed your request.')
-            print(f"[PIPELINE] Discord execution successful via {result.get('pipeline') or result.get('type') or 'harness'}")
-
-            out = {
-                'success': True,
-                'response': response,
-                'type': result.get('type') or 'pipeline_execution',
-                'pipeline': result.get('pipeline'),
-            }
-            if db_sid is not None:
-                out['session_id'] = db_sid
-            return jsonify(out)
-
-        error = result.get('error', 'Unknown error')
-        print(f"[PIPELINE] Discord execution failed: {error}")
-        return jsonify({
-            'success': False,
-            'error': error,
-            'response': result.get('response') or _no_pipeline_chat_result()['response'],
-        }), 404
-            
-    except Exception as e:
-        print(f"Discord trigger endpoint error: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({
-            'success': False,
-            'error': str(e),
-            'response': 'I encountered an unexpected error. Please try again later.'
-        }), 500
 
 def _handle_external_trigger(trigger_type, data, channel_name):
     """Shared handler for Telegram/Slack: pairing, then the same chat path as web."""
@@ -8491,8 +8217,7 @@ def wizard_status():
         api_keys_set = bool(os.environ.get('OPENAI_API_KEY') or os.environ.get('API_KEY') or os.environ.get('ANTHROPIC_API_KEY'))
         channels_cfg = (settings.get_setting('channels') or {})
         webchat_cfg = channels_cfg.get('webchat') or {}
-        discord_cfg = channels_cfg.get('discord') or {}
-        channels_configured = bool(webchat_cfg.get('allowFrom') or discord_cfg.get('allowFrom'))
+        channels_configured = bool(webchat_cfg.get('allowFrom'))
         next_step = None
         if not api_keys_set:
             next_step = 'api_keys'
@@ -8685,7 +8410,7 @@ def update_sandbox_settings():
 
 @app.route('/api/settings/starred-slash', methods=['GET'])
 def get_starred_slash_api():
-    """Starred sticky agent for new Cuttle chats and Discord DMs."""
+    """Starred sticky agent for new Cuttle chats."""
     try:
         from api.starred_slash import get_starred_prefixes
         return jsonify({'success': True, 'prefixes': get_starred_prefixes()})

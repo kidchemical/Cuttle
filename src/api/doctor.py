@@ -39,7 +39,7 @@ def run_checks() -> Dict[str, Any]:
     checks.append({
         "name": "trigger_discord",
         "status": "ok",
-        "message": "Discord DMs use slash agents (legacy URL /api/pipeline-trigger-discord)",
+        "message": "No inbound Discord gateway; optional REST agent-ops if DISCORD_TOKEN is set",
     })
     checks.append({
         "name": "default_pipeline_webchat",

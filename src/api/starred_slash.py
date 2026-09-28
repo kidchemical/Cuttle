@@ -1,8 +1,7 @@
-"""Starred sticky slash agents (e.g. /cursor) — shared by Cuttle chat UI and Discord.
+"""Starred sticky slash agents (e.g. /cursor) for Cuttle chat.
 
-The chat palette star used to live only in browser localStorage, so Discord DMs
-always fell through to the default pipeline (Cuttle_Main). The star is now also
-stored in settings.json so inbound Discord can apply the same default.
+The palette star is stored in settings.json so new chats (and any future
+surface adapter using the same ingress) share the same default.
 """
 
 from __future__ import annotations
@@ -180,8 +179,8 @@ def resolve_sticky_prefix(
 ) -> Optional[str]:
     """The sticky prefix this message should run under, or None.
 
-    Session history wins over the global star so an invited Cursor chat stays
-    on Cursor Agent even if the star later changes. ``star_on_new_session_only``
+    Session history wins over the global star so a chat that already picked
+    Cursor stays on Cursor even if the star later changes. ``star_on_new_session_only``
     mirrors the chat page, where the star seeds new chats but never takes over a
     conversation that has been running without an agent.
     """
@@ -209,7 +208,7 @@ def apply_default_sticky_prefix(
 ) -> str:
     """Prepend the session sticky or starred default onto a plain message.
 
-    Leaves explicit slash commands alone (``/help``, ``/cursor …``, ``/invite``).
+    Leaves explicit slash commands alone (``/help``, ``/cursor …``).
     With ``allow_cloud_cli`` false (Local-mode chats) only local-capable
     prefixes are applied, so a plain message never turns into a blocked
     cloud-CLI command. ``no_agent`` is the user removing the agent badge: the

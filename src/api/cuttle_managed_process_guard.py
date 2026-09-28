@@ -34,10 +34,6 @@ DENY_MESSAGE = (
 DEFAULT_MANAGED_FRAGMENTS = (
     "web_chat_api",
     "cuttle_daemon",
-    "discord_bot.py",
-    "discord_bot",
-    "bot_mcp.py",
-    "bot_mcp",
 )
 
 # Deprecated spoofable marker — kept only so tests prove it is ignored.
@@ -54,19 +50,19 @@ _TASKKILL = re.compile(r"(?i)\btaskkill\b")
 _STOP_PROCESS = re.compile(r"(?i)\bStop-Process\b")
 _WMIC_DELETE = re.compile(r"(?i)\bwmic\b.*\bprocess\b.*\b(?:delete|call\s+terminate)\b")
 _FILTER_MANAGED = re.compile(
-    r"(?i)(?:web_chat_api|cuttle_daemon|discord_bot\.py|discord_bot|bot_mcp\.py|bot_mcp)"
+    r"(?i)(?:web_chat_api|cuttle_daemon)"
 )
 _WHERE_OBJECT_KILL = re.compile(
-    r"(?i)Where-Object[^\n]*CommandLine[^\n]*(?:web_chat_api|cuttle_daemon|discord_bot|bot_mcp)"
+    r"(?i)Where-Object[^\n]*CommandLine[^\n]*(?:web_chat_api|cuttle_daemon)"
     r"[^\n]*(?:taskkill|Stop-Process|kill)"
 )
 _GET_CIM_KILL = re.compile(
-    r"(?i)Get-CimInstance[^\n]*(?:web_chat_api|cuttle_daemon|discord_bot|bot_mcp)[^\n]*"
+    r"(?i)Get-CimInstance[^\n]*(?:web_chat_api|cuttle_daemon)[^\n]*"
     r"(?:taskkill|Stop-Process|ForEach-Object)"
 )
 _TASKKILL_IM_FILTER = re.compile(
     r"(?i)taskkill\b[^\n]*/(?:IM|im)\s+python\.exe[^\n]*/(?:FI|fi)[^\n]*"
-    r"(?:web_chat_api|cuttle_daemon|discord_bot|bot_mcp|WINDOWTITLE\s+eq\s+web_chat)"
+    r"(?:web_chat_api|cuttle_daemon|WINDOWTITLE\s+eq\s+web_chat)"
 )
 
 

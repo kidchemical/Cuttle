@@ -1,6 +1,4 @@
 # Cuttle Dependencies
-# Core Discord bot functionality
-discord.py>=2.3.0
 python-dotenv>=1.0.0
 
 # AI and LLM functionality

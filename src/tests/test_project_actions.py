@@ -141,7 +141,7 @@ def test_discord_post_allowlist_and_mock_http(tmp_path: Path):
     mock_resp.status_code = 200
     mock_resp.json.return_value = {"id": "msg1"}
 
-    with patch("api.project_actions._load_discord_bot_token", return_value="tok"):
+    with patch("api.discord_ops.token.load_discord_bot_token", return_value="tok"):
         with patch("requests.post", return_value=mock_resp) as post:
             result = execute_pending_action(action_id, session_id="sess")
     assert result["success"] is True
@@ -176,10 +176,41 @@ def test_unknown_channel_rejected(tmp_path: Path):
     import re
 
     action_id = re.search(r'id="([a-f0-9]+)"', out).group(1)
-    with patch("api.project_actions._load_discord_bot_token", return_value="tok"):
+    with patch("api.discord_ops.token.load_discord_bot_token", return_value="tok"):
         result = execute_pending_action(action_id, session_id="sess")
     assert result["success"] is False
     assert "Unknown Discord channel" in result["response"]
+
+
+def test_discord_post_rejects_arbitrary_numeric_channel(tmp_path: Path):
+    clear_pending_for_tests()
+    _write_action(
+        tmp_path,
+        "discord-post",
+        (
+            "name: discord.post\n"
+            "type: discord.post\n"
+            "channels:\n"
+            "  feature-updates: '555'\n"
+        ),
+    )
+    text = (
+        '<cuttle_confirm action="discord.post" channel="999000111222">'
+        "x"
+        "</cuttle_confirm>"
+    )
+    out, _ = rewrite_cuttle_confirms(
+        text, session_id="sess", project_path=str(tmp_path)
+    )
+    import re
+
+    action_id = re.search(r'id="([a-f0-9]+)"', out).group(1)
+    with patch("api.discord_ops.token.load_discord_bot_token", return_value="tok"):
+        with patch("requests.post") as post:
+            result = execute_pending_action(action_id, session_id="sess")
+    assert result["success"] is False
+    assert "Unknown Discord channel" in result["response"]
+    assert not post.called
 
 
 def test_inline_confirm_payload_roundtrip(tmp_path: Path):

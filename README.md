@@ -2,7 +2,7 @@
 
 <img src="src/img/cuttle-logo.png" alt="Cuttle" width="300">
 
-**A harness of harnesses. Run Cursor, Codex, Claude, Muse Code, and OpenCode from one self-hosted chat, on your desktop, your phone, or Discord.**
+**A harness of harnesses. Run Cursor, Codex, Claude, Muse Code, and OpenCode from one self-hosted chat — desktop, phone, or browser.**
 
 Pick an agent per chat or let the router choose, and fan jobs out across every machine on your LAN. It's open source down to the last line: describe the Cuttle you want, and your agents build it.
 
@@ -21,7 +21,7 @@ Pick an agent per chat or let the router choose, and fan jobs out across every m
 
 ## What it is
 
-Cuttle is a control plane for the coding agents you already use. It runs as a daemon on your PC (tray icon or headless), hosts vendor agent CLIs such as Cursor, Codex, Claude Code, Muse Code, and Hermes, and gives them one chat UI with shared history, projects, and tools. The same chats open in the browser, in the Electron desktop app, on an Android phone, or in Discord DMs.
+Cuttle is a control plane for the coding agents you already use. It runs as a daemon on your PC (tray icon or headless), hosts vendor agent CLIs such as Cursor, Codex, Claude Code, Muse Code, and Hermes, and gives them one chat UI with shared history, projects, and tools. The same chats open in the browser, in the Electron desktop app, and on an Android phone. Discord is optional **agent operations** (read a channel, confirmed posts) — not a default chat gateway.
 
 Each chat can stick to one agent, or leave the choice to the **agent router**, which picks a harness for cost and quality and escalates when a run fails. Agents report progress, keep a pinned task list, and ask questions as clickable cards instead of walls of text. When a job is too big for one machine, **Cuttle Workers** splits it across the other PCs on your network.
 
@@ -65,7 +65,7 @@ The codebase is set up so an agent can do that well:
 | Surface | What you get |
 | --- | --- |
 | **Open source** | MIT-licensed Python and vanilla JS with agent briefings built in, so any hosted agent can extend Cuttle itself. See [Make it yours](#make-it-yours). |
-| **Chat** | Web UI, Electron desktop (Host + LAN Client), Android app, and Discord DMs over one history. Streamed progress notes, pinned **Tasks** lists, clickable **action forms** for questions and approvals, image and PDF attachments with a vision pre-pass, and mid-turn steering for Codex and Muse Code. |
+| **Chat** | Web UI, Electron desktop (Host + LAN Client), and Android app over one history. Streamed progress notes, pinned **Tasks** lists, clickable **action forms** for questions and approvals, image and PDF attachments with a vision pre-pass, and mid-turn steering for Codex and Muse Code. |
 | **Agents** | `/cursor`, `/codex`, `/claude`, `/muse`, `/hermes`, `/deepseek`, `/opencode`, `/antigravity`, and more from a shared harness catalog ([`src/api/agent_harness/agents/`](src/api/agent_harness/agents/)). Star one as the default for new chats. |
 | **Agent router** | Picks a harness on clean sessions and escalates on failure (Cursor Auto → Grok → Codex fallback chain). Starred or sticky agents bypass it, and Stop is always terminal. |
 | **Workspace** | Split any pane horizontally or vertically, drag to resize, and keep a separate layout per space. 14 themes plus YouTube or video wallpapers behind the whole UI. |
@@ -82,7 +82,7 @@ The codebase is set up so an agent can do that well:
 
 - Windows 10/11 **or** Ubuntu 22.04+
 - Python 3.11+ (the project uses a local `.venv`)
-- Optional: Node.js 18+ (Electron desktop), a Discord bot token, OpenAI / Anthropic keys, Ollama, and the vendor agent CLIs you want to host (Cursor, Codex, Claude, …)
+- Optional: Node.js 18+ (Electron desktop), a Discord bot token **only if** you want REST agent-ops (`python -m api.discord_cli` / `discord.post`), OpenAI / Anthropic keys, Ollama, and the vendor agent CLIs you want to host (Cursor, Codex, Claude, …)
 
 ### Install and run
 
@@ -110,7 +110,7 @@ copy src\.env.example src\.env
 
 Open [https://127.0.0.1:8080](https://127.0.0.1:8080) (self-signed HTTPS). Setup status and health checks live at `/wizard_page.html`.
 
-The daemon owns Flask (port **8080**), the Discord bot, cron, the tray icon, and the local worker loop. To run Flask alone (no tray, Discord, or cron), use `src/scripts/start_api_server.py`.
+The daemon owns Flask (port **8080**), cron, the tray icon, and the local worker loop. It does **not** start a Discord gateway. To run Flask alone (no tray or cron), prefer `python src/api/web_chat_api.py` from the repo (see [`docs/architecture/repository-map.md`](docs/architecture/repository-map.md)).
 
 ### Try it
 
@@ -157,11 +157,13 @@ flowchart LR
     Web[Web chat]
     Desk[Electron Host / Client]
     Phone[Android app]
-    Discord[Discord bot]
+  end
+  subgraph AgentOps
+    DiscordREST[Discord REST read/post]
   end
   Daemon[cuttle_daemon<br/>tray · cron · hot reload] -. spawns .-> API
-  Daemon -. spawns .-> Discord
-  Web & Desk & Phone & Discord --> API[Flask API :8080]
+  Web & Desk & Phone --> API[Flask API :8080]
+  DiscordREST -.-> API
   API --> Router[Agent router]
   Router --> Harness[Agent harness adapters]
   Harness --> CLIs[Cursor · Codex · Claude · Muse · Hermes · DeepSeek · OpenCode]
@@ -174,12 +176,12 @@ flowchart LR
 
 | Path | Purpose |
 | --- | --- |
-| `src/scripts/cuttle_daemon.py` | Daemon: spawns Flask and the Discord bot, runs cron, the tray icon, hot reload, and the local worker loop. |
+| `src/scripts/cuttle_daemon.py` | Daemon: spawns Flask, runs cron, the tray icon, hot reload, and the local worker loop. |
 | `src/api/` | Flask API (`web_chat_api.py`), chat delivery, action forms, and the `python -m api.*` agent ops CLIs. |
 | `src/api/agent_harness/` | Harness adapters and the bundled agent catalog (`agents/`). |
 | `src/api/agent_router/` | Picks a harness per turn and handles escalation. |
 | `src/api/device_workers/` | Cuttle Workers mesh: jobs, shards, and self-update. |
-| `src/bots/` | Discord bot bridge. |
+| `src/api/discord_ops/` / `discord_cli/` | Optional Discord REST agent-ops (not a chat surface). |
 | `src/web/` | Vanilla JS web UI: chat, app shell, settings, dashboards. |
 | `electron/` | Desktop Host and LAN Client. |
 | `apps/mobile/` | Android app (Capacitor WebView onto the Host). |

@@ -105,6 +105,27 @@ def test_messages_unknown_alias(tmp_path: Path):
     assert payload["ok"] is False
 
 
+def test_messages_unknown_snowflake_with_project_rejected(tmp_path: Path):
+    root = _project_with_discord(tmp_path)
+    code, out = _run(["messages", "999888777666", "--project", str(root), "--json"])
+    assert code == 2
+    payload = json.loads(out)
+    assert payload["ok"] is False
+    assert "not allowlisted" in payload.get("detail", "")
+
+
+def test_messages_allowlisted_snowflake_with_project(tmp_path: Path):
+    root = _project_with_discord(tmp_path)
+    fake = [{"id": "m1", "timestamp": "t", "content": "ok", "author": {"id": "u", "username": "a"}}]
+    with patch("api.discord_cli.cli._discord_request", return_value=(200, fake, "")) as req:
+        code, out = _run(
+            ["messages", "222", "--project", str(root), "--limit", "1", "--json"]
+        )
+    assert code == 0
+    assert json.loads(out)["channel_id"] == "222"
+    assert req.call_args[0][1] == "/channels/222/messages"
+
+
 def test_messages_snowflake_without_project():
     fake = [
         {

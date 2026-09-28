@@ -130,25 +130,7 @@ class JamBitDebugLauncher:
         except Exception as e:
             print(f"❌ Flask-CORS check failed: {e}")
         
-        # Check Discord.py
-        try:
-            result = subprocess.run([self.python_cmd, "-c", "import discord; print(f'Discord.py {discord.__version__}')"], 
-                                  capture_output=True, text=True, timeout=10)
-            if result.returncode == 0:
-                print(f"✅ {result.stdout.strip()}")
-            else:
-                print(f"📦 Installing Discord.py and dependencies...")
-                deps = [
-                    "discord.py>=2.3.0", "python-dotenv", "openai", 
-                    "pillow", "psutil", "mss", "pytesseract", "opencv-python"
-                ]
-                if not self.is_wsl:
-                    deps.extend(["pywin32", "pyautogui", "pygetwindow", "pywinauto", "keyboard", "mouse"])
-                
-                self.install_package(" ".join(deps))
-        except Exception as e:
-            print(f"❌ Discord.py check failed: {e}")
-        
+        # Discord.py gateway library is not required.
         return True
     
     def install_package(self, package):
@@ -178,60 +160,9 @@ class JamBitDebugLauncher:
         return True
     
     def start_discord_bot(self):
-        """Start the Discord bot with error capture"""
-        print("🦑 Starting Discord bot...")
-        
-        if self.is_wsl:
-            bot_script = "bot_wsl.py"
-        else:
-            bot_script = "bot_deprecated.py"
-        
-        bot_path = self.project_root / bot_script
-        print(f"   Bot script: {bot_path}")
-        print(f"   Bot exists: {bot_path.exists()}")
-        
-        try:
-            # Test if bot script can be imported first
-            print("   Testing bot script import...")
-            test_result = subprocess.run([
-                self.python_cmd, "-c", f"import sys; sys.path.insert(0, '{self.project_root}'); import {bot_script[:-3]}"
-            ], capture_output=True, text=True, timeout=10)
-            
-            if test_result.returncode != 0:
-                print(f"❌ Bot script import failed:")
-                print(f"   stdout: {test_result.stdout}")
-                print(f"   stderr: {test_result.stderr}")
-                return False
-            
-            print("   Bot script import successful")
-            
-            # Start the bot
-            process = subprocess.Popen([
-                self.python_cmd, bot_script
-            ], cwd=self.project_root, 
-            stdout=subprocess.PIPE, 
-            stderr=subprocess.PIPE,
-            text=True)
-            
-            self.processes.append(("Discord Bot", process))
-            print(f"✅ Discord bot started (PID: {process.pid})")
-            
-            # Give it a moment to start, then check if it's still running
-            time.sleep(2)
-            if process.poll() is not None:
-                stdout, stderr = process.communicate()
-                print(f"❌ Discord bot exited immediately:")
-                print(f"   Return code: {process.returncode}")
-                print(f"   stdout: {stdout}")
-                print(f"   stderr: {stderr}")
-                self.processes.remove(("Discord Bot", process))
-                return False
-            
-            return True
-        except Exception as e:
-            print(f"❌ Failed to start Discord bot: {e}")
-            print(f"   Traceback: {traceback.format_exc()}")
-            return False
+        """Inbound Discord gateway is retired (no-op)."""
+        print("Discord inbound gateway is not part of Cuttle Core (skipped).")
+        return True
     
     def start_web_chat_api(self):
         """Start the Web Chat API server with error capture"""
@@ -356,15 +287,15 @@ class JamBitDebugLauncher:
             bot_started = self.start_discord_bot()
             api_started = self.start_web_chat_api()
             
-            if not bot_started and not api_started:
-                print("❌ Failed to start any services")
+            if not api_started:
+                print("❌ Failed to start Web Chat API")
                 return False
             
             # Show status
             print("\n🎉 Cuttle is running!")
             print("=" * 60)
             if bot_started:
-                print("🦑 Discord bot: Active")
+                print("🦑 Discord inbound gateway: not shipped (REST agent-ops only)")
             if api_started:
                 print("🌐 Web Chat API: http://localhost:8080")
             print("🛑 Press Ctrl+C to stop all services")

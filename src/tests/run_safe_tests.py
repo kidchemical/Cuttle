@@ -217,12 +217,12 @@ def generate_safe_test_summary(safe_results, individual_results):
     else:
         print(f"   [FAIL] bot_config.json missing - Bot configuration tests may fail")
     
-    # Check for Discord.py
+    # Check for requests (Discord REST agent-ops)
     try:
-        import discord
-        print(f"   [PASS] discord.py is available")
+        import requests
+        print(f"   [PASS] requests is available")
     except ImportError:
-        print(f"   [FAIL] discord.py not available - Discord bot tests will fail")
+        print(f"   [FAIL] requests not available")
     
     # Check for OpenAI
     try:

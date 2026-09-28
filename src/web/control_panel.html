@@ -22,31 +22,24 @@
             <div class="compact-tile-grid">
             <div class="service-card">
                 <div class="service-header">
-                    <div class="service-title">🦑 Discord Bot</div>
-                    <div class="service-status status-stopped" id="discordStatus">Stopped</div>
+                    <div class="service-title">🦑 Discord agent-ops</div>
+                    <div class="service-status status-stopped" id="discordStatus">Optional</div>
                 </div>
                 <div class="service-controls">
-                    <button class="control-button btn-start" onclick="startService('discord')">Start</button>
-                    <button class="control-button btn-stop" onclick="stopService('discord')" disabled>Stop</button>
-                    <button class="control-button btn-restart" onclick="restartService('discord')" disabled>Restart</button>
                     <button class="control-button btn-info" onclick="showServiceInfo('discord')">Info</button>
                 </div>
                 <div class="service-info" id="discordInfo" style="display: none;">
                     <div class="info-row">
-                        <span class="info-label">Status:</span>
-                        <span class="info-value" id="discordStatusDetail">Stopped</span>
+                        <span class="info-label">Role:</span>
+                        <span class="info-value">REST read/post — no inbound gateway</span>
                     </div>
                     <div class="info-row">
-                        <span class="info-label">Port:</span>
-                        <span class="info-value">Discord Gateway</span>
+                        <span class="info-label">CLI:</span>
+                        <span class="info-value">python -m api.discord_cli</span>
                     </div>
                     <div class="info-row">
-                        <span class="info-label">Uptime:</span>
-                        <span class="info-value" id="discordUptime">-</span>
-                    </div>
-                    <div class="info-row">
-                        <span class="info-label">Last Activity:</span>
-                        <span class="info-value" id="discordLastActivity">-</span>
+                        <span class="info-label">Post:</span>
+                        <span class="info-value">discord.post (project allowlist)</span>
                     </div>
                 </div>
             </div>
@@ -104,7 +97,7 @@
                     </div>
                     <div class="info-row">
                         <span class="info-label">Services:</span>
-                        <span class="info-value">Discord Bot + Web Chat API</span>
+                        <span class="info-value">Web Chat API</span>
                     </div>
                     <div class="info-row">
                         <span class="info-label">Uptime:</span>

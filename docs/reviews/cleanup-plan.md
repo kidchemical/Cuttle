@@ -1,8 +1,8 @@
 # Cleanup plan (gated on investigation)
 
-**HEAD at this continuation:** `4f2880c` · **Application code not changed.**
+**HEAD:** `4f2880c` · **Application code not changed.**
 
-This document is **not** a license to start deleting graph HTTP or launchers. The previous version jumped to implementation. **Workstream 0 is coverage and corrections.** Implementation streams start only when the inventory review column and the audit’s “incomplete investigations” list say that subsystem is closed.
+Graphs and Telegram/Slack are **decided removals** (stream 1 / 1b) with consumer tables in [`graph-discord-consumers.md`](graph-discord-consumers.md). Gateway Discord chat is **not** deleted until stream 1c is approved. Workstream 0 remains the execution-review ledger.
 
 Product work (workers, GUI, dashboards) stays **ahead of** Flask extraction ([issue #6](https://github.com/kidchemical/Cuttle/issues/6)).
 
@@ -20,13 +20,12 @@ Product work (workers, GUI, dashboards) stays **ahead of** Flask extraction ([is
 | 0.4 | Record clean-install vs cleanliness | Yes in audit; **clone not actually run** | Optional: empty dir + README daemon steps |
 | 0.5 | Promote `structure` → `execution` by subsystem | **Open** — 500+ py/js still structure-only | Pick one owner prefix per session; grep callers; update ledger |
 
-**Remaining structure-only closures (priority order for a later session):**
+**Remaining execution review (0.5):**
 
-1. `src/api/*.py` except `web_chat_api.py` (partial) — especially unused vs kernel.
-2. `src/scripts/utilities/*_cli_tool.py` and session stores (harness live; samples vs dead).
-3. `src/web/js/*.js` besides `app_shell.js` / `chat_page.js`.
-4. `src/api/dashboards/` vs port-5000 time-series (**B9**).
-5. Android trees — which APK is canonical.
+1. `src/api/agent_harness/`, `device_workers/`, `cuttle_jobs/`, `agent_router/` packages.
+2. `chat_page.js` Discord invite (blocks 1c).
+3. Android which-APK.
+4. `GET /api/pipeline-chats` UI.
 
 **Tests:** none. **Risk:** none if no app edits.
 
@@ -48,33 +47,57 @@ Product work (workers, GUI, dashboards) stays **ahead of** Flask extraction ([is
 
 ---
 
-## Workstream 1 — Jobs UI vs graph APIs
+## Workstream 1 — Remove graph UI from Jobs; keep workers + cuttle-jobs
 
-**Depends on:** product decision (Jobs = workers/cuttle-jobs vs leftover graph cockpit). **Depends on:** A4/A5 understood (empty `running_pipelines`; unreachable writers).
+**Decision:** graphs and node editor are **retired**. Jobs’ live surfaces are `GET /api/cuttle-jobs` and `/api/workers/*`. `loadPipelines()` already returns empty.
 
 | Step | Change | Verify |
 |---|---|---|
-| 1.1 | List every `fetch('/api/pipeline-*')` and `/api/job-insight` in Jobs HTML | Grep + browser |
-| 1.2 | Point buttons at workers / cuttle-jobs **or** hide; expect 410 on `pipeline-run-now` until then | Manual Jobs page |
-| 1.3 | After UI stops depending on empty dict: delete **unreachable** tails (`pipeline_reload` after return; `api_jobs` after empty return) and/or 410 `pipeline-job-status` / `pipeline-check-running` | `GET /api/status` 200; `running_pipeline_count` may stay 0 |
-| 1.4 | **Do not** 410 `/api/pipeline-trigger-discord` or Telegram/Slack chat adapters | Discord DM still works |
-| 1.5 | **Do not** delete `active_executions` | `/api/executing-jobs` + kernel |
+| 1.1 | Remove graph browse/render/`startJob`/`runNow`/`job_insight` links from `jobs_page.html` | Manual Jobs: mesh jobs + Gitea history still load; no `pipeline-*` fetch |
+| 1.2 | Remove or stub `job_insight.html` + `/api/job-insight` | No 500s from remaining nav |
+| 1.3 | Delete unreachable graph tails and unused graph routes (`pipeline-reload` body, `api_jobs` tail, job-status, check-running, execution-finish, record-node, execute-tool/output, pipeline-settings, `force_reload.js`, `create_test_execution.py`). Optional: `sandbox_policy.py` **only if** still unimported. **Do not** remove `GET`/`POST /api/settings/sandbox` or `SettingsManager` sandbox accessors. | `GET /api/status` 200; **`/api/executing-jobs` still lists harness runs**; `test_http_authz.py` sandbox POST tests still pass |
+| 1.4 | **Do not** delete `active_executions`, kernel, or `query_tracker` | live `/cursor` |
+| 1.5 | `/api/pipeline-trigger-discord` | **Done in 1c** — route removed |
 
-**Regression:** `test_http_authz.py` process-control 410; add assertion `pipeline-run-now` is 410 **or** new Jobs API; live `/cursor` still registers/unregisters executions.
+**Regression:** `test_http_authz.py`; `test_cuttle_jobs.py`; `test_device_workers.py`; `test_agent_harness.py`; browser Jobs page (cuttle-jobs + workers only).
 
 ---
 
-## Workstream 2 — `/api/execute-tool` HTTP
-
-**Depends on:** 0.5 caller pass (Discord stub already traced; `internal_http` does not POST it).
+## Workstream 1b — Remove Telegram and Slack
 
 | Step | Change | Verify |
 |---|---|---|
-| 2.1 | Optional access-log / 1-week 404 counter in production | Ops |
-| 2.2 | 410 `execute_tool` / `execute-output` **or** delete routes after 2.1 | Chat `/cursor` still works |
-| 2.3 | Keep `_execute_remote_agent_tool` until no remaining in-process caller | `test_remote_agent.py` |
+| 1b.1 | Delete telegram/slack routes and `_handle_external_trigger` if unused | Grep `telegram`/`slack` in `src/` |
+| 1b.2 | Drop settings `channels.telegram/slack` and session kinds | Settings GET/POST channels only webchat (+ discord until 1c) |
+| 1b.3 | Landing marketing copy | No Slack-as-product claims |
 
-**Risk:** medium if an external graph runner still POSTs.
+**Tests:** pairing/rate-limit tests that POST those routes.
+
+---
+
+## Workstream 1c — Discord gateway DM/guild AI chat — **complete (2026-09)**
+
+**Kept:** `python -m api.discord_cli`, `discord.post`, optional `DISCORD_TOKEN` for REST only, `{project}/.cuttle/actions/discord-post.yaml`.
+
+**Removed:** daemon `discord_bot.py`, `/api/pipeline-trigger-discord`, `discord_chat_bridge.py`, Invite-Discord UI, inbound Discord gateway. Token does not spawn a gateway.
+
+Deliverable: [`discord-cleanup-2026-09.md`](discord-cleanup-2026-09.md). Architecture: [`../architecture/extension-boundaries.md`](../architecture/extension-boundaries.md).
+
+| Step | Change | Verify |
+|---|---|---|
+| 1c.1 | Confirm no remaining DM `/cursor` users | Operator |
+| 1c.2 | Stop spawning bot in `cuttle_daemon.py`; delete `discord_bot.py` | REST `discord_cli messages` and a `discord.post` confirm still work **without** the gateway process |
+| 1c.3 | `/api/status` `discord_connected` | Do not leave a stale file LED; optional REST `/users/@me` or omit |
+| 1c.4 | Classify `src/bot.py` tests; do not delete until tests migrate | `test_security.py` |
+| 1c.5 | `bot_config.json` / `get_config()` | Still used by query_tracker / local_llm — **not** deleted with the gateway |
+
+**Tests:** `test_discord_cli.py`, `test_project_actions.py`, `test_action_forms.py`; **do not** require `discord.py` gateway.
+
+---
+
+## Workstream 2 — `/api/execute-tool` (part of stream 1.3)
+
+Only called from graph HTTP. `_execute_remote_agent_tool` has **no** chat callers (chat uses `_run_harness_web_command`). Delete with graphs; update `test_remote_agent.py` / integration string asserts.
 
 ---
 
@@ -139,21 +162,23 @@ Same as before: comment the `*.json` allowlist; do not track `settings.json` “
 
 ## Order
 
-`0` (ledger) is **done enough to resume**; `0.5` continues forever as structure→execution.  
-`0b` can land as docs-only.  
-`1 → 2` only after Jobs product decision and A4/A14 caller lists.  
-`4` after shortcuts.  
-`6` anytime.  
-`7` when the monolith blocks product work.
+`0` / `0.5` continue execution review of harness packages.  
+`0b` docs-only anytime.  
+`1` graph Jobs strip (graphs **retired**).  
+`1b` Telegram/Slack.  
+`1c` gateway Discord **after** operator OK.  
+`2` folded into `1.3`.  
+`4` launchers. `6` security. `7` Flask extract last.
 
 ---
 
 ## What this plan will not do
 
 - Recommend `start_web_chat.py` as Flask-alone.
-- Delete `_execute_remote_agent_tool` or `active_executions` with Jobs UI.
-- 410 Discord/Telegram chat triggers because their URLs contain `pipeline`.
+- Delete `active_executions` or the agent kernel with graph HTTP.
+- Delete `discord_cli` / `discord.post` / `DISCORD_TOKEN` with the gateway bot.
+- Delete `src/bot.py` before its tests migrate.
 - `git submodule` force-add `claw-code`.
 - Wipe `temp/` or `_personal/` from the agent.
 - Extract 15k lines of `web_chat_api.py` as a single change.
-- Declare graph HTTP fully dead because `running_pipelines` is never written.
+- Delete `GET`/`POST /api/settings/sandbox` in a graph-cleanup PR (security API + #4; no HTML fetch ≠ unused).

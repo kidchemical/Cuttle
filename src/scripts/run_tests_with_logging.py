@@ -283,7 +283,6 @@ def run_safe_tests_with_logging():
     safe_tests = [
         ("Security Tests", "python tests/unit/test_security_standalone.py"),
         ("Username Case Tests", "python tests/unit/test_username_case.py"),
-        ("Discord Integration Tests", "python tests/integration/test_discord_bot_integration.py"),
         ("API Key Tests", "python tests/unit/test_api_key.py"),
         ("OpenAI Connection Tests", "python tests/unit/test_openai_connection.py"),
         ("RAG System Tests", "python tests/unit/test_rag_system.py")

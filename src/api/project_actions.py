@@ -827,109 +827,16 @@ def execute_inline_action(
 
 
 def _load_discord_bot_token() -> Optional[str]:
-    for key in ("DISCORD_TOKEN", "DISCORD_BOT_TOKEN"):
-        val = (os.getenv(key) or "").strip().strip('"').strip("'")
-        if val and not val.startswith("your_"):
-            return val
-    # Fallback secret file used by the EP runbook / older setups
-    try:
-        here = Path(__file__).resolve()
-        secret = here.parents[1] / ".secret_DONOTSHIP" / "discord bot token.txt"
-        if secret.is_file():
-            tok = secret.read_text(encoding="utf-8").strip()
-            if tok:
-                return tok
-    except OSError:
-        pass
-    # Also try loading from src/.env if not already in environ
-    try:
-        env_path = Path(__file__).resolve().parents[1] / ".env"
-        if env_path.is_file():
-            for line in env_path.read_text(encoding="utf-8").splitlines():
-                if line.startswith("DISCORD_TOKEN=") or line.startswith("DISCORD_BOT_TOKEN="):
-                    tok = line.split("=", 1)[1].strip().strip('"').strip("'")
-                    if tok and not tok.startswith("your_"):
-                        return tok
-    except OSError:
-        pass
-    return None
+    """Re-export for tests that patch this name."""
+    from api.discord_ops.token import load_discord_bot_token
+
+    return load_discord_bot_token()
 
 
 def _execute_discord_post(action: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
-    import requests
+    from api.discord_ops.post import execute_discord_post
 
-    content = str(params.get("content") or "").strip()
-    if not content:
-        return {"success": False, "error": "Nothing to post (empty content)."}
-
-    channel_key = str(params.get("channel") or params.get("channel_id") or "").strip()
-    channels = action.get("channels") or {}
-    channel_id = channels.get(channel_key) or (
-        channel_key if channel_key.isdigit() else ""
-    )
-    if not channel_id:
-        allowed = ", ".join(sorted(channels.keys())) or "(none configured)"
-        return {
-            "success": False,
-            "error": (
-                f"Unknown Discord channel `{channel_key or '(missing)'}`. "
-                f"Allowlisted aliases: {allowed}"
-            ),
-        }
-
-    token = _load_discord_bot_token()
-    if not token:
-        return {
-            "success": False,
-            "error": "Discord bot token not found (DISCORD_TOKEN / DISCORD_BOT_TOKEN).",
-        }
-
-    headers = {
-        "Authorization": f"Bot {token}",
-        "User-Agent": "CuttleBot (https://github.com/jambit, 1.0)",
-        "Content-Type": "application/json",
-    }
-    url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
-    last_err = ""
-    for attempt in range(1, 4):
-        try:
-            r = requests.post(
-                url,
-                headers=headers,
-                json={"content": content},
-                timeout=30,
-            )
-            if r.ok:
-                mid = (r.json() or {}).get("id")
-                guild = action.get("guild_id") or ""
-                msg_url = (
-                    f"https://discord.com/channels/{guild}/{channel_id}/{mid}"
-                    if guild and mid
-                    else (f"channel {channel_id} message {mid}" if mid else "posted")
-                )
-                return {
-                    "success": True,
-                    "response": (
-                        f"**Posted to Discord** (`{channel_key or channel_id}`)\n\n"
-                        f"{msg_url}"
-                    ),
-                    "channel_id": channel_id,
-                    "message_id": mid,
-                    "url": msg_url if guild and mid else None,
-                }
-            if r.status_code == 429:
-                try:
-                    wait = float((r.json() or {}).get("retry_after", 2))
-                except Exception:
-                    wait = 2.0
-                time.sleep(wait)
-                continue
-            last_err = f"HTTP {r.status_code}: {(r.text or '')[:400]}"
-            break
-        except Exception as e:
-            last_err = str(e)
-            time.sleep(2 * attempt)
-    return {"success": False, "error": last_err or "Discord post failed"}
+    return execute_discord_post(action, params)
 
 
 def _parse_label_list(value: Any) -> List[str]:

@@ -1,6 +1,8 @@
 # Channel-Level Security: Pairing and Allowlist
 
-Cuttle supports **DM pairing** and **allowFrom** for Web Chat and Discord so you can safely expose the assistant to untrusted users.
+Cuttle supports **DM pairing** and **allowFrom** for **Web Chat** so you can safely expose the assistant to untrusted users.
+
+**Historical:** inbound Discord DM pairing (`channels.discord`) belonged to the retired Discord gateway. Settings keys may still exist; they do not enable a Discord chat surface. Discord **agent-ops** (read/post) use project `discord-post.yaml` allowlists, not this pairing API.
 
 ## Concepts
 

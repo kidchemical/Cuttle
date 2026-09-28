@@ -4,9 +4,9 @@ Guidance for Cursor, Muse, Codex, Claude Code, Hermes, and other agents working 
 
 ## Flask / daemon restart safety
 
-Cuttle’s Flask API and Discord bot are children of `cuttle_daemon`.
+Cuttle’s Flask API is a child of `cuttle_daemon`.
 
-- **Never** use `taskkill` / `Stop-Process` on `web_chat_api`, `cuttle_daemon`, or `discord_bot` to restart them from an agent session.
+- **Never** use `taskkill` / `Stop-Process` on `web_chat_api` or `cuttle_daemon` to restart them from an agent session.
 - Use `/restart graceful`, `/restart when-idle`, or `/restart force --yes` (or `POST /api/flask/restart`).
 - In Cuttle chat, propose the restart with the `flask.restart` action form (clickable choice card) rather than asking the user to type a slash command; the slash commands are the fallback.
 - Killing Flask from inside a chat destroys the delivery path for your own reply.
@@ -25,9 +25,9 @@ Details: `.cursor/rules/restart-cuttle.mdc`, `src/api/flask_restart.py`, `src/ap
 
 ## What is Cuttle
 
-Cuttle is a persistent, autonomous AI agent framework. It runs as a system-tray (or headless) daemon that manages a Flask API (port 8080), a Discord bot, and vendor agent CLIs. Web chat and Discord use starred slash agents (`/cursor`, …) and the agent router.
+Cuttle is a persistent, autonomous AI agent framework. It runs as a system-tray (or headless) daemon that manages a Flask API (port 8080) and vendor agent CLIs. Web chat uses starred slash agents (`/cursor`, …) and the agent router. Discord is **optional agent-ops** (REST read/post), not an inbound gateway.
 
-Project config lives under `.cuttle/` (commands, actions, docs, rules). Prefer that over inventing parallel paths.
+Project config lives under `.cuttle/` (commands, actions, docs, rules). Prefer that over inventing parallel paths. Extension categories: [`docs/architecture/extension-boundaries.md`](docs/architecture/extension-boundaries.md).
 
 ## Starting the Project
 
@@ -43,7 +43,7 @@ Project config lives under `.cuttle/` (commands, actions, docs, rules). Prefer t
 
 **Venv**: use `.venv/bin/python` (POSIX) or `.venv\Scripts\python.exe` (Windows).
 
-**Environment**: secrets (DISCORD_TOKEN, API keys) live in `src/.env`. The daemon loads this file before spawning subprocesses; `discord_bot.py` also loads it on startup.
+**Environment**: secrets (optional `DISCORD_TOKEN` for REST agent-ops, API keys) live in `src/.env`. The daemon loads this file before spawning subprocesses. Setting `DISCORD_TOKEN` does **not** start an inbound Discord gateway.
 
 ## Running Tests
 
@@ -64,21 +64,21 @@ Project config lives under `.cuttle/` (commands, actions, docs, rules). Prefer t
 ### Execution Flow
 
 ```
-User message (Discord DM / Web Chat)
-  → discord_bot.py or web_chat_api.py
+User message (Web Chat / Electron / Android)
+  → web_chat_api.py
   → sticky/starred slash agent OR agent router
   → harness CLI (`/cursor`, `/codex`, …) or LLM fallback
 ```
 
-Discord DMs still POST `/api/pipeline-trigger-discord` (legacy path name) which calls the same `process_message_with_bot` as web chat.
+Chat ingress is transport-agnostic. Do not add platform-specific execution routes (the retired Discord path was `POST /api/pipeline-trigger-discord`).
 
 ### Key Layers
 
 | Layer | Path | Role |
 |---|---|---|
-| Daemon | `src/scripts/cuttle_daemon.py` | Spawns Flask + Discord bot, tray icon |
+| Daemon | `src/scripts/cuttle_daemon.py` | Spawns Flask, tray icon, workers |
 | Flask API | `src/api/web_chat_api.py` | REST endpoints, web UI, chat dispatch. Map: `docs/guides/WEB_CHAT_API.md` (read before adding imports or routes; do not extract unless product work is blocked). |
-| Discord Bot | `src/bots/discord_bot.py` | Bridges Discord DMs → Flask; channel posts via `discord.post` |
+| Discord agent-ops | `src/api/discord_ops/`, `src/api/discord_cli/` | Optional REST read + confirmed `discord.post`. Not a chat surface. |
 | Cursor Agent CLI | `src/scripts/utilities/cursor_cli_tool.py` | Headless `agent -p` (stream-json, resume) — same adapter pattern as Codex |
 
 ### Frontend

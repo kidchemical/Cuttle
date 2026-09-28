@@ -1,8 +1,10 @@
 # Repository-wide technical-debt audit
 
-**Date:** 2026-09-27 (continued pass) · **HEAD:** `4f2880c` · **Application code:** not modified.
+**Date:** 2026-09-27 (pass 3) · **HEAD:** `4f2880c` · **Application code:** not modified.
 
-Companion: [`repository-inventory.md`](repository-inventory.md) (file-level class/owner/purpose/review), [`coverage-ledger.md`](coverage-ledger.md) (resume state), [`cleanup-plan.md`](cleanup-plan.md) (**investigation first**; implementation streams are gated).
+Pass 3 product decisions and consumer tables: [`graph-discord-consumers.md`](graph-discord-consumers.md). Coverage: [`coverage-ledger.md`](coverage-ledger.md).
+
+CH-000743-21 AST/ledger is **not** treated as a finished execution review. This pass classified **all 60** `src/api/*.py` modules by inbound consumers and traced graph/Jobs/Discord/Telegram paths. Remaining trees (harness packages, `chat_page.js`, scripts) are still incomplete.
 
 **Baselines**
 
@@ -34,7 +36,9 @@ A clone **can** fail to match *documented* Flask-alone: README names `src/script
 | Inventoried ≠ reviewed | **Yes** — review column: `inventoried` / `structure` / `execution` / `partial-execution` |
 | Every maintained `.py` inspected | **AST parse of all 505** (0 syntax failures) = `structure`. **Not** every function body. Oversized modules are `partial-execution`. |
 | Every maintained `.js` inspected | **Header/prefix read of all 35**; `chat_page.js` / `app_shell.js` partial-execution |
-| Dynamic HTTP/JS/subprocess | Graph HTTP, Jobs fetch, Discord `pipeline-trigger-discord`, daemon spawn, launchers — traced. Not every `@app.route`. |
+| Dynamic HTTP/JS/subprocess | Graph + Jobs + Discord planes + Telegram/Slack: **traced** (see graph-discord-consumers). Not every `web_chat_api` handler. |
+| `src/api/*.py` (60 files) | **Consumer-classified** this pass; not every function body |
+| Every maintained `.py` inspected | AST all 505; **execution** only where ledger/consumers say so |
 | Android Java/Gradle, Electron `node_modules` | Inventoried; not line-reviewed |
 | Vendor `claw-code` / `mcp-govee` internals | Not line-reviewed |
 | Fresh clone install | **Not run** |
@@ -52,7 +56,7 @@ Confidence: **H** high · **M** medium · **L** low.
 | ID | Finding | Evidence | Confidence | Dead vs live |
 |---|---|---|---|---|
 | A1 | Graph JSON pipelines no longer ship | `git ls-files src/pipelines` empty | H | Confirmed gone as product |
-| A2 | Jobs UI still POSTs `/api/pipeline-run-now` | `jobs_page.html` ~1558; `job_insight.html` ~312 | H | **Live client**; handler **returns 410** (`pipeline_run_now` → `_graph_pipelines_gone_response()` at ~10397) |
+| A2 | Jobs UI still contains graph `fetch` helpers | `startJob`/`runNow` in `jobs_page.html`; `loadPipelines` already forces `allJobs=[]`. Live Jobs data is `cuttle-jobs` + workers | H | **Retired graphs:** delete graph browse/JS; **keep** cuttle-jobs/workers |
 | A3 | `/api/execute-tool` has no JS callers | Grep `src/web`: no `/api/execute-tool`. Handler ~11739 still implements node types | H HTTP unused from UI | **Suspected** dead HTTP. Discord `execute_tool_command` is a **retired stub** (returns string; does not POST this route). `internal_http._internal_app_post` is **never called**. Tests: `test_discord_remote_execution.py` string-asserts `_execute_remote_agent_tool` exists. **Do not delete** `_execute_remote_agent_tool` until chat/local-LLM confirmed unused — it is still defined and used **from** `execute_tool()`. |
 | A4 | `running_pipelines` **writes** | Module dict `{}` at ~350. Only assignment to keys is in `pipeline_reload()` **after** `return jsonify(...)` at ~10454. `pipeline-register-running` is 410. **No reachable writer.** | H | **Confirmed:** dict stays empty. **Readers still live:** `/api/status` `running_pipeline_count`; `/api/running-pipelines`; `/api/jobs` **dead tail** after empty return (~2308); `/api/job-insight` ~3194; `/api/sessions/list` ~9883; `/api/pipeline-check-running`; `/api/pipeline-job-status`. They always observe empty/stopped. |
 | A5 | Tombstone remnants (unreachable bodies) | `pipeline_reload` ~10454–10478 unreachable. `api_jobs` ~2308 returns empty then ~88 lines of graph listing (~2309–2396) unreachable. | H | **Confirmed dead statements** inside live functions. Compatibility **response** is the early return. |
@@ -62,11 +66,13 @@ Confidence: **H** high · **M** medium · **L** low.
 | A9 | `query_tracker` `node_editor` context | ~220 | M | Suspected leftover branch |
 | A10 | Settings `OOBE_Welcome` / `show_node_ids` | `settings_manager.py` | M | Config debt |
 | A11 | `/api/job-insight` still loads graph JSON from settings path | ~3164–3178; 404 if file missing | H | **Live handler**, empty product data |
-| A12 | Telegram/Slack `pipeline-trigger-*` | Call `_handle_external_trigger` → `process_message_with_bot` (~7152). **Not** graph execution. Names are legacy. | H | **Live** chat adapters if anything POSTs them |
-| A13 | `active_executions` | `register_execution` from `agent_harness/kernel.py` | H | **Live** — must **preserve** if graph HTTP dies |
-| A14 | `pipeline-execution-finish` | Route ~10257; still has a large live body (query tracker / reports), not an early 410 | M | **Uncertain** callers; Jobs/query-log era. Trace JS before 410. |
+| A12 | Telegram/Slack HTTP | `_handle_external_trigger` only those two routes; **no** `src/web` callers | H | **Remove** (unwanted). Executable ≠ wanted |
+| A13 | `active_executions` | `register_execution` from `agent_harness/kernel.py` | H | **Live** — **preserve** when graph HTTP dies |
+| A14 | `pipeline-execution-finish` | Live body ~10257; caller `create_test_execution.py` only | H | Delete with graphs; kernel uses `query_tracker` in-process |
+| A15 | `force_reload.js` | No HTML include; expects `PipelineExecutor` | H | Abandoned |
+| A16 | `sandbox_policy.py` vs `/api/settings/sandbox` | Policy module: no production import. **HTTP:** POST owner-only (`require_owner`); tests `test_http_authz.py`. GET unauthenticated ([#4](https://github.com/kidchemical/Cuttle/issues/4), hardening doc). No `src/web` fetch. `get_sandbox_config` not read by harness. | H | **Do not** put the settings API in graph removal. Policy `.py` is a separate optional delete. Cursor `/sandbox` slash ≠ this API. |
 
-**Replacement:** harness + `/api/cuttle-jobs` / workers. Graph **HTTP names** remain. Entire graph subsystem **cannot** be deleted as one unit: Discord still uses `/api/pipeline-trigger-discord`; kernel still uses `active_executions`.
+**Replacement:** harness + cuttle-jobs + workers. Graph HTTP removable after Jobs JS cleanup. Discord **gateway** chat is a separate stream. Kernel `active_executions` stays.
 
 ### B. Launchers and docs (reproducibility)
 
@@ -146,7 +152,7 @@ Unchanged directory classes. No secrets quoted.
 4. **`internal_http` load-bearing unused import.**
 5. **`tool_manager` missing** — `debug_cursor_location.py` cannot import.
 6. **`kill_bots` / Electron README path drift.**
-7. **Telegram/Slack routes are chat, not graphs** — do not 410 them with graph cleanup.
+7. Telegram/Slack are **unwanted** — remove routes and settings; do not keep because they share `process_message_with_bot`.
 8. **`active_executions` is harness-live** — not a graph-only helper.
 
 ---
@@ -165,9 +171,8 @@ Unchanged directory classes. No secrets quoted.
 
 - `_run_harness_web_command` / `agent_harness` — chat
 - `active_executions` — kernel + `/api/executing-jobs` (`app_shell.js` ~6081)
-- `process_message_with_bot` / `/api/pipeline-trigger-discord` — Discord
-- `_handle_external_trigger` — Telegram/Slack names
-- `query_tracker` — query log inspector (product; overlapping graph leftovers)
+- `process_message_with_bot` / `/api/chat` — web agents
+- `query_tracker` — kernel (strip node-editor branches later)
 - `PIPELINE_AVAILABLE` flag semantics
 
 ---
@@ -180,6 +185,8 @@ Unchanged directory classes. No secrets quoted.
 - `src/api/dashboards` has **no** timeseries/5000 refs; B9 still not a process-list on this host
 - Which `bot_config.json` wins for daemon vs `launcher.py` vs tests
 - Which Android app is shipping
-- `pipeline-execution-finish` JS callers
-- Full consumer graph of `src/scripts/utilities/*_cli_tool.py` (structure only except known harness adapters)
+- `GET /api/pipeline-chats` UI callers
+- `src/api/agent_harness/**`, `agent_router/**`, `device_workers/**` package execution (not this pass’s 60-file table)
+- Full `chat_page.js` (Invite Discord + starred-for-DMs must stay until gateway retirement is approved)
 - Fresh-clone install
+- Escape Purgatory `discord-post.yaml` not opened (EP not this workspace)

@@ -169,31 +169,7 @@ class JamBitLauncher:
         # Check Ungit
         self.check_ungit_dependency()
         
-        # Check Discord.py
-        try:
-            import discord
-            print(f"{CHECK} Discord.py {discord.__version__} available")
-        except ImportError:
-            print(f"{PACKAGE} Installing Discord.py...")
-            deps = [
-                "discord.py>=2.3.0", "python-dotenv", 
-                "pillow", "psutil", "mss", "pytesseract", "opencv-python"
-            ]
-            # OpenAI is optional - only install if user has API key
-            try:
-                import openai
-            except ImportError:
-                deps.append("openai")
-            if not self.is_wsl:
-                deps.extend(["pywin32", "pyautogui", "pygetwindow", "pywinauto", "keyboard", "mouse"])
-            else:
-                # For WSL, still install keyboard and mouse for input tools
-                deps.extend(["keyboard", "mouse"])
-            
-            subprocess.check_call([
-                self.python_cmd, "-m", "pip", "install"
-            ] + deps)
-            print(f"{CHECK} Discord.py and dependencies installed")
+        # Discord gateway library is not required. Optional REST agent-ops use requests.
         
         # Check MCP dependencies if requested
         if include_mcp:
@@ -464,28 +440,9 @@ class JamBitLauncher:
             return False
     
     def start_discord_bot(self, use_mcp=False):
-        """Start the Discord bot"""
-        print(f"{ROBOT} Starting Discord bot...")
-        
-        # Always use MCP bot (legacy bots removed)
-        bot_script = "bots/discord_bot.py"
-        
-        try:
-            # Set up environment to ensure proper imports
-            env = os.environ.copy()
-            env['PYTHONPATH'] = str(self.project_root)
-            
-            process = subprocess.Popen([
-                self.python_cmd, bot_script
-            ], cwd=self.project_root, env=env)
-            
-            bot_type = "Discord Bot"
-            self.processes.append((bot_type, process))
-            print(f"{CHECK} {bot_type} started (PID: {process.pid})")
-            return True
-        except Exception as e:
-            print(f"{ERROR} Failed to start Discord bot: {e}")
-            return False
+        """Inbound Discord gateway is retired (no-op)."""
+        print(f"{ROBOT} Discord inbound gateway is not part of Cuttle Core (skipped).")
+        return True
     
     def start_web_chat_api(self):
         """Start the Web Chat API server"""
@@ -867,8 +824,8 @@ class JamBitLauncher:
             # Install dependencies
             self.install_dependencies(include_mcp=True)
             
-            # Start services
-            bot_started = self.start_discord_bot(use_mcp=use_mcp)
+            # Start services (Flask only; no Discord gateway)
+            bot_started = False
             api_started = self.start_web_chat_api()
             
             # Start Ungit if available
@@ -919,10 +876,10 @@ def show_menu():
     print("=" * 50)
     print("Select a launcher option:")
     print()
-    print("1. [FULL] Full System - Web Chat + Discord + Ungit (Recommended)")
-    print("2. [WEB] Web Chat Only - Pipeline-based chat interface")
-    print("3. [DISCORD] Discord Bot Only")
-    print("4. [DAEMON] Daemon Mode - Hot-swap pipelines, auto-restart on crash")
+    print("1. [FULL] Full System - Web Chat + Ungit (legacy launcher)")
+    print("2. [WEB] Web Chat Only")
+    print("3. [DISCORD] Discord gateway (retired — REST agent-ops only)")
+    print("4. [DAEMON] Daemon Mode - Flask, tray, workers")
     print()
     print("K. [KILL] Kill Existing Processes")
     print("0. [EXIT] Exit")
@@ -949,8 +906,9 @@ def show_menu():
                 print(f"\n{WORLD} Starting Web Chat Only...")
                 return run_web_chat_only()
             elif choice == "3":
-                print(f"\n{ROBOT} Starting Discord Bot Only...")
-                return run_discord_bot_only()
+                print(f"\n{ROBOT} Discord inbound gateway was removed from Cuttle Core.")
+                print("Use python -m api.discord_cli / discord.post for optional REST agent-ops.")
+                return True
             elif choice == "4":
                 print(f"\n{SIGNAL} Starting Cuttle Daemon (hot-swap + auto-restart)...")
                 return run_daemon_mode()
@@ -974,16 +932,13 @@ def show_menu():
             return False
 
 def run_discord_bot_only():
-    """Run Discord bot only"""
-    try:
-        subprocess.run([sys.executable, "bots/discord_bot.py"], cwd=Path(__file__).parent)
-        return True
-    except Exception as e:
-        print(f"{ERROR} Failed to start Discord bot: {e}")
-        return False
+    """Retired: inbound Discord gateway is not part of Cuttle Core."""
+    print("Discord inbound gateway is not shipped with Cuttle Core.")
+    print("Optional agent-ops: python -m api.discord_cli  and  discord.post confirm cards.")
+    return True
 
 def run_daemon_mode():
-    """Run Cuttle daemon: manages Flask + Discord, hot-swaps pipelines, auto-restarts."""
+    """Run Cuttle daemon: Flask, tray, workers (no Discord gateway)."""
     try:
         daemon_script = Path(__file__).parent / "scripts" / "cuttle_daemon.py"
         if not daemon_script.exists():

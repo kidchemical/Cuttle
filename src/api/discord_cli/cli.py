@@ -41,9 +41,9 @@ def _discord_request(
     params: Optional[Dict[str, Any]] = None,
 ) -> Tuple[int, Any, str]:
     import requests
-    from api.project_actions import _load_discord_bot_token
+    from api.discord_ops.token import load_discord_bot_token
 
-    token = _load_discord_bot_token()
+    token = load_discord_bot_token()
     if not token:
         return 0, None, "Discord bot token not found (DISCORD_TOKEN / DISCORD_BOT_TOKEN in src/.env)"
     url = "https://discord.com/api/v10" + path
@@ -95,17 +95,31 @@ def _resolve_channel_id(
     *,
     project: Optional[str],
 ) -> Tuple[str, Optional[str]]:
-    """Return (channel_id, alias_or_None)."""
+    """Return (channel_id, alias_or_None).
+
+    With ``--project``, aliases and allowlisted snowflakes (yaml values) only.
+    Without ``--project``, a raw snowflake is allowed (read-only CLI; bot token
+    still required). Posts never use this helper — they go through discord.post.
+    """
     key = str(raw or "").strip()
     if not key:
         raise SystemExit("error: channel id or alias required")
-    if key.isdigit():
-        return key, None
-    action = _load_discord_action(project)
+    action = _load_discord_action(project) if project else None
     channels = (action or {}).get("channels") or {}
     if key in channels:
         return str(channels[key]), key
-    allowed = ", ".join(sorted(channels.keys())) or "(none — pass a snowflake or --project with discord-post.yaml)"
+    if key.isdigit():
+        if project:
+            allowlisted_ids = {str(v).strip() for v in channels.values() if str(v).strip()}
+            if key in allowlisted_ids:
+                return key, None
+            allowed = ", ".join(sorted(channels.keys())) or "(none)"
+            raise SystemExit(
+                f"error: channel id {key!r} is not allowlisted for this project. "
+                f"Aliases: {allowed}"
+            )
+        return key, None
+    allowed = ", ".join(sorted(channels.keys())) or "(none — pass --project with discord-post.yaml)"
     raise SystemExit(
         f"error: unknown channel alias {key!r}. Allowlisted: {allowed}"
     )
