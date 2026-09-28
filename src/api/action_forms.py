@@ -673,6 +673,15 @@ def load_action_form_spec_from_history(
             )
             if not spec:
                 continue
+            # Shared id flask-restart-gN must never execute a git.push (or other)
+            # spec that merely appeared in a message containing that string.
+            if _is_flask_restart_form_id(fid):
+                try:
+                    from api.flask_restart import is_flask_restart_controller_spec
+                except Exception:
+                    is_flask_restart_controller_spec = lambda _s: False  # noqa: E731
+                if not is_flask_restart_controller_spec(spec):
+                    continue
             spec["id"] = fid
             spec["session_id"] = f"db_session_{nid}"
             return spec
@@ -1312,6 +1321,17 @@ def execute_action_form_submission(
                 project_path=str(rec.get("project_path") or ""),
             )
             form_id = str(rec.get("id") or token)
+            # In-memory slot flask-restart-gN is global. Refuse a non-restart
+            # spec (e.g. git.push Status) so a later card cannot steal the click.
+            if spec and _is_flask_restart_form_id(form_id):
+                try:
+                    from api.flask_restart import is_flask_restart_controller_spec
+                except Exception:
+                    is_flask_restart_controller_spec = lambda _s: False  # noqa: E731
+                if not is_flask_restart_controller_spec(spec):
+                    spec = None
+                    owner_session = ""
+                    form_id = str(form_id_hint or token or "").strip() or form_id
 
     locator = (
         (str(form_id_hint).strip() if form_id_hint else "")

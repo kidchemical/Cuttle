@@ -15928,14 +15928,16 @@
     }
 
     function specLooksLikeFlaskRestart(spec, formId) {
-        if (flaskRestartFormEpoch(formId) != null) return true;
-        const group = spec && (spec.restartFormGroup || spec.id);
-        if (flaskRestartFormEpoch(group) != null) return true;
         const opts = (spec && spec.options) || [];
-        return opts.some((o) => {
+        if (opts.some((o) => {
             const a = String((o && o.action) || '');
             return a === 'flask.restart' || a === '__native_restart__';
-        });
+        })) return true;
+        const title = String((spec && spec.title) || '').trim().toLowerCase();
+        if (title.includes('restart flask') || title.startsWith('flask restart')) return true;
+        // Form id flask-restart-gN alone is not enough: a git.push card that
+        // reused that id would otherwise show restart chrome / run Status as push.
+        return false;
     }
 
     /**
@@ -16626,17 +16628,10 @@
 
     function isLinkedFlaskRestartCard(card) {
         if (!card) return false;
-        const fid = String(card.getAttribute('data-form-id') || '').trim();
-        if (flaskRestartFormEpoch(fid) != null) return true;
-        const group = String(card.getAttribute('data-restart-form-group') || '').trim();
-        if (flaskRestartFormEpoch(group) != null) return true;
         try {
             const spec = JSON.parse(card.getAttribute('data-spec') || '{}');
-            const opts = (spec && spec.options) || [];
-            return opts.some((o) => {
-                const a = String((o && o.action) || '');
-                return a === 'flask.restart' || a === '__native_restart__';
-            });
+            const fid = String(card.getAttribute('data-form-id') || '').trim();
+            return specLooksLikeFlaskRestart(spec, fid);
         } catch (_) {
             return false;
         }

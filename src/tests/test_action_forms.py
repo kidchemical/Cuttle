@@ -14,6 +14,7 @@ from api.action_forms import (
     clear_forms_for_tests,
     encode_form_fallback,
     execute_action_form_submission,
+    load_action_form_spec_from_history,
     normalize_action_form_spec,
     rewrite_action_forms,
 )
@@ -156,6 +157,46 @@ def test_rewrite_flask_restart_forms_share_generation_id(tmp_path: Path, monkeyp
     assert 'id="flask-restart-g7"' in out_a
     assert 'id="flask-restart-g7"' in out_b
     assert '"restartFormGroup": "flask-restart-g7"' in out_a
+
+
+def test_history_restart_id_skips_git_push_spec(monkeypatch):
+    """LIKE '%flask-restart-gN%' can hit a git.push message; skip that spec."""
+    form_id = "flask-restart-g3"
+    git_body = (
+        f'<cuttle_action_form_pending id="{form_id}">'
+        '{"id":"' + form_id + '","session_id":"db_session_9","title":"Push to remote?",'
+        '"mode":"choice","options":[{"id":"status","label":"Status","action":"git.push",'
+        '"params":{"mode":"status"}}]}'
+        "</cuttle_action_form_pending>"
+        " mentioned " + form_id
+    )
+    restart_body = (
+        f'<cuttle_action_form_pending id="{form_id}">'
+        '{"id":"' + form_id + '","session_id":"db_session_9",'
+        '"title":"Restart Flask (daemon-owned)","mode":"choice",'
+        '"options":[{"id":"graceful","label":"Graceful","action":"flask.restart",'
+        '"params":{"mode":"graceful"}}]}'
+        "</cuttle_action_form_pending>"
+    )
+
+    class _Msg:
+        def __init__(self, content: str):
+            self._d = {"id": 1, "content": content, "metadata": {}}
+
+        def get(self, k, default=None):
+            return self._d.get(k, default)
+
+    class _DB:
+        def find_messages_containing(self, *_a, **_k):
+            return [_Msg(git_body), _Msg(restart_body)]
+
+    monkeypatch.setattr("api.auth_db.get_auth_db", lambda: _DB())
+    monkeypatch.setattr(
+        "api.action_forms.verify_action_form_spec", lambda _o: True
+    )
+    spec = load_action_form_spec_from_history("db_session_9", form_id)
+    assert spec is not None
+    assert spec["options"][0]["action"] == "flask.restart"
 
 
 def test_flask_restart_soft_ignored_lock_is_not_consumed(tmp_path: Path, monkeypatch):
