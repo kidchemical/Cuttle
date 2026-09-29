@@ -20,7 +20,7 @@ Layout (folder per agent)::
 Drop-in roots (same manifest + adapter contract; cannot shadow bundled ids)::
 
     src/data/harness_agents/<id>/
-    {Cuttle}/.cuttle/agents/<id>/
+    {Cuttle}/.cuttle_global/agents/<id>/
     {project}/.cuttle/agents/<id>/
     CUTTLE_AGENTS_DIR (extra search paths)
 

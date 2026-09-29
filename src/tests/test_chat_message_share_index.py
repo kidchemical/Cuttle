@@ -148,26 +148,26 @@ def test_older_visible_count_aligns_with_share_index_base(tmp_path: Path):
 
 def test_runbook_teaches_cli_and_non_system_share_index():
     """Docs must teach chat_cli + user+assistant indexing (not all-rows[N-1])."""
-    hub = Path(__file__).resolve().parents[2] / ".cuttle" / "docs" / "chat-history.md"
+    global_doc = Path(__file__).resolve().parents[2] / ".cuttle_global" / "docs" / "chat-history.md"
     personal = (
         Path(__file__).resolve().parents[2]
-        / ".cuttle"
+        / ".cuttle_global"
         / "personal"
         / "docs"
         / "chat-history.md"
     )
-    bodies = [hub.read_text(encoding="utf-8")]
+    tracked = global_doc.read_text(encoding="utf-8")
+    assert "api.chat_cli" in tracked
+    assert "user+assistant" in tracked or "user + assistant" in tracked or "non-system" in tracked
+    assert "system" in tracked.lower()
+    assert "role != 'system'" in tracked or 'role != "system"' in tracked or (
+        "role IN ('user', 'assistant')" in tracked
+        or 'role IN ("user", "assistant")' in tracked
+    )
     if personal.exists():
-        bodies.append(personal.read_text(encoding="utf-8"))
-
-    for body in bodies:
-        assert "api.chat_cli" in body
-        assert "user+assistant" in body or "user + assistant" in body or "non-system" in body
-        assert "system" in body.lower()
-        assert "role != 'system'" in body or 'role != "system"' in body or (
-            "role IN ('user', 'assistant')" in body
-            or 'role IN ("user", "assistant")' in body
-        )
+        # Personal twin is a small delta, not a fork of the teaching above.
+        delta = personal.read_text(encoding="utf-8")
+        assert len(delta.splitlines()) < len(tracked.splitlines())
 
 
 @pytest.mark.parametrize(

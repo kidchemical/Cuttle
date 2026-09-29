@@ -487,6 +487,15 @@ class Adapter:
             usage["cache_read_tokens"] = int(uq.get("cache_read_tokens") or 0)
         if uq.get("cache_write_tokens"):
             usage["cache_write_tokens"] = int(uq.get("cache_write_tokens") or 0)
+        # Codex CLI reports tokens only, never cost — estimate the API price
+        # from the turn totals. Codex input_tokens include cached reads
+        # (OpenAI-style).
+        try:
+            from api.model_pricing import attach_estimated_cost
+
+            attach_estimated_cost(usage, mid or "codex", cache_inclusive=True)
+        except Exception:
+            pass
         ok = bool(raw.get("success"))
         err = None if ok else (raw.get("error") or "Codex CLI failed")
         meta = badge_meta("codex", mid or "", _model_source)

@@ -877,7 +877,7 @@ def test_shell_recipe_allowlist_and_self_update_schedules(tmp_path, monkeypatch)
     monkeypatch.setattr(ex.subprocess, "Popen", fake_popen)
     monkeypatch.setenv("CUTTLE_REPO_ROOT", str(tmp_path))
     (tmp_path / ".git").mkdir()
-    scripts = tmp_path / ".cuttle" / "scripts"
+    scripts = tmp_path / ".cuttle_global" / "scripts"
     scripts.mkdir(parents=True)
     (scripts / "client-self-update.ps1").write_text("# stub\n", encoding="utf-8")
     (scripts / "client-self-update.sh").write_text("#!/bin/bash\n", encoding="utf-8")

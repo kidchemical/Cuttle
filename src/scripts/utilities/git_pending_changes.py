@@ -525,6 +525,7 @@ def collect_pending_changes(
     max_files: int = 200,
     wait_timeout: float = 0.0,
     include_line_stats: bool = True,
+    keep_paths: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
     Return pending (uncommitted) changes for the git work tree containing cwd.
@@ -535,6 +536,10 @@ def collect_pending_changes(
 
     ``include_line_stats``: when False, skip numstat / untracked line counts
     (status-only; used by commit so the lock is released quickly).
+
+    ``keep_paths``: repo-relative paths that must survive ``max_files``
+    truncation (moved to the front; used by commit-message suggest so a
+    selected file past the cap still resolves).
 
     Shape:
       {
@@ -563,6 +568,7 @@ def collect_pending_changes(
             root,
             max_files=max_files,
             include_line_stats=include_line_stats,
+            keep_paths=keep_paths,
         )
     finally:
         lock.release()
@@ -599,6 +605,7 @@ def _collect_pending_changes_locked(
     *,
     max_files: int = 200,
     include_line_stats: bool = True,
+    keep_paths: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     # Chat composer polls this; keep well under Electron's ~6-conn / 20s client cap.
     poll_timeout = 8.0
@@ -639,6 +646,13 @@ def _collect_pending_changes_locked(
     files.sort(key=lambda f: f["path"].lower())
     total_pending = len(files)
     truncated = False
+    if keep_paths:
+        keep = {_normalize_repo_rel(str(p)) for p in keep_paths if str(p).strip()}
+        keep.discard("")
+        if keep:
+            head = [f for f in files if _normalize_repo_rel(str(f.get("path") or "")) in keep]
+            rest = [f for f in files if _normalize_repo_rel(str(f.get("path") or "")) not in keep]
+            files = head + rest
     if len(files) > max_files:
         files = files[:max_files]
         truncated = True
@@ -750,13 +764,16 @@ def collect_commit_suggest_context(
     """Pending file list + truncated diff excerpt for commit-message suggestion.
 
     When ``paths`` is set, only those repo-relative files are included (matches
-    the chat UI's include/exclude checkboxes).
+    the chat UI's include/exclude checkboxes). Requested paths are kept past
+    the ``max_files`` truncation so selecting a file the list cut off still
+    resolves.
     """
     pending = collect_pending_changes(
         cwd,
         max_files=max_files,
         wait_timeout=45.0,
         include_line_stats=True,
+        keep_paths=list(paths) if paths is not None else None,
     )
     if pending.get("clean") or not pending.get("files"):
         raise ValueError("Nothing to commit")

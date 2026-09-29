@@ -24,10 +24,10 @@ inspect the envelope. Day-to-day, Flask injects it — no extra round-trip.
 ## Canonical layers (order)
 
 1. **Core contract** — versioned Cuttle UI / headless-turn rules (`cuttle_ui_capabilities`).
-2. **Cuttle hub rules** — `{Cuttle}/.cuttle/rules/*.md` (global guidelines for every registered project).
-3. **Project rules** — `{project}/.cuttle/rules/*.md` (always-on guidelines for that project).
+2. **Cuttle global rules** — `{Cuttle}/.cuttle_global/rules/*.md` (global guidelines for every registered project).
+3. **Project rules** — `{project}/.cuttle/rules/*.md` (always-on guidelines for that project; for the Cuttle repo itself this is Cuttle-only rules, never guest etiquette).
 4. **Profile** — `standard` today; room for coordination / supervision later.
-5. **Runtime** — inventory of commands/docs/actions (hub + project); optional handoff delta; chat-store hint.
+5. **Runtime** — inventory of commands/docs/actions (global + project); optional handoff delta; chat-store hint.
 6. **Ranked context (optional)** — Jev may inject 1–3 extra skill/doc snippets for this prompt (`python -m api.jev rank`). Always-on rules still win on conflict.
 7. **User request** — the actual turn prompt (never truncated by the compiler).
 
@@ -35,11 +35,12 @@ inspect the envelope. Day-to-day, Flask injects it — no extra round-trip.
 
 | Path | Role vs compiler |
 |---|---|
-| `{Cuttle}/.cuttle/rules/` | **Always-on global** guidelines — compiled for every registered project. |
-| `{Cuttle}/.cuttle/personal/` | **Install-local overlay** (gitignored) — same layout; same-relative-path files win. |
-| `{project}/.cuttle/rules/` | **Always-on project** guidelines — compiled after hub rules. |
+| `{Cuttle}/.cuttle_global/rules/` | **Always-on global** guidelines — compiled for every registered project. |
+| `{Cuttle}/.cuttle_global/personal/` | **Install-local global overlay** (gitignored) — same layout; personal markdown appends as a delta, other files win by basename. |
+| `{project}/.cuttle/rules/` | **Always-on project** guidelines — compiled after global rules. |
+| `{Cuttle}/.cuttle/rules/` | **Cuttle-repo-only** rules — compiled only when the chat targets Cuttle itself. |
 | `commands/*.md` | **On-demand** via `/name` expand (`project_commands`). Listed in inventory; not dumped every turn. |
-| `docs/` | Runbooks — inventory only; agents open when relevant (hub `discord.md` is canonical for Discord). |
+| `docs/` | Runbooks — inventory only; agents open when relevant (global `discord.md` is canonical for Discord). |
 | `actions/` | Allowlisted side effects — inventory of action ids. |
 | `agents/` | Drop-in harness connectors — discovery, not context text. |
 | `memory/` (future) | Retrieved snippets via Brain; not a full dump. |
@@ -53,7 +54,7 @@ Cuttle owns the **neutral chat transcript** (SQLite). Each agent keeps its own
 native resume id for this chat.
 
 - **Fresh session** → full Context Compiler envelope; snapshot recorded.
-- **Same agent + resume** → bare user prompt. If hub/project rules or inventory
+- **Same agent + resume** → bare user prompt. If global/project rules or inventory
   changed since that snapshot, prepend a **context delta** (changed rules + new
   docs/actions only — not the full briefing).
 - **Agent switch** → target agent's resume when available; handoff transcript delta;

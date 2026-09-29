@@ -325,6 +325,35 @@ body.is-electron.fullscreen .shell-zoom-hud {
     opacity: 1;
 }
 
+/* Pane-drag hover: quick release moves the pane to the far right of this
+   space; the bar fills over 1s, then the shell switches so a swap target
+   can be picked. */
+.shell-space-tab.pane-space-hover {
+    position: relative;
+    background: rgba(88, 166, 255, 0.12);
+    border-color: rgba(88, 166, 255, 0.7);
+    opacity: 1;
+}
+
+.shell-space-tab.pane-space-hover::after {
+    content: '';
+    position: absolute;
+    left: 6px;
+    right: 6px;
+    bottom: 1px;
+    height: 2px;
+    border-radius: 1px;
+    background: rgba(88, 166, 255, 0.9);
+    transform-origin: left center;
+    animation: space-hover-countdown 1s linear forwards;
+    pointer-events: none;
+}
+
+@keyframes space-hover-countdown {
+    from { transform: scaleX(0); }
+    to { transform: scaleX(1); }
+}
+
 .shell-space-name {
     min-width: 0;
     overflow: hidden;
@@ -372,6 +401,274 @@ body.is-electron.fullscreen .shell-zoom-hud {
 .shell-space-close:hover {
     opacity: 1 !important;
     background: rgba(255, 255, 255, 0.12);
+}
+
+/* Space groups (Chrome-style): pill before the first member, accent
+   underline on member tabs. Solid preset colors only. */
+.shell-space-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+    height: 22px;
+    max-width: 150px;
+    padding: 0 9px;
+    border: 1px solid var(--space-accent, #e8eaed);
+    border-radius: 11px;
+    background: transparent;
+    color: var(--rail-icon-hover, var(--rail-icon));
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    outline: none;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.shell-space-group {
+    background: color-mix(in srgb, var(--space-accent, #e8eaed) 18%, transparent);
+}
+
+.shell-space-group:hover {
+    background: color-mix(in srgb, var(--space-accent, #e8eaed) 28%, transparent);
+}
+
+.shell-space-group.is-drop-target {
+    background: color-mix(in srgb, var(--space-accent, #e8eaed) 38%, transparent);
+    border-color: #fff;
+}
+
+.shell-space-group-count {
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: 8px;
+    background: var(--space-accent, #e8eaed);
+    color: #0b1220;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 16px;
+    text-align: center;
+}
+
+.shell-space-group:focus-visible {
+    border-color: rgba(88, 166, 255, 0.6);
+}
+
+.shell-space-group-dot {
+    flex-shrink: 0;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--space-accent, #e8eaed);
+}
+
+.shell-space-group-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.shell-space-tab.has-accent {
+    position: relative;
+    background: color-mix(in srgb, var(--space-accent) 16%, transparent);
+    border-color: color-mix(in srgb, var(--space-accent) 45%, transparent);
+    opacity: 1;
+}
+
+.shell-space-tab.has-accent.is-active {
+    background: color-mix(in srgb, var(--space-accent) 28%, transparent);
+    border-color: color-mix(in srgb, var(--space-accent) 65%, transparent);
+}
+
+.shell-space-tab.has-accent::before {
+    content: '';
+    position: absolute;
+    left: 9px;
+    right: 9px;
+    bottom: 2px;
+    height: 2px;
+    border-radius: 1px;
+    background: var(--space-accent);
+    pointer-events: none;
+}
+
+/* Space tab right-click menu + submenus. */
+.shell-space-ctx {
+    position: fixed;
+    z-index: 1000002;
+    min-width: 178px;
+    max-width: 240px;
+    padding: 4px;
+    margin: 0;
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    border-radius: 10px;
+    background: rgba(15, 23, 42, 0.97);
+    box-shadow: 0 10px 32px rgba(0, 0, 0, 0.45);
+    color: #e2e8f0;
+    font-family: inherit;
+    font-size: 12px;
+    line-height: 1.3;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.shell-space-ctx-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    box-sizing: border-box;
+    margin: 0;
+    padding: 7px 10px;
+    border: none;
+    border-radius: 7px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.shell-space-ctx-item:hover,
+.shell-space-ctx-item:focus-visible,
+.shell-space-ctx-item.is-open {
+    outline: none;
+    background: rgba(96, 165, 250, 0.22);
+}
+
+.shell-space-ctx-item.has-sub::after {
+    content: '▸';
+    margin-left: auto;
+    opacity: 0.6;
+    font-size: 10px;
+}
+
+.shell-space-ctx-sep {
+    height: 1px;
+    margin: 4px 6px;
+    background: rgba(148, 163, 184, 0.25);
+}
+
+.shell-ctx-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.shell-ctx-dot {
+    flex-shrink: 0;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--swatch, #e8eaed);
+}
+
+.shell-ctx-check {
+    margin-left: auto;
+    opacity: 0.8;
+}
+
+.shell-ctx-swatches,
+.shell-group-swatches {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 6px;
+    padding: 6px 8px 8px;
+}
+
+.shell-ctx-swatch {
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 2px solid transparent;
+    border-radius: 50%;
+    background: var(--swatch, #e8eaed);
+    background-clip: padding-box;
+    cursor: pointer;
+    outline: none;
+}
+
+.shell-ctx-swatch:hover {
+    border-color: rgba(255, 255, 255, 0.5);
+}
+
+.shell-ctx-swatch.is-selected {
+    border-color: #fff;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.4);
+}
+
+/* Group editor bubble (name + palette + Ungroup / Delete group). */
+.shell-group-bubble {
+    position: fixed;
+    z-index: 1000002;
+    width: 208px;
+    padding: 10px;
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    border-radius: 10px;
+    background: rgba(15, 23, 42, 0.97);
+    box-shadow: 0 10px 32px rgba(0, 0, 0, 0.45);
+    color: #e2e8f0;
+    font-family: inherit;
+    font-size: 12px;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.shell-group-name {
+    width: 100%;
+    box-sizing: border-box;
+    height: 26px;
+    padding: 0 8px;
+    margin: 0 0 4px;
+    border: 1px solid rgba(88, 166, 255, 0.6);
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.35);
+    color: inherit;
+    font: inherit;
+    outline: none;
+}
+
+.shell-group-swatches {
+    padding: 4px 0 8px;
+}
+
+.shell-group-actions {
+    display: flex;
+    gap: 6px;
+}
+
+.shell-group-btn {
+    flex: 1;
+    height: 26px;
+    padding: 0 8px;
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.shell-group-btn:hover {
+    background: rgba(96, 165, 250, 0.22);
+}
+
+.shell-group-btn-danger {
+    color: #f28b82;
+    border-color: rgba(242, 139, 130, 0.45);
+}
+
+.shell-group-btn-danger:hover {
+    background: rgba(242, 139, 130, 0.16);
+}
+
+.shell-group-btn-danger.is-armed {
+    background: rgba(242, 139, 130, 0.24);
+    border-color: #f28b82;
 }
 
 /* Space-tab activity: same five states as chat history dots. */
@@ -948,6 +1245,12 @@ body.rail-mod-alt-shift .rail-logo-close.is-rail-logo-hot .rail-logo-split-v {
 }
 
 .split-container.has-splits .rail-pane-grip {
+    display: flex;
+}
+
+/* Cross-space drag: the grip must exist on single-pane spaces too when another
+   space tab can receive the drop. */
+.split-container.has-cross-space .rail-pane-grip {
     display: flex;
 }
 

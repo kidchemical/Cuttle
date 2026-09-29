@@ -12,18 +12,19 @@ from api.jev.types import choice, noul
 
 def _doc_summaries(project_path: Optional[str], inventory: Dict[str, List[str]]) -> List[Dict[str, str]]:
     names = list(inventory.get("docs") or [])
-    hub_names: List[str] = []
+    global_names: List[str] = []
     try:
-        from api.cuttle_brain.context_compiler import _cuttle_hub_root, _list_names
+        from api.cuttle_brain.context_compiler import _cuttle_global_config, _list_names
+        from api.cuttle_brain.router_config import load_router_config
 
-        hub = _cuttle_hub_root()
-        if hub:
-            hub_names = _list_names(hub / ".cuttle" / "docs", ("*.md",))
+        global_config = _cuttle_global_config()
+        if global_config and load_router_config(project_path).docs:
+            global_names = _list_names(global_config / "docs", ("*.md",))
     except Exception:
-        hub = None
+        global_config = None
     out: List[Dict[str, str]] = []
     seen = set()
-    for name in hub_names + names:
+    for name in global_names + names:
         if name in seen:
             continue
         seen.add(name)
@@ -56,25 +57,29 @@ def _skill_summaries() -> List[Dict[str, str]]:
 
 
 def _read_doc_body(name: str, project_path: Optional[str]) -> str:
-    from api.cuttle_brain.context_compiler import _cuttle_dirs, _cuttle_hub_root
-    from api.cuttle_brain.personal_overlay import resolve_cuttle_file
+    from api.cuttle_brain.context_compiler import _cuttle_dirs, _cuttle_global_config
+    from api.cuttle_brain.personal_overlay import read_cuttle_file_merged
+    from api.cuttle_brain.router_config import load_router_config
 
+    try:
+        docs_allowed = load_router_config(project_path).docs
+    except Exception:
+        docs_allowed = True
     roots: List[Path] = []
     for d in _cuttle_dirs(project_path):
         if d not in roots:
             roots.append(d)
-    hub = _cuttle_hub_root()
-    if hub:
-        hub_cuttle = hub / ".cuttle"
-        if hub_cuttle not in roots:
-            roots.append(hub_cuttle)
+    global_cuttle = _cuttle_global_config()
+    if global_cuttle and docs_allowed:
+        if global_cuttle not in roots:
+            roots.append(global_cuttle)
     for root in roots:
-        path = resolve_cuttle_file(root, "docs", name)
-        if path and path.is_file():
-            try:
-                return path.read_text(encoding="utf-8")
-            except OSError:
-                continue
+        try:
+            body = read_cuttle_file_merged(root, "docs", name)
+        except OSError:
+            continue
+        if body:
+            return body
     return ""
 
 

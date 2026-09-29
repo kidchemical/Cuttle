@@ -179,6 +179,8 @@ def test_performance_groups_per_agent_model_effort(tmp_path):
     assert high["success_rate"] == 100.0
     assert high["score"] == 50.0
     assert high["mean_duration_seconds"] == 20.0
+    assert high["mean_total_duration_seconds"] == 20.0
+    assert "mean_total_duration_seconds" in payload["axis_fields"]
     assert high["provider"] == "OpenAI" and high["harness"] == "codex"
     assert rows["codex|gpt-6-luna|low"]["score"] == 0.0
     assert payload["stats"]["pinned_turns"] == 4

@@ -49,6 +49,7 @@ def _connect(db_path: Optional[Path] = None) -> sqlite3.Connection:
             prompt_tokens INTEGER,
             completion_tokens INTEGER,
             total_tokens INTEGER,
+            cached_tokens INTEGER,
             cost REAL,
             user_feedback TEXT,
             UNIQUE(decision_id, attempt_index)
@@ -66,6 +67,8 @@ def _connect(db_path: Optional[Path] = None) -> sqlite3.Connection:
     columns = {row[1] for row in conn.execute("PRAGMA table_info(router_outcomes)")}
     if "reasoning_effort" not in columns:
         conn.execute("ALTER TABLE router_outcomes ADD COLUMN reasoning_effort TEXT")
+    if "cached_tokens" not in columns:
+        conn.execute("ALTER TABLE router_outcomes ADD COLUMN cached_tokens INTEGER")
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_router_outcomes_query "
         "ON router_outcomes(query_id)"
@@ -80,6 +83,24 @@ def _number(value: Any, cast):
         return None
 
 
+_CACHED_KEYS = (
+    "cached_tokens",
+    "cached_input_tokens",
+    "cache_read_tokens",
+    "cache_read_input_tokens",
+    "cachedInputTokens",
+    "cacheReadTokens",
+)
+
+
+def _cached_tokens(usage: Dict[str, Any]) -> Optional[int]:
+    for key in _CACHED_KEYS:
+        value = _number(usage.get(key), int)
+        if value is not None:
+            return value
+    return None
+
+
 def _usage(result: Dict[str, Any]) -> Dict[str, Any]:
     usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
     prompt = usage.get("prompt_tokens", usage.get("input_tokens"))
@@ -91,6 +112,7 @@ def _usage(result: Dict[str, Any]) -> Dict[str, Any]:
         "prompt_tokens": _number(prompt, int),
         "completion_tokens": _number(completion, int),
         "total_tokens": _number(total, int),
+        "cached_tokens": _cached_tokens(usage),
         "cost": _number(result.get("cost", usage.get("cost")), float),
     }
 
@@ -120,8 +142,8 @@ def record_attempt(
                     recorded_at, decision_id, attempt_index, session_id, project_path,
                     task_type, difficulty, strategy, target_agent, target_model,
                     source, success, failure_kind, reason, latency_ms, query_id,
-                    prompt_tokens, completion_tokens, total_tokens, cost, user_feedback
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                    prompt_tokens, completion_tokens, total_tokens, cached_tokens, cost, user_feedback
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
                 """,
                 (
                     time.time(),
@@ -143,6 +165,7 @@ def record_attempt(
                     usage["prompt_tokens"],
                     usage["completion_tokens"],
                     usage["total_tokens"],
+                    usage["cached_tokens"],
                     usage["cost"],
                 ),
             )
@@ -188,9 +211,9 @@ def record_turn(
                     recorded_at, decision_id, attempt_index, session_id, project_path,
                     task_type, difficulty, strategy, target_agent, target_model,
                     source, success, failure_kind, reason, latency_ms, query_id,
-                    prompt_tokens, completion_tokens, total_tokens, cost, user_feedback,
+                    prompt_tokens, completion_tokens, total_tokens, cached_tokens, cost, user_feedback,
                     reasoning_effort
-                ) VALUES (?, ?, 0, ?, ?, ?, ?, 'direct', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+                ) VALUES (?, ?, 0, ?, ?, ?, ?, 'direct', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
                 """,
                 (
                     float(recorded_at) if recorded_at is not None else time.time(),
@@ -210,6 +233,7 @@ def record_turn(
                     usage["prompt_tokens"],
                     usage["completion_tokens"],
                     usage["total_tokens"],
+                    usage["cached_tokens"],
                     usage["cost"],
                     (str(reasoning_effort).strip().lower() or None) if reasoning_effort else None,
                 ),

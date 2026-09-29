@@ -124,7 +124,7 @@ while True:
              "item": {"type": "agentMessage", "id": "a1", "text": "saw: %s" % steer_text}}})
         out({"method": "thread/tokenUsage/updated", "params": {"threadId": "th-1", "tokenUsage": {
              "total": {"inputTokens": 10, "outputTokens": 2, "totalTokens": 12},
-             "last": {"inputTokens": 8, "totalTokens": 9}, "modelContextWindow": 1000}}})
+             "last": {"inputTokens": 10, "outputTokens": 2, "totalTokens": 9}, "modelContextWindow": 1000}}})
         out({"method": "turn/completed", "params": {"threadId": "th-1", "turn": {"id": "turn-1", "status": "completed"}}})
         continue
     method, mid = m.get("method"), m.get("id")

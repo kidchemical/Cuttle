@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "playwright": {
-      "command": "${workspaceFolder}/.cuttle/scripts/playwright-mcp.cmd",
+      "command": "${workspaceFolder}/.cuttle_global/scripts/playwright-mcp.cmd",
       "args": []
     },
     "govee": {

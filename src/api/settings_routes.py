@@ -1,0 +1,550 @@
+"""Settings HTTP surface — the single owner for settings concerns.
+
+Ownership contract (do not split across the monolith again):
+- Validation: per-family ``validate_*`` functions in THIS module, or the
+  dedicated backend module named in SETTING_FAMILIES (config setters,
+  ``starred_*``, ``video_playlists``). Never inline new rules in handlers.
+- Persistence: ``managers.settings_manager`` for app settings,
+  ``core.config`` for bot/model settings. No other stores.
+- Defaults: ``settings_manager`` (app) and ``core.config`` (bot).
+- Authorization: reads are ``authenticated_required`` (bot config and
+  channel security stay owner-only); every write is ``owner_required``,
+  enforced SOLELY by the route decorator — never repeat an inline
+  ``require_owner()`` check inside a handler.
+- To add a setting: add the key + validator below, persist via one of the
+  two stores, gate write owner-only. No changes to ``web_chat_api.py``.
+
+Route contract is frozen: same paths, methods, status codes and payload
+shapes as when these handlers lived on the monolith app object.
+"""
+
+from __future__ import annotations
+
+from flask import Blueprint, jsonify, request
+
+from api.http_authz import authenticated_required, owner_required
+
+settings_bp = Blueprint("settings", __name__, url_prefix="/api")
+
+# Pairing (channel-level security) and bot config are optional imports,
+# mirroring the monolith: routes answer 503 when the backend is missing.
+PAIRING_AVAILABLE = False
+try:
+    from api.pairing_manager import get_pairing_manager  # noqa: F401
+    from managers.settings_manager import get_settings_manager
+    PAIRING_AVAILABLE = True
+except ImportError:
+    get_settings_manager = None  # type: ignore[assignment]
+
+try:
+    from core.config import get_config
+except ImportError:
+    get_config = None
+
+
+# Family registry: the one place that names every settings group, its
+# backend, its validator, and its auth. Add rows here, not new modules.
+# backend: "bot-config" | "settings-manager" | named helper module.
+SETTING_FAMILIES = (
+    {"name": "bot", "routes": ["GET/POST /settings"],
+     "backend": "bot-config (core.config setters validate)",
+     "validator": "config.set_*", "read": "owner", "write": "owner"},
+    {"name": "lan-access", "routes": ["GET/POST /settings/lan-access"],
+     "backend": "settings-manager key 'discovery' + api.lan_access (live)",
+     "validator": "validate_lan_access_update", "read": "owner", "write": "owner"},
+    {"name": "channels", "routes": ["GET/POST /settings/channels"],
+     "backend": "settings_manager channel config (pairing-gated)",
+     "validator": "validate_channel_update", "read": "owner", "write": "owner"},
+    {"name": "sandbox", "routes": ["GET /settings/sandbox", "POST /settings/sandbox"],
+     "backend": "settings_manager sandbox config",
+     "validator": "SANDBOX_WRITABLE_KEYS (unknown ignored; empty POST is no-op 200)",
+     "read": "authenticated", "write": "owner"},
+    {"name": "starred-slash", "routes": ["GET/POST /settings/starred-slash"],
+     "backend": "api.starred_slash", "validator": "set_starred_prefixes",
+     "read": "authenticated", "write": "owner"},
+    {"name": "starred-project", "routes": ["GET/POST /settings/starred-project"],
+     "backend": "api.starred_project", "validator": "set_starred_project",
+     "read": "authenticated", "write": "owner"},
+    {"name": "ui-layout", "routes": ["GET/POST /settings/ui-layout"],
+     "backend": "settings-manager generic key 'ui_layout'",
+     "validator": "validate_ui_layout_update", "read": "authenticated", "write": "owner"},
+    {"name": "video-background", "routes": ["GET/POST /settings/video-background"],
+     "backend": "api.video_playlists + settings-manager generic key",
+     "validator": "apply_video_background_update", "read": "authenticated", "write": "owner"},
+    {"name": "app-settings", "routes": ["GET /app-settings"],
+     "backend": "settings_manager.get_all_settings() (read-only aggregate)",
+     "validator": "none (read-only)", "read": "open", "write": "n/a"},
+)
+
+
+# --- validators (owned here) ---------------------------------------------
+
+def validate_channel_update(data: dict) -> tuple[bool, str]:
+    """Channel writes accept only the live channels."""
+    if data.get('channel') not in ('webchat', 'discord'):
+        return False, 'Invalid channel'
+    return True, ''
+
+
+SANDBOX_WRITABLE_KEYS = frozenset({
+    'enabled', 'allowed_tools', 'allowed_pipelines', 'denied_tools',
+    'denied_tool_prefixes', 'restrict_for_session_kinds',
+})
+"""Accepted sandbox POST keys. Unknown keys are ignored; an empty POST is a
+no-op 200 (frozen contract) — do not add a required-keys gate here."""
+
+
+def validate_ui_layout_update(data: dict) -> dict:
+    """Merge rail keys; drop retired side-panel keys. Returns the patch."""
+    patch: dict = {}
+    for key in ('rail_items', 'rail_footer', 'rail_hidden'):
+        if key in data and data[key] is not None:
+            patch[key] = [str(x) for x in data[key]]
+    if isinstance(data.get('layout_version'), int):
+        patch['layout_version'] = data['layout_version']
+    return patch
+
+
+def validate_lan_access_update(data: dict) -> tuple[bool, str]:
+    """LAN writes require the master flag; mdns is optional."""
+    if 'lan_access_enabled' not in data:
+        return False, 'lan_access_enabled required'
+    return True, ''
+
+
+# --- bot/model settings (backend: core.config) ----------------------------
+
+@settings_bp.route('/settings', methods=['GET'])
+@owner_required
+def get_settings():
+    """Get current bot settings"""
+    try:
+        if get_config is None:
+            return jsonify({'success': False, 'error': 'Bot config not available'}), 503
+        config = get_config()
+        return jsonify({
+            'success': True,
+            'settings': {
+                'agent_stage_mode': config.get_agent_stage_mode(),
+                'preferred_llm_model': config.get_preferred_llm_model(),
+                'preferred_ollama_model': config.get_preferred_ollama_model(),
+                'preferred_tools_llm_model': config.get_preferred_tools_llm_model(),
+                'preferred_tools_ollama_model': config.get_preferred_tools_ollama_model(),
+                'agent_name': config.get_agent_name(),
+                'llm_fallback_enabled': config.is_llm_fallback_enabled(),
+                'mode': config.get_mode(),
+                'thinking_response': config.should_show_thinking(),
+                'debug_mode': config.is_debug_mode(),
+                'cursor_agent_method': config.get_cursor_agent_method(),
+                'system_prompt_mode': config.get_system_prompt_mode(),
+                'custom_system_prompt': config.get_custom_system_prompt()
+            }
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@settings_bp.route('/settings', methods=['POST'])
+@owner_required
+def update_settings():
+    """Update bot settings"""
+    try:
+        if get_config is None:
+            return jsonify({'success': False, 'error': 'Bot config not available'}), 503
+        data = request.get_json()
+        if not data:
+            return jsonify({
+                'success': False,
+                'error': 'No data provided'
+            }), 400
+
+        config = get_config()
+        updated_settings = []
+
+        # Update agent stage mode
+        if 'agent_stage_mode' in data:
+            if config.set_agent_stage_mode(data['agent_stage_mode']):
+                updated_settings.append('agent_stage_mode')
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': f"Invalid agent stage mode: {data['agent_stage_mode']}"
+                }), 400
+
+        # Update preferred LLM model
+        if 'preferred_llm_model' in data:
+            if config.set_preferred_llm_model(data['preferred_llm_model']):
+                updated_settings.append('preferred_llm_model')
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': f"Invalid LLM model: {data['preferred_llm_model']}"
+                }), 400
+
+        # Update preferred Ollama (local) model
+        if 'preferred_ollama_model' in data:
+            if config.set_preferred_ollama_model(data['preferred_ollama_model']):
+                updated_settings.append('preferred_ollama_model')
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': "Preferred Ollama model must be a non-empty string"
+                }), 400
+
+        # Update preferred tool-calling LLM model (cloud)
+        if 'preferred_tools_llm_model' in data:
+            if config.set_preferred_tools_llm_model(data['preferred_tools_llm_model']):
+                updated_settings.append('preferred_tools_llm_model')
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': f"Invalid tool-calling LLM model: {data['preferred_tools_llm_model']}"
+                }), 400
+
+        # Update preferred tool-calling Ollama (local) model
+        if 'preferred_tools_ollama_model' in data:
+            if config.set_preferred_tools_ollama_model(data['preferred_tools_ollama_model']):
+                updated_settings.append('preferred_tools_ollama_model')
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': "Preferred tool-calling Ollama model must be a non-empty string"
+                }), 400
+
+        # Update agent name
+        if 'agent_name' in data:
+            if config.set_agent_name(data['agent_name']):
+                updated_settings.append('agent_name')
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': f"Invalid agent name: {data['agent_name']}"
+                }), 400
+
+        # Update LLM fallback setting
+        if 'llm_fallback_enabled' in data:
+            config.set_llm_fallback_enabled(data['llm_fallback_enabled'])
+            updated_settings.append('llm_fallback_enabled')
+
+        # Update other settings if provided
+        if 'mode' in data:
+            if config.set_mode(data['mode']):
+                updated_settings.append('mode')
+
+        if 'thinking_response' in data:
+            config.set('thinking_response', data['thinking_response'])
+            updated_settings.append('thinking_response')
+
+        if 'debug_mode' in data:
+            config.set('debug_mode', data['debug_mode'])
+            updated_settings.append('debug_mode')
+
+        if 'cursor_agent_method' in data:
+            if config.set_cursor_agent_method(data['cursor_agent_method']):
+                updated_settings.append('cursor_agent_method')
+
+        # Update system prompt mode
+        if 'system_prompt_mode' in data:
+            if config.set_system_prompt_mode(data['system_prompt_mode']):
+                updated_settings.append('system_prompt_mode')
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': f"Invalid system prompt mode: {data['system_prompt_mode']}"
+                }), 400
+
+        # Update custom system prompt
+        if 'custom_system_prompt' in data:
+            config.set_custom_system_prompt(data['custom_system_prompt'])
+            updated_settings.append('custom_system_prompt')
+
+        return jsonify({
+            'success': True,
+            'message': f'Updated settings: {", ".join(updated_settings)}',
+            'updated_settings': updated_settings
+        })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+# --- LAN access (backend: settings-manager 'discovery' + api.lan_access) ---
+
+@settings_bp.route('/settings/lan-access', methods=['GET', 'POST'])
+@owner_required
+def api_settings_lan_access():
+    """Read/update discovery.lan_access_enabled (phone/LAN portal). Restart Flask after changes."""
+    try:
+        from managers.settings_manager import get_settings_manager
+        from api.lan_access import (
+            is_lan_access_enabled,
+            get_lan_ipv4,
+            lan_phone_portal_url,
+            lan_phone_http_fallback_url,
+            LAN_PHONE_HTTPS_PORT,
+            LAN_HTTP_FALLBACK_PORT,
+        )
+
+        sm = get_settings_manager()
+        discovery = dict(sm.get_setting('discovery') or {})
+
+        if request.method == 'POST':
+            data = request.get_json(silent=True) or {}
+            ok, err = validate_lan_access_update(data)
+            if not ok:
+                return jsonify({'success': False, 'error': err}), 400
+            discovery['lan_access_enabled'] = bool(data['lan_access_enabled'])
+            if 'mdns_enabled' in data:
+                discovery['mdns_enabled'] = bool(data['mdns_enabled'])
+            if not sm.set_setting('discovery', discovery):
+                return jsonify({'success': False, 'error': 'Failed to save settings'}), 500
+
+        enabled = bool(discovery.get('lan_access_enabled'))
+        # Live process may still reflect env override / pre-restart bind.
+        live = is_lan_access_enabled()
+        lan_ip = get_lan_ipv4() if live else None
+        return jsonify({
+            'success': True,
+            'lan_access_enabled': enabled,
+            'live_enabled': live,
+            'mdns_enabled': bool(discovery.get('mdns_enabled')),
+            'lan_ip': lan_ip,
+            'portal_url_phone': lan_phone_portal_url(LAN_PHONE_HTTPS_PORT, lan_ip) if live else None,
+            'portal_url_http_fallback': lan_phone_http_fallback_url(lan_ip) if live else None,
+            'http_port': LAN_HTTP_FALLBACK_PORT,
+            'https_port': LAN_PHONE_HTTPS_PORT,
+            'restart_required': enabled != live or (
+                enabled and live and request.method == 'POST'
+            ),
+            'notes': (
+                'Turning LAN on/off requires a Flask restart so the server rebinds. '
+                'Use the tray Restart Flask, or approve a remote restart.'
+            ),
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# --- channels (backend: settings_manager, pairing-gated) -------------------
+
+@settings_bp.route('/settings/channels', methods=['GET'])
+@owner_required
+def get_channel_settings():
+    """Get channel security config (dmPolicy, allowFrom) for webchat and discord."""
+    if not PAIRING_AVAILABLE:
+        return jsonify({'success': False, 'error': 'Pairing not available'}), 503
+    try:
+        settings = get_settings_manager()
+        channels = {}
+        for ch in ('webchat', 'discord'):
+            channels[ch] = settings.get_channel_config(ch)
+        return jsonify({'success': True, 'channels': channels})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@settings_bp.route('/settings/channels', methods=['POST'])
+@owner_required
+def update_channel_settings():
+    """Update channel security config. Body: { channel, dmPolicy?, allowFrom? }."""
+    if not PAIRING_AVAILABLE:
+        return jsonify({'success': False, 'error': 'Pairing not available'}), 503
+    try:
+        data = request.get_json() or {}
+        ok, err = validate_channel_update(data)
+        if not ok:
+            return jsonify({'success': False, 'error': err}), 400
+        channel = data.get('channel')
+        settings = get_settings_manager()
+        dm_policy = data.get('dmPolicy')
+        allow_from = data.get('allowFrom')
+        if dm_policy is not None or allow_from is not None:
+            settings.set_channel_config(channel, dm_policy=dm_policy, allow_from=allow_from)
+        return jsonify({'success': True, 'channels': {channel: settings.get_channel_config(channel)}})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# --- sandbox (backend: settings_manager) ------------------------------------
+
+@settings_bp.route('/settings/sandbox', methods=['GET'])
+@authenticated_required
+def get_sandbox_settings():
+    """Get sandbox config (enabled, restrict_for_session_kinds, allowed/denied tools, allowed_pipelines)."""
+    try:
+        settings = get_settings_manager()
+        return jsonify({'success': True, 'sandbox': settings.get_sandbox_config()})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@settings_bp.route('/settings/sandbox', methods=['POST'])
+@owner_required
+def update_sandbox_settings():
+    """Update sandbox config. Owner only (decorator is the single enforcement point)."""
+    try:
+        data = request.get_json() or {}
+        settings = get_settings_manager()
+        settings.set_sandbox_config(
+            enabled=data.get('enabled'),
+            allowed_tools=data.get('allowed_tools'),
+            allowed_pipelines=data.get('allowed_pipelines'),
+            denied_tools=data.get('denied_tools'),
+            denied_tool_prefixes=data.get('denied_tool_prefixes'),
+            restrict_for_session_kinds=data.get('restrict_for_session_kinds'),
+        )
+        return jsonify({'success': True, 'sandbox': settings.get_sandbox_config()})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# --- starred defaults (backends: api.starred_slash / api.starred_project) ---
+
+@settings_bp.route('/settings/starred-slash', methods=['GET'])
+@authenticated_required
+def get_starred_slash_api():
+    """Starred sticky agent for new Cuttle chats."""
+    try:
+        from api.starred_slash import get_starred_prefixes
+        return jsonify({'success': True, 'prefixes': get_starred_prefixes()})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e), 'prefixes': []}), 500
+
+
+@settings_bp.route('/settings/starred-slash', methods=['POST'])
+@owner_required
+def update_starred_slash_api():
+    """Body: { prefixes: ["/cursor "] } — empty list clears the default."""
+    try:
+        from api.starred_slash import set_starred_prefixes
+        data = request.get_json() or {}
+        prefixes = data.get('prefixes')
+        if prefixes is None:
+            prefixes = data.get('prefix')
+        saved = set_starred_prefixes(prefixes if prefixes is not None else [])
+        return jsonify({'success': True, 'prefixes': saved})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@settings_bp.route('/settings/starred-project', methods=['GET'])
+@authenticated_required
+def get_starred_project_api():
+    """Exclusive starred default project for new Cuttle chats."""
+    try:
+        from api.starred_project import get_starred_project
+        return jsonify({'success': True, 'project': get_starred_project()})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e), 'project': None}), 500
+
+
+@settings_bp.route('/settings/starred-project', methods=['POST'])
+@owner_required
+def update_starred_project_api():
+    """Body: { project: {id, path, name} } or { project: null } to clear.
+
+    Only one project can be starred; posting a new project replaces the previous.
+    """
+    try:
+        from api.starred_project import set_starred_project
+        data = request.get_json() or {}
+        payload = data.get('project')
+        if payload is None and 'path' in data:
+            payload = data
+        saved = set_starred_project(payload)
+        return jsonify({'success': True, 'project': saved})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# --- ui-layout (backend: settings-manager generic key) ----------------------
+
+@settings_bp.route('/settings/ui-layout', methods=['GET'])
+@authenticated_required
+def get_ui_layout():
+    """Get persisted UI layout (rail item / footer order)."""
+    try:
+        settings = get_settings_manager()
+        layout = settings.get_setting('ui_layout')
+        if layout is None:
+            layout = {}
+        return jsonify({'success': True, 'ui_layout': layout})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@settings_bp.route('/settings/ui-layout', methods=['POST'])
+@owner_required
+def update_ui_layout():
+    """Save UI layout. Body: { rail_items?, rail_footer?, rail_hidden?, layout_version? }.
+
+    ``rail_hidden`` lists apps stashed in the Apps page instead of the blade bar.
+    Legacy panel_* keys are ignored.
+    """
+    try:
+        data = request.get_json() or {}
+        settings = get_settings_manager()
+        layout = settings.get_setting('ui_layout') or {}
+        layout.update(validate_ui_layout_update(data))
+        # Drop legacy side-panel layout keys (panel removed; rail-only shell)
+        for legacy in ('panel_sections', 'section_status_items', 'section_nav_items', 'nav_rows_hidden'):
+            layout.pop(legacy, None)
+        settings.set_setting('ui_layout', layout)
+        return jsonify({'success': True, 'ui_layout': layout})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# --- video-background (backend: api.video_playlists + generic key) ----------
+
+@settings_bp.route('/settings/video-background', methods=['GET'])
+@authenticated_required
+def get_video_background_setting():
+    """Persisted wallpaper playlists (mirrors localStorage; restores after data clear)."""
+    try:
+        from api.video_playlists import normalize_video_background
+        settings = get_settings_manager()
+        vb = normalize_video_background(settings.get_setting('video_background'))
+        return jsonify({'success': True, 'video_background': vb})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@settings_bp.route('/settings/video-background', methods=['POST'])
+@owner_required
+def update_video_background_setting():
+    """Save wallpaper prefs to settings.json. Body: { playlists?, active_playlist?, urls?, duration?, opacity?, enabled? }.
+
+    Merges with existing; ``urls`` alone edits the active playlist.
+    """
+    try:
+        from api.video_playlists import apply_video_background_update
+        data = request.get_json() or {}
+        settings = get_settings_manager()
+        vb = apply_video_background_update(settings.get_setting('video_background'), data)
+        settings.set_setting('video_background', vb)
+        return jsonify({'success': True, 'video_background': vb})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# --- read-only aggregate -----------------------------------------------------
+
+@settings_bp.route('/app-settings', methods=['GET'])
+def get_all_app_settings():
+    """Get all application settings"""
+    try:
+        from managers.settings_manager import get_settings_manager
+        settings_mgr = get_settings_manager()
+
+        return jsonify({
+            'success': True,
+            'settings': settings_mgr.get_all_settings()
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500

@@ -467,7 +467,7 @@ def test_rewrite_posix_shell_recipe_maps_powershell_flask_restart():
     if not py.is_file():
         py = Path("/usr/bin/python3")
     out = rewrite_posix_shell_recipe(
-        r"powershell -NoProfile -ExecutionPolicy Bypass -File .cuttle\scripts\restart-flask.ps1",
+        r"powershell -NoProfile -ExecutionPolicy Bypass -File .cuttle_global\scripts\restart-flask.ps1",
         repo,
         py,
     )

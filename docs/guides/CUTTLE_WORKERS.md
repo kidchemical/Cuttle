@@ -1,7 +1,7 @@
 # Cuttle Workers — multi-device compute mesh
 
 **Status:** W1–W2 live; **W2.5 platform verbs** shipped (actions + CLI); **W2b** `blender_render` + `workers.blender-shard` shipped; **W2b+** work-steal chunks + per-frame analytics + render EWMA profiles (default `distribution=work_steal`); **W3** heuristics via `workers.plan` / `POST /api/workers/plan` (auto-enqueue off by default).  
-**Related:** [`.cuttle/learnings/FEATURE_REQUESTS.md`](../../.cuttle/learnings/FEATURE_REQUESTS.md) `[FEAT-20260917-001]`, [`docs/ROADMAP.md`](../ROADMAP.md), [`.cuttle/docs/cuttle-workers.md`](../../.cuttle/docs/cuttle-workers.md) (Brain how-to), [`.cuttle/docs/cuttle-jobs.md`](../../.cuttle/docs/cuttle-jobs.md), [`SUPERVISED_COORDINATOR.md`](SUPERVISED_COORDINATOR.md), [`MODULARITY.md`](MODULARITY.md).
+**Related:** [`.cuttle/learnings/FEATURE_REQUESTS.md`](../../.cuttle/learnings/FEATURE_REQUESTS.md) `[FEAT-20260917-001]`, [`docs/ROADMAP.md`](../ROADMAP.md), [`.cuttle_global/docs/cuttle-workers.md`](../../.cuttle_global/docs/cuttle-workers.md) (Brain how-to), [`.cuttle_global/docs/cuttle-jobs.md`](../../.cuttle_global/docs/cuttle-jobs.md), [`SUPERVISED_COORDINATOR.md`](SUPERVISED_COORDINATOR.md), [`MODULARITY.md`](MODULARITY.md).
 
 ## Product intent (read this first)
 
@@ -11,8 +11,8 @@ The user talks to **Cuttle**. Cuttle (orchestrator + Brain) decides when work sh
 |---|---|
 | **User** | Chat intent (“render this blend”, “copy from the laptop”, or nothing special) |
 | **Cuttle host** | Intent policy + job queue + claim/lease; optional auto-shard when mesh-worthy |
-| **Platform verbs** | Agent-agnostic list / submit / status / cancel (MCP and/or `.cuttle/actions`) — same contract for every harness |
-| **Context Compiler** | Short rule → `.cuttle/docs/cuttle-workers.md` (when to mesh; never invent remote shell) |
+| **Platform verbs** | Agent-agnostic list / submit / status / cancel (MCP and/or `.cuttle_global/actions`) — same contract for every harness |
+| **Context Compiler** | Short rule → `.cuttle_global/docs/cuttle-workers.md` (when to mesh; never invent remote shell) |
 | **Jobs → Devices** | **Observability only** (online workers, role you/host, mesh job history). Not the day-to-day control surface |
 | **Sticky agent** | Irrelevant to the mesh API — just another tentacle |
 
@@ -29,7 +29,7 @@ The user talks to **Cuttle**. Cuttle (orchestrator + Brain) decides when work sh
 | Client sidecar | `electron/device-worker/cuttle_device_worker.py` (stdlib; shipped in Client asar) + Electron `startWorkerSidecar()` |
 | Sidecar log (Client) | `%APPDATA%/cuttle-desktop/device-worker.log` (Electron console on exit) |
 | Job types | `ping`, `file_copy`, `blender_render`, `shell`, `execute_shell_*`, `cuttle_self_update` |
-| Platform verbs | `.cuttle/actions/workers-*.yaml` + `python -m api.device_workers.cli` |
+| Platform verbs | `.cuttle_global/actions/workers-*.yaml` + `python -m api.device_workers.cli` |
 | Host intent | `workers.plan` / `POST /api/workers/plan` (heuristics); `auto_mesh` default off |
 | Blender farm | Default **work_steal** chunks (untargeted queue); `distribution=pinned` for legacy equal splits; per-frame timing in job results; EWMA `render_profile` on worker meta |
 | Jobs UI | **Devices** tab — observability only |
@@ -93,7 +93,7 @@ Commercial analogies (Incredibuild, Flamenco) solve pieces of this. Cuttle’s d
 
 1. Owns the remote worker claim loop (Electron skips sidecar when daemon heartbeat is fresh).
 2. Accepts allowlisted `shell` recipes (`git_pull`, …) and `cuttle_self_update`.
-3. On `cuttle_self_update`, schedules a **detached** updater (`.cuttle/scripts/client-self-update.ps1`): stop Electron → `git pull --ff-only` → restart client daemon + Electron Client.
+3. On `cuttle_self_update`, schedules a **detached** updater (`.cuttle_global/scripts/client-self-update.ps1`): stop Electron → `git pull --ff-only` → restart client daemon + Electron Client.
 
 Platform verb: `workers.self-update` (`target` = laptop `worker_id`). This is the mesh dogfood for “host commands Client lifecycle” without opening inbound SSH for updates.
 
@@ -114,7 +114,7 @@ SSH is a **shell transport**, not the control plane. Enroll/claim/self-update st
 
 Wire the mesh the same way other Cuttle capabilities work (see [`MODULARITY.md`](MODULARITY.md), action-forms, project commands):
 
-1. **Stable verbs** — `workers.list` / `submit` / `status` / `cancel` / `wait` / `plan` / `blender-shard` / `self-update` / `shell` as `.cuttle/actions/workers-*.yaml` + `python -m api.device_workers.cli`. Hub runbook: [`.cuttle/docs/cuttle-workers.md`](../../.cuttle/docs/cuttle-workers.md).
+1. **Stable verbs** — `workers.list` / `submit` / `status` / `cancel` / `wait` / `plan` / `blender-shard` / `self-update` / `shell` as `.cuttle_global/actions/workers-*.yaml` + `python -m api.device_workers.cli`. Global runbook: [`.cuttle_global/docs/cuttle-workers.md`](../../.cuttle_global/docs/cuttle-workers.md).
 2. **Host intent** — `workers.plan` / `POST /api/workers/plan` heuristics; `device_workers.auto_mesh` reserved (default off).
 3. **Observability** — Jobs Devices + titlebar badge; optional progress via action-form watch later.
 
@@ -128,9 +128,9 @@ SSH is **not** the control plane (workers dial out / claim). Optional later tran
 | mDNS advertise | `src/api/discovery_mdns.py` | Optional discovery of coordinator / workers on LAN |
 | Host vs Client Electron | `electron/main.js` | Client UI; skips sidecar when **client daemon** owns worker |
 | Client daemon | `src/scripts/cuttle_client_daemon.py` | Worker loop + self-update ownership |
-| Detached Client updater | `.cuttle/scripts/client-self-update.ps1` | pull + restart Electron/daemon |
+| Detached Client updater | `.cuttle_global/scripts/client-self-update.ps1` | pull + restart Electron/daemon |
 | Jobs UI cockpit | `/jobs_page.html` Devices tab | Observability (workers + mesh jobs); not primary submit UX |
-| Action forms / project commands | `.cuttle/actions`, `.cuttle/commands` | Pattern for agent-agnostic workers verbs |
+| Action forms / project commands | `.cuttle_global/actions`, `.cuttle/commands` | Pattern for agent-agnostic workers verbs |
 
 ## Target topology (hybrid)
 

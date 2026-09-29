@@ -89,12 +89,20 @@ def normalize_usage(*candidates: Any) -> Dict[str, Any]:
         total = usage.get("total_tokens", usage.get("totalTokens"))
         if total is None and (prompt is not None or completion is not None):
             total = int(prompt or 0) + int(completion or 0)
-        if prompt is None and completion is None and total is None and usage.get("cost") is None:
+        cached = next(
+            (usage.get(k) for k in (
+                "cached_tokens", "cached_input_tokens", "cache_read_tokens",
+                "cache_read_input_tokens", "cachedInputTokens", "cacheReadTokens",
+            ) if usage.get(k) is not None),
+            None,
+        )
+        if prompt is None and completion is None and total is None and cached is None and usage.get("cost") is None:
             continue
         return {
             "prompt_tokens": prompt,
             "completion_tokens": completion,
             "total_tokens": total,
+            "cached_tokens": cached,
             "cost": usage.get("cost"),
         }
     return {}

@@ -27,12 +27,12 @@ def test_compile_includes_rules_and_user_prompt(tmp_path):
     assert compiled.prompt.index("Never invent") < compiled.prompt.index("do the thing")
 
 
-def test_compile_includes_hub_rules_for_sibling_project(tmp_path):
-    from api.cuttle_brain.context_compiler import compile_context, load_hub_rules
+def test_compile_includes_global_rules_for_sibling_project(tmp_path):
+    from api.cuttle_brain.context_compiler import compile_context, load_global_rules
 
-    hub_rules = load_hub_rules()
-    if not hub_rules:
-        return  # Cuttle hub not present in this checkout layout
+    global_rules = load_global_rules()
+    if not global_rules:
+        return  # Cuttle global root not present in this checkout layout
 
     rules = tmp_path / ".cuttle" / "rules"
     rules.mkdir(parents=True)
@@ -45,12 +45,12 @@ def test_compile_includes_hub_rules_for_sibling_project(tmp_path):
     )
     assert "sync discord" in compiled.prompt
     assert "Local project rule." in compiled.prompt
-    assert "Cuttle hub rules" in compiled.prompt
-    assert "hub_rules" in compiled.layers_used
+    assert "Cuttle global rules" in compiled.prompt
+    assert "global_rules" in compiled.layers_used
     assert "project_rules" in compiled.layers_used
-    # Hub 00-core should mention the native discord runbook when present.
-    hub_text = " ".join(t for _, t in hub_rules).lower()
-    if "discord" in hub_text:
+    # Global 00-core should mention the native discord runbook when present.
+    global_text = " ".join(t for _, t in global_rules).lower()
+    if "discord" in global_text:
         assert "discord.md" in compiled.prompt.lower()
 
 

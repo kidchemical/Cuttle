@@ -32,7 +32,7 @@ When the user asks you to **create, register, or set up a Cuttle project**
 ## Where they live
 
 **Convention:** every Cuttle-registered project owns its own `.cuttle/` tree.
-Cuttle’s hub repo (`/path/to/Cuttle/.cuttle/`) is the **master layout + docs** —
+Cuttle’s repo (`/path/to/Cuttle/.cuttle/`, shared config in `/path/to/Cuttle/.cuttle_global/`) is the **master layout + docs** —
 other projects (Escape Purgatory, etc.) mirror that shape with their own commands,
 actions, and runbooks. They do **not** inherit Cuttle’s actions at runtime.
 
@@ -44,10 +44,11 @@ For any registered project root:
 {project_root}/.cuttle/actions/*.yaml
 {project_root}/.cuttle/docs/          # optional runbooks
 {project_root}/.cuttle/scripts/       # optional shell helpers
+{project_root}/.cuttle/ROUTER.ini     # which global layers apply (rules/docs/actions)
 ```
 
-Hub reference: `/path/to/Cuttle/.cuttle/README.md` and
-`/path/to/Cuttle/.cuttle/docs/commands-and-actions.md`.
+Global reference: `/path/to/Cuttle/.cuttle_global/README.md` and
+`/path/to/Cuttle/.cuttle_global/docs/commands-and-actions.md`.
 
 Unity-style layouts (git under `source/`) may also use:
 

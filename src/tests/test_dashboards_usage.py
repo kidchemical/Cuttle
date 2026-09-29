@@ -7,7 +7,7 @@ from pathlib import Path
 
 from flask import Flask
 
-from api.agent_router.outcomes import record_turn
+from api.agent_router.outcomes import all_outcomes, record_turn
 from api.dashboards import usage
 from api.dashboards.routes import dashboards_bp
 
@@ -123,6 +123,115 @@ def test_usage_route(tmp_path: Path, monkeypatch):
     assert body["selected_group_by"] == "harness"
     assert len(body["buckets"]) == 14
     assert body["totals"]["turns"] == 3
+
+
+def test_cached_input_tokens_metric(tmp_path: Path):
+    db = tmp_path / "outcomes.db"
+    record_turn(
+        decision_id="c1", target_agent="muse", target_model="m", source="pinned",
+        failure_kind="none", recorded_at=NOW,
+        result={"usage": {"input_tokens": 1000, "cached_tokens": 800, "output_tokens": 10}},
+        db_path=db,
+    )
+    record_turn(
+        decision_id="c2", target_agent="codex", target_model="m", source="pinned",
+        failure_kind="none", recorded_at=NOW,
+        result={"usage": {"input_tokens": 500, "cached_input_tokens": 100}},
+        db_path=db,
+    )
+    record_turn(
+        decision_id="c3", target_agent="cursor", target_model="m", source="pinned",
+        failure_kind="none", recorded_at=NOW,
+        result={"usage": {"input_tokens": 200, "cacheReadTokens": 50, "output_tokens": 5}},
+        db_path=db,
+    )
+    record_turn(
+        decision_id="c4", target_agent="muse", target_model="m", source="pinned",
+        failure_kind="none", recorded_at=NOW,
+        result={"usage": {"input_tokens": 300, "output_tokens": 5}},
+        db_path=db,
+    )
+    stored = {r["decision_id"]: r for r in all_outcomes(db_path=db)}
+    assert stored["c1"]["cached_tokens"] == 800
+    assert stored["c2"]["cached_tokens"] == 100
+    assert stored["c3"]["cached_tokens"] == 50
+    assert stored["c4"]["cached_tokens"] is None
+    out = usage.cuttle_usage(range_id="7d", group_by="none", tz_offset_minutes=0, db_path=db, now=NOW)
+    assert "cached_input_tokens" in [m["id"] for m in out["metrics"]]
+    assert out["totals"]["cached_input_tokens"] == 950
+    assert out["stats"]["with_cached"] == 3
+
+
+def _seed_chat_rows(db: Path) -> None:
+    rows = [
+        ("p1", "muse", "m", "777", "q-alpha", NOW - 100),
+        ("p2", "muse", "m", "777", "q-beta", NOW - 90),
+        ("p3", "codex", "m", "778", "q-gamma", NOW - 80),
+        ("p4", "codex", "m", None, None, NOW - 70),
+    ]
+    for decision, agent, model, sid, qid, stamp in rows:
+        record_turn(
+            decision_id=decision, target_agent=agent, target_model=model, source="pinned",
+            failure_kind="none", recorded_at=stamp, session_id=sid, query_id=qid, db_path=db,
+        )
+
+
+def _seed_auth_db(path: Path) -> None:
+    import json
+    import sqlite3
+
+    conn = sqlite3.connect(str(path))
+    conn.execute("CREATE TABLE chat_messages (id INTEGER PRIMARY KEY, chat_session_id TEXT, role TEXT, metadata TEXT)")
+    bubbles = [
+        (777, "user", {}),
+        (777, "assistant", {"query_id": "q-alpha"}),
+        (777, "user", {}),
+        (777, "assistant", {"query_id": "q-beta"}),
+        (778, "user", {}),
+        (778, "assistant", {"query_id": "q-gamma"}),
+    ]
+    for sid, role, meta in bubbles:
+        conn.execute(
+            "INSERT INTO chat_messages (chat_session_id, role, metadata) VALUES (?, ?, ?)",
+            (str(sid), role, json.dumps(meta)),
+        )
+    conn.commit()
+    conn.close()
+
+
+def test_group_by_chat(tmp_path: Path):
+    db = tmp_path / "outcomes.db"
+    _seed_chat_rows(db)
+    out = usage.cuttle_usage(range_id="7d", group_by="chat", tz_offset_minutes=0, db_path=db, now=NOW)
+    by_key = {g["key"]: g for g in out["groups"]}
+    assert by_key["chat:777"]["label"] == "CH-000777"
+    assert by_key["chat:777"]["totals"]["turns"] == 2
+    assert by_key["chat:778"]["label"] == "CH-000778"
+    assert by_key["chat:none"]["label"] == "No chat"
+
+
+def test_group_by_prompt_resolves_handles(tmp_path: Path):
+    db = tmp_path / "outcomes.db"
+    auth = tmp_path / "auth.db"
+    _seed_chat_rows(db)
+    _seed_auth_db(auth)
+    out = usage.cuttle_usage(
+        range_id="7d", group_by="prompt", tz_offset_minutes=0, db_path=db, auth_db_path=auth, now=NOW,
+    )
+    labels = {g["label"] for g in out["groups"]}
+    assert labels == {"CH-000777-2", "CH-000777-4", "CH-000778-2", "No chat · p4"}
+    assert out["totals"]["turns"] == 4
+
+
+def test_group_by_prompt_falls_back_without_auth_db(tmp_path: Path):
+    db = tmp_path / "outcomes.db"
+    _seed_chat_rows(db)
+    out = usage.cuttle_usage(
+        range_id="7d", group_by="prompt", tz_offset_minutes=0, db_path=db,
+        auth_db_path=tmp_path / "missing.db", now=NOW,
+    )
+    labels = {g["label"] for g in out["groups"]}
+    assert "CH-000777 · q-alpha" in labels
 
 
 def test_one_and_three_day_ranges(tmp_path: Path):

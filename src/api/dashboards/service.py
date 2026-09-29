@@ -140,6 +140,7 @@ PERFORMANCE_AXES = [
     "score",
     "success_rate",
     "mean_duration_seconds",
+    "mean_total_duration_seconds",
     "mean_cost_usd",
     "mean_output_tokens",
     "mean_total_tokens",
@@ -321,6 +322,7 @@ def cuttle_performance(
             "transport_failures": sum(1 for r in items if r.get("failure_kind") == "transport"),
             "task_failures": sum(1 for r in items if r.get("failure_kind") == "task"),
             "mean_duration_seconds": _median(durations),
+            "mean_total_duration_seconds": _mean(durations),
             "p90_duration_seconds": (
                 sorted(durations)[min(len(durations) - 1, int(len(durations) * 0.9))]
                 if durations else None

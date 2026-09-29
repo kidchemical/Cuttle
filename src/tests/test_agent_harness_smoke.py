@@ -122,6 +122,35 @@ def test_opencode_step_finish_usage_is_accumulated():
     assert usage["peak_context_tokens"] == 1200
 
 
+def test_opencode_cache_read_survives_to_outcome_store(tmp_path):
+    """GLM-style step_finish cache.read must reach cached_tokens (not dropped)."""
+    from api.agent_harness.agents.opencode.adapter import _parse_opencode_stdout
+    from api.agent_harness.kernel import _usage_from_result
+    from api.agent_router.outcomes import all_outcomes
+    from api.agent_router.pinned_outcomes import record_pinned_turn
+
+    raw = "\n".join(
+        [
+            '{"type":"step_finish","part":{"type":"step-finish","reason":"stop",'
+            '"cost":0.0089,"tokens":{"input":10358,"output":570,'
+            '"cache":{"write":0,"read":203904}}}}',
+            '{"type":"step_finish","part":{"type":"step-finish","reason":"stop",'
+            '"cost":0.0094,"tokens":{"input":7856,"output":226,'
+            '"cache":{"write":0,"read":199000}}}}',
+        ]
+    )
+    _, _, adapter_usage = _parse_opencode_stdout(raw)
+    assert adapter_usage["cache_read_tokens"] == 402904
+    body = {
+        "agent_id": "opencode", "query_id": "cache-q", "response": "hi",
+        "type": "opencode_command", "success": True,
+        "usage": _usage_from_result(adapter_usage),
+    }
+    assert record_pinned_turn("opencode", body, latency_ms=5, db_path=tmp_path / "o.db")
+    stored = all_outcomes(db_path=tmp_path / "o.db")[0]
+    assert stored["cached_tokens"] == 402904
+
+
 @pytest.mark.asyncio
 async def test_opencode_exec_emits_jsonl_activity(monkeypatch, tmp_path):
     import asyncio

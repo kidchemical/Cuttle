@@ -14,18 +14,18 @@ Corrections, knowledge gaps, and best practices. Format: `[LRN-YYYYMMDD-XXX] cat
 
 ## [LRN-20260927-001] correction
 
-**Priority:** high · **Status:** promoted (AGENTS.md, `.cuttle/rules/00-core.md`, `.cuttle/docs/git.md`) · **Area:** git / action forms
+**Priority:** high · **Status:** promoted (AGENTS.md, `.cuttle_global/rules/00-core.md`, `.cuttle_global/docs/git.md`) · **Area:** git / action forms
 
 Agent pushed `origin/main` after a public-tree cleanup without an explicit “push”
 ask (inferred from the user looking at GitHub leftovers). User: never push
 without permission; in Cuttle chat always gate with a `git.push` action form
 (not prose “OK to push?”). Git pending-changes UI remains the user’s own path.
 
-**Metadata:** Cuttle project chip · `.cuttle/actions/git-push.yaml`
+**Metadata:** Cuttle project chip · `.cuttle_global/actions/git-push.yaml`
 
 ## [LRN-20260926-001] correction
 
-**Priority:** high · **Status:** promoted (AGENTS.md, `.cuttle/rules/00-core.md`) · **Area:** action forms
+**Priority:** high · **Status:** promoted (AGENTS.md, `.cuttle_global/rules/00-core.md`) · **Area:** action forms
 
 Agent demoed Q&A by emitting a `choice` card and a `multi` card, both `resume: true`,
 in one reply. The first click resumed the turn and orphaned the second card, so only

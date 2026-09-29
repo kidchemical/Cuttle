@@ -1,7 +1,7 @@
 """CLI: ``python -m api.subagents <verb> …``
 
 Spawn real child chats from any parent chat, wait for results, message or
-cancel them. See ``.cuttle/docs/subagents.md``.
+cancel them. See ``.cuttle_global/docs/subagents.md``.
 
 Examples::
 

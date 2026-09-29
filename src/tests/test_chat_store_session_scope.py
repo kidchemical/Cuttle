@@ -69,7 +69,7 @@ def test_addon_still_teaches_via_runbook_pointer():
     assert "chat-history.md" in addon
     assert "gitignored" in addon.lower() or "not in the working tree" in addon.lower()
 
-    runbook = Path(__file__).resolve().parents[2] / ".cuttle" / "docs" / "chat-history.md"
+    runbook = Path(__file__).resolve().parents[2] / ".cuttle_global" / "docs" / "chat-history.md"
     body = runbook.read_text(encoding="utf-8")
     assert "chat_sessions" in body and "chat_messages" in body
     assert "leading zeros" in body.lower()

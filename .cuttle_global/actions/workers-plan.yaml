@@ -1,0 +1,10 @@
+name: workers.plan
+title: Plan mesh intent
+description: >-
+  Classify a chat message for mesh-worthiness (no enqueue).
+  Params: message (or content). Returns kind, advice, next verb.
+type: shell
+run: powershell -NoProfile -ExecutionPolicy Bypass -File .cuttle_global\scripts\workers-cli.ps1 plan
+run_posix: .venv/bin/python -m api.device_workers.cli plan
+workdir: .
+timeout: 60

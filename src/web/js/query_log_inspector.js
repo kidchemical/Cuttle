@@ -228,7 +228,7 @@
             '<div>mode ' + esc(b.mode || '—') + '</div>' +
             '<div>layers: ' + esc((b.layers || []).join(', ') || '—') + '</div>' +
             '<div>envelope ' + esc(b.envelope_chars || 0) + ' · prompt ' + esc(b.prompt_chars || 0) + ' chars</div>' +
-            '<div>rules ' + esc(b.rules_count || 0) + ' (hub ' + esc(b.hub_rules_count || 0) + ')</div></article>');
+            '<div>rules ' + esc(b.rules_count || 0) + ' (global ' + esc(b.global_rules_count || 0) + ')</div></article>');
         ['commands', 'docs', 'actions', 'rules'].forEach(function (k) {
             var list = inv[k] || [];
             if (!list.length) return;

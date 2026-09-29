@@ -156,7 +156,7 @@ def test_chat_store_addon_names_the_db_and_warns_off_empty_searches():
     assert "chat-history.md" in addon
     assert "gitignored" in addon.lower() or "not in the working tree" in addon.lower()
 
-    runbook = Path(__file__).resolve().parents[2] / ".cuttle" / "docs" / "chat-history.md"
+    runbook = Path(__file__).resolve().parents[2] / ".cuttle_global" / "docs" / "chat-history.md"
     body = runbook.read_text(encoding="utf-8")
     assert "cuttle_auth.db" in body
     assert "chat_messages" in body
@@ -179,7 +179,7 @@ def test_chat_store_addon_maps_the_path_and_drops_localhost_for_wsl():
     assert expected in addon
     assert str(Path(db)) not in addon
     # Recipes / localhost firewall notes live in the runbook.
-    runbook = Path(__file__).resolve().parents[2] / ".cuttle" / "docs" / "chat-history.md"
+    runbook = Path(__file__).resolve().parents[2] / ".cuttle_global" / "docs" / "chat-history.md"
     body = runbook.read_text(encoding="utf-8")
     assert "WSL" in body
     assert "api.chat_cli" in body

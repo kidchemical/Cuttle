@@ -48,11 +48,18 @@ _BUTTON_CONFIRM_PREFIX = "project-action-confirm"
 _BUTTON_CANCEL_PREFIX = "project-action-cancel"
 
 
-def _actions_dirs_for_project(project_path: str) -> List[Tuple[Path, Path]]:
+def _actions_dirs_for_project(
+    project_path: str, *, include_global: bool = True
+) -> List[Tuple[Path, Path]]:
     """Return ``(actions_dir, owning_project_root)`` pairs to scan.
 
     Includes the given path, optional ``source/.cuttle``, and parent folders
     (so opening the workspace on ``…/Cuttle/src`` still finds ``…/Cuttle/.cuttle``).
+    When an owner is the Cuttle install itself, its global
+    ``.cuttle_global/actions`` (+ personal) dirs are appended last so project
+    actions win by name and global actions (flask.restart, git.push, workers.*)
+    stay resolvable from any chat — unless ``include_global`` is False
+    (ROUTER.ini severed leg).
     """
     try:
         from core.runtime_paths import rewrite_windows_lab_path
@@ -92,6 +99,16 @@ def _actions_dirs_for_project(project_path: str) -> List[Tuple[Path, Path]]:
             # Owning root for Unity-style nested .cuttle is still the project root.
             seen.add(key + "::source")
             out.append((nested, owner_r))
+        if not include_global:
+            return
+        hub_personal = owner_r / ".cuttle_global" / "personal" / "actions"
+        if hub_personal.is_dir():
+            seen.add(key + "::global-personal")
+            out.append((hub_personal, owner_r))
+        hub_actions = owner_r / ".cuttle_global" / "actions"
+        if hub_actions.is_dir():
+            seen.add(key + "::global")
+            out.append((hub_actions, owner_r))
 
     _add(root)
     cur = root
@@ -157,12 +174,16 @@ def _parse_action_file(path: Path, project_path: str) -> Optional[Dict[str, Any]
     }
 
 
-def list_project_actions(project_path: str) -> List[Dict[str, Any]]:
+def list_project_actions(
+    project_path: str, *, include_global: bool = True
+) -> List[Dict[str, Any]]:
     if not project_path:
         return []
     seen: set = set()
     out: List[Dict[str, Any]] = []
-    for actions_dir, owner_root in _actions_dirs_for_project(project_path):
+    for actions_dir, owner_root in _actions_dirs_for_project(
+        project_path, include_global=include_global
+    ):
         try:
             files = sorted(actions_dir.glob("*.y*ml"), key=lambda p: p.name.lower())
         except OSError:
@@ -182,11 +203,13 @@ def list_project_actions(project_path: str) -> List[Dict[str, Any]]:
     return out
 
 
-def find_project_action(project_path: str, name: str) -> Optional[Dict[str, Any]]:
+def find_project_action(
+    project_path: str, name: str, *, include_global: bool = True
+) -> Optional[Dict[str, Any]]:
     want = str(name or "").strip()
     if not want:
         return None
-    for action in list_project_actions(project_path):
+    for action in list_project_actions(project_path, include_global=include_global):
         if action["name"] == want:
             return action
     return None
@@ -237,8 +260,15 @@ def find_project_action_resolved(
         seen_paths.add(key)
         candidates.append((action, str(action.get("project_path") or path)))
 
+    try:
+        from api.cuttle_brain.router_config import load_router_config
+
+        include_global = load_router_config(primary or None).actions
+    except Exception:
+        include_global = True
+
     if primary:
-        _add_candidate(find_project_action(primary, want), primary)
+        _add_candidate(find_project_action(primary, want, include_global=include_global), primary)
 
     paths: List[str] = []
     try:
@@ -255,7 +285,7 @@ def find_project_action_resolved(
         except Exception:
             pass
 
-    # Optional sibling checkouts from gitignored .cuttle/personal/path-aliases.json.
+    # Optional sibling checkouts from gitignored .cuttle_global/personal/path-aliases.json.
     try:
         from core.runtime_paths import (
             personal_sibling_project_paths,
@@ -269,16 +299,19 @@ def find_project_action_resolved(
         if mapped not in paths and mapped != primary:
             paths.append(mapped)
 
-    # Cuttle hub (flask.restart / hub docs) — this file lives under src/api/.
+    # Cuttle install fallback. The global leg is cut per-path below when the
+    # chat project's ROUTER.ini severs it (include_global=False).
     try:
-        hub = str(Path(__file__).resolve().parents[2])
-        if hub not in paths and hub != primary:
-            paths.append(hub)
+        install = str(Path(__file__).resolve().parents[2])
+        if install not in paths and install != primary:
+            paths.append(install)
     except Exception:
         pass
 
     for path in paths:
-        _add_candidate(find_project_action(path, want), path)
+        _add_candidate(
+            find_project_action(path, want, include_global=include_global), path
+        )
 
     if not candidates:
         return None, primary
@@ -324,7 +357,9 @@ def find_project_action_resolved(
                 ):
                     return action, path
         # Primary path may be nested (…/Cuttle/src) while owner is …/Cuttle
-        primary_found = find_project_action(primary, want)
+        primary_found = find_project_action(
+            primary, want, include_global=include_global
+        )
         if primary_found and (
             (not channel_key or channel_key in (primary_found.get("channels") or {}))
             and (not repo_key or repo_key in (primary_found.get("repos") or {}))

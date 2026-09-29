@@ -22,7 +22,7 @@ This file is the home for *what Cuttle is*, *how plugins/sockets should feel*, a
    optional agent-ops, not a default gateway. Do not spend design
    budget on a user-facing `cuttle.exe`. Do ship thin **agent toolkit** modules
    (`python -m api.chat_cli`, `api.device_workers.cli`, `api.cuttle_brain`, …) so agents
-   stop inventing SQL. See `.cuttle/docs/agent-ops-cli.md`.
+   stop inventing SQL. See `.cuttle_global/docs/agent-ops-cli.md`.
 
 ---
 
@@ -149,7 +149,7 @@ Security in [`docs/ROADMAP.md`](../ROADMAP.md) still comes first when it conflic
 
 7. Phase 0 preference table + CuttleRouter as a pin-able harness agent ([`.cuttle/docs/agent-router-todo.md`](../../.cuttle/docs/agent-router-todo.md)). Include DeepSeek Flash as a cheap tentacle in OOB discovery once the CLI is installed and keyed.
 8. Do not extract a standalone router package until runners do not touch Flask.
-9. Prefer growing **agent ops** `python -m api.<module>` verbs (chat, workers, brain) over a product `cuttle` shell. See `.cuttle/docs/agent-ops-cli.md`.
+9. Prefer growing **agent ops** `python -m api.<module>` verbs (chat, workers, brain) over a product `cuttle` shell. See `.cuttle_global/docs/agent-ops-cli.md`.
 
 ---
 
@@ -172,7 +172,7 @@ When dsh grows native resume or a stable non-preview CLI, upgrade the adapter in
 
 | Need | Where |
 |---|---|
-| Phases, security, OpenClaw, what not to build | `docs/ROADMAP.md` (public); `.cuttle/personal/docs/roadmap-2026.md` (this install) |
+| Phases, security, OpenClaw, what not to build | `docs/ROADMAP.md` (public); `.cuttle_global/personal/docs/roadmap-2026.md` (this install) |
 | Router work items, CuttleRouter-as-agent, authority order | `.cuttle/docs/agent-router-todo.md` |
 | Router economics, backends-as-black-boxes, eval notes | `docs/ROUTER_RESEARCH_NOTES.md` |
 | How routing works in chat | `docs/guides/AGENT_ROUTER.md` |

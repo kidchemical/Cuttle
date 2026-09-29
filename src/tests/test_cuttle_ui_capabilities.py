@@ -9,7 +9,7 @@ from api.cuttle_ui_capabilities import (
     with_cuttle_ui_capabilities,
 )
 
-_HUB_DOCS = Path(__file__).resolve().parents[2] / ".cuttle" / "docs"
+_GLOBAL_DOCS = Path(__file__).resolve().parents[2] / ".cuttle_global" / "docs"
 
 
 def test_with_cuttle_ui_capabilities_prefixes_block():
@@ -69,7 +69,7 @@ def test_capabilities_are_directory_not_howto():
         "headless-turns.md",
     ):
         assert name in text
-        assert (_HUB_DOCS / name).is_file()
+        assert (_GLOBAL_DOCS / name).is_file()
     # Intent triggers for routing (not how-to).
     assert "cuttle_action_form" in text
     assert "CH-" in text

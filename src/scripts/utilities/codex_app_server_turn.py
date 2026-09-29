@@ -79,10 +79,15 @@ def _usage_from_token_usage(tu: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     for src, dst in (
         ("inputTokens", "input_tokens"),
+        ("input_tokens", "input_tokens"),
         ("outputTokens", "output_tokens"),
+        ("output_tokens", "output_tokens"),
         ("totalTokens", "total_tokens"),
+        ("total_tokens", "total_tokens"),
         ("cachedInputTokens", "cached_input_tokens"),
+        ("cached_input_tokens", "cached_input_tokens"),
         ("cacheWriteInputTokens", "cache_write_input_tokens"),
+        ("cache_write_input_tokens", "cache_write_input_tokens"),
     ):
         try:
             val = int(total.get(src) or 0)
@@ -90,6 +95,55 @@ def _usage_from_token_usage(tu: Optional[Dict[str, Any]]) -> Dict[str, Any]:
             val = 0
         if val:
             out[dst] = val
+    return out
+
+
+def _note_turn_tokens(st: Dict[str, Any], tu: Dict[str, Any]) -> None:
+    """Accumulate the per-call ``last`` deltas of thread/tokenUsage/updated.
+
+    ``total`` is thread-cumulative across a resumed session, so per-turn usage
+    must be summed from the per-request ``last`` payloads instead.
+    """
+    last = tu.get("last") if isinstance(tu.get("last"), dict) else {}
+    if not last:
+        return
+    acc = st.setdefault(
+        "turn_tokens",
+        {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "calls": 0,
+        },
+    )
+    try:
+        acc["input_tokens"] += int(last.get("inputTokens") or last.get("input_tokens") or 0)
+        acc["output_tokens"] += int(last.get("outputTokens") or last.get("output_tokens") or 0)
+        acc["cached_input_tokens"] += int(
+            last.get("cachedInputTokens") or last.get("cached_input_tokens") or 0
+        )
+        acc["cache_write_input_tokens"] += int(
+            last.get("cacheWriteInputTokens") or last.get("cache_write_input_tokens") or 0
+        )
+        acc["calls"] += 1
+    except (TypeError, ValueError):
+        pass
+
+
+def _usage_from_turn_tokens(st: Dict[str, Any]) -> Dict[str, Any]:
+    acc = st.get("turn_tokens")
+    if not isinstance(acc, dict) or not acc.get("calls"):
+        return {}
+    inp = int(acc.get("input_tokens") or 0)
+    outp = int(acc.get("output_tokens") or 0)
+    if inp <= 0 and outp <= 0:
+        return {}
+    out: Dict[str, Any] = {"input_tokens": inp, "output_tokens": outp, "total_tokens": inp + outp}
+    if acc.get("cached_input_tokens"):
+        out["cached_input_tokens"] = int(acc["cached_input_tokens"])
+    if acc.get("cache_write_input_tokens"):
+        out["cache_write_input_tokens"] = int(acc["cache_write_input_tokens"])
     return out
 
 
@@ -389,6 +443,7 @@ async def run_codex_turn_app_server(
             tu = params.get("tokenUsage")
             if isinstance(tu, dict):
                 st["token_usage"] = tu
+                _note_turn_tokens(st, tu)
                 _save_live_snapshot(tu)
             return
 
@@ -462,7 +517,9 @@ async def run_codex_turn_app_server(
             undelivered.append(text)
     if undelivered:
         display = f"{display}\n\n{_undelivered_notice(undelivered)}".strip()
-    usage = _usage_from_token_usage(st["token_usage"])
+    # Per-turn tokens come from the accumulated per-request deltas; the
+    # thread-cumulative total is only a fallback for older servers.
+    usage = _usage_from_turn_tokens(st) or _usage_from_token_usage(st["token_usage"])
     token_usage = _token_usage_fill(st["token_usage"]) if st["token_usage"] else None
     base: Dict[str, Any] = {
         "usage": usage,

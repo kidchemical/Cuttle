@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 from api.agent_harness.activity import put_status
 from api.agent_harness.cwd import resolve_harness_cwd
@@ -358,6 +358,16 @@ class Adapter:
         # run a coarse adapter heartbeat (stomps tool/thinking lines).
         put_status(status_queue, "Calling Muse Code…")
         from api.agent_harness.steer import steer_enabled
+        from scripts.utilities.muse_cli_session_store import read_muse_session_usage
+
+        # Cumulative usage in the session log before the turn — resuming a
+        # session needs this baseline so the post-turn diff is exactly this
+        # turn's model calls.
+        baseline: Dict[str, Any] = {}
+        try:
+            baseline = read_muse_session_usage(resume)
+        except Exception:
+            baseline = {}
 
         muse = MuseCliTool(model=mid)
         raw = None
@@ -449,6 +459,29 @@ class Adapter:
                 usage["cost"] = float(uq["cost"])
             except (TypeError, ValueError):
                 pass
+        # Session-log diff is the authoritative per-turn token count — Muse 1.4
+        # exec stdout often omits usage and the MSP fallback only sees the last
+        # snapshot. Includes cache/reasoning splits the CLI may not report.
+        try:
+            logged = read_muse_session_usage(
+                raw.get("muse_session_id") or resume, baseline=baseline
+            )
+        except Exception:
+            logged = {}
+        if logged.get("input_tokens") or logged.get("output_tokens"):
+            usage["prompt_tokens"] = int(logged.get("input_tokens") or 0)
+            usage["completion_tokens"] = int(logged.get("output_tokens") or 0)
+            usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
+            for src in ("cache_read_tokens", "cache_write_tokens", "reasoning_tokens"):
+                if logged.get(src):
+                    usage[src] = int(logged[src])
+        # CLI-reported cost wins; otherwise estimate from the diffed tokens.
+        try:
+            from api.model_pricing import attach_estimated_cost
+
+            attach_estimated_cost(usage, mid or "", cache_inclusive=True)
+        except Exception:
+            pass
         ok = bool(raw.get("success"))
         err = None if ok else (raw.get("error") or "Muse Code failed")
         if err and re.search(r"credential|meta_api_key|muse login", err, re.I):

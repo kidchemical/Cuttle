@@ -1,4 +1,4 @@
-# `.cuttle/learnings/` — process backlog (hub)
+# `.cuttle/learnings/` — process backlog (Cuttle repo only)
 
 Structured logs agents (and humans) append by hand:
 
@@ -10,6 +10,6 @@ Structured logs agents (and humans) append by hand:
 
 **Not** Context Compiler `docs/` — these are never always-on injected. Open when logging a FEAT/ERR/LRN or triaging backlog.
 
-**History:** lived at repo-root `.learnings/` for the scheduled Self Improvement pipeline (graphs removed; see `docs/archive/deprecated-pipelines/`). Kept as a manual backlog under hub `.cuttle/`.
+**History:** lived at repo-root `.learnings/` for the scheduled Self Improvement pipeline (graphs removed; see `docs/archive/deprecated-pipelines/`). Kept as a manual backlog in the Cuttle repo under `.cuttle/` (not scaffolded to guests).
 
-Hub-only — do **not** scaffold into every registered project.
+Cuttle-repo-only — do **not** scaffold into every registered project.

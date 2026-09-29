@@ -1,9 +1,22 @@
-"""Install-local ``.cuttle/personal/`` overlay (gitignored).
+"""Install-local ``personal/`` overlay (gitignored).
 
-Mirrors the tracked ``.cuttle/`` layout (rules, docs, actions, commands, scripts).
-When the same relative path exists under ``personal/``, that file wins.
+Mirrors the tracked layout (rules, docs, actions, commands, scripts) beside
+whichever cuttle root it belongs to — ``{project}/.cuttle/personal/`` or
+``{install}/.cuttle_global/personal/``.
 
-Tracked ``.cuttle/`` stays product-portable; machine-specific paths, LAN hosts,
+Two behaviors, by file kind:
+
+- **Markdown (rules/docs): supplement, not fork.** A personal twin is *appended*
+  after the tracked text (marked install-local), so personal files stay small
+  deltas and cannot desync from the baseline.
+- **Everything else (yaml/commands/scripts): basename wins.** Structured files
+  cannot concatenate, so the personal twin replaces the tracked one.
+
+``resolve_cuttle_file`` still returns the personal *path* when present (for
+opening/editing); content readers that want merged markdown use
+``read_merged_md`` / ``read_cuttle_file_merged``.
+
+Tracked trees stay product-portable; machine-specific paths, LAN hosts,
 guild aliases, and dogfood notes live only under ``personal/``.
 """
 
@@ -23,7 +36,7 @@ PERSONAL_SUBDIRS = (
 
 
 def personal_root(cuttle_root: Path) -> Path:
-    """``{project|hub}/.cuttle/personal``."""
+    """``personal/`` beside a cuttle root (``{project}/.cuttle`` or ``{install}/.cuttle_global``)."""
     return Path(cuttle_root) / PERSONAL_DIRNAME
 
 
@@ -77,21 +90,116 @@ def merge_named_files(
     return [(p.name, p) for p in items]
 
 
+_DELTA_MARKER = "*Install-local delta (`personal/{rel}` — appended after tracked; tracked above is canonical):*"
+
+
+def _append_delta(tracked_text: str, rel: str, personal_path: Path) -> str:
+    try:
+        delta = personal_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        delta = ""
+    if not delta:
+        return tracked_text
+    return (
+        tracked_text.rstrip()
+        + "\n\n---\n"
+        + _DELTA_MARKER.format(rel=rel)
+        + "\n\n"
+        + delta
+        + "\n"
+    )
+
+
 def read_merged_md(
     tracked_dir: Path,
     *,
     limit: int = 24,
 ) -> List[Tuple[str, str]]:
-    """Read markdown files with personal overrides (basename wins)."""
+    """Read markdown files with personal twins appended as deltas (never replacing)."""
     out: List[Tuple[str, str]] = []
-    for name, path in merge_named_files(tracked_dir, patterns=("*.md",), limit=limit):
-        try:
-            text = path.read_text(encoding="utf-8").strip()
-        except OSError:
+    tracked_dir = Path(tracked_dir)
+    personal_dir = personal_root(tracked_dir.parent) / tracked_dir.name
+
+    def _twin(directory: Path, name: str) -> Optional[Path]:
+        if not directory.is_dir():
+            return None
+        for cand in sorted(directory.glob("*.md"), key=lambda p: p.name.lower()):
+            if cand.is_file() and cand.name.lower() == name.lower():
+                return cand
+        return None
+
+    for name, _ in merge_named_files(tracked_dir, patterns=("*.md",), limit=limit):
+        tracked = _twin(tracked_dir, name)
+        personal = _twin(personal_dir, name)
+        text = ""
+        if tracked is not None:
+            try:
+                text = tracked.read_text(encoding="utf-8").strip()
+            except OSError:
+                text = ""
+        if not text and personal is not None:
+            # Personal-only file: included as-is.
+            try:
+                text = personal.read_text(encoding="utf-8").strip()
+            except OSError:
+                continue
+        if not text:
             continue
-        if text:
-            out.append((name, text))
+        if tracked is not None and personal is not None:
+            text = _append_delta(text, f"{tracked_dir.name}/{tracked.name}", personal)
+        out.append((tracked.name if tracked is not None else name, text))
     return out
+
+
+def list_merged_delta_names(
+    tracked_dir: Path,
+    patterns: Sequence[str] = ("*.md",),
+    *,
+    limit: int = 40,
+) -> List[str]:
+    """Basenames in ``tracked_dir`` that have a personal twin (carry an appended delta)."""
+    tracked_dir = Path(tracked_dir)
+    root = personal_root(tracked_dir.parent) / tracked_dir.name
+    names: List[str] = []
+    seen = set()
+    if root.is_dir():
+        for pattern in patterns:
+            try:
+                entries = sorted(root.glob(pattern), key=lambda p: p.name.lower())
+            except OSError:
+                continue
+            for path in entries:
+                if not path.is_file() or path.name.lower() in seen:
+                    continue
+                # Only a delta when a tracked file of the same name exists.
+                if not (tracked_dir / path.name).is_file():
+                    continue
+                seen.add(path.name.lower())
+                names.append(path.name)
+                if len(names) >= limit:
+                    return names
+    return names
+
+
+def read_cuttle_file_merged(cuttle_root: Path, *parts: str) -> Optional[str]:
+    """Merged text of a tracked file plus its personal delta (None if no tracked file)."""
+    if not parts:
+        return None
+    root = Path(cuttle_root)
+    tracked = root.joinpath(*parts)
+    if not tracked.is_file():
+        return None
+    try:
+        text = tracked.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not text:
+        return None
+    rel = "/".join(parts)
+    personal = personal_root(root).joinpath(*parts)
+    if personal.is_file():
+        text = _append_delta(text, rel, personal)
+    return text
 
 
 def list_merged_names(

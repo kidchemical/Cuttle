@@ -1,7 +1,8 @@
 """Agent-agnostic device-workers platform verbs (host-side).
 
-Used by CLI / .cuttle/actions — not Cursor-specific. Any harness invokes the
-same contract via Context Compiler → cuttle-workers.md → these verbs.
+Used by CLI / action YAML (project `.cuttle/actions`, global `.cuttle_global/actions`) —
+not Cursor-specific. Any harness invokes the same contract via Context Compiler
+→ cuttle-workers.md → these verbs.
 """
 
 from __future__ import annotations
@@ -910,7 +911,7 @@ def submit_self_update(
     if (host or "").strip():
         params["host"] = host.strip()
     # Ship the latest updater bytes with the job (chicken-egg with dirty Clients).
-    scripts_dir = Path(__file__).resolve().parents[3] / ".cuttle" / "scripts"
+    scripts_dir = Path(__file__).resolve().parents[3] / ".cuttle_global" / "scripts"
     try:
         ps1 = scripts_dir / "client-self-update.ps1"
         if ps1.is_file():

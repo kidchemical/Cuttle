@@ -9,7 +9,7 @@ description: >-
 
 Cuttle does not host an MCP tool server. For local coding use **llama.cpp** or
 a guest CLI (`/hermes`, `/cursor`, …). Cuttle-owned agent ops are
-`python -m api.*` (`.cuttle/docs/agent-ops-cli.md`).
+`python -m api.*` (`.cuttle_global/docs/agent-ops-cli.md`).
 
 Ollama remains an optional `/api/llm-request` backend (serialized, one model
 at a time). Do not rebuild pipeline-node tool loops around it.

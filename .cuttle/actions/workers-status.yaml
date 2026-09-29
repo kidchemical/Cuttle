@@ -1,9 +1,0 @@
-name: workers.status
-title: Mesh job status
-description: >-
-  Get one job (job_id) or list recent mesh jobs (limit).
-type: shell
-run: powershell -NoProfile -ExecutionPolicy Bypass -File .cuttle\scripts\workers-cli.ps1 status
-run_posix: .venv/bin/python -m api.device_workers.cli status
-workdir: .
-timeout: 60

@@ -312,6 +312,17 @@ class Adapter:
                     usage["context_tokens"] = int(peak)
                 except (TypeError, ValueError):
                     pass
+        # Cursor (subscription billing) never reports cost — estimate the
+        # API-equivalent price from the final cumulative usage. Cursor usage
+        # is additive (inputTokens excludes cached reads), so the inclusive
+        # heuristic must not subtract cache reads from the prompt. "auto"
+        # turns have no public per-model rate and stay unpriced.
+        try:
+            from api.model_pricing import attach_estimated_cost
+
+            attach_estimated_cost(usage, reported or "", cache_inclusive=False)
+        except Exception:
+            pass
         reported = (
             str(run_meta.get("reported_model") or mid).strip()
             if isinstance(run_meta, dict)

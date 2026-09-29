@@ -585,13 +585,16 @@ def estimate_cost_usd(
     *,
     cache_read_tokens: int = 0,
     cache_write_tokens: int = 0,
+    cache_inclusive: Optional[bool] = None,
 ) -> Optional[float]:
     """Estimate USD from models.dev rates. None when model/rates unavailable.
 
     ``prompt_tokens`` semantics vary by provider:
     - Inclusive (OpenAI/Codex): cached reads are a subset of prompt → subtract.
     - Exclusive (Anthropic/Cursor/OpenCode/Muse): prompt is uncached only → add.
-    Heuristic: when ``0 < cache_read <= prompt``, treat as inclusive.
+    Heuristic: when ``0 < cache_read <= prompt``, treat as inclusive. Pass
+    ``cache_inclusive`` explicitly when the harness semantics are known
+    (e.g. Cursor's additive usage would be mispriced by the heuristic).
     """
     rates = lookup_model_rates(model)
     if not rates:
@@ -619,8 +622,10 @@ def estimate_cost_usd(
     else:
         cache_write_rate = float(cache_write_rate)
 
-    if cr > 0 and cr <= pt:
-        uncached = pt - cr
+    if cache_inclusive is None:
+        cache_inclusive = cr > 0 and cr <= pt
+    if cache_inclusive:
+        uncached = max(0, pt - cr)
     else:
         uncached = pt
 
@@ -631,6 +636,43 @@ def estimate_cost_usd(
         + (ct / 1_000_000.0) * output_rate
     )
     return round(cost, 6)
+
+
+def attach_estimated_cost(
+    usage: Optional[Dict[str, Any]],
+    model: str,
+    *,
+    cache_inclusive: Optional[bool] = None,
+) -> Optional[Dict[str, Any]]:
+    """Fill ``usage['cost']`` from token counts when the harness reported none.
+
+    Marks the result with ``cost_estimated=True``. Returns ``usage`` unchanged
+    (and ``None``) when there is nothing to price — no tokens, a cost already
+    present, or a model with no public rate (e.g. Cursor 'auto').
+    """
+    if not isinstance(usage, dict) or usage.get("cost") is not None:
+        return None
+    try:
+        pt = int(usage.get("prompt_tokens") or 0)
+        ct = int(usage.get("completion_tokens") or 0)
+        has_tokens = bool(int(usage.get("total_tokens") or 0)) or pt or ct
+    except (TypeError, ValueError):
+        return None
+    if not has_tokens:
+        return None
+    est = estimate_cost_usd(
+        model,
+        pt,
+        ct,
+        cache_read_tokens=int(usage.get("cache_read_tokens") or 0),
+        cache_write_tokens=int(usage.get("cache_write_tokens") or 0),
+        cache_inclusive=cache_inclusive,
+    )
+    if est is None:
+        return None
+    usage["cost"] = float(est)
+    usage["cost_estimated"] = True
+    return usage
 
 
 def enrich_usage_for_display(

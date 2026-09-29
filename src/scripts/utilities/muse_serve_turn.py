@@ -77,8 +77,13 @@ def _usage_from_turn(usage: Any, prompt_tokens: int) -> Dict[str, Any]:
     if isinstance(usage, dict):
         for src, dst in (
             ("inputTokens", "input_tokens"),
+            ("input_tokens", "input_tokens"),
             ("outputTokens", "output_tokens"),
+            ("output_tokens", "output_tokens"),
             ("cachedTokens", "cached_tokens"),
+            ("cacheReadTokens", "cache_read_tokens"),
+            ("cacheWriteTokens", "cache_write_tokens"),
+            ("reasoningTokens", "reasoning_tokens"),
         ):
             try:
                 val = int(usage.get(src) or 0)
@@ -86,6 +91,21 @@ def _usage_from_turn(usage: Any, prompt_tokens: int) -> Dict[str, Any]:
                 val = 0
             if val:
                 out[dst] = val
+        cost = usage.get("costUsd")
+        if cost is None:
+            cost = usage.get("cost")
+        if cost is None:
+            micros = usage.get("costMicros")
+            if micros is not None:
+                try:
+                    cost = int(micros) / 1_000_000.0
+                except (TypeError, ValueError):
+                    cost = None
+        if cost is not None:
+            try:
+                out["cost"] = float(cost)
+            except (TypeError, ValueError):
+                pass
         if out.get("input_tokens") or out.get("output_tokens"):
             out["total_tokens"] = int(out.get("input_tokens") or 0) + int(out.get("output_tokens") or 0)
     if prompt_tokens:

@@ -78,7 +78,7 @@ User (web)
 | Kernel | `src/api/agent_harness/kernel.py` |
 | Router | `src/api/agent_router/` |
 | CLI wrappers | `src/scripts/utilities/*_cli_tool.py` |
-| Project commands/actions | `{project}/.cuttle/` + hub `.cuttle/` |
+| Project commands/actions | `{project}/.cuttle/` + global `.cuttle_global/` |
 | Brain / context compile | `src/api/cuttle_brain/` |
 
 Graph-era **HTTP** `POST /api/execute-tool` still wraps `_execute_remote_agent_tool`, which internally calls `_run_harness_web_command`. No first-party JS caller of `/api/execute-tool` was found. Chat does **not** go through that HTTP route.
@@ -123,7 +123,7 @@ Vanilla JS: `src/web/js/app_shell.js` (shell), `chat_page.js` (chat). No bundler
 
 ## CLI / automation
 
-Canonical: `python -m api.*` (`.cuttle/docs/agent-ops-cli.md`). Hub actions: `.cuttle/actions/*.yaml`. POSIX launchers: `.cuttle/scripts/*.sh`. Windows `.bat`/`.ps1` still present for mixed hosts.
+Canonical: `python -m api.*` (`.cuttle_global/docs/agent-ops-cli.md`). Global actions: `.cuttle_global/actions/*.yaml`. POSIX launchers: `.cuttle/scripts/*.sh` + `.cuttle_global/scripts/*.sh`. Windows `.bat`/`.ps1` still present for mixed hosts.
 
 ---
 

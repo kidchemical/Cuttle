@@ -21,6 +21,8 @@ RANGES = [
 GROUP_BY = [
     {"id": "model", "name": "Model"},
     {"id": "harness", "name": "Harness"},
+    {"id": "chat", "name": "Chat"},
+    {"id": "prompt", "name": "Prompt"},
     {"id": "none", "name": "None (totals)"},
 ]
 INTERVALS = [
@@ -39,6 +41,7 @@ METRICS = [
     {"id": "total_tokens", "label": "Total tokens", "unit": "tokens"},
     {"id": "turns", "label": "Turns", "unit": "count"},
     {"id": "input_tokens", "label": "Input tokens", "unit": "tokens"},
+    {"id": "cached_input_tokens", "label": "Cached input tokens", "unit": "tokens"},
     {"id": "output_tokens", "label": "Output tokens", "unit": "tokens"},
     {"id": "agent_hours", "label": "Agent time", "unit": "hours"},
 ]
@@ -84,12 +87,35 @@ def _auto_interval(span_days: int) -> str:
     return "month"
 
 
-def _group_identity(row: Dict[str, Any], group_by: str) -> Tuple[str, str]:
+def _chat_label(session_id: Any) -> str:
+    s = str(session_id or "").strip()
+    if s.isdigit():
+        return f"CH-{int(s):06d}"
+    return s or "No chat"
+
+
+def _group_identity(
+    row: Dict[str, Any],
+    group_by: str,
+    prompt_handles: Optional[Dict[str, str]] = None,
+) -> Tuple[str, str]:
     agent = str(row.get("target_agent") or "unknown").lower()
     if group_by == "harness":
         return agent, agent
     if group_by == "none":
         return "all", "All turns"
+    if group_by == "chat":
+        sid = str(row.get("session_id") or "").strip()
+        return f"chat:{sid or 'none'}", _chat_label(sid)
+    if group_by == "prompt":
+        qid = str(row.get("query_id") or "").strip()
+        key = qid or f"{row.get('decision_id')}:{row.get('attempt_index')}"
+        label = (prompt_handles or {}).get(qid) if qid else None
+        if not label:
+            chat = _chat_label(row.get("session_id"))
+            short = (qid[:8] if qid else str(row.get("decision_id") or "turn")[:8])
+            label = f"{chat} · {short}"
+        return f"prompt:{key}", label
     from api.agent_router.pinned_outcomes import split_model_effort
 
     raw = str(row.get("target_model") or "").strip().lower()
@@ -100,6 +126,80 @@ def _group_identity(row: Dict[str, Any], group_by: str) -> Tuple[str, str]:
     return model, model
 
 
+def _prompt_handles(
+    rows: List[Dict[str, Any]],
+    auth_db_path: Optional[Path] = None,
+) -> Dict[str, str]:
+    """Map outcome ``query_id`` → prompt handle (``CH-000777-9``).
+
+    The handle's ``-9`` suffix is the visible share index of the assistant
+    bubble carrying that ``query_id`` in its chat history. Sessions are read
+    once each; any failure resolves to ``{}`` and callers fall back to a
+    chat + query-prefix label.
+    """
+    import json
+    import sqlite3
+
+    wanted: Dict[str, str] = {}
+    for r in rows:
+        qid = str(r.get("query_id") or "").strip()
+        sid = str(r.get("session_id") or "").strip()
+        if qid and sid and qid not in wanted:
+            wanted[qid] = sid
+    if not wanted:
+        return {}
+    by_session: Dict[str, List[str]] = {}
+    for qid, sid in wanted.items():
+        by_session.setdefault(sid, []).append(qid)
+    if auth_db_path is None:
+        try:
+            from core.runtime_paths import data_db_dir
+
+            auth_db_path = data_db_dir() / "cuttle_auth.db"
+        except Exception:
+            return {}
+    out: Dict[str, str] = {}
+    try:
+        conn = sqlite3.connect(str(auth_db_path), timeout=10.0)
+    except Exception:
+        return {}
+    try:
+        for sid, qids in by_session.items():
+            pending = set(qids)
+            try:
+                cursor = conn.execute(
+                    "SELECT role, metadata FROM chat_messages "
+                    "WHERE chat_session_id = ? ORDER BY id",
+                    (sid,),
+                )
+            except Exception:
+                continue
+            visible = 0
+            for role, raw_meta in cursor:
+                if role not in ("user", "assistant"):
+                    continue
+                visible += 1
+                if role != "assistant" or not raw_meta or not pending:
+                    continue
+                try:
+                    meta = json.loads(raw_meta)
+                except (TypeError, ValueError):
+                    continue
+                if not isinstance(meta, dict):
+                    continue
+                qid = str(meta.get("query_id") or "").strip()
+                if qid in pending:
+                    chat = _chat_label(sid)
+                    out[qid] = f"{chat}-{visible}"
+                    pending.discard(qid)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return out
+
+
 def _row_metrics(row: Dict[str, Any]) -> Dict[str, float]:
     latency = row.get("latency_ms")
     return {
@@ -107,6 +207,7 @@ def _row_metrics(row: Dict[str, Any]) -> Dict[str, float]:
         "total_tokens": float(row.get("total_tokens") or 0),
         "turns": 1.0,
         "input_tokens": float(row.get("prompt_tokens") or 0),
+        "cached_input_tokens": float(row.get("cached_tokens") or 0),
         "output_tokens": float(row.get("completion_tokens") or 0),
         "agent_hours": (float(latency) / 3_600_000.0) if latency is not None else 0.0,
     }
@@ -126,6 +227,7 @@ def cuttle_usage(
     source_id: str = "all",
     tz_offset_minutes: Optional[int] = None,
     db_path: Optional[Path] = None,
+    auth_db_path: Optional[Path] = None,
     now: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Stacked-column series per time bucket; ``start``/``end`` (YYYY-MM-DD) override ``range_id``."""
@@ -196,6 +298,8 @@ def cuttle_usage(
         cursor = _next_bucket(cursor, bucket_interval)
     index = {b: i for i, b in enumerate(buckets)}
 
+    prompt_handles = _prompt_handles(rows, auth_db_path) if group_by == "prompt" else {}
+
     groups: Dict[str, Dict[str, Any]] = {}
     totals = _empty_totals()
     for r in rows:
@@ -203,7 +307,7 @@ def cuttle_usage(
         slot = index.get(_bucket_start(day, bucket_interval))
         if slot is None:
             continue
-        key, label = _group_identity(r, group_by)
+        key, label = _group_identity(r, group_by, prompt_handles)
         g = groups.setdefault(key, {
             "key": key,
             "label": label,
@@ -251,11 +355,14 @@ def cuttle_usage(
             "turns": len(rows),
             "with_cost": sum(1 for r in rows if r.get("cost") is not None),
             "with_tokens": sum(1 for r in rows if r.get("total_tokens") is not None),
+            "with_cached": sum(1 for r in rows if r.get("cached_tokens") is not None),
             "cancelled": sum(1 for r in rows if r.get("failure_kind") == "cancelled"),
             "groups": len(groups),
         },
         "message": (
             "Every recorded attempt (pinned agents, router, fallbacks, cancelled turns). "
-            "Cost only counts turns whose harness reports it; Cursor does not."
+            "Cost is the harness-reported price when it reports one (OpenCode), otherwise a "
+            "models.dev estimate from the turn's tokens (Muse, Codex; Cursor subscription "
+            "turns when a concrete model is pinned — Auto has no public rate)."
         ),
     }

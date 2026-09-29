@@ -107,36 +107,74 @@ def _cuttle_dirs(project_path: Optional[str]) -> List[Path]:
 
 
 def _read_md_files(directory: Path, *, limit: int = 24) -> List[tuple[str, str]]:
-    """Read ``*.md`` in a directory, applying ``.cuttle/personal/`` overrides."""
+    """Read ``*.md`` in a directory, appending ``personal/`` deltas."""
     from api.cuttle_brain.personal_overlay import read_merged_md
 
     return read_merged_md(directory, limit=limit)
 
 
 def _list_names(directory: Path, patterns: Sequence[str], *, limit: int = 40) -> List[str]:
-    """List basenames with ``.cuttle/personal/`` overrides winning."""
+    """List basenames (personal twins share the basename; see delta names)."""
     from api.cuttle_brain.personal_overlay import list_merged_names
 
     return list_merged_names(directory, patterns, limit=limit)
 
 
-def _cuttle_hub_root() -> Optional[Path]:
-    """Cuttle install root (contains hub ``.cuttle/``)."""
+def _delta_names(directory: Path, patterns: Sequence[str]) -> List[str]:
+    """Basenames in ``directory`` carrying an appended personal delta."""
+    from api.cuttle_brain.personal_overlay import list_merged_delta_names
+
     try:
-        hub = Path(__file__).resolve().parents[3]
+        return list_merged_delta_names(directory, tuple(patterns))
+    except Exception:
+        return []
+
+
+def _apply_router_to_global_rules(
+    all_global: List[tuple[str, str]],
+    project_names: List[str],
+    router: Any,
+) -> List[tuple[str, str]]:
+    """Enforce ROUTER.ini rules mode; safety rules always survive."""
+    from api.cuttle_brain.router_config import SAFETY_RULE_FILES
+
+    safety = [(n, t) for n, t in all_global if n in SAFETY_RULE_FILES]
+    policy = [(n, t) for n, t in all_global if n not in SAFETY_RULE_FILES]
+    mode = (router.rules_mode if router is not None else "append") or "append"
+    if mode == "off":
+        return safety
+    if mode == "shadow":
+        shadowed = {n.lower() for n in project_names}
+        return safety + [(n, t) for n, t in policy if n.lower() not in shadowed]
+    return all_global
+
+
+def _cuttle_install_root() -> Optional[Path]:
+    """Cuttle install root (contains global ``.cuttle_global/``)."""
+    try:
+        install = Path(__file__).resolve().parents[3]
     except IndexError:
         return None
-    if (hub / ".cuttle" / "rules").is_dir():
-        return hub
+    if (install / ".cuttle_global" / "rules").is_dir():
+        return install
     return None
 
 
-def load_hub_rules() -> List[tuple[str, str]]:
-    """Always-on rules from the Cuttle hub ``.cuttle/rules/`` (every registered project)."""
-    hub = _cuttle_hub_root()
-    if not hub:
+def _cuttle_global_config() -> Optional[Path]:
+    """Global shared-config root: ``{install}/.cuttle_global/`` (rules/docs/actions/…)."""
+    install = _cuttle_install_root()
+    if not install:
+        return None
+    config = install / ".cuttle_global"
+    return config if config.is_dir() else None
+
+
+def load_global_rules() -> List[tuple[str, str]]:
+    """Always-on rules from the Cuttle global ``.cuttle_global/rules/`` (every registered project)."""
+    config = _cuttle_global_config()
+    if not config:
         return []
-    return _read_md_files(hub / ".cuttle" / "rules")
+    return _read_md_files(config / "rules")
 
 
 def load_project_rules(project_path: Optional[str]) -> List[tuple[str, str]]:
@@ -199,13 +237,13 @@ def looks_like_envelope_narration(text: Optional[str]) -> bool:
 
 
 def _rules_block(
-    hub_rules: List[tuple[str, str]],
+    global_rules: List[tuple[str, str]],
     project_rules: List[tuple[str, str]],
 ) -> str:
     parts: List[str] = []
-    if hub_rules:
-        parts.extend(["## Cuttle hub rules (global)", ""])
-        for name, text in hub_rules:
+    if global_rules:
+        parts.extend(["## Cuttle global rules", ""])
+        for name, text in global_rules:
             parts.append(f"### {name}")
             parts.append(text)
             parts.append("")
@@ -231,38 +269,61 @@ def _runtime_block(
     include_chat_store_hint: bool,
     wsl: bool,
     chat_session_id: Any = None,
+    project_path: Optional[str] = None,
 ) -> str:
     parts: List[str] = ["## Runtime context"]
+    active_root = _project_root(project_path) if project_path else None
+    if active_root is not None:
+        parts.append(f"Active project root: `{active_root}`")
     cmd = inventory.get("commands") or []
     docs = inventory.get("docs") or []
     actions = inventory.get("actions") or []
     rules = inventory.get("rules") or []
-    hub = _cuttle_hub_root()
-    hub_docs = _list_names(hub / ".cuttle" / "docs", ("*.md",)) if hub else []
-    if cmd or docs or actions or rules or hub_docs:
+    from api.cuttle_brain.router_config import load_router_config
+
+    router = load_router_config(project_path)
+    global_config = _cuttle_global_config()
+    if global_config is not None and router.docs:
+        global_docs = _list_names(global_config / "docs", ("*.md",))
+        deltas = _delta_names(global_config / "docs", ("*.md",))
+    else:
+        global_docs = []
+        deltas = []
+    if cmd or docs or actions or rules or global_docs:
         parts.append(
             "Project `.cuttle/` inventory (open docs/commands when needed; "
             "do not invent parallel paths):"
         )
-        if hub_docs:
-            hub_docs_path = hub / ".cuttle" / "docs"
-            personal_docs = hub / ".cuttle" / "personal" / "docs"
-            overlay_note = (
-                f"; prefer `{personal_docs}` when the same filename exists there"
-                if personal_docs.is_dir()
-                else "; install-local overrides: `.cuttle/personal/docs/`"
+        if global_docs and global_config is not None:
+            global_docs_path = global_config / "docs"
+            delta_note = (
+                f"; install-local deltas appended for: {', '.join(deltas)}"
+                if deltas
+                else ""
             )
             parts.append(
-                f"- hub docs (Cuttle): {', '.join(hub_docs)} "
-                f"— under `{hub_docs_path}` when path differs from project"
-                f"{overlay_note}"
+                f"- global docs (Cuttle): {', '.join(global_docs)} "
+                f"— under `{global_docs_path}` when path differs from project"
+                f"{delta_note}"
             )
+        if not router.docs and global_config is not None:
+            parts.append("- global docs: off per this project's ROUTER.ini")
         if rules:
             parts.append(f"- rules: {', '.join(rules)}")
         if cmd:
             parts.append(f"- commands: {', '.join(f'/{Path(n).stem}' for n in cmd)}")
         if docs:
-            parts.append(f"- docs: {', '.join(docs)}")
+            proj_deltas: List[str] = []
+            for cuttle_dir in _cuttle_dirs(project_path) if project_path else []:
+                for name in _delta_names(cuttle_dir / "docs", ("*.md",)):
+                    if name not in proj_deltas:
+                        proj_deltas.append(name)
+            delta_note = (
+                f"; install-local deltas appended for: {', '.join(proj_deltas)}"
+                if proj_deltas
+                else ""
+            )
+            parts.append(f"- docs: {', '.join(docs)}{delta_note}")
         if actions:
             parts.append(f"- actions: {', '.join(Path(n).stem for n in actions)}")
     else:
@@ -345,18 +406,22 @@ def compile_context(
         layers.append("core_contract")
 
     rules = load_project_rules(project_path) if include_rules else []
-    hub_rules = load_hub_rules() if include_rules else []
-    # When the registered project *is* Cuttle hub, avoid duplicating the same files.
-    if include_rules and hub_rules and rules:
-        proj_root = _project_root(project_path)
-        hub_root = _cuttle_hub_root()
-        if proj_root and hub_root and proj_root == hub_root.resolve():
-            hub_rules = []
-    rules_text = _rules_block(hub_rules, rules)
+    if include_rules:
+        from api.cuttle_brain.router_config import load_router_config
+
+        router = load_router_config(project_path)
+        # Global policy is additive by default; ROUTER.ini shadow/off trims it.
+        # Safety rules always survive (enforced inside the helper).
+        global_rules = _apply_router_to_global_rules(
+            load_global_rules(), [n for n, _ in rules], router
+        )
+    else:
+        global_rules = []
+    rules_text = _rules_block(global_rules, rules)
     if rules_text:
         sections.append(rules_text)
-        if hub_rules:
-            layers.append("hub_rules")
+        if global_rules:
+            layers.append("global_rules")
         if rules:
             layers.append("project_rules")
 
@@ -378,6 +443,7 @@ def compile_context(
                 handoff=None,  # appended below once
                 include_chat_store_hint=False,
                 wsl=wsl,
+                project_path=project_path,
             )
         )
     if handoff and handoff.text.strip():
@@ -434,8 +500,8 @@ def compile_context(
         layers_used=layers,
         meta={
             "profile": (profile or _DEFAULT_PROFILE).strip().lower() or _DEFAULT_PROFILE,
-            "rules_count": len(rules) + len(hub_rules),
-            "hub_rules_count": len(hub_rules),
+            "rules_count": len(rules) + len(global_rules),
+            "global_rules_count": len(global_rules),
             "inventory": inv,
             "handoff_from": handoff.from_agent if handoff else None,
             "handoff_to": handoff.to_agent if handoff else None,

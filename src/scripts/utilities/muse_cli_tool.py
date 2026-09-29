@@ -529,7 +529,7 @@ def windows_to_wsl_path(path: str) -> str:
 # Windows:
 #   1. Meta's official install: ``%LOCALAPPDATA%\Programs\muse\muse.cmd`` →
 #      PowerShell launcher → ``muse-bin-<ver>.exe`` (native — keep).
-#   2. Cuttle's legacy ``.cuttle/scripts/muse.cmd`` which forwards into
+#   2. Cuttle's legacy ``.cuttle_global/scripts/muse.cmd`` which forwards into
 #      ``wsl … muse``. Treating (2) as native hands it a Windows
 #      ``--workspace`` path; bash then strips backslashes
 #      (``C:\\Projects\\Cuttle`` → ``C:ProjectsCuttle``) and muse dies with

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-_SCRIPT = Path(__file__).resolve().parents[2] / ".cuttle" / "scripts" / "opencode_sync_auth.py"
+_SCRIPT = Path(__file__).resolve().parents[2] / ".cuttle_global" / "scripts" / "opencode_sync_auth.py"
 
 
 def _load_mod():

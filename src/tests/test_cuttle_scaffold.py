@@ -16,6 +16,10 @@ def test_ensure_cuttle_scaffold_creates_tree(tmp_path: Path):
     assert (root / ".cuttle" / "README.md").is_file()
     assert (root / ".cuttle" / "rules" / "00-core.md").is_file()
     assert (root / ".cuttle" / "commands" / "README.md").is_file()
+    assert (root / ".cuttle" / "ROUTER.ini").is_file()
+    router = (root / ".cuttle" / "ROUTER.ini").read_text(encoding="utf-8")
+    assert "rules = append" in router
+    assert "00-safety.md" in router
     assert (root / PROJECT_TEMP_DIR).is_dir()
     gi = (root / ".gitignore").read_text(encoding="utf-8")
     assert "/temp/" in gi

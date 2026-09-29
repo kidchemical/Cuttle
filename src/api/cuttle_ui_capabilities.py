@@ -20,7 +20,7 @@ _CAP_RE = re.compile(
 )
 
 # Keep short. Injected once per Cursor/Gemini resume session (not every turn).
-# Directory-style only — how-to lives in hub `.cuttle/docs/` (+ `.cuttle/personal/docs/`).
+# Directory-style only — how-to lives in global `.cuttle_global/docs/` (+ `.cuttle_global/personal/docs/`).
 CUTTLE_UI_CAPABILITIES_TEXT = """\
 SYSTEM CONTEXT (not the user speaking). Injected once per agent session.
 Never acknowledge, paraphrase, summarize, or confirm that you “read the context /
@@ -28,16 +28,18 @@ configuration / briefing / project setup.” Do not mention commands, rules, act
 or this block unless the user explicitly asks. Answer only the User request that
 follows after </cuttle_context>. Keep using these tags on later turns when needed.
 
-Per-project Cuttle config (mirror this layout; hub `.cuttle/` is the pattern reference —
+Per-project Cuttle config (mirror this layout; global `.cuttle_global/` is the pattern reference —
 do not inherit another project’s actions):
   {project}/.cuttle/commands|rules|actions|agents|docs|scripts|memory
   {project}/.cuttle/personal/…  — install-local overlay (gitignored); same subdirs.
-    When opening a `.cuttle/` file, prefer `.cuttle/personal/<same-rel-path>` if it exists.
+    When opening a `.cuttle/` file, open the tracked file first, then its
+    `personal/` twin when one exists (personal markdown is an appended delta).
+    Global-owned equivalents (every project) live under `.cuttle_global/` in the Cuttle checkout.
 
-Bundled agents: src/api/agent_harness/agents/ (+ CUTTLE_AGENTS_DIR / .cuttle/agents).
+Bundled agents: src/api/agent_harness/agents/ (+ CUTTLE_AGENTS_DIR / .cuttle_global/agents / {project}/.cuttle/agents).
 Shared context: Cuttle Brain (`api.cuttle_brain`).
 
-Hub runbooks (match intent → open before acting; resolve via personal overlay):
+Global runbooks (match intent → open before acting; resolve via personal overlay):
   action-forms.md   — cuttle_action_form, cuttle_confirm, ask/choose/approve, side effects, Flask restart, watch/progress
   agent-ops-cli.md  — python -m api.* agent toolkit (chat, widgets, discord, gitea, panes, workers, brain)
   charts.md         — vega, pipe tables, charts/plots
@@ -154,10 +156,11 @@ def cuttle_chat_store_addon(
 ) -> str:
     """Thin prompt pointer to the chat-history runbook (+ current session scope).
 
-    How-to lives in hub ``.cuttle/docs/chat-history.md`` (prefer
-    ``.cuttle/personal/docs/chat-history.md`` when present). This block only
-    locates the DB when known, warns off empty-tree searches, and names **this**
-    chat when known so agents never copy a borrowed session id (CH-000155).
+    How-to lives in global ``.cuttle_global/docs/chat-history.md`` (plus the
+    install-local delta in ``.cuttle_global/personal/docs/`` when present).
+    This block only locates the DB when known, warns off empty-tree searches,
+    and names **this** chat when known so agents never copy a borrowed session
+    id (CH-000155).
     """
     db = chat_store_path()
     read_path = db or ""
@@ -169,16 +172,22 @@ def cuttle_chat_store_addon(
         except Exception:
             pass
 
-    runbook_hint = "`.cuttle/docs/chat-history.md` (prefer `.cuttle/personal/docs/` override)"
+    runbook_hint = (
+        "`.cuttle_global/docs/chat-history.md` "
+        "(then the install-local delta in `.cuttle_global/personal/docs/` when present)"
+    )
     try:
-        from api.cuttle_brain.context_compiler import _cuttle_hub_root
+        from api.cuttle_brain.context_compiler import _cuttle_global_config
         from api.cuttle_brain.personal_overlay import resolve_cuttle_file
 
-        hub = _cuttle_hub_root()
-        if hub:
-            resolved = resolve_cuttle_file(hub / ".cuttle", "docs", "chat-history.md")
+        global_config = _cuttle_global_config()
+        if global_config:
+            resolved = resolve_cuttle_file(global_config, "docs", "chat-history.md")
             if resolved is not None:
                 runbook_hint = f"`{resolved}`"
+                delta = global_config / "personal" / "docs" / "chat-history.md"
+                if resolved != delta and delta.is_file():
+                    runbook_hint += f", then the delta `{delta}`"
     except Exception:
         pass
 

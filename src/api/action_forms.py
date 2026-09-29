@@ -8,7 +8,7 @@ Agents emit::
     </cuttle_action_form>
 
 Cuttle rewrites that into a self-contained UI card. User choices run allowlisted
-``.cuttle/actions/*`` recipes (Discord, shell, CLI, …) with **no LLM** and
+project ``.cuttle/actions/*`` or global ``.cuttle_global/actions/*`` recipes (Discord, shell, CLI, …) with **no LLM** and
 (by default) **no chat reply** — only toast + lock on the card.
 """
 
@@ -1544,7 +1544,7 @@ def execute_action_form_submission(
                         f"Unknown action `{action}` for project path "
                         f"`{run_project or '(empty)'}`. "
                         "Set the chat project chip to the project that owns "
-                        "`.cuttle/actions/`."
+                        "`.cuttle/actions/` (or add it to global `.cuttle_global/actions/`)."
                     ),
                 }
             )

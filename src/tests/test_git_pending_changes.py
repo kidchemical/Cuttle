@@ -211,6 +211,40 @@ def test_collect_pending_changes_temp_repo(tmp_path: Path):
     assert "diff" in (ctx["diff_excerpt"] or "").lower() or "+++ b/b.txt" in (ctx["diff_excerpt"] or "")
 
 
+def test_suggest_context_keeps_selected_file_past_truncation(tmp_path: Path):
+    """A selected file the list cap cut off must still resolve (no 'No selected files')."""
+    from scripts.utilities.git_pending_changes import collect_commit_suggest_context
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def git(*args):
+        r = subprocess.run(
+            ["git", *args],
+            cwd=str(repo),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert r.returncode == 0, r.stderr
+        return r
+
+    git("init")
+    git("config", "user.email", "test@example.com")
+    git("config", "user.name", "Test")
+    (repo / "seed.txt").write_text("seed\n", encoding="utf-8")
+    git("add", "seed.txt")
+    git("commit", "-m", "init")
+    for i in range(10):
+        (repo / f"a_{i:02d}.txt").write_text(" filler\n", encoding="utf-8")
+    (repo / "zzz-target.txt").write_text("target\n", encoding="utf-8")
+
+    ctx = collect_commit_suggest_context(str(repo), max_files=5, paths=["zzz-target.txt"])
+    assert [f["path"] for f in ctx["files"]] == ["zzz-target.txt"]
+    assert "zzz-target.txt" in ctx["file_summary"]
+    assert ctx["heuristic_message"]
+
+
 def test_resolve_git_workdir_nested_source(tmp_path: Path):
     from scripts.utilities.git_pending_changes import resolve_git_workdir
 

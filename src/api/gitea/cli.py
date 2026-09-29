@@ -1,7 +1,8 @@
 """CLI: ``python -m api.gitea <verb> …``
 
 Thin argparse front over ``api.gitea_client``. Formerly
-``.cuttle/scripts/gitea_cli.py`` (that path still delegates here).
+``.cuttle/scripts/gitea_cli.py`` (now ``.cuttle_global/scripts/gitea_cli.py``;
+that path still delegates here).
 
 Examples::
 

@@ -1,0 +1,13 @@
+name: workers.blender-shard
+title: Shard Blender render
+description: >-
+  Split frame_start..frame_end into blender_render jobs. Default distribution
+  is work_steal (small untargeted chunks; idle workers claim next). Use
+  distribution=pinned for legacy equal ranges. Params: blend_file, output_dir,
+  frame_start, frame_end, engine?, blender_bin?, max_shards?, chunk_size?,
+  distribution?, batch_id?, submitted_by?
+type: shell
+run: powershell -NoProfile -ExecutionPolicy Bypass -File .cuttle_global\scripts\workers-cli.ps1 blender-shard
+run_posix: .venv/bin/python -m api.device_workers.cli blender-shard
+workdir: .
+timeout: 120

@@ -20,7 +20,7 @@ The user often uses Cuttle from a **LAN device** (phone / another PC) and **cann
 
 ### Ask with a card, not a sentence (required in Cuttle chat)
 
-`.cuttle/actions/flask-restart.yaml` (`flask.restart`) and `.cuttle/actions/flask-health.yaml`
+`.cuttle_global/actions/flask-restart.yaml` (`flask.restart`) and `.cuttle_global/actions/flask-health.yaml`
 (`flask.health`) are allowlisted, so the ask should always be clickable — the user is often on a
 phone / LAN device where typing `/restart graceful` is the worst available option. Emit this and
 let them click; do **not** run the restart yourself.

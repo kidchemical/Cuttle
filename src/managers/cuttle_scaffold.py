@@ -25,7 +25,7 @@ _TEMP_GITIGNORE_LINE = "/temp/"
 
 _README = """# `.cuttle/` — per-project Cuttle config
 
-Mirror of the Cuttle hub layout. This project owns its own commands, rules,
+Mirror of the Cuttle global layout. This project owns its own commands, rules,
 actions, and docs — it does **not** inherit another project's recipes.
 
 ```text
@@ -48,10 +48,10 @@ temp/               # agent scratch / redirected stdout (gitignored)
 Install-local overlay (gitignored except README):
 
 ```text
-.cuttle/personal/   # mirrors commands|rules|actions|docs|scripts — wins over tracked
+.cuttle/personal/   # mirrors commands|rules|actions|docs|scripts — supplements tracked (md appends, rest wins)
 ```
 
-Hub reference: see this repo's `.cuttle/README.md` and `.cuttle/docs/commands-and-actions.md`
+Global reference: see this repo's `.cuttle_global/README.md` and `.cuttle_global/docs/commands-and-actions.md`
 (relative to your Cuttle install — do not hardcode another machine's drive path).
 """
 
@@ -59,7 +59,7 @@ _COMMANDS_README = """# Project commands
 
 Drop one markdown file per slash command (YAML frontmatter + body).
 
-See hub: `.cuttle/docs/commands-and-actions.md` under your Cuttle install.
+See global: `.cuttle_global/docs/commands-and-actions.md` under your Cuttle install.
 """
 
 _RULES_CORE = """# {name} — always-on project rules
@@ -72,8 +72,8 @@ These files under `.cuttle/rules/` are compiled into every harness agent turn by
 | Path | Role |
 |---|---|
 | (fill in) | Primary source / content root |
-| `temp/` | Agent scratch / redirected stdout (gitignored; hub rule 15) |
-| `.cuttle/personal/` | Install-local overlay (gitignored; wins over tracked `.cuttle/`) |
+| `temp/` | Agent scratch / redirected stdout (gitignored; global rule 14) |
+| `.cuttle/personal/` | Install-local overlay (gitignored; supplements tracked `.cuttle/`) |
 | `.cuttle/commands/` | Cuttle slash commands (`/name`) |
 | `.cuttle/actions/` | Allowlisted side effects (forms / confirms) |
 | `.cuttle/docs/` | Runbooks and design notes |
@@ -82,15 +82,31 @@ These files under `.cuttle/rules/` are compiled into every harness agent turn by
 
 1. Prefer this project's `.cuttle/commands`, `.cuttle/actions`, and `.cuttle/docs` over inventing parallel conventions.
 2. Long OS jobs should use project commands with `execute: shell` + `watch:` when available.
-3. Scratch / `_tmp_*` dumps go in `temp/` (or `scripts/temp/` if this project keeps agent scripts under `scripts/`) — never next to kept helpers or at the repo root. See hub `.cuttle/rules/00-core.md` rule 15.
+3. Scratch / `_tmp_*` dumps go in `temp/` (or `scripts/temp/` if this project keeps agent scripts under `scripts/`) — never next to kept helpers or at the repo root. See global `.cuttle_global/rules/00-core.md` rule 14.
 4. Machine-specific paths / LAN notes → `.cuttle/personal/` (never commit).
 """
 
 _PERSONAL_README = """# `.cuttle/personal/` — install-local overlay
 
-Gitignored twin of tracked `.cuttle/`. Same-relative-path files here **win** over
-tracked copies. Put LAN hosts, absolute paths, and guild/repo examples here — not
-in tracked docs. See the Cuttle hub `.cuttle/personal/README.md` for the full contract.
+Gitignored twin of tracked `.cuttle/`. Same-relative-path files here **supplement**
+tracked copies: personal *markdown* is appended after the tracked file as a delta
+(keep it small — never fork the whole file); other personal files replace by
+basename. Put LAN hosts, absolute paths, and guild/repo examples here — not
+in tracked docs. See the Cuttle global `.cuttle_global/personal/README.md` for the full contract.
+"""
+
+_ROUTER_INI = """# `.cuttle/ROUTER.ini` — per-project routing contract: which global layers apply here.
+# Absent file = everything on and additive. Unknown keys/values fall back to defaults.
+# Safety core (`.cuttle_global/rules/00-safety.md`) always compiles and cannot be
+# severed per project; edit the global tree to change it for everyone.
+[global]
+# rules: append (global + project compile) | shadow (a same-basename project file
+#   replaces the global one — use to retract a global rule for this project) | off
+rules = append
+# docs: on | off (skip the global docs inventory leg for this project)
+docs = on
+# actions: on | off (skip the global actions fallback leg for this project)
+actions = on
 """
 
 
@@ -182,6 +198,7 @@ def ensure_cuttle_scaffold(
 
     _write_if_missing(cuttle / "README.md", _README)
     _write_if_missing(cuttle / "commands" / "README.md", _COMMANDS_README)
+    _write_if_missing(cuttle / "ROUTER.ini", _ROUTER_INI)
     _write_if_missing(
         cuttle / "rules" / "00-core.md",
         _RULES_CORE.format(name=display),
@@ -194,7 +211,7 @@ def ensure_cuttle_scaffold(
             pass
         _write_if_missing(keep, "")
 
-    # Install-local overlay (gitignored on hub; projects get a README + subdirs)
+    # Install-local overlay (gitignored on global; projects get a README + subdirs)
     personal = cuttle / "personal"
     _mkdir(personal)
     for sub in ("commands", "rules", "actions", "docs", "scripts"):
@@ -202,7 +219,7 @@ def ensure_cuttle_scaffold(
     _write_if_missing(personal / "README.md", _PERSONAL_README)
     _ensure_personal_gitignore(root, created)
 
-    # Project-root scratch (hub rule 15) — dir + gitignore, never overwrite ignore body
+    # Project-root scratch (global rule 14) — dir + gitignore, never overwrite ignore body
     _mkdir(root / PROJECT_TEMP_DIR)
     _ensure_temp_gitignore(root, created)
 

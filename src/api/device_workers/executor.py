@@ -724,7 +724,7 @@ def _materialize_updater_script(
         try:
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_text(text, encoding="utf-8")
-            repo_script = repo / ".cuttle" / "scripts" / name
+            repo_script = repo / ".cuttle_global" / "scripts" / name
             try:
                 repo_script.parent.mkdir(parents=True, exist_ok=True)
                 repo_script.write_text(text, encoding="utf-8")
@@ -733,7 +733,7 @@ def _materialize_updater_script(
             return dest
         except OSError as e:
             raise JobExecError(f"failed to write embedded updater: {e}") from e
-    script = repo / ".cuttle" / "scripts" / name
+    script = repo / ".cuttle_global" / "scripts" / name
     if not script.is_file():
         raise JobExecError(f"updater script missing: {script}")
     return script

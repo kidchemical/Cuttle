@@ -1,14 +1,14 @@
 # Cuttle documentation (human)
 
-Product docs for people reading the repo. **Agent how-to lives in [`.cuttle/docs/`](../.cuttle/docs/)** — do not add a third docs tree.
+Product docs for people reading the repo. **Agent how-to lives in [`.cuttle_global/docs/`](../.cuttle_global/docs/)** — do not add a third docs tree.
 
-Canonical briefs: [`AGENTS.md`](../AGENTS.md), [`ROADMAP.md`](ROADMAP.md), [`.cuttle/docs/`](../.cuttle/docs/).
+Canonical briefs: [`AGENTS.md`](../AGENTS.md), [`ROADMAP.md`](ROADMAP.md), [`.cuttle_global/docs/`](../.cuttle_global/docs/).
 
 ## Guides
 
 - [Modularity / harness of harnesses](guides/MODULARITY.md) — product thesis
 - [Agent router](guides/AGENT_ROUTER.md) — use-case table, `/router` commands
-- [Cuttle Workers](guides/CUTTLE_WORKERS.md) — mesh design (hub runbook: [`.cuttle/docs/cuttle-workers.md`](../.cuttle/docs/cuttle-workers.md))
+- [Cuttle Workers](guides/CUTTLE_WORKERS.md) — mesh design (global runbook: [`.cuttle_global/docs/cuttle-workers.md`](../.cuttle_global/docs/cuttle-workers.md))
 - [Supervised coordinator](guides/SUPERVISED_COORDINATOR.md)
 - [Pairing and allowlist](guides/PAIRING_AND_ALLOWLIST.md)
 - [Remote access](guides/REMOTE_ACCESS.md)
@@ -16,7 +16,7 @@ Canonical briefs: [`AGENTS.md`](../AGENTS.md), [`ROADMAP.md`](ROADMAP.md), [`.cu
 - [Repository architecture map](architecture/repository-map.md) — whole-repo boot/deps (2026-09 audit)
 - [Extension boundaries](architecture/extension-boundaries.md) — harness adapters vs surfaces vs agent-ops
 
-Auth (bcrypt, LAN) is in [`ROADMAP.md`](ROADMAP.md). Desktop version lives in `electron/package.json`. Agent runbooks stay under `.cuttle/docs/`.
+Auth (bcrypt, LAN) is in [`ROADMAP.md`](ROADMAP.md). Desktop version lives in `electron/package.json`. Agent runbooks stay under `.cuttle_global/docs/`.
 
 ## Reviews
 

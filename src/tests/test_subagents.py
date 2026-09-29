@@ -676,10 +676,10 @@ def test_hydrate_repairs_missing_codex_assistant_badge(tmp_path: Path):
 
 def test_hub_rule_mentions_cli():
     root = Path(__file__).resolve().parents[2]
-    text = (root / ".cuttle" / "rules" / "03-subagents.md").read_text(encoding="utf-8")
+    text = (root / ".cuttle_global" / "rules" / "03-subagents.md").read_text(encoding="utf-8")
     assert "python -m api.subagents" in text
     assert "--collect" in text
-    from api.cuttle_brain.context_compiler import load_hub_rules
+    from api.cuttle_brain.context_compiler import load_global_rules
 
-    names = [n for n, _ in load_hub_rules()]
+    names = [n for n, _ in load_global_rules()]
     assert any("03-subagents" in n for n in names)

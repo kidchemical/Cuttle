@@ -305,6 +305,97 @@ def read_muse_msp_context(muse_session_uuid: Optional[str]) -> Optional[Dict[str
     return out
 
 
+_USAGE_KEYS = (
+    "input_tokens",
+    "output_tokens",
+    "cache_read_tokens",
+    "cache_write_tokens",
+    "reasoning_tokens",
+)
+
+
+def muse_session_log_paths(muse_session_uuid: Optional[str]) -> list:
+    """Every session.jsonl for one Muse session: main log + subagent logs."""
+    sid = str(muse_session_uuid or "").strip()
+    if not sid or not _UUID_RE.match(sid):
+        return []
+    root = muse_data_home() / "sessions"
+    if not root.is_dir():
+        return []
+    hits = list(root.glob(f"*/*/*/{sid}/session.jsonl"))
+    hits.extend(root.glob(f"*/*/*/{sid}/subagent/*/session.jsonl"))
+    return [p for p in hits if p.is_file()]
+
+
+def _positive_int(*values: Any) -> int:
+    for v in values:
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0:
+            return int(v)
+    return 0
+
+
+def read_muse_session_usage(
+    muse_session_uuid: Optional[str],
+    *,
+    baseline: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Aggregate per-call token usage from a Muse session log.
+
+    Reads the ``model_completed`` events Muse writes to
+    ``sessions/<Y>/<M>/<D>/<sid>/session.jsonl`` (plus its subagent logs) —
+    the same records the Meta API bills from. ``muse exec --json`` stdout no
+    longer carries usage, so this is Cuttle's authoritative per-turn source.
+
+    With ``baseline`` (a previous return value captured before the turn),
+    returns only the delta — one turn's usage for a resumed session.
+
+    Input tokens are inclusive of cached reads (OpenAI-style), matching what
+    ``estimate_cost_usd`` expects alongside ``cache_read_tokens``. Returns {}
+    when the log is missing/unreadable.
+    """
+    files = muse_session_log_paths(muse_session_uuid)
+    if not files:
+        return {}
+    agg: Dict[str, int] = {k: 0 for k in _USAGE_KEYS}
+    agg["calls"] = 0
+    for path in files:
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    s = line.strip()
+                    if not s.startswith("{") or '"model_completed"' not in s:
+                        continue
+                    try:
+                        ev = json.loads(s)
+                    except json.JSONDecodeError:
+                        continue
+                    pay = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
+                    event = pay.get("event") if isinstance(pay.get("event"), dict) else {}
+                    if event.get("kind") != "model_completed":
+                        continue
+                    usage = event.get("usage") if isinstance(event.get("usage"), dict) else {}
+                    if not usage:
+                        continue
+                    agg["input_tokens"] += _positive_int(usage.get("input_tokens"), usage.get("inputTokens"))
+                    agg["output_tokens"] += _positive_int(usage.get("output_tokens"), usage.get("outputTokens"))
+                    agg["cache_read_tokens"] += _positive_int(usage.get("cache_read_tokens"), usage.get("cacheReadTokens"))
+                    agg["cache_write_tokens"] += _positive_int(usage.get("cache_write_tokens"), usage.get("cacheWriteTokens"))
+                    agg["reasoning_tokens"] += _positive_int(usage.get("reasoning_tokens"), usage.get("reasoningTokens"))
+                    agg["calls"] += 1
+        except OSError:
+            continue
+    if not agg["calls"]:
+        return {}
+    out = dict(agg)
+    if baseline:
+        for key, val in baseline.items():
+            if key in out:
+                out[key] = max(0, out[key] - int(val or 0))
+        if not out["calls"]:
+            return {}
+    return out
+
+
 def clear_muse_resume_id(cwd: str, cuttle_session_id: Optional[Any]) -> None:
     if not _normalize_session_id(cuttle_session_id):
         return

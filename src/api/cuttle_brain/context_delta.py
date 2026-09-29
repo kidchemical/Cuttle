@@ -1,7 +1,7 @@
 """Context delta — lightweight updates on resumed agent sessions.
 
 Full Context Compiler envelope on fresh sessions; on resume, send only what changed
-(hub/project rules, new docs/actions) so agents stay current without re-injecting
+(global/project rules, new docs/actions) so agents stay current without re-injecting
 the entire briefing every turn.
 """
 
@@ -17,8 +17,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from api.cuttle_brain.context_compiler import (
     CONTEXT_SCHEMA_VERSION,
     _USER_REQUEST_HEADER,
-    _cuttle_hub_root,
-    load_hub_rules,
+    _cuttle_global_config,
+    load_global_rules,
     load_project_rules,
     project_inventory,
 )
@@ -77,9 +77,9 @@ def _rules_map(rules: List[Tuple[str, str]]) -> Dict[str, str]:
 @dataclass(frozen=True)
 class ContextSnapshot:
     schema_version: int
-    hub_rules: Dict[str, str]
+    global_rules: Dict[str, str]
     project_rules: Dict[str, str]
-    hub_docs: Tuple[str, ...]
+    global_docs: Tuple[str, ...]
     project_docs: Tuple[str, ...]
     project_actions: Tuple[str, ...]
     project_commands: Tuple[str, ...]
@@ -87,9 +87,9 @@ class ContextSnapshot:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "schema_version": self.schema_version,
-            "hub_rules": dict(self.hub_rules),
+            "global_rules": dict(self.global_rules),
             "project_rules": dict(self.project_rules),
-            "hub_docs": list(self.hub_docs),
+            "global_docs": list(self.global_docs),
             "project_docs": list(self.project_docs),
             "project_actions": list(self.project_actions),
             "project_commands": list(self.project_commands),
@@ -99,9 +99,9 @@ class ContextSnapshot:
     def from_dict(cls, raw: Dict[str, Any]) -> ContextSnapshot:
         return cls(
             schema_version=int(raw.get("schema_version") or 0),
-            hub_rules=dict(raw.get("hub_rules") or {}),
+            global_rules=dict(raw.get("global_rules") or {}),
             project_rules=dict(raw.get("project_rules") or {}),
-            hub_docs=tuple(raw.get("hub_docs") or ()),
+            global_docs=tuple(raw.get("global_docs") or ()),
             project_docs=tuple(raw.get("project_docs") or ()),
             project_actions=tuple(raw.get("project_actions") or ()),
             project_commands=tuple(raw.get("project_commands") or ()),
@@ -110,17 +110,17 @@ class ContextSnapshot:
 
 def compute_snapshot(project_path: Optional[str]) -> ContextSnapshot:
     inv = project_inventory(project_path)
-    hub = _cuttle_hub_root()
-    hub_docs: List[str] = []
-    if hub:
-        docs_dir = hub / ".cuttle" / "docs"
+    global_config = _cuttle_global_config()
+    global_docs: List[str] = []
+    if global_config:
+        docs_dir = global_config / "docs"
         if docs_dir.is_dir():
-            hub_docs = sorted(p.name for p in docs_dir.glob("*.md"))
+            global_docs = sorted(p.name for p in docs_dir.glob("*.md"))
     return ContextSnapshot(
         schema_version=CONTEXT_SCHEMA_VERSION,
-        hub_rules=_rules_map(load_hub_rules()),
+        global_rules=_rules_map(load_global_rules()),
         project_rules=_rules_map(load_project_rules(project_path)),
-        hub_docs=tuple(hub_docs),
+        global_docs=tuple(global_docs),
         project_docs=tuple(sorted(inv.get("docs") or [])),
         project_actions=tuple(sorted(inv.get("actions") or [])),
         project_commands=tuple(sorted(Path(n).stem for n in (inv.get("commands") or []))),
@@ -237,7 +237,7 @@ def _format_rule_changes(
 
     lines.append(f"### {label}")
     if project_path is None:
-        rules_list = load_hub_rules()
+        rules_list = load_global_rules()
     else:
         rules_list = load_project_rules(project_path)
 
@@ -293,10 +293,10 @@ def build_delta_text(
 
     parts.extend(
         _format_rule_changes(
-            "Cuttle hub rules",
-            previous.hub_rules,
-            current.hub_rules,
-            load_hub_rules,
+            "Cuttle global rules",
+            previous.global_rules,
+            current.global_rules,
+            load_global_rules,
             None,
         )
     )
@@ -310,14 +310,14 @@ def build_delta_text(
         )
     )
 
-    hub = _cuttle_hub_root()
-    hub_hint = f"`{hub / '.cuttle' / 'docs'}`" if hub else "Cuttle hub `.cuttle/docs`"
+    global_config = _cuttle_global_config()
+    global_hint = f"`{global_config / 'docs'}`" if global_config else "Cuttle global `.cuttle_global/docs`"
     parts.extend(
         _format_inventory_delta(
-            "Hub docs",
-            previous.hub_docs,
-            current.hub_docs,
-            path_hint=hub_hint,
+            "Global docs",
+            previous.global_docs,
+            current.global_docs,
+            path_hint=global_hint,
         )
     )
     parts.extend(

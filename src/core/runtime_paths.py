@@ -121,13 +121,17 @@ def _repo_root() -> Path:
 def load_personal_path_aliases(project_root: Optional[Path] = None) -> dict:
     """Install-local path aliases (gitignored). Stdlib JSON only.
 
-    See ``.cuttle/personal/README.md``. Missing file → empty dict.
+    See ``.cuttle_global/personal/README.md``. Missing file → empty dict.
     """
     import json
 
     root = Path(project_root) if project_root is not None else _repo_root()
-    path = root / ".cuttle" / "personal" / "path-aliases.json"
-    if not path.is_file():
+    candidates = (
+        root / ".cuttle" / "personal" / "path-aliases.json",
+        root / ".cuttle_global" / "personal" / "path-aliases.json",
+    )
+    path = next((p for p in candidates if p.is_file()), None)
+    if path is None:
         return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -175,7 +179,7 @@ def rewrite_windows_cuttle_path(path: str, project_root: Optional[Path] = None) 
     Matching is generic: any path *segment* equal to this repo's folder name
     (usually ``Cuttle``) maps onto ``project_root``. Extra prefixes that do not
     contain that folder name live in gitignored
-    ``.cuttle/personal/path-aliases.json`` (or ``CUTTLE_WINDOWS_PREFIXES``).
+    ``.cuttle_global/personal/path-aliases.json`` (or ``CUTTLE_WINDOWS_PREFIXES``).
     """
     raw = (path or "").strip()
     if not raw or is_windows():

@@ -115,3 +115,10 @@ message instead of a wall of stack traces. See `src/api/agent_harness/ADDING_AN_
 - **Suggested Fix / Done:** Kernel owns cwd via `api.agent_harness.cwd.resolve_harness_cwd` and `constrain_to_project` so adapters cannot jump repos. Resume lookup is same-repo aliases only (`src/` / `source/`). Tests: `test_every_bundled_adapter_honors_project_chip`, `test_kernel_rejects_adapter_cwd_from_another_project`, `test_resume_binding_does_not_follow_other_project`.
 - **Learning:** Resume is per (agent, chat, **project**). Preserving a CLI session is not worth running the wrong repo. Put cwd in the kernel so the next agent does not re-copy `getcwd()`.
 - **See Also:** ERR-20260816-009
+
+### [ERR-20260928-001] dashboards — stale performance-route test vs owner gate
+- **Priority:** Medium · **Status:** Fixed (regression test added) · **Area:** dashboards / test_jev
+- **Summary:** `test_jev.py::test_flask_performance_route` failed with `KeyError: 'id'`.
+- **Error:** Test mounted `dashboards_bp` standalone with no auth context and asserted payload fields; the applied `@owner_required` gate returns 401 JSON with no `id`.
+- **Context:** Workstream-1-adjacent cleanup gated the dashboards blueprint but did not update the test. Recorded separately per CH-000764; does not block settings extraction.
+- **Suggested Fix / Done:** Rewrote as `test_flask_performance_route_requires_owner` asserting 401 for anonymous (gate contract). Service payload shape remains covered by `test_dashboards_catalog_performance_is_live`. Deliberately did not loosen the gate.

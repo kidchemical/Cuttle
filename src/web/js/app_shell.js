@@ -23,6 +23,12 @@ const splitContainer = document.getElementById('splitContainer');
     }
 })();
 
+// Hooks the fullscreen titlebar auto-hide exposes (set inside
+// initElectronTitlebar). Space menus/bubbles pin the titlebar while open and
+// re-arm the hide timer after they close.
+let cuttleTitlebarRescheduleHide = null;
+let cuttleTitlebarCancelHide = null;
+
 // ── Electron frameless window chrome ───────────────────────────
 (function initElectronTitlebar() {
     const api = window.electron;
@@ -530,10 +536,23 @@ const splitContainer = document.getElementById('splitContainer');
     };
     const scheduleHideTitlebar = () => {
         if (hideTimer) clearTimeout(hideTimer);
+        // An open space menu/bubble pins the titlebar until it closes.
+        if (typeof isSpaceCtxOpen === 'function' && isSpaceCtxOpen()) return;
         hideTimer = setTimeout(() => {
             hideTimer = null;
             titlebar.classList.remove('is-revealed');
         }, 420);
+    };
+    cuttleTitlebarRescheduleHide = () => {
+        if (!document.body.classList.contains('fullscreen')) return;
+        if (titlebar.matches(':hover')) return;
+        scheduleHideTitlebar();
+    };
+    cuttleTitlebarCancelHide = () => {
+        if (hideTimer) {
+            clearTimeout(hideTimer);
+            hideTimer = null;
+        }
     };
 
     const onFullscreenChange = (fullscreen) => {
@@ -5080,6 +5099,243 @@ async function deleteWorkspace(id) {
     });
 })();
 
+// ── Space groups (Chrome-style tab groups) ─────────────
+// A group is a named, colored bucket of spaces. Tabs keep working exactly as
+// before; members render under a group pill and share the group color.
+const SPACE_GROUP_COLORS = [
+    { name: 'White', hex: '#e8eaed' },
+    { name: 'Grey', hex: '#9aa0a6' },
+    { name: 'Blue', hex: '#8ab4f8' },
+    { name: 'Red', hex: '#f28b82' },
+    { name: 'Yellow', hex: '#fdd663' },
+    { name: 'Green', hex: '#81c995' },
+    { name: 'Pink', hex: '#ff8bcb' },
+    { name: 'Purple', hex: '#c58af9' },
+    { name: 'Cyan', hex: '#78d9ec' },
+    { name: 'Orange', hex: '#fcad70' },
+];
+const SPACE_GROUP_DEFAULT_COLOR = '#e8eaed';
+
+/** Only preset swatches are stored; anything else becomes null (no color). */
+function sanitizeSpaceColor(hex) {
+    const want = String(hex || '').toLowerCase();
+    const hit = SPACE_GROUP_COLORS.find((c) => c.hex.toLowerCase() === want);
+    return hit ? hit.hex : null;
+}
+
+function newSpaceGroupId() {
+    return 'sg_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
+function spaceGroupById(gid) {
+    if (!gid) return null;
+    return (spacesState.groups || []).find((g) => g && g.id === gid) || null;
+}
+
+function ensureSpaceGroupsArray() {
+    if (!Array.isArray(spacesState.groups)) spacesState.groups = [];
+    return spacesState.groups;
+}
+
+/** Drop groups with no member tabs (runs after ungroup/close/delete). */
+function pruneEmptySpaceGroups() {
+    const groups = ensureSpaceGroupsArray();
+    if (!groups.length) return;
+    const used = new Set(spacesState.spaces.map((s) => s && s.groupId).filter(Boolean));
+    const kept = groups.filter((g) => g && used.has(g.id));
+    if (kept.length !== groups.length) {
+        spacesState.groups = kept;
+        persistSpacesState();
+    }
+}
+
+/** Keep a group's tabs adjacent: move the space right after the last member.
+ *  A first/only member stays where it is (Chrome keeps a new group in place). */
+function moveSpaceNextToGroup(spaceId, gid) {
+    const list = spacesState.spaces;
+    const idx = list.findIndex((s) => s && s.id === spaceId);
+    if (idx < 0) return;
+    let last = -1;
+    for (let i = 0; i < list.length; i++) {
+        if (list[i] && list[i].id !== spaceId && list[i].groupId === gid) last = i;
+    }
+    if (last < 0) return;
+    const [space] = list.splice(idx, 1);
+    list.splice(last > idx ? last : last + 1, 0, space);
+}
+
+function setSpaceGroup(spaceId, gid) {
+    const space = spacesState.spaces.find((s) => s && s.id === spaceId);
+    if (!space) return false;
+    if (gid && space.groupId === gid) gid = null; // clicking the current group removes it
+    if (gid && !spaceGroupById(gid)) return false;
+    if (gid) {
+        space.groupId = gid;
+        moveSpaceNextToGroup(spaceId, gid);
+    } else {
+        delete space.groupId;
+    }
+    pruneEmptySpaceGroups();
+    persistSpacesState();
+    renderSpaceTabs();
+    return true;
+}
+
+function createSpaceGroupForSpace(spaceId) {
+    const space = spacesState.spaces.find((s) => s && s.id === spaceId);
+    if (!space) return null;
+    const group = { id: newSpaceGroupId(), name: '', color: SPACE_GROUP_DEFAULT_COLOR };
+    ensureSpaceGroupsArray().push(group);
+    space.groupId = group.id;
+    moveSpaceNextToGroup(spaceId, group.id);
+    persistSpacesState();
+    renderSpaceTabs();
+    return group;
+}
+
+function removeSpaceFromGroup(spaceId) {
+    const space = spacesState.spaces.find((s) => s && s.id === spaceId);
+    if (!space || !space.groupId) return false;
+    delete space.groupId;
+    pruneEmptySpaceGroups();
+    persistSpacesState();
+    renderSpaceTabs();
+    return true;
+}
+
+function renameSpaceGroup(gid, name) {
+    const group = spaceGroupById(gid);
+    if (!group) return;
+    group.name = String(name || '').trim().slice(0, 40);
+    persistSpacesState();
+}
+
+function setSpaceGroupColor(gid, hex) {
+    const group = spaceGroupById(gid);
+    if (!group) return false;
+    group.color = sanitizeSpaceColor(hex) || SPACE_GROUP_DEFAULT_COLOR;
+    persistSpacesState();
+    renderSpaceTabs();
+    return true;
+}
+
+function setSpaceColor(spaceId, hex) {
+    const space = spacesState.spaces.find((s) => s && s.id === spaceId);
+    if (!space) return false;
+    const clean = sanitizeSpaceColor(hex);
+    if (clean) space.color = clean;
+    else delete space.color;
+    persistSpacesState();
+    renderSpaceTabs();
+    return true;
+}
+
+/** Ungroup: dissolve the group, member spaces survive as plain tabs. */
+function dissolveSpaceGroup(gid) {
+    const group = spaceGroupById(gid);
+    if (!group) return false;
+    spacesState.spaces.forEach((s) => { if (s && s.groupId === gid) delete s.groupId; });
+    spacesState.groups = ensureSpaceGroupsArray().filter((g) => g && g.id !== gid);
+    persistSpacesState();
+    renderSpaceTabs();
+    return true;
+}
+
+/** Collapse/expand a group. Never hides the active tab. */
+function toggleSpaceGroupCollapsed(gid) {
+    const group = spaceGroupById(gid);
+    if (!group) return false;
+    if (!group.collapsed) {
+        const hidesActive = spacesState.spaces.some(
+            (s) => s && s.groupId === gid && s.id === spacesState.active
+        );
+        if (hidesActive) {
+            if (typeof window.showToast === 'function') {
+                window.showToast('Active space is in this group', 'info');
+            }
+            return false;
+        }
+        group.collapsed = true;
+    } else {
+        group.collapsed = false;
+    }
+    persistSpacesState();
+    renderSpaceTabs();
+    return true;
+}
+
+/** True when a viewport x lands on a group's pill (generous bounds). */
+function spaceGroupPillAtX(gid, x) {
+    try {
+        if (typeof document === 'undefined' || !Number.isFinite(x)) return false;
+        const pill = document.querySelector('.shell-space-group[data-group-id="' + CSS.escape(gid) + '"]');
+        if (!pill) return false;
+        const r = pill.getBoundingClientRect();
+        return x >= r.left - 10 && x <= r.right + 4;
+    } catch (_) {
+        return false;
+    }
+}
+
+/**
+ * After a tab-reorder drop, match Chrome: a tab landing between members of
+ * one group joins it; landing between two different groups (or away from any
+ * group) leaves it ungrouped — including dragging a tab out. The left edge
+ * is special: parking just before the badge stays ungrouped, and only a drop
+ * directly on the pill joins the group.
+ */
+function fixDraggedTabGroup(draggedId, dropX) {
+    const list = spacesState.spaces;
+    const i = list.findIndex((s) => s && s.id === draggedId);
+    if (i < 0) return;
+    const space = list[i];
+    const left = i > 0 ? list[i - 1] : null;
+    const right = i < list.length - 1 ? list[i + 1] : null;
+    const leftGroup = left && left.groupId ? spaceGroupById(left.groupId) : null;
+    const rightGroup = right && right.groupId ? spaceGroupById(right.groupId) : null;
+    let want = null;
+    if (leftGroup && rightGroup && leftGroup.id === rightGroup.id) want = leftGroup.id;
+    else if (leftGroup && !rightGroup) want = leftGroup.id;
+    else if (!leftGroup && rightGroup) {
+        if (spaceGroupPillAtX(rightGroup.id, dropX)) want = rightGroup.id;
+    }
+    if ((space.groupId || null) === want) return;
+    if (want) space.groupId = want;
+    else delete space.groupId;
+    pruneEmptySpaceGroups();
+    persistSpacesState();
+}
+
+/** Delete group: dissolve it and close its member spaces (at least one space survives). */
+function deleteSpaceGroupWithSpaces(gid) {
+    const group = spaceGroupById(gid);
+    if (!group) return false;
+    const members = spacesState.spaces.filter((s) => s && s.groupId === gid).map((s) => s.id);
+    dissolveSpaceGroup(gid);
+    // Close non-active members first so the active space is the last one standing.
+    members.sort((a, b) => (a === spacesState.active ? 1 : 0) - (b === spacesState.active ? 1 : 0));
+    members.forEach((id) => closeSpace(id));
+    pruneEmptySpaceGroups();
+    return true;
+}
+
+function spaceGroupPillHtml(group) {
+    const color = sanitizeSpaceColor(group.color) || SPACE_GROUP_DEFAULT_COLOR;
+    const name = escapeHtml(group.name || '');
+    const collapsed = !!group.collapsed;
+    const members = spacesState.spaces.filter((s) => s && s.groupId === group.id).length;
+    const title = (group.name ? 'Group: ' + name : 'Group')
+        + ' — click to ' + (collapsed ? 'expand' : 'collapse') + ', right-click to edit';
+    return '<button type="button" class="shell-space-group' + (collapsed ? ' is-collapsed' : '') + '"'
+        + ' data-group-id="' + escapeHtml(group.id) + '"'
+        + ' style="--space-accent:' + color + '"'
+        + ' title="' + title + '">'
+        + '<span class="shell-space-group-dot" aria-hidden="true"></span>'
+        + (group.name ? '<span class="shell-space-group-name">' + name + '</span>' : '')
+        + (collapsed ? '<span class="shell-space-group-count">' + members + '</span>' : '')
+        + '</button>';
+}
+
 // ── Spaces (titlebar tabs — each holds its own split layout) ────
 // Per-device, like STORAGE_LAYOUT. The active space's layout *is* the live
 // STORAGE_LAYOUT; `root` is only authoritative for inactive spaces.
@@ -5093,21 +5349,42 @@ function readSpacesState() {
     try {
         const data = JSON.parse(localStorage.getItem(STORAGE_SPACES) || 'null');
         if (data && Array.isArray(data.spaces) && data.spaces.length) {
+            const groupById = new Map();
+            const cleanGroups = [];
+            (Array.isArray(data.groups) ? data.groups : []).forEach((g) => {
+                if (!g || !g.id || groupById.has(String(g.id))) return;
+                const clean = {
+                    id: String(g.id),
+                    name: String(g.name || '').slice(0, 40),
+                    color: sanitizeSpaceColor(g.color) || SPACE_GROUP_DEFAULT_COLOR,
+                    collapsed: !!g.collapsed,
+                };
+                groupById.set(clean.id, clean);
+                cleanGroups.push(clean);
+            });
             const spaces = data.spaces
                 .filter((s) => s && s.id)
-                .map((s) => ({
-                    id: String(s.id),
-                    name: String(s.name || 'Space').slice(0, 60),
-                    root: s.root && typeof s.root === 'object' ? s.root : null,
-                }));
+                .map((s) => {
+                    const entry = {
+                        id: String(s.id),
+                        name: String(s.name || 'Space').slice(0, 60),
+                        root: s.root && typeof s.root === 'object' ? s.root : null,
+                    };
+                    if (s.groupId && groupById.has(String(s.groupId))) {
+                        entry.groupId = String(s.groupId);
+                    }
+                    const color = sanitizeSpaceColor(s.color);
+                    if (color) entry.color = color;
+                    return entry;
+                });
             if (spaces.length) {
                 const active = spaces.some((s) => s.id === data.active) ? data.active : spaces[0].id;
-                return { active, spaces };
+                return { active, spaces, groups: cleanGroups };
             }
         }
     } catch (_) {}
     const id = newSpaceId();
-    return { active: id, spaces: [{ id, name: 'Space 1', root: null }] };
+    return { active: id, spaces: [{ id, name: 'Space 1', root: null }], groups: [] };
 }
 
 const spacesState = readSpacesState();
@@ -5127,6 +5404,12 @@ function switchSpace(id) {
     if (_restoringLayout || id === spacesState.active) return;
     const target = spacesState.spaces.find((s) => s.id === id);
     if (!target) return;
+    const targetGroup = target.groupId ? spaceGroupById(target.groupId) : null;
+    if (targetGroup && targetGroup.collapsed) {
+        targetGroup.collapsed = false;
+        persistSpacesState();
+        renderSpaceTabs();
+    }
     const current = spacesState.spaces.find((s) => s.id === spacesState.active);
     if (current) current.root = snapshotLayoutTree(splitContainer);
     spacesState.active = id;
@@ -5176,6 +5459,7 @@ function closeSpace(id) {
         if (spacesState.active === id) return;
     }
     list.splice(list.findIndex((s) => s.id === id), 1);
+    pruneEmptySpaceGroups();
     persistSpacesState();
     renderSpaceTabs();
     scheduleSpaceActivityPoll(true);
@@ -5225,20 +5509,35 @@ function renderSpaceTabs() {
     const host = document.getElementById('shellSpacesTabs');
     if (!host) return;
     host.dataset.count = String(spacesState.spaces.length);
-    host.innerHTML = spacesState.spaces.map((s) => {
+    const renderedGroups = new Set();
+    let html = '';
+    spacesState.spaces.forEach((s) => {
+        const group = s.groupId ? spaceGroupById(s.groupId) : null;
+        if (group && !renderedGroups.has(group.id)) {
+            renderedGroups.add(group.id);
+            html += spaceGroupPillHtml(group);
+        }
+        if (group && group.collapsed) return; // hidden until the pill expands it
+        const accent = group
+            ? (sanitizeSpaceColor(group.color) || SPACE_GROUP_DEFAULT_COLOR)
+            : sanitizeSpaceColor(s.color);
         const active = s.id === spacesState.active;
         const name = escapeHtml(s.name).replace(/"/g, '&quot;');
-        return '<div class="shell-space-tab' + (active ? ' is-active' : '') + '" role="tab" tabindex="0"'
+        html += '<div class="shell-space-tab' + (active ? ' is-active' : '') + (accent ? ' has-accent' : '') + '" role="tab" tabindex="0"'
             + ' aria-selected="' + (active ? 'true' : 'false') + '"'
             + ' data-space-id="' + escapeHtml(s.id) + '"'
+            + (group ? ' data-group-id="' + escapeHtml(group.id) + '"' : '')
+            + (accent ? ' style="--space-accent:' + accent + '"' : '')
             + ' title="' + name + ' — drag to reorder, double-click to rename">'
             + '<span class="shell-space-activity" aria-hidden="true" hidden></span>'
             + '<span class="shell-space-name">' + name + '</span>'
             + '<button type="button" class="shell-space-close" tabindex="-1" aria-label="Close space ' + name + '">×</button>'
             + '</div>';
-    }).join('');
+    });
+    host.innerHTML = html;
     syncActiveSpaceTab();
     syncSpaceActivityTabs();
+    syncCrossSpaceGripVisibility();
 }
 
 /** Toggle the active tab in place — re-rendering would eat the second click of a dblclick. */
@@ -5596,6 +5895,317 @@ function scheduleSpaceActivityPoll(immediate) {
     refreshSpaceActivityFromServer();
 }
 
+// ── Space tab right-click menu + group editor bubble ────
+let spaceCtxEls = [];
+let spaceCtxDismiss = null;
+
+/** True while a space menu, submenu, or group bubble is on screen. */
+function isSpaceCtxOpen() {
+    return spaceCtxEls.length > 0;
+}
+
+function closeSpaceCtxLayers() {
+    if (spaceCtxDismiss) {
+        try { spaceCtxDismiss(); } catch (_) {}
+        spaceCtxDismiss = null;
+    }
+    spaceCtxEls.forEach((el) => { try { el.remove(); } catch (_) {} });
+    spaceCtxEls = [];
+    // The open layers pinned the fullscreen titlebar; re-arm its auto-hide now
+    // that they are gone (no-op unless fullscreen and the pointer is away).
+    if (typeof cuttleTitlebarRescheduleHide === 'function') {
+        try { cuttleTitlebarRescheduleHide(); } catch (_) {}
+    }
+}
+
+function trackSpaceCtxDismiss() {
+    if (spaceCtxDismiss) {
+        try { spaceCtxDismiss(); } catch (_) {}
+        spaceCtxDismiss = null;
+    }
+    // Layers opening pin the titlebar: drop any hide another close just armed.
+    if (typeof cuttleTitlebarCancelHide === 'function') {
+        try { cuttleTitlebarCancelHide(); } catch (_) {}
+    }
+    const onDown = (e) => {
+        if (e.target && e.target.closest && e.target.closest('.shell-space-ctx, .shell-group-bubble')) return;
+        closeSpaceCtxLayers();
+    };
+    const onKey = (e) => {
+        if (e.key === 'Escape') { e.stopPropagation(); closeSpaceCtxLayers(); }
+    };
+    const onHide = () => closeSpaceCtxLayers();
+    document.addEventListener('pointerdown', onDown, true);
+    document.addEventListener('keydown', onKey, true);
+    window.addEventListener('scroll', onHide, true);
+    window.addEventListener('resize', onHide);
+    window.addEventListener('blur', onHide);
+    spaceCtxDismiss = () => {
+        document.removeEventListener('pointerdown', onDown, true);
+        document.removeEventListener('keydown', onKey, true);
+        window.removeEventListener('scroll', onHide, true);
+        window.removeEventListener('resize', onHide);
+        window.removeEventListener('blur', onHide);
+    };
+}
+
+/** Append a fixed panel, measure it, then clamp it inside the viewport. */
+function placeFixedPanel(el, x, y) {
+    el.style.left = '0px';
+    el.style.top = '0px';
+    document.body.appendChild(el);
+    spaceCtxEls.push(el);
+    const rect = el.getBoundingClientRect();
+    const pad = 8;
+    let nx = Number(x) || 0;
+    let ny = Number(y) || 0;
+    if (nx + rect.width + pad > window.innerWidth) nx = Math.max(pad, window.innerWidth - rect.width - pad);
+    if (ny + rect.height + pad > window.innerHeight) ny = Math.max(pad, window.innerHeight - rect.height - pad);
+    el.style.left = Math.max(pad, nx) + 'px';
+    el.style.top = Math.max(pad, ny) + 'px';
+    return el;
+}
+
+function spaceCtxSwatchesHtml(selected) {
+    return '<div class="shell-ctx-swatches" role="group" aria-label="Colors">'
+        + SPACE_GROUP_COLORS.map((c) => (
+            '<button type="button" class="shell-ctx-swatch' + (selected === c.hex ? ' is-selected' : '') + '"'
+            + ' data-color="' + c.hex + '"'
+            + ' style="--swatch:' + c.hex + '"'
+            + ' title="' + c.name + '" aria-label="' + c.name + '"></button>'
+        )).join('')
+        + '</div>';
+}
+
+function openSpaceTabMenu(x, y, spaceId) {
+    const space = spacesState.spaces.find((s) => s && s.id === spaceId);
+    if (!space) return;
+    closeSpaceCtxLayers();
+    trackSpaceCtxDismiss();
+    const menu = document.createElement('div');
+    menu.className = 'shell-space-ctx';
+    menu.setAttribute('role', 'menu');
+    menu.setAttribute('aria-label', 'Space options');
+    let html = '<button type="button" class="shell-space-ctx-item" role="menuitem" data-ctx-act="rename"><span>Rename</span></button>'
+        + '<button type="button" class="shell-space-ctx-item has-sub" role="menuitem" data-ctx-act="color" aria-haspopup="menu"><span>Set color</span></button>'
+        + '<button type="button" class="shell-space-ctx-item has-sub" role="menuitem" data-ctx-act="group" aria-haspopup="menu"><span>Add to group</span></button>';
+    if (space.groupId && spaceGroupById(space.groupId)) {
+        html += '<div class="shell-space-ctx-sep" aria-hidden="true"></div>'
+            + '<button type="button" class="shell-space-ctx-item" role="menuitem" data-ctx-act="remove-group"><span>Remove from group</span></button>';
+    }
+    menu.innerHTML = html;
+    placeFixedPanel(menu, x, y);
+
+    let openSub = null;
+    let subFor = null;
+    const closeOpenSub = () => {
+        if (openSub) {
+            try { openSub.remove(); } catch (_) {}
+            spaceCtxEls = spaceCtxEls.filter((el) => el !== openSub);
+            openSub = null;
+        }
+        subFor = null;
+        menu.querySelectorAll('.is-open').forEach((b) => b.classList.remove('is-open'));
+    };
+    const openSubFor = (btn, build) => {
+        if (subFor === btn && openSub) {
+            closeOpenSub();
+            return;
+        }
+        closeOpenSub();
+        subFor = btn;
+        btn.classList.add('is-open');
+        const sub = build();
+        const r = btn.getBoundingClientRect();
+        placeFixedPanel(sub, r.right - 2, r.top - 4);
+        openSub = sub;
+    };
+    const buildColorSub = () => {
+        const sub = document.createElement('div');
+        sub.className = 'shell-space-ctx shell-space-ctx-sub';
+        sub.setAttribute('role', 'menu');
+        sub.setAttribute('aria-label', 'Space color');
+        sub.innerHTML = spaceCtxSwatchesHtml(space.color || null)
+            + '<button type="button" class="shell-space-ctx-item" role="menuitem" data-color="">'
+            + '<span>None</span></button>';
+        sub.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-color]');
+            if (!btn || !sub.isConnected) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const hex = btn.dataset.color || '';
+            const id = spaceId;
+            closeSpaceCtxLayers();
+            setSpaceColor(id, hex || null);
+        });
+        return sub;
+    };
+    const buildGroupSub = () => {
+        const sub = document.createElement('div');
+        sub.className = 'shell-space-ctx shell-space-ctx-sub';
+        sub.setAttribute('role', 'menu');
+        sub.setAttribute('aria-label', 'Add to group');
+        const groups = ensureSpaceGroupsArray();
+        let h = '<button type="button" class="shell-space-ctx-item" role="menuitem" data-new-group>'
+            + '<span>New group</span></button>';
+        if (groups.length) h += '<div class="shell-space-ctx-sep" aria-hidden="true"></div>';
+        groups.forEach((g) => {
+            if (!g) return;
+            const color = sanitizeSpaceColor(g.color) || SPACE_GROUP_DEFAULT_COLOR;
+            h += '<button type="button" class="shell-space-ctx-item" role="menuitem" data-gid="' + escapeHtml(g.id) + '">'
+                + '<span class="shell-ctx-dot" style="--swatch:' + color + '" aria-hidden="true"></span>'
+                + '<span class="shell-ctx-label">' + (escapeHtml(g.name) || 'Unnamed group') + '</span>'
+                + (space.groupId === g.id ? '<span class="shell-ctx-check" aria-hidden="true">✓</span>' : '')
+                + '</button>';
+        });
+        sub.innerHTML = h;
+        sub.addEventListener('click', (e) => {
+            const id = spaceId;
+            if (e.target.closest('[data-new-group]')) {
+                e.preventDefault();
+                e.stopPropagation();
+                closeSpaceCtxLayers();
+                const group = createSpaceGroupForSpace(id);
+                if (group) openSpaceGroupBubbleFor(group.id, id, true);
+                return;
+            }
+            const btn = e.target.closest('[data-gid]');
+            if (!btn || !sub.isConnected) return;
+            e.preventDefault();
+            e.stopPropagation();
+            closeSpaceCtxLayers();
+            setSpaceGroup(id, btn.dataset.gid || null);
+        });
+        return sub;
+    };
+
+    menu.querySelectorAll('[data-ctx-act]').forEach((btn) => {
+        btn.addEventListener('pointerenter', () => {
+            const act = btn.dataset.ctxAct;
+            if (act === 'color') openSubFor(btn, buildColorSub);
+            else if (act === 'group') openSubFor(btn, buildGroupSub);
+            else closeOpenSub();
+        });
+        btn.addEventListener('click', (e) => {
+            const act = btn.dataset.ctxAct;
+            const id = spaceId;
+            if (act === 'color') { e.stopPropagation(); openSubFor(btn, buildColorSub); return; }
+            if (act === 'group') { e.stopPropagation(); openSubFor(btn, buildGroupSub); return; }
+            e.preventDefault();
+            e.stopPropagation();
+            closeSpaceCtxLayers();
+            if (act === 'rename') startSpaceRename(id);
+            else if (act === 'remove-group') removeSpaceFromGroup(id);
+        });
+    });
+}
+
+/** Chrome-style group editor: name field, color palette, Ungroup / Delete group. */
+function openSpaceGroupBubbleFor(gid, anchorSpaceId, focusName) {
+    const group = spaceGroupById(gid);
+    if (!group) return;
+    closeSpaceCtxLayers();
+    trackSpaceCtxDismiss();
+    const bubble = document.createElement('div');
+    bubble.className = 'shell-group-bubble';
+    bubble.setAttribute('role', 'dialog');
+    bubble.setAttribute('aria-label', 'Edit group');
+    bubble.innerHTML = '<input type="text" class="shell-group-name" maxlength="40"'
+        + ' placeholder="Name group" aria-label="Group name"'
+        + ' value="' + escapeHtml(group.name || '').replace(/"/g, '&quot;') + '">'
+        + spaceCtxSwatchesHtml(group.color)
+        + '<div class="shell-group-actions">'
+        + '<button type="button" class="shell-group-btn" data-group-act="ungroup">Ungroup</button>'
+        + '<button type="button" class="shell-group-btn shell-group-btn-danger" data-group-act="delete">Delete group</button>'
+        + '</div>';
+    renderSpaceTabs();
+    const pill = document.querySelector('.shell-space-group[data-group-id="' + CSS.escape(gid) + '"]');
+    if (pill) pill.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    const anchor = pill
+        || (anchorSpaceId && document.querySelector('.shell-space-tab[data-space-id="' + CSS.escape(anchorSpaceId) + '"]'));
+    const r = anchor ? anchor.getBoundingClientRect() : { left: 8, bottom: 40 };
+    placeFixedPanel(bubble, r.left, (r.bottom || 40) + 6);
+
+    const input = bubble.querySelector('.shell-group-name');
+    if (focusName && input) {
+        input.focus();
+        input.select();
+    }
+    input.addEventListener('input', () => {
+        renameSpaceGroup(gid, input.value);
+        renderSpaceTabs(); // pill text follows live; the bubble keeps focus
+    });
+    input.addEventListener('keydown', (e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') { e.preventDefault(); closeSpaceCtxLayers(); }
+        else if (e.key === 'Escape') { e.preventDefault(); closeSpaceCtxLayers(); }
+    });
+    ['click', 'dblclick', 'mousedown', 'contextmenu'].forEach((evt) => {
+        input.addEventListener(evt, (e) => e.stopPropagation());
+    });
+    let deleteArmed = false;
+    bubble.addEventListener('click', (e) => {
+        const swatch = e.target.closest('[data-color]');
+        if (swatch) {
+            e.stopPropagation();
+            setSpaceGroupColor(gid, swatch.dataset.color || null);
+            bubble.querySelectorAll('.shell-ctx-swatch').forEach((el) => {
+                el.classList.toggle('is-selected', el.dataset.color === spaceGroupById(gid).color);
+            });
+            return;
+        }
+        const btn = e.target.closest('[data-group-act]');
+        if (!btn) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (btn.dataset.groupAct === 'ungroup') {
+            closeSpaceCtxLayers();
+            dissolveSpaceGroup(gid);
+            return;
+        }
+        if (btn.dataset.groupAct === 'delete') {
+            if (!deleteArmed) {
+                deleteArmed = true;
+                btn.classList.add('is-armed');
+                btn.textContent = 'Click again to confirm';
+                return;
+            }
+            closeSpaceCtxLayers();
+            deleteSpaceGroupWithSpaces(gid);
+        }
+    });
+}
+
+function setupSpaceTabMenus(host) {
+    if (!host || host.dataset.spaceMenus === '1') return;
+    host.dataset.spaceMenus = '1';
+    host.addEventListener('click', (e) => {
+        const pill = e.target.closest('.shell-space-group');
+        if (pill && pill.dataset.groupId) {
+            e.stopPropagation();
+            toggleSpaceGroupCollapsed(pill.dataset.groupId);
+        }
+    });
+    host.addEventListener('dblclick', (e) => {
+        // Pills must not bubble to the titlebar maximize gesture.
+        if (e.target.closest('.shell-space-group')) e.stopPropagation();
+    });
+    host.addEventListener('contextmenu', (e) => {
+        const pill = e.target.closest('.shell-space-group');
+        if (pill && pill.dataset.groupId) {
+            e.preventDefault();
+            e.stopPropagation();
+            openSpaceGroupBubbleFor(pill.dataset.groupId, null, false);
+            return;
+        }
+        const tab = e.target.closest('.shell-space-tab');
+        if (!tab || !tab.dataset.spaceId) return;
+        e.preventDefault();
+        e.stopPropagation();
+        openSpaceTabMenu(e.clientX, e.clientY, tab.dataset.spaceId);
+    });
+}
+
 (function setupSpaces() {
     const host = document.getElementById('shellSpacesTabs');
     if (!host) return;
@@ -5636,6 +6246,7 @@ function scheduleSpaceActivityPoll(immediate) {
     addBtn?.addEventListener('click', () => addSpace());
     addBtn?.addEventListener('dblclick', (e) => e.stopPropagation());
     setupSpaceTabDrag(host);
+    setupSpaceTabMenus(host);
     // Chat iframes write unread prefs + followups to the same localStorage —
     // refresh dots without waiting for the next heartbeat.
     window.addEventListener('storage', (e) => {
@@ -5656,6 +6267,193 @@ function reorderSpaces(ids) {
     persistSpacesState();
 }
 
+// ── Cross-space pane drag (grip → space tab) ───────────────
+// Quick release over a space tab moves the dragged viewport to the far right
+// of that space (new horizontal split, placed at end). Holding over a tab for
+// PANE_SPACE_HOVER_MS instead switches to that space so the still-held grip
+// can be dropped on the exact pane to swap with.
+const PANE_SPACE_HOVER_MS = 1000;
+
+function spaceById(id) {
+    return spacesState.spaces.find((s) => s && s.id === id) || null;
+}
+
+/** Space-tab element under a viewport point (titlebar hit-test during pane drags). */
+function spaceTabAtPoint(x, y) {
+    const tabs = document.querySelectorAll('.shell-space-tab');
+    for (const tab of tabs) {
+        const r = tab.getBoundingClientRect();
+        if (x >= r.left && x < r.right && y >= r.top && y < r.bottom) return tab;
+    }
+    return null;
+}
+
+function blankLayoutLeafNode() {
+    return { type: 'leaf', id: newLeafId(), page: '/chat_page.html', flex: '' };
+}
+
+/** Append a leaf copy as a far-right horizontal split; wraps when needed. */
+function appendLayoutLeafToEnd(root, leaf) {
+    const node = {
+        type: 'leaf',
+        id: (leaf && leaf.id) || newLeafId(),
+        page: (leaf && leaf.page) || '/chat_page.html',
+        flex: '',
+    };
+    if (leaf && leaf.chat) node.chat = String(leaf.chat);
+    if (leaf && leaf.terminal) node.terminal = String(leaf.terminal);
+    if (!root || typeof root !== 'object') {
+        return {
+            type: 'group', id: newGroupId(), orientation: 'horizontal', flex: '',
+            children: [blankLayoutLeafNode(), node],
+        };
+    }
+    if (root.type === 'group' && normalizeSplitOrientation(root.orientation) === 'horizontal'
+        && Array.isArray(root.children)) {
+        root.children.push(node);
+        return root;
+    }
+    return {
+        type: 'group', id: newGroupId(), orientation: 'horizontal', flex: '',
+        children: [root, node],
+    };
+}
+
+/** Depth-first leaf lookup by stored leaf id. */
+function findLayoutLeafNode(root, leafId) {
+    if (!root || typeof root !== 'object' || !leafId) return null;
+    if (root.type === 'leaf') return root.id === leafId ? root : null;
+    if (root.type === 'group' && Array.isArray(root.children)) {
+        for (const ch of root.children) {
+            const hit = findLayoutLeafNode(ch, leafId);
+            if (hit) return hit;
+        }
+    }
+    return null;
+}
+
+/** Remove a leaf by id, collapsing single-child groups. Returns { root, removed }. */
+function removeLayoutLeafNode(root, leafId) {
+    if (!root || typeof root !== 'object' || !leafId) return { root, removed: null };
+    if (root.type === 'leaf') {
+        return root.id === leafId ? { root: null, removed: root } : { root, removed: null };
+    }
+    if (root.type !== 'group' || !Array.isArray(root.children)) return { root, removed: null };
+    let removed = null;
+    const kept = [];
+    for (const ch of root.children) {
+        if (removed) { kept.push(ch); continue; }
+        if (ch && ch.type === 'leaf' && ch.id === leafId) { removed = ch; continue; }
+        const res = removeLayoutLeafNode(ch, leafId);
+        if (res.removed) removed = res.removed;
+        if (res.root) kept.push(res.root);
+    }
+    if (!removed) return { root, removed: null };
+    if (kept.length === 0) return { root: null, removed };
+    if (kept.length === 1) return { root: kept[0], removed };
+    root.children = kept;
+    return { root, removed };
+}
+
+/** Point a live pane at stored leaf content (page + chat/terminal handles). */
+function applyStoredLeafToLivePane(colIdx, leaf) {
+    if (!Number.isFinite(colIdx) || !leaf) return false;
+    const col = getColumnEl(colIdx);
+    if (!col) return false;
+    const entry = {};
+    if (leaf.chat) entry.chat = String(leaf.chat);
+    if (leaf.terminal) entry.terminal = String(leaf.terminal);
+    lastChatByColumn.delete(colIdx);
+    if (Object.keys(entry).length) lastChatByColumn.set(colIdx, entry);
+    const page = pageWithPaneSession(colIdx, canonicalizeShellPage(leaf.page || '/chat_page.html'));
+    setState(colIdx, page);
+    updateColumnUI(colIdx, page);
+    const frame = replaceFrame(colIdx, page);
+    if (frame) attachFrameLoadListener(colIdx, frame);
+    return true;
+}
+
+/** Quick drop: move the dragged viewport to the far right of another space. */
+function moveDraggedPaneToSpace(load, colEl, targetSpaceId) {
+    if (!load || !targetSpaceId || targetSpaceId === spacesState.active) return false;
+    const target = spaceById(targetSpaceId);
+    if (!target) return false;
+    target.root = appendLayoutLeafToEnd(target.root, load);
+    persistSpacesState();
+    renderSpaceTabs();
+    const live = getSplitColumns();
+    if (live.length >= 2 && colEl && colEl.isConnected) {
+        closeSplitColumn(colEl);
+    } else if (colEl && colEl.isConnected) {
+        // Sole viewport moved away — leave a fresh chat behind, never an empty space.
+        const idx = parseInt(colEl.dataset.column, 10);
+        if (Number.isFinite(idx)) {
+            lastChatByColumn.delete(idx);
+            applyStoredLeafToLivePane(idx, blankLayoutLeafNode());
+            persistLastChatHandles();
+            persistSplitLayout();
+        }
+    }
+    if (typeof window.showToast === 'function') {
+        window.showToast('Moved pane to ' + (target.name || 'space'), 'success');
+    }
+    return true;
+}
+
+/** Chained drop while carrying: relocate the payload between stored spaces. */
+function moveCarriedPaneToSpace(load, srcId, targetSpaceId) {
+    if (!load || !targetSpaceId || targetSpaceId === spacesState.active) return false;
+    const dst = spaceById(targetSpaceId);
+    if (!dst || targetSpaceId === srcId) return false;
+    const src = spaceById(srcId);
+    if (src && src.root) {
+        const res = removeLayoutLeafNode(src.root, load.id);
+        if (res.removed) src.root = res.root || blankLayoutLeafNode();
+    }
+    dst.root = appendLayoutLeafToEnd(dst.root, load);
+    persistSpacesState();
+    renderSpaceTabs();
+    if (typeof window.showToast === 'function') {
+        window.showToast('Moved pane to ' + (dst.name || 'space'), 'success');
+    }
+    return true;
+}
+
+/** Drop on a live pane while carrying: swap the payload with that pane's content. */
+function exchangeCarriedPaneWithLive(load, srcId, targetCol) {
+    const src = spaceById(srcId);
+    if (!src || !load || !targetCol || !targetCol.isConnected) return false;
+    const idxT = parseInt(targetCol.dataset.column, 10);
+    if (!Number.isFinite(idxT)) return false;
+    const stateT = { ...getState(idxT) };
+    const oldPage = pageWithPaneSession(idxT, canonicalizeShellPage(stateT.page || '/chat_page.html'));
+    const oldHandles = { ...(lastChatByColumn.get(idxT) || {}) };
+    if (!applyStoredLeafToLivePane(idxT, load)) return false;
+    const slot = findLayoutLeafNode(src.root, load.id);
+    if (slot) {
+        slot.page = oldPage;
+        delete slot.chat;
+        delete slot.terminal;
+        if (oldHandles.chat) slot.chat = String(oldHandles.chat);
+        if (oldHandles.terminal) slot.terminal = String(oldHandles.terminal);
+    }
+    persistSpacesState();
+    persistLastChatHandles();
+    persistSplitLayout();
+    focusedColumnIdx = idxT;
+    broadcastPaneFocus();
+    if (typeof window.showToast === 'function') {
+        window.showToast('Swapped panes with ' + (src.name || 'space'), 'success');
+    }
+    return true;
+}
+
+/** Show the grip for cross-space drags even when this space has a single pane. */
+function syncCrossSpaceGripVisibility() {
+    if (!splitContainer) return;
+    splitContainer.classList.toggle('has-cross-space', spacesState.spaces.length >= 2);
+}
+
 /** Drag a tab sideways to reorder; it follows the pointer while siblings reflow around it. */
 function setupSpaceTabDrag(host) {
     const THRESHOLD = 4;
@@ -5664,7 +6462,7 @@ function setupSpaceTabDrag(host) {
 
     const finish = (commit) => {
         if (!drag) return;
-        const { tab, active, pointerId } = drag;
+        const { tab, active, pointerId, lastX } = drag;
         drag = null;
         if (!active) return;
         tab.classList.remove('is-dragging');
@@ -5672,7 +6470,12 @@ function setupSpaceTabDrag(host) {
         host.classList.remove('is-reordering');
         if (tab.hasPointerCapture(pointerId)) tab.releasePointerCapture(pointerId);
         if (commit) {
-            reorderSpaces(Array.from(host.querySelectorAll('.shell-space-tab')).map((t) => t.dataset.spaceId));
+            const ids = Array.from(host.querySelectorAll('.shell-space-tab')).map((t) => t.dataset.spaceId);
+            const draggedId = tab.dataset.spaceId;
+            reorderSpaces(ids);
+            // Dropping between members of one group joins it; dropping out
+            // ungroups; parking before a badge stays out unless dropped on it.
+            fixDraggedTabGroup(draggedId, lastX);
         }
         renderSpaceTabs();
         // The pointerup still produces a click on the tab; don't treat the drop as a switch.
@@ -5684,11 +6487,12 @@ function setupSpaceTabDrag(host) {
         if (e.button !== 0 || spacesState.spaces.length < 2) return;
         const tab = e.target.closest('.shell-space-tab');
         if (!tab || e.target.closest('.shell-space-close, .shell-space-rename')) return;
-        drag = { tab, pointerId: e.pointerId, startX: e.clientX, originLeft: tab.getBoundingClientRect().left, tx: 0, active: false };
+        drag = { tab, pointerId: e.pointerId, startX: e.clientX, lastX: e.clientX, originLeft: tab.getBoundingClientRect().left, tx: 0, active: false };
     });
 
     host.addEventListener('pointermove', (e) => {
         if (!drag || e.pointerId !== drag.pointerId) return;
+        drag.lastX = e.clientX;
         const { tab } = drag;
         if (!drag.active) {
             if (Math.abs(e.clientX - drag.startX) < THRESHOLD) return;
@@ -5697,6 +6501,18 @@ function setupSpaceTabDrag(host) {
             tab.classList.add('is-dragging');
             host.classList.add('is-reordering');
         }
+        // Hovering a group pill marks it as a drop target (dropping joins it).
+        host.querySelectorAll('.shell-space-group.is-drop-target').forEach((p) => {
+            p.classList.remove('is-drop-target');
+        });
+        try {
+            const under = document.elementFromPoint
+                && document.elementFromPoint(e.clientX, e.clientY);
+            const pill = under && under.closest
+                ? under.closest('.shell-space-group')
+                : null;
+            if (pill && host.contains(pill)) pill.classList.add('is-drop-target');
+        } catch (_) {}
         const siblings = Array.from(host.querySelectorAll('.shell-space-tab')).filter((t) => t !== tab);
         const before = siblings.find((t) => {
             const r = t.getBoundingClientRect();
@@ -5717,7 +6533,10 @@ function setupSpaceTabDrag(host) {
     });
 
     host.addEventListener('pointerup', (e) => {
-        if (drag && e.pointerId === drag.pointerId) finish(true);
+        if (drag && e.pointerId === drag.pointerId) {
+            if (Number.isFinite(e.clientX)) drag.lastX = e.clientX;
+            finish(true);
+        }
     });
     host.addEventListener('pointercancel', (e) => {
         if (drag && e.pointerId === drag.pointerId) finish(false);
@@ -5902,8 +6721,8 @@ function ensureRailPaneGrip(colEl) {
         grip = document.createElement('button');
         grip.type = 'button';
         grip.className = 'rail-pane-grip';
-        grip.dataset.tooltip = 'Drag onto any pane to swap';
-        grip.setAttribute('aria-label', 'Drag onto any pane to swap');
+        grip.dataset.tooltip = 'Drag onto a pane to swap · onto a space tab to move';
+        grip.setAttribute('aria-label', 'Drag onto a pane to swap · onto a space tab to move');
         grip.innerHTML = RAIL_PANE_GRIP_HTML;
         if (logo) logo.insertAdjacentElement('afterend', grip);
         else rail.insertBefore(grip, rail.firstChild);
@@ -6165,6 +6984,18 @@ function setupPaneReorder(colEl) {
     let activated = false;
     let dropTarget = null;
     let dropBefore = true;
+    // Cross-space carry: snapshot of the dragged leaf + source space while the
+    // pointer hovers space tabs (quick drop = move to end, 1s hover = switch).
+    let dragPayload = null;
+    let carrying = false;
+    let sourceSpaceId = null;
+    let hoverTab = null;
+    let hoverTimer = 0;
+
+    const clearSpaceHover = () => {
+        if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = 0; }
+        if (hoverTab) { hoverTab.classList.remove('pane-space-hover'); hoverTab = null; }
+    };
 
     const unbindWindow = () => {
         window.removeEventListener('pointermove', onMove, true);
@@ -6172,14 +7003,53 @@ function setupPaneReorder(colEl) {
         window.removeEventListener('pointercancel', onUp, true);
     };
 
-    const finish = () => {
+    const autoSwitchToSpace = (spaceId) => {
+        if (!dragging || !spaceId || spaceId === spacesState.active) return;
+        if (!carrying) {
+            carrying = true;
+            sourceSpaceId = spacesState.active;
+        }
+        clearSpaceHover();
+        dropTarget = null;
+        clearPaneDropIndicators();
+        switchSpace(spaceId);
+        // Hovering home for 1s just comes back — the payload never left.
+        if (spacesState.active === sourceSpaceId) {
+            carrying = false;
+            sourceSpaceId = null;
+        }
+    };
+
+    const trackSpaceTabHover = (e) => {
+        if (spacesState.spaces.length < 2) return;
+        const tab = spaceTabAtPoint(e.clientX, e.clientY);
+        if (tab === hoverTab) return;
+        clearSpaceHover();
+        hoverTab = tab || null;
+        if (hoverTab && hoverTab.dataset.spaceId !== spacesState.active) {
+            hoverTab.classList.add('pane-space-hover');
+            const id = hoverTab.dataset.spaceId;
+            hoverTimer = setTimeout(() => {
+                if (dragging && hoverTab && hoverTab.dataset.spaceId === id) autoSwitchToSpace(id);
+            }, PANE_SPACE_HOVER_MS);
+        }
+    };
+
+    const finish = (upEvent) => {
         if (!dragging) return;
         const wasActive = activated;
         const target = dropTarget;
         const before = dropBefore;
+        const load = dragPayload;
+        const wasCarrying = carrying;
+        const srcId = sourceSpaceId;
         dragging = false;
         activated = false;
+        carrying = false;
+        sourceSpaceId = null;
+        dragPayload = null;
         unbindWindow();
+        clearSpaceHover();
         grip.classList.remove('is-dragging');
         colEl.classList.remove('is-pane-dragging');
         splitContainer?.classList.remove('is-reordering-panes');
@@ -6187,12 +7057,37 @@ function setupPaneReorder(colEl) {
         document.body.style.userSelect = '';
         clearPaneDropIndicators();
         dropTarget = null;
-        if (!wasActive || !target || target === colEl) return;
+        if (!wasActive || !load) return;
+        const tab = (upEvent && Number.isFinite(upEvent.clientX) && Number.isFinite(upEvent.clientY))
+            ? spaceTabAtPoint(upEvent.clientX, upEvent.clientY)
+            : null;
+        const tabId = tab ? (tab.dataset.spaceId || '') : '';
+        if (tabId && tabId !== spacesState.active) {
+            if (!wasCarrying) {
+                setTimeout(() => moveDraggedPaneToSpace(load, colEl, tabId), 0);
+                return;
+            }
+            if (tabId === srcId) {
+                setTimeout(() => switchSpace(srcId), 0);
+                return;
+            }
+            setTimeout(() => moveCarriedPaneToSpace(load, srcId, tabId), 0);
+            return;
+        }
+        if (wasCarrying) {
+            if (target && target.isConnected && target !== colEl) {
+                const targetEl = target;
+                setTimeout(() => exchangeCarriedPaneWithLive(load, srcId, targetEl), 0);
+            }
+            return;
+        }
+        if (!target || target === colEl) return;
         setTimeout(() => reorderSplitColumn(colEl, target, before), 0);
     };
 
     const onMove = (e) => {
         if (!dragging) return;
+        trackSpaceTabHover(e);
         const dx = e.clientX - startX;
         const dy = e.clientY - startY;
         if (!activated) {
@@ -6241,16 +7136,19 @@ function setupPaneReorder(colEl) {
         dropTarget = hit;
     };
 
-    const onUp = () => finish();
+    const onUp = (e) => finish(e);
 
     grip.addEventListener('pointerdown', (e) => {
         if (e.button != null && e.button !== 0) return;
-        if (getSplitColumns().length < 2) return;
+        if (getSplitColumns().length < 2 && spacesState.spaces.length < 2) return;
         if (dragging) finish();
         e.preventDefault();
         e.stopPropagation();
         dragging = true;
         activated = false;
+        carrying = false;
+        sourceSpaceId = null;
+        dragPayload = snapshotLayoutTree(colEl);
         startX = e.clientX;
         startY = e.clientY;
         dropTarget = null;

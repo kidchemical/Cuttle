@@ -257,7 +257,7 @@ def _compile_agent_prompt(
                 "envelope_chars": len(compiled.envelope or ""),
                 "prompt_chars": len(compiled.prompt or ""),
                 "rules_count": meta.get("rules_count"),
-                "hub_rules_count": meta.get("hub_rules_count"),
+                "global_rules_count": meta.get("global_rules_count"),
                 "inventory": {
                     "commands": list(inv.get("commands") or [])[:40],
                     "docs": list(inv.get("docs") or [])[:40],

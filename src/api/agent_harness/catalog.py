@@ -4,7 +4,7 @@ Roots (first wins for a given id; bundled always preferred)::
 
 1. ``src/api/agent_harness/agents/<id>/`` — shipped connectors
 2. ``CUTTLE_AGENTS_DIR`` (os.pathsep-separated) + ``src/data/harness_agents/``
-3. ``{Cuttle}/.cuttle/agents/<id>/`` — instance-level drop-ins
+3. ``{Cuttle}/.cuttle_global/agents/<id>/`` — instance-level drop-ins
 4. ``{project}/.cuttle/agents/<id>/`` — project drop-ins (when ``project_path`` given)
 
 Drop-in folders use the same contract as bundled: ``manifest.yaml`` + ``adapter.py``
@@ -29,7 +29,7 @@ from api.agent_harness.types import AgentAdapter, AgentManifest
 _AGENTS_ROOT = Path(__file__).resolve().parent / "agents"
 _CUTTLE_ROOT = Path(__file__).resolve().parents[3]  # .../Cuttle
 _USER_AGENTS_ROOT = _CUTTLE_ROOT / "src" / "data" / "harness_agents"
-_INSTANCE_AGENTS_ROOT = _CUTTLE_ROOT / ".cuttle" / "agents"
+_INSTANCE_AGENTS_ROOT = _CUTTLE_ROOT / ".cuttle_global" / "agents"
 
 # (manifest, adapter, agent_dir)
 _AgentEntry = Tuple[AgentManifest, AgentAdapter, Path]
@@ -315,7 +315,7 @@ def _discover_global() -> Dict[str, _AgentEntry]:
     for root in _env_agent_roots():
         _merge_dropins(root, "user")
     _merge_dropins(_USER_AGENTS_ROOT, "user")
-    # Instance .cuttle/agents — skip if it's the same path we already scanned as project later
+    # Instance .cuttle_global/agents — skip if it's the same path we already scanned as project later
     if _INSTANCE_AGENTS_ROOT.resolve() != _AGENTS_ROOT.resolve():
         _merge_dropins(_INSTANCE_AGENTS_ROOT, "user")
     return found

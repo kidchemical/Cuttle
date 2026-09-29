@@ -12,10 +12,11 @@
         score_spread: 'Score spread (percentage points)',
         success_rate: 'Finished without error (%)',
         mean_total_tokens: 'Total tokens / turn',
+        mean_total_duration_seconds: 'Mean total duration (sec)',
         turns: 'Turns (log)',
     };
     const PERF_ID = 'cuttle-performance';
-    const PERF_DEFAULT_AXES = { x: 'mean_duration_seconds', y: 'score', z: 'turns' };
+    const PERF_DEFAULT_AXES = { x: 'mean_duration_seconds', y: 'score', z: 'mean_cost_usd' };
     const USAGE_ID = 'cuttle-usage';
     const USAGE_COLORS = ['#636efa', '#ef553b', '#00cc96', '#ab63fa', '#ffa15a', '#19d3f3', '#ff6692', '#b6e880', '#ff97ff', '#fecb52'];
     const USAGE_FORMATS = {
@@ -30,11 +31,12 @@
 
     let catalog = [];
     let payload = null;
-    let xField = 'mean_cost_usd';
+    let xField = 'mean_duration_seconds';
     let yField = 'score';
-    let zField = 'mean_duration_seconds';
+    let zField = 'mean_cost_usd';
     let axesUserSet = false;
-    let invertAxes = { x: false, y: false, z: false };
+    let invertAxes = { x: true, y: false, z: false };
+    let logAxes = { x: false, y: false, z: false };
     let axisLimits = { x: null, y: null, z: null };
     let sortKey = 'score';
     let sortDir = -1;
@@ -42,7 +44,11 @@
     let filterState = { providers: new Set(), efforts: new Set(), harnesses: new Set() };
     let plotCamera = null;
     let controlMode = 'default';
-    let projectionMode = 'perspective';
+    let projectionMode = 'orthographic';
+    // True once the user picks a projection in the widget menu. Anything
+    // stored or synced before this flag existed is legacy residue of the old
+    // perspective default, not an explicit choice, and is ignored on load.
+    let projectionUserSet = false;
     let camSpeed = 1;
     let sweet = {
         enabled: false,
@@ -79,7 +85,10 @@
         try {
             const raw = JSON.parse(localStorage.getItem(PREF_KEY) || '{}');
             if (raw.controlMode === 'free' || raw.controlMode === 'default') controlMode = raw.controlMode;
-            if (raw.projectionMode === 'orthographic' || raw.projectionMode === 'perspective') projectionMode = raw.projectionMode;
+            if (raw.projectionUserSet === true) projectionUserSet = true;
+            if (projectionUserSet && (raw.projectionMode === 'orthographic' || raw.projectionMode === 'perspective')) {
+                projectionMode = raw.projectionMode;
+            }
             if (raw.sweet && typeof raw.sweet === 'object') {
                 sweet = Object.assign(sweet, raw.sweet);
                 sweet._user = true;
@@ -100,8 +109,16 @@
                 axesUserSet = true;
             }
         });
-        const inverted = new Set((params.get('invert') || '').split(',').filter(Boolean));
-        invertAxes = { x: inverted.has('x'), y: inverted.has('y'), z: inverted.has('z') };
+        // Only an explicit ?invert= overrides the default (X inverted); a URL
+        // without it leaves defaults intact.
+        if (params.has('invert')) {
+            const inverted = new Set((params.get('invert') || '').split(',').filter(Boolean));
+            invertAxes = { x: inverted.has('x'), y: inverted.has('y'), z: inverted.has('z') };
+        }
+        if (params.has('log')) {
+            const logged = new Set((params.get('log') || '').split(',').filter(Boolean));
+            logAxes = { x: logged.has('x'), y: logged.has('y'), z: logged.has('z') };
+        }
         ['x', 'y', 'z'].forEach((axis) => {
             const raw = params.get('l' + axis);
             if (!raw) return;
@@ -121,7 +138,14 @@
         });
         if (['opt', 'shape', 'smin', 'cmax', 'tmax'].some((key) => params.has(key))) sweet._user = true;
         if (params.get('control') === 'default' || params.get('control') === 'free') controlMode = params.get('control');
-        if (params.get('projection') === 'perspective' || params.get('projection') === 'orthographic') projectionMode = params.get('projection');
+        // A ?projection=perspective without a stored explicit choice is legacy
+        // auto-sync residue, not a deliberate share — ignore it so the
+        // orthographic default applies. An explicit orthographic (or a
+        // perspective from a browser where the user chose one) is honored.
+        if (params.get('projection') === 'orthographic'
+            || (params.get('projection') === 'perspective' && projectionUserSet)) {
+            projectionMode = params.get('projection');
+        }
         const speed = Number(params.get('speed'));
         if (params.has('speed') && Number.isFinite(speed)) camSpeed = Math.min(12, Math.max(0.15, speed));
         const view = (params.get('view') || '').split(',').map(Number);
@@ -139,7 +163,7 @@
     function savePrefs() {
         try {
             localStorage.setItem(PREF_KEY, JSON.stringify({
-                controlMode, projectionMode, sweet, camSpeed,
+                controlMode, projectionMode, projectionUserSet, sweet, camSpeed,
             }));
         } catch (_) {}
         scheduleUrlConfigSync();
@@ -181,6 +205,9 @@
         const inverted = ['x', 'y', 'z'].filter((axis) => invertAxes[axis]);
         if (inverted.length) url.searchParams.set('invert', inverted.join(','));
         else url.searchParams.delete('invert');
+        const logged = ['x', 'y', 'z'].filter((axis) => logAxes[axis]);
+        if (logged.length) url.searchParams.set('log', logged.join(','));
+        else url.searchParams.delete('log');
         [['providers', filterState.providers], ['efforts', filterState.efforts], ['harnesses', filterState.harnesses]].forEach(([key, values]) => {
             const param = key.slice(0, -1);
             url.searchParams.delete(param);
@@ -363,15 +390,15 @@
             yField = 'score';
             zField = 'score_spread';
         } else if (!axesUserSet && (xField === 'benchmark_count' || zField === 'score_spread')) {
-            xField = 'mean_cost_usd';
+            xField = 'mean_duration_seconds';
             yField = 'score';
-            zField = 'mean_duration_seconds';
+            zField = 'mean_cost_usd';
         }
         if (axesUserSet) {
             const available = (field) => (payload.rows || []).some((row) => row[field] != null && Number.isFinite(Number(row[field])));
-            if (!available(xField)) xField = 'mean_cost_usd';
+            if (!available(xField)) xField = 'mean_duration_seconds';
             if (!available(yField)) yField = 'score';
-            if (!available(zField)) zField = 'mean_duration_seconds';
+            if (!available(zField)) zField = 'mean_cost_usd';
         }
         restoreSelectionFromUrl();
 
@@ -495,7 +522,10 @@
         observeWidgetSize();
         syncHint();
         renderTable();
-        drawChart();
+        dashMark('tables-painted');
+        // The 3D widget blocks the main thread; let stats + tables paint
+        // first and show a spinner meanwhile.
+        scheduleMainChart();
         syncUrlConfig();
     }
 
@@ -624,6 +654,7 @@
             }
             if (action === 'projection') {
                 projectionMode = btn.getAttribute('data-value');
+                projectionUserSet = true;
                 savePrefs();
                 syncWidgetMenuState();
                 drawChart();
@@ -774,7 +805,9 @@
         let hi = max;
         if (field === 'score') lo = Math.max(min, sweet.scoreMin);
         else if (field === 'mean_cost_usd') hi = Math.min(max, sweet.costMax);
-        else if (field === 'mean_duration_seconds') hi = Math.min(max, sweet.durationMax);
+        else if (field === 'mean_duration_seconds' || field === 'mean_total_duration_seconds') {
+            hi = Math.min(max, sweet.durationMax);
+        }
         if (lo > hi) {
             const t = lo;
             lo = hi;
@@ -997,8 +1030,8 @@
                 <td>${r.mean_agent_steps == null ? '—' : Number(r.mean_agent_steps).toFixed(1)}</td>
                 <td>${escapeHtml(r.harness)}</td>
             </tr>`;
-        }).join('');
-        table.innerHTML = head + '<tbody>' + (body || '<tr><td colspan="8">No rows match filters.</td></tr>') + '</tbody>';
+        });
+        setLazyTable(table, head, body, '<tr><td colspan="8">No rows match filters.</td></tr>', 8);
         bindTableInteractions(table, rows);
     }
 
@@ -1033,8 +1066,8 @@
                 <td>${fmtMoney(r.mean_cost_usd)}</td>
                 <td>${fmtZoneDistance(distances.get(rowIndex))}</td>
             </tr>`;
-        }).join('');
-        table.innerHTML = head + '<tbody>' + (body || '<tr><td colspan="10">No configs match filters.</td></tr>') + '</tbody>';
+        });
+        setLazyTable(table, head, body, '<tr><td colspan="10">No configs match filters.</td></tr>', 10);
         bindTableInteractions(table, rows);
     }
 
@@ -1048,19 +1081,24 @@
 
     function bindTableInteractions(table, rows) {
         if (activeRowIndex != null && !rows.some((r) => (payload.rows || []).indexOf(r) === activeRowIndex)) activeRowIndex = null;
-        table.querySelectorAll('tbody tr[data-row-index]').forEach((tr) => {
-            tr.addEventListener('click', () => {
-                commitSelection(Number(tr.dataset.rowIndex), false);
+        // Delegated: rows appended later by chunked lazy-load stay interactive.
+        if (!table.__dashDelegated) {
+            table.__dashDelegated = true;
+            table.addEventListener('click', (e) => {
+                const tr = e.target.closest('tbody tr[data-row-index]');
+                if (tr && table.contains(tr)) {
+                    commitSelection(Number(tr.dataset.rowIndex), false);
+                    return;
+                }
+                const th = e.target.closest('th[data-sort]');
+                if (th && table.contains(th)) {
+                    const key = th.getAttribute('data-sort');
+                    if (sortKey === key) sortDir *= -1;
+                    else { sortKey = key; sortDir = key === 'label' || key === 'provider' || key === 'harness' ? 1 : -1; }
+                    renderTable();
+                }
             });
-        });
-        table.querySelectorAll('th[data-sort]').forEach((th) => {
-            th.addEventListener('click', () => {
-                const key = th.getAttribute('data-sort');
-                if (sortKey === key) sortDir *= -1;
-                else { sortKey = key; sortDir = key === 'label' || key === 'provider' || key === 'harness' ? 1 : -1; }
-                renderTable();
-            });
-        });
+        }
         if (selectedRowIndex != null) {
             const selectedRow = table.querySelector(`tbody tr[data-row-index="${selectedRowIndex}"]`);
             if (selectedRow) selectedRow.scrollIntoView({ block: 'nearest', inline: 'nearest' });
@@ -1141,7 +1179,7 @@
         const keys = [];
         if (includeScore) keys.push('score');
         if (payload && Array.isArray(payload.axis_fields)) keys.push.apply(keys, payload.axis_fields);
-        else keys.push('mean_cost_usd', 'mean_duration_seconds', 'mean_output_tokens', 'mean_agent_steps');
+        else keys.push('mean_duration_seconds', 'mean_cost_usd', 'mean_output_tokens', 'mean_agent_steps');
         if (!includeScore) keys.push('score');
         if (payload && payload.selected_source === 'aggregate') keys.push('benchmark_count', 'score_spread');
         const seen = new Set();
@@ -1177,7 +1215,7 @@
         if (field === 'turns') return String(Math.round(value));
         if (field === 'mean_output_tokens' || field === 'mean_total_tokens') return fmtCount(value);
         if (field === 'mean_cost_usd') return fmtMoney(value);
-        if (field === 'mean_duration_seconds') return fmtDur(value);
+        if (field === 'mean_duration_seconds' || field === 'mean_total_duration_seconds') return fmtDur(value);
         return Number(value).toFixed(2);
     }
 
@@ -1192,6 +1230,7 @@
         return `<div class="dash-axis-row" data-axis-row="${axis}">
             <label class="dash-axis-field"><span>${id}</span><select id="dash${id}" aria-label="${id} dimension">${axisOptions(field, includeScore)}</select></label>
             <label class="dash-axis-invert"><input type="checkbox" id="dashInvert${id}" data-axis-invert="${axis}"${invertAxes[axis] ? ' checked' : ''}> Invert</label>
+            <label class="dash-axis-invert"><input type="checkbox" id="dashLog${id}" data-axis-log="${axis}"${logAxes[axis] ? ' checked' : ''}> Log</label>
             <label class="dash-axis-slider"><span>Min</span><input type="range" min="${extent.min}" max="${extent.max}" step="${step}" value="${low}" data-axis-limit="${axis}" data-limit-kind="min" aria-label="${id} lower limit" title="${axisValueLabel(field, low)}"></label>
             <label class="dash-axis-slider"><span>Max</span><input type="range" min="${extent.min}" max="${extent.max}" step="${step}" value="${high}" data-axis-limit="${axis}" data-limit-kind="max" aria-label="${id} upper limit" title="${axisValueLabel(field, high)}"></label>
             <output class="dash-axis-limit-value" data-axis-limit-value="${axis}">${escapeHtml(axisValueLabel(field, low))} – ${escapeHtml(axisValueLabel(field, high))}</output>
@@ -1230,6 +1269,13 @@
                 invertAxes[invert.dataset.axisInvert] = invert.checked;
                 drawChart();
                 scheduleUrlConfigSync();
+                return;
+            }
+            const log = event.target.closest('[data-axis-log]');
+            if (log) {
+                logAxes[log.dataset.axisLog] = log.checked;
+                drawChart();
+                scheduleUrlConfigSync();
             }
         });
         toolbar.addEventListener('input', (event) => {
@@ -1259,7 +1305,7 @@
 
     function resetCameraView() {
         controlMode = 'default';
-        projectionMode = 'perspective';
+        projectionMode = 'orthographic';
         flyKeys.clear();
         flyVel = { x: 0, y: 0, z: 0 };
         flyLastT = 0;
@@ -1810,6 +1856,27 @@
         };
     }
 
+    function viewDepth(gd, x, y, z) {
+        // View-space depth without projection: exact at every camera angle,
+        // including top-down where NDC depth compresses. View space looks
+        // down -z, so larger return = farther from the camera.
+        const scene = glScene(gd);
+        const glplot = scene && scene.glplot;
+        const cam = scene && scene.camera;
+        if (!glplot || !cam) return null;
+        try {
+            if (typeof cam.tick === 'function') cam.tick();
+        } catch (_) {}
+        const params = glplot.cameraParams;
+        const model = params && params.model;
+        const view = (params && params.view) || cam.matrix;
+        if (!model || !view) return null;
+        let v = mat4MulVec4(model, x, y, z, 1);
+        v = mat4MulVec4(view, v.x, v.y, v.z, v.w);
+        if (!Number.isFinite(v.z) || !Number.isFinite(v.w) || v.w <= 1e-6) return null;
+        return -(v.z / v.w);
+    }
+
     function sceneBounds(gd) {
         try {
             const b = glScene(gd).glplot.bounds;
@@ -1869,8 +1936,16 @@
                     const scr = projectGlPoint(gd, mid.x, mid.y, mid.z);
                     if (!scr) return;
                     const edge = axis + ':' + a + ',' + b;
-                    const score = scr.y + Math.abs(scr.x - w / 2) * 0.04 - scr.z * 40;
-                    if (!best || score > best.score) best = { edge, scr, score, mid };
+                    // Far side of the grid: view-space depth is exact at every
+                    // camera angle (NDC depth compresses top-down), so it owns
+                    // the pick and screen height only breaks near-ties. Native
+                    // tick numbers are Plotly's own and untouched.
+                    const depth = viewDepth(gd, mid.x, mid.y, mid.z);
+                    const far = depth == null ? scr.z : depth;
+                    if (!best || far > best.far + 1e-6
+                        || (Math.abs(far - best.far) <= 1e-6 && scr.y > best.scr.y)) {
+                        best = { edge, scr, far };
+                    }
                 });
             });
             if (!best) {
@@ -2026,7 +2101,9 @@
             autorange: limits ? false : (invertAxes[axis] ? 'reversed' : true),
         };
         const field = axis === 'x' ? xField : axis === 'y' ? yField : zField;
-        const logAxis = field === 'turns';
+        // Turns is always log-scale (legacy); the per-axis Log box extends
+        // that to any dimension (needs positives — zeros drop off a log axis).
+        const logAxis = !!logAxes[axis] || field === 'turns';
         if (logAxis) config.type = 'log';
         if (limits) {
             const lo = logAxis ? Math.log10(Math.max(limits.min, 0.5)) : limits.min;
@@ -2135,6 +2212,8 @@
         if (!el.data) el.innerHTML = '';
         window.Plotly.react(el, traces, layout, config).then((gd) => {
             lastPlotGd = gd;
+            el.__dashDrawn = true;
+            dashMark('chart-done');
             if (controlMode === 'free') {
                 lockFreeCamController(gd);
                 writeGlCamera(gd, sanitizeCamera(plotCamera || defaultCamera()));
@@ -2324,11 +2403,11 @@
                 <td>${t.cost_usd == null ? '—' : fmtMoney(t.cost_usd)}</td>
                 <td>${escapeHtml(chat)}</td>
             </tr>`;
-        }).join('');
+        });
         const empty = selected
             ? 'No recent turns for this config in the loaded window.'
             : 'No turns recorded yet. Send a message to any agent, then refresh.';
-        table.innerHTML = head + '<tbody>' + (body || `<tr><td colspan="10">${empty}</td></tr>`) + '</tbody>';
+        setLazyTable(table, head, body, `<tr><td colspan="10">${empty}</td></tr>`, 10);
     }
 
     function fmtCompact(n) {
@@ -2346,6 +2425,119 @@
         if (unit === 'tokens') return fmtCompact(n);
         if (unit === 'hours') return (n >= 10 ? Number(n).toFixed(0) : Number(n || 0).toFixed(1)) + ' h';
         return Number(n || 0).toLocaleString();
+    }
+
+    // Chunked table rendering: first paint stays fast, more rows append on
+    // scroll (IntersectionObserver sentinel) or via the fallback button.
+    const LAZY_PAGE = 20;
+    function lazyObserverFor(table) {
+        if (table && table.__lazyObserver) {
+            try { table.__lazyObserver.disconnect(); } catch (_) {}
+            table.__lazyObserver = null;
+        }
+    }
+    function appendLazyChunk(table) {
+        const state = table.__lazyState;
+        if (!state) return;
+        const tbody = table.querySelector('tbody');
+        if (!tbody) return;
+        const more = tbody.querySelector('tr.dash-lazy-more');
+        if (more) more.remove();
+        const next = state.rows.slice(state.shown, state.shown + LAZY_PAGE);
+        state.shown += next.length;
+        tbody.insertAdjacentHTML('beforeend', next.join(''));
+        const remaining = state.rows.length - state.shown;
+        if (remaining <= 0) {
+            lazyObserverFor(table);
+            return;
+        }
+        const tr = document.createElement('tr');
+        tr.className = 'dash-lazy-more';
+        tr.innerHTML = `<td colspan="${state.cols}"><button type="button" class="dash-link-btn">Show ${Math.min(LAZY_PAGE, remaining)} more (${remaining} remaining)</button></td>`;
+        tbody.appendChild(tr);
+        tr.querySelector('button').addEventListener('click', () => appendLazyChunk(table));
+        lazyObserverFor(table);
+        if ('IntersectionObserver' in window) {
+            const scrollRoot = tr.closest('.jobs-table-scroll') || null;
+            const ob = new IntersectionObserver((entries) => {
+                if (entries.some((e) => e.isIntersecting)) appendLazyChunk(table);
+            }, { root: scrollRoot, rootMargin: '400px' });
+            ob.observe(tr);
+            table.__lazyObserver = ob;
+        }
+    }
+    function setLazyTable(table, headHtml, rowsHtml, emptyHtml, cols) {
+        lazyObserverFor(table);
+        table.__lazyState = null;
+        table.innerHTML = headHtml + '<tbody></tbody>';
+        if (!rowsHtml.length) {
+            table.querySelector('tbody').innerHTML = emptyHtml;
+            return;
+        }
+        table.__lazyState = { rows: rowsHtml, shown: 0, cols: cols || 1 };
+        appendLazyChunk(table);
+    }
+    // One line per load stage in the devtools console so a slow load can be
+    // attributed (fetch vs tables vs WebGL) instead of guessed at.
+    function dashMark(stage) {
+        try {
+            if (window.__dashT0 == null) window.__dashT0 = performance.now();
+            const t = Math.round(performance.now() - window.__dashT0);
+            if (window.console && typeof window.console.debug === 'function') {
+                window.console.debug('[dash-timing] ' + stage + ' +' + t + 'ms');
+            }
+        } catch (_) {}
+    }
+
+    let mainChartTimer = 0;
+    let mainChartObserver = null;
+    function cancelMainChart() {
+        if (mainChartTimer) {
+            clearTimeout(mainChartTimer);
+            mainChartTimer = 0;
+        }
+        if (mainChartObserver) {
+            try { mainChartObserver.disconnect(); } catch (_) {}
+            mainChartObserver = null;
+        }
+    }
+    function scheduleMainChart() {
+        // The 3D WebGL pass is the heaviest main-thread block on the page:
+        // wait until the browser is idle and only then, and skip it entirely
+        // while the widget is below the fold. Tables/stats paint first.
+        const el = document.getElementById('dashChart');
+        if (!el) return;
+        if (!el.__dashDrawn) el.innerHTML = '<p class="dash-loading">Loading 3D graph…</p>';
+        if (mainChartTimer) {
+            clearTimeout(mainChartTimer);
+            mainChartTimer = 0;
+        }
+        if (mainChartObserver) {
+            try { mainChartObserver.disconnect(); } catch (_) {}
+            mainChartObserver = null;
+        }
+        dashMark('chart-scheduled');
+        const kick = () => {
+            const run = () => {
+                mainChartTimer = 0;
+                dashMark('chart-start');
+                if (el.isConnected) drawChart();
+            };
+            if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 2000 });
+            else setTimeout(run, 0);
+        };
+        if ('IntersectionObserver' in window) {
+            mainChartObserver = new IntersectionObserver((entries) => {
+                if (entries.some((e) => e.isIntersecting)) {
+                    try { mainChartObserver.disconnect(); } catch (_) {}
+                    mainChartObserver = null;
+                    kick();
+                }
+            });
+            mainChartObserver.observe(el);
+        } else {
+            kick();
+        }
     }
 
     function usageBucketLabels() {
@@ -2391,6 +2583,7 @@
             cost_usd: `${stats.with_cost || 0} of ${stats.turns || 0} turns report cost`,
             total_tokens: `${stats.with_tokens || 0} of ${stats.turns || 0} turns report tokens`,
             input_tokens: `${stats.with_tokens || 0} of ${stats.turns || 0} turns report tokens`,
+            cached_input_tokens: `${stats.with_cached || 0} of ${stats.turns || 0} turns report cached tokens`,
             output_tokens: `${stats.with_tokens || 0} of ${stats.turns || 0} turns report tokens`,
         };
         const chartCards = metrics.map((m) => `
@@ -2499,33 +2692,56 @@
         drawUsageCharts();
     }
 
+    function usageGroupName() {
+        const byId = { model: 'Model', harness: 'Harness', chat: 'Chat', prompt: 'Prompt', none: 'Group' };
+        return byId[payload.selected_group_by] || 'Model';
+    }
+
     function renderUsageTable() {
         const table = document.getElementById('dashUsageTable');
         if (!table) return;
         const metrics = payload.metrics || [];
         const groups = (payload.groups || []).map((g, i) => ({ g, i })).filter(({ g }) => !usageHidden.has(g.key));
         const tokenTotal = groups.reduce((sum, { g }) => sum + (g.totals.total_tokens || 0), 0);
-        const head = `<thead><tr><th>${escapeHtml(payload.selected_group_by === 'harness' ? 'Harness' : 'Model')}</th>${
+        const head = `<thead><tr><th>${escapeHtml(usageGroupName())}</th>${
             metrics.map((m) => `<th>${escapeHtml(m.label)}</th>`).join('')
         }<th>Token share</th></tr></thead>`;
         const body = groups.map(({ g, i }) => `<tr>
             <td class="jobs-cell-wrap"><span class="dash-swatch" style="background:${usageGroupColor(i)}"></span>${escapeHtml(g.label)}</td>
             ${metrics.map((m) => `<td>${escapeHtml(fmtUsageValue(m.unit, g.totals[m.id]))}</td>`).join('')}
             <td>${tokenTotal ? ((100 * (g.totals.total_tokens || 0)) / tokenTotal).toFixed(1) + '%' : '—'}</td>
-        </tr>`).join('');
-        table.innerHTML = head + '<tbody>' + (body || `<tr><td colspan="${metrics.length + 2}">No turns in this range.</td></tr>`) + '</tbody>';
+        </tr>`);
+        setLazyTable(table, head, body, `<tr><td colspan="${metrics.length + 2}">No turns in this range.</td></tr>`, metrics.length + 2);
     }
 
+    let usageChartTimer = 0;
     function drawUsageCharts() {
+        // Chunked: one widget per frame so N metrics × M groups never block
+        // first paint (or a legend toggle) in a single synchronous burst.
         const cells = Array.from(root.querySelectorAll('.dash-usage-chart'));
         if (!cells.length) return;
+        cells.forEach((el) => {
+            if (!el.__dashDrawn) el.innerHTML = '<p class="dash-loading">Loading chart…</p>';
+        });
         if (!window.Plotly) {
-            cells.forEach((el) => { el.innerHTML = '<p class="dash-loading">Loading chart…</p>'; });
             if (window.CuttleOptionalCdn && typeof window.CuttleOptionalCdn.loadPlotlyExtras === 'function') {
                 window.CuttleOptionalCdn.loadPlotlyExtras();
             }
             return;
         }
+        if (usageChartTimer) clearTimeout(usageChartTimer);
+        const queue = cells.slice();
+        const step = () => {
+            usageChartTimer = 0;
+            const el = queue.shift();
+            if (el) drawUsageChartCell(el);
+            if (queue.length) usageChartTimer = setTimeout(step, 0);
+        };
+        usageChartTimer = setTimeout(step, 0);
+    }
+
+    function drawUsageChartCell(el) {
+        if (!window.Plotly || !el.isConnected) return;
         const colors = themeColors();
         const byId = {};
         (payload.metrics || []).forEach((m) => { byId[m.id] = m; });
@@ -2533,7 +2749,7 @@
         const breakdown = new URLSearchParams(window.location.search).get('view') === 'total';
         const visible = (payload.groups || []).map((g, i) => ({ g, color: usageGroupColor(i) }))
             .filter(({ g }) => !usageHidden.has(g.key));
-        cells.forEach((el) => {
+        {
             const metric = byId[el.getAttribute('data-usage-metric')];
             if (!metric) return;
             const fmt = USAGE_FORMATS[metric.unit] || USAGE_FORMATS.count;
@@ -2592,9 +2808,10 @@
                 hoverlabel: { bgcolor: 'rgba(15,23,42,0.92)', bordercolor: colors.grid, font: { color: '#e2e8f0' } },
             });
             if (!el.data) el.innerHTML = '';
+            el.__dashDrawn = true;
             window.Plotly.react(el, traces, layout, { responsive: true, displaylogo: false, displayModeBar: false })
                 .catch((err) => { el.innerHTML = '<p class="dash-error">' + escapeHtml((err && err.message) || String(err)) + '</p>'; });
-        });
+        }
     }
 
     function renderSoon() {
@@ -2624,6 +2841,7 @@
 
     async function loadDashboard(force) {
         const id = dashIdFromUrl();
+        cancelMainChart();
         root.innerHTML = '<p class="dash-loading">Loading…</p>';
         const params = new URLSearchParams();
         const urlParams = new URLSearchParams(window.location.search);
@@ -2641,6 +2859,7 @@
         }
         const q = params.toString() ? '?' + params.toString() : '';
         payload = await fetchJson('/api/dashboards/' + encodeURIComponent(id) + q);
+        dashMark('fetch-done');
         if (id === 'model-benchmarks') renderModelBenchmarks();
         else if (id === 'cuttle-performance') renderCuttlePerformance();
         else if (id === USAGE_ID) renderCuttleUsage();
@@ -2676,7 +2895,8 @@
         }
         if (!payload || (dashIdFromUrl() !== 'model-benchmarks' && dashIdFromUrl() !== PERF_ID)) return;
         if (window.Plotly) {
-            drawChart();
+            dashMark('plotly-ready');
+            scheduleMainChart();
             return;
         }
         const el = document.getElementById('dashChart');

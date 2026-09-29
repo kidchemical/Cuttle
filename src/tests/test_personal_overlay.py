@@ -18,7 +18,7 @@ def test_resolve_prefers_personal(tmp_path: Path):
     assert resolved.read_text(encoding="utf-8") == "personal"
 
 
-def test_rules_merge_personal_overrides(tmp_path: Path):
+def test_rules_merge_personal_appends_delta(tmp_path: Path):
     from api.cuttle_brain.context_compiler import compile_context
 
     rules = tmp_path / ".cuttle" / "rules"
@@ -34,9 +34,14 @@ def test_rules_merge_personal_overrides(tmp_path: Path):
         project_path=str(tmp_path),
         inject_capabilities=False,
     )
+    # Supplement, not fork: tracked baseline stays, personal delta appends after it.
     assert "PERSONAL_RULE_TOKEN" in compiled.prompt
     assert "PERSONAL_ONLY_TOKEN" in compiled.prompt
-    assert "TRACKED_RULE_TOKEN" not in compiled.prompt
+    assert "TRACKED_RULE_TOKEN" in compiled.prompt
+    assert compiled.prompt.index("TRACKED_RULE_TOKEN") < compiled.prompt.index(
+        "PERSONAL_RULE_TOKEN"
+    )
+    assert "Install-local delta" in compiled.prompt
 
 
 def test_inventory_includes_personal_docs(tmp_path: Path):

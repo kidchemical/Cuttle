@@ -27,7 +27,7 @@ User-requested capabilities. Format: `[FEAT-YYYYMMDD-XXX] capability_name`
 - **Notes:** Each self-hosted Cuttle creates its own App ("Only on this account"): a shared public App would mean distributing its private key. Auth = App ID + private key (.pem, outside the repo) → short-lived installation token. Bot commit email: `<bot-user-id>+cuttle-harness[bot]@users.noreply.github.com`.
 - **Progress:** App created and installed (issues / PRs / contents write); `GITHUB_APP_*` keys in `src/.env` (not read by code yet). Profile README commit co-authored by the bot.
 - **Complexity:** L
-- **Related:** `.cuttle/docs/gitea.md`, `.cuttle/docs/cuttle-jobs.md`, `src/api/gitea/`, `src/api/cuttle_jobs/`, `src/scripts/utilities/git_pending_changes.py`, `src/api/edit_attribution/`
+- **Related:** `.cuttle_global/docs/gitea.md`, `.cuttle_global/docs/cuttle-jobs.md`, `src/api/gitea/`, `src/api/cuttle_jobs/`, `src/scripts/utilities/git_pending_changes.py`, `src/api/edit_attribution/`
 
 ## [FEAT-20260926-002] query_log_inspector
 
@@ -45,7 +45,7 @@ User-requested capabilities. Format: `[FEAT-YYYYMMDD-XXX] capability_name`
 - **User context:** CH-000584 — public JSON feeds (DeepSWE, BenchmarkList, SWE-bench, OpenRouter) to pick models; Cuttle-local outcomes as a second dataset.
 - **Complexity:** L
 - **Progress:** Hub + DeepSWE v1.1 live JSON + BenchmarkList discovery panel + rail item. Not yet: SWE-bench dump, OpenRouter, Artificial Analysis, local Cuttle telemetry.
-- **Related:** `.cuttle/docs/dashboards.md`, `src/api/dashboards/`
+- **Related:** `.cuttle_global/docs/dashboards.md`, `src/api/dashboards/`
 
 ## [FEAT-20260917-001] cuttle_device_workers
 
@@ -54,7 +54,7 @@ User-requested capabilities. Format: `[FEAT-YYYYMMDD-XXX] capability_name`
 - **User context:** CH-000391 — run Cuttle on laptop + tower; Client mode should also run (or default) worker mode so tower can e.g. copy files from Yoga Desktop or farm Blender frames across GPUs. ChatGPT framing: one workspace / several computers; orchestrator + backends. Clarified: teach **Cuttle**, not sticky agents; smart batching when workers available.
 - **Complexity:** XL
 - **Progress:** W0–W2.5 done; W2b blender job/shard code done + JamBit v11 dogfood; **W2b+ work-steal chunks (default), per-frame result analytics, EWMA `render_profile`** code done. W2c Client daemon + `cuttle_self_update` / allowlisted `shell` recipes code done. Remaining: content-addressed staging, optional auto_mesh, weighted static plans using profiles, W4.
-- **Related:** `docs/guides/CUTTLE_WORKERS.md`, `.cuttle/docs/cuttle-workers.md`, `docs/ROADMAP.md`, `src/api/cuttle_jobs/`, `src/api/device_workers/`, `src/api/discovery_mdns.py`, `.cuttle/docs/cuttle-jobs.md`
+- **Related:** `docs/guides/CUTTLE_WORKERS.md`, `.cuttle_global/docs/cuttle-workers.md`, `docs/ROADMAP.md`, `src/api/cuttle_jobs/`, `src/api/device_workers/`, `src/api/discovery_mdns.py`, `.cuttle_global/docs/cuttle-jobs.md`
 
 ## [FEAT-20260917-002] mobile_worker_sensor_edge
 
@@ -111,7 +111,7 @@ User-requested capabilities. Format: `[FEAT-YYYYMMDD-XXX] capability_name`
 - **User context:** Game/Unity asset pipeline (CH-000184). RTX 3080 10GB — low-VRAM workflows. Engine installed at `F:\AI\ComfyUI-Trellis` (Python 3.11), not in the Cuttle git tree.
 - **Notes:** TRELLIS.2-4B weights complete 2026-08-19 (~16.2 GB, 9 safetensors). DINOv3 still gated; generation blocked until HF license + login.
 - **Complexity:** L
-- **Related:** `.cuttle/docs/comfyui-trellis2.md`, `src/tools/comfyui/`
+- **Related:** `.cuttle_global/docs/comfyui-trellis2.md`, `src/tools/comfyui/`
 
 ## [FEAT-20260817-002] cuttle_cli (deferred — product shell)
 
@@ -165,4 +165,4 @@ User-requested capabilities. Format: `[FEAT-YYYYMMDD-XXX] capability_name`
 - **User context:** CH-000764 — JamBit HQ model: every employee runs a Host, one farm serves all. Explicitly rejected: N worker registrations per machine (static split, uncoordinated contention) and manual coordinator re-pointing.
 - **Notes:** Claim protocol already has capability ads, leases, heartbeats; multihoming would still need cross-coordinator capacity accounting to avoid double-booking a GPU. Queue beats mesh gossip on fairness, persistence, debuggability. Do not build until a second Host needs the farm.
 - **Complexity:** M (shared queue posture) / XL (true multihoming — not recommended)
-- **Related:** `.cuttle/docs/cuttle-workers.md`, `src/api/cuttle_jobs/`, `src/api/device_workers/worker_loop.py`, `[FEAT-20260928-002]`
+- **Related:** `.cuttle_global/docs/cuttle-workers.md`, `src/api/cuttle_jobs/`, `src/api/device_workers/worker_loop.py`, `[FEAT-20260928-002]`

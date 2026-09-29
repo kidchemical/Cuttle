@@ -1,6 +1,6 @@
 """CLI entry: python -m api.device_workers.cli <verb> …
 
-Reads CUTTLE_ACTION_PARAMS_JSON / CUTTLE_PARAM_* when invoked from .cuttle/actions.
+Reads CUTTLE_ACTION_PARAMS_JSON / CUTTLE_PARAM_* when invoked from action YAML.
 """
 
 from __future__ import annotations

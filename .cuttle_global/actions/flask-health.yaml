@@ -1,0 +1,7 @@
+name: flask.health
+title: Check Flask health
+description: GET https://127.0.0.1:8080/api/health (ignore self-signed cert).
+type: shell
+run: powershell -NoProfile -ExecutionPolicy Bypass -File .cuttle_global\scripts\flask-health.ps1
+run_posix: .venv/bin/python .cuttle_global/scripts/flask-health.py
+workdir: .

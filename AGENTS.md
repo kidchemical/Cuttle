@@ -19,7 +19,7 @@ Canonical daemon restart (admin / external terminal only):
 - Windows: `.cuttle/scripts/restart-daemon.ps1` from the repo root
 - Linux / macOS: `.cuttle/scripts/restart-daemon.sh` (or `./start_cuttle.sh` after a stop)
 
-Hub action forms (`flask.restart`, workers, …) use `run:` (PowerShell) on Windows and `run_posix:` (venv python / bash) on Linux. Do not invoke `.ps1` recipes from Ubuntu.
+Global action forms (`flask.restart`, workers, …) use `run:` (PowerShell) on Windows and `run_posix:` (venv python / bash) on Linux. Do not invoke `.ps1` recipes from Ubuntu.
 
 Details: `.cursor/rules/restart-cuttle.mdc`, `src/api/flask_restart.py`, `src/api/restart_safety_policy.py`.
 
@@ -27,7 +27,7 @@ Details: `.cursor/rules/restart-cuttle.mdc`, `src/api/flask_restart.py`, `src/ap
 
 Cuttle is a persistent, autonomous AI agent framework. It runs as a system-tray (or headless) daemon that manages a Flask API (port 8080) and vendor agent CLIs. Web chat uses starred slash agents (`/cursor`, …) and the agent router. Discord is **optional agent-ops** (REST read/post), not an inbound gateway.
 
-Project config lives under `.cuttle/` (commands, actions, docs, rules). Prefer that over inventing parallel paths. Extension categories: [`docs/architecture/extension-boundaries.md`](docs/architecture/extension-boundaries.md).
+Project config lives under `.cuttle/` (commands, actions, docs, rules, `ROUTER.ini` for global-layer selection); shared global config under `.cuttle_global/`. Prefer that over inventing parallel paths. Extension categories: [`docs/architecture/extension-boundaries.md`](docs/architecture/extension-boundaries.md).
 
 ## Starting the Project
 
@@ -93,7 +93,7 @@ The web UI is vanilla JS served by Flask at port 8080. Key files:
 
 ### Tools for agents
 
-Cuttle does **not** host an MCP tool server. Guest CLIs keep their own MCP. Cuttle-owned verbs for agents are `python -m api.<module>` (see `.cuttle/docs/agent-ops-cli.md`). **`/cursor`** runs `scripts.utilities.cursor_cli_tool` via the Cursor harness adapter. Discord feature posts use `discord.post` + `python -m api.discord_cli`. Live `src/tools/` is ComfyUI, Govee, OCR (chat vision fallback), and web search.
+Cuttle does **not** host an MCP tool server. Guest CLIs keep their own MCP. Cuttle-owned verbs for agents are `python -m api.<module>` (see `.cuttle_global/docs/agent-ops-cli.md`). **`/cursor`** runs `scripts.utilities.cursor_cli_tool` via the Cursor harness adapter. Discord feature posts use `discord.post` + `python -m api.discord_cli`. Live `src/tools/` is ComfyUI, Govee, OCR (chat vision fallback), and web search.
 
 ### Agent Router (execution harness selection)
 
@@ -126,12 +126,12 @@ Cuttle does **not** host an MCP tool server. Guest CLIs keep their own MCP. Cutt
 
 - **Never** `git push` from the agent shell in Cuttle chat (including `--force`).
 - The user pushing from the Git pending-changes UI is allowed.
-- In chat, emit the `git.push` action form (status / push / don’t) and stop. See `.cuttle/docs/git.md`. Do not ask “OK to push?” in prose.
+- In chat, emit the `git.push` action form (status / push / don’t) and stop. See `.cuttle_global/docs/git.md`. Do not ask “OK to push?” in prose.
 
 ### Asking the user questions (Cuttle chat)
 
 - **Never call the IDE `AskQuestion` tool** when the turn runs through Cuttle (`/cursor`, router, etc.). Headless `agent -p` has no picker, so it returns "skipped" instantly and the user sees nothing.
-- Emit a Q&A `<cuttle_action_form>` with `"resume": true` instead (`choice`, `multi` with Submit/Cancel, or `form` with `radio`/`checkboxes` fields), then end the turn. See `.cuttle/docs/action-forms.md`.
+- Emit a Q&A `<cuttle_action_form>` with `"resume": true` instead (`choice`, `multi` with Submit/Cancel, or `form` with `radio`/`checkboxes` fields), then end the turn. See `.cuttle_global/docs/action-forms.md`.
 - **One Q&A card per reply.** Several questions → one `form` card with one field per question and a single Submit. Separate resume cards each start a turn on their own click, so the first answer orphans the rest. `rewrite_action_forms` merges stray multi-card replies into one form as a safety net (`merge_qa_resume_specs`).
 - The answer bubble has exactly one writer: the client's resume send (`sendMessage({text})` → `/api/chat`). `/api/action-form/run` returns `injected_user_message` but must not persist it — doing both showed every answer twice. `[form-answers]` lists every field, including unanswered ones.
 - Never tell the user they "skipped" a question. `src/api/cursor_question_bridge.py` converts stray AskQuestion calls into a card as a safety net.
@@ -193,4 +193,4 @@ Rules:
 - Include both file:// and vscode:// links whenever possible
 - **Not for chat handles:** emit bare `CH-000182` / `CH-000182-23` only — never
   `[CH-…](file://…)` or other markdown wrappers (those become file chips). See
-  `.cuttle/rules/01-chat-handles.md`.
+  `.cuttle_global/rules/01-chat-handles.md`.

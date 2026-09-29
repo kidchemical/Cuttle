@@ -448,7 +448,14 @@ def test_dashboards_catalog_performance_is_live():
     assert card["status"] == "live"
 
 
-def test_flask_performance_route(tmp_path, monkeypatch):
+def test_flask_performance_route_requires_owner(tmp_path, monkeypatch):
+    """Dashboards blueprint is owner-gated; anonymous gets 401, not payload.
+
+    Regression for ERR-20260928-001: the pre-cleanup version of this test
+    mounted the blueprint with no auth context and asserted payload fields,
+    which broke when the owner gate landed. Service-level payload shape is
+    covered by test_dashboards_catalog_performance_is_live.
+    """
     from flask import Flask
     from api.dashboards.routes import dashboards_bp
     from api.dashboards import service
@@ -458,6 +465,5 @@ def test_flask_performance_route(tmp_path, monkeypatch):
     })
     app = Flask(__name__)
     app.register_blueprint(dashboards_bp)
-    body = app.test_client().get("/api/dashboards/cuttle-performance").get_json()
-    assert body["id"] == "cuttle-performance"
-    assert body["status"] == "live"
+    res = app.test_client().get("/api/dashboards/cuttle-performance")
+    assert res.status_code == 401
