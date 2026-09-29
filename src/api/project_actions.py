@@ -59,7 +59,7 @@ def _actions_dirs_for_project(
     ``.cuttle_global/actions`` (+ personal) dirs are appended last so project
     actions win by name and global actions (flask.restart, git.push, workers.*)
     stay resolvable from any chat — unless ``include_global`` is False
-    (ROUTER.ini severed leg).
+    (GLOBAL.ini severed leg).
     """
     try:
         from core.runtime_paths import rewrite_windows_lab_path
@@ -261,9 +261,9 @@ def find_project_action_resolved(
         candidates.append((action, str(action.get("project_path") or path)))
 
     try:
-        from api.cuttle_brain.router_config import load_router_config
+        from api.cuttle_brain.global_layers import load_global_layers
 
-        include_global = load_router_config(primary or None).actions
+        include_global = load_global_layers(primary or None).actions
     except Exception:
         include_global = True
 
@@ -300,7 +300,7 @@ def find_project_action_resolved(
             paths.append(mapped)
 
     # Cuttle install fallback. The global leg is cut per-path below when the
-    # chat project's ROUTER.ini severs it (include_global=False).
+    # chat project's GLOBAL.ini severs it (include_global=False).
     try:
         install = str(Path(__file__).resolve().parents[2])
         if install not in paths and install != primary:

@@ -6245,13 +6245,30 @@ function setupSpaceTabMenus(host) {
     scheduleSpaceActivityPoll(true);
 })();
 
-function reorderSpaces(ids) {
-    const byId = new Map(spacesState.spaces.map((s) => [s.id, s]));
-    const next = ids.map((id) => byId.get(id)).filter(Boolean);
-    if (next.length !== spacesState.spaces.length) return;
-    if (next.every((s, i) => s === spacesState.spaces[i])) return;
-    spacesState.spaces.splice(0, spacesState.spaces.length, ...next);
+/**
+ * Commit a tab-strip drop. Only visible tabs take part in the DOM order —
+ * members of collapsed groups are hidden, so they keep their slots: the
+ * dragged tab anchors after its left visible neighbor (or at the front).
+ * The old all-or-nothing reorder silently dropped every commit while any
+ * group was collapsed.
+ */
+function reorderSpacesAroundHidden(visibleIds, draggedId) {
+    const list = spacesState.spaces;
+    const vi = visibleIds.indexOf(draggedId);
+    if (vi < 0) return false;
+    const dragged = list.find((s) => s && s.id === draggedId);
+    if (!dragged) return false;
+    const without = list.filter((s) => s && s.id !== draggedId);
+    let at = 0;
+    if (vi > 0) {
+        const li = without.findIndex((s) => s && s.id === visibleIds[vi - 1]);
+        at = li < 0 ? without.length : li + 1;
+    }
+    const next = without.slice(0, at).concat([dragged], without.slice(at));
+    if (next.every((s, idx) => s === list[idx])) return false;
+    list.splice(0, list.length, ...next);
     persistSpacesState();
+    return true;
 }
 
 // ── Cross-space pane drag (grip → space tab) ───────────────
@@ -6457,9 +6474,9 @@ function setupSpaceTabDrag(host) {
         host.classList.remove('is-reordering');
         if (tab.hasPointerCapture(pointerId)) tab.releasePointerCapture(pointerId);
         if (commit) {
-            const ids = Array.from(host.querySelectorAll('.shell-space-tab')).map((t) => t.dataset.spaceId);
+            const visibleIds = Array.from(host.querySelectorAll('.shell-space-tab')).map((t) => t.dataset.spaceId);
             const draggedId = tab.dataset.spaceId;
-            reorderSpaces(ids);
+            reorderSpacesAroundHidden(visibleIds, draggedId);
             // Dropping between members of one group joins it; dropping out
             // ungroups; parking before a badge always stays out.
             fixDraggedTabGroup(draggedId);
@@ -6515,6 +6532,9 @@ function setupSpaceTabDrag(host) {
     host.addEventListener('pointercancel', (e) => {
         if (drag && e.pointerId === drag.pointerId) finish(false);
     });
+    // Releasing off-window delivers no pointerup; snap back instead of
+    // floating the tab until the next hover cancels the gesture.
+    window.addEventListener('blur', () => { if (drag) finish(false); });
     host.addEventListener('keydown', (e) => {
         if (drag?.active && e.key === 'Escape') {
             e.preventDefault();
@@ -6975,6 +6995,7 @@ function setupPaneReorder(colEl) {
         window.removeEventListener('pointermove', onMove, true);
         window.removeEventListener('pointerup', onUp, true);
         window.removeEventListener('pointercancel', onCancel, true);
+        window.removeEventListener('blur', onBlurCancel, true);
     };
 
     const autoSwitchToSpace = (spaceId) => {
@@ -7115,6 +7136,7 @@ function setupPaneReorder(colEl) {
 
     const onUp = (e) => finish(e, false);
     const onCancel = () => finish(null, true);
+    const onBlurCancel = () => finish(null, true);
 
     grip.addEventListener('pointerdown', (e) => {
         if (e.button != null && e.button !== 0) return;
@@ -7135,6 +7157,7 @@ function setupPaneReorder(colEl) {
         window.addEventListener('pointermove', onMove, true);
         window.addEventListener('pointerup', onUp, true);
         window.addEventListener('pointercancel', onCancel, true);
+        window.addEventListener('blur', onBlurCancel, true);
     });
 }
 

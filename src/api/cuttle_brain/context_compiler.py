@@ -135,8 +135,8 @@ def _apply_router_to_global_rules(
     project_names: List[str],
     router: Any,
 ) -> List[tuple[str, str]]:
-    """Enforce ROUTER.ini rules mode; safety rules always survive."""
-    from api.cuttle_brain.router_config import SAFETY_RULE_FILES
+    """Enforce GLOBAL.ini rules mode; safety rules always survive."""
+    from api.cuttle_brain.global_layers import SAFETY_RULE_FILES
 
     safety = [(n, t) for n, t in all_global if n in SAFETY_RULE_FILES]
     policy = [(n, t) for n, t in all_global if n not in SAFETY_RULE_FILES]
@@ -279,9 +279,9 @@ def _runtime_block(
     docs = inventory.get("docs") or []
     actions = inventory.get("actions") or []
     rules = inventory.get("rules") or []
-    from api.cuttle_brain.router_config import load_router_config
+    from api.cuttle_brain.global_layers import load_global_layers
 
-    router = load_router_config(project_path)
+    router = load_global_layers(project_path)
     global_config = _cuttle_global_config()
     if global_config is not None and router.docs:
         global_docs = _list_names(global_config / "docs", ("*.md",))
@@ -307,7 +307,7 @@ def _runtime_block(
                 f"{delta_note}"
             )
         if not router.docs and global_config is not None:
-            parts.append("- global docs: off per this project's ROUTER.ini")
+            parts.append("- global docs: off per this project's GLOBAL.ini")
         if rules:
             parts.append(f"- rules: {', '.join(rules)}")
         if cmd:
@@ -407,10 +407,10 @@ def compile_context(
 
     rules = load_project_rules(project_path) if include_rules else []
     if include_rules:
-        from api.cuttle_brain.router_config import load_router_config
+        from api.cuttle_brain.global_layers import load_global_layers
 
-        router = load_router_config(project_path)
-        # Global policy is additive by default; ROUTER.ini shadow/off trims it.
+        router = load_global_layers(project_path)
+        # Global policy is additive by default; GLOBAL.ini shadow/off trims it.
         # Safety rules always survive (enforced inside the helper).
         global_rules = _apply_router_to_global_rules(
             load_global_rules(), [n for n, _ in rules], router

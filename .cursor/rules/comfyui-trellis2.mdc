@@ -1,9 +1,0 @@
----
-description: Apply the ComfyUI TRELLIS.2 skill when the user wants local 3D assets, meshes, or textures
-alwaysApply: false
----
-
-When the user asks to generate 3D models, GLB/GLTF assets, image-to-3D, mesh textures, ComfyUI, or TRELLIS/Trellis2:
-1. Apply the project skill **comfyui-trellis2** (`.cursor/skills/comfyui-trellis2/SKILL.md`).
-2. Use MCP tools `comfyui_status` / `comfyui_start` / `comfyui_generate_3d` (not Cuttle's `.venv`).
-3. This PC is an RTX 3080 10GB — default to low-poly / low-VRAM workflows.

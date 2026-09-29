@@ -1,9 +1,9 @@
 # Cuttle safety core (non-severable)
 
 These two rules protect shared infrastructure and other projects. They compile
-for every chat even when a project's `ROUTER.ini` severs other global layers.
+for every chat even when a project's `GLOBAL.ini` severs other global layers.
 To change them for everyone, edit this tree (`.cuttle_global/rules/`) — a
-per-project `ROUTER.ini` cannot switch them off, and a project `00-safety.md`
+per-project `GLOBAL.ini` cannot switch them off, and a project `00-safety.md`
 can only *append* (never replace them).
 
 1. Never force-kill Flask, `cuttle_daemon`, or the Discord bot from an agent those

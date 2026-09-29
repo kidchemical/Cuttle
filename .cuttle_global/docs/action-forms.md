@@ -248,8 +248,25 @@ also healed on render / click.
 Surfaces without action buttons (Discord, plain API, terminal/CLI session): never emit raw `<cuttle_action_form>` markup — cards only render in Cuttle chat, elsewhere it prints as dead text. Use `/restart graceful`,
 `/restart when-idle`, `/restart force --yes` (or `POST /api/flask/restart`).
 
+**The launcher/child trap:** the daemon tracks the `.venv\Scripts\python.exe`
+**launcher**; the **`Python311\python.exe` child** holds port 8080. Killing only
+the launcher orphans the child → restart loop. Never kill half the tree — use
+the coordinated daemon restart. Also leave alone: `llama-server.exe` and
+unrelated `*MCP*` / UnityMCP processes.
+
+**Verify (HTTPS + self-signed on 8080):**
+
+```powershell
+curl.exe -k -s -o NUL -w "%{http_code}" https://127.0.0.1:8080/api/health
+# expect 200
+curl.exe -k -s https://127.0.0.1:8080/api/flask/restart/status
+```
+
+Do not report "restart complete" until `/api/health` (or restart status
+`healthy`) succeeds.
+
 ## Related
 
 - Layout / authoring: [commands-and-actions.md](commands-and-actions.md)
 - Discord read/post: [discord.md](discord.md)
-- Cursor skill (deeper examples): `cuttle-project-commands`
+- Skill (deeper examples): `.cuttle_global/skills/cuttle-project-commands/SKILL.md`

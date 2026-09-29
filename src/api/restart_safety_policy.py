@@ -26,14 +26,14 @@ DENY_MESSAGE = (
 # Explicit coverage map — update when adding harnesses.
 HARNESS_COVERAGE: Dict[str, Dict[str, Any]] = {
     "cursor": {
-        "hard_enforcement": "beforeShellExecution",
-        "hard_path": ".cursor/hooks.json → block_cuttle_managed_kill.py",
+        "hard_enforcement": None,
+        "hard_path": None,
         "advisory": [
-            ".cursor/rules/restart-cuttle.mdc",
+            ".cuttle_global/docs/action-forms.md (Flask restart traps + verify)",
             "cuttle_ui_capabilities / restart_safety_brief",
             "AGENTS.md",
         ],
-        "notes": "Project hooks apply when agent --workspace is Cuttle (or a project that inherits these hooks).",
+        "notes": "No IDE shell gate ships with this repo; policy is advisory only.",
     },
     "codex": {
         "hard_enforcement": None,

@@ -160,7 +160,7 @@ def test_codex_and_hermes_coverage_declared_advisory_not_hard():
     deepseek = rsp.assert_harness_not_silently_protected("deepseek")
     assert deepseek["hard_enforcement"] is None
     cursor = rsp.assert_harness_not_silently_protected("cursor")
-    assert cursor["hard_enforcement"] == "beforeShellExecution"
+    assert cursor["hard_enforcement"] is None
 
 
 def test_unknown_harness_not_silently_protected():

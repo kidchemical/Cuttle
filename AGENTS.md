@@ -21,13 +21,13 @@ Canonical daemon restart (admin / external terminal only):
 
 Global action forms (`flask.restart`, workers, …) use `run:` (PowerShell) on Windows and `run_posix:` (venv python / bash) on Linux. Do not invoke `.ps1` recipes from Ubuntu.
 
-Details: `.cursor/rules/restart-cuttle.mdc`, `src/api/flask_restart.py`, `src/api/restart_safety_policy.py`.
+Details: `.cuttle_global/docs/action-forms.md` (Flask restart), `src/api/flask_restart.py`, `src/api/restart_safety_policy.py`.
 
 ## What is Cuttle
 
 Cuttle is a persistent, autonomous AI agent framework. It runs as a system-tray (or headless) daemon that manages a Flask API (port 8080) and vendor agent CLIs. Web chat uses starred slash agents (`/cursor`, …) and the agent router. Discord is **optional agent-ops** (REST read/post), not an inbound gateway.
 
-Project config lives under `.cuttle/` (commands, actions, docs, rules, `ROUTER.ini` for global-layer selection); shared global config under `.cuttle_global/`. Prefer that over inventing parallel paths. Extension categories: [`docs/architecture/extension-boundaries.md`](docs/architecture/extension-boundaries.md).
+Project config lives under `.cuttle/` (commands, actions, docs, rules, `GLOBAL.ini` for global-layer selection); shared global config under `.cuttle_global/`. Prefer that over inventing parallel paths. Extension categories: [`docs/architecture/extension-boundaries.md`](docs/architecture/extension-boundaries.md).
 
 ## Starting the Project
 
@@ -112,7 +112,7 @@ Cuttle does **not** host an MCP tool server. Guest CLIs keep their own MCP. Cutt
 ### Flask restart (daemon-owned) — expanded
 
 - **Never** `taskkill` `web_chat_api` from a Cursor/Codex/Muse agent hosted by that Flask — the reply is lost.
-- When proposing a restart in Cuttle chat, emit the `flask.restart` action form (choice card: status / graceful / when-idle / force / `flask.health`) instead of asking in prose — see `.cursor/rules/restart-cuttle.mdc`. Card restarts are `silent`: progress shows on the card (spinner → green check), and no ack/completion bubbles are written to the chat.
+- When proposing a restart in Cuttle chat, emit the `flask.restart` action form (choice card: status / graceful / when-idle / force / `flask.health`) instead of asking in prose — see `.cuttle_global/docs/action-forms.md` (Flask restart). Card restarts are `silent`: progress shows on the card (spinner → green check), and no ack/completion bubbles are written to the chat.
 - Action cards carry the `session_id` of the chat they were rendered in; `/api/action-form/run` runs the action in that chat regardless of what the client thinks is open, so a restart can never land its status in another chat.
 - Prefer `/restart status|graceful|when-idle|force --yes` or `POST /api/flask/restart` when action buttons aren't available.
 - `/restart` is a **native Cuttle control command**: it is intercepted in `/api/chat` (and in `process_message_with_bot`) before sticky/starred agent prefixing, the router, and any Cursor/Codex/Hermes dispatch, so it never becomes a model turn or an agent job. Palette entry lives in `SLASH_COMMANDS` (`controlCommand: true`) in `chat_page.js`.
@@ -120,7 +120,7 @@ Cuttle does **not** host an MCP tool server. Guest CLIs keep their own MCP. Cutt
 - **Manual verification 2026-08-16:** `/restart status` → native chip (no agent); `/restart graceful` → ack persisted, auto-reconnect, Flask PID 4856→19048, generation 1→2, health 6798.6 ms, completion delivered without a follow-up message (`restart_id` `f2cb0682…`, status file `healthy`).
 - Daemon helper: `.cuttle/scripts/restart-daemon.sh` (POSIX) or `.cuttle/scripts/restart-daemon.ps1` (Windows).
 - Drain-first: graceful waits/rejects when busy; `when-idle` schedules; force requires confirm.
-- **Cursor hard gate:** `.cursor/hooks.json` `beforeShellExecution` (Cuttle workspace).
+- No IDE shell gate ships with this repo (the old Cursor `beforeShellExecution` hook was removed); enforcement is the safety core + daemon-owned restart path.
 
 ### Git push (Cuttle chat)
 
@@ -161,7 +161,7 @@ Scheduled `Self_Improvement.json` was removed with the graphs. Process backlog l
 - `_execute_remote_agent_tool()` in `web_chat_api.py` handles harness CLI vs LLM fallback — this is the core AI dispatch logic
 - Flask runs on port **8080** (not 5000)
 - Discord token is read from `src/.env` — the daemon must load this before spawning bot subprocess
-- **Project commands**: `{project}/.cuttle/commands/*.md` (YAML frontmatter + body) appear in the chat `/` palette for that project. See `.cursor/skills/cuttle-project-commands/SKILL.md`. Invoke as `/{name}` or `/cmd {name}` (works after sticky `/cursor` too).
+- **Project commands**: `{project}/.cuttle/commands/*.md` (YAML frontmatter + body) appear in the chat `/` palette for that project. See `.cuttle_global/skills/cuttle-project-commands/SKILL.md`. Invoke as `/{name}` or `/cmd {name}` (works after sticky `/cursor` too).
 
 ### Chat attachments (images / PDFs)
 

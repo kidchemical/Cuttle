@@ -4,7 +4,7 @@ Global content compiles/resolves for every registered project. Cuttle-repo
 content loads only when the chat targets Cuttle itself — guest projects must
 never inherit Cuttle release/versioning mechanics.
 
-Per-project ``ROUTER.ini`` trims the global legs (shadow/off); the safety core
+Per-project ``GLOBAL.ini`` trims the global legs (shadow/off); the safety core
 (``00-safety.md``) always survives. Personal markdown appends as a delta.
 """
 
@@ -20,7 +20,7 @@ def _guest(tmp_path: Path, router_ini: str | None = None) -> Path:
     (guest / ".cuttle" / "rules").mkdir(parents=True)
     (guest / ".cuttle" / "rules" / "00-core.md").write_text("# Guest\n", encoding="utf-8")
     if router_ini is not None:
-        (guest / ".cuttle" / "ROUTER.ini").write_text(router_ini, encoding="utf-8")
+        (guest / ".cuttle" / "GLOBAL.ini").write_text(router_ini, encoding="utf-8")
     return guest
 
 
@@ -142,7 +142,7 @@ def test_docs_off_hides_global_inventory(tmp_path):
     compiled = compile_context(
         "do guest work", project_path=str(guest), inject_capabilities=False
     )
-    assert "global docs: off per this project's ROUTER.ini" in compiled.prompt
+    assert "global docs: off per this project's GLOBAL.ini" in compiled.prompt
     assert "global docs (Cuttle)" not in compiled.prompt
 
 
@@ -156,17 +156,17 @@ def test_actions_off_blocks_global_fallback(tmp_path):
 
 
 def test_malformed_router_falls_back_to_defaults(tmp_path):
-    from api.cuttle_brain.router_config import load_router_config
+    from api.cuttle_brain.global_layers import load_global_layers
 
     guest = _guest(tmp_path, "[global\nrules = off\n")
-    cfg = load_router_config(str(guest))
+    cfg = load_global_layers(str(guest))
     assert cfg.rules_mode == "append"
     assert cfg.docs is True
     assert cfg.actions is True
     guest2 = _guest(tmp_path / "x")
-    (guest2 / ".cuttle" / "ROUTER.ini").write_text(
+    (guest2 / ".cuttle" / "GLOBAL.ini").write_text(
         "[global]\nrules = vaporize\ndocs = maybe\nbogus = 1\n", encoding="utf-8"
     )
-    cfg2 = load_router_config(str(guest2))
+    cfg2 = load_global_layers(str(guest2))
     assert cfg2.rules_mode == "append"
     assert cfg2.docs is True

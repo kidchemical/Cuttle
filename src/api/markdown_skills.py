@@ -1,5 +1,5 @@
 """
-Discover Cursor-style markdown skills (SKILL.md) under `.cursor/skills`.
+Discover Cuttle markdown skills (SKILL.md) under `.cuttle_global/skills`.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ except ImportError:  # pragma: no cover
 
 SRC_DIR = Path(__file__).resolve().parent.parent
 REPO_ROOT = SRC_DIR.parent
-CURSOR_SKILLS_DIR = REPO_ROOT / ".cursor" / "skills"
+GLOBAL_SKILLS_DIR = REPO_ROOT / ".cuttle_global" / "skills"
 
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
 
@@ -105,21 +105,21 @@ def _scan_dir(root: Path, source: str) -> List[Dict[str, Any]]:
 
 
 def list_markdown_skills() -> List[Dict[str, Any]]:
-    """Lightweight list of workspace Cursor skills (no full body)."""
-    return _scan_dir(CURSOR_SKILLS_DIR, "cursor")
+    """Lightweight list of global Cuttle skills (no full body)."""
+    return _scan_dir(GLOBAL_SKILLS_DIR, "global")
 
 
 def get_markdown_skill(skill_ref: str) -> Optional[Dict[str, Any]]:
     """
-    skill_ref is 'cursor/<dir>'.
+    skill_ref is 'global/<dir>'.
     """
     skill_ref = skill_ref.strip().strip("/")
     if "/" not in skill_ref:
         return None
     source, sid = skill_ref.split("/", 1)
-    if source != "cursor" or not sid or "/" in sid or ".." in sid:
+    if source != "global" or not sid or "/" in sid or ".." in sid:
         return None
-    base = CURSOR_SKILLS_DIR
+    base = GLOBAL_SKILLS_DIR
     path = (base / sid / "SKILL.md").resolve()
     try:
         path.relative_to(base.resolve())

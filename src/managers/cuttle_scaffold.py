@@ -95,7 +95,7 @@ basename. Put LAN hosts, absolute paths, and guild/repo examples here — not
 in tracked docs. See the Cuttle global `.cuttle_global/personal/README.md` for the full contract.
 """
 
-_ROUTER_INI = """# `.cuttle/ROUTER.ini` — per-project routing contract: which global layers apply here.
+_GLOBAL_INI = """# `.cuttle/GLOBAL.ini` — per-project routing contract: which global layers apply here.
 # Absent file = everything on and additive. Unknown keys/values fall back to defaults.
 # Safety core (`.cuttle_global/rules/00-safety.md`) always compiles and cannot be
 # severed per project; edit the global tree to change it for everyone.
@@ -198,7 +198,7 @@ def ensure_cuttle_scaffold(
 
     _write_if_missing(cuttle / "README.md", _README)
     _write_if_missing(cuttle / "commands" / "README.md", _COMMANDS_README)
-    _write_if_missing(cuttle / "ROUTER.ini", _ROUTER_INI)
+    _write_if_missing(cuttle / "GLOBAL.ini", _GLOBAL_INI)
     _write_if_missing(
         cuttle / "rules" / "00-core.md",
         _RULES_CORE.format(name=display),

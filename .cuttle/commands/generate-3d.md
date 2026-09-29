@@ -8,7 +8,7 @@ execute: prompt
 # Generate a 3D asset (ComfyUI + TRELLIS.2)
 
 Follow the project skill **comfyui-trellis2**
-([`.cursor/skills/comfyui-trellis2/SKILL.md`](file:////path/to/Cuttle/.cursor/skills/comfyui-trellis2/SKILL.md)).
+(`.cuttle_global/skills/comfyui-trellis2/SKILL.md`).
 
 ## Do this
 

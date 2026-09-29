@@ -15,10 +15,10 @@ def _doc_summaries(project_path: Optional[str], inventory: Dict[str, List[str]])
     global_names: List[str] = []
     try:
         from api.cuttle_brain.context_compiler import _cuttle_global_config, _list_names
-        from api.cuttle_brain.router_config import load_router_config
+        from api.cuttle_brain.global_layers import load_global_layers
 
         global_config = _cuttle_global_config()
-        if global_config and load_router_config(project_path).docs:
+        if global_config and load_global_layers(project_path).docs:
             global_names = _list_names(global_config / "docs", ("*.md",))
     except Exception:
         global_config = None
@@ -59,10 +59,10 @@ def _skill_summaries() -> List[Dict[str, str]]:
 def _read_doc_body(name: str, project_path: Optional[str]) -> str:
     from api.cuttle_brain.context_compiler import _cuttle_dirs, _cuttle_global_config
     from api.cuttle_brain.personal_overlay import read_cuttle_file_merged
-    from api.cuttle_brain.router_config import load_router_config
+    from api.cuttle_brain.global_layers import load_global_layers
 
     try:
-        docs_allowed = load_router_config(project_path).docs
+        docs_allowed = load_global_layers(project_path).docs
     except Exception:
         docs_allowed = True
     roots: List[Path] = []

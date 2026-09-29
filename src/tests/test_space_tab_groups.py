@@ -67,6 +67,18 @@ def test_reorder_drop_joins_or_leaves_group():
     assert "spaceGroupPillAtX" not in src
 
 
+def test_tab_reorder_survives_collapsed_groups():
+    src = SHELL_JS.read_text(encoding="utf-8")
+    # Hidden members keep their slots; the dragged tab anchors after its
+    # left visible neighbor instead of the all-or-nothing bail.
+    assert "function reorderSpacesAroundHidden(" in src
+    assert "reorderSpacesAroundHidden(visibleIds, draggedId)" in src
+    assert "reorderSpaces(ids)" not in src
+    # Off-window releases snap back instead of floating the tab.
+    assert "window.addEventListener('blur', () => { if (drag) finish(false); });" in src
+    assert "window.addEventListener('blur', onBlurCancel, true)" in src
+
+
 def test_buttonless_moves_cancel_drags():
     src = SHELL_JS.read_text(encoding="utf-8")
     # A press whose release was missed must never start a button-less reorder.

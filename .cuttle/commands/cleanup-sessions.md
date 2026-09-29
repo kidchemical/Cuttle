@@ -8,7 +8,7 @@ execute: prompt
 # Cleanup idle chat sessions
 
 Follow the project skill **cuttle-cleanup-sessions**
-([`.cursor/skills/cuttle-cleanup-sessions/SKILL.md`](file:////path/to/Cuttle/.cursor/skills/cuttle-cleanup-sessions/SKILL.md)).
+(`.cuttle_global/skills/cuttle-cleanup-sessions/SKILL.md`).
 
 ## Do this
 
