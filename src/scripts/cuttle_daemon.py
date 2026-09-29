@@ -114,6 +114,34 @@ _process_log_handles: List = []  # Keep log file handles open for child processe
 daemon_running = True
 FLASK_PORT = 8080
 tray_icon = None  # Set by setup_tray, used by Exit handler
+_shutdown_lock = threading.Lock()
+_shutdown_done = False  # Idempotent shutdown gate (signal handler + tray Exit + main loop)
+
+
+def request_shutdown(source: str = "signal") -> None:
+    """Idempotent shutdown shared by Ctrl+C/SIGTERM, tray Exit, and main loop.
+
+    Stops the tray icon (pystray's non-daemon thread is what kept the
+    PowerShell window hung after ``[DAEMON] Shutting down...``), stops
+    managed subprocesses, and tells watchdog loops to exit. Safe to call
+    from a signal handler, the tray Exit callback, or the main thread.
+    """
+    global daemon_running, _shutdown_done
+    with _shutdown_lock:
+        if _shutdown_done:
+            return
+        _shutdown_done = True
+        daemon_running = False
+    icon = tray_icon
+    if icon is not None:
+        try:
+            icon.stop()
+        except Exception:
+            pass
+    try:
+        stop_all_processes()
+    except Exception:
+        pass
 _flask_restart_lock = threading.Lock()
 _flask_generation = 0
 _flask_restart_in_progress = False
@@ -892,6 +920,8 @@ def _post_restart_chat_notice(restart_id: str) -> None:
 def watch_flask_restart_requests():
     """Poll for Flask-authored restart requests; daemon owns the replacement."""
     while daemon_running:
+        if _shutdown_done:
+            return
         try:
             if FLASK_RESTART_REQUEST_PATH.exists() and not _flask_restart_in_progress:
                 # Let Flask finish flushing the HTTP ack / persist before kill.
@@ -1018,6 +1048,8 @@ def watch_flask_health():
         if proc.poll() is not None:
             continue  # Process dead - main loop will restart
         if not _flask_health_check():
+            if _shutdown_done or not daemon_running:
+                return
             now = time.time()
             if now - last_restart < RESTART_COOLDOWN:
                 continue  # Already restarted recently
@@ -1126,10 +1158,7 @@ def _setup_tray():
         restart_process("llamacpp")
 
     def on_exit(icon, item):
-        global daemon_running
-        daemon_running = False
-        stop_all_processes()
-        icon.stop()
+        request_shutdown("tray-exit")
 
     image = _load_tray_icon_image()
     lights_menu = pystray.Menu(
@@ -1297,8 +1326,7 @@ def run_daemon():
         print(f"[DAEMON] Could not open daemon log: {e}")
 
     def handler(signum, frame):
-        global daemon_running
-        daemon_running = False
+        request_shutdown("signal")
 
     signal.signal(signal.SIGINT, handler)
     signal.signal(signal.SIGTERM, handler)
@@ -1377,6 +1405,8 @@ def run_daemon():
 
     print("[DAEMON] Services started. Tray icon manages Cuttle. Exit from tray to stop.")
     while daemon_running:
+        if not daemon_running or _shutdown_done:
+            break
         # Re-spawn dead processes (skip while a coordinated restart owns the lifecycle)
         for name in list(processes.keys()):
             proc = processes[name]
@@ -1401,7 +1431,11 @@ def run_daemon():
         time.sleep(5)
 
     print("[DAEMON] Shutting down...")
-    stop_all_processes()
+    request_shutdown("main-loop")
+    try:
+        tray_thread.join(timeout=10)
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":
