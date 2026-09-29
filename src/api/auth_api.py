@@ -80,6 +80,39 @@ def _oauth_redirect_uri(provider: str) -> str:
     return f"{_oauth_public_base()}/api/auth/callback/{provider}"
 
 
+# OAuth client env names per provider (read at request time so a key added
+# to src/.env without a restart is honored).
+_OAUTH_ENV_NAMES = {
+    'google': ('GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'),
+    'microsoft': ('MICROSOFT_CLIENT_ID', 'MICROSOFT_CLIENT_SECRET'),
+    'facebook': ('FACEBOOK_APP_ID', 'FACEBOOK_APP_SECRET'),
+}
+
+_OAUTH_SETUP_HINT = (
+    'Add the client ID and secret to src/.env (see the OAuth section of the '
+    'Settings page or docs) and restart Flask, then try again.'
+)
+
+
+def _oauth_live_config(provider: str) -> dict:
+    """OAuth config with credentials resolved from the live environment.
+
+    Credentials come strictly from the live environment — never from the
+    import-time ``OAUTH_CONFIGS`` snapshot, so a key added to ``src/.env``
+    (or removed) is honored without depending on import order.
+    """
+    base = dict(OAUTH_CONFIGS.get(provider, {}))
+    names = _OAUTH_ENV_NAMES.get(provider, (None, None))
+    base['client_id'] = os.getenv(names[0], '') if names[0] else ''
+    base['client_secret'] = os.getenv(names[1], '') if names[1] else ''
+    return base
+
+
+def _oauth_configured(provider: str) -> bool:
+    cfg = _oauth_live_config(provider)
+    return bool((cfg.get('client_id') or '').strip() and (cfg.get('client_secret') or '').strip())
+
+
 # OAuth configuration (redirect_uri resolved at request time via helpers above)
 OAUTH_CONFIGS = {
     'google': {
@@ -107,6 +140,18 @@ OAUTH_CONFIGS = {
         'scopes': ['email', 'public_profile'],
     }
 }
+
+
+@auth_bp.route('/oauth/status', methods=['GET'])
+def oauth_status():
+    """Which OAuth providers are usable (public — reveals nothing secret)."""
+    return jsonify({
+        'success': True,
+        'providers': {
+            name: {'configured': _oauth_configured(name)}
+            for name in OAUTH_CONFIGS
+        },
+    })
 
 @auth_bp.route('/register', methods=['POST'])
 @_auth_limiter.limit("5 per minute")
@@ -349,13 +394,22 @@ def oauth_login(provider):
                 'error': f'Unknown OAuth provider: {provider}'
             }), 400
         
-        config = OAUTH_CONFIGS[provider]
-        
-        if not config['client_id']:
+        config = _oauth_live_config(provider)
+
+        if not (config.get('client_id') or '').strip() or not (config.get('client_secret') or '').strip():
+            message = f'{provider.title()} login is not set up on this server. {_OAUTH_SETUP_HINT}'
+            # Browser navigation (the login button is a plain link) lands on
+            # the app with guidance in the auth dialog instead of raw JSON.
+            best = request.accept_mimetypes.best_match(['text/html', 'application/json'])
+            if best == 'text/html':
+                return redirect(f"/?auth_error={provider}_oauth_not_configured")
             return jsonify({
                 'success': False,
-                'error': f'{provider.title()} OAuth not configured. Please add client ID and secret to .env file.'
-            }), 500
+                'error': message,
+                'code': 'oauth_not_configured',
+                'provider': provider,
+                'setup': _OAUTH_SETUP_HINT,
+            }), 503
         
         db = get_auth_db()
         link_user_id = None
@@ -420,7 +474,7 @@ def oauth_callback(provider):
             return redirect('/?auth_error=invalid_state')
         link_user_id = state_row.get('link_user_id')
         
-        config = OAUTH_CONFIGS[provider]
+        config = _oauth_live_config(provider)
         redirect_uri = _oauth_redirect_uri(provider)
         
         # Exchange code for token (redirect_uri must match the authorize request)

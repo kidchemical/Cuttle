@@ -103,33 +103,78 @@ class ProjectManager:
         conn.close()
     
     def ensure_default_project(self):
-        """Ensure there's a default project for the current Cuttle directory"""
+        """Ensure there's a default project pointing at this Cuttle checkout.
+
+        The repository root is resolved from this file's location — never
+        ``Path.cwd()``, which is ``src/`` when Flask runs with ``cwd=src``
+        and would register the wrong directory on fresh installs.
+        """
         try:
             # Check if we already have any projects
             projects = self.get_projects()
             if projects:
+                self._normalize_legacy_default_name(projects)
                 return  # Already have projects, no need to add default
-            
-            # Get current working directory (should be the Cuttle project root)
-            current_dir = Path.cwd().resolve()
-            
+
+            # Repository root from this file's location (robust to cwd).
+            repo_root = Path(__file__).resolve().parents[2]
+            current_dir = repo_root if repo_root.exists() else Path.cwd().resolve()
+
             # Add the current Cuttle project as the default project
             success = self.add_local_project(
-                name="Cuttle Development",
+                name="Cuttle",
                 path=str(current_dir),
-                description="Main Cuttle development project - your current workspace",
-                tags=["cuttle", "development", "main", "default"]
+                description="Main Cuttle project - your current workspace",
+                tags=["cuttle", "main", "default"]
             )
-            
+
             if success:
                 # Set this as the current project
                 projects = self.get_projects()
                 if projects:
                     self.switch_to_project(projects[0]['id'])
-                    print(f"✅ Added default project: Cuttle Development ({current_dir})")
-            
+                    print(f"✅ Added default project: Cuttle ({current_dir})")
+
         except Exception as e:
             print(f"Warning: Could not create default project: {e}")
+
+    def _normalize_legacy_default_name(self, projects) -> None:
+        """Rename the auto-created fresh-install default to ``Cuttle``.
+
+        Early fresh installs registered the checkout as ``Cuttle
+        Development``. Only the untouched auto-created row is renamed
+        (matching name, default tag, and repo-root path) — user projects
+        and user-selected pins are never modified.
+        """
+        try:
+            repo_root = str(Path(__file__).resolve().parents[2])
+            names = {str(p.get('name') or '') for p in projects}
+            if 'Cuttle' in names:
+                return
+            for p in projects:
+                if str(p.get('name') or '') != 'Cuttle Development':
+                    continue
+                tags = p.get('tags') or []
+                if isinstance(tags, str):
+                    try:
+                        tags = json.loads(tags)
+                    except (ValueError, TypeError):
+                        tags = []
+                if 'default' not in [str(t) for t in tags]:
+                    continue
+                if str(p.get('path') or '') != repo_root:
+                    continue
+                with self.get_db_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        'UPDATE projects SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                        ('Cuttle', p['id']),
+                    )
+                    conn.commit()
+                print(f"✅ Renamed default project to Cuttle ({repo_root})")
+                return
+        except Exception as e:
+            print(f"Warning: Could not normalize default project name: {e}")
     
     def add_local_project(self, name: str, path: str, description: str = "", tags: List[str] = None) -> bool:
         """Add a local project"""

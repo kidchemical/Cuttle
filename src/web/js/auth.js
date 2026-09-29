@@ -205,6 +205,9 @@ function _applyRemoteAuthUser(incoming) {
         currentChatSession = null;
         chatSessions = [];
         updateUIForUnauthenticatedUser();
+        // A sign-out broadcast from another viewport opens the dialog here
+        // too, so logout looks the same in every open pane.
+        openAuthModal('login');
     }
 
     _emitAuthChanged({ localOnly: true });
@@ -382,7 +385,18 @@ function checkAuthRedirect() {
         window.history.replaceState({}, document.title, window.location.pathname);
     } else if (urlParams.has('auth_error')) {
         const error = urlParams.get('auth_error');
-        showAuthError(`Authentication failed: ${error}`);
+        const m = /^([a-z]+)_oauth_not_configured$/.exec(error || '');
+        if (m) {
+            const provider = m[1].charAt(0).toUpperCase() + m[1].slice(1);
+            openAuthModal('login');
+            showAuthError(
+                `${provider} login is not set up on this server yet. ` +
+                'Add the client ID and secret to src/.env, restart Flask, then try again — ' +
+                'or continue with a local account or as guest.'
+            );
+        } else {
+            showAuthError(`Authentication failed: ${error}`);
+        }
         window.history.replaceState({}, document.title, window.location.pathname);
     }
 }
@@ -545,10 +559,44 @@ function _authOauthBlock(dividerText) {
         a.innerHTML = b.svg + '<span>' + b.label + '</span>';
         list.appendChild(a);
     });
+    _refreshOauthAvailability(list);
     return _el('div', null, [
         _el('div', { className: 'auth-divider' }, [_el('span', { text: dividerText })]),
         list,
     ]);
+}
+
+/**
+ * Disable OAuth buttons whose provider is not configured server-side.
+ * Unavailable providers never look like functioning login methods: the
+ * button stays visible but inert, with setup guidance instead of a raw
+ * backend error after the click.
+ */
+function _refreshOauthAvailability(listEl) {
+    if (!listEl || typeof fetch !== 'function') return;
+    fetch('/api/auth/oauth/status', { credentials: 'include' })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+            const providers = (data && data.providers) || {};
+            Array.from(listEl.querySelectorAll('[data-oauth-provider]')).forEach((a) => {
+                const p = a.getAttribute('data-oauth-provider');
+                const st = providers[p];
+                if (st && st.configured === false) {
+                    a.classList.add('auth-oauth-unavailable');
+                    a.setAttribute('aria-disabled', 'true');
+                    a.title = 'Not set up on this server — add the client ID and secret to src/.env';
+                    a.addEventListener('click', (e) => {
+                        e.preventDefault();
+                        showAuthError(
+                            'Google login is not set up on this server yet. ' +
+                            'Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to src/.env, ' +
+                            'restart Flask, then try again — or continue with a local account or as guest.'
+                        );
+                    });
+                }
+            });
+        })
+        .catch(() => { /* leave buttons enabled; server explains on click */ });
 }
 
 function _hostWantsOauth(host) {
@@ -898,6 +946,10 @@ async function handleLogout(opts = {}) {
             _flushMobileAuthCookies('');
             updateUIForUnauthenticatedUser();
             _emitAuthChanged({ allowParentSignOut: true });
+            // Sign-out returns to the auth dialog (Guest stays an explicit
+            // alternative on the login tab). Remote viewports follow via
+            // _applyRemoteAuthUser so every pane agrees.
+            openAuthModal('login');
 
             // Hard redirect only for standalone pages (landing), not the app shell.
             if (!skipRedirect && !document.getElementById('appShell') && window.parent === window) {

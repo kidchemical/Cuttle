@@ -25916,7 +25916,17 @@
             // history list here — unless the URL already asked for a specific chat
             // (deep-link / second tab), which must wait for auth before loading.
             // Must not wipe an active history search (see reloadHistoryListKeepingSearch).
-            reloadHistoryListKeepingSearch();
+            //
+            // Reload projects too: the first viewport often fetches
+            // /api/projects before auth settles (empty list → no pin badge),
+            // while later viewports load after auth and show it. Refreshing
+            // here re-reconciles the chip so no refresh is required, and
+            // sign-out/in correctly restores the pin state.
+            if (typeof loadProjects === 'function') {
+                loadProjects();
+            } else {
+                reloadHistoryListKeepingSearch();
+            }
             const urlParams = new URLSearchParams(window.location.search);
             const wanted = urlParams.get('chat') || urlParams.get('session');
             if (!wanted || !isAuthMode()) return;
