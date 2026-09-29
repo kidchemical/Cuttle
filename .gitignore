@@ -77,6 +77,8 @@ src/data/certs/
 # Install-local Cuttle overlay (machine paths, LAN hosts, guild notes) — never ship
 .cuttle/personal/*
 !.cuttle/personal/README.md
+.cuttle/hub/personal/*
+!.cuttle/hub/personal/README.md
 
 # Hub config lives at repo-root `.cuttle/` — ignore accidental scaffold under src/
 src/.cuttle/
