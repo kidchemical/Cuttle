@@ -5264,27 +5264,14 @@ function toggleSpaceGroupCollapsed(gid) {
     return true;
 }
 
-/** True when a viewport x lands on a group's pill (generous bounds). */
-function spaceGroupPillAtX(gid, x) {
-    try {
-        if (typeof document === 'undefined' || !Number.isFinite(x)) return false;
-        const pill = document.querySelector('.shell-space-group[data-group-id="' + CSS.escape(gid) + '"]');
-        if (!pill) return false;
-        const r = pill.getBoundingClientRect();
-        return x >= r.left - 10 && x <= r.right + 4;
-    } catch (_) {
-        return false;
-    }
-}
-
 /**
  * After a tab-reorder drop, match Chrome: a tab landing between members of
  * one group joins it; landing between two different groups (or away from any
- * group) leaves it ungrouped — including dragging a tab out. The left edge
- * is special: parking just before the badge stays ungrouped, and only a drop
- * directly on the pill joins the group.
+ * group) leaves it ungrouped — including dragging a tab out. Parking before
+ * the badge never joins from a drag: the badge is the boundary. Reordering
+ * inside its own group (already a member, moved up front) keeps membership.
  */
-function fixDraggedTabGroup(draggedId, dropX) {
+function fixDraggedTabGroup(draggedId) {
     const list = spacesState.spaces;
     const i = list.findIndex((s) => s && s.id === draggedId);
     if (i < 0) return;
@@ -5297,7 +5284,7 @@ function fixDraggedTabGroup(draggedId, dropX) {
     if (leftGroup && rightGroup && leftGroup.id === rightGroup.id) want = leftGroup.id;
     else if (leftGroup && !rightGroup) want = leftGroup.id;
     else if (!leftGroup && rightGroup) {
-        if (spaceGroupPillAtX(rightGroup.id, dropX)) want = rightGroup.id;
+        if (space.groupId === rightGroup.id) want = rightGroup.id;
     }
     if ((space.groupId || null) === want) return;
     if (want) space.groupId = want;
@@ -6462,7 +6449,7 @@ function setupSpaceTabDrag(host) {
 
     const finish = (commit) => {
         if (!drag) return;
-        const { tab, active, pointerId, lastX } = drag;
+        const { tab, active, pointerId } = drag;
         drag = null;
         if (!active) return;
         tab.classList.remove('is-dragging');
@@ -6474,8 +6461,8 @@ function setupSpaceTabDrag(host) {
             const draggedId = tab.dataset.spaceId;
             reorderSpaces(ids);
             // Dropping between members of one group joins it; dropping out
-            // ungroups; parking before a badge stays out unless dropped on it.
-            fixDraggedTabGroup(draggedId, lastX);
+            // ungroups; parking before a badge always stays out.
+            fixDraggedTabGroup(draggedId);
         }
         renderSpaceTabs();
         // The pointerup still produces a click on the tab; don't treat the drop as a switch.
@@ -6487,12 +6474,14 @@ function setupSpaceTabDrag(host) {
         if (e.button !== 0 || spacesState.spaces.length < 2) return;
         const tab = e.target.closest('.shell-space-tab');
         if (!tab || e.target.closest('.shell-space-close, .shell-space-rename')) return;
-        drag = { tab, pointerId: e.pointerId, startX: e.clientX, lastX: e.clientX, originLeft: tab.getBoundingClientRect().left, tx: 0, active: false };
+        drag = { tab, pointerId: e.pointerId, startX: e.clientX, originLeft: tab.getBoundingClientRect().left, tx: 0, active: false };
     });
 
     host.addEventListener('pointermove', (e) => {
         if (!drag || e.pointerId !== drag.pointerId) return;
-        drag.lastX = e.clientX;
+        // A press whose release was missed (off-window pointerup) must never
+        // start a button-less reorder on the next hover — cancel it instead.
+        if (e.buttons === 0) { finish(false); return; }
         const { tab } = drag;
         if (!drag.active) {
             if (Math.abs(e.clientX - drag.startX) < THRESHOLD) return;
@@ -6501,18 +6490,6 @@ function setupSpaceTabDrag(host) {
             tab.classList.add('is-dragging');
             host.classList.add('is-reordering');
         }
-        // Hovering a group pill marks it as a drop target (dropping joins it).
-        host.querySelectorAll('.shell-space-group.is-drop-target').forEach((p) => {
-            p.classList.remove('is-drop-target');
-        });
-        try {
-            const under = document.elementFromPoint
-                && document.elementFromPoint(e.clientX, e.clientY);
-            const pill = under && under.closest
-                ? under.closest('.shell-space-group')
-                : null;
-            if (pill && host.contains(pill)) pill.classList.add('is-drop-target');
-        } catch (_) {}
         const siblings = Array.from(host.querySelectorAll('.shell-space-tab')).filter((t) => t !== tab);
         const before = siblings.find((t) => {
             const r = t.getBoundingClientRect();
@@ -6533,10 +6510,7 @@ function setupSpaceTabDrag(host) {
     });
 
     host.addEventListener('pointerup', (e) => {
-        if (drag && e.pointerId === drag.pointerId) {
-            if (Number.isFinite(e.clientX)) drag.lastX = e.clientX;
-            finish(true);
-        }
+        if (drag && e.pointerId === drag.pointerId) finish(true);
     });
     host.addEventListener('pointercancel', (e) => {
         if (drag && e.pointerId === drag.pointerId) finish(false);
@@ -7000,7 +6974,7 @@ function setupPaneReorder(colEl) {
     const unbindWindow = () => {
         window.removeEventListener('pointermove', onMove, true);
         window.removeEventListener('pointerup', onUp, true);
-        window.removeEventListener('pointercancel', onUp, true);
+        window.removeEventListener('pointercancel', onCancel, true);
     };
 
     const autoSwitchToSpace = (spaceId) => {
@@ -7035,7 +7009,7 @@ function setupPaneReorder(colEl) {
         }
     };
 
-    const finish = (upEvent) => {
+    const finish = (upEvent, cancelled) => {
         if (!dragging) return;
         const wasActive = activated;
         const target = dropTarget;
@@ -7057,7 +7031,7 @@ function setupPaneReorder(colEl) {
         document.body.style.userSelect = '';
         clearPaneDropIndicators();
         dropTarget = null;
-        if (!wasActive || !load) return;
+        if (cancelled || !wasActive || !load) return;
         const tab = (upEvent && Number.isFinite(upEvent.clientX) && Number.isFinite(upEvent.clientY))
             ? spaceTabAtPoint(upEvent.clientX, upEvent.clientY)
             : null;
@@ -7087,6 +7061,9 @@ function setupPaneReorder(colEl) {
 
     const onMove = (e) => {
         if (!dragging) return;
+        // A grip press whose release was missed must never start a button-less
+        // drag on the next hover — cancel it instead of committing anything.
+        if (e.buttons === 0) { finish(null, true); return; }
         trackSpaceTabHover(e);
         const dx = e.clientX - startX;
         const dy = e.clientY - startY;
@@ -7136,7 +7113,8 @@ function setupPaneReorder(colEl) {
         dropTarget = hit;
     };
 
-    const onUp = (e) => finish(e);
+    const onUp = (e) => finish(e, false);
+    const onCancel = () => finish(null, true);
 
     grip.addEventListener('pointerdown', (e) => {
         if (e.button != null && e.button !== 0) return;
@@ -7156,7 +7134,7 @@ function setupPaneReorder(colEl) {
         splitContainer?.classList.add('is-reordering-panes');
         window.addEventListener('pointermove', onMove, true);
         window.addEventListener('pointerup', onUp, true);
-        window.addEventListener('pointercancel', onUp, true);
+        window.addEventListener('pointercancel', onCancel, true);
     });
 }
 

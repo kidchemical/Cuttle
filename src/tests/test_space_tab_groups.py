@@ -60,10 +60,20 @@ def test_reorder_drop_joins_or_leaves_group():
     src = SHELL_JS.read_text(encoding="utf-8")
     # Dropping between members of one group joins it; dropping out ungroups.
     assert "function fixDraggedTabGroup(" in src
-    assert "fixDraggedTabGroup(draggedId, lastX)" in src
-    # Parking just before the badge stays ungrouped; only a drop on the pill joins.
-    assert "function spaceGroupPillAtX(" in src
-    assert "spaceGroupPillAtX(rightGroup.id, dropX)" in src
+    assert "fixDraggedTabGroup(draggedId)" in src
+    # Parking before the badge never joins from a drag; reordering inside the
+    # group (already a member, moved up front) keeps membership.
+    assert "already a member" in src
+    assert "spaceGroupPillAtX" not in src
+
+
+def test_buttonless_moves_cancel_drags():
+    src = SHELL_JS.read_text(encoding="utf-8")
+    # A press whose release was missed must never start a button-less reorder.
+    assert "if (e.buttons === 0) { finish(false); return; }" in src
+    assert "if (e.buttons === 0) { finish(null, true); return; }" in src
+    # pointercancel is a true cancel, never a commit.
+    assert "window.addEventListener('pointercancel', onCancel, true)" in src
 
 
 def test_groups_collapse_and_expand():

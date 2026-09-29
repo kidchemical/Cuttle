@@ -433,11 +433,6 @@ body.is-electron.fullscreen .shell-zoom-hud {
     background: color-mix(in srgb, var(--space-accent, #e8eaed) 28%, transparent);
 }
 
-.shell-space-group.is-drop-target {
-    background: color-mix(in srgb, var(--space-accent, #e8eaed) 38%, transparent);
-    border-color: #fff;
-}
-
 .shell-space-group-count {
     min-width: 16px;
     height: 16px;
