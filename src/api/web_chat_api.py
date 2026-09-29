@@ -4021,85 +4021,172 @@ def test_discord_key(token):
 @app.route('/api/save-api-key', methods=['POST'])
 @owner_required
 def save_api_key():
-    """Save an API key securely"""
+    """Save an API key securely.
+
+    Only the named credential is modified; every other line of ``src/.env``
+    (comments, blanks, ``export`` prefixes, unrelated keys) is preserved.
+    ``DISCORD_BOT_TOKEN`` is the canonical settings key — saving a Discord
+    token also clears a legacy ``DISCORD_TOKEN`` line so a stale shadowed
+    value cannot win at runtime. Saved values are applied to
+    ``os.environ`` immediately so new requests pick them up without a
+    Flask restart.
+    """
     try:
-        data = request.get_json()
-        api_type = data.get('api_type')
-        api_key = data.get('api_key')
-        
-        if not api_type or not api_key:
+        data = request.get_json() or {}
+        api_type = (data.get('api_type') or '').strip().lower()
+        api_key = (data.get('api_key') or '').strip()
+
+        _key_names = {
+            'openai': 'OPENAI_API_KEY',
+            'anthropic': 'ANTHROPIC_API_KEY',
+            'discord': 'DISCORD_BOT_TOKEN',
+        }
+        if api_type not in _key_names:
+            return jsonify({
+                'success': False,
+                'message': f'Unknown API type: {data.get("api_type")}'
+            }), 400
+        if not api_key:
             return jsonify({
                 'success': False,
                 'message': 'API type and key are required'
             }), 400
-        
-        # Save to src/.env only
-        env_file = actual_project_root / 'src' / '.env'
-        
-        # Read existing .env file
-        env_vars = {}
-        if env_file.exists():
-            with open(env_file, 'r') as f:
-                for line in f:
-                    if '=' in line and not line.strip().startswith('#'):
-                        key, value = line.strip().split('=', 1)
-                        env_vars[key] = value
-        
-        # Update the specific API key
-        if api_type == 'openai':
-            env_vars['OPENAI_API_KEY'] = api_key
-        elif api_type == 'anthropic':
-            env_vars['ANTHROPIC_API_KEY'] = api_key
-        elif api_type == 'discord':
-            env_vars['DISCORD_BOT_TOKEN'] = api_key
-        else:
+        if '•' in api_key or '…' in api_key:
+            # Display hints are not credentials — refuse to store one.
             return jsonify({
                 'success': False,
-                'message': f'Unknown API type: {api_type}'
+                'message': 'That looks like a masked hint, not a credential. Type or paste the full key.'
             }), 400
-        
-        # Write back to .env file
-        with open(env_file, 'w') as f:
-            for key, value in env_vars.items():
-                f.write(f'{key}={value}\n')
-        
+
+        env_name = _key_names[api_type]
+        # Save to src/.env only
+        env_file = actual_project_root / 'src' / '.env'
+
+        lines: list = []
+        if env_file.exists():
+            with open(env_file, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+
+        found = False
+        out_lines: list = []
+        for line in lines:
+            stripped = line.strip()
+            # Preserve comments, blanks, and non-assignment lines verbatim.
+            if not stripped or stripped.startswith('#') or '=' not in line:
+                out_lines.append(line if line.endswith('\n') else line + '\n')
+                continue
+            lhs, _, _rhs = line.partition('=')
+            lhs_name = lhs.strip()
+            # Drop `export ` prefix when comparing, preserve it on write.
+            bare = lhs_name[7:].strip() if lhs_name.startswith('export ') else lhs_name
+            if bare == env_name:
+                prefix = lhs[:len(lhs) - len(lhs_name)] + (
+                    lhs_name[:len(lhs_name) - len(bare)] if bare != lhs_name else ''
+                )
+                out_lines.append(f'{prefix}{env_name}={api_key}\n')
+                found = True
+            elif api_type == 'discord' and bare == 'DISCORD_TOKEN':
+                # Converge on the canonical settings key; a legacy line
+                # would otherwise shadow the saved value at runtime.
+                continue
+            else:
+                out_lines.append(line if line.endswith('\n') else line + '\n')
+        if not found:
+            out_lines.append(f'{env_name}={api_key}\n')
+
+        env_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(env_file, 'w', encoding='utf-8') as f:
+            f.writelines(out_lines)
+
+        # Apply immediately for new requests (no Flask restart needed).
+        os.environ[env_name] = api_key
+        if api_type == 'discord':
+            os.environ.pop('DISCORD_TOKEN', None)
+
         return jsonify({
             'success': True,
-            'message': f'{api_type} API key saved successfully'
+            'message': f'{api_type} API key saved successfully',
+            'configured': {api_type: True},
+            'hint': {api_type: _mask_credential_for_display(api_key)},
         })
-        
+
     except Exception as e:
         return jsonify({
             'success': False,
             'message': str(e)
         }), 500
 
+
+def _mask_credential_for_display(value: str) -> str:
+    """Presence hint for a stored secret — never the secret itself."""
+    v = (value or '').strip()
+    if not v:
+        return ''
+    if len(v) < 12:
+        return '••••••••'
+    return f'{v[:4]}••••••••{v[-4:]}'
+
+
+def _read_env_credential(names) -> str:
+    """First non-empty value for one of ``names`` (env, then ``src/.env``)."""
+    if isinstance(names, str):
+        names = (names,)
+    for name in names:
+        v = (os.environ.get(name) or '').strip()
+        if v:
+            return v
+    try:
+        env_file = actual_project_root / 'src' / '.env'
+        if env_file.exists():
+            with open(env_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    stripped = line.strip()
+                    if not stripped or stripped.startswith('#') or '=' not in line:
+                        continue
+                    lhs, _, rhs = line.partition('=')
+                    bare = lhs.strip()
+                    if bare.startswith('export '):
+                        bare = bare[7:].strip()
+                    if bare in names:
+                        v = rhs.strip().strip('"').strip("'")
+                        if v:
+                            return v
+    except OSError:
+        pass
+    return ''
+
+
 @app.route('/api/load-api-keys')
 @owner_required
 def load_api_keys():
-    """Load API keys from secure storage"""
+    """Credential-presence indicators for the Settings UI.
+
+    Never returns full secrets — only masked hints plus ``configured``
+    flags. The browser cannot reconstruct a key from this response; to
+    change a credential, POST the new value to ``/api/save-api-key``.
+    """
     try:
-        env_file = actual_project_root / 'src' / '.env'
-        
-        api_keys = {}
-        
-        if env_file.exists():
-            with open(env_file, 'r') as f:
-                for line in f:
-                    if '=' in line and not line.strip().startswith('#'):
-                        key, value = line.strip().split('=', 1)
-                        if key == 'OPENAI_API_KEY':
-                            api_keys['openai'] = value
-                        elif key == 'ANTHROPIC_API_KEY':
-                            api_keys['anthropic'] = value
-                        elif key == 'DISCORD_BOT_TOKEN':
-                            api_keys['discord'] = value
-        
+        openai_val = _read_env_credential('OPENAI_API_KEY')
+        anthropic_val = _read_env_credential('ANTHROPIC_API_KEY')
+        # Runtime precedence accepts the legacy name; the settings UI
+        # converges saves onto DISCORD_BOT_TOKEN (see save_api_key).
+        discord_val = _read_env_credential(('DISCORD_BOT_TOKEN', 'DISCORD_TOKEN'))
+
+        hints = {
+            'openai': _mask_credential_for_display(openai_val),
+            'anthropic': _mask_credential_for_display(anthropic_val),
+            'discord': _mask_credential_for_display(discord_val),
+        }
         return jsonify({
             'success': True,
-            'api_keys': api_keys
+            'api_keys': hints,
+            'configured': {
+                'openai': bool(openai_val),
+                'anthropic': bool(anthropic_val),
+                'discord': bool(discord_val),
+            },
         })
-        
+
     except Exception as e:
         return jsonify({
             'success': False,

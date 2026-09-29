@@ -1480,18 +1480,16 @@
                 const result = await response.json();
                 
                 if (result.success && result.api_keys) {
-                    // Set masked values as placeholders to show keys are configured
+                    // Server returns display-only hints (never full secrets).
+                    const hint = (v) => (v && v.includes('•')) ? v : maskApiKey(v);
                     if (result.api_keys.openai) {
-                        const masked = maskApiKey(result.api_keys.openai);
-                        document.getElementById('openaiKey').placeholder = `${masked} (configured)`;
+                        document.getElementById('openaiKey').placeholder = `${hint(result.api_keys.openai)} (configured)`;
                     }
                     if (result.api_keys.anthropic) {
-                        const masked = maskApiKey(result.api_keys.anthropic);
-                        document.getElementById('anthropicKey').placeholder = `${masked} (configured)`;
+                        document.getElementById('anthropicKey').placeholder = `${hint(result.api_keys.anthropic)} (configured)`;
                     }
                     if (result.api_keys.discord) {
-                        const masked = maskApiKey(result.api_keys.discord);
-                        document.getElementById('discordKey').placeholder = `${masked} (configured)`;
+                        document.getElementById('discordKey').placeholder = `${hint(result.api_keys.discord)} (configured)`;
                     }
                 }
             } catch (error) {

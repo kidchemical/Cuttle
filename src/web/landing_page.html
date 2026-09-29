@@ -2769,9 +2769,10 @@
                 if (response.ok) {
                     const data = await response.json();
                     if (data.success) {
-                        // Load API keys into form fields (masked)
+                        // Server returns display-only hints (never full secrets).
+                        const hint = (v) => (v && v.includes('•')) ? v : maskApiKey(v);
                         if (data.api_keys.openai) {
-                            document.getElementById('openaiApiKey').value = maskApiKey(data.api_keys.openai);
+                            document.getElementById('openaiApiKey').value = hint(data.api_keys.openai);
                             updateApiKeyStatus(
                                 document.getElementById('openaiApiKeyStatus'),
                                 'valid',
@@ -2779,7 +2780,7 @@
                             );
                         }
                         if (data.api_keys.anthropic) {
-                            document.getElementById('anthropicApiKey').value = maskApiKey(data.api_keys.anthropic);
+                            document.getElementById('anthropicApiKey').value = hint(data.api_keys.anthropic);
                             updateApiKeyStatus(
                                 document.getElementById('anthropicApiKeyStatus'),
                                 'valid',
@@ -2787,7 +2788,7 @@
                             );
                         }
                         if (data.api_keys.discord) {
-                            document.getElementById('discordBotToken').value = maskApiKey(data.api_keys.discord);
+                            document.getElementById('discordBotToken').value = hint(data.api_keys.discord);
                             updateApiKeyStatus(
                                 document.getElementById('discordBotTokenStatus'),
                                 'valid',
