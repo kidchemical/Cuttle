@@ -433,6 +433,12 @@ body.is-electron.fullscreen .shell-zoom-hud {
     background: color-mix(in srgb, var(--space-accent, #e8eaed) 28%, transparent);
 }
 
+/* While a space tab drag is active, content iframes lose hit-testing so moves
+   and the release land on the gesture even over page content. */
+body.is-reordering-spaces iframe {
+    pointer-events: none !important;
+}
+
 .shell-space-group-count {
     min-width: 16px;
     height: 16px;

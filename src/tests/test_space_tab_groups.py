@@ -79,6 +79,26 @@ def test_tab_reorder_survives_collapsed_groups():
     assert "window.addEventListener('blur', onBlurCancel, true)" in src
 
 
+def test_tab_drag_nudges_groups_live():
+    src = SHELL_JS.read_text(encoding="utf-8")
+    # Pills ride in the live sibling order so the group visibly shifts mid-drag.
+    assert "el.classList.contains('shell-space-group')" in src
+    assert "Pills take part in the live order" in src
+
+
+def test_tab_drag_survives_iframes_and_off_strip_releases():
+    src = SHELL_JS.read_text(encoding="utf-8")
+    # Gesture events ride on window: the strip is small and content iframes
+    # swallow events aimed at it.
+    assert "window.addEventListener('pointermove', (e) => {" in src
+    assert "window.addEventListener('pointerup', (e) => {" in src
+    assert "window.addEventListener('pointercancel', (e) => {" in src
+    # While active, content iframes lose hit-testing so the release lands.
+    assert "is-reordering-spaces" in src
+    css = SHELL_CSS.read_text(encoding="utf-8")
+    assert "body.is-reordering-spaces iframe" in css
+
+
 def test_buttonless_moves_cancel_drags():
     src = SHELL_JS.read_text(encoding="utf-8")
     # A press whose release was missed must never start a button-less reorder.

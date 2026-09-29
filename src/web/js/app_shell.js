@@ -6472,6 +6472,7 @@ function setupSpaceTabDrag(host) {
         tab.classList.remove('is-dragging');
         tab.style.transform = '';
         host.classList.remove('is-reordering');
+        document.body.classList.remove('is-reordering-spaces');
         if (tab.hasPointerCapture(pointerId)) tab.releasePointerCapture(pointerId);
         if (commit) {
             const visibleIds = Array.from(host.querySelectorAll('.shell-space-tab')).map((t) => t.dataset.spaceId);
@@ -6494,7 +6495,11 @@ function setupSpaceTabDrag(host) {
         drag = { tab, pointerId: e.pointerId, startX: e.clientX, originLeft: tab.getBoundingClientRect().left, tx: 0, active: false };
     });
 
-    host.addEventListener('pointermove', (e) => {
+    // Move/up/cancel ride on window (capture): the strip is small and the page
+    // below is all iframes, which swallow events aimed at the strip. While a
+    // drag is active, content iframes also lose hit-testing (see
+    // body.is-reordering-spaces) so a release over page content still lands.
+    window.addEventListener('pointermove', (e) => {
         if (!drag || e.pointerId !== drag.pointerId) return;
         // A press whose release was missed (off-window pointerup) must never
         // start a button-less reorder on the next hover — cancel it instead.
@@ -6506,8 +6511,13 @@ function setupSpaceTabDrag(host) {
             tab.setPointerCapture(e.pointerId);
             tab.classList.add('is-dragging');
             host.classList.add('is-reordering');
+            document.body.classList.add('is-reordering-spaces');
         }
-        const siblings = Array.from(host.querySelectorAll('.shell-space-tab')).filter((t) => t !== tab);
+        // Pills take part in the live order so the group visibly nudges as the
+        // tab slides past it; only tabs commit to the space order on drop.
+        const siblings = Array.from(host.children).filter((el) => el !== tab
+            && (el.classList.contains('shell-space-tab')
+                || el.classList.contains('shell-space-group')));
         const before = siblings.find((t) => {
             const r = t.getBoundingClientRect();
             return e.clientX < r.left + r.width / 2;
@@ -6526,12 +6536,12 @@ function setupSpaceTabDrag(host) {
         tab.style.transform = 'translateX(' + drag.tx + 'px)';
     });
 
-    host.addEventListener('pointerup', (e) => {
+    window.addEventListener('pointerup', (e) => {
         if (drag && e.pointerId === drag.pointerId) finish(true);
-    });
-    host.addEventListener('pointercancel', (e) => {
+    }, true);
+    window.addEventListener('pointercancel', (e) => {
         if (drag && e.pointerId === drag.pointerId) finish(false);
-    });
+    }, true);
     // Releasing off-window delivers no pointerup; snap back instead of
     // floating the tab until the next hover cancels the gesture.
     window.addEventListener('blur', () => { if (drag) finish(false); });
