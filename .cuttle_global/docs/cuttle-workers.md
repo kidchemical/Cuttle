@@ -66,13 +66,32 @@ Use **SSH for ad-hoc shell** when you already trust SSH into that machine. Do **
 
 Optional: `device_workers.execute_shell_prefixes` (list of allowed command prefixes) when either unsafe/ssh execute is on.
 
-### LAN-only SSH
+### LAN-only SSH (explicit pairing, per-install identities)
+
+Cuttle distributes **no shared trusted key**. Each installation owns its
+keypair and every target authorizes exactly the peer keys its operator
+installs — possession of one install's private key never implies access to
+unrelated installations.
+
+1. On each machine, generate its own identity (safe to re-run; never
+   overwrites an existing keypair):
+   - Windows: `.cuttle_global/scripts/install-cuttle-mesh-lan-key.ps1 -Generate`
+   - Linux/macOS: `.cuttle_global/scripts/install-cuttle-mesh-lan-key.sh --generate`
+2. Pair explicitly — on the TARGET, authorize the SOURCE's `.pub`
+   (elevated on Windows; LAN CIDR + loopback `from=` restriction applied):
+   - Windows: `install-cuttle-mesh-lan-key.ps1 -PubKeyFile <peer.pub> -Alias <name>`
+   - Linux/macOS: `install-cuttle-mesh-lan-key.sh --pubkey <peer.pub> --alias <name>`
+3. Point `src/settings.json` at **this** install's private key
+   (`device_workers.ssh_host` / `ssh_identity`).
 
 Configure keys / `authorized_keys` / `ssh_host` in `src/settings.json` for **this** install.
 Document your LAN CIDR, key paths, and host aliases under
 `.cuttle_global/personal/docs/cuttle-workers.md` — do not commit them to the tracked global doc.
 
-Helper script (when present): `.cuttle_global/scripts/install-cuttle-mesh-lan-key.ps1`.
+Legacy note: early installs trusted one shared provisioned key. Cuttle no
+longer ships or installs it, and pairing never purges existing
+`authorized_keys` entries — removing a legacy entry is a deliberate manual
+rotation on that machine, not a side effect of pairing.
 
 **HITL:** first `execute_shell_unsafe` or `execute_shell_ssh` in a worker process pops a Cuttle modal.
 **Queue TTL:** jobs get `expires_at` (defaults vary by type). Override with `ttl_seconds` / `expires_at` on submit.
