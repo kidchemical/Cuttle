@@ -697,7 +697,15 @@ def run_agent_web_command(
                 if usage_payload.get(key):
                     tok_payload[key] = int(usage_payload[key])
         call_cost = float(usage_payload.get("cost") or 0) if usage_payload.get("cost") is not None else 0.0
-        model_name = result.model or (model or manifest.id)
+        _result_meta = result.meta if isinstance(result.meta, dict) else {}
+        if result.model:
+            model_name = result.model
+        elif _result_meta.get("model_source") == "unknown":
+            # The adapter could not determine the executed model — record
+            # unknown honestly instead of the harness id (e.g. "opencode").
+            model_name = "unknown"
+        else:
+            model_name = model or manifest.id
         preview = (result.output or "")[:8000]
         report_url = f"/query_log.html?id={query_id}"
         tool_params = {

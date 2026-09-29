@@ -52,6 +52,40 @@ def _provider_for(config: RouterConfig):
         if prov in ("jev", "typesafe") or is_jev_model_id(config.provider.api_model or ""):
             return JevRouterProvider()
         return OpenAIApiRouterProvider()
+
+
+# Reason fragments meaning "the routing brain never ran — the default target
+# is executing as a fallback". Dispatch uses this to label the outcome
+# honestly instead of presenting it as a successful routing decision.
+ROUTER_NEVER_RAN_MARKERS = (
+    "router error:",
+    "router recursion blocked",
+    "router mode off",
+    "no provider",
+)
+
+
+def routing_never_ran(decision: RoutingDecision) -> bool:
+    reason = str(getattr(decision, "reason", "") or "")
+    if getattr(decision, "source", "") == TargetSource.DEFAULT.value and any(
+        m in reason for m in ROUTER_NEVER_RAN_MARKERS
+    ):
+        return True
+    return False
+
+
+def actionable_router_hint(error: str) -> str:
+    """Short actionable hint for a routing-brain failure (main response)."""
+    msg = str(error or "")
+    if "OPENAI_API_KEY" in msg:
+        return (
+            "routing needs OPENAI_API_KEY in src/.env "
+            "(or switch the router to local/agent mode)"
+        )
+    if "no provider" in msg.lower():
+        return "no routing provider is available (check the router mode)"
+    short = msg.strip().split("\n", 1)[0][:120]
+    return f"router unavailable: {short}" if short else "router unavailable"
     if mode == RouterMode.LOCAL.value:
         return LocalRouterProvider()
     if mode == RouterMode.AGENT.value:
@@ -138,27 +172,43 @@ def decide_with_outcome(
 
     meta["provider"] = getattr(provider, "name", "?")
     log.log_invoked(mode=cfg.provider.mode, provider=meta["provider"])
-    decision: RoutingDecision
-    try:
-        with _BrainGuard():
-            decision = provider.decide(context, cfg)
-    except ProviderError as e:
-        log.log_invalid(str(e))
-        log.log_default(str(e))
-        msg = str(e)
-        meta["used_fallback"] = True
-        meta["api_error"] = msg
-        meta["invalid_rejected"] = bool(
-            re.search(r"invalid|unknown|invent|unregistered|malformed|not valid json", msg, re.I)
-        )
-        decision = default_decision(cfg, f"router error: {e}")
-    except Exception as e:
-        log.log_invalid(str(e))
-        log.log_default(str(e))
-        meta["used_fallback"] = True
-        meta["api_error"] = str(e)
-        decision = default_decision(cfg, f"router error: {e}")
+    # Detect an unavailable routing provider before attempting inference:
+    # with only third-party keys (e.g. OpenRouter) configured, API mode has
+    # no usable brain. Record the fallback now so no inference is attempted;
+    # the use-case table and demotion layers below still apply.
+    _unavailable: Optional[str] = None
+    if meta["provider"] == "openai_api":
+        import os as _os
 
+        if not (_os.environ.get("OPENAI_API_KEY") or "").strip():
+            _unavailable = "OPENAI_API_KEY not set"
+    decision: RoutingDecision
+    if _unavailable is not None:
+        log.log_invalid(_unavailable)
+        log.log_default(_unavailable)
+        meta["used_fallback"] = True
+        meta["api_error"] = _unavailable
+        decision = default_decision(cfg, f"router error: {_unavailable}")
+    else:
+        try:
+            with _BrainGuard():
+                decision = provider.decide(context, cfg)
+        except ProviderError as e:
+            log.log_invalid(str(e))
+            log.log_default(str(e))
+            msg = str(e)
+            meta["used_fallback"] = True
+            meta["api_error"] = msg
+            meta["invalid_rejected"] = bool(
+                re.search(r"invalid|unknown|invent|unregistered|malformed|not valid json", msg, re.I)
+            )
+            decision = default_decision(cfg, f"router error: {e}")
+        except Exception as e:
+            log.log_invalid(str(e))
+            log.log_default(str(e))
+            meta["used_fallback"] = True
+            meta["api_error"] = str(e)
+            decision = default_decision(cfg, f"router error: {e}")
     # Phase 0 — declared use-case table overrides the brain's target choice.
     try:
         from api.agent_router.use_cases import apply_table

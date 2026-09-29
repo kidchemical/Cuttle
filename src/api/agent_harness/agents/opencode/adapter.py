@@ -265,19 +265,62 @@ def _finalize_opencode_usage(usage: Dict[str, Any]) -> Dict[str, Any]:
     return usage
 
 
-def _parse_opencode_stdout(raw: str) -> Tuple[str, Optional[str], Dict[str, Any]]:
+def _extract_opencode_event_model(obj: Dict[str, Any]) -> Optional[str]:
+    """Best-effort executed-model probe for one ``opencode run`` JSON event.
+
+    The CLI picks its own default when ``--model`` is omitted; when an event
+    carries that choice (``model`` / ``modelID`` / ``model_id`` at the top
+    level or one level nested), surface it so badges and usage reflect what
+    actually ran. Returns None when the event says nothing about the model.
+    """
+    if not isinstance(obj, dict):
+        return None
+    candidates: List[Any] = [
+        obj.get("model"),
+        obj.get("modelID"),
+        obj.get("modelId"),
+        obj.get("model_id"),
+    ]
+    for nested_key in ("session", "message", "properties", "part", "info"):
+        nested = obj.get(nested_key)
+        if isinstance(nested, dict):
+            candidates.extend(
+                (
+                    nested.get("model"),
+                    nested.get("modelID"),
+                    nested.get("modelId"),
+                    nested.get("model_id"),
+                )
+            )
+    for cand in candidates:
+        if isinstance(cand, dict):
+            cand = cand.get("id") or cand.get("modelID")
+        if not isinstance(cand, str):
+            continue
+        mid = cand.strip()
+        # Event-type words and JSON blobs are never model ids.
+        if not mid or len(mid) > 160 or any(c in mid for c in " \t\n\r{}[]\"'"):
+            continue
+        return mid
+    return None
+
+
+def _parse_opencode_stdout(raw: str) -> Tuple[str, Optional[str], Dict[str, Any], Optional[str]]:
     """
     Prefer ``--format json`` event stream / object; fall back to plain text.
 
-    Returns (display_text, session_id, usage).
+    Returns (display_text, session_id, usage, detected_model) where
+    detected_model is the executed provider/model observed in the event
+    stream (None when the stream carries no model metadata).
     """
     stripped = (raw or "").strip()
     if not stripped:
-        return "", None, {}
+        return "", None, {}, None
 
     session_id: Optional[str] = None
     usage: Dict[str, Any] = {}
     texts: List[str] = []
+    detected_model: Optional[str] = None
 
     # JSONL event stream
     if "\n" in stripped and stripped.lstrip().startswith("{"):
@@ -297,6 +340,8 @@ def _parse_opencode_stdout(raw: str) -> Tuple[str, Optional[str], Dict[str, Any]
             sid = obj.get("sessionID") or obj.get("session_id") or obj.get("sessionId")
             if isinstance(sid, str) and sid.strip():
                 session_id = sid.strip()
+            if detected_model is None:
+                detected_model = _extract_opencode_event_model(obj)
             _accumulate_opencode_usage(obj, usage)
             # Common shapes: type=text / message / part / content
             t = obj.get("type") or obj.get("event")
@@ -320,26 +365,27 @@ def _parse_opencode_stdout(raw: str) -> Tuple[str, Optional[str], Dict[str, Any]
             if isinstance(props.get("text"), str) and props["text"].strip():
                 texts.append(props["text"].strip())
         usage = _finalize_opencode_usage(usage)
-        if texts or usage:
-            return ("\n".join(texts).strip() if texts else ""), session_id, usage
+        if texts or usage or detected_model:
+            return ("\n".join(texts).strip() if texts else ""), session_id, usage, detected_model
 
     # Single JSON object
     if stripped.startswith("{"):
         try:
             parsed = json.loads(stripped)
         except json.JSONDecodeError:
-            return stripped, None, {}
+            return stripped, None, {}, None
         if isinstance(parsed, dict):
             sid = parsed.get("sessionID") or parsed.get("session_id") or parsed.get("sessionId")
             if isinstance(sid, str) and sid.strip():
                 session_id = sid.strip()
+            detected_model = _extract_opencode_event_model(parsed)
             for key in ("response", "text", "output", "message", "content"):
                 val = parsed.get(key)
                 if isinstance(val, str) and val.strip():
-                    return val.strip(), session_id, usage
-            return stripped, session_id, usage
+                    return val.strip(), session_id, usage, detected_model
+            return stripped, session_id, usage, detected_model
 
-    return stripped, None, {}
+    return stripped, None, {}, None
 
 
 def summarize_opencode_error(raw: str, returncode: Optional[int] = None) -> str:
@@ -877,11 +923,20 @@ class Adapter:
 
         out = b"".join(out_buf).decode("utf-8", errors="replace")
         err = b"".join(err_buf).decode("utf-8", errors="replace")
-        display, sid, usage = _parse_opencode_stdout(out)
+        display, sid, usage, detected = _parse_opencode_stdout(out)
         ok = proc.returncode == 0
         from api.agent_harness.agent_defaults import badge_meta as _badge_meta
 
-        meta = _badge_meta("opencode", mid or "", _model_source, effort, _effort_source)
+        # Precedence: per-chat pin → explicit override → starred → executed
+        # model observed in the event stream → unknown (never config-guess:
+        # execution metadata wins over opencode.json).
+        if mid:
+            effective_model, effective_source = mid, _model_source
+        elif detected:
+            effective_model, effective_source = detected, SOURCE_CLI_DEFAULT
+        else:
+            effective_model, effective_source = "", "unknown"
+        meta = _badge_meta("opencode", effective_model, effective_source, effort, _effort_source)
         if _effort_ignored:
             meta["effort_ignored"] = _effort_ignored
             display = (display + "\n\n_" + _effort_ignored + "_").strip() if display else ("_" + _effort_ignored + "_")
@@ -898,7 +953,7 @@ class Adapter:
                 ),
                 usage=usage,
                 session_id=sid,
-                model=mid,
+                model=effective_model,
                 meta=meta,
             )
         return AgentResult(
@@ -906,7 +961,7 @@ class Adapter:
             output=display or out.strip() or "Done.",
             usage=usage,
             session_id=sid,
-            model=mid,
+            model=effective_model,
             meta=meta,
         )
 

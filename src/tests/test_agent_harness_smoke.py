@@ -110,7 +110,7 @@ def test_opencode_step_finish_usage_is_accumulated():
             ),
         ]
     )
-    text, sid, usage = _parse_opencode_stdout(raw)
+    text, sid, usage, _detected = _parse_opencode_stdout(raw)
     assert text == "Done."
     assert sid == "ses_abc"
     assert usage["prompt_tokens"] == 1871
@@ -139,7 +139,7 @@ def test_opencode_cache_read_survives_to_outcome_store(tmp_path):
             '"cache":{"write":0,"read":199000}}}}',
         ]
     )
-    _, _, adapter_usage = _parse_opencode_stdout(raw)
+    _, _, adapter_usage, _ = _parse_opencode_stdout(raw)
     assert adapter_usage["cache_read_tokens"] == 402904
     body = {
         "agent_id": "opencode", "query_id": "cache-q", "response": "hi",

@@ -151,6 +151,8 @@ def _annotate_result(
         "source": source,
         "attempts": list(attempts),
         "note": routed_note,
+        # Verbose diagnostics live here (details), not in the headline note.
+        "decision": decision.to_dict() if decision is not None else None,
     }
     if routed_note and isinstance(out.get("response"), str):
         # Prepend a short routing footer only once for visibility.
@@ -279,10 +281,29 @@ def execute_decision(
 
     if kind == FailureKind.NONE.value:
         clear_last_failure(chat_session_id)
-        note = (
-            f"Routed to `{used.agent}` / `{used.model or 'default'}` "
-            f"({decision.reason or decision.source})"
-        )
+        try:
+            from api.agent_router.engine import (
+                actionable_router_hint,
+                routing_never_ran,
+            )
+
+            _brain_failed = routing_never_ran(decision)
+        except Exception:
+            _brain_failed = False
+        if _brain_failed:
+            # The routing brain never ran — this is the default target
+            # executing as a fallback, not a routing decision. Say so and
+            # keep the raw diagnostic in out["router"] (decision.reason),
+            # not in the main response.
+            note = (
+                f"Default `{used.agent}` / `{used.model or 'default'}` "
+                f"({actionable_router_hint(decision.reason)})"
+            )
+        else:
+            note = (
+                f"Routed to `{used.agent}` / `{used.model or 'default'}` "
+                f"({decision.reason or decision.source})"
+            )
         return _annotate_result(
             result, target=used, decision=decision, source=source, attempts=attempts, routed_note=note
         )
