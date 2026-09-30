@@ -78,14 +78,11 @@ def check_dependencies():
     print("Checking dependencies...")
     
     required_packages = [
-        'discord.py',
-        'openai', 
+        'openai',
         'python-dotenv',
         'flask',
         'flask-cors',
         'psutil',
-        'pyautogui',
-        'mss',
         'pytesseract'
     ]
     
@@ -93,9 +90,7 @@ def check_dependencies():
     
     for package in required_packages:
         try:
-            if package == 'discord.py':
-                import discord
-            elif package == 'python-dotenv':
+            if package == 'python-dotenv':
                 import dotenv
             elif package == 'flask-cors':
                 import flask_cors

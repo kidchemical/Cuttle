@@ -104,17 +104,11 @@ def main():
     else:
         print("⚠️ No requirements.txt found, installing basic dependencies...")
         basic_deps = [
-            "discord.py>=2.3.0", "flask>=2.3.0", "flask-cors>=4.0.0",
-            "python-dotenv", "openai", "pillow", "psutil", "mss", 
+            "flask>=2.3.0", "flask-cors>=4.0.0",
+            "python-dotenv", "openai", "pillow", "psutil",
             "pytesseract", "opencv-python"
         ]
-        
-        if not is_wsl:
-            basic_deps.extend([
-                "pywin32", "pyautogui", "pygetwindow", "pywinauto", 
-                "keyboard", "mouse"
-            ])
-        
+
         try:
             subprocess.check_call([
                 str(venv_python), "-m", "pip", "install"

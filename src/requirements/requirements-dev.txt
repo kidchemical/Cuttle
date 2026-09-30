@@ -1,0 +1,8 @@
+# Cuttle development and testing dependencies
+#
+# Install alongside the runtime file:
+# .venv/bin/pip install -r src/requirements/requirements.txt -r src/requirements/requirements-dev.txt
+
+pytest>=7.4.0
+pytest-asyncio>=0.21.0,<1.0
+playwright>=1.40.0

@@ -103,19 +103,8 @@ def main():
         "openai",
         "pillow",
         "psutil",
-        "mss",
         "pytesseract",
         "opencv-python"
-    ]
-    
-    # Windows-specific packages
-    windows_packages = [
-        "pywin32",
-        "pyautogui", 
-        "pygetwindow",
-        "pywinauto",
-        "keyboard",
-        "mouse"
     ]
     
     print(f"{TARGET} Installing essential packages first...")
@@ -153,7 +142,7 @@ def main():
     print("\n" + "=" * 50)
     print(f"{LIGHTBULB} Essential packages are installed and working!")
     print(f"{THINKING} Do you want to install additional packages?")
-    print("   - These include AI, image processing, and automation tools")
+    print("   - These include AI and image processing tools")
     print("   - They're larger and may take longer over network drives")
     
     response = input("\nInstall additional packages? (y/n): ").lower().strip()
@@ -167,16 +156,6 @@ def main():
             time.sleep(2)
         
         print(f"\n{CHART} Additional packages: {additional_success}/{len(additional_packages)} installed")
-        
-        if not is_wsl:
-            print(f"\n{TARGET} Installing Windows-specific packages...")
-            windows_success = 0
-            for package in windows_packages:
-                if install_package(python_cmd, package, timeout=180):
-                    windows_success += 1
-                time.sleep(2)
-            
-            print(f"\n{CHART} Windows packages: {windows_success}/{len(windows_packages)} installed")
     else:
         print(f"{SKIP} Skipping additional packages")
     
