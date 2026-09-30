@@ -699,3 +699,174 @@ unchanged (classic scripts + namespace; no bundler introduced).
    2026-09-30). Phase 2 readiness is a review decision, not an automatic
    gate-pass. Do NOT begin Phase 2 in this track until explicitly
    authorized.
+
+---
+
+# Phase 2 — Slice 1: Projects HTTP Extraction
+
+## Phase status
+
+- Slice: Phase 2 Slice 1 — Projects HTTP transport → `api.project_routes`.
+- Git baseline before work: `72ede1ec` ("Phase 1 close-out: record manual
+  browser verification (passed)"), clean tree.
+- Git commit after work: the single `Phase 2 slice 1: projects HTTP
+  extraction` commit on main (identify via `git log --oneline`).
+- Completion status: **complete, awaiting external review**. No further
+  Phase 2 slices started (Git, Action Forms untouched).
+
+## Original problem
+
+`web_chat_api.py` owned every `/api/projects*` handler inline (~300 lines
+including the `requires_project_manager` guard): route registration,
+auth gating, and response shaping for project CRUD + history/stats lived
+in the monolith while the actual domain logic already had an owner
+(`managers.project_manager`). Any agent touching project transport had to
+work inside the 12.7k-line composition root, and the auth matrix for these
+recently-regressed routes had no single obvious home.
+
+## Slice selection
+
+Re-checked the dependency map before changing code. Candidates ranked:
+
+1. **Projects HTTP (chosen):** 10 handlers, uniformly thin
+   (manager call + jsonify), zero lazy `api.*` imports inside handlers,
+   zero prod reverse-deps on the handler functions, pre-existing owned
+   service (`project_manager`), exact blueprint precedent
+   (`settings_routes.py`). Smallest blast radius with a real ownership win.
+2. **Git HTTP (deferred):** ~1,750 lines / 21 handlers with embedded
+   subprocess logic, repo resolution, and `fs_reveal` / suggester coupling;
+   no owned service module yet — needs a service layer first, too big for
+   a first slice.
+3. **Action-form transport (deferred):** 4 handlers but HMAC provenance +
+   restart-recovery semantics inline; needs careful interface design,
+   scheduled after Projects proves the pattern.
+
+## Architecture before
+
+- All 10 project routes registered via `@app.route` in the monolith
+  (lines ~11902–12197): GET list/one/current/history/stats
+  (`authenticated_required`), POST create/switch/sync, PUT update, DELETE
+  (`owner_required`), each additionally guarded by the local
+  `requires_project_manager` decorator (503 when the manager import
+  failed).
+- Test stubbing reached the manager through the monolith's module
+  attribute (`wca.project_manager`).
+
+## Changes made
+
+- **Added `src/api/project_routes.py`** (new owner): `projects_bp`
+  blueprint (`url_prefix="/api"`), the `requires_project_manager` guard
+  moved in, all 10 handlers moved verbatim (same paths, methods,
+  decorators, bodies, log lines, status codes, payload shapes). Module
+  docstring states the ownership contract (transport only; logic in
+  `project_manager`; auth by decorator only; 503 by guard only) and the
+  Phase 2 rule: never imports `api.web_chat_api` (verified — only a
+  docstring mention).
+- **Monolith:** registers `projects_bp` (same try/except pattern as
+  `settings_bp`); deleted the 10 handlers (~296 lines) and the now-unused
+  guard + `functools.wraps` import. `project_manager` import stays (other
+  handlers still use it: chat execution, `project_commands_list`, path
+  resolution).
+- Monolith size: 12,732 → 12,429 lines (−303).
+- **Tests:** new `src/tests/test_project_routes.py` (4 tests, written
+  pre-move against the monolith, green both sides): route-registration
+  contract (10 routes × methods, no duplicates), read shapes + 404,
+  401 anon / 403 guest matrix, owner validation matrix (400s), success
+  shapes incl. switch/500-on-manager-false, 503 for all 10 routes when
+  the manager is None. Stub helper `_set_pm` patches every holder module
+  so it survives the move. Repaired `test_http_authz._stub_project_registry`
+  to stub the blueprint's reference too (shared instance).
+- Moved vs deleted: handlers relocated verbatim (moved); the monolith's
+  guard definition deleted as superseded (deleted; single new home).
+
+## Architecture after
+
+```
+web_chat_api.py ──registers──▶ projects_bp (api/project_routes.py)
+                                   │ transport only
+                                   ▼
+                          managers.project_manager (logic, unchanged)
+```
+
+One-way dependency: `project_routes` → `managers.*`, `api.http_authz`,
+Flask. No reach-back into the monolith. The `project_manager` singleton
+is still constructed once (`managers.project_manager`); both the monolith
+(remaining users) and the blueprint hold a reference to the same object.
+
+## Dependencies and state
+
+- Removed: 10 route registrations + guard from the composition root; the
+  monolith is no longer the owner of any `/api/projects*` path.
+- Introduced: `api.project_routes` module (Flask Blueprint; no new
+  runtime deps). No new shared state — handlers are stateless w.r.t. the
+  transport layer; all state stays in `project_manager`/SQLite as before.
+- Reverse deps: none existed on the moved functions (verified); none created.
+- Persistence/restart semantics: unchanged (manager-owned; no in-memory
+  transport state existed).
+- Compatibility: no shims; paths/methods/shapes/codes/auth identical
+  (pinned by tests).
+
+## Tests and verification
+
+- New `test_project_routes.py`: 4/4 pass pre-move AND post-move.
+- `test_http_authz.py` (auth matrix incl. project reads/writes): passes
+  with the repaired stub helper — 50/50 combined with the new file.
+- Broad: `.venv/bin/python -m pytest -q` → **1,740 passed, 28 failed,
+  60 skipped**; the 28 failures are byte-identical to the Phase 0/1
+  baseline list (verified via `diff`) — all unrelated to this slice.
+- `ast.parse` clean on both touched Python files; `grep` confirms no
+  `web_chat_api` import in the new module and no `requires_project_manager`
+  remnants in the monolith.
+- Manual workflows: none applicable (no UI changed; route contract
+  covered by tests). Not exercised: live Flask boot, chat round-trip.
+
+## Metrics
+
+| Metric | Before (`72ede1ec`) | After | Method |
+|---|---|---|---|
+| `web_chat_api.py` lines | 12,732 | 12,429 (−303) | `wc -l` |
+| `/api/projects*` handlers owned by monolith | 10 | 0 | grep |
+| New owned modules | — | `api/project_routes.py` (10 routes) | — |
+| Project route tests | auth-matrix only (in http_authz) | +4 contract/shape/guard tests | pytest |
+| Full suite | 1,736 / 28 / 60 | 1,740 / 28 (identical list) / 60 | pytest + diff |
+
+## Remaining concerns
+
+1. `wca.project_manager` reference remains for non-extracted users (chat
+   execution, project-commands, path resolution) — expected; later slices
+   narrow it further.
+2. `/api/project-commands` (`project_commands_list`) deliberately left in
+   the monolith: different deps (`project_commands` module + cwd
+   resolver), separate slice candidate.
+3. Tasks routes (`/api/tasks*`) still inline — natural companion for a
+   later Projects-adjacent slice, not this one.
+4. The 28 baseline failures are untouched and unrelated.
+
+## Diff summary
+
+- Added: `src/api/project_routes.py`, `src/tests/test_project_routes.py`.
+- Modified: `src/api/web_chat_api.py` (−303 lines net: −296 handlers,
+  −15 guard/import, +8 blueprint registration),
+  `src/tests/test_http_authz.py` (stub helper covers both holders).
+- Deleted: no files.
+- `git status --short` before commit: 3 modified + 2 new paths (above).
+
+## External Review Summary
+
+1. **What changed architecturally?** Project HTTP transport moved from
+   the Flask monolith to an owned `projects_bp` blueprint; the monolith
+   now only composes it. Domain logic did not move (already owned).
+2. **What behavior intentionally changed?** Nothing.
+3. **What behavior should be identical?** All 10 route paths, methods,
+   auth matrix (reads authenticated, writes owner, 503 without manager),
+   payload shapes, and status codes (400/404/500 cases pinned).
+4. **What remains coupled or messy?** Git + Action Forms + tasks still
+   inline; monolith still holds a `project_manager` reference for
+   remaining users; 28 unrelated baseline failures preserved.
+5. **What should be reviewed before the next slice?** The ownership
+   contract header in `project_routes.py`; whether Git or Action Forms
+   goes next (recommendation: Action Forms transport — small, owned
+   service exists — before the larger Git service-layer split).
+6. **Is the next slice safe to begin?** This slice is self-contained
+   (no chat/router/workers touched; failures identical to baseline). Do
+   NOT begin the next slice in this track until this review is approved.

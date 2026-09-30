@@ -904,6 +904,11 @@ def test_worker_bearer_cannot_read_router_options(tmp_path, monkeypatch):
 def _stub_project_registry(monkeypatch, projects, current=None):
     from api import web_chat_api as wca
 
+    try:
+        import api.project_routes as project_routes_mod
+    except ImportError:
+        project_routes_mod = None
+
     class _StubPM:
         def get_projects(self):
             return list(projects)
@@ -928,7 +933,12 @@ def _stub_project_registry(monkeypatch, projects, current=None):
                     continue
             return None
 
-    monkeypatch.setattr(wca, "project_manager", _StubPM())
+    stub = _StubPM()
+    monkeypatch.setattr(wca, "project_manager", stub)
+    if project_routes_mod is not None and hasattr(project_routes_mod, "project_manager"):
+        # Phase 2: project routes live on the projects blueprint; stub its
+        # reference too or the stub silently stops applying.
+        monkeypatch.setattr(project_routes_mod, "project_manager", stub)
 
 
 def _init_git_repo(path, dirty):
