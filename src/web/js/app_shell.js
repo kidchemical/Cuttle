@@ -5267,14 +5267,39 @@ function toggleSpaceGroupCollapsed(gid) {
     return true;
 }
 
+/** Bounding rect of a group's sleeve (null outside a browser / when missing). */
+function spaceGroupSleeveRect(gid) {
+    try {
+        if (typeof document === 'undefined') return null;
+        const el = document.querySelector('.shell-space-group-sleeve[data-group-id="' + CSS.escape(gid) + '"]');
+        return el ? el.getBoundingClientRect() : null;
+    } catch (_) {
+        return null;
+    }
+}
+
+/** Group id of the sleeve under a viewport point (collapsed sleeves excluded). */
+function spaceGroupSleeveAtPoint(x, y) {
+    try {
+        if (typeof document === 'undefined') return null;
+        const sleeves = document.querySelectorAll('.shell-space-group-sleeve:not(.is-collapsed)');
+        for (const el of sleeves) {
+            const r = el.getBoundingClientRect();
+            if (x >= r.left && x < r.right && y >= r.top && y < r.bottom) return el.dataset.groupId || null;
+        }
+    } catch (_) {}
+    return null;
+}
+
 /**
- * After a tab-reorder drop, match Chrome: a tab landing between members of
- * one group joins it; landing between two different groups (or away from any
- * group) leaves it ungrouped — including dragging a tab out. Parking before
- * the badge never joins from a drag: the badge is the boundary. Reordering
- * inside its own group (already a member, moved up front) keeps membership.
+ * After a tab-reorder drop, match Chrome: the group's sleeve is the boundary.
+ * Dropping left of the sleeve parks outside (never joins); dropping on or
+ * inside it joins (front slot included); between members joins; dropping past
+ * the sleeve's end parks outside. Dragging a member out ungroups it. A drop
+ * with no coordinates (keyboard/programmatic) keeps the conservative outcome:
+ * outsiders stay out, members stay in. Collapsed groups never gain by drag.
  */
-function fixDraggedTabGroup(draggedId) {
+function fixDraggedTabGroup(draggedId, dropX) {
     const list = spacesState.spaces;
     const i = list.findIndex((s) => s && s.id === draggedId);
     if (i < 0) return;
@@ -5283,11 +5308,31 @@ function fixDraggedTabGroup(draggedId) {
     const right = i < list.length - 1 ? list[i + 1] : null;
     const leftGroup = left && left.groupId ? spaceGroupById(left.groupId) : null;
     const rightGroup = right && right.groupId ? spaceGroupById(right.groupId) : null;
+    const sleeveStart = (gid) => {
+        const r = spaceGroupSleeveRect(gid);
+        if (!r || !Number.isFinite(dropX)) return false;
+        return dropX >= r.left - 4;
+    };
+    const pastSleeveEnd = (gid) => {
+        const r = spaceGroupSleeveRect(gid);
+        if (!r || !Number.isFinite(dropX)) return false;
+        return dropX > r.right + 6;
+    };
     let want = null;
-    if (leftGroup && rightGroup && leftGroup.id === rightGroup.id) want = leftGroup.id;
-    else if (leftGroup && !rightGroup) want = leftGroup.id;
-    else if (!leftGroup && rightGroup) {
-        if (space.groupId === rightGroup.id) want = rightGroup.id;
+    if (leftGroup && rightGroup && leftGroup.id === rightGroup.id) {
+        if (!leftGroup.collapsed) want = leftGroup.id;
+    } else if (leftGroup && !rightGroup) {
+        if (!leftGroup.collapsed && !pastSleeveEnd(leftGroup.id)) want = leftGroup.id;
+    } else if (!leftGroup && rightGroup) {
+        if (!rightGroup.collapsed) {
+            if (space.groupId === rightGroup.id) {
+                // Already in: stay, unless explicitly dropped left of the sleeve.
+                const r = spaceGroupSleeveRect(rightGroup.id);
+                if (!(r && Number.isFinite(dropX) && dropX < r.left - 4)) want = rightGroup.id;
+            } else if (sleeveStart(rightGroup.id)) {
+                want = rightGroup.id;
+            }
+        }
     }
     if ((space.groupId || null) === want) return;
     if (want) space.groupId = want;
@@ -5499,13 +5544,25 @@ function renderSpaceTabs() {
     const host = document.getElementById('shellSpacesTabs');
     if (!host) return;
     host.dataset.count = String(spacesState.spaces.length);
-    const renderedGroups = new Set();
+    // Grouped runs render inside a shared sleeve so the group reads as one
+    // container; a pill opens every run (members may be split by dragging).
     let html = '';
+    let openGroup = null;
+    const closeSleeve = () => { if (openGroup) { html += '</span>'; openGroup = null; } };
     spacesState.spaces.forEach((s) => {
         const group = s.groupId ? spaceGroupById(s.groupId) : null;
-        if (group && !renderedGroups.has(group.id)) {
-            renderedGroups.add(group.id);
-            html += spaceGroupPillHtml(group);
+        const gid = group ? group.id : null;
+        if (gid !== openGroup) {
+            closeSleeve();
+            if (group) {
+                const color = sanitizeSpaceColor(group.color) || SPACE_GROUP_DEFAULT_COLOR;
+                openGroup = gid;
+                html += '<span class="shell-space-group-sleeve'
+                    + (group.collapsed ? ' is-collapsed' : '') + '" role="presentation"'
+                    + ' data-group-id="' + escapeHtml(gid) + '"'
+                    + ' style="--space-accent:' + color + '">';
+                html += spaceGroupPillHtml(group);
+            }
         }
         if (group && group.collapsed) return; // hidden until the pill expands it
         const accent = group
@@ -5524,6 +5581,7 @@ function renderSpaceTabs() {
             + '<button type="button" class="shell-space-close" tabindex="-1" aria-label="Close space ' + name + '">×</button>'
             + '</div>';
     });
+    closeSleeve();
     host.innerHTML = html;
     syncActiveSpaceTab();
     syncSpaceActivityTabs();
@@ -6467,7 +6525,7 @@ function setupSpaceTabDrag(host) {
     let drag = null;
     let suppressClick = false;
 
-    const finish = (commit) => {
+    const finish = (commit, dropX) => {
         if (!drag) return;
         const { tab, active, pointerId } = drag;
         drag = null;
@@ -6481,9 +6539,8 @@ function setupSpaceTabDrag(host) {
             const visibleIds = Array.from(host.querySelectorAll('.shell-space-tab')).map((t) => t.dataset.spaceId);
             const draggedId = tab.dataset.spaceId;
             reorderSpacesAroundHidden(visibleIds, draggedId);
-            // Dropping between members of one group joins it; dropping out
-            // ungroups; parking before a badge always stays out.
-            fixDraggedTabGroup(draggedId);
+            // Membership follows the sleeve boundary at the drop point.
+            fixDraggedTabGroup(draggedId, dropX);
         }
         renderSpaceTabs();
         // The pointerup still produces a click on the tab; don't treat the drop as a switch.
@@ -6516,19 +6573,52 @@ function setupSpaceTabDrag(host) {
             host.classList.add('is-reordering');
             document.body.classList.add('is-reordering-spaces');
         }
-        // Pills take part in the live order so the group visibly nudges as the
-        // tab slides past it; only tabs commit to the space order on drop.
-        const siblings = Array.from(host.children).filter((el) => el !== tab
-            && (el.classList.contains('shell-space-tab')
-                || el.classList.contains('shell-space-group')));
+        // Tabs and sleeves take part in the live order so the group nudges as
+        // a whole as the tab slides past it; only tabs commit to the space
+        // order on drop. The pill itself is never an insertion point —
+        // inserting before it would swallow the tab into the sleeve, stretch
+        // the boundary over the pointer, and join on drop.
+        const siblings = Array.from(
+            host.querySelectorAll('.shell-space-tab, .shell-space-group-sleeve')
+        ).filter((el) => el !== tab);
         const before = siblings.find((t) => {
             const r = t.getBoundingClientRect();
             return e.clientX < r.left + r.width / 2;
         });
-        if (before) {
-            if (tab.nextElementSibling !== before) host.insertBefore(tab, before);
+        // Preview the join: if the pointer sits in a sleeve's span (with the
+        // same end slop the drop rule uses) but `before` resolved outside it,
+        // park the tab inside the sleeve end instead — aiming at the last
+        // slot must stretch the sleeve, not hover past it.
+        const joinSleeve = (() => {
+            try {
+                const sleeves = host.querySelectorAll('.shell-space-group-sleeve:not(.is-collapsed)');
+                for (const el of sleeves) {
+                    const r = el.getBoundingClientRect();
+                    if (e.clientX >= r.left && e.clientX <= r.right + 6) return el;
+                }
+            } catch (_) {}
+            return null;
+        })();
+        if (joinSleeve && (!before || before.closest('.shell-space-group-sleeve') !== joinSleeve)) {
+            if (tab.parentElement !== joinSleeve || tab.nextElementSibling !== null) {
+                joinSleeve.appendChild(tab);
+            }
+        } else if (before) {
+            if (tab.nextElementSibling !== before) before.parentElement.insertBefore(tab, before);
         } else if (host.lastElementChild !== tab) {
             host.appendChild(tab);
+        }
+        // Hovering a sleeve lights its boundary: inside = joins, outside = out.
+        host.querySelectorAll('.shell-space-group-sleeve.is-drop-target').forEach((el) => {
+            el.classList.remove('is-drop-target');
+        });
+        const hovId = spaceGroupSleeveAtPoint(e.clientX, e.clientY);
+        if (hovId) {
+            try {
+                host.querySelector(
+                    '.shell-space-group-sleeve[data-group-id="' + CSS.escape(hovId) + '"]'
+                )?.classList.add('is-drop-target');
+            } catch (_) {}
         }
         const rect = tab.getBoundingClientRect();
         const layoutLeft = rect.left - drag.tx;
@@ -6540,7 +6630,7 @@ function setupSpaceTabDrag(host) {
     });
 
     window.addEventListener('pointerup', (e) => {
-        if (drag && e.pointerId === drag.pointerId) finish(true);
+        if (drag && e.pointerId === drag.pointerId) finish(true, e.clientX);
     }, true);
     window.addEventListener('pointercancel', (e) => {
         if (drag && e.pointerId === drag.pointerId) finish(false);

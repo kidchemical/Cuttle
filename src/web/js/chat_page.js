@@ -3500,7 +3500,7 @@
         // File chips open Explorer via /api/fs/reveal (browsers block file://).
         const title = escapeHtmlInline(
             kind === 'file'
-                ? ('Reveal in File Explorer — ' + href)
+                ? ('Open in default application — ' + href)
                 : kind === 'code'
                 ? ('Open in editor — ' + href)
                 : href
@@ -3518,10 +3518,10 @@
         );
     }
 
-    async function revealFileInExplorer(href) {
+    async function openFileInDefaultApp(href) {
         const toast = window.showToast || function () {};
         try {
-            const resp = await fetch('/api/fs/reveal', {
+            const resp = await fetch('/api/fs/open', {
                 method: 'POST',
                 credentials: 'include',
                 headers: { 'Content-Type': 'application/json' },
@@ -3533,12 +3533,12 @@
             } catch (_) {}
             if (!resp.ok || !data || !data.success) {
                 const err = (data && data.error) || ('HTTP ' + resp.status);
-                toast('Could not open in Explorer: ' + err, 'error');
+                toast('Could not open file: ' + err, 'error');
                 return false;
             }
             return true;
         } catch (e) {
-            toast('Could not open in Explorer: ' + ((e && e.message) || e), 'error');
+            toast('Could not open file: ' + ((e && e.message) || e), 'error');
             return false;
         }
     }
@@ -3554,7 +3554,7 @@
             if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
             e.preventDefault();
             e.stopPropagation();
-            revealFileInExplorer(href);
+            openFileInDefaultApp(href);
         }, true);
     }
 
@@ -12891,6 +12891,35 @@
         if (!modal || modal.dataset.bound === '1') return;
         modal.dataset.bound = '1';
         syncPendingDiffViewToggle(readPendingDiffViewMode());
+        const titleEl = document.getElementById('pendingDiffTitle');
+        if (titleEl) {
+            titleEl.addEventListener('click', async (e) => {
+                e.preventDefault();
+                const file = pendingDiffModalState && pendingDiffModalState.path;
+                if (!currentProject || !currentProject.path || !file) return;
+                try {
+                    const resp = await fetch('/api/git/open-file', {
+                        method: 'POST', credentials: 'include',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            path: currentProject.path,
+                            project_id: currentProject.id,
+                            repo_root: (pendingDiffModalState && pendingDiffModalState.repoRoot) || undefined,
+                            file: file,
+                        }),
+                    });
+                    const data = await resp.json().catch(() => null);
+                    if (!resp.ok || !data || !data.success) {
+                        throw new Error((data && data.error) || ('HTTP ' + resp.status));
+                    }
+                } catch (err) {
+                    (window.showToast || function () {})(
+                        'Could not open file: ' + ((err && err.message) || err),
+                        'error'
+                    );
+                }
+            });
+        }
         const closeBtn = document.getElementById('pendingDiffClose');
         if (closeBtn) {
             closeBtn.addEventListener('click', (e) => {
@@ -25895,7 +25924,7 @@
         // Chat TTS play-button prefs (Settings → Chat voice)
         loadChatTtsPrefs();
 
-        // file:// chips → Explorer with selection (via /api/fs/reveal)
+        // file:// chips → host OS default application
         bindMdLinkChipClicks();
         bindChatHandleLinkClicks();
         bindGitCommitLinkClicks();

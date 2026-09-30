@@ -10425,6 +10425,33 @@ def fs_reveal_in_explorer():
     return jsonify({'success': True, **(result or {})})
 
 
+@app.route('/api/fs/open', methods=['POST'])
+@owner_required
+def fs_open_default_app():
+    """Open a local file with its registered desktop application."""
+    try:
+        from api.fs_reveal import open_in_default_app
+    except ImportError:
+        try:
+            from fs_reveal import open_in_default_app  # type: ignore
+        except ImportError as e:
+            return jsonify({'success': False, 'error': f'file opener unavailable: {e}'}), 500
+
+    body = request.get_json(silent=True) or {}
+    target = (body.get('path') or body.get('url') or body.get('href') or '').strip()
+    if not target:
+        return jsonify({'success': False, 'error': 'path or url is required'}), 400
+    try:
+        result = open_in_default_app(target)
+    except FileNotFoundError as e:
+        return jsonify({'success': False, 'error': str(e)}), 404
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+    except OSError as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    return jsonify({'success': True, **result})
+
+
 @app.route('/api/git/open-diff', methods=['POST'])
 @owner_required
 def git_open_diff():
@@ -10487,6 +10514,44 @@ def git_open_diff():
         },
         **result,
     })
+
+
+@app.route('/api/git/open-file', methods=['POST'])
+@owner_required
+def git_open_file_default_app():
+    """Open a project worktree file with its OS-registered application."""
+    try:
+        from scripts.utilities.git_pending_changes import resolve_allowed_project_cwd, resolve_allowed_repo_root
+        from api.fs_reveal import open_in_default_app
+    except ImportError as e:
+        return jsonify({'success': False, 'error': f'file opener unavailable: {e}'}), 500
+    body = request.get_json(silent=True) or {}
+    rel_file = (body.get('file') or body.get('rel_path') or '').strip().replace('\\', '/')
+    if not rel_file or rel_file.startswith('/') or '..' in rel_file.split('/'):
+        return jsonify({'success': False, 'error': 'Invalid file path'}), 400
+    pid_raw = body.get('project_id')
+    try:
+        project_id = int(pid_raw) if pid_raw not in (None, '') else None
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'error': 'Invalid project_id'}), 400
+    try:
+        projects = project_manager.get_projects() if project_manager else []
+        current = project_manager.get_current_project() if project_manager else None
+        cwd, _proj, err = resolve_allowed_project_cwd((body.get('path') or '').strip() or None, project_id, projects, current)
+        if err or not cwd:
+            return jsonify({'success': False, 'error': err or 'No project'}), 400
+        root = resolve_allowed_repo_root(cwd, (body.get('repo_root') or '').strip() or None)
+        target = (Path(root) / rel_file).resolve(strict=True)
+        if not target.is_relative_to(Path(root).resolve()) or not target.is_file():
+            return jsonify({'success': False, 'error': 'File is outside the selected worktree'}), 400
+        result = open_in_default_app(str(target))
+    except FileNotFoundError as e:
+        return jsonify({'success': False, 'error': str(e)}), 404
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+    except OSError as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    return jsonify({'success': True, **result})
 
 
 @app.route('/api/git/pending-diff', methods=['GET'])

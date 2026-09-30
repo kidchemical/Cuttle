@@ -6221,6 +6221,18 @@ pre.has-code-copy:hover .code-copy-btn,
     word-break: break-word;
 }
 
+.pending-diff-modal-title a {
+    color: inherit;
+    text-decoration: underline;
+    text-decoration-color: color-mix(in srgb, currentColor 55%, transparent);
+    text-underline-offset: 2px;
+    cursor: pointer;
+}
+.pending-diff-modal-title a:hover {
+    color: var(--link-color, #60a5fa);
+    text-decoration-color: currentColor;
+}
+
 .pending-diff-modal-meta {
     display: flex;
     flex-wrap: wrap;
@@ -8653,4 +8665,3 @@ body.voice-mode .chat-chrome-menu {
         transition: none;
     }
 }
-

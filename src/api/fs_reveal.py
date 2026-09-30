@@ -94,6 +94,22 @@ def reveal_in_file_manager(url_or_path: str) -> Dict[str, Any]:
     }
 
 
+def open_in_default_app(url_or_path: str) -> Dict[str, Any]:
+    """Open a local file with the operating system's registered application."""
+    path = parse_local_path(url_or_path)
+    p = Path(path)
+    if not p.exists() or not p.is_file():
+        raise FileNotFoundError(f"file does not exist: {path}")
+    resolved = str(p.resolve(strict=True))
+    if sys.platform == "win32":
+        os.startfile(resolved)  # type: ignore[attr-defined]
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", resolved], close_fds=True)
+    else:
+        subprocess.Popen(["xdg-open", resolved], close_fds=True)
+    return {"path": resolved, "platform": sys.platform}
+
+
 def reveal_path_or_error(url_or_path: str) -> tuple[Optional[Dict[str, Any]], Optional[str], int]:
     """API helper: (result, error_message, http_status)."""
     try:

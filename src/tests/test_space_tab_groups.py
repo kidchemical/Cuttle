@@ -58,12 +58,10 @@ def test_grouped_tabs_render_pill_and_accent():
 
 def test_reorder_drop_joins_or_leaves_group():
     src = SHELL_JS.read_text(encoding="utf-8")
-    # Dropping between members of one group joins it; dropping out ungroups.
-    assert "function fixDraggedTabGroup(" in src
-    assert "fixDraggedTabGroup(draggedId)" in src
-    # Parking before the badge never joins from a drag; reordering inside the
-    # group (already a member, moved up front) keeps membership.
-    assert "already a member" in src
+    # Membership follows the sleeve boundary at the drop point.
+    assert "function fixDraggedTabGroup(draggedId, dropX)" in src
+    assert "fixDraggedTabGroup(draggedId, dropX)" in src
+    assert "function spaceGroupSleeveRect(" in src
     assert "spaceGroupPillAtX" not in src
 
 
@@ -81,9 +79,22 @@ def test_tab_reorder_survives_collapsed_groups():
 
 def test_tab_drag_nudges_groups_live():
     src = SHELL_JS.read_text(encoding="utf-8")
-    # Pills ride in the live sibling order so the group visibly shifts mid-drag.
-    assert "el.classList.contains('shell-space-group')" in src
-    assert "Pills take part in the live order" in src
+    # Tabs and sleeves share the live sibling order; the pill itself is never
+    # an insertion point (it would swallow the tab into the sleeve).
+    assert "'.shell-space-tab, .shell-space-group-sleeve'" in src
+    assert "never an insertion point" in src
+    # Hovering a sleeve lights the join boundary mid-drag.
+    assert "spaceGroupSleeveAtPoint(" in src
+    assert "is-drop-target" in src
+
+
+def test_sleeve_end_preview_matches_drop():
+    src = SHELL_JS.read_text(encoding="utf-8")
+    # Aiming at the last slot parks the tab inside the sleeve end so the
+    # preview agrees with the drop rule (same end slop on both sides).
+    assert "park the tab inside the sleeve end" in src
+    assert "r.right + 6" in src
+    assert "joinSleeve.appendChild(tab)" in src
 
 
 def test_tab_drag_survives_iframes_and_off_strip_releases():
@@ -133,8 +144,24 @@ def test_open_menu_pins_fullscreen_titlebar():
 def test_group_tint_css():
     css = SHELL_CSS.read_text(encoding="utf-8")
     assert "color-mix" in css
-    assert ".shell-space-tab.has-accent.is-active" in css
     assert ".shell-space-group-count" in css
+    # Grouped tabs take the sleeve background; singles keep their own wash.
+    assert ".shell-spaces-tabs > .shell-space-tab.has-accent" in css
+    assert ".shell-space-group-sleeve > .shell-space-tab.has-accent" in css
+
+
+def test_group_sleeve_and_active_only_underline():
+    src = SHELL_JS.read_text(encoding="utf-8")
+    assert "shell-space-group-sleeve" in src
+    assert "closeSleeve" in src
+    css = SHELL_CSS.read_text(encoding="utf-8")
+    assert ".shell-space-group-sleeve" in css
+    assert ".shell-space-group-sleeve.is-drop-target" in css
+    # Exactly one underline in the strip: the active tab. Dark gray fallback
+    # when the active space has no color.
+    assert ".shell-space-tab.is-active::before" in css
+    assert "#6b7280" in css
+    assert ".shell-space-tab.has-accent::before" not in css
 
 
 def test_group_menu_css():

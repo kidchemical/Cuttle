@@ -332,6 +332,14 @@
         }
 
         function renderDiffModal(data) {
+            if (els.diffOpenFile) {
+                const path = String((data && data.path) || (els.diffFileSelect && els.diffFileSelect.value) || '');
+                els.diffOpenFile.textContent = path || 'Open file';
+                els.diffOpenFile.setAttribute('aria-label', path ? 'Open ' + path + ' in its default application' : 'Open file');
+                els.diffOpenFile.setAttribute('title', 'Open in its default application');
+                els.diffOpenFile.classList.toggle('is-disabled', !path);
+                els.diffOpenFile.setAttribute('aria-disabled', path ? 'false' : 'true');
+            }
             const status = statusBadgeLabel((data && data.status) || 'modified');
             if (els.diffStatus) {
                 els.diffStatus.textContent = status;
@@ -465,6 +473,23 @@
                 toast(err, 'error');
             } finally {
                 if (fetchGen === diffFetchGen) setDiffModalLoading(false);
+            }
+        }
+
+        async function openSelectedFile() {
+            const relPath = els.diffFileSelect ? els.diffFileSelect.value : '';
+            const path = getProjectPath();
+            if (!relPath || !path) return;
+            try {
+                const resp = await fetch('/api/git/open-file', {
+                    method: 'POST', credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: path, repo_root: diffModalRepoRoot || getRepoRoot(), file: relPath }),
+                });
+                const data = await resp.json().catch(function () { return null; });
+                if (!resp.ok || !data || !data.success) throw new Error((data && data.error) || ('HTTP ' + resp.status));
+            } catch (e) {
+                toast('Could not open file: ' + ((e && e.message) || e), 'error');
             }
         }
 
@@ -629,6 +654,10 @@
                     loadDiffForSelectedFile();
                 });
             }
+            if (els.diffOpenFile) els.diffOpenFile.addEventListener('click', function (e) {
+                e.preventDefault();
+                if (!els.diffOpenFile.classList.contains('is-disabled')) openSelectedFile();
+            });
         }
 
         return {
@@ -658,10 +687,12 @@
             + '<div class="pending-diff-modal-card">'
             + '<header class="pending-diff-modal-header">'
             + '<div class="pending-diff-modal-heading">'
-            + '<label class="git-diff-file-label" for="gitDiffFileSelect">'
+            + '<div class="git-diff-file-row">'
             + '<span class="pending-diff-modal-title sr-only" id="gitDiffTitle">File diff</span>'
-            + '<select id="gitDiffFileSelect" class="git-diff-file-select" aria-label="Changed file"></select>'
-            + '</label>'
+            + '<a href="#" class="git-diff-open-file" id="gitDiffOpenFile" title="Open file in its default application">Open file</a>'
+            + '<label class="git-diff-file-picker" for="gitDiffFileSelect" title="Switch changed file">'
+            + '<select id="gitDiffFileSelect" class="git-diff-file-select" aria-label="Switch changed file"></select>'
+            + '</label></div>'
             + '<div class="pending-diff-modal-meta">'
             + '<span class="pending-diff-modal-badge" id="gitDiffStatus"></span>'
             + '<span class="pending-diff-modal-stats" id="gitDiffStats"></span>'
@@ -700,6 +731,7 @@
                 detailBody: document.getElementById('gitCommitModalBody'),
                 diffModal: document.getElementById('gitDiffModal'),
                 diffFileSelect: document.getElementById('gitDiffFileSelect'),
+                diffOpenFile: document.getElementById('gitDiffOpenFile'),
                 diffStatus: document.getElementById('gitDiffStatus'),
                 diffStats: document.getElementById('gitDiffStats'),
                 diffCommit: document.getElementById('gitDiffCommit'),

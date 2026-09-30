@@ -276,6 +276,7 @@ body.is-electron.fullscreen .shell-zoom-hud {
 }
 
 .shell-space-tab {
+    position: relative;
     display: inline-flex;
     align-items: center;
     gap: 2px;
@@ -471,19 +472,9 @@ body.is-reordering-spaces iframe {
     white-space: nowrap;
 }
 
-.shell-space-tab.has-accent {
-    position: relative;
-    background: color-mix(in srgb, var(--space-accent) 16%, transparent);
-    border-color: color-mix(in srgb, var(--space-accent) 45%, transparent);
-    opacity: 1;
-}
-
-.shell-space-tab.has-accent.is-active {
-    background: color-mix(in srgb, var(--space-accent) 28%, transparent);
-    border-color: color-mix(in srgb, var(--space-accent) 65%, transparent);
-}
-
-.shell-space-tab.has-accent::before {
+/* Active space only (one at a time): the underline. Group color, own color,
+   else dark gray when the space has no color. */
+.shell-space-tab.is-active::before {
     content: '';
     position: absolute;
     left: 9px;
@@ -491,8 +482,58 @@ body.is-reordering-spaces iframe {
     bottom: 2px;
     height: 2px;
     border-radius: 1px;
-    background: var(--space-accent);
+    background: var(--space-accent, #6b7280);
     pointer-events: none;
+}
+
+/* Ungrouped colored singles keep their own wash; grouped tabs live in the
+   sleeve and take its background instead (no double tint). */
+.shell-spaces-tabs > .shell-space-tab.has-accent {
+    background: color-mix(in srgb, var(--space-accent) 16%, transparent);
+    border-color: color-mix(in srgb, var(--space-accent) 45%, transparent);
+    opacity: 1;
+}
+
+/* Group sleeve: one container around the pill + its members, so grouped
+   spaces read as a single block. Its left/right edges are the join boundary
+   when dragging tabs (outside stays out, inside joins). */
+.shell-space-group-sleeve {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    flex-shrink: 0;
+    height: 22px;
+    box-sizing: border-box;
+    padding: 0 4px 0 2px;
+    border: 1px solid color-mix(in srgb, var(--space-accent, #e8eaed) 55%, transparent);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--space-accent, #e8eaed) 20%, transparent);
+}
+
+.shell-space-group-sleeve.is-collapsed {
+    opacity: 0.85;
+}
+
+.shell-space-group-sleeve.is-drop-target {
+    border-color: #fff;
+    background: color-mix(in srgb, var(--space-accent, #e8eaed) 34%, transparent);
+}
+
+.shell-space-group-sleeve > .shell-space-group {
+    height: 20px;
+    border: none;
+    background: transparent;
+    padding: 0 3px 0 2px;
+}
+
+.shell-space-group-sleeve > .shell-space-tab {
+    height: 20px;
+    max-width: 130px;
+}
+
+.shell-space-group-sleeve > .shell-space-tab.has-accent {
+    background: transparent;
+    border-color: transparent;
 }
 
 /* Space tab right-click menu + submenus. */

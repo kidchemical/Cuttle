@@ -24,7 +24,29 @@ let projectData = {
 // Initialize Git UI when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
     initializeGitUI();
+    document.addEventListener('click', function (event) {
+        const link = event.target && event.target.closest && event.target.closest('[data-git-open-file]');
+        if (!link) return;
+        event.preventDefault();
+        openGitFileDefault(link.getAttribute('data-git-open-file'));
+    });
 });
+
+async function openGitFileDefault(relPath) {
+    const project = projectData.currentProject;
+    if (!project || !project.path || !relPath) return;
+    try {
+        const response = await fetch('/api/git/open-file', {
+            method: 'POST', credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: project.path, project_id: project.id, file: relPath }),
+        });
+        const data = await response.json().catch(() => null);
+        if (!response.ok || !data || !data.success) throw new Error((data && data.error) || ('HTTP ' + response.status));
+    } catch (error) {
+        showError('Could not open file: ' + (error.message || error));
+    }
+}
 
 // Initialize Git UI
 function initializeGitUI() {
@@ -335,7 +357,7 @@ function updateGitFilesDisplay() {
     gitData.files.forEach(file => {
         html += `
             <li class="git-file-item">
-                <span class="git-file-name">${file.name}</span>
+                <a href="#" class="git-file-name" data-git-open-file="${escapeHtml(file.name).replace(/"/g, '&quot;')}" title="Open in default application">${escapeHtml(file.name)}</a>
                 <span class="git-file-status ${file.status}">${file.status}</span>
             </li>
         `;
@@ -378,7 +400,7 @@ function updateCommitFilesList() {
                 <label class="git-file-toggle-wrapper">
                     <input type="checkbox" value="${file.name}" class="git-file-toggle-input" checked>
                     <span class="git-file-toggle-track"><span class="git-file-toggle-thumb"></span></span>
-                    <span class="git-file-name">${file.name}</span>
+                    <a href="#" class="git-file-name" data-git-open-file="${escapeHtml(file.name).replace(/"/g, '&quot;')}" title="Open in default application">${escapeHtml(file.name)}</a>
                     <span class="git-file-status ${file.status}" style="margin-left: auto;">${file.status}</span>
                 </label>
             `;

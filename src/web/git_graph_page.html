@@ -14,7 +14,7 @@
     <noscript><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"></noscript>
     <link rel="stylesheet" href="/css/compact_page.css">
     <link rel="stylesheet" href="/css/pending_changes.css?v=20260920multiRepo">
-    <link rel="stylesheet" href="/css/git_commit_viewer.css?v=20260926commitModal">
+    <link rel="stylesheet" href="/css/git_commit_viewer.css?v=20260929openFile">
     <link rel="stylesheet" href="/css/git_graph_page.css?v=20260920multiRepo">
     <script src="/js/toast.js"></script>
 </head>
@@ -78,10 +78,13 @@
         <div class="pending-diff-modal-card">
             <header class="pending-diff-modal-header">
                 <div class="pending-diff-modal-heading">
-                    <label class="git-diff-file-label" for="gitDiffFileSelect">
+                    <div class="git-diff-file-row">
                         <span class="pending-diff-modal-title sr-only" id="gitDiffTitle">File diff</span>
-                        <select id="gitDiffFileSelect" class="git-diff-file-select" aria-label="Changed file"></select>
-                    </label>
+                        <a href="#" class="git-diff-open-file is-disabled" id="gitDiffOpenFile" aria-disabled="true" title="Open file in its default application">Open file</a>
+                        <label class="git-diff-file-picker" for="gitDiffFileSelect" title="Switch changed file">
+                            <select id="gitDiffFileSelect" class="git-diff-file-select" aria-label="Switch changed file"></select>
+                        </label>
+                    </div>
                     <div class="pending-diff-modal-meta">
                         <span class="pending-diff-modal-badge" id="gitDiffStatus"></span>
                         <span class="pending-diff-modal-stats" id="gitDiffStats"></span>
@@ -102,7 +105,7 @@
     </dialog>
 
     <script src="/js/pending_changes_panel.js?v=20260920multiRepo"></script>
-    <script src="/js/git_commit_viewer.js?v=20260926commitModal"></script>
+    <script src="/js/git_commit_viewer.js?v=20260929openFile"></script>
     <script src="/js/git_graph_page.js?v=20260926commitModal"></script>
 </body>
 </html>
