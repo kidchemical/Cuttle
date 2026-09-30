@@ -469,8 +469,11 @@ error in either — current-tree numbers above are the ones Phase 1 must use.
 - Git commit after work: the single `Phase 1 Spaces/Shell decomposition`
   commit on main (one commit for the whole phase; identify via
   `git log --oneline`, not by hash, since a doc-only amend finalizes it).
-- Completion status: **complete** (rendering extraction deferred, see
-  Remaining concerns).
+- Completion status: **fully closed** — implementation complete,
+  automated verification green (53/53 focused; full suite failures
+  identical to baseline), manual browser smoke test passed 2026-09-30
+  with no regressions. Rendering extraction remains deliberately deferred
+  (see Remaining concerns); it is future work, not an open Phase 1 item.
 
 ## Original problem
 
@@ -616,11 +619,14 @@ unchanged (classic scripts + namespace; no bundler introduced).
   rail failures dispositioned as unrelated (backend auth gate / rail, no
   Spaces functions involved) and preserved.
 - `node --check` clean on all 5 new modules + `app_shell.js`.
-- Manual workflows NOT exercised (no browser in this environment):
-  reorder within/between/out-of group, create/remove groups, reload
-  persistence, multiple spaces, inactive-space activity, indicators. The
-  pure-logic equivalents of all eight are covered by the new tests above;
-  DOM-level drag gestures still need a human/browser pass before release.
+- Manual browser smoke test: **passed** (operator-verified in the actual
+  Cuttle UI after commit `667bfaeb`, reported 2026-09-30). All eight plan
+  acceptance gestures exercised with no regressions observed:
+  reorder within a group, moving between groups, moving out of a group,
+  group create/remove behavior, persistence after reload, multiple Spaces,
+  inactive-space activity indicators, drag/group highlight behavior.
+  (The agent-side environment has no browser; the pure-logic equivalents
+  of all eight were already covered by the new node-executed tests.)
 
 ## Metrics
 
@@ -650,8 +656,8 @@ unchanged (classic scripts + namespace; no bundler introduced).
 3. **NaN-drop comment inaccuracy** (old comment vs code, preserved as-is).
 4. **Workspace snapshot routes** (`/api/shell/workspaces` 401 failure) and
    **rail layout** failures are pre-existing, unrelated, preserved.
-5. **No live-browser verification** in this environment — the 8 plan
-   acceptance gestures need a human pass; pure equivalents are tested.
+5. **Manual browser verification now done** — operator smoke test passed
+   2026-09-30 (all 8 acceptance gestures, no regressions); concern closed.
 
 ## Diff summary
 
@@ -688,7 +694,8 @@ unchanged (classic scripts + namespace; no bundler introduced).
    header); the highlight micro-fix; the deferred rendering extraction;
    confirmation that Phase 2 must not touch the Spaces seam.
 6. **Is the next phase safe to begin?** Phase 1 is self-contained (no
-   backend, no chat, no router touched; failures identical to baseline).
-   Phase 2 may begin after the manual browser pass on the 8 acceptance
-   gestures, or in parallel at reviewer risk. Do NOT begin Phase 2 in this
-   track until this review is approved.
+   backend, no chat, no router touched; failures identical to baseline)
+   and its manual-browser precondition is now met (smoke test passed
+   2026-09-30). Phase 2 readiness is a review decision, not an automatic
+   gate-pass. Do NOT begin Phase 2 in this track until explicitly
+   authorized.
