@@ -456,3 +456,239 @@ error in either — current-tree numbers above are the ones Phase 1 must use.
    chosen seam, per the Global Rules ("add or preserve regression tests
    before moving boundaries"). The baseline commit is `a7e035d2` with a
    clean tree; this file is the only delta and is docs-only.
+
+---
+
+# Phase 1 — Spaces / Shell Decomposition
+
+## Phase status
+
+- Phase number and name: Phase 1 — Spaces / Shell Decomposition.
+- Git baseline before work: `1f789211` ("Baseline: authoritative stabilization
+  plan Phases 0-7 (external review input)"), clean tree.
+- Git commit after work: the single `Phase 1 Spaces/Shell decomposition`
+  commit on main (one commit for the whole phase; identify via
+  `git log --oneline`, not by hash, since a doc-only amend finalizes it).
+- Completion status: **complete** (rendering extraction deferred, see
+  Remaining concerns).
+
+## Original problem
+
+`app_shell.js` (~7.9k lines, 306 top-level functions) accumulated Spaces
+state, grouping, ordering, drag/drop, persistence, and activity logic as
+globals-sharing functions. Space-group drag/drop in particular had three
+competing interpretations of pointer state (preview insertion, preview join
+highlight, commit membership) that could disagree, producing repeated
+regressions. An agent fixing a drop bug had to understand the whole shell.
+
+## Architecture before
+
+- All Spaces logic (~83 functions across state/groups/order/drop/activity/
+  menus/render) lived in `src/web/js/app_shell.js` (7,943 lines), closing
+  over module-level singletons: `spacesState`, `SPACE_GROUP_COLORS`,
+  `SPACE_GROUP_DEFAULT_COLOR`, `SPACE_ACTIVITY_RANK/LABEL`,
+  `spaceActivityBySession`, `STORAGE_SPACES`.
+- Drop commit derived order by re-reading the preview-mutated DOM
+  (`reorderSpacesAroundHidden(visibleIds-from-DOM)`) and membership by a
+  separate neighbor inference (`fixDraggedTabGroup(draggedId, dropX)`),
+  while preview used inline midpoint/span logic plus a strict hover
+  hit-test (`spaceGroupSleeveAtPoint`, no slop) — three rules, two slop
+  conventions (strict vs left-4/right+6).
+- Characterization tests were source-text assertions (`assert "function
+  foo(" in src`, some pinning code comments), not behavior.
+
+## Changes made
+
+New subsystem `src/web/js/spaces/` (loaded via `<script>` before
+`app_shell.js`, API surface `window.CuttleSpaces`, `module.exports` under
+node for tests). Every module is DOM-free (geometry/storage injected):
+
+- `spaces_state.js` (211 L): state shape, palette (exact 10 presets),
+  ids, `sanitizeLoadedData` (frozen load rules), `load/saveSpacesState`
+  with injected storage, `nextSpaceName`, `addSpaceToState`,
+  `plan/commitSpaceClose`, `renameSpaceInState`.
+- `spaces_groups.js` (192 L): pure transitions taking state —
+  `setGroup` (incl. toggle-off + Chrome adjacency), `createGroupForSpace`,
+  `removeFromGroup`, `rename/setColor`, `dissolveGroup`,
+  `toggleGroupCollapsed` (refuses hides-active, no toast inside),
+  `planGroupDelete`, `pruneEmptyGroups`, `moveNextToGroup`.
+- `spaces_order.js` (52 L): `computeReorderedIds` (visible-order commit,
+  hidden slots kept) + `applyVisibleOrder`.
+- `spaces_drop.js` (266 L): canonical `computeDropTarget({spaces, groups,
+  visibleIds, draggedId, lanes, tabRects, sleeveRects, x})` returning
+  `{order, groupId, noop, place}` consumed by BOTH preview (`place`) and
+  commit (`order` + `groupId`); `applyDropTarget` commits + prunes.
+- `spaces_activity.js` (135 L): `RANK/LABEL`, owned snapshot map (+reset),
+  `sidVariants`, `note/lookup/clearSessionActivity`, `followupKind`,
+  `selectSpaceActivity` (priority + seen-suppression, exact port).
+- `app_shell.js` keeps: the `spacesState` singleton, storage binding,
+  all rendering (`renderSpaceTabs`, pill html, menus, bubbles, dots DOM),
+  orchestration (`switchSpace`, `add/close/renameSpace` sequencing, poll
+  transport, drag event wiring, `measureSpaceDropLanes`), plus thin
+  wrappers that bind the singleton and own persist/render tails.
+- Deleted from shell: `fixDraggedTabGroup`, `reorderSpacesAroundHidden`,
+  `moveSpaceNextToGroup`, `spaceGroupSleeveRect/AtPoint`, palette consts,
+  rank/label consts, activity map, `sanitizeSpaceColor`, `newSpaceId`,
+  `newSpaceGroupId`, `nextSpaceName`, `followupKind` (~420 lines removed,
+  ~240 added back as delegation).
+- `app_shell.html`: 5 spaces `<script>` tags before `app_shell.js`
+  (all `?v=20260930spaces1` cache-busted).
+- Tests: 4 new behavioral files (26 tests, node-executed against the real
+  modules); repaired 8 source-text pins in `test_space_tab_groups.py` /
+  `test_space_activity_dots.py` to assert new owners + delegation (intent
+  preserved, see below); added load-order test.
+- Code moved vs deleted: logic relocated verbatim-or-faithfully into owned
+  modules (moved); the three-way drop-rule split and two sleeve-measure
+  helpers deleted as superseded by the canonical path (deleted, no
+  callers left).
+
+## Architecture after
+
+```
+src/web/js/spaces/          pure domain (node-testable, no DOM/globals)
+  spaces_state.js           shape, palette, sanitize, load/save, lifecycle
+  spaces_groups.js          membership transitions (state in, state out)
+  spaces_order.js           visible-order commit (hidden slots kept)
+  spaces_drop.js            computeDropTarget -> {order, groupId, place}
+  spaces_activity.js        ranking + owned snapshot map
+src/web/js/app_shell.js     orchestration + rendering (singleton, storage,
+                            DOM measure, event wiring, persist/render tails)
+         measure (lanes) ──▶ computeDropTarget ──┬──▶ preview (place)
+                                                 └──▶ commit (order+groupId)
+```
+
+Dependency direction is one-way: shell → `CuttleSpaces.*`. Modules never
+read shell globals (verified: no `spacesState`, `document`, `localStorage`,
+or `window.*` access in `spaces/` — only the `typeof window` namespace
+bootstrap line; storage and geometry are injected). Cross-file JS scoping
+unchanged (classic scripts + namespace; no bundler introduced).
+
+## Dependencies and state
+
+- Dependencies removed: shell-internal couplings — preview↔commit via
+  preview-mutated DOM reads; commit's neighbor inference as a second rule;
+  strict hover hit-test as a third rule; 15 top-level shared bindings
+  (palette, rank/label, activity map, id/color/name helpers).
+- Dependencies introduced: shell → `CuttleSpaces` namespace (43 call
+  sites, all same-file script scope + node `require` for tests). No new
+  runtime, build, or backend dependencies. No backend routes touched.
+- Remaining reverse dependencies: none new (frontend has no import graph;
+  `chat_page.js` iframe messaging untouched).
+- Shared mutable state remaining: the `spacesState` singleton (shell-owned,
+  explicitly passed into every module call — dependency inversion, not
+  global sharing); activity snapshot map (now module-owned with reset);
+  poll timers/scheduling flags (shell transport). Rendering still reads the
+  singleton directly (deferred, below).
+- Persistence/restart-sensitive state: unchanged semantics —
+  `localStorage shell_spaces_v1` via injected storage; save/load round-trip
+  pinned by test.
+- Compatibility layers: none added/removed.
+
+## Tests and verification
+
+- New characterization (behavioral, node-executed, all passing):
+  `test_spaces_drop.py` (11: within-group reorder, between-members join,
+  move-out left-of-sleeve, outsider-stays-out, ±6 end-slop boundary, front
+  slot + pill join, member-stays, NaN conservative, collapsed-never-gains,
+  `place` directives, apply commit),
+  `test_spaces_state.py` (6: sanitize, empty-reject + active fallback,
+  save/load round-trip, lifecycle, exact legacy palette parity, parse),
+  `test_spaces_groups.py` (5: assign/adjacency/toggle-off, first-stays,
+  color/rename/dissolve/delete, collapse refusal, parse),
+  `test_spaces_order_activity.py` (3: hidden slots, priority + both
+  seen-suppression directions, parse).
+- Differential proof (scratch, `/tmp/drop_diff_probe*.js`, not committed):
+  original HEAD functions vs new modules end-to-end (preview sim + commit)
+  over 1,134 (drag, x) positions across single-group, two-group, and
+  collapsed fixtures — **zero mismatches**. NaN path additionally confirmed
+  against HEAD (`[A,C,D,B]`/ungrouped — the old comment's "members stay in"
+  does not hold at end position; preserved as-is, unreachable via UI).
+- Repaired pins (8 tests in `test_space_tab_groups.py` /
+  `test_space_activity_dots.py`): same intents, new owners asserted
+  (palette, persist, canonical target, hidden-slot order, lane measure,
+  sleeve-end park, collapse, priority) + no-forked-copy guards.
+- Focused: 52/52 Spaces tests pass (`test_space*`, `test_pane_space_drag`).
+- Broad: `.venv/bin/python -m pytest -q` → **1,736 passed, 28 failed,
+  60 skipped**; the 28 failures are byte-identical to the Phase 0 baseline
+  list (verified via `diff`) — all unrelated to the Phase 1 boundary
+  (harness endpoints, supervised, frontend-asset, dashboards, rail layout).
+  Boundary-adjacent `test_shell_workspaces` 401 and `test_ui_layout_apps`
+  rail failures dispositioned as unrelated (backend auth gate / rail, no
+  Spaces functions involved) and preserved.
+- `node --check` clean on all 5 new modules + `app_shell.js`.
+- Manual workflows NOT exercised (no browser in this environment):
+  reorder within/between/out-of group, create/remove groups, reload
+  persistence, multiple spaces, inactive-space activity, indicators. The
+  pure-logic equivalents of all eight are covered by the new tests above;
+  DOM-level drag gestures still need a human/browser pass before release.
+
+## Metrics
+
+| Metric | Before (`1f789211`) | After | Method |
+|---|---|---|---|
+| `app_shell.js` lines | 7,943 | 7,704 (−239) | `wc -l` |
+| Top-level fns in shell | 306 | 269 (−37) | regex `^function` |
+| Top-level shared bindings | 99 | 94 (−5 net; 15 removed, ~10 orchestration glue added) | regex `^(const\|let\|var)` |
+| Spaces domain fns requiring shell-global access | ~83 (all) | 0 in modules (state passed as arg; no `spacesState`/`document`/`localStorage`/`window.*` reads — only the namespace bootstrap) | grep |
+| Drop interpretations of pointer state | 3 (preview insert, hover highlight, commit neighbor) | 1 (`computeDropTarget`) | code |
+| Sleeve slop conventions | 2 (strict hover vs −4/+6 commit) | 1 (−4/+6 everywhere; highlight now truthful in +6 end zone — intentional micro-fix, documented) | code |
+| Behavioral drop/group/order/activity tests | 0 (string pins only) | 26 node-executed | pytest |
+| Differential old-vs-new drop positions | — | 1,134/1,134 match | scratch probe |
+| Full suite | 1,710 pass / 28 fail / 60 skip | 1,736 pass / 28 fail (identical list) / 60 skip | pytest ×2 runs compared |
+
+## Remaining concerns
+
+1. **Rendering not extracted** (`renderSpaceTabs`, pill html, tab/group
+   menus + bubbles, dots DOM patching, `sync*` fns remain in shell reading
+   the singleton). Deliberate: "rendering last" per plan, and moving it
+   now would have ballooned blast radius. A Phase 1 follow-up (or Phase 3
+   frontend work) should extract `spaces_render.js` with an injected
+   shell adapter; the `window.*` surface is small.
+2. **Highlight micro-change**: in the +6px past-end slop zone the sleeve
+   now highlights (commit joins there) where the old strict hover did not.
+   Preview is now truthful; flagging for the manual browser pass.
+3. **NaN-drop comment inaccuracy** (old comment vs code, preserved as-is).
+4. **Workspace snapshot routes** (`/api/shell/workspaces` 401 failure) and
+   **rail layout** failures are pre-existing, unrelated, preserved.
+5. **No live-browser verification** in this environment — the 8 plan
+   acceptance gestures need a human pass; pure equivalents are tested.
+
+## Diff summary
+
+- Added: `src/web/js/spaces/` (5 files, 856 L total),
+  `src/tests/test_spaces_{drop,groups,order_activity,state}.py` (4 files).
+- Modified: `src/web/js/app_shell.js` (543 changed: +~120/−~420),
+  `src/web/app_shell.html` (+5 script tags, `?v` bump),
+  `src/tests/test_space_tab_groups.py`, `src/tests/test_space_activity_dots.py`
+  (pin repairs only).
+- Deleted: no files; ~7 superseded shell functions (see Changes).
+- Docs: this Phase 1 review section.
+- `git status --short` before commit: 4 modified + 6 new paths (above).
+
+## External Review Summary
+
+1. **What changed architecturally?** Spaces domain logic left
+   `app_shell.js` for five DOM-free owned modules under `src/web/js/
+   spaces/` behind the `CuttleSpaces` interface; the shell kept the
+   singleton, rendering, and orchestration. The three competing drop rules
+   collapsed into one canonical `computeDropTarget` shared by preview and
+   commit.
+2. **What behavior intentionally changed?** One micro-fix: sleeve highlight
+   in the +6px past-end slop zone now matches the joining commit (was dark
+   while the drop joined). Everything else is behavior-preserving (1,134
+   differential positions match).
+3. **What behavior should be identical?** Tab order/group outcomes for every
+   drop position, group CRUD + collapse rules, palette, persistence shape,
+   activity priority + seen-suppression, poll transport, all DOM structure.
+4. **What remains coupled or messy?** Spaces rendering + menus still read
+   the shell singleton directly; `switchSpace`/pane-tree coupling untouched
+   (correctly — panes domain); 28 unrelated baseline failures preserved.
+5. **What should be reviewed before beginning the next phase?** The
+   `computeDropTarget` contract (inputs/outputs in `spaces_drop.js`
+   header); the highlight micro-fix; the deferred rendering extraction;
+   confirmation that Phase 2 must not touch the Spaces seam.
+6. **Is the next phase safe to begin?** Phase 1 is self-contained (no
+   backend, no chat, no router touched; failures identical to baseline).
+   Phase 2 may begin after the manual browser pass on the 8 acceptance
+   gestures, or in parallel at reviewer risk. Do NOT begin Phase 2 in this
+   track until this review is approved.

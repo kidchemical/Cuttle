@@ -6,24 +6,39 @@ from pathlib import Path
 
 SHELL_JS = Path(__file__).resolve().parents[2] / "src" / "web" / "js" / "app_shell.js"
 SHELL_CSS = Path(__file__).resolve().parents[2] / "src" / "web" / "css" / "app_shell.css"
+SPACES_DIR = Path(__file__).resolve().parents[2] / "src" / "web" / "js" / "spaces"
+STATE_JS = SPACES_DIR / "spaces_state.js"
+GROUPS_JS = SPACES_DIR / "spaces_groups.js"
+ORDER_JS = SPACES_DIR / "spaces_order.js"
+DROP_JS = SPACES_DIR / "spaces_drop.js"
 
 
 def test_group_color_presets():
-    src = SHELL_JS.read_text(encoding="utf-8")
-    assert "const SPACE_GROUP_COLORS = [" in src
-    assert "const SPACE_GROUP_DEFAULT_COLOR = '#e8eaed'" in src  # new groups start white
-    for name in ("Grey", "Blue", "Red", "Yellow", "Green", "Pink", "Purple", "Cyan", "Orange"):
-        assert name in src
+    # Palette owner is spaces_state.js (single source of truth, Phase 1);
+    # the shell consumes CuttleSpaces.COLORS / sanitizeColor / DEFAULT_COLOR.
+    mod = STATE_JS.read_text(encoding="utf-8")
+    assert "const COLORS = [" in mod
+    assert "const DEFAULT_COLOR = '#e8eaed'" in mod  # new groups start white
+    for name in ("White", "Grey", "Blue", "Red", "Yellow", "Green", "Pink", "Purple", "Cyan", "Orange"):
+        assert name in mod
     # Only preset swatches persist; arbitrary strings never become colors.
-    assert "function sanitizeSpaceColor(" in src
+    assert "function sanitizeColor(" in mod
+    src = SHELL_JS.read_text(encoding="utf-8")
+    assert "const SPACE_GROUP_COLORS = [" not in src  # no forked copy
+    assert "const SPACE_GROUP_DEFAULT_COLOR" not in src
+    assert "CuttleSpaces.sanitizeColor" in src
 
 
 def test_groups_persist_with_spaces_state():
+    # Load/save sanitation owner is spaces_state.js; the shell binds storage.
+    mod = STATE_JS.read_text(encoding="utf-8")
+    assert "groups: cleanGroups" in mod
+    assert "groups: []" in mod
+    assert "entry.groupId" in mod
+    assert "entry.color" in mod
     src = SHELL_JS.read_text(encoding="utf-8")
-    assert "groups: cleanGroups" in src
-    assert "groups: []" in src
-    assert "entry.groupId" in src
-    assert "entry.color" in src
+    assert "CuttleSpaces.loadSpacesState(" in src
+    assert "CuttleSpaces.saveSpacesState(" in src
 
 
 def test_tab_menu_offers_rename_color_group():
@@ -57,20 +72,28 @@ def test_grouped_tabs_render_pill_and_accent():
 
 
 def test_reorder_drop_joins_or_leaves_group():
+    # Phase 1: one canonical target (spaces_drop.js) feeds preview AND commit.
+    # The old split (fixDraggedTabGroup + sleeve-rect neighbor pass) is gone.
+    mod = DROP_JS.read_text(encoding="utf-8")
+    assert "function computeDropTarget(" in mod
+    assert "function applyDropTarget(" in mod
+    assert "spaceGroupPillAtX" not in mod
     src = SHELL_JS.read_text(encoding="utf-8")
-    # Membership follows the sleeve boundary at the drop point.
-    assert "function fixDraggedTabGroup(draggedId, dropX)" in src
-    assert "fixDraggedTabGroup(draggedId, dropX)" in src
-    assert "function spaceGroupSleeveRect(" in src
+    assert "function fixDraggedTabGroup(" not in src
+    assert "computeSpaceDropTarget(host, tab.dataset.spaceId" in src  # preview + commit
+    assert "CuttleSpaces.applyDropTarget(spacesState, target," in src
     assert "spaceGroupPillAtX" not in src
 
 
 def test_tab_reorder_survives_collapsed_groups():
-    src = SHELL_JS.read_text(encoding="utf-8")
     # Hidden members keep their slots; the dragged tab anchors after its
     # left visible neighbor instead of the all-or-nothing bail.
-    assert "function reorderSpacesAroundHidden(" in src
-    assert "reorderSpacesAroundHidden(visibleIds, draggedId)" in src
+    # Owner is spaces_order.js (Phase 1); the shell commits via applyDropTarget.
+    mod = ORDER_JS.read_text(encoding="utf-8")
+    assert "function computeReorderedIds(" in mod
+    assert "function applyVisibleOrder(" in mod
+    src = SHELL_JS.read_text(encoding="utf-8")
+    assert "function reorderSpacesAroundHidden(" not in src
     assert "reorderSpaces(ids)" not in src
     # Off-window releases snap back instead of floating the tab.
     assert "window.addEventListener('blur', () => { if (drag) finish(false); });" in src
@@ -79,22 +102,32 @@ def test_tab_reorder_survives_collapsed_groups():
 
 def test_tab_drag_nudges_groups_live():
     src = SHELL_JS.read_text(encoding="utf-8")
-    # Tabs and sleeves share the live sibling order; the pill itself is never
-    # an insertion point (it would swallow the tab into the sleeve).
+    # Tabs and sleeves share the measured lane order for the canonical target.
     assert "'.shell-space-tab, .shell-space-group-sleeve'" in src
-    assert "never an insertion point" in src
-    # Hovering a sleeve lights the join boundary mid-drag.
-    assert "spaceGroupSleeveAtPoint(" in src
+    assert "function measureSpaceDropLanes(" in src
+    assert "function placeDraggedSpaceTab(" in src
+    # The sleeve highlight matches the committed membership (no separate
+    # hover rule since Phase 1).
     assert "is-drop-target" in src
+    assert "spaceGroupSleeveAtPoint(" not in src
+    mod = DROP_JS.read_text(encoding="utf-8")
+    # The pill itself is never an insertion point: a sleeve lane resolves to
+    # before its first visible member.
+    assert "beforeSleeve" in mod
+    assert "{ beforeTab: before.id } : { beforeSleeve: before.gid }" in mod
 
 
 def test_sleeve_end_preview_matches_drop():
-    src = SHELL_JS.read_text(encoding="utf-8")
     # Aiming at the last slot parks the tab inside the sleeve end so the
     # preview agrees with the drop rule (same end slop on both sides).
-    assert "park the tab inside the sleeve end" in src
-    assert "r.right + 6" in src
-    assert "joinSleeve.appendChild(tab)" in src
+    # Owner is spaces_drop.js (Phase 1); the shell places via `place`.
+    mod = DROP_JS.read_text(encoding="utf-8")
+    assert "inside the sleeve end" in mod
+    assert "r.left + r.width + 6" in mod  # same +6 end slop as membership
+    assert "place = { park: joinSleeve }" in mod
+    src = SHELL_JS.read_text(encoding="utf-8")
+    assert "placeDraggedSpaceTab(host, tab, target)" in src
+    assert "sleeve.appendChild(tab)" in src
 
 
 def test_tab_drag_survives_iframes_and_off_strip_releases():
@@ -122,7 +155,9 @@ def test_buttonless_moves_cancel_drags():
 def test_groups_collapse_and_expand():
     src = SHELL_JS.read_text(encoding="utf-8")
     assert "function toggleSpaceGroupCollapsed(" in src
-    assert "collapsed: !!g.collapsed" in src  # persisted
+    assert "CuttleSpaces.toggleGroupCollapsed(spacesState, gid" in src
+    mod = STATE_JS.read_text(encoding="utf-8")
+    assert "collapsed: !!g.collapsed" in mod  # persisted
     assert "group.collapsed) return" in src  # members hidden while collapsed
     assert "shell-space-group-count" in src  # pill shows member count
     # The active tab is never hidden: collapse refuses, switching expands.
@@ -139,6 +174,17 @@ def test_open_menu_pins_fullscreen_titlebar():
     assert "cuttleTitlebarCancelHide();" in src
     # ...and closing re-arms it when the pointer is away.
     assert "cuttleTitlebarRescheduleHide();" in src
+
+
+def test_spaces_scripts_load_before_shell():
+    html = (Path(__file__).resolve().parents[2] / "src" / "web" / "app_shell.html").read_text(encoding="utf-8")
+    idx = {}
+    for name in ("spaces_state.js", "spaces_groups.js", "spaces_order.js", "spaces_drop.js", "spaces_activity.js", "app_shell.js"):
+        pos = html.find(name)
+        assert pos >= 0, name + " not loaded by app_shell.html"
+        idx[name] = pos
+    for name in ("spaces_state.js", "spaces_groups.js", "spaces_order.js", "spaces_drop.js", "spaces_activity.js"):
+        assert idx[name] < idx["app_shell.js"], name + " must load before app_shell.js"
 
 
 def test_group_tint_css():

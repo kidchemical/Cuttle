@@ -10,14 +10,18 @@ CHAT_JS = Path(__file__).resolve().parents[2] / "src" / "web" / "js" / "chat_pag
 
 
 def test_space_activity_priority_order():
-    src = SHELL_JS.read_text(encoding="utf-8")
-    assert "const SPACE_ACTIVITY_RANK = { running: 5, error: 4, unread: 3, queued: 2, paused: 1 }" in src
+    # Aggregation owner is spaces_activity.js (Phase 1); the shell delegates.
+    mod = (Path(__file__).resolve().parents[2] / "src" / "web" / "js" / "spaces" / "spaces_activity.js").read_text(encoding="utf-8")
+    assert "const RANK = { running: 5, error: 4, unread: 3, queued: 2, paused: 1 }" in mod
     # Running is evaluated before (and outranks) every dot state.
-    agg = src.split("function spaceActivityFor(", 1)[1].split(
-        "function syncSpaceActivityTabs(", 1
+    agg = mod.split("function selectSpaceActivity(", 1)[1].split(
+        "const api = {", 1
     )[0]
     assert "hit.running" in agg
-    assert agg.index("best = 'running'") < agg.index("SPACE_ACTIVITY_RANK[kind]")
+    assert agg.index("best = 'running'") < agg.index("RANK[kind]")
+    src = SHELL_JS.read_text(encoding="utf-8")
+    assert "CuttleSpaces.selectSpaceActivity(ids, lookupSpaceSessionActivity," in src
+    assert "const SPACE_ACTIVITY_RANK" not in src
 
 
 def test_space_tab_renders_activity_dot():

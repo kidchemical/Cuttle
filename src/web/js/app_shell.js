@@ -5105,79 +5105,27 @@ async function deleteWorkspace(id) {
 // ── Space groups (Chrome-style tab groups) ─────────────
 // A group is a named, colored bucket of spaces. Tabs keep working exactly as
 // before; members render under a group pill and share the group color.
-const SPACE_GROUP_COLORS = [
-    { name: 'White', hex: '#e8eaed' },
-    { name: 'Grey', hex: '#9aa0a6' },
-    { name: 'Blue', hex: '#8ab4f8' },
-    { name: 'Red', hex: '#f28b82' },
-    { name: 'Yellow', hex: '#fdd663' },
-    { name: 'Green', hex: '#81c995' },
-    { name: 'Pink', hex: '#ff8bcb' },
-    { name: 'Purple', hex: '#c58af9' },
-    { name: 'Cyan', hex: '#78d9ec' },
-    { name: 'Orange', hex: '#fcad70' },
-];
-const SPACE_GROUP_DEFAULT_COLOR = '#e8eaed';
-
-/** Only preset swatches are stored; anything else becomes null (no color). */
-function sanitizeSpaceColor(hex) {
-    const want = String(hex || '').toLowerCase();
-    const hit = SPACE_GROUP_COLORS.find((c) => c.hex.toLowerCase() === want);
-    return hit ? hit.hex : null;
-}
-
-function newSpaceGroupId() {
-    return 'sg_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-}
-
+// ── Space groups (Chrome-style tab groups) ─────────────
+// A group is a named, colored bucket of spaces. Tabs keep working exactly as
+// before; members render under a group pill and share the group color.
+// Domain logic lives in spaces_groups.js (pure state transitions on
+// spacesState); the wrappers below bind the singleton and own the
+// persist + re-render tail. Palette + ids live in spaces_state.js.
 function spaceGroupById(gid) {
-    if (!gid) return null;
-    return (spacesState.groups || []).find((g) => g && g.id === gid) || null;
+    return CuttleSpaces.getGroupById(spacesState, gid);
 }
 
 function ensureSpaceGroupsArray() {
-    if (!Array.isArray(spacesState.groups)) spacesState.groups = [];
-    return spacesState.groups;
+    return CuttleSpaces.ensureGroupsArray(spacesState);
 }
 
 /** Drop groups with no member tabs (runs after ungroup/close/delete). */
 function pruneEmptySpaceGroups() {
-    const groups = ensureSpaceGroupsArray();
-    if (!groups.length) return;
-    const used = new Set(spacesState.spaces.map((s) => s && s.groupId).filter(Boolean));
-    const kept = groups.filter((g) => g && used.has(g.id));
-    if (kept.length !== groups.length) {
-        spacesState.groups = kept;
-        persistSpacesState();
-    }
-}
-
-/** Keep a group's tabs adjacent: move the space right after the last member.
- *  A first/only member stays where it is (Chrome keeps a new group in place). */
-function moveSpaceNextToGroup(spaceId, gid) {
-    const list = spacesState.spaces;
-    const idx = list.findIndex((s) => s && s.id === spaceId);
-    if (idx < 0) return;
-    let last = -1;
-    for (let i = 0; i < list.length; i++) {
-        if (list[i] && list[i].id !== spaceId && list[i].groupId === gid) last = i;
-    }
-    if (last < 0) return;
-    const [space] = list.splice(idx, 1);
-    list.splice(last > idx ? last : last + 1, 0, space);
+    if (CuttleSpaces.pruneEmptyGroups(spacesState)) persistSpacesState();
 }
 
 function setSpaceGroup(spaceId, gid) {
-    const space = spacesState.spaces.find((s) => s && s.id === spaceId);
-    if (!space) return false;
-    if (gid && space.groupId === gid) gid = null; // clicking the current group removes it
-    if (gid && !spaceGroupById(gid)) return false;
-    if (gid) {
-        space.groupId = gid;
-        moveSpaceNextToGroup(spaceId, gid);
-    } else {
-        delete space.groupId;
-    }
+    if (!CuttleSpaces.setGroup(spacesState, spaceId, gid)) return false;
     pruneEmptySpaceGroups();
     persistSpacesState();
     renderSpaceTabs();
@@ -5185,21 +5133,15 @@ function setSpaceGroup(spaceId, gid) {
 }
 
 function createSpaceGroupForSpace(spaceId) {
-    const space = spacesState.spaces.find((s) => s && s.id === spaceId);
-    if (!space) return null;
-    const group = { id: newSpaceGroupId(), name: '', color: SPACE_GROUP_DEFAULT_COLOR };
-    ensureSpaceGroupsArray().push(group);
-    space.groupId = group.id;
-    moveSpaceNextToGroup(spaceId, group.id);
+    const group = CuttleSpaces.createGroupForSpace(spacesState, spaceId);
+    if (!group) return null;
     persistSpacesState();
     renderSpaceTabs();
     return group;
 }
 
 function removeSpaceFromGroup(spaceId) {
-    const space = spacesState.spaces.find((s) => s && s.id === spaceId);
-    if (!space || !space.groupId) return false;
-    delete space.groupId;
+    if (!CuttleSpaces.removeFromGroup(spacesState, spaceId)) return false;
     pruneEmptySpaceGroups();
     persistSpacesState();
     renderSpaceTabs();
@@ -5207,27 +5149,19 @@ function removeSpaceFromGroup(spaceId) {
 }
 
 function renameSpaceGroup(gid, name) {
-    const group = spaceGroupById(gid);
-    if (!group) return;
-    group.name = String(name || '').trim().slice(0, 40);
+    if (!CuttleSpaces.renameGroup(spacesState, gid, name)) return;
     persistSpacesState();
 }
 
 function setSpaceGroupColor(gid, hex) {
-    const group = spaceGroupById(gid);
-    if (!group) return false;
-    group.color = sanitizeSpaceColor(hex) || SPACE_GROUP_DEFAULT_COLOR;
+    if (!CuttleSpaces.setGroupColor(spacesState, gid, hex)) return false;
     persistSpacesState();
     renderSpaceTabs();
     return true;
 }
 
 function setSpaceColor(spaceId, hex) {
-    const space = spacesState.spaces.find((s) => s && s.id === spaceId);
-    if (!space) return false;
-    const clean = sanitizeSpaceColor(hex);
-    if (clean) space.color = clean;
-    else delete space.color;
+    if (!CuttleSpaces.setSpaceColor(spacesState, spaceId, hex)) return false;
     persistSpacesState();
     renderSpaceTabs();
     return true;
@@ -5235,10 +5169,7 @@ function setSpaceColor(spaceId, hex) {
 
 /** Ungroup: dissolve the group, member spaces survive as plain tabs. */
 function dissolveSpaceGroup(gid) {
-    const group = spaceGroupById(gid);
-    if (!group) return false;
-    spacesState.spaces.forEach((s) => { if (s && s.groupId === gid) delete s.groupId; });
-    spacesState.groups = ensureSpaceGroupsArray().filter((g) => g && g.id !== gid);
+    if (!CuttleSpaces.dissolveGroup(spacesState, gid)) return false;
     persistSpacesState();
     renderSpaceTabs();
     return true;
@@ -5246,107 +5177,24 @@ function dissolveSpaceGroup(gid) {
 
 /** Collapse/expand a group. Never hides the active tab. */
 function toggleSpaceGroupCollapsed(gid) {
-    const group = spaceGroupById(gid);
-    if (!group) return false;
-    if (!group.collapsed) {
-        const hidesActive = spacesState.spaces.some(
-            (s) => s && s.groupId === gid && s.id === spacesState.active
-        );
-        if (hidesActive) {
-            if (typeof window.showToast === 'function') {
-                window.showToast('Active space is in this group', 'info');
-            }
-            return false;
+    const res = CuttleSpaces.toggleGroupCollapsed(spacesState, gid, spacesState.active);
+    if (!res.ok) {
+        if (res.reason === 'hides-active' && typeof window.showToast === 'function') {
+            window.showToast('Active space is in this group', 'info');
         }
-        group.collapsed = true;
-    } else {
-        group.collapsed = false;
+        return false;
     }
     persistSpacesState();
     renderSpaceTabs();
     return true;
 }
 
-/** Bounding rect of a group's sleeve (null outside a browser / when missing). */
-function spaceGroupSleeveRect(gid) {
-    try {
-        if (typeof document === 'undefined') return null;
-        const el = document.querySelector('.shell-space-group-sleeve[data-group-id="' + CSS.escape(gid) + '"]');
-        return el ? el.getBoundingClientRect() : null;
-    } catch (_) {
-        return null;
-    }
-}
-
-/** Group id of the sleeve under a viewport point (collapsed sleeves excluded). */
-function spaceGroupSleeveAtPoint(x, y) {
-    try {
-        if (typeof document === 'undefined') return null;
-        const sleeves = document.querySelectorAll('.shell-space-group-sleeve:not(.is-collapsed)');
-        for (const el of sleeves) {
-            const r = el.getBoundingClientRect();
-            if (x >= r.left && x < r.right && y >= r.top && y < r.bottom) return el.dataset.groupId || null;
-        }
-    } catch (_) {}
-    return null;
-}
-
-/**
- * After a tab-reorder drop, match Chrome: the group's sleeve is the boundary.
- * Dropping left of the sleeve parks outside (never joins); dropping on or
- * inside it joins (front slot included); between members joins; dropping past
- * the sleeve's end parks outside. Dragging a member out ungroups it. A drop
- * with no coordinates (keyboard/programmatic) keeps the conservative outcome:
- * outsiders stay out, members stay in. Collapsed groups never gain by drag.
- */
-function fixDraggedTabGroup(draggedId, dropX) {
-    const list = spacesState.spaces;
-    const i = list.findIndex((s) => s && s.id === draggedId);
-    if (i < 0) return;
-    const space = list[i];
-    const left = i > 0 ? list[i - 1] : null;
-    const right = i < list.length - 1 ? list[i + 1] : null;
-    const leftGroup = left && left.groupId ? spaceGroupById(left.groupId) : null;
-    const rightGroup = right && right.groupId ? spaceGroupById(right.groupId) : null;
-    const sleeveStart = (gid) => {
-        const r = spaceGroupSleeveRect(gid);
-        if (!r || !Number.isFinite(dropX)) return false;
-        return dropX >= r.left - 4;
-    };
-    const pastSleeveEnd = (gid) => {
-        const r = spaceGroupSleeveRect(gid);
-        if (!r || !Number.isFinite(dropX)) return false;
-        return dropX > r.right + 6;
-    };
-    let want = null;
-    if (leftGroup && rightGroup && leftGroup.id === rightGroup.id) {
-        if (!leftGroup.collapsed) want = leftGroup.id;
-    } else if (leftGroup && !rightGroup) {
-        if (!leftGroup.collapsed && !pastSleeveEnd(leftGroup.id)) want = leftGroup.id;
-    } else if (!leftGroup && rightGroup) {
-        if (!rightGroup.collapsed) {
-            if (space.groupId === rightGroup.id) {
-                // Already in: stay, unless explicitly dropped left of the sleeve.
-                const r = spaceGroupSleeveRect(rightGroup.id);
-                if (!(r && Number.isFinite(dropX) && dropX < r.left - 4)) want = rightGroup.id;
-            } else if (sleeveStart(rightGroup.id)) {
-                want = rightGroup.id;
-            }
-        }
-    }
-    if ((space.groupId || null) === want) return;
-    if (want) space.groupId = want;
-    else delete space.groupId;
-    pruneEmptySpaceGroups();
-    persistSpacesState();
-}
-
 /** Delete group: dissolve it and close its member spaces (at least one space survives). */
 function deleteSpaceGroupWithSpaces(gid) {
-    const group = spaceGroupById(gid);
-    if (!group) return false;
-    const members = spacesState.spaces.filter((s) => s && s.groupId === gid).map((s) => s.id);
-    dissolveSpaceGroup(gid);
+    const members = CuttleSpaces.planGroupDelete(spacesState, gid);
+    if (!members) return false;
+    persistSpacesState();
+    renderSpaceTabs();
     // Close non-active members first so the active space is the last one standing.
     members.sort((a, b) => (a === spacesState.active ? 1 : 0) - (b === spacesState.active ? 1 : 0));
     members.forEach((id) => closeSpace(id));
@@ -5355,7 +5203,7 @@ function deleteSpaceGroupWithSpaces(gid) {
 }
 
 function spaceGroupPillHtml(group) {
-    const color = sanitizeSpaceColor(group.color) || SPACE_GROUP_DEFAULT_COLOR;
+    const color = CuttleSpaces.sanitizeColor(group.color) || CuttleSpaces.DEFAULT_COLOR;
     const name = escapeHtml(group.name || '');
     const collapsed = !!group.collapsed;
     const members = spacesState.spaces.filter((s) => s && s.groupId === group.id).length;
@@ -5374,65 +5222,27 @@ function spaceGroupPillHtml(group) {
 // ── Spaces (titlebar tabs — each holds its own split layout) ────
 // Per-device, like STORAGE_LAYOUT. The active space's layout *is* the live
 // STORAGE_LAYOUT; `root` is only authoritative for inactive spaces.
+// Singleton storage binding lives here (shell orchestration); validation,
+// ids, names, and transitions live in spaces_state.js.
 const STORAGE_SPACES = 'shell_spaces_v1';
-
-function newSpaceId() {
-    return 'sp_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-}
 
 function readSpacesState() {
     try {
-        const data = JSON.parse(localStorage.getItem(STORAGE_SPACES) || 'null');
-        if (data && Array.isArray(data.spaces) && data.spaces.length) {
-            const groupById = new Map();
-            const cleanGroups = [];
-            (Array.isArray(data.groups) ? data.groups : []).forEach((g) => {
-                if (!g || !g.id || groupById.has(String(g.id))) return;
-                const clean = {
-                    id: String(g.id),
-                    name: String(g.name || '').slice(0, 40),
-                    color: sanitizeSpaceColor(g.color) || SPACE_GROUP_DEFAULT_COLOR,
-                    collapsed: !!g.collapsed,
-                };
-                groupById.set(clean.id, clean);
-                cleanGroups.push(clean);
-            });
-            const spaces = data.spaces
-                .filter((s) => s && s.id)
-                .map((s) => {
-                    const entry = {
-                        id: String(s.id),
-                        name: String(s.name || 'Space').slice(0, 60),
-                        root: s.root && typeof s.root === 'object' ? s.root : null,
-                    };
-                    if (s.groupId && groupById.has(String(s.groupId))) {
-                        entry.groupId = String(s.groupId);
-                    }
-                    const color = sanitizeSpaceColor(s.color);
-                    if (color) entry.color = color;
-                    return entry;
-                });
-            if (spaces.length) {
-                const active = spaces.some((s) => s.id === data.active) ? data.active : spaces[0].id;
-                return { active, spaces, groups: cleanGroups };
-            }
-        }
-    } catch (_) {}
-    const id = newSpaceId();
-    return { active: id, spaces: [{ id, name: 'Space 1', root: null }], groups: [] };
+        return CuttleSpaces.loadSpacesState(
+            typeof localStorage !== 'undefined' ? localStorage : null
+        );
+    } catch (_) {
+        return CuttleSpaces.createDefaultState();
+    }
 }
 
 const spacesState = readSpacesState();
 
 function persistSpacesState() {
-    try { localStorage.setItem(STORAGE_SPACES, JSON.stringify(spacesState)); } catch (_) {}
-}
-
-function nextSpaceName() {
-    const taken = new Set(spacesState.spaces.map((s) => s.name.toLowerCase()));
-    let n = spacesState.spaces.length + 1;
-    while (taken.has(('space ' + n))) n += 1;
-    return 'Space ' + n;
+    CuttleSpaces.saveSpacesState(
+        typeof localStorage !== 'undefined' ? localStorage : null,
+        spacesState
+    );
 }
 
 function switchSpace(id) {
@@ -5477,23 +5287,20 @@ function hideOutgoingSpaceFrames() {
 }
 
 function addSpace() {
-    const space = { id: newSpaceId(), name: nextSpaceName(), root: null };
-    spacesState.spaces.push(space);
+    const space = CuttleSpaces.addSpaceToState(spacesState);
     renderSpaceTabs();
     switchSpace(space.id);
     startSpaceRename(space.id);
 }
 
 function closeSpace(id) {
-    const list = spacesState.spaces;
-    if (list.length < 2) return;
-    const idx = list.findIndex((s) => s.id === id);
-    if (idx < 0) return;
-    if (id === spacesState.active) {
-        switchSpace((list[idx + 1] || list[idx - 1]).id);
+    const plan = CuttleSpaces.planSpaceClose(spacesState, id);
+    if (!plan.ok) return;
+    if (plan.switchTo) {
+        switchSpace(plan.switchTo);
         if (spacesState.active === id) return;
     }
-    list.splice(list.findIndex((s) => s.id === id), 1);
+    CuttleSpaces.commitSpaceClose(spacesState, id);
     pruneEmptySpaceGroups();
     persistSpacesState();
     renderSpaceTabs();
@@ -5501,10 +5308,7 @@ function closeSpace(id) {
 }
 
 function renameSpace(id, name) {
-    const space = spacesState.spaces.find((s) => s.id === id);
-    const clean = String(name || '').trim().slice(0, 60);
-    if (!space || !clean) return;
-    space.name = clean;
+    if (!CuttleSpaces.renameSpaceInState(spacesState, id, name)) return;
     persistSpacesState();
 }
 
@@ -5555,7 +5359,7 @@ function renderSpaceTabs() {
         if (gid !== openGroup) {
             closeSleeve();
             if (group) {
-                const color = sanitizeSpaceColor(group.color) || SPACE_GROUP_DEFAULT_COLOR;
+                const color = CuttleSpaces.sanitizeColor(group.color) || CuttleSpaces.DEFAULT_COLOR;
                 openGroup = gid;
                 html += '<span class="shell-space-group-sleeve'
                     + (group.collapsed ? ' is-collapsed' : '') + '" role="presentation"'
@@ -5566,8 +5370,8 @@ function renderSpaceTabs() {
         }
         if (group && group.collapsed) return; // hidden until the pill expands it
         const accent = group
-            ? (sanitizeSpaceColor(group.color) || SPACE_GROUP_DEFAULT_COLOR)
-            : sanitizeSpaceColor(s.color);
+            ? (CuttleSpaces.sanitizeColor(group.color) || CuttleSpaces.DEFAULT_COLOR)
+            : CuttleSpaces.sanitizeColor(s.color);
         const active = s.id === spacesState.active;
         const name = escapeHtml(s.name).replace(/"/g, '&quot;');
         html += '<div class="shell-space-tab' + (active ? ' is-active' : '') + (accent ? ' has-accent' : '') + '" role="tab" tabindex="0"'
@@ -5603,45 +5407,26 @@ function syncActiveSpaceTab() {
 // error (red), unread (green), queued/active (orange), paused (yellow).
 // A space shows the highest-priority state across its chats:
 // running > error > unread > queued > paused > none.
-const SPACE_ACTIVITY_RANK = { running: 5, error: 4, unread: 3, queued: 2, paused: 1 };
-const SPACE_ACTIVITY_LABEL = {
-    running: 'Active',
-    error: 'Unread error',
-    unread: 'Unread',
-    queued: 'Queued prompt',
-    paused: 'Paused queued prompt',
-};
-/** sessionId variants -> { activity:'', running:false, at:number } */
-const spaceActivityBySession = new Map();
+// Aggregation + snapshot map live in spaces_activity.js; the poll transport
+// and DOM patching below stay in the shell.
 let spaceActivityPollInFlight = false;
 let spaceActivityLastPollAt = 0;
 let spaceActivitySig = '';
 
 function spaceSidVariants(sid) {
-    const raw = String(sid == null ? '' : sid).trim();
-    if (!raw) return [];
-    const out = [raw];
-    const bare = raw.startsWith('db_session_') ? raw.slice('db_session_'.length) : raw;
-    if (bare && bare !== raw) out.push(bare);
-    if (bare && 'db_session_' + bare !== raw) out.push('db_session_' + bare);
-    return out;
+    return CuttleSpaces.sidVariants(sid);
 }
 
 function noteSpaceSessionActivity(sid, activity, running) {
-    const clean = activity === 'error' || activity === 'unread' || activity === 'queued' || activity === 'paused'
-        ? activity
-        : '';
-    const entry = { activity: clean, running: !!running, at: Date.now() };
-    spaceSidVariants(sid).forEach((key) => { spaceActivityBySession.set(key, entry); });
+    CuttleSpaces.noteSessionActivity(sid, activity, running);
 }
 
 function lookupSpaceSessionActivity(sid) {
-    const keys = spaceSidVariants(sid);
-    for (let i = 0; i < keys.length; i++) {
-        const hit = spaceActivityBySession.get(keys[i]);
-        if (hit) return hit;
-    }
-    return null;
+    return CuttleSpaces.lookupSessionActivity(sid);
+}
+
+function clearSpaceSessionActivity(sid) {
+    CuttleSpaces.clearSessionActivity(sid);
 }
 
 /** Chat session ids belonging to a space. Active space reads live panes;
@@ -5693,36 +5478,7 @@ function spaceActivityFor(space) {
     if (!ids.length) return '';
     const isActive = space.id === spacesState.active;
     const visible = isActive ? visibleActiveSpaceChatIds() : new Set();
-    const visibleBare = new Set([...visible].map((s) => {
-        const v = spaceSidVariants(s);
-        return v.length > 1 ? v[1] : s;
-    }));
-    let best = '';
-    let bestRank = 0;
-    ids.forEach((sid) => {
-        const hit = lookupSpaceSessionActivity(sid);
-        if (!hit) return;
-        if (hit.running) {
-            if (SPACE_ACTIVITY_RANK.running > bestRank) {
-                best = 'running';
-                bestRank = SPACE_ACTIVITY_RANK.running;
-            }
-            return;
-        }
-        let kind = hit.activity || '';
-        if (!kind) return;
-        // Unread/error on a chat you are currently looking at is already seen.
-        if (isActive && (kind === 'unread' || kind === 'error')) {
-            const variants = spaceSidVariants(sid);
-            if (variants.some((v) => visible.has(v) || visibleBare.has(v))) return;
-        }
-        const rank = SPACE_ACTIVITY_RANK[kind] || 0;
-        if (rank > bestRank) {
-            best = kind;
-            bestRank = rank;
-        }
-    });
-    return best;
+    return CuttleSpaces.selectSpaceActivity(ids, lookupSpaceSessionActivity, isActive, visible);
 }
 
 /** Patch tab dots in place (no re-render — preserves dblclick rename). */
@@ -5747,7 +5503,7 @@ function syncSpaceActivityTabs() {
             dot.className = 'shell-space-activity' + (kind ? ' is-' + kind : '');
             if (kind) {
                 dot.hidden = false;
-                const label = SPACE_ACTIVITY_LABEL[kind] || kind;
+                const label = CuttleSpaces.LABEL[kind] || kind;
                 dot.title = label;
                 dot.setAttribute('aria-label', label);
             } else {
@@ -5757,7 +5513,7 @@ function syncSpaceActivityTabs() {
             }
             const spaceName = space ? space.name : '';
             tab.title = spaceName + ' — drag to reorder, double-click to rename'
-                + (kind ? ' · ' + (SPACE_ACTIVITY_LABEL[kind] || kind) : '');
+                + (kind ? ' · ' + (CuttleSpaces.LABEL[kind] || kind) : '');
         }
     });
     spaceActivitySig = sigParts.join('|');
@@ -5795,19 +5551,6 @@ function readLocalChatSessions() {
     }
 }
 
-function followupKind(items) {
-    let active = false;
-    let paused = false;
-    (Array.isArray(items) ? items : []).forEach((x) => {
-        if (!x) return;
-        if (x.paused) paused = true;
-        else active = true;
-    });
-    if (active) return 'queued';
-    if (paused) return 'paused';
-    return '';
-}
-
 /** Poll fallback so inactive spaces (no live iframe) still show dots.
  *  Push messages from chat iframes give immediacy; this gives coverage. */
 async function refreshSpaceActivityFromServer() {
@@ -5824,7 +5567,7 @@ async function refreshSpaceActivityFromServer() {
                 noteSpaceSessionActivity(sid, p.unreadIsError ? 'error' : 'unread', !!(prev && prev.running));
             } else if (prev && (prev.activity === 'unread' || prev.activity === 'error') && !prev.running) {
                 // Cleared elsewhere (chat opened) with no fresh push yet.
-                spaceSidVariants(sid).forEach((key) => { spaceActivityBySession.delete(key); });
+                clearSpaceSessionActivity(sid);
             }
         });
     } catch (_) {}
@@ -5834,10 +5577,10 @@ async function refreshSpaceActivityFromServer() {
         Object.keys(local || {}).forEach((sid) => {
             const obj = local[sid];
             if (!obj || typeof obj !== 'object') return;
-            const kind = followupKind(obj.followup_queue != null ? obj.followup_queue : obj.followups);
+            const kind = CuttleSpaces.followupKind(obj.followup_queue != null ? obj.followup_queue : obj.followups);
             if (kind) {
                 const prev = lookupSpaceSessionActivity(sid);
-                if (!prev || (!prev.running && (!prev.activity || SPACE_ACTIVITY_RANK[kind] > (SPACE_ACTIVITY_RANK[prev.activity] || 0)))) {
+                if (!prev || (!prev.running && (!prev.activity || CuttleSpaces.RANK[kind] > (CuttleSpaces.RANK[prev.activity] || 0)))) {
                     noteSpaceSessionActivity(sid, kind, !!(prev && prev.running));
                 }
             }
@@ -5880,7 +5623,7 @@ async function refreshSpaceActivityFromServer() {
                 const s = sessionsByBare.get(bare) || sessionsByBare.get(variants[0]);
                 if (!s) return;
                 const running = !!(s.generating || s.awaiting_action);
-                let kind = followupKind(s.followup_queue != null ? s.followup_queue : s.followups);
+                let kind = CuttleSpaces.followupKind(s.followup_queue != null ? s.followup_queue : s.followups);
                 const prev = lookupSpaceSessionActivity(sid);
                 // A pushed unread/error outranks a polled queue state.
                 if (prev && (prev.activity === 'unread' || prev.activity === 'error')) {
@@ -5889,7 +5632,7 @@ async function refreshSpaceActivityFromServer() {
                 if (running || kind) {
                     noteSpaceSessionActivity(sid, kind, running);
                 } else if (prev && prev.running) {
-                    spaceSidVariants(sid).forEach((key) => { spaceActivityBySession.delete(key); });
+                    clearSpaceSessionActivity(sid);
                 }
             });
         } else {
@@ -5920,7 +5663,7 @@ async function refreshSpaceActivityFromServer() {
                             const prev = lookupSpaceSessionActivity(sid);
                             if (prev && prev.running) {
                                 if (prev.activity) noteSpaceSessionActivity(sid, prev.activity, false);
-                                else spaceSidVariants(sid).forEach((key) => { spaceActivityBySession.delete(key); });
+                                else clearSpaceSessionActivity(sid);
                             }
                         }
                     });
@@ -6016,7 +5759,7 @@ function placeFixedPanel(el, x, y) {
 
 function spaceCtxSwatchesHtml(selected) {
     return '<div class="shell-ctx-swatches" role="group" aria-label="Colors">'
-        + SPACE_GROUP_COLORS.map((c) => (
+        + CuttleSpaces.COLORS.map((c) => (
             '<button type="button" class="shell-ctx-swatch' + (selected === c.hex ? ' is-selected' : '') + '"'
             + ' data-color="' + c.hex + '"'
             + ' style="--swatch:' + c.hex + '"'
@@ -6099,7 +5842,7 @@ function openSpaceTabMenu(x, y, spaceId) {
         if (groups.length) h += '<div class="shell-space-ctx-sep" aria-hidden="true"></div>';
         groups.forEach((g) => {
             if (!g) return;
-            const color = sanitizeSpaceColor(g.color) || SPACE_GROUP_DEFAULT_COLOR;
+            const color = CuttleSpaces.sanitizeColor(g.color) || CuttleSpaces.DEFAULT_COLOR;
             h += '<button type="button" class="shell-space-ctx-item" role="menuitem" data-gid="' + escapeHtml(g.id) + '">'
                 + '<span class="shell-ctx-dot" style="--swatch:' + color + '" aria-hidden="true"></span>'
                 + '<span class="shell-ctx-label">' + (escapeHtml(g.name) || 'Unnamed group') + '</span>'
@@ -6313,23 +6056,8 @@ function setupSpaceTabMenus(host) {
  * The old all-or-nothing reorder silently dropped every commit while any
  * group was collapsed.
  */
-function reorderSpacesAroundHidden(visibleIds, draggedId) {
-    const list = spacesState.spaces;
-    const vi = visibleIds.indexOf(draggedId);
-    if (vi < 0) return false;
-    const dragged = list.find((s) => s && s.id === draggedId);
-    if (!dragged) return false;
-    const without = list.filter((s) => s && s.id !== draggedId);
-    let at = 0;
-    if (vi > 0) {
-        const li = without.findIndex((s) => s && s.id === visibleIds[vi - 1]);
-        at = li < 0 ? without.length : li + 1;
-    }
-    const next = without.slice(0, at).concat([dragged], without.slice(at));
-    if (next.every((s, idx) => s === list[idx])) return false;
-    list.splice(0, list.length, ...next);
-    persistSpacesState();
-    return true;
+function spaceById(id) {
+    return CuttleSpaces.getSpaceById(spacesState, id);
 }
 
 // ── Cross-space pane drag (grip → space tab) ───────────────
@@ -6338,10 +6066,6 @@ function reorderSpacesAroundHidden(visibleIds, draggedId) {
 // PANE_SPACE_HOVER_MS instead switches to that space so the still-held grip
 // can be dropped on the exact pane to swap with.
 const PANE_SPACE_HOVER_MS = 1000;
-
-function spaceById(id) {
-    return spacesState.spaces.find((s) => s && s.id === id) || null;
-}
 
 /** Space-tab element under a viewport point (titlebar hit-test during pane drags). */
 function spaceTabAtPoint(x, y) {
@@ -6519,6 +6243,72 @@ function syncCrossSpaceGripVisibility() {
     splitContainer.classList.toggle('has-cross-space', spacesState.spaces.length >= 2);
 }
 
+/** Measure the tab strip for the canonical drop computation (DOM read only). */
+function measureSpaceDropLanes(host, draggedId) {
+    const lanes = [];
+    const tabRects = {};
+    const sleeveRects = {};
+    host.querySelectorAll('.shell-space-tab, .shell-space-group-sleeve').forEach((el) => {
+        if (el.classList.contains('shell-space-tab')) {
+            const id = el.dataset.spaceId;
+            if (!id || id === draggedId) return;
+            const r = el.getBoundingClientRect();
+            lanes.push({ t: 'tab', id });
+            tabRects[id] = { left: r.left, width: r.width };
+        } else if (el.dataset.groupId) {
+            const r = el.getBoundingClientRect();
+            lanes.push({ t: 'sleeve', gid: el.dataset.groupId });
+            sleeveRects[el.dataset.groupId] = { left: r.left, width: r.width };
+        }
+    });
+    return { lanes, tabRects, sleeveRects };
+}
+
+/** One canonical drop target for preview AND commit (spaces_drop.js). */
+function computeSpaceDropTarget(host, draggedId, x) {
+    const visibleIds = Array.from(host.querySelectorAll('.shell-space-tab')).map((t) => t.dataset.spaceId);
+    const m = measureSpaceDropLanes(host, draggedId);
+    return CuttleSpaces.computeDropTarget({
+        spaces: spacesState.spaces,
+        groups: spacesState.groups,
+        visibleIds,
+        draggedId,
+        lanes: m.lanes,
+        tabRects: m.tabRects,
+        sleeveRects: m.sleeveRects,
+        x,
+    });
+}
+
+/** Position the dragged tab element per the canonical preview directive. */
+function placeDraggedSpaceTab(host, tab, target) {
+    const place = (target && !target.noop && target.place) || { end: true };
+    const tabElFor = (id) => {
+        try {
+            return host.querySelector('.shell-space-tab[data-space-id="' + CSS.escape(id) + '"]');
+        } catch (_) { return null; }
+    };
+    const sleeveElFor = (gid) => {
+        try {
+            return host.querySelector('.shell-space-group-sleeve[data-group-id="' + CSS.escape(gid) + '"]');
+        } catch (_) { return null; }
+    };
+    if (place.park) {
+        const sleeve = sleeveElFor(place.park);
+        if (sleeve && (tab.parentElement !== sleeve || tab.nextElementSibling !== null)) {
+            sleeve.appendChild(tab);
+        }
+    } else if (place.beforeTab) {
+        const ref = tabElFor(place.beforeTab);
+        if (ref && tab.nextElementSibling !== ref) ref.parentElement.insertBefore(tab, ref);
+    } else if (place.beforeSleeve) {
+        const ref = sleeveElFor(place.beforeSleeve);
+        if (ref && tab.nextElementSibling !== ref) host.insertBefore(tab, ref);
+    } else if (host.lastElementChild !== tab) {
+        host.appendChild(tab);
+    }
+}
+
 /** Drag a tab sideways to reorder; it follows the pointer while siblings reflow around it. */
 function setupSpaceTabDrag(host) {
     const THRESHOLD = 4;
@@ -6536,11 +6326,13 @@ function setupSpaceTabDrag(host) {
         document.body.classList.remove('is-reordering-spaces');
         if (tab.hasPointerCapture(pointerId)) tab.releasePointerCapture(pointerId);
         if (commit) {
-            const visibleIds = Array.from(host.querySelectorAll('.shell-space-tab')).map((t) => t.dataset.spaceId);
-            const draggedId = tab.dataset.spaceId;
-            reorderSpacesAroundHidden(visibleIds, draggedId);
-            // Membership follows the sleeve boundary at the drop point.
-            fixDraggedTabGroup(draggedId, dropX);
+            // Commit consumes the same canonical target the preview showed:
+            // no re-derivation from DOM order, no separate neighbor pass.
+            const target = computeSpaceDropTarget(host, tab.dataset.spaceId, dropX);
+            if (!target.noop) {
+                const res = CuttleSpaces.applyDropTarget(spacesState, target, tab.dataset.spaceId);
+                if (res.orderChanged || res.groupChanged || res.pruned) persistSpacesState();
+            }
         }
         renderSpaceTabs();
         // The pointerup still produces a click on the tab; don't treat the drop as a switch.
@@ -6573,50 +6365,19 @@ function setupSpaceTabDrag(host) {
             host.classList.add('is-reordering');
             document.body.classList.add('is-reordering-spaces');
         }
-        // Tabs and sleeves take part in the live order so the group nudges as
-        // a whole as the tab slides past it; only tabs commit to the space
-        // order on drop. The pill itself is never an insertion point —
-        // inserting before it would swallow the tab into the sleeve, stretch
-        // the boundary over the pointer, and join on drop.
-        const siblings = Array.from(
-            host.querySelectorAll('.shell-space-tab, .shell-space-group-sleeve')
-        ).filter((el) => el !== tab);
-        const before = siblings.find((t) => {
-            const r = t.getBoundingClientRect();
-            return e.clientX < r.left + r.width / 2;
-        });
-        // Preview the join: if the pointer sits in a sleeve's span (with the
-        // same end slop the drop rule uses) but `before` resolved outside it,
-        // park the tab inside the sleeve end instead — aiming at the last
-        // slot must stretch the sleeve, not hover past it.
-        const joinSleeve = (() => {
-            try {
-                const sleeves = host.querySelectorAll('.shell-space-group-sleeve:not(.is-collapsed)');
-                for (const el of sleeves) {
-                    const r = el.getBoundingClientRect();
-                    if (e.clientX >= r.left && e.clientX <= r.right + 6) return el;
-                }
-            } catch (_) {}
-            return null;
-        })();
-        if (joinSleeve && (!before || before.closest('.shell-space-group-sleeve') !== joinSleeve)) {
-            if (tab.parentElement !== joinSleeve || tab.nextElementSibling !== null) {
-                joinSleeve.appendChild(tab);
-            }
-        } else if (before) {
-            if (tab.nextElementSibling !== before) before.parentElement.insertBefore(tab, before);
-        } else if (host.lastElementChild !== tab) {
-            host.appendChild(tab);
-        }
-        // Hovering a sleeve lights its boundary: inside = joins, outside = out.
+        // Preview consumes the canonical target: the tab renders where the
+        // drop would commit it, and the sleeve highlight matches the
+        // membership the drop would assign (no separate hover rule).
+        const target = computeSpaceDropTarget(host, tab.dataset.spaceId, e.clientX);
+        placeDraggedSpaceTab(host, tab, target);
+        // Hovering a sleeve lights its boundary exactly when the drop joins.
         host.querySelectorAll('.shell-space-group-sleeve.is-drop-target').forEach((el) => {
             el.classList.remove('is-drop-target');
         });
-        const hovId = spaceGroupSleeveAtPoint(e.clientX, e.clientY);
-        if (hovId) {
+        if (target.groupId) {
             try {
                 host.querySelector(
-                    '.shell-space-group-sleeve[data-group-id="' + CSS.escape(hovId) + '"]'
+                    '.shell-space-group-sleeve[data-group-id="' + CSS.escape(target.groupId) + '"]'
                 )?.classList.add('is-drop-target');
             } catch (_) {}
         }
