@@ -632,3 +632,35 @@ class ProjectManager:
 # Global project manager instance — always use src/data/db/projects.db (not cwd-relative).
 _PROJECTS_DB_PATH = Path(__file__).resolve().parents[1] / "data" / "db" / "projects.db"
 project_manager = ProjectManager(str(_PROJECTS_DB_PATH))
+
+# Repo root (parent of src/) for cwd fallbacks that cannot rely on the
+# entry module's globals.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def default_chat_cwd(pm, root=None) -> str:
+    """Fallback cwd when the request/session has no project.
+
+    Prefer the registered Cuttle project (often ``…/src``, matching the
+    Cursor workspace) over the repo root. Mixing those two on the first
+    vs second /cursor turn forks Cursor ``--resume``. Explicit inputs so
+    harness code never imports the entry module for this heuristic;
+    pass the module ``project_manager`` singleton (or None) and an
+    explicit root.
+    """
+    import re as _re
+
+    if pm is not None:
+        try:
+            cur = getattr(pm, 'current_project', None)
+            if isinstance(cur, dict) and (cur.get('path') or '').strip():
+                return str(cur['path']).strip()
+            for p in pm.get_projects() or []:
+                name = str(p.get('name') or '')
+                path = str(p.get('path') or '').strip()
+                if path and _re.search(r'cuttle', name, _re.I):
+                    return path
+        except Exception:
+            pass
+    base = Path(root) if root is not None else REPO_ROOT
+    return str(base)

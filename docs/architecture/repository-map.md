@@ -84,6 +84,17 @@ completion put, and the SSE pump loop stay in transport/route code.
 `api.chat_status_phases` is a leaf formatter taking an injected
 `emit_fn`, never importing the entry module.
 
+**Metadata shapers + chat cwd (Phase 4 P4-3):** `api.chat_metadata`
+owns the pure message/badge shapers (`muse_model_label`,
+`usage_meta_from_assistant_result`, `user_badge_metadata` — no module
+state, `typing`-only imports); `managers.project_manager`
+owns `default_chat_cwd(pm, root)` with explicit inputs plus
+`REPO_ROOT`. `web_chat_api` keeps thin aliases. `internal_http`
+is loopback-HTTP-only (dead in-process `test_client` POST deleted).
+Remaining entry-module imports are the Phase-5 runner calls
+(`agent_router.dispatch`, `supervised/adapters`) plus a `doctor`
+smoke probe — no helper reverse imports left.
+
 **History:** `api.auth_db` SQLite (`src/data/db/`, gitignored). Pairing store for **users** is separate from **worker** enroll.
 
 ---

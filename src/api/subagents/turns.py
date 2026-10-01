@@ -89,13 +89,15 @@ def _assistant_identity_meta(
         # model_override / session pin (that is what painted Grok Riddler as Auto).
         meta["slash_command"] = child_slash_command(spec, child)
         try:
-            from api.web_chat_api import _assistant_message_metadata
+            from api.chat_metadata import usage_meta_from_assistant_result
 
-            asst = _assistant_message_metadata(result) or {}
-            if asst.get("cursor_run") and not meta.get("cursor_run"):
-                meta["cursor_run"] = asst["cursor_run"]
-            if asst.get("usage"):
-                meta["usage"] = asst["usage"]
+            _res = result if isinstance(result, dict) else {}
+            _cursor_run = _res.get("cursor_run")
+            if isinstance(_cursor_run, dict) and _cursor_run and not meta.get("cursor_run"):
+                meta["cursor_run"] = _cursor_run
+            _usage = usage_meta_from_assistant_result(_res)
+            if _usage:
+                meta["usage"] = _usage
         except Exception:
             pass
     name = name or (child.display_name or child.label or "").strip()

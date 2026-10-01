@@ -163,21 +163,18 @@ from api.chat_status_phases import (
 if os.path.basename(os.getcwd()) == 'api':
     os.chdir(actual_project_root)
 
-# Import in-process HTTP helpers (LLM fallback). Visual pipeline graphs are gone.
+# Import loopback HTTP helpers (LLM fallback). Visual pipeline graphs are
+# gone. Only the module presence is probed here — all four helper names
+# previously imported were uncalled (P4-3 removed the dead in-process
+# POST and its entry-module import).
 try:
-    from api.internal_http import (
-        LLM_INTERNAL_HTTP_TIMEOUT,
-        _internal_app_post,
-        _internal_response_ok,
-        _internal_response_json,
-    )
+    from api import internal_http  # noqa: F401
     PIPELINE_AVAILABLE = True  # chat backend is up (legacy flag name)
 except ImportError as e:
     print(f"Warning: Internal HTTP helpers not available: {e}")
     print(f"Current working directory: {os.getcwd()}")
     print(f"Python path: {sys.path}")
     PIPELINE_AVAILABLE = False
-    LLM_INTERNAL_HTTP_TIMEOUT = 300
 
 # Import authentication
 try:
@@ -274,6 +271,10 @@ from api import chat_live_status as _live_status_svc
 # Turn producers import the service directly; this module keeps a thin
 # cancel-injecting wrapper so existing call sites are untouched.
 from api import chat_status as _status_svc
+# Message/badge metadata shapers — owned module (chat_metadata.py).
+# Subagent builders import it directly; aliases below preserve the
+# existing internal call sites.
+from api import chat_metadata as _metadata_svc
 
 from api.http_authz import (
     authenticated_required,
@@ -1219,25 +1220,11 @@ def _resolve_request_project_path(data: Optional[dict] = None) -> str:
 
 
 def _default_chat_cwd() -> str:
-    """Fallback cwd when the request/session has no project.
+    # Owned helper (managers.project_manager); explicit inputs preserve the
+    # import-failed fallback to this module's repo root exactly.
+    from managers.project_manager import default_chat_cwd
 
-    Prefer the registered Cuttle project (often ``…/src``, matching the Cursor
-    workspace) over git-root ``actual_project_root``. Mixing those two on the
-    first vs second /cursor turn forks Cursor ``--resume``.
-    """
-    if project_manager is not None:
-        try:
-            cur = getattr(project_manager, 'current_project', None)
-            if isinstance(cur, dict) and (cur.get('path') or '').strip():
-                return str(cur['path']).strip()
-            for p in project_manager.get_projects() or []:
-                name = str(p.get('name') or '')
-                path = str(p.get('path') or '').strip()
-                if path and re.search(r'cuttle', name, re.I):
-                    return path
-        except Exception:
-            pass
-    return str(actual_project_root)
+    return default_chat_cwd(project_manager, actual_project_root)
 
 
 def _project_record_for_path(path: str) -> Optional[Dict[str, Any]]:
@@ -4705,12 +4692,8 @@ def _slash_agent_chip(response_type) -> Optional[dict]:
     return None
 
 
-def _muse_model_label(model) -> str:
-    """Human label used by Muse reply badges."""
-    from scripts.utilities.muse_cli_tool import muse_model_label
-    return muse_model_label(model)
-
-
+# Owned shaper (api.chat_metadata); alias preserves internal callers.
+_muse_model_label = _metadata_svc.muse_model_label
 def _harness_pretty_model_label(agent: str, model: str) -> str:
     """Best-effort human model label for a harness agent id."""
     mid = str(model or '').strip()
@@ -4889,64 +4872,8 @@ def _assistant_message_metadata(res: Optional[dict], request_data: Optional[dict
     return meta or None
 
 
-def _usage_meta_from_assistant_result(res: Optional[dict]) -> Optional[dict]:
-    """Normalize CLI usage (+ models.dev estimate) for chat bubble footers."""
-    if not isinstance(res, dict):
-        return None
-    raw = res.get('usage') if isinstance(res.get('usage'), dict) else {}
-    cursor_run = res.get('cursor_run') if isinstance(res.get('cursor_run'), dict) else {}
-    if not raw and isinstance(cursor_run.get('usage'), dict):
-        raw = cursor_run.get('usage') or {}
-    # Cursor stores full camelCase usage on cursor_run even when the top-level
-    # usage blob was stripped to prompt/completion only — merge cache fields.
-    elif isinstance(cursor_run.get('usage'), dict):
-        cu = cursor_run.get('usage') or {}
-        merged = dict(raw)
-        for src, dst in (
-            ('cacheReadTokens', 'cache_read_tokens'),
-            ('cache_read_tokens', 'cache_read_tokens'),
-            ('cacheWriteTokens', 'cache_write_tokens'),
-            ('cache_write_tokens', 'cache_write_tokens'),
-            ('context_tokens', 'context_tokens'),
-            ('peak_context_tokens', 'peak_context_tokens'),
-        ):
-            if merged.get(dst) is not None:
-                continue
-            if cu.get(src) is None:
-                continue
-            try:
-                n = int(cu.get(src) or 0)
-            except (TypeError, ValueError):
-                continue
-            if n > 0:
-                merged[dst] = n
-        raw = merged
-    model = str(
-        res.get('agent_model')
-        or res.get('model')
-        or res.get('muse_model')
-        or res.get('hermes_model')
-        or res.get('opencode_model')
-        or res.get('codex_model')
-        or ''
-    ).strip()
-    if not model and cursor_run:
-        model = str(
-            cursor_run.get('reported_model')
-            or cursor_run.get('requested_model')
-            or ''
-        ).strip()
-    merged = dict(raw) if isinstance(raw, dict) else {}
-    if res.get('cost') is not None and merged.get('cost') is None:
-        merged['cost'] = res.get('cost')
-    try:
-        from api.model_pricing import enrich_usage_for_display
-        return enrich_usage_for_display(merged, model=model or None)
-    except Exception as exc:
-        print(f"[CHAT] usage meta enrich failed: {exc}", flush=True)
-        return None
-
-
+# Owned shaper (api.chat_metadata); alias preserves internal callers.
+_usage_meta_from_assistant_result = _metadata_svc.usage_meta_from_assistant_result
 def _current_request_data() -> dict:
     try:
         body = request.get_json(silent=True)
@@ -4957,206 +4884,8 @@ def _current_request_data() -> dict:
     return {}
 
 
-def _user_badge_metadata(message_text: str, session_id, identity: Optional[dict] = None) -> Optional[dict]:
-    """Snapshot the agent badge (model + effort) for a user turn at send time.
-
-    History renders user bubbles from this stored chip. Without it the
-    frontend re-derives badges from the *current* session pins, so changing
-    the effort pin later rewrites every older bubble on refresh.
-
-    ``identity`` is the frozen send-time tuple (same values the CLI gets).
-    When present it wins over a second store/starred lookup.
-    """
-    import re as _re
-
-    text = str(message_text or '').lstrip()
-    m = _re.match(r'^/(muse|hermes|opencode|codex|cursor)\b', text, _re.IGNORECASE)
-    if not m:
-        return None
-    agent = m.group(1).lower()
-    sid = str(session_id) if session_id is not None else ''
-    ident = identity if isinstance(identity, dict) else None
-    if ident and str(ident.get('agent') or '').strip().lower() != agent:
-        ident = None
-    ident_model = str((ident or {}).get('model') or '').strip() if ident else ''
-    ident_effort = str((ident or {}).get('effort') or '').strip() if ident else ''
-
-    def _starred(model_fn=None, effort_fn=None, aid=''):
-        sm = se = ''
-        try:
-            from api.agent_harness.agent_defaults import (
-                get_starred_effort,
-                get_starred_model,
-            )
-            if aid:
-                sm = str(get_starred_model(aid) or '').strip()
-                se = str(get_starred_effort(aid) or '').strip()
-        except Exception:
-            pass
-        return sm, se
-
-    if agent == 'muse':
-        model = effort = ''
-        if ident is not None:
-            model, effort = ident_model, ident_effort
-        else:
-            try:
-                from scripts.utilities.muse_cli_session_store import (
-                    load_muse_effort,
-                    load_muse_model,
-                )
-                if sid:
-                    model = str(load_muse_model(sid) or '').strip()
-                    effort = str(load_muse_effort(sid) or '').strip()
-            except Exception:
-                pass
-            if not model or not effort:
-                sm, se = _starred(aid='muse')
-                model = model or sm
-                effort = effort or se
-        if not model:
-            try:
-                from scripts.utilities.muse_cli_tool import resolve_muse_default_model
-                model = str(resolve_muse_default_model() or '').strip()
-            except Exception:
-                model = ''
-        label_model = model
-        try:
-            label_model = _muse_model_label(model) if model else model
-        except Exception:
-            pass
-        label = 'Muse Code' + (f' - {label_model}' if label_model else '')
-        meta = '/muse' + (f' · model {model}' if model else '')
-        if effort:
-            label += f' · {effort}'
-            meta += f' · effort {effort}'
-        return {'slash_command': {'chips': [{'label': label, 'meta': meta, 'category': 'muse'}]}}
-    if agent == 'hermes':
-        model = effort = ''
-        if ident is not None:
-            model, effort = ident_model, ident_effort
-        else:
-            try:
-                from scripts.utilities.hermes_cli_session_store import (
-                    load_hermes_effort,
-                    load_hermes_model,
-                )
-                if sid:
-                    model = str(load_hermes_model(sid) or '').strip()
-                    effort = str(load_hermes_effort(sid) or '').strip()
-            except Exception:
-                pass
-            if not model or not effort:
-                sm, se = _starred(aid='hermes')
-                model = model or sm
-                effort = effort or se
-        label_model = model
-        try:
-            from scripts.utilities.hermes_cli_tool import hermes_model_label
-            label_model = hermes_model_label(model) if model else model
-        except Exception:
-            pass
-        label = 'Hermes' + (f' - {label_model}' if label_model else '')
-        meta = '/hermes' + (f' · model {model}' if model else '')
-        if effort:
-            label += f' · {effort}'
-            meta += f' · effort {effort}'
-        return {'slash_command': {'chips': [{'label': label, 'meta': meta, 'category': 'hermes'}]}}
-    if agent == 'opencode':
-        model = effort = ''
-        if ident is not None:
-            model, effort = ident_model, ident_effort
-        else:
-            try:
-                from api.agent_harness.agents.opencode.session_store import (
-                    load_opencode_effort,
-                    load_opencode_model,
-                )
-                if sid:
-                    model = str(load_opencode_model(sid) or '').strip()
-                    effort = str(load_opencode_effort(sid) or '').strip()
-            except Exception:
-                pass
-            if not model or not effort:
-                sm, se = _starred(aid='opencode')
-                model = model or sm
-                effort = effort or se
-        label_model = model
-        try:
-            from api.agent_harness.agents.opencode.adapter import opencode_model_label
-            label_model = opencode_model_label(model) if model else model
-        except Exception:
-            pass
-        label = 'OpenCode' + (f' - {label_model}' if label_model else '')
-        meta = '/opencode' + (f' · model {model}' if model else '')
-        if effort:
-            label += f' · {effort}'
-            meta += f' · effort {effort}'
-        return {'slash_command': {'chips': [{'label': label, 'meta': meta, 'category': 'opencode'}]}}
-    if agent == 'codex':
-        model = effort = ''
-        if ident is not None:
-            model, effort = ident_model, ident_effort
-        else:
-            try:
-                from scripts.utilities.codex_cli_session_store import (
-                    load_codex_effort,
-                    load_codex_model,
-                )
-                if sid:
-                    model = str(load_codex_model(sid) or '').strip()
-                    effort = str(load_codex_effort(sid) or '').strip()
-            except Exception:
-                pass
-            if not model or not effort:
-                sm, se = _starred(aid='codex')
-                model = model or sm
-                effort = effort or se
-        label_model = model
-        try:
-            from api.agent_harness.agents.codex.model_catalog import codex_model_label
-            label_model = codex_model_label(model) if model else model
-        except Exception:
-            pass
-        label = 'Codex' + (f' - {label_model}' if label_model else '')
-        meta = '/codex' + (f' · model {model}' if model else '')
-        if effort:
-            label += f' · {effort}'
-            meta += f' · effort {effort}'
-        return {'slash_command': {'chips': [{'label': label, 'meta': meta, 'category': 'codex'}]}}
-    # Cursor effort is baked into the model id.
-    model = ident_model if ident is not None else ''
-    try:
-        if not model and sid:
-            from scripts.utilities.cursor_cli_session_store import load_cursor_agent_options
-            model = str((load_cursor_agent_options('', sid) or {}).get('model') or '').strip()
-    except Exception:
-        pass
-    if not model:
-        sm, _ = _starred(aid='cursor')
-        model = sm or 'auto'
-    pretty = model
-    if not model or model.lower() in ('auto', 'default'):
-        pretty = 'Auto'
-    else:
-        try:
-            from api.cursor_agent_commands import list_cursor_agent_models
-            for _m in list_cursor_agent_models() or []:
-                if str(_m.get('id') or '').lower() == model.lower() and _m.get('label'):
-                    pretty = str(_m['label']).strip() or model
-                    break
-        except Exception:
-            pass
-        if pretty == model:
-            text = model[7:] if model.lower().startswith('cursor-') else model
-            pretty = text.replace('-', ' ').replace('_', ' ').title()
-    return {'slash_command': {'chips': [{
-        'label': f'Cursor - {pretty}',
-        'meta': f'/cursor · requested {pretty}',
-        'category': 'cursor',
-    }]}}
-
-
+# Owned shaper (api.chat_metadata); alias preserves internal callers.
+_user_badge_metadata = _metadata_svc.user_badge_metadata
 def _persist_auth_user_message(chat_session_id, message_text: str, metadata=None) -> None:
     """Save a user turn for authenticated slash-command chats (/cursor, /hermes, …)."""
     if chat_session_id is None or not message_text:

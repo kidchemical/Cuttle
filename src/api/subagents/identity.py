@@ -103,9 +103,9 @@ def child_slash_command(
     identity = {"agent": agent, "model": model, "effort": str(effort or "").strip()}
     text = f"/{agent} ping"
     try:
-        from api.web_chat_api import _user_badge_metadata
+        from api.chat_metadata import user_badge_metadata
 
-        badge = _user_badge_metadata(text, session_id, identity=identity)
+        badge = user_badge_metadata(text, session_id, identity=identity)
         sc = (badge or {}).get("slash_command")
         if _has_chips(sc):
             return {"chips": list(sc["chips"])}

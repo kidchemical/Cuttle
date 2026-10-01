@@ -5231,3 +5231,90 @@ whole was rejected as monolith-shifting. The owned seam is
   calls + `internal_http` transport (same grep method).
 - Commit independently on main. No push, no restart.
   **STOP for Codex review before P4-3 or Phase 5.**
+
+## P4-2 approval (Codex) + Phase 4 P4-3 helper boundaries and Phase 4 closure
+
+- P4-2 `3b973f7e` APPROVED. Reviewer last read line 5233; this
+  section appended only below that boundary; prior sections preserved.
+- P4-3 scope (no coordinator/router redesign): the remaining
+  production reverse imports into `web_chat_api.py` were helper-level
+  only. Before/after census, same grep method
+  (`grep -rn web_chat_api src/ --include=*.py`, non-test, plus
+  `importlib`/`__import__`/dynamic-`getattr` pattern sweep which found
+  zero dynamic imports):
+  - BEFORE (8): `chat_delivery`, `auth_api`, `supervised/orchestrator`
+    (removed P4-1/P4-2), `agent_harness/kernel._fallback_chat_cwd`,
+    `subagents/turns`, `subagents/identity`,
+    `internal_http._internal_app_post`, `agent_router/dispatch`,
+    `supervised/adapters` x2, `doctor` probe.
+  - AFTER (4, all Phase-5-or-justified): `agent_router/dispatch:48`
+    + `supervised/adapters:103,123` (runner fns reserved for Phase 5),
+    `doctor:83` (lazy smoke probe, justified remainder). Zero helper
+    reverse imports; zero dynamic-pattern imports.
+- Moves (verbatim behavior, thin `wca` aliases preserve callers):
+  - NEW `src/api/chat_metadata.py`: `muse_model_label`,
+    `usage_meta_from_assistant_result`, `user_badge_metadata`. Pure
+    functions; module imports `typing` only; zero module-level mutable
+    state (verified by grep — no hidden state). `subagents/turns.py`
+    and `subagents/identity.py` import the owner directly
+    (`cursor_run` passthrough kept inline in `turns`, same shape).
+  - `managers/project_manager.py` owns `default_chat_cwd(pm, root)`
+    + `REPO_ROOT`; `pm` is a required explicit arg (a `None` fallback
+    to the singleton was rejected by test pin
+    `test_default_cwd_owner_explicit_inputs`, now explicit). Kernel
+    `_fallback_chat_cwd` passes `(_pm, REPO_ROOT)` explicitly.
+  - `internal_http.py`: dead in-process `test_client().post` branch
+    deleted (zero callers; `_internal_use_http_dispatch` +
+    `_internal_app_post_lock` removed with it); module is now
+    loopback-HTTP-only, transport seam explicit. `wca` import in that
+    module gone.
+- Lifetimes: `chat_metadata` is stateless (safe anywhere);
+  `default_chat_cwd` reads the process `project_manager` singleton
+  passed explicitly — no per-request caching, no restart-sensitive
+  state moved. Phase-4 lifetime rule holds (process state never into
+  per-request objects; restart behavior unchanged — singleton
+  re-reads `projects.db` on next process start as before).
+- Coverage (committed `src/tests/test_chat_metadata_service.py`,
+  8 tests, all green): 5 behavior pins written/run BEFORE the move
+  (badge slash chips, usage extraction incl. empty/malformed,
+  model-label mapping, cwd preference order, alias delegation) + 3
+  post-move (owner import guard, explicit-input signature, alias
+  identity both directions). Discrimination: cache-merge-swap
+  mutation failed the usage tests as required, restored
+  byte-identical (`cmp` clean).
+- Gates (same env/invocation/scope: `.venv`,
+  `pytest -q -p no:warnings src/tests/ --ignore=src/tests/unit`):
+  all three Phase-4 service suites green together (38 passed);
+  focused + neighbors (steer/stop/followup/restart/supervised,
+  subagents, harness) green; broad post-P4-3 **28 failed /
+  1918 passed / 79 skipped** with sorted FAILED identities
+  `diff`-clean against the same-env stashed P4-2 baseline (28/28,
+  byte-identical list — pre-existing failures only, listed in gate
+  artifacts `/tmp/p42base_failed.txt` vs `/tmp/p43_failed.txt`).
+- Spend audit: `CUTTLE_AGENT_SMOKE`/`CUTTLE_ALLOW_SPEND` unset; paid
+  smoke tests appear in the gate only as SKIPPED; no paid/token
+  prompt tests run.
+- Manual validation N/A (backend-only moves; no UI change). No Flask
+  restart/kill performed. No push.
+- Files: `src/api/chat_metadata.py` (new),
+  `src/tests/test_chat_metadata_service.py` (new),
+  `src/api/web_chat_api.py` (aliases + delegation, net −~270 lines),
+  `src/api/subagents/turns.py`, `src/api/subagents/identity.py`,
+  `src/api/agent_harness/kernel.py`, `src/api/internal_http.py`,
+  `src/managers/project_manager.py`, this section +
+  `docs/architecture/repository-map.md` (P4-3 ownership row).
+- Limits/risks: metadata shapers have many lazy leaf callers —
+  checked for cycles (owner imports `typing` only; none possible).
+  `turns.py` keeps a small inline `cursor_run` passthrough rather
+  than forcing it into the owner — deliberate, documented above.
+  Deferred dev dependency/preflight tooling still deferred; stale
+  baseline pins untouched.
+- Phase 4 CLOSURE: all Phase-4 service interfaces own explicit
+  inputs/lifetimes (live-status store, status-queue registry + emit,
+  metadata shapers, chat cwd, loopback transport seam); production
+  reverse imports into the entry module are only the Phase-5 runner
+  calls + transport + one justified probe. Coordinator
+  (`process_message_with_bot`) and router/harness redesign reserved
+  for Phase 5/6 — untouched.
+- Commit independently on main. No push, no restart.
+  **STOP for Codex review before Phase 5.**

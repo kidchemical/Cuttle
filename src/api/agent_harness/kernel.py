@@ -68,9 +68,13 @@ def _should_inject_capabilities(manifest: AgentManifest, *, has_resume: bool) ->
 def _fallback_chat_cwd() -> str:
     """Registered Cuttle project when the request/session has no chip."""
     try:
-        from api.web_chat_api import _default_chat_cwd
+        from managers.project_manager import (
+            REPO_ROOT,
+            default_chat_cwd,
+            project_manager as _pm,
+        )
 
-        return str(_default_chat_cwd() or "").strip()
+        return str(default_chat_cwd(_pm, REPO_ROOT) or "").strip()
     except Exception:
         return ""
 
