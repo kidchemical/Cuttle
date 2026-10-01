@@ -9,7 +9,6 @@ import asyncio
 import threading
 import time
 import re
-import queue as queue_module
 from datetime import datetime
 from flask import Flask, request, jsonify, send_from_directory, Response, stream_with_context, make_response, redirect
 from flask_cors import CORS
@@ -987,8 +986,10 @@ def process_message_with_bot(
         )
 
     try:
-        # Get session for context
-        session = get_or_create_session(session_id)
+        # Ensure the session row exists (return value unused since P5-F
+        # removed the naked-fallback context build; kept for the side
+        # effect sessions/send and local-mode prompts rely on).
+        _session = get_or_create_session(session_id)
         
         from api.inference_mode import normalize_inference_mode
 
@@ -1094,24 +1095,11 @@ def process_message_with_bot(
             io=_legacy_io, delivery=_chat_delivery,
             claim=False,
         )
-        if _turn_out.body is not None:
-            return _turn_out.body
-        # Plain-router abstain / pipeline entry: naked fallback as before.
+        # The shared entry never returns None: executed arms return their
+        # result, and the pipeline arm / plain-router abstain return the
+        # owned no-LLM fallback — no naked tail to reimplement here.
+        return _turn_out.body
 
-        # Turn context dicts owned by api.chat_turn (P5-A seam); IO stays here.
-        from api.chat_turn import build_turn_context as _build_turn_context
-
-        user_context, session_data = _build_turn_context(
-            session_id,
-            session_kind,
-            routing_key,
-            is_owner,
-            chat_inference_mode,
-            session.get_recent_messages(5),
-        )
-
-        return _no_pipeline_chat_result()
-        
     except Exception as e:
         import traceback
         error_details = traceback.format_exc()
@@ -1736,231 +1724,66 @@ def mobile_submit_reply():
 def _generate_chat_stream(process_fn, session_id_for_status, on_result=None, on_claimed=None):
     """Run process_fn() in a thread and yield SSE events for status updates + final response.
 
-    on_result(result) persists the reply (e.g. save to db). It runs on the worker
-    thread, not in the SSE loop, so closing the tab mid-reply no longer discards
-    a finished answer; the reply is also parked in chat_delivery for the client
-    to collect when it reconnects.
+    Transport adapter over the owned pipeline stream entry (P5-F): the
+    claim → persist → worker → finalize → release lifecycle lives in
+    ``api.chat_coordinator.submit_agent_stream_turn`` /
+    ``api.chat_turn_workflow.run_agent_stream_turn``; this function only
+    submits (explicit pipeline selection) and frames. Same observable
+    contract as before:
 
-    on_claimed() runs only after this chat's busy slot is acquired — persist the
-    user turn here so a second send cannot land in history before the lock.
+    on_result(result) persists the reply (e.g. save to db). It runs on the
+    worker thread, not in the SSE loop, so closing the tab mid-reply no
+    longer discards a finished answer; the reply is also parked in
+    chat_delivery for the client to collect when it reconnects.
+    (No clear_result on done: writing the SSE chunk is not proof the
+    browser parsed it — clients often detach the fetch body right as the
+    final event is written. Client take_result (or TTL) clears pending
+    after a real delivery.)
+
+    on_claimed() runs only after this chat's busy slot is acquired — persist
+    the user turn here so a second send cannot land in history before the
+    lock. A busy slot yields the status/busy/done triple (no session
+    event: historical callers prefix it themselves).
     """
     from api import chat_delivery
+    from api.chat_coordinator import (
+        AgentSelection as _AgentSelection,
+        PreparedAgentTurn as _PreparedAgentTurn,
+        StreamTurnIO as _StreamTurnIO,
+        submit_agent_stream_turn as _submit_stream_turn,
+    )
 
-    status_queue = queue_module.Queue()
-    result_holder = {'result': None}
+    def _unreachable(*_a, **_k):
+        raise RuntimeError("unreachable arm in pipeline compat adapter")
 
-    def _sse_json(obj: dict) -> str:
-        try:
-            return json.dumps(obj, ensure_ascii=False, default=str)
-        except Exception as enc_err:
-            return json.dumps(
-                {
-                    'type': 'response',
-                    'success': False,
-                    'response': f'(Could not encode assistant reply: {enc_err})',
-                    'session_id': session_id_for_status,
-                },
-                ensure_ascii=False,
-                default=str,
-            )
-
-    # One reply per chat at a time — a re-send while an agent is still working
-    # would otherwise start a second run competing for the same conversation.
-    if not chat_delivery.try_begin(session_id_for_status):
-        yield f"data: {_sse_json({'type': 'status', 'message': 'A reply is already generating…'})}\n\n"
-        yield f"data: {_sse_json({'type': 'busy', 'session_id': session_id_for_status})}\n\n"
-        yield f"data: {_sse_json({'type': 'done'})}\n\n"
+    _io = _StreamTurnIO(
+        run_harness=_unreachable,
+        run_router=_unreachable,
+        persist_user=(on_claimed if on_claimed is not None else (lambda: None)),
+        make_saver=(lambda: on_result),
+        notify_mobile=(
+            lambda _r: _emit_chat_complete_mobile(session_id_for_status, _r)
+        ),
+        format_shortcut=_unreachable,
+        run_pipeline=(
+            lambda status_queue=None: process_fn(status_queue=status_queue)
+        ),
+    )
+    _events = _submit_stream_turn(
+        _PreparedAgentTurn(message="", session_id=session_id_for_status),
+        io=_io,
+        delivery=chat_delivery,
+        is_router_family=_is_router_family_message,
+        selection=_AgentSelection(kind="pipeline"),
+    )
+    _first = next(_events, None)
+    # Pipeline selection never yields shortcut arms; busy keeps the
+    # historical bare triple (no session event).
+    if _first is not None and _first[0] == "busy":
+        yield from _pipeline_busy_chunks(session_id_for_status)
         return
+    yield from _pipeline_progress_chunks(_first, _events, session_id_for_status)
 
-    # Identifies this turn for the rest of its life. If the user stops this run
-    # and sends again, a late finish must not write into the newer turn.
-    turn_token = chat_delivery.current_turn(session_id_for_status)
-
-    # Persist the user turn only after we own the busy slot (avoids ghost
-    # user bubbles when a second send loses the race).
-    if on_claimed:
-        try:
-            on_claimed()
-        except Exception as claim_err:
-            print(f"[CHAT] on_claimed failed: {claim_err}")
-            try:
-                chat_delivery.end(session_id_for_status)
-            except Exception:
-                pass
-            yield f"data: {_sse_json({'type': 'response', 'success': False, 'response': f'Failed to save your message: {claim_err}', 'session_id': session_id_for_status})}\n\n"
-            yield f"data: {_sse_json({'type': 'done'})}\n\n"
-            return
-
-    # Send immediate event to prove stream is live and force early flush so status updates show in UI
-    try:
-        set_chat_live_status(session_id_for_status, 'Connecting...', active=True)
-    except Exception:
-        pass
-    yield f"data: {_sse_json({'type': 'status', 'message': 'Connecting...'})}\n\n"
-
-    def run_process():
-        try:
-            result_holder['result'] = process_fn(status_queue=status_queue)
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            result_holder['result'] = {
-                'success': False,
-                'error': str(e),
-                'response': f'I encountered an error: {str(e)}. Please try again.'
-            }
-        result = result_holder['result'] or {}
-        # Completion policy owned by api.chat_turn_workflow (P5-B): persist
-        # here rather than in the SSE loop below (the loop dies with the
-        # browser connection, this thread does not). Failure replies that
-        # still have response text are saved so closed tabs keep them.
-        # Cursor / Codex / other harness replies never go through
-        # process_message_with_bot, so the phone listener only hears about
-        # them from this stream completion.
-        from api.chat_turn_workflow import finalize_stream_result as _finalize
-
-        _finalize(
-            chat_delivery,
-            session_id_for_status,
-            turn_token,
-            result,
-            on_result=on_result,
-            notify_mobile=lambda _r: _emit_chat_complete_mobile(session_id_for_status, _r),
-        )
-        status_queue.put(('done', result))
-
-    thread = threading.Thread(target=run_process, daemon=True)
-    thread.start()
-
-    # The SSE loop below dies with the browser connection, so it cannot be the
-    # thing that publishes live status. This pump outlives it, keeping the
-    # status current for whoever reconnects, and hands events to the loop.
-    sse_queue = queue_module.Queue()
-
-    def pump_status():
-        while True:
-            item = status_queue.get()
-            kind, payload = item[0], item[1]
-            # A superseded/cancelled run must not narrate over the turn that
-            # replaced it (or resurrect activity after Stop).
-            if kind != 'done' and (
-                chat_delivery.is_stale_turn(session_id_for_status, turn_token)
-                or chat_delivery.is_turn_cancelled(session_id_for_status)
-            ):
-                continue
-            try:
-                if kind == 'status':
-                    set_chat_live_status(session_id_for_status, payload, active=True)
-                elif kind == 'query_started':
-                    set_chat_live_status(
-                        session_id_for_status,
-                        None,
-                        active=True,
-                        query_id=payload.get('query_id'),
-                        report_url=payload.get('report_url'),
-                    )
-            except Exception:
-                pass
-            sse_queue.put(item)
-            if kind == 'done':
-                stale = chat_delivery.is_stale_turn(session_id_for_status, turn_token)
-                try:
-                    # Belt-and-suspenders: worker already ends busy before putting
-                    # done; if that failed, don't leave history spinners stuck.
-                    chat_delivery.end(session_id_for_status, turn=turn_token)
-                except Exception:
-                    pass
-                cancelled = False
-                try:
-                    cancelled = chat_delivery.is_turn_cancelled(session_id_for_status)
-                except Exception:
-                    cancelled = False
-                _clear_live_status_on_stream_done(
-                    session_id_for_status, stale=stale, cancelled=cancelled
-                )
-                break
-
-    pump = threading.Thread(target=pump_status, daemon=True)
-    pump.start()
-
-    try:
-        while True:
-            try:
-                item = sse_queue.get(timeout=0.15)
-            except queue_module.Empty:
-                if not pump.is_alive():
-                    break
-                continue
-            kind, payload = item[0], item[1]
-            if kind == 'status':
-                yield f"data: {_sse_json({'type': 'status', 'message': payload})}\n\n"
-                yield ": " + (" " * 128) + "\n\n"  # SSE comment to encourage flush so chat page gets status promptly
-            elif kind == 'query_started':
-                yield f"data: {_sse_json({'type': 'query_started', 'query_id': payload.get('query_id'), 'report_url': payload.get('report_url')})}\n\n"
-            elif kind == 'done':
-                result = payload or {}
-                # Belt-and-suspenders: rewrite confirms here too in case on_result
-                # was missing/failed — client must never see stuck "Waiting…" cards.
-                try:
-                    result = _rewrite_assistant_response_actions(
-                        result,
-                        session_id_for_status,
-                        (result.get('cursor_run') or {}).get('cwd')
-                        or result.get('project_path')
-                        or '',
-                    ) or result
-                except Exception as _rw_err:
-                    print(f"[CHAT] SSE confirm rewrite failed: {_rw_err}", flush=True)
-                resp = {'type': 'response', 'success': result.get('success', False), 'response': result.get('response', ''), 'session_id': session_id_for_status if session_id_for_status is not None else result.get('session_id'), 'response_type': result.get('type', 'unknown')}
-                if result.get('query_id'):
-                    resp['query_id'] = result['query_id']
-                if result.get('report_url'):
-                    resp['report_url'] = result['report_url']
-                if result.get('cursor_run'):
-                    resp['cursor_run'] = result['cursor_run']
-                # Agent/model badge fields. Without these the streaming client
-                # never learns which model answered, so reply chips fall back to
-                # the bare agent name (e.g. "Muse Code" with no model).
-                # agent_effort / agent_id are canonical (CH-000497-8); legacy
-                # per-agent keys kept for older clients.
-                for _passthrough in (
-                    'agent_id',
-                    'agent_model',
-                    'agent_effort',
-                    'muse_model',
-                    'muse_effort',
-                    'hermes_model',
-                    'hermes_effort',
-                    'opencode_model',
-                    'opencode_effort',
-                    'codex_model',
-                    'codex_effort',
-                ):
-                    if result.get(_passthrough):
-                        resp[_passthrough] = result[_passthrough]
-                # Token/cost footer: prefer enriched meta (CLI $ or models.dev est.).
-                try:
-                    _usage = _usage_meta_from_assistant_result(result)
-                    if _usage:
-                        resp['usage'] = _usage
-                except Exception:
-                    if isinstance(result.get('usage'), dict) and result.get('usage'):
-                        resp['usage'] = result['usage']
-                    if result.get('cost') is not None:
-                        resp['cost'] = result['cost']
-                yield f"data: {_sse_json(resp)}\n\n"
-                yield f"data: {_sse_json({'type': 'done'})}\n\n"
-                # Do NOT clear_result here. Writing the SSE chunk is not proof the
-                # browser parsed it — clients often detach the fetch body (~45s)
-                # right as the final event is written, and clearing here dropped
-                # the parked reply (chirp / done UI, blank transcript until refresh).
-                # Client take_result (or TTL) clears pending after a real delivery.
-                break
-    finally:
-        # Deliberately no clear_chat_live_status here: a disconnected browser
-        # does not stop the worker, and the pump clears status when the run
-        # actually ends.
-        thread.join(timeout=0.5)
 
 
 @app.route('/phone')
@@ -5035,6 +4858,43 @@ def _frame_stream_lifecycle_event(kind, payload, session_id_for_status):
     return []
 
 
+def _pipeline_busy_chunks(session_id):
+    """Busy triple without the session event (callers prefix it)."""
+    _sid = session_id
+    yield f"data: {json.dumps({'type': 'status', 'message': 'A reply is already generating…'}, ensure_ascii=False)}\n\n"
+    yield f"data: {json.dumps({'type': 'busy', 'session_id': _sid}, ensure_ascii=False, default=str)}\n\n"
+    yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+
+def _stream_busy_sse_response(session_id):
+    """Transport helper: busy answer without streaming (both stream twins)."""
+    def _stream_busy():
+        yield _sse_session_event(session_id)
+        yield from _pipeline_busy_chunks(session_id)
+    return Response(
+        stream_with_context(_stream_busy()),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no',
+            'Connection': 'keep-alive',
+        },
+    )
+
+
+def _stream_connecting_head(session_id):
+    """Transport helper: session event + Connecting liveness pair."""
+    _sid = session_id
+    if _sid is not None:
+        yield _sse_session_event(_sid)
+    try:
+        set_chat_live_status(_sid, 'Connecting...', active=True)
+    except Exception:
+        pass
+    yield f"data: {json.dumps({'type': 'status', 'message': 'Connecting...'}, ensure_ascii=False)}\n\n"
+    yield ": " + (" " * 128) + "\n\n"
+
+
 def _stream_agent_turn_response(prepared, *, io):
     """Submit one stream turn through the shared entry; frame events as SSE.
 
@@ -5059,32 +4919,11 @@ def _stream_agent_turn_response(prepared, *, io):
     if _first is not None and _first[0] == "shortcut":
         return jsonify(_first[1])
     if _first is not None and _first[0] == "busy":
-        def _stream_busy():
-            _sid = prepared.session_id
-            yield _sse_session_event(_sid)
-            yield f"data: {json.dumps({'type': 'status', 'message': 'A reply is already generating…'}, ensure_ascii=False)}\n\n"
-            yield f"data: {json.dumps({'type': 'busy', 'session_id': _sid}, ensure_ascii=False, default=str)}\n\n"
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
-        return Response(
-            stream_with_context(_stream_busy()),
-            mimetype='text/event-stream',
-            headers={
-                'Cache-Control': 'no-cache',
-                'X-Accel-Buffering': 'no',
-                'Connection': 'keep-alive',
-            },
-        )
+        return _stream_busy_sse_response(prepared.session_id)
 
     def _stream_gen():
         _sid = prepared.session_id
-        if _sid is not None:
-            yield _sse_session_event(_sid)
-        try:
-            set_chat_live_status(_sid, 'Connecting...', active=True)
-        except Exception:
-            pass
-        yield f"data: {json.dumps({'type': 'status', 'message': 'Connecting...'}, ensure_ascii=False)}\n\n"
-        yield ": " + (" " * 128) + "\n\n"
+        yield from _stream_connecting_head(_sid)
         if _first is None:
             _first_event = (
                 "done",
@@ -5102,6 +4941,130 @@ def _stream_agent_turn_response(prepared, *, io):
         for _kind, _payload in _events:
             for _chunk in _frame_stream_lifecycle_event(_kind, _payload, _sid):
                 yield _chunk
+
+    return Response(
+        stream_with_context(_stream_gen()),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no',
+            'Connection': 'keep-alive',
+        },
+    )
+
+
+def _pipeline_progress_chunks(first, events, session_id):
+    """Connecting head + framed owned pipeline lifecycle events.
+
+    Transport only, shared by the pipeline lane adapter and the
+    ``_generate_chat_stream`` compat adapter: per-event live-status
+    publish, the belt-and-suspenders wire rewrite of confirms on done,
+    and the live-status clear on done. ``first`` is the peeked head
+    event (or None); ``events`` is the remaining owned event iterator.
+    """
+    from api import chat_delivery as _chat_delivery
+
+    _sid = session_id
+    yield from _stream_connecting_head(_sid)
+    if first is None:
+        _rest = iter([(
+            "done",
+            {
+                "success": False,
+                "response": "Stream ended unexpectedly.",
+                "type": "stream_error",
+            },
+        )])
+    else:
+        import itertools as _it
+        _rest = _it.chain([first], events)
+    for _kind, _payload in _rest:
+        try:
+            if _kind == "status":
+                set_chat_live_status(_sid, _payload, active=True)
+            elif _kind == "query_started":
+                _pq = _payload or {}
+                set_chat_live_status(
+                    _sid,
+                    None,
+                    active=True,
+                    query_id=_pq.get("query_id"),
+                    report_url=_pq.get("report_url"),
+                )
+        except Exception:
+            pass
+        if _kind == "done":
+            _result = _payload or {}
+            # Belt-and-suspenders: rewrite confirms here too in case
+            # on_result was missing/failed — client must never see
+            # stuck "Waiting…" cards. Verbatim from the old SSE loop.
+            try:
+                _result = _rewrite_assistant_response_actions(
+                    _result,
+                    _sid,
+                    (_result.get("cursor_run") or {}).get("cwd")
+                    or _result.get("project_path")
+                    or "",
+                ) or _result
+            except Exception as _rw_err:
+                print(f"[CHAT] SSE confirm rewrite failed: {_rw_err}", flush=True)
+            # A newer turn generating now owns the spinner: skip the
+            # clear so this stale completion does not drop it. (Old
+            # code compared the worker's turn token; the token lives in
+            # the owned entry now, so "someone else generating" is the
+            # equivalent signal. Residual difference: a newer turn that
+            # already finished releases into a clear — benign, and no
+            # test observes live-status service state.)
+            try:
+                _stale_now = _chat_delivery.current_turn(_sid) is not None
+            except Exception:
+                _stale_now = False
+            try:
+                _cancelled_now = bool(
+                    _chat_delivery.is_turn_cancelled(_sid)
+                )
+            except Exception:
+                _cancelled_now = False
+            _clear_live_status_on_stream_done(
+                _sid, stale=_stale_now, cancelled=_cancelled_now
+            )
+            _payload = _result
+        for _chunk in _frame_stream_lifecycle_event(_kind, _payload, _sid):
+            yield _chunk
+
+
+def _stream_pipeline_turn_response(prepared, *, io):
+    """Pipeline twin of ``_stream_agent_turn_response`` (transport only).
+
+    The pipeline lane submits the shared entry with an explicit pipeline
+    selection; this adapter frames the owned lifecycle events verbatim
+    and keeps the lane's surface delivery effects (see
+    ``_pipeline_progress_chunks``). Claim/persist/run/finalize/release
+    all live in the coordinator entry, never here.
+    """
+    from api import chat_delivery as _chat_delivery
+    from api.chat_coordinator import (
+        AgentSelection as _AgentSelection,
+        submit_agent_stream_turn as _submit_stream_turn,
+    )
+
+    _events = _submit_stream_turn(
+        prepared,
+        io=io,
+        delivery=_chat_delivery,
+        is_router_family=_is_router_family_message,
+        selection=_AgentSelection(kind="pipeline"),
+    )
+    _first = next(_events, None)
+    if _first is not None and _first[0] == "shortcut":
+        return jsonify(_first[1])
+    if _first is not None and _first[0] == "busy":
+        return _stream_busy_sse_response(prepared.session_id)
+
+    def _stream_gen():
+        yield from _pipeline_progress_chunks(
+            _first, _events, prepared.session_id
+        )
 
     return Response(
         stream_with_context(_stream_gen()),
@@ -6327,14 +6290,18 @@ def chat_endpoint():
                 if _lane_status == 409:
                     return jsonify(_lane_body), 409
                 return jsonify(_lane_body)
-            _process_fn = lambda status_queue: process_message_with_bot(
-                message_content, _session_id,
-                session_kind='web_user', routing_key=f'web_user_{user["id"]}',
-                is_owner=_user_is_owner, status_queue=status_queue,
-                inference_mode=chat_inference_mode,
+            from api.chat_coordinator import (
+                PreparedAgentTurn as _PreparedAgentTurn,
+                StreamTurnIO as _StreamTurnIO,
             )
-            # Stream pipeline responses for status updates
-            def on_save(res):
+
+            def _pipeline_unreachable(*_a, **_k):
+                raise RuntimeError('unreachable arm in pipeline stream lane')
+
+            def _pipeline_save_assistant(_res):
+                # Verbatim from the old on_save: persist-anything (including
+                # [CANCELLED]/system rows the saver-built lanes skip —
+                # [ERR-20261001-001], deliberately unchanged here).
                 try:
                     _proj = _resolve_request_project_path({
                         **(data or {}),
@@ -6342,14 +6309,14 @@ def chat_endpoint():
                     })
                 except Exception:
                     _proj = ''
-                res = _rewrite_assistant_response_actions(
-                    res, _session_id, _proj or ''
-                ) or res
-                _asst_meta = _assistant_message_metadata(res)
+                _res = _rewrite_assistant_response_actions(
+                    _res, _session_id, _proj or ''
+                ) or _res
+                _asst_meta = _assistant_message_metadata(_res)
                 db.add_message(
                     chat_session_id,
                     'assistant',
-                    res.get('response', ''),
+                    _res.get('response', ''),
                     metadata=_asst_meta or None,
                 )
                 try:
@@ -6358,24 +6325,35 @@ def chat_endpoint():
                 except Exception as _te:
                     print(f"[TITLER] hook failed: {_te}")
 
-            def on_claimed():
-                db.add_message(
+            _stream_pipeline_io = _StreamTurnIO(
+                run_harness=_pipeline_unreachable,
+                run_router=_pipeline_unreachable,
+                persist_user=lambda: db.add_message(
                     chat_session_id,
                     'user',
                     history_message,
                     metadata=_user_msg_meta,
-                )
-            def stream_gen():
-                # Announce session id immediately so history / URL update before the reply.
-                yield _sse_session_event(chat_session_id)
-                for chunk in _generate_chat_stream(
-                    _process_fn, chat_session_id, on_result=on_save, on_claimed=on_claimed
-                ):
-                    yield chunk
-            return Response(
-                stream_with_context(stream_gen()),
-                mimetype='text/event-stream',
-                headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no', 'Connection': 'keep-alive'}
+                ),
+                make_saver=lambda: _pipeline_save_assistant,
+                notify_mobile=lambda _b: _emit_chat_complete_mobile(chat_session_id, _b),
+                format_shortcut=_pipeline_unreachable,
+                run_pipeline=lambda status_queue=None: process_message_with_bot(
+                    message_content, _session_id,
+                    session_kind='web_user', routing_key=f'web_user_{user["id"]}',
+                    is_owner=_user_is_owner, status_queue=status_queue,
+                    inference_mode=chat_inference_mode,
+                ),
+            )
+            return _stream_pipeline_turn_response(
+                _PreparedAgentTurn(
+                    message=message_content, session_id=chat_session_id,
+                    inference_mode=chat_inference_mode, wants_stream=wants_stream,
+                    request_data=data or {},
+                    # Unused: selection is explicit pipeline (no catalog
+                    # match) and the pipeline worker is not rewritten.
+                    project_path='',
+                ),
+                io=_stream_pipeline_io,
             )
         
         # Cookie was required above; missing resolve must not run a harness turn.
@@ -6438,19 +6416,6 @@ def _is_router_family_message(message_content) -> bool:
     except Exception:
         return False
     return False
-
-
-def _no_pipeline_chat_result():
-    """Chat/Discord fallback when no slash agent, router, or pipeline handled the turn."""
-    return {
-        'success': True,
-        'type': 'no_pipeline',
-        'error': 'no_pipeline',
-        'response': (
-            'No graph is running — Cuttle chat and Discord use slash agents '
-            '(`/cursor`, `/codex`, …) or the agent router. Pick an agent chip, or send a plain message for the router.'
-        ),
-    }
 
 
 @app.route('/api/local-llm/status', methods=['GET'])

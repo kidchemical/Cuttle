@@ -6510,3 +6510,178 @@ was inverted into the shared-entry assertion (HTTP sync lane submits
   `_cancel_sticky` semantics unchanged; deferred dependency/preflight
   tooling and the `[ERR-20261001-001]` canceled-row defect unchanged.
 - **STOP for Codex final review; do not self-approve phases.**
+
+---
+
+## P5-F — fallback lifecycle ownership + final gate (appended after line 6512; prior sections preserved)
+
+### Prior approval recorded
+
+P5-E `07d3e005` harness/router shared stream direction APPROVED; full
+closure was HOLD on remaining fallback lifecycle ownership and the
+canonical final gate. This report closes exactly that dispatched scope —
+not optional redesign. No phases self-approved.
+
+### Release-semantics correction (P5-E report overclaim)
+
+P5-E said "exactly-once release" while its own effect log showed
+`release, release`. Actual contract, now stated in the code
+(`run_agent_stream_turn`, `submit_agent_stream_turn` docstrings):
+**token-guarded release — two guarded `end` calls, one logical release.**
+`finalize_stream_result` ends by token, then the pump `finally` ends by
+token; `delivery.end(session, turn)` skips a slot owned by a newer turn,
+so a stale worker can never free a newer turn while the slot is freed
+once. Previous semantics preserved (no end-call removed/added); only the
+wording was wrong. Proven by `test_stale_finalize_never_releases_newer_turn`
+(real delivery: late completion discarded AND the live turn keeps its
+slot) and `test_stream_persist_failure_releases_and_reports`.
+
+### Inventory: what the leftover pipeline actually is
+
+- Retired: visual pipeline graphs (`/pipelines` answers
+  `pipelines_removed`; graphs went with Self_Improvement). No graph
+  engine, no LLM pipeline remains.
+- Active "pipeline" = plain-router attempt (`maybe_route_plain_message`)
+  + native no-LLM compatibility outcome (`no_pipeline` /
+  "No graph is running") for empty messages and router abstains.
+- Sync route lane: already owned (`run_pipeline_sync_turn` claimed;
+  route holds only persist/save/build leaf closures).
+- Compat entry (`process_message_with_bot`: local-mode prompts,
+  `/api/sessions/send`): already submitted unclaimed, but `submit`
+  returned None for pipeline/abstain so the route reimplemented a naked
+  fallback tail (plus dead context build).
+- Stream route lane: route-owned `_generate_chat_stream` lifecycle
+  (claim/persist-thread/worker/finalize/pump) — the actual bypass.
+- Control-plane SSE (restart, supervised control, busy-reject, device
+  push) never submits turns: out of scope, untouched.
+
+### What was built (no generic callback bags, no submit shim)
+
+- `chat_turn_workflow.pipeline_fallback_result()` — owned normalized
+  no-LLM outcome, byte-identical to the removed route
+  `_no_pipeline_chat_result` (single source of truth).
+- `run_agent_stream_turn(..., rewrite_result=True)` — one flag:
+  pipeline arm finalizes raw (its saver rewrites before persisting; the
+  adapter re-applies the wire rewrite), harness/router arms unchanged.
+- `submit_agent_turn`: pipeline arm and plain-router abstain return the
+  owned fallback — never None (persisted/released like any turn, no
+  saver/notify of its own, exactly the old naked tail). Sync lane
+  untouched (already owned skeleton + leaf closures — moving it would
+  risk launch-gate/restart/identity behavior for zero gain).
+- `StreamTurnIO.run_pipeline` (optional, default None) +
+  `submit_agent_stream_turn` pipeline arm through the owned skeleton
+  with `rewrite_result=False`. Other lanes leave it None (unreachable).
+- Route: compat tail reduced to `return _turn_out.body` (dead context
+  build removed; `get_or_create_session` kept for its side effect);
+  `_no_pipeline_chat_result` deleted; stream pipeline lane submits with
+  explicit pipeline selection through `_stream_pipeline_turn_response`;
+  `_generate_chat_stream` reimplemented as a transport adapter over the
+  owned entry (same signature/contract — all existing direct pump tests
+  pass UNMODIFIED, including the load-bearing release + neutered twins,
+  order `claimed→run→save`, cancel-discard, parked take_result, mobile
+  chat_complete). Shared `_pipeline_busy_chunks` /
+  `_pipeline_progress_chunks` transport helpers; orphaned
+  `queue-as-queue_module` import removed.
+- Deliberately preserved: pipeline stream saver persist-anything
+  (`[ERR-20261001-001]` NOT fixed — divergence oracle pins the
+  `[CANCELLED]` row); sync/stream 409-vs-busy distinction (pipeline
+  stream busy stays the auth-section 409, oracle-pinned); sessions/send
+  unclaimed with zero rows; canceled/sticky semantics; project stamps.
+- Known residual (documented, unobserved by any test): done-clear
+  staleness now uses "someone else generating" (token lives in the
+  entry); a newer turn that already finished releases into a clear
+  instead of a skip. Benign; live-status service state is asserted
+  nowhere (the one live-status suite fails identically on both trees).
+
+### Oracles + TDD evidence (`src/tests/test_p5f_pipeline_oracles.py`, 12)
+
+Pre-change run: 8 behavior pins passed, exactly the 3 new-contract
+tests failed (`None` bodies, missing `run_pipeline` member) — authentic
+failure observed before the fix. Post-change: 12/12 pass; the 8 pins
+passed unchanged throughout (zero shape/row/effect drift), plus a 12th
+(sessions/send unclaimed) added with the implementation since the
+compat tail it covers changed.
+Coverage: sync fallback shape + rows (`user, assistant`), sync
+router-accepts execution + rows, sessions/send (fallback, zero rows,
+never claimed), stream fallback shape + rows, stream 409-busy,
+`[CANCELLED]`-row divergence (ERR pinned), cancel-discards (user row
+only, sticky cleared), direct pipeline/abstain owned-fallback equality,
+direct stream pipeline lifecycle order
+(`begin → persist_user → executor → saver → notify → park → release →
+release`, slot free), stale-finalize, persist-failure.
+Fakes only (fake plain-router, tmp-DB auth, `p5f-` ids); spend flags
+unset; no prompts.
+- Fixture finding (honest limitation): `web_chat_api` binds
+  `get_auth_db` at import, so module-attr DB patches never reached the
+  route — P5-E slash-lane oracles ran de-facto anonymous (those lanes
+  tolerate it; events/release pins unaffected). Pipeline-lane oracles
+  need real auth, so this file patches the route binding too (same seam
+  as `test_chat_attachments`).
+- Starred-default finding: plain test messages were prefixed with the
+  starred `/cursor` server-side (real CLI attempt, sandbox EROFS), so
+  pipeline HTTP oracles send `sticky_agent: "none"` (documented bypass).
+
+### Gates
+
+- Focused oracles + pump consumers (P5-E/P5-F/boundaries/workflow/
+  mobile/seam): 86 passed.
+- Neighbors (coordinator/persist/pending/busy/steer/stop/followup/
+  resume/starred/router/session/live/mobile): 247 passed, 9 skipped,
+  4 failed — all 4 pre-existing on clean HEAD with the identical
+  assertion reason (3 supervised JS pins + live-status endpoint;
+  verified via stash A/B, not by ID alone).
+- Canonical final broad comparator (cwd repo root, preexisting node
+  shim on PATH, exact command
+  `.venv/bin/python -m pytest -q -p no:warnings src/tests/
+  --ignore=src/tests/unit -rf`, spend flags unset):
+  HEAD `07d3e005` (stashed `-u`): **28 failed / 2028 passed / 79
+  skipped**; P5-F tree: **28 failed / 2040 passed / 79 skipped**,
+  FAILED byte-identical (diff clean). Delta **+12 passed = exactly the
+  12 new oracle tests**, all green.
+- Count math across scopes (no drift claims): earlier `28 failed /
+  2014 passed` was this same root scope on the older tree
+  (2014 + 14 P5-E tests = 2028; + 12 P5-F tests = 2040; failures
+  identical throughout). The `34 failed` number comes only from the
+  `src/`-cwd scope (`pytest tests/` from `src/`): 6 CWD-sensitive JS
+  suites fail there and PASS from root
+  (`supervised_coordinator palette_control_flags + js_control_lane`,
+  `supervised_forensics js_canonical_bubble`,
+  `supervised_hardening parse_ok + js_activity_card + node_helpers` —
+  verified passing from root in this turn). Scope/cwd, not drift, not
+  P5-F-caused; every P5-F comparison above is same-env/same-scope.
+- Import-graph / reverse-import / manifest enforcement green; no new
+  violations from the touched prod files.
+- Manual/browser: N/A (backend-only; no UI change). No push, no
+  restart/kill of Cuttle processes.
+
+### Corrected acceptance matrix
+
+- Phase 5: ACCEPT — sync AND stream AND fallback share the normalized
+  turn/selection/executor with owned lifecycles; coordinator submits
+  never return None; transport adapters explicit
+  (`_stream_*_response`, `_generate_chat_stream`); compat unclaimed;
+  pipeline dispositions (sync skeleton, stream entry, naked outcome)
+  all owned with byte-identical outputs/rows/events.
+- Phase 6: prior P6-A/B/C stand; P5-F adds no trust/import change
+  (adapter guidance updated only where the runtime path changed).
+- Phase 7: enforcement complete — bypass spies assert shared entries
+  for sync, stream, AND pipeline; scanner/release/accounting from
+  `4d6b0eb9` unchanged and green.
+
+### Files, commit, status
+
+- Prod: `src/api/chat_turn_workflow.py` (fallback fn, rewrite flag,
+  release-contract wording), `src/api/chat_coordinator.py` (never-None
+  arms, `run_pipeline` member, contract wording),
+  `src/api/web_chat_api.py` (compat tail, lane rewiring, pipeline
+  adapter, pump-to-adapter, dead code/import removal).
+- Tests: `src/tests/test_p5f_pipeline_oracles.py` (new, 12).
+- Docs: `docs/architecture/extension-boundaries.md` (§A rewritten to the
+  actual complete runtime path), `AGENTS.md` (chat-execution row), this
+  log.
+- Commit: P5-F independently committed on main (hash below);
+  `git status` clean except pre-existing untracked `work/` (not mine —
+  untouched). No push, no restart.
+- Deferred unchanged: dependency/preflight tooling,
+  `[ERR-20261001-001]` canceled-row defect (pinned, not fixed).
+- **STOP for Codex final review; do not self-approve the initiative.**

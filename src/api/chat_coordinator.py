@@ -12,15 +12,18 @@ Surfaces and their (intentionally different) entry semantics:
 
 - ``/api/chat`` route lanes: ``claim=True`` (busy slots), session
   stamping + example texts in ``format_shortcut``, enriched pipeline
-  bodies. The pipeline arm is NOT executed here — the route runs its
-  claiming ``run_pipeline_sync_turn`` itself.
+  bodies. The sync pipeline lane runs the owned claiming
+  ``run_pipeline_sync_turn`` itself (same skeleton family, lane leaf
+  effects); the stream pipeline lane submits here (pipeline arm).
 - ``process_message_with_bot`` (local-mode prompts, ``/api/sessions/send``):
   ``claim=False`` (no delivery interaction, exactly as before),
-  no-op persistence, plain shortcut bodies, naked pipeline fallback.
+  no-op persistence, plain shortcut bodies, owned pipeline fallback.
 
-Non-executed arms (mode blocks, empty prompts, pipeline entry) return
-control to the caller with the selection attached — no surface
-formatting or pipeline policy is smuggled in here.
+Non-executed shortcut arms (mode blocks, empty prompts) return control
+to the caller with the selection attached. The fallback arms (pipeline
+entry, plain-router abstain) return the owned no-LLM outcome
+(``pipeline_fallback_result``) — never None — so no surface reimplements
+the fallback; it carries no saver/notify of its own.
 """
 
 from __future__ import annotations
@@ -117,7 +120,8 @@ def select_agent_turn(
 class AgentTurnIO:
     """One surface's arm implementations. All members are required —
     no silent defaults. ``run_router`` returning None means abstain
-    (caller runs its pipeline entry)."""
+    (owned no-LLM fallback). The pipeline arm needs no runner: an empty
+    message has nothing to execute, so the owned fallback applies."""
 
     run_harness: Callable[..., Dict[str, Any]]
     run_router: Callable[..., Optional[Dict[str, Any]]]
@@ -130,8 +134,9 @@ class AgentTurnIO:
 
 @dataclass(frozen=True)
 class AgentTurnResult:
-    """``body`` is None only when the caller must run its own entry:
-    the pipeline arm, or a plain-router abstain."""
+    """``body`` is always set: executed arms return their result, and the
+    pipeline arm / plain-router abstain return the owned no-LLM fallback
+    (``pipeline_fallback_result``) so no surface reimplements it."""
 
     body: Optional[Dict[str, Any]]
     status: int
@@ -142,7 +147,10 @@ class AgentTurnResult:
 class StreamTurnIO:
     """One surface's stream arm implementations. Narrow by design: the
     stream save policy lives in ``finalize_stream_result`` (kept-rule),
-    so there is deliberately no ``should_save`` member."""
+    so there is deliberately no ``should_save`` member. ``run_pipeline``
+    is the fallback executor (plain-router attempt / naked no-LLM
+    outcome); lanes that pre-match other arms leave it None and the
+    pipeline arm is then unreachable from them."""
 
     run_harness: Callable[..., Dict[str, Any]]
     run_router: Callable[..., Optional[Dict[str, Any]]]
@@ -150,6 +158,7 @@ class StreamTurnIO:
     make_saver: Callable[[], Optional[Callable[[Dict[str, Any]], None]]]
     notify_mobile: Optional[Callable[[Dict[str, Any]], None]]
     format_shortcut: Callable[[str, AgentSelection], Dict[str, Any]]
+    run_pipeline: Optional[Callable[..., Dict[str, Any]]] = None
 
 
 def _after_run(
@@ -181,11 +190,14 @@ def submit_agent_turn(
     Claimed (route lanes): busy → persist → run → conditional save →
     release via the owned sync skeleton. Unclaimed (legacy surfaces):
     the same order with no delivery interaction. Shortcut arms are
-    formatted by the surface; pipeline/plain-router-abstain returns
-    ``body=None`` for the caller's own entry. Callers that already
-    matched (route lanes) pass ``selection`` to skip re-selection.
+    formatted by the surface; the pipeline arm and plain-router abstain
+    return the owned no-LLM fallback (persisted/released like any turn,
+    but with no saver/notify of its own — exactly the old naked tail).
+    Callers that already matched (route lanes) pass ``selection`` to
+    skip re-selection.
     """
     from api.chat_turn_workflow import run_agent_sync_turn as _run_lane
+    from api.chat_turn_workflow import pipeline_fallback_result as _fallback
 
     message = prepared.message or ""
     sel = selection or select_agent_turn(
@@ -238,8 +250,8 @@ def submit_agent_turn(
             io.persist_user()
             body = _run_router()
             if body is None:
-                return AgentTurnResult(body=None, status=200, selection=sel)
-            if isinstance(body, dict):
+                body = _fallback()
+            elif isinstance(body, dict):
                 _after(body)
             return AgentTurnResult(body=body, status=200, selection=sel)
         body, status = _run_lane(
@@ -250,10 +262,28 @@ def submit_agent_turn(
             after_run=_after,
         )
         if body is None:
-            return AgentTurnResult(body=None, status=status, selection=sel)
+            body = _fallback()
         return AgentTurnResult(body=body, status=status, selection=sel)
 
-    return AgentTurnResult(body=None, status=200, selection=sel)
+    if sel.kind == "pipeline":
+        def _run_fallback():
+            return _fallback()
+
+        if not claim:
+            io.persist_user()
+            return AgentTurnResult(
+                body=_run_fallback(), status=200, selection=sel
+            )
+        body, status = _run_lane(
+            prepared.session_id,
+            delivery=delivery,
+            persist_user=io.persist_user,
+            run=_run_fallback,
+            after_run=lambda _b: None,
+        )
+        return AgentTurnResult(body=body, status=status, selection=sel)
+
+    return AgentTurnResult(body=_fallback(), status=200, selection=sel)
 
 
 def submit_agent_stream_turn(
@@ -274,7 +304,9 @@ def submit_agent_stream_turn(
     non-executed arms, ``("busy", body)`` when claimed elsewhere, or
     ``("done", result)``. Transport (SSE framing, pump loop) stays with
     the caller; busy/turn-token ownership, persist ordering, rewrite,
-    finalize, and exactly-once release live in the owned skeleton.
+    finalize, and release live in the owned skeleton. Release is
+    token-guarded (finalize end + pump-finally end; a stale worker never
+    frees a newer turn) — logically one release, two guarded end calls.
 
     Always claims: every stream ingress is claimed (the unclaimed compat
     entry is sync-only by transport).
@@ -299,9 +331,30 @@ def submit_agent_stream_turn(
                 sel.agent_id, sel.prompt,
                 status_queue=queue, **dict(prepared.run_kwargs or {}),
             )
+        _rewrite = True
     elif sel.kind in ("router_family", "plain_router"):
         def _run(queue):
             return io.run_router(status_queue=queue)
+        _rewrite = True
+    elif sel.kind == "pipeline":
+        if io.run_pipeline is None:  # defensive: no lane passes this
+            yield (
+                "done",
+                {
+                    "success": False,
+                    "error": "unsupported_arm",
+                    "response": "This turn type cannot stream.",
+                    "type": "stream_unsupported",
+                },
+            )
+            return
+
+        def _run(queue):
+            return io.run_pipeline(status_queue=queue)
+        # The pipeline saver rewrites before persisting and the transport
+        # adapter re-applies the rewrite on the wire (belt-and-suspenders),
+        # exactly the old pipeline stream order — so the worker must not.
+        _rewrite = False
     else:  # pragma: no cover - unreachable from route stream branches
         yield (
             "done",
@@ -322,4 +375,5 @@ def submit_agent_stream_turn(
         make_saver=io.make_saver,
         notify_mobile=io.notify_mobile,
         project_path=prepared.project_path or "",
+        rewrite_result=_rewrite,
     )

@@ -24,13 +24,21 @@ the sync skeleton `run_agent_sync_turn`); stream agent turns
 (router-family and harness lanes) run through its stream twin
 (`api.chat_coordinator.submit_agent_stream_turn`, which owns the stream
 skeleton `run_agent_stream_turn`: claim → persist → worker → rewrite →
-shared finalize → exactly-once release). SSE framing, the pump loop, and
-status queues stay transport in the route. The leftover pipeline stream
-lane (`_generate_chat_stream` + `process_message_with_bot`) stays
-route-owned by design, mirroring the sync pipeline passthrough. No surface
-implements an independent execution path or its own executor — the
-declared sync/stream serialization, error, and delivery distinctions are
-pinned by HTTP tests. Cuttle never installs
+shared finalize → token-guarded release). SSE framing, live-status
+delivery, and the pump loops stay transport in the route. The leftover
+pipeline path (plain-router attempt + native no-LLM fallback — graphs
+retired) is owned end to end: the coordinator submits never return None
+(pipeline arm / plain-router abstain return the owned
+`pipeline_fallback_result`), sync runs the owned `run_pipeline_sync_turn`,
+streams run the owned entry, and `_generate_chat_stream` plus the lane
+response builders are transport-only adapters over it. The compat entry
+(`process_message_with_bot`, `/api/sessions/send`) submits unclaimed
+with no persist. The pipeline stream saver's persist-anything policy
+(including `[CANCELLED]` rows, `[ERR-20261001-001]`) is pinned unchanged
+pending its own defect pass. No surface implements an independent
+execution path or its own executor — the declared sync/stream
+serialization, error, and delivery distinctions are pinned by HTTP tests.
+Cuttle never installs
 vendor CLIs (BYO-CLI guidance only, Phase 6 P6-A). Opted-in project
 drop-ins (`{project}/.cuttle/agents/`) are trusted unsandboxed code:
 manifest identity is validated before import and siblings load on demand

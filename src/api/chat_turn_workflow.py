@@ -190,6 +190,27 @@ def finalize_stream_result(
     return bool(not superseded and kept)
 
 
+def pipeline_fallback_result() -> Dict[str, Any]:
+    """Normalized no-LLM compatibility outcome (P5-F).
+
+    The pipeline is not a graph engine anymore (visual graphs retired):
+    an empty message or a plain-router abstain ends here. Pure data —
+    surfaces persist/frame it through their own transport adapters, and
+    the coordinator arms return it instead of None so no surface
+    reimplements the fallback. Moved verbatim from the route's
+    ``_no_pipeline_chat_result``.
+    """
+    return {
+        'success': True,
+        'type': 'no_pipeline',
+        'error': 'no_pipeline',
+        'response': (
+            'No graph is running — Cuttle chat and Discord use slash agents '
+            '(`/cursor`, `/codex`, …) or the agent router. Pick an agent chip, or send a plain message for the router.'
+        ),
+    }
+
+
 def rewrite_assistant_response_actions(
     res: Optional[Dict[str, Any]], session_id, project_path: str = ""
 ) -> Optional[Dict[str, Any]]:
@@ -247,6 +268,7 @@ def run_agent_stream_turn(
     make_saver: Callable[[], Optional[Callable[[Dict[str, Any]], None]]],
     notify_mobile: Optional[Callable[[Dict[str, Any]], None]],
     project_path: str = "",
+    rewrite_result: bool = True,
 ) -> Any:
     """Stream lifecycle skeleton (order is the contract).
 
@@ -258,13 +280,22 @@ def run_agent_stream_turn(
 
     begin (busy yields ``("busy", body)``) → persist → run in a worker
     thread → stale/cancel-filtered progress → rewrite → shared finalize
-    (save/park/notify/release) → release exactly once (belt-and-suspenders:
-    finalize already ended by token).
+    (save/park/notify/end-by-token) → belt-and-suspenders end-by-token in
+    the pump ``finally``. Both ends are token-guarded no-ops once the
+    turn is over (``delivery.end`` skips a slot owned by a newer turn),
+    so logically the slot is released once while a stale worker can never
+    free a newer turn — two guarded ``end`` calls, one release.
 
     Distinctions from the sync skeleton, preserved deliberately: executor
     errors become the standard error result instead of propagating (the
     route's 500 handler never sees stream failures); save policy is
     ``finalize_stream_result``'s kept-rule, not ``should_save``.
+
+    ``rewrite_result=False`` is the pipeline arm: the worker result is
+    finalized raw and the surface transport adapter applies the response
+    rewrite (its own saver rewrites before persisting, the wire rewrite
+    is a belt-and-suspenders re-application) — exactly the old pipeline
+    stream order. The harness/router arms rewrite in the worker.
     """
     import queue as _queue_mod
     import threading as _threads
@@ -308,12 +339,15 @@ def run_agent_stream_turn(
             }
         if not isinstance(result, dict):
             result = {}
-        try:
-            display = rewrite_assistant_response_actions(
-                result, session_id, project_path
-            )
-        except Exception:
+        if not rewrite_result:
             display = result
+        else:
+            try:
+                display = rewrite_assistant_response_actions(
+                    result, session_id, project_path
+                )
+            except Exception:
+                display = result
         finalize_stream_result(
             delivery,
             session_id,
