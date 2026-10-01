@@ -28,12 +28,6 @@ async def test_current_api_key():
         print("   Get your API key from: https://platform.openai.com/account/api-keys")
         return True  # Don't fail the test for placeholder values
     
-    if api_key.startswith('sk-proj-'):
-        print("[FAIL] This is a Cursor API key, not an OpenAI API key!")
-        print("Cursor API keys start with 'sk-proj-' and are for Cursor IDE features")
-        print("OpenAI API keys start with 'sk-' and are for programmatic access")
-        return False
-    
     if api_key.startswith('sk-'):
         print("[PASS] This appears to be an OpenAI API key")
     else:

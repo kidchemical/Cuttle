@@ -19,6 +19,16 @@ SAMPLE_JSONL = """
 """.strip()
 
 
+@pytest.fixture(autouse=True)
+def _fresh_codex_catalog_cache():
+    """Fake catalogs cached here must not leak into later files' effort checks."""
+    from api.agent_harness.agents.codex import model_catalog as mc
+
+    mc.clear_codex_catalog_cache()
+    yield
+    mc.clear_codex_catalog_cache()
+
+
 def test_parse_codex_jsonl_extracts_thread_message_usage():
     parsed = _parse_codex_jsonl(SAMPLE_JSONL)
     assert parsed["thread_id"] == "01a006a4-6f5e-7750-a333-27261e4ebdce"
@@ -336,6 +346,39 @@ def test_codex_catalog_from_cli(monkeypatch):
     assert out["models"][0]["id"] == "gpt-5.6-sol"
 
 
+def test_codex_efforts_for_cli_only_model_after_cache_expiry(monkeypatch):
+    """A model newer than the manifest must not be refused once the cache expires.
+
+    CH-000840: a `gpt-6.1-sol · low` pin was refused ("no verified effort
+    list") whenever the 120s live catalog had lapsed, because only the
+    manifest snapshot was consulted.
+    """
+    from api.agent_harness.agents.codex import model_catalog as mc
+
+    calls = []
+
+    def fake_debug_models(*, refresh=False):
+        calls.append(refresh)
+        return (
+            [{"id": "gpt-9-future", "label": "GPT-9-Future", "efforts": ["low", "high"]}],
+            None,
+        )
+
+    monkeypatch.setattr(mc, "_run_codex_debug_models", fake_debug_models)
+    assert mc.codex_efforts_for_model("gpt-9-future") == ["low", "high"]
+    assert calls == [False]  # bundled catalog, not a remote refresh
+
+    # Manifest models stay CLI-free when nothing is cached.
+    mc.clear_codex_catalog_cache()
+    calls.clear()
+    assert "low" in mc.codex_efforts_for_model("gpt-5.5")
+    assert calls == []
+
+    # Ids the CLI does not list stay empty (guard still refuses them).
+    mc.clear_codex_catalog_cache()
+    assert mc.codex_efforts_for_model("not-a-model") == []
+
+
 def test_codex_model_slash_refresh(monkeypatch):
     from api.agent_harness.agents.codex.adapter import _handle_codex_model_slash
 
@@ -386,6 +429,15 @@ def test_codex_models_endpoints(tmp_path: Path, monkeypatch):
     )
 
     with w.app.test_client() as client:
+        denied = client.post(
+            "/api/codex/model", json={"session": "api-sess", "model": "gpt-5.6-luna"}
+        )
+        assert denied.status_code == 401  # pins require a signed-in caller
+
+        monkeypatch.setattr(
+            w, "_require_session_actor",
+            lambda session_id: ({"id": 1}, session_id, None),
+        )
         listed = client.get("/api/codex/models?session=api-sess").get_json()
         assert listed["success"] is True
         assert {m["id"] for m in listed["models"]} >= {"gpt-5.6-sol"}

@@ -1,7 +1,6 @@
 """Bridge Cursor ``AskQuestion`` tool calls into Cuttle action forms.
 
-The IDE renders AskQuestion as a clickable picker. Headless ``agent -p`` has no
-UI, so the tool returns "skipped" immediately and the user never sees the
+Headless ``agent -p`` has no picker UI for AskQuestion, so the tool returns "skipped" immediately and the user never sees the
 question. This turns the tool args into a ``<cuttle_action_form>`` with
 ``resume: true`` so the pick starts the next agent turn.
 """

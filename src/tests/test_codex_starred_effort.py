@@ -58,13 +58,14 @@ def test_codex_effort_info_reports_starred_default_for_unpinned_chat(
     tmp_path, monkeypatch
 ):
     from scripts.utilities import codex_cli_session_store as store
-    from api.agent_harness.agents.codex import model_catalog
+    from api.agent_harness.agents.codex import adapter as cadapter
     from api.agent_harness.agents.codex.adapter import Adapter
 
     _install_low_star(monkeypatch)
     monkeypatch.setattr(store, "_map_file", lambda: tmp_path / "codex_map.json")
+    # The adapter binds codex_efforts_for_model at import; patch its reference.
     monkeypatch.setattr(
-        model_catalog,
+        cadapter,
         "codex_efforts_for_model",
         lambda _model=None: ["low", "medium", "xhigh"],
     )
@@ -81,13 +82,13 @@ def test_codex_effort_info_reports_starred_default_for_unpinned_chat(
 def test_codex_execution_passes_starred_effort_to_cli(tmp_path, monkeypatch):
     from scripts.utilities import codex_cli_session_store as store
     from scripts.utilities import codex_cli_tool
-    from api.agent_harness.agents.codex import model_catalog
+    from api.agent_harness.agents.codex import adapter as cadapter
     from api.agent_harness.agents.codex.adapter import Adapter
 
     _install_low_star(monkeypatch)
     monkeypatch.setattr(store, "_map_file", lambda: tmp_path / "codex_map.json")
     monkeypatch.setattr(
-        model_catalog,
+        cadapter,
         "codex_efforts_for_model",
         lambda _model=None: ["low", "medium", "xhigh"],
     )

@@ -15,7 +15,7 @@ Pytest suite. Default entry (per AGENTS.md):
 ```
 src/tests/
 ├── test_*.py        # ~130 pytest files (chat, agents, jobs, restart, discord, …)
-├── unit/            # legacy tool tests (window focus, security, …)
+├── unit/            # legacy tool tests (security, API keys, …)
 ├── integration/     # live-server / content tests (pytest, skip when deps missing)
 │   ├── test_discord_api_e2e.py          # /api/health; asserts pipeline-trigger-discord is 404 if server up
 │   └── test_discord_remote_execution.py # gateway files absent; Electron does not start Discord
@@ -42,10 +42,6 @@ proactively, do not bury them in a larger command.
 
 ## Removed (2026-09)
 
-- `unit/test_cursor_command.py`, `unit/test_cursor_newwindow.py` — drove the
-  **Cursor IDE** (`cursor` binary + window focus/Ctrl+L automation) instead of the
-  `agent` CLI. The `test_cursor_agent_*` files are the real CLI coverage (mocked
-  `_resolve_cursor_agent_argv`) and stay.
 - `integration/test_bot_startup.py`, `test_wsl_integration.py` — hardcoded
   `/home/<user>/...` paths, shelled out to `wsl`, tested machine setup.
 - `integration/test_discord_bot_integration.py` — asserted against local fake
@@ -57,7 +53,7 @@ Runner references were cleaned in `run_all_tests.py`, `run_safe_tests.py`,
 ## Contributing
 
 1. New tests go flat in `src/tests/` as `test_*.py` (pytest discovers them).
-2. Mock subprocesses — never launch the IDE, a server, or a harness for real.
+2. Mock subprocesses — never launch a GUI app, a server, or a harness for real.
 3. Live-server tests must `pytest.skip` when the server is down (see
    `integration/test_discord_api_e2e.py`).
 4. `deprecated/` is archaeology — do not add new cases there.

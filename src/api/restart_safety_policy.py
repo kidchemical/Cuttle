@@ -33,7 +33,7 @@ HARNESS_COVERAGE: Dict[str, Dict[str, Any]] = {
             "cuttle_ui_capabilities / restart_safety_brief",
             "AGENTS.md",
         ],
-        "notes": "No IDE shell gate ships with this repo; policy is advisory only.",
+        "notes": "Cursor Agent CLI has no Cuttle-owned before-shell hook; policy is advisory only.",
     },
     "codex": {
         "hard_enforcement": None,
@@ -73,7 +73,7 @@ HARNESS_COVERAGE: Dict[str, Dict[str, Any]] = {
         "hard_enforcement": None,
         "hard_path": None,
         "advisory": [],
-        "notes": "Pipeline tools.shell archived; Cursor CLI still gated by beforeShellExecution.",
+        "notes": "Pipeline tools.shell archived; no Cuttle shell gate.",
     },
 }
 

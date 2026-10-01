@@ -138,9 +138,16 @@ def test_history_js_hard_gates_full_list_paint_while_searching():
     marker = "off the welcome splash"
     auth_idx = js.find(marker)
     assert auth_idx > 0
-    auth_block = js[auth_idx : auth_idx + 600]
+    auth_block = js[auth_idx : auth_idx + 1200]
     assert "reloadHistoryListKeepingSearch()" in auth_block
     assert "loadChatHistory();" not in auth_block
+    # The settle path may reload projects first; that reload must keep search too.
+    if "loadProjects();" in auth_block:
+        lp_start = js.find("async function loadProjects(")
+        lp_end = js.find("\n    }\n", lp_start)
+        load_projects = js[lp_start:lp_end]
+        assert "reloadHistoryListKeepingSearch()" in load_projects
+        assert "loadChatHistory();" not in load_projects
     # Title matches sort above content matches in the sidebar.
     assert "entrySearchMatchRank" in js
     assert "title matches before content" in js.lower() or "Matching titles" in js
@@ -150,9 +157,15 @@ def test_history_js_hard_gates_full_list_paint_while_searching():
 
 def test_chat_page_asset_versions_bump_for_capacitor_cache():
     """Capacitor WebViews cache ?v= JS/CSS as immutable — bump when search UI changes."""
+    import re
+
     html = (WEB / "chat_page.html").read_text(encoding="utf-8")
-    assert "chat_page.js?v=20260927graphsGone" in html
-    assert "chat_page.css?v=20260927qlFit" in html
+    # Date-prefixed cache-busters, never older than the search-wipe fix
+    # (exact strings change on every bump).
+    for asset in ("chat_page.js", "chat_page.css"):
+        m = re.search(re.escape(asset) + r"\?v=(\d{8})\w*", html)
+        assert m, f"{asset} lost its ?v= cache-buster"
+        assert int(m.group(1)) >= 20260927, f"{asset} version older than the search fix"
     # Stale fingerprints must not linger (phone app would keep the wipe bug).
     assert "historyIconsFix" not in html
     assert "20260922codexModel" not in html

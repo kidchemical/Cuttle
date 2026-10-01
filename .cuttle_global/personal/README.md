@@ -40,7 +40,7 @@ Guest projects have their own twin at `{project}/.cuttle/personal/`.
 
 - Code Cuttle needs to boot (keep that tracked)
 - Secrets (use `src/.env` / `.secret_DONOTSHIP/`)
-- Non-Cuttle dogfood (Instacart skills, etc.) → repo-root `_personal/`
+- Non-Cuttle home-lab dogfood → repo-root `_personal/`
 
 ## Fresh install
 

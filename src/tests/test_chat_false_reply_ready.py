@@ -85,14 +85,6 @@ def test_background_notify_requires_nonempty_body():
     assert "(data.success || String(data.response" not in window
 
 
-def test_cursor_stream_switch_does_not_chirp_mid_run():
-    body = _fn_body(_src(), "async function processCursorCommandStreaming")
-    assert "notifyAssistantResponseReady(boundStreamSessionId)" not in body.split(
-        "activeEventSource.onmessage", 1
-    )[1].split("data.type === 'done'", 1)[0]
-    assert "watchDetachedSessionForCompletion(boundStreamSessionId)" in body
-
-
 def test_detached_watcher_only_notifies_on_pending_body():
     body = _fn_body(_src(), "function watchDetachedSessionForCompletion")
     assert "/api/chat-pending-result" in body

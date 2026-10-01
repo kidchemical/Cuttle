@@ -113,20 +113,6 @@ Columns: **class** · **owner** · **purpose** · **review**. Git status for eve
 |---|---|---|---|---|
 | `.claude/agents/code-reviewer.md` | 1 | claude-ide | Markdown (code-reviewer.md) | inventoried |
 | `.claude/agents/researcher.md` | 1 | claude-ide | Markdown (researcher.md) | inventoried |
-| `.cursor/hooks/block_cuttle_managed_kill.py` | 1 | cursor-ide | Python module (hooks/block_cuttle_managed_kill.py) | structure |
-| `.cursor/mcp.json` | 1 | cursor-ide | JSON config/fixture (mcp.json) | inventoried |
-| `.cursor/rules/comfyui-trellis2.mdc` | 1 | cursor-ide | Cursor rule | inventoried |
-| `.cursor/rules/cuttle-electron-debug.mdc` | 1 | cursor-ide | Cursor rule | inventoried |
-| `.cursor/rules/multi-project-awareness.mdc` | 1 | cursor-ide | Cursor rule | inventoried |
-| `.cursor/rules/project-guidelines.mdc` | 1 | cursor-ide | Cursor rule | inventoried |
-| `.cursor/rules/restart-cuttle.mdc` | 1 | cursor-ide | Cursor rule | inventoried |
-| `.cursor/skills/comfyui-trellis2/SKILL.md` | 1 | cursor-ide | Agent skill | inventoried |
-| `.cursor/skills/cuttle-cleanup-sessions/SKILL.md` | 1 | cursor-ide | Agent skill | inventoried |
-| `.cursor/skills/cuttle-electron-debug/SKILL.md` | 1 | cursor-ide | Agent skill | inventoried |
-| `.cursor/skills/cuttle-project-commands/SKILL.md` | 1 | cursor-ide | Agent skill | inventoried |
-| `.cursor/skills/cuttle-roadmap/SKILL.md` | 1 | cursor-ide | Agent skill | inventoried |
-| `.cursor/skills/govee/SKILL.md` | 1 | cursor-ide | Agent skill | inventoried |
-| `.cursor/skills/local-plan-act-ollama/SKILL.md` | 1 | cursor-ide | Agent skill | inventoried |
 | `.cuttle/README.md` | 1 | hub-config | Readme (.cuttle) | inventoried |
 | `.cuttle/actions/.gitkeep` | 1 | hub-actions | Tracked file (.gitkeep) | inventoried |
 | `.cuttle/actions/comfyui-start.yaml` | 1 | hub-actions | Hub action form | inventoried |
@@ -725,7 +711,6 @@ Columns: **class** · **owner** · **purpose** · **review**. Git status for eve
 | `src/scripts/utilities/codex_cli_tool.py` | 1 | cli-utilities | Python module (utilities/codex_cli_tool.py) | structure |
 | `src/scripts/utilities/cursor_cli_session_store.py` | 1 | cli-utilities | Python module (utilities/cursor_cli_session_store.py) | structure |
 | `src/scripts/utilities/cursor_cli_tool.py` | 1 | cli-utilities | Python module (utilities/cursor_cli_tool.py) | structure |
-| `src/scripts/utilities/debug_cursor_location.py` | 5 | cli-utilities | Debug helper; imports tool_manager from utilities/ (module lives elsewhere) | structure |
 | `src/scripts/utilities/example_project_setup.py` | 1 | cli-utilities | Python module (utilities/example_project_setup.py) | structure |
 | `src/scripts/utilities/fix_project_paths.py` | 1 | cli-utilities | Python module (utilities/fix_project_paths.py) | structure |
 | `src/scripts/utilities/git_credential_helper.py` | 1 | cli-utilities | Python module (utilities/git_credential_helper.py) | structure |
@@ -939,7 +924,6 @@ Columns: **class** · **owner** · **purpose** · **review**. Git status for eve
 | `src/tests/unit/test_security_standalone.py` | 1 | tests | Test: test_security_standalone.py | structure |
 | `src/tests/unit/test_username_case.py` | 1 | tests | Test: test_username_case.py | structure |
 | `src/tests/unit/test_username_case_standalone.py` | 1 | tests | Test: test_username_case_standalone.py | structure |
-| `src/tests/unit/test_window_focus.py` | 1 | tests | Test: test_window_focus.py | structure |
 | `src/tools/TOOLS_README.md` | 1 | tools | Markdown (TOOLS_README.md) | inventoried |
 | `src/tools/__init__.py` | 1 | tools | Package init (tools) | structure |
 | `src/tools/comfyui/__init__.py` | 1 | tools | Package init (comfyui) | structure |

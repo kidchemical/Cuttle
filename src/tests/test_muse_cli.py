@@ -707,18 +707,20 @@ async def test_execute_prompt_cancel_preserves_partial(tmp_path: Path, monkeypat
 @pytest.mark.asyncio
 async def test_e2e_muse_echo_provider():
     """Live WSL/native muse exec --provider echo (no Meta API credits)."""
+    from api.agent_router.supervised.test_isolation import allow_external_runners
     from scripts.utilities.muse_cli_tool import muse_available
 
     if not muse_available():
         pytest.skip("muse CLI not installed")
     tool = MuseCliTool()
-    result = await tool.execute_prompt(
-        "Cuttle e2e ping",
-        cwd=str(Path(__file__).resolve().parents[2]),
-        timeout=120.0,
-        provider="echo",
-        max_model_steps=2,
-    )
+    with allow_external_runners("muse echo provider e2e (no model credits)"):
+        result = await tool.execute_prompt(
+            "Cuttle e2e ping",
+            cwd=str(Path(__file__).resolve().parents[2]),
+            timeout=120.0,
+            provider="echo",
+            max_model_steps=2,
+        )
     assert result["success"] is True, result.get("error")
     assert "Cuttle e2e ping" in (result.get("output") or "")
     assert result.get("muse_session_id")
@@ -759,13 +761,13 @@ def test_registry_knows_muse():
     assert target.agent == "muse"
 
 
-def test_chat_endpoint_dispatches_muse_in_auto_mode(monkeypatch):
+def test_chat_endpoint_dispatches_muse_in_auto_mode(monkeypatch, owner_session):
     """Regression: the cloud-mode guard must not swallow allowed CLI commands."""
     from api import web_chat_api as w
 
     monkeypatch.setattr(
         w,
-        "_run_harness_web_command",
+        "_run_pinned_harness_turn",
         lambda agent_id, prompt, chat_session_id, **kwargs: {
             "success": True,
             "response": f"muse handled: {prompt}",
@@ -775,6 +777,7 @@ def test_chat_endpoint_dispatches_muse_in_auto_mode(monkeypatch):
     )
 
     with w.app.test_client() as client:
+        owner_session.sign_in(client)
         response = client.post(
             "/api/chat",
             json={
@@ -860,7 +863,7 @@ def _sse_events(payload: bytes):
     return out
 
 
-def test_muse_stream_forwards_agent_model_to_client(monkeypatch):
+def test_muse_stream_forwards_agent_model_to_client(monkeypatch, owner_session):
     """The badge is built from the SSE `response` event — it must carry agent_model.
 
     Unit-testing the Muse adapter alone passed while the live chat still
@@ -870,7 +873,7 @@ def test_muse_stream_forwards_agent_model_to_client(monkeypatch):
 
     monkeypatch.setattr(
         w,
-        "_run_harness_web_command",
+        "_run_pinned_harness_turn",
         lambda agent_id, prompt, chat_session_id, **kwargs: {
             "success": True,
             "response": "done",
@@ -881,6 +884,7 @@ def test_muse_stream_forwards_agent_model_to_client(monkeypatch):
     )
 
     with w.app.test_client() as client:
+        owner_session.sign_in(client)
         response = client.post(
             "/api/chat",
             json={
@@ -997,12 +1001,13 @@ def test_muse_clear_session_reply(tmp_path: Path, monkeypatch):
     assert store.load_muse_resume_id(str(tmp_path), "muse-clear") is None
 
 
-def test_muse_models_endpoints(tmp_path: Path, monkeypatch):
+def test_muse_models_endpoints(tmp_path: Path, monkeypatch, owner_session):
     from api import web_chat_api as w
 
     monkeypatch.setattr(store, "_repo_root", lambda: tmp_path)
 
     with w.app.test_client() as client:
+        owner_session.sign_in(client)
         listed = client.get("/api/muse/models?session=api-sess").get_json()
         assert listed["success"] is True
         assert listed["preferredModel"] == DEFAULT_MUSE_MODEL

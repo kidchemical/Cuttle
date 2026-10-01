@@ -134,7 +134,7 @@ def test_history_text_is_a_no_op_without_attachments():
 
 
 @pytest.fixture
-def cursor_chat(tmp_path, monkeypatch, stub_vision):
+def cursor_chat(tmp_path, monkeypatch, stub_vision, owner_session):
     """`/api/chat` wired to a fake DB + fake Cursor CLI, with a real upload on disk."""
     from api import web_chat_api as wca
 
@@ -169,10 +169,10 @@ def cursor_chat(tmp_path, monkeypatch, stub_vision):
     )
     monkeypatch.setattr(wca, "_resolve_request_project_path", lambda data: str(tmp_path))
     monkeypatch.setattr(wca, "_stamp_auth_session_project", lambda *a, **k: None)
-    monkeypatch.setattr(wca, "_run_harness_web_command", fake_harness)
+    monkeypatch.setattr(wca, "_run_pinned_harness_turn", fake_harness)
     monkeypatch.setattr(wca, "_make_auth_assistant_saver", lambda *a, **k: None)
 
-    client = wca.app.test_client()
+    client = owner_session.sign_in(wca.app.test_client())
 
     def send(message):
         return client.post(

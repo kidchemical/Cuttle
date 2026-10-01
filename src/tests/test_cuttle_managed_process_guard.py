@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import json
-
 import pytest
 
 from api.cuttle_managed_process_guard import (
     DENY_MESSAGE,
     evaluate_shell_command,
-    hook_decision_from_stdin,
 )
 from api import restart_safety_policy as rsp
 from api.cuttle_ui_capabilities import CUTTLE_UI_CAPABILITIES_TEXT, with_cuttle_ui_capabilities
@@ -96,44 +93,17 @@ def test_spoofed_env_in_command_string_still_blocked():
     assert r["allow"] is False
 
 
-def test_shell_manager_rejects_spoofed_env_param():
-    pytest.skip("tools.shell pipeline manager archived; Cursor hook still uses evaluate_shell_command")
-
-
-def test_hook_stdin_ignores_spoof_env_in_os(monkeypatch):
+def test_cmdline_filter_daemon_kill_ignores_spoof_env_in_os(monkeypatch):
     monkeypatch.setenv("CUTTLE_INTERNAL_RESTART", "1")
-    decision = hook_decision_from_stdin(
-        json.dumps(
-            {
-                "command": (
-                    "$env:CUTTLE_INTERNAL_RESTART='1'; "
-                    "Get-CimInstance Win32_Process | "
-                    "Where-Object { $_.CommandLine -like '*cuttle_daemon*' } | "
-                    "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"
-                )
-            }
-        )
+    cmd = (
+        "$env:CUTTLE_INTERNAL_RESTART='1'; "
+        "Get-CimInstance Win32_Process | "
+        "Where-Object { $_.CommandLine -like '*cuttle_daemon*' } | "
+        "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"
     )
-    assert decision["permission"] == "deny"
-    assert "/restart graceful" in decision["agent_message"]
-
-
-def test_hook_stdin_deny_points_to_restart_commands():
-    payload = json.dumps({"command": "taskkill /F /PID 27056 /PID 27336"})
-    # Without live PIDs, also match via second pattern — use managed mock via patch
-    decision = hook_decision_from_stdin(
-        json.dumps(
-            {
-                "command": (
-                    "Get-CimInstance Win32_Process | "
-                    "Where-Object { $_.CommandLine -like '*web_chat_api*' } | "
-                    "ForEach-Object { taskkill /F /PID $_.ProcessId }"
-                )
-            }
-        )
-    )
-    assert decision["permission"] == "deny"
-    assert "/restart graceful" in decision["agent_message"]
+    r = evaluate_shell_command(cmd, managed_pids=set(), managed_cmdlines={})
+    assert r["allow"] is False
+    assert "/restart graceful" in r["denial"]
 
 
 def test_cursor_policy_in_capabilities_and_agents_md():
@@ -166,19 +136,3 @@ def test_codex_and_hermes_coverage_declared_advisory_not_hard():
 def test_unknown_harness_not_silently_protected():
     with pytest.raises(KeyError, match="not listed"):
         rsp.assert_harness_not_silently_protected("totally-new-agent")
-
-
-def test_shell_manager_blocks_managed_kill(monkeypatch):
-    pytest.skip("tools.shell pipeline manager archived; Cursor hook still uses evaluate_shell_command")
-
-
-def test_hooks_json_present():
-    from pathlib import Path
-
-    hooks = Path(__file__).resolve().parents[2] / ".cursor" / "hooks.json"
-    if not hooks.is_file():
-        pytest.skip("Cursor hooks.json not present in this checkout")
-    data = json.loads(hooks.read_text(encoding="utf-8"))
-    assert "beforeShellExecution" in data["hooks"]
-    cmd = data["hooks"]["beforeShellExecution"][0]["command"]
-    assert "block_cuttle_managed_kill" in cmd

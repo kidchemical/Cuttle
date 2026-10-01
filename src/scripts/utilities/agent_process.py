@@ -219,6 +219,13 @@ async def run_interruptible(
                     await proc.wait()
                 except ProcessLookupError:
                     pass
+                # CLIs print trailers on stderr at exit (Hermes `session_id:`);
+                # cancelling the pump before it drains drops them. Capped
+                # because a surviving grandchild can hold the pipe open.
+                try:
+                    await asyncio.wait_for(asyncio.shield(err_task), timeout=2.0)
+                except (asyncio.TimeoutError, Exception):
+                    pass
     finally:
         err_task.cancel()
         try:

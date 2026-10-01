@@ -56,7 +56,7 @@ def supervised_env(tmp_path: Path, monkeypatch):
 # ── 1–4: control lane / auth / fallthrough / idempotency ─────────────────────
 
 
-def test_auth_user_exists_in_real_flask_control_route(supervised_env, monkeypatch):
+def test_auth_user_exists_in_real_flask_control_route(supervised_env, monkeypatch, owner_session):
     """Reproduce NameError fallthrough: control must resolve auth before use."""
     from api import web_chat_api as wca
     from api.agent_router.supervised.orchestrator import create_supervised_task
@@ -73,7 +73,7 @@ def test_auth_user_exists_in_real_flask_control_route(supervised_env, monkeypatc
     monkeypatch.setattr(wca, "_resolve_request_project_path", lambda data: ".")
     monkeypatch.setattr(wca, "_strip_invisible_leading", lambda s: s or "")
 
-    client = wca.app.test_client()
+    client = owner_session.sign_in(wca.app.test_client())
     resp = client.post(
         "/api/chat",
         json={
@@ -106,7 +106,7 @@ def test_auth_user_exists_in_real_flask_control_route(supervised_env, monkeypatc
     assert len(pending) == 1
 
 
-def test_recognized_control_never_falls_through(supervised_env, monkeypatch):
+def test_recognized_control_never_falls_through(supervised_env, monkeypatch, owner_session):
     from api import web_chat_api as wca
 
     monkeypatch.setattr(
@@ -124,7 +124,7 @@ def test_recognized_control_never_falls_through(supervised_env, monkeypatch):
         "api.agent_router.supervised.commands.handle_coordinate_command",
         boom,
     )
-    client = wca.app.test_client()
+    client = owner_session.sign_in(wca.app.test_client())
     resp = client.post(
         "/api/chat",
         json={"message": "/coordinate status", "session_id": 7, "stream": False},

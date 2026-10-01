@@ -302,12 +302,15 @@ def test_cursor_models_endpoint_prefers_starred_without_session(monkeypatch):
     assert bare.get_json()["preferredModel"] == "auto"
 
 
-def test_agent_defaults_post_rejects_capability_violations(monkeypatch):
+def test_agent_defaults_post_rejects_capability_violations(monkeypatch, owner_session):
     import api.web_chat_api as wca
 
     fake = _FakeSettings()
     monkeypatch.setattr(ad, "_settings", lambda: fake)
     client = wca.app.test_client()
+    anon = client.post("/api/agent-defaults/muse", json={"starred_effort": "high"})
+    assert anon.status_code == 401
+    owner_session.sign_in(client)
     denied = client.post("/api/agent-defaults/cursor", json={"starred_effort": "high"})
     assert denied.status_code == 400
     assert denied.get_json()["success"] is False

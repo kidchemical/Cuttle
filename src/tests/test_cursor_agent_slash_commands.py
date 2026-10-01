@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -437,8 +438,11 @@ def test_format_cursor_usage_markdown_included_plan():
     assert "Cursor — usage" in md
     assert "Pro" in md
     assert "<cuttle_meters>" in md
-    assert '"label":"Included"' in md.replace(" ", "")
-    assert '"pct":3' in md.replace(" ", "")
+    compact = md.replace(" ", "")
+    # Meters show remaining quota: 100 - CLI percent used.
+    assert '{"label":"Included","pct":97.0}' in compact
+    assert '{"label":"Auto","pct":97.0}' in compact
+    assert '{"label":"API","pct":100.0}' in compact
     assert "<vega>" not in md
     assert "$7.72" in md
     assert "$20.00" in md
@@ -475,7 +479,9 @@ def test_format_cursor_usage_prefers_cli_pct_over_dollar_display_message():
         }
     )
     assert "<cuttle_meters>" in md
-    assert '"pct":2.61' in md.replace(" ", "") or '"pct":2.62' in md.replace(" ", "")
+    # Remaining = 100 - CLI totalPercentUsed (2.61), not 100 - dollar 60%.
+    assert '{"label":"Included","pct":97.39}' in md.replace(" ", "")
+    assert '"pct":40' not in md.replace(" ", "")
     assert "Included: 60%" not in md
     assert "<vega>" not in md
     assert "Compute $" in md
@@ -510,10 +516,34 @@ def test_cuttle_meters_tag_wired_in_chat_page():
 
 def test_format_cursor_usage_markdown_error():
     md = format_cursor_usage_markdown(
-        {"success": False, "error": "Could not find a Cursor IDE login session"}
+        {"success": False, "error": "Could not find a Cursor Agent CLI login"}
     )
     assert md.startswith("❌")
-    assert "login session" in md
+    assert "CLI login" in md
+
+
+def test_cursor_usage_reads_cli_auth_not_ide(tmp_path, monkeypatch):
+    import api.cursor_agent_commands as cac
+
+    auth = tmp_path / "auth.json"
+    monkeypatch.setattr(cac, "_cursor_cli_auth_path", lambda: auth)
+    assert cac._read_cursor_cli_access_token() is None
+    missing = cac.fetch_cursor_account_usage()
+    assert missing["success"] is False
+    assert "agent login" in missing["error"]
+    assert "IDE" not in missing["error"]
+
+    auth.write_text(json.dumps({"accessToken": " tok ", "refreshToken": "r"}))
+    assert cac._read_cursor_cli_access_token() == "tok"
+
+
+def test_cursor_cli_auth_path_linux_xdg(tmp_path, monkeypatch):
+    import api.cursor_agent_commands as cac
+
+    if cac.os.name == "nt" or cac.sys.platform == "darwin":
+        return
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    assert cac._cursor_cli_auth_path() == tmp_path / "cursor" / "auth.json"
 
 
 def test_handle_cursor_usage_slash(tmp_path, monkeypatch):

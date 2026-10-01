@@ -4907,17 +4907,24 @@ def _stream_agent_turn_response(prepared, *, io):
     the session event plus the Connecting liveness pair and frame every
     lifecycle event verbatim. Claim/persist/run/rewrite/finalize/release
     all live in the coordinator entry, never here.
+
+    Live-status is transport state: each progress event is published and
+    the done event clears it (token-guarded via ``completion``). Without
+    the clear, the head's "Connecting..." row outlives the reply and
+    live-status pollers repaint a waiting bubble after the answer.
     """
     from api import chat_delivery as _chat_delivery
     from api.chat_coordinator import (
         submit_agent_stream_turn as _submit_stream_turn,
     )
 
+    _completion = {}
     _events = _submit_stream_turn(
         prepared,
         io=io,
         delivery=_chat_delivery,
         is_router_family=_is_router_family_message,
+        completion=_completion,
     )
     _first = next(_events, None)
     if _first is not None and _first[0] == "shortcut":
@@ -4939,10 +4946,28 @@ def _stream_agent_turn_response(prepared, *, io):
             )
         else:
             _first_event = _first
-        _k0, _p0 = _first_event
-        for _chunk in _frame_stream_lifecycle_event(_k0, _p0, _sid):
-            yield _chunk
-        for _kind, _payload in _events:
+        import itertools as _it
+        for _kind, _payload in _it.chain([_first_event], _events):
+            try:
+                if _kind == "status":
+                    set_chat_live_status(_sid, _payload, active=True)
+                elif _kind == "query_started":
+                    _pq = _payload or {}
+                    set_chat_live_status(
+                        _sid,
+                        None,
+                        active=True,
+                        query_id=_pq.get("query_id"),
+                        report_url=_pq.get("report_url"),
+                    )
+            except Exception:
+                pass
+            if _kind == "done":
+                _clear_live_status_on_stream_done(
+                    _sid,
+                    stale=bool(_completion.get("stale", False)),
+                    cancelled=bool(_completion.get("cancelled", False)),
+                )
             for _chunk in _frame_stream_lifecycle_event(_kind, _payload, _sid):
                 yield _chunk
 
@@ -6506,7 +6531,7 @@ def health_check():
         local_llm_backend = 'ollama'
         local_llm_label = 'Ollama'
 
-    cursor_exe = bool(shutil.which("cursor"))
+    cursor_exe = bool(shutil.which("agent") or shutil.which("cursor-agent"))
     try:
         from managers.settings_manager import get_settings_manager
         plimits = get_settings_manager().get_pipeline_limits()

@@ -111,14 +111,14 @@ def test_overflow_never_folds_a_costly_low_turn_group(tmp_path: Path):
     assert "gpt-pricey" not in other["members"]
 
 
-def test_usage_route(tmp_path: Path, monkeypatch):
+def test_usage_route(tmp_path: Path, monkeypatch, owner_session):
     db = tmp_path / "outcomes.db"
     _seed(db)
     real = usage.cuttle_usage
     monkeypatch.setattr(usage, "cuttle_usage", lambda **kw: real(**kw, db_path=db, now=NOW))
     app = Flask(__name__)
     app.register_blueprint(dashboards_bp)
-    body = app.test_client().get("/api/dashboards/cuttle-usage?range=14d&group=harness&tz=0").get_json()
+    body = owner_session.sign_in(app.test_client()).get("/api/dashboards/cuttle-usage?range=14d&group=harness&tz=0").get_json()
     assert body["success"] is True
     assert body["selected_group_by"] == "harness"
     assert len(body["buckets"]) == 14

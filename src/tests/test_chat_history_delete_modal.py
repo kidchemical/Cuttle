@@ -15,12 +15,15 @@ def test_history_delete_modal_lives_in_the_pane_not_the_sidebar():
     assert panel_start > 0 and panel_end > panel_start
     panel = html[panel_start:panel_end]
     layout_start = html.find('class="chat-layout"')
-    layout_end = html.find("</div>", html.find("</main>"))
-    layout = html[layout_start:layout_end + len("</div>")]
+    main_end = html.find("</main>", layout_start)
     assert 'id="historyDeleteModal"' not in panel
-    assert 'id="historyDeleteModal"' in layout
-    assert 'id="historyDeleteConfirm"' in layout
-    assert 'id="historyDeleteCancel"' in layout
+    # Pane overlay: a sibling after </main> inside .chat-layout (other pane
+    # modals such as git-push confirm may sit between them).
+    modal = html.find('id="historyDeleteModal"')
+    assert layout_start < main_end < modal
+    modal_end = html.find('id="historyRenameModal"', modal)
+    for child in ('id="historyDeleteConfirm"', 'id="historyDeleteCancel"'):
+        assert modal < html.find(child) < modal_end
     assert "chat-delete-confirm" not in html
 
 

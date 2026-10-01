@@ -111,6 +111,33 @@ def test_cuttle_meters_markdown_contract():
     assert payload["rows"][1]["status"] == "Off"
 
 
+def test_codex_quota_meters_show_remaining_percent():
+    payload = _meters_payload(format_codex_usage_markdown(CODEX_USAGE_FAKE))
+    assert [row["pct"] for row in payload["rows"][:2]] == [57.5, 90.0]
+
+
+def test_cursor_quota_meters_show_remaining_percent():
+    payload = _meters_payload(format_cursor_usage_markdown(CURSOR_USAGE_FAKE))
+    rows = {row["label"]: row for row in payload["rows"]}
+    assert rows["Included"]["pct"] == 97.0
+    assert rows["Auto"]["pct"] == 97.0
+    assert rows["API"]["pct"] == 100.0
+    assert rows["On-Demand"]["disabled"] is True
+
+
+def test_usage_share_meters_are_labeled_as_distribution():
+    md = format_muse_usage_markdown(MUSE_USAGE_FAKE)
+    assert "local context share" in md.lower()
+    hermes = format_hermes_usage_markdown(
+        {**parse_hermes_insights_text(HERMES_INSIGHTS_SAMPLE), "success": True, "days": 30}
+    )
+    assert "tool distribution" in hermes.lower()
+    opencode = format_opencode_usage_markdown(
+        {**parse_opencode_stats_text(OPENCODE_STATS_SAMPLE), "success": True, "days": 30}
+    )
+    assert "tool distribution" in opencode.lower()
+
+
 def test_cuttle_meters_renderer_wired_in_frontend():
     js = CHAT_JS.read_text(encoding="utf-8")
     mod = (CHAT_JS.parent / "chat_messages.js").read_text(encoding="utf-8")

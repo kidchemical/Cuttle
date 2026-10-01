@@ -285,7 +285,7 @@ def format_codex_usage_markdown(data: Dict[str, Any]) -> str:
     meter_rows: List[Dict[str, Any]] = []
     if primary:
         try:
-            pct = float(primary.get("used_percent") or 0)
+            pct = 100.0 - float(primary.get("used_percent") or 0)
         except (TypeError, ValueError):
             pct = 0.0
         label = "5-hour"
@@ -295,7 +295,7 @@ def format_codex_usage_markdown(data: Dict[str, Any]) -> str:
         meter_rows.append({"label": label, "pct": round(pct, 2)})
     if secondary:
         try:
-            pct = float(secondary.get("used_percent") or 0)
+            pct = 100.0 - float(secondary.get("used_percent") or 0)
         except (TypeError, ValueError):
             pct = 0.0
         label = "Weekly"
@@ -343,8 +343,8 @@ def format_codex_usage_markdown(data: Dict[str, Any]) -> str:
 
     lines.append("")
     lines.append(
-        "_5-hour / Weekly % match ChatGPT Codex plan windows "
-        "(`GET /backend-api/wham/usage`)._"
+        "_5-hour / Weekly bars show remaining capacity from ChatGPT Codex plan "
+        "windows (`GET /backend-api/wham/usage`)._"
     )
     lines.append(
         "Dashboard: [chatgpt.com](https://chatgpt.com) → Settings → Usage"
@@ -517,7 +517,7 @@ def format_opencode_usage_markdown(data: Dict[str, Any]) -> str:
     ]
     if tool_rows:
         lines.append("")
-        lines.append("**Tools**")
+        lines.append("**Tool distribution**")
         lines.append("")
         lines.append(cuttle_meters_markdown(tool_rows, variant="usage"))
 
@@ -705,7 +705,7 @@ def format_hermes_usage_markdown(data: Dict[str, Any]) -> str:
     ]
     if tool_rows:
         lines.append("")
-        lines.append("**Tools**")
+        lines.append("**Tool distribution**")
         lines.append("")
         lines.append(cuttle_meters_markdown(tool_rows, variant="usage"))
 

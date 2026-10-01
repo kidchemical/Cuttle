@@ -572,6 +572,7 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
 
     function slashPaletteItemHaystack(item) {
         return [
+            ...slashPaletteIdentityFields(item),
             item.label,
             item.hint,
             item.meta,
@@ -585,6 +586,35 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
             .filter(Boolean)
             .map((x) => String(x).toLowerCase())
             .join('\n');
+    }
+
+    /** Names/aliases are intent; hints, keywords and paths are discovery text. */
+    function slashPaletteIdentityFields(item) {
+        const aliases = Array.isArray(item.aliases) ? item.aliases : [item.aliases];
+        return [item.prefix, item.label, item.name, ...aliases, item.projectCommandName,
+            item.projectName, item.pipelineId, item.skillRef, item.modelId]
+            .filter(Boolean)
+            .map((value) => String(value).toLowerCase().replace(/^\//, '')
+                .replace(/^★\s*/, '').replace(/\s+\(current\)$/, '').trim());
+    }
+
+    /** Lower ranks win. All query tokens must match, including subcommands. */
+    function slashPaletteItemSearchRank(item, filter) {
+        const tokens = slashPaletteFilterTokens(filter);
+        if (!tokens.length) return 0;
+        const query = tokens.join(' ');
+        const fields = slashPaletteIdentityFields(item);
+        if (fields.some((field) => field === query)) return 0;
+        if (fields.some((field) => field.startsWith(query))) return 1;
+        const words = fields.flatMap((field) => field.split(/[\s._/\-]+/));
+        if (tokens.every((token) => words.includes(token))) return 2;
+        if (tokens.every((token) => words.some((word) => word.startsWith(token)))) return 3;
+        if (tokens.every((token) => fields.some((field) => field.includes(token)))) return 4;
+        const compact = (value) => value.replace(/[\s._/\-]+/g, '');
+        if (tokens.every((token) => compact(token)
+            && fields.some((field) => compact(field).includes(compact(token))))) return 5;
+        if (slashPaletteItemMatches(item, query)) return 6;
+        return 7;
     }
 
     function slashPaletteItemMatches(item, filterLower) {
@@ -837,6 +867,7 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
                     (c.aliases || []).join(' '),
                 ].join(' '),
                 projectCommandName: name,
+                aliases: c.aliases || [],
             };
         }).filter(Boolean);
     }
@@ -1072,6 +1103,7 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
         slashPaletteTypeBadgeLabel,
         slashPaletteItemHaystack,
         slashPaletteItemMatches,
+        slashPaletteItemSearchRank,
         starredRank,
         isSlashCommandStarred,
         starredStickyChips,

@@ -48,7 +48,6 @@ def run_safe_tests():
         ("Screenshot Tools", "unit.test_screenshot_tools"),
         ("OCR Tools", "unit.test_ocr_tools"),
         ("Windows Tools", "unit.test_windows_tools"),
-        ("Window Focus", "unit.test_window_focus"),
     ]
     
     print("[PASS] Safe Tests (Will Run):")
@@ -117,7 +116,6 @@ def run_safe_individual_test_files():
         "test_screenshot_tools.py",
         "test_ocr_tools.py",
         "test_windows_tools.py",
-        "test_window_focus.py",
     ]
     
     print("[PASS] Safe Test Files (Will Run):")

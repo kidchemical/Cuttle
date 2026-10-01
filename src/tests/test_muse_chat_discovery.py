@@ -52,12 +52,16 @@ def _run_wsl(script: str, timeout: int = 60) -> subprocess.CompletedProcess:
 # --------------------------------------------------------------------------
 
 
-def test_chat_store_is_a_real_sqlite_file_outside_git():
+def test_chat_store_is_a_real_sqlite_file_outside_git(monkeypatch):
     """The transcripts live in a binary file that git ignores.
 
     Code-search tools honour `.gitignore` and skip binaries, so an agent that
     greps the workspace cannot see chat content no matter how hard it looks.
     """
+    import api.auth_db as auth_db
+
+    # Read-only check of the live path (conftest redirects DB_PATH to tmp).
+    monkeypatch.setattr(auth_db, "DB_PATH", auth_db.data_db_dir() / "cuttle_auth.db")
     db = chat_store_path()
     assert db, "chat store path must resolve for the prompt addon to be useful"
     db_path = Path(db)

@@ -17,7 +17,7 @@ in `.cuttle_global/docs/`. Rules for the Cuttle repo itself (not guests) live in
 2. `cuttle_action_form` / `cuttle_confirm` / choose / approve / watch / progress → `action-forms.md`.
    Q&A picks: **omit** `action` (never invent `none` / `noop` / `__agent_reply__`).
    Side effects: real allowlisted ids only (`discord.post`, `flask.restart`, `git.push`, …).
-   **Asking the user a question:** never call the IDE `AskQuestion` tool in Cuttle chat —
+   **Asking the user a question:** never call the `AskQuestion` tool in Cuttle chat —
    it cannot render headless and returns "skipped" instantly. Emit a Q&A
    `<cuttle_action_form>` with `"resume": true` and end the turn. Never tell the user
    they "skipped" a question; a skipped tool result means the UI never showed it.
@@ -47,7 +47,7 @@ in `.cuttle_global/docs/`. Rules for the Cuttle repo itself (not guests) live in
    **Stale process:** if Jobs shows `stale` / ⚠, the live worker loop is older than on-disk git — `workers.self-update` (or wait one poll for hot-reload); do not ask the user. Details → `cuttle-workers.md`.
 9. **New / register project** (user asks in chat *or* UI/API) → always ensure `{project}/.cuttle/` exists. Registration hooks call `managers.cuttle_scaffold.ensure_cuttle_scaffold`; agents who create a folder by hand must call the same helper (or `python -m managers.cuttle_scaffold <path>`) before considering the project done. Do not wait for a slash command.
 10. **Mesh self-serve (do not outsource to the user):** when a device worker can perform the action (`file_copy`, shell recipes, `workers.self-update`, blender shards, registry/desktop fixes, placing `.lnk` shortcuts, reading logs, etc.), **do it on the mesh yourself**. Do not ask the user to download/run fix scripts, hunt Desktop vs OneDrive paths, or click installers unless (a) no capable worker is online, (b) HITL/approval is required and only they can click it, or (c) the step truly needs interactive UI only they can see. Details → `cuttle-workers.md`.
-11. Cursor `CreatePlan` / Plan mode → `cursor-plan-bridge.md`. Never rely on the IDE plan card alone in Cuttle; the harness bridges CreatePlan into markdown + a Q&A form, but still put the plan in the visible reply when you can.
+11. Cursor `CreatePlan` / Plan mode → `cursor-plan-bridge.md`. Never rely on the `CreatePlan` tool call alone in Cuttle; the harness bridges CreatePlan into markdown + a Q&A form, but still put the plan in the visible reply when you can.
 12. Git undo / discard → `git.md`. **Never** `git checkout -- <file>` (or restore) to undo one edit unless that file’s *entire* dirty diff is yours and you mean to throw it all away.
     **Git push in Cuttle chat:** never `git push` from the agent shell. Emit the `git.push` action form (`git.md`). The Git pending-changes UI is the other allowed path. Never force-push.
 13. Plans / todos / roadmaps → `widgets.md`. **One** Tasks list per concern: create

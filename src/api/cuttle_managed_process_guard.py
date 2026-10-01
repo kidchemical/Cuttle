@@ -1,12 +1,10 @@
 """
 Guard against agent shell commands that terminate Cuttle-managed processes.
 
-Hard enforcement exists for:
-  - Cursor Agent CLI via project ``beforeShellExecution`` hook
-
-Pipeline ``tools.shell`` nodes are retired. Codex / Hermes / Claude Code do **not**
-expose a Cuttle-owned pre-shell intercept today — those get advisory policy
-injection only.
+Pipeline ``tools.shell`` nodes are retired. No harness CLI (Cursor / Codex /
+Hermes / Claude Code) exposes a Cuttle-owned pre-shell intercept today — those
+get advisory policy injection only. ``evaluate_shell_command`` is the shared
+matcher for any future intercept.
 
 Authorization model
 -------------------
@@ -15,12 +13,11 @@ Agent-facing guards **never** trust environment variables (including
 shell command or passing it via ``shell_manager`` ``env=`` must not allow a kill.
 
 The daemon bypasses these guards by construction: it calls ``taskkill`` from
-Python in ``cuttle_daemon.py``, not via Cursor hooks or ``shell_manager``.
+Python in ``cuttle_daemon.py``, not via an agent shell or ``shell_manager``.
 """
 
 from __future__ import annotations
 
-import json
 import re
 import sys
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
@@ -199,33 +196,3 @@ def guard_or_raise(command: str, **kwargs) -> None:
     result = evaluate_shell_command(command, **kwargs)
     if not result.get("allow", True):
         raise PermissionError(result.get("denial") or DENY_MESSAGE)
-
-
-def hook_decision_from_stdin(stdin_text: str) -> Dict[str, Any]:
-    """Parse Cursor beforeShellExecution stdin JSON → permission decision."""
-    try:
-        payload = json.loads(stdin_text or "{}")
-    except json.JSONDecodeError:
-        payload = {}
-    command = str(payload.get("command") or "")
-    # Never consult os.environ / payload env for authorization.
-    result = evaluate_shell_command(command, env=None)
-    if result.get("allow", True):
-        return {"permission": "allow"}
-    return {
-        "permission": "deny",
-        "user_message": DENY_MESSAGE,
-        "agent_message": DENY_MESSAGE,
-    }
-
-
-def main() -> int:
-    """Cursor hook entry: read stdin, print JSON decision."""
-    raw = sys.stdin.read()
-    decision = hook_decision_from_stdin(raw)
-    sys.stdout.write(json.dumps(decision))
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

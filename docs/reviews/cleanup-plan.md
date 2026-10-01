@@ -120,7 +120,7 @@ Only called from graph HTTP. `_execute_remote_agent_tool` has **no** chat caller
 | 4.1 | Inventory `src/launcher.py` / `create_desktop_shortcuts.ps1` consumers | Windows/Linux |
 | 4.2 | Deprecate `src/scripts/launchers/*` (all four confirmed broken) | Daemon still boots |
 | 4.3 | Rename or comment `start_api_server.py` so it cannot be confused with 8080 | README 0b.1 |
-| 4.4 | `kill_bots.py` / `hello_world.py` / `debug_cursor_location.py` | Only after no docs/scripts reference |
+| 4.4 | `kill_bots.py` / `hello_world.py` | Only after no docs/scripts reference |
 
 **Tests:** `test_flask_restart.py`, `test_cuttle_managed_process_guard.py`. **Never** `taskkill` Flask from an agent.
 

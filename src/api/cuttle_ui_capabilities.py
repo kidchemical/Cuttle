@@ -48,7 +48,7 @@ Global runbooks (match intent → open before acting; resolve via personal overl
   gitea.md          — Gitea: `python -m api.gitea`; writes may use gitea.issue confirm
   chat-history.md   — CH- handles + `api.chat_cli` / live panes: `api.panes_cli`
   headless-turns.md — one-shot CLI turn, long build/upload, no wait loops
-  cursor-plan-bridge.md — CreatePlan must land as markdown (+ form) in Cuttle chat (IDE card is not delivered)
+  cursor-plan-bridge.md — CreatePlan must land as markdown (+ form) in Cuttle chat (the tool call alone is not delivered)
   widgets.md        — Tasks strip; one list per concern then patch; never fake pin chips; shell: python -m api.widgets_cli
   subagents.md      — spawn real child chats (python -m api.subagents); sibling orbs + parent/child launchers; agent profiles
 

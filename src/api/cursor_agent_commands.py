@@ -10,9 +10,9 @@ from __future__ import annotations
 import json
 import os
 import re
-import sqlite3
 import ssl
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -198,72 +198,29 @@ def _run_agent_about() -> str:
     return f"**Cursor Agent — about**\n\n```\n{text[:4000]}\n```"
 
 
-def _cursor_state_vscdb_paths() -> List[Path]:
-    """Candidate Cursor IDE state DB paths (Windows / macOS / Linux)."""
+def _cursor_cli_auth_path() -> Path:
+    """Where `agent login` stores credentials (mirrors the CLI's getAuthFilePath)."""
     home = Path.home()
-    candidates: List[Path] = []
-    appdata = (os.environ.get("APPDATA") or "").strip()
-    if appdata:
-        candidates.append(
-            Path(appdata) / "Cursor" / "User" / "globalStorage" / "state.vscdb"
-        )
-    candidates.append(
-        home
-        / "Library"
-        / "Application Support"
-        / "Cursor"
-        / "User"
-        / "globalStorage"
-        / "state.vscdb"
-    )
+    if os.name == "nt":
+        appdata = (os.environ.get("APPDATA") or "").strip()
+        base = Path(appdata) if appdata else home / "AppData" / "Roaming"
+        return base / "Cursor" / "auth.json"
+    if sys.platform == "darwin":
+        return home / ".cursor" / "auth.json"
     xdg = (os.environ.get("XDG_CONFIG_HOME") or "").strip()
-    if xdg:
-        candidates.append(
-            Path(xdg) / "Cursor" / "User" / "globalStorage" / "state.vscdb"
-        )
-    candidates.append(
-        home / ".config" / "Cursor" / "User" / "globalStorage" / "state.vscdb"
-    )
-    seen: set[str] = set()
-    out: List[Path] = []
-    for p in candidates:
-        key = str(p)
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(p)
-    return out
+    return (Path(xdg) if xdg else home / ".config") / "cursor" / "auth.json"
 
 
-def _read_cursor_ide_access_token() -> Optional[str]:
-    """Read the Cursor IDE session access token from local state (never log it)."""
-    for db in _cursor_state_vscdb_paths():
-        if not db.is_file():
-            continue
-        try:
-            uri = f"file:{db.resolve().as_posix()}?mode=ro"
-            conn = sqlite3.connect(uri, uri=True)
-            try:
-                row = conn.execute(
-                    "SELECT value FROM ItemTable WHERE key = ?",
-                    ("cursorAuth/accessToken",),
-                ).fetchone()
-            finally:
-                conn.close()
-        except Exception:
-            continue
-        if not row or not row[0]:
-            continue
-        token = row[0]
-        if isinstance(token, bytes):
-            try:
-                token = token.decode("utf-8")
-            except Exception:
-                continue
-        token = str(token).strip()
-        if token:
-            return token
-    return None
+def _read_cursor_cli_access_token() -> Optional[str]:
+    """Read the Cursor Agent CLI login access token (never log it)."""
+    try:
+        data = json.loads(_cursor_cli_auth_path().read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    token = str(data.get("accessToken") or "").strip()
+    return token or None
 
 
 def _cursor_dashboard_post(
@@ -348,18 +305,18 @@ def _fmt_tokens(n: Any) -> str:
 
 def fetch_cursor_account_usage() -> Dict[str, Any]:
     """
-    Fetch current-cycle Cursor plan usage via the IDE session + dashboard API.
+    Fetch current-cycle Cursor plan usage via the Agent CLI login + dashboard API.
 
     Returns a dict with keys success (bool), error? (str), and usage fields when OK.
     Does not include the access token.
     """
-    token = _read_cursor_ide_access_token()
+    token = _read_cursor_cli_access_token()
     if not token:
         return {
             "success": False,
             "error": (
-                "Could not find a Cursor IDE login session on this machine. "
-                "Sign in to Cursor Desktop, then try `/usage` again."
+                "Could not find a Cursor Agent CLI login on this machine. "
+                "Run `agent login`, then try `/usage` again."
             ),
         }
     try:
@@ -375,7 +332,7 @@ def fetch_cursor_account_usage() -> Dict[str, Any]:
     except urllib.error.HTTPError as e:
         return {
             "success": False,
-            "error": f"Cursor usage API returned HTTP {e.code}. Re-sign in to Cursor and retry.",
+            "error": f"Cursor usage API returned HTTP {e.code}. Run `agent login` and retry.",
         }
     except Exception as e:
         return {"success": False, "error": f"Cursor usage request failed: {e}"}
@@ -421,7 +378,7 @@ def fetch_cursor_account_usage() -> Dict[str, Any]:
 def format_cursor_usage_markdown(data: Dict[str, Any]) -> str:
     """Render fetch_cursor_account_usage() output as a chat markdown reply.
 
-    Headline percentages follow Cursor Agent CLI ``/usage``
+    Headline percentages show remaining quota, derived from Cursor Agent CLI ``/usage``
     (``totalPercentUsed`` / ``autoPercentUsed`` / ``apiPercentUsed``), not the
     dollar ``totalSpend/limit`` ratio — those can diverge sharply (e.g. 60%
     dollar vs 3% plan quota) because included-plan compute $ is a different
@@ -514,29 +471,29 @@ def format_cursor_usage_markdown(data: Dict[str, Any]) -> str:
         if end_s:
             lines.append(f"- Resets: {end_s}")
 
-    # Match agent CLI layout: Included / Auto / API / On-demand.
+    # Show remaining quota: Included / Auto / API / On-demand.
     # Primary UI is the meter strip (not duplicate bullet % + analytics chart).
     meter_rows: List[Dict[str, Any]] = []
     if included_pct is not None:
         meter_rows.append(
-            {"label": "Included", "pct": round(float(included_pct), 2)}
+            {"label": "Included", "pct": round(100.0 - float(included_pct), 2)}
         )
     if auto_pct is not None:
         meter_rows.append(
-            {"label": "Auto", "pct": round(float(auto_pct), 2)}
+            {"label": "Auto", "pct": round(100.0 - float(auto_pct), 2)}
         )
     elif auto_msg:
         lines.append(f"- Auto / Composer: {auto_msg}")
     if api_pct is not None:
         meter_rows.append(
-            {"label": "API", "pct": round(float(api_pct), 2)}
+            {"label": "API", "pct": round(100.0 - float(api_pct), 2)}
         )
     elif named_msg:
         lines.append(f"- Named / API models: {named_msg}")
     meter_rows.append(
         {
             "label": "On-Demand",
-            "pct": 0 if on_demand_off else round(float(dollar_pct or 0), 2),
+            "pct": 0 if on_demand_off else round(100.0 - float(dollar_pct or 0), 2),
             "disabled": on_demand_off,
             "status": "Off" if on_demand_off else None,
         }
@@ -590,7 +547,7 @@ def format_cursor_usage_markdown(data: Dict[str, Any]) -> str:
 
     lines.append("")
     lines.append(
-        "_Included / Auto / API % match Cursor Agent CLI `/usage`. "
+        "_Included / Auto / API show remaining quota from Cursor Agent CLI `/usage`. "
         "Compute $ is included-plan value"
         + (
             ", not extra charges (on-demand is off)."

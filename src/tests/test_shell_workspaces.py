@@ -37,10 +37,12 @@ def test_workspace_summary_uses_chat_handle(workspace_settings):
     assert "Settings" in w._workspace_column_summary({"page": "/settings_page.html"})
 
 
-def test_workspace_api_save_list_replace_delete(workspace_settings):
+def test_workspace_api_save_list_replace_delete(workspace_settings, owner_session):
     from api import web_chat_api as w
 
     client = w.app.test_client()
+    assert client.get("/api/shell/workspaces").status_code == 401
+    owner_session.sign_in(client)
     empty = client.get("/api/shell/workspaces")
     assert empty.status_code == 200
     assert empty.get_json()["workspaces"] == []

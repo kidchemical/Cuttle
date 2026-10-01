@@ -16,8 +16,6 @@ node_only = pytest.mark.skipif(
 CHAT_JS = Path(__file__).resolve().parents[1] / "web" / "js" / "chat_page.js"
 ACTIVITY_JS = Path(__file__).resolve().parents[1] / "web" / "js" / "chat_activity.js"
 CHAT_CSS = Path(__file__).resolve().parents[1] / "web" / "css" / "chat_page.css"
-CHAT_HTML = Path(__file__).resolve().parents[1] / "web" / "chat_page.html"
-
 _HELPERS = (
     "toAuthDbSessionId",
     "sessionIdsEqual",
@@ -142,7 +140,6 @@ def test_subagent_ui_helpers():
 def test_subagent_markup_present():
     js = CHAT_JS.read_text(encoding="utf-8")
     css = CHAT_CSS.read_text(encoding="utf-8")
-    html = CHAT_HTML.read_text(encoding="utf-8")
     assert "typing-subagent-orbs" in js
     assert "syncSubagentOrbs" in js
     assert "paintSubagentOrbs" in js
@@ -162,4 +159,3 @@ def test_subagent_markup_present():
     assert "parentSpeaker ? null" in js
     assert "stickyChipsFromAssistantSlash" in js
     assert "storedLooksSpecific" in js
-    assert "subagents" in html

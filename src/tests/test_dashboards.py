@@ -182,7 +182,7 @@ def test_aggregate_metrics_use_best_score_and_leave_single_source_spread_empty()
     assert by_model["Solo Model"]["score_spread"] is None
 
 
-def test_flask_routes(tmp_path: Path, monkeypatch):
+def test_flask_routes(tmp_path: Path, monkeypatch, owner_session):
     from api.dashboards import benchmarklist as bl
 
     monkeypatch.setattr(deepswe, "default_cache_dir", lambda: tmp_path)
@@ -191,6 +191,8 @@ def test_flask_routes(tmp_path: Path, monkeypatch):
     app = Flask(__name__)
     app.register_blueprint(dashboards_bp)
     client = app.test_client()
+    assert client.get("/api/dashboards").status_code == 401  # owner-only
+    owner_session.sign_in(client)
     hub = client.get("/api/dashboards").get_json()
     assert hub["dashboards"][0]["id"] == "model-benchmarks"
     missing = client.get("/api/dashboards/nope")

@@ -15,7 +15,6 @@ Turn inspectors: `/query_log.html?id=<query_id>`. Source of truth is `src/web/lo
 - `claude_cli_tool.py` - Claude Code CLI (`claude -p`) with resume + JSON usage
 - `claude_cli_session_store.py` - Per-chat Claude resume id / model pin map
 - `claude_code_tool.py` - Thin re-export of `claude_cli_tool` (legacy import path)
-- `debug_cursor_location.py` - Debug cursor position
 - `hello_world.py` - Simple test script
 - `update_project_paths.py` - Update project file paths
 

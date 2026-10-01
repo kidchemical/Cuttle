@@ -17,53 +17,6 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-def _resolve_cursor_ide_executable() -> Optional[str]:
-    """Path to the Cursor editor `cursor` / cursor.CMD launcher (not cursor-agent)."""
-    import shutil
-    p = shutil.which("cursor")
-    if p:
-        return p
-    possible_paths = [
-        r"C:\Program Files\cursor\resources\app\bin\cursor.CMD",
-        r"%LOCALAPPDATA%\Programs\cursor\resources\app\bin\cursor.CMD",
-        r"C:\Users\%USERNAME%\AppData\Local\Programs\cursor\resources\app\bin\cursor.CMD",
-    ]
-    for path in possible_paths:
-        expanded = os.path.expandvars(path)
-        if expanded and os.path.isfile(expanded):
-            return expanded
-    return None
-
-
-def _cursor_ide_open_path(path_str: str) -> str:
-    """Open a file or folder in the Cursor editor."""
-    raw = path_str.strip().strip('"').strip("'")
-    if not raw:
-        return "[FAIL] No path provided. Example: `open C:\\Projects\\Cuttle`"
-    p = Path(raw)
-    try:
-        p = p.expanduser()
-    except Exception:
-        pass
-    if not p.exists():
-        return (
-            f"[FAIL] Path not found: `{path_str}`\n\n"
-            "Use a real folder or file path. Example: `open /path/to/Cuttle`"
-        )
-    exe = _resolve_cursor_ide_executable()
-    if not exe:
-        return (
-            "[FAIL] Cursor editor CLI not found. Install it from Cursor: "
-            "`Ctrl+Shift+P` → **Shell Command: Install 'cursor' command in PATH**"
-        )
-    resolved = str(p.resolve())
-    try:
-        subprocess.Popen([exe, resolved], close_fds=True)
-    except Exception as e:
-        return f"[FAIL] Could not launch Cursor: {e}"
-    return f"✅ **Opened in Cursor:** `{resolved}`"
-
-
 _CURSOR_AGENT_VERSION_RE = re.compile(
     r"^\d{4}\.\d{1,2}\.\d{1,2}(-\d{2}-\d{2}-\d{2})?-[a-f0-9]+$",
     re.I,
@@ -1542,14 +1495,12 @@ def _cursor_agent_oneline_prompt(
 
 def handle_cursor_cli_command(command: str) -> str:
     """
-    Handle /cursor (and legacy /cursor-cli): open paths in the Cursor editor,
-    one-shot `agent` prompts, or `session …` for the legacy Discord session starter.
+    Handle /cursor (and legacy /cursor-cli): one-shot `agent` prompts,
+    `--version` / `--help`, or `session …` for the legacy Discord session starter.
 
     Args:
-        command: e.g. ``open E:\\repo``, ``session My Unity Project``, ``fix the login bug``
+        command: e.g. ``session My Unity Project``, ``fix the login bug``
     """
-    import re
-
     print(f"🖥️ Cursor CLI Command: '{command}'")
 
     command = (command or "").strip()
@@ -1557,7 +1508,6 @@ def handle_cursor_cli_command(command: str) -> str:
         return "[FAIL] No command provided"
 
     low = command.lower()
-    exe = _resolve_cursor_ide_executable()
     agent_argv = _resolve_cursor_agent_argv()
     agent_exe = _resolve_cursor_agent_cli()
 
@@ -1580,16 +1530,7 @@ def handle_cursor_cli_command(command: str) -> str:
                 parts.append(f"**agent CLI:** failed — {e}")
         else:
             parts.append("**agent CLI:** not found on PATH (install Cursor Agent / `agent`)")
-        if exe:
-            try:
-                r = subprocess.run(
-                    [exe, "--version"], capture_output=True, text=True, timeout=30
-                )
-                out = (r.stdout or r.stderr or "").strip()
-                parts.append(f"**Cursor editor** (`cursor`):\n```\n{out or '(no output)'}\n```")
-            except Exception as e:
-                parts.append(f"**Cursor editor:** failed — {e}")
-        return "\n\n".join(parts) if parts else "[FAIL] Neither `agent` nor `cursor` found on PATH."
+        return "\n\n".join(parts)
 
     if low in ("--help", "-h", "help"):
         agent_note = (
@@ -1600,33 +1541,11 @@ def handle_cursor_cli_command(command: str) -> str:
         return (
             "**Cursor Agent** (`/cursor`)\n\n"
             f"• **Plain text** — one-shot prompt via Cursor Agent CLI ({agent_note}, `agent -p`)\n"
-            "• **`open <path>`** — open a folder or file in the **Cursor editor**\n"
-            "• **`<path>`** — same as `open` if the path exists\n"
             "• **`session <name-or-path>`** — legacy Discord-style agent session starter\n"
             "• **`--version`** / **`--help`**\n\n"
             "Requires chat mode **Auto** or **Cloud** (blocked in Local).\n"
             "(`/cursor-cli` still works as an alias.)"
         )
-
-    # Open folder/file in Cursor IDE (not agent prompt)
-    if low.startswith("open "):
-        path = command[5:].strip().strip('"').strip("'")
-        if not path:
-            return "[FAIL] Usage: `open <path>` — e.g. `open C:\\Projects\\Cuttle`"
-        return _cursor_ide_open_path(path)
-
-    # Bare Windows absolute path or UNC
-    if re.match(r"^[a-zA-Z]:[/\\]", command) or command.startswith("\\\\"):
-        return _cursor_ide_open_path(command)
-
-    # Existing relative or absolute path
-    try:
-        pc = Path(command.strip().strip('"').strip("'"))
-        pc = pc.expanduser()
-        if pc.exists():
-            return _cursor_ide_open_path(str(pc))
-    except Exception:
-        pass
 
     # Legacy Discord GUI session starter — not part of the harness adapter.
     if low.startswith("session ") or low.startswith("agent "):
@@ -1643,5 +1562,4 @@ def handle_cursor_cli_command(command: str) -> str:
     return (
         "**Cursor Agent** — `agent` not found on PATH.\n\n"
         "• Install the Cursor Agent CLI so `agent` works in a terminal\n"
-        "• **`open E:\\\\Dev\\\\Cuttle`** — open that folder in the Cursor editor\n"
     )

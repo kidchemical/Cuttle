@@ -87,7 +87,6 @@ Confidence: **H** high · **M** medium · **L** low.
 | B4 | `AGENTS.md` core dispatch | Names `_execute_remote_agent_tool`; chat uses `_run_harness_web_command` / kernel | H | Doc only |
 | B5 | e2e comment `start_api_server.py` | `test_app_shell_navigation.py` ~12 | M | Comment-only |
 | B6 | Electron README `python ../src/kill_bots.py` | File is `src/scripts/utilities/kill_bots.py`; that script `from launcher import JamBitLauncher` with `sys.path` = `utilities/` | H | Stale doc + **broken script** |
-| B7 | `debug_cursor_location.py` | `from tool_manager import find_cursor_exe`; **no** `tool_manager.py` in repo | H | Confirmed broken |
 | B8 | `hello_world.py` | Prints Hello World; utilities README lists it as test script | H | Abandoned sample |
 | B9 | No product UI caller of `/api/timeseries` | No matches in `src/web` or `src/api/dashboards`. `run_tests_with_logging.py` + `tests/html_reporter.py` use `test_history_manager.get_time_series_data` **in-process**, not port 5000. | H unused **HTTP :5000**; M whether anyone still starts that process by habit |
 
@@ -150,10 +149,9 @@ Unchanged directory classes. No secrets quoted.
 2. **`api_jobs` same tombstone pattern** as reload (empty return, then dead graph listing).
 3. **Four `src/scripts/launchers/` files all broken** (cwd/`sys.path`), not just `start_web_chat.py` “uncertain”.
 4. **`internal_http` load-bearing unused import.**
-5. **`tool_manager` missing** — `debug_cursor_location.py` cannot import.
-6. **`kill_bots` / Electron README path drift.**
-7. Telegram/Slack are **unwanted** — remove routes and settings; do not keep because they share `process_message_with_bot`.
-8. **`active_executions` is harness-live** — not a graph-only helper.
+5. **`kill_bots` / Electron README path drift.**
+6. Telegram/Slack are **unwanted** — remove routes and settings; do not keep because they share `process_message_with_bot`.
+7. **`active_executions` is harness-live** — not a graph-only helper.
 
 ---
 

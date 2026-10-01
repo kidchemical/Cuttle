@@ -146,7 +146,7 @@ Cuttle does **not** host an MCP tool server. Guest CLIs keep their own MCP. Cutt
 - **Manual verification 2026-08-16:** `/restart status` → native chip (no agent); `/restart graceful` → ack persisted, auto-reconnect, Flask PID 4856→19048, generation 1→2, health 6798.6 ms, completion delivered without a follow-up message (`restart_id` `f2cb0682…`, status file `healthy`).
 - Daemon helper: `.cuttle/scripts/restart-daemon.sh` (POSIX) or `.cuttle/scripts/restart-daemon.ps1` (Windows).
 - Drain-first: graceful waits/rejects when busy; `when-idle` schedules; force requires confirm.
-- No IDE shell gate ships with this repo (the old Cursor `beforeShellExecution` hook was removed); enforcement is the safety core + daemon-owned restart path.
+- No shell gate ships with this repo; enforcement is the safety core + daemon-owned restart path.
 
 ### Git push (Cuttle chat)
 
@@ -156,7 +156,7 @@ Cuttle does **not** host an MCP tool server. Guest CLIs keep their own MCP. Cutt
 
 ### Asking the user questions (Cuttle chat)
 
-- **Never call the IDE `AskQuestion` tool** when the turn runs through Cuttle (`/cursor`, router, etc.). Headless `agent -p` has no picker, so it returns "skipped" instantly and the user sees nothing.
+- **Never call the `AskQuestion` tool** when the turn runs through Cuttle (`/cursor`, router, etc.). Headless `agent -p` has no picker, so it returns "skipped" instantly and the user sees nothing.
 - Emit a Q&A `<cuttle_action_form>` with `"resume": true` instead (`choice`, `multi` with Submit/Cancel, or `form` with `radio`/`checkboxes` fields), then end the turn. See `.cuttle_global/docs/action-forms.md`.
 - **One Q&A card per reply.** Several questions → one `form` card with one field per question and a single Submit. Separate resume cards each start a turn on their own click, so the first answer orphans the rest. `rewrite_action_forms` merges stray multi-card replies into one form as a safety net (`merge_qa_resume_specs`).
 - The answer bubble has exactly one writer: the client's resume send (`sendMessage({text})` → `/api/chat`). `/api/action-form/run` returns `injected_user_message` but must not persist it — doing both showed every answer twice. `[form-answers]` lists every field, including unanswered ones.

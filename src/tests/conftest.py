@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 import os
+import tempfile
 import traceback
 
 import pytest
@@ -16,6 +17,28 @@ import pytest
 src_root = Path(__file__).resolve().parent.parent
 if str(src_root) not in sys.path:
     sys.path.insert(0, str(src_root))
+
+# Never collected, whichever pytest.ini / cwd is used (`--ignore` in addopts is
+# cwd-relative, so `pytest src/tests/` from the repo root used to collect
+# these). They drive the real mouse/keyboard/windows, launch apps, need live
+# network/API keys, or import retired modules.
+collect_ignore = [
+    "e2e",
+    "unit/test_input_tools.py",
+    "unit/test_process_tools.py",
+    "unit/test_window_tools.py",
+    "unit/test_screenshot_tools.py",
+    "unit/test_ocr_tools.py",
+    "unit/test_windows_tools.py",
+    "unit/test_api_key.py",
+    "unit/test_openai_connection.py",
+    "unit/test_security.py",
+    "unit/test_security_standalone.py",
+    "test_claude_usage.py",
+    "test_mcp_conversion.py",
+    "test_mcp_install.py",
+    "test_hello_world_parallelization.py",
+]
 
 
 def pytest_configure(config):
@@ -192,10 +215,107 @@ def pytest_generate_tests(metafunc):
         )
 
 
+_VENDOR_AGENT_CLIS = {"agent", "cursor-agent", "codex", "muse", "hermes", "claude", "opencode"}
+
+
+def _vendor_cli_in_argv(args) -> str:
+    """Vendor CLI named by the program or its script, by file or folder name.
+
+    Checks every path component of the first two argv entries: the Cursor CLI
+    runs as ``~/.local/share/cursor-agent/versions/<v>/node index.js`` and npm
+    CLIs as ``node …/codex/bin/codex.js``, so the binary name alone misses them.
+    """
+    argv = [args] if isinstance(args, (str, bytes, os.PathLike)) else list(args or [])
+    argv = [os.fsdecode(a) for a in argv if isinstance(a, (str, bytes, os.PathLike))]
+    if argv and Path(argv[0]).name.lower() in ("wsl", "wsl.exe"):
+        argv = argv[1:]
+    # Fake servers written to tmp_path (e.g. a `codex` shebang script) are fine.
+    if argv and Path(argv[0]).resolve().is_relative_to(Path(tempfile.gettempdir()).resolve()):
+        return ""
+    for entry in argv[:2]:
+        for part in Path(entry).parts:
+            name = part.lower()
+            for ext in (".exe", ".cmd", ".bat", ".js", ".mjs"):
+                if name.endswith(ext):
+                    name = name[: -len(ext)]
+                    break
+            if name in _VENDOR_AGENT_CLIS:
+                return name
+    return ""
+
+
+@pytest.fixture(autouse=True)
+def _no_real_vendor_cli(monkeypatch):
+    """Fail closed if a test would launch a real agent CLI (spends quota).
+
+    Guards ``subprocess.Popen`` (asyncio subprocesses spawn through it too), so
+    a stale seam — a fake patched on a function the route no longer calls —
+    raises instead of silently running Cursor/Codex/Muse on the developer's
+    login. Tests that fake ``create_subprocess_exec`` never reach Popen.
+    """
+    import subprocess
+
+    from api.agent_router.supervised.test_isolation import external_runners_allowed
+
+    real_popen = subprocess.Popen
+
+    class _GuardedPopen(real_popen):  # type: ignore[misc, valid-type]
+        def __init__(self, args, *a, **k):
+            cli = _vendor_cli_in_argv(args)
+            if cli and not external_runners_allowed():
+                raise RuntimeError(
+                    f"test guard: real `{cli}` CLI launch blocked "
+                    f"({os.environ.get('PYTEST_CURRENT_TEST', '?')}); fake the runner seam"
+                )
+            super().__init__(args, *a, **k)
+
+    monkeypatch.setattr(subprocess, "Popen", _GuardedPopen)
+
+
 @pytest.fixture(autouse=True)
 def _no_live_steer_servers(monkeypatch):
     """Adapters must not spawn real ``codex app-server`` / ``muse serve`` in tests."""
     monkeypatch.setenv("CUTTLE_AGENT_STEER", "0")
+
+
+@pytest.fixture(autouse=True)
+def _isolated_auth_db(tmp_path, monkeypatch):
+    """Tests never read or write the live ``cuttle_auth.db``.
+
+    ``get_auth_db`` is a lazy singleton, so pointing ``DB_PATH`` at a temp file
+    and dropping the instance isolates every caller (including modules that
+    from-imported ``get_auth_db``). Owner mode is single-user unless a test
+    sets ``OWNER_USER_EMAIL`` itself — a developer's shell value must not turn
+    freshly registered test users into non-owners. Empty (not unset) so the
+    ``src/.env`` load on first ``web_chat_api`` import (override=False) cannot
+    put it back mid-test.
+    """
+    import api.auth_db as auth_db
+
+    monkeypatch.setattr(auth_db, "DB_PATH", tmp_path / "cuttle_auth.db")
+    monkeypatch.setattr(auth_db, "_db_instance", None)
+    monkeypatch.setenv("OWNER_USER_EMAIL", "")
+
+
+class OwnerSession:
+    def __init__(self, db, user_id, token):
+        self.db = db
+        self.user_id = user_id
+        self.token = token
+
+    def sign_in(self, client):
+        client.set_cookie("session_token", self.token)
+        return client
+
+
+@pytest.fixture
+def owner_session():
+    """A real signed-in owner in the isolated auth DB (cookie via ``sign_in``)."""
+    from api.auth_db import get_auth_db
+
+    db = get_auth_db()
+    user_id = db.create_user("owner@local", "Owner", "local", password="x")
+    return OwnerSession(db, user_id, db.create_auth_session(user_id))
 
 
 @pytest.fixture(autouse=True)

@@ -303,8 +303,8 @@ def run_agent_stream_turn(
     yielded, ``completion["stale"]`` / ``completion["cancelled"]`` are
     set from this turn's own token (same point-in-time the old pump read
     them). Transport must never infer freshness from the busy boolean —
-    a free slot does not mean this turn is current. Harness/router lanes
-    pass nothing (they do no done-clear).
+    a free slot does not mean this turn is current. Every stream lane
+    (harness, router, pipeline) passes it for the live-status done-clear.
     """
     import queue as _queue_mod
     import threading as _threads

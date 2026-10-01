@@ -247,6 +247,84 @@ def test_oracle_router_family_stream_shape(authed_client, monkeypatch):
     chat_delivery.end(sid)
 
 
+def test_harness_stream_done_clears_live_status(authed_client, fake_harness):
+    """Done must clear the head's "Connecting..." row.
+
+    A leftover active row makes live-status pollers (app shell hub, status
+    poll, message sync) repaint a "Connecting..." bubble after the reply.
+    """
+    from api import chat_live_status as live
+
+    client, db, uid = authed_client
+    sid = db.create_chat_session(uid)
+    res = client.post(
+        "/api/chat",
+        json={"message": "/cursor /usage", "session_id": sid},
+    )
+    assert res.status_code == 200
+    assert _event_types(res.get_data(as_text=True))[-1] == "done"
+    assert live.get_live_status(sid).get("active") is False
+    assert str(sid) not in live.active_live_session_ids()
+    assert chat_delivery.try_begin(sid) is True
+    chat_delivery.end(sid)
+
+
+def test_harness_stream_publishes_progress_to_live_status(
+    authed_client, monkeypatch
+):
+    """Progress reaches live-status mid-turn so pollers never read "Connecting..."."""
+    from api import chat_live_status as live
+
+    seen = {}
+
+    def fake_run(agent_id, prompt, chat_session_id, **kwargs):
+        kwargs["status_queue"].put(("status", "oracle-progress"))
+        import time
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            seen["status"] = live.get_live_status(chat_session_id).get("status")
+            if seen["status"] == "oracle-progress":
+                break
+            time.sleep(0.02)
+        return {"success": True, "response": "progress-ok", "type": "fake"}
+
+    monkeypatch.setattr(wca, "_run_pinned_harness_turn", fake_run)
+    client, db, uid = authed_client
+    sid = db.create_chat_session(uid)
+    res = client.post(
+        "/api/chat",
+        json={"message": "/codex progress", "session_id": sid},
+    )
+    assert res.status_code == 200
+    res.get_data(as_text=True)
+    assert seen["status"] == "oracle-progress"
+    assert live.get_live_status(sid).get("active") is False
+    assert chat_delivery.try_begin(sid) is True
+    chat_delivery.end(sid)
+
+
+def test_router_family_stream_done_clears_live_status(authed_client, monkeypatch):
+    from api import chat_live_status as live
+    import api.agent_router.integration as integration
+
+    monkeypatch.setattr(
+        integration,
+        "handle_router_family_command",
+        lambda *a, **k: {"success": True, "response": "router-ok", "type": "r"},
+    )
+    client, db, uid = authed_client
+    sid = db.create_chat_session(uid)
+    res = client.post(
+        "/api/chat",
+        json={"message": "/retry hello", "session_id": sid},
+    )
+    assert res.status_code == 200
+    assert _event_types(res.get_data(as_text=True))[-1] == "done"
+    assert live.get_live_status(sid).get("active") is False
+    assert chat_delivery.try_begin(sid) is True
+    chat_delivery.end(sid)
+
+
 def test_oracle_stream_busy_shape(authed_client, fake_harness):
     client, db, uid = authed_client
     sid = db.create_chat_session(uid)

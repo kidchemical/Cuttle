@@ -215,11 +215,8 @@ class Adapter:
 
         low_p = (prompt or "").strip().lower()
         peel_low = slash_prompt.strip().lower()
-        is_meta = (
-            peel_low.startswith("open ")
-            or peel_low.startswith("session ")
-            or peel_low in ("--version", "-v", "version", "--help", "-h", "help")
-            or bool(__import__("re").match(r"^[a-zA-Z]:[/\\]", slash_prompt or ""))
+        is_meta = peel_low.startswith("session ") or peel_low in (
+            "--version", "-v", "version", "--help", "-h", "help"
         )
         if is_meta:
             put_status(status_queue, "Cursor Agent meta command…")

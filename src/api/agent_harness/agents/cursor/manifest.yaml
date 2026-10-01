@@ -27,8 +27,8 @@ missing_cli_hint: >-
   Install the Cursor `agent` command (or legacy `cursor-agent`) and ensure it
   is on PATH.
 install_hint: >-
-  Install Cursor Agent CLI from Cursor settings / docs, then ensure `agent` is
-  on PATH. Auth is the Cursor account already used by the IDE.
+  Install Cursor Agent CLI from the Cursor docs, ensure `agent` is on PATH,
+  then run `agent login`.
 executable_names:
   - agent
   - cursor-agent

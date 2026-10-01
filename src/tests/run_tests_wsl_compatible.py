@@ -58,7 +58,6 @@ def run_wsl_compatible_tests():
         ("Windows Tools", "unit.test_windows_tools"),
         ("Security Tests", "unit.test_security"),
         ("Username Case Tests", "unit.test_username_case"),
-        ("Window Focus", "unit.test_window_focus"),
     ]
     
     print("[PASS] WSL-Compatible Tests:")

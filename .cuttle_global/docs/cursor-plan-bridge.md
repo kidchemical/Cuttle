@@ -1,6 +1,6 @@
 # Cursor CreatePlan → Cuttle chat
 
-Cursor IDE Plan mode shows an interactive plan card. Cuttle’s `/cursor` path runs
+Cursor Agent can end a turn on a `CreatePlan` tool call. Cuttle’s `/cursor` path runs
 `agent -p` and only persists assistant text, so a turn that ends on `CreatePlan`
 used to look abrupt (`Plan created successfully`) with no plan body.
 
@@ -20,7 +20,7 @@ Code: `src/api/cursor_plan_bridge.py` (wired from `scripts.utilities.cursor_cli_
 ## Agent guidance
 
 - Prefer putting the plan in the **visible reply** when on Cuttle; do not rely on
-  the IDE card alone.
+  the `CreatePlan` tool call alone.
 - `CreatePlan` is fine — Cuttle will surface it — but still write a short preface
   in the reply when you can.
 - After the user approves (tap or reply **go**), implement; if they want changes,

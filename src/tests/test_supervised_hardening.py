@@ -309,7 +309,7 @@ def test_cancel_then_reconcile_single_terminal(supervised_env, monkeypatch):
     assert len([h for h in history if h["role"] == "assistant"]) == 1
 
 
-def test_control_lane_idempotent_skips_second_persist(supervised_env, monkeypatch):
+def test_control_lane_idempotent_skips_second_persist(supervised_env, monkeypatch, owner_session):
     from api import web_chat_api as wca
     from api.agent_router.supervised.orchestrator import create_supervised_task
 
@@ -332,7 +332,7 @@ def test_control_lane_idempotent_skips_second_persist(supervised_env, monkeypatc
     monkeypatch.setattr(wca, "_strip_invisible_leading", lambda s: s or "")
     monkeypatch.setattr(wca, "get_auth_db", lambda: FakeDB())
 
-    client = wca.app.test_client()
+    client = owner_session.sign_in(wca.app.test_client())
     body = {
         "message": "/coordinate followup once please",
         "session_id": 42,

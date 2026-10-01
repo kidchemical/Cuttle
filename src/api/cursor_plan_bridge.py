@@ -1,7 +1,6 @@
 """Bridge Cursor ``CreatePlan`` tool calls into Cuttle chat replies.
 
-Cursor IDE Plan mode renders an interactive plan card. Headless ``agent -p``
-(and Cuttle's Cursor harness) only persist assistant text — so a turn that ends
+Headless ``agent -p`` (and Cuttle's Cursor harness) only persist assistant text — so a turn that ends
 on ``CreatePlan`` looks abrupt ("Plan created successfully") with no card.
 
 This module extracts CreatePlan payloads from stream-json tool_call events and
@@ -168,7 +167,7 @@ def format_create_plan_for_chat(plan: Dict[str, Any]) -> str:
         "lock": "form",
         "silent": True,
         # Q&A pick must resume the agent — otherwise Cuttle only toasts and
-        # never starts a turn (IDE plan cards approve in-place; we cannot).
+        # never starts a turn.
         "resume": True,
         "options": [
             {"id": "go", "label": "Looks good — implement it"},
@@ -210,7 +209,7 @@ def _is_plan_stub_reply(visible: str) -> bool:
         return True
     if _PLAN_STUB_RE.match(text):
         return True
-    # Short IDE-card ack with no real plan content.
+    # Short CreatePlan ack with no real plan content.
     if len(text) <= 120 and re.search(r"\bplan created\b", text, re.IGNORECASE):
         return True
     return False

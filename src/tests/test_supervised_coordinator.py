@@ -925,6 +925,14 @@ def test_dropped_mock_fails_closed(supervised_env):
 
 
 def test_palette_includes_followup_control(supervised_env):
-    js = Path("src/web/js/chat_page.js").read_text(encoding="utf-8")
-    assert "/coordinate followup" in js
-    assert "isImmediateControlLaneMessage" in js
+    web_js = Path(__file__).resolve().parents[1] / "web" / "js"
+    slash = (web_js / "chat_slash.js").read_text(encoding="utf-8")
+    entry = slash[slash.index("prefix: '/coordinate '"):]
+    entry = entry[: entry.index("}")]
+    assert "controlCommand: true" in entry
+    assert "followup" in entry
+    supervised = (web_js / "supervised_control.js").read_text(encoding="utf-8")
+    lane = supervised[supervised.index("function isImmediateControlLaneMessage"):]
+    lane = lane[: lane.index("\n    }\n")]
+    assert "'followup'" in lane
+    assert "isImmediateControlLaneMessage" in (web_js / "chat_page.js").read_text(encoding="utf-8")

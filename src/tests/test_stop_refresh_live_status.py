@@ -108,12 +108,17 @@ def test_repeated_late_status_pulses_stay_idle_after_stop():
     )
 
 
-def test_live_status_endpoint_idle_when_cancelled_even_if_row_lingers():
+def test_live_status_endpoint_idle_when_cancelled_even_if_row_lingers(monkeypatch):
     from flask import Flask
     from api import chat_delivery as delivery
     from api.chat_run_registry import cancel_session_runs
     import api.web_chat_api as wca
 
+    # The route requires a signed-in caller; auth is not under test here.
+    monkeypatch.setattr(
+        wca, "_require_session_actor",
+        lambda session_id: ({"id": 1}, session_id, None),
+    )
     sid = "522-endpoint"
     assert delivery.try_begin(sid)
     cancel_session_runs(sid)

@@ -6142,7 +6142,6 @@
         if (
             !modelFilter
             || slashPaletteItemMatches(refreshItem, modelFilter)
-            || /refresh|reload|sync|catalog/.test(modelFilter)
         ) {
             items.push(refreshItem);
         }
@@ -6229,7 +6228,6 @@
         if (
             !modelFilter
             || slashPaletteItemMatches(refreshItem, modelFilter)
-            || /refresh|reload|sync|catalog/.test(modelFilter)
         ) {
             items.push(refreshItem);
         }
@@ -6774,7 +6772,6 @@
         if (
             !modelFilter
             || slashPaletteItemMatches(refreshItem, modelFilter)
-            || /refresh|reload|sync|catalog/.test(modelFilter)
         ) {
             items.push(refreshItem);
         }
@@ -6814,6 +6811,9 @@
             .filter((item) => (modelFilter ? slashPaletteItemMatches(item, modelFilter) : true));
         // Keep the palette usable when the filter is broad (hundreds of OpenRouter ids).
         const MAX = 40;
+        // Rank before clipping so a name hit cannot be hidden by description hits.
+        mapped.sort((a, b) => CuttleChatSlash.slashPaletteItemSearchRank(a, f)
+            - CuttleChatSlash.slashPaletteItemSearchRank(b, f));
         const clipped = mapped.length > MAX ? mapped.slice(0, MAX) : mapped;
         if (mapped.length > MAX) {
             items.push({
@@ -7074,7 +7074,6 @@
         if (
             !modelFilter
             || slashPaletteItemMatches(refreshItem, modelFilter)
-            || /refresh|reload|sync|catalog/.test(modelFilter)
         ) {
             items.push(refreshItem);
         }
@@ -7120,6 +7119,9 @@
             .filter(Boolean)
             .filter((item) => (modelFilter ? slashPaletteItemMatches(item, modelFilter) : true));
         const MAX = 40;
+        // Rank before clipping so a name hit cannot be hidden by description hits.
+        mapped.sort((a, b) => CuttleChatSlash.slashPaletteItemSearchRank(a, f)
+            - CuttleChatSlash.slashPaletteItemSearchRank(b, f));
         const clipped = mapped.length > MAX ? mapped.slice(0, MAX) : mapped;
         if (mapped.length > MAX) {
             items.push({
@@ -7444,19 +7446,6 @@
             starredProject && starredProject.id != null
                 ? String(starredProject.id)
                 : null;
-        const tokens = slashPaletteFilterTokens(f);
-
-        function score(item) {
-            const lab = String(item.label || '').toLowerCase();
-            const hay = slashPaletteItemHaystack(item);
-            if (!f) return 0;
-            if (lab.startsWith(f) || hay.startsWith(f)) return 0;
-            if (lab.includes(f) || (tokens.length === 1 && hay.includes(tokens[0]))) return 1;
-            if (tokens.length > 1 && tokens.every((t) => lab.includes(t))) return 1;
-            if (tokens.length > 1 && tokens.every((t) => hay.includes(t))) return 2;
-            return 3;
-        }
-
         function starredRank(item) {
             // Single implementation lives in chat_slash.js; the closure
             // supplies prefs gathered above.
@@ -7469,10 +7458,13 @@
 
         function sortGroup(arr) {
             return arr.slice().sort((a, b) => {
+                const disabled = Number(!!a.disabled) - Number(!!b.disabled);
+                if (disabled !== 0) return disabled;
+                const relevance = CuttleChatSlash.slashPaletteItemSearchRank(a, f)
+                    - CuttleChatSlash.slashPaletteItemSearchRank(b, f);
+                if (relevance !== 0) return relevance;
                 const sr = starredRank(a) - starredRank(b);
                 if (sr !== 0) return sr;
-                const ds = score(a) - score(b);
-                if (ds !== 0) return ds;
                 return String(a.label || '').localeCompare(String(b.label || ''), undefined, {
                     sensitivity: 'base',
                 });

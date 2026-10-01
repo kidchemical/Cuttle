@@ -216,34 +216,45 @@ def refresh_codex_catalog() -> Dict[str, Any]:
     return list_codex_catalog_models(refresh=True)
 
 
-def codex_efforts_for_model(model: Optional[str] = None) -> List[str]:
-    """Return verified effort levels for a model, or the all-model intersection.
-
-    Recent live `codex debug models` metadata wins. When there is no recent
-    catalog, use the manifest snapshot without starting a CLI process; unknown
-    or custom model ids stay empty.
-    """
-    catalog = None
+def _fresh_catalog_rows() -> Optional[List[Dict[str, Any]]]:
     if _CATALOG_CACHE is not None:
         cached_at, cached_rows, _source, _err = _CATALOG_CACHE
         if time.monotonic() - cached_at < _CATALOG_CACHE_TTL_SEC and cached_rows:
-            catalog = {"models": cached_rows}
-    if catalog is None:
-        catalog = {"models": CODEX_KNOWN_MODELS}
+            return cached_rows
+    return None
+
+
+def _row_efforts(rows: Optional[List[Dict[str, Any]]], mid: str) -> Optional[List[str]]:
+    for row in rows or []:
+        if str(row.get("id") or "").strip().lower() == mid:
+            return [
+                str(level).strip().lower()
+                for level in (row.get("efforts") or [])
+                if str(level).strip()
+            ]
+    return None
+
+
+def codex_efforts_for_model(model: Optional[str] = None) -> List[str]:
+    """Return verified effort levels for a model, or the all-model intersection.
+
+    Recent live `codex debug models` metadata wins, then the manifest snapshot
+    (no CLI process). A model in neither loads the CLI catalog once (cached),
+    because the manifest lags new CLI models and the live cache expires —
+    otherwise a valid pin is refused whenever the palette has not been opened
+    in the last two minutes. Ids the CLI does not list stay empty.
+    """
     mid = str(model or "").strip().lower()
     if mid:
-        for row in catalog.get("models") or []:
-            if str(row.get("id") or "").strip().lower() == mid:
-                return [
-                    str(level).strip().lower()
-                    for level in (row.get("efforts") or [])
-                    if str(level).strip()
-                ]
-        if catalog.get("source") == "static_fallback":
-            return list(CODEX_MODEL_EFFORTS.get(mid, []))
-        return []
+        found = _row_efforts(_fresh_catalog_rows(), mid)
+        if found is None:
+            found = _row_efforts(CODEX_KNOWN_MODELS, mid)
+        if found is None:
+            found = _row_efforts(list_codex_catalog_models().get("models"), mid)
+        return found or []
 
-    rows = [row for row in (catalog.get("models") or []) if isinstance(row, dict)]
+    rows = _fresh_catalog_rows() or CODEX_KNOWN_MODELS
+    rows = [row for row in rows if isinstance(row, dict)]
     if not rows:
         return []
     available = [
