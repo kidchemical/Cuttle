@@ -610,6 +610,51 @@ def test_relative_lazy_import_works_after_load(project_agents, clean_import_stat
     assert pair[1].describe() == "LAZY"
 
 
+def test_purged_package_lifetime_needs_fresh_discovery(
+    project_agents, clean_import_state
+):
+    """Pin the exact purge contract with execution proof.
+
+    `reload_catalog()` drops the namespaced package: already-bound top-level
+    references on a previously returned instance keep working, but a NEW
+    lazy relative import afterwards raises until fresh discovery returns a
+    new adapter (which works again). No production caller purges mid-turn
+    (`reload_catalog` is tests/hot-add only); this pins the semantics.
+    """
+    proj, root = project_agents
+    d = _write_agent(
+        root,
+        "purged",
+        adapter_src=(
+            "from . import helper\n"
+            "BOUND = helper.MARKER\n"
+            "class Adapter:\n"
+            "    def available(self):\n"
+            "        return True\n"
+            "    def bound(self):\n"
+            "        return BOUND\n"
+            "    def lazy(self):\n"
+            "        from . import helper\n"
+            "        return helper.MARKER\n"
+            "def build_adapter():\n"
+            "    return Adapter()\n"
+        ),
+    )
+    (d / "helper.py").write_text("MARKER = 'P'\n", encoding="utf-8")
+    reload_catalog()
+    old = get_agent("purged", str(proj))[1]
+    assert old.lazy() == "P"
+    reload_catalog()
+    # Bound at load time: still valid after the purge.
+    assert old.bound() == "P"
+    # New lazy resolution after the purge: must fail, not silently rebind.
+    with pytest.raises(ImportError):
+        old.lazy()
+    # Fresh discovery heals with a working adapter.
+    new = get_agent("purged", str(proj))[1]
+    assert new.lazy() == "P"
+
+
 def test_edited_adapter_reloads_on_next_discovery(
     project_agents, clean_import_state
 ):

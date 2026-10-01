@@ -6075,3 +6075,105 @@ migration, per the review's explicit alternative.
   one-word migration + loud-failure rule; catalog docstring matches.
 - Commit: this correction independently on main. No push, no restart.
   **STOP for Codex review before P6-C.**
+
+## P6-B approval + P6-C report — Surface vs Agent-Ops boundaries, Phase 6 closure
+
+- P6-B `57222bab` + corrections `d9a9837b`/`fb9704e7` APPROVED on the
+  final relative-only on-demand import contract and its tests. Earlier
+  sys.path/eager revisions are superseded, not precedent.
+- Carry-forward correction (verified, not claimed): the P6-B-final report
+  phrasing on purge lifetime was loose. Executed proof
+  (`test_purged_package_lifetime_needs_fresh_discovery`, 23/23 in the
+  loader file) establishes the exact contract: after `reload_catalog()`
+  drops the namespaced package, a previously returned instance keeps its
+  already-bound top-level references, but a NEW lazy relative import
+  raises `ImportError` (fails loudly, never silently rebinds) until fresh
+  discovery returns a new adapter, which works again. No production caller
+  purges mid-turn (`reload_catalog` has zero non-test callers — verified
+  by grep); purge is tests/hot-add only. Author docs (`ADDING_AN_AGENT.md`
+  "Purge lifetime") now state this verbatim.
+
+### P6-C inventory (read, not assumed)
+
+- **Surfaces (Web / Electron / Android): transports, not execution.**
+  Mobile companion = SSE stream + notification relay; Electron module =
+  update/manifest serving; Android = HTTP client. None reference
+  `submit_agent_turn`, `process_message_with_bot`, or the harness.
+- **Single execution funnel.** `/api/chat` route lanes (stream + sync)
+  pass `_run_pinned_harness_turn` as `run_harness=` into
+  `api.chat_coordinator.submit_agent_turn` (`_AgentTurnIO`); non-lane
+  ingress (`/api/sessions/send` → `process_message_with_bot`) submits to
+  the same entry unclaimed with plain bodies (documented compat entry, "do
+  not add new surfaces here"). `_run_pinned_harness_turn` is defined once
+  and invoked only through those coordinator submissions — grep-verified,
+  no surface-specific bypass, no vendor logic in surfaces or core
+  workflow (bundled agents go through the harness only).
+- **Agent-ops (Discord): ops verbs, not a surface.** `discord_ops/` =
+  `post` + `token` only; zero references to chat execution anywhere in
+  `discord_ops/` or `discord_cli/`. No inbound gateway (retired,
+  `test_discord_gateway_retired` green). Action/project integrations
+  (`project_actions`, `action_forms`) contain no harness references —
+  they run commands/forms, not agents.
+- **Result: no demonstrated mixing or bypass exists.** Per the brief, no
+  code changes manufactured. Enforcement is documentation + existing pins:
+  `extension-boundaries.md` §A now states the funnel (lanes claimed,
+  sessions_send unclaimed, BYO-CLI guidance-only, drop-in trust pointer);
+  retirement pins (`test_executable_installer_module_is_gone`,
+  kernel-import scan) fail on reintroduction; gateway-retired test stands.
+- Small closure fix (not manufactured): `types.py` still said
+  "see installer.py" after P6-A deleted that module — now reads "inert
+  schema ballast … never executed". Repo-wide grep confirms no other live
+  references (remaining hits are intentional retirement pins, historical
+  author-doc notes, and review-log history).
+
+### Phase 6 closure matrix
+
+- BYO-CLI: no executable installer paths (module deleted, kernel
+  import-free, Antigravity + 3 manifests guidance-only, `auto_install`
+  uniformly false and inert); discovery / availability-version / invoke /
+  capability-results / resume / cancel / steer preserved (focused harness
+  suites green).
+- Project adapters: opt-in gate, validate-before-import (canonical id +
+  slash, hijack rejected), relative-only on-demand namespaced loader, no
+  sys.path, mtime-keyed load-once + failure-quiet + purge, honestly-scoped
+  serialization, purge lifetime proven. Unsandboxed-trust stance explicit
+  in author guidance; no permissions framework, no sandbox claims.
+- Surface/harness/agent-ops: three categories independently owned and
+  verified above; coordinator path exclusive; Discord stays REST ops.
+- Manifests/capabilities: uniform validation (all 8 bundled canonical,
+  zero drift); unknown capability values keep tolerant kernel defaults
+  (pinned). Intentional retirements (installer machinery, Discord
+  inbound, `pipeline-trigger-discord`) and migrations (self-install
+  guidance, `import helper` → `from . import helper`) documented in
+  author/boundary/map guidance.
+- Known defects vs gaps (concrete, not architectural): the 32 broad-gate
+  failures are byte-identical to the clean tree (pre-existing, mostly
+  JS/process/palette neighbor pins — listed in gate files); deferred
+  dependency/preflight tooling and `[ERR-20261001-001]` unchanged.
+
+### Gates
+
+- Focused surface/ops/coordinator/adapter (12 files: coordinator
+  acceptance, supervised coordinator, discord ops/cli/gateway-retired,
+  action forms ×3, project actions, project-adapters, harness, byocli):
+  189 passed / 4 failed — the 4 FAILED identities identical on the clean
+  tree (pre-existing JS/process pins).
+- 20-file catalog-consumer neighbor set: 381 passed / 7 failed, FAILED
+  identical to clean-tree baseline (all pre-existing).
+- Broad Phase-6 gate, same command/env/scope both sides
+  (`pytest src/tests/ --ignore=src/tests/unit -rf`): **32 failed /
+  1778 passed / 298 skipped**, FAILED identities byte-identical
+  (`diff` clean) to the stashed clean tree. Note: absolute counts drifted
+  since P6-A's 28/1978/79 (environment collection/skips); the valid gate
+  is this same-window comparison, which is identical. Loader file 23/23
+  within the 1778.
+- Spend: `CUTTLE_*_SPEND`/token env unset (verified empty); smoke file
+  (real prompts) not executed; fakes + temp projects + barrier threads
+  only. No installs, no restarts.
+- Files: `types.py` (dangling-ref fix),
+  `ADDING_AN_AGENT.md` (purge lifetime), `extension-boundaries.md` (§A
+  funnel), `repository-map.md` (P6-A row corrected: no sys.path, audit
+  done), `test_harness_project_adapters.py` (+lifetime pin),
+  this review log.
+- Commit: P6-C + Phase 6 closure independently on main. No push/restart.
+  **STOP for Codex review before Phase 7.**

@@ -60,6 +60,12 @@ sandbox; containment is the opt-in gate plus the rules below.
   working after load (the package persists), including inside adapter
   methods. Migration from a flat layout is one word: `import helper` →
   `from . import helper`.
+- **Purge lifetime.** `reload_catalog()` (tests / hot-add only — no
+  production caller purges mid-turn) drops the namespaced package: a
+  previously returned instance keeps its already-bound top-level references,
+  but a NEW lazy relative import afterwards raises `ImportError` until
+  fresh discovery returns a new adapter (pinned in
+  `tests/test_harness_project_adapters.py`).
 - **Bare absolute imports are not sibling imports.** `import helper` inside
   a drop-in resolves against the ambient environment (stdlib /
   site-packages / live modules) and fails loudly otherwise — the adapter is

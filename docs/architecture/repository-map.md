@@ -158,11 +158,16 @@ manifest guidance and never shells out. The 4 auto-install manifests
 recipes and auto flags removed, hints reworded to self-install.
 Discovery, availability/version validation, invocation, capability
 normalization, and `install_hint`/`missing_cli_hint` rendering
-(frontend palette reads hints only) are unchanged. Trust posture
-unchanged and still narrow: project drop-ins stay opt-in
-(`CUTTLE_ALLOW_PROJECT_ADAPTERS`), bundled-only execution was already
-refused, `sys.path` append-only. Next slices: project-adapter trust
-audit (approval/manifest/import isolation) and surface/agent-ops
+(frontend palette reads hints only) are unchanged.
+**Project-adapter trust (Phase 6 P6-B, final):** project drop-ins stay
+opt-in (`CUTTLE_ALLOW_PROJECT_ADAPTERS`); manifest id/slash validated
+before import (folder name canonical, hijack slashes rejected); each
+external adapter loads once (mtime-keyed) as a uniquely-namespaced
+package with no `sys.path` mutation; only relative sibling imports
+resolve, on demand; bare absolute imports fail loudly (one-word
+migration); purge lifetime pinned (bound refs survive, new lazy imports
+need fresh discovery). Trust posture: opted-in project code is trusted
+unsandboxed, no sandbox claims. Next slice: surface/agent-ops
 boundary review.
 
 ---

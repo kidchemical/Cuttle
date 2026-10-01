@@ -73,9 +73,10 @@ class AgentManifest:
     install_package: str = ""
     install_url_windows: str = ""
     install_url_posix: str = ""
-    # Optional sha256 pins for script_url installers (hex, per OS). When a pin
-    # is declared the installer refuses to execute on mismatch. No bundled
-    # manifest pins one yet — see installer.py.
+    # Optional sha256 pins for script_url installers (hex, per OS). Inert
+    # schema ballast since P6-A retired the executable installer machinery:
+    # parsed, surfaced in guidance, never executed. No bundled manifest
+    # pins one.
     install_sha256_windows: str = ""
     install_sha256_posix: str = ""
     executable_names: List[str] = field(default_factory=list)
