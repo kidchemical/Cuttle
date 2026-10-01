@@ -3475,3 +3475,106 @@ reads no page globals.
    or feature changes; failures identical to clean HEAD). Do NOT
    continue in this track until this review is approved. **STOP —
    Slice 8 not started.**
+
+---
+
+# Phase 3 — Slice 7 follow-up: execution-level duplicate-guard test
+(correction to the Slice 6 regression protection)
+
+## Review correction accepted
+
+The Slice 7 structural pins (`test_ignore_duplicate_preserves_...
+spans inside the duplicate branch) did NOT satisfy the requested
+behavioral coverage: the original bug was `takePendingAttachments` /
+`dismissOpenInteractiveCards` hoisted BEFORE the `ignore-duplicate`
+branch, and a span-inside-the-branch test passes with that bug
+present. Both structural tests are removed (no stale references
+remain) and replaced by node-executed tests against the real
+`sendMessage` below. No production behavior changed; no test-only
+copy of `sendMessage` was created.
+
+## Coverage (committed, `src/tests/test_chat_composer.py`)
+
+- `test_send_message_duplicate_preserves_staged_attachments_and_cards`:
+  extracts the REAL `async function sendMessage` from `chat_page.js`
+  by exact markers (plus the real `takePendingAttachments` /
+  `clearPendingAttachments` / `normalizeMessageContentForMatch`
+  bodies) and executes it under node with stubbed page dependencies
+  (DOM input, sendability + lane checks via the real
+  `CuttleChatComposer` module, steer/queue/dismiss/send pipeline as
+  tracking stubs). For duplicate in-flight AND duplicate queued
+  sends with one staged attachment (`a.png`) and one open card:
+  asserts take/dismiss/steer/enqueue/send/effort effects absent,
+  staged attachment and card preserved, sticky re-resolve ran.
+- `test_send_message_followup_takes_attachments_and_cards`
+  (non-duplicate control): a real follow-up takes the staged
+  attachment, dismisses cards, steers-or-queues, and sends nothing
+  yet — proving the harness observes the take/dismiss path when it
+  legitimately runs.
+- Branch behavior clarified: duplicate sends DO clear composer text
+  (input reset + sticky re-resolve) but must NOT clear staged
+  attachments or open cards. Earlier "no clear" phrasing was
+  ambiguous on this point; the committed assertions pin
+  `inputValue == ""` alongside intact staged/card state.
+
+## Mutation / discrimination evidence
+
+- Temporary production mutation (NOT committed): inserted
+  `takePendingAttachments()` + `dismissOpenInteractiveCards(...)`
+  above the duplicate check in `src/web/js/chat_page.js`,
+  reintroducing the original hoisting bug.
+- Observed: `test_send_message_duplicate_...` FAILED
+  (`assert 1 == 0` on take calls); the follow-up control also FAILED
+  (`take == 2`, double-take) — the harness observes real ordering.
+  Remaining 5 composer tests passed.
+- Production restored via `git checkout -- src/web/js/chat_page.js`
+  (committed `901bf260` content byte-identical; `git diff` shows no
+  production delta); composer suite re-run 7/7 green.
+
+## Results
+
+- Focused + neighbors (agent-model, composer, pins, codex-effort,
+  bare-sticky, starred-removal, bubble-badge, badge-segments,
+  starred-slash, agent-defaults, slash-consistency, attachments,
+  activity, attention-dots, followup-heal, stop-then-followup,
+  pagination, history-search, action-forms, supervised ×2,
+  restart ×2): **296 passed, 8 failed, 9 skipped** — all 8 failures
+  identity-match the Slice 7 pre-change baseline list (7 neighbors
+  + agent-defaults auth-env); zero new failures.
+- Full broad suite NOT repeated: this follow-up touches only
+  `src/tests/test_chat_composer.py` (test-only correction, zero
+  production delta), and the Slice 7 broad gate (1,815 / 28 / 60,
+  identities byte-identical to clean HEAD) still stands.
+- No JS sources changed, so no `node --check` rerun was needed;
+  the touched file is Python executed via pytest (7/7 green).
+
+## Ownership note (preserved distinction)
+
+Session restoration (`restoreSessionStickySlash`) stays in the page
+in Slice 7 because of ownership/scope — restore is an orchestration
+unit spanning prefs IO, chip render, typing-indicator badge refresh,
+and shell live-status ordering (pinned as one ordered unit by the
+working-bubble suite), not a pure decision over explicit inputs —
+not merely because moving it would require repairing existing test
+harnesses. A Messages/History slice may revisit restore with those
+harnesses; the harness-repair cost is a consequence, not the reason.
+
+## Limitations
+
+- Manual browser/Flask verification still not performed (no UI
+  served from this session); execution coverage is node-level with
+  stubbed DOM/transport, as before.
+- The harness stubs `composeMessageWithSlashChip` as identity and
+  `healStaleGeneratingState` as noop (separately covered units);
+  healing-fresh vs stale generating transitions are not
+  re-exercised here.
+
+## Diff summary (this follow-up)
+
+- Modified: `src/tests/test_chat_composer.py` (structural pins
+  replaced by 2 execution tests + marker-extracted harness),
+  `docs/reviews/architecture-stabilization.md` (this section).
+- Production files: unchanged (`git diff` empty for all
+  non-test, non-docs paths).
+- Commit: independent follow-up commit on main (see `git log`).
+  No push, no restart. **STOP — Slice 8 not started.**

@@ -187,87 +187,137 @@ def test_chat_composer_module_parses():
     assert proc.returncode == 0, proc.stderr
 
 
-DUP_HARNESS = """
-const A = require(process.env.MOD_JS);
-const P = (o) => A.composerSendPlan(Object.assign(
-  { guardSet: false, generating: false, generatingBeforeHeal: false, sendable: true,
-    control: false, message: 'hi', normalizedMessage: 'hi', inFlightMessage: 'old',
-    queuedMessages: [] }, o));
-const out = {};
-out.dupFlight = P({ generating: true, generatingBeforeHeal: true, inFlightMessage: 'hi' });
-out.dupQueue = P({ generating: true, generatingBeforeHeal: true,
-  queuedMessages: ['other', 'hi'] });
-out.noDup = P({ generating: true, generatingBeforeHeal: true, inFlightMessage: '' });
-process.stdout.write(JSON.stringify(out));
-"""
-
 CHAT_PAGE_JS = REPO_ROOT / "src" / "web" / "js" / "chat_page.js"
 
+# Executes the REAL sendMessage from chat_page.js (extracted by exact
+# markers, never copied) with stubbed page dependencies. The real
+# takePendingAttachments / clearPendingAttachments /
+# normalizeMessageContentForMatch bodies are extracted too; everything
+# else (DOM, prefs, fetch, steer/queue execution, send pipeline) is a
+# tracking stub. This pins effect ORDER — a take/dismiss hoisted above
+# the duplicate check fails here even though the text inside the
+# duplicate branch is unchanged.
+SEND_HARNESS = """
+const fs = require('fs');
+const SRC = fs.readFileSync(process.env.CHAT_PAGE_JS, 'utf-8');
+const span = (s, e) => SRC.slice(SRC.indexOf(s), SRC.indexOf(e, SRC.indexOf(s)));
+const CuttleChatComposer = require(process.env.MOD_JS);
 
-def _duplicate_branch_src():
-    """The sendMessage span that executes an ignore-duplicate plan."""
-    src = CHAT_PAGE_JS.read_text(encoding="utf-8")
-    start = src.index("if (plan.action === 'ignore-duplicate') {")
-    end = src.index("if (plan.action === 'followup') {", start)
-    return src[start:end]
+async function scenario(cfg) {
+  const calls = { take: 0, dismiss: 0, steer: 0, enqueue: 0,
+                  process: 0, effort: 0, sticky: 0 };
+  let pendingAttachments = cfg.staged.map((f) => ({ filename: f }));
+  let openCards = cfg.cards.map((id) => ({ id }));
+  let inFlightUserMessage = cfg.inFlight;
+  let pendingFollowups = cfg.queued.map((content) => ({ content }));
+  let sendDispatchGuard = false;
+  let currentSessionId = 'CH-duptest';
+  const input = { id: 'chatInput', value: cfg.composerText };
+  const document = { getElementById: (id) => (id === 'chatInput' ? input : null) };
+  const window = {};
+  const LOG = () => {}, LOG_ERR = () => {};
+  const isSessionGenerating = () => cfg.generating;
+  const composeMessageWithSlashChip = (t) => t.value;
+  const isSendableComposerMessage = (m, a) =>
+    CuttleChatComposer.isSendableComposerMessage(m, a, null);
+  const healStaleGeneratingState = () => {};
+  const maybeRefreshCursorModelsCatalogFromOutbound = () => {};
+  const isImmediateControlLaneMessage = (t) =>
+    CuttleChatComposer.isImmediateControlLaneText(t);
+  const clearComposerDraft = () => {};
+  const applyStickySlashAfterComposerSend = () => { calls.sticky++; };
+  const autoResizeTextarea = () => {};
+  const trySteerRunningTurn = async () => { calls.steer++; return false; };
+  const enqueueFollowup = () => { calls.enqueue++; };
+  const formatMessageWithAttachments = (m) => m;
+  const dismissOpenInteractiveCards = () => { calls.dismiss++; openCards.length = 0; };
+  const ensureCodexEffortForSend = async () => { calls.effort++; };
+  const processMessage = async () => { calls.process++; };
+  const beginLocalGeneration = () => { calls.process++; };
+  const addMessageToUI = () => { calls.process++; };
+  const saveChatSession = () => { calls.process++; };
+  const _clearPersistedPending = () => {};
+  const renderAttachmentChips = () => {};
+  eval(span('    function clearPendingAttachments() {',
+            '    function isImageAttachment(att) {'));
+  eval(span('    function normalizeMessageContentForMatch(s) {',
+            '    function claimUnmarkedMessageEl('));
+  const _realTake = takePendingAttachments;
+  takePendingAttachments = (...a) => { calls.take++; return _realTake(...a); };
+  eval(span('    async function sendMessage(opts) {',
+            '    function userAvatarInnerHtmlForChat() {'));
+  await sendMessage();
+  return { calls, inputValue: input.value,
+           stagedLeft: pendingAttachments.map((a) => a.filename),
+           cardsLeft: openCards.map((c) => c.id) };
+}
+
+(async () => {
+  const base = { composerText: 'hi', staged: ['a.png'], cards: [7],
+                 generating: true, inFlight: 'hi', queued: [] };
+  const out = {};
+  out.dupFlight = await scenario(base);
+  out.dupQueue = await scenario(Object.assign({}, base,
+    { inFlight: 'other', queued: ['other', 'hi'] }));
+  out.followup = await scenario(Object.assign({}, base,
+    { composerText: 'hello new', inFlight: 'other', queued: [] }));
+  process.stdout.write(JSON.stringify(out));
+})().catch((e) => { console.error('HARNESS-ERROR', e); process.exit(2); });
+"""
+
+
+def _run_send_scenarios():
+    import os
+    proc = subprocess.run(
+        ["node", "-e", SEND_HARNESS],
+        capture_output=True, text=True, timeout=30,
+        env={"PATH": os.environ["PATH"], "MOD_JS": str(MOD_JS),
+             "CHAT_PAGE_JS": str(CHAT_PAGE_JS)},
+    )
+    assert proc.returncode == 0, proc.stderr or proc.stdout
+    return json.loads(proc.stdout)
 
 
 @node_only
-def test_ignore_duplicate_plan_contract():
-    """Guard contract the orchestration test below depends on."""
-    import os
-    import subprocess as sp
-    proc = sp.run(
-        ["node", "-e", DUP_HARNESS],
-        capture_output=True, text=True, timeout=30,
-        env={"PATH": os.environ["PATH"], "MOD_JS": str(MOD_JS)},
-    )
-    assert proc.returncode == 0, proc.stderr
-    res = json.loads(proc.stdout)
-    assert res["dupFlight"] == {"action": "ignore-duplicate", "outbound": "hi"}
-    assert res["dupQueue"] == {"action": "ignore-duplicate", "outbound": "hi"}
-    assert res["noDup"]["action"] == "followup"
+def test_send_message_duplicate_preserves_staged_attachments_and_cards():
+    """Slice 6 regression, executed against the real sendMessage.
 
+    The original bug hoisted takePendingAttachments +
+    dismissOpenInteractiveCards ABOVE the duplicate check, so an
+    ignored duplicate swallowed staged attachments and dismissed
+    interactive cards. These scenarios fail if any take/dismiss runs
+    before (or inside) the duplicate early-return, for both
+    in-flight and queued duplicates.
 
-def test_ignore_duplicate_preserves_staged_attachments_and_cards():
-    """Slice 6 regression: an ignored duplicate must not consume send effects.
-
-    The first refactor hoisted takePendingAttachments +
-    dismissOpenInteractiveCards above the duplicate check, so ignored
-    duplicates swallowed staged attachments and dismissed interactive
-    cards. The duplicate branch must only reset composer input state
-    (clear + sticky re-resolve + resize) and return before any take,
-    dismiss, steer, queue, or send effect.
+    Duplicate sends DO clear composer text (input reset + sticky
+    re-resolve); they must NOT clear staged attachments or cards.
     """
-    branch = _duplicate_branch_src()
-    for effect in (
-        "takePendingAttachments",
-        "clearPendingAttachments",
-        "dismissOpenInteractiveCards",
-        "trySteerRunningTurn",
-        "enqueueFollowup",
-        "processMessage",
-        "beginLocalGeneration",
-        "saveChatSession",
-        "addMessageToUI",
-        "fetch(",
-    ):
-        assert effect not in branch, (
-            f"ignore-duplicate branch must not run {effect}"
-        )
-    assert "clearComposer();" in branch
-    assert "applyStickySlashAfterComposerSend(message);" in branch
-    assert "return;" in branch
+    res = _run_send_scenarios()
+    for name in ("dupFlight", "dupQueue"):
+        dup = res[name]
+        assert dup["calls"]["take"] == 0, name
+        assert dup["calls"]["dismiss"] == 0, name
+        assert dup["calls"]["steer"] == 0, name
+        assert dup["calls"]["enqueue"] == 0, name
+        assert dup["calls"]["process"] == 0, name
+        assert dup["calls"]["effort"] == 0, name
+        assert dup["stagedLeft"] == ["a.png"], name
+        assert dup["cardsLeft"] == [7], name
+        # Composer text IS cleared on duplicates; attachments are not.
+        assert dup["inputValue"] == "", name
+        assert dup["calls"]["sticky"] == 1, name
 
 
-def test_followup_branch_still_takes_attachments_and_cards():
-    """Discrimination check: the follow-up branch owns the take/dismiss effects."""
-    src = CHAT_PAGE_JS.read_text(encoding="utf-8")
-    start = src.index("if (plan.action === 'followup') {")
-    end = src.index(
-        "if (isSessionGenerating() && isImmediateControlLaneMessage(message))",
-        start,
-    )
-    branch = src[start:end]
-    assert "takePendingAttachments()" in branch
-    assert "dismissOpenInteractiveCards(" in branch
+@node_only
+def test_send_message_followup_takes_attachments_and_cards():
+    """Non-duplicate control: a real follow-up takes staged state."""
+    res = _run_send_scenarios()
+    follow = res["followup"]
+    assert follow["calls"]["take"] == 1
+    assert follow["calls"]["dismiss"] == 1
+    assert follow["calls"]["steer"] == 1
+    assert follow["calls"]["enqueue"] == 1
+    assert follow["calls"]["process"] == 0
+    assert follow["stagedLeft"] == []
+    assert follow["cardsLeft"] == []
+    assert follow["inputValue"] == ""
