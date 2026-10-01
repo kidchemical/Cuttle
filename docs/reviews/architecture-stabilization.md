@@ -6814,3 +6814,89 @@ added/removed; all oracle event/row/persistence/cancel divergences
 - Deferred unchanged: dependency/preflight tooling,
   `[ERR-20261001-001]` (pinned, not fixed).
 - **STOP for Codex final review; do not self-approve the initiative.**
+
+---
+
+## FINAL REVIEW APPROVAL — initiative architecture scope COMPLETE (appended after line 6816; all prior sections preserved)
+
+Codex FINAL REVIEW APPROVED: P5-F `812dc18e`, P5-G `a3311fcf`, and the
+completed Phases 3/4/5/6/7 including all dispatched sub-slices and
+corrections. Earlier Phases 0/1/2 accepted per durable plan/history.
+The initiative architecture scope is COMPLETE on reviewed
+owned-boundary/test evidence, with explicit known baseline
+failures/manual gaps and deferred items unchanged.
+
+### Phase/slice completion matrix (reviewed commits)
+
+- Phases 0/1/2 — accepted per durable plan/history (baseline map,
+  Spaces/shell decomposition, low-risk backend extraction).
+- Phase 3 — chat UI decomposition, one reviewable checkpoint at a time:
+  Slice 6 composer domain (`be2658e9`); Slice 7 agent/model controls
+  (`901bf260`) + execution-level duplicate-guard follow-up (`18268ead`);
+  Slice 8A records/history windowing (`8058127b`); 8B user-bubble
+  display dispatch (`adcce8c5`); 8C structured-block planning/restore
+  (`f4ba9cd1`); Slice 9C follow-up queue ownership (`5f0fa257`);
+  Slice 9D pending-result/replay/reconcile lifecycle; stale frontend
+  lock release fix among the intentional changes.
+- Phase 4 — shared chat lifecycle backend + closure (helper
+  interfaces, reverse-import reduction, restart/session/steer/cancel/
+  follow-up suites green).
+- Phase 5 — chat-turn coordinator extraction: normalized turn
+  submission for sync, SSE stream (`07d3e005`, shared stream entry with
+  streamed captured project stamps), and leftover pipeline fallback
+  (`812dc18e`, never-None owned no-LLM outcome); `P5-G` (`a3311fcf`)
+  restored the original token-stale done-clear/status order via
+  owner-carried turn identity after extraction drift was demonstrated
+  by failing-first tests.
+- Phase 6 — adapter/extension hardening: P6-A BYO-CLI executable
+  installer retirement, guidance only (`dc6276de`); P6-B project
+  adapter relative-only on-demand import migration; P6-C
+  surface/agent-ops boundary verification and closure (`fbd73b72`).
+- Phase 7 — ownership rules and enforcement tests (`6971f472`) +
+  import-cycle/SSE-HTTP enforcement correction (`4d6b0eb9`); bypass
+  spies assert shared entries for sync, stream, and pipeline.
+
+Per-slice evidence (files, boundaries, focused/neighbor/broad gates,
+failure-identity comparisons) lives in the preceding log sections and
+stands as written.
+
+### Final canonical gate (observed, not rerun here)
+
+Command (repo root, preexisting node shim on PATH):
+`.venv/bin/python -m pytest -q -p no:warnings src/tests/
+--ignore=src/tests/unit -rf`
+Revision: `a3311fcf` tree vs stashed-`-u` HEAD baseline, same
+env/scope. Result: **2048 passed / 28 failed / 79 skipped**, FAILED
+byte-identical to baseline (diff clean; delta exactly the 8 new
+stale-clear/guard tests, all green). No all-green claim: the 28
+failures are the long-standing baseline set (JS/env/CWD-sensitive),
+identical IDs on both trees. Test collection exclusion
+`src/tests/unit` documented as run.
+
+### Known gaps and deferred items (unchanged)
+
+- Browser/manual verification gap (backend-only slices; explicitly
+  reported per slice, never treated as exemption).
+- Deferred: dev reproducibility/startup-preflight tooling and
+  `[ERR-20261001-001]` canceled-row divergence (pipeline saver
+  persist-anything pinned, not fixed).
+
+### Spend disclosure (factual)
+
+One unmocked starred-Cursor message during oracle development
+attempted a real CLI spawn, blocked at sandbox EROFS — no prompt sent,
+no known spend. Historical "no prompts attempted" wording corrected in
+the P5-G section. Final fake-provider integration guards (kernel +
+router dispatch bindings, per-file counters) prevent silent repeats.
+No paid/token tests run; spend flags unset throughout.
+
+### Closeout state
+
+- Final code-bearing commit: `a3311fcf`. This closeout is docs-only in
+  its own independent commit (hash in git log; reported in the handoff).
+- Unpushed; no Cuttle process restart/kill at any point.
+- Pre-existing untracked `work/` scratch preserved untouched.
+- Worker model/session retained: Muse Code (Meta Muse Spark), session
+  `01a0f6e4-8193-7ea0-a3ff-4a476a315128` (golden-procyon).
+- No remaining required architecture work. No optional cleanup or
+  follow-up implemented. **STOP completed.**

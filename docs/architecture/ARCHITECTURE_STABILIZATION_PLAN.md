@@ -654,3 +654,40 @@ Do not automatically continue to the next phase.
 The purpose of this initiative is not simply to make the repository look cleaner.
 
 The purpose is to make Cuttle easier to reason about, safer to change, and dramatically easier for coding agents to navigate without repeatedly introducing regressions.
+
+---
+
+# Completion Status — initiative architecture scope COMPLETE
+
+The roadmap, goals, rules, and phase definitions above are retained
+unchanged as the authoritative plan. This section records only the
+reviewed outcome. Codex FINAL REVIEW APPROVED all phases; per-slice
+evidence lives in `docs/reviews/architecture-stabilization.md`.
+
+- Phase 0 — complete (architecture baseline map/inventory).
+- Phase 1 — complete (Spaces/shell decomposition).
+- Phase 2 — complete (low-risk backend extraction).
+- Phase 3 — complete (chat UI decomposition: composer `be2658e9`,
+  agent/model controls `901bf260` + duplicate-guard follow-up
+  `18268ead`, messages/history sub-slices `8058127b`/`adcce8c5`/
+  `f4ba9cd1`, follow-up queue `5f0fa257`, streaming lifecycle
+  including the stale frontend lock release fix).
+- Phase 4 — complete (shared chat lifecycle backend, helper
+  interfaces, reverse-import reduction).
+- Phase 5 — complete (coordinator extraction: shared stream entry
+  `07d3e005` with streamed captured project stamps; pipeline fallback
+  ownership `812dc18e`; extraction-drift correction restoring
+  original token-stale/status order `a3311fcf`).
+- Phase 6 — complete (BYO-CLI installer retirement `dc6276de`;
+  project relative-only import migration; boundary closure `fbd73b72`).
+- Phase 7 — complete (ownership rules/enforcement `6971f472`;
+  correction `4d6b0eb9`; bypass spies cover sync, stream, pipeline).
+
+Final canonical gate: `.venv/bin/python -m pytest -q -p no:warnings
+src/tests/ --ignore=src/tests/unit -rf` → 2048 passed / 28 failed /
+79 skipped, failure identities byte-identical to baseline. The 28
+failures are the known long-standing baseline set; no all-green claim.
+Known gaps: browser/manual verification; deferred dev
+reproducibility/startup-preflight tooling and `[ERR-20261001-001]`
+canceled-row divergence. One disclosed blocked (unspent) real-CLI
+attempt during testing; fake-provider guards prevent repeats.
