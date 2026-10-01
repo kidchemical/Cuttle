@@ -30,6 +30,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHAT_JS = REPO_ROOT / "src" / "web" / "js" / "chat_page.js"
+SLASH_JS = REPO_ROOT / "src" / "web" / "js" / "chat_slash.js"
 CHAT_HTML = REPO_ROOT / "src" / "web" / "chat_page.html"
 
 pytestmark = pytest.mark.skipif(
@@ -53,9 +54,13 @@ def _extract_inclusive(src: str, start_marker: str, end_marker: str) -> str:
     return src[head:tail]
 
 
+def _slash_src() -> str:
+    return SLASH_JS.read_text(encoding="utf-8")
+
+
 def _sticky_slash_agents(src: str | None = None) -> list[str]:
     """Agent ids with ``stickySession: true`` in ``SLASH_COMMANDS`` (all CLIs)."""
-    text = src if src is not None else _src()
+    text = src if src is not None else _slash_src()
     start = text.index("const SLASH_COMMANDS = [")
     end = text.index("const CURSOR_AGENT_SLASH_COMMANDS", start)
     block = text[start:end]
@@ -93,6 +98,7 @@ USAGE_REFRESH_AGENTS = (
 
 
 def _cursor_agent_block(src: str) -> str:
+    # Registry lives in chat_slash.js; callers pass _slash_src().
     start = src.index("const CURSOR_AGENT_SLASH_COMMANDS = [")
     end = src.index("];", start)
     return src[start : end + 2]
@@ -100,9 +106,13 @@ def _cursor_agent_block(src: str) -> str:
 
 def _run_js(script: str) -> dict:
     src = _src()
-    commands = _extract_inclusive(src, "const SLASH_COMMANDS = [", "\n    ];")
+    # Registry lives in chat_slash.js (Phase 3 Slice 2); the require below
+    # also serves the delegating wrappers sliced from chat_page.js.
+    slash_src = _slash_src()
+    slash_mod = str(SLASH_JS)
+    commands = _extract_inclusive(slash_src, "const SLASH_COMMANDS = [", "\n];")
     cursor_cmds = _extract_inclusive(
-        src, "const CURSOR_AGENT_SLASH_COMMANDS = [", "\n    ];"
+        slash_src, "const CURSOR_AGENT_SLASH_COMMANDS = [", "\n];"
     )
     helpers = ""
     # Prefer the shared sticky-agent helpers (CH-000482 multi-agent).
@@ -192,6 +202,7 @@ function isHarnessNestedCommandChip(chip) {
     )
 
     harness = f"""
+const CuttleChatSlash = require("{slash_mod}");
 {commands}
 {cursor_cmds}
 {helpers}
@@ -257,7 +268,7 @@ function displayLabelForComposerChip(chip, preferred) {{
 
 
 def test_cursor_nested_commands_use_cursor_cmd_category():
-    block = _cursor_agent_block(_src())
+    block = _cursor_agent_block(_slash_src())
     for prefix in (
         "/usage",
         "/about",
@@ -298,7 +309,7 @@ def test_model_refresh_palette_item_is_staged_not_instant():
 
 
 def test_usage_not_in_global_sticky_slash_list():
-    src = _src()
+    src = _slash_src()
     start = src.index("const SLASH_COMMANDS = [")
     end = src.index("const CURSOR_AGENT_SLASH_COMMANDS", start)
     base = src[start:end]
@@ -549,7 +560,7 @@ def test_harness_usage_and_refresh_consistent_across_agents():
     - compose + sendable with the sticky agent
     """
     src = _src()
-    sticky_all = _sticky_slash_agents(src)
+    sticky_all = _sticky_slash_agents(_slash_src())
     assert set(USAGE_REFRESH_AGENTS).issubset(set(sticky_all)), sticky_all
 
     for flag in (
@@ -640,7 +651,7 @@ def test_sticky_agent_chip_rejects_nested_for_all_agent_clis():
     """CH-000482-1: nested prefixes must not count as the sticky badge — every CLI."""
     src = _src()
     assert "function isStickyAgentChip(" in src
-    agents = _sticky_slash_agents(src)
+    agents = _sticky_slash_agents(_slash_src())
     assert len(agents) >= 8, agents
     for name in (
         "hasActiveCursorAgentChip",

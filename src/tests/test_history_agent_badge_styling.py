@@ -11,6 +11,8 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHAT_JS = REPO_ROOT / "src" / "web" / "js" / "chat_page.js"
+SLASH_JS = REPO_ROOT / "src" / "web" / "js" / "chat_slash.js"
+SLASH_MOD = str(SLASH_JS)
 
 node_only = pytest.mark.skipif(
     shutil.which("node") is None, reason="node not available"
@@ -57,6 +59,7 @@ def test_resolve_slash_chip_palette_category_maps_legacy_muse_command():
         "    /**\n     * Resolve the palette category used for chip chrome.",
     )
     harness = f"""
+const CuttleChatSlash = require("{SLASH_MOD}");
 {composer}
 {category_class}
 {resolve}
@@ -134,6 +137,7 @@ def test_history_chip_html_uses_muse_palette_for_legacy_command_category():
         "    const SLASH_CHIP_ERR_ICON =",
     )
     harness = f"""
+const CuttleChatSlash = require("{SLASH_MOD}");
 {escape}
 {composer}
 {category_class}

@@ -42,6 +42,7 @@ HARNESS_IDS = ("cursor", "codex", "muse", "claude", "deepseek", "antigravity", "
 
 WEB = Path(__file__).resolve().parents[1] / "web"
 CHAT_JS = WEB / "js" / "chat_page.js"
+SLASH_JS = WEB / "js" / "chat_slash.js"
 CHAT_CSS = WEB / "css" / "chat_page.css"
 
 node_only = pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
@@ -649,7 +650,11 @@ def _extract_js(src: str, name: str) -> str:
 
 
 def _extract_js_const(src: str, name: str) -> str:
-    start = src.index(f"    const {name} = ")
+    # chat_slash.js owns these at top level (no indent); fall back to the
+    # legacy 4-space IIFE indent when reading chat_page.js.
+    start = src.find(f"const {name} = ")
+    if start < 0:
+        start = src.index(f"    const {name} = ")
     end = src.index("};", start) if src[src.index("=", start) + 2] == "{" else src.index("];", start)
     return src[start : end + 2]
 
@@ -925,32 +930,32 @@ def test_pricing_renderer_highlights_active_row(tmp_path):
 
 @node_only
 def test_palette_offers_cost_for_every_harness_badge(tmp_path):
+    # Registry tables + pure decision layer live in chat_slash.js (Phase 3
+    # Slice 2); chip-gated assembly stays in chat_page.js.
     src = CHAT_JS.read_text(encoding="utf-8")
+    slash_src = SLASH_JS.read_text(encoding="utf-8")
+    slash_mod = str(SLASH_JS).replace("\\", "\\\\")
     parts = [
-        _extract_js_const(src, "HARNESS_USAGE_SLASH_BY_AGENT"),
-        _extract_js_const(src, "HARNESS_COST_AGENT_LABELS"),
+        _extract_js_const(slash_src, "HARNESS_USAGE_SLASH_BY_AGENT"),
+        _extract_js_const(slash_src, "HARNESS_COST_AGENT_LABELS"),
     ] + [
         _extract_js(src, n)
         for n in (
-            "isStickyAgentChip",
-            "isStickyMuseAgentChip",
-            "isStickyCodexAgentChip",
-            "isStickyHermesAgentChip",
-            "isStickyOpenCodeAgentChip",
             "hasActiveMuseAgentChip",
             "hasActiveCodexAgentChip",
             "hasActiveHermesAgentChip",
             "hasActiveOpenCodeAgentChip",
             "hasActiveHarnessAgentChip",
-            "harnessCostSlashCommand",
             "harnessUsageSlashCommandsForPalette",
-            "isHarnessNestedCommandChip",
-            "composerChipAgentId",
         )
     ]
     script = (
+        f"const CuttleChatSlash = require({slash_mod!r});\n"
         "let slashCtx = {chat: {chips: []}, welcome: {chips: []}};\n"
         "let mode = 'cloud';\nfunction readInferenceMode() { return mode; }\n"
+        "const { isStickyAgentChip, isStickyMuseAgentChip, isStickyCodexAgentChip, "
+        "isStickyHermesAgentChip, isStickyOpenCodeAgentChip, harnessCostSlashCommand, "
+        "isHarnessNestedCommandChip, composerChipAgentId } = CuttleChatSlash;\n"
         + "\n".join(parts)
         + """
 const badges = {
@@ -1005,11 +1010,12 @@ console.log(JSON.stringify(out));
 
 def test_cursor_palette_has_cost_and_sendable_gate():
     js = CHAT_JS.read_text(encoding="utf-8")
-    start = js.find("const CURSOR_AGENT_SLASH_COMMANDS = [")
-    block = js[start : js.find("];", start)]
+    slash_js = SLASH_JS.read_text(encoding="utf-8")
+    start = slash_js.find("const CURSOR_AGENT_SLASH_COMMANDS = [")
+    block = slash_js[start : slash_js.find("];", start)]
     assert "prefix: '/cost'" in block and "category: 'cursor-cmd'" in block
     sendable = js[js.find("function isSendableComposerMessage(") :][:2400]
     assert "usage|cost" in sendable
     # Never a global sticky/agent command.
-    base = js[js.find("const SLASH_COMMANDS = [") : js.find("const CURSOR_AGENT_SLASH_COMMANDS")]
+    base = slash_js[slash_js.find("const SLASH_COMMANDS = [") : slash_js.find("const CURSOR_AGENT_SLASH_COMMANDS")]
     assert "prefix: '/cost'" not in base

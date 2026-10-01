@@ -40,6 +40,7 @@ from api.cursor_agent_commands import (
 
 WEB = Path(__file__).resolve().parents[1] / "web"
 CHAT_JS = WEB / "js" / "chat_page.js"
+SLASH_JS = WEB / "js" / "chat_slash.js"
 CHAT_CSS = WEB / "css" / "chat_page.css"
 
 # Harnesses that expose a nested ``/usage`` one-shot in Cuttle chat.
@@ -478,16 +479,19 @@ def test_every_usage_harness_adapter_exposes_handle_meta(agent_id):
 
 def test_palette_usage_gated_per_harness_not_global():
     js = CHAT_JS.read_text(encoding="utf-8")
+    # Registry tables moved to chat_slash.js (Phase 3 Slice 2); gating
+    # assembly stays in chat_page.js.
+    slash_js = SLASH_JS.read_text(encoding="utf-8")
 
     # Cursor nested list.
-    c_start = js.find("const CURSOR_AGENT_SLASH_COMMANDS = [")
-    c_end = js.find("];", c_start)
-    cursor_block = js[c_start:c_end]
+    c_start = slash_js.find("const CURSOR_AGENT_SLASH_COMMANDS = [")
+    c_end = slash_js.find("];", c_start)
+    cursor_block = slash_js[c_start:c_end]
     assert "prefix: '/usage'" in cursor_block
     assert "category: 'cursor-cmd'" in cursor_block
 
     # Other harnesses share HARNESS_USAGE_SLASH_BY_AGENT.
-    assert "HARNESS_USAGE_SLASH_BY_AGENT" in js
+    assert "HARNESS_USAGE_SLASH_BY_AGENT" in slash_js
     assert "function harnessUsageSlashCommandsForPalette(" in js
     for agent, cat in (
         ("muse", "muse-cmd"),
@@ -495,8 +499,8 @@ def test_palette_usage_gated_per_harness_not_global():
         ("hermes", "hermes-cmd"),
         ("opencode", "opencode-cmd"),
     ):
-        assert f"category: '{cat}'" in js
-        assert agent in js  # agent key present in HARNESS_USAGE_SLASH_BY_AGENT
+        assert f"category: '{cat}'" in slash_js
+        assert agent in slash_js  # agent key present in HARNESS_USAGE_SLASH_BY_AGENT
 
     # Explicit chip gates used by harnessUsageSlashCommandsForPalette.
     for fn in (
@@ -509,8 +513,8 @@ def test_palette_usage_gated_per_harness_not_global():
         assert f"function {fn}(" in js
 
     # Must not appear in the global sticky/agent list.
-    s_start = js.find("const SLASH_COMMANDS = [")
-    s_end = js.find("const CURSOR_AGENT_SLASH_COMMANDS", s_start)
+    s_start = slash_js.find("const SLASH_COMMANDS = [")
+    s_end = slash_js.find("const CURSOR_AGENT_SLASH_COMMANDS", s_start)
     base = js[s_start:s_end]
     assert "prefix: '/usage'" not in base
 
@@ -522,9 +526,10 @@ def test_palette_usage_gated_per_harness_not_global():
 
 def test_palette_chip_categories_map_usage_to_agent():
     js = CHAT_JS.read_text(encoding="utf-8")
+    slash_js = SLASH_JS.read_text(encoding="utf-8")
     # composerChipAgentId must map *-cmd categories to the right agent.
-    assert "'muse-cmd': 'muse'" in js.replace(" ", "") or "'muse-cmd': 'muse'" in js
-    body = js[js.find("function composerChipAgentId(") : js.find("function composerChipAgentId(") + 1800]
+    assert "'muse-cmd': 'muse'" in slash_js.replace(" ", "") or "'muse-cmd': 'muse'" in slash_js
+    body = slash_js[slash_js.find("function composerChipAgentId(") : slash_js.find("function composerChipAgentId(") + 1800]
     for pair in (
         ("muse-cmd", "muse"),
         ("codex-cmd", "codex"),

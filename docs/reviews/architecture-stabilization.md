@@ -1881,3 +1881,213 @@ companion modules behind thin adapters.
    (no streaming/messages/composer/agent/attachment/action-form code
    touched; failures strictly decreased). Do NOT continue in this track
    until this review is approved.
+
+---
+
+# Phase 3 — Slice 2: Slash Command Domain (chat_page.js)
+
+## Phase status
+
+- Slice: Phase 3 Slice 2 — slash registry, parsing, matching, and
+  sticky/starred decisions → `src/web/js/chat_slash.js`
+  (`window.CuttleChatSlash`).
+- Git baseline before work: `21c071d5` ("Phase 3 slice 1: chat project
+  context domain"), clean tree.
+- Git commit after work: the single `Phase 3 slice 2: slash command
+  domain` commit on main (identify via `git log --oneline`).
+- Completion status: **complete, awaiting external review**. No further
+  chat-page domains started (palette DOM/rendering, composer send flow,
+  streaming, messages/history, agent/model controls, attachments, action
+  forms untouched).
+
+## Original problem
+
+`chat_page.js` owned the entire slash-command decision layer — the
+command registries, stored-message parsing, palette matching, sticky
+badge detection, starred resolution, project-command merging, native
+control detection, and chip classification — as closures over page
+globals. Command behavior could only be tested by slicing source text
+out of the 26k-line page, and several suites did exactly that (brittle
+marker coupling across ~10 test files).
+
+## Before implementation (10-class inventory)
+
+146 name-matched functions triaged (26,503-line page, 933 named fns):
+
+1. **Definition/registry** (moved as data): `SLASH_COMMANDS`,
+   `CURSOR_AGENT_SLASH_COMMANDS`, `HARNESS_USAGE_SLASH_BY_AGENT`,
+   `HARNESS_COST_AGENT_LABELS`, `TITLE_SLASH_SKIP`.
+2. **Parsing/normalization** (moved): `parseStoredSlashCommandHead/
+   Message`, `parseProjectOrGenericSlashHead`, `parseTitleSlashChips`,
+   `titleChipKey`, `normalizeSlashCommandStored`,
+   `slashCommandMetaFromUserMessage`.
+3. **Matching/search/filter** (moved pure cores): filter tokens,
+   haystack, matches, category label, type bucket/badge, `starredRank`
+   (nested copy now delegates; assembly/orchestration stays).
+4. **Metadata** (moved): chip classifiers (`isStickyAgentChip` + 5
+   per-agent, nested ×2, header, cursor-related), `sortChipsAgentThen-
+   Command` (stable partition, not a label sort), `composerChipAgentId`,
+   `composerChipRemovalIndexes`.
+5. **Sticky/starred state** (moved decisions; IO stays):
+   `getStickySlashCommandFromMessage`, `isStickySlashAssistantFailure`,
+   `stickyAgentOverrideForRequest` (explicit inputs),
+   `inferStickyChipsFromUserMessages`, `stickyChipsFromAssistantSlash`,
+   `hasStickyAgentChip`, `activeStickyAgentChip`,
+   `isSlashCommandStarred`, `starredStickyChips`, registry merge +
+   mode gating (`mergeHarnessAgentsIntoSlashCommands`,
+   `slashCommandsForCurrentMode`), project builders.
+6. **Project-command integration** (moved pure builders):
+   `buildProjectPaletteItems`, `buildProjectCommandPaletteItems`
+   (fetch stays).
+7. **Dispatch/action selection**: `applySlashSelection*`, compose/clear/
+   typing orchestration — stay (composer/DOM-coupled). Pure dispatch
+   surface: `isNativeControlCommand` (moved).
+8. **Palette DOM/rendering**: render/menu/show/hide/keydown/compact-
+   labels/history-palette/filter-bar — stay.
+9. **Settings IO**: starred prefs read/write/hydrate, model loaders,
+   project-commands fetch, harness-agents fetch, persist/restore sticky
+   — stay.
+10. **False friends** (verified out of scope): history starred chats,
+    starred-project settings, agent model/effort builders + loaders,
+    context gauge, history search palette, supervised dispatch,
+    pipeline/skill builders, restart palette items, button-click
+    parsing, form-reply rendering.
+
+Shared bindings the slice reads (now explicit inputs or wrapper-bound):
+registries, `slashCtx` chips, inference mode, starred prefs, supplement
+lists, projects list, pipeline/model resolvers (injected callbacks).
+No moved function was exposed on `window.*`.
+
+## Changes made
+
+- **Added `src/web/js/chat_slash.js`** (1,110 L): registry data +
+  ~45 pure functions behind `CuttleChatSlash` (classic script + node
+  exports; footer uses TDZ-proof `globalThis`). Pipeline/model
+  resolvers inject via `deps`; everything else is explicit arguments.
+- **chat_page.js keeps**: palette assembly/orchestration (incl.
+  `filterSlashPaletteItems`, gated builders, `pruneCloud…`), all DOM/
+  events/rendering, fetch/settings IO, chip HTML, enrichers,
+  send/compose orchestration, `slashCtx`, supervised dispatch, plus
+  thin same-named wrappers (identical signatures where possible) so
+  ~120 unrelated call sites don't churn. Deleted outright: the two
+  registry consts, harness tables, agent regexes, and all moved bodies.
+- chat_page.js: 26,503 → 25,704 lines (−799 net).
+- `chat_page.html`: `chat_slash.js` script tag before `chat_page.js`
+  (both `?v=20261001slice2` cache-busted).
+- **Tests:** new `src/tests/test_chat_slash.py` (8 tests,
+  node-executed against the real module): registry shape, parsing
+  matrix, matching/rank, sticky decisions, starred + control,
+  project merge, classifiers/removal, parse check. Repaired 14 test
+  files to require the module instead of slicing moved code
+  (registry reads repointed; harnesses gain one `require` line;
+  delegation assertions replace body assertions where the owner moved).
+- Moved vs deleted: decision logic relocated verbatim (moved, two
+  fidelity corrections during porting: full `isAgentHeaderChip` tail,
+  partition-not-sort); const/duplicate bodies deleted.
+
+## Architecture after
+
+```
+chat_page.js (palette assembly, DOM/events, IO, send orchestration)
+      │  explicit inputs / same-named thin wrappers
+      ▼
+chat_slash.js (registry + parse + match + sticky/starred + classify)
+```
+
+One-way dependency (page → namespace); module holds no state and
+reads no page globals. Palette filter assembly stays because it
+composes 15+ live builders (agent models, projects, restart) that
+belong to other domains.
+
+## Dependencies and state
+
+- Removed: chat-page closures over singletons for all moved decision
+  logic; duplicated registry reads now flow through one definition.
+- Introduced: `CuttleChatSlash` namespace (classic script + node
+  exports; no new runtime deps). No shared state added or moved.
+- Reverse deps: none existed outside the page (only repaired tests);
+  none created.
+- Persistence/settings semantics: unchanged (all IO stays in the page).
+- Three porting fidelity items verified by differential proof (below):
+  full classifier tails, stable-partition sort, plus injected-resolver
+  parity for pipeline/model branches.
+
+## Tests and verification
+
+- New `test_chat_slash.py`: 8/8 (covers every preserved contract in
+  the slice brief: parsing, exact/prefix matching, filtering, ordering
+  keys, sticky/starred resolution, project merge, native control,
+  classifiers, removal, empty-input edges).
+- Differential proof (scratch `/tmp/slash_diff_probe.js`, not
+  committed): HEAD chat_page functions vs new module over a 26-case
+  battery (messages × chips × filters × registries) — **zero
+  mismatches** after aligning probe inputs (several initial diffs were
+  probe artifacts: stub ordering, global-vs-explicit inputs).
+- Repaired suites: all 10 slash-adjacent test files green (244/244 in
+  the focused run), including 2 previously-passing suites that needed
+  no changes and 5 newly discovered slicing suites repaired
+  (composer-removal, history-styling, muse-palette, supervised flags,
+  plus cost/usage/router/badge/bare-sticky/restart/selection/starred/
+  bubble).
+- Broad: `.venv/bin/python -m pytest -q` → **1,781 passed, 26 failed,
+  60 skipped**; the 26 failures byte-identical to the Slice 1 baseline
+  (verified via `diff` — no new failures).
+- `node --check` clean on all touched JS.
+- Manual workflows: none applicable (no UI changed). Not exercised:
+  live Flask boot, chat round-trip.
+
+## Metrics
+
+| Metric | Before (`21c071d5`) | After | Method |
+|---|---|---|---|
+| `chat_page.js` lines | 26,503 | 25,704 (−799) | `wc -l` |
+| Slash decision fns needing page globals | ~45 (all) | 0 in module (explicit inputs) | grep |
+| Slash behavior tests | string pins + slices | +8 module tests; 14 files repaired to require | pytest |
+| Full suite | 1,773 / 26 / 60 | 1,781 / 26 (identical list) / 60 | pytest + diff |
+
+## Remaining concerns
+
+1. Palette assembly, DOM/rendering, send orchestration, settings IO,
+   enrichers, history palette, agent/model builders, and supervised
+   dispatch stay in the page (correct per slice scope).
+2. Repaired harnesses still slice orchestration shells by markers;
+   markers re-verified in this slice, but each future domain move must
+   re-check them (established pattern).
+3. `filterSlashPaletteItems` remains the one complex assembly mixing
+   15+ builders across domains — a future palette-architecture pass
+   (not a single-domain slice) should address it.
+4. 26 remaining baseline failures are untouched and unrelated.
+
+## Diff summary
+
+- Added: `src/web/js/chat_slash.js` (1,110 L),
+  `src/tests/test_chat_slash.py` (8 tests).
+- Modified: `src/web/js/chat_page.js` (−799 net: delegation),
+  `src/web/chat_page.html` (+1 script tag, `?v` bump), 14 test files
+  (require lines + registry repoints + delegation assertions).
+- Deleted: no files.
+- `git status --short` before commit: 15 modified + 2 new paths (above).
+
+## External Review Summary
+
+1. **What changed architecturally?** Slash registry, parsing,
+   matching, sticky/starred decisions, project-command merging, and
+   chip classification moved to owned pure `chat_slash.js`; the page
+   keeps assembly, DOM, IO, and orchestration behind thin wrappers.
+2. **What behavior intentionally changed?** Nothing (two porting
+   corrections matched the originals exactly).
+3. **What behavior should be identical?** Slash syntax, matching/
+   search, sticky prefixes, starred resolution, project-command
+   availability, `/project`, ordering, labels/hints, keyboard nav,
+   dispatch behavior, settings persistence, new/existing-chat behavior.
+4. **What remains coupled or messy?** Palette assembly over 15+
+   cross-domain builders; all rendering/IO/orchestration in the page;
+   harness marker-slicing for orchestration shells; 26 unrelated
+   baseline failures remain.
+5. **What should be reviewed before the next chat domain?** The
+   decision/assembly split (assembly stays by design); whether the
+   next slice is composer, streaming, or message rendering.
+6. **Is the next domain safe to begin?** This slice is self-contained
+   (no streaming/messages/composer-send/agent/attachment/action-form
+   logic touched; failures identical to baseline). Do NOT continue in
+   this track until this review is approved.

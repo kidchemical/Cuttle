@@ -14,6 +14,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHAT_JS = REPO_ROOT / "src" / "web" / "js" / "chat_page.js"
+SLASH_JS = REPO_ROOT / "src" / "web" / "js" / "chat_slash.js"
 WEB_API = REPO_ROOT / "src" / "api" / "web_chat_api.py"
 
 
@@ -64,7 +65,8 @@ def fake_work(monkeypatch):
 
 def test_restart_is_registered_in_the_shared_slash_command_list():
     src = CHAT_JS.read_text(encoding="utf-8")
-    block = src.split("const SLASH_COMMANDS = [", 1)[1].split("\n    ];", 1)[0]
+    slash_src = SLASH_JS.read_text(encoding="utf-8")
+    block = slash_src.split("const SLASH_COMMANDS = [", 1)[1].split("\n];", 1)[0]
     assert "prefix: '/restart '" in block
     assert "controlCommand: true" in block
     assert "Restart Flask" in block
@@ -418,7 +420,8 @@ def test_existing_slash_commands_and_sticky_prefixes_still_work():
 
 def test_palette_still_lists_the_other_control_commands():
     src = CHAT_JS.read_text(encoding="utf-8")
-    block = src.split("const SLASH_COMMANDS = [", 1)[1].split("\n    ];", 1)[0]
+    slash_src = SLASH_JS.read_text(encoding="utf-8")
+    block = slash_src.split("const SLASH_COMMANDS = [", 1)[1].split("\n];", 1)[0]
     for prefix in ("/cursor ", "/codex ", "/help"):
         assert f"prefix: '{prefix}'" in block
     # Agent entries stay sticky; the harness adds new ones over time, so assert

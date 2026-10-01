@@ -26,6 +26,7 @@ from api import starred_slash as ss
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHAT_JS = REPO_ROOT / "src" / "web" / "js" / "chat_page.js"
+SLASH_JS = REPO_ROOT / "src" / "web" / "js" / "chat_slash.js"
 
 
 # --------------------------------------------------------------------------
@@ -121,7 +122,11 @@ def _extract(src: str, start_marker: str, end_marker: str) -> str:
 def _run_sticky_js(script: str, *, starred, chips, session_id=None, prefs=None):
     """Run the real sticky-agent helpers from chat_page.js with the UI stubbed."""
     src = CHAT_JS.read_text(encoding="utf-8")
-    commands = _extract(src, "const SLASH_COMMANDS = [", "\n    ];") + "\n    ];"
+    # Registry lives in chat_slash.js (Phase 3 Slice 2); the require below
+    # also serves the delegating wrappers in the helpers range.
+    slash_src = SLASH_JS.read_text(encoding="utf-8")
+    slash_mod = str(SLASH_JS)
+    commands = _extract(slash_src, "const SLASH_COMMANDS = [", "\n];") + "\n];"
     helpers = _extract(
         src,
         "    function getStickySlashCommandFromMessage(message) {",
@@ -129,6 +134,7 @@ def _run_sticky_js(script: str, *, starred, chips, session_id=None, prefs=None):
     )
 
     harness = f"""
+const CuttleChatSlash = require("{slash_mod}");
 {commands}
 const prefsMap = {json.dumps(prefs or {})};
 let currentSessionId = {json.dumps(session_id)};

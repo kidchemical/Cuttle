@@ -740,7 +740,8 @@ def test_starred_slash_allows_muse():
 
 
 def test_palette_js_lists_muse():
-    js = Path(__file__).resolve().parents[1] / "web" / "js" / "chat_page.js"
+    # Registry lives in chat_slash.js (Phase 3 Slice 2).
+    js = Path(__file__).resolve().parents[1] / "web" / "js" / "chat_slash.js"
     text = js.read_text(encoding="utf-8")
     assert "prefix: '/muse '" in text
     assert "Muse Code" in text

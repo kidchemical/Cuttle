@@ -12,21 +12,23 @@ from pathlib import Path
 
 WEB = Path(__file__).resolve().parents[1] / "web"
 CHAT_JS = WEB / "js" / "chat_page.js"
+SLASH_JS = WEB / "js" / "chat_slash.js"
 CHAT_HTML = WEB / "chat_page.html"
 
 ROUTER_PALETTE_PREFIXES = ("/router ", "/route ", "/retry ")
 
 
 def _slash_commands_block(js: str) -> str:
+    # Registry lives in chat_slash.js since Phase 3 Slice 2.
     start = js.find("const SLASH_COMMANDS = [")
-    assert start >= 0, "SLASH_COMMANDS array not found in chat_page.js"
+    assert start >= 0, "SLASH_COMMANDS array not found in chat_slash.js"
     end = js.find("const CURSOR_AGENT_SLASH_COMMANDS", start)
     assert end > start, "CURSOR_AGENT_SLASH_COMMANDS marker missing after SLASH_COMMANDS"
     return js[start:end]
 
 
 def test_router_slash_commands_not_in_chat_palette():
-    js = CHAT_JS.read_text(encoding="utf-8")
+    js = SLASH_JS.read_text(encoding="utf-8")
     block = _slash_commands_block(js)
     for prefix in ROUTER_PALETTE_PREFIXES:
         assert f"prefix: '{prefix}'" not in block and f'prefix: "{prefix}"' not in block, (
@@ -46,7 +48,7 @@ def test_no_parameterized_router_palette_builder():
 
 
 def test_sticky_agent_commands_remain():
-    js = CHAT_JS.read_text(encoding="utf-8")
+    js = SLASH_JS.read_text(encoding="utf-8")
     block = _slash_commands_block(js)
     for prefix in ("/cursor ", "/codex ", "/muse ", "/claude "):
         assert f"prefix: '{prefix}'" in block, f"Missing sticky agent {prefix!r}"
@@ -65,15 +67,16 @@ def test_cursor_model_palette_still_wired():
 def test_cursor_usage_palette_gated_to_cursor_chip():
     """`/usage` is a Cursor Agent nested slash — only when the Cursor chip is on."""
     js = CHAT_JS.read_text(encoding="utf-8")
-    start = js.find("const CURSOR_AGENT_SLASH_COMMANDS = [")
-    end = js.find("];", start)
+    slash_js = SLASH_JS.read_text(encoding="utf-8")
+    start = slash_js.find("const CURSOR_AGENT_SLASH_COMMANDS = [")
+    end = slash_js.find("];", start)
     assert start > 0 and end > start
-    block = js[start:end]
+    block = slash_js[start:end]
     assert "prefix: '/usage'" in block
     assert "label: 'Usage'" in block
 
     # Must not appear in the global sticky/agent list.
-    base = _slash_commands_block(js)
+    base = _slash_commands_block(slash_js)
     assert "prefix: '/usage'" not in base
 
     gate = js.find("function cursorAgentSlashCommandsForPalette(")
@@ -86,11 +89,12 @@ def test_cursor_usage_palette_gated_to_cursor_chip():
 def test_harness_usage_palette_gated_per_agent():
     """Muse/Codex/Hermes/OpenCode each get a chip-gated `/usage` row."""
     js = CHAT_JS.read_text(encoding="utf-8")
-    assert "HARNESS_USAGE_SLASH_BY_AGENT" in js
+    slash_js = SLASH_JS.read_text(encoding="utf-8")
+    assert "HARNESS_USAGE_SLASH_BY_AGENT" in slash_js
     assert "function harnessUsageSlashCommandsForPalette(" in js
     for cat in ("muse-cmd", "codex-cmd", "hermes-cmd", "opencode-cmd"):
-        assert f"category: '{cat}'" in js
-    base = _slash_commands_block(js)
+        assert f"category: '{cat}'" in slash_js
+    base = _slash_commands_block(slash_js)
     assert "prefix: '/usage'" not in base
 
 

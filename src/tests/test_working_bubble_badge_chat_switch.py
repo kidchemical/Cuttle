@@ -24,6 +24,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHAT_JS = REPO_ROOT / "src" / "web" / "js" / "chat_page.js"
+SLASH_JS = REPO_ROOT / "src" / "web" / "js" / "chat_slash.js"
 
 node_only = pytest.mark.skipif(
     shutil.which("node") is None, reason="node not available"
@@ -100,7 +101,8 @@ def test_load_chat_session_refreshes_agent_badge_after_sticky_if_bubble_already_
 def test_hub_early_paint_then_sticky_restore_adds_agent_badge():
     """Simulate phone hub: badge-less meta first, then sticky restore recovers it."""
     src = CHAT_JS.read_text(encoding="utf-8")
-    commands = _extract(src, "const SLASH_COMMANDS = [", "\n    ];") + "\n    ];"
+    slash_src = SLASH_JS.read_text(encoding="utf-8")
+    commands = _extract(slash_src, "const SLASH_COMMANDS = [", "\n];") + "\n];"
     chip_preds = _extract(
         src,
         "    function isStickyAgentChip(chip, agentId) {",
@@ -126,7 +128,9 @@ def test_hub_early_paint_then_sticky_restore_adds_agent_badge():
         "    /**\n     * Derive the chip(s) to show in the typing indicator",
         "    /**\n     * Active sticky agent composer chip",
     )
+    slash_mod = str(SLASH_JS)
     lean = f"""
+const CuttleChatSlash = require("{slash_mod}");
 {commands}
 const prefsMap = {{
   'CH-000503': {{
@@ -193,7 +197,8 @@ def test_reopen_working_bubble_meta_requires_restored_sticky_chips():
         < body.index("updateRemoteWaitingFromMessages(loadedMessages, liveStatus)")
     )
 
-    commands = _extract(src, "const SLASH_COMMANDS = [", "\n    ];") + "\n    ];"
+    slash_src = SLASH_JS.read_text(encoding="utf-8")
+    commands = _extract(slash_src, "const SLASH_COMMANDS = [", "\n];") + "\n];"
     sticky_helpers = _extract(
         src,
         "    function getStickySlashCommandFromMessage(message) {",
@@ -221,10 +226,11 @@ def test_reopen_working_bubble_meta_requires_restored_sticky_chips():
         "    /**\n     * Active sticky agent composer chip (Cursor / Muse / Codex",
         "    /**\n     * Sticky agent chip + preferred model/effort — used when typing UI is",
     )
-    assert "isStickyMuseAgentChip" in active_fn
-    assert "isStickyCodexAgentChip" in active_fn
+    assert "CuttleChatSlash.activeStickyAgentChip" in active_fn
 
+    slash_mod = str(SLASH_JS)
     harness = f"""
+const CuttleChatSlash = require("{slash_mod}");
 {commands}
 const prefsMap = {{}};
 let currentSessionId = 'CH-000503';
@@ -319,9 +325,11 @@ def test_reopen_working_bubble_meta_covers_non_cursor_sticky_agents():
             f"{label} still calls the Cursor-only helper name."
         )
 
-    assert "isStickyMuseAgentChip" in active_fn
-    assert "isStickyHermesAgentChip" in active_fn
-    assert "isStickyOpenCodeAgentChip" in active_fn
-    assert "isStickyCodexAgentChip" in active_fn
+    assert "CuttleChatSlash.activeStickyAgentChip" in active_fn
+    slash_src = SLASH_JS.read_text(encoding="utf-8")
+    for agent_fn in ("isStickyMuseAgentChip", "isStickyHermesAgentChip",
+                     "isStickyOpenCodeAgentChip", "isStickyCodexAgentChip",
+                     "isStickyCursorAgentChip"):
+        assert agent_fn in slash_src, f"{agent_fn} must live in chat_slash.js"
     assert "activeStickyAgentChip()" in meta_fn
     assert "hasActiveCursorAgentChip" not in meta_fn

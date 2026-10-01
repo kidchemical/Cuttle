@@ -5153,189 +5153,11 @@
 
     /** Slash commands: / menu + chips (stack multiple). `category` drives palette styling.
      *  requiresCloud: hidden/blocked when chat inference mode is Local. */
-    const SLASH_COMMANDS = [
-        {
-            prefix: '/claude ',
-            label: 'Claude Code',
-            hint: 'Run Claude Code on the project (Auto/Cloud)',
-            category: 'command',
-            requiresCloud: true,
-            stickySession: true,
-        },
-        {
-            prefix: '/hermes ',
-            label: 'Hermes Agent',
-            hint: 'Run Hermes Agent on the local llama.cpp model (Qwen3-Coder)',
-            category: 'hermes',
-            stickySession: true,
-        },
-        {
-            prefix: '/cursor ',
-            label: 'Cursor Agent',
-            hint: 'Run Cursor `agent` CLI one-shot (Auto/Cloud)',
-            category: 'cursor',
-            requiresCloud: true,
-            stickySession: true,
-        },
-        {
-            prefix: '/codex ',
-            label: 'Codex',
-            hint: 'Run OpenAI Codex CLI (`codex exec`) with per-chat resume (Auto/Cloud)',
-            category: 'codex',
-            requiresCloud: true,
-            stickySession: true,
-        },
-        {
-            prefix: '/muse ',
-            label: 'Muse Code',
-            hint: 'Run Meta Muse Code CLI (`muse exec`) with per-chat resume (Auto/Cloud)',
-            category: 'muse',
-            requiresCloud: true,
-            stickySession: true,
-        },
-        {
-            prefix: '/opencode ',
-            label: 'OpenCode',
-            hint: 'Run OpenCode CLI (`opencode run`) with per-chat resume (Auto/Cloud)',
-            category: 'opencode',
-            requiresCloud: true,
-            stickySession: true,
-        },
-        {
-            prefix: '/antigravity ',
-            label: 'Antigravity CLI',
-            hint: 'Run Google Antigravity CLI (`agy`) with per-chat resume (Auto/Cloud)',
-            category: 'command',
-            requiresCloud: true,
-            stickySession: true,
-        },
-        {
-            prefix: '/deepseek ',
-            label: 'DeepSeek Harness',
-            hint: 'Run DeepSeek Harness CLI (`dsh --profile headless`; Flash by default)',
-            category: 'command',
-            requiresCloud: true,
-            stickySession: true,
-        },
-        {
-            prefix: '/coordinator ',
-            label: 'Coordinator',
-            hint: 'Supervised mode: status, mode, profile, worker, review-loops',
-            category: 'command',
-            requiresCloud: true,
-            controlCommand: true,
-            keywords: 'coordinator supervised diet-frontier mode profile worker',
-        },
-        {
-            prefix: '/coordinate ',
-            label: 'Coordinate task',
-            hint: 'Run supervised task (Codex Sol low → Cursor Auto) or status/cancel',
-            category: 'command',
-            requiresCloud: true,
-            controlCommand: true,
-            keywords: 'coordinate supervised task followup cancel status',
-        },
-        {
-            prefix: '/restart ',
-            label: 'Restart Flask',
-            hint: 'Cuttle control: status, graceful, when-idle, force --yes',
-            category: 'command',
-            controlCommand: true,
-            keywords: 'restart flask daemon reload graceful when-idle force status',
-        },
-        { prefix: '/help', label: 'Help', hint: 'Show command help', category: 'command' },
-    ];
 
-    /**
-     * Cursor Agent CLI slash commands (docs: /model, /plan, /ask, …).
-     * Only shown in the palette when the Cursor Agent sticky badge is active.
-     * Composed as `/cursor /model …` via the existing chip stack.
-     */
-    /**
-     * Nested under the Cursor Agent sticky badge (palette-gated).
-     * category ``cursor-cmd`` — command chips, NOT the agent badge.
-     * (``category: 'cursor'`` made renderSlashChips relabel them
-     * ``Cursor - Auto``.)
-     */
-    const CURSOR_AGENT_SLASH_COMMANDS = [
-        {
-            prefix: '/model ',
-            label: 'Model',
-            hint: 'List, set, or refresh Cursor Agent models for this chat',
-            category: 'cursor-cmd',
-            keywords: 'cursor model llm opus sonnet composer refresh',
-        },
-        {
-            prefix: '/plan ',
-            label: 'Plan mode',
-            hint: 'Switch Cursor Agent to Plan mode (read-only planning)',
-            category: 'cursor-cmd',
-            keywords: 'cursor plan mode',
-        },
-        {
-            prefix: '/ask ',
-            label: 'Ask mode',
-            hint: 'Switch Cursor Agent to Ask mode (read-only Q&A)',
-            category: 'cursor-cmd',
-            keywords: 'cursor ask mode',
-        },
-        {
-            prefix: '/agent',
-            label: 'Agent mode',
-            hint: 'Reset Cursor Agent to default agent mode',
-            category: 'cursor-cmd',
-            keywords: 'cursor agent mode default',
-        },
-        {
-            prefix: '/clear',
-            label: 'New Cursor chat',
-            hint: 'Clear the Cursor Agent resume session for this chat',
-            category: 'cursor-cmd',
-            keywords: 'cursor clear new chat reset session',
-        },
-        {
-            prefix: '/sandbox ',
-            label: 'Sandbox',
-            hint: 'Set sandbox enabled/disabled for Cursor Agent runs',
-            category: 'cursor-cmd',
-            keywords: 'cursor sandbox network',
-        },
-        {
-            prefix: '/about',
-            label: 'About',
-            hint: 'Show Cursor Agent CLI version and account info',
-            category: 'cursor-cmd',
-            keywords: 'cursor about version whoami',
-        },
-        {
-            prefix: '/usage',
-            label: 'Usage',
-            hint: 'Show Cursor plan usage for the current billing cycle',
-            category: 'cursor-cmd',
-            keywords: 'cursor usage quota billing spend tokens plan',
-        },
-        {
-            prefix: '/cost',
-            label: 'Cost',
-            hint: 'Per-model input/output token prices (active model first)',
-            category: 'cursor-cmd',
-            keywords: 'cursor cost pricing price rates tokens models dollars',
-        },
-        {
-            prefix: '/compact',
-            label: 'Compact',
-            hint: 'Summarize the Cursor Agent session to free context window space',
-            category: 'cursor-cmd',
-            keywords: 'cursor compact summarize compress context window',
-        },
-    ];
-
+    // Slash decisions live in chat_slash.js; wrappers bind page state.
     function slashCommandsForCurrentMode() {
-        const mode = readInferenceMode();
-        const base = mode !== 'local'
-            ? SLASH_COMMANDS.slice()
-            : SLASH_COMMANDS.filter((c) => !c.requiresCloud);
-        return mergeHarnessAgentsIntoSlashCommands(base);
+        return CuttleChatSlash.slashCommandsForCurrentMode(
+            readInferenceMode(), slashPaletteSupplement.harnessAgents || []);
     }
 
     /**
@@ -5343,56 +5165,8 @@
      * is missing, and append drop-in harness agents not already hardcoded.
      */
     function mergeHarnessAgentsIntoSlashCommands(base) {
-        const agents = slashPaletteSupplement.harnessAgents || [];
-        if (!agents.length) return base;
-        const byPrefix = new Map();
-        for (const a of agents) {
-            const prefix = String(a.prefix || ((a.slash || '') + ' ') || '').trimEnd();
-            const norm = prefix.endsWith(' ') ? prefix : (prefix + ' ');
-            if (norm.length > 1) byPrefix.set(norm.toLowerCase(), a);
-        }
-        const out = base.map((cmd) => {
-            const key = String(cmd.prefix || '').toLowerCase();
-            const a = byPrefix.get(key);
-            if (!a) return cmd;
-            const available = a.available !== false;
-            const install = String(a.install_hint || '').trim();
-            const hint = !available && install
-                ? install
-                : (String(a.hint || cmd.hint || '').trim() || cmd.hint);
-            return {
-                ...cmd,
-                label: a.label || cmd.label,
-                hint,
-                requiresCloud: a.requires_cloud != null ? !!a.requires_cloud : cmd.requiresCloud,
-                stickySession: a.stickySession != null ? !!a.stickySession : cmd.stickySession,
-                harness: true,
-                available,
-                installHint: install,
-            };
-        });
-        const existing = new Set(out.map((c) => String(c.prefix || '').toLowerCase()));
-        for (const a of agents) {
-            const prefixRaw = String(a.prefix || ((a.slash || '') + ' ') || '').trim();
-            if (!prefixRaw) continue;
-            const prefix = prefixRaw.endsWith(' ') ? prefixRaw : (prefixRaw + ' ');
-            if (existing.has(prefix.toLowerCase())) continue;
-            const available = a.available !== false;
-            const install = String(a.install_hint || '').trim();
-            out.push({
-                prefix,
-                label: a.label || a.id || prefix.trim(),
-                hint: (!available && install) ? install : (a.hint || install || 'Harness agent'),
-                category: 'command',
-                requiresCloud: a.requires_cloud !== false,
-                stickySession: a.sticky !== false && a.stickySession !== false,
-                harness: true,
-                available,
-                installHint: install,
-            });
-            existing.add(prefix.toLowerCase());
-        }
-        return out;
+        return CuttleChatSlash.mergeHarnessAgentsIntoSlashCommands(
+            base, slashPaletteSupplement.harnessAgents || []);
     }
 
     function loadHarnessAgentsForPalette() {
@@ -5485,65 +5259,17 @@
         if (!hasActiveCursorAgentChip()) return [];
         const mode = readInferenceMode();
         if (mode === 'local') return [];
-        return CURSOR_AGENT_SLASH_COMMANDS.slice();
+        return CuttleChatSlash.CURSOR_AGENT_SLASH_COMMANDS.slice();
     }
 
     /**
      * Nested ``/usage`` for Muse / Codex / Hermes / OpenCode — same chip
      * pattern as Cursor's Usage row (gated to the active agent badge).
-     * Cursor keeps its own entry inside CURSOR_AGENT_SLASH_COMMANDS.
+     * Cursor keeps its own entry inside CuttleChatSlash.CURSOR_AGENT_SLASH_COMMANDS.
      */
-    const HARNESS_USAGE_SLASH_BY_AGENT = {
-        muse: {
-            prefix: '/usage',
-            label: 'Usage',
-            hint: 'Show Muse Code account + local session usage',
-            category: 'muse-cmd',
-            keywords: 'muse usage quota billing spend tokens plan subscription',
-        },
-        codex: {
-            prefix: '/usage',
-            label: 'Usage',
-            hint: 'Show ChatGPT Codex plan windows (5-hour / weekly)',
-            category: 'codex-cmd',
-            keywords: 'codex usage quota billing spend tokens plan chatgpt',
-        },
-        hermes: {
-            prefix: '/usage',
-            label: 'Usage',
-            hint: 'Show Hermes local insights (tokens, tools, models)',
-            category: 'hermes-cmd',
-            keywords: 'hermes usage insights tokens tools models',
-        },
-        opencode: {
-            prefix: '/usage',
-            label: 'Usage',
-            hint: 'Show OpenCode local stats (cost, tools, models)',
-            category: 'opencode-cmd',
-            keywords: 'opencode usage stats cost tokens tools models',
-        },
-    };
-
-    /** Nested ``/cost`` (per-model token prices) for every non-Cursor harness. */
-    const HARNESS_COST_AGENT_LABELS = {
-        muse: 'Muse Code',
-        codex: 'Codex',
-        hermes: 'Hermes',
-        opencode: 'OpenCode',
-        claude: 'Claude Code',
-        deepseek: 'DeepSeek',
-        antigravity: 'Antigravity',
-    };
-
+    // Harness usage/cost tables live in chat_slash.js (single owner).
     function harnessCostSlashCommand(agent) {
-        const name = HARNESS_COST_AGENT_LABELS[agent] || agent;
-        return {
-            prefix: '/cost',
-            label: 'Cost',
-            hint: name + ' per-model input/output token prices (active model first)',
-            category: agent + '-cmd',
-            keywords: agent + ' cost pricing price rates tokens models dollars',
-        };
+        return CuttleChatSlash.harnessCostSlashCommand(agent);
     }
 
     function hasActiveHarnessAgentChip(agent, key) {
@@ -5560,8 +5286,9 @@
         const mode = readInferenceMode();
         const forAgent = (agent) => {
             const out = [];
-            if (HARNESS_USAGE_SLASH_BY_AGENT[agent]) {
-                out.push(Object.assign({}, HARNESS_USAGE_SLASH_BY_AGENT[agent]));
+            const usageTable = CuttleChatSlash.HARNESS_USAGE_SLASH_BY_AGENT;
+            if (usageTable[agent]) {
+                out.push(Object.assign({}, usageTable[agent]));
             }
             out.push(harnessCostSlashCommand(agent));
             return out;
@@ -5589,7 +5316,7 @@
             if (!Array.isArray(arr)) return [];
             return arr
                 .map((p) => String(p || ''))
-                .filter((p) => SLASH_COMMANDS.some((c) => c.stickySession && c.prefix === p));
+                .filter((p) => CuttleChatSlash.SLASH_COMMANDS.some((c) => c.stickySession && c.prefix === p));
         } catch (_) {
             return [];
         }
@@ -5636,7 +5363,7 @@
     }
 
     function isSlashCommandStarred(prefix) {
-        return readStarredSlashPrefixes().includes(prefix);
+        return CuttleChatSlash.isSlashCommandStarred(readStarredSlashPrefixes(), prefix);
     }
 
     /**
@@ -5644,7 +5371,7 @@
      * starred at a time so new chats get a single default (e.g. Cursor Agent).
      */
     function toggleStarredSlashCommand(prefix) {
-        const cmd = SLASH_COMMANDS.find((c) => c.prefix === prefix && c.stickySession);
+        const cmd = CuttleChatSlash.SLASH_COMMANDS.find((c) => c.prefix === prefix && c.stickySession);
         if (!cmd) return false;
         const current = readStarredSlashPrefixes();
         const wasStarred = current.includes(prefix);
@@ -5662,17 +5389,7 @@
     }
 
     function getStarredStickyChips() {
-        const starred = readStarredSlashPrefixes();
-        if (!starred.length) return [];
-        const mode = readInferenceMode();
-        return starred
-            .map((prefix) => SLASH_COMMANDS.find((c) => c.prefix === prefix && c.stickySession))
-            .filter((c) => c && !(mode === 'local' && c.requiresCloud))
-            .map((c) => ({
-                prefix: c.prefix,
-                label: c.label,
-                category: c.category || 'command',
-            }));
+        return CuttleChatSlash.starredStickyChips(readStarredSlashPrefixes(), readInferenceMode());
     }
 
     /** Apply globally starred sticky agent chips (new chat / welcome only). */
@@ -5808,7 +5525,7 @@
         ['welcome', 'chat'].forEach((key) => {
             const before = slashCtx[key].chips.length;
             slashCtx[key].chips = slashCtx[key].chips.filter((c) => {
-                const match = SLASH_COMMANDS.find((s) => s.prefix === c.prefix);
+                const match = CuttleChatSlash.SLASH_COMMANDS.find((s) => s.prefix === c.prefix);
                 return !(match && match.requiresCloud);
             });
             if (slashCtx[key].chips.length !== before) changed = true;
@@ -6454,30 +6171,12 @@
     }
 
     function slashPaletteCategoryLabel(cat) {
-        if (cat === 'pipeline') return 'Pipeline';
-        if (cat === 'skill') return 'Skill';
-        if (cat === 'project') return 'Project';
-        if (cat === 'project-cmd') return 'Project cmd';
-        if (cat === 'cursor' || cat === 'cursor-model' || cat === 'cursor-cmd') return 'Cursor';
-        if (cat === 'muse' || cat === 'muse-model' || cat === 'muse-effort' || cat === 'muse-cmd') return 'Muse';
-        if (cat === 'hermes' || cat === 'hermes-model' || cat === 'hermes-effort' || cat === 'hermes-cmd') return 'Hermes';
-        if (cat === 'opencode' || cat === 'opencode-model' || cat === 'opencode-effort' || cat === 'opencode-cmd') return 'OpenCode';
-        if (cat === 'codex' || cat === 'codex-model' || cat === 'codex-effort' || cat === 'codex-cmd') return 'Codex';
-        if (cat === 'claude-cmd') return 'Claude';
-        if (cat === 'deepseek-cmd') return 'DeepSeek';
-        if (cat === 'antigravity-cmd') return 'Antigravity';
-        return 'Command';
+        return CuttleChatSlash.slashPaletteCategoryLabel(cat);
     }
 
     /** Normalize palette categories into filter-badge buckets. */
     function slashPaletteTypeBucket(cat) {
-        const c = cat || 'command';
-        if (c === 'cursor-model' || c === 'cursor-cmd') return 'cursor';
-        if (c === 'muse-model' || c === 'muse-effort' || c === 'muse-cmd') return 'muse';
-        if (c === 'hermes-model' || c === 'hermes-effort' || c === 'hermes-cmd') return 'hermes';
-        if (c === 'opencode-model' || c === 'opencode-effort' || c === 'opencode-cmd') return 'opencode';
-        if (c === 'codex-model' || c === 'codex-effort' || c === 'codex-cmd') return 'codex';
-        return c;
+        return CuttleChatSlash.slashPaletteTypeBucket(cat);
     }
 
     const SLASH_PALETTE_TYPE_ORDER = [
@@ -6508,62 +6207,16 @@
     }
 
     function slashPaletteTypeBadgeLabel(bucket) {
-        if (bucket === 'all') return 'All';
-        if (bucket === 'command') return 'Commands';
-        if (bucket === 'project-cmd') return 'Project cmds';
-        if (bucket === 'project') return 'Projects';
-        if (bucket === 'pipeline') return 'Pipelines';
-        if (bucket === 'skill') return 'Skills';
-        if (bucket === 'cursor') return 'Cursor';
-        if (bucket === 'muse') return 'Muse';
-        if (bucket === 'hermes') return 'Hermes';
-        if (bucket === 'opencode') return 'OpenCode';
-        if (bucket === 'codex') return 'Codex';
-        return slashPaletteCategoryLabel(bucket);
+        return CuttleChatSlash.slashPaletteTypeBadgeLabel(bucket);
     }
 
     function buildProjectPaletteItems() {
-        return (projects || []).map((p) => {
-            const name = String(p.name || '').trim() || ('Project ' + p.id);
-            const path = String(p.path || '').trim();
-            return {
-                category: 'project',
-                prefix: '/project ' + name + ' ',
-                label: name,
-                hint: path || 'Set this project as the chat working directory',
-                meta: path,
-                keywords: 'project cd directory cwd folder ' + name + ' ' + path,
-                projectId: p.id,
-                projectPath: path,
-                projectName: name,
-            };
-        });
+        return CuttleChatSlash.buildProjectPaletteItems(projects);
     }
 
     function buildProjectCommandPaletteItems() {
-        return (slashPaletteSupplement.projectCommands || []).map((c) => {
-            const name = String(c.name || '').trim();
-            if (!name) return null;
-            const title = String(c.title || name).trim() || name;
-            const desc = String(c.description || '').trim();
-            const collision = !!c.reserved_collision;
-            const prefix = collision ? ('/cmd ' + name + ' ') : ('/' + name + ' ');
-            return {
-                category: 'project-cmd',
-                prefix,
-                label: title,
-                hint: desc || ('Run project command /' + name),
-                meta: collision ? ('/cmd ' + name) : ('/' + name),
-                keywords: [
-                    'project command cmd',
-                    name,
-                    title,
-                    desc,
-                    (c.aliases || []).join(' '),
-                ].join(' '),
-                projectCommandName: name,
-            };
-        }).filter(Boolean);
+        return CuttleChatSlash.buildProjectCommandPaletteItems(
+            slashPaletteSupplement.projectCommands || []);
     }
 
     function buildPipelinePaletteItems() {
@@ -7900,42 +7553,15 @@
 
     /** Split a slash filter into tokens; all tokens must match (AND). */
     function slashPaletteFilterTokens(filterLower) {
-        return String(filterLower || '')
-            .toLowerCase()
-            .trim()
-            .split(/\s+/)
-            .filter(Boolean);
+        return CuttleChatSlash.slashPaletteFilterTokens(filterLower);
     }
 
     function slashPaletteItemHaystack(item) {
-        return [
-            item.label,
-            item.hint,
-            item.meta,
-            item.prefix ? String(item.prefix).replace(/^\//, '').trim() : '',
-            item.pipelineId,
-            item.skillRef,
-            item.keywords,
-            item.modelId,
-            slashPaletteCategoryLabel(item.category),
-        ]
-            .filter(Boolean)
-            .map((x) => String(x).toLowerCase())
-            .join('\n');
+        return CuttleChatSlash.slashPaletteItemHaystack(item);
     }
 
     function slashPaletteItemMatches(item, filterLower) {
-        if (!filterLower) return true;
-        const tokens = slashPaletteFilterTokens(filterLower);
-        if (!tokens.length) return true;
-        const haystack = slashPaletteItemHaystack(item);
-        // Compact form so "sonnet4" / "1m" still hit dashed ids and spaced labels.
-        const compact = haystack.replace(/[\s._/-]+/g, '');
-        return tokens.every((tok) => {
-            if (haystack.includes(tok)) return true;
-            const compactTok = tok.replace(/[\s._/-]+/g, '');
-            return !!(compactTok && compact.includes(compactTok));
-        });
+        return CuttleChatSlash.slashPaletteItemMatches(item, filterLower);
     }
 
     function filterSlashPaletteItems(filter) {
@@ -7985,23 +7611,13 @@
         }
 
         function starredRank(item) {
-            if (item.stickySession && starredSet.has(item.prefix)) return 0;
-            if (item.category === 'project') {
-                if (
-                    starredProjectId != null
-                    && item.projectId != null
-                    && String(item.projectId) === starredProjectId
-                ) {
-                    return 0;
-                }
-                if (
-                    starredProjectPath
-                    && normalizeStarredProjectPath(item.projectPath) === starredProjectPath
-                ) {
-                    return 0;
-                }
-            }
-            return 1;
+            // Single implementation lives in chat_slash.js; the closure
+            // supplies prefs gathered above.
+            return CuttleChatSlash.starredRank(item, {
+                prefixes: Array.from(starredSet),
+                projectId: starredProjectId,
+                projectPath: starredProjectPath,
+            });
         }
 
         function sortGroup(arr) {
@@ -8235,8 +7851,7 @@
         );
     }
 
-    const AGENT_CHIP_RE = /(?:^|[^\w])\/(cursor|muse|hermes|codex|opencode|claude|deepseek|antigravity)(?:\s|$)/i;
-    const AGENT_LABEL_RE = /^(cursor|muse|hermes|codex|opencode|claude|deepseek|antigravity)\b/i;
+    // Agent chip regexes live in chat_slash.js (single owner).
 
     /**
      * Sticky agent badge only (``/cursor``, ``/codex``, …). Nested cmds like
@@ -8247,157 +7862,42 @@
      * must not win.
      */
     function isStickyAgentChip(chip, agentId) {
-        if (!chip || !agentId) return false;
-        const id = String(agentId).toLowerCase();
-        const cat = String((chip && chip.category) || '').toLowerCase();
-        if (cat === id + '-cmd' || cat === id + '-model' || cat === id + '-effort') {
-            return false;
-        }
-        const hay = String(chip.prefix || chip.meta || '')
-            .toLowerCase()
-            .trim();
-        // Nested one-shots — never the sticky badge (incl. legacy wrong category).
-        if (
-            /^\/(usage|cost)(\s|$)/.test(hay)
-            || /^\/model\s+refresh\b/.test(hay)
-            || /^\/(about|clear|plan|ask|sandbox|agent)\b/.test(hay)
-            || new RegExp('^/' + id + '\\s+/').test(hay)
-            || new RegExp(
-                '^/' + id + '\\s+(model|effort|usage|cost|about|clear|plan|ask|sandbox|agent)\\b'
-            ).test(hay)
-        ) {
-            return false;
-        }
-        if (cat === id) return true;
-        if (!hay) return false;
-        // Exact token, optional trailing space, or history meta `/codex · …`.
-        const m = hay.match(new RegExp('^/' + id + '(?:\\s+(.*))?$'));
-        if (!m) return false;
-        const rest = String(m[1] || '').trim();
-        if (!rest) return true;
-        return /^(·|•)/.test(rest);
+        return CuttleChatSlash.isStickyAgentChip(chip, agentId);
     }
 
     function isStickyCursorAgentChip(chip) {
-        return isStickyAgentChip(chip, 'cursor');
+        return CuttleChatSlash.isStickyCursorAgentChip(chip);
     }
     function isStickyMuseAgentChip(chip) {
-        return isStickyAgentChip(chip, 'muse');
+        return CuttleChatSlash.isStickyMuseAgentChip(chip);
     }
     function isStickyCodexAgentChip(chip) {
-        return isStickyAgentChip(chip, 'codex');
+        return CuttleChatSlash.isStickyCodexAgentChip(chip);
     }
     function isStickyHermesAgentChip(chip) {
-        return isStickyAgentChip(chip, 'hermes');
+        return CuttleChatSlash.isStickyHermesAgentChip(chip);
     }
     function isStickyOpenCodeAgentChip(chip) {
-        return isStickyAgentChip(chip, 'opencode');
+        return CuttleChatSlash.isStickyOpenCodeAgentChip(chip);
     }
 
     /** Nested Cursor Agent slash (``/usage``, ``/plan``, ``/model refresh``, …). */
     function isCursorNestedCommandChip(chip) {
-        if (!chip) return false;
-        if ((chip.category || '') === 'cursor-cmd') return true;
-        // Real model *setting* picks stay companion chips, not nested one-shots.
-        if ((chip.category || '') === 'cursor-model') return false;
-        const pre = String(chip.prefix || chip.meta || '').toLowerCase().trim();
-        if (pre === '/model' || /^\/model\s+refresh\b/.test(pre)) return true;
-        if (/^\/model\b/.test(pre)) return false;
-        return /^\/(usage|cost|about|clear|plan|ask|sandbox|agent)\b/.test(pre)
-            && !isStickyCursorAgentChip(chip);
+        return CuttleChatSlash.isCursorNestedCommandChip(chip);
     }
 
     /** Nested harness cmd chip (``/usage``, ``/cost``, staged ``/model refresh``, …). */
     function isHarnessNestedCommandChip(chip) {
-        if (!chip) return false;
-        const cat = String(chip.category || '').toLowerCase();
-        if (/^(cursor|muse|codex|hermes|opencode|claude|deepseek|antigravity)-cmd$/.test(cat)) return true;
-        const pre = String(chip.prefix || chip.meta || '').toLowerCase().trim();
-        return /^\/(usage|cost)(\s|$)/.test(pre)
-            || /^\/model\s+refresh\b/.test(pre);
+        return CuttleChatSlash.isHarnessNestedCommandChip(chip);
     }
 
     function isAgentHeaderChip(chip) {
-        const cat = String((chip && chip.category) || '').toLowerCase();
-        // Nested agent cmds (/usage, /cost, /plan, …) are command chips — not the agent badge.
-        if (/^(cursor|muse|codex|hermes|opencode|claude|deepseek|antigravity)-cmd$/.test(cat)) return false;
-        if (isHarnessNestedCommandChip(chip) && !isStickyAgentChip(chip, 'cursor')
-            && !isStickyAgentChip(chip, 'muse') && !isStickyAgentChip(chip, 'codex')
-            && !isStickyAgentChip(chip, 'hermes') && !isStickyAgentChip(chip, 'opencode')) {
-            return false;
-        }
-        if (
-            cat === 'cursor' || cat === 'cursor-model'
-            || cat === 'muse' || cat === 'muse-model' || cat === 'muse-effort'
-            || cat === 'codex' || cat === 'codex-model' || cat === 'codex-effort'
-            || cat === 'hermes' || cat === 'hermes-model' || cat === 'hermes-effort'
-            || cat === 'opencode' || cat === 'opencode-model' || cat === 'opencode-effort'
-            || cat === 'agent'
-        ) {
-            // Model/effort companions are not the primary agent header chip.
-            if (cat.endsWith('-model') || cat.endsWith('-effort')) return false;
-            return true;
-        }
-        if (isStickyCursorAgentChip(chip) || isStickyMuseAgentChip(chip)
-            || isStickyCodexAgentChip(chip) || isStickyHermesAgentChip(chip)
-            || isStickyOpenCodeAgentChip(chip)) {
-            return true;
-        }
-        const hay = String((chip && (chip.prefix || chip.meta || chip.label)) || '');
-        if (/^\/(usage|cost|about|clear|plan|ask|sandbox|model)\b/i.test(hay.trim())) {
-            return false;
-        }
-        // Only sticky-shaped agent tokens count — not `/codex model …` / `/codex /usage`.
-        const pre = hay.trim().toLowerCase();
-        const stickyOnly = pre.match(
-            /^\/(cursor|muse|hermes|codex|opencode|claude|deepseek|antigravity)(?:\s|$)/i
-        );
-        if (stickyOnly) {
-            const agentTok = stickyOnly[1].toLowerCase();
-            return isStickyAgentChip({ prefix: pre, category: '' }, agentTok);
-        }
-        return AGENT_LABEL_RE.test(hay.trim()) && !/^usage\b/i.test(hay.trim());
+        return CuttleChatSlash.isAgentHeaderChip(chip);
     }
 
     /** Agent id owning a composer chip, or '' for agent-less chips. Pure. */
     function composerChipAgentId(chip) {
-        const cat = String((chip && chip.category) || '').toLowerCase();
-        const byCat = {
-            'cursor': 'cursor', 'cursor-model': 'cursor', 'cursor-cmd': 'cursor',
-            'muse': 'muse', 'muse-model': 'muse', 'muse-effort': 'muse', 'muse-cmd': 'muse',
-            'hermes': 'hermes', 'hermes-model': 'hermes', 'hermes-effort': 'hermes', 'hermes-cmd': 'hermes',
-            'opencode': 'opencode', 'opencode-model': 'opencode', 'opencode-effort': 'opencode', 'opencode-cmd': 'opencode',
-            'codex': 'codex', 'codex-model': 'codex', 'codex-effort': 'codex', 'codex-cmd': 'codex',
-            'claude': 'claude', 'claude-cmd': 'claude',
-            'deepseek': 'deepseek', 'deepseek-cmd': 'deepseek',
-            'antigravity': 'antigravity', 'antigravity-cmd': 'antigravity',
-        };
-        if (byCat[cat]) return byCat[cat];
-        // History title chips often store meta `/codex · model …` with no prefix
-        // (CH-000497-8). Prefer prefix, then meta — same haystack as sticky match.
-        const pre = String((chip && (chip.prefix || chip.meta)) || '')
-            .trim()
-            .toLowerCase();
-        const m = pre.match(/^\/(cursor-cli|cursor|muse|hermes|codex|opencode|claude|deepseek|antigravity)\b/);
-        if (m) return m[1] === 'cursor-cli' ? 'cursor' : m[1];
-        // Cursor-only nested cmds (plan/ask/…) typed after the agent chip.
-        if (/^\/(model|plan|ask|about|clear|sandbox|agent)\b/.test(pre)) return 'cursor';
-        // Label-only fallback (title-parsed "codex" / "Codex" with empty meta).
-        const lab = String((chip && chip.label) || '').trim().toLowerCase();
-        const labM = lab.match(
-            /^(cursor(?:\s+agent)?|muse(?:\s+code)?|hermes(?:\s+agent)?|codex|opencode|claude(?:\s+code)?|deepseek(?:\s+harness)?|antigravity(?:\s+cli)?)\b/
-        );
-        if (labM) {
-            const tok = labM[1].split(/\s+/)[0];
-            return tok === 'cursor' || tok === 'muse' || tok === 'hermes'
-                || tok === 'codex' || tok === 'opencode'
-                || tok === 'claude' || tok === 'deepseek' || tok === 'antigravity'
-                ? tok
-                : '';
-        }
-        // Bare /usage: do not assume Cursor — category (*-cmd) should already
-        // have mapped above. Leaving '' avoids bundling Codex Usage with Cursor.
-        return '';
+        return CuttleChatSlash.composerChipAgentId(chip);
     }
 
     /**
@@ -8406,25 +7906,11 @@
      * so no residual subcommand chip is left behind. Pure.
      */
     function composerChipRemovalIndexes(chips, idx) {
-        const list = Array.isArray(chips) ? chips : [];
-        if (!Number.isFinite(idx) || idx < 0 || idx >= list.length) return [];
-        const agent = composerChipAgentId(list[idx]);
-        if (!agent) return [idx];
-        const out = [];
-        for (let n = 0; n < list.length; n++) {
-            if (composerChipAgentId(list[n]) === agent) out.push(n);
-        }
-        return out.length ? out : [idx];
+        return CuttleChatSlash.composerChipRemovalIndexes(chips, idx);
     }
 
     function sortChipsAgentThenCommand(chips) {
-        const agent = [];
-        const command = [];
-        (chips || []).forEach((c) => {
-            if (isAgentHeaderChip(c)) agent.push(c);
-            else command.push(c);
-        });
-        return agent.concat(command);
+        return CuttleChatSlash.sortChipsAgentThenCommand(chips);
     }
 
     // Project mapping lives in chat_project.js (pure over explicit inputs).
@@ -9142,10 +8628,10 @@
             return;
         }
         // Exclusive sticky agent: only one agent badge at a time (Cursor vs Muse etc.)
-        const _stickyMatch = SLASH_COMMANDS.find((s) => s.prefix === cmd.prefix && s.stickySession);
+        const _stickyMatch = CuttleChatSlash.SLASH_COMMANDS.find((s) => s.prefix === cmd.prefix && s.stickySession);
         if (_stickyMatch) {
             ctx.chips = ctx.chips.filter((c) => {
-                const m = SLASH_COMMANDS.find((s) => s.prefix === c.prefix);
+                const m = CuttleChatSlash.SLASH_COMMANDS.find((s) => s.prefix === c.prefix);
                 if (m && m.stickySession) return false;
                 return !isOrphanedCompanionChip(c, cmd);
             });
@@ -9160,7 +8646,7 @@
         ctx.paletteDismissed = false;
         hideSlashMenu(key);
         // Sticky agent chips apply for the rest of the session — mirror to both composers.
-        const match = SLASH_COMMANDS.find((s) => s.prefix === cmd.prefix);
+        const match = CuttleChatSlash.SLASH_COMMANDS.find((s) => s.prefix === cmd.prefix);
         if (match && match.stickySession) {
             const other = key === 'chat' ? 'welcome' : 'chat';
             slashCtx[other].chips = ctx.chips.slice();
@@ -9254,13 +8740,7 @@
     /** Native Cuttle control commands are handled by Cuttle itself, so a sticky
      *  agent chip must never wrap them into an agent prompt. */
     function isNativeControlCommand(text) {
-        const t = String(text || '').trim().toLowerCase();
-        if (!t.startsWith('/')) return false;
-        return SLASH_COMMANDS.some((c) => {
-            if (!c.controlCommand) return false;
-            const token = c.prefix.trim().toLowerCase();
-            return t === token || t.startsWith(token + ' ');
-        });
+        return CuttleChatSlash.isNativeControlCommand(text);
     }
 
     /**
@@ -9429,43 +8909,12 @@
      *  Matches bare tokens too (``/cursor``) — compose strips the trailing space
      *  from empty-body chip sends, and must not look like a badge removal. */
     function getStickySlashCommandFromMessage(message) {
-        const m = String(message).trim();
-        if (!m) return null;
-        const candidates = SLASH_COMMANDS.filter((c) => c.stickySession).sort(
-            (a, b) => b.prefix.length - a.prefix.length
-        );
-        const low = m.toLowerCase();
-        for (const cmd of candidates) {
-            const token = cmd.prefix.replace(/\s+$/, '');
-            const tokenLow = token.toLowerCase();
-            // Bare "/cursor", "/cursor …", or prefix-with-space "/cursor foo"
-            // — same rules as api.starred_slash.sticky_prefix_from_text.
-            if (
-                low === tokenLow
-                || low.startsWith(tokenLow + ' ')
-                || m.startsWith(cmd.prefix)
-            ) {
-                return cmd;
-            }
-        }
-        return null;
+        return CuttleChatSlash.getStickySlashCommandFromMessage(message);
     }
 
     /** True when the API response indicates a failed sticky agent run (UI only). */
     function isStickySlashAssistantFailure(stickyCmd, data) {
-        if (!stickyCmd || !data) return false;
-        if (data.busy) return false;
-        if (data.success === false) return true;
-        const t = data.type;
-        if (stickyCmd.prefix.startsWith('/opencode')) return t === 'opencode_error';
-        if (stickyCmd.prefix.startsWith('/antigravity')) return t === 'antigravity_error';
-        if (stickyCmd.prefix.startsWith('/hermes')) return t === 'hermes_error';
-        if (stickyCmd.prefix.startsWith('/claude')) return t === 'claude_error' || t === 'error';
-        if (stickyCmd.prefix.startsWith('/cursor')) return t === 'cursor_error' || t === 'error';
-        if (stickyCmd.prefix.startsWith('/codex')) return t === 'codex_error' || t === 'error';
-        if (stickyCmd.prefix.startsWith('/muse')) return t === 'muse_error' || t === 'error';
-        if (stickyCmd.prefix.startsWith('/deepseek')) return t === 'deepseek_error' || t === 'error';
-        return false;
+        return CuttleChatSlash.isStickySlashAssistantFailure(stickyCmd, data);
     }
 
     function persistStickySlashForCurrentSession() {
@@ -9474,7 +8923,7 @@
             ? slashCtx.chat.chips
             : (slashCtx.welcome.chips || []);
         const sticky = (chips || []).filter((c) => {
-            const match = SLASH_COMMANDS.find((s) => s.prefix === c.prefix);
+            const match = CuttleChatSlash.SLASH_COMMANDS.find((s) => s.prefix === c.prefix);
             return match && match.stickySession;
         });
         if (sticky.length) stickyAgentClearedPending = false;
@@ -9512,75 +8961,26 @@
     }
 
     function hasStickyAgentChip() {
-        return ['chat', 'welcome'].some((key) =>
-            (slashCtx[key].chips || []).some((c) => {
-                const match = SLASH_COMMANDS.find((s) => s.prefix === c.prefix);
-                return !!(match && match.stickySession);
-            })
-        );
+        return CuttleChatSlash.hasStickyAgentChip(slashCtx.chat.chips, slashCtx.welcome.chips);
     }
 
     /** 'none' when this turn must skip the server-side sticky/starred agent. */
     function stickyAgentOverrideForRequest(message) {
-        if (getStickySlashCommandFromMessage(message)) return null;
-        if (hasStickyAgentChip()) return null;
-        if (isStickyAgentCleared()) return 'none';
-        // A star we know about with no badge on the composer means the user took
-        // the badge off. An unknown star (prefs still hydrating) stays silent so
-        // the server fallback can cover a genuinely dropped chip.
-        return readStarredSlashPrefixes().length ? 'none' : null;
+        return CuttleChatSlash.stickyAgentOverrideForRequest({
+            message,
+            hasChip: hasStickyAgentChip(),
+            cleared: isStickyAgentCleared(),
+            starredPrefixes: readStarredSlashPrefixes(),
+        });
     }
 
     /** Recover sticky agent from recent user turns when prefs were never saved / wiped. */
     function inferStickyChipsFromUserMessages(messages) {
-        if (!Array.isArray(messages)) return [];
-        for (let i = messages.length - 1; i >= 0; i--) {
-            const m = messages[i];
-            if (!m || m.role !== 'user') continue;
-            let meta = m.metadata;
-            if (typeof meta === 'string') {
-                try { meta = JSON.parse(meta); } catch (_) { meta = null; }
-            }
-            if (meta && String(meta.speaker_kind || '') === 'parent') continue;
-            const cmd = getStickySlashCommandFromMessage(m.content || '');
-            if (cmd) {
-                return [{
-                    prefix: cmd.prefix,
-                    label: cmd.label,
-                    category: cmd.category || 'command',
-                }];
-            }
-        }
-        for (let i = messages.length - 1; i >= 0; i--) {
-            const m = messages[i];
-            if (!m || m.role !== 'assistant') continue;
-            let meta = m.metadata;
-            if (typeof meta === 'string') {
-                try { meta = JSON.parse(meta); } catch (_) { meta = null; }
-            }
-            const sc = (meta && meta.slash_command) || m.slash_command;
-            const chips = stickyChipsFromAssistantSlash(sc);
-            if (chips.length) return chips;
-        }
-        return [];
+        return CuttleChatSlash.inferStickyChipsFromUserMessages(messages);
     }
 
     function stickyChipsFromAssistantSlash(sc) {
-        if (!sc || typeof sc !== 'object') return [];
-        const chips = Array.isArray(sc.chips) ? sc.chips : [];
-        if (!chips.length) return [];
-        const c = chips[0] || {};
-        const cat = String(c.category || '').toLowerCase();
-        const meta = String(c.meta || '');
-        let prefix = '';
-        if (meta.startsWith('/')) prefix = meta.split(/[\s·]/)[0];
-        if (!prefix && cat) prefix = '/' + cat.split('-')[0];
-        if (!prefix || prefix === '/') return [];
-        return [{
-            prefix: prefix,
-            label: String(c.label || prefix).trim() || prefix,
-            category: cat || 'command',
-        }];
+        return CuttleChatSlash.stickyChipsFromAssistantSlash(sc);
     }
 
     function restoreSessionStickySlash(sessionId, messages) {
@@ -9688,108 +9088,21 @@
      * Parse one slash / skill prefix from the start of `s`. Used for display + assistant reply chips.
      * Mirrors composeMessageWithSlashChip() output shapes.
      */
+    /** Page-owned resolvers for the slash decision layer (chat_slash.js). */
+    function slashParseDeps() {
+        return {
+            resolvePipelineChip: (id) => resolvePipelineChipFromId(id),
+            modelLabel: (mid) => preferredModelLabel(mid),
+        };
+    }
+
     function parseStoredSlashCommandHead(s) {
-        const str = String(s ?? '').trim();
-        if (!str) return null;
-
-        const pipeM = str.match(/^\/pipeline\s+(\S+)\s*(.*)$/s);
-        if (pipeM) {
-            const id = pipeM[1];
-            const body = pipeM[2].trim();
-            return { chips: [resolvePipelineChipFromId(id)], body };
-        }
-
-        // `/model <id> …` — consume the model id so it does not leak into the body
-        // (and so we can collapse to a single Cursor badge).
-        const modelSetM = str.match(/^\/model\s+(\S+)\s*(.*)$/s);
-        if (modelSetM) {
-            const mid = modelSetM[1];
-            const body = (modelSetM[2] || '').trim();
-            return {
-                chips: [{
-                    label: preferredModelLabel(mid),
-                    meta: '/model ' + mid,
-                    category: 'cursor-model',
-                    modelId: mid,
-                }],
-                body,
-            };
-        }
-
-        const cmds = SLASH_COMMANDS.concat(CURSOR_AGENT_SLASH_COMMANDS)
-            .slice()
-            .sort((a, b) => b.prefix.length - a.prefix.length);
-        for (const cmd of cmds) {
-            const p = cmd.prefix;
-            const cat = cmd.category || 'command';
-            // `/model ` alone (list models) — handled here; `/model <id>` above.
-            if (p === '/model ') {
-                if (str === '/model') {
-                    return { chips: [{ label: cmd.label, meta: '/model', category: cat }], body: '' };
-                }
-                continue;
-            }
-            if (p.endsWith(' ')) {
-                const headTrim = p.replace(/\s+$/, '');
-                if (str === headTrim) {
-                    return { chips: [{ label: cmd.label, meta: headTrim, category: cat }], body: '' };
-                }
-                if (str.startsWith(p)) {
-                    return {
-                        chips: [{ label: cmd.label, meta: headTrim, category: cat }],
-                        body: str.slice(p.length).trim(),
-                    };
-                }
-            } else {
-                if (str === p) {
-                    return { chips: [{ label: cmd.label, meta: p, category: cat }], body: '' };
-                }
-                if (str.startsWith(p + ' ')) {
-                    return {
-                        chips: [{ label: cmd.label, meta: p, category: cat }],
-                        body: str.slice(p.length + 1).trim(),
-                    };
-                }
-            }
-        }
-
-        const skillM = str.match(/^\[Skill\s+([\w/-]+)\]\s*(.*)$/s);
-        if (skillM) {
-            const ref = skillM[1];
-            const body = skillM[2].trim();
-            const slug = ref.includes('/') ? ref.split('/').pop() : ref;
-            const pretty = slug
-                .split(/[-_]+/)
-                .filter(Boolean)
-                .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-                .join(' ');
-            return {
-                chips: [{ label: pretty || ref, meta: '[Skill ' + ref + ']', category: 'skill' }],
-                body,
-            };
-        }
-        return null;
+        return CuttleChatSlash.parseStoredSlashCommandHead(s, slashParseDeps());
     }
 
     /** Full message: first command(s), then optional freeform body. Supports multiple consecutive commands. */
     function parseStoredSlashCommandMessage(raw) {
-        const s = String(raw ?? '').trim();
-        if (!s.startsWith('/') && !/^\[Skill\s/i.test(s)) return null;
-        const chips = [];
-        let rest = s;
-        for (let i = 0; i < 24; i++) {
-            const step = parseStoredSlashCommandHead(rest);
-            if (!step) {
-                if (i === 0) return null;
-                break;
-            }
-            chips.push(...step.chips);
-            rest = step.body.trim();
-            if (!rest) break;
-            if (!rest.startsWith('/') && !/^\[Skill\s/i.test(rest)) break;
-        }
-        if (!chips.length) return null;
-        return { chips, body: rest };
+        return CuttleChatSlash.parseStoredSlashCommandMessage(raw, slashParseDeps());
     }
 
     /**
@@ -10089,19 +9402,7 @@
 
     /** Cursor Agent sticky or a model *setting* pick — not nested one-shots. */
     function isCursorRelatedSlashChip(c) {
-        if (!c) return false;
-        const cat = String(c.category || '');
-        const meta = String(c.meta || c.prefix || '');
-        const lab = String(c.label || '');
-        // Nested cmds stay as their own chips on history (do not collapse into
-        // the Cursor agent badge).
-        if (cat === 'cursor-cmd' || isCursorNestedCommandChip(c)) return false;
-        if (cat === 'cursor' || cat === 'cursor-model') return true;
-        if (meta.toLowerCase().startsWith('/cursor')) return true;
-        if (/^\/model\s+refresh\b/i.test(meta)) return false;
-        if (/^\/model\b/i.test(meta)) return true;
-        if (/^cursor(\s|-)/i.test(lab) || /^cursor$/i.test(lab.trim())) return true;
-        return false;
+        return CuttleChatSlash.isCursorRelatedSlashChip(c);
     }
 
     /**
@@ -10289,91 +9590,17 @@
     const TITLE_SLASH_SKIP = { help: 1, pipelines: 1, project: 1, cd: 1 };
 
     function titleChipKey(c) {
-        const src = String((c && (c.meta || c.prefix || c.label)) || '').toLowerCase().trim();
-        const pipe = src.match(/^\/pipeline\s+(\S+)/);
-        if (pipe) return '/pipeline ' + pipe[1];
-        const cmd = src.match(/^\/cmd\s+([a-z][\w-]*)/);
-        if (cmd) return '/' + cmd[1];
-        const tok = src.match(/^\/([a-z][\w-]*)/);
-        if (!tok) return src;
-        const name = tok[1];
-        if (name === 'cursor' || name === 'model' || name === 'plan' || name === 'ask' || name === 'agent') {
-            return '/cursor';
-        }
-        return '/' + name;
+        return CuttleChatSlash.titleChipKey(c);
     }
 
     function parseProjectOrGenericSlashHead(rest) {
-        const str = String(rest || '').trim();
-        if (!str.startsWith('/')) return null;
-        const items = (typeof buildProjectCommandPaletteItems === 'function')
-            ? buildProjectCommandPaletteItems()
-            : [];
-        const sorted = items.slice().sort((a, b) => String(b.prefix || '').length - String(a.prefix || '').length);
-        for (const item of sorted) {
-            const p = String(item.prefix || '');
-            if (!p) continue;
-            const head = p.replace(/\s+$/, '');
-            if (str === head || str.startsWith(p) || str.startsWith(head + ' ')) {
-                const body = str === head
-                    ? ''
-                    : (str.startsWith(p) ? str.slice(p.length) : str.slice(head.length)).trim();
-                return {
-                    chips: [{
-                        label: item.label || head.replace(/^\//, ''),
-                        meta: item.meta || head,
-                        category: 'project-cmd',
-                    }],
-                    body,
-                };
-            }
-        }
-        const cmdM = str.match(/^\/cmd\s+([A-Za-z][\w-]*)\s*(.*)$/s);
-        if (cmdM) {
-            const name = cmdM[1];
-            if (TITLE_SLASH_SKIP[name.toLowerCase()]) {
-                return { chips: [], body: (cmdM[2] || '').trim() };
-            }
-            return {
-                chips: [{ label: name, meta: '/cmd ' + name, category: 'project-cmd' }],
-                body: (cmdM[2] || '').trim(),
-            };
-        }
-        const tokM = str.match(/^\/([A-Za-z][\w-]*)\s*(.*)$/s);
-        if (!tokM) return null;
-        const name = tokM[1];
-        if (TITLE_SLASH_SKIP[name.toLowerCase()]) {
-            return { chips: [], body: (tokM[2] || '').trim() };
-        }
-        return {
-            chips: [{ label: name, meta: '/' + name, category: 'command' }],
-            body: (tokM[2] || '').trim(),
-        };
+        return CuttleChatSlash.parseProjectOrGenericSlashHead(
+            rest, buildProjectCommandPaletteItems());
     }
 
     function parseTitleSlashChips(raw) {
-        const chips = [];
-        let rest = String(raw ?? '').trim();
-        if (!rest) return { chips, body: '' };
-        for (let i = 0; i < 8; i++) {
-            if (!rest.startsWith('/') && !/^\[Skill\s/i.test(rest)) break;
-            const known = parseStoredSlashCommandHead(rest);
-            const step = known && known.chips && known.chips.length
-                ? known
-                : parseProjectOrGenericSlashHead(rest);
-            if (!step) break;
-            if (step.chips && step.chips.length) {
-                step.chips.forEach((c) => {
-                    const key = titleChipKey(c).replace(/^\//, '').split(/\s+/)[0];
-                    if (TITLE_SLASH_SKIP[key]) return;
-                    chips.push(c);
-                });
-            }
-            const next = String(step.body || '').trim();
-            if (next === rest) break;
-            rest = next;
-        }
-        return { chips, body: rest };
+        return CuttleChatSlash.parseTitleSlashChips(raw, Object.assign(
+            slashParseDeps(), { projectCmdItems: buildProjectCommandPaletteItems() }));
     }
 
     function sessionPrefsForHistory(sessionId) {
@@ -10568,26 +9795,7 @@
      * Used when recreating the typing / remote-waiting bubble mid-run.
      */
     function activeStickyAgentChip() {
-        const keys = ['chat', 'welcome'];
-        for (let i = 0; i < keys.length; i++) {
-            const chips = (slashCtx[keys[i]] && slashCtx[keys[i]].chips) || [];
-            for (let j = 0; j < chips.length; j++) {
-                const c = chips[j];
-                if (!c) continue;
-                if (
-                    isStickyCursorAgentChip(c)
-                    || isStickyMuseAgentChip(c)
-                    || isStickyHermesAgentChip(c)
-                    || isStickyOpenCodeAgentChip(c)
-                    || isStickyCodexAgentChip(c)
-                ) {
-                    return c;
-                }
-                const match = SLASH_COMMANDS.find((s) => s.prefix === c.prefix);
-                if (match && match.stickySession) return c;
-            }
-        }
-        return null;
+        return CuttleChatSlash.activeStickyAgentChip(slashCtx.chat.chips, slashCtx.welcome.chips);
     }
 
     /**
@@ -11197,18 +10405,11 @@
     }
 
     function normalizeSlashCommandStored(sc) {
-        if (!sc) return null;
-        if (Array.isArray(sc.chips) && sc.chips.length) return sc;
-        if (sc.label && sc.meta) {
-            return { chips: [{ label: sc.label, meta: sc.meta, category: sc.category || 'command' }] };
-        }
-        return null;
+        return CuttleChatSlash.normalizeSlashCommandStored(sc);
     }
 
     function slashCommandMetaFromUserMessage(userMessage) {
-        const p = parseStoredSlashCommandMessage(userMessage);
-        if (!p || !p.chips.length) return null;
-        return { chips: p.chips };
+        return CuttleChatSlash.slashCommandMetaFromUserMessage(userMessage, slashParseDeps());
     }
 
     /** User bubble: show slash commands as chips + optional body (not raw /prefix). */
@@ -19031,7 +18232,7 @@
     }
 
     function collectHistoryFilterAgents() {
-        return SLASH_COMMANDS
+        return CuttleChatSlash.SLASH_COMMANDS
             .filter((c) => c && c.stickySession)
             .map((c) => {
                 const prefix = String(c.prefix || '').trim();

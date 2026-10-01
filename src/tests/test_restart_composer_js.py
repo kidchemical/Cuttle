@@ -17,6 +17,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHAT_JS = REPO_ROOT / "src" / "web" / "js" / "chat_page.js"
+SLASH_JS = REPO_ROOT / "src" / "web" / "js" / "chat_slash.js"
 
 pytestmark = pytest.mark.skipif(
     shutil.which("node") is None, reason="node not available"
@@ -31,7 +32,8 @@ def _extract(src: str, start_marker: str, end_marker: str) -> str:
 
 def _run_composer(chips, body):
     src = CHAT_JS.read_text(encoding="utf-8")
-    commands = _extract(src, "const SLASH_COMMANDS = [", "\n    ];")
+    slash_src = SLASH_JS.read_text(encoding="utf-8")
+    commands = _extract(slash_src, "const SLASH_COMMANDS = [", "\n];")
     control = _extract(
         src,
         "    function isNativeControlCommand(text) {",
@@ -41,7 +43,9 @@ def _run_composer(chips, body):
         src, "    function composeMessageWithSlashChip(textarea) {", "\n    }\n"
     )
 
+    slash_mod = str(SLASH_JS)
     harness = f"""
+const CuttleChatSlash = require("{slash_mod}");
 {commands}
 {control}
 const slashCtx = {{

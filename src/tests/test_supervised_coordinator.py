@@ -381,7 +381,8 @@ def test_control_commands_bypass_sticky_prefixes(supervised_env):
 
 
 def test_palette_control_flags_in_js():
-    js = Path("src/web/js/chat_page.js").read_text(encoding="utf-8")
+    # Registry lives in chat_slash.js (Phase 3 Slice 2).
+    js = Path("src/web/js/chat_slash.js").read_text(encoding="utf-8")
     assert "prefix: '/coordinator '" in js
     assert "prefix: '/coordinate '" in js
     assert "controlCommand: true" in js

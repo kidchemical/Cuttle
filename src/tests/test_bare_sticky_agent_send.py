@@ -33,6 +33,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHAT_JS = REPO_ROOT / "src" / "web" / "js" / "chat_page.js"
+SLASH_JS = REPO_ROOT / "src" / "web" / "js" / "chat_slash.js"
 
 pytestmark = pytest.mark.skipif(
     shutil.which("node") is None, reason="node not available"
@@ -63,7 +64,8 @@ MODEL_CHIP = {
 def _run_js(script: str, *, chips=None) -> dict:
     """Stub UI; run real compose / sticky helpers from chat_page.js."""
     src = CHAT_JS.read_text(encoding="utf-8")
-    commands = _extract_inclusive(src, "const SLASH_COMMANDS = [", "\n    ];")
+    slash_src = SLASH_JS.read_text(encoding="utf-8")
+    commands = _extract_inclusive(slash_src, "const SLASH_COMMANDS = [", "\n];")
     control = _extract(
         src,
         "    function isNativeControlCommand(text) {",
@@ -86,7 +88,9 @@ def _run_js(script: str, *, chips=None) -> dict:
     )
 
     chips_json = json.dumps(chips if chips is not None else [CURSOR_CHIP])
+    slash_mod = str(SLASH_JS)
     harness = f"""
+const CuttleChatSlash = require("{slash_mod}");
 {commands}
 {control}
 const isControlCommandPrefix = isNativeControlCommand;

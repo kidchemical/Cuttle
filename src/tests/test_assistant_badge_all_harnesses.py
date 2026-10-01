@@ -22,6 +22,8 @@ from api import web_chat_api as w
 REPO_ROOT = Path(__file__).resolve().parents[2]
 AGENTS_ROOT = REPO_ROOT / "src" / "api" / "agent_harness" / "agents"
 CHAT_JS = REPO_ROOT / "src" / "web" / "js" / "chat_page.js"
+SLASH_JS = REPO_ROOT / "src" / "web" / "js" / "chat_slash.js"
+SLASH_MOD = str(SLASH_JS)
 
 # Agents whose reply chips share palette chrome + model enrichment.
 PALETTE_AGENTS = frozenset(w._HARNESS_PALETTE_AGENTS) - {"cursor"}
@@ -214,11 +216,14 @@ function prettyMuseModelLabel(m) { return m; }
 function prettyHermesModelLabel(m) { return m; }
 function prettyOpenCodeModelLabel(m) { return m; }
 """
-    composer = _extract(
+    _composer_src = _extract(
         src,
         "    /** Agent id owning a composer chip, or '' for agent-less chips. Pure. */",
         "    /**\n     * Indexes to delete when the × on chips[idx] is clicked.",
     )
+    assert "CuttleChatSlash.composerChipAgentId" in _composer_src
+    composer = "const composerChipAgentId = CuttleChatSlash.composerChipAgentId;"
+
     bare = _extract(
         src,
         "    function isBareAgentChipLabel(chip) {",
@@ -229,21 +234,15 @@ function prettyOpenCodeModelLabel(m) { return m; }
         "    function normalizeAgentSlashChips(chips, sessionId) {",
         "    const TITLE_SLASH_SKIP = { help: 1, pipelines: 1, project: 1, cd: 1 };",
     )
-    title_key = _extract(
-        src,
-        "    function titleChipKey(c) {",
-        "    function parseProjectOrGenericSlashHead(rest) {",
-    )
-    parse_generic = _extract(
-        src,
-        "    function parseProjectOrGenericSlashHead(rest) {",
-        "    function parseTitleSlashChips(raw) {",
-    )
-    parse_title = _extract(
-        src,
-        "    function parseTitleSlashChips(raw) {",
-        "    function sessionPrefsForHistory(sessionId) {",
-    )
+    assert "    function titleChipKey(c) {" in src  # now a thin wrapper
+    title_key = "const titleChipKey = CuttleChatSlash.titleChipKey;"
+    assert "    function parseProjectOrGenericSlashHead(rest) {" in src
+    parse_generic = ("const parseProjectOrGenericSlashHead = (rest) =>\n"
+                     "  CuttleChatSlash.parseProjectOrGenericSlashHead(rest, []);")
+    assert "    function parseTitleSlashChips(raw) {" in src
+    parse_title = ("const parseTitleSlashChips = (raw) =>\n"
+                   "  CuttleChatSlash.parseTitleSlashChips(raw, {});")
+
     prefs = _extract(
         src,
         "    function sessionPrefsForHistory(sessionId) {",
@@ -264,6 +263,7 @@ function prettyOpenCodeModelLabel(m) { return m; }
         "function parseStoredSlashCommandHead() { return null; }\n"
     )
     harness = f"""
+const CuttleChatSlash = require("{SLASH_MOD}");
 {escape}
 {stubs}
 {stub_stored}
@@ -302,12 +302,16 @@ process.stdout.write(JSON.stringify({{
 def test_composer_chip_agent_id_reads_meta_without_prefix():
     """History chips with only meta `/codex` must resolve to agent id codex."""
     src = CHAT_JS.read_text(encoding="utf-8")
-    composer = _extract(
+    _composer_src = _extract(
         src,
         "    /** Agent id owning a composer chip, or '' for agent-less chips. Pure. */",
         "    /**\n     * Indexes to delete when the × on chips[idx] is clicked.",
     )
+    assert "CuttleChatSlash.composerChipAgentId" in _composer_src
+    composer = "const composerChipAgentId = CuttleChatSlash.composerChipAgentId;"
+
     harness = f"""
+const CuttleChatSlash = require("{SLASH_MOD}");
 {composer}
 const cases = {{
   metaOnly: composerChipAgentId({{ label: 'Codex', meta: '/codex', category: 'command' }}),

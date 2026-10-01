@@ -17,6 +17,7 @@ node_only = pytest.mark.skipif(
 )
 
 CHAT_JS = Path(__file__).resolve().parents[1] / "web" / "js" / "chat_page.js"
+SLASH_JS = Path(__file__).resolve().parents[1] / "web" / "js" / "chat_slash.js"
 
 _HELPERS = ("composerChipAgentId", "composerChipRemovalIndexes")
 
@@ -37,7 +38,8 @@ def _extract_function(src: str, name: str) -> str:
     raise AssertionError(f"unbalanced braces in {name}")
 
 
-_DRIVER_TMPL = """%s
+_DRIVER_TMPL = """
+%s
 const assert = require('assert');
 const cases = %s;
 for (const [chips, idx, want] of cases) {
@@ -79,7 +81,10 @@ def test_merged_agent_badge_removes_as_a_whole(tmp_path):
         (cursor_pair, 9, []),
     ]
     driver = tmp_path / "chip-removal.js"
-    driver.write_text(_DRIVER_TMPL % (helpers, json.dumps(cases)), encoding="utf-8")
+    script = _DRIVER_TMPL % (helpers, json.dumps(cases))
+    # The sliced wrappers delegate to the owned module (Phase 3 Slice 2).
+    script = f"const CuttleChatSlash = require({json.dumps(str(SLASH_JS))});\n" + script
+    driver.write_text(script, encoding="utf-8")
     proc = subprocess.run(
         ["node", str(driver)], capture_output=True, text=True, timeout=60
     )
