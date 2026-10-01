@@ -987,11 +987,12 @@ def process_message_with_bot(
     """Process a chat/Discord turn: slash agents, router, then a no-graph fallback.
 
     Compatibility entry for non-lane surfaces (local-mode prompts,
-    `/api/sessions/send` cross-session sends): it shares the owned
-    selection head (`api.chat_turn.classify_selection`), owned runners
-    (`api.agent_harness.runners`), and the owned router — not a second
-    execution path. Authed web turns go through the route lanes +
-    `api.chat_turn_workflow` instead; do not add new surfaces here.
+    `/api/sessions/send` cross-session sends): it submits the turn to
+    the shared application entry (`api.chat_coordinator`) unclaimed,
+    with plain shortcut bodies and a naked pipeline fallback — the
+    same contract as before, not a second execution path. Authed web
+    turns go through the route lanes instead; do not add new surfaces
+    here.
     """
     if isinstance(message_content, str):
         from api.chat_turn import strip_invisible_leading as _strip_leading
@@ -1050,71 +1051,80 @@ def process_message_with_bot(
 
         # Explicit agent CLIs must not fall through to a missing graph.
         # Bundled agents (incl. legacy /cursor-cli → /cursor) go through the harness only.
-        # Selection decision owned by api.chat_turn (P5-A); execution stays here.
-        from api.chat_turn import classify_selection as _classify_turn
+        # Selection + execution owned by the shared application entry
+        # (api.chat_coordinator); this surface stays unclaimed with plain
+        # shortcut bodies and a naked pipeline fallback, exactly as before.
+        from api.chat_coordinator import (
+            AgentTurnIO as _AgentTurnIO,
+            PreparedAgentTurn as _PreparedAgentTurn,
+            submit_agent_turn as _submit_turn,
+        )
         from api.chat_turn import split_db_session_id as _split_db_sid
-        from api.flask_restart import parse_restart_slash as _parse_restart
-        from api.inference_mode import (
-            is_cloud_cli_slash_command,
-            cloud_cli_slash_blocked_message,
+        from api import chat_delivery as _chat_delivery
+
+        _legacy_proj = _resolve_request_project_path({'session_id': session_id})
+        _ident_kw = _harness_identity_run_kwargs(
+            _freeze_send_identity(session_id, message_content, None)
         )
 
-        _sel = _classify_turn(
-            message_content,
-            inference_mode=chat_inference_mode,
-            match_harness=lambda _m: _match_harness_slash(
-                _m,
-                project_path=_resolve_request_project_path({'session_id': session_id}),
-            ),
-            is_restart=lambda _m: _parse_restart(_m) is not None,
-            cloud_blocked=lambda _m, _mode: (
-                cloud_cli_slash_blocked_message(_mode)
-                if is_cloud_cli_slash_command(_m)
-                else None
-            ),
-        )
-        if _sel.kind == 'harness':
+        def _legacy_run_harness(_aid, _prompt, status_queue=None):
             return _run_pinned_harness_turn(
-                _sel.agent_id,
-                _sel.prompt,
-                session_id,
-                status_queue=status_queue,
-                project_path=_resolve_request_project_path({
-                    'session_id': session_id,
-                }),
-                **_harness_identity_run_kwargs(
-                    _freeze_send_identity(session_id, message_content, None)
-                ),
+                _aid, _prompt, session_id,
+                status_queue=status_queue, project_path=_legacy_proj,
+                **_ident_kw,
             )
-        if _sel.kind == 'mode_blocked':
-            return {'success': True, 'response': _sel.block_message, 'type': 'mode_blocked'}
-        if _sel.kind == 'harness_empty_prompt':
+
+        def _legacy_run_router(status_queue=None):
+            try:
+                from api.agent_router.integration import maybe_route_plain_message
+
+                _db_sid = _split_db_sid(session_id)
+                return maybe_route_plain_message(
+                    message_content,
+                    session_id=_db_sid if _db_sid is not None else session_id,
+                    project_path=_legacy_proj,
+                    status_queue=status_queue,
+                )
+            except Exception as _ar_disp:
+                print(f"[AGENT-ROUTER] plain-message dispatch failed: {_ar_disp}", flush=True)
+                return None
+
+        def _legacy_shortcut(_kind, _sel):
+            if _kind == 'mode_blocked':
+                return {'success': True, 'response': _sel.block_message, 'type': 'mode_blocked'}
             return {
                 'success': True,
-                'response': _sel.block_message,
+                'response': f'❌ Please provide a prompt after /{_sel.agent_id}.',
                 'type': f'{_sel.agent_id}_error',
             }
-        # 'router' — plus 'restart' when the native handler above failed and
-        # fell through: no /restart harness agent exists, so the pre-seam code
-        # reached the router here too.
 
-        # Agent router: plain messages with no sticky/explicit agent selection
-        try:
-            from api.agent_router.integration import maybe_route_plain_message
-
-            _db_sid = _split_db_sid(session_id)
-            _routed = maybe_route_plain_message(
-                message_content,
-                session_id=_db_sid if _db_sid is not None else session_id,
-                project_path=_resolve_request_project_path({'session_id': session_id}),
-                status_queue=status_queue,
-            )
-            if _routed is not None:
-                if status_queue is None:
-                    _emit_chat_complete_mobile(session_id, _routed)
-                return _routed
-        except Exception as _ar_disp:
-            print(f"[AGENT-ROUTER] plain-message dispatch failed: {_ar_disp}", flush=True)
+        _legacy_io = _AgentTurnIO(
+            run_harness=_legacy_run_harness,
+            run_router=_legacy_run_router,
+            persist_user=lambda: None,
+            make_saver=lambda: None,
+            should_save=lambda _b: False,
+            notify_mobile=(
+                None if status_queue is not None
+                else lambda _b: _emit_chat_complete_mobile(session_id, _b)
+            ),
+            format_shortcut=_legacy_shortcut,
+        )
+        _turn_out = _submit_turn(
+            _PreparedAgentTurn(
+                message=message_content, session_id=session_id,
+                inference_mode=chat_inference_mode,
+                session_kind=session_kind or 'web_anon',
+                routing_key=routing_key or f'web_anon_{session_id}',
+                is_owner=is_owner, project_path=_legacy_proj or '',
+                run_kwargs=_ident_kw,
+            ),
+            io=_legacy_io, delivery=_chat_delivery,
+            claim=False,
+        )
+        if _turn_out.body is not None:
+            return _turn_out.body
+        # Plain-router abstain / pipeline entry: naked fallback as before.
 
         # Turn context dicts owned by api.chat_turn (P5-A seam); IO stays here.
         from api.chat_turn import build_turn_context as _build_turn_context
@@ -5866,35 +5876,61 @@ def chat_endpoint():
                     },
                 )
             from api import chat_delivery as _chat_delivery
-            from api.chat_turn_workflow import run_agent_sync_turn as _run_lane
+            from api.chat_coordinator import (
+                AgentSelection as _AgentSelection,
+                AgentTurnIO as _AgentTurnIO,
+                PreparedAgentTurn as _PreparedAgentTurn,
+                submit_agent_turn as _submit_turn,
+            )
 
-            def _router_after_run(_body):
-                _body.setdefault('session_id', chat_session_id)
-                if _auth_user and _body.get('success'):
-                    _saver = _make_auth_assistant_saver(chat_session_id, chat_inference_mode)
-                    if _saver:
-                        try:
-                            _saver(_body)
-                        except Exception as _se:
-                            print(f"[CHAT] router persist failed: {_se}")
+            def _guarded_router_saver():
+                _saver = _make_auth_assistant_saver(chat_session_id, chat_inference_mode)
+                if _saver is None:
+                    return None
 
-            def _router_run():
+                def _guarded(_body):
+                    try:
+                        _saver(_body)
+                    except Exception as _se:
+                        print(f"[CHAT] router persist failed: {_se}")
+
+                return _guarded
+
+            def _router_unreachable(*_a, **_k):
+                raise RuntimeError('unreachable arm in router sync lane')
+
+            def _router_run_family(status_queue=None):
                 from api.agent_router.integration import handle_router_family_command as _hrf2
                 return dict(_hrf2(
                     message_content,
                     session_id=chat_session_id,
                     project_path=_router_proj,
+                    status_queue=status_queue,
                 ) or {})
 
-            _lane_body, _lane_status = _run_lane(
-                chat_session_id,
-                delivery=_chat_delivery,
+            _router_io = _AgentTurnIO(
+                run_harness=_router_unreachable,
+                run_router=_router_run_family,
                 persist_user=lambda: (_persist_user_turn(chat_session_id) if _auth_user else None),
-                run=_router_run,
-                after_run=_router_after_run,
+                make_saver=_guarded_router_saver,
+                should_save=lambda _b: bool(_auth_user and _b.get('success')),
+                notify_mobile=None,
+                format_shortcut=_router_unreachable,
             )
-            if _lane_status == 409:
-                return jsonify(_lane_body), 409
+            _turn_out = _submit_turn(
+                _PreparedAgentTurn(
+                    message=message_content, session_id=chat_session_id,
+                    inference_mode=chat_inference_mode, wants_stream=wants_stream,
+                    request_data=data or {}, project_path=_router_proj or '',
+                ),
+                io=_router_io, delivery=_chat_delivery, claim=True,
+                selection=_AgentSelection(kind='router_family'),
+            )
+            if _turn_out.status == 409:
+                return jsonify(_turn_out.body), 409
+            _lane_body = _turn_out.body
+            if isinstance(_lane_body, dict):
+                _lane_body.setdefault('session_id', chat_session_id)
             return jsonify(_lane_body)
 
         # Cloud CLI slash commands require Auto/Cloud inference mode
@@ -5972,36 +6008,59 @@ def chat_endpoint():
                     },
                 )
             from api import chat_delivery as _chat_delivery
-            from api.chat_turn_workflow import run_agent_sync_turn as _run_lane
-
-            def _harness_after_run(_body):
-                _emit_chat_complete_mobile(chat_session_id, _body)
-                if chat_session_id is not None:
-                    _body.setdefault('session_id', chat_session_id)
-                    if _auth_user and _body.get('success'):
-                        _saver = _make_auth_assistant_saver(
-                            chat_session_id,
-                            chat_inference_mode,
-                            project_path=project_path,
-                        )
-                        if _saver:
-                            try:
-                                _saver(_body)
-                            except Exception as _se:
-                                print(f'[CHAT] harness persist failed: {_se}')
-
-            _lane_body, _lane_status = _run_lane(
-                chat_session_id,
-                delivery=_chat_delivery,
-                persist_user=lambda: (_persist_user_turn(chat_session_id) if _auth_user else None),
-                run=lambda: _run_pinned_harness_turn(
-                    _hid, prompt, chat_session_id, project_path=project_path,
-                    **_ident_run_kw,
-                ),
-                after_run=_harness_after_run,
+            from api.chat_coordinator import (
+                AgentSelection as _AgentSelection,
+                AgentTurnIO as _AgentTurnIO,
+                PreparedAgentTurn as _PreparedAgentTurn,
+                submit_agent_turn as _submit_turn,
             )
-            if _lane_status == 409:
-                return jsonify(_lane_body), 409
+
+            def _guarded_harness_saver():
+                _saver = _make_auth_assistant_saver(
+                    chat_session_id,
+                    chat_inference_mode,
+                    project_path=project_path,
+                )
+                if _saver is None:
+                    return None
+
+                def _guarded(_body):
+                    try:
+                        _saver(_body)
+                    except Exception as _se:
+                        print(f'[CHAT] harness persist failed: {_se}')
+
+                return _guarded
+
+            def _harness_unreachable(*_a, **_k):
+                raise RuntimeError('unreachable arm in harness sync lane')
+
+            _harness_io = _AgentTurnIO(
+                run_harness=lambda _aid, _prompt, status_queue=None: _run_pinned_harness_turn(
+                    _aid, _prompt, chat_session_id, project_path=project_path,
+                    status_queue=status_queue, **_ident_run_kw,
+                ),
+                run_router=_harness_unreachable,
+                persist_user=lambda: (_persist_user_turn(chat_session_id) if _auth_user else None),
+                make_saver=_guarded_harness_saver,
+                should_save=lambda _b: bool(_auth_user and _b.get('success')),
+                notify_mobile=lambda _b: _emit_chat_complete_mobile(chat_session_id, _b),
+                format_shortcut=_harness_unreachable,
+            )
+            _turn_out = _submit_turn(
+                _PreparedAgentTurn(
+                    message=message_content, session_id=chat_session_id,
+                    inference_mode=chat_inference_mode, wants_stream=wants_stream,
+                    request_data=data or {}, project_path=project_path or '',
+                ),
+                io=_harness_io, delivery=_chat_delivery, claim=True,
+                selection=_AgentSelection(kind='harness', agent_id=_hid, prompt=prompt),
+            )
+            if _turn_out.status == 409:
+                return jsonify(_turn_out.body), 409
+            _lane_body = _turn_out.body
+            if isinstance(_lane_body, dict) and chat_session_id is not None:
+                _lane_body.setdefault('session_id', chat_session_id)
             return jsonify(_lane_body)
 
         # Per-agent /cursor|/muse|/codex|/claude|/hermes elifs removed —

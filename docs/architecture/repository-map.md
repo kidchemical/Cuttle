@@ -134,7 +134,21 @@ smoke probe.
 
 Graph-era **HTTP** `POST /api/execute-tool` and `_execute_remote_agent_tool` are fully removed (no references in `src/`; this paragraph previously claimed otherwise). Execution is `api.agent_harness.runners` → `kernel.run_agent_web_command`; turn orchestration is `api.chat_turn_workflow`, persistence `api.chat_turn_persist`.
 
-**Turn persistence (Phase 5 P5-C):** `api.chat_turn_persist` owns `make_assistant_saver` (skip guards verbatim: supervised-owned rows, empty failures, `[CANCELLED]`, `ui == 'system'`, cancelled turns), `persist_user_turn` (badge/history/project merge), and `persist_auth_user_message`. All take explicit `db` + `request_data` (captured once at ingress) — no Flask reads inside. The entry wrappers only inject project/metadata/titler shapers. Stream-thread saves now merge the captured body instead of an empty re-read (reported boundary delta, no test depended on the gap).
+**Turn persistence (Phase 5 P5-C):** `api.chat_turn_persist` owns `make_assistant_saver` (skip guards verbatim: supervised-owned rows, empty failures, `[CANCELLED]`, `ui == 'system'`, cancelled turns), `persist_user_turn` (badge/history/project merge), and `persist_auth_user_message`. All take explicit `db` + `request_data` (captured once at ingress) — no Flask reads inside. The entry wrappers only inject project/metadata/titler shapers. Stream-thread saves now merge the captured body instead of an empty re-read (pinned by the threaded SSE stamp test, which fails on the pre-capture tree).
+
+**Application coordinator (Phase 5 P5-D):** `api.chat_coordinator` is the
+transport-neutral turn entry — `PreparedAgentTurn` (frozen plain data),
+`select_agent_turn` (one decision tree: router-family → harness /
+mode-block / empty-prompt → plain-router → pipeline), `AgentTurnIO`
+(surface arm implementations, all required), `submit_agent_turn`
+(shared claimed/unclaimed execution; shortcuts formatted by the
+surface; pipeline entry stays per-surface). Route agent lanes submit
+claimed with precomputed selections; `process_message_with_bot` (local
+prompts, `/api/sessions/send`) submits unclaimed with plain bodies and
+a naked fallback. No-LLM control lanes, session resolve, SSE pump, and
+`jsonify` stay ingress-side. Owners never read the Flask request;
+`request_data` is captured once at the boundary and never mutated
+(pinned by test).
 
 ---
 

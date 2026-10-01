@@ -5630,3 +5630,96 @@ whole was rejected as monolith-shifting. The owned seam is
   Deferred dependency/startup tooling unchanged.
 - Commit independently on main. No push, no restart.
   **STOP for Codex review before Phase 6.**
+
+## P5-C acceptance + P5-D shared application entry and Phase 5 closure
+
+- P5-C `764d4a78` direction accepted; Phase 5 closure was NOT
+  approved pending this audit. Reviewer last read line 5632; this
+  section appended only below that boundary; prior sections preserved.
+- Acceptance audit (actual branch bodies): the route still owned the
+  full agent-lane SELECTION (router-family parse block, mode gate,
+  harness match, pipeline fallthrough) while `process_message_with_bot`
+  ran a SECOND selection via P5-A `classify_selection` — same
+  decisions, two implementations, no shared entry. Helpers were
+  per-lane mechanics; the decision tree was route-resident. Gap
+  confirmed and closed below — not declared complete by import counts.
+- New `src/api/chat_coordinator.py` (no Flask, no DB, no vendor code):
+  `PreparedAgentTurn` (frozen plain data — message through run_kwargs),
+  `select_agent_turn` (ONE tree: router-family → harness / mode-block /
+  empty-prompt → plain-router → pipeline; narrow injected predicates),
+  `AgentTurnIO` (7 required members: run_harness, run_router,
+  persist_user, make_saver, should_save, notify_mobile,
+  format_shortcut — run_router None means abstain),
+  `AgentTurnResult(body, status, selection)` (body None ⟺ caller runs
+  its own pipeline entry), `submit_agent_turn` (claimed route lanes
+  via the owned sync skeleton incl. 409s; unclaimed legacy surfaces
+  with zero delivery interaction; shortcuts formatted by the
+  surface). Demonstrated without Flask: the acceptance test drives
+  `submit_agent_turn` directly (no request context) with fake
+  executors over the real delivery service.
+- Callers rewired: route harness + router-family sync lanes submit
+  claimed with precomputed selections (no re-match; session stamp
+  stays route-side serialization; saver-error containment preserved
+  via guarded factories); `process_message_with_bot` submits
+  unclaimed (noop persist, saver None, plain shortcuts, naked
+  fallback — sessions_send and local callers byte-identical in
+  contract, incl. no delivery claim and mobile-emit only when
+  `status_queue is None`). Residual route ownership (documented,
+  bounded): no-LLM control lanes, session/pins/sticky/prepass/launch
+  resolve, busy-reject + zombie-heal pre-guards, SSE pump/thread/
+  framing, `jsonify`. Pipeline entry stays per-surface (claiming
+  enriched lane vs naked fallback are genuinely different).
+- Frozen-data semantics: `request_data` is the parsed body captured
+  once at ingress, passed by reference and never mutated by saver/
+  owner (pinned by test). Alias risk documented: safe because the
+  route never mutates `data` after lane dispatch and owners only
+  read. Saver-error containment and empty/no-session guards preserved
+  from P5-C.
+- Capture-delta proof (corrects the P5-C narrative): the threaded SSE
+  project-stamp test FAILS on the true P5-B tree (`973bd17e`,
+  verified via clean worktree — an earlier stash-based check was
+  vacuous because the tree was already clean, discarded) and PASSES
+  now: worker-thread saves merge the captured body. The stamp's exact
+  mechanism on the old tree was left unmodeled rather than asserted.
+- Deferred divergence now referenced: pipeline stream `on_save`
+  `[CANCELLED]`/`system` persistence gap filed as
+  `[ERR-20261001-001]` in `.cuttle/learnings/ERRORS.md` (Open,
+  needs its own row-evidence defect pass). No silent fix.
+- Coverage (`src/tests/test_chat_coordinator_acceptance.py`, 8
+  green): 3 select-tree pins + same-turn equivalence across real
+  HTTP sync / real HTTP SSE / direct coordinator submit (same
+  executor request, same row order/shape, same release) + threaded
+  SSE project-stamp + frozen-data + `/api/sessions/send` compat
+  (real endpoint, patched actor only, fake runner — no prompts).
+  Discrimination: acceptance file failed at collection pre-module;
+  stamp test fails pre-capture tree.
+- Gates (same command/env/scope; baseline `764d4a78`): focused
+  turn suites 62/62 → 70/70 with acceptance; broad **28 failed /
+  1980 passed / 79 skipped**, sorted FAILED `diff`-clean vs P5-C
+  across repeated runs (`/tmp/p5c_failed2.txt` vs `/tmp/
+  p5d_failed4.txt`); +8 = acceptance tests, −0/+0 failures. One
+  intermediate count-only run showed 29 (transient; unidentified —
+  two `-rf` runs both pin 28 identical, reported honestly).
+- Spend audit: flags unset; fakes only; no paid prompts, no process
+  restart/kill. Manual validation N/A (backend-only).
+- Files: `src/api/chat_coordinator.py` + `src/tests/
+  test_chat_coordinator_acceptance.py` (new); `src/api/web_chat_api.py`
+  (lanes + legacy entry submit; residual documented); AGENTS.md +
+  repository-map (coordinator row; P5-C delta wording corrected);
+  `.cuttle/learnings/ERRORS.md` (`[ERR-20261001-001]`).
+- Acceptance matrix: normalized entry invokable without Flask ✓;
+  same turn equivalent across HTTP sync/SSE/direct ✓ (modulo SSE
+  framing + parked-result collection, both declared transport);
+  cancel/stale/busy/control/empty/fallback/error/resume/project/
+  attachment/pin seams preserved (gates + prior pins) ✓;
+  sessions/send compat pinned ✓; no reverse imports added (only
+  `doctor` probe remains) ✓; no router/vendor/lifetime changes ✓.
+- Phase 5 CLOSURE (corrected): P5-A envelope/selection seam ✓, P5-B
+  lane mechanics + runners ✓, P5-C persistence boundary ✓, P5-D
+  shared application entry + acceptance ✓. Remaining work is
+  explicitly Phase 6 or transport: SSE pump extraction, saver
+  per-lane review (`[ERR-20261001-001]`), no-LLM lane policy
+  ownership, `sessions_send` contract evolution. Deferred
+  reproducibility/preflight unchanged.
+- Commit independently on main. No push, no restart.
+  **STOP for Codex review before Phase 6.**

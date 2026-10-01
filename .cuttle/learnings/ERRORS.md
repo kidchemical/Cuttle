@@ -122,3 +122,10 @@ message instead of a wall of stack traces. See `src/api/agent_harness/ADDING_AN_
 - **Error:** Test mounted `dashboards_bp` standalone with no auth context and asserted payload fields; the applied `@owner_required` gate returns 401 JSON with no `id`.
 - **Context:** Workstream-1-adjacent cleanup gated the dashboards blueprint but did not update the test. Recorded separately per CH-000764; does not block settings extraction.
 - **Suggested Fix / Done:** Rewrote as `test_flask_performance_route_requires_owner` asserting 401 for anonymous (gate contract). Service payload shape remains covered by `test_dashboards_catalog_performance_is_live`. Deliberately did not loosen the gate.
+
+### [ERR-20261001-001] chat stream lanes — pipeline `on_save` persists `[CANCELLED]`/`system` rows the saver skips
+- **Priority:** Low · **Status:** Open (deferred, pre-existing divergence) · **Area:** web_chat_api stream lanes / chat_turn_persist
+- **Summary:** The leftover-pipeline stream `on_save` persists any result with success-or-text, including `[CANCELLED]` status lines and `ui == 'system'` rows. The saver-built lanes (harness, router-family, sync pipeline via `run_pipeline_sync_turn`) skip all of those via `make_assistant_saver` guards.
+- **Error:** Inconsistent history contents for cancelled/system turns depending on which lane streamed them; no crash, no data loss.
+- **Context:** Found during Phase 5 P5-C extraction (commit `764d4a78`); deliberately not fixed there — unifying the guards would change persisted history shape, which needs its own scoped defect pass with before/after row evidence.
+- **Suggested Fix / Done:** Route the pipeline stream `on_save` through `make_assistant_saver` (like the other lanes) or document the pipeline lane's persist-anything as intentional; add a row-level test pinning the chosen contract. See architecture-stabilization review log P5-C section.
