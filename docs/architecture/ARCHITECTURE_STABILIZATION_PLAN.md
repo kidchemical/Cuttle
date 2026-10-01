@@ -661,8 +661,10 @@ The purpose is to make Cuttle easier to reason about, safer to change, and drama
 
 The roadmap, goals, rules, and phase definitions above are retained
 unchanged as the authoritative plan. This section records only the
-reviewed outcome. Codex FINAL REVIEW APPROVED all phases; per-slice
-evidence lives in `docs/reviews/architecture-stabilization.md`.
+reviewed outcome. Codex FINAL REVIEW APPROVED all phases; the public
+outcome and validation summary lives in
+`docs/reviews/architecture-stabilization.md`. Detailed execution notes
+are retained in the install-local personal overlay.
 
 - Phase 0 — complete (architecture baseline map/inventory).
 - Phase 1 — complete (Spaces/shell decomposition).

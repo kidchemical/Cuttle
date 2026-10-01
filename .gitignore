@@ -148,3 +148,10 @@ docs/media/promo/
 /src/test_ws_copy.png
 /src/verify_nav_history.png
 /src/output.txt
+
+# Global install-local overlay (paths, LAN hosts, private project notes)
+/.cuttle_global/personal/*
+!/.cuttle_global/personal/README.md
+
+# Muse agent run transcripts (local runtime data)
+/work/muse-runs/
