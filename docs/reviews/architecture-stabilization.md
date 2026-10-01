@@ -2091,3 +2091,240 @@ belong to other domains.
    (no streaming/messages/composer-send/agent/attachment/action-form
    logic touched; failures identical to baseline). Do NOT continue in
    this track until this review is approved.
+
+---
+
+# Phase 3 — Slice 3: Action Forms Frontend Domain (chat_page.js)
+
+## Phase status
+
+- Slice: Phase 3 Slice 3 — action-forms card interpretation, watch
+  interpretation, restart presentation decisions, lock/state pure logic
+  → `src/web/js/chat_action_forms.js`
+  (`window.CuttleChatActionForms`).
+- Git baseline before work: `be530dbd` ("Phase 3 slice 2: slash command
+  domain"), clean tree.
+- Git commit after work: the single `Phase 3 slice 3: action-forms
+  frontend domain` commit on main (identify via `git log --oneline`).
+- Completion status: **complete, awaiting external review**. No further
+  chat-page domains started (composer, streaming, messages/history,
+  attachments, agent/model controls untouched except the narrow
+  adapter interface described below).
+
+## Original problem
+
+`chat_page.js` owned the entire action-forms frontend decision layer —
+cancel/side-effect predicates, watch inference/keys/snapshots/terminal
+detection, elapsed/bars formatting, restart progress tables/labels,
+restart card linkage — as closures interleaved with DOM rendering,
+fetch transport, timers, and history integration. The behavior could
+only be tested by slicing source text out of the 25.7k-line page, and
+the backend HMAC/recovery contract (stabilized in Phase 2 Slice 2)
+had no frontend decision owner.
+
+## Before implementation (11-class inventory)
+
+20 name-matched bindings triaged (25,704-line page):
+
+1. **Card data/model interpretation** (moved pure): `isExplicit-
+   ActionFormCancelOption` (Q&A choices omit `action` and must NOT read
+   as cancel), `actionFormHasSideEffect`, `specLooksLikeFlaskRestart`
+   (form-id alone is NOT enough — guards git.push id reuse).
+2. **Run/confirm behavior**: transport + orchestration — stays.
+3. **Dismiss/cancel behavior**: `dismissOpenInteractiveCards`,
+   `collapseLockedActionForm` (DOM + fetch) — stay.
+4. **Watch-state polling**: `inferActionFormWatch` (moved),
+   `safeActionFormWatchUrl` (moved), `watchRunKey` / `cardWatchBind` /
+   `watchSnapshotFromSpec` / `watchIsTerminalState` (moved);
+   `actionFormWatchSpec` (DOM gather), poll loops, snapshot persist —
+   stay.
+5. **Follow-up-message behavior**: `offerJobSuccessDiscordForm` (fetch
+   + history) — stays.
+6. **Restart/recovery presentation**: `RESTART_PROGRESS_PCT` /
+   `RESTART_TERMINAL_STATES` (moved as owned tables),
+   `restartProgressLabel` (moved), `flaskRestartFormEpoch` (moved);
+   progress-bar DOM, poll orchestration, linked-event broadcast —
+   stay.
+7. **One-shot/locked state**: `lockWatchFormCard`,
+   `unlockFlaskRestartPendingSyncCard` (DOM + spec mutation) — stay.
+8. **DOM/card rendering** (`renderWatchBarsHtml`,
+   `setActionFormCardProgress`, `updateRestartCardProgressBar`) — stay.
+9. **HTTP transport** (`/run`, `/dismiss`, `/watch-state`,
+   `/followup-message` fetches) — stays.
+10. **Message-history integration** (`persistActionFormWatchSnapshot`
+    server sync, `formAwaitingSessionIdFromCard`) — stays.
+11. **False friends** (verified out of scope): generic confirm-button
+    locking (`lockCuttleButtonsInContainer`), follow-up queue,
+    activity/unread, composer, streaming, attachments.
+
+Shared bindings the moved logic needed: none beyond explicit
+arguments, except three DOM-coupled helpers that read card attributes
+(`isLinkedFlaskRestartCard`, `linkedFlaskRestartFormId`,
+`actionFormWatchStorageKey`) — rewired as narrow gather-then-delegate
+adapters (DOM read in page, decision in module). No moved function
+was exposed on `window.*`; no callers exist outside `chat_page.js`
+(verified by repo-wide grep).
+
+## Changes made
+
+- **Added `src/web/js/chat_action_forms.js`** (297 L): 15 pure
+  functions + 2 owned const tables behind `CuttleChatActionForms`
+  (classic script + node exports; footer uses TDZ-proof `globalThis`).
+  Two additive convenience wrappers with no page original
+  (`restartProgressPercent`, `isRestartTerminalState`) are covered by
+  the new tests. No `document`/`window`/`localStorage`/`fetch` in the
+  module — all inputs explicit.
+- **chat_page.js keeps**: all DOM rendering, fetch transport,
+  timers/polling, sessionStorage IO, spec-mutation persistence,
+  history integration, and orchestration, plus thin same-signature
+  adapters (15 pure delegations + 3 DOM gather-then-delegate) so
+  ~50 existing call sites don't churn. The 2 const tables were
+  deleted and their 5 bare use-sites rewritten to qualified access
+  (Slice 2 convention — no local aliases).
+- chat_page.js: 25,704 → 25,591 lines (−113 net).
+- `chat_page.html`: `chat_action_forms.js` script tag before
+  `chat_page.js` (both `?v=20261001slice3` cache-busted).
+- **Tests:** new `src/tests/test_chat_action_forms.py` (6 tests,
+  node-executed against the real module — no source slicing):
+  cancel/side-effect model, restart recognition + linkage, watch
+  interpretation, elapsed + bars, restart progress presentation,
+  module parse check.
+- Moved vs deleted: decision logic relocated verbatim (moved);
+  const-table duplicates and original bodies deleted (rewire asserts:
+  brace balance, `}`/`;` endings, exact use-site counts 2 + 3).
+
+## Architecture after
+
+```
+chat_page.js (rendering, fetch, timers, storage IO, history, orchestration)
+      │  same-signature thin adapters / qualified table access
+      ▼
+chat_action_forms.js (predicates + watch interpretation + restart decisions)
+```
+
+One-way dependency (page → namespace); module holds no state and
+reads no page globals. DOM-heavy rendering stays by design — moving
+it would couple the module to page markup instead of plain data.
+
+## Dependencies and state
+
+- Removed: chat-page closures over card-spec interpretation for all
+  15 moved decisions; two restart const-table definitions.
+- Introduced: `CuttleChatActionForms` namespace (classic script +
+  node exports; no new runtime deps). No shared state added or moved.
+- Reverse deps: none existed outside the page; none created (module
+  never references `chat_page.js` globals).
+- Persistence/restart-sensitive state: unchanged (all sessionStorage
+  IO, spec `locked`/`toast` mutation, `/watch-state` sync, and
+  restart poll orchestration stay in the page). Backend HMAC/recovery
+  model untouched.
+- Compatibility: same-named adapters preserve every internal call
+  signature; route shapes, auth, and restart behavior unchanged.
+
+## Tests and verification
+
+- New `test_chat_action_forms.py`: 6/6 (node-executed; covers every
+  preserved contract in the slice brief: actionable vs locked forms,
+  Confirm/Cancel transitions via cancel/side-effect predicates,
+  repeated-action prevention inputs, recovered-form state via
+  snapshot/terminal helpers, watch interpretation, follow-up inputs
+  via watch/run keys, invalid-metadata edges, restart/progress
+  presentation, empty/error responses).
+- Differential proof (scratch `/tmp/diff_forms.js`, not committed):
+  pre-rewire page originals (extracted from a pre-edit backup) vs new
+  module over a 113-vector battery (predicates × specs × watch states
+  × elapsed forms × bar shapes × restart states) with a fixed clock —
+  **113/113 match, zero mismatches**.
+- Focused: `test_chat_action_forms` + `test_action_forms` +
+  `test_action_form_routes` + `test_action_form_process_restart` +
+  `test_chat_page_js_syntax` → **59 passed, 1 skipped**.
+- Neighbors (restart, message/history, follow-up, attachments,
+  project, slash): 94 passed; 6 failures proven pre-existing by
+  re-running them on clean HEAD (`git stash -u`) — identical 6 fail
+  without this change (stale `?v` pins, history-gate and attachment
+  suites unrelated to this slice).
+- Broad: `.venv/bin/python -m pytest -q` → **1,787 passed, 26 failed,
+  60 skipped**; the 26 failures byte-identical to the pre-change set
+  (verified via `diff` of sorted FAILED lists before/after — no new
+  failures; +6 passed = the new tests).
+- `node --check` clean on both JS files (via
+  `ELECTRON_RUN_AS_NODE=1` electron binary — no system node on PATH;
+  a `/tmp/nodeshim/node` shim provided `node` for pytest's
+  `shutil.which("node")` gate; shim lives outside the repo).
+- Manual workflows: none applicable (no UI changed). Not exercised:
+  live Flask boot, chat round-trip, browser card click-through.
+
+## Metrics
+
+| Metric | Before (`be530dbd`) | After | Method |
+|---|---|---|---|
+| `chat_page.js` lines | 25,704 | 25,591 (−113) | `wc -l` |
+| Action-forms decision fns needing page scope | 15 + 3 DOM-coupled + 2 tables | 0 in module (explicit inputs) | grep |
+| Action-forms behavior tests | backend-only | +6 module tests, real `require` | pytest |
+| Differential old-vs-new | — | 113/113 match | node harness |
+| Full suite | 1,781 / 26 / 60 | 1,787 / 26 (identical list) / 60 | pytest + diff |
+
+## Remaining concerns
+
+1. Card rendering, run/dismiss/fetch transport, watch poll loops,
+   snapshot persistence, sessionStorage IO, history integration, and
+   linked-restart event broadcast stay in the page (correct per slice
+   scope — they are DOM/IO/orchestration, not decisions).
+2. `watch-state` remains authentication-only rather than
+   chat-owner-bound (documented non-blocking item from Slice 2; still
+   deferred).
+3. The restart-suite → auth-suite test-ordering pollution noted in
+   Slice 2 still stands; untouched here.
+4. No system `node` on this machine's PATH — JS verification depends
+   on the vendored electron binary (`ELECTRON_RUN_AS_NODE=1`); CI
+   environments with real node are unaffected (tests gate on
+   `shutil.which("node")`).
+5. 26 baseline failures remain untouched and unrelated (exact same
+   set before/after).
+
+## Diff summary
+
+- Added: `src/web/js/chat_action_forms.js` (297 L),
+  `src/tests/test_chat_action_forms.py` (6 tests).
+- Modified: `src/web/js/chat_page.js` (−113 net: 20 spans rewired
+  to adapters + 5 qualified table accesses),
+  `src/web/chat_page.html` (+1 script tag, `?v` bump),
+  `docs/reviews/architecture-stabilization.md` (this section).
+- Deleted: no files.
+- Insertions/deletions (`git diff --numstat`): chat_page.js
+  +41/−154 (net −113 lines); chat_page.html +2/−1; review doc +234/−0
+  (new files untracked: `chat_action_forms.js` 297 L,
+  `test_chat_action_forms.py`).
+- `git status --short` before commit: 3 modified
+  (`src/web/js/chat_page.js`, `src/web/chat_page.html`,
+  `docs/reviews/architecture-stabilization.md`) + 2 new
+  (`src/web/js/chat_action_forms.js`,
+  `src/tests/test_chat_action_forms.py`).
+
+## External Review Summary
+
+1. **What changed architecturally?** Action-forms card/watch/restart
+   decision logic moved to owned pure `chat_action_forms.js`; the
+   page keeps rendering, transport, timers, storage, history, and
+   orchestration behind thin same-signature adapters.
+2. **What behavior intentionally changed?** Nothing — differential
+   proof 113/113; adapters preserve signatures; const accesses only
+   re-qualified.
+3. **What behavior should be identical?** Confirm/Cancel/dismiss,
+   one-shot locking, already-locked behavior, watch-state
+   interpretation, follow-up behavior, restart-recovered and
+   persisted-card presentation, session/form identifiers,
+   error/toast/loading/progress/disabled states, repeated-click
+   prevention.
+4. **What remains coupled or messy?** All DOM rendering and IO stays
+   in the 25.6k-line page; watch poll orchestration and linked-event
+   broadcast remain page-owned; 26 unrelated baseline failures
+   remain.
+5. **What should be reviewed before the next chat domain?** The
+   decision/rendering split (rendering stays by design); whether the
+   next slice is composer, streaming, or message rendering; the
+   deferred `watch-state` ownership note.
+6. **Is the next domain safe to begin?** This slice is self-contained
+   (no composer/streaming/messages/attachments/agent-controls logic
+   touched; failures identical to baseline). Do NOT continue in this
+   track until this review is approved.

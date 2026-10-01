@@ -14870,20 +14870,15 @@
      * `action` on purpose and must NOT be treated as cancel (that used to
      * collapse every preference click to "Cancelled.").
      */
+    // Owned by chat_action_forms.js — thin adapter.
     function isExplicitActionFormCancelOption(opt) {
-        if (!opt || typeof opt !== 'object') return false;
-        if (opt.cancel === true) return true;
-        if (String(opt.action || '') === '__dismiss__') return true;
-        return String(opt.id || '').toLowerCase() === 'cancel';
+        return CuttleChatActionForms.isExplicitActionFormCancelOption(opt);
     }
 
     /** False for Q&A cards: answers go back to the agent, nothing runs or posts. */
+    // Owned by chat_action_forms.js — thin adapter.
     function actionFormHasSideEffect(spec) {
-        if (!spec || typeof spec !== 'object') return false;
-        if (spec.watch) return true;
-        if (spec.submit && spec.submit.action) return true;
-        const opts = Array.isArray(spec.options) ? spec.options : [];
-        return opts.some((o) => o && o.action && !isExplicitActionFormCancelOption(o));
+        return CuttleChatActionForms.actionFormHasSideEffect(spec);
     }
 
     /**
@@ -14891,9 +14886,9 @@
      * a card reports here (spinner → green check) instead of dropping ack and
      * completion bubbles into the transcript.
      */
+    // Owned by chat_action_forms.js — thin adapter.
     function isWatchFormAction(action) {
-        const a = String(action || '');
-        return a === '__watch_resume__' || a === '__watch_park__' || a === '__watch_cancel__';
+        return CuttleChatActionForms.isWatchFormAction(action);
     }
 
     function collapseLockedActionForm(card, selectedIds, summary) {
@@ -14964,17 +14959,9 @@
         if (toggleEl) toggleEl.setAttribute('aria-expanded', 'true');
     }
 
+    // Owned by chat_action_forms.js — thin adapter.
     function specLooksLikeFlaskRestart(spec, formId) {
-        const opts = (spec && spec.options) || [];
-        if (opts.some((o) => {
-            const a = String((o && o.action) || '');
-            return a === 'flask.restart' || a === '__native_restart__';
-        })) return true;
-        const title = String((spec && spec.title) || '').trim().toLowerCase();
-        if (title.includes('restart flask') || title.startsWith('flask restart')) return true;
-        // Form id flask-restart-gN alone is not enough: a git.push card that
-        // reused that id would otherwise show restart chrome / run Status as push.
-        return false;
+        return CuttleChatActionForms.specLooksLikeFlaskRestart(spec, formId);
     }
 
     /**
@@ -15041,23 +15028,9 @@
         }).catch(() => {});
     }
 
+    // Owned by chat_action_forms.js — thin adapter.
     function inferActionFormWatch(spec) {
-        const options = Array.isArray(spec && spec.options) ? spec.options : [];
-        const hasWatchBtn = options.some((o) => isWatchFormAction((o && o.action) || ''));
-        let watch = (spec && spec.watch && typeof spec.watch === 'object') ? spec.watch : null;
-        if (!watch && hasWatchBtn) {
-            const fromParams = options
-                .map((o) => o && o.params && o.params.url)
-                .find((u) => u);
-            watch = {
-                id: 'job',
-                url: String(fromParams || '/output/trellis-download-status.json'),
-                interval_ms: 4000,
-                done_states: ['done', 'trellis_ok'],
-                fail_states: ['failed'],
-            };
-        }
-        return watch;
+        return CuttleChatActionForms.inferActionFormWatch(spec);
     }
 
     function actionFormWatchSpec(card) {
@@ -15069,14 +15042,12 @@
         }
     }
 
+    // Owned by chat_action_forms.js — DOM gather, domain decides.
     function actionFormWatchStorageKey(card) {
-        // Per-card, not per job-id: /build and /deploy both used "ep-release"
-        // and leaked Continue/Park across forms.
         const formId = String(card.getAttribute('data-form-id') || '').trim();
         const watch = actionFormWatchSpec(card) || {};
         const sid = String(card.getAttribute('data-session-id') || currentSessionId || '').trim();
-        const id = formId || [watch.id, watch.started_at || watch.run_id].filter(Boolean).join('.') || 'watch';
-        return 'cuttle.formWatch.' + sid + '.' + id;
+        return CuttleChatActionForms.actionFormWatchStorageKey({ formId, watch, sessionId: sid });
     }
 
     function rememberActionFormWatchChoice(card, mode) {
@@ -15107,20 +15078,19 @@
         } catch (_) {}
     }
 
+    // Owned by chat_action_forms.js — thin adapter.
     function safeActionFormWatchUrl(url) {
-        const u = String(url || '').trim();
-        if (u.startsWith('/output/') || u.startsWith('/api/')) return u;
-        return '';
+        return CuttleChatActionForms.safeActionFormWatchUrl(url);
     }
 
+    // Owned by chat_action_forms.js — thin adapter.
     function watchRunKey(data) {
-        if (!data || typeof data !== 'object') return '';
-        return String(data.run_id || data.started_at || '').trim();
+        return CuttleChatActionForms.watchRunKey(data);
     }
 
+    // Owned by chat_action_forms.js — thin adapter.
     function cardWatchBind(watch) {
-        if (!watch || typeof watch !== 'object') return '';
-        return String(watch.run_id || watch.started_at || '').trim();
+        return CuttleChatActionForms.cardWatchBind(watch);
     }
 
     function watchCardsSharingUrl(card, url) {
@@ -15147,17 +15117,14 @@
         return isLiveWatchCardForUrl(card, url);
     }
 
+    // Owned by chat_action_forms.js — thin adapter.
     function watchSnapshotFromSpec(watch) {
-        const snap = watch && watch.snapshot && typeof watch.snapshot === 'object' ? watch.snapshot : null;
-        return snap;
+        return CuttleChatActionForms.watchSnapshotFromSpec(watch);
     }
 
+    // Owned by chat_action_forms.js — thin adapter.
     function watchIsTerminalState(watch, data, doneStates, failStates) {
-        const state = String((data && data.state) || '');
-        if (watch && watch.terminal) return true;
-        const done = Array.isArray(doneStates) ? doneStates : ['done', 'trellis_ok'];
-        const fail = Array.isArray(failStates) ? failStates : ['failed'];
-        return done.indexOf(state) >= 0 || fail.indexOf(state) >= 0;
+        return CuttleChatActionForms.watchIsTerminalState(watch, data, doneStates, failStates);
     }
 
     function lockWatchFormCard(card, summary, failed) {
@@ -15272,51 +15239,19 @@
         addMessageToUI(content, 'assistant');
     }
 
+    // Owned by chat_action_forms.js — thin adapter.
     function formatWatchElapsedSeconds(sec) {
-        const n = Math.max(0, Math.floor(Number(sec) || 0));
-        const h = Math.floor(n / 3600);
-        const m = Math.floor((n % 3600) / 60);
-        const s = n % 60;
-        if (h > 0) return h + 'h ' + String(m).padStart(2, '0') + 'm ' + String(s).padStart(2, '0') + 's';
-        if (m > 0) return m + 'm ' + String(s).padStart(2, '0') + 's';
-        return s + 's';
+        return CuttleChatActionForms.formatWatchElapsedSeconds(sec);
     }
 
+    // Owned by chat_action_forms.js — thin adapter.
     function watchElapsedText(data) {
-        if (!data) return '';
-        const state = String(data.state || '');
-        if ((state === 'done' || state === 'failed') && data.elapsed) return String(data.elapsed);
-        if ((state === 'done' || state === 'failed') && data.elapsed_sec != null) {
-            return formatWatchElapsedSeconds(data.elapsed_sec);
-        }
-        const started = Date.parse(data.started_at || '');
-        if (!Number.isNaN(started)) {
-            return formatWatchElapsedSeconds((Date.now() - started) / 1000);
-        }
-        if (data.elapsed) return String(data.elapsed);
-        return '';
+        return CuttleChatActionForms.watchElapsedText(data);
     }
 
+    // Owned by chat_action_forms.js — thin adapter.
     function normalizeWatchBars(data) {
-        const pct = Math.max(0, Math.min(100, Number(data && data.percent != null ? data.percent : 0)));
-        const label = String((data && (data.label || data.file)) || '');
-        const raw = (data && Array.isArray(data.bars)) ? data.bars : null;
-        if (!raw || !raw.length) {
-            return [{ id: 'overall', label: label || 'Overall', percent: pct, kind: 'primary' }];
-        }
-        return raw.slice(0, 12).map((b, i) => {
-            const kind = String((b && b.kind) || (i === 0 ? 'primary' : 'worker')).toLowerCase();
-            const safeKind = (kind === 'primary' || kind === 'worker' || kind === 'secondary')
-                ? kind
-                : (i === 0 ? 'primary' : 'worker');
-            return {
-                id: String((b && (b.id || b.label)) || ('bar' + i)).slice(0, 64),
-                label: String((b && b.label) || b.id || ('Bar ' + (i + 1))).slice(0, 120),
-                percent: Math.max(0, Math.min(100, Number(b && b.percent != null ? b.percent : 0))),
-                kind: safeKind,
-                detail: String((b && b.detail) || '').slice(0, 160),
-            };
-        });
+        return CuttleChatActionForms.normalizeWatchBars(data);
     }
 
     function renderWatchBarsHtml(bars) {
@@ -15545,19 +15480,6 @@
         card.__watchLoop = false;
     }
 
-    const RESTART_PROGRESS_PCT = {
-        waiting_for_idle: 12,
-        acknowledged: 22,
-        preparing: 32,
-        stopping_old_flask: 52,
-        starting_new_flask: 72,
-        health_checking: 88,
-        healthy: 100,
-        failed: 100,
-        timed_out: 100,
-        rejected: 100,
-        cancelled: 100,
-    };
 
     function updateRestartCardProgressBar(card, pct, label) {
         const wrap = card && card.querySelector('[data-restart-progress]');
@@ -15610,46 +15532,10 @@
         }
     }
 
-    const RESTART_TERMINAL_STATES = ['healthy', 'failed', 'timed_out', 'rejected', 'cancelled'];
 
+    // Owned by chat_action_forms.js — thin adapter.
     function restartProgressLabel(status, liveWork) {
-        const state = String((status && status.state) || '');
-        // Live count while waiting; the status file's copy is a request-time snapshot.
-        const work = liveWork || (status && status.active_work) || {};
-        const n = Number(work.active_count || 0);
-        switch (state) {
-            case 'waiting_for_idle':
-                return n > 0
-                    ? `Waiting for ${n} active task${n === 1 ? '' : 's'} to finish…`
-                    : 'Waiting for active work to finish…';
-            case 'acknowledged':
-            case 'preparing':
-                return 'Handing off to the daemon…';
-            case 'stopping_old_flask':
-                return 'Stopping Flask…';
-            case 'starting_new_flask':
-                return 'Starting Flask…';
-            case 'health_checking':
-                return 'Health check…';
-            case 'healthy': {
-                const ms = status && status.health_ms;
-                const pid = status && status.new_flask_pid;
-                const detail = [
-                    pid ? `PID ${pid}` : '',
-                    ms != null ? `${(Number(ms) / 1000).toFixed(1)}s` : '',
-                ].filter(Boolean).join(', ');
-                return detail ? `Flask restarted — ${detail}` : 'Flask restarted';
-            }
-            case 'failed':
-            case 'timed_out':
-                return `Restart ${state.replace('_', ' ')} — ${(status && status.error) || 'see daemon logs'}`;
-            case 'rejected':
-                return 'Restart postponed — other work is still running';
-            case 'cancelled':
-                return 'Restart cancelled';
-            default:
-                return 'Restarting Flask…';
-        }
+        return CuttleChatActionForms.restartProgressLabel(status, liveWork);
     }
 
     /** Follow one restart to completion, surviving the Flask replacement itself. */
@@ -15658,30 +15544,31 @@
      * until the daemon actually replaces Flask. One click should settle every
      * sibling card; after restart the generation bumps and new cards unlink.
      */
+    // Owned by chat_action_forms.js — thin adapter.
     function flaskRestartFormEpoch(formId) {
-        const m = /^flask-restart-g(\d+)$/i.exec(String(formId || '').trim());
-        return m ? parseInt(m[1], 10) : null;
+        return CuttleChatActionForms.flaskRestartFormEpoch(formId);
     }
 
+    // Owned by chat_action_forms.js — DOM gather, domain decides.
     function isLinkedFlaskRestartCard(card) {
         if (!card) return false;
         try {
             const spec = JSON.parse(card.getAttribute('data-spec') || '{}');
             const fid = String(card.getAttribute('data-form-id') || '').trim();
-            return specLooksLikeFlaskRestart(spec, fid);
+            return CuttleChatActionForms.specLooksLikeFlaskRestart(spec, fid);
         } catch (_) {
             return false;
         }
     }
 
+    // Owned by chat_action_forms.js — DOM gather, domain decides.
     function linkedFlaskRestartFormId(card) {
         const fid = String(card.getAttribute('data-form-id') || '').trim();
-        if (flaskRestartFormEpoch(fid) != null) return fid;
         const group = String(
             card.getAttribute('data-restart-form-group')
             || (JSON.parse(card.getAttribute('data-spec') || '{}').restartFormGroup || '')
         ).trim();
-        return group || fid;
+        return CuttleChatActionForms.linkedRestartFormId({ formId: fid, group });
     }
 
     function broadcastLinkedFlaskRestart(payload) {
@@ -15756,8 +15643,8 @@
         const st = (data && data.status) || {};
         const state = String(st.state || '');
         const rid = String(st.restart_id || '').trim();
-        const inFlight = !!(rid && state && RESTART_TERMINAL_STATES.indexOf(state) < 0);
-        const terminal = !!(rid && RESTART_TERMINAL_STATES.indexOf(state) >= 0);
+        const inFlight = !!(rid && state && CuttleChatActionForms.RESTART_TERMINAL_STATES.indexOf(state) < 0);
+        const terminal = !!(rid && CuttleChatActionForms.RESTART_TERMINAL_STATES.indexOf(state) >= 0);
 
         cards.forEach((card) => {
             const cardId = linkedFlaskRestartFormId(card);
@@ -15882,11 +15769,11 @@
             }
             const state = String(status.state || '');
             card.__restartState = state;
-            card.__restartPct = RESTART_PROGRESS_PCT[state] != null
-                ? RESTART_PROGRESS_PCT[state]
+            card.__restartPct = CuttleChatActionForms.RESTART_PROGRESS_PCT[state] != null
+                ? CuttleChatActionForms.RESTART_PROGRESS_PCT[state]
                 : 25;
             const label = restartProgressLabel(status, liveWork);
-            if (RESTART_TERMINAL_STATES.indexOf(state) >= 0) {
+            if (CuttleChatActionForms.RESTART_TERMINAL_STATES.indexOf(state) >= 0) {
                 const ok = state === 'healthy';
                 setActionFormCardProgress(card, label, ok ? 'ok' : 'error');
                 card.__restartWatchId = null;
