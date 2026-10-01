@@ -32,19 +32,16 @@ from typing import Any, Dict, List, Optional
 
 try:
     from scripts.utilities.git_pending_changes import (
-        _git_commit_env,
         git_push_command,
         git_run,
     )
 except ImportError:  # pragma: no cover - sys.path variant
     try:
         from utilities.git_pending_changes import (  # type: ignore
-            _git_commit_env,
             git_push_command,
             git_run,
         )
     except ImportError:
-        _git_commit_env = None  # type: ignore[assignment]
         git_push_command = None  # type: ignore[assignment]
         git_run = None  # type: ignore[assignment]
 
@@ -385,51 +382,6 @@ def commit_diff(cwd: str, commit_hash: str, page: int, per_page: int,
             'has_prev': page > 1
         }
     }
-
-
-def commit_changes(cwd: str, message: str, files: List[str]) -> str:
-    """Stage ``files`` (or everything) and commit with Cuttle identity.
-    Returns the commit stdout; raises GitError('Git commit failed: …')."""
-    import os as _os
-    env: Optional[Dict[str, str]] = None
-    if _git_commit_env is not None:
-        try:
-            env = _git_commit_env(cwd)
-        except Exception:
-            env = None
-    if env is None:
-        env = _os.environ.copy()
-    name = env.get('GIT_AUTHOR_NAME') or 'Cuttle'
-    email = env.get('GIT_AUTHOR_EMAIL') or 'cuttle@localhost'
-    ident = ['-c', f'user.name={name}', '-c', f'user.email={email}']
-
-    def _exec(args: List[str]) -> subprocess.CompletedProcess:
-        try:
-            return subprocess.run(
-                ['git', *args], cwd=cwd, capture_output=True, text=True,
-                timeout=None, check=False, env=env,
-            )
-        except OSError as e:
-            return subprocess.CompletedProcess(
-                args=['git', *args], returncode=127, stdout="", stderr=str(e))
-
-    if files:
-        for file in files:
-            proc = _exec(['add', file])
-            if proc.returncode != 0:
-                raise GitError(f'Git commit failed: {proc.stderr}',
-                               returncode=proc.returncode, stderr=proc.stderr)
-    else:
-        proc = _exec(['add', '.'])
-        if proc.returncode != 0:
-            raise GitError(f'Git commit failed: {proc.stderr}',
-                           returncode=proc.returncode, stderr=proc.stderr)
-
-    result = _exec([*ident, 'commit', '-m', message])
-    if result.returncode != 0:
-        raise GitError(f'Git commit failed: {result.stderr}',
-                       returncode=result.returncode, stderr=result.stderr)
-    return result.stdout or ''
 
 
 def pull_repo(cwd: str, remote: str, branch: str) -> str:

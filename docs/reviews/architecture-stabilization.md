@@ -1262,3 +1262,173 @@ modules at top level). The future Git Blueprint can now wrap
 6. **Is the Blueprint slice safe to begin?** The service is proven
    (12 new tests + parity). Do NOT begin it in this track until this
    review is approved.
+
+---
+
+# Phase 2 — Slice 3B: Git HTTP Blueprint Extraction
+
+## Phase status
+
+- Slice: Phase 2 Slice 3B — Git HTTP transport → `api.git_routes`
+  (`git_bp`); shadowed legacy commit route removed with proven closure.
+- Git baseline before work: `1247461a` ("Phase 2 slice 3A: git service
+  boundary extraction"), clean tree.
+- Git commit after work: the single `Phase 2 slice 3B: git HTTP blueprint
+  extraction` commit on main (identify via `git log --oneline`).
+- Completion status: **complete, awaiting external review**. No next
+  Phase 2 domain started.
+
+## Original problem
+
+After Slice 3A owned all Git behavior, the 21 route registrations plus
+auth/validation/shaping still lived inline in the Flask monolith (~1,400
+lines), and a dead shadowed handler sat beside the live commit route. Any
+agent touching Git transport still worked inside the 11.8k-line
+composition root.
+
+## Before moving routes (reconfirmed inventory)
+
+- 20 unique `/api/git/*` paths, 21 handlers; reads
+  `authenticated_required`, mutations `owner_required` (Slice 3A matrix
+  re-verified unchanged).
+- Delegation classes confirmed per handler: `api.git_service` (8 thinned
+  handlers + push internals), `scripts.utilities.git_pending_changes`
+  (repos, pending-changes, open-diff, open-file, pending-diff, commit,
+  ignore, push-target/sanitize), `git_graph` utils (graph, detail,
+  file-diff), `commit_message_suggester` + `inference_mode` (suggest),
+  `fs_reveal` (open/reveal), `project_manager` (cwd/registry reads).
+- Externals used by the moved block: `project_manager`, `request`,
+  `jsonify`, `pathlib.Path` (open-file; now imported by the new module),
+  inline `print`/`traceback` (kept verbatim). No `os`/`json`/`sys`/
+  module-level needs beyond that (verified by scan + AST check).
+- Frontend callers re-verified: `git_ui.js`, `git_graph_page.js`,
+  `git_commit_viewer.js`, `pending_changes_panel.js`, `chat_page.js`,
+  `app_shell.js` (pending-changes poll) — all hit paths/shapes, none
+  reference handler symbols.
+
+## Changes made
+
+- **Added `src/api/git_routes.py`** (1,388 L): `git_bp` blueprint
+  (`url_prefix="/api"`, short `/git/*` paths per the settings/projects
+  precedent), 19 handlers moved (mechanical `@app.route` →
+  `@git_bp.route` via scripted extraction, bodies verbatim). Module
+  docstring states the transport-only ownership contract and the Phase 2
+  rule (never imports `api.web_chat_api` — verified).
+- **Monolith:** registers `git_bp` (same try/except pattern); deleted
+  the ~1,400-line block. Zero `def git_*` remain. Monolith:
+  11,801 → 10,406 lines (−1,395 net).
+- **Shadowed legacy removal (dead-code cleanup, closure proven):**
+  `git_commit` (legacy `POST /api/git/commit`) deleted from the moved
+  set — never dispatched (first-registered `git_commit_pending` always
+  wins); zero prod Python references; both frontend callers hit the path
+  (served by pending before and after); legacy modal is shape-agnostic
+  (`data.success` only). Companion service op `commit_changes` (sole
+  caller was the dead handler) removed from `api.git_service` with its
+  now-unused `_git_commit_env` import; service test now commits via git
+  CLI. Test asserts exactly one `POST /api/git/commit`
+  (`git.git_commit_pending`).
+- **Tests:** `test_git_service.py` 12/12 (8 HTTP parity green pre-move,
+  post-rewire, and post-blueprint; 4 service unit); repaired two slice
+  artifacts — stub helper now covers the blueprint holder (same
+  Slice-1 pattern; applied to `test_git_service._ctx` and shared
+  `test_http_authz._stub_project_registry`), shadow test → single-
+  registration assertion.
+- Moved vs deleted: 19 handlers relocated verbatim (moved); legacy
+  handler + its orphaned service op deleted as proven-dead (deleted).
+
+## Architecture after
+
+```
+web_chat_api.py ──registers──▶ git_bp (api/git_routes.py, transport only)
+                                   ├─▶ api.git_service (8 lanes + push parts)
+                                   ├─▶ scripts.utilities.git_pending_changes
+                                   ├─▶ git_graph utils, suggester, fs_reveal
+                                   └── managers.project_manager (registry/cwd)
+```
+
+One-way dependencies throughout; blueprint endpoints carry the `git.`
+prefix (`git.git_status`, …). No new shared state; allowlisting still
+enforced transport-side via the untouched resolver calls.
+
+## Dependencies and state
+
+- Removed: all 21 Git route registrations + the dead handler from the
+  composition root; orphaned `commit_changes` op from the service.
+- Introduced: `api/git_routes.py` (Flask Blueprint; no new runtime
+  deps). No new shared state; none moved.
+- Reverse deps: none existed on moved handlers (verified); none created.
+- Allowlisting/safety: byte-identical enforcement (resolver calls moved
+  verbatim); quirk pins and `timeout=None` semantics untouched.
+- Restart/persistence semantics: none in this layer; unchanged.
+
+## Tests and verification
+
+- `test_git_service.py`: 12/12 (parity green across all three states:
+  monolith, service-backed, blueprint).
+- `test_git_pending_changes.py` + `test_http_authz.py`: 87/87 combined
+  with the above (covers Pending Changes, auth matrix, project-context
+  persistence, suggester neighbors green; only pre-existing project_chip
+  failures elsewhere).
+- Broad: `.venv/bin/python -m pytest -q` → **1,761 passed, 28 failed,
+  60 skipped**; the 28 failures byte-identical to the established
+  baseline (verified via `diff`).
+- `ast.parse` clean on all touched files; grep confirms zero `def git_*`
+  in the monolith, no monolith import in the blueprint, exactly one
+  `POST /api/git/commit`, no dangling `git_commit`/`commit_changes`
+  references outside this review's historical sections.
+- A mid-slice double-prefix fault (`/api/api/...`, from full-path
+  decorators under `url_prefix`) was caught by the parity tests and
+  fixed to short paths before verification.
+- Manual workflows: none applicable (no UI changed). Not exercised:
+  live Flask boot, chat round-trip.
+
+## Metrics
+
+| Metric | Before (`1247461a`) | After | Method |
+|---|---|---|---|
+| `web_chat_api.py` lines | 11,801 | 10,406 (−1,395) | `wc -l` |
+| Git handlers owned by monolith | 20 (21 routes) | 0 | grep |
+| New owned modules | — | `api/git_routes.py` (19 routes) | — |
+| Dead code removed | — | legacy handler + orphaned service op | closure proof |
+| Full suite | 1,761 / 28 / 60 | 1,761 / 28 (identical list) / 60 | pytest + diff |
+
+## Remaining concerns
+
+1. Monolith still holds `project_manager`/`get_auth_db` references for
+   remaining users (chat, tasks, fs, launchers, …) — expected; later
+   slices narrow them. Test stub helpers must now cover each new holder
+   (established pattern, applied twice).
+2. Tasks routes (`/api/tasks*`) still inline — natural next slice
+   candidate alongside remaining misc extractions.
+3. The 28 baseline failures are untouched and unrelated.
+
+## Diff summary
+
+- Added: `src/api/git_routes.py` (1,388 L).
+- Modified: `src/api/web_chat_api.py` (−1,395 net: block delete +7
+  registration), `src/api/git_service.py` (−48: orphaned op + import),
+  `src/tests/test_git_service.py` (holder stubs, CLI commit setup,
+  single-registration assertion),
+  `src/tests/test_http_authz.py` (+7: holder stub).
+- Deleted: no files (dead handler removed within the moved set).
+- `git status --short` before commit: 4 modified + 1 new path (above).
+
+## External Review Summary
+
+1. **What changed architecturally?** All Git HTTP transport moved to
+   owned `git_bp`; the monolith only composes it. Dead shadowed commit
+   handler + orphaned service op removed with proven closure.
+2. **What behavior intentionally changed?** Nothing reachable (removal
+   deletes code that never served; verified unserved pre-removal).
+3. **What behavior should be identical?** All 19 route paths/methods/
+   auth/shapes/codes; allowlisting; quirk outputs; timeout semantics;
+   frontend behavior on every Git surface.
+4. **What remains coupled or messy?** Tasks + misc routes still inline;
+   holder-stubbing pattern needed per extraction; 28 unrelated baseline
+   failures preserved.
+5. **What should be reviewed before the next domain?** The `git_bp`
+   ownership header; confirmation of the next slice scope (tasks/misc
+   suggested; chat lifecycle explicitly out of Phase 2).
+6. **Is the next domain safe to begin?** This slice is self-contained
+   (no chat/router/workers touched; failures identical to baseline).
+   Do NOT begin it in this track until this review is approved.

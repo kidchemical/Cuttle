@@ -67,7 +67,16 @@ def _ctx(tmp_path, monkeypatch, repo: Path):
     monkeypatch.delenv("OWNER_USER_EMAIL", raising=False)
     monkeypatch.setenv("OWNER_USER_EMAIL", "owner@local")
     registry = [{"id": 1, "name": "R", "type": "local", "path": str(repo)}]
-    monkeypatch.setattr(wca, "project_manager", _FakePM(registry))
+    fake = _FakePM(registry)
+    # Stub every holder: transport moved to the git blueprint in Slice 3B
+    # while other monolith handlers still read the monolith's reference.
+    monkeypatch.setattr(wca, "project_manager", fake)
+    try:
+        import api.git_routes as git_routes_mod
+    except ImportError:
+        git_routes_mod = None
+    if git_routes_mod is not None and hasattr(git_routes_mod, "project_manager"):
+        monkeypatch.setattr(git_routes_mod, "project_manager", fake)
     owner = db.create_user("owner@local", "Owner", "local", password="x")
     guest = db.create_user("guest@local", "Guest", "local", password="x")
     db.create_chat_session(owner, "o")
@@ -271,12 +280,13 @@ def test_service_branches_commits_files(tmp_path):
         gs.list_commits(str(tmp_path), 1, 20)
 
 
-def test_service_commit_diff_and_changes(tmp_path):
+def test_service_commit_diff(tmp_path):
     gs = _svc()
     repo = _init_repo(tmp_path / "repo")
     (repo / "a.txt").write_text("one\ntwo\n", encoding="utf-8")
-    out = gs.commit_changes(str(repo), "second", ["a.txt"])
-    assert "second" in (out + _git("log", "--oneline", cwd=repo).stdout)
+    _git("add", "a.txt", cwd=repo)
+    _git("commit", "-m", "second", cwd=repo)
+    assert "second" in _git("log", "--oneline", cwd=repo).stdout
     head = _git("rev-parse", "HEAD", cwd=repo).stdout.strip()
     d = gs.commit_diff(str(repo), head, 1, 100, None)
     assert d["commit"]["message"] == "second"
@@ -323,13 +333,13 @@ def test_service_pull_push_branch(tmp_path):
         gs.branch_operation(str(repo), "switch", "no-such-branch")
 
 
-def test_legacy_commit_route_is_shadowed():
-    """POST /api/git/commit registers twice; first-registered wins, so the
-    legacy ``git_commit`` handler never serves. Pinned so a future removal
-    is a deliberate, verified decision — not an accident."""
+def test_commit_route_registered_once():
+    """Slice 3B removed the shadowed legacy ``git_commit`` handler (closure
+    proven: no prod references, both frontend callers hit the path served
+    by ``git_commit_pending``, legacy modal is shape-agnostic). Exactly one
+    POST /api/git/commit must remain."""
     from api import web_chat_api as wca
 
     endpoints = [r.endpoint for r in wca.app.url_map.iter_rules()
                  if str(r.rule) == "/api/git/commit" and "POST" in r.methods]
-    assert endpoints[0] == "git_commit_pending"
-    assert "git_commit" in endpoints[1:]
+    assert endpoints == ["git.git_commit_pending"]

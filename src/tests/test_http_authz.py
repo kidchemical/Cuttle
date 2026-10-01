@@ -939,6 +939,13 @@ def _stub_project_registry(monkeypatch, projects, current=None):
         # Phase 2: project routes live on the projects blueprint; stub its
         # reference too or the stub silently stops applying.
         monkeypatch.setattr(project_routes_mod, "project_manager", stub)
+    try:
+        import api.git_routes as git_routes_mod
+    except ImportError:
+        git_routes_mod = None
+    if git_routes_mod is not None and hasattr(git_routes_mod, "project_manager"):
+        # Slice 3B: git transport lives on the git blueprint too.
+        monkeypatch.setattr(git_routes_mod, "project_manager", stub)
 
 
 def _init_git_repo(path, dirty):
