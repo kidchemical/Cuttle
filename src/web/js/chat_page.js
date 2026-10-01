@@ -135,34 +135,19 @@
      * Pipeline runtime often uses "db_session_<id>" — strip that for auth APIs
      * and for stable URL / equality comparisons.
      */
+    // Owned by chat_activity.js — thin adapter.
     function toAuthDbSessionId(sessionId) {
-        if (sessionId == null || sessionId === '') return null;
-        let s = String(sessionId).trim();
-        if (s.startsWith('db_session_')) s = s.slice('db_session_'.length);
-        else if (/^CH-/i.test(s)) {
-            // CH-000182 or share ref CH-000182-23 → digits of the session only.
-            const m = s.match(/^CH-(\d+)(?:-\d+)?$/i);
-            if (m) return String(parseInt(m[1], 10));
-            s = s.slice(3);
-        }
-        if (/^\d+$/.test(s)) return String(parseInt(s, 10));
-        return s || null;
+        return CuttleChatActivity.toAuthDbSessionId(sessionId);
     }
 
+    // Owned by chat_activity.js — thin adapter.
     function canonicalizeChatSessionId(sessionId) {
-        if (sessionId == null || sessionId === '') return sessionId;
-        const bare = toAuthDbSessionId(sessionId);
-        // Prefer bare numeric for auth DB chats; leave anonymous/web ids alone.
-        if (bare != null && /^\d+$/.test(bare)) return bare;
-        return String(sessionId);
+        return CuttleChatActivity.canonicalizeChatSessionId(sessionId);
     }
 
+    // Owned by chat_activity.js — thin adapter.
     function sessionIdsEqual(a, b) {
-        if (a == null || b == null) return false;
-        if (String(a) === String(b)) return true;
-        const na = toAuthDbSessionId(a);
-        const nb = toAuthDbSessionId(b);
-        return na != null && nb != null && String(na) === String(nb);
+        return CuttleChatActivity.sessionIdsEqual(a, b);
     }
 
     /**
@@ -170,40 +155,9 @@
      * Auth DB ids stay numeric internally; display as CH-XXXXXX.
      * Numeric sessions use zero-padded decimal (CH-000042) so they match the DB id.
      */
+    // Owned by chat_activity.js — thin adapter.
     function formatChatDisplayId(sessionId) {
-        if (sessionId == null || sessionId === '') return null;
-        const raw = String(sessionId).trim();
-        if (!raw) return null;
-        if (/^CH-[A-Z0-9]+$/i.test(raw)) return raw.toUpperCase();
-
-        const bare = toAuthDbSessionId(raw);
-        if (bare != null && /^\d+$/.test(bare)) {
-            const n = parseInt(bare, 10);
-            if (!Number.isFinite(n) || n < 0) return null;
-            // Grow past 6 digits rather than truncate (session 1000000 → CH-1000000).
-            return 'CH-' + String(n).padStart(6, '0');
-        }
-
-        const m = raw.match(/^(?:chat_|web_session_)(\d+)$/i);
-        if (m) {
-            // Timestamps / counters → stable 6-char base36 code.
-            const digits = m[1].slice(-10);
-            const num = parseInt(digits, 10);
-            if (Number.isFinite(num) && num >= 0) {
-                const mod = Math.pow(36, 6);
-                const code = (num % mod).toString(36).toUpperCase().padStart(6, '0');
-                return 'CH-' + code;
-            }
-        }
-
-        // Stable fallback for odd string ids
-        let h = 2166136261;
-        for (let i = 0; i < raw.length; i++) {
-            h ^= raw.charCodeAt(i);
-            h = Math.imul(h, 16777619);
-        }
-        const code = (h >>> 0).toString(36).toUpperCase().padStart(6, '0').slice(-6);
-        return 'CH-' + code;
+        return CuttleChatActivity.formatChatDisplayId(sessionId);
     }
 
     /** New anonymous (localStorage) chat ids — CH-XXXXXX. */
@@ -1791,10 +1745,7 @@
 
     function markChatSessionRead(sessionId) {
         if (sessionId == null || sessionId === '') return;
-        if (
-            _manualUnreadHoldId != null
-            && sessionIdsEqual(_manualUnreadHoldId, sessionId)
-        ) {
+        if (CuttleChatActivity.manualHoldBlocksRead({ holdId: _manualUnreadHoldId, sessionId })) {
             return;
         }
         updateSessionPrefs(sessionId, {
@@ -1805,51 +1756,35 @@
         try { scheduleChatActivityBroadcast(); } catch (_) {}
     }
 
+    // Owned by chat_activity.js — DOM/state gather, domain decides.
     function releaseManualUnreadHoldIfLeaving(nextSessionId) {
-        if (_manualUnreadHoldId == null) return;
-        if (nextSessionId != null && sessionIdsEqual(_manualUnreadHoldId, nextSessionId)) {
-            // Re-opening the held chat counts as "open again" — allow read clear.
-            _manualUnreadHoldId = null;
-            return;
-        }
-        if (
-            currentSessionId != null
-            && sessionIdsEqual(_manualUnreadHoldId, currentSessionId)
-            && (nextSessionId == null || !sessionIdsEqual(nextSessionId, currentSessionId))
-        ) {
-            _manualUnreadHoldId = null;
-        }
+        _manualUnreadHoldId = CuttleChatActivity.releaseManualHold({
+            holdId: _manualUnreadHoldId,
+            currentSessionId,
+            nextSessionId,
+        });
     }
 
     /** Prefs flag only — ignores "currently viewing" so open-chat handoff can keep the title dot. */
+    // Owned by chat_activity.js — DOM/state gather, domain decides.
     function sessionPrefsHasUnreadFlag(sessionId) {
         if (sessionId == null || sessionId === '') return false;
-        const prefs = getSessionPrefs(sessionId);
-        return !!(prefs && prefs.hasUnread);
+        return CuttleChatActivity.prefsHasUnreadFlag(getSessionPrefs(sessionId));
     }
 
+    // Owned by chat_activity.js — DOM/state gather, domain decides.
     function sessionPrefsUnreadIsError(sessionId) {
         if (sessionId == null || sessionId === '') return false;
-        const prefs = getSessionPrefs(sessionId);
-        return !!(prefs && prefs.hasUnread && prefs.unreadIsError);
+        return CuttleChatActivity.prefsUnreadIsError(getSessionPrefs(sessionId));
     }
 
     /**
      * Failed assistant reply for attention dots (red). Uses slash_command_failed
      * metadata when present; otherwise common error bubble text.
      */
+    // Owned by chat_activity.js — thin adapter.
     function assistantReplyLooksLikeError(content, meta) {
-        if (meta && (meta.slash_command_failed || meta.failed || meta.is_error)) return true;
-        const t = String(content || '').replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-        if (!t) return false;
-        if (/^❌/.test(t)) return true;
-        if (/Could not reach the Cuttle API/i.test(t)) return true;
-        if (/^Request failed\b/i.test(t)) return true;
-        if (/Sorry, I encountered an error/i.test(t)) return true;
-        if (/\b(cursor|codex|muse|claude|hermes|opencode|deepseek|antigravity)_error\b/i.test(t)) {
-            return true;
-        }
-        return false;
+        return CuttleChatActivity.assistantReplyLooksLikeError(content, meta);
     }
 
     function beginSuppressChatAttention() {
@@ -1860,16 +1795,34 @@
         _suppressChatAttention = Math.max(0, _suppressChatAttention - 1);
     }
 
-    function chatAttentionActive() {
-        return !!(chatUnseenBelow || chatNeedsAck);
+    /** Open-chat attention snapshot (plain data for the activity domain). */
+    function snapshotChatAttention() {
+        return {
+            unseenBelow: chatUnseenBelow,
+            needsAck: chatNeedsAck,
+            isError: chatAttentionIsError,
+            viewportActivated: chatViewportActivated,
+        };
     }
 
+    function applyChatAttention(next) {
+        chatUnseenBelow = !!next.unseenBelow;
+        chatNeedsAck = !!next.needsAck;
+        chatAttentionIsError = !!next.isError;
+        chatViewportActivated = next.viewportActivated !== false;
+    }
+
+    // Owned by chat_activity.js — DOM/state gather, domain decides.
+    function chatAttentionActive() {
+        return CuttleChatActivity.attentionIsActive(snapshotChatAttention());
+    }
+
+    // Owned by chat_activity.js — DOM/state gather, domain decides.
     function resetChatAttentionState(opts) {
-        chatUnseenBelow = false;
-        chatNeedsAck = !!(opts && opts.needsAck);
-        chatAttentionIsError = !!(opts && opts.needsAck && opts.isError);
-        // Unread open → require click/type. Clean open → already "active".
-        chatViewportActivated = !chatNeedsAck;
+        applyChatAttention(CuttleChatActivity.attentionAfterReset(snapshotChatAttention(), {
+            needsAck: !!(opts && opts.needsAck),
+            isError: !!(opts && opts.isError),
+        }));
         syncChatAttentionIndicators();
     }
 
@@ -1880,44 +1833,35 @@
      * Title unread dot → unseen below, OR in-view but viewport never activated.
      * Does NOT re-nag after every reply once the viewport is already active.
      */
+    // Owned by chat_activity.js — DOM/state gather, domain decides.
     function noteFinalizedAssistantAttention(opts) {
         if (_suppressChatAttention > 0) return;
-        const isError = !!(opts && opts.isError);
-        const scrolledAway = !chatPinnedToBottom || isChatScrolledUp(140);
-        if (scrolledAway) {
-            chatUnseenBelow = true;
-            chatAttentionIsError = isError || chatAttentionIsError;
-        } else if (!chatViewportActivated) {
-            chatNeedsAck = true;
-            chatAttentionIsError = isError || chatAttentionIsError;
-        } else if (isError) {
-            // Bottom-pinned error still deserves a red title nag until ack.
-            chatNeedsAck = true;
-            chatAttentionIsError = true;
-            chatViewportActivated = false;
-        }
+        applyChatAttention(CuttleChatActivity.attentionAfterFinalized(snapshotChatAttention(), {
+            isError: !!(opts && opts.isError),
+            scrolledAway: !chatPinnedToBottom || isChatScrolledUp(140),
+        }));
         syncChatAttentionIndicators();
     }
 
+    // Owned by chat_activity.js — DOM/state gather, domain decides.
     function clearChatUnseenBelow() {
         if (!chatUnseenBelow) {
             updateJumpToBottomVisibility();
             return;
         }
-        chatUnseenBelow = false;
-        if (!chatNeedsAck) chatAttentionIsError = false;
+        applyChatAttention(CuttleChatActivity.attentionAfterClearUnseen(snapshotChatAttention()));
         syncChatAttentionIndicators();
     }
 
     /** Click in transcript or typing in composer acknowledges the open chat. */
+    // Owned by chat_activity.js — DOM/state gather, domain decides.
     function activateChatViewport() {
-        chatViewportActivated = true;
-        if (!chatNeedsAck) {
+        const hadAck = chatNeedsAck;
+        applyChatAttention(CuttleChatActivity.attentionAfterActivate(snapshotChatAttention()));
+        if (!hadAck) {
             updateSessionTitleUnreadDot();
             return;
         }
-        chatNeedsAck = false;
-        chatAttentionIsError = false;
         syncChatAttentionIndicators();
     }
 
@@ -2001,40 +1945,20 @@
         }
     }
 
+    // Owned by chat_activity.js — DOM/state gather, domain decides.
     function sessionHasUnread(sessionId, sessionObj) {
-        if (sessionId == null || sessionId === '') return false;
-        // Currently open + visible ⇒ treat as read for the history badge
-        if (currentSessionId != null && sessionIdsEqual(currentSessionId, sessionId) && !pageIsBackgrounded()) {
-            return false;
-        }
-        const prefs = getSessionPrefs(sessionId);
-        if (prefs && prefs.hasUnread) return true;
-        // Timestamp fallback only after we've recorded a read watermark (avoids
-        // marking every historical chat unread on first load of this feature).
-        if (prefs && prefs.lastReadAt != null && sessionObj && Array.isArray(sessionObj.messages)) {
-            const lastReadAt = Number(prefs.lastReadAt) || 0;
-            for (let i = sessionObj.messages.length - 1; i >= 0; i--) {
-                const m = sessionObj.messages[i];
-                if (m && m.role === 'assistant') {
-                    const ts = Number(m.timestamp) || 0;
-                    return ts > lastReadAt;
-                }
-            }
-        }
-        return false;
+        return CuttleChatActivity.sessionHasUnread({
+            sessionId,
+            currentSessionId,
+            backgrounded: pageIsBackgrounded(),
+            prefs: getSessionPrefs(sessionId),
+            sessionObj,
+        });
     }
 
+    // Owned by chat_activity.js — thin adapter.
     function parseFollowupQueue(raw) {
-        if (Array.isArray(raw)) return raw;
-        if (typeof raw === 'string' && raw.trim()) {
-            try {
-                const parsed = JSON.parse(raw);
-                return Array.isArray(parsed) ? parsed : [];
-            } catch (_) {
-                return [];
-            }
-        }
-        return [];
+        return CuttleChatActivity.parseFollowupQueue(raw);
     }
 
     /** Resolve followup_queue for a session (open chat uses live pendingFollowups). */
@@ -2060,37 +1984,34 @@
     }
 
     /** True when this chat has at least one paused queued prompt. */
+    // Owned by chat_activity.js — DOM/state gather, domain decides.
     function sessionHasPausedFollowup(sessionId, sessionObj) {
-        return followupQueueForSession(sessionId, sessionObj).some((x) => x && x.paused);
+        return CuttleChatActivity.queueHasPaused(
+            followupQueueForSession(sessionId, sessionObj));
     }
 
     /** True when this chat has at least one active (unpaused) queued prompt. */
+    // Owned by chat_activity.js — DOM/state gather, domain decides.
     function sessionHasActiveFollowup(sessionId, sessionObj) {
-        return followupQueueForSession(sessionId, sessionObj).some((x) => x && !x.paused);
+        return CuttleChatActivity.queueHasActive(
+            followupQueueForSession(sessionId, sessionObj));
     }
 
     /** Last assistant message on a session object (for unread-error fallback). */
+    // Owned by chat_activity.js — thin adapter.
     function lastAssistantMessageFromSessionObj(sessionObj) {
-        if (!sessionObj || !Array.isArray(sessionObj.messages)) return null;
-        for (let i = sessionObj.messages.length - 1; i >= 0; i--) {
-            const m = sessionObj.messages[i];
-            if (m && m.role === 'assistant') return m;
-        }
-        return null;
+        return CuttleChatActivity.lastAssistantMessageFromSessionObj(sessionObj);
     }
 
+    // Owned by chat_activity.js — DOM/state gather, domain decides.
     function sessionHasUnreadError(sessionId, sessionObj) {
-        if (!sessionHasUnread(sessionId, sessionObj)) return false;
-        if (sessionPrefsUnreadIsError(sessionId)) return true;
-        const last = lastAssistantMessageFromSessionObj(sessionObj);
-        if (!last) return false;
-        let meta = last.metadata;
-        if (typeof meta === 'string') {
-            try { meta = JSON.parse(meta); } catch (_) { meta = {}; }
-        }
-        if (!meta || typeof meta !== 'object') meta = {};
-        if (last.slash_command_failed) meta = { ...meta, slash_command_failed: true };
-        return assistantReplyLooksLikeError(last.content, meta);
+        return CuttleChatActivity.sessionHasUnreadError({
+            sessionId,
+            currentSessionId,
+            backgrounded: pageIsBackgrounded(),
+            prefs: getSessionPrefs(sessionId),
+            sessionObj,
+        });
     }
 
     /**
@@ -2098,12 +2019,16 @@
      * error (red) > unread (green) > queued/active (amber) > paused (yellow).
      * Extends the CH-000439-14 legend (paused was amber; active queue takes amber now).
      */
+    // Owned by chat_activity.js — DOM/state gather, domain decides.
     function sessionHistoryAttentionKind(sessionId, sessionObj) {
-        if (sessionHasUnreadError(sessionId, sessionObj)) return 'error';
-        if (sessionHasUnread(sessionId, sessionObj)) return 'unread';
-        if (sessionHasActiveFollowup(sessionId, sessionObj)) return 'queued';
-        if (sessionHasPausedFollowup(sessionId, sessionObj)) return 'paused';
-        return '';
+        return CuttleChatActivity.sessionHistoryAttentionKind({
+            sessionId,
+            currentSessionId,
+            backgrounded: pageIsBackgrounded(),
+            prefs: getSessionPrefs(sessionId),
+            sessionObj,
+            queue: followupQueueForSession(sessionId, sessionObj),
+        });
     }
 
     function projectFieldsFromServerSession(serverSession) {
@@ -2791,15 +2716,25 @@
         })();
     }
 
+    // Owned by chat_activity.js — DOM/state gather, domain decides.
     function notifyAssistantResponseReady(sessionId, opts = {}) {
         const sid = sessionId != null ? String(sessionId) : null;
         if (!sid) return;
+        const isError = !!(opts && opts.isError);
         // One chirp per session completion — blocks processMessage + sync double-fire
         // (and multi-pane sync) from stacking two full chirps back-to-back.
         const now = Date.now();
-        const lastChirp = _chirpedReadyAtBySession[sid] || 0;
-        const skipChirp = (now - lastChirp) < CHIRP_SESSION_COOLDOWN_MS;
-        if (!skipChirp) {
+        const plan = CuttleChatActivity.responseReadyPlan({
+            sessionId: sid,
+            currentSessionId,
+            backgrounded: pageIsBackgrounded(),
+            lastChirpAt: _chirpedReadyAtBySession[sid] || 0,
+            nowMs: now,
+            cooldownMs: CHIRP_SESSION_COOLDOWN_MS,
+            isError,
+            fromSync: !!(opts && opts.fromSync),
+        });
+        if (plan.chirp) {
             _chirpedReadyAtBySession[sid] = now;
             try {
                 if (typeof window.playCuttleCompletionChirp === 'function') {
@@ -2809,9 +2744,7 @@
                 }
             } catch (_) {}
         }
-        const viewingThis = currentSessionId != null && sessionIdsEqual(currentSessionId, sid) && !pageIsBackgrounded();
-        const isError = !!(opts && opts.isError);
-        if (viewingThis) {
+        if (plan.viewingThis) {
             markChatSessionRead(sid);
             syncHistoryUnreadIndicators();
             // Green/red unread / jump glow — only once the reply is finalized.
@@ -2839,7 +2772,7 @@
         }
         markChatSessionUnread(sid, { isError });
         // Avoid duplicate "Reply ready" toasts from sync shortly after local notify.
-        if (!skipChirp || !(opts && opts.fromSync)) {
+        if (plan.toast) {
             const title = (opts && opts.title) || getChatSessionDisplayTitle(sid);
             (window.showToast || function () {})(
                 (isError ? 'Reply failed — ' : 'Reply ready — ') + title,
@@ -14181,23 +14114,9 @@
         removeRemoteWaitingIndicator();
     }
 
+    // Owned by chat_activity.js — thin adapter.
     function liveStatusLooksActive(liveStatus) {
-        if (!liveStatus) return false;
-        // Stop / cancelled turn — refresh must not resurrect the spinner from
-        // a leftover live-status row (CH-000522).
-        if (liveStatus.cancelled) return false;
-        // Busy lock means a worker is still running even if the last status
-        // text is old (long Cursor tool with no stream events). Aging that out
-        // made the UI paint "No response received." mid-run.
-        if (liveStatus.generating) return true;
-        const flagged = !!liveStatus.active;
-        if (!flagged) return false;
-        // updated_at is unix seconds from Flask. Stale rows (crashed worker /
-        // uncleared tool status) used to resurrect the spinner on every refresh.
-        const ts = Number(liveStatus.updated_at);
-        if (!Number.isFinite(ts) || ts <= 0) return flagged;
-        const ageMs = Date.now() - ts * 1000;
-        return ageMs < 180000; // 3 minutes
+        return CuttleChatActivity.liveStatusLooksActive(liveStatus);
     }
 
     const SUPERVISED_PHASE_LABELS = (window.CuttleSupervised && window.CuttleSupervised.PHASE_LABELS) || {
@@ -17508,11 +17427,7 @@
             const sid = item.dataset && item.dataset.sessionId;
             if (sid == null || sid === '') return;
             const running = item.classList.contains('is-running');
-            let activity = '';
-            if (item.classList.contains('has-unread-error')) activity = 'error';
-            else if (item.classList.contains('has-unread')) activity = 'unread';
-            else if (item.classList.contains('has-queued')) activity = 'queued';
-            else if (item.classList.contains('has-paused-queue')) activity = 'paused';
+            const activity = CuttleChatActivity.activityClassToKind(item.classList);
             if (running || activity) out.set(String(sid), { id: String(sid), activity, running });
         });
         if (currentSessionId != null && currentSessionId !== '') {
@@ -18964,12 +18879,9 @@
         return toAuthDbSessionId(currentSessionId);
     }
 
+    // Owned by chat_activity.js — thin adapter.
     function followupQueueFingerprint(items) {
-        return (items || []).map((x) => (
-            String(x && x.id || '')
-            + ':' + String(x && (x.rawMessage || x.content) || '')
-            + ':' + (x && x.paused ? '1' : '0')
-        )).join('|');
+        return CuttleChatActivity.followupQueueFingerprint(items);
     }
 
     function patchLiveSessionFollowupQueue(sessionId, followups) {
@@ -18990,14 +18902,7 @@
         if (editingFollowupId) return;
         if (!Array.isArray(list)) return;
         if (followupQueueFingerprint(list) === followupQueueFingerprint(pendingFollowups)) return;
-        pendingFollowups = list.map((item) => ({
-            id: String(item.id || ('fq_' + Date.now().toString(36))),
-            content: String(item.content || item.rawMessage || ''),
-            created: Number(item.created) || Date.now(),
-            attachments: Array.isArray(item.attachments) ? item.attachments : [],
-            rawMessage: item.rawMessage != null ? String(item.rawMessage) : String(item.content || ''),
-            paused: !!item.paused,
-        }));
+        pendingFollowups = list.map((item) => CuttleChatActivity.normalizeFollowupItem(item));
         patchLiveSessionFollowupQueue(currentSessionId, pendingFollowups);
         renderFollowupQueue();
         if (pendingFollowups.some((x) => !x.paused) && !isSessionGenerating() && !editingFollowupId) {
@@ -19142,48 +19047,15 @@
      * Sticky slash prefix from the first item is kept on the combined message
      * so /cursor · /claude routing still works.
      */
+    // Owned by chat_activity.js — DOM/state gather, domain decides.
     function combineFollowupBatch(items) {
-        const parts = (items || []).map((item) => {
-            const atts = Array.isArray(item && item.attachments) ? item.attachments.slice() : [];
-            const raw = String(
-                item && item.rawMessage != null ? item.rawMessage : (item && item.content) || ''
-            ).trim();
-            const content = String((item && item.content) || '').trim()
-                || formatMessageWithAttachments(raw, atts);
-            return { raw, content, atts };
-        }).filter((p) => p.raw || p.atts.length);
-
-        if (!parts.length) return null;
-        if (parts.length === 1) {
-            const p = parts[0];
-            return {
-                message: p.raw || '(see attached files)',
-                displayMessage: p.content || formatMessageWithAttachments('', p.atts),
-                attachments: p.atts,
-            };
-        }
-
-        const firstSticky = getStickySlashCommandFromMessage(parts[0].raw);
-        const sharedPrefix = firstSticky ? firstSticky.prefix : '';
-        const bodies = parts.map((p) => {
-            let body = p.raw;
-            if (sharedPrefix && body.startsWith(sharedPrefix)) {
-                body = body.slice(sharedPrefix.length).trim();
-            }
-            if (!body && p.atts.length) body = '(see attached files)';
-            return body || '(empty)';
+        return CuttleChatActivity.combineFollowupBatch(items, {
+            stickyPrefixFor: (raw) => {
+                const sticky = getStickySlashCommandFromMessage(raw);
+                return sticky ? sticky.prefix : '';
+            },
+            formatWithAttachments: formatMessageWithAttachments,
         });
-        const numbered = bodies.map((b, i) => `${i + 1}. ${b}`).join('\n\n');
-        const combinedBody = (
-            `The user queued ${parts.length} follow-ups while you were busy. `
-            + `Address all of them in this turn:\n\n${numbered}`
-        );
-        const message = sharedPrefix
-            ? (sharedPrefix.endsWith(' ') ? sharedPrefix + combinedBody : sharedPrefix + ' ' + combinedBody)
-            : combinedBody;
-        const attachments = parts.reduce((acc, p) => acc.concat(p.atts), []);
-        const displayMessage = formatMessageWithAttachments(message, attachments);
-        return { message, displayMessage, attachments };
     }
 
     async function drainNextFollowup() {
@@ -19212,27 +19084,23 @@
                 if (data && data.success && Array.isArray(data.followups)) {
                     batch = data.followups;
                     pendingFollowups = Array.isArray(data.remaining)
-                        ? data.remaining.map((item) => ({
-                            id: String(item.id || ('fq_' + Date.now().toString(36))),
-                            content: String(item.content || item.rawMessage || ''),
-                            created: Number(item.created) || Date.now(),
-                            attachments: Array.isArray(item.attachments) ? item.attachments : [],
-                            rawMessage: item.rawMessage != null ? String(item.rawMessage) : String(item.content || ''),
-                            paused: !!item.paused,
-                        }))
+                        ? data.remaining.map((item) => CuttleChatActivity.normalizeFollowupItem(item))
                         : pendingFollowups.filter((x) => x.paused);
                 } else if (pendingFollowups.length) {
-                    batch = pendingFollowups.filter((x) => !x.paused && x.id !== editingFollowupId);
-                    pendingFollowups = pendingFollowups.filter((x) => x.paused || x.id === editingFollowupId);
+                    const _take = CuttleChatActivity.partitionFollowupForDrain(pendingFollowups, editingFollowupId);
+                    batch = _take.batch;
+                    pendingFollowups = _take.remaining;
                 }
             } catch (_) {
-                batch = pendingFollowups.filter((x) => !x.paused && x.id !== editingFollowupId);
-                pendingFollowups = pendingFollowups.filter((x) => x.paused || x.id === editingFollowupId);
+                const _take = CuttleChatActivity.partitionFollowupForDrain(pendingFollowups, editingFollowupId);
+                batch = _take.batch;
+                pendingFollowups = _take.remaining;
             }
             followupTakeInFlight = false;
         } else {
-            batch = pendingFollowups.filter((x) => !x.paused && x.id !== editingFollowupId);
-            pendingFollowups = pendingFollowups.filter((x) => x.paused || x.id === editingFollowupId);
+            const _take = CuttleChatActivity.partitionFollowupForDrain(pendingFollowups, editingFollowupId);
+            batch = _take.batch;
+            pendingFollowups = _take.remaining;
         }
         // Keep editing state if the edited item remained in the queue.
         if (editingFollowupId && !pendingFollowups.some((x) => x.id === editingFollowupId)) {

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -13,6 +14,7 @@ node_only = pytest.mark.skipif(
 )
 
 CHAT_JS = Path(__file__).resolve().parents[1] / "web" / "js" / "chat_page.js"
+ACTIVITY_JS = Path(__file__).resolve().parents[1] / "web" / "js" / "chat_activity.js"
 CHAT_CSS = Path(__file__).resolve().parents[1] / "web" / "css" / "chat_page.css"
 CHAT_HTML = Path(__file__).resolve().parents[1] / "web" / "chat_page.html"
 
@@ -124,7 +126,9 @@ console.log('ok');
 def test_subagent_ui_helpers():
     src = CHAT_JS.read_text(encoding="utf-8")
     blob = "\n".join(_extract_function(src, name) for name in _HELPERS)
-    driver = _DRIVER % blob
+    # Phase 3 Slice 4: the id helpers are thin adapters over chat_activity.js;
+    # requiring the module resolves the CuttleChatActivity global they call.
+    driver = "require(%s);\n" % json.dumps(str(ACTIVITY_JS)) + (_DRIVER % blob)
     proc = subprocess.run(
         ["node", "-e", driver],
         capture_output=True,

@@ -2328,3 +2328,307 @@ it would couple the module to page markup instead of plain data.
    (no composer/streaming/messages/attachments/agent-controls logic
    touched; failures identical to baseline). Do NOT continue in this
    track until this review is approved.
+
+---
+
+# Phase 3 — Slice 4: Activity / Unread / Follow-up Queue Domain (chat_page.js)
+
+## Phase status
+
+- Slice: Phase 3 Slice 4 — chat activity, unread/seen, attention,
+  chirp eligibility, follow-up queue interpretation, and session-id
+  normalization → `src/web/js/chat_activity.js`
+  (`window.CuttleChatActivity`).
+- Git baseline before work: `0b9a53b9` ("Phase 3 slice 3:
+  action-forms frontend domain"), clean tree.
+- Git commit after work: the single `Phase 3 slice 4:
+  activity/unread/follow-up domain` commit on main (identify via
+  `git log --oneline`).
+- Completion status: **complete, awaiting external review**. No
+  further chat-page domains started (composer, streaming,
+  messages/history rendering, attachments, agent/model controls
+  untouched except the narrow adapter interface described below).
+
+## Original problem
+
+`chat_page.js` owned the entire activity decision layer — session-id
+normalization/equivalence, unread/seen predicates, the error > unread
+> queued > paused attention priority, the open-chat attention state
+machine, chirp cooldown, the response-ready branch plan, follow-up
+queue parsing/normalization/partition/batching, and live-status
+activity — as closures interleaved with DOM badges, sounds, toast
+rendering, fetch/poll loops, persistence IO, and streaming
+orchestration. The behavior could only be tested by slicing source
+text out of the 25.6k-line page, and several suites did exactly that
+(brittle marker coupling: attention-dots, handle-links,
+subagents-ui, project-chip, mobile-webview).
+
+## Before implementation (12-class inventory)
+
+~40 name-matched bindings triaged (25,591-line page):
+
+1. **Unread state** (moved decisions): `sessionHasUnread` (open +
+   visible reads as not-unread; watermark fallback),
+   `sessionPrefsHasUnreadFlag` / `sessionPrefsUnreadIsError` (prefs
+   rows now explicit inputs), `sessionHasUnreadError`,
+   `lastAssistantMessageFromSessionObj`.
+2. **Activity/running state** (moved): `liveStatusLooksActive`
+   (cancelled veto, generating lock, 3-minute staleness gate),
+   `activityClassToKind` (new owned mapping for the shell snapshot).
+3. **Attention/chirp decisions** (moved): `shouldChirp` (8s
+   one-chirp-per-completion cooldown),
+   `responseReadyPlan` (new dispatch plan: chirp × viewing ×
+   mark × toast), `assistantReplyLooksLikeError`.
+4. **Follow-up queue state** (moved pure cores):
+   `parseFollowupQueue`, `followupQueueFingerprint`,
+   `normalizeFollowupItem` (shared server-take + local normalizer),
+   `partitionFollowupForDrain` (batch vs paused/under-edit),
+   `queueHasActive` / `queueHasPaused`.
+5. **Pending follow-up result interpretation**:
+   `collectPendingResult` — stays (streaming fetch orchestration;
+   fused with typing UI and nav-generation guards).
+6. **Seen/read suppression** (moved transitions):
+   `manualHoldBlocksRead`, `releaseManualHold` (re-open counts as
+   open-again; leaving releases).
+7. **Notification/toast decisions** (moved plan, kept rendering):
+   toast branch of `notifyAssistantResponseReady` now follows
+   `responseReadyPlan`; `showToast`/title stay in the page.
+8. **Session/chat identity normalization** (moved verbatim):
+   `toAuthDbSessionId` (CH- refs → digits), `canonicalize-
+   ChatSessionId`, `sessionIdsEqual`, `formatChatDisplayId`.
+9. **DOM badge/rendering**: title dots, running icon, history
+   indicators, icon HTML, jump button, attention listeners — stay.
+10. **Polling/fetch transport**: follow-up persist/take/drain,
+    pending-result poll, live-status fetch, activity broadcast
+    timer, shell postMessage — stay.
+11. **Persistence/storage**: session prefs IO, `chatSessions`
+    reads, follow-up server patch, terminal registry — stay.
+12. **False friends** (verified out of scope): `trySteerRunningTurn`
+    (agent steer), supervised cards/jump notifications,
+    `mediaCtxToast`, `notifyShellPaneActivity`, terminal sessions,
+    `formatPendingStat`/pending-diff modal (Git UI),
+    `combineFollowupBatch`'s neighbors `formatMessageWithAttachments`
+    (message rendering) and `getStickySlashCommandFromMessage`
+    (slash domain, injected as a callback).
+
+Shared bindings the moved logic needed: `currentSessionId`,
+`pageIsBackgrounded()`, prefs rows, live `pendingFollowups`,
+chirp timestamps, attention flags — all now explicit plan/state
+inputs or narrow gather-then-delegate adapters. No moved function
+was exposed on `window.*`; no callers exist outside `chat_page.js`
+(verified by repo-wide grep). Shell cross-link
+(`cuttle-chat-activity` postMessage → Spaces indicators in
+`app_shell.js`) is a transport contract and stays in the page;
+`app_shell.js` logic was not merged.
+
+## Changes made
+
+- **Added `src/web/js/chat_activity.js`** (535 L): 31 pure
+  functions behind `CuttleChatActivity` (classic script + node
+  exports; footer uses TDZ-proof `globalThis`). New names with no
+  page original (all covered by new tests): `prefsHasUnreadFlag`,
+  `prefsUnreadIsError` (prefs-row forms), `queueHasActive` /
+  `queueHasPaused`,
+  `manualHoldBlocksRead`, `releaseManualHold`, the five
+  `attentionAfter*` reducer transitions + `defaultAttentionState` +
+  `attentionIsActive`, `shouldChirp`, `responseReadyPlan`,
+  `normalizeFollowupItem`, `partitionFollowupForDrain`,
+  `activityClassToKind` (31 total). No `document`/`window`/
+  `localStorage`/`fetch` in the module.
+- **chat_page.js keeps**: DOM badges/rendering, sounds, toast
+  rendering, all fetch/poll loops, persistence IO, streaming
+  orchestration, message rendering, session switching, history-group
+  assembly (now calling extracted per-session decisions via
+  adapters), plus thin same-signature adapters (10 pure
+  delegations + 12 gather-then-delegate) and two page-owned
+  snapshot/apply helpers for the attention flags (state stays in
+  the page; transitions are pure).
+- `notifyAssistantResponseReady` refactored to execute a
+  `responseReadyPlan` — every side-effect statement preserved
+  verbatim (chirp stamp/play, mark read/unread, attention note,
+  pending-changes refresh, chirp-heal fetch, voice hook, toast,
+  history sync/reload); proven equivalent by full-effect
+  differential below.
+- `drainNextFollowup`: 3 local filter-pair sites now use
+  `partitionFollowupForDrain`; 2 normalize maps now use
+  `normalizeFollowupItem`. The server-take `: filter(x => x.paused)`
+  fallback is intentionally untouched (server owns the queue in
+  that branch).
+- One deliberate hardening: `normalizeFollowupItem` is null-safe
+  where the inline maps threw on a null item (never observed;
+  documented, not behavior relied upon).
+- chat_page.js: 25,591 → 25,459 lines (−132 net).
+- `chat_page.html`: `chat_activity.js` script tag before
+  `chat_page.js` (both `?v=20261001slice4` cache-busted).
+- **Tests:** new `src/tests/test_chat_activity.py` (7 tests,
+  node-executed against the real module): identity normalization,
+  unread + attention priority, hold + attention reducer, chirp +
+  ready plan, follow-up interpretation, live-status + snapshot
+  mapping, parse check. Repaired 5 slicing suites to require the
+  module instead of moved bodies (attention-dots priority now
+  behavioral; handle-links/subagents-ui/project-chip drivers gain
+  one require line; mobile-webview CH- pin repointed at the owner).
+- Moved vs deleted: decision logic relocated verbatim (moved);
+  original bodies + duplicated normalize/partition inline code
+  deleted (rewire asserts: brace balance, `}`/`;` endings,
+  single-occurrence targeted replaces).
+
+## Architecture after
+
+```
+chat_page.js (badges, sounds, toasts, fetch/poll, storage, streaming,
+              history assembly, shell broadcast, session switching)
+      │  same-signature adapters / dispatch plan / pure reducer + apply
+      ▼
+chat_activity.js (identity + unread/seen + attention + chirp +
+                  follow-up interpretation + live-status activity)
+```
+
+One-way dependency (page → namespace); module holds no state and
+reads no page globals. Attention flags and the chirp-timestamp map
+stay in the page (mutable runtime state); the module owns the
+transitions over explicit snapshots. Follow-up cross-domain needs
+(sticky prefix, attachment formatting) inject as callbacks —
+the module does not import the slash or message domains.
+
+## Dependencies and state
+
+- Removed: chat-page closures over identity/unread/attention/chirp/
+  follow-up/live-status interpretation for all moved decisions.
+- Introduced: `CuttleChatActivity` namespace (classic script +
+  node exports; no new runtime deps). No shared state added or
+  moved; `snapshotChatAttention`/`applyChatAttention` are the only
+  new page bindings (plain gather/apply, no logic).
+- Reverse deps: none existed outside the page; none created.
+- Persistence/restart-sensitive state: unchanged (prefs IO,
+  follow-up server sync, live-status cache, pending-result flow
+  stay in the page). Backend contracts untouched.
+- Compatibility: same-named adapters preserve every internal call
+  signature; `combineFollowupBatch(items)` keeps its signature
+  with page-injected deps.
+
+## Tests and verification
+
+- New `test_chat_activity.py`: 7/7 (node-executed; covers every
+  preserved contract in the slice brief: unread → seen
+  transitions, active vs idle, running/completed, chirp
+  allowed/suppressed, same/other-session, duplicate suppression,
+  enqueue-relevant fingerprint/normalize/partition, pending-result
+  inputs via run keys, malformed state, id aliases/equivalence,
+  cross-session attention priority).
+- Differential proof (scratch `/tmp/diff_activity.js`, not
+  committed): pre-rewire page originals (from a pre-edit backup)
+  vs new module + rewired adapters over a 128-case battery —
+  pure fns, unread chain under stubbed page scope, attention
+  reducer + hold (state + call log), `notifyAssistantResponseReady`
+  full side-effect log + state under stubbed DOM/IO/fetch, and
+  combine/normalize/partition — **128/128 match, zero mismatches**
+  (frozen clock; 4 initial diffs were wall-clock artifacts in the
+  harness itself).
+- Focused + repaired: activity, attention-dots, handle-links,
+  subagents-ui helpers, project-chip, action-forms backend,
+  page-syntax → green; `test_notify_passes_error_flag` passes
+  unmodified (refactor preserved its asserted strings).
+- One genuine catch during verification:
+  `test_mobile_webview_hardening::test_adopt_chat_session_refuses_numeric_hijack`
+  pinned `/^CH-/i.test(s)` inside the moved `toAuthDbSessionId`
+  body — repaired to pin the guard in the page plus the parse in
+  the owned module (adopt behavior itself unchanged).
+- Neighbors (live-status, Spaces activity ×2, cross-session,
+  follow-up ×3, busy-zombie, false-reply, pagination, history ×2,
+  project, slash, restart, attachments): 109 passed; 8 failures
+  all proven pre-existing on clean HEAD (`git stash -u`), including
+  the chirp-adjacent `test_cursor_stream_switch_does_not_chirp_mid_run`
+  and the live-status backend test.
+- Broad: `.venv/bin/python -m pytest -q` → **1,794 passed, 26
+  failed, 60 skipped**; the 26 failures byte-identical to the
+  pre-change set (verified via `diff` of sorted FAILED lists
+  before/after — no new failures; +7 passed = the new tests).
+- `node --check` clean on all touched JS (via
+  `ELECTRON_RUN_AS_NODE=1` electron binary + `/tmp/nodeshim/node`
+  shim for pytest's `shutil.which("node")` gate; shim lives outside
+  the repo).
+- Manual workflows: none applicable (no UI changed). Not exercised:
+  live Flask boot, chat round-trip, browser dot/chirp/queue
+  click-through.
+
+## Metrics
+
+| Metric | Before (`0b9a53b9`) | After | Method |
+|---|---|---|---|
+| `chat_page.js` lines | 25,591 | 25,459 (−132) | `wc -l` |
+| Activity decision fns needing page scope | ~31 (all) | 0 in module (explicit inputs) | grep |
+| Activity behavior tests | string pins + slices | +7 module tests; 5 files repaired to require | pytest |
+| Differential old-vs-new | — | 128/128 match | node harness |
+| Full suite | 1,787 / 26 / 60 | 1,794 / 26 (identical list) / 60 | pytest + diff |
+
+## Remaining concerns
+
+1. DOM badges, sounds, toast rendering, fetch/poll loops,
+   persistence IO, streaming orchestration, message rendering,
+   history-group assembly, shell broadcast, and session switching
+   stay in the page (correct per slice scope).
+2. `collectPendingResult` remains streaming orchestration with the
+   result-mapping fused into its poll loop — a future streaming
+   slice (not this one) owns that separation.
+3. `normalizeFollowupItem` null-safety is a deliberate micro-
+   hardening (inline maps threw on null items); no caller passes
+   null today.
+4. No system `node` on this machine's PATH — JS verification
+   depends on the vendored electron binary (as in Slice 3).
+5. 26 baseline failures remain untouched and unrelated (exact same
+   set before/after).
+
+## Diff summary
+
+- Added: `src/web/js/chat_activity.js` (535 L),
+  `src/tests/test_chat_activity.py` (7 tests).
+- Modified: `src/web/js/chat_page.js` (−132 net: 24 spans rewired
+  + 6 targeted delegation replaces), `src/web/chat_page.html`
+  (+1 script tag, `?v` bump), 5 test files (require lines +
+  behavioral priority test + hijack-pin repoint),
+  `docs/reviews/architecture-stabilization.md` (this section).
+- Deleted: no files.
+- Insertions/deletions (`git diff --numstat`): chat_page.js
+  +129/−261; chat_page.html +2/−1; test repairs +63/−18 total
+  (new files untracked: `chat_activity.js` 535 L,
+  `test_chat_activity.py` ~270 L).
+- `git status --short` before commit: 7 modified
+  (`src/web/js/chat_page.js`, `src/web/chat_page.html`, 5 test
+  files) + 2 new (`src/web/js/chat_activity.js`,
+  `src/tests/test_chat_activity.py`).
+
+## External Review Summary
+
+1. **What changed architecturally?** Activity, unread/seen,
+   attention, chirp, follow-up interpretation, live-status
+   activity, and session-id normalization moved to owned pure
+   `chat_activity.js`; the page keeps badges, sounds, toasts,
+   fetch/poll, storage, streaming, rendering, history assembly,
+   broadcast, and session switching behind thin adapters and a
+   response-ready dispatch plan.
+2. **What behavior intentionally changed?** Nothing except
+   null-safety in `normalizeFollowupItem` (dead path today) —
+   differential 128/128; adapters preserve signatures; notify
+   side effects preserved verbatim.
+3. **What behavior should be identical?** Unread indicators,
+   active/running indicators, chirp timing, notification
+   suppression, seen/read semantics, follow-up ordering and
+   batching, pending behavior, session switching, new/existing
+   chat behavior, live-status interaction, Spaces activity
+   indicators, toast/sound timing, session-id equivalence.
+4. **What remains coupled or messy?** All rendering/IO/polling in
+   the 25.5k-line page; `collectPendingResult` still fuses poll
+   loop with result mapping; server-take remaining-branch keeps
+   its own filter; 26 unrelated baseline failures remain.
+5. **What should be reviewed before the next chat domain?** The
+   reducer + dispatch-plan shape (state stays, transitions move)
+   as the pattern for composer/streaming; whether the next slice
+   is composer, streaming, or message rendering; the fused
+   pending-result loop as streaming-slice input.
+6. **Is the next domain safe to begin?** This slice is
+   self-contained (no streaming implementation, message
+   rendering, composer/send, attachments, agent controls, Action
+   Forms, or slash logic touched; failures identical to
+   baseline). Do NOT continue in this track until this review is
+   approved.

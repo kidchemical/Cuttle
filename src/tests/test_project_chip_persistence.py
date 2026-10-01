@@ -20,6 +20,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHAT_JS = REPO_ROOT / "src" / "web" / "js" / "chat_page.js"
 CHAT_PROJECT_JS = REPO_ROOT / "src" / "web" / "js" / "chat_project.js"
+CHAT_ACTIVITY_JS = REPO_ROOT / "src" / "web" / "js" / "chat_activity.js"
 
 node_only = pytest.mark.skipif(
     shutil.which("node") is None, reason="node not available"
@@ -50,10 +51,15 @@ def _run_project_chip_js(script: str) -> dict:
     src = CHAT_JS.read_text(encoding="utf-8")
     mod_path = str(CHAT_PROJECT_JS).replace("\\", "\\\\")
 
-    id_helpers = _extract(
-        src,
-        "    function toAuthDbSessionId(sessionId) {",
-        "    /**\n     * Human-friendly chat id shown in the corner badge",
+    # Phase 3 Slice 4: session-id normalization lives in chat_activity.js
+    # and is required directly (the page keeps thin adapters that would
+    # need the module global anyway).
+    mod_activity_path = str(CHAT_ACTIVITY_JS).replace("\\", "\\\\")
+    id_helpers = (
+        f"const CuttleChatActivity = require({json.dumps(mod_activity_path)});\n"
+        "function toAuthDbSessionId(s) { return CuttleChatActivity.toAuthDbSessionId(s); }\n"
+        "function canonicalizeChatSessionId(s) { return CuttleChatActivity.canonicalizeChatSessionId(s); }\n"
+        "function sessionIdsEqual(a, b) { return CuttleChatActivity.sessionIdsEqual(a, b); }\n"
     )
     prefs_map = _extract(
         src,

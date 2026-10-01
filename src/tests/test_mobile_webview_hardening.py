@@ -9,6 +9,7 @@ MAIN = REPO / "apps" / "mobile" / "android" / "app" / "src" / "main" / "java" / 
 NOTIFY = REPO / "apps" / "mobile" / "android" / "app" / "src" / "main" / "java" / "com" / "cuttle" / "mobile" / "notify" / "EventStreamService.java"
 SHELL_JS = REPO / "src" / "web" / "js" / "app_shell.js"
 CHAT_JS = REPO / "src" / "web" / "js" / "chat_page.js"
+ACTIVITY_JS = REPO / "src" / "web" / "js" / "chat_activity.js"
 MANIFEST = REPO / "apps" / "mobile" / "android" / "app" / "src" / "main" / "AndroidManifest.xml"
 
 
@@ -161,7 +162,11 @@ def test_adopt_chat_session_refuses_numeric_hijack():
     src = CHAT_JS.read_text(encoding="utf-8")
     assert "Already bound to a Cuttle chat" in src
     assert "prevBare !== nextBare" in src
-    assert "/^CH-/i.test(s)" in src
+    # Phase 3 Slice 4: CH- parsing lives in the owned activity module;
+    # adoptChatSessionId (still in the page) reaches it via adapter.
+    assert "toAuthDbSessionId" in src
+    mod = ACTIVITY_JS.read_text(encoding="utf-8")
+    assert "/^CH-/i.test(s)" in mod
 
 
 def test_shell_ignores_outgoing_iframe_url_sync():

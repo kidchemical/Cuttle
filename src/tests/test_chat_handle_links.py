@@ -18,6 +18,7 @@ node_only = pytest.mark.skipif(
 )
 
 CHAT_JS = Path(__file__).resolve().parents[1] / "web" / "js" / "chat_page.js"
+ACTIVITY_JS = Path(__file__).resolve().parents[1] / "web" / "js" / "chat_activity.js"
 CHAT_CSS = Path(__file__).resolve().parents[1] / "web" / "css" / "chat_page.css"
 CHAT_HTML = Path(__file__).resolve().parents[1] / "web" / "chat_page.html"
 
@@ -116,7 +117,9 @@ console.log('chat-handle-links-ok');
 def test_chat_handle_link_helpers():
     src = CHAT_JS.read_text(encoding="utf-8")
     helpers = "\n".join(_extract_function(src, name) for name in _HELPERS)
-    driver = _DRIVER % helpers
+    # Phase 3 Slice 4: the id helpers are thin adapters over chat_activity.js;
+    # requiring the module resolves the CuttleChatActivity global they call.
+    driver = "require(%s);\n" % json.dumps(str(ACTIVITY_JS)) + (_DRIVER % helpers)
     proc = subprocess.run(
         ["node", "-e", driver],
         capture_output=True,
