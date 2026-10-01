@@ -1064,3 +1064,201 @@ same lazy-import pattern, not copies). Restart-sensitive state untouched
    (no chat/router/workers/git touched; failures identical to
    baseline). Do NOT begin the Git extraction in this track until this
    review is approved.
+
+---
+
+# Phase 2 — Slice 3A: Git Service Boundary
+
+## Phase status
+
+- Slice: Phase 2 Slice 3A — Git service boundary (`api.git_service`).
+  Routes intentionally NOT moved (transport stays in the monolith).
+- Git baseline before work: `5af5efd7` ("Phase 2 slice 2: action-form
+  HTTP transport extraction to owned blueprint"), clean tree.
+- Git commit after work: the single `Phase 2 slice 3A: git service
+  boundary` commit on main (identify via `git log --oneline`).
+- Completion status: **complete, awaiting external review**. The Git
+  Blueprint/route extraction is explicitly NOT started.
+
+## Original problem
+
+The Git area (~21 handlers) combined two strata: newer handlers already
+delegating to the owned `scripts.utilities.git_pending_changes` /
+`git_graph` service layer, and eight legacy handlers embedding raw
+subprocess calls, output parsing, and status/diff/commit/pull/push/branch
+behavior directly in the Flask monolith. Any agent fixing Git behavior had
+to work inside the 12.1k-line composition root, and the eventual Git
+Blueprint had no service to be thin over.
+
+## Dependency map (measured pre-move)
+
+- 20 unique `/api/git/*` paths, 21 handlers (19 GET/POST routes + the
+  duplicate below). Auth: all reads `authenticated_required`, all
+  mutations `owner_required` (verified programmatically).
+- Already serviced (delegate to utils, untouched this slice): `repos`,
+  `pending-changes`, `open-diff`, `open-file`, `pending-diff`,
+  `commit_pending`, `ignore`, `suggest-commit-message`, `graph`,
+  `commit detail`, `commit file-diff`.
+- Inline legacy (rewired this slice): `status`, `branches`, `commits`,
+  `files`, `commit diff`, `commit` (legacy), `pull`, `branch`, plus the
+  branch-fallback + push-exec inside `push`.
+- Shared helpers used by non-Git code (not moved, already owned):
+  `git_run`, `git_push_target/command`, `resolve_allowed_project_cwd`,
+  `resolve_allowed_repo_root`, `sanitize_git_output`,
+  `collect_project_pending_changes`, `commit_pending_changes`
+  (consumers: agent harness cwd, supervised evidence, device workers,
+  edit attribution, cuttle jobs).
+- Frontend callers (unchanged paths/shapes): `git_ui.js` (status, push,
+  pull, files, commits, branches, commit, branch), `git_graph_page.js`
+  (graph, repos), `git_commit_viewer.js` (commit diff, pending-diff),
+  `pending_changes_panel.js` (pending-changes, ignore, commit, suggest).
+- Notable discovery: **two handlers share `POST /api/git/commit`** —
+  `git_commit_pending` (registered first, always serves) shadows the
+  legacy `git_commit` (unreachable dead route). Pinned by test; removal
+  is a separate verified decision, not this slice.
+
+## Service-boundary plan (executed)
+
+New module `src/api/git_service.py` (501 L): `GitError` (fully formatted
+handler-compatible messages) + `NotARepositoryError` (the one 400 case);
+`resolve_repo_cwd`, `repo_work_tree`, `repo_status`, `list_branches`,
+`list_commits`, `list_files`, `commit_diff`, `commit_changes`,
+`pull_repo`, `current_branch_name`, `push_repo`, `branch_operation`.
+Rules enforced: no Flask/`request`/`jsonify`, no `web_chat_api` import
+(verified), no HTTP globals; narrow `cwd`-in/data-out operations;
+project allowlisting stays transport-side (handlers still resolve via
+`resolve_allowed_project_cwd`); `timeout=None` preserves legacy
+wait-forever semantics; `push_repo` uses the shared `git_push_command`
+argv verbatim (upstream/HEAD fallbacks, credential-helper flags).
+
+## Changes made
+
+- **Added `src/api/git_service.py`** with the operations above, ported
+  line-for-line from the inline handlers including two embedded quirks
+  (found during characterization, pinned by tests):
+  (a) `stdout.strip()` eats the first porcelain line's leading status
+  space, so a worktree-modified first file counts `staged=1` (status)
+  and misses the files status map (reads `clean`, invisible to the
+  status filter); (b) staged content (no leading space) parses normally.
+- **Rewired 8 handlers + push internals** in `web_chat_api.py` to thin
+  shells: auth + request parsing/validation + project-manager cwd fetch
+  + service call + unchanged response shaping + `GitError` mapping to
+  the identical strings. Monolith: 12,152 → 11,801 lines (−351 net).
+- Deliberate micro-delta (documented): `commit_changes` captures `git
+  add` stderr, so an add-failure now reports the real error instead of
+  the legacy `Git commit failed: None` (add ran uncaptured under
+  `check=True`). Commit-step messages are byte-identical.
+- Legacy `git_commit` kept calling the service with a shadowing NOTE
+  (still registered, still shadowed, still unserved).
+- **Tests:** new `src/tests/test_git_service.py` (12 tests): 8 HTTP
+  parity tests written pre-move against the monolith (auth matrix,
+  status/branches/commits/files/commit-diff shapes, branch lifecycle +
+  validation, local-remote pull/push round-trip, shadow pin, non-repo
+  400/500s) green both sides; 4 service unit tests against real tmp
+  repos (status/quirks, branches/commits/files, diff+commit_changes,
+  pull/push/branch incl. error paths). Quirk pins carry comments.
+- Moved vs deleted: subprocess behavior relocated (moved); no routes,
+  shapes, codes, or auth touched; no obsolete code removed.
+
+## Architecture after
+
+```
+web_chat_api.py (transport: auth/parse/shape, 8 thin git handlers)
+      │  uses-service                    │  UTIL-gpc/graph (as before)
+      ▼                                  ▼
+api.git_service (pure git)    scripts.utilities.git_pending_changes
+      │  reuses runner/env              (shared, pre-existing)
+      └──────────────▶ git_run, git_push_command, _git_commit_env
+```
+
+One-way dependencies throughout; no cycles (utils import no `api`
+modules at top level). The future Git Blueprint can now wrap
+`git_service` + utils without touching subprocess code.
+
+## Dependencies and state
+
+- Removed: all inline `subprocess` use from Git handlers (verified zero
+  remaining); duplicated cwd-resolution blocks now flow through
+  `resolve_repo_cwd`.
+- Introduced: `api.git_service` (no new runtime deps; no shared state —
+  all functions are pure over explicit `cwd`).
+- Reverse deps: none existed on the inline bodies; service is newly
+  importable by HTTP + future internal callers alike.
+- Restart/persistence semantics: none exist in this layer (stateless
+  subprocess calls); unchanged.
+- Allowlisting/safety: unchanged and still enforced transport-side
+  (`resolve_allowed_project_cwd/repo_root` untouched in serviced
+  handlers; `resolve_repo_cwd` only maps an already-resolved project).
+
+## Tests and verification
+
+- New `test_git_service.py`: 8/8 HTTP parity green pre-move AND
+  post-rewire; 4/4 service unit tests green.
+- Neighbors: `test_git_pending_changes.py` 41/41 combined with the above;
+  `test_http_authz.py` + `test_commit_message_suggester.py` green (2
+  pre-existing project_chip failures only).
+- Broad: `.venv/bin/python -m pytest -q` → **1,761 passed, 28 failed,
+  60 skipped**; the 28 failures byte-identical to the established
+  baseline (verified via `diff`).
+- `ast.parse` clean; grep confirms zero inline subprocess in git
+  handlers and no Flask/monolith imports in the service.
+- Manual workflows: none applicable (no UI changed). Not exercised:
+  live Flask boot, chat round-trip.
+
+## Metrics
+
+| Metric | Before (`5af5efd7`) | After | Method |
+|---|---|---|---|
+| `web_chat_api.py` lines | 12,152 | 11,801 (−351 net this slice) | `wc -l` |
+| Inline-subprocess git handlers | 8 | 0 | span grep |
+| New owned modules | — | `api.git_service` (12 ops) | — |
+| Git behavior tests | pending-changes/auth only | +12 parity + unit tests | pytest |
+| Full suite | 1,749 / 28 / 60 | 1,761 / 28 (identical list) / 60 | pytest + diff |
+
+## Remaining concerns
+
+1. Flask-specific Git code remaining (by design): all 21 route
+   registrations, auth decorators, request validation/clamps, allowlist
+   resolution, and rich response shaping (esp. push Gitea hints) — the
+   future Blueprint slice moves these onto `git_service`.
+2. Shadowed legacy `git_commit` route: removal needs frontend-closure
+   verification (callers always reach `git_commit_pending` today);
+   proposed for the Blueprint slice, not here.
+3. `wca.project_manager`/`get_auth_db` references remain for
+   non-extracted users — expected.
+4. `timeout=None` preserves legacy hangs deliberately; a future slice
+   may introduce bounded timeouts as an explicit reliability change.
+5. The 28 baseline failures are untouched and unrelated.
+
+## Diff summary
+
+- Added: `src/api/git_service.py` (501 L),
+  `src/tests/test_git_service.py` (12 tests).
+- Modified: `src/api/web_chat_api.py` (−351 net: 8 handlers thinned +
+  push internals; ~108 added glue).
+- Deleted: no files.
+- `git status --short` before commit: 1 modified + 2 new paths (above).
+
+## External Review Summary
+
+1. **What changed architecturally?** Inline Git subprocess behavior
+   moved from 8 Flask handlers into owned `api.git_service`; handlers
+   are now thin transport over the service (+ pre-existing utils).
+   No routes moved.
+2. **What behavior intentionally changed?** One micro-delta: failed
+   `git add` now reports real stderr instead of `None`. Everything
+   else byte-identical (including two `strip()` parsing quirks, pinned).
+3. **What behavior should be identical?** All 20 route paths/methods/
+   auth/shapes/codes; status/branch/commit/file/diff/pull/push
+   outputs; allowlisting; error strings; the shadowed legacy route
+   still registers (still unserved).
+4. **What remains coupled or messy?** All Git transport still inline
+   (by design for 3A); shadowed legacy route kept pending verified
+   removal; 28 unrelated baseline failures preserved.
+5. **What should be reviewed before the Blueprint slice?** The service
+   API surface in `git_service.py` (12 ops + error types); the
+   `push_repo` argv handling; whether to remove the shadowed legacy
+   route in the same Blueprint pass.
+6. **Is the Blueprint slice safe to begin?** The service is proven
+   (12 new tests + parity). Do NOT begin it in this track until this
+   review is approved.

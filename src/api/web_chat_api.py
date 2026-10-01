@@ -9874,78 +9874,33 @@ def _message_is_slash_remote_agent(msg: str) -> bool:
 def git_status():
     """Get Git repository status"""
     try:
-        import subprocess
-        import os
-        
-        # Get current working directory (use current project if available)
+        from api.git_service import (
+            NotARepositoryError,
+            GitError,
+            repo_status,
+            resolve_repo_cwd,
+        )
+
         current_project = project_manager.get_current_project()
-        if current_project and current_project['type'] in ['local', 'github', 'gitlab']:
-            cwd = current_project['path']
-        else:
-            cwd = os.getcwd()
-        
-        # Check if we're in a git repository
+        cwd = resolve_repo_cwd(current_project)
+
         try:
-            result = subprocess.run(['git', 'rev-parse', '--is-inside-work-tree'], 
-                                  cwd=cwd, capture_output=True, text=True, check=True)
-            if result.stdout.strip() != 'true':
-                return jsonify({
-                    'success': False,
-                    'error': 'Not in a Git repository'
-                }), 400
-        except subprocess.CalledProcessError:
+            data = repo_status(cwd)
+        except NotARepositoryError:
             return jsonify({
                 'success': False,
                 'error': 'Not in a Git repository'
             }), 400
-        
-        # Get repository name
-        repo_result = subprocess.run(['git', 'rev-parse', '--show-toplevel'], 
-                                   cwd=cwd, capture_output=True, text=True, check=True)
-        repo_name = os.path.basename(repo_result.stdout.strip())
-        
-        # Get current branch
-        branch_result = subprocess.run(['git', 'branch', '--show-current'], 
-                                     cwd=cwd, capture_output=True, text=True, check=True)
-        current_branch = branch_result.stdout.strip()
-        
-        # Get working directory status
-        status_result = subprocess.run(['git', 'status', '--porcelain'], 
-                                     cwd=cwd, capture_output=True, text=True, check=True)
-        status_lines = status_result.stdout.strip().split('\n') if status_result.stdout.strip() else []
-        
-        # Count different file states
-        modified = len([line for line in status_lines if line.startswith(' M') or line.startswith('M ')])
-        added = len([line for line in status_lines if line.startswith('A ') or line.startswith('A')])
-        deleted = len([line for line in status_lines if line.startswith(' D') or line.startswith('D ')])
-        untracked = len([line for line in status_lines if line.startswith('??')])
-        staged = len([line for line in status_lines if line[0] != ' ' and line[0] != '?'])
-        
-        # Check if working directory is clean
-        working_clean = len(status_lines) == 0
-        
+
         return jsonify({
             'success': True,
-            'data': {
-                'repository': repo_name,
-                'currentBranch': current_branch,
-                'workingDirectory': {
-                    'clean': working_clean,
-                    'modified': modified,
-                    'added': added,
-                    'deleted': deleted,
-                    'untracked': untracked
-                },
-                'stagingArea': {
-                    'staged': staged
-                }
-            }
+            'data': data
         })
-        
-    except subprocess.CalledProcessError as e:
+
+    except GitError as e:
         return jsonify({
             'success': False,
-            'error': f'Git command failed: {e.stderr}'
+            'error': str(e)
         }), 500
     except Exception as e:
         return jsonify({
@@ -10925,61 +10880,23 @@ def git_commit_file_diff(commit_hash):
 def git_branches():
     """Get Git branches"""
     try:
-        import subprocess
-        import os
-        
-        # Get current working directory (use current project if available)
+        from api.git_service import GitError, list_branches, resolve_repo_cwd
+
         current_project = project_manager.get_current_project()
-        if current_project and current_project['type'] in ['local', 'github', 'gitlab']:
-            cwd = current_project['path']
-        else:
-            cwd = os.getcwd()
-        
-        # Get all branches
-        result = subprocess.run(['git', 'branch', '-a'], 
-                              cwd=cwd, capture_output=True, text=True, check=True)
-        branch_lines = result.stdout.strip().split('\n')
-        
-        branches = []
-        current_branch = None
-        
-        for line in branch_lines:
-            line = line.strip()
-            if not line:
-                continue
-                
-            # Check if it's the current branch
-            if line.startswith('*'):
-                current_branch = line[2:].strip()
-                branches.append({
-                    'name': current_branch,
-                    'current': True,
-                    'remote': False
-                })
-            else:
-                # Remove remote prefix for local branches
-                branch_name = line
-                is_remote = False
-                if line.startswith('remotes/'):
-                    branch_name = line.split('/', 2)[-1]
-                    is_remote = True
-                
-                branches.append({
-                    'name': branch_name,
-                    'current': False,
-                    'remote': is_remote
-                })
-        
+        cwd = resolve_repo_cwd(current_project)
+
+        out = list_branches(cwd)
+
         return jsonify({
             'success': True,
-            'data': branches,
-            'current': current_branch
+            'data': out['branches'],
+            'current': out['current']
         })
-        
-    except subprocess.CalledProcessError as e:
+
+    except GitError as e:
         return jsonify({
             'success': False,
-            'error': f'Git command failed: {e.stderr}'
+            'error': str(e)
         }), 500
     except Exception as e:
         return jsonify({
@@ -10992,69 +10909,31 @@ def git_branches():
 def git_commits():
     """Get recent Git commits with pagination"""
     try:
-        import subprocess
-        import os
-        
+        from api.git_service import GitError, list_commits, resolve_repo_cwd
+
         # Get pagination parameters
         page = request.args.get('page', 1, type=int)
         per_page = request.args.get('per_page', 20, type=int)
-        
+
         # Validate pagination parameters
         page = max(1, page)
         per_page = min(max(1, per_page), 100)  # Limit to 100 commits per page
-        
-        # Calculate skip count for git log
-        skip = (page - 1) * per_page
-        
-        # Get current working directory (use current project if available)
+
         current_project = project_manager.get_current_project()
-        if current_project and current_project['type'] in ['local', 'github', 'gitlab']:
-            cwd = current_project['path']
-        else:
-            cwd = os.getcwd()
-        
-        # First, get total commit count for pagination info
-        count_result = subprocess.run(['git', 'rev-list', '--count', 'HEAD'], 
-                                    cwd=cwd, capture_output=True, text=True, check=True)
-        total_commits = int(count_result.stdout.strip())
-        
-        # Get commits with pagination
-        result = subprocess.run(['git', 'log', f'--max-count={per_page}', f'--skip={skip}',
-                               '--pretty=format:%H|%an|%ae|%ad|%s', '--date=iso'], 
-                              cwd=cwd, capture_output=True, text=True, check=True)
-        
-        commits = []
-        for line in result.stdout.strip().split('\n'):
-            if not line:
-                continue
-                
-            parts = line.split('|', 4)
-            if len(parts) >= 5:
-                commits.append({
-                    'hash': parts[0],
-                    'author': parts[1],
-                    'email': parts[2],
-                    'date': parts[3],
-                    'message': parts[4]
-                })
-        
+        cwd = resolve_repo_cwd(current_project)
+
+        out = list_commits(cwd, page, per_page)
+
         return jsonify({
             'success': True,
-            'data': commits,
-            'pagination': {
-                'page': page,
-                'per_page': per_page,
-                'total': total_commits,
-                'pages': (total_commits + per_page - 1) // per_page,
-                'has_next': skip + per_page < total_commits,
-                'has_prev': page > 1
-            }
+            'data': out['commits'],
+            'pagination': out['pagination']
         })
-        
-    except subprocess.CalledProcessError as e:
+
+    except GitError as e:
         return jsonify({
             'success': False,
-            'error': f'Git command failed: {e.stderr}'
+            'error': str(e)
         }), 500
     except Exception as e:
         return jsonify({
@@ -11067,109 +10946,32 @@ def git_commits():
 def git_files():
     """Get Git working directory files with pagination"""
     try:
-        import subprocess
-        import os
-        
+        from api.git_service import GitError, list_files, resolve_repo_cwd
+
         # Get pagination parameters
         page = request.args.get('page', 1, type=int)
         per_page = request.args.get('per_page', 50, type=int)
         status_filter = request.args.get('status', None)  # Filter by status: modified, added, deleted, untracked, clean
-        
+
         # Validate pagination parameters
         page = max(1, page)
         per_page = min(max(1, per_page), 200)  # Limit to 200 items per page
-        
-        # Get current working directory (use current project if available)
+
         current_project = project_manager.get_current_project()
-        if current_project and current_project['type'] in ['local', 'github', 'gitlab']:
-            cwd = current_project['path']
-        else:
-            cwd = os.getcwd()
-        
-        # Get all tracked files
-        tracked_result = subprocess.run(['git', 'ls-files'], 
-                                      cwd=cwd, capture_output=True, text=True, check=True)
-        
-        # Get file status for changed files
-        status_result = subprocess.run(['git', 'status', '--porcelain'], 
-                                     cwd=cwd, capture_output=True, text=True, check=True)
-        
-        # Create a map of file statuses
-        status_map = {}
-        for line in status_result.stdout.strip().split('\n'):
-            if not line:
-                continue
-            status_code = line[:2]
-            filename = line[3:]
-            
-            # Determine file status
-            if status_code == '??':
-                status = 'untracked'
-            elif status_code[0] == 'A':
-                status = 'added'
-            elif status_code[0] == 'M':
-                status = 'modified'
-            elif status_code[0] == 'D':
-                status = 'deleted'
-            elif status_code[1] == 'M':
-                status = 'modified'
-            elif status_code[1] == 'D':
-                status = 'deleted'
-            else:
-                status = 'clean'
-                
-            status_map[filename] = {
-                'status': status,
-                'staged': status_code[0] != ' ' and status_code[0] != '?'
-            }
-        
-        # Build files list with all tracked files
-        all_files = []
-        for filename in tracked_result.stdout.strip().split('\n'):
-            if not filename:
-                continue
-                
-            if filename in status_map:
-                file_data = {
-                    'name': filename,
-                    'status': status_map[filename]['status'],
-                    'staged': status_map[filename]['staged']
-                }
-            else:
-                # File is tracked but has no changes
-                file_data = {
-                    'name': filename,
-                    'status': 'clean',
-                    'staged': False
-                }
-            
-            # Apply status filter if specified
-            if status_filter is None or file_data['status'] == status_filter:
-                all_files.append(file_data)
-        
-        # Apply pagination
-        total_files = len(all_files)
-        start_idx = (page - 1) * per_page
-        end_idx = start_idx + per_page
-        files = all_files[start_idx:end_idx]
-        
+        cwd = resolve_repo_cwd(current_project)
+
+        out = list_files(cwd, page, per_page, status_filter)
+
         return jsonify({
             'success': True,
-            'data': files,
-            'pagination': {
-                'page': page,
-                'per_page': per_page,
-                'total': total_files,
-                'pages': (total_files + per_page - 1) // per_page,
-                'has_next': end_idx < total_files,
-                'has_prev': page > 1
-            }
+            'data': out['files'],
+            'pagination': out['pagination']
         })
-        
-    except subprocess.CalledProcessError as e:
+
+    except GitError as e:
         return jsonify({
             'success': False,
-            'error': f'Git command failed: {e.stderr}'
+            'error': str(e)
         }), 500
     except Exception as e:
         return jsonify({
@@ -11182,135 +10984,36 @@ def git_files():
 def git_commit_diff(commit_hash):
     """Get diff for a specific commit with pagination"""
     try:
-        import subprocess
-        import os
-        
+        from api.git_service import GitError, commit_diff, resolve_repo_cwd
+
         # Get pagination parameters
         page = request.args.get('page', 1, type=int)
         per_page = request.args.get('per_page', 100, type=int)  # Lines per page for diff
         file_filter = request.args.get('file', None)  # Filter by specific file
-        
+
         # Validate pagination parameters
         page = max(1, page)
         per_page = min(max(1, per_page), 500)  # Limit to 500 lines per page
-        
-        # Get current working directory (use current project if available)
+
         current_project = project_manager.get_current_project()
-        if current_project and current_project['type'] in ['local', 'github', 'gitlab']:
-            cwd = current_project['path']
-        else:
-            cwd = os.getcwd()
-        
-        # Get commit info
-        commit_info_result = subprocess.run([
-            'git', 'show', '--format=%H|%an|%ae|%ad|%s', '--no-patch', commit_hash
-        ], cwd=cwd, capture_output=True, text=True, check=True)
-        
-        commit_info_line = commit_info_result.stdout.strip()
-        if commit_info_line:
-            parts = commit_info_line.split('|', 4)
-            commit_info = {
-                'hash': parts[0],
-                'author': parts[1],
-                'email': parts[2],
-                'date': parts[3],
-                'message': parts[4]
-            }
-        else:
-            commit_info = {}
-        
-        # Get file changes summary
-        files_result = subprocess.run([
-            'git', 'show', '--name-status', commit_hash
-        ], cwd=cwd, capture_output=True, text=True, check=True)
-        
-        files_changed_raw = []
-        for line in files_result.stdout.strip().split('\n'):
-            if not line or '\t' not in line:
-                continue
-            status, filename = line.split('\t', 1)
-            files_changed_raw.append({
-                'status': status,
-                'filename': filename
-            })
-        
-        # Get the full diff first to filter files properly
-        if file_filter:
-            # Get diff for specific file only
-            full_diff_result = subprocess.run([
-                'git', 'show', '--format=', commit_hash, '--', file_filter
-            ], cwd=cwd, capture_output=True, text=True, check=True)
-        else:
-            # Get diff for all files
-            full_diff_result = subprocess.run([
-                'git', 'show', '--format=', commit_hash
-            ], cwd=cwd, capture_output=True, text=True, check=True)
-        
-        # Filter out files that don't have actual diff content using the FULL diff
-        full_diff_text = full_diff_result.stdout
-        files_changed = []
-        
-        for file_info in files_changed_raw:
-            filename = file_info['filename']
-            # Check if this file has actual diff content by getting its specific diff
-            has_diff = False
-            
-            # Get diff for this specific file to check if it has actual changes
-            try:
-                file_diff_result = subprocess.run([
-                    'git', 'show', '--format=', commit_hash, '--', filename
-                ], cwd=cwd, capture_output=True, text=True, check=True)
-                
-                file_diff_text = file_diff_result.stdout
-                
-                # Check if the diff contains actual changes (not just metadata)
-                for line in file_diff_text.split('\n'):
-                    if line.startswith('+') and not line.startswith('+++'):
-                        has_diff = True
-                        break
-                    elif line.startswith('-') and not line.startswith('---'):
-                        has_diff = True
-                        break
-                        
-            except subprocess.CalledProcessError:
-                # If we can't get diff for this file, skip it
-                has_diff = False
-            
-            # Only include files that have actual diff content
-            if has_diff:
-                files_changed.append(file_info)
-        
-        # Now apply pagination to the FULL diff
-        diff_lines = full_diff_text.split('\n')
-        total_lines = len(diff_lines)
-        
-        # Apply pagination
-        start_idx = (page - 1) * per_page
-        end_idx = start_idx + per_page
-        paginated_diff_lines = diff_lines[start_idx:end_idx]
-        paginated_diff = '\n'.join(paginated_diff_lines)
-        
+        cwd = resolve_repo_cwd(current_project)
+
+        out = commit_diff(cwd, commit_hash, page, per_page, file_filter)
+
         return jsonify({
             'success': True,
             'data': {
-                'commit': commit_info,
-                'files': files_changed,
-                'diff': paginated_diff,
-                'pagination': {
-                    'page': page,
-                    'per_page': per_page,
-                    'total_lines': total_lines,
-                    'pages': (total_lines + per_page - 1) // per_page,
-                    'has_next': end_idx < total_lines,
-                    'has_prev': page > 1
-                }
+                'commit': out['commit'],
+                'files': out['files'],
+                'diff': out['diff'],
+                'pagination': out['pagination']
             }
         })
-        
-    except subprocess.CalledProcessError as e:
+
+    except GitError as e:
         return jsonify({
             'success': False,
-            'error': f'Git command failed: {e.stderr}'
+            'error': str(e)
         }), 500
     except Exception as e:
         print(f"Error getting commit diff: {e}")
@@ -11324,12 +11027,15 @@ def git_commit_diff(commit_hash):
 @app.route('/api/git/commit', methods=['POST'])
 @owner_required
 def git_commit():
-    """Legacy git UI commit — same identity rules as pending-changes."""
+    """Legacy git UI commit — same identity rules as pending-changes.
+
+    NOTE: this route is shadowed — ``git_commit_pending`` registers the
+    identical path+method first, so it always serves. Kept (calling the
+    service) until a verified removal; see the stabilization review.
+    """
     try:
-        import subprocess
-        import os
         from core.runtime_paths import rewrite_windows_cuttle_path
-        from scripts.utilities.git_pending_changes import _git_commit_env
+        from api.git_service import GitError, commit_changes
 
         data = request.get_json()
         if not data or 'message' not in data:
@@ -11342,39 +11048,23 @@ def git_commit():
         if current_project and current_project['type'] in ['local', 'github', 'gitlab']:
             cwd = rewrite_windows_cuttle_path(current_project['path'])
         else:
+            import os
             cwd = os.getcwd()
         message = data['message']
         files = data.get('files', [])
-        env = _git_commit_env(cwd)
-        name = env.get('GIT_AUTHOR_NAME') or 'Cuttle'
-        email = env.get('GIT_AUTHOR_EMAIL') or 'cuttle@localhost'
-        ident = ['-c', f'user.name={name}', '-c', f'user.email={email}']
 
-        if files:
-            for file in files:
-                subprocess.run(['git', 'add', file], cwd=cwd, check=True, env=env)
-        else:
-            subprocess.run(['git', 'add', '.'], cwd=cwd, check=True, env=env)
-
-        result = subprocess.run(
-            ['git', *ident, 'commit', '-m', message],
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-            check=True,
-            env=env,
-        )
+        output = commit_changes(cwd, message, files)
 
         return jsonify({
             'success': True,
             'message': 'Commit successful',
-            'output': result.stdout
+            'output': output
         })
 
-    except subprocess.CalledProcessError as e:
+    except GitError as e:
         return jsonify({
             'success': False,
-            'error': f'Git commit failed: {e.stderr}'
+            'error': str(e)
         }), 500
     except Exception as e:
         print(f"Error git_commit: {e}", flush=True)
@@ -11390,34 +11080,28 @@ def git_commit():
 def git_pull():
     """Pull changes from remote"""
     try:
-        import subprocess
-        import os
-        
+        from api.git_service import GitError, pull_repo, resolve_repo_cwd
+
         data = request.get_json()
         remote = data.get('remote', 'origin')
         branch = data.get('branch', 'main')
-        
-        # Get current working directory (use current project if available)
+
         current_project = project_manager.get_current_project()
-        if current_project and current_project['type'] in ['local', 'github', 'gitlab']:
-            cwd = current_project['path']
-        else:
-            cwd = os.getcwd()
-        
+        cwd = resolve_repo_cwd(current_project)
+
         # Pull from remote
-        result = subprocess.run(['git', 'pull', remote, branch], 
-                              cwd=cwd, capture_output=True, text=True, check=True)
-        
+        output = pull_repo(cwd, remote, branch)
+
         return jsonify({
             'success': True,
             'message': 'Pull successful',
-            'output': result.stdout
+            'output': output
         })
-        
-    except subprocess.CalledProcessError as e:
+
+    except GitError as e:
         return jsonify({
             'success': False,
-            'error': f'Git pull failed: {e.stderr}'
+            'error': str(e)
         }), 500
     except Exception as e:
         return jsonify({
@@ -11436,11 +11120,10 @@ def git_push():
       remote / branch   — when both set, `git push <remote> <branch>` (legacy git UI)
     """
     try:
-        import subprocess
+        from api.git_service import current_branch_name, push_repo
 
         try:
             from scripts.utilities.git_pending_changes import (
-                git_push_command,
                 git_push_target,
                 resolve_allowed_project_cwd,
                 resolve_allowed_repo_root,
@@ -11448,7 +11131,6 @@ def git_push():
             )
         except ImportError:
             from utilities.git_pending_changes import (  # type: ignore
-                git_push_command,
                 git_push_target,
                 resolve_allowed_project_cwd,
                 resolve_allowed_repo_root,
@@ -11489,21 +11171,9 @@ def git_push():
         if not branch:
             branch = (target.get('branch') or '').strip()
             if not branch:
-                br = subprocess.run(
-                    ['git', 'branch', '--show-current'],
-                    cwd=git_cwd, capture_output=True, text=True, check=False,
-                )
-                branch = (br.stdout or '').strip()
+                branch = current_branch_name(git_cwd)
 
-        cmd, env = git_push_command(remote, branch)
-        result = subprocess.run(
-            cmd,
-            cwd=git_cwd,
-            capture_output=True,
-            text=True,
-            check=False,
-            env=env,
-        )
+        result = push_repo(git_cwd, remote, branch)
         if result.returncode != 0:
             detail = sanitize_git_output(
                 (result.stderr or result.stdout or 'git push failed').strip()
@@ -11562,59 +11232,38 @@ def git_push():
 def git_branch():
     """Create, switch, or delete branches"""
     try:
-        import subprocess
-        import os
-        
+        from api.git_service import GitError, branch_operation, resolve_repo_cwd
+
         data = request.get_json()
         if not data or 'action' not in data or 'branch' not in data:
             return jsonify({
                 'success': False,
                 'error': 'Action and branch name are required'
             }), 400
-        
-        # Get current working directory (use current project if available)
+
         current_project = project_manager.get_current_project()
-        if current_project and current_project['type'] in ['local', 'github', 'gitlab']:
-            cwd = current_project['path']
-        else:
-            cwd = os.getcwd()
+        cwd = resolve_repo_cwd(current_project)
         action = data['action']
         branch = data['branch']
-        
-        if action == 'create':
-            # Create and switch to new branch
-            result = subprocess.run(['git', 'checkout', '-b', branch], 
-                                  cwd=cwd, capture_output=True, text=True, check=True)
-            message = f'Created and switched to branch: {branch}'
-            
-        elif action == 'switch':
-            # Switch to existing branch
-            result = subprocess.run(['git', 'checkout', branch], 
-                                  cwd=cwd, capture_output=True, text=True, check=True)
-            message = f'Switched to branch: {branch}'
-            
-        elif action == 'delete':
-            # Delete branch
-            result = subprocess.run(['git', 'branch', '-d', branch], 
-                                  cwd=cwd, capture_output=True, text=True, check=True)
-            message = f'Deleted branch: {branch}'
-            
-        else:
+
+        try:
+            out = branch_operation(cwd, action, branch)
+        except ValueError:
             return jsonify({
                 'success': False,
                 'error': f'Invalid action: {action}'
             }), 400
-        
+
         return jsonify({
             'success': True,
-            'message': message,
-            'output': result.stdout
+            'message': out['message'],
+            'output': out['output']
         })
-        
-    except subprocess.CalledProcessError as e:
+
+    except GitError as e:
         return jsonify({
             'success': False,
-            'error': f'Git branch operation failed: {e.stderr}'
+            'error': str(e)
         }), 500
     except Exception as e:
         return jsonify({
