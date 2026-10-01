@@ -4921,3 +4921,124 @@ whole was rejected as monolith-shifting. The owned seam is
   page-orchestration remainder is declared and Phase 4 may proceed.
 - Commit independently on main. No push, no restart.
   **STOP for Codex review before 9E/Phase 4.**
+
+## Prior approval recorded: 9D eff783fe
+
+- Codex review **APPROVED** Slice 9D (pending-result/replay/reconcile
+  lifecycle, `chat_pending_result.js`) at `eff783fe`. No production
+  changes requested. Next: final Phase 3 checkpoint 9E (busy-generation
+  state/poll scheduler ownership + closure verification); no Phase 4
+  implementation yet. No push/restart.
+
+## Slice 9E report — busy-generation lifecycle + Phase 3 closure
+  (`chat_generation.js`)
+
+- Owner: `src/web/js/chat_generation.js` (`CuttleChatGeneration`,
+  loaded after pending-result, before page). ONE explicit busy-lock
+  state object `{ loading, localSessionId, seq }` + transitions; sync
+  cadence decision; detached-poll classification; session-open flag
+  decision. No document/window/fetch/timers; no reverse dependencies
+  (verified: only its own export references `Cuttle*`). Page holds the
+  single instance and performs ALL effects: timer handles/scheduling,
+  transport, DOM, voice phase, stop transitions, running-flag paint.
+- Boundary: `beginGeneration` (idempotent re-begin keeps the token —
+  composer + processMessage double-begin preserved);
+  `endGeneration(state, token)` — token mismatch never releases
+  (fixes the Stop→send race where a stale turn callback could clear a
+  newer turn's lock; force with no token reserved for Stop/chat-delete,
+  which own the turn); `detachGeneration` (always wins, invalidates
+  pre-detach tokens, keeps spinner id); `rebindGeneration` (session
+  rebind while loading only); `isLoadingForSession` (viewing-gated
+  predicate, injected); `decideSyncDelayMs` + `SYNC_MS` (all six cadence
+  branches + inflightMax, verbatim values); `classifyDetachedPoll`
+  (stop/notify-done/keep-waiting/spin-down, fetch order preserved: live
+  status fetched only when no parked body and not generating);
+  `decideSessionOpen` (default-idle-until-live-status on switch).
+  Turn/stop/queue/pending-result composed via interfaces only.
+- Token threading: `beginLocalGeneration()` returns the token;
+  processMessage captures `turnGenToken` and all its end calls
+  (handoff, silent-form, control-skip, finally) pass it;
+  `finishLocalStreamFromServerSync` passes the current token; Stop and
+  chat-delete force. `isLoading`/`localGeneratingSessionId` readers
+  renamed mechanically to `generation.loading`/`generation.localSessionId`
+  (24 code sites; strings/comments untouched; `isLoadingThisSession`
+  keeps its name as a thin adapter).
+- Diffs: transition bodies become adapters; page diff is +24 net
+  (adapter comments/descriptors/token threading outweigh removed
+  bodies) — ownership, not line count, is the metric. No behavior
+  change except the specified stale-release hardening.
+- Coverage (committed `src/tests/test_chat_generation.py`, 10 tests,
+  all green): ORACLE differentials from executing pre-change page
+  functions BEFORE the move (scratch `/tmp/pre9e_oracle.js`) — begin
+  claim + idempotent re-begin, request-id fallback, end release,
+  detach (bump/suppress/keep-spinner/watcher), all six cadences,
+  schedule-replace, start no-double/gating, stop cancel, viewing
+  gates — embedded as literals, all equal post-move. Post-move
+  integration (scratch `/tmp/post9e_adapter.js`): real page adapters +
+  real module reproduce oracle values, plus stale-token no-release.
+  Discrimination: always-release mutation fails
+  `test_stale_token_never_releases_newer_turn`; cadence-swap mutation
+  fails `test_sync_cadence_branches`; restored byte-identical.
+  Structural pin updates required by the move: 9B stop-state adapter
+  harness migrated to the owned lock (now true page+module
+  integration), interval pin retargeted to `SYNC_MS` + delegation.
+- Closure contracts (all preserved, no moves): active-query search
+  paint gate (`historySearchQueryActive` gates untouched);
+  last-message-time stable sort; prefs/render/live-status restore order
+  (`restoreSessionStickySlash` prefs-first, transcript inference after
+  `/messages`); prompt-history remap migration owned by
+  `chat_prompt_history.js`; generation-flag interfaces
+  (`setHistorySessionRunning` call sites unchanged);
+  duplicate append/persist protection (`seenControlRequestIds`,
+  control_request_id claim); reconnect/parked/stop/steer/cross-session
+  paths; composer/markdown/render contracts — covered by the broad gate.
+- Gates (same env/invocation/scope: main-repo `.venv`, node shim on
+  `PATH`, `pytest -q -p no:warnings src/tests/
+  --ignore=src/tests/unit`): focused/neighbors green (only the known
+  pre-existing `test_cursor_stream_switch_does_not_chirp_mid_run`
+  fails — fails on HEAD too); broad **28 failed / 1880 passed /
+  79 skipped** with sorted FAILED identities `diff`-clean against the
+  9D HEAD baseline (28/1870/79 via `git stash -u` round-trip; +10
+  passed = 10 new tests, −0/+0 failures). `node --check` clean.
+- Cache: `chat_page.html` adds versioned
+  `chat_generation.js?v=20261001slice9e` and bumps `chat_page.js` to
+  `slice9e`; no other assets changed.
+- Spend audit: `CUTTLE_AGENT_SMOKE`/`CUTTLE_ALLOW_SPEND` unset (verified
+  zero in this shell); no paid/token prompt tests run.
+- Manual validation unavailable (node/fake-DOM only — no browser/Flask);
+  no visible UI changes.
+
+## Phase 3 closure summary
+
+- Planned domains and owners: turn/staleness → `chat_turn_guard.js`;
+  stop/cancel → `chat_stop_state.js`; follow-up queue →
+  `chat_followup_queue.js` (+ `chat_activity.js` items);
+  pending-result/replay/reconcile/SSE classes → `chat_pending_result.js`;
+  busy-generation/poll cadence → `chat_generation.js`;
+  messages/history (8A–8F) → `chat_messages.js`,
+  `chat_activate.js`, `chat_markdown.js`, `chat_prompt_history.js`.
+  Navigation map updated in `docs/architecture/repository-map.md`
+  (Frontend ownership table).
+- Metrics: `chat_page.js` 24265 → 24289 lines across 9E (+24 net —
+  mechanical reader rename + comments/descriptors; lifecycle decision
+  bodies now live in the 179-line owner); the five lifecycle owners
+  total 1126 lines with narrow interfaces; before/after behavior proven by
+  oracle differentials + `diff`-clean broad gates per slice, not by
+  line counts.
+- Remaining page-side by design (with justification): message-sync and
+  history timer handles/mechanics (dumb schedulers — decisions owned);
+  SSE byte-transport loop (transport, event classes owned);
+  session-adopt nav guards (navigation state); running-flag store/paint
+  (server-truth fan-in from many paths — splitting it would fragment);
+  render orchestration and persistence effects (orchestrator role).
+- Reverse-dependency checks: each owner module is standalone (no
+  `document`/`window`/`fetch`/timers/`Cuttle*` references); page
+  depends on owners, never the reverse.
+- Proposed Phase 4 slices (inventory only, no implementation):
+  P4-1 backend turn orchestration (`process_message_with_bot` dispatch
+  vs `chat_delivery`/`chat_run_registry` seams); P4-2 SSE/delivery
+  transport ownership (server event arms vs client waiter contract);
+  P4-3 router/harness selection boundaries (`agent_router` brain vs
+  sticky/starred executors). Each needs Codex dispatch.
+- Commit independently on main. No push, no restart.
+  **STOP for Codex review before Phase 4.**

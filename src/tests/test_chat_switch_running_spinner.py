@@ -15,6 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 
 CHAT_JS = Path(__file__).resolve().parents[1] / "web" / "js" / "chat_page.js"
+MOD_GEN = Path(__file__).resolve().parents[1] / "web" / "js" / "chat_generation.js"
 
 
 def _src() -> str:
@@ -90,4 +91,9 @@ def test_sessions_generating_does_not_rearm_open_chat():
 def test_poll_intervals_unchanged():
     src = _src()
     assert "const HISTORY_GENERATING_POLL_MS = 12000" in src
-    assert "const MESSAGE_SYNC_ACTIVE_MS = 5000" in src
+    # Sync cadence intervals live in the owned generation module (Slice 9E);
+    # the page only delegates the delay decision.
+    mod = MOD_GEN.read_text(encoding="utf-8")
+    assert "active: 5000" in mod
+    assert "CuttleChatGeneration.decideSyncDelayMs(" in src
+    assert "const MESSAGE_SYNC_ACTIVE_MS = 5000" not in src

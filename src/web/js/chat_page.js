@@ -672,9 +672,11 @@
     let messageNavPinnedToBottom = true;
     let _ignoreNavScrollPinUntil = 0;
     const NAV_AUTOSCROLL_STICK_PX = 24;
-    let isLoading = false;
-    /** Session id currently generating in this tab (history panel spinner). */
-    let localGeneratingSessionId = null;
+    // Busy-generation lock { loading, localSessionId, seq }, owned by
+    // chat_generation.js. Exactly one instance; all transitions go through
+    // CuttleChatGeneration (token-scoped release) — never direct writes.
+    // Reads stay inline as generation.loading / generation.localSessionId.
+    const generation = CuttleChatGeneration.createGenerationState();
     /** Session ids known to be generating (local stream and/or remote live status). */
     const runningSessionIds = new Set();
     /** Sessions with an active action form (pending restart / watch) — same spinner. */
@@ -749,17 +751,10 @@
     // Turn/staleness token source, owned by chat_turn_guard.js. Exactly
     // one instance; New Chat / history switch bumps it (see detach).
     const turnGeneration = CuttleTurnGuard.createGeneration();
-    // Split panes each run this timer. Aggressive dual GETs exhaust Chromium's
-    // HTTPS/HTTP pool and wedge Electron / starve YouTube + refresh.
-    const MESSAGE_SYNC_IDLE_MS = 12000;
-    const MESSAGE_SYNC_ACTIVE_MS = 5000;
-    const MESSAGE_SYNC_HIDDEN_MS = 60000;
-    /** Unfocused split pane: still recover, but don't compete for the conn pool. */
-    const MESSAGE_SYNC_UNFOCUSED_MS = 16000;
-    const MESSAGE_SYNC_UNFOCUSED_IDLE_MS = 45000;
-    /** While local stream is stuck, still poll messages (recovery) this often. */
-    const MESSAGE_SYNC_RECOVER_MS = 4000;
-    const MESSAGE_SYNC_INFLIGHT_MAX_MS = 20000;
+    // Message-sync poll cadence intervals, owned by chat_generation.js
+    // (CuttleChatGeneration.SYNC_MS). Split panes each run this timer.
+    // Aggressive dual GETs exhaust Chromium's HTTPS/HTTP pool and wedge
+    // Electron / starve YouTube + refresh.
     /** Inside app shell iframe — live-status is batched by the parent. */
     const inAppShell = !!(window.parent && window.parent !== window);
     let shellPaneFocused = true;
@@ -959,10 +954,11 @@
         } catch (_) {}
         removeTypingIndicator();
         removeRemoteWaitingIndicator();
-        const keepRunningId = localGeneratingSessionId;
+        // Owned by chat_generation.js — detach transition (drops the local
+        // lock, invalidates pre-detach tokens); the page applies transport
+        // teardown below and keeps the spinner/watch effects.
+        const keepRunningId = CuttleChatGeneration.detachGeneration(generation).keepRunningId;
         clearStreamStatusPoll();
-        isLoading = false;
-        localGeneratingSessionId = null;
         // Server run continues — keep history spinner for the chat we left.
         if (keepRunningId) {
             setHistorySessionRunning(keepRunningId, true);
@@ -1219,7 +1215,7 @@
         const decision = CuttleChatPendingResult.decideStaleHeal({
             stopped: stopState.userStopped,
             suppressed: stopState.waitingSuppressed,
-            loading: isLoading,
+            loading: generation.loading,
             hasEventSource: !!activeEventSource,
             hasRequest: !!activeRequestController,
             hasTrackedTurn: !!inFlightUserMessage,
@@ -2574,10 +2570,11 @@
      * switches chats, isLoading can still be true for the *previous* chat —
      * recovery/paint must not treat that as "this transcript is generating."
      */
+    // Owned by chat_generation.js — thin adapter over the owned lock.
     function isLoadingThisSession() {
-        if (!isLoading) return false;
-        if (localGeneratingSessionId == null) return true;
-        return isViewingSession(localGeneratingSessionId);
+        return CuttleChatGeneration.isLoadingForSession(
+            generation, (sid) => isViewingSession(sid)
+        );
     }
 
     /** Mark unread + toast when a reply arrives while the user isn't looking at that chat. */
@@ -2640,32 +2637,39 @@
                     if (cancelled) break;
                     if (currentSessionId != null && sessionIdsEqual(currentSessionId, sid)) break;
 
+                    // Owned by chat_generation.js — one poll-step decision;
+                    // the page owns transport, sleeps, chirp, and flag paint.
+                    let body = '';
                     if (data && data.success && data.pending && data.result) {
-                        const body = String(data.result.response || data.result.output || '').trim();
-                        if (body) {
-                            try { consumeParkedChatResult(sid); } catch (_) {}
-                            setHistorySessionRunning(sid, false);
-                            notifyAssistantResponseReady(sid, {
-                                isError: data.result.success === false,
-                            });
-                            break;
-                        }
+                        body = String(data.result.response || data.result.output || '').trim();
                     }
-
-                    if (data && data.generating) {
+                    const step = {
+                        cancelled: false,
+                        returnedHome: false,
+                        body: body,
+                        generating: !!(data && data.generating),
+                        liveActive: false,
+                    };
+                    if (!step.body && !step.generating) {
+                        const live = await fetchChatLiveStatus(sid).catch(() => null);
+                        if (cancelled) break;
+                        step.liveActive = liveStatusLooksActive(live);
+                    }
+                    const action = CuttleChatGeneration.classifyDetachedPoll(step);
+                    if (action === 'notify-done') {
+                        try { consumeParkedChatResult(sid); } catch (_) {}
+                        setHistorySessionRunning(sid, false);
+                        notifyAssistantResponseReady(sid, {
+                            isError: data.result.success === false,
+                        });
+                        break;
+                    }
+                    if (action === 'keep-waiting') {
                         setHistorySessionRunning(sid, true);
                         await new Promise((r) => setTimeout(r, pollMs));
                         continue;
                     }
-
-                    const live = await fetchChatLiveStatus(sid).catch(() => null);
-                    if (cancelled) break;
-                    if (liveStatusLooksActive(live)) {
-                        setHistorySessionRunning(sid, true);
-                        await new Promise((r) => setTimeout(r, pollMs));
-                        continue;
-                    }
-
+                    if (action === 'stop') break;
                     // Idle, no parked body — spin down; opening the chat loads history.
                     setHistorySessionRunning(sid, false);
                     break;
@@ -10408,7 +10412,7 @@
                 btn.__wired_button = true;
                 btn.addEventListener('click', () => {
                     try {
-                        if (isLoading) return;
+                        if (generation.loading) return;
                         if (btn.disabled || btn.closest('.cuttle-buttons-locked')) return;
                         const id = btn.getAttribute('data-cuttle-button-id') || 'button';
                         const payload = btn.getAttribute('data-cuttle-button-payload') || '';
@@ -11996,7 +12000,7 @@
      */
     function consumeCancelledAgentReply(text, opts = {}) {
         if (!isCancelledAgentText(text)) return false;
-        const live = stopState.userStopped || isLoading;
+        const live = stopState.userStopped || generation.loading;
         if (opts.announce === true || (opts.announce !== false && live)) {
             ensureGenerationStopNotice('⏹ Generation cancelled.');
         }
@@ -12649,10 +12653,10 @@
         // Leaving a different chat's local stream — detach UI so this session
         // isn't treated as generating (false follow-up queue).
         if (
-            isLoading
+            generation.loading
             && (
-                localGeneratingSessionId == null
-                || !sessionIdsEqual(localGeneratingSessionId, sessionId)
+                generation.localSessionId == null
+                || !sessionIdsEqual(generation.localSessionId, sessionId)
             )
         ) {
             detachLocalGenerationForNavigation();
@@ -12718,10 +12722,13 @@
             // confirms generating. Stale runningSessionIds / hub cache from a
             // prior visit used to flash the purple title + history spinner for
             // a few seconds while waiting on the shell heartbeat poll.
+            // Owned by chat_generation.js — an opened chat defaults to idle
+            // until the one-shot live-status confirms generating.
+            const openFlags = CuttleChatGeneration.decideSessionOpen({ switchingAway });
+            if (openFlags.clearHubCache) hubLiveStatusCache = null;
+            if (openFlags.deferGenerating) deferOpenChatGeneratingFromSessions = true;
+            if (openFlags.markIdle) setHistorySessionRunning(sessionId, false);
             if (switchingAway) {
-                hubLiveStatusCache = null;
-                deferOpenChatGeneratingFromSessions = true;
-                setHistorySessionRunning(sessionId, false);
                 // Form-awaiting is DOM-derived; cleared messages must not keep
                 // the old chat's pending-form spinner on this title.
                 _mutateSessionIdSet(formAwaitingSessionIds, sessionId, false);
@@ -13242,10 +13249,12 @@
             slashPaletteSupplement.codexEffortDirty = false;
             persistCodexEffortSelection(slashPaletteSupplement.codexEffort);
         }
-        if (isLoading) {
-            if (prev) setHistorySessionRunning(prev, false);
-            localGeneratingSessionId = sessionId;
-            setHistorySessionRunning(sessionId, true);
+        // Owned by chat_generation.js — rebind the local lock to the newly
+        // bound session while loading; idle means no lock to move.
+        const rebound = CuttleChatGeneration.rebindGeneration(generation, sessionId);
+        if (rebound) {
+            if (rebound.prev) setHistorySessionRunning(rebound.prev, false);
+            setHistorySessionRunning(rebound.sessionId, true);
         }
         if (wasNew) {
             refreshChatHistoryList();
@@ -13254,17 +13263,16 @@
         }
     }
 
+    // Owned by chat_generation.js — thin adapter: cadence decision lives
+    // in the owner (intervals in CuttleChatGeneration.SYNC_MS); the page
+    // supplies the snapshot and owns the timer mechanics.
     function messageSyncDelayMs() {
-        if (pageIsBackgrounded()) return MESSAGE_SYNC_HIDDEN_MS;
-        if (inAppShell && !shellPaneFocused) {
-            if (isLoading || isSessionGenerating()) return MESSAGE_SYNC_UNFOCUSED_MS;
-            return MESSAGE_SYNC_UNFOCUSED_IDLE_MS;
-        }
-        // Local stream/detached wait: keep a light recovery poll so a finished
-        // server reply can paint without requiring an Electron refresh.
-        if (isLoading) return MESSAGE_SYNC_RECOVER_MS;
-        if (isSessionGenerating()) return MESSAGE_SYNC_ACTIVE_MS;
-        return MESSAGE_SYNC_IDLE_MS;
+        return CuttleChatGeneration.decideSyncDelayMs({
+            backgrounded: pageIsBackgrounded(),
+            shellUnfocused: inAppShell && !shellPaneFocused,
+            loading: generation.loading,
+            generating: isSessionGenerating(),
+        });
     }
 
     function stopMessageSync(opts = {}) {
@@ -14167,10 +14175,10 @@
         // Local stream owns this chat's turn — keep/restore the typing bubble
         // (it is wiped when switching chats or after a hard refresh race).
         if (
-            isLoading
-            && localGeneratingSessionId != null
+            generation.loading
+            && generation.localSessionId != null
             && currentSessionId != null
-            && sessionIdsEqual(localGeneratingSessionId, currentSessionId)
+            && sessionIdsEqual(generation.localSessionId, currentSessionId)
         ) {
             const statusLabel = (liveStatus && liveStatus.status) || undefined;
             ensureLocalTypingIndicator(statusLabel);
@@ -14179,7 +14187,7 @@
             return;
         }
         // Generating in another chat in this tab — don't steal that stream's UI.
-        if (isLoading) {
+        if (generation.loading) {
             removeRemoteWaitingIndicator();
             const liveActiveOther = liveStatusLooksActive(liveStatus);
             if (currentSessionId && liveActiveOther) {
@@ -14236,7 +14244,7 @@
             // drain follow-ups queued while isSessionGenerating() was true.
             // Drain on any generating UI clear, not only when the remote indicator
             // was present — history "generating" flags alone used to queue forever.
-            if (wasGeneratingUi && !isLoading && !stopState.waitingSuppressed) {
+            if (wasGeneratingUi && !generation.loading && !stopState.waitingSuppressed) {
                 scheduleFollowupDrain(80);
             }
         }
@@ -15395,7 +15403,7 @@
     }
 
     function finishLocalStreamFromServerSync() {
-        if (!isLoading) return;
+        if (!generation.loading) return;
         CuttleStopState.markStreamDetached(stopState);
         try {
             if (activeRequestController) activeRequestController.abort();
@@ -15409,7 +15417,8 @@
         } catch (_) {}
         removeTypingIndicator();
         removeRemoteWaitingIndicator();
-        endLocalGeneration();
+        // Current turn owns this finish: a newer turn's lock must survive.
+        endLocalGeneration(CuttleChatGeneration.currentToken(generation));
         const chatInput = document.getElementById('chatInput');
         const sendButton = document.getElementById('sendButton');
         const stopButton = document.getElementById('stopButton');
@@ -15444,7 +15453,7 @@
         // which silently stopped all recovery sync until Electron refresh.
         if (messageSyncInFlight) {
             if (messageSyncStartedAt
-                && (Date.now() - messageSyncStartedAt) > MESSAGE_SYNC_INFLIGHT_MAX_MS) {
+                && (Date.now() - messageSyncStartedAt) > CuttleChatGeneration.SYNC_MS.inflightMax) {
                 messageSyncInFlight = false;
             } else {
                 return;
@@ -15491,7 +15500,7 @@
             }
             const data = await msgResp.json();
             if (!data.success || !Array.isArray(data.messages)) {
-                if (liveStatus && liveStatus.active && !isLoading) {
+                if (liveStatus && liveStatus.active && !generation.loading) {
                     updateRemoteWaitingFromMessages([], liveStatus);
                 }
                 return;
@@ -15635,10 +15644,10 @@
                 }
             }
 
-            if (appendedAssistant && isLoading && (appendedNewAssistant || turnAlreadyShowsAssistantReply())) {
+            if (appendedAssistant && generation.loading && (appendedNewAssistant || turnAlreadyShowsAssistantReply())) {
                 finishLocalStreamFromServerSync();
                 scheduleHistoryTitleRefresh();
-            } else if (isLoading) {
+            } else if (generation.loading) {
                 healStaleGeneratingState();
             }
             // Only chirp/toast for replies that arrived via sync (other device /
@@ -16246,7 +16255,7 @@
         }
 
         // If this chat is actively generating, abort the local stream immediately.
-        if (sessionIdsEqual(currentSessionId, sessionId) && isLoading) {
+        if (sessionIdsEqual(currentSessionId, sessionId) && generation.loading) {
             try {
                 if (activeRequestController) activeRequestController.abort();
             } catch (_) {}
@@ -16258,6 +16267,7 @@
             } catch (_) {}
             removeTypingIndicator();
             removeRemoteWaitingIndicator();
+            // Force: deleting the chat owns its turn outright.
             endLocalGeneration();
             setHistorySessionRunning(sessionId, false);
         }
@@ -16861,12 +16871,18 @@
         syncHistoryRunningIndicators();
     }
 
+    // Owned by chat_generation.js — thin adapter: the transition runs in
+    // the owner (idempotent re-begin keeps the token); the page applies
+    // stop/flag/voice/sync effects. Returns the begin token so the turn's
+    // own end calls can prove they still own the lock.
     function beginLocalGeneration() {
-        isLoading = true;
+        const begun = CuttleChatGeneration.beginGeneration(generation, {
+            currentSessionId: currentSessionId,
+            requestSessionId: authSessionIdForRequest(),
+        });
         CuttleStopState.clearAbortSuppression(stopState);
-        localGeneratingSessionId = currentSessionId || authSessionIdForRequest() || null;
-        if (localGeneratingSessionId) {
-            setHistorySessionRunning(localGeneratingSessionId, true);
+        if (begun.markRunning) {
+            setHistorySessionRunning(begun.markRunning, true);
         }
         if (voiceModeActive && voiceModePhase !== 'speaking') {
             setVoiceModePhase('processing', 'Thinking…');
@@ -16878,17 +16894,21 @@
         // paint if the SSE/pending path stalls (no Electron refresh required).
         startMessageSync();
         if (messageSyncTimer) scheduleNextMessageSync();
+        return begun.token;
     }
 
-    function endLocalGeneration() {
+    // Owned by chat_generation.js — thin adapter. token scopes the release:
+    // pass the turn's begin token; omit it only when the caller owns the
+    // turn outright (Stop / chat-delete force paths).
+    function endLocalGeneration(token) {
+        const ended = CuttleChatGeneration.endGeneration(generation, token);
+        if (!ended.released) return false;
         clearStreamStatusPoll();
-        isLoading = false;
-        if (localGeneratingSessionId) {
-            const id = localGeneratingSessionId;
-            localGeneratingSessionId = null;
-            setHistorySessionRunning(id, false);
+        if (ended.sessionId) {
+            setHistorySessionRunning(ended.sessionId, false);
         }
         if (messageSyncTimer) scheduleNextMessageSync();
+        return true;
     }
 
     function syncHistoryRunningIndicators() {
@@ -17059,7 +17079,7 @@
                 // reply is already on screen (same race as live-status sync).
                 if (
                     s.generating
-                    && !isLoading
+                    && !generation.loading
                     && turnAlreadyShowsAssistantReply()
                 ) {
                     return;
@@ -17086,7 +17106,7 @@
         // Drop spinners for sessions the server no longer reports as generating,
         // but keep the one this tab is actively streaming and form-awaiting sessions.
         [...runningSessionIds].forEach((id) => {
-            if (localGeneratingSessionId != null && sessionIdsEqual(id, localGeneratingSessionId)) {
+            if (generation.localSessionId != null && sessionIdsEqual(id, generation.localSessionId)) {
                 return;
             }
             if ([...formAwaitingSessionIds].some((fid) => sessionIdsEqual(fid, id))) {
@@ -17110,7 +17130,7 @@
         if (
             currentWasRunning
             && !currentStillRunning
-            && !isLoading
+            && !generation.loading
             && !stopState.waitingSuppressed
             && followupQueue.items.length
         ) {
@@ -18696,7 +18716,7 @@
     function syncComposerStopWithWatch() {
         const stopButton = document.getElementById('stopButton');
         if (!stopButton) return;
-        if (stopState.userStopped || isLoading) return;
+        if (stopState.userStopped || generation.loading) return;
         if (chatHasRunningWatchJob()) {
             stopButton.style.display = 'flex';
             stopButton.disabled = false;
@@ -18729,6 +18749,7 @@
         } catch (_) {}
         removeTypingIndicator();
         removeRemoteWaitingIndicator();
+        // Force: Stop owns the turn outright (the re-send claims a new token).
         endLocalGeneration();
         if (currentSessionId) setHistorySessionRunning(currentSessionId, false);
         activeRequestController = null;
@@ -18763,13 +18784,16 @@
         const controlLane = !!opts.controlLane || isImmediateControlLaneMessage(message);
         const stickyCmd = getStickySlashCommandFromMessage(message);
         let responseData = null;
+        // This turn's generation-lock token: end calls below release only
+        // if no newer turn (or detach) has since claimed generation.
+        let turnGenToken = null;
         // Control-lane replies must not clobber an in-flight agent turn's stop/abort state.
         const prevInFlight = inFlightUserMessage;
         const prevController = activeRequestController;
         if (!controlLane) {
             CuttleStopState.beginSend(stopState);
             inFlightUserMessage = message;
-            beginLocalGeneration();
+            turnGenToken = beginLocalGeneration();
         }
 
         const chatInput = document.getElementById('chatInput');
@@ -19158,7 +19182,7 @@
                         // Hand off to remote waiting + poll; don't fake an error.
                         removeTypingIndicator();
                         // Clear local generating before remote-waiting UI (it no-ops while isLoading).
-                        if (!controlLane) endLocalGeneration();
+                        if (!controlLane) endLocalGeneration(turnGenToken);
                         startMessageSync();
                         updateRemoteWaitingFromMessages([], transportOutcome.live);
                         return;
@@ -19195,7 +19219,7 @@
                         data.success ? 'success' : 'error'
                     );
                 }
-                if (!controlLane) endLocalGeneration();
+                if (!controlLane) endLocalGeneration(turnGenToken);
                 return;
             }
 
@@ -19397,7 +19421,7 @@
                         );
                         if (already) {
                             removeTypingIndicator();
-                            if (!controlLane) endLocalGeneration();
+                            if (!controlLane) endLocalGeneration(turnGenToken);
                             // skip assistant append
                         } else if (!turnAlreadyShowsAssistantReply(data.response)) {
                             const assistantTs = Date.now();
@@ -19434,7 +19458,7 @@
                         }
                         if (data.session_id) adoptChatSessionId(data.session_id);
                         removeRemoteWaitingIndicator();
-                        notifyAssistantResponseReady(currentSessionId || localGeneratingSessionId, {
+                        notifyAssistantResponseReady(currentSessionId || generation.localSessionId, {
                             isError: !!assistantFailed,
                         });
                         startMessageSync();
@@ -19484,7 +19508,7 @@
                 // Reply is on screen — drop any remote-waiting UI a parallel
                 // sync may have armed from a stale live-status snapshot.
                 removeRemoteWaitingIndicator();
-                notifyAssistantResponseReady(currentSessionId || localGeneratingSessionId, {
+                notifyAssistantResponseReady(currentSessionId || generation.localSessionId, {
                     isError: !!assistantFailed,
                 });
                 startMessageSync();
@@ -19517,7 +19541,7 @@
                     if (data.session_id) {
                         adoptChatSessionId(data.session_id);
                     }
-                    notifyAssistantResponseReady(currentSessionId || localGeneratingSessionId, {
+                    notifyAssistantResponseReady(currentSessionId || generation.localSessionId, {
                         isError: true,
                     });
                     startMessageSync();
@@ -19561,7 +19585,7 @@
                         slash_command_failed: !!stickyCmd,
                     });
                     notifyAssistantResponseReady(
-                        currentSessionId || localGeneratingSessionId || turnSessionId(),
+                        currentSessionId || generation.localSessionId || turnSessionId(),
                         { isError: true }
                     );
                 } else {
@@ -19579,7 +19603,7 @@
                 removeTypingIndicator();
             } else {
                 inFlightUserMessage = null;
-                endLocalGeneration();
+                endLocalGeneration(turnGenToken);
                 activeRequestController = null;
             }
             if (stickyCmd && !controlLane) {

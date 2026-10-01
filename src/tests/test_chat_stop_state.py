@@ -16,6 +16,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 MOD_SS = REPO_ROOT / "src" / "web" / "js" / "chat_stop_state.js"
+MOD_GEN = REPO_ROOT / "src" / "web" / "js" / "chat_generation.js"
 
 node_only = pytest.mark.skipif(
     shutil.which("node") is None, reason="node not available"
@@ -163,8 +164,8 @@ const fnBody = (name) => {
 // so the adapter suite executes the true page+module integration).
 globalThis.CuttleStopState = require(process.env.MOD_SS);
 const stopState = CuttleStopState.createStopState();
-let isLoading = false;
-let localGeneratingSessionId = null;
+globalThis.CuttleChatGeneration = require(process.env.MOD_GEN);
+const generation = CuttleChatGeneration.createGenerationState();
 let currentSessionId = 's1';
 let inFlightUserMessage = null;
 let activeRequestController = null;
@@ -235,10 +236,10 @@ out.throwing = { flags: flags(),
   ctrlNull: activeRequestController === null, sseNull: activeEventSource === null };
 // 5. detach with live transports (navigation keeps server run)
 stopState.userStopped = false; stopState.abortSuppressed = false; stopState.waitingSuppressed = false;
-isLoading = true; localGeneratingSessionId = 's1';
+generation.loading = true; generation.localSessionId = 's1';
 activeRequestController = mkCtrl(false); activeEventSource = mkSSE(false);
 detachLocalGenerationForNavigation();
-out.detach = { flags: flags(), loading: isLoading, genSession: localGeneratingSessionId,
+out.detach = { flags: flags(), loading: generation.loading, genSession: generation.localSessionId,
   ctrlNull: activeRequestController === null, sseNull: activeEventSource === null,
   inflightNull: inFlightUserMessage === null, fx: fx.splice(0) };
 // 6. shell pause vs teardown
@@ -248,16 +249,16 @@ releaseLocalStreamForShellPause(true);
 out.teardown = { flags: flags(), fx: fx.splice(0) };
 // 7. begin lifts suppression and marks running
 beginLocalGeneration();
-out.begin = { flags: flags(), loading: isLoading, genSession: localGeneratingSessionId, fx: fx.splice(0) };
+out.begin = { flags: flags(), loading: generation.loading, genSession: generation.localSessionId, fx: fx.splice(0) };
 // 8. server-sync finish: noop when idle; teardown + drain when live
-isLoading = false;
+generation.loading = false;
 finishLocalStreamFromServerSync();
 out.finishIdle = { flags: flags(), fx: fx.splice(0) };
-isLoading = true;
+generation.loading = true;
 activeRequestController = mkCtrl(false); activeEventSource = mkSSE(false);
 followupQueue.items = [{ id: 'q1' }];
 finishLocalStreamFromServerSync();
-out.finishLive = { flags: flags(), loading: isLoading, fx: fx.splice(0) };
+out.finishLive = { flags: flags(), loading: generation.loading, fx: fx.splice(0) };
 process.stdout.write(JSON.stringify(out));
 })().catch((e) => { console.error('HARNESS-ERROR', e); process.exit(2); });
 """
@@ -271,6 +272,7 @@ def _run_adapter():
         env={"PATH": os.environ["PATH"], "CHAT_PAGE_JS": str(CHAT_PAGE_JS),
              "MOD_TG": str(REPO_ROOT / "src" / "web" / "js" / "chat_turn_guard.js"),
              "MOD_SS": str(MOD_SS),
+             "MOD_GEN": str(MOD_GEN),
              "MOD_FQ": str(REPO_ROOT / "src" / "web" / "js" / "chat_followup_queue.js")},
     )
     assert proc.returncode == 0, proc.stderr or proc.stdout

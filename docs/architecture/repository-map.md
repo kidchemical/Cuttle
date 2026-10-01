@@ -119,6 +119,26 @@ Coordinator HTTP: `/api/workers/*` (`device_workers`). Store: gitignored SQLite 
 
 Vanilla JS: `src/web/js/app_shell.js` (shell), `chat_page.js` (chat). No bundler. Electron loads the same HTTPS origin.
 
+**Chat frontend ownership (Phase 3 closure):** `chat_page.js` is the
+page orchestrator — it owns DOM, transport URLs, timer handles, and
+persistence effects. Decisions/state live in one owner module each
+(loaded before the page; no reverse dependencies — owners never touch
+`document`/`window`/`fetch`/timers):
+
+| Owner | Owns (decisions/state) | Page keeps (effects) |
+|---|---|---|
+| `chat_turn_guard.js` | turn/staleness generation tokens | bump/capture call sites |
+| `chat_stop_state.js` | stop/cancel flags + abort classification | notices, transport abort, dispatch |
+| `chat_followup_queue.js` | follow-up queue state + take/reconcile (composes `chat_activity.js` items) | drain timer, persistence, edit UI |
+| `chat_pending_result.js` | pending-result waiter, history-recovery match, sync exactly-once classification, stale-heal, SSE event classes, send-failure recovery, restart poll | fetch/paint/clock, session-adopt guards |
+| `chat_generation.js` | busy-lock `{loading, localSessionId, seq}` + token-scoped release, sync cadence, detached-poll classes, session-open flags | timers, transport, voice, running-flag paint |
+| `chat_messages.js` etc. (8A–8F) | records/windowing, display formatting, markdown/activation, prompt history | render orchestration, streaming |
+
+Streaming lifecycle fixes belong in the lifecycle/state owners plus
+page adapters/tests — not in unrelated page regions. Deferred, still
+page-side by design: message-sync/history timer mechanics, SSE byte
+transport, session-adopt nav guards, running-flag store/paint.
+
 ---
 
 ## CLI / automation
