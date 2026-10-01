@@ -3199,3 +3199,279 @@ heal snapshots.
    refactors; no backend changes; failures identical to
    baseline). Do NOT continue in this track until this review is
    approved.
+
+---
+
+# Phase 3 — Slice 6 approval (recorded at the Slice 7 append boundary)
+
+- Slice 6 (`be2658e9`, composer domain) is **approved** per the worker
+  brief for Slice 7; prior sections above are preserved verbatim —
+  reviewer last read line 3201, and these notes sit at the append
+  boundary rather than rewriting them.
+- Slice 6 review follow-up honored in this slice: the duplicate-guard
+  ordering subtlety (ignored duplicate must return before
+  `takePendingAttachments` / `dismissOpenInteractiveCards`) is now
+  pinned by a durable committed regression test, not just the Slice 6
+  scratch differential. New `test_chat_composer.py` coverage:
+  `test_ignore_duplicate_plan_contract` (node-executed plan behavior),
+  `test_ignore_duplicate_preserves_staged_attachments_and_cards`
+  (sendMessage duplicate-branch orchestration effects: no take, clear,
+  dismiss, steer, queue, or send effect; only clear + sticky
+  re-resolve + resize + return), and
+  `test_followup_branch_still_takes_attachments_and_cards`
+  (discrimination check that the follow-up branch owns take/dismiss).
+  Verified 8/8 with node on PATH.
+
+---
+
+# Phase 3 — Slice 7: Agent/Model Controls (chat_page.js)
+
+## Phase status
+
+- Slice: Phase 3 Slice 7 — agent/model/effort selection decisions →
+  `src/web/js/chat_agent_model.js` (`window.CuttleChatAgentModel`).
+- Git baseline before work: `be2658e9` ("Phase 3 slice 6: composer
+  domain"); tree clean except pre-existing untracked `work/`
+  (scratch, left in place, never touched).
+- Git commit after work: the single `Phase 3 slice 7: agent/model
+  controls domain` commit on main (identify via `git log --oneline`).
+- Completion status: **complete, awaiting external review**. Slice 8
+  (Messages/History or Streaming) NOT started.
+
+## Original problem
+
+`chat_page.js` owned every Agent/Model control decision inline as
+closures over `slashPaletteSupplement`: which backend pin wins
+(nested `agent_pins` vs legacy flat keys), starred model/effort
+default lookups, starred-default row matching, send-time `agent_pins`
+construction (active-harness always-attach vs dirty-only), the Codex
+pre-send effort fetch gate, and badge effort resolution — interleaved
+with palette/badge DOM, fetch/POST transport, session-prefs IO, and
+send orchestration. The decisions could only be tested by slicing
+page source (first-turn pins, codex-effort ordering pins).
+
+## Before implementation (inventory)
+
+Agent/Model responsibilities triaged across the 25,396-line page:
+
+1. **Supplement state** (`slashPaletteSupplement`: per-agent
+   model/effort/dirty/loading/key + cursor/muse/hermes/opencode/codex
+   catalogs + starred maps) — stays (domain state, page-owned).
+2. **Pin reads** (moved): `sessionPin` (nested-wins, blank-falls-back).
+3. **Starred defaults** (moved lookups, kept IO): `starredAgentModel` /
+   `starredAgentEffort` (case-insensitive map read);
+   `isAgentDefaultStarred` (row match); loaders/POSTs stay.
+4. **Outbound request inputs** (moved build, kept application):
+   `attachAgentIdentityToRequest` core → `buildAgentPinsForRequest`;
+   `sticky_agent` override stays (already delegates to
+   `CuttleChatSlash.stickyAgentOverrideForRequest`); send-path attach
+   order (sticky then pins) unchanged.
+5. **Pre-send fetch gate** (moved gate, kept IO):
+   `ensureCodexEffortForSend` → `codexEffortFetchForSend`; dirty
+   re-check after await, assignment, and both send paths'
+   ensure-before-`addMessageToUI` ordering preserved.
+6. **Badge effort resolution** (moved): fallback chain inside
+   `enrichSlashCommandWithAgentBadge`; badge DOM construction stays.
+7. **Session restoration** (`restoreSessionStickySlash`,
+   `markStickyAgentCleared`, prefs IO) — stays untouched: two suites
+   (`test_starred_agent_removal.py`, `test_working_bubble_badge...`)
+   execute the real function under node with stubbed prefs, so moving
+   it would break their harnesses for no slice benefit. Preserved and
+   covered, not absorbed.
+8. **Palette DOM, badge paint, catalog fetch/POST, history chips,
+   typing-meta, execution orchestration** — stay in their owners.
+9. **Explicitly NOT absorbed**: Messages/History, Streaming,
+   backend routing, feature redesign. No backend changes.
+
+Shared state the moved logic needed: supplement maps/values (passed
+as an explicit `models` snapshot / `pinnedEfforts` array — never the
+live object), chip presence + prefs + session key (passed as
+booleans/strings into the fetch gate). No moved function touches
+`document` / `window` / `localStorage` / `fetch`.
+
+## Changes made
+
+- **Added `src/web/js/chat_agent_model.js`** (169 L): 7 pure
+  functions behind `CuttleChatAgentModel` (classic script + node
+  exports; footer uses TDZ-proof `globalThis`, same pattern as
+  `chat_composer.js`): `sessionPin`, `starredAgentModel`,
+  `starredAgentEffort`, `isAgentDefaultStarred`,
+  `buildAgentPinsForRequest`, `codexEffortFetchForSend`,
+  `resolveAgentEffortForBadge`.
+- **chat_page.js keeps**: supplement state, all fetch/POST, palette
+  and badge DOM, prefs IO, sticky restore/override orchestration,
+  send-path ordering, plus thin same-signature adapters (pure
+  delegations + gather-then-delegate for pins/effort/gate).
+- `attachAgentIdentityToRequest(requestBody)` keeps its signature,
+  guard, and `agent_pins` application; only the build moves.
+- `ensureCodexEffortForSend` keeps its async shape, early dirty
+  return (still ahead of `await fetch`, so the existing
+  dirty-respect pin holds verbatim), in-flight dirty re-check, and
+  assignment.
+- `enrichSlashCommandWithAgentBadge` keeps agent detection, model
+  read, per-harness enrichers, and drift-warning chip; only the
+  effort `||` chain moves (end-only trim semantics preserved —
+  locked by a whitespace-data edge case in tests).
+- chat_page.js: 25,396 → 25,386 lines (−10 net).
+- `chat_page.html`: `chat_agent_model.js` script tag before
+  `chat_page.js` (page `?v=20261001slice7` cache-busted; domain tags
+  keep their slice versions).
+- **Tests:** new `src/tests/test_chat_agent_model.py` (7 tests,
+  node-executed against the real module + one adapter-delegation
+  structural test). Repointed 1 slicing suite
+  (`test_first_turn_agent_pins.py` active-identity test now asserts
+  module ownership + adapter delegation + send-path call site).
+- Moved vs deleted: decision logic relocated verbatim (moved);
+  original bodies replaced by adapters (rewire asserts: single
+  occurrence spans, brace balance).
+
+## Architecture after
+
+```
+chat_page.js (supplement state, palette/badge DOM, fetch/POST,
+              prefs IO, sticky restore/override, send ordering,
+              badge construction)
+      │  same-signature adapters / gather-then-delegate
+      ▼
+chat_agent_model.js (pin read + starred lookups/row match +
+                     pins build + codex fetch gate +
+                     badge effort) ──reads──▶ explicit inputs only
+                     (models snapshot, pinnedEfforts, keys/flags)
+CuttleChatSlash (chip classification — never duplicated here)
+```
+
+One-way dependency (page → namespace); module holds no state and
+reads no page globals.
+
+## Dependencies and state
+
+- Removed: page closures over pin reads, starred lookups/matching,
+  pins construction, fetch gating, badge-effort fallback.
+- Introduced: `CuttleChatAgentModel` namespace (no new runtime
+  deps). No shared state added or moved; the `models` snapshot is a
+  fresh gather per send, never a live reference.
+- Reverse deps: none created.
+- Persistence/streaming/backend behavior: unchanged. Backend
+  `/api/chat` untouched.
+- Compatibility: every internal call signature preserved
+  (`sessionPin/3`, `starredAgent*(1)`, `isAgentDefaultStarred/2`,
+  `attachAgentIdentityToRequest/1`, `ensureCodexEffortForSend/1`).
+
+## Tests and verification
+
+- New `test_chat_agent_model.py`: 7/7 (node-executed; covers pin
+  nested/blank-flat/missing/null, starred case-insensitivity,
+  row match/mismatch/no-star, pins active/dirty-only/empty/
+  effort-only, gate fetch/key-match/dirty/no-codex/chip/no-session
+  + URL shape, badge data/generic/pinned/none/null, module parses,
+  page-delegation structure).
+- Slice 6 follow-up: 3 durable duplicate-guard tests in
+  `test_chat_composer.py`, 8/8 composer green.
+- Differential proof (scratch `/tmp/diff_agent_model.js`, not
+  committed): HEAD page originals (eval'd with a stubbed
+  supplement) vs new module over a 179-case battery — pins,
+  starred, row-match, pins-build, fetch gate, badge effort —
+  **179/179 match, zero mismatches**.
+- Focused (agent-model, composer, pins, codex-effort, bare-sticky,
+  starred-removal, bubble-badge, badge-segments, starred-slash,
+  agent-defaults): **107 passed, 1 failed** — the failure
+  (`test_agent_defaults_post_rejects_capability_violations`) is on
+  the pre-change list (401 auth-env, unrelated).
+- Neighbors (slash-consistency, attachments, activity,
+  attention-dots, followup-heal, stop-then-followup, pagination,
+  history-search, action-forms, supervised ×2, restart ×2):
+  190 passed; 7 failures all on the pre-change list (verified by
+  identity grep). Asset-version failure output byte-identical
+  pre/post (stale `20260927graphsGone` pin, fails since Slice 6).
+- Broad with node on PATH (`/tmp/nodeshim`, pre-existing shim; no
+  system node): post-change **1,815 passed, 28 failed, 60 skipped**;
+  clean HEAD (`git stash -u`) **1,805 passed, 28 failed, 60
+  skipped**; sorted FAILED identities **byte-identical (diff
+  empty)** — +10 passed = the 10 new tests, zero regressions.
+- Without node on PATH the pre-change tree gives 1,664 / 32 / 197
+  (4 node-gated suites fail on missing binary); node presence, not
+  this slice, accounts for the difference. Reported Slice 6 baseline
+  (1,807 / 26 / 60) predates this environment; the 2-test delta is
+  backend/env drift between machines — in THIS environment pre/post
+  identities match exactly.
+- `node --check` clean on all touched JS.
+- Manual workflows: explicitly NOT performed — no browser or Flask
+  round-trip available from this session (no UI served, no chat
+  click-through). Node-level smoke of the exact decision points
+  stands in: Enter/submit interpretation, plain/whitespace sends,
+  attachment-only send, duplicate suppression, and
+  agent/model/effort selection + fetch gate + badge effort are all
+  executed under node by the committed suites above. No visible UI
+  changes does not waive this: the workflow validation gap is
+  recorded here for the external reviewer.
+
+## Metrics
+
+| Metric | Before (`be2658e9`) | After | Method |
+|---|---|---|---|
+| `chat_page.js` lines | 25,396 | 25,386 (−10) | `wc -l` |
+| Agent/Model decision fns needing page scope | ~6 (all) | 0 in module (explicit inputs) | grep |
+| Agent/Model behavior tests | string pins + slices | +7 module tests; 1 suite repointed | pytest |
+| Differential old-vs-new | — | 179/179 match | node harness |
+| Full suite (node on PATH) | 1,805 / 28 / 60 | 1,815 / 28 (identical list) / 60 | pytest + diff |
+
+## Remaining concerns
+
+1. Supplement state, palette/badge DOM, catalog transport, prefs
+   IO, sticky restore, badge construction, and send orchestration
+   stay in the 25.4k-line page (correct per slice scope — they are
+   the inputs/consumers of this boundary, not the decisions).
+2. `restoreSessionStickySlash` deliberately untouched (two node
+   harnesses execute the real page function); a future
+   Messages/History slice may revisit restore with those harnesses.
+3. The stale `test_chat_page_asset_versions_bump...` pin
+   (`20260927graphsGone`) predates Slice 6 and still fails; not
+   this slice's to fix, but it will keep failing until someone
+   updates that pin.
+4. No system `node` on PATH; `/tmp/nodeshim/node` (v18.18.2,
+   pre-existing) used. 28 baseline failures remain untouched.
+5. `test_codex_execution_passes_starred_effort_to_cli` fails both
+   pre and post in this environment (backend/env); identical
+   identity in the stash diff.
+
+## Diff summary
+
+- Added: `src/web/js/chat_agent_model.js` (169 L),
+  `src/tests/test_chat_agent_model.py` (7 tests).
+- Modified: `src/web/js/chat_page.js` (+46/−56: 6 spans rewired),
+  `src/web/chat_page.html` (+2/−1: script tag, page `?v` bump),
+  `src/tests/test_chat_composer.py` (+86: 3 Slice 6 follow-up
+  tests), `src/tests/test_first_turn_agent_pins.py` (+10/−4:
+  repoint to owned module),
+  `docs/reviews/architecture-stabilization.md` (this section +
+  Slice 6 approval boundary note).
+- Deleted: no files.
+
+## External Review Summary
+
+1. **What changed architecturally?** Pin reads, starred
+   lookups/row-match, `agent_pins` construction, the Codex pre-send
+   fetch gate, and badge-effort resolution moved to owned pure
+   `chat_agent_model.js`; the page keeps state, DOM, transport,
+   prefs IO, sticky restore/override, badge construction, and
+   send-path ordering behind same-signature adapters.
+2. **What behavior intentionally changed?** Nothing. Differential
+   179/179; adapters preserve signatures; send side-effect order
+   untouched (sticky-then-pins attach; ensure-before-paint).
+3. **What should be identical?** agent/model/effort selection,
+   sticky-agent clearing, starred defaults, session restoration,
+   outbound `agent_pins`/`sticky_agent` inputs,
+   ensureCodexEffortForSend ordering, badge labels, Enter/send,
+   attachment-only and duplicate-suppressed sends.
+4. **What remains coupled or messy?** All DOM/IO/fetch in the page;
+   restore stays pending a Messages/History revisit; 28 unrelated
+   baseline failures remain; asset-version pin stale.
+5. **What should be reviewed before the next chat domain?** The
+   gather-then-delegate adapter shape (supplement snapshot in,
+   pure decision out) as the pattern for Messages/History or
+   Streaming; whether restore moves with its harnesses next.
+6. **Is the next domain safe to begin?** This slice is
+   self-contained (no Messages/History, Streaming, backend routing,
+   or feature changes; failures identical to clean HEAD). Do NOT
+   continue in this track until this review is approved. **STOP —
+   Slice 8 not started.**

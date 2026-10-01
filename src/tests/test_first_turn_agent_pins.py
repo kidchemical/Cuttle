@@ -15,6 +15,9 @@ from api import web_chat_api as w
 from api.agent_harness import agent_defaults as defaults
 
 CHAT_JS = Path(__file__).resolve().parents[1] / "web" / "js" / "chat_page.js"
+AGENT_MODEL_JS = (
+    Path(__file__).resolve().parents[1] / "web" / "js" / "chat_agent_model.js"
+)
 
 # Harnesses that pin reasoning effort (Cursor bakes effort into the model id).
 EFFORT_AGENTS = ("muse", "hermes", "opencode", "codex")
@@ -73,11 +76,14 @@ def test_chat_request_attaches_active_identity_even_when_not_dirty():
     end = src.index("\n    function ", start + 10)
     body = src[start:end]
     assert "requestBody.agent_pins" in body
-    assert "else if (aid === 'codex') put('codex', S.codexModel, S.codexEffort)" in body
+    assert "CuttleChatAgentModel.buildAgentPinsForRequest" in body
+    # Pins-building decisions live in the owned Agent/Model module
+    # (Phase 3 Slice 7); the page only gathers supplement state.
+    mod = AGENT_MODEL_JS.read_text(encoding="utf-8")
+    assert "function buildAgentPinsForRequest(parts)" in mod
+    assert "else if (aid === 'codex') put('codex', S.codex)" in mod
     for agent in EFFORT_AGENTS:
-        assert f"S.{agent}Effort" in body, agent
-        assert f"{agent}EffortDirty" in body, agent
-        assert f"{agent}ModelDirty" in body, agent
+        assert f"dirtyPut('{agent}', S.{agent})" in mod, agent
 
     proc = src[
         src.index("await ensureAuthChatSession();")

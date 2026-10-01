@@ -5581,21 +5581,21 @@
     }
 
     function starredAgentModel(agentId) {
-        return String((slashPaletteSupplement.starredAgentModels || {})[String(agentId || '').toLowerCase()] || '');
+        return CuttleChatAgentModel.starredAgentModel(
+            slashPaletteSupplement.starredAgentModels, agentId);
     }
 
     function starredAgentEffort(agentId) {
-        return String((slashPaletteSupplement.starredAgentEfforts || {})[String(agentId || '').toLowerCase()] || '');
+        return CuttleChatAgentModel.starredAgentEffort(
+            slashPaletteSupplement.starredAgentEfforts, agentId);
     }
 
     /** True when this model/effort row is the agent's global starred default. */
     
     function isAgentDefaultStarred(spec, cmd) {
-        if (!spec || !cmd) return false;
-        const rowVal = String(cmd.modelId || '').trim();
-        if (!rowVal) return false;
+        if (!spec) return false;
         const star = spec.kind === 'effort' ? starredAgentEffort(spec.agent) : starredAgentModel(spec.agent);
-        return !!star && star.toLowerCase() === rowVal.toLowerCase();
+        return CuttleChatAgentModel.isAgentDefaultStarred(spec, cmd, star);
     }
 
     /** Starred muse/hermes/opencode/codex defaults (cursor has its own loader above). */
@@ -6420,10 +6420,7 @@
     }
 
     function sessionPin(data, agent, kind) {
-        const pins = data && data.agent_pins;
-        const nested = pins && pins[agent] && pins[agent][kind];
-        if (nested != null && String(nested).trim() !== '') return String(nested).trim();
-        return String((data && data[agent + '_' + kind]) || '').trim();
+        return CuttleChatAgentModel.sessionPin(data, agent, kind);
     }
 
     function seedMuseSupplementFromSessionData(data, sessionId) {
@@ -7243,16 +7240,17 @@
      * right before the badge snapshot, then flush the corrupted value on adopt.
      */
     async function ensureCodexEffortForSend(message) {
-        const text = String(message || '');
-        if (!/^\/codex(?:\s|$)/i.test(text) && !hasActiveCodexAgentChip()) return;
-        if (slashPaletteSupplement.codexEffortDirty) return;
+        const gate = CuttleChatAgentModel.codexEffortFetchForSend({
+            messageText: message,
+            hasCodexChip: hasActiveCodexAgentChip(),
+            codexEffortDirty: slashPaletteSupplement.codexEffortDirty,
+            sessionKey: currentSessionId != null ? String(currentSessionId) : '',
+            effortKey: slashPaletteSupplement.codexEffortKey,
+        });
+        if (!gate.fetch) return;
         const key = currentSessionId != null ? String(currentSessionId) : '';
-        if (key && slashPaletteSupplement.codexEffortKey === key) return;
-        const url = key
-            ? '/api/codex/effort?session=' + encodeURIComponent(key)
-            : '/api/codex/effort';
         try {
-            const response = await fetch(url, { cache: 'no-store' });
+            const response = await fetch(gate.url, { cache: 'no-store' });
             const result = await response.json();
             if (!result || !result.success) return;
             // A palette click may have set dirty while this fetch was in flight.
@@ -7278,36 +7276,27 @@
     function attachAgentIdentityToRequest(requestBody) {
         if (!requestBody || typeof requestBody !== 'object') return;
         const S = slashPaletteSupplement;
-        const pins = {};
-        const put = (agent, model, effort) => {
-            const entry = {};
-            const m = String(model || '').trim();
-            const e = String(effort || '').trim();
-            if (m) entry.model = m;
-            if (e) entry.effort = e;
-            if (Object.keys(entry).length) pins[agent] = entry;
-        };
-        const msg = String(requestBody.message || '');
-        const activeMatch = msg.match(/^\/(muse|hermes|opencode|codex)\b/i);
-        const aid = activeMatch ? String(activeMatch[1]).toLowerCase() : '';
-        if (aid === 'muse') put('muse', S.museModel, S.museEffort);
-        else if (aid === 'hermes') put('hermes', S.hermesModel, S.hermesEffort);
-        else if (aid === 'opencode') put('opencode', S.opencodeModel, S.opencodeEffort);
-        else if (aid === 'codex') put('codex', S.codexModel, S.codexEffort);
-        const dirtyPut = (agent, model, effort, modelDirty, effortDirty) => {
-            if (!modelDirty && !effortDirty) return;
-            put(agent, model, effort);
-        };
-        dirtyPut('muse', S.museModel, S.museEffort, S.museModelDirty, S.museEffortDirty);
-        dirtyPut('hermes', S.hermesModel, S.hermesEffort, S.hermesModelDirty, S.hermesEffortDirty);
-        dirtyPut(
-            'opencode',
-            S.opencodeModel,
-            S.opencodeEffort,
-            S.opencodeModelDirty,
-            S.opencodeEffortDirty
-        );
-        dirtyPut('codex', S.codexModel, S.codexEffort, S.codexModelDirty, S.codexEffortDirty);
+        const pins = CuttleChatAgentModel.buildAgentPinsForRequest({
+            message: requestBody.message,
+            models: {
+                muse: {
+                    model: S.museModel, effort: S.museEffort,
+                    modelDirty: S.museModelDirty, effortDirty: S.museEffortDirty,
+                },
+                hermes: {
+                    model: S.hermesModel, effort: S.hermesEffort,
+                    modelDirty: S.hermesModelDirty, effortDirty: S.hermesEffortDirty,
+                },
+                opencode: {
+                    model: S.opencodeModel, effort: S.opencodeEffort,
+                    modelDirty: S.opencodeModelDirty, effortDirty: S.opencodeEffortDirty,
+                },
+                codex: {
+                    model: S.codexModel, effort: S.codexEffort,
+                    modelDirty: S.codexModelDirty, effortDirty: S.codexEffortDirty,
+                },
+            },
+        });
         if (Object.keys(pins).length) requestBody.agent_pins = pins;
     }
 
@@ -10190,14 +10179,15 @@
         const model = String(
             (data && (data.agent_model || data.model)) || ''
         ).trim();
-        const effort = String(
-            (data && (data.agent_effort || data.muse_effort || data.hermes_effort || data.opencode_effort || data.codex_effort))
-            || slashPaletteSupplement.museEffort
-            || slashPaletteSupplement.hermesEffort
-            || slashPaletteSupplement.opencodeEffort
-            || slashPaletteSupplement.codexEffort
-            || ''
-        ).trim();
+        const effort = CuttleChatAgentModel.resolveAgentEffortForBadge({
+            data,
+            pinnedEfforts: [
+                slashPaletteSupplement.museEffort,
+                slashPaletteSupplement.hermesEffort,
+                slashPaletteSupplement.opencodeEffort,
+                slashPaletteSupplement.codexEffort,
+            ],
+        });
         let out = replySlash || null;
         if (isMuse) out = enrichSlashCommandWithMuseModel(out, model, effort);
         else if (isHermes) out = enrichSlashCommandWithHermesModel(out, model, effort);

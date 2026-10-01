@@ -185,3 +185,89 @@ def test_chat_composer_module_parses():
     import subprocess as sp
     proc = sp.run(["node", "--check", str(MOD_JS)], capture_output=True, text=True)
     assert proc.returncode == 0, proc.stderr
+
+
+DUP_HARNESS = """
+const A = require(process.env.MOD_JS);
+const P = (o) => A.composerSendPlan(Object.assign(
+  { guardSet: false, generating: false, generatingBeforeHeal: false, sendable: true,
+    control: false, message: 'hi', normalizedMessage: 'hi', inFlightMessage: 'old',
+    queuedMessages: [] }, o));
+const out = {};
+out.dupFlight = P({ generating: true, generatingBeforeHeal: true, inFlightMessage: 'hi' });
+out.dupQueue = P({ generating: true, generatingBeforeHeal: true,
+  queuedMessages: ['other', 'hi'] });
+out.noDup = P({ generating: true, generatingBeforeHeal: true, inFlightMessage: '' });
+process.stdout.write(JSON.stringify(out));
+"""
+
+CHAT_PAGE_JS = REPO_ROOT / "src" / "web" / "js" / "chat_page.js"
+
+
+def _duplicate_branch_src():
+    """The sendMessage span that executes an ignore-duplicate plan."""
+    src = CHAT_PAGE_JS.read_text(encoding="utf-8")
+    start = src.index("if (plan.action === 'ignore-duplicate') {")
+    end = src.index("if (plan.action === 'followup') {", start)
+    return src[start:end]
+
+
+@node_only
+def test_ignore_duplicate_plan_contract():
+    """Guard contract the orchestration test below depends on."""
+    import os
+    import subprocess as sp
+    proc = sp.run(
+        ["node", "-e", DUP_HARNESS],
+        capture_output=True, text=True, timeout=30,
+        env={"PATH": os.environ["PATH"], "MOD_JS": str(MOD_JS)},
+    )
+    assert proc.returncode == 0, proc.stderr
+    res = json.loads(proc.stdout)
+    assert res["dupFlight"] == {"action": "ignore-duplicate", "outbound": "hi"}
+    assert res["dupQueue"] == {"action": "ignore-duplicate", "outbound": "hi"}
+    assert res["noDup"]["action"] == "followup"
+
+
+def test_ignore_duplicate_preserves_staged_attachments_and_cards():
+    """Slice 6 regression: an ignored duplicate must not consume send effects.
+
+    The first refactor hoisted takePendingAttachments +
+    dismissOpenInteractiveCards above the duplicate check, so ignored
+    duplicates swallowed staged attachments and dismissed interactive
+    cards. The duplicate branch must only reset composer input state
+    (clear + sticky re-resolve + resize) and return before any take,
+    dismiss, steer, queue, or send effect.
+    """
+    branch = _duplicate_branch_src()
+    for effect in (
+        "takePendingAttachments",
+        "clearPendingAttachments",
+        "dismissOpenInteractiveCards",
+        "trySteerRunningTurn",
+        "enqueueFollowup",
+        "processMessage",
+        "beginLocalGeneration",
+        "saveChatSession",
+        "addMessageToUI",
+        "fetch(",
+    ):
+        assert effect not in branch, (
+            f"ignore-duplicate branch must not run {effect}"
+        )
+    assert "clearComposer();" in branch
+    assert "applyStickySlashAfterComposerSend(message);" in branch
+    assert "return;" in branch
+
+
+def test_followup_branch_still_takes_attachments_and_cards():
+    """Discrimination check: the follow-up branch owns the take/dismiss effects."""
+    src = CHAT_PAGE_JS.read_text(encoding="utf-8")
+    start = src.index("if (plan.action === 'followup') {")
+    end = src.index(
+        "if (isSessionGenerating() && isImmediateControlLaneMessage(message))",
+        start,
+    )
+    branch = src[start:end]
+    assert "takePendingAttachments()" in branch
+    assert "dismissOpenInteractiveCards(" in branch
