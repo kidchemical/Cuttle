@@ -150,6 +150,21 @@ a naked fallback. No-LLM control lanes, session resolve, SSE pump, and
 `request_data` is captured once at the boundary and never mutated
 (pinned by test).
 
+**BYO-CLI boundary (Phase 6 P6-A):** `api.agent_harness.installer`
+(executable machinery: npm installs, remote-script download+execute,
+PATH refresh) is deleted; the kernel missing-CLI path answers with
+manifest guidance and never shells out. The 4 auto-install manifests
+(antigravity, deepseek, opencode, claude) are guidance-only: install
+recipes and auto flags removed, hints reworded to self-install.
+Discovery, availability/version validation, invocation, capability
+normalization, and `install_hint`/`missing_cli_hint` rendering
+(frontend palette reads hints only) are unchanged. Trust posture
+unchanged and still narrow: project drop-ins stay opt-in
+(`CUTTLE_ALLOW_PROJECT_ADAPTERS`), bundled-only execution was already
+refused, `sys.path` append-only. Next slices: project-adapter trust
+audit (approval/manifest/import isolation) and surface/agent-ops
+boundary review.
+
 ---
 
 ## Workers mesh

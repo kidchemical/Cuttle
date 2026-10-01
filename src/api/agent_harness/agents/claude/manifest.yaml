@@ -23,11 +23,8 @@ missing_cli_hint: >-
 install_hint: >-
   Install `@anthropic-ai/claude-code` (or the native build), then
   `claude auth login` or set `ANTHROPIC_API_KEY` in `src/.env`.
-install_kind: npm_global
-install_package: "@anthropic-ai/claude-code"
 executable_names:
   - claude
-auto_install: true
 notes: >-
   Native `claude -p --output-format json` against the project cwd.
   Resume via `--resume` + claude_cli_session_store. Compact via `/compact`.

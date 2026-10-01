@@ -5723,3 +5723,92 @@ whole was rejected as monolith-shifting. The owned seam is
   reproducibility/preflight unchanged.
 - Commit independently on main. No push, no restart.
   **STOP for Codex review before Phase 6.**
+
+## Phase 5 approval + Phase 6 inventory and P6-A BYO-CLI retirement
+
+- P5-C `764d4a78`, P5-D `3073dafc`, and the corrected Phase 5
+  closure APPROVED on shared-entry acceptance evidence (captured
+  streamed stamps intentional). Reviewer last read line 5725; this
+  section appended only below that boundary; prior sections preserved.
+- Phase 6 inventory (actual code, three plan categories):
+  - Harness adapters: 8 bundled vendors under
+    `api/agent_harness/agents/` (antigravity, claude, codex, cursor,
+    deepseek, hermes, muse, opencode), each `adapter.py` +
+    `manifest.yaml` + session store; registry/catalog with
+    availability (`available()`), resume maps, capability flags
+    (`capabilities_inject`, `env_profile`, `activity`), model
+    commands, pricing hooks. Execution via `kernel` → `runners`
+    (P5-B owner). No vendor installer/update daemons besides the
+    retired module below.
+  - Installer machinery (retired this slice): `api/agent_harness/
+    installer.py` (274 lines: npm-global installs, allowlisted
+    remote-script download + execute, Windows PATH refresh) + the
+    kernel auto-install trigger + `auto_install`/`install_kind`/
+    urls/package/sha recipe fields in 4 manifests. Only production
+    caller was the kernel turn path; no route/UI/API trigger exists.
+    Sharp edge driving retirement: Antigravity auto-executed an
+    UNPINNED remote script (`install.sh`/`.ps1`, no sha in manifest;
+    the code path explicitly proceeded unpinned) on ordinary chat
+    turns — remote code execution by default, outside BYO-CLI policy.
+  - Trust posture (audited, unchanged, narrow — next-slice material):
+    project drop-ins opt-in only (`CUTTLE_ALLOW_PROJECT_ADAPTERS`
+    env/setting, default off), installer refused non-bundled sources,
+    `sys.path` append-only (no shadowing), unique module names per
+    drop-in, catalog surface exposes hints/status only
+    (frontend renders `install_hint` text, no triggers).
+  - Surfaces/agent-ops (not touched): Web/Electron/Android use the
+    owned coordinator; Discord stays optional agent-ops (no inbound
+    gateway revived); no new integrations added.
+- P6-A removal (behavior change, reported not hidden): missing CLI →
+  manifest guidance reply (`missing_cli_hint`/`install_hint`) with
+  zero subprocess activity; the `Installing…` status and `setup
+  failed`/`setup_status` reply shape are gone. Preserved: discovery,
+  availability/version validation, invocation, resume/cancel/steer/
+  results/config, capability normalization, palette hint rendering,
+  `installable`/`auto_install` catalog fields (now uniformly false;
+  schema-stable), `auto_install` manifest parsing (tolerant).
+  Manifest hints reworded to self-install where they claimed Cuttle
+  installs (deepseek, opencode); antigravity/claude hints already
+  self-install shaped. Author guide (`ADDING_AN_AGENT.md`) rewritten
+  guidance-only with an explicit never-add-install-machinery rule.
+- Coverage: new `src/tests/test_harness_byocli.py` (manifest pins:
+  no auto flags, no recipes, guidance present — all failed pre-move
+  alongside module-absence/no-shell pins); `test_agent_harness.py`
+  installer block (7 tests of removed machinery: untrusted-dropin,
+  npm-verify, checksum/pin/unpinned/size/spec) replaced with 3
+  retirement pins (module gone, kernel import-free, missing-CLI
+  guidance with subprocess.run guarded to throw); catalog shape pin
+  retargeted (`installable`/`auto_install` false + hints present);
+  cost-slash guard patch dropped (module it patched is gone; /cost
+  answers from manifest without CLI). Replaced — not weakened:
+  every deleted test covered removed code; the new pins fail if any
+  executable install path returns.
+- Gates (same command/env/scope; baseline `3073dafc`): neighbors
+  green except one pre-existing auth failure already in the 28;
+  broad **28 failed / 1978 passed / 79 skipped**, sorted FAILED
+  `diff`-clean vs P5-D (`/tmp/p5d_failed4.txt` vs `/tmp/
+  p6a_failed2.txt`); counts 1980→1978 = −7 removed +5 new pins.
+  Mid-slice, 3 cost-slash tests failed on the deleted-module patch
+  (expected — they patched removed code); retargeted, gate clean.
+- Spend audit: flags unset; fakes only (fake adapters, guarded
+  subprocess, temp projects); no installs executed (none possible —
+  no network installer ran), no paid prompts, no restart/kill/push.
+- Files: `src/api/agent_harness/installer.py` (deleted),
+  `src/api/agent_harness/kernel.py` (trigger block out, guidance
+  fallthrough stays), 4 manifests (recipes out, hints kept/
+  reworded), `ADDING_AN_AGENT.md` (guidance-only),
+  `src/tests/test_harness_byocli.py` (new),
+  `src/tests/test_agent_harness.py` (retirement pins replace
+  machinery tests, catalog pin retargeted),
+  `src/tests/test_agent_cost_slash.py` (dead patch dropped),
+  this section + repository-map (P6-A row).
+- Limits/risks: users who relied on auto-install now get install
+  commands to run themselves (intended per plan); `install_kind`-
+  style fields remain parseable in types/catalog (schema stability,
+  inert without machinery); project-adapter approval/manifest/
+  import-isolation audit and surface/agent-ops boundary review are
+  explicitly the next slices, not this one. Deferred
+  reproducibility/preflight unchanged; `[ERR-20261001-001]` stays
+  backlog.
+- Commit independently on main. No push, no restart.
+  **STOP for Codex review before the next slice/Phase 7.**

@@ -616,10 +616,9 @@ def test_kernel_answers_cost_without_cli_turn(prompt, pricing_cache, no_pins, mo
             raise AssertionError("/cost must not start a CLI turn")
 
     monkeypatch.setattr(kernel, "get_agent", lambda aid, project_path=None: (manifest, _NoCliAdapter()))
-    monkeypatch.setattr(
-        "api.agent_harness.installer.install_agent_cli",
-        lambda *a, **k: (_ for _ in ()).throw(AssertionError("/cost must not install")),
-    )
+    # BYO-CLI (P6-A): the installer module is gone, so there is nothing to
+    # guard here — /cost answers from the manifest without touching a CLI.
+    # The no-shell-out pin lives in test_agent_harness.py.
     monkeypatch.setattr(
         "api.agent_cost._load_catalog",
         lambda m, refresh: ([{"id": x, "label": x} for x in m.models], "manifest"),

@@ -24,11 +24,7 @@ install_hint: >-
   still requires a Google sign-in via `agy` or a configured GEMINI_API_KEY provider.
 missing_cli_hint: >-
   Install from https://antigravity.google/docs/cli/install/ and ensure `agy` is available.
-install_kind: script_url
-install_url_windows: https://antigravity.google/cli/install.ps1
-install_url_posix: https://antigravity.google/cli/install.sh
 executable_names:
   - agy
-auto_install: true
 schema_version: 1
 notes: Official Google Antigravity CLI connector; structured headless JSON output.

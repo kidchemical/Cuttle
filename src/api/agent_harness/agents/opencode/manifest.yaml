@@ -26,7 +26,7 @@ env_profile: native
 activity: jsonl
 hint: Run OpenCode CLI (`opencode run`) — OpenRouter GLM 5.3 Flash by default
 install_hint: >-
-  Cuttle can install OpenCode with `npm install -g opencode-ai`. Set
+  Install OpenCode yourself with `npm install -g opencode-ai`. Set
   OPENROUTER_API_KEY in src/.env, then run the allowlisted opencode.sync-auth
   action (provider openrouter) to copy the key into OpenCode without the LLM
   seeing it. Also supports OPENAI_API_KEY / ANTHROPIC_API_KEY, or
@@ -34,11 +34,8 @@ install_hint: >-
 missing_cli_hint: >-
   Install OpenCode and ensure `opencode` is on PATH
   (see https://opencode.ai/docs/ — `opencode run "…"`).
-install_kind: npm_global
-install_package: opencode-ai
 executable_names:
   - opencode
-auto_install: true
 notes: >-
   Bundled harness connector. Default model is OpenRouter GLM 5.3 Flash.
   Pin per chat with `/opencode model <id>` or `/opencode effort <level>`

@@ -428,42 +428,9 @@ def run_agent_web_command(
                 "meta_command": True,
             }
 
-        if not adapter.available() and manifest.auto_install:
-            if _run_was_cancelled(chat_session_id):
-                try:
-                    finish_query_tracking(success=False, error_message="cancelled")
-                except Exception:
-                    pass
-                return _cancelled_web_result(
-                    chat_session_id,
-                    query_id=query_id,
-                    type_err=type_err,
-                    agent_id=manifest.id,
-                    label=label,
-                )
-            _put_status(status_queue, f"Installing {label} CLI…")
-            from api.agent_harness.installer import install_agent_cli
-
-            install = install_agent_cli(
-                manifest.id,
-                project_path=project_path,
-                automatic=True,
-            )
-            if not install.get("success"):
-                message = str(install.get("message") or "CLI installation failed.")
-                finish_query_tracking(success=False, error_message=message[:500])
-                return {
-                    "success": True,
-                    "response": f"❌ **{label} setup failed.** {message}",
-                    "session_id": chat_session_id,
-                    "type": type_err,
-                    "query_id": query_id,
-                    "report_url": f"/query_log.html?id={query_id}",
-                    "agent_id": manifest.id,
-                    "setup_status": install.get("status"),
-                }
-            _put_status(status_queue, f"{label} installed; checking authentication…")
-
+        # BYO-CLI (Phase 6 P6-A): Cuttle discovers, validates, invokes,
+        # and documents vendor CLIs — it never installs them. A missing CLI
+        # answers with its manifest guidance below.
         if not adapter.available():
             hint = (
                 manifest.missing_cli_hint

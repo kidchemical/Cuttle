@@ -173,30 +173,27 @@ prompts. If a job has no project command yet, the shared UI contract (item 7 in
 `cuttle_ui_capabilities`) still tells every agent to kick + watch form — still no
 adapter code.
 
-## CLI installation
+## CLI installation (BYO-CLI)
 
-Bundled connectors should declare a trusted installer when the upstream CLI has a stable,
-official distribution path:
+Cuttle does not install vendor CLIs — no npm installs, no remote-script
+download/execute, no update logic (Phase 6 P6-A retired the
+`agent_harness.installer` execution machinery, including unpinned
+remote-script auto-install). Bundled connectors declare **guidance
+only** so a missing CLI answers with an actionable message:
 
 ```yaml
-install_kind: npm_global          # or script_url
-install_package: opencode-ai      # npm_global (plain [@scope/]name[@version])
-install_url_windows: https://…/install.ps1
-install_url_posix: https://…/install.sh
-install_sha256_windows: "<64-hex>"  # optional pin; mismatch refuses to execute
-install_sha256_posix: "<64-hex>"
 executable_names: [tool-name]
-auto_install: true
+missing_cli_hint: >-
+  Install Tool and ensure `tool` is on PATH (see https://…/docs/).
+install_hint: >-
+  Install `tool` yourself (`npm i -g tool-package`), then authenticate
+  with `tool auth login` or set `TOOL_API_KEY` in `src/.env`.
 ```
 
-Script downloads are size-capped and sha256-logged (`script_sha256` in the
-install result). A declared pin is enforced fail-closed; `install_package`
-must be a plain npm spec (no flags, URLs, or whitespace).
-
-When an explicitly selected agent is missing, the kernel installs it once, refreshes the
-Windows process PATH, verifies `available()` again, and then continues the original request.
-Install failures are returned as setup errors; authentication is a separate state and must
-produce a short actionable message.
+When an explicitly selected agent is missing, the kernel answers with
+that guidance and stops; authentication is a separate state and must
+produce a short actionable message. Never add per-adapter install or
+update machinery — link the vendor's official installer instead.
 
 Security boundary: automatic installers are accepted only from **bundled** connectors, script
 URLs must use HTTPS and an allowlisted upstream host, installer processes are serialized, and

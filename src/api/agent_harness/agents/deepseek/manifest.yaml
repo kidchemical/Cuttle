@@ -20,13 +20,11 @@ missing_cli_hint: >-
   Install `@deepseek-ai/dsh` (`npm i -g @deepseek-ai/dsh`) and set
   `DEEPSEEK_API_KEY` in `src/.env`.
 install_hint: >-
-  Cuttle can install `@deepseek-ai/dsh` with npm. Then set `DEEPSEEK_API_KEY`
-  in `src/.env` (or the daemon env) and restart Flask. Smoke uses Flash, not Pro.
-install_kind: npm_global
-install_package: "@deepseek-ai/dsh"
+  Install `@deepseek-ai/dsh` yourself (`npm i -g @deepseek-ai/dsh`). Then set
+  `DEEPSEEK_API_KEY` in `src/.env` (or the daemon env) and restart Flask.
+  Smoke uses Flash, not Pro.
 executable_names:
   - dsh
-auto_install: true
 notes: >-
   Bundled connector for DeepSeek Harness developer preview (`dsh`).
   Headless one-shot has no native per-chat resume (official docs). Invokes
