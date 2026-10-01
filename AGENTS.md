@@ -91,6 +91,32 @@ The web UI is vanilla JS served by Flask at port 8080. Key files:
 
 `src/settings.json` + `src/managers/settings_manager.py` handle starred slash agents, sandbox mode, and LAN/auth settings.
 
+### Ownership (stabilization, Phase 7)
+
+One subsystem owns each area below. Touch the owner, not the monoliths.
+Enforced by `src/tests/test_architecture_boundaries.py` (no reverse imports
+into `web_chat_api` except the doctor probe; acyclic `src/api`; coordinator
+funnel + SSE pump proven at runtime; manifest schema).
+
+| Task | Owner (code) | Entry interface | Tests |
+|---|---|---|---|
+| New settings route | `src/api/settings_routes.py` + `managers/settings_manager.py` (never `web_chat_api.py`) | HTTP route + `get_settings_manager()` | settings suites |
+| New Spaces feature | `src/web/js/spaces/*.js` (`CuttleSpaces.*`, pure logic, injected storage); shell owns singleton/DOM | `CuttleSpaces.*` namespace | spaces suites |
+| New slash command | client registry `src/web/js/chat_slash.js` (`CuttleChatSlash.SLASH_COMMANDS`); project commands `src/api/project_commands.py`; sticky `src/api/starred_slash.py` | registry entry, not a new trigger | slash suites |
+| Chat execution | `api.chat_coordinator.submit_agent_turn` — the only funnel; lanes pass `run_harness`, `/api/sessions/send` goes unclaimed | `AgentTurnIO` + `PreparedAgentTurn` | coordinator + seam suites |
+| Vendor CLI behavior | `src/api/agent_harness/agents/<id>/` via catalog; kernel coordinates, never installs (BYO-CLI guidance only) | `build_adapter()` / `Adapter` | harness suites |
+| Project drop-in adapter | catalog contract: opt-in, validate-before-import, relative-only on-demand namespaced load | `manifest.yaml` + `adapter.py` | `test_harness_project_adapters.py` |
+| External service op | `src/api/discord_ops/` pattern (`discord.post`); never branches in project actions, never a chat surface | `python -m api.discord_cli` | discord suites |
+| Flask/daemon lifetime | daemon owns; Flask only via `/restart` → `src/api/flask_restart.py` | `flask.restart` action form | restart suites |
+
+Direction rule: owned layers (`agent_harness`, `agent_router`,
+`chat_coordinator`, `chat_turn*`, `chat_delivery`, `discord_ops`, …) must
+never import `web_chat_api`. `web_chat_api.py` (routes/auth/SSE/lanes over
+owned services), `chat_page.js` (page orchestration over `CuttleChat*`
+slice modules), and `app_shell.js` (shell over `CuttleSpaces.*` + apps)
+compose; they do not own domain decisions. Details:
+`docs/architecture/extension-boundaries.md`.
+
 ### Tools for agents
 
 Cuttle does **not** host an MCP tool server. Guest CLIs keep their own MCP. Cuttle-owned verbs for agents are `python -m api.<module>` (see `.cuttle_global/docs/agent-ops-cli.md`). **`/cursor`** runs `scripts.utilities.cursor_cli_tool` via the Cursor harness adapter. Discord feature posts use `discord.post` + `python -m api.discord_cli`. Live `src/tools/` is ComfyUI, Govee, OCR (chat vision fallback), and web search.

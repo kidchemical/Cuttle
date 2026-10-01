@@ -6177,3 +6177,101 @@ migration, per the review's explicit alternative.
   this review log.
 - Commit: P6-C + Phase 6 closure independently on main. No push/restart.
   **STOP for Codex review before Phase 7.**
+
+## Phase 6 approval + Phase 7 report — Final Architecture Enforcement (awaiting final review, not self-approval)
+
+- Phase 6 (P6-A `dc6276de`, P6-B `57222bab`+`d9a9837b`+`fb9704e7`,
+  P6-C `fbd73b72`) APPROVED, including the purge-lifetime clarification
+  and the surface/agent-ops boundary inventory. No rework requested.
+- Skip-drift resolved (was hand-waved as environment drift in P6-C):
+  the 298 skips were node-gated JS suites skipping on missing `node`
+  (`shutil.which("node")` self-skips). Preexisting runtime
+  `/tmp/nodeshim/node` (v18.18.2, no installs) on PATH restores them:
+  with node the gate is **28 failed / 2006 passed / 79 skipped** —
+  the P6-A-era profile, not unknown drift. No dependency tooling added.
+
+### Durable ownership rules
+
+- `AGENTS.md` gains an "Ownership (stabilization, Phase 7)" section:
+  task → owner → entry interface → test-suite table covering settings
+  routes, Spaces (`src/web/js/spaces/*.js`, `CuttleSpaces.*` — verified
+  real: pure state model, injected storage, shell owns singleton/DOM),
+  slash registry (`chat_slash.js` + `project_commands.py` +
+  `starred_slash.py`), coordinator funnel, harness vendors, project
+  drop-ins, external service ops, Flask/daemon lifetime, plus the
+  no-reverse-import direction rule and the compose-don't-own reading of
+  the three large files. Every cited suite family verified to exist.
+- `extension-boundaries.md` (P6-C §A funnel) is the detail companion;
+  no giant new doc written.
+
+### Lightweight enforcement (`src/tests/test_architecture_boundaries.py`, 5 tests)
+
+- Reverse-import prohibition (AST — comments/regex strings can't false
+  positive): production `src/{api,managers,scripts}` importing
+  `web_chat_api` (static + `importlib`/`__import__` dynamic) must equal
+  exactly `{doctor.py}` with its recorded justification (importability
+  health probe, try/except, no attribute use). Current set verified =
+  `{doctor}`; `limiter.py` (comment) and `cuttle_managed_process_guard.py`
+  (process-match regexes) correctly clean. Any new importer fails with
+  its path; stale allowlist entries fail too.
+- Acyclic `src/api`: full internal module-edge graph (247 modules,
+  relative+absolute) asserted cycle-free — measured zero cycles first,
+  then pinned. Deferred function-level imports are not module cycles.
+- Coordinator funnel at runtime (no source-string claims): compat entry
+  with monkeypatched `submit_agent_turn` proves `PreparedAgentTurn`
+  (`session_kind="sessions_send"`, `claim=False`, callable
+  `run_harness`) reaches the coordinator.
+- SSE funnel proven real: a drained `_generate_chat_stream` with a fake
+  runner yields status + `response:"pump-ok-fake"`, delivers to
+  `on_result`, and releases the busy slot (re-acquirable afterwards).
+  Notable catch during authoring: my own pre-claim of the slot yielded
+  the protocol-correct `busy` event — the test respects the protocol now.
+- Manifest schema + retirement: all bundled manifests pass canonical
+  identity, `auto_install is False`, known install kinds.
+- Considered and rejected (not concrete enough to enforce without
+  gaming): route-auth-convention scan, module-size caps (sizes reported
+  below as context only).
+
+### Final acceptance audit (truthful, per criterion)
+
+- `web_chat_api.py` (9,738 lines, 139 routes) composes the server:
+  routes/auth/SSE/lanes over owned services and blueprints; owned layers
+  never import it (test 1); package acyclic (test 2). Lanes are the
+  explicitly permitted transport orchestration. No further extraction
+  proposed — routes must live somewhere.
+- `app_shell.js` (7,704 lines, 308 fns, 14 composed scripts incl. 5
+  Spaces modules) composes shell over `CuttleSpaces.*` + apps. Accepted.
+- `chat_page.js` (24,289 lines, 934 fns) orchestrates page send/load/
+  stream/session flows and delegates every Phase-3 domain to 13 owned
+  `CuttleChat*` slice namespaces (175 measured references, each
+  behavior-tested). No giant implicit domain logic hides behind the
+  wrappers — delegation is real. Noted scale (not hidden): the
+  orchestrator file itself remains a large working context; agents work
+  through slice owners per the table. No corrective extraction proposed
+  in this slice; flagging the number, not failing on it.
+- State ownership / narrow interfaces / independent adapters / one-owner
+  feature norm: met via the table, `AgentTurnIO`/`PreparedAgentTurn`,
+  `CuttleSpaces`, folder-per-agent catalog + author guide. Slice-sized
+  modules fit working context; the three composition files are navigated
+  via owners, which is the initiative's stated purpose.
+
+### Gates
+
+- New enforcement file: 5/5 pass (4 green first run; SSE needed the
+  busy-protocol correction above — a test bug, not production).
+- Broad gate with node, same command/env/scope both sides
+  (`PATH="/tmp/nodeshim:$PATH" .venv/bin/python -m pytest -q
+  -p no:warnings src/tests/ --ignore=src/tests/unit -rf`):
+  **28 failed / 2006 passed / 79 skipped**, FAILED byte-identical
+  (`diff` clean) to the stashed clean tree. The 5 new tests pass on both
+  trees (expected: Phase 7 changes no production code — enforcement pins
+  existing-good-state; discrimination lives in the allowlist/graph/funnel
+  assertions, which fail on violation by construction).
+- 28 pre-existing failures unchanged in identity from the P6-A profile;
+  deferred dependency/preflight and `[ERR-20261001-001]` unchanged.
+- Spend: flags unset, smoke file excluded, no prompts/installs/network.
+  Manual/browser verification: N/A (no behavior change; backend-only
+  tests + docs). No restart/push.
+- Files: `AGENTS.md` (ownership table),
+  `src/tests/test_architecture_boundaries.py` (new, 5 tests), this log.
+- Commit independently. **Awaiting Codex final review; no push/restart.**
