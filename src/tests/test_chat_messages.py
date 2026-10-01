@@ -363,6 +363,208 @@ def test_user_bubble_attachment_composition_and_fallbacks():
     assert "old.png" in res["inferred"]
 
 
+STRUCTURED_HARNESS = """
+const fs = require('fs');
+const SRC = fs.readFileSync(process.env.CHAT_PAGE_JS, 'utf-8');
+const span = (s, e) => SRC.slice(SRC.indexOf(s), SRC.indexOf(e, SRC.indexOf(s)));
+const A = require(process.env.MOD_JS);
+eval(span('    function escapeHtmlInline(s) {',
+          '    function windowsPathToFileUrl(path) {'));
+eval(span('    function clamp(n, min, max) {',
+          '    function safeJsonParse(s) {'));
+const deps = { escapeHtmlInline, clamp,
+  renderMdLinkChip: (label, url) => '<a data-url="' + url + '">' + label + '</a>',
+  renderCuttlePricingHtml: (raw) => '<price:' + String(raw).slice(0, 12) + '>',
+  mediaKindFromUrl: (u) => (/\\.(mp4|webm)$/i.test(String(u).split('?')[0]) ? 'video' : 'image'),
+  buildMediaThumbHtml: (src, o) => '<thumb src="' + src + '" title="' + ((o && o.title) || '') + '">' };
+const E = (text) => A.extractHeadStructuredBlocks(text, deps);
+const T = (text) => A.extractTailStructuredBlocks(text, deps);
+const out = {};
+out.think = E('a <think>reason <b>here</b></think> b');
+out.thinkFenced = E('```\\n<think>x</think>\\n```');
+out.thinkInlineCode = E('`<think>x</think>` and <think>real</think>');
+out.thinkUnclosed = E('a <think>oops b');
+out.thinkXss = E('<think><script>alert(1)</script></think>');
+out.tool = E('<tool_output>ls <b>out</b></tool_output>');
+const tailIn = '<cuttle_trace>t <i>x</i></cuttle_trace> <progress id="p\\"1" label="L<o" value="42"/> <terminal id="t1" title="T\\"tle" interactive="true">echo hi</terminal>';
+out.tail = T(tailIn);
+out.meters = T('<cuttle_meters>{"rows": [{"label": "M<x", "pct": 33}]}</cuttle_meters>');
+out.metersBad = T('<cuttle_meters>not json</cuttle_meters>');
+out.metersDisabled = T('<cuttle_meters>{"rows": [{"label": "D", "pct": 90, "disabled": true, "status": "off"}]}</cuttle_meters>');
+out.pricing = T('<cuttle_pricing>{"model": "m1"}</cuttle_pricing>');
+out.mediaAudio = T('<media type="audio" src="s.mp3" title="T\\"t"></media>');
+out.mediaImg = T('<media src="pic.png" title="P"></media>');
+out.mediaNoSrc = T('<media type="image" title="P"></media>');
+out.vegaTag = T('<vega>{"mark": "point"}</vega>');
+out.vegaFence = T('```vega\\n{"mark": "x"}\\n```');
+out.vegaEmpty = A.buildVegaWrapHtml('   ', deps);
+out.vegaXss = A.buildVegaWrapHtml('{"a": "</div><script>}', deps);
+out.empty = E('');
+out.nullText = T(null);
+const combined = {};
+for (const part of [out.think.blocks, out.tool.blocks, out.tail.blocks]) {
+  for (const k of Object.keys(part)) combined[k] = (combined[k] || []).concat(part[k]);
+}
+out.restored = A.restoreStructuredBlocks(
+  out.think.text + ' ' + out.tool.text + ' ' + out.tail.text, combined);
+out.restoreUnknown = A.restoreStructuredBlocks('keep {{CUTTLE_NOPE_0}} here', {});
+out.restoreEmpty = A.restoreStructuredBlocks('plain', { think: [], tool: [] });
+out.copyClean = A.cleanCodeCopyText
+  ? A.cleanCodeCopyText('a\\u200Bb\\u00A0c\\r\\n\\n')
+  : 'module-has-no-cleanCodeCopyText';
+// vega activation executes the REAL page function with a fake DOM
+eval(span('    function activateVegaEmbeds(containerEl) {',
+          '    function cleanCodeCopyText(raw) {'));
+const embedCalls = [];
+const mkEl = (spec) => {
+  const el = { __vega_done: false, _spec: spec, _c: null, _text: null, _html: 'x',
+    getAttribute: function (k) { return this._spec; } };
+  el.classList = { add: (c) => { el._c = c; } };
+  Object.defineProperty(el, 'textContent', {
+    set(v) { el._text = v; }, get() { return el._text; } });
+  Object.defineProperty(el, 'innerHTML', {
+    set(v) { el._html = v; }, get() { return el._html; } });
+  return el;
+};
+globalThis.window = { vegaEmbed: async (el, spec, opts) => { embedCalls.push({ spec, opts }); } };
+const good = mkEl('{"mark": "point"}');
+const bad = mkEl('{oops');
+const done = mkEl('{"a": 1}'); done.__vega_done = true;
+activateVegaEmbeds({ querySelectorAll: () => [good, bad, done] });
+out.vegaActivate = { embedCalls: embedCalls.length,
+  goodDone: good.__vega_done, badError: bad._c, badText: bad._text,
+  doneSkipped: embedCalls.filter((c) => c.spec.a === 1).length };
+delete globalThis.window;
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+def _run_structured():
+    import os
+    proc = subprocess.run(
+        ["node", "-e", STRUCTURED_HARNESS],
+        capture_output=True, text=True, timeout=30,
+        env={"PATH": os.environ["PATH"], "MOD_JS": str(MOD_JS),
+             "CHAT_PAGE_JS": str(CHAT_PAGE_JS)},
+    )
+    assert proc.returncode == 0, proc.stderr or proc.stdout
+    return json.loads(proc.stdout)
+
+
+@node_only
+def test_structured_block_planning_extracts_and_escapes():
+    res = _run_structured()
+    think = res["think"]
+    assert think["blocks"]["think"] and len(think["blocks"]["think"]) == 1
+    assert "{{CUTTLE_THINK_0}}" in think["text"]
+    assert "reason <b>here</b>" not in think["blocks"]["think"][0]
+    assert "reason &lt;b&gt;here&lt;/b&gt;" in think["blocks"]["think"][0]
+    # tags inside fenced/inline code are protected, real ones still extract
+    assert res["thinkFenced"]["blocks"]["think"] == []
+    assert "<think>" in res["thinkFenced"]["text"]
+    assert len(res["thinkInlineCode"]["blocks"]["think"]) == 1
+    assert res["thinkUnclosed"]["blocks"]["think"] == []
+    assert "&lt;script&gt;" in res["thinkXss"]["blocks"]["think"][0]
+    assert "<script>" not in res["thinkXss"]["blocks"]["think"][0]
+    tool = res["tool"]
+    assert "{{CUTTLE_TOOL_0}}" in tool["text"]
+    assert "&lt;b&gt;out&lt;/b&gt;" in tool["blocks"]["tool"][0]
+
+
+@node_only
+def test_structured_tail_blocks_attributes_and_fallbacks():
+    res = _run_structured()
+    tail = res["tail"]
+    assert "{{CUTTLE_TRACE_0}}" in tail["text"]
+    assert "&lt;i&gt;" in tail["blocks"]["trace"][0]
+    assert "{{CUTTLE_PROGRESS_0}}" in tail["text"]
+    # quote-bearing attrs truncate at the inner quote (inherited regex behavior)
+    assert 'data-progress-id="p"' in tail["blocks"]["progress"][0]
+    assert "L&lt;o" in tail["blocks"]["progress"][0]
+    assert "{{CUTTLE_TERM_0}}" in tail["text"]
+    assert 'data-interactive="true"' in tail["blocks"]["terminal"][0]
+    assert 'terminal-title">T</div>' in tail["blocks"]["terminal"][0]
+    assert "M&lt;x" in res["meters"]["blocks"]["meters"][0]
+    assert res["meters"]["blocks"]["meters"][0].count("cuttle-meter-row") >= 1
+    assert res["metersBad"]["blocks"]["meters"][0].count("cuttle-meter-row") == 0
+    assert "cuttle-meter-row--disabled" in res["metersDisabled"]["blocks"]["meters"][0]
+    assert res["pricing"]["blocks"]["pricing"] == ['<price:{"model": "m>']
+    assert "msg-audio" not in res["mediaAudio"]["blocks"]["media"][0]
+    assert "<audio" in res["mediaAudio"]["blocks"]["media"][0]
+    # quote-bearing attrs truncate at the inner quote (inherited regex behavior)
+    assert 'ui-title">T</div>' in res["mediaAudio"]["blocks"]["media"][0]
+    assert "<thumb" in res["mediaImg"]["blocks"]["media"][0]
+    assert res["mediaNoSrc"]["text"] == ""
+    assert res["mediaNoSrc"]["blocks"]["media"] == []
+
+
+@node_only
+def test_vega_wrap_planning_and_activation_order():
+    res = _run_structured()
+    assert res["vegaEmpty"] == (
+        '<div class="vega-wrap vega-wrap--error">Empty Vega chart</div>')
+    assert 'data-vega-spec="{&quot;a&quot;: &quot;&lt;/div&gt;&lt;script&gt;}' in res["vegaXss"]
+    assert "</div><script>" not in res["vegaXss"]
+    assert "{{CUTTLE_VEGA_0}}" in res["vegaTag"]["text"]
+    assert "{{CUTTLE_VEGA_0}}" in res["vegaFence"]["text"]
+    act = res["vegaActivate"]
+    assert act["embedCalls"] == 1
+    assert act["goodDone"] is True
+    assert act["badError"] == "vega-wrap--error"
+    assert "Invalid Vega JSON" in act["badText"]
+    assert act["doneSkipped"] == 0
+
+
+@node_only
+def test_structured_restore_and_copy_text():
+    res = _run_structured()
+    assert "{{CUTTLE_" not in res["restored"]
+    assert "thinking-block" in res["restored"]
+    assert "tool-block" in res["restored"]
+    assert res["restoreUnknown"] == "keep {{CUTTLE_NOPE_0}} here"
+    assert res["restoreEmpty"] == "plain"
+    assert res["empty"] == {"text": "", "blocks": {"think": [], "tool": []}}
+    assert res["nullText"] == {"text": "", "blocks": {
+        "trace": [], "progress": [], "meters": [], "pricing": [],
+        "terminal": [], "media": [], "vega": []}}
+    # zero-width chars drop (no space), exotic spaces flatten
+    assert res["copyClean"] == "ab c"
+
+
+def test_format_message_orders_structured_extraction_around_supervised():
+    """Order pin: head planning → supervised (stays) → tail planning.
+
+    The original bug class here is a take/dismiss-style hoist: running
+    tail patterns before supervised placeholder-replacement would let
+    live-activity JSON match block patterns. The page must keep the
+    supervised seam between the two owned planning calls, and restore
+    through the owned protocol instead of inline loops.
+    """
+    src = CHAT_PAGE_JS.read_text(encoding="utf-8")
+    start = src.index("function formatMessage(text)")
+    end = src.index("function isTouchComposer()", start)
+    body = src[start:end]
+    head = body.index("extractHeadStructuredBlocks")
+    sup = body.index("supervisedActivityBlocks")
+    tail = body.index("extractTailStructuredBlocks")
+    assert head < sup < tail
+    assert "restoreStructuredBlocks(result, structuredBlocks)" in body
+    for leftover in (
+        "pushThinkBlock",
+        "extractThinkTags",
+        "parseMediaAttr",
+        "pushMediaCard",
+        "pushVega",
+        "const traceBlocks = []",
+        "const toolBlocks = []",
+        "CUTTLE_THINK_' + thinkBlocks.length",
+    ):
+        assert leftover not in body, f"moved planning must not remain inline: {leftover}"
+    # supervised extraction + restore stay inline (live supervised state)
+    assert "window.CuttleSupervised" in body
+    assert "CUTTLE_SUP_ACT_' + supervisedActivityBlocks.length" in body
+
+
 def test_page_delegates_message_history_decisions_to_owned_module():
     """Narrow page adapters: same signatures, no duplicated decision logic."""
     src = CHAT_PAGE_JS.read_text(encoding="utf-8")
@@ -383,6 +585,10 @@ def test_page_delegates_message_history_decisions_to_owned_module():
          "CuttleChatMessages.historyPageMeta"),
         ("function transcriptEndsWithAssistant(messages)",
          "CuttleChatMessages.transcriptEndsWithAssistant"),
+        ("function buildVegaWrapHtml(rawSpec)",
+         "CuttleChatMessages.buildVegaWrapHtml"),
+        ("function cleanCodeCopyText(raw)",
+         "CuttleChatMessages.cleanCodeCopyText"),
     ):
         assert adapter in src, f"page adapter {adapter} must stay (same signature)"
         assert owned in src, f"page must delegate to {owned}"

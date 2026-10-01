@@ -484,11 +484,17 @@ def test_format_cursor_usage_prefers_cli_pct_over_dollar_display_message():
 
 def test_cuttle_meters_tag_wired_in_chat_page():
     js = Path(__file__).resolve().parents[1] / "web" / "js" / "chat_page.js"
+    mod = Path(__file__).resolve().parents[1] / "web" / "js" / "chat_messages.js"
     css = Path(__file__).resolve().parents[1] / "web" / "css" / "chat_page.css"
     text = js.read_text(encoding="utf-8")
+    owned = mod.read_text(encoding="utf-8")
     styles = css.read_text(encoding="utf-8")
-    assert "cuttle_meters" in text
-    assert "CUTTLE_METERS_" in text
+    # Meters planning lives in the owned Messages module (Phase 3 Slice 8C);
+    # the page stays wired through the structured-block planning calls.
+    assert "extractTailStructuredBlocks" in text
+    assert "restoreStructuredBlocks(result, structuredBlocks)" in text
+    assert "cuttle_meters" in owned
+    assert "CUTTLE_METERS_" in owned
     assert "cuttle-meters" in styles
     assert "cuttle-meter-fill" in styles
     # Vega no longer forced into ui-card / dark theme for opaque analytics look.

@@ -3961,3 +3961,189 @@ One-way dependency (page → namespace); module holds no state.
 - Added/deleted files: none. `chat_page.html` untouched.
 - Commit independently on main. No push, no restart.
   **STOP before further sub-slices or Streaming.**
+
+---
+
+# Phase 3 — Slice 8B approval (recorded at the Slice 8C append boundary)
+
+- `adcce8c5` (Slice 8B, user-bubble display dispatch) is **approved**
+  per the worker brief for Slice 8C; prior sections above are
+  preserved verbatim — reviewer last read line 3963, and these notes
+  sit at the append boundary.
+- Carry-forward fix honored in this commit: 8B changed the already-
+  loaded `chat_messages.js` + `chat_page.js` without bumping their
+  `?v=` fingerprints, so `?v=`-immutable clients (7-day max-age per
+  `src/api/web_chat_api.py` `add_cache_headers`: fingerprinted
+  assets immutable, HTML no-store) would keep running 8A code after
+  an 8B deploy. Both assets are bumped to `?v=20261001slice8c` in
+  this commit (`chat_page.html` only; it is the sole entry point
+  loading them). No unrelated stale pins touched.
+
+---
+
+# Phase 3 — Slice 8C: structured-block planning + vega/copy leaves
+
+## Phase status
+
+- Slice: Phase 3 Slice 8C — pre-escape structured-block extraction
+  (think/tool/trace/progress/meters/pricing/terminal/media/vega) +
+  placeholder restore protocol + vega-wrap/copy-text leaves →
+  `chat_messages.js`. No new script tag (module already loads).
+- Git baseline before work: `adcce8c5` (Slice 8B); tree clean
+  except pre-existing untracked `work/` (scratch, untouched).
+- Completion status: **complete, awaiting Codex review**. 8D and
+  Streaming / Slice 9 NOT started.
+
+## Boundary chosen (and what was NOT moved)
+
+`formatMessage` is a ~1,200-line staged pipeline; relocating it
+whole was rejected as monolith-shifting. The owned seam is
+**pre-escape extraction → placeholder → post-render restore**:
+- Moved (pure HTML planning, verbatim): think (code-fence-aware,
+  incl. `formatThinkingInner`/`formatThinkingLineInline` which have
+  no other callers), tool_output, trace, progress (needs `clamp`),
+  meters, pricing (needs `renderCuttlePricingHtml` leaf), terminal,
+  media (needs `mediaKindFromUrl` + `buildMediaThumbHtml` leaves),
+  vega tag+fence (incl. `buildVegaWrapHtml` vega planning),
+  `cleanCodeCopyText` (pure; page adapter kept for the copy-button
+  wiring), and the 9-prefix restore loop table.
+- New module fns: `extractHeadStructuredBlocks` (think+tool),
+  `extractTailStructuredBlocks` (trace/progress/meters/pricing/
+  terminal/media/vega), `restoreStructuredBlocks`,
+  `formatThinkingLineInline`, `formatThinkingInner`,
+  `buildVegaWrapHtml`, `cleanCodeCopyText`. Deps (6 named leaves):
+  `escapeHtmlInline`, `clamp`, `renderMdLinkChip`,
+  `renderCuttlePricingHtml`, `mediaKindFromUrl`,
+  `buildMediaThumbHtml`.
+- Staying, explicitly: supervised-activity extraction + restore
+  (reads live `window.CuttleSupervised` state), widget ingest (side-
+  effecting `queueClientWidgetUpsert`), buttons/action-forms/
+  cuttle_form extraction (action-form machinery + window state),
+  markdown images/links/code/git-SHA core, the escaped line loop,
+  ALL DOM activation (`activateEnhancements`, vega embed, code-copy
+  buttons, hljs, terminal/button wiring), persistence, sync,
+  streaming.
+- Order-exactness: the page calls head-extract → supervised
+  (unchanged, inline) → tail-extract, preserving the original
+  pipeline order so live-activity JSON can never match a block
+  pattern. Restore order across prefixes is irrelevant (distinct
+  inert placeholders); the single restore call sits at the first
+  restore site, supervised/forms/code/link loops stay inline.
+- Feature task now navigable in the owner: "fix a collapsible
+  block's extraction/escaping/placeholder round-trip" (think
+  truncation, meter JSON fallbacks, terminal attr escaping, vega
+  wrap shape) without touching the 1,200-line pipeline; the
+  planning↔activation contract (`data-vega-spec` in → embed/error/
+  skip behavior) is pinned by test.
+
+## Changes made
+
+- `chat_messages.js`: +461 (planning fns + ownership docblocks);
+  module 353 → 814 L.
+- `chat_page.js`: +25/−427 — think-inner/line/vega-wrap bodies
+  deleted (no other callers), copy-text/vega-wrap same-signature
+  adapters, `structuredRenderDeps()` gatherer, head/tail/restore
+  call substitutions; page 25,267 → 24,865 (−402 net).
+- `chat_page.html`: `?v=20261001slice8c` for both chat assets
+  (carry-forward fix; no other entry point loads them).
+- **Tests:** 4 rendered-output tests (extract/escape/round-trip,
+  attrs/malformed/disabled fallbacks, vega wrap + REAL
+  `activateVegaEmbeds` execution on a fake DOM, restore + copy
+  text) + 1 page-order test (head < supervised < tail; moved bodies
+  absent; supervised stays). 3 wiring pins repointed at the owned
+  module (`cursor_agent_slash_commands`, `agent_cost_slash`,
+  `agent_usage_slash`) with page-wiring assertions kept.
+- Composer duplicate execution tests, history windowing, session-
+  restore ordering untouched and green.
+
+## Tests and verification
+
+- 4 new tests failed pre-move (authentic failure), pass post-move;
+  messages file 15/15.
+- Differential proof (scratch `/tmp/diff_structured.js`, not
+  committed): HEAD original spans (eval'd) vs module over
+  head/tail/full-pipeline-restore + wrap/copytext, 16 adversarial
+  cases (fenced/inline-code think protection, unclosed think,
+  redacted_thinking, XSS content/attrs, clamped percents, NaN pct,
+  malformed meters JSON, disabled rows, locked∩interactive
+  terminal, missing media src, fake placeholders, null/empty) —
+  **51/51 match, zero mismatches**.
+- Earlier `/tmp/diff_format.js` (8B, 23/23) unaffected by this
+  slice (formatter untouched).
+- Focused + neighbors (messages, chips, composer, badges, widgets,
+  agent-model, codex-effort, pins, starred-removal, bubble-badge,
+  followup-heal, stop-refresh, history-search, pagination,
+  project-meta/share, supervised ×2, action-forms, attachments,
+  activity, restart ×2, slash-consistency, pricing, cost/usage/
+  cursor-slash): 331+ passed; every failure identity-matched to
+  the 8B baseline except 3 same-family wiring pins, which were
+  repointed (intent preserved) and are green.
+- Broad with node on PATH: post-change **1,829 passed, 28 failed,
+  60 skipped**; 8B HEAD **1,821 / 28 / 60**; sorted FAILED
+  identities **byte-identical (diff empty)** — +8 = 3 format (8B)
+  + 5 structured/order (8C).
+- `node --check` clean on both touched JS files. Transport note:
+  mid-slice audit caught `\uXXXX`-in-`find` mangling plus doubled
+  `\\u` escapes in new code; repaired by byte-exact replacement
+  and re-verified (zero stray control bytes; differential green
+  after repair). No paid tests run.
+
+## Metrics
+
+| Metric | Before (`adcce8c5`) | After | Method |
+|---|---|---|---|
+| `chat_page.js` lines | 25,267 | 24,865 (−402) | `wc -l` |
+| `chat_messages.js` lines | 353 | 814 (+461) | `wc -l` |
+| Structured planning tests | none | +4 behavior, +1 order | pytest |
+| Differential (extract+restore) | — | 51/51 match | node harness |
+| Full suite (node on PATH) | 1,821 / 28 / 60 | 1,829 / 28 (identical list) / 60 | pytest + diff |
+
+## Remaining Messages/History work (acceptance-criteria disposition)
+
+- **Sync machinery** (`syncSessionMessagesFromServer`, dedup,
+  reconcile, poll): done when record/window owners are its only
+  message-shape deps and streaming owns live rows — still open.
+- **Prompt-history nav**: done when key handling/anchor/persist
+  split is tested — still open (composer-adjacent).
+- **Search + history-panel UI**: done when panel DOM/persistence
+  actions route through owned record/window fns — still open.
+- **Assistant markdown core** (links/code/tables/line loop,
+  `formatMessage` remainder): done when line rendering is
+  separable from block planning without duplicating escape
+  semantics — still open; NOT to be moved whole.
+- **DOM activation** (vega embed, copy buttons, hljs, terminal/
+  button wiring): done when a bounded activation owner with
+  injected container-scoped deps replaces inline wiring — still
+  open; this slice pins its input contract only.
+- Domain closure requires 8D-or-later disposition of all five;
+  none is an optional extra extraction — each has the criterion above.
+
+## Limitations and risks
+
+- Manual browser/Flask validation not performed (no UI served;
+  no visual change to inspect) — recorded, not waived. Node-level
+  execution covers planning HTML byte-exact plus real vega
+  activation transitions; button wiring + hljs + terminal wiring
+  stay browser-only and unexercised.
+- Markdown/chip stub leaves in the 8B harness remain premises of
+  their own units.
+- 28 baseline failures + stale asset-version pin untouched.
+- Page-side `structuredRenderDeps()` is a 6-leaf gatherer, not a
+  generic bag: each leaf is named, single-purpose, and stays in
+  its owner (util/pricing/media/link-chip). Watch for growth in
+  later sub-slices.
+
+## Diff summary
+
+- Modified: `src/web/js/chat_messages.js` (+461),
+  `src/web/js/chat_page.js` (+25/−427),
+  `src/web/chat_page.html` (+2/−2: `?v` bumps),
+  `src/tests/test_chat_messages.py` (+206: harnesses + 5 tests),
+  `src/tests/test_cursor_agent_slash_commands.py`,
+  `src/tests/test_agent_cost_slash.py`,
+  `src/tests/test_agent_usage_slash.py` (wiring repoints),
+  `docs/reviews/architecture-stabilization.md` (this section +
+  8B approval + cache-fix note).
+- Added/deleted files: none.
+- Commit independently on main. No push, no restart.
+  **STOP for Codex review before 8D or Streaming.**

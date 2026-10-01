@@ -113,9 +113,14 @@ def test_cuttle_meters_markdown_contract():
 
 def test_cuttle_meters_renderer_wired_in_frontend():
     js = CHAT_JS.read_text(encoding="utf-8")
+    mod = (CHAT_JS.parent / "chat_messages.js").read_text(encoding="utf-8")
     css = CHAT_CSS.read_text(encoding="utf-8")
-    assert "cuttle_meters" in js
-    assert "CUTTLE_METERS_" in js
+    # Meters planning lives in the owned Messages module (Phase 3 Slice 8C);
+    # the page stays wired through the structured-block planning calls.
+    assert "extractTailStructuredBlocks" in js
+    assert "restoreStructuredBlocks(result, structuredBlocks)" in js
+    assert "cuttle_meters" in mod
+    assert "CUTTLE_METERS_" in mod
     assert "cuttle-meters" in css
     assert "cuttle-meter-fill" in css
 

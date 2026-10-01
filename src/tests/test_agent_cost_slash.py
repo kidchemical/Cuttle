@@ -669,9 +669,15 @@ def _run_node(tmp_path, script: str) -> str:
 
 def test_frontend_wires_pricing_renderer_and_styles():
     js = CHAT_JS.read_text(encoding="utf-8")
+    mod = (CHAT_JS.parent / "chat_messages.js").read_text(encoding="utf-8")
     css = CHAT_CSS.read_text(encoding="utf-8")
-    assert "<cuttle_pricing>" in js
-    assert "{{CUTTLE_PRICING_" in js
+    # Pricing planning lives in the owned Messages module (Phase 3 Slice 8C);
+    # the page stays wired through the structured-block planning calls, and
+    # the pricing HTML leaf stays in the page for the renderer tests below.
+    assert "extractTailStructuredBlocks" in js
+    assert "restoreStructuredBlocks(result, structuredBlocks)" in js
+    assert "<cuttle_pricing>" in mod
+    assert "{{CUTTLE_PRICING_" in mod
     assert "function renderCuttlePricingHtml(" in js
     assert "tr.is-active" in css and ".cuttle-pricing-badge" in css
 

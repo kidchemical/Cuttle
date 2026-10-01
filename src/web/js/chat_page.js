@@ -10395,16 +10395,7 @@
     }
 
     function buildVegaWrapHtml(rawSpec) {
-        const raw = String(rawSpec ?? '').trim();
-        if (!raw) {
-            return '<div class="vega-wrap vega-wrap--error">Empty Vega chart</div>';
-        }
-        // No ui-card chrome — charts sit flush in the bubble (transparent bg).
-        return (
-            '<div class="vega-wrap" data-vega-spec="' +
-            escapeHtmlInline(raw) +
-            '"><div class="vega-pending" aria-hidden="true">Loading chart…</div></div>'
-        );
+        return CuttleChatMessages.buildVegaWrapHtml(rawSpec, { escapeHtmlInline });
     }
 
     function activateVegaEmbeds(containerEl) {
@@ -10464,11 +10455,7 @@
     // garbage in terminals: zero-width/BOM/soft hyphen dropped, exotic spaces
     // flattened to ASCII space.
     function cleanCodeCopyText(raw) {
-        return String(raw ?? '')
-            .replace(/\r\n?/g, '\n')
-            .replace(/[\u200B-\u200D\u2060\uFEFF\u00AD]/g, '')
-            .replace(/[\u00A0\u2007\u202F]/g, ' ')
-            .replace(/\n+$/, '');
+        return CuttleChatMessages.cleanCodeCopyText(raw);
     }
 
     function attachCodeCopyButtons(containerEl) {
@@ -22837,72 +22824,6 @@
     }
     
     /** Inline markdown (links, inline code, bold) for a single reasoning line. */
-    function formatThinkingLineInline(raw) {
-        const chips = [];
-        const codes = [];
-        let t = String(raw ?? '');
-        // Markdown links → chips (capture raw url/label before escaping).
-        t = t.replace(/\[([^\]]*)]\(([^)]+)\)/g, function (_, label, url) {
-            const ph = '\u0001L' + chips.length + '\u0001';
-            chips.push(renderMdLinkChip(label, String(url || '').trim()));
-            return ph;
-        });
-        // Inline code → placeholders so backticks don't render literally.
-        t = t.replace(/`([^`]+)`/g, function (_, code) {
-            const ph = '\u0001C' + codes.length + '\u0001';
-            codes.push('<code>' + escapeHtmlInline(code) + '</code>');
-            return ph;
-        });
-        t = escapeHtmlInline(t);
-        t = t.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-        t = t.replace(/\u0001C(\d+)\u0001/g, function (_, i) { return codes[Number(i)] || ''; });
-        t = t.replace(/\u0001L(\d+)\u0001/g, function (_, i) { return chips[Number(i)] || ''; });
-        return t;
-    }
-
-    /** Structured layout inside model reasoning blocks (step labels vs plain lines). */
-    function formatThinkingInner(raw) {
-        let trimmed = String(raw ?? '').trim();
-        if (!trimmed) return '';
-        // Render fenced code the model quoted in its reasoning as real blocks
-        // instead of leaving raw ``` lines. Protect them before line splitting.
-        const codeBlocks = [];
-        trimmed = trimmed.replace(/```([^\n`]*)\r?\n([\s\S]*?)```/g, function (_, langRaw, code) {
-            const lang = String(langRaw || '').trim().split(/\s+/)[0] || '';
-            const safeLang = /^[a-zA-Z0-9_+#.-]+$/.test(lang) ? lang : '';
-            const safe = escapeHtmlInline(String(code ?? '').replace(/\n$/, ''));
-            const cls = safeLang ? (' class="language-' + escapeHtmlInline(safeLang) + '"') : '';
-            const ph = '\u0002TC' + codeBlocks.length + '\u0002';
-            codeBlocks.push('<pre class="message-code-block"><code' + cls + '>' + safe + '</code></pre>');
-            return '\n' + ph + '\n';
-        });
-        const lines = trimmed.split('\n');
-        const parts = [];
-        for (let i = 0; i < lines.length; i++) {
-            const line = lines[i];
-            const codeM = line.trim().match(/^\u0002TC(\d+)\u0002$/);
-            if (codeM) {
-                parts.push(codeBlocks[Number(codeM[1])] || '');
-                continue;
-            }
-            if (line.trim() === '') continue;
-            const m = line.match(
-                /^\s*((?:Step\s*\d+[:.)]|\d{1,2}\.\s+|Action:|Thought:|Observation:|Tool(?:\s+use)?:|Result:|Planning:|Final:)\s*)(.*)$/i
-            );
-            if (m && m[1] && m[1].trim().length < 52) {
-                parts.push(
-                    '<div class="thinking-step">'
-                    + '<span class="thinking-step-label">' + escapeHtmlInline(m[1].trim()) + '</span>'
-                    + '<span class="thinking-step-body">' + formatThinkingLineInline(m[2]) + '</span>'
-                    + '</div>'
-                );
-            } else {
-                parts.push('<div class="thinking-line">' + formatThinkingLineInline(line) + '</div>');
-            }
-        }
-        return '<div class="thinking-inner">' + parts.join('') + '</div>';
-    }
-
     /** Split a GFM pipe-table row into cell strings (outer pipes optional). */
     function splitMarkdownTableRow(line) {
         let s = String(line || '').trim();
@@ -23143,6 +23064,18 @@
         });
     }
 
+    /** Page-owned seams for structured-block render planning (chat_messages.js). */
+    function structuredRenderDeps() {
+        return {
+            escapeHtmlInline,
+            clamp,
+            renderMdLinkChip,
+            renderCuttlePricingHtml,
+            mediaKindFromUrl,
+            buildMediaThumbHtml,
+        };
+    }
+
     function ingestAndStripCuttleWidgets(text) {
         return String(text || '').replace(
             /<cuttle_widget\b([^>]*)>([\s\S]*?)<\/cuttle_widget\s*>/gi,
@@ -23160,93 +23093,11 @@
             text = ingestAndStripCuttleWidgets(text);
         }
         // Extract <think> / <redacted_thinking> blocks (before escapeHtml)
-        const thinkBlocks = [];
-        function pushThinkBlock(content) {
-            const placeholder = '{{CUTTLE_THINK_' + thinkBlocks.length + '}}';
-            thinkBlocks.push(
-                '<details class="thinking-block">'
-                + '<summary>Progress</summary>'
-                + formatThinkingInner(content)
-                + '</details>'
-            );
-            return placeholder;
-        }
-        // Match <think>/<redacted_thinking> tags, but ignore any that live inside
-        // fenced or inline code. Reasoning that quotes those tags (e.g. code
-        // samples containing "</think>") used to truncate the block and spill the
-        // rest of the reasoning — plus a stray closing tag — into the message body.
-        (function extractThinkTags() {
-            const protectedRanges = [];
-            const addRanges = (re) => {
-                let mm;
-                while ((mm = re.exec(text)) !== null) {
-                    const s = mm.index;
-                    const e = s + mm[0].length;
-                    if (!protectedRanges.some((r) => s >= r[0] && e <= r[1])) {
-                        protectedRanges.push([s, e]);
-                    }
-                    if (mm.index === re.lastIndex) re.lastIndex++;
-                }
-            };
-            addRanges(/```[^\n`]*\r?\n[\s\S]*?```/g);
-            addRanges(/`[^`\n]+`/g);
-            const inProtected = (pos) =>
-                protectedRanges.some((r) => pos >= r[0] && pos < r[1]);
-
-            const tagRe = /<(\/?)(think|redacted_thinking)>/g;
-            const tokens = [];
-            let mm;
-            while ((mm = tagRe.exec(text)) !== null) {
-                if (inProtected(mm.index)) continue;
-                tokens.push({
-                    close: mm[1] === '/',
-                    name: mm[2],
-                    start: mm.index,
-                    end: mm.index + mm[0].length,
-                });
-            }
-
-            const segments = [];
-            let idx = 0;
-            while (idx < tokens.length) {
-                const open = tokens[idx];
-                if (open.close) { idx++; continue; }
-                let j = idx + 1;
-                while (
-                    j < tokens.length
-                    && !(tokens[j].close && tokens[j].name === open.name)
-                ) {
-                    j++;
-                }
-                if (j >= tokens.length) break;
-                segments.push({
-                    start: open.start,
-                    end: tokens[j].end,
-                    content: text.slice(open.end, tokens[j].start),
-                });
-                idx = j + 1;
-            }
-            if (!segments.length) return;
-
-            let out = '';
-            let cursor = 0;
-            for (const seg of segments) {
-                out += text.slice(cursor, seg.start);
-                out += pushThinkBlock(seg.content);
-                cursor = seg.end;
-            }
-            out += text.slice(cursor);
-            text = out;
-        })();
-
-        // Extract <tool_output> blocks (rendered as collapsible)
-        const toolBlocks = [];
-        text = text.replace(/<tool_output>([\s\S]*?)<\/tool_output>/g, function(_, content) {
-            const escaped = escapeHtmlInline(content.trim());
-            const placeholder = '{{CUTTLE_TOOL_' + toolBlocks.length + '}}';
-            toolBlocks.push('<details class="tool-block"><summary>🧰 Tool output</summary><pre class="tool-content"><code>' + escaped + '</code></pre></details>');
-            return placeholder;
-        });
+        const headStructured = CuttleChatMessages.extractHeadStructuredBlocks(
+            text, structuredRenderDeps());
+        text = headStructured.text;
+        const thinkBlocks = headStructured.blocks.think;
+        const toolBlocks = headStructured.blocks.tool;
 
         // Supervised live activity indicator + Activity disclosure (collapsed).
         const supervisedActivityBlocks = [];
@@ -23279,236 +23130,11 @@
             }
         );
 
-        // Query trace appendix (what actually ran; from _build_cuttle_trace_block)
-        const traceBlocks = [];
-        text = text.replace(/<cuttle_trace>([\s\S]*?)<\/cuttle_trace>/g, function(_, content) {
-            const escaped = escapeHtmlInline(content.trim());
-            const placeholder = '{{CUTTLE_TRACE_' + traceBlocks.length + '}}';
-            traceBlocks.push(
-                '<details class="pipeline-trace-block">'
-                + '<summary>Query trace (what actually ran)</summary>'
-                + '<pre class="trace-content"><code>' + escaped + '</code></pre>'
-                + '</details>'
-            );
-            return placeholder;
-        });
-
-        // Extract <progress .../> (stream-friendly)
-        const progressBlocks = [];
-        text = text.replace(/<progress\s+([^>]*?)\/>/g, function(_, attrs) {
-            const idMatch = String(attrs).match(/\bid\s*=\s*["']([^"']+)["']/i);
-            const labelMatch = String(attrs).match(/\blabel\s*=\s*["']([^"']+)["']/i);
-            const valueMatch = String(attrs).match(/\bvalue\s*=\s*["']([^"']+)["']/i);
-            const id = escapeHtmlInline(idMatch ? idMatch[1] : ('p_' + progressBlocks.length));
-            const label = escapeHtmlInline(labelMatch ? labelMatch[1] : 'Progress');
-            const value = clamp(valueMatch ? valueMatch[1] : 0, 0, 100);
-            const placeholder = '{{CUTTLE_PROGRESS_' + progressBlocks.length + '}}';
-            progressBlocks.push(
-                '<div class="ui-card" data-progress-id="' + id + '">'
-                + '<div class="ui-title">' + label + '</div>'
-                + '<div class="progress-row">'
-                + '<div class="progress-track"><div class="progress-bar" style="width:' + value + '%"></div></div>'
-                + '<div class="progress-value">' + value + '%</div>'
-                + '</div></div>'
-            );
-            return placeholder;
-        });
-
-        // Compact multi-row meters (e.g. Cursor /usage) — no card chrome.
-        const metersBlocks = [];
-        text = text.replace(/<cuttle_meters>([\s\S]*?)<\/cuttle_meters>/gi, function(_, rawBody) {
-            const placeholder = '{{CUTTLE_METERS_' + metersBlocks.length + '}}';
-            let rows = [];
-            let variant = '';
-            try {
-                const parsed = JSON.parse(String(rawBody || '').trim());
-                if (Array.isArray(parsed)) rows = parsed;
-                else if (parsed && typeof parsed === 'object') {
-                    variant = String(parsed.variant || '');
-                    rows = Array.isArray(parsed.rows) ? parsed.rows : [];
-                }
-            } catch (_) {
-                rows = [];
-            }
-            const fmtPct = (p) => {
-                const n = Number(p);
-                if (!Number.isFinite(n)) return '—';
-                if (Math.abs(n - Math.round(n)) < 0.05) return String(Math.round(n)) + '%';
-                return n.toFixed(1).replace(/\.0$/, '') + '%';
-            };
-            const rowHtml = rows.map((row) => {
-                if (!row || typeof row !== 'object') return '';
-                const label = escapeHtmlInline(String(row.label || '').trim() || '—');
-                const disabled = !!row.disabled;
-                const status = row.status != null ? String(row.status).trim() : '';
-                const pctNum = clamp(row.pct != null ? row.pct : 0, 0, 100);
-                const pctLabel = disabled && status
-                    ? escapeHtmlInline(status)
-                    : escapeHtmlInline(fmtPct(pctNum));
-                const fillW = disabled ? 0 : pctNum;
-                const disClass = disabled ? ' cuttle-meter-row--disabled' : '';
-                return (
-                    '<div class="cuttle-meter-row' + disClass + '">'
-                    + '<span class="cuttle-meter-label">' + label + '</span>'
-                    + '<span class="cuttle-meter-pct">' + pctLabel + '</span>'
-                    + '<div class="cuttle-meter-track" aria-hidden="true">'
-                    + '<div class="cuttle-meter-fill" style="width:' + fillW + '%"></div>'
-                    + '</div>'
-                    + '</div>'
-                );
-            }).join('');
-            const varClass = variant
-                ? ' cuttle-meters--' + escapeHtmlInline(variant.replace(/[^a-z0-9_-]/gi, ''))
-                : '';
-            metersBlocks.push(
-                '<div class="cuttle-meters' + varClass + '" role="group">'
-                + rowHtml
-                + '</div>'
-            );
-            return placeholder;
-        });
-
-        // Per-model price table (harness ``/cost``) — active model row highlighted.
-        const pricingBlocks = [];
-        text = text.replace(/<cuttle_pricing>([\s\S]*?)<\/cuttle_pricing>/gi, function(_, rawBody) {
-            const placeholder = '{{CUTTLE_PRICING_' + pricingBlocks.length + '}}';
-            pricingBlocks.push(renderCuttlePricingHtml(rawBody));
-            return placeholder;
-        });
-
-        // Extract <terminal ...>...</terminal>
-        const terminalBlocks = [];
-        text = text.replace(/<terminal([^>]*)>([\s\S]*?)<\/terminal>/g, function(_, attrs, content) {
-            const idMatch = String(attrs).match(/\bid\s*=\s*["']([^"']+)["']/i);
-            const titleMatch = String(attrs).match(/\btitle\s*=\s*["']([^"']+)["']/i);
-            const lockedMatch = String(attrs).match(/\blocked\s*=\s*["']?(true|false)["']?/i);
-            const interactiveMatch = String(attrs).match(/\binteractive\s*=\s*["']?(true|false)["']?/i);
-            const id = escapeHtmlInline(idMatch ? idMatch[1] : ('t_' + terminalBlocks.length));
-            const title = escapeHtmlInline(titleMatch ? titleMatch[1] : 'Console');
-            const locked = (lockedMatch ? lockedMatch[1] : 'false').toLowerCase() === 'true';
-            const interactive = (interactiveMatch ? interactiveMatch[1] : 'false').toLowerCase() === 'true';
-            const body = escapeHtmlInline(String(content ?? '').trim());
-            const placeholder = '{{CUTTLE_TERM_' + terminalBlocks.length + '}}';
-            terminalBlocks.push(
-                '<div class="ui-card terminal" data-terminal-id="' + id + '" data-interactive="' + (interactive && !locked ? 'true' : 'false') + '">'
-                + '<div class="terminal-header">'
-                + '<div class="terminal-title">' + title + '</div>'
-                + '<div class="terminal-badge">' + (locked ? 'Locked' : (interactive ? 'Interactive' : 'Read-only')) + '</div>'
-                + '</div>'
-                + '<div class="terminal-body">' + body + '</div>'
-                + (interactive && !locked
-                    ? '<div class="terminal-input-row">'
-                      + '<input data-terminal-input type="text" placeholder="Type a command…">'
-                      + '<button data-terminal-send title="Send">↵</button>'
-                      + '</div>'
-                    : '')
-                + '</div>'
-            );
-            return placeholder;
-        });
-
-        // Extract <media>...</media> and <media .../> (image/video/audio)
-        const mediaBlocks = [];
-        const parseMediaAttr = (attrsStr, attrName) => {
-            const m = String(attrsStr || '').match(
-                new RegExp('\\b' + attrName + '\\s*=\\s*["\']([^"\']*)["\']', 'i')
-            );
-            return m ? m[1] : '';
-        };
-        const pushMediaCard = (attrs, bodyText) => {
-            const type = (parseMediaAttr(attrs, 'type') || 'image').toLowerCase();
-            const src = String(parseMediaAttr(attrs, 'src') || '').trim();
-            const title = parseMediaAttr(attrs, 'title');
-            const description = String(
-                parseMediaAttr(attrs, 'description')
-                || parseMediaAttr(attrs, 'desc')
-                || bodyText
-                || ''
-            ).trim();
-            if (!src) return '';
-            const placeholder = '{{CUTTLE_MEDIA_' + mediaBlocks.length + '}}';
-            let inner = '';
-            if (type === 'audio') {
-                inner =
-                    '<audio controls src="' +
-                    escapeHtmlInline(src) +
-                    '"></audio>';
-                mediaBlocks.push(
-                    '<div class="ui-card media-wrap">' +
-                    (title ? '<div class="ui-title">' + escapeHtmlInline(title) + '</div>' : '') +
-                    (description && description !== title
-                        ? '<div class="cuttle-media-caption cuttle-media-caption--block">' +
-                          escapeHtmlInline(description) +
-                          '</div>'
-                        : '') +
-                    inner +
-                    '</div>'
-                );
-            } else {
-                const kind = type === 'video' ? 'video' : mediaKindFromUrl(src);
-                mediaBlocks.push(
-                    '<div class="ui-card media-wrap">' +
-                    (title ? '<div class="ui-title">' + escapeHtmlInline(title) + '</div>' : '') +
-                    buildMediaThumbHtml(src, {
-                        title: title,
-                        kind: kind,
-                        description: description,
-                    }) +
-                    '</div>'
-                );
-            }
-            return placeholder;
-        };
-        text = text.replace(/<media\s+([^>]*?)>([\s\S]*?)<\/media>/gi, function(_, attrs, body) {
-            return pushMediaCard(attrs, String(body || '').trim());
-        });
-        text = text.replace(/<media\s+([^>]*?)\/>/gi, function(_, attrs) {
-            return pushMediaCard(attrs, '');
-        });
-
-        // Markdown images ![alt](url) or ![alt](url "description") — before generic link chips
-        text = text.replace(/!\[([^\]]*)]\(([^)]+)\)/g, function(_, alt, rawDest) {
-            const parsed = parseMdImageDest(rawDest);
-            const src = normalizeMdHref(String(parsed.href || '').trim());
-            const description = String(parsed.description || '').trim();
-            const placeholder = '{{CUTTLE_MEDIA_' + mediaBlocks.length + '}}';
-            if (!isSafeMediaSrc(src)) {
-                // Local paths: leave a chip; server rewrite stages on persist
-                mediaBlocks.push(
-                    '<span class="cuttle-media-unstaged" title="Media not hosted yet">' +
-                    escapeHtmlInline(alt || src || 'image') +
-                    '</span>'
-                );
-                return placeholder;
-            }
-            const kind = mediaKindFromUrl(src);
-            mediaBlocks.push(
-                buildMediaThumbHtml(src, {
-                    alt: alt,
-                    title: alt,
-                    kind: kind,
-                    description: description,
-                })
-            );
-            return placeholder;
-        });
-
-        // Extract <vega>...</vega> JSON spec + ```vega / ```vega-lite fences
-        const vegaBlocks = [];
-        const pushVega = (rawContent) => {
-            const placeholder = '{{CUTTLE_VEGA_' + vegaBlocks.length + '}}';
-            vegaBlocks.push(buildVegaWrapHtml(rawContent));
-            return placeholder;
-        };
-        text = text.replace(/<vega>([\s\S]*?)<\/vega>/gi, function(_, content) {
-            return pushVega(content);
-        });
-        text = text.replace(
-            /```(?:vega(?:-lite)?|vegalite)\s*\r?\n([\s\S]*?)```/gi,
-            function(_, content) {
-                return pushVega(content);
-            }
-        );
+        const tailStructured = CuttleChatMessages.extractTailStructuredBlocks(
+            text, structuredRenderDeps());
+        text = tailStructured.text;
+        const structuredBlocks = Object.assign(
+            { think: thinkBlocks, tool: toolBlocks }, tailStructured.blocks);
 
         // Extract <cuttle_button .../> blocks
         const buttonBlocks = [];
@@ -24332,35 +23958,10 @@
         }
         
         let result = formatted.join('');
-        // Restore <think> block HTML
-        for (let i = 0; i < thinkBlocks.length; i++) {
-            result = result.split('{{CUTTLE_THINK_' + i + '}}').join(thinkBlocks[i]);
-        }
-        // Restore <tool_output> block HTML
-        for (let i = 0; i < toolBlocks.length; i++) {
-            result = result.split('{{CUTTLE_TOOL_' + i + '}}').join(toolBlocks[i]);
-        }
+        result = CuttleChatMessages.restoreStructuredBlocks(result, structuredBlocks);
         // Restore supervised Activity disclosure
         for (let i = 0; i < supervisedActivityBlocks.length; i++) {
             result = result.split('{{CUTTLE_SUP_ACT_' + i + '}}').join(supervisedActivityBlocks[i]);
-        }
-        for (let i = 0; i < progressBlocks.length; i++) {
-            result = result.split('{{CUTTLE_PROGRESS_' + i + '}}').join(progressBlocks[i]);
-        }
-        for (let i = 0; i < metersBlocks.length; i++) {
-            result = result.split('{{CUTTLE_METERS_' + i + '}}').join(metersBlocks[i]);
-        }
-        for (let i = 0; i < pricingBlocks.length; i++) {
-            result = result.split('{{CUTTLE_PRICING_' + i + '}}').join(pricingBlocks[i]);
-        }
-        for (let i = 0; i < terminalBlocks.length; i++) {
-            result = result.split('{{CUTTLE_TERM_' + i + '}}').join(terminalBlocks[i]);
-        }
-        for (let i = 0; i < mediaBlocks.length; i++) {
-            result = result.split('{{CUTTLE_MEDIA_' + i + '}}').join(mediaBlocks[i]);
-        }
-        for (let i = 0; i < vegaBlocks.length; i++) {
-            result = result.split('{{CUTTLE_VEGA_' + i + '}}').join(vegaBlocks[i]);
         }
         for (let i = 0; i < formBlocks.length; i++) {
             result = result.split('{{CUTTLE_FORM_' + i + '}}').join(formBlocks[i]);
@@ -24376,9 +23977,6 @@
         }
         for (let i = 0; i < linkChips.length; i++) {
             result = result.split('{{CUTTLE_LINK_' + i + '}}').join(linkChips[i]);
-        }
-        for (let i = 0; i < traceBlocks.length; i++) {
-            result = result.split('{{CUTTLE_TRACE_' + i + '}}').join(traceBlocks[i]);
         }
         return result;
     }

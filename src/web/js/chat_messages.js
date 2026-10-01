@@ -232,6 +232,460 @@
         };
     }
 
+    /**
+     * Inline-code/link shaping inside one reasoning line. Needs the
+     * link-chip leaf (`renderMdLinkChip`) and the shared escaper.
+     */
+    function formatThinkingLineInline(raw, deps) {
+        const d = deps || {};
+        const chips = [];
+        const codes = [];
+        let t = String(raw ?? '');
+        // Markdown links → chips (capture raw url/label before escaping).
+        t = t.replace(/\[([^\]]*)]\(([^)]+)\)/g, function (_, label, url) {
+            const ph = '\u0001L' + chips.length + '\u0001';
+            chips.push(d.renderMdLinkChip(label, String(url || '').trim()));
+            return ph;
+        });
+        // Inline code → placeholders so backticks don't render literally.
+        t = t.replace(/`([^`]+)`/g, function (_, code) {
+            const ph = '\u0001C' + codes.length + '\u0001';
+            codes.push('<code>' + d.escapeHtmlInline(code) + '</code>');
+            return ph;
+        });
+        t = d.escapeHtmlInline(t);
+        t = t.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+        t = t.replace(/\u0001C(\d+)\u0001/g, function (_, i) { return codes[Number(i)] || ''; });
+        t = t.replace(/\u0001L(\d+)\u0001/g, function (_, i) { return chips[Number(i)] || ''; });
+        return t;
+    }
+
+    /**
+     * Vega chart placeholder wrap (planning half; the DOM embed half
+     * stays in the page's `activateVegaEmbeds`, which consumes the
+     * `data-vega-spec` attribute produced here).
+     */
+    function buildVegaWrapHtml(rawSpec, deps) {
+        const d = deps || {};
+        const raw = String(rawSpec ?? '').trim();
+        if (!raw) {
+            return '<div class="vega-wrap vega-wrap--error">Empty Vega chart</div>';
+        }
+        // No ui-card chrome — charts sit flush in the bubble (transparent bg).
+        return (
+            '<div class="vega-wrap" data-vega-spec="' +
+            d.escapeHtmlInline(raw) +
+            '"><div class="vega-pending" aria-hidden="true">Loading chart…</div></div>'
+        );
+    }
+
+    /**
+     * Head structured-block extraction (think + tool_output). Runs at
+     * the pipeline position before supervised-activity extraction, so
+     * later stages never see raw think/tool markup.
+     * Returns { text, blocks: { think, tool } }.
+     */
+    function extractHeadStructuredBlocks(text, deps) {
+        const d = deps || {};
+        let out = String(text || '');
+        const thinkBlocks = [];
+        const pushThinkBlock = (content) => {
+            const placeholder = '{{CUTTLE_THINK_' + thinkBlocks.length + '}}';
+            thinkBlocks.push(
+                '<details class="thinking-block">'
+                + '<summary>Progress</summary>'
+                + formatThinkingInner(content, d)
+                + '</details>'
+            );
+            return placeholder;
+        };
+        // Match <think>/<redacted_thinking> tags, but ignore any that live inside
+        // fenced or inline code. Reasoning that quotes those tags (e.g. code
+        // samples containing "</think>") used to truncate the block and spill the
+        // rest of the reasoning — plus a stray closing tag — into the message body.
+        (function extractThinkTags() {
+            const protectedRanges = [];
+            const addRanges = (re) => {
+                let mm;
+                while ((mm = re.exec(out)) !== null) {
+                    const s = mm.index;
+                    const e = s + mm[0].length;
+                    if (!protectedRanges.some((r) => s >= r[0] && e <= r[1])) {
+                        protectedRanges.push([s, e]);
+                    }
+                    if (mm.index === re.lastIndex) re.lastIndex++;
+                }
+            };
+            addRanges(/```[^\n`]*\r?\n[\s\S]*?```/g);
+            addRanges(/`[^`\n]+`/g);
+            const inProtected = (pos) =>
+                protectedRanges.some((r) => pos >= r[0] && pos < r[1]);
+
+            const tagRe = /<(\/?)(think|redacted_thinking)>/g;
+            const tokens = [];
+            let mm;
+            while ((mm = tagRe.exec(out)) !== null) {
+                if (inProtected(mm.index)) continue;
+                tokens.push({
+                    close: mm[1] === '/',
+                    name: mm[2],
+                    start: mm.index,
+                    end: mm.index + mm[0].length,
+                });
+            }
+
+            const segments = [];
+            let idx = 0;
+            while (idx < tokens.length) {
+                const open = tokens[idx];
+                if (open.close) { idx++; continue; }
+                let j = idx + 1;
+                while (
+                    j < tokens.length
+                    && !(tokens[j].close && tokens[j].name === open.name)
+                ) {
+                    j++;
+                }
+                if (j >= tokens.length) break;
+                segments.push({
+                    start: open.start,
+                    end: tokens[j].end,
+                    content: out.slice(open.end, tokens[j].start),
+                });
+                idx = j + 1;
+            }
+            if (!segments.length) return;
+
+            let rebuilt = '';
+            let cursor = 0;
+            for (const seg of segments) {
+                rebuilt += out.slice(cursor, seg.start);
+                rebuilt += pushThinkBlock(seg.content);
+                cursor = seg.end;
+            }
+            rebuilt += out.slice(cursor);
+            out = rebuilt;
+        })();
+
+        // Extract <tool_output> blocks (rendered as collapsible)
+        const toolBlocks = [];
+        out = out.replace(/<tool_output>([\s\S]*?)<\/tool_output>/g, function(_, content) {
+            const escaped = d.escapeHtmlInline(content.trim());
+            const placeholder = '{{CUTTLE_TOOL_' + toolBlocks.length + '}}';
+            toolBlocks.push('<details class="tool-block"><summary>🧰 Tool output</summary><pre class="tool-content"><code>' + escaped + '</code></pre></details>');
+            return placeholder;
+        });
+        return { text: out, blocks: { think: thinkBlocks, tool: toolBlocks } };
+    }
+
+    /**
+     * Tail structured-block extraction (trace, progress, meters,
+     * pricing, terminal, media, vega). Runs after supervised-activity
+     * extraction, preserving the pipeline's original order: supervised
+     * markup is placeholder-replaced before these patterns run, so
+     * live-activity JSON can never match a block pattern here.
+     * Returns { text, blocks } with one array per prefix below.
+     */
+    function extractTailStructuredBlocks(text, deps) {
+        const d = deps || {};
+        let out = String(text || '');
+        // Query trace appendix (what actually ran; from _build_cuttle_trace_block)
+        const traceBlocks = [];
+        out = out.replace(/<cuttle_trace>([\s\S]*?)<\/cuttle_trace>/g, function(_, content) {
+            const escaped = d.escapeHtmlInline(content.trim());
+            const placeholder = '{{CUTTLE_TRACE_' + traceBlocks.length + '}}';
+            traceBlocks.push(
+                '<details class="pipeline-trace-block">'
+                + '<summary>Query trace (what actually ran)</summary>'
+                + '<pre class="trace-content"><code>' + escaped + '</code></pre>'
+                + '</details>'
+            );
+            return placeholder;
+        });
+
+        // Extract <progress .../> (stream-friendly)
+        const progressBlocks = [];
+        out = out.replace(/<progress\s+([^>]*?)\/>/g, function(_, attrs) {
+            const idMatch = String(attrs).match(/\bid\s*=\s*["']([^"']+)["']/i);
+            const labelMatch = String(attrs).match(/\blabel\s*=\s*["']([^"']+)["']/i);
+            const valueMatch = String(attrs).match(/\bvalue\s*=\s*["']([^"']+)["']/i);
+            const id = d.escapeHtmlInline(idMatch ? idMatch[1] : ('p_' + progressBlocks.length));
+            const label = d.escapeHtmlInline(labelMatch ? labelMatch[1] : 'Progress');
+            const value = d.clamp(valueMatch ? valueMatch[1] : 0, 0, 100);
+            const placeholder = '{{CUTTLE_PROGRESS_' + progressBlocks.length + '}}';
+            progressBlocks.push(
+                '<div class="ui-card" data-progress-id="' + id + '">'
+                + '<div class="ui-title">' + label + '</div>'
+                + '<div class="progress-row">'
+                + '<div class="progress-track"><div class="progress-bar" style="width:' + value + '%"></div></div>'
+                + '<div class="progress-value">' + value + '%</div>'
+                + '</div></div>'
+            );
+            return placeholder;
+        });
+
+        // Compact multi-row meters (e.g. Cursor /usage) — no card chrome.
+        const metersBlocks = [];
+        out = out.replace(/<cuttle_meters>([\s\S]*?)<\/cuttle_meters>/gi, function(_, rawBody) {
+            const placeholder = '{{CUTTLE_METERS_' + metersBlocks.length + '}}';
+            let rows = [];
+            let variant = '';
+            try {
+                const parsed = JSON.parse(String(rawBody || '').trim());
+                if (Array.isArray(parsed)) rows = parsed;
+                else if (parsed && typeof parsed === 'object') {
+                    variant = String(parsed.variant || '');
+                    rows = Array.isArray(parsed.rows) ? parsed.rows : [];
+                }
+            } catch (_) {
+                rows = [];
+            }
+            const fmtPct = (p) => {
+                const n = Number(p);
+                if (!Number.isFinite(n)) return '—';
+                if (Math.abs(n - Math.round(n)) < 0.05) return String(Math.round(n)) + '%';
+                return n.toFixed(1).replace(/\.0$/, '') + '%';
+            };
+            const rowHtml = rows.map((row) => {
+                if (!row || typeof row !== 'object') return '';
+                const label = d.escapeHtmlInline(String(row.label || '').trim() || '—');
+                const disabled = !!row.disabled;
+                const status = row.status != null ? String(row.status).trim() : '';
+                const pctNum = d.clamp(row.pct != null ? row.pct : 0, 0, 100);
+                const pctLabel = disabled && status
+                    ? d.escapeHtmlInline(status)
+                    : d.escapeHtmlInline(fmtPct(pctNum));
+                const fillW = disabled ? 0 : pctNum;
+                const disClass = disabled ? ' cuttle-meter-row--disabled' : '';
+                return (
+                    '<div class="cuttle-meter-row' + disClass + '">'
+                    + '<span class="cuttle-meter-label">' + label + '</span>'
+                    + '<span class="cuttle-meter-pct">' + pctLabel + '</span>'
+                    + '<div class="cuttle-meter-track" aria-hidden="true">'
+                    + '<div class="cuttle-meter-fill" style="width:' + fillW + '%"></div>'
+                    + '</div>'
+                    + '</div>'
+                );
+            }).join('');
+            const varClass = variant
+                ? ' cuttle-meters--' + d.escapeHtmlInline(variant.replace(/[^a-z0-9_-]/gi, ''))
+                : '';
+            metersBlocks.push(
+                '<div class="cuttle-meters' + varClass + '" role="group">'
+                + rowHtml
+                + '</div>'
+            );
+            return placeholder;
+        });
+
+        // Per-model price table (harness ``/cost``) — active model row highlighted.
+        const pricingBlocks = [];
+        out = out.replace(/<cuttle_pricing>([\s\S]*?)<\/cuttle_pricing>/gi, function(_, rawBody) {
+            const placeholder = '{{CUTTLE_PRICING_' + pricingBlocks.length + '}}';
+            pricingBlocks.push(d.renderCuttlePricingHtml(rawBody));
+            return placeholder;
+        });
+
+        // Extract <terminal ...>...</terminal>
+        const terminalBlocks = [];
+        out = out.replace(/<terminal([^>]*)>([\s\S]*?)<\/terminal>/g, function(_, attrs, content) {
+            const idMatch = String(attrs).match(/\bid\s*=\s*["']([^"']+)["']/i);
+            const titleMatch = String(attrs).match(/\btitle\s*=\s*["']([^"']+)["']/i);
+            const lockedMatch = String(attrs).match(/\blocked\s*=\s*["']?(true|false)["']?/i);
+            const interactiveMatch = String(attrs).match(/\binteractive\s*=\s*["']?(true|false)["']?/i);
+            const id = d.escapeHtmlInline(idMatch ? idMatch[1] : ('t_' + terminalBlocks.length));
+            const title = d.escapeHtmlInline(titleMatch ? titleMatch[1] : 'Console');
+            const locked = (lockedMatch ? lockedMatch[1] : 'false').toLowerCase() === 'true';
+            const interactive = (interactiveMatch ? interactiveMatch[1] : 'false').toLowerCase() === 'true';
+            const body = d.escapeHtmlInline(String(content ?? '').trim());
+            const placeholder = '{{CUTTLE_TERM_' + terminalBlocks.length + '}}';
+            terminalBlocks.push(
+                '<div class="ui-card terminal" data-terminal-id="' + id + '" data-interactive="' + (interactive && !locked ? 'true' : 'false') + '">'
+                + '<div class="terminal-header">'
+                + '<div class="terminal-title">' + title + '</div>'
+                + '<div class="terminal-badge">' + (locked ? 'Locked' : (interactive ? 'Interactive' : 'Read-only')) + '</div>'
+                + '</div>'
+                + '<div class="terminal-body">' + body + '</div>'
+                + (interactive && !locked
+                    ? '<div class="terminal-input-row">'
+                      + '<input data-terminal-input type="text" placeholder="Type a command…">'
+                      + '<button data-terminal-send title="Send">↵</button>'
+                      + '</div>'
+                    : '')
+                + '</div>'
+            );
+            return placeholder;
+        });
+
+        // Extract <media>...</media> and <media .../> (image/video/audio)
+        const mediaBlocks = [];
+        const parseMediaAttr = (attrsStr, attrName) => {
+            const m = String(attrsStr || '').match(
+                new RegExp('\\b' + attrName + '\\s*=\\s*["\']([^"\']*)["\']', 'i')
+            );
+            return m ? m[1] : '';
+        };
+        const pushMediaCard = (attrs, bodyText) => {
+            const type = (parseMediaAttr(attrs, 'type') || 'image').toLowerCase();
+            const src = String(parseMediaAttr(attrs, 'src') || '').trim();
+            const title = parseMediaAttr(attrs, 'title');
+            const description = String(
+                parseMediaAttr(attrs, 'description')
+                || parseMediaAttr(attrs, 'desc')
+                || bodyText
+                || ''
+            ).trim();
+            if (!src) return '';
+            const placeholder = '{{CUTTLE_MEDIA_' + mediaBlocks.length + '}}';
+            let inner = '';
+            if (type === 'audio') {
+                inner =
+                    '<audio controls src="' +
+                    d.escapeHtmlInline(src) +
+                    '"></audio>';
+                mediaBlocks.push(
+                    '<div class="ui-card media-wrap">' +
+                    (title ? '<div class="ui-title">' + d.escapeHtmlInline(title) + '</div>' : '') +
+                    (description && description !== title
+                        ? '<div class="cuttle-media-caption cuttle-media-caption--block">' +
+                          d.escapeHtmlInline(description) +
+                          '</div>'
+                        : '') +
+                    inner +
+                    '</div>'
+                );
+            } else {
+                const kind = type === 'video' ? 'video' : d.mediaKindFromUrl(src);
+                mediaBlocks.push(
+                    '<div class="ui-card media-wrap">' +
+                    (title ? '<div class="ui-title">' + d.escapeHtmlInline(title) + '</div>' : '') +
+                    d.buildMediaThumbHtml(src, {
+                        title: title,
+                        kind: kind,
+                        description: description,
+                    }) +
+                    '</div>'
+                );
+            }
+            return placeholder;
+        };
+        out = out.replace(/<media\s+([^>]*?)>([\s\S]*?)<\/media>/gi, function(_, attrs, body) {
+            return pushMediaCard(attrs, String(body || '').trim());
+        });
+        out = out.replace(/<media\s+([^>]*?)\/>/gi, function(_, attrs) {
+            return pushMediaCard(attrs, '');
+        });
+
+        // Extract <vega>...</vega> JSON spec + ```vega / ```vega-lite fences
+        const vegaBlocks = [];
+        const pushVega = (rawContent) => {
+            const placeholder = '{{CUTTLE_VEGA_' + vegaBlocks.length + '}}';
+            vegaBlocks.push(buildVegaWrapHtml(rawContent, d));
+            return placeholder;
+        };
+        out = out.replace(/<vega>([\s\S]*?)<\/vega>/gi, function(_, content) {
+            return pushVega(content);
+        });
+        out = out.replace(
+            /```(?:vega(?:-lite)?|vegalite)\s*\r?\n([\s\S]*?)```/gi,
+            function(_, content) {
+                return pushVega(content);
+            }
+        );
+        return {
+            text: out,
+            blocks: {
+                trace: traceBlocks,
+                progress: progressBlocks,
+                meters: metersBlocks,
+                pricing: pricingBlocks,
+                terminal: terminalBlocks,
+                media: mediaBlocks,
+                vega: vegaBlocks,
+            },
+        };
+    }
+
+    /**
+     * Restore moved structured-block placeholders after the escaped
+     * line rendering. Unknown prefixes and missing arrays pass
+     * through untouched; restore order across prefixes is irrelevant
+     * (distinct inert placeholders).
+     */
+    function restoreStructuredBlocks(html, blocks) {
+        const b = blocks || {};
+        const table = [
+            ['CUTTLE_THINK_', b.think], ['CUTTLE_TOOL_', b.tool],
+            ['CUTTLE_TRACE_', b.trace], ['CUTTLE_PROGRESS_', b.progress],
+            ['CUTTLE_METERS_', b.meters], ['CUTTLE_PRICING_', b.pricing],
+            ['CUTTLE_TERM_', b.terminal], ['CUTTLE_MEDIA_', b.media],
+            ['CUTTLE_VEGA_', b.vega],
+        ];
+        let out = String(html || '');
+        for (const [prefix, arr] of table) {
+            if (!Array.isArray(arr)) continue;
+            for (let i = 0; i < arr.length; i++) {
+                out = out.split('{{' + prefix + i + '}}').join(arr[i]);
+            }
+        }
+        return out;
+    }
+
+    // Invisible characters that survive a rendered-text copy and show up as
+    // garbage in terminals: zero-width/BOM/soft hyphen dropped, exotic spaces
+    // flattened to ASCII space.
+    function cleanCodeCopyText(raw) {
+        return String(raw ?? '')
+            .replace(/\r\n?/g, '\n')
+            .replace(/[\u200B-\u200D\u2060\uFEFF\u00AD]/g, '')
+            .replace(/[\u00A0\u2007\u202F]/g, ' ')
+            .replace(/\n+$/, '');
+    }
+
+    /** Structured layout inside model reasoning blocks (step labels vs plain lines). */
+    function formatThinkingInner(raw, deps) {
+        const d = deps || {};
+        let trimmed = String(raw ?? '').trim();
+        if (!trimmed) return '';
+        // Render fenced code the model quoted in its reasoning as real blocks
+        // instead of leaving raw ``` lines. Protect them before line splitting.
+        const codeBlocks = [];
+        trimmed = trimmed.replace(/```([^\n`]*)\r?\n([\s\S]*?)```/g, function (_, langRaw, code) {
+            const lang = String(langRaw || '').trim().split(/\s+/)[0] || '';
+            const safeLang = /^[a-zA-Z0-9_+#.-]+$/.test(lang) ? lang : '';
+            const safe = d.escapeHtmlInline(String(code ?? '').replace(/\n$/, ''));
+            const cls = safeLang ? (' class="language-' + d.escapeHtmlInline(safeLang) + '"') : '';
+            const ph = '\u0002TC' + codeBlocks.length + '\u0002';
+            codeBlocks.push('<pre class="message-code-block"><code' + cls + '>' + safe + '</code></pre>');
+            return '\n' + ph + '\n';
+        });
+        const lines = trimmed.split('\n');
+        const parts = [];
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            const codeM = line.trim().match(/^\u0002TC(\d+)\u0002$/);
+            if (codeM) {
+                parts.push(codeBlocks[Number(codeM[1])] || '');
+                continue;
+            }
+            if (line.trim() === '') continue;
+            const m = line.match(
+                /^\s*((?:Step\s*\d+[:.)]|\d{1,2}\.\s+|Action:|Thought:|Observation:|Tool(?:\s+use)?:|Result:|Planning:|Final:)\s*)(.*)$/i
+            );
+            if (m && m[1] && m[1].trim().length < 52) {
+                parts.push(
+                    '<div class="thinking-step">'
+                    + '<span class="thinking-step-label">' + d.escapeHtmlInline(m[1].trim()) + '</span>'
+                    + '<span class="thinking-step-body">' + formatThinkingLineInline(m[2], d) + '</span>'
+                    + '</div>'
+                );
+            } else {
+                parts.push('<div class="thinking-line">' + formatThinkingLineInline(line, d) + '</div>');
+            }
+        }
+        return '<div class="thinking-inner">' + parts.join('') + '</div>';
+    }
+
     /** Server transcript ends on an assistant turn → live-status reads idle. */
     function transcriptEndsWithAssistant(messages) {
         if (!Array.isArray(messages) || !messages.length) return false;
@@ -341,6 +795,13 @@
         windowHistoryMessages,
         transcriptEndsWithAssistant,
         formatUserMessageForDisplay,
+        formatThinkingLineInline,
+        formatThinkingInner,
+        buildVegaWrapHtml,
+        cleanCodeCopyText,
+        extractHeadStructuredBlocks,
+        extractTailStructuredBlocks,
+        restoreStructuredBlocks,
     };
 
     const ns = (root.CuttleChatMessages = root.CuttleChatMessages || {});
