@@ -1592,3 +1592,92 @@ stub point (no holder-split: handlers bind at request time).
    (no chat/router/workers/supervised touched; failures identical to
    baseline). Do NOT begin misc cleanup in this track until review
    decides Phase 2's end.
+
+---
+
+# Phase 2 — Closure Summary
+
+Phase 2 is closed by external direction. No miscellaneous-route
+extraction was performed; the phase ends with the four completed slices
+above. Status recorded 2026-10-01 on commit `9ffd062e` (clean tree).
+
+## Slices delivered
+
+| Slice | Owner created | Monolith gave up | Tests added |
+|---|---|---|---|
+| 1 — Projects transport | `api/project_routes` (`projects_bp`, 10 routes) | ~300 lines | 4 contract/auth/shape/guard |
+| 2 — Action Forms transport | `api/action_form_routes` (`action_forms_bp`, 4 routes) | ~280 lines | 9 transport/auth/recovery |
+| 3A — Git service boundary | `api.git_service` (12 pure ops, no Flask) | 0 routes (behavior only) | 4 service unit (real repos) |
+| 3B — Git transport | `api.git_routes` (`git_bp`, 19 routes) | ~1,400 lines | 8 HTTP parity |
+| 4 — Tasks transport | `api.task_routes` (`tasks_bp`, 8 routes) | ~260 lines | 5 contract/auth/shape/flow |
+
+Dead code removed with proven closure along the way: shadowed legacy
+`POST /api/git/commit` handler + orphaned `commit_changes` service op
+(Slice 3B). Documented tech debt deliberately NOT changed: public task
+GET, process-CWD close commits, missing git identity there, raw
+`files.split()`, orphan comments, porcelain `strip()` quirks,
+`timeout=None`, restart-controller pre-auth skip.
+
+## `web_chat_api.py` Phase-0 → Phase-2 size change
+
+- 12,732 → 10,152 lines (−2,580, −20%). Route decorators on the
+  monolith app: 184 → 139 (−45).
+- Composition-root shape now: single global `app` + TLS/CORS/limiter
+  init + 5 owned blueprints (`auth`, `workers`, `dashboards`,
+  `settings`, `projects`, `action_forms`, `git`, `tasks` — auth/workers/
+  dashboards/settings predate Phase 2) + `register_*` route groups +
+  remaining inline handlers (chat core, sessions, shell/panes, launchers,
+  home-automation, mobile, media, infra, supervised thin handlers).
+- Reduction was never the gate: every slice moved or created ownership
+  (or removed proven-dead code); line deltas are reported as evidence,
+  not success criteria.
+
+## Ownership/dependency improvements
+
+- Direction is one-way everywhere new: blueprints → managers/services/
+  utils; `git_service` → shared runner/env helpers. Verified no
+  `web_chat_api` import in any new module.
+- Shared test-stub pattern established: stub helpers cover each holder
+  module holding a manager reference (`wca` + blueprints).
+- Lazy function-level imports preserved where handlers already used
+  them, keeping existing test patch points working.
+- `chat_page.js` iframe messaging and all frontend contracts untouched
+  throughout Phase 2 (backend paths/shapes/codes frozen per slice).
+
+## Test-baseline preservation
+
+- Full suite at closure: **1,766 passed, 28 failed, 60 skipped** —
+  failures byte-identical to the Phase 0 baseline list at every slice
+  gate (verified via `diff` four times). Slice test inventory added
+  across Phase 2: 4 + 9 + 12 + 5 = 30 new tests, all green.
+- Two pre-existing test-hygiene findings recorded (not fixed — out of
+  scope): restart-suite → auth-suite ordering pollution in ad-hoc
+  combined runs (full-suite order green), and holder-split stubbing
+  noted as a future dependency-injection cleanup candidate.
+
+## Intentionally deferred backend concerns
+
+- Remaining inline handlers (chat core/turn coordinator, sessions,
+  shell/panes, launchers, home-automation, mobile, media, infra,
+  supervised thin handlers, tasks-adjacent misc, `/api/project-commands`
+  cwd-resolver lane, fs routes) — future phases, not Phase 2.
+- Git reliability/behavior cleanups (bounded timeouts, quirk fixes,
+  shadow-route-adjacent frontend dead ends) — later cleanup with
+  explicit product review.
+- Task-domain quirks (public GET, process-CWD commits, identity,
+  string split, orphans) — explicit security/reliability review later.
+- Chat lifecycle / turn coordinator extraction — explicitly out of
+  Phase 2 (Phases 4–5 territory).
+
+## Remaining reverse dependencies (Phase 0 list, re-verified)
+
+All 11 Phase 0 prod importers still reach into the monolith (plus one
+missed in Phase 0 now recorded): `agent_harness/kernel`
+(`_default_chat_cwd`), `internal_http` (`app.test_client`),
+`chat_delivery` (live-status), `auth_api` (live session ids),
+`subagents/turns` + `subagents/identity` (message/badge metadata),
+`supervised/orchestrator` + `supervised/adapters` + `dispatch`
+(runners/status), `chat_status_phases` (emit), `chat_run_registry`
+(clear status), and `doctor.py` (importability health-check only —
+not a real dependency). None were widened by Phase 2; narrowing them
+is Phase 4 work, gated on the same per-slice evidence standard.
