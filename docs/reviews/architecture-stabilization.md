@@ -4556,3 +4556,95 @@ whole was rejected as monolith-shifting. The owned seam is
   (lifecycle-adjacent, Slice 9).
 - Commit independently on main. No push, no restart.
   **STOP for Codex review before Slice 9/Streaming.**
+
+## Prior approval recorded: Slice 8F f2df4ae4 + Messages/History closure
+
+- External review approves 8F and the Messages/History closure with the
+  explicit Slice 9 lifecycle carry-forward contracts. Reviewer last read
+  line 4558; this section appends only beyond that boundary; earlier
+  sections preserved.
+
+## Slice 9A report — turn/staleness guard ownership (first portion)
+
+- Inventory drove the subdivision: generation state (`isLoading`,
+  `localGeneratingSessionId`, `runningSessionIds`,
+  `activeRequestController`, `activeEventSource`,
+  `userStoppedGeneration` + suppress flags), follow-up queue
+  (`pendingFollowups` + drain/take/reconcile/render), stop/cancel
+  (`stopGenerating`, detach, shell-pause release), pending-result
+  waiter (`collectPendingResult` + poll timers), SSE arms, and
+  poll/busy machinery form one coupled lifecycle; moving any whole
+  would be the giant-closure move the slice forbids. 9A takes the
+  narrowest cross-cutting seam: the staleness token every one of those
+  bodies already checks.
+- New owner `src/web/js/chat_turn_guard.js` (`CuttleTurnGuard`, IIFE +
+  `module.exports`, zero DOM/fetch/timers): `createGeneration` (page
+  holds exactly one instance), `bump` (navigation invalidates all
+  prior turns), `capture` (send-time snapshot, also ferried as
+  `opts.navGen`), `isStale` (null-token-never-stale preserves the
+  waiter's `turnNavGen != null &&` shape), `canPaintHere`
+  (freshness-then-binding truth table; session lookup lazy via an
+  `isViewing` callback). Bodies keep all control flow; only the
+  comparisons move.
+- Page rewire (signatures and order preserved): token source, detach
+  bump, send-time capture, four waiter checks → `isStale`, adopt gate
+  → `!isStale`, `navAway` → `isStale`; `canPaintTurnHere` stays as a
+  5-line adapter binding the mutable per-turn bound id + live session
+  state (8 call sites untouched). No other `chatNavGeneration` readers
+  or writers existed (single bump site verified).
+- Coverage (committed, real module execution): new
+  `test_chat_turn_guard.py` (5 tests: source/bump/null-safety incl.
+  double bump, full paint truth table, New-Chat-during-turn lifecycle
+  — fresh paints, zombie blocked, waiter exits, new turn paints, old
+  stays stale — tag pin). Pre-move differential `/tmp/diff_turn.js`
+  (scratch): real page closure + check expressions vs module over
+  gens×captured×bound×current (incl. null/undefined tokens) plus
+  lifecycle sequences — IDENTICAL throughout. Two
+  `test_chat_cross_session_activity.py` pins updated to the new call
+  shapes (same contracts: token source in detach, zombie adopt gate);
+  SSE-status/pending-poll gating pins pass unchanged via the kept
+  adapter.
+- Gates, same controlled scope (`--ignore=src/tests/unit`, spend flags
+  verified unset, zero `SPENDING REAL TOKENS` trips): focused
+  lifecycle 38 passed + 1 known pre-existing failure
+  (`test_cursor_stream_switch_does_not_chirp_mid_run` — stale pin on
+  unrelated `processCursorCommandStreaming`, fails identically on
+  stashed 8F HEAD); neighbors 256 passed with only the 6 accounted
+  pre-existing failures (composer duplicate, steer, starred-removal
+  green); broad **28 failed / 1844 passed / 79 skipped** with FAILED
+  identities byte-identical to the 8F 28 (`diff` clean; +5 passed = 5
+  new tests). `node --check` clean on all touched JS.
+- Cache: `chat_page.html` adds versioned
+  `chat_turn_guard.js?v=20261001slice9a` (after prompt-history,
+  before page) and bumps `chat_page.js` to `slice9a`; all other
+  assets untouched with matching fingerprints.
+- Files: `src/web/js/chat_turn_guard.js` (new),
+  `src/web/js/chat_page.js` (token source/checks/closure/comments),
+  `src/web/chat_page.html` (+2/−1 tags),
+  `src/tests/test_chat_turn_guard.py` (new),
+  `src/tests/test_chat_cross_session_activity.py` (2 pin updates),
+  this section. No backend/routing/product-behavior changes.
+
+## Remaining Slice 9 portions + Phase 3 closure acceptance
+
+- 9B (candidate): stop/cancel state transitions — `userStoppedGeneration`
+  + `suppressStreamAbortUi`/`suppressRemoteWaitingAfterStop` + transport
+  teardown across `stopGenerating`/detach/shell-pause release; keep
+  stop→send races and instant-notice semantics pinned first.
+- 9C (candidate): follow-up queue — `pendingFollowups` + drain timer +
+  take/reconcile + pause/resume render; combine-on-idle and Stop-liter
+  semantics are the contracts to preserve.
+- 9D (candidate): pending-result waiter + replay/reconcile/dedup +
+  message-sync poll timers + busy lock/heal; exactly-once
+  append/persist and disconnect/reconnect behavior pinned first.
+- Phase 3 closure acceptance (carried, unchanged): search gate over
+  active query; last-message-time sort stability; prefs/render/
+  live-status restore order; prompt-history migration wired to remap;
+  `loadChatHistory`/poll generation-flag interfaces explicit; no
+  paid-prompt tests run; manual browser/Flask validation reported as
+  unavailable (node/fake-DOM only).
+- Risks/limits: guard adapter keeps 8 bound call sites in the page by
+  design (mutable per-turn state); no other turn-token readers exist,
+  verified by search.
+- Commit independently on main. No push, no restart.
+  **STOP for Codex review before 9B or Phase 4.**

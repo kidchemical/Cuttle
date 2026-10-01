@@ -742,7 +742,9 @@
      * from the previous chat cannot paint status or re-adopt into the open UI
      * (phone: start A → New Chat → send B → A's activity showed on B).
      */
-    let chatNavGeneration = 0;
+    // Turn/staleness token source, owned by chat_turn_guard.js. Exactly
+    // one instance; New Chat / history switch bumps it (see detach).
+    const turnGeneration = CuttleTurnGuard.createGeneration();
     // Split panes each run this timer. Aggressive dual GETs exhaust Chromium's
     // HTTPS/HTTP pool and wedge Electron / starve YouTube + refresh.
     const MESSAGE_SYNC_IDLE_MS = 12000;
@@ -932,7 +934,7 @@
      *
      * Leave suppressStreamAbortUi true until the next beginLocalGeneration so
      * orphaned collectPendingResult loops exit instead of painting into the
-     * next chat. chatNavGeneration invalidates canPaintTurnHere for that turn.
+     * next chat. CuttleTurnGuard.bump(turnGeneration) invalidates canPaintTurnHere for that turn.
      *
      * History/title: keep the *left* chat in runningSessionIds (server still
      * working). endLocalGeneration would clear it and leave a gap until the
@@ -940,7 +942,7 @@
      * the purple spinner on the title until live-status arrived.
      */
     function detachLocalGenerationForNavigation() {
-        chatNavGeneration += 1;
+        CuttleTurnGuard.bump(turnGeneration);
         suppressStreamAbortUi = true;
         try {
             if (activeEventSource) {
@@ -14254,12 +14256,12 @@
         // After stream detach: one short poll at a time. 2s dual GETs were
         // starving chat reloads / YouTube while a long agent ran.
         const pollMs = opts.pollMs != null ? opts.pollMs : 4000;
-        // Caller turn's nav generation — New Chat bumps chatNavGeneration and
+        // Caller turn's nav generation — New Chat bumps turnGeneration and
         // this waiter must stop (and never paint into another transcript).
         const turnNavGen = opts.navGen;
         let polls = 0;
         for (;;) {
-            if (turnNavGen != null && turnNavGen !== chatNavGeneration) return null;
+            if (CuttleTurnGuard.isStale(turnNavGen, turnGeneration)) return null;
             if (userStoppedGeneration || suppressStreamAbortUi) return null;
             // Sync may have already painted the assistant for THIS turn.
             // Don't wait on leftover typing UI — phone WebView often keeps the
@@ -14283,13 +14285,13 @@
                 data = await resp.json();
             } catch (_) {
                 // Timed out / network blip — keep waiting while the deadline allows.
-                if (turnNavGen != null && turnNavGen !== chatNavGeneration) return null;
+                if (CuttleTurnGuard.isStale(turnNavGen, turnGeneration)) return null;
                 if (userStoppedGeneration || suppressStreamAbortUi) return null;
                 if (Date.now() >= deadline) return null;
                 await new Promise((r) => setTimeout(r, pollMs));
                 continue;
             }
-            if (turnNavGen != null && turnNavGen !== chatNavGeneration) return null;
+            if (CuttleTurnGuard.isStale(turnNavGen, turnGeneration)) return null;
             if (userStoppedGeneration || suppressStreamAbortUi) return null;
             if (!data || !data.success) {
                 // Auth blip / transient — don't abandon a live agent run.
@@ -14320,7 +14322,7 @@
             const live = (inAppShell && shellHubSeen)
                 ? (getCachedHubLiveStatus(sessionId) || await fetchChatLiveStatus(sessionId))
                 : await fetchChatLiveStatus(sessionId);
-            if (turnNavGen != null && turnNavGen !== chatNavGeneration) return null;
+            if (CuttleTurnGuard.isStale(turnNavGen, turnGeneration)) return null;
             if (userStoppedGeneration || suppressStreamAbortUi) return null;
             if (live && live.status && isViewingSession(sessionId)) {
                 updateTypingStatus(live.status);
@@ -18962,19 +18964,20 @@
         // Declared outside try so catch/finally can still gate paints after a switch.
         let boundSessionId = canonicalizeChatSessionId(currentSessionId);
         // Snapshot nav generation at send time. New Chat / history switch bumps
-        // chatNavGeneration; zombie status/adopt must not touch the new UI.
-        const turnNavGen = chatNavGeneration;
+        // turnGeneration; zombie status/adopt must not touch the new UI.
+        const turnNavGen = CuttleTurnGuard.capture(turnGeneration);
         const turnSessionId = () => (
             boundSessionId != null
                 ? boundSessionId
                 : null
         );
-        const canPaintTurnHere = () => {
-            if (turnNavGen !== chatNavGeneration) return false;
-            const bound = turnSessionId();
-            if (bound == null) return currentSessionId == null;
-            return isViewingSession(bound);
-        };
+        // Adapter: mutable per-turn bound id + live session state bound here;
+        // the freshness/binding truth table lives in CuttleTurnGuard.
+        const canPaintTurnHere = () => CuttleTurnGuard.canPaintHere(turnNavGen, turnSessionId(), {
+            gen: turnGeneration.gen,
+            currentSessionId,
+            isViewing: (id) => isViewingSession(id),
+        });
         try {
             await ensureAuthChatSession();
             // Send to API with project context (stream for status updates; JSON fallback if SSE fails)
@@ -19159,7 +19162,7 @@
                                         // turnNavGen gates zombies after New Chat (welcome is
                                         // currentSessionId == null — must not re-adopt chat A).
                                         if (
-                                            turnNavGen === chatNavGeneration
+                                            !CuttleTurnGuard.isStale(turnNavGen, turnGeneration)
                                             && (
                                                 currentSessionId == null
                                                 || sessionIdsEqual(currentSessionId, sid)
@@ -19255,7 +19258,7 @@
                     // new transcript would look "painted" → false Reply ready.
                     const navAway = (
                         suppressStreamAbortUi
-                        || turnNavGen !== chatNavGeneration
+                        || CuttleTurnGuard.isStale(turnNavGen, turnGeneration)
                     );
                     const painted = navAway ? null : assistantElAfterInFlightUser();
                     if (!document.getElementById('typing-indicator') && painted) {

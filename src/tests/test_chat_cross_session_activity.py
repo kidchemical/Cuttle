@@ -84,11 +84,13 @@ def _sse_event_arms(src: str) -> dict[str, str]:
 
 def test_nav_generation_token_exists():
     src = _src()
-    assert "let chatNavGeneration = 0" in src
+    # Token source owned by chat_turn_guard.js (Slice 9A); the page holds
+    # the single instance and calls capture/bump/stale predicates.
+    assert "CuttleTurnGuard.createGeneration()" in src
     detach = _fn_body(src, "function detachLocalGenerationForNavigation")
-    assert "chatNavGeneration += 1" in detach
-    assert "const turnNavGen = chatNavGeneration" in src
-    assert "turnNavGen !== chatNavGeneration" in src
+    assert "CuttleTurnGuard.bump(turnGeneration)" in detach
+    assert "CuttleTurnGuard.capture(turnGeneration)" in src
+    assert "CuttleTurnGuard.isStale(" in src
 
 
 def test_sse_status_updates_gated_by_turn_view():
@@ -125,7 +127,9 @@ def test_sse_session_adopt_not_from_zombie_when_welcome():
     arms = _sse_event_arms(_src())
     session = arms["session"]
     assert "adoptChatSessionId(" in session
-    assert "turnNavGen === chatNavGeneration" in session
+    # Zombie adopt gate, now via the owned staleness predicate (same contract:
+    # a turn from before the navigation bump never adopts into the new UI).
+    assert "!CuttleTurnGuard.isStale(turnNavGen, turnGeneration)" in session
     # Welcome null path may remain, but only under the nav-gen gate.
     if "currentSessionId == null" in session:
         null_idx = session.index("currentSessionId == null")
