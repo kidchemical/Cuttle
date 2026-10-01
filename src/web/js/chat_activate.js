@@ -107,9 +107,47 @@
         }
 
 
+
+    function highlightCodeBlocks(containerEl, deps) {
+        const d = deps || {};
+        if (d.hljs) {
+            containerEl.querySelectorAll('pre code').forEach((el) => {
+                try {
+                    const text = el.textContent;
+                    el.textContent = text;
+                    d.hljs.highlightElement(el);
+                } catch (_) {}
+            });
+        }
+    }
+
+    function wireTerminalInputs(containerEl, deps) {
+        const d = deps || {};
+        containerEl.querySelectorAll('.terminal[data-terminal-id][data-interactive="true"]').forEach((term) => {
+            if (term.__wired) return;
+            term.__wired = true;
+            const id = term.getAttribute('data-terminal-id') || 'terminal';
+            const input = term.querySelector('input[data-terminal-input]');
+            const btn = term.querySelector('button[data-terminal-send]');
+            if (!input || !btn) return;
+            const send = () => {
+                const v = (input.value || '').trim();
+                if (!v) return;
+                input.value = '';
+                d.sendMessage(`[terminal:${id}] ${v}`);
+            };
+            btn.addEventListener('click', send);
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') { e.preventDefault(); send(); }
+            });
+        });
+    }
+
     const api = {
         activateVegaEmbeds,
         attachCodeCopyButtons,
+        highlightCodeBlocks,
+        wireTerminalInputs,
     };
 
     const ns = (root.CuttleChatActivate = root.CuttleChatActivate || {});

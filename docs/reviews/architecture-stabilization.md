@@ -4356,3 +4356,93 @@ whole was rejected as monolith-shifting. The owned seam is
 - Git: this correction appends report-only text; no production files
   touched. Commit independently; no push, no restart.
   **STOP for Codex review; no 8E/Streaming.**
+
+## Prior approval recorded: 8C f4ba9cd1, 8D a4981c0e, correction 2e2c158d
+
+- External review approves 8C, 8D, and the controlled-comparison correction
+  on exact-tree same-command evidence, with continued verification
+  discipline (exact revisions/command/env/scope, IDs, failure comparisons;
+  no unknown-scope historical counts). Reviewer last read line 4358;
+  this section appends only beyond that boundary; earlier sections
+  preserved.
+
+## Slice 8E report — markdown rendering ownership + activation disposition
+
+- New owner `src/web/js/chat_markdown.js` (`CuttleChatMarkdown`, IIFE +
+  `module.exports`, zero DOM/state): `formatInlineMarkdown` (pure inline
+  spans), `split/is/looksLike` table-row planning,
+  `markdownTableAlignFromSep`, `renderMarkdownTableHtml`, and
+  `renderMarkdownBlocks(text)` (the ~180-line block loop: empty-line
+  collapsing, block-placeholder passthrough, headers, rules, GFM tables,
+  blockquotes/callouts, lists, paragraphs). Takes already-escaped text,
+  returns joined HTML; page keeps `escapeHtml`, placeholder restore order,
+  and DOM activation. `BLOCK_PLACEHOLDER_RE` lives with the loop as the
+  routing table; whoever mints a new block placeholder kind must extend
+  it (documented in the module header). `chat_messages.js` does NOT grow:
+  871 → 871 lines; new module is 300 lines.
+- Activation disposition: `highlightCodeBlocks(containerEl, { hljs })`
+  and `wireTerminalInputs(containerEl, { sendMessage })` move into
+  `chat_activate.js` (same container-scoped idempotent-flag seam, narrow
+  deps; `processMessage` injected, never imported). Page
+  `activateEnhancements` keeps orchestration + order + try/catch, now
+  delegating those two stages. Deliberate stays with ownership reasons:
+  cuttle-button wiring (button domain + `isLoading`/
+  `lockCuttleButtonsInContainer` page state), supervised-card wiring
+  (supervised owner), form/action-form/widget wiring (form/widget
+  owners) — moving them would drag execution orchestration into the
+  seam. `renderCuttlePricingHtml` stays in the page (pricing owner per
+  8C pins) and now calls
+  `CuttleChatMarkdown.formatInlineMarkdown` for note cells.
+- Page adapters keep signatures; call sites replaced:
+  `renderMarkdownBlocks`, pricing inline, hljs/terminal delegation.
+  Net page delta −302/+~20 lines in the touched regions.
+- Coverage (committed, behavioral, extended before/around moves):
+  pipeline MSG2 added pre-move (headers/lists/table/quote/rule/
+  placeholders through real `formatMessage`), green before extraction;
+  new `test_chat_markdown.py` (7 tests: real module execution over
+  inline edges, table planning/render incl. ragged rows, block loop
+  structures, placeholder/fake-token passthrough, tag pin);
+  `test_chat_activate.py` +2 (highlight order/safety/no-lib/throw,
+  terminal send/trim/clear/keys/idempotence on fake DOM). Pricing
+  renderer test repointed to the real module function (same contract).
+- Differentials vs pre-change `a4981c0e`: module fns byte-identical to
+  page spans (inline 12 + row helpers 10×3 + align 6 + table render 3 +
+  block loop 30 inputs; `/tmp/diff_markdown.js` scratch); moved
+  highlight/terminal fns identical modulo declared dep rewiring;
+  complete-pipeline MSG output byte-identical (2355 chars, positions
+  identical; old-revision output captured from an `a4981c0e` worktree,
+  removed after). `null` hardening: none added this slice (loop takes
+  strings as the page always passed).
+- Gates, same controlled scope (`--ignore=src/tests/unit`, spend flags
+  verified unset, zero `SPENDING REAL TOKENS` trips): focused 33/33
+  (markdown + messages + activate); neighbors 196 passed with only the
+  5 pre-existing failures (byte-identical IDs to the 8D HEAD check);
+  broad **28 failed / 1832 passed / 79 skipped** with FAILED identities
+  byte-identical to the 8D main-tree 28 (`diff` clean; +9 passed = 9 new
+  tests). `node --check` clean on all touched JS.
+- Cache: `chat_page.html` adds versioned `chat_markdown.js?v=
+  20261001slice8e` (messages < activate < markdown < page) and bumps
+  `chat_page.js` + `chat_activate.js` to `slice8e`; `chat_messages.js`
+  unchanged, keeps its `slice8d` fingerprint (correct: fingerprint
+  matches content).
+- Files: `src/web/js/chat_markdown.js` (new), `src/web/js/chat_page.js`
+  (−~280: helpers/loop/highlight/terminal out, delegations in),
+  `src/web/js/chat_activate.js` (+38), `src/web/chat_page.html`
+  (+4/−3 tags), `src/tests/test_chat_markdown.py` (new),
+  `test_chat_activate.py` (+75), `test_chat_messages.py` (+31 pipeline
+  MSG2 + module require), `test_agent_cost_slash.py` (+9 pricing
+  repoint), this section. No backend/routing/product-behavior changes.
+- Remaining Messages/History inventory with next-boundary proposal (no
+  domain-closure claim): prompt-history navigation (`promptHistory[]`
+  state ~3021–3190, `navigatePromptHistory`, `handlePromptHistoryKeyDown`
+  3270) is the next coherent boundary — pure index/anchor decisions
+  with explicit state in/out, DOM/persistence staying in page/composer;
+  history search keeps page query state (`historySearchLiveQuery`) with
+  matching owned by `chat_find.js` (existing module, gate tests as
+  contract); `loadChatHistory`/poll/session-restore/sync stay with
+  streaming orchestration (Slice 9 scope, not this domain); session
+  restore still deferred for ownership/scope reasons. Suggested 8F:
+  prompt-history navigation ownership. Manual browser/Flask validation
+  unavailable (node/fake-DOM only) — reported, not waived.
+- Commit independently on main. No push, no restart.
+  **STOP for Codex review before 8F/next portion or Streaming.**

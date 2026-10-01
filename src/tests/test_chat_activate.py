@@ -104,6 +104,53 @@ out.copyRearm = { icon: btns[0]._html, title: btns[0].title, marked: btns[0]._cl
 copyDeps._ok = false;
 await btns[0]._listeners['click'][0](clickEv);
 out.copyFail = { toasted, failTitle: btns[0].title };
+// --- highlight activation
+const highlighted = [];
+let hljsImpl = { highlightElement(el) { highlighted.push(el._text); el._hl = true; } };
+const codeA = mkEl(); codeA._text = 'x <b>';
+const codeB = mkEl(); codeB._text = 'y';
+const seenHlSelectors = [];
+const containerC = { querySelectorAll(sel) { seenHlSelectors.push(sel); return [codeA, codeB]; } };
+A.highlightCodeBlocks(containerC, { hljs: hljsImpl });
+out.hljs = { highlighted: [...highlighted], aMarked: !!codeA._hl, selector: seenHlSelectors[0] };
+A.highlightCodeBlocks(containerC, {});
+out.hljsNoLib = { highlighted: [...highlighted] };
+hljsImpl = { highlightElement() { throw new Error('boom'); } };
+const codeC = mkEl(); codeC._text = 'z';
+A.highlightCodeBlocks({ querySelectorAll: () => [codeC] }, { hljs: hljsImpl });
+out.hljsThrow = { highlighted: [...highlighted], cMarked: !!codeC._hl };
+// --- terminal activation
+const sent = [];
+const mkTermKid = () => { const k = mkEl(); k.value = ''; return k; };
+const mkTerm = (id, withKids) => {
+  const term = mkEl(); term._attrs['data-terminal-id'] = id;
+  const input = mkTermKid(); const btn = mkTermKid();
+  term.querySelector = (sel) => {
+    if (!withKids) return null;
+    if (sel === 'input[data-terminal-input]') return input;
+    if (sel === 'button[data-terminal-send]') return btn;
+    return null;
+  };
+  return { term, input, btn };
+};
+const t1 = mkTerm('t1', true);
+const tBare = mkTerm('t2', false);
+const seenTermSelectors = [];
+const containerD = { querySelectorAll(sel) { seenTermSelectors.push(sel); return [t1.term, tBare.term]; } };
+A.wireTerminalInputs(containerD, { sendMessage: (m) => { sent.push(m); } });
+out.term = { wired: !!t1.term.__wired, bareWired: !!tBare.term.__wired,
+  selector: seenTermSelectors[0] };
+t1.input.value = '  hello  ';
+await t1.btn._listeners['click'][0]();
+t1.input.value = '';
+await t1.input._listeners['keydown'][0]({ key: 'Enter', preventDefault() {} });
+await t1.input._listeners['keydown'][0]({ key: 'x', preventDefault() {} });
+t1.input.value = 'go';
+await t1.input._listeners['keydown'][0]({ key: 'Enter', preventDefault() {} });
+out.termSend = { sent: [...sent], cleared: t1.input.value };
+A.wireTerminalInputs(containerD, { sendMessage: (m) => { sent.push(m); } });
+out.termIdempotent = { clicks: t1.btn._listeners['click'].length,
+  keys: t1.input._listeners['keydown'].length };
 process.stdout.write(JSON.stringify(out));
 })().catch((e) => { console.error('HARNESS-ERROR', e); process.exit(2); });
 """
@@ -171,6 +218,34 @@ def test_code_copy_button_lifecycle():
     # clipboard failure toasts instead of marking
     assert res["copyFail"]["toasted"] == ["Could not copy code block"]
     assert res["copyFail"]["failTitle"] == "Copy failed"
+
+
+@node_only
+def test_highlight_activation_order_and_safety():
+    res = _run()
+    # textContent re-seat passes raw text; library errors stay per-element
+    assert res["hljs"]["highlighted"] == ["x <b>", "y"]
+    assert res["hljs"]["aMarked"] is True
+    assert res["hljs"]["selector"] == "pre code"
+    # no library: silent noop, nothing highlighted
+    assert res["hljsNoLib"]["highlighted"] == ["x <b>", "y"]
+    # throwing library: per-element catch, failing element unmarked
+    assert res["hljsThrow"]["highlighted"] == ["x <b>", "y"]
+    assert res["hljsThrow"]["cMarked"] is False
+
+
+@node_only
+def test_terminal_activation_wiring_and_idempotence():
+    res = _run()
+    assert res["term"]["selector"] == '.terminal[data-terminal-id][data-interactive="true"]'
+    assert res["term"]["wired"] is True
+    # terminal without input/button is marked done but gets no handlers
+    assert res["term"]["bareWired"] is True
+    # click sends trimmed text with the terminal id prefix and clears input
+    assert res["termSend"]["sent"] == ["[terminal:t1] hello", "[terminal:t1] go"]
+    assert res["termSend"]["cleared"] == ""
+    # empty input and non-Enter keys never send; second pass adds nothing
+    assert res["termIdempotent"] == {"clicks": 1, "keys": 1}
 
 
 @node_only

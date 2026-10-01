@@ -872,10 +872,15 @@ def test_task_column_on_every_priced_row(pricing_cache, no_pins, monkeypatch):
 @node_only
 def test_pricing_renderer_highlights_active_row(tmp_path):
     src = CHAT_JS.read_text(encoding="utf-8")
+    md_src = (CHAT_JS.parent / "chat_markdown.js").read_text(encoding="utf-8")
+    # Inline markdown moved to chat_markdown.js (Slice 8E); the pricing
+    # renderer executes against the real owned module function.
     helpers = "\n".join(
         _extract_js(src, n)
-        for n in ("escapeHtmlInline", "formatInlineMarkdown", "fmtPricingRate", "fmtPricingContext", "renderCuttlePricingHtml")
-    )
+        for n in ("escapeHtmlInline", "fmtPricingRate", "fmtPricingContext", "renderCuttlePricingHtml")
+    ) + "\n" + _extract_js(md_src, "formatInlineMarkdown")
+    md_mod = str(CHAT_JS.parent / "chat_markdown.js").replace("\\", "\\\\")
+    helpers = f"globalThis.CuttleChatMarkdown = require({md_mod!r});\n" + helpers
     body = json.dumps(
         {
             "rows": [

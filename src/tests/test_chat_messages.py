@@ -28,6 +28,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MOD_JS = REPO_ROOT / "src" / "web" / "js" / "chat_messages.js"
+MOD_MD = REPO_ROOT / "src" / "web" / "js" / "chat_markdown.js"
 CHAT_PAGE_JS = REPO_ROOT / "src" / "web" / "js" / "chat_page.js"
 
 node_only = pytest.mark.skipif(
@@ -606,7 +607,9 @@ eval(span('    function renderMdLinkChip(label, url) {', '    async function ope
 eval(span('    function safeJsonParse(s) {', '    function slashCommandsForCurrentMode() {'));
 eval(span('    function clamp(n, min, max) {', '    function safeJsonParse(s) {'));
 eval(span('    function mediaKindFromUrl(url) {', '    function mediaPosterUrl(src) {'));
-eval(span('    function splitMarkdownTableRow(line) {', '    function fmtPricingContext(v) {'));
+// Block/inline markdown + tables moved to chat_markdown.js (Slice 8E);
+// the pipeline executes the real module, not page spans.
+globalThis.CuttleChatMarkdown = require(process.env.MOD_MD);
 // escapeHtml is DOM-backed in the page; the equivalent inline escape is the
 // documented premise (escape degrees are unit-covered, not pipeline-covered).
 const escapeHtml = (t) => escapeHtmlInline(String(t ?? ''));
@@ -638,7 +641,15 @@ const out = formatMessage(MSG);
 const order = ['thinking-block', 'message-code-block', 'md-link-chip', 'example.com/b',
   '<supact>', 'pipeline-trace-block', 'data-progress-id="p1"', '{{CUTTLE_FAKE_0}}'];
 const positions = order.map((s) => out.indexOf(s));
-process.stdout.write(JSON.stringify({ out, positions, calls,
+// Block-markdown message: headers, lists, table, quote, rule, placeholders.
+const MSG2 = ['## Results *bold* and _em_ and `code`',
+  '- alpha', '- beta', '', '1. one', '2. two', '',
+  '| Name | Score |', '| --- | ---: |', '| Ann | 9 |', '| Bob | 7 | extra |', '',
+  '> quoted **bold**', '', '---', '',
+  '{{CUTTLE_CODE_0}}', '{{CUTTLE_FAKE_9}}',
+  'not | a table', '| only one cell |'].join('\\n');
+const out2 = formatMessage(MSG2);
+process.stdout.write(JSON.stringify({ out, positions, calls, out2,
   linkPlaceholdersLeft: (out.match(/\\{\\{CUTTLE_LINK_\\d+\\}\\}/g) || []).length }));
 """
 
@@ -650,7 +661,8 @@ def _run_full_pipeline():
         capture_output=True, text=True, timeout=30,
         env={"PATH": os.environ["PATH"], "MOD_JS": str(MOD_JS),
              "CHAT_PAGE_JS": str(CHAT_PAGE_JS),
-             "CHAT_ATTACHMENTS_JS": str(CHAT_ATTACHMENTS_JS)},
+             "CHAT_ATTACHMENTS_JS": str(CHAT_ATTACHMENTS_JS),
+             "MOD_MD": str(MOD_MD)},
     )
     assert proc.returncode == 0, proc.stderr or proc.stdout
     return json.loads(proc.stdout)
@@ -672,6 +684,19 @@ def test_format_message_pipeline_interleaves_all_stages():
     assert "plain output here" in res["out"]
     assert res["out"].count("thinking-block") == 1
     assert res["calls"].get("handles") and res["calls"].get("git")
+    second = res["out2"]
+    assert '<h2 class="message-header">' in second
+    assert "<strong>bold</strong>" in second and "<em>em</em>" in second
+    assert "<code>code</code>" in second
+    assert second.count("<li>") == 4 and "<ul>" in second and "<ol>" in second
+    assert '<div class="message-table-wrap">' in second
+    assert 'style="text-align:right"' in second
+    assert "<td>extra</td>" in second
+    assert "message-blockquote" in second
+    assert '<hr class="message-hr">' in second
+    # Unknown/fake and unresolvable placeholders pass through literally.
+    assert "{{CUTTLE_FAKE_9}}" in second and "{{CUTTLE_CODE_0}}" in second
+    assert "not | a table" in second and "| only one cell |" in second
 
 
 def test_format_message_orders_structured_extraction_around_supervised():
