@@ -774,10 +774,11 @@
 
     // Follow-up queue while a reply is generating. On idle, the whole queue is
     // combined into one agent turn (not drained one-by-one).
-    let pendingFollowups = []; // { id, content, created, attachments?, rawMessage? }
+    // Follow-up queue contents + persistence/take flags, owned by
+    // chat_followup_queue.js (composes chat_activity.js item decisions).
+    // followupDrainTimer stays here: raw timer handle for the scheduler.
+    const followupQueue = CuttleFollowupQueue.createQueueState();
     let followupDrainTimer = null;
-    let followupDirty = false;
-    let followupTakeInFlight = false;
     /** Uploaded file refs awaiting the next send: {filename, path, mime, size?} */
     let pendingAttachments = [];
     function _pendingKey(sid) { return `cuttle.pendingAttachments.${sid || 'anon'}`; }
@@ -1249,7 +1250,7 @@
             stopButton.disabled = true;
             stopButton.style.display = 'none';
         }
-        if (pendingFollowups.length) scheduleFollowupDrain(0);
+        if (followupQueue.items.length) scheduleFollowupDrain(0);
         return true;
     }
 
@@ -1929,11 +1930,11 @@
         return CuttleChatActivity.parseFollowupQueue(raw);
     }
 
-    /** Resolve followup_queue for a session (open chat uses live pendingFollowups). */
+    /** Resolve followup_queue for a session (open chat uses live followupQueue.items). */
     function followupQueueForSession(sessionId, sessionObj) {
         if (sessionId == null || sessionId === '') return [];
         if (currentSessionId != null && sessionIdsEqual(currentSessionId, sessionId)) {
-            return pendingFollowups.slice();
+            return followupQueue.items.slice();
         }
         let obj = sessionObj;
         if (!obj && isAuthMode()) {
@@ -12875,7 +12876,7 @@
                     updateRemoteWaitingFromMessages(loadedMessages, liveStatus);
                     healStaleGeneratingState();
                     if (
-                        pendingFollowups.some((x) => !x.paused)
+                        followupQueue.items.some((x) => !x.paused)
                         && !isSessionGenerating()
                         && !editingFollowupId
                     ) {
@@ -15569,7 +15570,7 @@
             stopButton.style.display = 'none';
         }
         setWelcomeComposerEnabled(true);
-        if (pendingFollowups.length && !stopState.waitingSuppressed) {
+        if (followupQueue.items.length && !stopState.waitingSuppressed) {
             scheduleFollowupDrain(80);
         }
     }
@@ -17265,7 +17266,7 @@
             && !currentStillRunning
             && !isLoading
             && !stopState.waitingSuppressed
-            && pendingFollowups.length
+            && followupQueue.items.length
         ) {
             scheduleFollowupDrain(80);
         }
@@ -18295,14 +18296,14 @@
     }
 
     function beginEditFollowup(id) {
-        if (!id || !pendingFollowups.some((x) => x.id === id)) return;
-        const item = pendingFollowups.find((x) => x.id === id);
+        if (!id || !followupQueue.items.some((x) => x.id === id)) return;
+        const item = followupQueue.items.find((x) => x.id === id);
         if (!item) return;
         editingFollowupId = id;
         editingFollowupWasPaused = !!item.paused;
         // Soft-pause so /followups/take cannot yank the message mid-edit.
         if (!item.paused) {
-            item.paused = true;
+            CuttleFollowupQueue.setPaused(followupQueue, id, true);
             persistFollowupPut();
         }
         clearTimeout(followupDrainTimer);
@@ -18315,15 +18316,15 @@
         const id = editingFollowupId;
         editingFollowupId = null;
         if (id) {
-            const item = pendingFollowups.find((x) => x.id === id);
-            if (item) item.paused = editingFollowupWasPaused;
+            const item = followupQueue.items.find((x) => x.id === id);
+            if (item) CuttleFollowupQueue.setPaused(followupQueue, id, editingFollowupWasPaused);
         }
         editingFollowupWasPaused = false;
         renderFollowupQueue();
         persistFollowupPut();
         if (
             resumeDrain
-            && pendingFollowups.some((x) => !x.paused)
+            && followupQueue.items.some((x) => !x.paused)
             && !isSessionGenerating()
         ) {
             scheduleFollowupDrain(180);
@@ -18336,7 +18337,7 @@
 
     function saveEditFollowup(id, nextText) {
         if (!id) return;
-        const item = pendingFollowups.find((x) => x.id === id);
+        const item = followupQueue.items.find((x) => x.id === id);
         if (!item) return;
         const text = String(nextText ?? '').trim();
         if (!text && !(item.attachments && item.attachments.length)) {
@@ -18354,19 +18355,19 @@
     function renderFollowupQueue() {
         const root = document.getElementById('followupQueue');
         if (!root) return;
-        patchLiveSessionFollowupQueue(currentSessionId, pendingFollowups);
-        if (!pendingFollowups.length) {
+        patchLiveSessionFollowupQueue(currentSessionId, followupQueue.items);
+        if (!followupQueue.items.length) {
             editingFollowupId = null;
             root.hidden = true;
             root.innerHTML = '';
             syncHistoryUnreadIndicators();
             return;
         }
-        if (editingFollowupId && !pendingFollowups.some((x) => x.id === editingFollowupId)) {
+        if (editingFollowupId && !followupQueue.items.some((x) => x.id === editingFollowupId)) {
             editingFollowupId = null;
         }
         root.hidden = false;
-        const items = pendingFollowups.map((item, idx) => {
+        const items = followupQueue.items.map((item, idx) => {
             const isEditing = item.id === editingFollowupId;
             if (isEditing) {
                 const editVal = escapeHtml(followupEditableText(item));
@@ -18422,10 +18423,10 @@
                 </div>
             `;
         }).join('');
-        const otherPaused = pendingFollowups.filter(
+        const otherPaused = followupQueue.items.filter(
             (x) => x.paused && x.id !== editingFollowupId
         ).length;
-        const titleBits = [`Queued · ${pendingFollowups.length}`];
+        const titleBits = [`Queued · ${followupQueue.items.length}`];
         if (editingFollowupId) titleBits.push('editing · send paused');
         if (otherPaused) titleBits.push(`${otherPaused} paused`);
         root.innerHTML = `
@@ -18548,15 +18549,14 @@
     }
 
     function applyServerFollowups(list) {
-        if (followupTakeInFlight || followupDirty) return;
-        // Don't clobber an in-progress queue edit (or soft-pause state).
-        if (editingFollowupId) return;
-        if (!Array.isArray(list)) return;
-        if (followupQueueFingerprint(list) === followupQueueFingerprint(pendingFollowups)) return;
-        pendingFollowups = list.map((item) => CuttleChatActivity.normalizeFollowupItem(item));
-        patchLiveSessionFollowupQueue(currentSessionId, pendingFollowups);
+        // Don't clobber an in-progress take, unsynced edits, a queue edit,
+        // or an identical list (owned reconcile decision).
+        const r = CuttleFollowupQueue.reconcileServerList(followupQueue, list,
+            { editingId: editingFollowupId }, CuttleChatActivity);
+        if (!r.applied) return;
+        patchLiveSessionFollowupQueue(currentSessionId, followupQueue.items);
         renderFollowupQueue();
-        if (pendingFollowups.some((x) => !x.paused) && !isSessionGenerating() && !editingFollowupId) {
+        if (followupQueue.items.some((x) => !x.paused) && !isSessionGenerating() && !editingFollowupId) {
             scheduleFollowupDrain(250);
         }
         try { scheduleChatActivityBroadcast(); } catch (_) {}
@@ -18565,7 +18565,7 @@
     async function persistFollowupAppend(item) {
         const sid = followupAuthSid();
         if (!sid || !item) return;
-        followupDirty = true;
+        CuttleFollowupQueue.markDirty(followupQueue);
         try {
             const resp = await fetch(`/api/auth/sessions/${encodeURIComponent(sid)}/followups`, {
                 method: 'POST',
@@ -18575,40 +18575,37 @@
             });
             const data = await resp.json().catch(() => null);
             if (data && data.success && Array.isArray(data.followups)) {
-                followupDirty = false;
+                CuttleFollowupQueue.markClean(followupQueue);
                 applyServerFollowups(data.followups);
             }
         } catch (_) {}
-        followupDirty = false;
+        CuttleFollowupQueue.markClean(followupQueue);
     }
 
     async function persistFollowupPut() {
         const sid = followupAuthSid();
         if (!sid) return;
-        followupDirty = true;
+        CuttleFollowupQueue.markDirty(followupQueue);
         try {
             const resp = await fetch(`/api/auth/sessions/${encodeURIComponent(sid)}/followups`, {
                 method: 'PUT',
                 credentials: 'include',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ followups: pendingFollowups }),
+                body: JSON.stringify({ followups: followupQueue.items }),
             });
             const data = await resp.json().catch(() => null);
-            if (data && data.success) followupDirty = false;
+            if (data && data.success) CuttleFollowupQueue.markClean(followupQueue);
         } catch (_) {}
-        followupDirty = false;
+        CuttleFollowupQueue.markClean(followupQueue);
     }
 
     function enqueueFollowup(message, opts = {}) {
-        const item = {
-            id: 'fq_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7),
+        const item = CuttleFollowupQueue.enqueue(followupQueue, {
             content: message,
-            created: Date.now(),
-            attachments: Array.isArray(opts.attachments) ? opts.attachments : [],
-            rawMessage: opts.rawMessage != null ? opts.rawMessage : message,
-            paused: !!opts.paused,
-        };
-        pendingFollowups.push(item);
+            attachments: opts.attachments,
+            rawMessage: opts.rawMessage,
+            paused: opts.paused,
+        }, { now: () => Date.now(), rand: () => Math.random() });
         renderFollowupQueue();
         persistFollowupAppend(item);
         return item;
@@ -18657,9 +18654,9 @@
 
     function toggleFollowupPaused(id) {
         if (!id) return;
-        const item = pendingFollowups.find((x) => x.id === id);
-        if (!item) return;
-        item.paused = !item.paused;
+        const current = followupQueue.items.find((x) => x.id === id);
+        if (!current) return;
+        const item = CuttleFollowupQueue.setPaused(followupQueue, id, !current.paused);
         renderFollowupQueue();
         persistFollowupPut();
         if (!item.paused && !isSessionGenerating()) scheduleFollowupDrain(120);
@@ -18671,7 +18668,7 @@
             editingFollowupId = null;
             editingFollowupWasPaused = false;
         }
-        pendingFollowups = pendingFollowups.filter((x) => x.id !== id);
+        CuttleFollowupQueue.removeItem(followupQueue, id);
         renderFollowupQueue();
         persistFollowupPut();
     }
@@ -18679,7 +18676,7 @@
     function clearFollowupQueue() {
         editingFollowupId = null;
         editingFollowupWasPaused = false;
-        pendingFollowups = [];
+        CuttleFollowupQueue.clearAll(followupQueue);
         renderFollowupQueue();
         persistFollowupPut();
     }
@@ -18719,12 +18716,12 @@
         let batch = [];
         const sid = followupAuthSid();
         if (sid) {
-            followupTakeInFlight = true;
+            CuttleFollowupQueue.beginTake(followupQueue);
             try {
-                if (pendingFollowups.length) await persistFollowupPut();
+                if (followupQueue.items.length) await persistFollowupPut();
                 // Edit may have started during the PUT round-trip.
                 if (editingFollowupId) {
-                    followupTakeInFlight = false;
+                    CuttleFollowupQueue.endTake(followupQueue);
                     return;
                 }
                 const resp = await fetch(`/api/auth/sessions/${encodeURIComponent(sid)}/followups/take`, {
@@ -18732,29 +18729,23 @@
                     credentials: 'include',
                 });
                 const data = await resp.json().catch(() => null);
-                if (data && data.success && Array.isArray(data.followups)) {
-                    batch = data.followups;
-                    pendingFollowups = Array.isArray(data.remaining)
-                        ? data.remaining.map((item) => CuttleChatActivity.normalizeFollowupItem(item))
-                        : pendingFollowups.filter((x) => x.paused);
-                } else if (pendingFollowups.length) {
-                    const _take = CuttleChatActivity.partitionFollowupForDrain(pendingFollowups, editingFollowupId);
-                    batch = _take.batch;
-                    pendingFollowups = _take.remaining;
-                }
+                // Owned take/reconcile decision (server take, fallback,
+                // empty-queue noop); transport + errors stay here.
+                batch = CuttleFollowupQueue.resolveTake(followupQueue, editingFollowupId,
+                    (data && data.success)
+                        ? { ok: true, followups: data.followups, remaining: data.remaining }
+                        : { ok: false },
+                    CuttleChatActivity);
             } catch (_) {
-                const _take = CuttleChatActivity.partitionFollowupForDrain(pendingFollowups, editingFollowupId);
-                batch = _take.batch;
-                pendingFollowups = _take.remaining;
+                batch = CuttleFollowupQueue.resolveTake(followupQueue, editingFollowupId,
+                    { ok: false }, CuttleChatActivity);
             }
-            followupTakeInFlight = false;
+            CuttleFollowupQueue.endTake(followupQueue);
         } else {
-            const _take = CuttleChatActivity.partitionFollowupForDrain(pendingFollowups, editingFollowupId);
-            batch = _take.batch;
-            pendingFollowups = _take.remaining;
+            batch = CuttleFollowupQueue.resolveTake(followupQueue, editingFollowupId, null, CuttleChatActivity);
         }
         // Keep editing state if the edited item remained in the queue.
-        if (editingFollowupId && !pendingFollowups.some((x) => x.id === editingFollowupId)) {
+        if (editingFollowupId && !followupQueue.items.some((x) => x.id === editingFollowupId)) {
             editingFollowupId = null;
             editingFollowupWasPaused = false;
         }
@@ -19847,7 +19838,7 @@
             message,
             normalizedMessage: normalizeMessageContentForMatch(message),
             inFlightMessage: normalizeMessageContentForMatch(inFlightUserMessage),
-            queuedMessages: pendingFollowups.map((x) => normalizeMessageContentForMatch(x.content)),
+            queuedMessages: followupQueue.items.map((x) => normalizeMessageContentForMatch(x.content)),
         });
         if (plan.action === 'ignore-guard') {
             // Unreachable here (guard already returned above); kept so the

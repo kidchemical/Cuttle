@@ -171,7 +171,9 @@ let activeRequestController = null;
 let activeEventSource = null;
 let followupDrainTimer = null;
 let messageSyncTimer = null;
-let pendingFollowups = [];
+// queue contents live in the owned module state (Slice 9C)
+globalThis.CuttleFollowupQueue = require(process.env.MOD_FQ);
+const followupQueue = CuttleFollowupQueue.createQueueState();
 let sendDispatchGuard = true;
 let voiceModeActive = false;
 let voiceModePhase = '';
@@ -253,7 +255,7 @@ finishLocalStreamFromServerSync();
 out.finishIdle = { flags: flags(), fx: fx.splice(0) };
 isLoading = true;
 activeRequestController = mkCtrl(false); activeEventSource = mkSSE(false);
-pendingFollowups = [{ id: 'q1' }];
+followupQueue.items = [{ id: 'q1' }];
 finishLocalStreamFromServerSync();
 out.finishLive = { flags: flags(), loading: isLoading, fx: fx.splice(0) };
 process.stdout.write(JSON.stringify(out));
@@ -268,7 +270,8 @@ def _run_adapter():
         capture_output=True, text=True, timeout=60,
         env={"PATH": os.environ["PATH"], "CHAT_PAGE_JS": str(CHAT_PAGE_JS),
              "MOD_TG": str(REPO_ROOT / "src" / "web" / "js" / "chat_turn_guard.js"),
-             "MOD_SS": str(MOD_SS)},
+             "MOD_SS": str(MOD_SS),
+             "MOD_FQ": str(REPO_ROOT / "src" / "web" / "js" / "chat_followup_queue.js")},
     )
     assert proc.returncode == 0, proc.stderr or proc.stdout
     return json.loads(proc.stdout)

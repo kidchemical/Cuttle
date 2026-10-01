@@ -4727,3 +4727,82 @@ whole was rejected as monolith-shifting. The owned seam is
   span harness — noted honestly).
 - Commit independently on main. No push, no restart.
   **STOP for Codex review before 9C or Phase 4.**
+
+## Prior approval recorded: Slice 9B 7fa788a2
+
+- External review approves 9B, carrying the full send-catch
+  integration limitation into later lifecycle checks. Reviewer last
+  read line 4729; this section appends only beyond that boundary;
+  earlier sections preserved.
+
+## Slice 9C report — follow-up queue ownership
+
+- New owner `src/web/js/chat_followup_queue.js`
+  (`CuttleFollowupQueue`, IIFE + `module.exports`, zero DOM/fetch/
+  timers): the queue as ONE state object `{ items, dirty,
+  takeInFlight }` plus transitions (`enqueue` with injected clock,
+  `setPaused`, `removeItem`, `clearAll`, dirty/take latches) and the
+  two pure decisions — `resolveTake` (server-take / fallback /
+  empty-queue-noop branches incl. server-remaining-as-is verbatim)
+  and `reconcileServerList` (busy/editing/invalid/same guards +
+  normalize). Item shaping (fingerprint, normalize, partition,
+  combine) stays owned by `chat_activity.js` and is used ONLY
+  through an explicit `activity` dependency — composed, never
+  duplicated. Drain-timer handle, edit UI state, persistence
+  transport, render, heal/send effects stay page-side.
+- Page rewire: 4 `let`s → 1 `followupQueue` instance; enqueue,
+  pause/resume, remove, clear, reconcile, persist ×2, and the full
+  drain take-branch → owned calls; edit-UI paused flips route via
+  `setPaused`; remaining readers → `followupQueue.items`. Steer-first
+  path untouched (steer → queue fallback order preserved).
+- Coverage (committed, executed BEFORE moves): new
+  `test_chat_followup_queue.py` (7 tests). Module truth table +
+  take/reconcile branches green pre-rewire. The adapter suite
+  executes the REAL page enqueue/schedule/drain/reconcile/persist
+  bodies with fake timers, scripted fetch, and DOM stubs over
+  enqueue-reconcile, schedule gates, server-take (with/without
+  remaining), take-failure/local/no-sid fallbacks, mid-PUT edit race,
+  pause/resume, remove/clear, and all six reconcile guards — green
+  pre-rewire (pinning old-code effects, incl. POST-echo
+  reconciliation scheduling drains) and green post-rewire with
+  identical assertions: the pre/post differential. The 9B stop
+  adapter and the Slice 7 composer sendMessage harnesses were
+  migrated to the owned state object (duplicate-send contracts
+  re-verified through real send + real queue module).
+- Gates, same controlled scope (`--ignore=src/tests/unit`, spend flags
+  verified unset, zero `SPENDING REAL TOKENS` trips): neighbors 286
+  passed with only the 7 accounted pre-existing failures (composer
+  duplicate, steer, turn-guard, cross-session gating green); broad
+  **28 failed / 1858 passed / 79 skipped** with FAILED identities
+  byte-identical to the 9B 28 (`diff` clean; +7 passed = 7 new
+  tests). `node --check` clean on all touched JS.
+- Cache: `chat_page.html` adds versioned
+  `chat_followup_queue.js?v=20261001slice9c` (after stop-state,
+  before page) and bumps `chat_page.js` to `slice9c`; all other
+  assets untouched with matching fingerprints.
+- Files: `src/web/js/chat_followup_queue.js` (new),
+  `src/web/js/chat_page.js` (queue state + decisions + readers),
+  `src/web/chat_page.html` (+2/−1 tags),
+  `src/tests/test_chat_followup_queue.py` (new),
+  `src/tests/test_chat_stop_state.py`,
+  `src/tests/test_chat_composer.py` (harness state migration), this
+  section. No backend/routing/product-behavior changes.
+
+## Remaining Slice 9 + Phase 3 closure acceptance (unchanged)
+
+- 9D: pending-result waiter (`collectPendingResult`) + replay/
+  reconcile/dedup + message-sync poll timers + busy lock/heal;
+  exactly-once append/persist and disconnect/reconnect pinned first.
+  SSE delivery arms stay with their bodies; backend turn
+  orchestration reserved for Phases 4/5.
+- Closure acceptance carried: search gate over active query;
+  last-message-time sort stability; prefs/render/live-status restore
+  order; prompt-history migration wired to remap; loadChatHistory/poll
+  generation-flag interfaces explicit; full send-catch integration
+  limitation carried from 9B; no paid-prompt tests run; manual
+  browser/Flask validation unavailable (node/fake-DOM only).
+- Risks/limits: edit-UI content edits write item fields directly
+  (edit-domain, documented); timer handle deliberately stays
+  page-side as the scheduler effect.
+- Commit independently on main. No push, no restart.
+  **STOP for Codex review before 9D or Phase 4.**

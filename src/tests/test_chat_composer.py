@@ -209,7 +209,11 @@ async function scenario(cfg) {
   let pendingAttachments = cfg.staged.map((f) => ({ filename: f }));
   let openCards = cfg.cards.map((id) => ({ id }));
   let inFlightUserMessage = cfg.inFlight;
-  let pendingFollowups = cfg.queued.map((content) => ({ content }));
+  // sendMessage reads the owned queue object; seed it like production.
+  const CuttleFollowupQueue = require(process.env.MOD_FQ);
+  let followupQueue = CuttleFollowupQueue.createQueueState();
+  cfg.queued.forEach((content) => CuttleFollowupQueue.enqueue(followupQueue,
+    { content }, { now: () => 1, rand: () => 0.5 }));
   let sendDispatchGuard = false;
   let currentSessionId = 'CH-duptest';
   const input = { id: 'chatInput', value: cfg.composerText };
@@ -272,7 +276,8 @@ def _run_send_scenarios():
         ["node", "-e", SEND_HARNESS],
         capture_output=True, text=True, timeout=30,
         env={"PATH": os.environ["PATH"], "MOD_JS": str(MOD_JS),
-             "CHAT_PAGE_JS": str(CHAT_PAGE_JS)},
+             "CHAT_PAGE_JS": str(CHAT_PAGE_JS),
+             "MOD_FQ": str(REPO_ROOT / "src" / "web" / "js" / "chat_followup_queue.js")},
     )
     assert proc.returncode == 0, proc.stderr or proc.stdout
     return json.loads(proc.stdout)
