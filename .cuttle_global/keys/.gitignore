@@ -1,7 +1,0 @@
-# No key material is ever committed from this directory.
-# Per-install mesh identities live in ~/.ssh (see
-# ../scripts/install-cuttle-mesh-lan-key.ps1|.sh --generate); previously a
-# shared provisioned .pub was distributed here and has been removed — do not
-# re-add trusted public keys to version control.
-*
-!.gitignore

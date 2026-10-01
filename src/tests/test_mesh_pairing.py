@@ -22,16 +22,17 @@ def _git(*args: str) -> str:
 
 def test_no_shared_trusted_key_distributed():
     tracked = _git("ls-files", ".cuttle_global/keys").split()
-    assert "cuttle_mesh_lan.pub" not in [Path(p).name for p in tracked]
+    assert tracked == []  # The retired directory has no shipped files.
     assert not (KEYS_DIR / "cuttle_mesh_lan.pub").exists()
 
 
 def test_key_directory_ignores_key_material():
-    # Even a probe name must be ignored — no key material may be committed.
-    probe = _git("check-ignore", "-q", ".cuttle_global/keys/probe.pub")
-    assert probe == ""  # check-ignore -q prints nothing on match
-    text = (KEYS_DIR / ".gitignore").read_text(encoding="utf-8")
-    assert "!*.pub" not in text
+    # Root ignore rules protect both current and legacy locations even when
+    # those directories and their old nested .gitignore do not exist.
+    for directory in (".cuttle_global/keys", ".cuttle/keys"):
+        for filename in ("probe.pub", "probe", ".gitignore"):
+            probe = _git("check-ignore", "-q", f"{directory}/{filename}")
+            assert probe == ""  # check-ignore -q prints nothing on match
 
 
 def test_windows_pairing_requires_explicit_peer_key():

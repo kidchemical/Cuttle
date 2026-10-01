@@ -155,3 +155,7 @@ docs/media/promo/
 
 # Muse agent run transcripts (local runtime data)
 /work/muse-runs/
+
+# Retired shared mesh key directories; identities belong in ~/.ssh
+/.cuttle_global/keys/
+/.cuttle/keys/
