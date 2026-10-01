@@ -35,6 +35,7 @@ src/.pytest_cache/
 
 # Virtual environment
 .venv/
+.venv.bak*/
 venv/
 env/
 .venv_wsl/
