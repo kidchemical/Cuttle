@@ -984,7 +984,15 @@ def process_message_with_bot(
     status_queue=None,
     inference_mode='auto',
 ):
-    """Process a chat/Discord turn: slash agents, router, then a no-graph fallback."""
+    """Process a chat/Discord turn: slash agents, router, then a no-graph fallback.
+
+    Compatibility entry for non-lane surfaces (local-mode prompts,
+    `/api/sessions/send` cross-session sends): it shares the owned
+    selection head (`api.chat_turn.classify_selection`), owned runners
+    (`api.agent_harness.runners`), and the owned router — not a second
+    execution path. Authed web turns go through the route lanes +
+    `api.chat_turn_workflow` instead; do not add new surfaces here.
+    """
     if isinstance(message_content, str):
         from api.chat_turn import strip_invisible_leading as _strip_leading
 
@@ -4854,16 +4862,16 @@ def _current_request_data() -> dict:
 _user_badge_metadata = _metadata_svc.user_badge_metadata
 def _persist_auth_user_message(chat_session_id, message_text: str, metadata=None) -> None:
     """Save a user turn for authenticated slash-command chats (/cursor, /hermes, …)."""
-    if chat_session_id is None or not message_text:
-        return
-    try:
-        db = get_auth_db()
-        metadata = _merge_project_into_meta(
-            metadata, _current_request_data(), chat_session_id
-        )
-        db.add_message(chat_session_id, 'user', message_text, metadata=metadata or None)
-    except Exception as e:
-        print(f"[CHAT] persist user message failed: {e}")
+    from api.chat_turn_persist import persist_auth_user_message as _owned
+
+    _owned(
+        get_auth_db(),
+        chat_session_id,
+        message_text,
+        metadata=metadata,
+        project_merge_fn=_merge_project_into_meta,
+        request_data=_current_request_data(),
+    )
 
 
 def _attachment_history_text(message_text: str, note: str) -> str:
@@ -4930,140 +4938,34 @@ def _run_attachment_prepass(message_content: str, raw_attachments, chat_session_
 
 
 def _make_auth_assistant_saver(chat_session_id, inference_mode=None, project_path=None):
-    """Return on_result callback that persists assistant replies for auth DB sessions."""
-    if chat_session_id is None:
-        return None
+    """Return on_result callback that persists assistant replies for auth DB sessions.
 
-    def on_save(res):
-        if not res:
-            return
-        # Supervised orchestration owns and updates its canonical assistant row.
-        if res.get('skip_history_persist') or res.get('coordinator_response_message_id'):
-            return
-        nonlocal_res = res
-        try:
-            from api.project_actions import prepare_assistant_text_for_actions
-            from api.cuttle_ui_capabilities import strip_cuttle_ui_capabilities
-            sid = f"db_session_{chat_session_id}"
-            text = nonlocal_res.get('response') or ''
-            if isinstance(text, str):
-                stripped = strip_cuttle_ui_capabilities(text)
-                if stripped != text:
-                    nonlocal_res = dict(nonlocal_res)
-                    nonlocal_res['response'] = stripped
-                    if isinstance(res, dict):
-                        res['response'] = stripped
-                    text = stripped
-            if isinstance(text, str) and (
-                '<cuttle_confirm' in text.lower()
-                or '<cuttle_action_form' in text.lower()
-                or '<cuttle_widget' in text.lower()
-            ):
-                proj = project_path or ''
-                if not proj:
-                    try:
-                        proj = _resolve_request_project_path({'session_id': chat_session_id}) or ''
-                    except Exception:
-                        proj = ''
-                rewritten = text
-                if '<cuttle_confirm' in text.lower() or '<cuttle_action_form' in text.lower():
-                    rewritten = prepare_assistant_text_for_actions(
-                        rewritten, session_id=sid, project_path=proj
-                    )
-                if '<cuttle_widget' in rewritten.lower():
-                    try:
-                        from api.chat_widgets import rewrite_assistant_text_widgets
-                        rewritten = rewrite_assistant_text_widgets(
-                            rewritten,
-                            session_id=chat_session_id,
-                            project_path=proj,
-                        )
-                    except Exception as _we:
-                        print(f"[CHAT] cuttle_widget rewrite on save failed: {_we}", flush=True)
-                if rewritten != text:
-                    nonlocal_res = dict(nonlocal_res)
-                    nonlocal_res['response'] = rewritten
-                    # Mutate original so streaming callers also see rewritten text
-                    if isinstance(res, dict):
-                        res['response'] = rewritten
-                    text = rewritten
-            # Stage local ![…](E:\…) / <media src="…"> into /output/shared/
-            if isinstance(text, str) and ('![' in text or '<media' in text.lower()):
-                try:
-                    from api.shared_media import rewrite_local_media_refs
+    Construction (and its request-data capture) is owned by
+    ``api.chat_turn_persist``; this wrapper only injects the entry's
+    project/metadata/titler shapers. ``request_data`` is captured here —
+    once, in the request thread — so late stream-thread saves see the
+    same body the turn started with instead of an empty re-read.
+    """
+    from api.chat_titler import schedule_session_autoname
+    from api.chat_turn_persist import make_assistant_saver as _owned
 
-                    staged_text, n_staged = rewrite_local_media_refs(
-                        text, project_root=actual_project_root
-                    )
-                    if n_staged and staged_text != text:
-                        nonlocal_res = dict(nonlocal_res)
-                        nonlocal_res['response'] = staged_text
-                        if isinstance(res, dict):
-                            res['response'] = staged_text
-                        print(
-                            f"[CHAT] staged {n_staged} local media ref(s) → /output/shared/",
-                            flush=True,
-                        )
-                except Exception as _me:
-                    print(f"[CHAT] shared media rewrite on save failed: {_me}", flush=True)
-        except Exception as e:
-            print(f"[CHAT] cuttle_confirm rewrite on save failed: {e}", flush=True)
+    _req = _current_request_data()
 
-        text = (nonlocal_res.get('response') or '').strip()
-        if not nonlocal_res.get('success') and not text:
-            return
-        # Status-line events — not assistant bubbles (Stop, /model set, …).
-        if text.startswith('[CANCELLED]'):
-            return
-        try:
-            from api.chat_delivery import is_turn_cancelled
+    def _meta_for_save(_res):
+        return _assistant_message_metadata(_res, _req)
 
-            if is_turn_cancelled(chat_session_id):
-                return
-        except Exception:
-            pass
-        if str(nonlocal_res.get('ui') or '').strip().lower() == 'system':
-            return
-        _asst_meta = _assistant_message_metadata(nonlocal_res)
-        _asst_meta = _merge_project_into_meta(
-            _asst_meta,
-            _current_request_data(),
-            chat_session_id,
-            nonlocal_res.get('cursor_run') if isinstance(nonlocal_res.get('cursor_run'), dict) else None,
-        )
-        try:
-            from api.subagents.service import attach_batches_to_assistant_meta
-
-            _asst_meta = attach_batches_to_assistant_meta(
-                chat_session_id, _asst_meta or {}
-            ) or _asst_meta
-        except Exception as _sa:
-            print(f"[CHAT] subagent attach meta failed: {_sa}", flush=True)
-        try:
-            db = get_auth_db()
-            _mid = db.add_message(
-                chat_session_id,
-                'assistant',
-                nonlocal_res.get('response', '') or '',
-                metadata=_asst_meta or None,
-            )
-            try:
-                from api.subagents.store import bind_unattached_batches
-
-                if _mid:
-                    bind_unattached_batches(db, chat_session_id, int(_mid))
-            except Exception as _sb:
-                print(f"[CHAT] subagent bind failed: {_sb}", flush=True)
-        except Exception as e:
-            print(f"[CHAT] persist assistant message failed: {e}")
-            return
-        try:
-            from api.chat_titler import schedule_session_autoname
-            schedule_session_autoname(chat_session_id, inference_mode)
-        except Exception as _te:
-            print(f"[TITLER] hook failed: {_te}")
-
-    return on_save
+    return _owned(
+        chat_session_id=chat_session_id,
+        inference_mode=inference_mode,
+        project_path=project_path,
+        db=get_auth_db(),
+        request_data=_req,
+        resolve_project=_resolve_request_project_path,
+        assistant_meta_fn=_meta_for_save,
+        project_merge_fn=_merge_project_into_meta,
+        schedule_autoname=schedule_session_autoname,
+        project_root=actual_project_root,
+    )
 
 
 def _reject_if_chat_busy(session_id, wants_stream: bool):
@@ -5658,20 +5560,19 @@ def chat_endpoint():
         _ident_run_kw = _harness_identity_run_kwargs(_send_identity)
 
         def _persist_user_turn(sid):
-            """Persist the user turn as history sees it (no digest, keeps thumbnails)."""
-            _turn_meta = dict(_user_msg_meta) if isinstance(_user_msg_meta, dict) else {}
-            try:
-                _badge = _user_badge_metadata(
-                    message_content, sid, identity=_send_identity
-                )
-                if _badge and 'slash_command' not in _turn_meta:
-                    _turn_meta['slash_command'] = _badge['slash_command']
-            except Exception:
-                pass
-            _persist_auth_user_message(
+            """Persist the user turn as history sees it (owned by chat_turn_persist)."""
+            from api.chat_turn_persist import persist_user_turn as _owned
+
+            _owned(
+                get_auth_db(),
                 sid,
-                _attachment_history_text(message_content, _att_note),
-                metadata=_turn_meta or None,
+                message_text=message_content,
+                history_text=_attachment_history_text(message_content, _att_note),
+                base_meta=_user_msg_meta,
+                identity=_send_identity,
+                badge_fn=_user_badge_metadata,
+                project_merge_fn=_merge_project_into_meta,
+                request_data=_current_request_data(),
             )
 
         # On-demand llama.cpp for /hermes and launch Yes/No buttons (before slash handlers).

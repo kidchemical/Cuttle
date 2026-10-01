@@ -184,21 +184,28 @@ def test_freeze_identity_chip_matches_cli_kwargs(
 
 
 def test_server_applies_pins_then_freezes_identity_for_badge_and_cli():
-    """Pin apply → freeze → persist chip + harness execute_kwargs, in that order."""
-    text = (
-        Path(__file__).resolve().parents[1] / "api" / "web_chat_api.py"
-    ).read_text(encoding="utf-8")
+    """Pin apply → freeze → persist chip + harness execute_kwargs, in that order.
+
+    The badge call itself lives in the persistence owner since P5-C; this
+    pins the route order plus the delegation contract (frozen identity and
+    badge shaper both reach the owner), while
+    `test_chat_turn_persist.py` proves the chips land on the user row.
+    """
+    api_dir = Path(__file__).resolve().parents[1] / "api"
+    text = (api_dir / "web_chat_api.py").read_text(encoding="utf-8")
     main = text.index(
         "# Authenticated chats: assign a DB session id before remaining slash-command"
     )
     apply = text.index("_apply_request_agent_pins(chat_session_id, data)", main)
     freeze = text.index("_freeze_send_identity(", main)
     persist_turn = text.index("def _persist_user_turn(sid):", main)
-    ident_badge = text.index(
-        "_user_badge_metadata(\n                    message_content, sid, identity=_send_identity",
-        main,
-    )
+    delegation = text.index("persist_user_turn as _owned", persist_turn)
+    ident_delegated = text.index("identity=_send_identity", delegation)
+    badge_delegated = text.index("badge_fn=_user_badge_metadata", delegation)
     ident_run = text.index("**_ident_run_kw", main)
     assert apply < freeze < persist_turn
-    assert persist_turn < ident_badge
+    assert persist_turn < delegation < ident_delegated
+    assert persist_turn < delegation < badge_delegated
     assert ident_run > persist_turn
+    owner = (api_dir / "chat_turn_persist.py").read_text(encoding="utf-8")
+    assert "badge_fn(message_text, session_id, identity=identity)" in owner

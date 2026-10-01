@@ -132,7 +132,9 @@ smoke probe.
 | Project commands/actions | `{project}/.cuttle/` + global `.cuttle_global/` |
 | Brain / context compile | `src/api/cuttle_brain/` |
 
-Graph-era **HTTP** `POST /api/execute-tool` still wraps `_execute_remote_agent_tool`, which internally calls `_run_harness_web_command`. No first-party JS caller of `/api/execute-tool` was found. Chat does **not** go through that HTTP route.
+Graph-era **HTTP** `POST /api/execute-tool` and `_execute_remote_agent_tool` are fully removed (no references in `src/`; this paragraph previously claimed otherwise). Execution is `api.agent_harness.runners` → `kernel.run_agent_web_command`; turn orchestration is `api.chat_turn_workflow`, persistence `api.chat_turn_persist`.
+
+**Turn persistence (Phase 5 P5-C):** `api.chat_turn_persist` owns `make_assistant_saver` (skip guards verbatim: supervised-owned rows, empty failures, `[CANCELLED]`, `ui == 'system'`, cancelled turns), `persist_user_turn` (badge/history/project merge), and `persist_auth_user_message`. All take explicit `db` + `request_data` (captured once at ingress) — no Flask reads inside. The entry wrappers only inject project/metadata/titler shapers. Stream-thread saves now merge the captured body instead of an empty re-read (reported boundary delta, no test depended on the gap).
 
 ---
 

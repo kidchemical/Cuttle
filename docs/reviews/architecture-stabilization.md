@@ -5540,3 +5540,93 @@ whole was rejected as monolith-shifting. The owned seam is
   redesign stays Phase 6. Deferred tooling unchanged.
 - Commit independently on main. No push, no restart.
   **STOP for Codex review before the next checkpoint/Phase 6.**
+
+## P5-B approval + P5-C persistence boundary and Phase 5 closure
+
+- P5-B `973bd17e` APPROVED. Reviewer last read line 5542; this
+  section appended only below that boundary; prior sections preserved.
+- P5-C inventory: `_make_auth_assistant_saver` (130-line closure over
+  Flask `request` via `_current_request_data` + `get_auth_db`
+  singleton), `_persist_user_turn` closure (badge/history/project via
+  `_persist_auth_user_message`, itself request-bound),
+  `_current_request_data` (thread-local re-read at save time),
+  stream lane triples (router/harness/pipeline `_run` + saver +
+  `_claimed` — 3-line wirings once saver/persist are owned),
+  `process_message_with_bot` callers (route leftover sync, leftover
+  stream, `/api/sessions/send` — verified zero Discord callers;
+  Discord is optional agent-ops only, nothing revived).
+  `_resolve_request_project_path(data)` is pure-given-data (no Flask
+  reads) — safe to inject as `resolve_project`.
+- New `src/api/chat_turn_persist.py` (no Flask/db-singleton/request
+  reads — verified by scan; leaf imports only): `make_assistant_saver`
+  (skip guards verbatim), `persist_user_turn` (badge/history/project),
+  `persist_auth_user_message` — all with explicit `db` +
+  `request_data` (+ `resolve_project`/`assistant_meta_fn`/
+  `project_merge_fn`/`schedule_autoname`/`badge_fn`/`project_root`).
+  Entry wrappers (`_make_auth_assistant_saver`,
+  `_persist_auth_user_message`, `_persist_user_turn`) only inject
+  shapers and capture the already-parsed body once in the request
+  thread. `process_message_with_bot` kept as a documented
+  compatibility entry (no new surfaces; selection/execution already
+  owned) — not retired, not duplicated.
+- Delegation: saver construction + user persist call the owner in all
+  lanes; stream triples compose owner-built pieces; SSE pump/thread/
+  framing stay bounded transport. Exactness fixes found during the
+  move: owner keeps the empty/no-session no-op guard and the
+  merge-inside-try containment of the original.
+- ONE reported boundary delta (not silent): saver/request capture
+  happens once at build (request thread) instead of re-read at save.
+  Sync saves are identical (same thread, same body). Late
+  stream-thread saves previously re-read `{}` (no request context)
+  and now merge the captured body — streamed assistant rows gain the
+  project stamps the sync path always had. No test depended on the
+  gap (broad gate clean); the old re-read looked accidental, but it
+  is recorded here rather than claimed as zero-drift.
+- Known pre-existing lane divergence (deferred, unchanged): the
+  pipeline stream `on_save` persists `[CANCELLED]`/`system` rows
+  while the saver-built lanes skip them. Out of P5-C scope; flagged
+  for a separately scoped defect pass, not fixed silently here.
+- Stale-doc corrections: `_execute_remote_agent_tool` and
+  `POST /api/execute-tool` no longer exist anywhere in `src/`
+  (verified zero hits) — AGENTS.md dispatch bullet and the
+  repository-map graph-era paragraph now point at
+  `runners`/`chat_turn*` owners.
+- Coverage (`src/tests/test_chat_turn_persist.py`, 15 green): 12
+  owner pins (badge/project/history/empty/merge-error guards; all 5
+  saver skips; cancel-guard; auth-message merge/no-op) written
+  BEFORE the owner existed (collection-error pre-failure) + 1 real
+  route SSE integration (stream 200, session event + response + done
+  chunk, both rows, release) + 2 guard tests added with the
+  exactness fixes. Discrimination: `[CANCELLED]`-guard removal fails
+  the parametrized skip test; restored byte-identical. One
+  pre-existing structural pin (`test_first_turn_agent_pins` badge
+  substring) was retargeted to the new shape — route order +
+  delegation contract + owner call-site assertion, with chip landing
+  still proven behaviorally by the owner test — not weakened.
+- Gates (same command/env/scope; baseline `973bd17e`): focused
+  persist+workflow+seam 54/54; pins 14/14; broad **28 failed / 1972
+  passed / 79 skipped**, sorted FAILED `diff`-clean vs P5-B
+  (`/tmp/p5b_failed.txt` vs `/tmp/p5c_failed2.txt`); +15 = new
+  persist tests, −0/+0 failures. The retargeted pins test passes in
+  both runs.
+- Spend audit: flags unset; fakes only; no paid prompts, no process
+  restart/kill. Manual validation N/A (backend-only).
+- Files: `src/api/chat_turn_persist.py` + `src/tests/
+  test_chat_turn_persist.py` (new); `src/api/web_chat_api.py`
+  (saver/persist wrappers delegate, dead `on_save` body excised
+  net −~130, compat docstring); `src/tests/
+  test_first_turn_agent_pins.py` (retargeted pin); AGENTS.md +
+  repository-map (stale executor pointers corrected, P5-C row).
+- Phase 5 CLOSURE matrix: P5-A envelope/selection ✓, P5-B lane
+  orchestration + runner relocation ✓, P5-C persistence boundary +
+  stream composition + compat decision + stale-doc cleanup ✓.
+  Entry-module production imports: only the `doctor` probe. All
+  turn paths (sync/SSE × harness/router/pipeline/control/no-LLM,
+  cancel/stale/409/500) owned or explicitly compat-wrapped.
+  Remaining non-gaps for Phase 6+: SSE pump/thread extraction
+  (transport), `_generate_chat_stream` caller triples, saver
+  per-lane specialization review (incl. the deferred
+  `[CANCELLED]` divergence), `sessions_send` contract preservation.
+  Deferred dependency/startup tooling unchanged.
+- Commit independently on main. No push, no restart.
+  **STOP for Codex review before Phase 6.**
