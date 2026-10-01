@@ -1162,9 +1162,12 @@ def test_rewrite_single_qa_card_is_untouched(tmp_path: Path):
 def test_form_resume_has_a_single_bubble_writer():
     """The run route must not persist the answer; the client resume send owns it."""
     root = Path(__file__).resolve().parents[1]
-    api = (root / "api" / "web_chat_api.py").read_text(encoding="utf-8")
+    # Phase 2 Slice 2: the run route lives on the action-forms blueprint.
+    api = (root / "api" / "action_form_routes.py").read_text(encoding="utf-8")
+    assert "def api_action_form_run" in api  # owned here, not the monolith
+    assert "def api_action_form_run" not in (root / "api" / "web_chat_api.py").read_text(encoding="utf-8")
     start = api.index("def api_action_form_run")
-    route = api[start : api.index("@app.route", start)]
+    route = api[start : api.index("@action_forms_bp.route", start)]
     assert "add_message" not in route
     assert "injected_user_message" in route
     js = (root / "web" / "js" / "chat_page.js").read_text(encoding="utf-8")

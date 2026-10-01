@@ -870,3 +870,197 @@ is still constructed once (`managers.project_manager`); both the monolith
 6. **Is the next slice safe to begin?** This slice is self-contained
    (no chat/router/workers touched; failures identical to baseline). Do
    NOT begin the next slice in this track until this review is approved.
+
+---
+
+# Phase 2 — Slice 2: Action Forms HTTP Transport
+
+## Phase status
+
+- Slice: Phase 2 Slice 2 — Action Forms HTTP transport →
+  `api.action_form_routes`.
+- Git baseline before work: `805b774c` ("Phase 2 slice 1: projects HTTP
+  extraction to owned blueprint"), clean tree.
+- Git commit after work: the single `Phase 2 slice 2: action-form HTTP
+  transport extraction` commit on main (identify via `git log --oneline`).
+- Completion status: **complete, awaiting external review**. Git
+  extraction explicitly NOT started.
+
+## Original problem
+
+The four `/api/action-form/*` handlers lived inline in the Flask monolith
+(~284 lines) while the domain already had an owner (`api.action_forms`).
+Transport concerns — auth gating, toast/error shaping, restart-status
+attach, one-shot lock persist, resume inject — were fused into the
+composition root, and the HMAC/security invariants had no single obvious
+HTTP home. Any agent touching form transport worked inside the 12.4k-line
+monolith.
+
+## Architecture before
+
+- `run` / `dismiss` / `watch-state` / `followup-message` registered via
+  `@app.route` in the monolith (lines ~7400–7683), each with inline lazy
+  imports (`http_authz`, `action_forms`, `project_actions`,
+  `flask_restart`) plus two monolith-namespace globals (`get_auth_db`,
+  `get_request_session_token`).
+- Per-route contracts (frozen and re-pinned):
+  - `run`: token/spec/form-id required (400 toast shape); session-bound
+    chat access with toast-mapped errors, else plain authentication
+    (401); double ownership inside `execute_action_form_submission`
+    (`owner_user_id` + spec session binding); flask.restart progress
+    attach; one-shot lock persist to history; resume inject
+    (`injected_user_message`, never persisted here); result JSON passed
+    through; 500 silent-toast shape.
+  - `dismiss`: form_id(s) merge (cap 40); shared `flask-restart-gN`
+    controller ids stripped **pre-auth by design**; 400 missing session;
+    skipped shape when empty; chat-session access; per-form history lock;
+    no side effects.
+  - `watch-state`: 400 missing form/session; authentication only (no
+    chat-ownership check — intentional, pinned); snapshot persist.
+  - `followup-message`: 400 missing spec; chat-session access; project
+    path resolution; assistant-text rewrite persisted to history.
+- Test stubbing reached `get_auth_db` through both `api.auth_db` and the
+  monolith's namespace; several fixtures patch both.
+
+## Changes made
+
+- **Added `src/api/action_form_routes.py`** (new owner): `action_forms_bp`
+  blueprint (`url_prefix="/api"`), all 4 handlers moved verbatim (same
+  paths, methods, bodies, log lines, status codes, payload shapes) except
+  the two monolith-namespace globals (`get_auth_db`,
+  `get_request_session_token`) converted to the file's existing
+  function-lazy import pattern — same late binding the other five lazy
+  imports already used, so all existing test patch points keep working.
+  Module docstring states the ownership contract and the Phase 2 rule:
+  never imports `api.web_chat_api` (verified by import + grep).
+- **Monolith:** registers `action_forms_bp` (same try/except pattern);
+  deleted the 4 handlers (~284 lines). No other monolith code touched.
+- Monolith size: 12,429 → 12,152 lines (−277 net).
+- **Tests:** new `src/tests/test_action_form_routes.py` (9 tests, written
+  pre-move against the monolith, green both sides): route-registration
+  contract; anon/guest/owner/wrong-chat matrix per route; tampered +
+  garbage tokens expire silent; restart-recovered Confirm (history +
+  memory flush) and Cancel; one-shot lock + `already_locked`; dismiss
+  ownership + pre-auth controller skip; follow-up ownership + persist;
+  watch-state auth/shapes. Repaired
+  `test_form_resume_has_a_single_bubble_writer` to read the new owner
+  module (intent preserved + asserts the monolith no longer defines the
+  route). Retained `test_action_forms.py` + process-restart HMAC suites
+  untouched.
+- Moved vs deleted: handlers relocated (moved, one documented
+  import-pattern normalization); no domain logic moved or redesigned;
+  no obsolete code removed (dependency closure not yet verified for the
+  surrounding form system).
+
+## Architecture after
+
+```
+web_chat_api.py ──registers──▶ action_forms_bp (api/action_form_routes.py)
+                                   │ transport only
+                                   ▼
+              api.action_forms (domain) + project_actions + flask_restart
+```
+
+One-way dependency: `action_form_routes` → `api.action_forms`,
+`api.project_actions`, `api.flask_restart`, `api.http_authz`,
+`api.auth_db`, `api.auth_session`, Flask. No reach-back into the
+monolith; no helpers duplicated (the two converted references use the
+same lazy-import pattern, not copies). Restart-sensitive state untouched
+(in-memory pending map + history recovery stay in `action_forms`).
+
+## Dependencies and state
+
+- Removed: 4 route registrations from the composition root; the monolith
+  no longer owns any `/api/action-form/*` path.
+- Introduced: `api.action_form_routes` (Flask Blueprint; no new runtime
+  deps). No new shared state; no state moved.
+- Reverse deps: none existed on the moved functions (only a source-text
+  test, repaired); none created.
+- Security invariants preserved (all pinned by tests): chat-session
+  access gating per route; double ownership (`owner_user_id` + spec
+  session binding enforced in `execute_action_form_submission`);
+  server-signed inline tokens (HMAC, `CUTTLE_ACTION_HMAC_SECRET`);
+  tampered/garbage tokens expire silent; spec_override is locator-only
+  (tampered-spec test retained in `test_action_forms.py`); persisted-card
+  + history recovery incl. restart flush; one-shot Confirm/Cancel locks;
+  dismiss + follow-up ownership; watch-state auth-only (documented);
+  restart-controller pre-auth skip.
+- Persistence/restart semantics: unchanged (history-backed locks and
+  recovery live in `action_forms`, untouched).
+
+## Tests and verification
+
+- New `test_action_form_routes.py`: 9/9 pass pre-move AND post-move.
+- Retained: `test_action_forms.py` (domain incl. tampered-spec,
+  single-bubble-writer — repaired pin) and
+  `test_action_form_process_restart.py` (live-server HMAC/restart
+  recovery) — pass.
+- Focused combined: action-form routes + domain suites 48 passed,
+  1 skipped.
+- Broad: `.venv/bin/python -m pytest -q` → **1,749 passed, 28 failed,
+  60 skipped**; the 28 failures are byte-identical to the Phase 0/1 and
+  Slice 1 baseline lists (verified via `diff`) — all unrelated.
+- Note: running `test_action_form_process_restart.py` immediately before
+  `test_http_authz.py` in one command pollutes 8 auth tests; verified
+  pre-existing on the clean baseline via `git stash` (same 8 fail
+  without my changes). Full-suite order is unaffected (http_authz green
+  there).
+- `ast.parse` clean; import check confirms no monolith import; grep
+  confirms no handler remnants in the monolith.
+- Manual workflows: none applicable (no UI changed). Not exercised:
+  live Flask boot, chat round-trip.
+
+## Metrics
+
+| Metric | Before (`805b774c`) | After | Method |
+|---|---|---|---|
+| `web_chat_api.py` lines | 12,429 | 12,152 (−277 net) | `wc -l` |
+| `/api/action-form/*` handlers owned by monolith | 4 | 0 | grep |
+| New owned modules | — | `api/action_form_routes.py` (4 routes) | — |
+| Transport tests | 0 (domain + restart only) | +9 route/auth/shape/recovery tests | pytest |
+| Full suite | 1,740 / 28 / 60 | 1,749 / 28 (identical list) / 60 | pytest + diff |
+
+## Remaining concerns
+
+1. `wca.get_auth_db` / `wca.project_manager` references remain for
+   non-extracted users — expected; later slices narrow them.
+2. Test-ordering pollution (restart suite → auth suite in one command)
+   is pre-existing, unrelated, and not worsened; full-suite order is green.
+3. Git routes (~21 handlers, needs a service layer first) explicitly
+   deferred — not started in this slice.
+4. The 28 baseline failures are untouched and unrelated.
+
+## Diff summary
+
+- Added: `src/api/action_form_routes.py`,
+  `src/tests/test_action_form_routes.py`.
+- Modified: `src/api/web_chat_api.py` (−277 net: −284 handlers,
+  +7 registration), `src/tests/test_action_forms.py` (one pin repair).
+- Deleted: no files.
+- `git status --short` before commit: 3 modified + 2 new paths (above).
+
+## External Review Summary
+
+1. **What changed architecturally?** Action-form HTTP transport moved
+   from the Flask monolith to an owned `action_forms_bp` blueprint; the
+   monolith now only composes it. Domain, HMAC model, and recovery
+   mechanics did not move.
+2. **What behavior intentionally changed?** Nothing (one
+   import-pattern normalization: two monolith-namespace globals now
+   resolve via the same lazy-import pattern the file already used;
+   all patch points preserved).
+3. **What behavior should be identical?** All 4 route paths/methods,
+   auth matrices, toast/error shapes, status codes, HMAC
+   accept/reject, history recovery, one-shot locks, resume inject
+   semantics, restart-controller skip.
+4. **What remains coupled or messy?** Git + tasks still inline;
+   monolith retains `get_auth_db`/`project_manager` refs for remaining
+   users; 28 unrelated baseline failures preserved; pre-existing
+   restart→auth test-ordering pollution noted.
+5. **What should be reviewed before the next slice?** The ownership
+   contract header in `action_form_routes.py`; confirmation that Git
+   (service layer first) is the correct next slice.
+6. **Is the next slice safe to begin?** This slice is self-contained
+   (no chat/router/workers/git touched; failures identical to
+   baseline). Do NOT begin the Git extraction in this track until this
+   review is approved.
