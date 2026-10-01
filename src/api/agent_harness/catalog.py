@@ -578,6 +578,11 @@ def match_slash_command(
     raw = (message or "").strip()
     if not raw.startswith("/"):
         return None
+    # Legacy alias kept for Discord / old clients; the catalog only
+    # declares /cursor. Normalized here so every surface (route lanes,
+    # compat entry, coordinator selection) resolves it identically.
+    if re.match(r"^/cursor-cli(\s|$)", raw, flags=re.I):
+        raw = "/cursor" + raw[len("/cursor-cli"):]
     for manifest in list_agent_manifests(project_path):
         token = manifest.slash_prefix().rstrip()
         esc = re.escape(token)

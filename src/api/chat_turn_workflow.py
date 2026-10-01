@@ -188,3 +188,152 @@ def finalize_stream_result(
     except Exception:
         pass
     return bool(not superseded and kept)
+
+
+def rewrite_assistant_response_actions(
+    res: Optional[Dict[str, Any]], session_id, project_path: str = ""
+) -> Optional[Dict[str, Any]]:
+    """Register <cuttle_confirm> blocks and rewrite them into Confirm/Cancel buttons.
+
+    Moved verbatim from the Flask ingress (P5-E): response post-processing
+    is application workflow, so the coordinator stream worker applies it
+    before finalize — the same transform the pump applied to the SSE copy.
+    """
+    if not isinstance(res, dict) or not session_id:
+        return res
+    text = res.get('response')
+    if not isinstance(text, str):
+        return res
+    lower = text.lower()
+    if (
+        '<cuttle_confirm' not in lower
+        and '<cuttle_action_form' not in lower
+        and '<cuttle_widget' not in lower
+    ):
+        return res
+    try:
+        from api.project_actions import prepare_assistant_text_for_actions
+        rewritten = prepare_assistant_text_for_actions(
+            text,
+            session_id=str(session_id),
+            project_path=project_path or '',
+        )
+    except Exception as e:
+        print(f"[CHAT] cuttle_confirm rewrite failed: {e}", flush=True)
+        rewritten = text
+    if '<cuttle_widget' in rewritten.lower():
+        try:
+            from api.chat_widgets import rewrite_assistant_text_widgets
+            rewritten = rewrite_assistant_text_widgets(
+                rewritten,
+                session_id=session_id,
+                project_path=project_path or '',
+            )
+        except Exception as e:
+            print(f"[CHAT] cuttle_widget rewrite failed: {e}", flush=True)
+    if rewritten == text:
+        return res
+    out = dict(res)
+    out['response'] = rewritten
+    return out
+
+
+def run_agent_stream_turn(
+    session_id: Any,
+    *,
+    delivery: Any,
+    persist_user: Callable[[], None],
+    run: Callable[..., Dict[str, Any]],
+    make_saver: Callable[[], Optional[Callable[[Dict[str, Any]], None]]],
+    notify_mobile: Optional[Callable[[Dict[str, Any]], None]],
+    project_path: str = "",
+) -> Any:
+    """Stream lifecycle skeleton (order is the contract).
+
+    Yields ``("status", message)`` / ``("query_started", payload)``
+    progress and exactly one terminal ``("done", result)``. Callers that
+    already know the turn is unclaimable never enter: this skeleton always
+    claims (all stream ingress is claimed; the unclaimed compat entry is
+    sync-only).
+
+    begin (busy yields ``("busy", body)``) → persist → run in a worker
+    thread → stale/cancel-filtered progress → rewrite → shared finalize
+    (save/park/notify/release) → release exactly once (belt-and-suspenders:
+    finalize already ended by token).
+
+    Distinctions from the sync skeleton, preserved deliberately: executor
+    errors become the standard error result instead of propagating (the
+    route's 500 handler never sees stream failures); save policy is
+    ``finalize_stream_result``'s kept-rule, not ``should_save``.
+    """
+    import queue as _queue_mod
+    import threading as _threads
+
+    token = begin_sync_turn(delivery, session_id)
+    if token is None and session_id is not None:
+        yield ("busy", busy_response_body(session_id))
+        return
+    # Saver factory runs HERE (request thread on first next()): saver
+    # construction captures request data once, which a worker thread
+    # must never re-read.
+    try:
+        saver = make_saver()
+    except Exception:
+        saver = None
+    try:
+        persist_user()
+    except Exception as exc:
+        release_sync_turn(delivery, session_id, token)
+        yield (
+            "done",
+            {
+                "success": False,
+                "response": f"Failed to save your message: {exc}",
+                "session_id": session_id,
+            },
+        )
+        return
+    events: Any = _queue_mod.Queue()
+
+    def _worker() -> None:
+        try:
+            result = run(events)
+        except Exception as exc:
+            import traceback
+            traceback.print_exc()
+            result = {
+                'success': False,
+                'error': str(exc),
+                'response': f'I encountered an error: {str(exc)}. Please try again.'
+            }
+        if not isinstance(result, dict):
+            result = {}
+        try:
+            display = rewrite_assistant_response_actions(
+                result, session_id, project_path
+            )
+        except Exception:
+            display = result
+        finalize_stream_result(
+            delivery,
+            session_id,
+            token,
+            result,
+            on_result=saver,
+            notify_mobile=notify_mobile,
+        )
+        events.put(("done", display if isinstance(display, dict) else result))
+
+    _thread = _threads.Thread(target=_worker, daemon=True)
+    _thread.start()
+    try:
+        while True:
+            kind, payload = events.get()
+            if kind != "done" and is_turn_superseded(delivery, session_id, token):
+                continue
+            if kind == "done":
+                yield ("done", payload)
+                break
+            yield (kind, payload)
+    finally:
+        release_sync_turn(delivery, session_id, token)

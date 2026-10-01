@@ -529,29 +529,25 @@ def test_http_chat_sync_lane_goes_through_coordinator(monkeypatch, tmp_path):
     assert calls[0][0] == "PreparedAgentTurn"
 
 
-def test_http_chat_stream_uses_shared_executor_without_submit(
+def test_http_chat_stream_goes_through_shared_entry(
     monkeypatch, tmp_path
 ):
-    """Documents the deliberate sync/stream lifecycle split (not a bypass).
+    """P5-E: real POST /api/chat streams through submit_agent_stream_turn.
 
-    The coordinator owns the SYNC skeleton (see its docstring:
-    ``run_agent_sync_turn``); the stream lane drives ``_generate_chat_stream``
-    directly with the SAME harness executor over the SAME owned delivery
-    primitives (busy/turn-guard/finalize/persist). Unifying the two
-    lifecycles would be a coordinator redesign (P5 scope), not enforcement:
-    this test pins the split so either side drifting — the stream lane
-    growing its own executor, or silently submitting — fails loudly and
-    forces an explicit architectural decision.
+    The spy forwards to the REAL stream entry while the harness executor
+    is faked: a lane that bypassed the shared entry would leave the spy
+    empty and fail. Same executor, same delivery lifecycle as sync —
+    only the lifecycle events (not a body) come back.
     """
     from api import web_chat_api as wca
     import api.chat_coordinator as coordinator
 
-    real_submit = coordinator.submit_agent_turn
+    real_submit = coordinator.submit_agent_stream_turn
     calls = []
 
-    def spy_submit(turn, *, io, delivery, claim, **kwargs):
+    def spy_submit(turn, *, io, delivery, **kwargs):
         calls.append(type(turn).__name__)
-        return real_submit(turn, io=io, delivery=delivery, claim=claim, **kwargs)
+        yield from real_submit(turn, io=io, delivery=delivery, **kwargs)
 
     ran = []
 
@@ -559,7 +555,7 @@ def test_http_chat_stream_uses_shared_executor_without_submit(
         ran.append((agent_id, prompt))
         return {"success": True, "response": "http-stream-fake", "type": "fake"}
 
-    monkeypatch.setattr(coordinator, "submit_agent_turn", spy_submit)
+    monkeypatch.setattr(coordinator, "submit_agent_stream_turn", spy_submit)
     monkeypatch.setattr(wca, "_run_pinned_harness_turn", fake_run)
     from api.auth_db import AuthDatabase
 
@@ -578,8 +574,8 @@ def test_http_chat_stream_uses_shared_executor_without_submit(
     assert "http-stream-fake" in res.get_data(as_text=True)
     # Same shared executor served the stream…
     assert ran == [("cursor", "hello stream")]
-    # …without entering the sync skeleton: the split, pinned.
-    assert calls == []
+    # …through the shared stream entry, not around it.
+    assert calls == ["PreparedAgentTurn"]
 
 
 def test_bundled_manifest_schema_and_no_install_flags():
@@ -595,3 +591,16 @@ def test_bundled_manifest_schema_and_no_install_flags():
         assert problem is None, f"{manifest.id}: {problem}"
         assert manifest.auto_install is False, manifest.id
         assert manifest.install_kind in ("", "npm_global", "script_url"), manifest.id
+
+
+def test_cursor_cli_legacy_alias_normalizes_to_cursor():
+    """P5-E: the legacy alias resolves identically on every surface."""
+    from api.agent_harness import catalog
+
+    direct = catalog.match_slash_command("/cursor hello")
+    assert direct is not None and direct[0] == "cursor"
+    assert catalog.match_slash_command("/cursor-cli hello") == direct
+    assert catalog.match_slash_command("/cursor-cli hello x") == (
+        "cursor",
+        "hello x",
+    )

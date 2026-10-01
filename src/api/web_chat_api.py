@@ -737,44 +737,16 @@ def _button_click_history(message_content: str):
 
 
 def _rewrite_assistant_response_actions(res: Optional[dict], session_id, project_path: str = '') -> Optional[dict]:
-    """Register <cuttle_confirm> blocks and rewrite them into Confirm/Cancel buttons."""
-    if not isinstance(res, dict) or not session_id:
-        return res
-    text = res.get('response')
-    if not isinstance(text, str):
-        return res
-    lower = text.lower()
-    if (
-        '<cuttle_confirm' not in lower
-        and '<cuttle_action_form' not in lower
-        and '<cuttle_widget' not in lower
-    ):
-        return res
-    try:
-        from api.project_actions import prepare_assistant_text_for_actions
-        rewritten = prepare_assistant_text_for_actions(
-            text,
-            session_id=str(session_id),
-            project_path=project_path or '',
-        )
-    except Exception as e:
-        print(f"[CHAT] cuttle_confirm rewrite failed: {e}", flush=True)
-        rewritten = text
-    if '<cuttle_widget' in rewritten.lower():
-        try:
-            from api.chat_widgets import rewrite_assistant_text_widgets
-            rewritten = rewrite_assistant_text_widgets(
-                rewritten,
-                session_id=session_id,
-                project_path=project_path or '',
-            )
-        except Exception as e:
-            print(f"[CHAT] cuttle_widget rewrite failed: {e}", flush=True)
-    if rewritten == text:
-        return res
-    out = dict(res)
-    out['response'] = rewritten
-    return out
+    """Register <cuttle_confirm> blocks and rewrite them into Confirm/Cancel buttons.
+
+    Delegates to the owned workflow implementation (P5-E); the body moved
+    to ``api.chat_turn_workflow`` so the coordinator stream worker applies
+    the identical transform. All existing callers keep working.
+    """
+    from api.chat_turn_workflow import (
+        rewrite_assistant_response_actions as _owned_rewrite,
+    )
+    return _owned_rewrite(res, session_id, project_path or '')
 
 
 def _persist_auth_launch_gate_reply(db, chat_session_id, user_message: str, launch_reply: dict) -> None:
@@ -5004,6 +4976,144 @@ def _reject_if_chat_busy(session_id, wants_stream: bool):
     return jsonify(body), 409
 
 
+def _frame_stream_lifecycle_event(kind, payload, session_id_for_status):
+    """Frame one owned lifecycle event as SSE chunk(s). Transport only.
+
+    Verbatim framing the pump loop applied: status text plus the flush
+    comment, query_started, and the done branch (badge/usage passthrough,
+    response + done). Unknown kinds are ignored, exactly as the loop did.
+    The coordinator already applied the response rewrite; framing never
+    re-rewrites.
+    """
+    if kind == 'status':
+        return [
+            f"data: {json.dumps({'type': 'status', 'message': payload}, ensure_ascii=False)}\n\n",
+            ": " + (" " * 128) + "\n\n",
+        ]
+    if kind == 'query_started':
+        _pq = payload or {}
+        return [
+            f"data: {json.dumps({'type': 'query_started', 'query_id': _pq.get('query_id'), 'report_url': _pq.get('report_url')}, ensure_ascii=False)}\n\n"
+        ]
+    if kind == 'done':
+        result = payload or {}
+        resp = {'type': 'response', 'success': result.get('success', False), 'response': result.get('response', ''), 'session_id': session_id_for_status if session_id_for_status is not None else result.get('session_id'), 'response_type': result.get('type', 'unknown')}
+        if result.get('query_id'):
+            resp['query_id'] = result['query_id']
+        if result.get('report_url'):
+            resp['report_url'] = result['report_url']
+        if result.get('cursor_run'):
+            resp['cursor_run'] = result['cursor_run']
+        for _passthrough in (
+            'agent_id',
+            'agent_model',
+            'agent_effort',
+            'muse_model',
+            'muse_effort',
+            'hermes_model',
+            'hermes_effort',
+            'opencode_model',
+            'opencode_effort',
+            'codex_model',
+            'codex_effort',
+        ):
+            if result.get(_passthrough):
+                resp[_passthrough] = result[_passthrough]
+        try:
+            _usage = _usage_meta_from_assistant_result(result)
+            if _usage:
+                resp['usage'] = _usage
+        except Exception:
+            if isinstance(result.get('usage'), dict) and result.get('usage'):
+                resp['usage'] = result['usage']
+            if result.get('cost') is not None:
+                resp['cost'] = result['cost']
+        return [
+            f"data: {json.dumps(resp, ensure_ascii=False, default=str)}\n\n",
+            f"data: {json.dumps({'type': 'done'})}\n\n",
+        ]
+    return []
+
+
+def _stream_agent_turn_response(prepared, *, io):
+    """Submit one stream turn through the shared entry; frame events as SSE.
+
+    Transport only: peek the first owned lifecycle event (shortcut/busy
+    answer without streaming, exactly like the pre-P5-E lanes), else emit
+    the session event plus the Connecting liveness pair and frame every
+    lifecycle event verbatim. Claim/persist/run/rewrite/finalize/release
+    all live in the coordinator entry, never here.
+    """
+    from api import chat_delivery as _chat_delivery
+    from api.chat_coordinator import (
+        submit_agent_stream_turn as _submit_stream_turn,
+    )
+
+    _events = _submit_stream_turn(
+        prepared,
+        io=io,
+        delivery=_chat_delivery,
+        is_router_family=_is_router_family_message,
+    )
+    _first = next(_events, None)
+    if _first is not None and _first[0] == "shortcut":
+        return jsonify(_first[1])
+    if _first is not None and _first[0] == "busy":
+        def _stream_busy():
+            _sid = prepared.session_id
+            yield _sse_session_event(_sid)
+            yield f"data: {json.dumps({'type': 'status', 'message': 'A reply is already generating…'}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'busy', 'session_id': _sid}, ensure_ascii=False, default=str)}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        return Response(
+            stream_with_context(_stream_busy()),
+            mimetype='text/event-stream',
+            headers={
+                'Cache-Control': 'no-cache',
+                'X-Accel-Buffering': 'no',
+                'Connection': 'keep-alive',
+            },
+        )
+
+    def _stream_gen():
+        _sid = prepared.session_id
+        if _sid is not None:
+            yield _sse_session_event(_sid)
+        try:
+            set_chat_live_status(_sid, 'Connecting...', active=True)
+        except Exception:
+            pass
+        yield f"data: {json.dumps({'type': 'status', 'message': 'Connecting...'}, ensure_ascii=False)}\n\n"
+        yield ": " + (" " * 128) + "\n\n"
+        if _first is None:
+            _first_event = (
+                "done",
+                {
+                    "success": False,
+                    "response": "Stream ended unexpectedly.",
+                    "type": "stream_error",
+                },
+            )
+        else:
+            _first_event = _first
+        _k0, _p0 = _first_event
+        for _chunk in _frame_stream_lifecycle_event(_k0, _p0, _sid):
+            yield _chunk
+        for _kind, _payload in _events:
+            for _chunk in _frame_stream_lifecycle_event(_kind, _payload, _sid):
+                yield _chunk
+
+    return Response(
+        stream_with_context(_stream_gen()),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no',
+            'Connection': 'keep-alive',
+        },
+    )
+
+
 @app.route('/api/upload', methods=['POST'])
 def upload_attachments():
     """Receive chat file uploads (images/PDFs) for vision pre-pass."""
@@ -5835,45 +5945,42 @@ def chat_endpoint():
             if busy_resp is not None:
                 return busy_resp
             if wants_stream:
-                _on_save = _make_auth_assistant_saver(
-                    chat_session_id if _auth_user else None,
-                    chat_inference_mode,
-                    project_path=_router_proj,
+                from api.chat_coordinator import (
+                    PreparedAgentTurn as _PreparedAgentTurn,
+                    StreamTurnIO as _StreamTurnIO,
                 )
 
-                def stream_gen_router_family():
-                    if chat_session_id is not None:
-                        yield _sse_session_event(chat_session_id)
+                def _stream_unreachable_router(_kind, _sel):
+                    raise RuntimeError('unreachable arm in router stream lane')
 
-                    def _claimed():
-                        if _auth_user:
-                            _persist_user_turn(chat_session_id)
+                def _stream_run_router(status_queue=None):
+                    from api.agent_router.integration import handle_router_family_command as _hrf2
+                    return dict(_hrf2(
+                        message_content,
+                        session_id=chat_session_id,
+                        project_path=_router_proj,
+                        status_queue=status_queue,
+                    ) or {})
 
-                    def _run(status_queue):
-                        from api.agent_router.integration import handle_router_family_command as _hr
-                        return _hr(
-                            message_content,
-                            session_id=chat_session_id,
-                            project_path=_router_proj,
-                            status_queue=status_queue,
-                        )
-
-                    for chunk in _generate_chat_stream(
-                        _run,
-                        chat_session_id,
-                        on_result=_on_save,
-                        on_claimed=_claimed if _auth_user else None,
-                    ):
-                        yield chunk
-
-                return Response(
-                    stream_with_context(stream_gen_router_family()),
-                    mimetype='text/event-stream',
-                    headers={
-                        'Cache-Control': 'no-cache',
-                        'X-Accel-Buffering': 'no',
-                        'Connection': 'keep-alive',
-                    },
+                _stream_router_io = _StreamTurnIO(
+                    run_harness=_stream_unreachable_router,
+                    run_router=_stream_run_router,
+                    persist_user=lambda: (_persist_user_turn(chat_session_id) if _auth_user else None),
+                    make_saver=lambda: _make_auth_assistant_saver(
+                        chat_session_id if _auth_user else None,
+                        chat_inference_mode,
+                        project_path=_router_proj,
+                    ),
+                    notify_mobile=lambda _b: _emit_chat_complete_mobile(chat_session_id, _b),
+                    format_shortcut=_stream_unreachable_router,
+                )
+                return _stream_agent_turn_response(
+                    _PreparedAgentTurn(
+                        message=message_content, session_id=chat_session_id,
+                        inference_mode=chat_inference_mode, wants_stream=wants_stream,
+                        request_data=data or {}, project_path=_router_proj or '',
+                    ),
+                    io=_stream_router_io,
                 )
             from api import chat_delivery as _chat_delivery
             from api.chat_coordinator import (
@@ -5973,39 +6080,63 @@ def chat_endpoint():
             if busy_resp is not None:
                 return busy_resp
             if wants_stream:
-                _h_on_save = _make_auth_assistant_saver(
-                    chat_session_id if _auth_user else None,
-                    chat_inference_mode,
-                    project_path=project_path,
+                from api.chat_coordinator import (
+                    PreparedAgentTurn as _PreparedAgentTurn,
+                    StreamTurnIO as _StreamTurnIO,
                 )
-                def stream_gen_harness(_agent=_hid, _prompt=prompt, _pp=project_path):
-                    if chat_session_id is not None:
-                        yield _sse_session_event(chat_session_id)
-                    def _h_claimed():
-                        if _auth_user:
-                            _persist_user_turn(chat_session_id)
-                    for chunk in _generate_chat_stream(
-                        lambda status_queue: _run_pinned_harness_turn(
-                            _agent,
-                            _prompt,
-                            chat_session_id,
-                            status_queue=status_queue,
-                            project_path=_pp,
-                            **_ident_run_kw,
-                        ),
-                        chat_session_id,
-                        on_result=_h_on_save,
-                        on_claimed=_h_claimed if _auth_user else None,
-                    ):
-                        yield chunk
-                return Response(
-                    stream_with_context(stream_gen_harness()),
-                    mimetype='text/event-stream',
-                    headers={
-                        'Cache-Control': 'no-cache',
-                        'X-Accel-Buffering': 'no',
-                        'Connection': 'keep-alive',
-                    },
+
+                def _stream_format_shortcut(_kind, _sel):
+                    if _kind == "harness_empty_prompt":
+                        _eaid = _sel.agent_id or _hid
+                        return {
+                            'success': True,
+                            'response': (
+                                f'❌ Please provide a prompt after /{_eaid}. '
+                                f'Example: `/{_eaid} "summarize this repo"`'
+                            ),
+                            'session_id': chat_session_id,
+                            'type': f'{_eaid}_error',
+                        }
+                    from api.inference_mode import (
+                        is_cloud_cli_slash_command as _is_cloud,
+                        cloud_cli_slash_blocked_message as _blocked_msg,
+                    )
+                    _blocked = (
+                        _blocked_msg(chat_inference_mode)
+                        if _is_cloud(message_content) else ''
+                    )
+                    return {
+                        'success': True,
+                        'response': _blocked,
+                        'session_id': chat_session_id,
+                        'type': 'mode_blocked',
+                    }
+
+                def _stream_unreachable_harness(*_a, **_k):
+                    raise RuntimeError('unreachable arm in harness stream lane')
+
+                _stream_harness_io = _StreamTurnIO(
+                    run_harness=lambda _aid, _prompt, status_queue=None: _run_pinned_harness_turn(
+                        _aid, _prompt, chat_session_id, project_path=project_path,
+                        status_queue=status_queue, **_ident_run_kw,
+                    ),
+                    run_router=_stream_unreachable_harness,
+                    persist_user=lambda: (_persist_user_turn(chat_session_id) if _auth_user else None),
+                    make_saver=lambda: _make_auth_assistant_saver(
+                        chat_session_id if _auth_user else None,
+                        chat_inference_mode,
+                        project_path=project_path,
+                    ),
+                    notify_mobile=lambda _b: _emit_chat_complete_mobile(chat_session_id, _b),
+                    format_shortcut=_stream_format_shortcut,
+                )
+                return _stream_agent_turn_response(
+                    _PreparedAgentTurn(
+                        message=message_content, session_id=chat_session_id,
+                        inference_mode=chat_inference_mode, wants_stream=wants_stream,
+                        request_data=data or {}, project_path=project_path or '',
+                    ),
+                    io=_stream_harness_io,
                 )
             from api import chat_delivery as _chat_delivery
             from api.chat_coordinator import (
@@ -6262,6 +6393,52 @@ def chat_endpoint():
             'error': str(e),
             'response': response_msg
         }), 500
+
+def _is_router_family_message(message_content) -> bool:
+    """Shared router-family predicate for coordinator selection (P5-E).
+
+    True for every message the route lanes handle as router-family
+    (router commands, route/retry/coordinate dispatches, supervised
+    control). Mirrors the inline lane classification exactly; the lanes
+    keep their own conditions for arm routing, the coordinator uses this
+    for the single normalized selection tree.
+
+    Placed after ``chat_endpoint`` on purpose: the restart dispatch-order
+    test pins ``from api.flask_restart import (`` textually before any
+    ``from api.agent_router.commands import (``, and this predicate holds
+    the file's first such import. Referenced at request time only, so
+    definition order has no runtime effect.
+    """
+    try:
+        from api.agent_router.commands import (
+            parse_retry_command as _parse_retry,
+            parse_route_command as _parse_route,
+            parse_router_command as _parse_router,
+        )
+        from api.agent_router.supervised.commands import (
+            parse_coordinate_command as _parse_coordinate,
+            parse_coordinator_command as _parse_coord,
+        )
+        from api.agent_router.supervised.control import (
+            is_coordinate_control as _is_coord_control,
+            is_supervised_control_message as _is_sup,
+        )
+        _m = message_content
+        if _parse_router(_m) is not None:
+            return True
+        if _parse_route(_m) is not None or _parse_retry(_m) is not None:
+            return True
+        if _parse_coord(_m) is not None:
+            return True
+        _coord_args = _parse_coordinate(_m)
+        if _coord_args is not None and not _is_coord_control(_coord_args):
+            return True
+        if _is_sup(_m):
+            return True
+    except Exception:
+        return False
+    return False
+
 
 def _no_pipeline_chat_result():
     """Chat/Discord fallback when no slash agent, router, or pipeline handled the turn."""

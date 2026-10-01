@@ -6376,3 +6376,137 @@ pre-fix imports FAILS naming all 6 cycles (stash-overlay run).
   `docs/architecture/extension-boundaries.md` (§A split), this log.
 - Commit independently. **STOP for Codex final review; no push/restart.**
   Deferred items unchanged.
+
+---
+
+## P5-E — shared stream application entry/lifecycle (appended after line 6378; prior sections preserved)
+
+### Gap (Codex HOLD) and disposition
+
+Real HTTP SSE never submitted the application coordinator: the
+router-family and harness stream lanes ran their own claim → persist →
+worker → rewrite → finalize → release inline in `web_chat_api.py` and
+drove `_generate_chat_stream` directly. Pinning "one executor, two
+lifecycles" as intentional did not satisfy Phase 5 acceptance (shared
+normalized turn workflow owns execution/progress/cancel/persistence/
+delivery/post-turn). P5-E builds the missing checkpoint: a shared stream
+entry/lifecycle. SSE framing, pump loop, status queues, and the session
+event stay transport in the route; lifecycle ownership moves to the
+coordinator/workflow. No submit shim into the monolith, no generic
+callback bag (`StreamTurnIO` is narrow and has deliberately no
+`should_save` — save policy is `finalize_stream_result`'s kept-rule).
+
+### What was built
+
+- `src/api/chat_turn_workflow.py`: `run_agent_stream_turn` (owned stream
+  skeleton: busy-yield → persist → worker thread → stale/cancel-filtered
+  progress → `rewrite_assistant_response_actions` (moved verbatim from the
+  route) → `finalize_stream_result` → exactly-once token-guarded release)
+  plus `begin_sync_turn` / `release_sync_turn` / `is_turn_superseded`
+  shared with the sync skeleton. Executor exceptions become the standard
+  error result (never propagate to the route 500 handler).
+- `src/api/chat_coordinator.py`: `StreamTurnIO` (run_harness, run_router,
+  persist_user, make_saver, notify_mobile, format_shortcut) +
+  `submit_agent_stream_turn` (normalized `select_agent_turn` selection,
+  shortcut arms yielded without claiming, harness/router arms through the
+  owned skeleton; always claims — the unclaimed compat entry is
+  sync-only). New `pipeline`/`unsupported` kinds can never arrive from the
+  two rewired lanes (route pre-matches), so they yield an explicit
+  unsupported done-event rather than silently falling through.
+- `src/api/web_chat_api.py`: `_is_router_family_message` (single
+  predicate over the real router parsers, used for coordinator selection),
+  `_frame_stream_lifecycle_event` + `_stream_agent_turn_response`
+  (transport-only: shortcut→JSON, busy→busy SSE, else session + Connecting
+  pair + verbatim framing). Both stream lanes rewired through the shared
+  entry with the same executors/savers/notify/project stamps. Done-on-stale
+  parity verified against the pre-move pump (`git show HEAD`: worker
+  always puts done; only non-done progress is stale-filtered).
+- `src/api/agent_harness/catalog.py`: `/cursor-cli` legacy alias
+  normalized inside `match_slash_command` so route match and coordinator
+  selection agree by construction (route `_match_harness_slash` delegates
+  to the same function).
+- Deliberately NOT moved: leftover pipeline stream lane
+  (`_generate_chat_stream` + `process_message_with_bot`, line ~6417
+  region) stays route-owned, mirroring the sync pipeline passthrough
+  (`submit_agent_turn` returns None for pipeline kind); control-plane SSE
+  (restart, supervised control, busy-reject, device push) never submits
+  turns. Declared sync-vs-stream distinctions preserved: sync 409 JSON
+  vs stream busy SSE events; sync `should_save` vs stream kept-rule;
+  `sessions_send` unclaimed; cancel/stale guards and project stamps
+  retained.
+
+### Pre-move oracles + differential evidence
+
+`src/tests/test_p5e_stream_oracles.py` (7 oracles recorded against the
+route-driven pump BEFORE the entry existed): harness shape, status events,
+router-family shape, busy shape, executor-exception shape, empty-prompt
+shape, rewrite passthrough. After rewiring, all 7 pass UNCHANGED —
+event/row/effect differential is zero. Post-move additions in the same
+file (6): direct-entry lifecycle/order vs real `chat_delivery` guards
+(events `[status, done]`, effects
+`begin → persist_user → executor → saver → notify → park → release →
+release`, slot free), direct busy arm (claim attempted, nothing else),
+direct shortcut arm (mode_blocked, not even a claim), cancel-mid-worker
+(discard: no saver/notify/park; double token-guarded release; sticky
+cleared), HTTP `/cursor-cli` alias end-to-end (executor sees
+`cursor`/`hello alias`), router-family predicate battery.
+`test_architecture_boundaries.py`: the EXPECTS-empty coordinator spy test
+was inverted into the shared-entry assertion (HTTP sync lane submits
+`submit_agent_turn`, HTTP stream lane submits `submit_agent_stream_turn`
+— `calls == ["PreparedAgentTurn"]`, else FAIL), plus a catalog alias pin.
+
+### Gates (same root-cwd `src/`, node shim on PATH, spend flags unset, no prompts)
+
+- Focused oracles + enforcement: 27 passed.
+- Coordinator/persist/workflow/pending/busy/steer/stop/followup/resume/
+  starred-removal/attachments neighbors: 186 passed, 9 skipped, 3 failed —
+  all 3 (`test_chat_attachments` persist rows) fail identically on clean
+  HEAD (stale fixture, pre-existing; no unrelated fix attempted).
+- Router/session/assemble/auth/badge neighbors: 118 passed, 4 failed —
+  all 4 fail identically on clean HEAD (verified via stash).
+- Broad `pytest tests/`: HEAD baseline via `stash -u`
+  **34 failed / 2023 passed / 79 skipped**; P5-E tree
+  **34 failed / 2037 passed / 79 skipped** with FAILED byte-identical
+  (34 = the HEAD 34, including chirp/muse-stream/codex-effort/hermes/
+  stop-refresh — all pre-existing, none P5-E-caused). Delta
+  **+14 passed = exactly the 14 added tests** (13 oracles/entry + 1 alias
+  pin), all green. One genuine P5-E regression was caught and fixed in
+  this turn: `test_restart_is_dispatched_before_router_and_agent_branches`
+  (my predicate's `agent_router.commands` import sat textually before the
+  restart import) — fixed by moving `_is_router_family_message` below
+  `chat_endpoint` with a placement comment; no runtime effect (request-
+  time reference only). Post-fix broad re-run confirms the parity above.
+- Import-graph / reverse-import / manifest enforcement suites green
+  within the broad run (no new violations from the 3 touched prod files).
+- Manual/browser: N/A (backend-only; no UI change). No push, no
+  restart/kill of Cuttle processes.
+
+### Corrected acceptance matrix
+
+- Phase 5: ACCEPT (with this P5-E entry) — sync AND stream share the
+  normalized turn/selection/executor with owned lifecycle +
+  progress/saver/delivery contracts; transport stays in the route;
+  pipeline passthrough disposition explicit on both sides.
+- Phase 6: prior P6-A/B/C reports stand; P5-E adds no trust/import change
+  (catalog alias is a pure normalization; adapter guidance updated only
+  where the runtime path changed — see files below).
+- Phase 7: enforcement updated — coordinator-bypass spy now asserts the
+  shared entry (was EXPECTS-empty/vacuous); scanner/release/accounting
+  from 4d6b0eb9 unchanged and still green.
+
+### Files, commit, status
+
+- Prod: `src/api/chat_turn_workflow.py`, `src/api/chat_coordinator.py`,
+  `src/api/web_chat_api.py`, `src/api/agent_harness/catalog.py`.
+- Tests: `src/tests/test_p5e_stream_oracles.py` (new, 13),
+  `src/tests/test_architecture_boundaries.py` (+1 alias pin, spy inverted).
+- Docs: `docs/architecture/extension-boundaries.md` (§A corrected to the
+  real runtime path), `AGENTS.md` (chat-execution row), this log.
+- Commit: P5-E independently committed on main (hash in commit line
+  below); `git status` clean except pre-existing untracked `work/`
+  (not mine — left untouched). No push, no restart.
+- Remaining risks: pipeline stream lane is intentionally route-owned
+  (future unification is P5-scope redesign, needs Codex dispatch);
+  `_cancel_sticky` semantics unchanged; deferred dependency/preflight
+  tooling and the `[ERR-20261001-001]` canceled-row defect unchanged.
+- **STOP for Codex final review; do not self-approve phases.**

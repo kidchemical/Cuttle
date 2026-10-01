@@ -138,6 +138,20 @@ class AgentTurnResult:
     selection: AgentSelection
 
 
+@dataclass(frozen=True)
+class StreamTurnIO:
+    """One surface's stream arm implementations. Narrow by design: the
+    stream save policy lives in ``finalize_stream_result`` (kept-rule),
+    so there is deliberately no ``should_save`` member."""
+
+    run_harness: Callable[..., Dict[str, Any]]
+    run_router: Callable[..., Optional[Dict[str, Any]]]
+    persist_user: Callable[[], None]
+    make_saver: Callable[[], Optional[Callable[[Dict[str, Any]], None]]]
+    notify_mobile: Optional[Callable[[Dict[str, Any]], None]]
+    format_shortcut: Callable[[str, AgentSelection], Dict[str, Any]]
+
+
 def _after_run(
     body: Dict[str, Any],
     *,
@@ -240,3 +254,72 @@ def submit_agent_turn(
         return AgentTurnResult(body=body, status=status, selection=sel)
 
     return AgentTurnResult(body=None, status=200, selection=sel)
+
+
+def submit_agent_stream_turn(
+    prepared: PreparedAgentTurn,
+    *,
+    io: StreamTurnIO,
+    delivery: Any,
+    is_router_family: Callable[[str], bool] = lambda message: False,
+    selection: Optional[AgentSelection] = None,
+):
+    """Execute the harness / router arms through the shared stream lifecycle.
+
+    The stream twin of ``submit_agent_turn``: same normalized selection
+    (single decision tree, caller-supplied or derived), same normalized
+    turn context and execution request — but lifecycle events instead of
+    a body. Yields ``("status", message)`` / ``("query_started", payload)``
+    progress, exactly one terminal event: ``("shortcut", body)`` for
+    non-executed arms, ``("busy", body)`` when claimed elsewhere, or
+    ``("done", result)``. Transport (SSE framing, pump loop) stays with
+    the caller; busy/turn-token ownership, persist ordering, rewrite,
+    finalize, and exactly-once release live in the owned skeleton.
+
+    Always claims: every stream ingress is claimed (the unclaimed compat
+    entry is sync-only by transport).
+    """
+    from api.chat_turn_workflow import run_agent_stream_turn as _run_stream
+
+    message = prepared.message or ""
+    sel = selection or select_agent_turn(
+        message,
+        inference_mode=prepared.inference_mode,
+        is_router_family=is_router_family,
+        project_path=prepared.project_path or None,
+    )
+
+    if sel.kind in ("mode_blocked", "harness_empty_prompt"):
+        yield ("shortcut", io.format_shortcut(sel.kind, sel))
+        return
+
+    if sel.kind == "harness":
+        def _run(queue):
+            return io.run_harness(
+                sel.agent_id, sel.prompt,
+                status_queue=queue, **dict(prepared.run_kwargs or {}),
+            )
+    elif sel.kind in ("router_family", "plain_router"):
+        def _run(queue):
+            return io.run_router(status_queue=queue)
+    else:  # pragma: no cover - unreachable from route stream branches
+        yield (
+            "done",
+            {
+                "success": False,
+                "error": "unsupported_arm",
+                "response": "This turn type cannot stream.",
+                "type": "stream_unsupported",
+            },
+        )
+        return
+
+    yield from _run_stream(
+        prepared.session_id,
+        delivery=delivery,
+        persist_user=io.persist_user,
+        run=_run,
+        make_saver=io.make_saver,
+        notify_mobile=io.notify_mobile,
+        project_path=prepared.project_path or "",
+    )

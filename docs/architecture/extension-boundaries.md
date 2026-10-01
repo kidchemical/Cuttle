@@ -17,14 +17,20 @@ Wrap vendor agent CLIs (Cursor, Codex, Claude, Muse, OpenCode, Hermes, …).
 Adding a vendor is filling a catalog/adapter folder, not a new HTTP trigger per chat platform.
 
 Chat execution has one shared executor (`_run_pinned_harness_turn`) and
-two lifecycles over the same owned delivery primitives. Sync turns
+two owned lifecycles over the same delivery primitives. Sync turns
 (`stream: false`, `/api/sessions/send` unclaimed) run through the shared
 application entry (`api.chat_coordinator.submit_agent_turn`, which owns
-the sync skeleton `run_agent_sync_turn`); stream turns drive
-`_generate_chat_stream` directly with the same run function. No surface
+the sync skeleton `run_agent_sync_turn`); stream agent turns
+(router-family and harness lanes) run through its stream twin
+(`api.chat_coordinator.submit_agent_stream_turn`, which owns the stream
+skeleton `run_agent_stream_turn`: claim → persist → worker → rewrite →
+shared finalize → exactly-once release). SSE framing, the pump loop, and
+status queues stay transport in the route. The leftover pipeline stream
+lane (`_generate_chat_stream` + `process_message_with_bot`) stays
+route-owned by design, mirroring the sync pipeline passthrough. No surface
 implements an independent execution path or its own executor — the
-sync/stream split is pinned by HTTP tests, and unifying the lifecycles
-would be a coordinator redesign, not enforcement. Cuttle never installs
+declared sync/stream serialization, error, and delivery distinctions are
+pinned by HTTP tests. Cuttle never installs
 vendor CLIs (BYO-CLI guidance only, Phase 6 P6-A). Opted-in project
 drop-ins (`{project}/.cuttle/agents/`) are trusted unsandboxed code:
 manifest identity is validated before import and siblings load on demand
