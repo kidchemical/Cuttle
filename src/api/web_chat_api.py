@@ -986,7 +986,9 @@ def process_message_with_bot(
 ):
     """Process a chat/Discord turn: slash agents, router, then a no-graph fallback."""
     if isinstance(message_content, str):
-        message_content = _strip_invisible_leading(message_content)
+        from api.chat_turn import strip_invisible_leading as _strip_leading
+
+        message_content = _strip_leading(message_content)
     if not PIPELINE_AVAILABLE:
         return {
             'success': False,
@@ -1040,29 +1042,33 @@ def process_message_with_bot(
 
         # Explicit agent CLIs must not fall through to a missing graph.
         # Bundled agents (incl. legacy /cursor-cli → /cursor) go through the harness only.
-        _hm = _match_harness_slash(
-            message_content,
-            project_path=_resolve_request_project_path({'session_id': session_id}),
+        # Selection decision owned by api.chat_turn (P5-A); execution stays here.
+        from api.chat_turn import classify_selection as _classify_turn
+        from api.chat_turn import split_db_session_id as _split_db_sid
+        from api.flask_restart import parse_restart_slash as _parse_restart
+        from api.inference_mode import (
+            is_cloud_cli_slash_command,
+            cloud_cli_slash_blocked_message,
         )
-        if _hm:
-            from api.inference_mode import (
-                is_cloud_cli_slash_command,
-                cloud_cli_slash_blocked_message,
-            )
-            if is_cloud_cli_slash_command(message_content):
-                blocked = cloud_cli_slash_blocked_message(chat_inference_mode)
-                if blocked:
-                    return {'success': True, 'response': blocked, 'type': 'mode_blocked'}
-            _hid, prompt = _hm
-            if not prompt:
-                return {
-                    'success': True,
-                    'response': f'❌ Please provide a prompt after /{_hid}.',
-                    'type': f'{_hid}_error',
-                }
+
+        _sel = _classify_turn(
+            message_content,
+            inference_mode=chat_inference_mode,
+            match_harness=lambda _m: _match_harness_slash(
+                _m,
+                project_path=_resolve_request_project_path({'session_id': session_id}),
+            ),
+            is_restart=lambda _m: _parse_restart(_m) is not None,
+            cloud_blocked=lambda _m, _mode: (
+                cloud_cli_slash_blocked_message(_mode)
+                if is_cloud_cli_slash_command(_m)
+                else None
+            ),
+        )
+        if _sel.kind == 'harness':
             return _run_pinned_harness_turn(
-                _hid,
-                prompt,
+                _sel.agent_id,
+                _sel.prompt,
                 session_id,
                 status_queue=status_queue,
                 project_path=_resolve_request_project_path({
@@ -1072,19 +1078,23 @@ def process_message_with_bot(
                     _freeze_send_identity(session_id, message_content, None)
                 ),
             )
+        if _sel.kind == 'mode_blocked':
+            return {'success': True, 'response': _sel.block_message, 'type': 'mode_blocked'}
+        if _sel.kind == 'harness_empty_prompt':
+            return {
+                'success': True,
+                'response': _sel.block_message,
+                'type': f'{_sel.agent_id}_error',
+            }
+        # 'router' — plus 'restart' when the native handler above failed and
+        # fell through: no /restart harness agent exists, so the pre-seam code
+        # reached the router here too.
 
         # Agent router: plain messages with no sticky/explicit agent selection
         try:
             from api.agent_router.integration import maybe_route_plain_message
 
-            _db_sid = None
-            if isinstance(session_id, str) and session_id.startswith('db_session_'):
-                try:
-                    _db_sid = int(session_id.rsplit('_', 1)[-1])
-                except ValueError:
-                    _db_sid = None
-            elif isinstance(session_id, int):
-                _db_sid = session_id
+            _db_sid = _split_db_sid(session_id)
             _routed = maybe_route_plain_message(
                 message_content,
                 session_id=_db_sid if _db_sid is not None else session_id,
@@ -1098,31 +1108,17 @@ def process_message_with_bot(
         except Exception as _ar_disp:
             print(f"[AGENT-ROUTER] plain-message dispatch failed: {_ar_disp}", flush=True)
 
-        # Create user context for web UI
-        user_context = {
-            'display_name': 'Web User',
-            'id': session_id,
-            'is_owner': is_owner,
-            'username': 'web_user',
-            'discriminator': '0',
-            'session_id': session_id,
-            'recent_messages': session.get_recent_messages(5),
-            'web_ui': True,  # Mark as web UI for query tracking
-            'inference_mode': chat_inference_mode,
-        }
-        
-        # Session kind and routing (Discord DM vs guild vs web)
-        sk = session_kind if session_kind is not None else 'web_anon'
-        rk = routing_key if routing_key is not None else f'web_anon_{session_id}'
-        session_data = {
-            'session_id': session_id,
-            'user_id': f'web_{session_id}',
-            'platform': 'webchat',
-            'timestamp': time.time(),
-            'session_kind': sk,
-            'routing_key': rk,
-            'inference_mode': chat_inference_mode,
-        }
+        # Turn context dicts owned by api.chat_turn (P5-A seam); IO stays here.
+        from api.chat_turn import build_turn_context as _build_turn_context
+
+        user_context, session_data = _build_turn_context(
+            session_id,
+            session_kind,
+            routing_key,
+            is_owner,
+            chat_inference_mode,
+            session.get_recent_messages(5),
+        )
 
         return _no_pipeline_chat_result()
         
@@ -5208,31 +5204,21 @@ def chat_endpoint():
         data = request.get_json()
         print(f"[API] POST /api/chat: received, has_message={bool(data and data.get('message'))}")
 
-        if not data or 'message' not in data:
+        # Owned normalization (api.chat_turn, P5-A); error strings are the 400s.
+        from api.chat_turn import normalize_chat_post as _normalize_chat_post
+
+        _turn_req = _normalize_chat_post(data)
+        if _turn_req.error is not None:
             return jsonify({
                 'success': False,
-                'error': 'No message provided'
+                'error': _turn_req.error
             }), 400
-        
-        message_content = _strip_invisible_leading(data.get('message') or '').strip()
-        raw_attachments = data.get('attachments') or []
-        chat_session_id = data.get('session_id')
-        from api.inference_mode import normalize_inference_mode
 
-        chat_inference_mode = normalize_inference_mode(data.get('inference_mode'))
-        _sv = data.get('stream', True)
-        if _sv is False:
-            wants_stream = False
-        elif isinstance(_sv, str) and _sv.strip().lower() in ('false', '0', 'no', 'off'):
-            wants_stream = False
-        else:
-            wants_stream = True
-
-        if not message_content and not raw_attachments:
-            return jsonify({
-                'success': False,
-                'error': 'Empty message'
-            }), 400
+        message_content = _turn_req.message
+        raw_attachments = _turn_req.attachments
+        chat_session_id = _turn_req.session_id
+        chat_inference_mode = _turn_req.inference_mode
+        wants_stream = _turn_req.wants_stream
 
         _auth_user_early, auth_err = require_authenticated()
         if auth_err:

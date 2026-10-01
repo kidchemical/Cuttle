@@ -5318,3 +5318,128 @@ whole was rejected as monolith-shifting. The owned seam is
   for Phase 5/6 — untouched.
 - Commit independently on main. No push, no restart.
   **STOP for Codex review before Phase 5.**
+
+## P4-3 approval + census reconciliation + Phase 4 readiness/closure + P5-A
+
+- P4-3 `c0ad8789` APPROVED (pending this factual clarification).
+  Reviewer last read line 5320; this section appended only below that
+  boundary; prior sections preserved.
+- Census reconciliation (exact, same method: static
+  `from api import web_chat_api` / `from api.web_chat_api import` /
+  `import api.web_chat_api` over `src/`, non-test, plus an
+  `importlib`/`__import__`/`import_module(api)` sweep — zero dynamic
+  hits both revisions):
+  - BEFORE is `3b973f7e` (P4-2 HEAD), not pre-Phase-4: 8 import
+    **sites** in 7 files — `agent_harness/kernel.py:71`
+    (`_default_chat_cwd`), `internal_http.py:61` (`as wca`,
+    in-process POST), `subagents/identity.py:106`
+    (`_user_badge_metadata`), `subagents/turns.py:92`
+    (`_assistant_message_metadata`), `agent_router/dispatch.py:48`
+    (`w._run_harness_web_command`), `supervised/adapters.py:103`
+    (`w._run_codex_web_command`), `supervised/adapters.py:123`
+    (`w._run_cursor_web_command`), `doctor.py:83` (import-only
+    smoke probe). Correction: the P4-3 report prose wrongly listed
+    `chat_delivery`/`auth_api`/`supervised/orchestrator` under
+    BEFORE — those were removed by P4-1/P4-2 and are absent at
+    `3b973f7e`. The "8" count itself was correct as a site count.
+  - AFTER is `c0ad8789`: 4 sites in 3 files — `dispatch.py:48`,
+    `adapters.py:103`, `adapters.py:123` (all Phase-5 runner fns),
+    `doctor.py:83` (probe). P4-3 removed exactly the 4 helper sites.
+  - "Transport remains" clarification: `internal_http` no longer
+    imports the entry module at all — what remains is the
+    loopback-HTTP transport *capability* as the explicit seam (dead
+    `test_client` branch deleted), not a reverse import.
+- Phase 4 readiness map (all required turn-lifecycle interfaces have
+  owned, tested services — no essential gap, so no P4 follow-up;
+  coordinator extraction may proceed):
+  - Session access: `AuthDatabase` (`api.auth_db`), process singleton
+    via `get_auth_db()` over `DB_PATH`; chat sessions + messages +
+    followup queue are SQLite rows (survive restart).
+  - Live status: `api.chat_live_status` (process dict + lock, 45-min
+    TTL); entry keeps thin wrappers injecting the delivery cancel
+    predicate.
+  - Delivery: `api.chat_delivery` — turn tokens
+    (`try_begin`/`current_turn`/`is_stale_turn`), busy lock
+    (`is_busy`/`reconcile_zombie_busy`), result store
+    (`store_result`/`take_result`); process state, never per-request.
+  - Cancel: `FailureKind.CANCELLED` (`agent_router/types` + `policy`
+    + `dispatch` — terminal, never escalates) + delivery turn guard
+    + `chat_run_registry.cancel_session_runs`.
+  - Steer: `api/agent_harness/steer.py` registry
+    (`register`/`unregister`/`steer`, per-session token).
+  - Followups: `auth_db` followup queue (`get`/`take_followup_queue`,
+    SQLite-persisted) + supervised `user_followup` control lane.
+  - Assistant persistence: `auth_db.add_message` /
+    `update_message_content` / `merge_message_metadata_by_query`.
+  - Execution status: `api.active_executions` (process dict,
+    stale TTL) + `api.chat_run_registry` (procs/pids/kill-tree).
+  - Restart/recovery: `api.flask_restart` (file-protocol state
+    machine: ack + `restart_id` → daemon request → status file +
+    chat completion) + `restart_safety_policy`.
+  - Remaining coupling (not gaps): delivery + run-registry dual-key
+    busy tracking by session; runner fns (`_run_*_web_command`)
+    still live in the entry module — P5-B target.
+- Factual Phase 4 CLOSURE: helper reverse imports eliminated (4
+  helper sites → 0); stateless/pure shapers, explicit-input cwd,
+  loopback-only transport, and all nine lifecycle interfaces above
+  are owned with explicit contracts and process/SQLite lifetimes.
+- P5-A (this checkpoint): transport-neutral turn seam, no workflow
+  move, no router redesign, no behavior change.
+  - Inventory: `/api/chat` route (~1100 lines: auth → /restart →
+    supervised lane → session resolve/pins → sticky/star → prepass →
+    identity → launch gate → … → `process_message_with_bot` at two
+    call sites + `_generate_chat_stream`); `process_message_with_bot`
+    selection head (launch gate → native /restart → harness slash +
+    mode block → router → `_no_pipeline_chat_result` fallback);
+    `_execute_remote_agent_tool`/runner fns stay for P5-B.
+  - NEW `src/api/chat_turn.py`: `strip_invisible_leading`,
+    `parse_stream_flag`, `TurnRequest`/`normalize_chat_post` (400
+    strings preserved as data), `TurnSelection`/`classify_selection`
+    (restart → harness/mode-blocked/empty-prompt → router; narrow
+    injected `match_harness`/`is_restart`/`cloud_blocked`),
+    `split_db_session_id`, `build_turn_context`. Imports `api`
+    leaf (`inference_mode`) only — no entry-module import.
+  - Delegation: route head → `normalize_chat_post` (400s
+    byte-identical); coordinator entry-strip, harness/mode/empty
+    arm, `db_session_<int>` parse, and context dicts → seam.
+    One documented precedence note: a hypothetical future harness
+    manifest named `/restart` would now lose to the native arm at
+    classify time (pre-seam it ran only when the native handler
+    threw); no such manifest exists in-repo (verified — zero
+    `restart` in catalog/agents), so in-repo behavior is identical.
+  - Coverage (`src/tests/test_chat_turn_seam.py`, 24 tests green):
+    16 seam pins (normalize edges incl. all stream forms,
+    invisible chars, both 400s, attachment-only; all classify arms
+    with fake matchers; db-sid parse; context shape) written BEFORE
+    the move against documented behavior, failing at collection
+    pre-implementation; 6 coordinator integration tests with the
+    REAL `process_message_with_bot` + fake executor/router (harness
+    arm via real catalog matcher, mode-blocked, empty-prompt,
+    router db-sid, fallback, restart-handler-failure fallthrough);
+    2 route tests through the real Flask test client (both 400
+    contracts). Strip parity proven differentially
+    (`STRIP_IDENTICAL` over BOM/ZW cases).
+  - Gates (same command/env/scope/revision `c0ad8789`+work):
+    seam 24/24; neighbors (metadata/live/status/steer/
+    supervised-coordinator) green from repo-root cwd — note: two
+    supervised JS-pin tests fail only when pytest runs from `src/`
+    (cwd artifact, pre-existing module `chdir` behavior, also true
+    on baseline; canonical root-cwd run is clean). Broad **28
+    failed / 1942 passed / 79 skipped** with sorted FAILED
+    identities `diff`-clean vs the P4-3 baseline (`/tmp/
+    p43_failed.txt` vs `/tmp/p5a_failed.txt`); +24 = new seam
+    tests, −0/+0 failures.
+  - Spend audit: `CUTTLE_AGENT_SMOKE`/`CUTTLE_ALLOW_SPEND` unset;
+    no paid/token prompt tests run (fakes only). No process
+    restart/kill. Manual validation N/A (backend-only; no UI).
+- Files: `src/api/chat_turn.py` (new),
+  `src/tests/test_chat_turn_seam.py` (new),
+  `src/api/web_chat_api.py` (route head + coordinator head
+  delegate; execution/persistence/delivery untouched), this section
+  + `docs/architecture/repository-map.md` (P5-A seam row).
+- Remaining P5: P5-B core workflow ownership (execution/resume/
+  progress/cancel/persistence/delivery/post-turn extraction with the
+  runner reverse imports); router/harness redesign stays Phase 6.
+  Deferred dependency/startup tooling unchanged.
+- Commit independently on main. No push, no restart.
+  **STOP for Codex review before P5-B/Phase 6.**

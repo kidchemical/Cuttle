@@ -95,6 +95,16 @@ Remaining entry-module imports are the Phase-5 runner calls
 (`agent_router.dispatch`, `supervised/adapters`) plus a `doctor`
 smoke probe — no helper reverse imports left.
 
+**Turn envelope + selection (Phase 5 P5-A):** `api.chat_turn` owns the
+transport-neutral turn seam — `TurnRequest`/`normalize_chat_post`
+(route-head validation), `TurnSelection`/`classify_selection`
+(restart → harness → router with injected matchers), `split_db_session_id`,
+`build_turn_context`. The `/api/chat` route and
+`process_message_with_bot` delegate to it; execution, persistence, and
+delivery stay in the entry module for P5-B. Runner reverse imports
+(`dispatch`, `supervised/adapters`) intentionally untouched until the
+core workflow moves.
+
 **History:** `api.auth_db` SQLite (`src/data/db/`, gitignored). Pairing store for **users** is separate from **worker** enroll.
 
 ---
