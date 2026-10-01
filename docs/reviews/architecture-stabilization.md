@@ -4249,3 +4249,110 @@ whole was rejected as monolith-shifting. The owned seam is
   (node/fake-DOM only) — reported, not waived.
 - Commit independently on main. No push, no restart.
   **STOP for Codex review before 8E or Streaming.**
+
+## Verification correction — controlled 8B/8C/8D comparison (report-only, no production change)
+
+- Method (read-only to the user worktree; no stash of user edits at any
+  point): detached `git worktree` checkouts at exactly `adcce8c5` (8B),
+  `f4ba9cd1` (8C), `a4981c0e` (8D) under `/tmp/ctrl8d` (removed after
+  evidence capture; manifests/logs retained there as scratch, not in
+  tree). Identical invocation everywhere: main-repo `.venv` python,
+  `PATH` with the node shim, `pytest -q -p no:warnings src/tests/
+  --ignore=src/tests/unit`, cwd = tree root. `CUTTLE_AGENT_SMOKE` and
+  `CUTTLE_ALLOW_SPEND` unset (verified empty). No paid-test selectors
+  were needed: prompt-spending tests self-skip by default (see spend
+  audit below), so scope was full-minus-unit with unchanged collection.
+- Unit exclusion, proven per baseline: `pytest src/tests/unit
+  --collect-only` on EACH of the three trees reports the identical
+  pre-existing error — `test_security.py`:
+  `ModuleNotFoundError: No module named 'core.multi_stage_processor'`
+  (with a `multi_stage_processor` fallback miss), `29 tests collected,
+  1 error`. A plain `pytest src/tests/` therefore collects nothing on ANY
+  baseline (collection error interrupts the run), so every historical
+  broad figure necessarily excluded unit somehow; `--ignore=src/tests/unit`
+  is the uniform documented scope. Fixing the import is deferred
+  dependency/preflight work, out of slice scope; the breakage is
+  domain-unrelated (agent harness CLP import, not Messages/History).
+- Manifest diffs (collect-only IDs, same scope): 8B 1916 → 8C 1921 → 8D
+  1930. 8B→8C: +5 test IDs, −0 (the five 8C structured/vega tests; the 8C
+  report's "8 = 3 8B + 5 8C" split was wrong — 8C added exactly 5).
+  8C→8D: +10 IDs, −1 ID. The 10 added = 9 brand-new tests (5
+  `test_chat_activate.py`, plus `test_code_fence_planning_escapes_and_
+  protects`, `test_format_message_pipeline_interleaves_all_stages`,
+  `test_link_planning_chips_and_safety`,
+  `test_restore_pass_order_pinned_against_placeholder_interleaving`) + 1
+  rename (`test_vega_wrap_planning_and_activation_order` →
+  `test_vega_wrap_planning`); the 1 removed is the rename's old name.
+  Corrected accounting: 8D's "+9 passed" = +10 added passing −1 removed
+  passing (the old vega test passed on 8C), NOT "8 new + 1 rename adding
+  a pass" — a rename is pass-neutral; the arithmetic closes exactly
+  (see counts below).
+- Controlled broad results (same invocation, worktree conditions):
+  8B `39 failed / 1797 passed / 80 skipped`; 8C `39 failed / 1802 passed
+  / 80 skipped`; 8D `39 failed / 1811 passed / 80 skipped`.
+  Arithmetic closes on all three (collected − failed − skipped =
+  passed). FAILED-identity diffs are EMPTY in both directions:
+  8B≡8C and 8C≡8D byte-identical sets. **8C did not regress from 8B;
+  8D did not regress from 8C.** Pass deltas (+5, then +9 net) equal new
+  test IDs exactly. No slice regression exists, so no production fix was
+  made — this correction is report-only.
+- Worktree-vs-main gap (same commit f4ba9cd1 or a4981c0e, different
+  environment): main tree shows 28 failed / 79 skipped; worktrees show
+  39 failed / 80 skipped. Causes, evidenced: (1) worktrees lack ignored
+  untracked files — principally `src/.env` (gitignored, present on
+  main, absent in every worktree) — plus no in-tree `.venv`
+  (`test_restart_daemon_sh_dry_run` fails with `Missing venv python:
+  .../wt8c/.venv/bin/python`, a pure checkout artifact); (2) 14
+  worktree-only failures are env/checkout-path sensitive (9
+  `test_agent_context_all_clis` compact tests failing on
+  `Invalid working directory: C:/Projects/Cuttle`, router/eval, git
+  pending-changes, mobile webview, restart-daemon-sh, runtime-paths).
+  25 of the main-tree 28 fail in worktrees too; 3 main-only failures
+  (`test_health_api_round_trip`, 2× `test_ui_layout_*`) flip the other
+  way (live-daemon/timing sensitive) — environmental both directions,
+  identical across all three slices. Skip delta 79↔80 is exactly one
+  test: `test_muse_chat_discovery.py:78` passes on main (chat db present)
+  and skips in worktrees (`no chat database on this machine yet` — the
+  db path resolves per-checkout); pass/skip arithmetic closes
+  (11 extra failures + 1 extra skip = 12 fewer passes: 1823→1811).
+  Older loose figures (1824/1821/1829 passed, 60 skipped) carry unknown
+  invocation scope and are non-comparable; the controlled numbers above
+  supersede them for gate purposes.
+- Spend audit: zero selectors, unchanged collection; the suite's live
+  tests self-skipped in every broad run (`test_agent_harness_smoke.py`
+  ×3 + `test_agent_resume_contract.py::...live...` with explicit
+  `SPENDING REAL TOKENS` skip reasons; `CUTTLE_AGENT_SMOKE`/
+  `CUTTLE_ALLOW_SPEND` unset); zero `SPENDING REAL TOKENS` guard trips
+  in any log. No paid/token prompt test was executed or repeated.
+- Pipeline-harness scope verdict:
+  `test_format_message_pipeline_interleaves_all_stages` DOES execute the
+  real complete page `formatMessage(text)` span end-to-end (span-extracted
+  from `CHAT_PAGE_JS`, not reimplemented), with the real
+  `CuttleChatMessages` and `CuttleChatAttachments` modules and real page
+  leaf spans; the message exercises think/code/links/supervised/trace/
+  progress/tool stages and asserts restore interleave order, zero
+  leftover link placeholders, think-escaping, single-block, and
+  handle+git stage invocation. Honest stub limits (documented
+  in-harness): DOM-backed `escapeHtml` runs as the inline-escape
+  equivalent (escape degrees unit-covered elsewhere, not
+  pipeline-covered); widget ingest, handle/git linkify, supervised
+  builders, pricing/media leaves are canned/identity with call
+  recorders — so action-form card CONTENT and handle-chip OUTPUT are
+  invocation-verified, not output-verified, in this test. The ORDER test
+  likewise executes the real page extract call-site + restore-tail spans
+  with the real module. One reporting correction: the 8D report's "all
+  node-executed" overstates one test —
+  `test_format_message_orders_structured_extraction_around_supervised`
+  is a structural source-order pin (head < supervised < tail, no
+  leftover inline loops), not a node execution; it complements, not
+  duplicates, the executed pipeline test.
+- No reviewer approval is recorded here: approval is the reviewer's act
+  on this evidence. Factual gate status: no regression on any
+  slice-to-slice comparison under controlled conditions.
+- Evidence kept out of tree in `/tmp/ctrl8d`: per-tree ID manifests,
+  `-rf` FAILED identity files (with pairwise `diff`s), `-rs` skip
+  summaries, full broad logs, exact commands above. No huge logs are
+  reproduced in this review file.
+- Git: this correction appends report-only text; no production files
+  touched. Commit independently; no push, no restart.
+  **STOP for Codex review; no 8E/Streaming.**
