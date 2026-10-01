@@ -143,7 +143,7 @@ def test_sibling_imports_do_not_cross_projects(
             root,
             aid,
             adapter_src=(
-                "import helper\n"
+                "from . import helper\n"
                 "MARKER = helper.MARKER\n"
                 "class Adapter:\n"
                 "    def available(self):\n"
@@ -304,20 +304,19 @@ def test_preexisting_unrelated_module_is_never_overwritten(
     assert _sys.modules["helper"].SENTINEL == "UNRELATED"
 
 
-def test_legacy_absolute_sibling_works_without_path_or_residue(
+def test_relative_sibling_top_level_binding(
     project_agents, clean_import_state
 ):
-    """Top-level legacy `import helper` still loads, leaves no trace."""
+    """Canonical `from . import helper` binds at top level, leaves no trace."""
     import sys as _sys
 
-    _sys.modules.pop("helper", None)
     proj, root = project_agents
     path_before = list(_sys.path)
     _write_agent(
         root,
-        "legacy",
+        "relbind",
         adapter_src=(
-            "import helper\n"
+            "from . import helper\n"
             "MARKER = helper.MARKER\n"
             "class Adapter:\n"
             "    def __init__(self):\n"
@@ -326,26 +325,25 @@ def test_legacy_absolute_sibling_works_without_path_or_residue(
             "        return True\n"
         ),
     )
-    (root / "legacy" / "helper.py").write_text("MARKER = 'LEG'\n", encoding="utf-8")
+    (root / "relbind" / "helper.py").write_text("MARKER = 'REL'\n", encoding="utf-8")
     reload_catalog()
-    pair = get_agent("legacy", str(proj))
+    pair = get_agent("relbind", str(proj))
     assert pair is not None
-    assert pair[1].marker == "LEG"
+    assert pair[1].marker == "REL"
     assert "helper" not in _sys.modules
     assert list(_sys.path) == path_before
 
 
-def test_factory_time_sibling_import_runs_inside_scope(
+def test_factory_time_relative_import_resolves(
     project_agents, clean_import_state
 ):
-    """`import helper` inside `build_adapter()` must resolve (factory in scope)."""
+    """`from . import helper` inside `build_adapter()` resolves via package."""
     import sys as _sys
 
-    _sys.modules.pop("helper", None)
     proj, root = project_agents
     _write_agent(
         root,
-        "factimp",
+        "factrel",
         adapter_src=(
             "class Adapter:\n"
             "    def __init__(self, marker):\n"
@@ -353,13 +351,13 @@ def test_factory_time_sibling_import_runs_inside_scope(
             "    def available(self):\n"
             "        return True\n"
             "def build_adapter():\n"
-            "    import helper\n"
+            "    from . import helper\n"
             "    return Adapter(helper.MARKER)\n"
         ),
     )
-    (root / "factimp" / "helper.py").write_text("MARKER = 'FAC'\n", encoding="utf-8")
+    (root / "factrel" / "helper.py").write_text("MARKER = 'FAC'\n", encoding="utf-8")
     reload_catalog()
-    pair = get_agent("factimp", str(proj))
+    pair = get_agent("factrel", str(proj))
     assert pair is not None
     assert pair[1].marker == "FAC"
     assert "helper" not in _sys.modules
@@ -483,6 +481,133 @@ def test_failed_load_cleans_import_state_and_stays_quiet(
     assert "boom_helper" not in _sys.modules
     assert not [k for k in _sys.modules if k.startswith("cuttle_harness_ext_boom")]
     assert list(_sys.path) == path_before
+
+
+def test_unused_sibling_never_executes(project_agents, clean_import_state, tmp_path):
+    """Discovery must not run utility scripts the adapter never imports."""
+    import sys as _sys
+
+    proj, root = project_agents
+    sentinel = tmp_path / "unused_ran.txt"
+    d = _write_agent(root, "restrained")
+    (d / "unused.py").write_text(
+        f"open({str(sentinel)!r}, 'w').write('ran')\nraise RuntimeError('unused')\n",
+        encoding="utf-8",
+    )
+    path_before = list(_sys.path)
+    reload_catalog()
+    pair = get_agent("restrained", str(proj))
+    assert pair is not None
+    assert not sentinel.exists()
+    assert "unused" not in _sys.modules
+    assert list(_sys.path) == path_before
+
+
+def test_broken_transitive_sibling_fails_only_when_imported(
+    project_agents, clean_import_state
+):
+    """A raising dependency surfaces at the importer; unrelated files ignored."""
+    import sys as _sys
+
+    proj, root = project_agents
+    d = _write_agent(
+        root,
+        "needschain",
+        adapter_src=(
+            "from . import mid\n"
+            "class Adapter:\n"
+            "    def __init__(self):\n"
+            "        self.value = mid.VALUE\n"
+            "    def available(self):\n"
+            "        return True\n"
+            "def build_adapter():\n"
+            "    return Adapter()\n"
+        ),
+    )
+    (d / "mid.py").write_text(
+        "from . import leaf\nVALUE = 'chain:' + leaf.VALUE\n", encoding="utf-8"
+    )
+    (d / "leaf.py").write_text("VALUE = 'ok'\n", encoding="utf-8")
+    (d / "bystander.py").write_text("raise RuntimeError('bystander')\n", encoding="utf-8")
+    reload_catalog()
+    pair = get_agent("needschain", str(proj))
+    assert pair is not None
+    assert pair[1].value == "chain:ok"
+    assert "bystander" not in _sys.modules
+
+
+def test_imported_broken_sibling_cleans_up(project_agents, clean_import_state):
+    """`from . import broken` (raising) skips the adapter with no residue."""
+    import sys as _sys
+
+    proj, root = project_agents
+    d = _write_agent(
+        root,
+        "needsbroken",
+        adapter_src="from . import broken\n",
+    )
+    (d / "broken.py").write_text("raise RuntimeError('broken dep')\n", encoding="utf-8")
+    path_before = list(_sys.path)
+    reload_catalog()
+    assert get_agent("needsbroken", str(proj)) is None
+    assert "broken" not in _sys.modules
+    assert not [k for k in _sys.modules if "needsbroken" in k]
+    assert list(_sys.path) == path_before
+
+
+def test_legacy_absolute_sibling_is_rejected(project_agents, clean_import_state):
+    """Declared contract: bare `import helper` is NOT a sibling import.
+
+    The adapter is skipped (never half-loads), nothing is aliased, and the
+    failure names the missing module so the author migrates to
+    `from . import helper`.
+    """
+    import sys as _sys
+
+    _sys.modules.pop("helper", None)
+    proj, root = project_agents
+    d = _write_agent(
+        root,
+        "legone",
+        adapter_src=(
+            "import helper\n"
+            "class Adapter:\n"
+            "    def available(self):\n"
+            "        return True\n"
+        ),
+    )
+    (d / "helper.py").write_text("MARKER = 'LEG'\n", encoding="utf-8")
+    path_before = list(_sys.path)
+    reload_catalog()
+    assert get_agent("legone", str(proj)) is None
+    assert "helper" not in _sys.modules
+    assert not [k for k in _sys.modules if "legone" in k]
+    assert list(_sys.path) == path_before
+
+
+def test_relative_lazy_import_works_after_load(project_agents, clean_import_state):
+    """Canonical relative imports are not confined to a load window: the
+    package persists, so a method called long after discovery resolves."""
+    proj, root = project_agents
+    d = _write_agent(
+        root,
+        "lazrel",
+        adapter_src=(
+            "class Adapter:\n"
+            "    def available(self):\n"
+            "        return True\n"
+            "    def describe(self):\n"
+            "        from . import helper\n"
+            "        return helper.MARKER\n"
+            "def build_adapter():\n"
+            "    return Adapter()\n"
+        ),
+    )
+    (d / "helper.py").write_text("MARKER = 'LAZY'\n", encoding="utf-8")
+    reload_catalog()
+    pair = get_agent("lazrel", str(proj))
+    assert pair is not None
+    assert pair[1].describe() == "LAZY"
 
 
 def test_edited_adapter_reloads_on_next_discovery(

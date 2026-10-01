@@ -51,20 +51,20 @@ sandbox; containment is the opt-in gate plus the rules below.
   process; editing `adapter.py` or a top-level sibling `.py` reloads it on
   the next discovery (no restart). Cache cleared by `reload_catalog()`.
   Top-level code must still be idempotent.
-- **Sibling imports: relative first.** Each drop-in loads as its own
+- **Sibling imports: relative only.** Each drop-in loads as its own
   namespace package with **no `sys.path` mutation**, so
-  `from . import helper` / `from .sub.deep import VAL` are always isolated
-  per drop-in (dotted subpackages included). This is the contract new
-  drop-ins must use.
-- **Legacy absolute siblings: narrow compatibility.** Top-level
-  `import helper` / `from helper import X` keep working only when the name
-  is otherwise unresolvable, via a temporary alias removed after load
-  (the window covers module exec + `build_adapter()`). A name that already
-  resolves — stdlib, site-packages, another live module — is never aliased
-  or overwritten: the pre-existing module wins, so migrate to relative
-  imports. Lazy absolute sibling imports from adapter methods called later
-  are not supported (bind what you need at top level or in
-  `build_adapter()`).
+  `from . import helper` / `from .sub.deep import VAL` resolve on demand
+  through the package, isolated per drop-in (dotted subpackages included).
+  Files the adapter never imports are never executed, and a broken file the
+  adapter never imports cannot break the adapter. Relative imports keep
+  working after load (the package persists), including inside adapter
+  methods. Migration from a flat layout is one word: `import helper` →
+  `from . import helper`.
+- **Bare absolute imports are not sibling imports.** `import helper` inside
+  a drop-in resolves against the ambient environment (stdlib /
+  site-packages / live modules) and fails loudly otherwise — the adapter is
+  skipped with the missing-module error. Nothing is aliased, scanned, or
+  pre-loaded to satisfy it, and a drop-in file can never shadow stdlib.
 - **Concurrency scope.** Drop-in loads are serialized against each other
   (one exec per adapter even under threaded discovery); this makes no claim
   about unrelated Python imports on other threads.

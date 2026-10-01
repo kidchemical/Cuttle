@@ -6006,3 +6006,72 @@ claims, project code remains trusted unsandboxed, symlink decision unchanged.
 - P6-C (surface vs agent-ops) + Phase 6 closure + Phase 7 still ahead.
 - Commit: this follow-up independently on main. No push, no restart.
   **STOP for Codex review before P6-C/Phase 7.**
+
+## P6-B final correction — on-demand relative-only imports, eager execution removed (HOLD released)
+
+Review correctly held approval on the eager-execution sentence: executing
+every sibling `.py` at load as the price of legacy aliases contradicts
+import isolation. Fixed by removing the mechanism, not by scoping it —
+legacy absolute sibling support is dropped with a documented one-word
+migration, per the review's explicit alternative.
+
+### Corrected contract (`catalog.py::_import_external_adapter`, now ~30 lines)
+
+- Only `adapter.py` executes, plus files the adapter actually imports via
+  the normal machinery through the namespaced package `__path__`. No
+  directory scan, no pre-loading, no `sys.path` touch, no bare aliases,
+  no `find_spec` probing.
+- Canonical and only sibling form: `from . import helper` /
+  `from .sub.deep import VAL` (top-level, factory, or later adapter
+  methods — the package persists, so there is no load window; pinned by a
+  post-discovery lazy-relative test).
+- Bare `import helper` resolves against the ambient environment and fails
+  loudly otherwise (`ModuleNotFoundError` → adapter skipped with that
+  error, never half-loaded). A drop-in file can never shadow stdlib /
+  site-packages / live modules because nothing ever points at it.
+- Unchanged and preserved: validate-before-import, mtime-keyed load-once
+  cache + failure-quiet + stale purge, `_exec_module_fresh` pyc bypass,
+  failure purge of `pkg.*`, `_EXTERNAL_LOAD_LOCK` with its honestly-scoped
+  claim, `reload_catalog` purge, trusted-code/no-sandbox/symlink stance.
+
+### Tests (executed BEFORE the change, then implementation)
+
+- 5 new pins, run against the eager loader first: 3 failed authentically
+  (`unused_sibling_never_executes` — sentinel file written + load broken;
+  `broken_transitive_sibling` — bystander broke a valid adapter;
+  `legacy_absolute_sibling_is_rejected` — legacy was accepted), 2 passed
+  (`imported_broken_sibling_cleans_up`, `relative_lazy_import_works_after_load`
+  — behavior preserved across the rewrite). After the loader simplification:
+  22/22 pass.
+- Legacy-expectation adjustments (the explicitly declared contract change,
+  nothing else weakened): `sibling_imports_do_not_cross_projects` and two
+  legacy loader tests now use `from . import helper` (isolation assertions
+  unchanged and stricter — namespaced `.helper` submodules + no bare
+  residue); legacy acceptance is pinned as rejection by the new test above.
+- Discrimination: sentinel-file non-execution, bystander non-interference,
+  transitive chain value (`chain:ok`), broken-dependency no-residue,
+  barrier-thread exec-once, mtime value-flip, stdlib-identity — all on
+  executed side effects/values.
+- Gates: 20-file catalog-consumer set → 381 passed / 7 failed; FAILED
+  identities byte-identical to the prior run and to the `dc6276de`
+  clean-tree baseline (6 neighbors + 1 defaults, all pre-existing).
+- Spend: no prompt-sending tests, flags unset, no installs/network.
+
+### No-eager-execution evidence + limits
+
+- Post-change proof is `test_unused_sibling_never_executes` (raising +
+  sentinel-writing `unused.py` beside a valid adapter: adapter loads,
+  sentinel absent, `unused` not in `sys.modules`, `sys.path` identical)
+  plus `test_broken_transitive_sibling...` (raising `bystander.py`
+  ignored while the real `mid → leaf` chain loads).
+- Remaining limits: a raising file the adapter DOES import still skips the
+  adapter (correct — surfaced at the importer with residue purged);
+  `reload_catalog()` purges live packages, so a previously returned
+  adapter doing a NEW lazy relative import after a purge would re-resolve
+  from source on next discovery rather than from the purged package
+  (instances keep working; documented hot-add path, not a turn-time path);
+  nested-package edits that leave top-level mtimes need `reload_catalog()`.
+- Docs: `ADDING_AN_AGENT.md` trust model rewritten to relative-only +
+  one-word migration + loud-failure rule; catalog docstring matches.
+- Commit: this correction independently on main. No push, no restart.
+  **STOP for Codex review before P6-C.**

@@ -14,10 +14,10 @@ Trust: project drop-ins (``{project}/.cuttle/agents/``) execute third-party
 ``adapter.py`` ONLY on explicit opt-in (``CUTTLE_ALLOW_PROJECT_ADAPTERS`` /
 ``agent_harness.allow_project_adapters``). Manifest identity is validated
 before import; each external adapter loads once (mtime-keyed) as a
-uniquely-namespaced package with no ``sys.path`` mutation. Relative sibling
-imports are isolated per drop-in; legacy absolute sibling imports get a
-load-scoped alias only when the name is otherwise unresolvable, and
-pre-existing modules are never overwritten. See ADDING_AN_AGENT.md
+uniquely-namespaced package with no ``sys.path`` mutation. Only relative
+sibling imports (``from . import helper``) resolve into the drop-in, loaded
+on demand; nothing else in the directory executes, and bare absolute imports
+are never aliased or satisfied from the drop-in. See ADDING_AN_AGENT.md
 ("Project drop-in trust model").
 """
 
@@ -59,10 +59,9 @@ _CANONICAL_SLASH_RE = re.compile(r"/[a-z0-9]+(-[a-z0-9]+)*")
 # this each turn would re-execute adapter.py top-level code.
 _EXTERNAL_ADAPTER_CACHE: Dict[str, Tuple[Tuple[int, ...], Optional[_AgentEntry]]] = {}
 
-# Serializes HARNESS drop-in loads only (cache check, alias window,
-# sys.modules edits we own). It makes no claim about unrelated Python
-# imports happening on other threads; the alias window below is kept
-# minimal (exec + factory) for exactly that reason.
+# Serializes HARNESS drop-in loads only (mtime check, package setup,
+# adapter exec). It makes no claim about unrelated Python imports happening
+# on other threads.
 _EXTERNAL_LOAD_LOCK = threading.Lock()
 
 _EXT_PKG_PREFIX = "cuttle_harness_ext_"
@@ -268,19 +267,17 @@ def _source_mtimes(agent_dir: Path) -> Tuple[int, ...]:
 def _import_external_adapter(agent_dir: Path, agent_id: str) -> AgentAdapter:
     """Load a drop-in as a uniquely-namespaced package; never touch sys.path.
 
-    Supported import contract (canonical first):
+    Import contract (only contract):
 
-    - ``from . import helper`` / ``from .sub.deep import VAL`` — always
-      isolated per drop-in via the package ``__path__``. This is the
-      contract new drop-ins must use.
-    - Legacy top-level ``import helper`` — works when the name is otherwise
-      unresolvable, via a temporary bare alias that is removed afterwards.
-      A name that already resolves (stdlib, site-packages, another live
-      module) is NEVER aliased or overwritten: the pre-existing module wins
-      and the drop-in should migrate to relative imports.
-    - The alias window covers module exec AND ``build_adapter()``; lazy
-      absolute sibling imports from adapter methods called later are NOT
-      supported (top-level bindings made during the window stay valid).
+    - ``from . import helper`` / ``from .sub.deep import VAL`` — resolved
+      on demand by the normal import machinery through the package
+      ``__path__``, isolated per drop-in. Files the adapter never imports
+      are never executed, and a broken file the adapter never imports
+      cannot break the adapter.
+    - Bare ``import helper`` is NOT a sibling import: it resolves against
+      the ambient environment (stdlib / site-packages / live modules) and
+      fails loudly otherwise, so the author migrates to relative imports.
+      Nothing is ever aliased, scanned, or pre-loaded to satisfy it.
     """
     agent_dir_str = str(agent_dir.resolve())
     # Unique package name so two drop-ins never share a namespace, even with
@@ -288,10 +285,7 @@ def _import_external_adapter(agent_dir: Path, agent_id: str) -> AgentAdapter:
     pkg_name = f"{_EXT_PKG_PREFIX}{agent_id}_{abs(hash(agent_dir_str))}"
     adapter_path = agent_dir / "adapter.py"
     pkg = sys.modules.get(pkg_name)
-    if (
-        pkg is None
-        or getattr(pkg, "__path__", None) != [agent_dir_str]
-    ):
+    if pkg is None or getattr(pkg, "__path__", None) != [agent_dir_str]:
         _purge_external_modules(pkg_name)
         pkg = importlib.util.module_from_spec(
             importlib.machinery.ModuleSpec(
@@ -300,65 +294,23 @@ def _import_external_adapter(agent_dir: Path, agent_id: str) -> AgentAdapter:
         )
         pkg.__path__ = [agent_dir_str]
         sys.modules[pkg_name] = pkg
-    added_aliases: List[Tuple[str, str]] = []
-    try:
-        try:
-            siblings = sorted(
-                p
-                for p in agent_dir.iterdir()
-                if p.suffix == ".py"
-                and p.name != "adapter.py"
-                and p.is_file()
-                and not p.name.startswith((".", "_"))
-            )
-        except OSError:
-            siblings = []
-        for sib in siblings:
-            stem = sib.stem
-            if not stem.isidentifier():
-                continue
-            namespaced = f"{pkg_name}.{stem}"
-            if namespaced not in sys.modules:
-                sib_spec = importlib.util.spec_from_file_location(
-                    namespaced, sib
-                )
-                if sib_spec is None or sib_spec.loader is None:
-                    raise ImportError(f"Cannot load sibling {sib}")
-                sib_mod = importlib.util.module_from_spec(sib_spec)
-                sys.modules[namespaced] = sib_mod
-                _exec_module_fresh(sib_spec, sib_mod)
-            if (
-                stem not in sys.modules
-                and importlib.util.find_spec(stem) is None
-            ):
-                # Otherwise-unresolvable legacy name: temporary alias only.
-                sys.modules[stem] = sys.modules[namespaced]
-                added_aliases.append((stem, namespaced))
-        spec = importlib.util.spec_from_file_location(
-            f"{pkg_name}.adapter", adapter_path
+    spec = importlib.util.spec_from_file_location(
+        f"{pkg_name}.adapter", adapter_path
+    )
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load adapter from {adapter_path}")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[f"{pkg_name}.adapter"] = mod
+    _exec_module_fresh(spec, mod)
+    factory = getattr(mod, "build_adapter", None)
+    if callable(factory):
+        return factory()
+    cls = getattr(mod, "Adapter", None)
+    if cls is None:
+        raise AttributeError(
+            f"{adapter_path} must export build_adapter() or Adapter"
         )
-        if spec is None or spec.loader is None:
-            raise ImportError(f"Cannot load adapter from {adapter_path}")
-        mod = importlib.util.module_from_spec(spec)
-        sys.modules[f"{pkg_name}.adapter"] = mod
-        _exec_module_fresh(spec, mod)
-        factory = getattr(mod, "build_adapter", None)
-        if callable(factory):
-            return factory()
-        cls = getattr(mod, "Adapter", None)
-        if cls is None:
-            raise AttributeError(
-                f"{adapter_path} must export build_adapter() or Adapter"
-            )
-        return cls()
-    finally:
-        # Remove ONLY aliases we installed, and only if nobody replaced them.
-        for stem, namespaced in added_aliases:
-            try:
-                if sys.modules.get(stem) is sys.modules.get(namespaced):
-                    del sys.modules[stem]
-            except KeyError:
-                pass
+    return cls()
 
 
 def _load_external_entry(
