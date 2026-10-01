@@ -47,14 +47,29 @@ sandbox; containment is the opt-in gate plus the rules below.
   Anything else (e.g. `slash: "/"`, `Evil Agent/`) is skipped **without
   importing** `adapter.py`. Unknown `capabilities_inject` / `env_profile` /
   `activity` values fall back to defaults instead of failing.
-- **Load-once.** Each external `adapter.py` executes once per process
-  (cache cleared by `reload_catalog()`); top-level code must be idempotent
-  anyway, but it will not re-run every turn.
-- **Sibling imports resolve at load time.** The drop-in dir is on `sys.path`
-  only while its `adapter.py` executes; top-level `import helper` /
-  `from helper import X` bindings stay valid, but function-level lazy absolute
-  imports of siblings need their own path handling. Same-named siblings in two
-  drop-ins never leak into each other (see `tests/test_harness_project_adapters.py`).
+- **Load-once (mtime-keyed).** Each external `adapter.py` executes once per
+  process; editing `adapter.py` or a top-level sibling `.py` reloads it on
+  the next discovery (no restart). Cache cleared by `reload_catalog()`.
+  Top-level code must still be idempotent.
+- **Sibling imports: relative first.** Each drop-in loads as its own
+  namespace package with **no `sys.path` mutation**, so
+  `from . import helper` / `from .sub.deep import VAL` are always isolated
+  per drop-in (dotted subpackages included). This is the contract new
+  drop-ins must use.
+- **Legacy absolute siblings: narrow compatibility.** Top-level
+  `import helper` / `from helper import X` keep working only when the name
+  is otherwise unresolvable, via a temporary alias removed after load
+  (the window covers module exec + `build_adapter()`). A name that already
+  resolves — stdlib, site-packages, another live module — is never aliased
+  or overwritten: the pre-existing module wins, so migrate to relative
+  imports. Lazy absolute sibling imports from adapter methods called later
+  are not supported (bind what you need at top level or in
+  `build_adapter()`).
+- **Concurrency scope.** Drop-in loads are serialized against each other
+  (one exec per adapter even under threaded discovery); this makes no claim
+  about unrelated Python imports on other threads.
+- Same-named siblings in two drop-ins never leak into each other
+  (see `tests/test_harness_project_adapters.py`).
 
 ## Hard-won gotchas (bake these in — do not rediscover)
 

@@ -155,14 +155,15 @@ def test_sibling_imports_do_not_cross_projects(
     pair_a = get_agent("alpha", str(proj))
     pair_b = get_agent("beta", str(proj))
     assert pair_a is not None and pair_b is not None
-    # Re-resolve the loaded adapter modules to read their bound MARKER.
-    mods = {
+    # Read each drop-in's own namespaced `.helper` submodule: same basename,
+    # per-adapter values, no bare `helper` residue.
+    helpers = {
         name: mod
         for name, mod in sys.modules.items()
-        if name.startswith("cuttle_harness_ext_")
+        if name.startswith("cuttle_harness_ext_") and name.endswith(".helper")
     }
-    markers = sorted(getattr(m, "MARKER", None) for m in mods.values())
-    assert markers == ["AAA", "BBB"]
+    assert sorted(m.MARKER for m in helpers.values()) == ["AAA", "BBB"]
+    assert "helper" not in sys.modules
 
 
 def test_hijack_slash_rejected_before_import(
@@ -229,3 +230,282 @@ def test_unknown_capability_values_fall_back_to_defaults(
     pair = get_agent("weird", str(proj))
     assert pair is not None
     assert pair[0].capabilities_inject == "sometimes"
+
+
+# --- P6-B follow-up: namespaced package loading, no sys.path mutation ---
+
+_PKG_ADAPTER = (
+    "from . import helper\n"
+    "from .sub.deep import VAL\n"
+    "COMBINED = (helper.MARKER, VAL)\n"
+    "class Adapter:\n"
+    "    def __init__(self):\n"
+    "        self.combined = COMBINED\n"
+    "    def available(self):\n"
+    "        return True\n"
+    "def build_adapter():\n"
+    "    return Adapter()\n"
+)
+
+
+def _write_pkg_agent(agents_root: Path, agent_id: str, marker: str, deep: str):
+    d = agents_root / agent_id
+    (d / "sub").mkdir(parents=True, exist_ok=True)
+    (d / "manifest.yaml").write_text(
+        f"label: Test {agent_id}\nslash: /{agent_id}\n", encoding="utf-8"
+    )
+    (d / "adapter.py").write_text(_PKG_ADAPTER, encoding="utf-8")
+    (d / "helper.py").write_text(f"MARKER = {marker!r}\n", encoding="utf-8")
+    (d / "sub" / "deep.py").write_text(f"VAL = {deep!r}\n", encoding="utf-8")
+    return d
+
+
+def test_dotted_relative_siblings_are_namespaced_per_adapter(
+    project_agents, clean_import_state
+):
+    """`from . import helper` + `from .sub.deep import VAL` resolve per drop-in.
+
+    No `sys.path` entry, no bare `helper` residue: same basenames in two
+    drop-ins (including a dotted subpackage) must not leak into each other.
+    """
+    import sys as _sys
+
+    proj, root = project_agents
+    path_before = list(_sys.path)
+    _write_pkg_agent(root, "pkgone", "P1", "D1")
+    _write_pkg_agent(root, "pkgtwo", "P2", "D2")
+    reload_catalog()
+    one = get_agent("pkgone", str(proj))
+    two = get_agent("pkgtwo", str(proj))
+    assert one is not None and two is not None
+    assert one[1].combined == ("P1", "D1")
+    assert two[1].combined == ("P2", "D2")
+    assert "helper" not in _sys.modules
+    assert list(_sys.path) == path_before
+
+
+def test_preexisting_unrelated_module_is_never_overwritten(
+    project_agents, clean_import_state, monkeypatch
+):
+    """A live `helper` module belonging to someone else survives the load."""
+    import sys as _sys
+    import types as _types
+
+    fake = _types.ModuleType("helper")
+    fake.SENTINEL = "UNRELATED"
+    monkeypatch.setitem(_sys.modules, "helper", fake)
+    proj, root = project_agents
+    _write_pkg_agent(root, "relonly", "MINE", "DD")
+    reload_catalog()
+    pair = get_agent("relonly", str(proj))
+    assert pair is not None
+    assert pair[1].combined == ("MINE", "DD")
+    assert _sys.modules["helper"] is fake
+    assert _sys.modules["helper"].SENTINEL == "UNRELATED"
+
+
+def test_legacy_absolute_sibling_works_without_path_or_residue(
+    project_agents, clean_import_state
+):
+    """Top-level legacy `import helper` still loads, leaves no trace."""
+    import sys as _sys
+
+    _sys.modules.pop("helper", None)
+    proj, root = project_agents
+    path_before = list(_sys.path)
+    _write_agent(
+        root,
+        "legacy",
+        adapter_src=(
+            "import helper\n"
+            "MARKER = helper.MARKER\n"
+            "class Adapter:\n"
+            "    def __init__(self):\n"
+            "        self.marker = MARKER\n"
+            "    def available(self):\n"
+            "        return True\n"
+        ),
+    )
+    (root / "legacy" / "helper.py").write_text("MARKER = 'LEG'\n", encoding="utf-8")
+    reload_catalog()
+    pair = get_agent("legacy", str(proj))
+    assert pair is not None
+    assert pair[1].marker == "LEG"
+    assert "helper" not in _sys.modules
+    assert list(_sys.path) == path_before
+
+
+def test_factory_time_sibling_import_runs_inside_scope(
+    project_agents, clean_import_state
+):
+    """`import helper` inside `build_adapter()` must resolve (factory in scope)."""
+    import sys as _sys
+
+    _sys.modules.pop("helper", None)
+    proj, root = project_agents
+    _write_agent(
+        root,
+        "factimp",
+        adapter_src=(
+            "class Adapter:\n"
+            "    def __init__(self, marker):\n"
+            "        self.marker = marker\n"
+            "    def available(self):\n"
+            "        return True\n"
+            "def build_adapter():\n"
+            "    import helper\n"
+            "    return Adapter(helper.MARKER)\n"
+        ),
+    )
+    (root / "factimp" / "helper.py").write_text("MARKER = 'FAC'\n", encoding="utf-8")
+    reload_catalog()
+    pair = get_agent("factimp", str(proj))
+    assert pair is not None
+    assert pair[1].marker == "FAC"
+    assert "helper" not in _sys.modules
+
+
+def test_stdlib_name_is_never_shadowed(project_agents, clean_import_state):
+    """A drop-in `email.py` must not shadow stdlib, even mid-load."""
+    import sys as _sys
+
+    _sys.modules.pop("email", None)
+    proj, root = project_agents
+    _write_agent(
+        root,
+        "stdemail",
+        adapter_src=(
+            "import email\n"
+            "IS_STDLIB = hasattr(email, 'message_from_string')\n"
+            "class Adapter:\n"
+            "    def __init__(self):\n"
+            "        self.is_stdlib = IS_STDLIB\n"
+            "    def available(self):\n"
+            "        return True\n"
+            "def build_adapter():\n"
+            "    return Adapter()\n"
+        ),
+    )
+    (root / "stdemail" / "email.py").write_text("MARKER = 'EVIL'\n", encoding="utf-8")
+    reload_catalog()
+    pair = get_agent("stdemail", str(proj))
+    assert pair is not None
+    assert pair[1].is_stdlib is True
+
+
+def test_concurrent_same_adapter_executes_once(project_agents, clean_import_state):
+    """Barrier-synchronized discovery from many threads: one exec, one entry."""
+    import sys as _sys
+    import threading
+
+    proj, root = project_agents
+    counter = root / "counter.txt"
+    counter.write_text("", encoding="utf-8")
+    _write_agent(
+        root,
+        "racy",
+        adapter_src=(
+            f"open({str(counter)!r}, 'a').write('x')\n"
+            "class Adapter:\n"
+            "    def available(self):\n"
+            "        return True\n"
+        ),
+    )
+    reload_catalog()
+    barrier = threading.Barrier(8)
+    results = []
+
+    def worker():
+        barrier.wait(timeout=30)
+        results.append(get_agent("racy", str(proj)) is not None)
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=60)
+    assert all(results) and len(results) == 8
+    assert counter.read_text(encoding="utf-8") == "x"
+
+
+def test_concurrent_different_adapters_stay_correct(
+    project_agents, clean_import_state
+):
+    """Simultaneous loads of two same-sibling-name adapters stay isolated."""
+    import threading
+
+    proj, root = project_agents
+    _write_pkg_agent(root, "concone", "C1", "E1")
+    _write_pkg_agent(root, "conctwo", "C2", "E2")
+    reload_catalog()
+    barrier = threading.Barrier(8)
+    results = []
+
+    def worker(i):
+        barrier.wait(timeout=30)
+        aid = "concone" if i % 2 == 0 else "conctwo"
+        pair = get_agent(aid, str(proj))
+        results.append((aid, pair[1].combined if pair else None))
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=60)
+    assert len(results) == 8
+    for aid, combined in results:
+        assert combined == ("C1", "E1") if aid == "concone" else ("C2", "E2")
+
+
+def test_failed_load_cleans_import_state_and_stays_quiet(
+    project_agents, clean_import_state, tmp_path
+):
+    """A raising adapter leaves no modules behind and is not re-executed."""
+    import sys as _sys
+
+    proj, root = project_agents
+    counter = tmp_path / "boom.txt"
+    counter.write_text("", encoding="utf-8")
+    d = _write_agent(
+        root,
+        "boom",
+        adapter_src=(
+            f"open({str(counter)!r}, 'a').write('x')\n"
+            "raise RuntimeError('boom')\n"
+        ),
+    )
+    (d / "boom_helper.py").write_text("MARKER = 'B'\n", encoding="utf-8")
+    path_before = list(_sys.path)
+    reload_catalog()
+    assert get_agent("boom", str(proj)) is None
+    assert get_agent("boom", str(proj)) is None
+    assert counter.read_text(encoding="utf-8") == "x"
+    assert "boom_helper" not in _sys.modules
+    assert not [k for k in _sys.modules if k.startswith("cuttle_harness_ext_boom")]
+    assert list(_sys.path) == path_before
+
+
+def test_edited_adapter_reloads_on_next_discovery(
+    project_agents, clean_import_state
+):
+    """mtime-keyed cache: editing adapter.py takes effect without restart."""
+    proj, root = project_agents
+    d = _write_agent(
+        root,
+        "hotedit",
+        adapter_src=(
+            "MARKER = 'V1'\n"
+            "class Adapter:\n"
+            "    def __init__(self):\n"
+            "        self.marker = MARKER\n"
+            "    def available(self):\n"
+            "        return True\n"
+        ),
+    )
+    reload_catalog()
+    assert get_agent("hotedit", str(proj))[1].marker == "V1"
+    (d / "adapter.py").write_text(
+        (d / "adapter.py").read_text(encoding="utf-8").replace("V1", "V2"),
+        encoding="utf-8",
+    )
+    assert get_agent("hotedit", str(proj))[1].marker == "V2"

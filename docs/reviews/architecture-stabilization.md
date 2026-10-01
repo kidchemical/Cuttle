@@ -5913,3 +5913,96 @@ whole was rejected as monolith-shifting. The owned seam is
 - Deferred unchanged: reproducibility/preflight, `[ERR-20261001-001]`.
 - Commit: P6-B independently on main. No push, no restart.
   **STOP for Codex review before P6-C/Phase 7.**
+
+## P6-B follow-up report — corrected import/cache isolation (review gaps closed)
+
+Review of `57222bab` correctly rejected the scoped-`sys.path` design:
+process-global `insert(0)` during exec exposed transient stdlib/site-package
+shadowing; eviction covered only bare top-level names (dotted subpackages
+leaked); `build_adapter()` ran after scope cleanup; the load-once cache had
+no synchronization. The sequential `helper.py` tests did not cover any of
+this. Fixed below with a narrower, explicitly-scoped contract — no sandbox
+claims, project code remains trusted unsandboxed, symlink decision unchanged.
+
+### Corrected loader (`catalog.py`: `_purge_external_modules`,
+`_exec_module_fresh`, `_source_mtimes`, `_import_external_adapter`,
+`_load_external_entry`, `_EXTERNAL_LOAD_LOCK`, mtime-keyed
+`_EXTERNAL_ADAPTER_CACHE`, `reload_catalog` purge)
+
+- **No `sys.path` mutation at all.** Each drop-in loads as a uniquely-named
+  package (`cuttle_harness_ext_<id>_<hash(path)>` + `__path__=[agent_dir]`);
+  canonical contract is relative imports (`from . import helper`,
+  `from .sub.deep import VAL`), isolated per drop-in including dotted
+  subpackages (proven with same-basename `helper.py` + `sub/deep.py` in two
+  drop-ins resolving to per-adapter values, zero bare residue).
+- **Legacy absolute siblings: explicit contained semantics.** Top-level
+  siblings pre-load under the package namespace; a bare alias is installed
+  ONLY when the name is otherwise unresolvable
+  (`stem not in sys.modules and find_spec(stem) is None`) — a resolvable
+  name (stdlib `email`, site-packages, another live module) is never
+  aliased or overwritten, the pre-existing module wins (pinned: drop-in
+  `email.py` + `import email` still binds stdlib). Aliases are removed in
+  `finally` iff still pointing at our module. Window covers exec AND
+  `build_adapter()` (pinned: factory-time `import helper`). Lazy absolute
+  sibling imports from later-called adapter methods are unsupported by
+  design (documented migration: bind at top level / in factory, or use
+  relative imports).
+- **Failure cleanup:** any exception purges `pkg` + `pkg.*` and installed
+  aliases; failed loads are cached quiet as `(mtimes, None)` so a broken
+  adapter neither re-executes every turn nor leaves modules behind (pinned:
+  counter stays `x`, no `cuttle_harness_ext_boom*`, no `boom_helper`,
+  `sys.path` byte-identical).
+- **Cache lifetimes:** key = resolved agent dir; validity = mtimes of
+  `adapter.py` + manifest + top-level sibling `.py`. Edit → reload on next
+  discovery, no restart (pinned). `reload_catalog()` clears entries AND
+  purges all `cuttle_harness_ext_*` modules. Same dir reached via different
+  project paths/symlinks shares one entry (resolved-key identity).
+- **Concurrency, honestly scoped:** `_EXTERNAL_LOAD_LOCK` serializes
+  harness drop-in loads (cache check + alias window + owned `sys.modules`
+  edits) — pinned by barrier-synchronized 8-thread same-adapter (counter
+  `x`, exactly one exec) and different-adapter (per-adapter values correct)
+  tests. It claims nothing about unrelated Python imports on other threads
+  (stated in code comment, docs, and here).
+- **Found while proving reload:** same-second same-size hot-edits re-ran
+  OLD code — `exec_module` honored a stale `__pycache__` `.pyc` (header is
+  second-granularity mtime+size) despite our ns-precision invalidation.
+  `_exec_module_fresh` unlinks the cached pyc before exec (source re-read,
+  then rewritten). This only affects our loader's reload promise, not the
+  global import system.
+
+### Evidence
+
+- New contract tests (9 added, `test_harness_project_adapters.py` now 17):
+  before the rewrite 8 failed / 9 passed (authentic gap observation);
+  after: 17/17 pass. The pre-existing 8 P6-B tests are preserved (one
+  retargeted to read namespaced `.helper` submodules — stricter, and now
+  also asserts no bare `helper`).
+- Discrimination beyond pass/fail: barrier-thread exec-once counter,
+  failure-quiet counter, mtime-reload value flip, stdlib-identity probe —
+  all assert on executed side effects/values, not structure.
+- Neighbors: 20-file catalog-consumer set → 376 passed / 7 failed; the 6
+  non-defaults FAILED identities are byte-identical (`diff` clean) to the
+  `dc6276de` clean-tree baseline, and the 7th
+  (`test_agent_defaults_post_rejects_capability_violations`) was already
+  proven failing on the clean tree — both pre-existing, untouched.
+- Spend: no prompt-sending tests (smoke file excluded), spend flags unset,
+  no installs/network; fakes + temp projects + barrier threads only.
+- Compat changes vs `57222bab`: (1) drop-ins relying on the `sys.path`
+  window for LAZY absolute sibling imports now fail loudly instead of
+  silently binding — intended, documented; (2) ALL top-level sibling `.py`
+  files execute at load (price of legacy-alias support); a broken sibling
+  fails the adapter with its real error; (3) same-second same-size edits
+  now actually reload (behavioral fix, not a compat break).
+
+### Remaining limits (explicit, not fixed)
+
+- Lock does not isolate from unrelated concurrent imports (documented).
+- Sibling-mtime tracking is top-level `.py` only; deeper file changes
+  (data files, nested package edits that keep top-level mtimes) need
+  `reload_catalog()` — stated in docs as the hot-add path.
+- Bundled adapters still re-run `build_adapter()` per project discovery
+  (pre-existing; factory is cheap constructor, out of review scope).
+- Symlink-out-of-dir still follows target (unchanged trusted-code decision).
+- P6-C (surface vs agent-ops) + Phase 6 closure + Phase 7 still ahead.
+- Commit: this follow-up independently on main. No push, no restart.
+  **STOP for Codex review before P6-C/Phase 7.**

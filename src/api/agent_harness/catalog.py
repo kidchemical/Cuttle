@@ -13,17 +13,23 @@ with ``build_adapter()``. Unknown CLIs never require a Cuttle core fork.
 Trust: project drop-ins (``{project}/.cuttle/agents/``) execute third-party
 ``adapter.py`` ONLY on explicit opt-in (``CUTTLE_ALLOW_PROJECT_ADAPTERS`` /
 ``agent_harness.allow_project_adapters``). Manifest identity is validated
-before import, each external adapter executes once, and sibling imports are
-scoped to load time. See ADDING_AN_AGENT.md ("Project drop-in trust model").
+before import; each external adapter loads once (mtime-keyed) as a
+uniquely-namespaced package with no ``sys.path`` mutation. Relative sibling
+imports are isolated per drop-in; legacy absolute sibling imports get a
+load-scoped alias only when the name is otherwise unresolvable, and
+pre-existing modules are never overwritten. See ADDING_AN_AGENT.md
+("Project drop-in trust model").
 """
 
 from __future__ import annotations
 
 import importlib
+import importlib.machinery
 import importlib.util
 import os
 import re
 import sys
+import threading
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -47,10 +53,19 @@ _AgentEntry = Tuple[AgentManifest, AgentAdapter, Path]
 _CANONICAL_ID_RE = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
 _CANONICAL_SLASH_RE = re.compile(r"/[a-z0-9]+(-[a-z0-9]+)*")
 
-# External (non-bundled) adapter modules, keyed by resolved agent dir.
-# _discover() re-scans project roots on every call (no project_path cache),
-# so without this each turn would re-execute adapter.py top-level code.
-_EXTERNAL_ADAPTER_CACHE: Dict[str, _AgentEntry] = {}
+# External (non-bundled) adapter loads, keyed by resolved agent dir.
+# Value: (source-mtimes, entry or None for a failed load). _discover()
+# re-scans project roots on every call (no project_path cache), so without
+# this each turn would re-execute adapter.py top-level code.
+_EXTERNAL_ADAPTER_CACHE: Dict[str, Tuple[Tuple[int, ...], Optional[_AgentEntry]]] = {}
+
+# Serializes HARNESS drop-in loads only (cache check, alias window,
+# sys.modules edits we own). It makes no claim about unrelated Python
+# imports happening on other threads; the alias window below is kept
+# minimal (exec + factory) for exactly that reason.
+_EXTERNAL_LOAD_LOCK = threading.Lock()
+
+_EXT_PKG_PREFIX = "cuttle_harness_ext_"
 
 
 def _canonical_agent_id(folder_name: str) -> str:
@@ -201,63 +216,186 @@ def _import_bundled_adapter(agent_id: str) -> AgentAdapter:
     return cls()
 
 
-def _import_external_adapter(agent_dir: Path, agent_id: str) -> AgentAdapter:
-    adapter_path = agent_dir / "adapter.py"
-    # Unique module name so two drop-ins with the same folder name don't collide.
-    mod_name = f"cuttle_harness_ext_{agent_id}_{abs(hash(str(agent_dir.resolve())))}"
-    spec = importlib.util.spec_from_file_location(mod_name, adapter_path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Cannot load adapter from {adapter_path}")
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[mod_name] = mod
-    agent_dir_str = str(agent_dir.resolve())
-    # Scope the drop-in dir to load time only: prepend so the drop-in's own
-    # siblings win while it executes, then remove so a later drop-in with a
-    # same-named sibling (helper.py) cannot inherit this one, and this one
-    # cannot shadow stdlib/bundled modules for anyone else afterwards.
-    # Caveat: function-level (lazy) absolute sibling imports must manage
-    # their own path; top-level `import helper` / `from helper import X`
-    # bindings made during exec stay valid because the module object is held.
-    added_path = False
-    if agent_dir_str not in sys.path:
-        sys.path.insert(0, agent_dir_str)
-        added_path = True
-    modules_before = set(sys.modules.keys())
+def _exec_module_fresh(spec, mod) -> None:
+    """exec_module() that cannot reuse a stale ``__pycache__`` entry.
+
+    pyc validation is (mtime-seconds, size): a hot-edit written within the
+    same second with the same byte size would otherwise re-execute old code
+    even though our mtime-ns cache correctly detected the change. Removing
+    the cached pyc forces a recompile from source (which exec then rewrites).
+    """
+    assert spec.loader is not None
     try:
-        spec.loader.exec_module(mod)
-    finally:
-        if added_path:
-            try:
-                sys.path.remove(agent_dir_str)
-            except ValueError:
-                pass
-        # Evict bare top-level modules that were loaded FROM this drop-in dir
-        # (e.g. its helper.py): the adapter already bound what it imported at
-        # exec time, and leaving 'helper' in sys.modules would serve this
-        # drop-in's sibling to the next drop-in's `import helper`.
-        for key in [k for k in sys.modules if k not in modules_before]:
-            if "." in key:
-                continue
-            try:
-                mod_file = getattr(sys.modules[key], "__file__", "") or ""
-            except Exception:
-                continue
-            if not mod_file:
-                continue
-            try:
-                if str(Path(mod_file).resolve()).startswith(agent_dir_str + os.sep):
-                    del sys.modules[key]
-            except OSError:
-                continue
-    factory = getattr(mod, "build_adapter", None)
-    if callable(factory):
-        return factory()
-    cls = getattr(mod, "Adapter", None)
-    if cls is None:
-        raise AttributeError(
-            f"{adapter_path} must export build_adapter() or Adapter"
+        if spec.origin:
+            os.unlink(importlib.util.cache_from_source(spec.origin))
+    except (OSError, ValueError):
+        pass
+    spec.loader.exec_module(mod)
+
+
+def _purge_external_modules(pkg_name: str) -> None:
+    """Drop this drop-in's namespaced modules (pkg + pkg.*) after a failure
+    or when sources changed. Never touches bare names owned by others."""
+    for key in [
+        k
+        for k in sys.modules
+        if k == pkg_name or k.startswith(pkg_name + ".")
+    ]:
+        try:
+            del sys.modules[key]
+        except KeyError:
+            pass
+
+
+def _source_mtimes(agent_dir: Path) -> Tuple[int, ...]:
+    """mtimes of everything one drop-in load executes (adapter + top-level
+    sibling .py). Editing any of them invalidates the load-once cache."""
+    stamps: List[int] = []
+    try:
+        entries = sorted(agent_dir.iterdir())
+    except OSError:
+        return (-1,)
+    for child in entries:
+        if child.suffix != ".py" or not child.is_file():
+            continue
+        try:
+            stamps.append(child.stat().st_mtime_ns)
+        except OSError:
+            stamps.append(-1)
+    return tuple(stamps) or (-1,)
+
+
+def _import_external_adapter(agent_dir: Path, agent_id: str) -> AgentAdapter:
+    """Load a drop-in as a uniquely-namespaced package; never touch sys.path.
+
+    Supported import contract (canonical first):
+
+    - ``from . import helper`` / ``from .sub.deep import VAL`` — always
+      isolated per drop-in via the package ``__path__``. This is the
+      contract new drop-ins must use.
+    - Legacy top-level ``import helper`` — works when the name is otherwise
+      unresolvable, via a temporary bare alias that is removed afterwards.
+      A name that already resolves (stdlib, site-packages, another live
+      module) is NEVER aliased or overwritten: the pre-existing module wins
+      and the drop-in should migrate to relative imports.
+    - The alias window covers module exec AND ``build_adapter()``; lazy
+      absolute sibling imports from adapter methods called later are NOT
+      supported (top-level bindings made during the window stay valid).
+    """
+    agent_dir_str = str(agent_dir.resolve())
+    # Unique package name so two drop-ins never share a namespace, even with
+    # the same folder name or the same sibling basenames.
+    pkg_name = f"{_EXT_PKG_PREFIX}{agent_id}_{abs(hash(agent_dir_str))}"
+    adapter_path = agent_dir / "adapter.py"
+    pkg = sys.modules.get(pkg_name)
+    if (
+        pkg is None
+        or getattr(pkg, "__path__", None) != [agent_dir_str]
+    ):
+        _purge_external_modules(pkg_name)
+        pkg = importlib.util.module_from_spec(
+            importlib.machinery.ModuleSpec(
+                pkg_name, loader=None, is_package=True
+            )
         )
-    return cls()
+        pkg.__path__ = [agent_dir_str]
+        sys.modules[pkg_name] = pkg
+    added_aliases: List[Tuple[str, str]] = []
+    try:
+        try:
+            siblings = sorted(
+                p
+                for p in agent_dir.iterdir()
+                if p.suffix == ".py"
+                and p.name != "adapter.py"
+                and p.is_file()
+                and not p.name.startswith((".", "_"))
+            )
+        except OSError:
+            siblings = []
+        for sib in siblings:
+            stem = sib.stem
+            if not stem.isidentifier():
+                continue
+            namespaced = f"{pkg_name}.{stem}"
+            if namespaced not in sys.modules:
+                sib_spec = importlib.util.spec_from_file_location(
+                    namespaced, sib
+                )
+                if sib_spec is None or sib_spec.loader is None:
+                    raise ImportError(f"Cannot load sibling {sib}")
+                sib_mod = importlib.util.module_from_spec(sib_spec)
+                sys.modules[namespaced] = sib_mod
+                _exec_module_fresh(sib_spec, sib_mod)
+            if (
+                stem not in sys.modules
+                and importlib.util.find_spec(stem) is None
+            ):
+                # Otherwise-unresolvable legacy name: temporary alias only.
+                sys.modules[stem] = sys.modules[namespaced]
+                added_aliases.append((stem, namespaced))
+        spec = importlib.util.spec_from_file_location(
+            f"{pkg_name}.adapter", adapter_path
+        )
+        if spec is None or spec.loader is None:
+            raise ImportError(f"Cannot load adapter from {adapter_path}")
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[f"{pkg_name}.adapter"] = mod
+        _exec_module_fresh(spec, mod)
+        factory = getattr(mod, "build_adapter", None)
+        if callable(factory):
+            return factory()
+        cls = getattr(mod, "Adapter", None)
+        if cls is None:
+            raise AttributeError(
+                f"{adapter_path} must export build_adapter() or Adapter"
+            )
+        return cls()
+    finally:
+        # Remove ONLY aliases we installed, and only if nobody replaced them.
+        for stem, namespaced in added_aliases:
+            try:
+                if sys.modules.get(stem) is sys.modules.get(namespaced):
+                    del sys.modules[stem]
+            except KeyError:
+                pass
+
+
+def _load_external_entry(
+    agent_dir: Path, agent_id: str, raw: Dict[str, Any], source: str
+) -> Optional[_AgentEntry]:
+    """Locked load-once wrapper: mtime-keyed cache, failures cached quiet."""
+    try:
+        cache_key = str(agent_dir.resolve())
+    except OSError:
+        cache_key = str(agent_dir)
+    want = _source_mtimes(agent_dir)
+    with _EXTERNAL_LOAD_LOCK:
+        hit = _EXTERNAL_ADAPTER_CACHE.get(cache_key)
+        if hit is not None and hit[0] == want:
+            return hit[1]
+        # Stale sources: purge namespaced modules so the re-exec below (and
+        # its relative `from . import ...` lookups) cannot reuse edited code.
+        if hit is not None:
+            _purge_external_modules(
+                f"{_EXT_PKG_PREFIX}{agent_id}_{abs(hash(cache_key))}"
+            )
+        try:
+            raw["id"] = agent_id  # folder name is canonical
+            manifest = _manifest_from_dict(
+                raw, fallback_id=agent_id, source=source, agent_dir=agent_dir
+            )
+            adapter = _import_external_adapter(agent_dir, agent_id)
+        except Exception as exc:
+            _purge_external_modules(
+                f"{_EXT_PKG_PREFIX}{agent_id}_{abs(hash(cache_key))}"
+            )
+            _EXTERNAL_ADAPTER_CACHE[cache_key] = (want, None)
+            print(f"[agent_harness] skip {agent_dir}: {exc}", flush=True)
+            return None
+        entry = (manifest, adapter, agent_dir)
+        _EXTERNAL_ADAPTER_CACHE[cache_key] = (want, entry)
+        return entry
 
 
 def _project_adapters_allowed() -> bool:
@@ -298,26 +436,13 @@ def _load_agent_dir(
         print(f"[agent_harness] skip {agent_dir}: {problem}", flush=True)
         return None
     if not bundled:
-        try:
-            cache_key = str(agent_dir.resolve())
-        except OSError:
-            cache_key = str(agent_dir)
-        cached = _EXTERNAL_ADAPTER_CACHE.get(cache_key)
-        if cached is not None:
-            return cached
+        return _load_external_entry(agent_dir, agent_id, raw, source)
     try:
         raw["id"] = agent_id  # folder name is canonical
         manifest = _manifest_from_dict(
             raw, fallback_id=agent_id, source=source, agent_dir=agent_dir
         )
-        if bundled:
-            adapter = _import_bundled_adapter(agent_id)
-        else:
-            adapter = _import_external_adapter(agent_dir, agent_id)
-        entry = (manifest, adapter, agent_dir)
-        if not bundled:
-            _EXTERNAL_ADAPTER_CACHE[cache_key] = entry
-        return entry
+        return manifest, _import_bundled_adapter(agent_id), agent_dir
     except Exception as exc:
         print(f"[agent_harness] skip {agent_dir}: {exc}", flush=True)
         return None
@@ -441,7 +566,15 @@ def _discover(project_path: Optional[str] = None) -> Dict[str, _AgentEntry]:
 def reload_catalog() -> None:
     """Clear discovery cache (tests / hot-add)."""
     _discover_global.cache_clear()
-    _EXTERNAL_ADAPTER_CACHE.clear()
+    with _EXTERNAL_LOAD_LOCK:
+        _EXTERNAL_ADAPTER_CACHE.clear()
+        for key in [
+            k for k in sys.modules if k.startswith(_EXT_PKG_PREFIX)
+        ]:
+            try:
+                del sys.modules[key]
+            except KeyError:
+                pass
 
 
 def list_agents(project_path: Optional[str] = None) -> List[str]:
