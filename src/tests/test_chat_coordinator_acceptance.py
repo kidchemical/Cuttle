@@ -12,6 +12,66 @@ from __future__ import annotations
 import pytest
 
 
+# ---------------------------------------------------------------------------
+# Fail-closed execution guard (auto-applied to every test in this file).
+# Any path that reaches a real harness CLI spawn or router provider call
+# without an injected fake raises HERE — before subprocess/network — with
+# a counter proving the attempt was blocked, not silently skipped. This
+# is the backstop behind the per-test fakes (spend flags alone cannot
+# stop a local spawn: a starred-slash default once drove a real Cursor
+# CLI attempt that died on sandbox EROFS with no spend — disclosed, and
+# now impossible to repeat silently).
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _no_real_execution(monkeypatch):
+    from api.agent_harness import kernel as _kernel
+    from api.agent_router import dispatch as _dispatch
+    from api.agent_router import integration as _integration
+
+    calls = {"kernel": 0, "dispatch": 0}
+
+    def _blocked_kernel(*args, **kwargs):
+        calls["kernel"] += 1
+        raise AssertionError(
+            "fail-closed test guard: real harness CLI execution attempted "
+            f"({args[0] if args else '?'}); inject a fake executor instead"
+        )
+
+    def _blocked_dispatch(*args, **kwargs):
+        calls["dispatch"] += 1
+        raise AssertionError(
+            "fail-closed test guard: real router execution attempted; "
+            "inject a fake instead"
+        )
+
+    monkeypatch.setattr(_kernel, "run_agent_web_command", _blocked_kernel)
+    monkeypatch.setattr(_dispatch, "execute_decision", _blocked_dispatch)
+    monkeypatch.setattr(_integration, "execute_decision", _blocked_dispatch)
+    monkeypatch.setattr(
+        _integration, "execute_explicit_target", _blocked_dispatch
+    )
+    return calls
+
+
+def test_execution_guard_blocks_real_runners(_no_real_execution):
+    """The guard — not spend flags — stops unmocked execution locally."""
+    from api.agent_harness import kernel as _kernel
+    from api.agent_router import dispatch as _dispatch
+    from api.agent_router import integration as _integration
+
+    for fn, args in (
+        (_kernel.run_agent_web_command, ("cursor", "hi", "guard-sid")),
+        (_dispatch.execute_decision, (object(),)),
+        (_integration.execute_decision, (object(),)),
+        (_integration.execute_explicit_target, (object(),)),
+    ):
+        with pytest.raises(AssertionError, match="fail-closed test guard"):
+            fn(*args)
+    assert _no_real_execution == {"kernel": 1, "dispatch": 3}
+
+
 USER = {"id": 7, "username": "owner", "email": "owner@example.com"}
 
 

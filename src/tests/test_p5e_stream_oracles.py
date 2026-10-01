@@ -5,9 +5,13 @@ entry exists. After the rewiring these same tests must pass unchanged
 (except the split-pinning spy test, which is inverted into the shared-entry
 assertion) — any event/row/effect difference is a regression.
 
-Isolation: unique ``p5e-`` session ids; fake executors (no CLIs, no
-prompts); real Flask test client with tmp-DB auth. Concurrency-free:
-busy is held/released deterministically via ``chat_delivery``.
+Isolation: fake executors (no CLIs, no prompts); real Flask test client
+with REAL tmp-DB auth (the route's own ``get_auth_db`` binding is
+patched — module-attr patches alone never reach it, and the lanes
+tolerate the resulting anonymous user, which would make persist pins
+vacuous). Tests mint numeric sessions and assert user/assistant rows
+land in the temporary DB. Concurrency-free: busy is held/released
+deterministically via ``chat_delivery``.
 """
 
 from __future__ import annotations
@@ -29,9 +33,13 @@ def authed_client(monkeypatch, tmp_path):
     token = db.create_auth_session(owner)
     monkeypatch.setattr("api.auth_api.get_auth_db", lambda: db)
     monkeypatch.setattr("api.auth_db.get_auth_db", lambda: db)
+    # web_chat_api binds get_auth_db at import (from-import); without
+    # this the route verifies against the real DB, the cookie user is
+    # unknown, and authed lanes 401. Same seam as test_chat_attachments.
+    monkeypatch.setattr(wca, "get_auth_db", lambda: db)
     client = wca.app.test_client()
     client.set_cookie("session_token", token)
-    return client
+    return client, db, owner
 
 
 @pytest.fixture
@@ -54,6 +62,66 @@ def fake_harness(monkeypatch):
 
     monkeypatch.setattr(wca, "_run_pinned_harness_turn", fake_run)
     return calls
+
+
+# ---------------------------------------------------------------------------
+# Fail-closed execution guard (auto-applied to every test in this file).
+# Any path that reaches a real harness CLI spawn or router provider call
+# without an injected fake raises HERE — before subprocess/network — with
+# a counter proving the attempt was blocked, not silently skipped. This
+# is the backstop behind the per-test fakes (spend flags alone cannot
+# stop a local spawn: a starred-slash default once drove a real Cursor
+# CLI attempt that died on sandbox EROFS with no spend — disclosed, and
+# now impossible to repeat silently).
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _no_real_execution(monkeypatch):
+    from api.agent_harness import kernel as _kernel
+    from api.agent_router import dispatch as _dispatch
+    from api.agent_router import integration as _integration
+
+    calls = {"kernel": 0, "dispatch": 0}
+
+    def _blocked_kernel(*args, **kwargs):
+        calls["kernel"] += 1
+        raise AssertionError(
+            "fail-closed test guard: real harness CLI execution attempted "
+            f"({args[0] if args else '?'}); inject a fake executor instead"
+        )
+
+    def _blocked_dispatch(*args, **kwargs):
+        calls["dispatch"] += 1
+        raise AssertionError(
+            "fail-closed test guard: real router execution attempted; "
+            "inject a fake instead"
+        )
+
+    monkeypatch.setattr(_kernel, "run_agent_web_command", _blocked_kernel)
+    monkeypatch.setattr(_dispatch, "execute_decision", _blocked_dispatch)
+    monkeypatch.setattr(_integration, "execute_decision", _blocked_dispatch)
+    monkeypatch.setattr(
+        _integration, "execute_explicit_target", _blocked_dispatch
+    )
+    return calls
+
+
+def test_execution_guard_blocks_real_runners(_no_real_execution):
+    """The guard — not spend flags — stops unmocked execution locally."""
+    from api.agent_harness import kernel as _kernel
+    from api.agent_router import dispatch as _dispatch
+    from api.agent_router import integration as _integration
+
+    for fn, args in (
+        (_kernel.run_agent_web_command, ("cursor", "hi", "guard-sid")),
+        (_dispatch.execute_decision, (object(),)),
+        (_integration.execute_decision, (object(),)),
+        (_integration.execute_explicit_target, (object(),)),
+    ):
+        with pytest.raises(AssertionError, match="fail-closed test guard"):
+            fn(*args)
+    assert _no_real_execution == {"kernel": 1, "dispatch": 3}
 
 
 def _event_types(text):
@@ -80,9 +148,11 @@ def _responses(text):
 
 
 def test_oracle_harness_stream_event_shape(authed_client, fake_harness):
-    res = authed_client.post(
+    client, db, uid = authed_client
+    sid = db.create_chat_session(uid)
+    res = client.post(
         "/api/chat",
-        json={"message": "/cursor hello oracle", "session_id": "p5e-h1"},
+        json={"message": "/cursor hello oracle", "session_id": sid},
     )
     assert res.status_code == 200
     text = res.get_data(as_text=True)
@@ -94,8 +164,13 @@ def test_oracle_harness_stream_event_shape(authed_client, fake_harness):
     assert responses[-1]["response"] == "oracle-reply:cursor:hello oracle"
     assert responses[-1]["success"] is True
     assert fake_harness and fake_harness[0]["agent_id"] == "cursor"
-    assert chat_delivery.try_begin("p5e-h1") is True  # released
-    chat_delivery.end("p5e-h1")
+    rows = db.get_messages(sid)
+    assert [(m["role"], m["content"]) for m in rows] == [
+        ("user", "/cursor hello oracle"),
+        ("assistant", "oracle-reply:cursor:hello oracle"),
+    ]
+    assert chat_delivery.try_begin(sid) is True  # released
+    chat_delivery.end(sid)
 
 
 def test_oracle_harness_stream_status_events(authed_client, monkeypatch):
@@ -109,9 +184,11 @@ def test_oracle_harness_stream_status_events(authed_client, monkeypatch):
         return {"success": True, "response": "status-ok", "type": "fake"}
 
     monkeypatch.setattr(wca, "_run_pinned_harness_turn", fake_run)
-    res = authed_client.post(
+    client, db, uid = authed_client
+    sid = db.create_chat_session(uid)
+    res = client.post(
         "/api/chat",
-        json={"message": "/cursor status check", "session_id": "p5e-h2"},
+        json={"message": "/cursor status check", "session_id": sid},
     )
     assert res.status_code == 200
     # Drain FIRST: post() returns after headers while the pump worker still
@@ -126,8 +203,13 @@ def test_oracle_harness_stream_status_events(authed_client, monkeypatch):
     ]
     statuses = [b for b in bodies if b.get("type") == "status"]
     assert "oracle-working" in [s.get("message") for s in statuses]
-    assert chat_delivery.try_begin("p5e-h2") is True
-    chat_delivery.end("p5e-h2")
+    rows = db.get_messages(sid)
+    assert [(m["role"], m["content"]) for m in rows] == [
+        ("user", "/cursor status check"),
+        ("assistant", "status-ok"),
+    ]
+    assert chat_delivery.try_begin(sid) is True
+    chat_delivery.end(sid)
 
 
 def test_oracle_router_family_stream_shape(authed_client, monkeypatch):
@@ -143,9 +225,11 @@ def test_oracle_router_family_stream_shape(authed_client, monkeypatch):
     monkeypatch.setattr(
         integration, "handle_router_family_command", fake_router
     )
-    res = authed_client.post(
+    client, db, uid = authed_client
+    sid = db.create_chat_session(uid)
+    res = client.post(
         "/api/chat",
-        json={"message": "/retry hello", "session_id": "p5e-r1"},
+        json={"message": "/retry hello", "session_id": sid},
     )
     assert res.status_code == 200
     text = res.get_data(as_text=True)
@@ -153,26 +237,34 @@ def test_oracle_router_family_stream_shape(authed_client, monkeypatch):
     assert kinds[0] == "session"
     assert kinds[-1] == "done"
     assert _responses(text)[-1]["response"] == "oracle-router-reply"
-    assert calls and calls[0][1] == "p5e-r1"
-    assert chat_delivery.try_begin("p5e-r1") is True
-    chat_delivery.end("p5e-r1")
+    assert calls and calls[0][1] == sid
+    rows = db.get_messages(sid)
+    assert [(m["role"], m["content"]) for m in rows] == [
+        ("user", "/retry hello"),
+        ("assistant", "oracle-router-reply"),
+    ]
+    assert chat_delivery.try_begin(sid) is True
+    chat_delivery.end(sid)
 
 
 def test_oracle_stream_busy_shape(authed_client, fake_harness):
-    assert chat_delivery.try_begin("p5e-busy") is True
+    client, db, uid = authed_client
+    sid = db.create_chat_session(uid)
+    assert chat_delivery.try_begin(sid) is True
     try:
-        res = authed_client.post(
+        res = client.post(
             "/api/chat",
-            json={"message": "/cursor while busy", "session_id": "p5e-busy"},
+            json={"message": "/cursor while busy", "session_id": sid},
         )
         assert res.status_code == 200
         kinds = _event_types(res.get_data(as_text=True))
         assert kinds == ["session", "status", "busy", "done"]
         assert not fake_harness  # executor never ran
+        assert db.get_messages(sid) == []  # busy claims nothing
     finally:
-        chat_delivery.end("p5e-busy")
-    assert chat_delivery.try_begin("p5e-busy") is True
-    chat_delivery.end("p5e-busy")
+        chat_delivery.end(sid)
+    assert chat_delivery.try_begin(sid) is True
+    chat_delivery.end(sid)
 
 
 def test_oracle_executor_exception_shape(authed_client, monkeypatch):
@@ -180,27 +272,35 @@ def test_oracle_executor_exception_shape(authed_client, monkeypatch):
         raise RuntimeError("oracle-boom")
 
     monkeypatch.setattr(wca, "_run_pinned_harness_turn", boom)
-    res = authed_client.post(
+    client, db, uid = authed_client
+    sid = db.create_chat_session(uid)
+    res = client.post(
         "/api/chat",
-        json={"message": "/cursor blow up", "session_id": "p5e-err"},
+        json={"message": "/cursor blow up", "session_id": sid},
     )
     assert res.status_code == 200
     responses = _responses(res.get_data(as_text=True))
     assert responses
     assert responses[-1]["success"] is False
     assert "oracle-boom" in responses[-1]["response"]
-    assert chat_delivery.try_begin("p5e-err") is True  # released after error
-    chat_delivery.end("p5e-err")
+    rows = db.get_messages(sid)
+    assert [m["role"] for m in rows] == ["user", "assistant"]
+    assert "oracle-boom" in rows[1]["content"]  # error reply still saved
+    assert chat_delivery.try_begin(sid) is True  # released after error
+    chat_delivery.end(sid)
 
 
 def test_oracle_empty_prompt_shape(authed_client, fake_harness):
-    res = authed_client.post(
-        "/api/chat", json={"message": "/cursor", "session_id": "p5e-empty"}
+    client, db, uid = authed_client
+    sid = db.create_chat_session(uid)
+    res = client.post(
+        "/api/chat", json={"message": "/cursor", "session_id": sid}
     )
     assert res.status_code == 200
     body = res.get_json()
     assert "prompt after /cursor" in body["response"]
     assert not fake_harness
+    assert db.get_messages(sid) == []  # usage hint, never a turn
 
 
 def test_oracle_rewrite_passthrough_shape(authed_client, monkeypatch):
@@ -213,16 +313,23 @@ def test_oracle_rewrite_passthrough_shape(authed_client, monkeypatch):
         }
 
     monkeypatch.setattr(wca, "_run_pinned_harness_turn", fake_run)
-    res = authed_client.post(
+    client, db, uid = authed_client
+    sid = db.create_chat_session(uid)
+    res = client.post(
         "/api/chat",
-        json={"message": "/cursor rewrite me", "session_id": "p5e-rw"},
+        json={"message": "/cursor rewrite me", "session_id": sid},
     )
     assert res.status_code == 200
     assert _responses(res.get_data(as_text=True))[-1]["response"] == (
         "plain text, no markers here"
     )
-    assert chat_delivery.try_begin("p5e-rw") is True
-    chat_delivery.end("p5e-rw")
+    rows = db.get_messages(sid)
+    assert [(m["role"], m["content"]) for m in rows] == [
+        ("user", "/cursor rewrite me"),
+        ("assistant", "plain text, no markers here"),
+    ]
+    assert chat_delivery.try_begin(sid) is True
+    chat_delivery.end(sid)
 
 
 # ---------------------------------------------------------------------------
@@ -313,9 +420,12 @@ def test_direct_stream_entry_matches_http_lifecycle():
             selection=selection,
         )
     )
-    assert [kind for kind, _ in events] == ["status", "done"]
-    assert events[0][1] == "direct-working"
-    assert events[1][1]["response"] == "direct-reply"
+    assert [kind for kind, _ in events] == [
+        "connecting", "status", "done"
+    ]
+    assert events[0] == ("connecting", None)  # liveness precedes worker start
+    assert events[1][1] == "direct-working"
+    assert events[2][1]["response"] == "direct-reply"
     # Contract order: persist → run → save → notify → park → release
     # (the trailing second release is the belt-and-suspenders finally:
     # token-guarded, a no-op once finalize already ended the turn).
@@ -429,7 +539,7 @@ def test_cancel_mid_worker_discards_result_but_releases():
     # The in-flight consumer still sees stream termination (parity with the
     # pre-P5-E pump, which always forwarded done and filtered only progress),
     # but the late result is discarded: no save, no notify, no park.
-    assert [kind for kind, _ in events] == ["done"]
+    assert [kind for kind, _ in events] == ["connecting", "done"]
     assert log == [
         "begin", "persist_user", "executor", "release", "release",
     ]
@@ -441,10 +551,12 @@ def test_http_cursor_cli_alias_streams_through_shared_entry(
     authed_client, fake_harness
 ):
     """Legacy /cursor-cli streams as /cursor through the same shared entry."""
-    res = authed_client.post(
+    client, db, uid = authed_client
+    sid = db.create_chat_session(uid)
+    res = client.post(
         "/api/chat",
         json={"message": "/cursor-cli hello alias",
-              "session_id": "p5e-alias"},
+              "session_id": sid},
     )
     assert res.status_code == 200
     text = res.get_data(as_text=True)
@@ -454,8 +566,13 @@ def test_http_cursor_cli_alias_streams_through_shared_entry(
     assert _responses(text)[-1]["response"] == "oracle-reply:cursor:hello alias"
     assert fake_harness and fake_harness[0]["agent_id"] == "cursor"
     assert fake_harness[0]["prompt"] == "hello alias"
-    assert chat_delivery.try_begin("p5e-alias") is True
-    chat_delivery.end("p5e-alias")
+    rows = db.get_messages(sid)
+    assert [(m["role"], m["content"]) for m in rows] == [
+        ("user", "/cursor-cli hello alias"),
+        ("assistant", "oracle-reply:cursor:hello alias"),
+    ]
+    assert chat_delivery.try_begin(sid) is True
+    chat_delivery.end(sid)
 
 
 def test_router_family_predicate_agrees_with_lanes():

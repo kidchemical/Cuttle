@@ -1769,12 +1769,14 @@ def _generate_chat_stream(process_fn, session_id_for_status, on_result=None, on_
             lambda status_queue=None: process_fn(status_queue=status_queue)
         ),
     )
+    _completion: dict = {}
     _events = _submit_stream_turn(
         _PreparedAgentTurn(message="", session_id=session_id_for_status),
         io=_io,
         delivery=chat_delivery,
         is_router_family=_is_router_family_message,
         selection=_AgentSelection(kind="pipeline"),
+        completion=_completion,
     )
     _first = next(_events, None)
     # Pipeline selection never yields shortcut arms; busy keeps the
@@ -1782,7 +1784,9 @@ def _generate_chat_stream(process_fn, session_id_for_status, on_result=None, on_
     if _first is not None and _first[0] == "busy":
         yield from _pipeline_busy_chunks(session_id_for_status)
         return
-    yield from _pipeline_progress_chunks(_first, _events, session_id_for_status)
+    yield from _pipeline_progress_chunks(
+        _first, _events, session_id_for_status, _completion
+    )
 
 
 
@@ -4953,17 +4957,18 @@ def _stream_agent_turn_response(prepared, *, io):
     )
 
 
-def _pipeline_progress_chunks(first, events, session_id):
+def _pipeline_progress_chunks(first, events, session_id, completion):
     """Connecting head + framed owned pipeline lifecycle events.
 
     Transport only, shared by the pipeline lane adapter and the
     ``_generate_chat_stream`` compat adapter: per-event live-status
     publish, the belt-and-suspenders wire rewrite of confirms on done,
     and the live-status clear on done. ``first`` is the peeked head
-    event (or None); ``events`` is the remaining owned event iterator.
+    event (or None); ``events`` is the remaining owned event iterator;
+    ``completion`` is the workflow's turn-identity out-dict (stale/
+    cancelled at done time) — the ONLY freshness signal the clear may
+    use. A free busy slot never implies this turn is current.
     """
-    from api import chat_delivery as _chat_delivery
-
     _sid = session_id
     yield from _stream_connecting_head(_sid)
     if first is None:
@@ -5008,25 +5013,16 @@ def _pipeline_progress_chunks(first, events, session_id):
                 ) or _result
             except Exception as _rw_err:
                 print(f"[CHAT] SSE confirm rewrite failed: {_rw_err}", flush=True)
-            # A newer turn generating now owns the spinner: skip the
-            # clear so this stale completion does not drop it. (Old
-            # code compared the worker's turn token; the token lives in
-            # the owned entry now, so "someone else generating" is the
-            # equivalent signal. Residual difference: a newer turn that
-            # already finished releases into a clear — benign, and no
-            # test observes live-status service state.)
-            try:
-                _stale_now = _chat_delivery.current_turn(_sid) is not None
-            except Exception:
-                _stale_now = False
-            try:
-                _cancelled_now = bool(
-                    _chat_delivery.is_turn_cancelled(_sid)
-                )
-            except Exception:
-                _cancelled_now = False
+            # Freshness comes from the owned entry's own turn token
+            # (captured in ``completion`` at done time), never from the
+            # busy boolean: a stale completion must not clear a newer
+            # turn's status, including a newer turn that already finished
+            # but left its entry behind.
+            _flags = completion if isinstance(completion, dict) else {}
             _clear_live_status_on_stream_done(
-                _sid, stale=_stale_now, cancelled=_cancelled_now
+                _sid,
+                stale=bool(_flags.get("stale", False)),
+                cancelled=bool(_flags.get("cancelled", False)),
             )
             _payload = _result
         for _chunk in _frame_stream_lifecycle_event(_kind, _payload, _sid):
@@ -5048,12 +5044,14 @@ def _stream_pipeline_turn_response(prepared, *, io):
         submit_agent_stream_turn as _submit_stream_turn,
     )
 
+    _completion: dict = {}
     _events = _submit_stream_turn(
         prepared,
         io=io,
         delivery=_chat_delivery,
         is_router_family=_is_router_family_message,
         selection=_AgentSelection(kind="pipeline"),
+        completion=_completion,
     )
     _first = next(_events, None)
     if _first is not None and _first[0] == "shortcut":
@@ -5063,7 +5061,7 @@ def _stream_pipeline_turn_response(prepared, *, io):
 
     def _stream_gen():
         yield from _pipeline_progress_chunks(
-            _first, _events, prepared.session_id
+            _first, _events, prepared.session_id, _completion
         )
 
     return Response(

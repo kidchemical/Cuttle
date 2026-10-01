@@ -58,6 +58,66 @@ def router_abstain(monkeypatch):
     )
 
 
+# ---------------------------------------------------------------------------
+# Fail-closed execution guard (auto-applied to every test in this file).
+# Any path that reaches a real harness CLI spawn or router provider call
+# without an injected fake raises HERE — before subprocess/network — with
+# a counter proving the attempt was blocked, not silently skipped. This
+# is the backstop behind the per-test fakes (spend flags alone cannot
+# stop a local spawn: a starred-slash default once drove a real Cursor
+# CLI attempt that died on sandbox EROFS with no spend — disclosed, and
+# now impossible to repeat silently).
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _no_real_execution(monkeypatch):
+    from api.agent_harness import kernel as _kernel
+    from api.agent_router import dispatch as _dispatch
+    from api.agent_router import integration as _integration
+
+    calls = {"kernel": 0, "dispatch": 0}
+
+    def _blocked_kernel(*args, **kwargs):
+        calls["kernel"] += 1
+        raise AssertionError(
+            "fail-closed test guard: real harness CLI execution attempted "
+            f"({args[0] if args else '?'}); inject a fake executor instead"
+        )
+
+    def _blocked_dispatch(*args, **kwargs):
+        calls["dispatch"] += 1
+        raise AssertionError(
+            "fail-closed test guard: real router execution attempted; "
+            "inject a fake instead"
+        )
+
+    monkeypatch.setattr(_kernel, "run_agent_web_command", _blocked_kernel)
+    monkeypatch.setattr(_dispatch, "execute_decision", _blocked_dispatch)
+    monkeypatch.setattr(_integration, "execute_decision", _blocked_dispatch)
+    monkeypatch.setattr(
+        _integration, "execute_explicit_target", _blocked_dispatch
+    )
+    return calls
+
+
+def test_execution_guard_blocks_real_runners(_no_real_execution):
+    """The guard — not spend flags — stops unmocked execution locally."""
+    from api.agent_harness import kernel as _kernel
+    from api.agent_router import dispatch as _dispatch
+    from api.agent_router import integration as _integration
+
+    for fn, args in (
+        (_kernel.run_agent_web_command, ("cursor", "hi", "guard-sid")),
+        (_dispatch.execute_decision, (object(),)),
+        (_integration.execute_decision, (object(),)),
+        (_integration.execute_explicit_target, (object(),)),
+    ):
+        with pytest.raises(AssertionError, match="fail-closed test guard"):
+            fn(*args)
+    assert _no_real_execution == {"kernel": 1, "dispatch": 3}
+
+
 def _event_types(text):
     out = []
     for line in text.splitlines():
@@ -391,8 +451,11 @@ def test_submit_stream_pipeline_arm_uses_owned_skeleton():
             selection=AgentSelection(kind="pipeline"),
         )
     )
-    assert [kind for kind, _ in events] == ["status", "done"]
-    assert events[1][1]["response"] == "pipeline-reply"
+    assert [kind for kind, _ in events] == [
+        "connecting", "status", "done"
+    ]
+    assert events[1][1] == "pipeline-working"
+    assert events[2][1]["response"] == "pipeline-reply"
     assert log == [
         "begin", "persist_user", "executor", "saver", "notify", "park",
         "release", "release",
@@ -423,6 +486,165 @@ def test_stale_finalize_never_releases_newer_turn():
     chat_delivery.end("p5f-dstale")
     assert chat_delivery.try_begin("p5f-dstale") is True
     chat_delivery.end("p5f-dstale")
+
+
+def _live_status():
+    from api import chat_live_status as live
+
+    return live
+
+
+def test_stale_completion_keeps_newer_lingering_status():
+    """Stale old worker never clears a newer turn's live-status entry.
+
+    Newer turn began AND finished (slot free) but its inactive entry
+    lingers. Pre-fix the adapter inferred freshness from the free slot
+    and cleared it; the owned entry must carry the real token staleness.
+    """
+    from api import web_chat_api as wca
+
+    live = _live_status()
+    sid = "p5f-stale-keep"
+    try:
+        chat_delivery.end(sid)
+    except Exception:
+        pass
+
+    def fake_run(status_queue=None):
+        # Newer turn runs to completion while the old worker is in flight.
+        chat_delivery.end(sid)
+        assert chat_delivery.try_begin(sid) is True
+        live.set_live_status(sid, "newer done", active=False)
+        chat_delivery.end(sid)
+        return {"success": True, "response": "old late reply", "type": "plain"}
+
+    saved = []
+    chunks = list(
+        wca._generate_chat_stream(fake_run, sid, on_result=saved.append)
+    )
+    assert _event_types("\n".join(chunks))[-1] == "done"
+    assert saved == []  # stale result discarded
+    assert chat_delivery.try_begin(sid) is True  # slot free
+    chat_delivery.end(sid)
+    # The lingering newer entry must survive the stale completion.
+    assert live.get_live_status(sid).get("status") == "newer done"
+    live.clear_live_status(sid)
+
+
+def test_current_completion_clears_own_status():
+    """Unchanged: a current turn's done still clears its own status."""
+    from api import web_chat_api as wca
+
+    live = _live_status()
+    sid = "p5f-current-clear"
+    try:
+        chat_delivery.end(sid)
+    except Exception:
+        pass
+    live.set_live_status(sid, "working", active=True)
+
+    saved = []
+    chunks = list(
+        wca._generate_chat_stream(
+            lambda status_queue=None: {
+                "success": True, "response": "fresh", "type": "plain",
+            },
+            sid,
+            on_result=saved.append,
+        )
+    )
+    assert _event_types("\n".join(chunks))[-1] == "done"
+    assert saved and saved[0]["response"] == "fresh"
+    assert live.get_live_status(sid).get("active") is False
+    assert chat_delivery.try_begin(sid) is True
+    chat_delivery.end(sid)
+    live.clear_live_status(sid)
+
+
+def test_cancelled_completion_clears_status():
+    """Unchanged: Stop then done clears (stale but cancelled)."""
+    from api import web_chat_api as wca
+
+    live = _live_status()
+    sid = "p5f-cancel-clear"
+    try:
+        chat_delivery.end(sid)
+    except Exception:
+        pass
+    live.set_live_status(sid, "working", active=True)
+
+    def fake_run(status_queue=None):
+        chat_delivery.cancel_current_turn(sid)  # user hits Stop
+        return {"success": True, "response": "too late", "type": "plain"}
+
+    saved = []
+    chunks = list(
+        wca._generate_chat_stream(fake_run, sid, on_result=saved.append)
+    )
+    assert _event_types("\n".join(chunks))[-1] == "done"
+    assert saved == []
+    assert live.get_live_status(sid).get("active") is False
+    assert chat_delivery.try_begin(sid) is True
+    chat_delivery.end(sid)
+    live.clear_live_status(sid)
+
+
+def test_entry_reports_completion_staleness():
+    """The owned entry reports token staleness for the done-clear."""
+    from api.chat_coordinator import (
+        AgentSelection,
+        PreparedAgentTurn,
+        submit_agent_stream_turn,
+    )
+
+    log = []
+
+    def run_pipeline(status_queue=None):
+        log.append("executor")
+        chat_delivery.end("p5f-dstale-flag")
+        assert chat_delivery.try_begin("p5f-dstale-flag") is True
+        # Published after the rebegin: the drain must filter it as stale.
+        status_queue.put(("status", "stale-progress"))
+        return {"success": True, "response": "late", "type": "plain"}
+
+    def _saver(body):
+        log.append("saver")
+
+    from api.chat_coordinator import StreamTurnIO
+
+    io = StreamTurnIO(
+        run_harness=lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("harness must not run")),
+        run_router=lambda **k: (_ for _ in ()).throw(
+            AssertionError("router must not run")),
+        persist_user=lambda: log.append("persist_user"),
+        make_saver=lambda: _saver,
+        notify_mobile=lambda body: log.append("notify"),
+        format_shortcut=lambda kind, sel: {"shortcut": kind},
+        run_pipeline=run_pipeline,
+    )
+    completion = {}
+    events = list(
+        submit_agent_stream_turn(
+            PreparedAgentTurn(
+                message="plain stale flag", session_id="p5f-dstale-flag"),
+            io=io,
+            delivery=_EntryDelivery(log),
+            is_router_family=lambda m: False,
+            selection=AgentSelection(kind="pipeline"),
+            completion=completion,  # pre-fix: TypeError (no such param)
+        )
+    )
+    # Stale progress filtered, done still terminates the consumer.
+    assert [kind for kind, _ in events] == ["connecting", "done"]
+    assert completion == {"stale": True, "cancelled": False}
+    assert "saver" not in log and "park" not in log
+    # The newer turn legitimately holds the slot: a stale worker must
+    # never release it. Releasing here is test cleanup, not the entry.
+    assert chat_delivery.try_begin("p5f-dstale-flag") is False
+    chat_delivery.end("p5f-dstale-flag")
+    assert chat_delivery.try_begin("p5f-dstale-flag") is True
+    chat_delivery.end("p5f-dstale-flag")
 
 
 def test_stream_persist_failure_releases_and_reports():

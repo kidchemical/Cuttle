@@ -293,6 +293,7 @@ def submit_agent_stream_turn(
     delivery: Any,
     is_router_family: Callable[[str], bool] = lambda message: False,
     selection: Optional[AgentSelection] = None,
+    completion: Optional[Dict[str, Any]] = None,
 ):
     """Execute the harness / router arms through the shared stream lifecycle.
 
@@ -307,6 +308,10 @@ def submit_agent_stream_turn(
     finalize, and release live in the owned skeleton. Release is
     token-guarded (finalize end + pump-finally end; a stale worker never
     frees a newer turn) — logically one release, two guarded end calls.
+
+    ``completion`` forwards the workflow's turn-identity out-dict
+    (stale/cancelled at done time) for transports that clear per-turn
+    state on completion.
 
     Always claims: every stream ingress is claimed (the unclaimed compat
     entry is sync-only by transport).
@@ -376,4 +381,5 @@ def submit_agent_stream_turn(
         notify_mobile=io.notify_mobile,
         project_path=prepared.project_path or "",
         rewrite_result=_rewrite,
+        completion=completion,
     )

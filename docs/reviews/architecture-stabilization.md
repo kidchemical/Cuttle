@@ -6685,3 +6685,132 @@ unset; no prompts.
 - Deferred unchanged: dependency/preflight tooling,
   `[ERR-20261001-001]` canceled-row defect (pinned, not fixed).
 - **STOP for Codex final review; do not self-approve the initiative.**
+
+---
+
+## P5-G — stale-clear restoration + fail-closed fixtures (appended after line 6687; prior sections preserved)
+
+### Residual 1: token staleness restored on the done-clear
+
+The P5-F report called the busy-boolean freshness inference "benign
+because no test observes state". Not acceptable: extraction drift is
+drift. Two real defects stood behind it, both now corrected with
+failing-first tests:
+
+(a) The owned entry's done-clear signal used "someone else generating"
+instead of the immutable turn token: a newer turn that began AND
+finished (slot free, entry lingering) got its status cleared by the
+stale completion. `test_stale_completion_keeps_newer_lingering_status`
+reproduced it pre-fix (lingering entry wiped) and passes post-fix.
+
+(b) Worse, the worker now starts before Connecting is published: a
+stale turn's Connecting repainted over the newer entry, and the
+skip-clear then preserved the clobber. The old pump ordered claim →
+persist → Connecting → worker (synchronously, so newer turns always
+came after). Restored via a `("connecting", None)` liveness marker the
+skeleton yields after persist but before thread start; framing ignores
+it, transports publish from it. Same correction applied to the harness
+twin (identical latent drift, bytes unchanged, P5-E oracles green).
+
+Owner-carried identity (no transport inference, no callback bag): the
+drain sets `completion["stale"]` / `completion["cancelled"]` from its
+own token at done time (exact point-in-time the old pump read them —
+stale unguarded, cancelled guarded, matching the original); the
+optional out-dict threads `run_agent_stream_turn` →
+`submit_agent_stream_turn(completion=)` → both pipeline adapters. The
+clear reads ONLY these flags. Pins: current completion still clears
+its own status; cancelled completion still clears (stale + cancelled);
+stale progress still filtered; late result still discarded with the
+slot held by the newer turn (entry test asserts `try_begin is False`
+post-completion — a stale worker never releases the newer turn).
+Logical token-idempotent double-end wording preserved; no end-call
+added/removed; all oracle event/row/persistence/cancel divergences
+(incl. ERR-20261001-001) unchanged.
+
+### Residual 2: fail-closed fixtures + history/spend disclosure
+
+- Lowest-boundary guards, autouse in all four files
+  (`test_p5e_stream_oracles`, `test_p5f_pipeline_oracles`,
+  `test_chat_coordinator_acceptance`,
+  `test_architecture_boundaries`): `kernel.run_agent_web_command`
+  (every harness CLI however reached) plus `dispatch.execute_decision`
+  and integration's from-imported `execute_decision` /
+  `execute_explicit_target` (LLM/provider paths) raise locally with
+  per-file counters before subprocess/network. One proof test per
+  file drives all four real entry points unfaked and asserts the
+  block + `{"kernel": 1, "dispatch": 3}`. Discrimination: without
+  the guard the proof test fails (kernel path attempts a real spawn —
+  that class is proven by the disclosed EROFS incident; dispatch paths
+  die on real-code TypeErrors instead of the asserted local
+  AssertionError); with it, local AssertionError on all four, no
+  Popen, no socket.
+- P5-E oracles upgraded from de-facto anonymous to REAL tmp-DB auth
+  (the route's own `get_auth_db` binding is now patched — module-attr
+  patches alone never reach the from-import; slash lanes tolerate the
+  resulting anonymous user, which made persist pins vacuous). All 8
+  HTTP oracles mint numeric sessions and assert user/assistant rows in
+  the temporary DB: executor-fired positive assertions kept, plus
+  busy/empty-prompt zero-row pins and the error-reply-saved pin.
+  Coordinator acceptance already met this bar (FakeDB rows, fake-fired,
+  star neutralized); architecture spies kept (non-vacuous: entry-call +
+  fake-body assertions) with guards added.
+- Starred-default: pipeline plain-message oracles send
+  `sticky_agent: "none"` (documented bypass); P5-E slash messages are
+  star-immune by shape.
+- Spend disclosure (correcting "no prompts attempted"): during P5-F
+  oracle development ONE un-faked plain message took the starred
+  `/cursor` default and attempted a real Cursor CLI spawn, which died
+  on sandbox EROFS before execution — no prompt sent, no network, no
+  known spend, but an attempt happened. Stated plainly: no known spend
+  is not proof of none; the new guards make a repeat impossible to
+  pass silently (local raise + counter). No paid/token tests run in
+  this turn; spend flags unset throughout.
+
+### Production delta this turn
+
+- `chat_turn_workflow.run_agent_stream_turn`: `completion` out-dict +
+  `("connecting", None)` marker before thread start (framing-neutral).
+- `chat_coordinator.submit_agent_stream_turn`: `completion` forward.
+- `web_chat_api`: `_pipeline_progress_chunks` takes `completion` and
+  clears ONLY from its flags; lane + `_generate_chat_stream` adapters
+  create/pass it. No behavior touched elsewhere.
+- Tests only otherwise: 4 stale-clear tests, 4 guard-proof tests, P5-E
+  auth/row upgrades, 4 direct-test vocabulary updates for the marker.
+
+### Gates
+
+- Focused lifecycle set (oracles/pump consumers/coordinator/seam/
+  persist/pending/busy/steer/stop/followup/resume/starred/router/
+  session/mobile/restart, 22 files): **321 passed, 9 skipped, 0
+  failed**.
+- Canonical final broad comparator (root cwd, preexisting node shim,
+  `.venv/bin/python -m pytest -q -p no:warnings src/tests/
+  --ignore=src/tests/unit -rf`, spend unset): HEAD `812dc18e`
+  (stashed `-u`): **28 failed / 2040 passed / 79 skipped**; current:
+  **28 failed / 2048 passed / 79 skipped**, FAILED byte-identical
+  (diff clean). Delta **+8 = 4 stale-clear + 4 guard-proof tests**,
+  all green. No repeated indiscriminate broads beyond this justified
+  comparator (change surface: coordinator/workflow/route + fixtures).
+- Limits: unit dir excluded per standing instruction (unchanged scope
+  both sides); manual/browser N/A (backend-only); the 28 failures are
+  the long-standing baseline set (JS/env/CWD-sensitive), identical IDs
+  on both trees.
+
+### Files, commit, status
+
+- Prod: `src/api/chat_turn_workflow.py`, `src/api/chat_coordinator.py`,
+  `src/api/web_chat_api.py`.
+- Tests: `src/tests/test_p5f_pipeline_oracles.py` (+4 stale),
+  `src/tests/test_p5e_stream_oracles.py` (auth/rows + marker vocab),
+  `src/tests/test_architecture_boundaries.py` (+guard),
+  `src/tests/test_chat_coordinator_acceptance.py` (+guard).
+- Docs: this log only (runtime map unchanged in structure).
+- Commit: independently committed on main (hash below); `git status`
+  clean except pre-existing untracked `work/` (not mine — untouched).
+  No push, no restart.
+- Remaining risks: live-status TTL interplay untested (service-level,
+  out of scope); `("connecting", None)` is new owned vocabulary any
+  future consumer must tolerate (framing ignores it today).
+- Deferred unchanged: dependency/preflight tooling,
+  `[ERR-20261001-001]` (pinned, not fixed).
+- **STOP for Codex final review; do not self-approve the initiative.**

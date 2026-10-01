@@ -269,6 +269,7 @@ def run_agent_stream_turn(
     notify_mobile: Optional[Callable[[Dict[str, Any]], None]],
     project_path: str = "",
     rewrite_result: bool = True,
+    completion: Optional[Dict[str, Any]] = None,
 ) -> Any:
     """Stream lifecycle skeleton (order is the contract).
 
@@ -296,6 +297,14 @@ def run_agent_stream_turn(
     rewrite (its own saver rewrites before persisting, the wire rewrite
     is a belt-and-suspenders re-application) — exactly the old pipeline
     stream order. The harness/router arms rewrite in the worker.
+
+    ``completion`` is an optional out-dict carrying the turn identity the
+    transport needs for the done-clear: when the terminal event is
+    yielded, ``completion["stale"]`` / ``completion["cancelled"]`` are
+    set from this turn's own token (same point-in-time the old pump read
+    them). Transport must never infer freshness from the busy boolean —
+    a free slot does not mean this turn is current. Harness/router lanes
+    pass nothing (they do no done-clear).
     """
     import queue as _queue_mod
     import threading as _threads
@@ -358,14 +367,31 @@ def run_agent_stream_turn(
         )
         events.put(("done", display if isinstance(display, dict) else result))
 
-    _thread = _threads.Thread(target=_worker, daemon=True)
-    _thread.start()
     try:
+        # Liveness marker BEFORE the worker starts: the transport
+        # publishes Connecting/progress only after claim + persist, and a
+        # stale turn must never repaint a newer turn's status. The old
+        # pump ordered claim → persist → Connecting → worker; the marker
+        # restores that order (framing ignores it). Abandoning the
+        # generator here still releases via the finally below.
+        yield ("connecting", None)
+        _thread = _threads.Thread(target=_worker, daemon=True)
+        _thread.start()
         while True:
             kind, payload = events.get()
             if kind != "done" and is_turn_superseded(delivery, session_id, token):
                 continue
             if kind == "done":
+                if completion is not None:
+                    completion["stale"] = bool(
+                        delivery.is_stale_turn(session_id, token)
+                    )
+                    try:
+                        completion["cancelled"] = bool(
+                            delivery.is_turn_cancelled(session_id)
+                        )
+                    except Exception:
+                        completion["cancelled"] = False
                 yield ("done", payload)
                 break
             yield (kind, payload)
