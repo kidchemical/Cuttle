@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from flask import Blueprint, jsonify, request
 
-from api.dashboards import catalog, service, usage
+import api.dashboards.catalog as catalog
+import api.dashboards.service as service
+import api.dashboards.usage as usage
 from api.http_authz import owner_required
 
 dashboards_bp = Blueprint("dashboards", __name__, url_prefix="/api/dashboards")

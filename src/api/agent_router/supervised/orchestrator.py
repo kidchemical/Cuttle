@@ -6,7 +6,7 @@ import threading
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 
-from api.agent_router.supervised import events as slog
+import api.agent_router.supervised.events as slog
 from api.agent_router.supervised.adapters import (
     CodexCoordinatorAdapter,
     CursorWorkerAdapter,

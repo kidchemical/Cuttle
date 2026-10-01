@@ -16,7 +16,7 @@ import math
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from api.agent_router import logging_events as log
+import api.agent_router.logging_events as log
 from api.agent_router.outcomes import outcomes_since
 
 SETTINGS_KEY = "agent_router"

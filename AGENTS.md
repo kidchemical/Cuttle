@@ -103,7 +103,7 @@ funnel + SSE pump proven at runtime; manifest schema).
 | New settings route | `src/api/settings_routes.py` + `managers/settings_manager.py` (never `web_chat_api.py`) | HTTP route + `get_settings_manager()` | settings suites |
 | New Spaces feature | `src/web/js/spaces/*.js` (`CuttleSpaces.*`, pure logic, injected storage); shell owns singleton/DOM | `CuttleSpaces.*` namespace | spaces suites |
 | New slash command | client registry `src/web/js/chat_slash.js` (`CuttleChatSlash.SLASH_COMMANDS`); project commands `src/api/project_commands.py`; sticky `src/api/starred_slash.py` | registry entry, not a new trigger | slash suites |
-| Chat execution | `api.chat_coordinator.submit_agent_turn` — the only funnel; lanes pass `run_harness`, `/api/sessions/send` goes unclaimed | `AgentTurnIO` + `PreparedAgentTurn` | coordinator + seam suites |
+| Chat execution | one shared executor; sync turns via `api.chat_coordinator.submit_agent_turn` (`run_harness`, `/api/sessions/send` unclaimed), stream turns via `_generate_chat_stream` with the same run fn over the same delivery primitives | `AgentTurnIO` + `PreparedAgentTurn` | coordinator + seam + boundary suites |
 | Vendor CLI behavior | `src/api/agent_harness/agents/<id>/` via catalog; kernel coordinates, never installs (BYO-CLI guidance only) | `build_adapter()` / `Adapter` | harness suites |
 | Project drop-in adapter | catalog contract: opt-in, validate-before-import, relative-only on-demand namespaced load | `manifest.yaml` + `adapter.py` | `test_harness_project_adapters.py` |
 | External service op | `src/api/discord_ops/` pattern (`discord.post`); never branches in project actions, never a chat surface | `python -m api.discord_cli` | discord suites |

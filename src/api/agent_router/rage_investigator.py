@@ -21,7 +21,7 @@ import re
 import threading
 from typing import Any, Dict, List, Optional
 
-from api.agent_router import logging_events as log
+import api.agent_router.logging_events as log
 from api.agent_router.frustration import load_rage_config
 from api.agent_router.outcomes import list_outcomes, set_feedback
 from api.agent_harness.kernel import run_agent_web_command

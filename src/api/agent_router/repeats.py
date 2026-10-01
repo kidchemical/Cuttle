@@ -21,7 +21,7 @@ import threading
 import time
 from typing import Any, Dict, Optional, Tuple
 
-from api.agent_router import logging_events as log
+import api.agent_router.logging_events as log
 from api.agent_router.frustration import detect_frustration
 from api.agent_router.outcomes import list_outcomes, set_feedback
 from api.agent_router.types import RouterConfig, RoutingDecision

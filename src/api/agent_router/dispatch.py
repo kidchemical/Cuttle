@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from typing import Any, Callable, Dict, List, Optional
 
-from api.agent_router import logging_events as log
+import api.agent_router.logging_events as log
 from api.agent_router.config import load_router_config
 from api.agent_router.outcomes import record_attempt
 from api.agent_router.policy import (

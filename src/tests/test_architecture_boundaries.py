@@ -4,13 +4,20 @@ These tests reject demonstrated forbidden wiring, not style:
 
 1. No production module may import the Flask monolith ``web_chat_api``
    (owned layers must never depend upward). Exactly one justification
-   exists: the doctor importability probe.
-2. The ``src/api`` internal import graph is acyclic (module-level edges).
+   exists: the doctor importability probe. The scanner fails loudly on
+   production syntax errors and covers aliased dynamic imports.
+2. The ``src/api`` internal import graph is acyclic at module level.
+   Function-level and ``TYPE_CHECKING`` imports are deferred by design
+   (documented, counted, allowed) — they break cycles intentionally.
 3. The non-lane compat entry submits through ``chat_coordinator`` —
    proven at runtime with a fake submit, not source strings.
-4. The SSE pump actually invokes the injected run and publishes its
-   result — proven by draining a real pump with a fake runner.
-5. Every bundled manifest satisfies the identity schema and carries no
+4. The SSE pump actually invokes the injected run and releases the busy
+   slot — proven by draining a real pump; the release assertion runs
+   before any test cleanup, and a neutering run proves it is load-bearing.
+5. The real HTTP route ``POST /api/chat`` streams through the shared
+   coordinator entry to the injected executor — a bypass of submit would
+   fail the spy assertion.
+6. Every bundled manifest satisfies the identity schema and carries no
    executable-install flags (BYO-CLI retirement enforcement).
 """
 
@@ -39,7 +46,10 @@ def _web_chat_api_refs(tree: ast.AST):
     """Yield (lineno, kind) for real imports of web_chat_api.
 
     AST-based: comments and unrelated string literals (process regexes,
-    log lines) never match. Covers static and dynamic import forms.
+    log lines) never match. Covers static forms plus dynamic imports
+    through any alias: ``importlib.import_module``,
+    ``il.import_module``, ``from importlib import import_module``,
+    ``__import__``.
     """
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -56,13 +66,19 @@ def _web_chat_api_refs(tree: ast.AST):
                 yield node.lineno, "from-api-import"
         elif isinstance(node, ast.Call):
             func = node.func
-            is_dynamic = (
-                isinstance(func, ast.Attribute)
-                and func.attr in ("import_module", "__import__")
-            ) or (
-                isinstance(func, ast.Name) and func.id == "__import__"
-            )
-            if not is_dynamic:
+            if isinstance(func, ast.Attribute) and func.attr in (
+                "import_module",
+                "__import__",
+            ):
+                dynamic = True
+            elif isinstance(func, ast.Name) and func.id in (
+                "import_module",
+                "__import__",
+            ):
+                dynamic = True
+            else:
+                dynamic = False
+            if not dynamic:
                 continue
             for arg in node.args:
                 if (
@@ -71,6 +87,17 @@ def _web_chat_api_refs(tree: ast.AST):
                     and "web_chat_api" in arg.value
                 ):
                     yield node.lineno, "dynamic-import"
+
+
+def _parse_production(path: Path) -> ast.AST:
+    """Parse or raise: a production file that does not parse is a finding,
+    never a silent skip."""
+    try:
+        return ast.parse(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        pytest.fail(f"cannot read production file {path}: {exc}")
+    except SyntaxError as exc:
+        pytest.fail(f"production syntax error in {path}: {exc}")
 
 
 def _production_files():
@@ -89,11 +116,7 @@ def test_no_reverse_imports_into_web_chat_api():
     for path in _production_files():
         if path.name == "web_chat_api.py":
             continue  # the monolith itself
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        except (OSError, SyntaxError):
-            continue
-        refs = list(_web_chat_api_refs(tree))
+        refs = list(_web_chat_api_refs(_parse_production(path)))
         if refs:
             offenders[str(path.relative_to(REPO_ROOT))] = refs
     unexpected = {
@@ -109,62 +132,143 @@ def test_no_reverse_imports_into_web_chat_api():
     # The allowlist itself must stay accurate: every entry must still exist
     # and still reference the monolith (no stale blanket permission).
     for rel in REVERSE_IMPORT_ALLOWLIST:
-        tree = ast.parse((REPO_ROOT / rel).read_text(encoding="utf-8"))
+        tree = _parse_production(REPO_ROOT / rel)
         assert list(_web_chat_api_refs(tree)), f"stale allowlist entry: {rel}"
 
 
-def _internal_edges():
-    """Module-level api.* -> api.* edges (relative + absolute)."""
-    mods = {}
-    for path in sorted(API_ROOT.rglob("*.py")):
-        if "__pycache__" in path.parts:
-            continue
-        rel = path.relative_to(API_ROOT).with_suffix("")
-        parts = list(rel.parts)
-        name = "api." + ".".join(parts[:-1] if parts[-1] == "__init__" else parts)
-        try:
-            mods[name] = ast.parse(path.read_text(encoding="utf-8"))
-        except (OSError, SyntaxError):
-            continue
+def test_reverse_import_scanner_discrimination(tmp_path):
+    """The scanner catches every import form and ignores non-imports."""
+    guilty = (
+        "import api.web_chat_api\n"
+        "from api import web_chat_api\n"
+        "from api.web_chat_api import app\n"
+        "import importlib as il\n"
+        "x = il.import_module('api.web_chat_api')\n"
+        "from importlib import import_module\n"
+        "y = import_module('api.web_chat_api')\n"
+        "z = __import__('api.web_chat_api')\n"
+    )
+    tree = ast.parse(guilty)
+    kinds = sorted(kind for _, kind in _web_chat_api_refs(tree))
+    assert kinds == [
+        "dynamic-import",
+        "dynamic-import",
+        "dynamic-import",
+        "from-api-import",
+        "from-import",
+        "import",
+    ]
+    innocent = (
+        "# import api.web_chat_api in a comment\n"
+        'PATTERN = r"(?:web_chat_api|cuttle_daemon)"\n'
+        'print("web_chat_api starting")\n'
+        "import api.chat_coordinator\n"
+    )
+    assert list(_web_chat_api_refs(ast.parse(innocent))) == []
 
-    def resolve(mod, node):
+
+# --------------------------------------------------------------------------
+# Import graph: module-level edges must be acyclic; deferred edges are
+# allowed by design (they execute lazily and intentionally break cycles).
+# --------------------------------------------------------------------------
+
+
+def _scan_root(api_root: Path):
+    """Return (modules, module_edges, deferred_edges) for one api/ root.
+
+    Module-level = executes at import (top level, class bodies,
+    decorators, base classes). Deferred = inside any function/lambda or
+    under ``if TYPE_CHECKING:``. ``from api import foo`` adds an
+    ``api.foo`` edge; ``from . import sib`` resolves through the real
+    package context (``__init__.py`` modules are their own package).
+    """
+
+    def modname(path: Path):
+        rel = path.relative_to(api_root).with_suffix("")
+        parts = list(rel.parts)
+        is_init = parts[-1] == "__init__"
+        if is_init:
+            parts = parts[:-1]
+        return "api." + ".".join(parts), is_init
+
+    def resolve(mod, is_init, level, module):
         parts = mod.split(".")
-        if node.level > len(parts):
+        pkg = parts if is_init else parts[:-1]
+        rise = level - 1
+        if rise > len(pkg) - 1:
             return None
-        base = parts[: len(parts) - node.level + 1]
-        if node.module:
-            return ".".join(base + [node.module])
+        base = pkg[: len(pkg) - rise]
+        if module:
+            return ".".join(base + [module])
         return ".".join(base)
 
-    edges = {}
-    for mod, tree in mods.items():
-        out = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and node.level:
-                target = resolve(mod, node)
-                if target and target in mods:
-                    out.add(target)
-            elif isinstance(node, ast.ImportFrom) and node.module in (
-                "api",
-                "api.web_chat_api",
-            ):
-                out.add(node.module)
+    mods = {}
+    for path in sorted(api_root.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        name, is_init = modname(path)
+        mods[name] = (is_init, ast.parse(path.read_text(encoding="utf-8")))
+
+    known = set(mods)
+    medges, fedges = {}, {}
+    for mod, (is_init, tree) in mods.items():
+        me, fe = set(), set()
+        stack = [(tree, False, False)]  # node, in_function, in_typechecking
+        while stack:
+            node, inf, itc = stack.pop()
+            for child in ast.iter_child_nodes(node):
+                ninf = inf or isinstance(
+                    child,
+                    (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda),
+                )
+                nitc = itc
+                if isinstance(child, ast.If):
+                    test = child.test
+                    if isinstance(test, ast.Name) and test.id == "TYPE_CHECKING":
+                        nitc = True
+                stack.append((child, ninf, nitc))
+            target = None
+            extra = []
+            if isinstance(node, ast.ImportFrom):
+                if node.level:
+                    if node.module:
+                        target = resolve(mod, is_init, node.level, node.module)
+                    else:
+                        # `from . import sib`: submodule(s) of the package.
+                        base = resolve(mod, is_init, node.level, None)
+                        if base:
+                            extra = [
+                                base + "." + a.name
+                                for a in node.names
+                                if a.name != "*"
+                            ]
+                elif node.module == "api":
+                    extra = [
+                        "api." + a.name
+                        for a in node.names
+                        if a.name != "*"
+                    ]
+                elif node.module and node.module.startswith("api."):
+                    target = node.module
             elif isinstance(node, ast.Import):
                 for alias in node.names:
-                    if alias.name in mods:
-                        out.add(alias.name)
-        edges[mod] = out
-    return edges
+                    if alias.name.startswith("api."):
+                        (fe if (inf or itc) else me).add(alias.name)
+            for edge in ([target] if target else []) + extra:
+                (fe if (inf or itc) else me).add(edge)
+        me.discard(mod)
+        fe.discard(mod)
+        medges[mod] = {e for e in me if e in known}
+        fedges[mod] = {e for e in fe if e in known}
+    return mods, medges, fedges
 
 
-def test_api_import_graph_acyclic():
-    edges = _internal_edges()
-    assert len(edges) > 100  # the scan must actually cover the package
+def _find_cycles(medges):
     visiting, done, cycles = set(), set(), []
 
     def visit(mod, stack):
         visiting.add(mod)
-        for dep in edges.get(mod, ()):
+        for dep in sorted(medges.get(mod, ())):
             if dep in visiting:
                 cycles.append(" -> ".join(stack + [dep]))
             elif dep not in done:
@@ -172,9 +276,91 @@ def test_api_import_graph_acyclic():
         visiting.discard(mod)
         done.add(mod)
 
-    for mod in edges:
+    for mod in sorted(medges):
         if mod not in done:
             visit(mod, [mod])
+    return cycles
+
+
+def _write_fixture_pkg(root: Path, files: dict):
+    pkg = root / "api"
+    for rel, src in files.items():
+        path = pkg / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(src, encoding="utf-8")
+
+
+def test_graph_detects_two_node_absolute_cycle(tmp_path):
+    _write_fixture_pkg(
+        tmp_path,
+        {"a.py": "from api.b import X\n", "b.py": "from api.a import Y\n"},
+    )
+    _, medges, _ = _scan_root(tmp_path / "api")
+    cycles = _find_cycles(medges)
+    assert len(cycles) == 1 and "api.a" in cycles[0] and "api.b" in cycles[0]
+
+
+def test_graph_detects_relative_init_cycle(tmp_path):
+    _write_fixture_pkg(
+        tmp_path,
+        {
+            "pkg/__init__.py": "from api.pkg.engine import run\n",
+            "pkg/engine.py": "from api.pkg import helpers as h\n",
+            "pkg/helpers.py": "VALUE = 1\n",
+        },
+    )
+    _, medges, _ = _scan_root(tmp_path / "api")
+    cycles = _find_cycles(medges)
+    assert any(
+        "api.pkg" in c and "api.pkg.engine" in c for c in cycles
+    ), cycles
+
+
+def test_graph_accepts_diamond_with_all_forms(tmp_path):
+    _write_fixture_pkg(
+        tmp_path,
+        {
+            "__init__.py": "",
+            "leaf.py": "VALUE = 1\n",
+            "mid.py": "from api.leaf import VALUE\n",
+            "top.py": "from api import leaf\nfrom . import mid\n",
+            "pkg/__init__.py": "from api.pkg.core import run\n",
+            "pkg/core.py": "import api.leaf as leaf\n",
+        },
+    )
+    mods, medges, _ = _scan_root(tmp_path / "api")
+    assert _find_cycles(medges) == []
+    # The resolver must actually see the edges it claims to cover.
+    assert medges["api.top"] == {"api.leaf", "api.mid"}
+    assert medges["api.pkg.core"] == {"api.leaf"}
+    assert medges["api.pkg"] == {"api.pkg.core"}
+
+
+def test_function_and_typechecking_imports_are_deferred(tmp_path):
+    _write_fixture_pkg(
+        tmp_path,
+        {
+            "a.py": "from api.b import X\n",
+            "b.py": (
+                "from typing import TYPE_CHECKING\n"
+                "if TYPE_CHECKING:\n"
+                "    from api.a import Y\n"
+                "def f():\n"
+                "    from api.a import Z\n"
+            ),
+        },
+    )
+    _, medges, fedges = _scan_root(tmp_path / "api")
+    assert _find_cycles(medges) == []
+    assert medges["api.b"] == set()
+    assert fedges["api.b"] == {"api.a"}
+
+
+def test_api_import_graph_acyclic():
+    mods, medges, fedges = _scan_root(API_ROOT)
+    assert len(mods) > 100  # the scan must actually cover the package
+    assert sum(len(v) for v in medges.values()) > 100  # and see real edges
+    cycles = _find_cycles(medges)
     assert not cycles, f"module-level import cycles in src/api: {cycles}"
 
 
@@ -185,7 +371,7 @@ def test_compat_entry_submits_through_coordinator(monkeypatch):
 
     seen = {}
 
-    def fake_submit(turn, *, io, delivery, claim):
+    def fake_submit(turn, *, io, delivery, claim, **kwargs):
         seen["turn"] = turn
         seen["claim"] = claim
         seen["io"] = io
@@ -206,8 +392,22 @@ def test_compat_entry_submits_through_coordinator(monkeypatch):
     assert callable(seen["io"].run_harness)
 
 
-def test_sse_pump_invokes_injected_run_and_releases(monkeypatch):
-    """Drain a real _generate_chat_stream: status + response + release."""
+def _drain_with_deadline(gen, seconds=20):
+    items = []
+    deadline = time.time() + seconds
+    for chunk in gen:
+        items.append(chunk)
+        if time.time() > deadline:
+            pytest.fail("SSE pump did not terminate")
+    return items
+
+
+def test_sse_pump_invokes_injected_run_and_releases():
+    """Drain a real _generate_chat_stream: status + response + release.
+
+    The release assertion runs BEFORE any test cleanup: nothing after it
+    can mask a pump that leaks the busy slot.
+    """
     import json
 
     from api import web_chat_api as wca
@@ -227,20 +427,9 @@ def test_sse_pump_invokes_injected_run_and_releases(monkeypatch):
         status_queue.put(("status", "Working"))
         return {"success": True, "response": "pump-ok-fake"}
 
-    events = []
-    deadline = time.time() + 20
-    try:
-        for chunk in wca._generate_chat_stream(
-            fake_run, sid, on_result=persisted.append
-        ):
-            events.append(chunk)
-            if time.time() > deadline:
-                pytest.fail("SSE pump did not terminate")
-    finally:
-        try:
-            chat_delivery.end(sid)
-        except Exception:
-            pass
+    events = _drain_with_deadline(
+        wca._generate_chat_stream(fake_run, sid, on_result=persisted.append)
+    )
 
     texts = [c for c in events if c.startswith("data: ")]
     bodies = [json.loads(c[len("data: "):]) for c in texts]
@@ -249,9 +438,148 @@ def test_sse_pump_invokes_injected_run_and_releases(monkeypatch):
     responses = [b for b in bodies if b.get("type") == "response"]
     assert responses and responses[-1].get("response") == "pump-ok-fake"
     assert persisted and persisted[0].get("response") == "pump-ok-fake"
-    # The pump released the busy slot: re-acquirable, no stuck spinner.
+    # Release BEFORE cleanup: a leaking pump fails here.
     assert chat_delivery.try_begin(sid) is True
+    # Cleanup only after every assertion has run.
     chat_delivery.end(sid)
+
+
+def test_sse_release_assertion_is_load_bearing(monkeypatch):
+    """Neutering delivery.end must flip the release check to busy.
+
+    If the release assertion passed regardless of the pump's own release,
+    this twin would pass too — it must instead observe the held slot.
+    """
+    from api import web_chat_api as wca
+    from api import chat_delivery
+
+    sid = "p7-sse-neutered"
+    try:
+        chat_delivery.end(sid)
+    except Exception:
+        pass
+    real_end = chat_delivery.end
+    monkeypatch.setattr(chat_delivery, "end", lambda *a, **k: None)
+
+    def fake_run(status_queue=None):
+        return {"success": True, "response": "neutered-fake"}
+
+    # Unique sid: even if the drain raised, a leaked slot expires via TTL
+    # and never collides with another test. No cleanup may run before the
+    # assertions below — that would be the vacuous pattern under test.
+    events = _drain_with_deadline(wca._generate_chat_stream(fake_run, sid))
+    assert any('"neutered-fake"' in c for c in events)  # pump still completed
+    # With end() neutered the slot stays held: proves the sibling test's
+    # try_begin assertion observes the pump's release, not test cleanup.
+    assert chat_delivery.try_begin(sid) is False
+    monkeypatch.undo()
+    real_end(sid)
+    assert chat_delivery.try_begin(sid) is True
+    real_end(sid)
+
+
+def test_http_chat_sync_lane_goes_through_coordinator(monkeypatch, tmp_path):
+    """Real POST /api/chat (sync lane) runs through submit_agent_turn.
+
+    The spy forwards to the REAL coordinator implementation while the
+    harness executor is faked: a route that bypassed submit would leave
+    the spy empty and fail, while a broken executor would empty the body.
+    """
+    from api import web_chat_api as wca
+    import api.chat_coordinator as coordinator
+
+    real_submit = coordinator.submit_agent_turn
+    calls = []
+
+    def spy_submit(turn, *, io, delivery, claim, **kwargs):
+        calls.append((type(turn).__name__, claim))
+        return real_submit(turn, io=io, delivery=delivery, claim=claim, **kwargs)
+
+    def fake_run(agent_id, prompt, chat_session_id, **kwargs):
+        return {
+            "success": True,
+            "response": "http-funnel-fake",
+            "type": "fake",
+            "agent_id": agent_id,
+        }
+
+    monkeypatch.setattr(coordinator, "submit_agent_turn", spy_submit)
+    monkeypatch.setattr(wca, "_run_pinned_harness_turn", fake_run)
+    from api.auth_db import AuthDatabase
+
+    db = AuthDatabase(tmp_path / "p7_auth.db")
+    owner = db.create_user("owner@local", "Owner", "local", password="x")
+    token = db.create_auth_session(owner)
+    monkeypatch.setattr("api.auth_api.get_auth_db", lambda: db)
+    monkeypatch.setattr("api.auth_db.get_auth_db", lambda: db)
+    client = wca.app.test_client()
+    client.set_cookie("session_token", token)
+    res = client.post(
+        "/api/chat",
+        json={
+            "message": "/cursor hello http",
+            "session_id": "p7-http-1",
+            "stream": False,
+        },
+    )
+    assert res.status_code == 200
+    body = res.get_json()
+    assert body["response"] == "http-funnel-fake"
+    assert calls, "sync lane bypassed chat_coordinator.submit_agent_turn"
+    assert calls[0][0] == "PreparedAgentTurn"
+
+
+def test_http_chat_stream_uses_shared_executor_without_submit(
+    monkeypatch, tmp_path
+):
+    """Documents the deliberate sync/stream lifecycle split (not a bypass).
+
+    The coordinator owns the SYNC skeleton (see its docstring:
+    ``run_agent_sync_turn``); the stream lane drives ``_generate_chat_stream``
+    directly with the SAME harness executor over the SAME owned delivery
+    primitives (busy/turn-guard/finalize/persist). Unifying the two
+    lifecycles would be a coordinator redesign (P5 scope), not enforcement:
+    this test pins the split so either side drifting — the stream lane
+    growing its own executor, or silently submitting — fails loudly and
+    forces an explicit architectural decision.
+    """
+    from api import web_chat_api as wca
+    import api.chat_coordinator as coordinator
+
+    real_submit = coordinator.submit_agent_turn
+    calls = []
+
+    def spy_submit(turn, *, io, delivery, claim, **kwargs):
+        calls.append(type(turn).__name__)
+        return real_submit(turn, io=io, delivery=delivery, claim=claim, **kwargs)
+
+    ran = []
+
+    def fake_run(agent_id, prompt, chat_session_id, **kwargs):
+        ran.append((agent_id, prompt))
+        return {"success": True, "response": "http-stream-fake", "type": "fake"}
+
+    monkeypatch.setattr(coordinator, "submit_agent_turn", spy_submit)
+    monkeypatch.setattr(wca, "_run_pinned_harness_turn", fake_run)
+    from api.auth_db import AuthDatabase
+
+    db = AuthDatabase(tmp_path / "p7b_auth.db")
+    owner = db.create_user("owner@local", "Owner", "local", password="x")
+    token = db.create_auth_session(owner)
+    monkeypatch.setattr("api.auth_api.get_auth_db", lambda: db)
+    monkeypatch.setattr("api.auth_db.get_auth_db", lambda: db)
+    client = wca.app.test_client()
+    client.set_cookie("session_token", token)
+    res = client.post(
+        "/api/chat",
+        json={"message": "/cursor hello stream", "session_id": "p7-http-2"},
+    )
+    assert res.status_code == 200
+    assert "http-stream-fake" in res.get_data(as_text=True)
+    # Same shared executor served the stream…
+    assert ran == [("cursor", "hello stream")]
+    # …without entering the sync skeleton: the split, pinned.
+    assert calls == []
 
 
 def test_bundled_manifest_schema_and_no_install_flags():

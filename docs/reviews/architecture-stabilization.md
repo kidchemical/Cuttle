@@ -6275,3 +6275,104 @@ migration, per the review's explicit alternative.
 - Files: `AGENTS.md` (ownership table),
   `src/tests/test_architecture_boundaries.py` (new, 5 tests), this log.
 - Commit independently. **Awaiting Codex final review; no push/restart.**
+
+## Phase 7 correction — HOLD items closed (per review; awaiting final review)
+
+All three false-negative/vacuous findings were real. Fixed with production
+delta where the audit demanded it; no initiative-complete claimed.
+
+### 1. Import graph rewritten, 6 real cycles found and fixed
+
+The shipped resolver under-covered edges (`from api.foo import …` ignored
+unless `foo` was `api`/`api.web_chat_api`; `from api import foo` added no
+`api.foo` edge; `from . import sib` dropped alias names; `__init__` package
+context wrong; function-level imports walked as module-level). The
+corrected scanner (`_scan_root`): accurate relative resolution with
+`__init__`-vs-file package context, `from api import name` →
+`api.name` edges, `from . import sib` → `package.sib` edges,
+module-level vs deferred (any function/lambda + `if TYPE_CHECKING:`)
+partition with documented treatment (deferred executes lazily and
+intentionally breaks cycles — allowed, counted).
+
+With the corrected resolver the real tree showed **6 module-level cycles**
+(272 module / 370 deferred edges over 247 modules), all package-`__init__`
+↔ leaf re-imports (`from api.agent_router import logging_events`,
+`from api.dashboards import catalog, …`, etc.). Narrow direction fix in
+12 files: leaves import sibling leaves directly
+(`import api.agent_router.logging_events as log` — identical runtime
+semantics: same objects, same order, no upward edge). Verified every
+rewritten name is a real submodule and namespace-style use is preserved;
+all 12 files import cleanly; router/dashboards/subagents neighbors show
+zero new failures (current 6 FAILED ⊆ baseline 7 — the extra baseline
+item is order-flaky and passes in suite on both trees).
+Re-probe: **0 module cycles** (280 module edges — more precise, not fewer).
+
+Fixture discrimination (synthetic `api/` roots): 2-node absolute cycle
+detected; relative + `__init__` 3-node cycle detected; diamond with
+`from api import` / `from api.foo import` / relative / `__init__`
+re-export accepted WITH edge assertions (resolver must see what it
+claims); function + `TYPE_CHECKING` back-imports deferred, module graph
+acyclic. Production discrimination: the new graph test run against the
+pre-fix imports FAILS naming all 6 cycles (stash-overlay run).
+
+### 2. SSE release made load-bearing; HTTP lanes tested for real
+
+- Pump test restructured: every assertion runs BEFORE any cleanup; the
+  prior `finally: end()` before the assert is gone (that ordering was the
+  reviewer's exact pattern — it had also infected my neutered twin, fixed
+  the same way with rationale recorded).
+- `test_sse_release_assertion_is_load_bearing`: with `delivery.end`
+  neutered, the drained pump completes (response present) but the slot
+  stays held (`try_begin` False); un-neutered release then succeeds.
+  Session keys verified non-vacuous (`chat_session_keys` returns real
+  keys for the test ids — checked, not assumed).
+- Real HTTP lane tests through `wca.app.test_client()` with tmp-DB auth:
+  sync lane (`stream:false`) — spy forwards to the REAL coordinator while
+  the executor is faked; 200 jsonify with the fake text AND the spy fired
+  with `PreparedAgentTurn` (a submit bypass fails the spy).
+- **Audit finding reported honestly:** the STREAM lane does NOT submit —
+  it returns the SSE `Response` directly and pumps with the same executor.
+  The coordinator owns the SYNC skeleton by documented design
+  (`run_agent_sync_turn`; P5-approved scope). Rerouting streams through
+  submit would be a coordinator redesign with real regression risk, not
+  enforcement — rejected with reasoning. Instead the split is pinned by
+  `test_http_chat_stream_uses_shared_executor_without_submit` (same
+  executor ran, spy provably empty), and the overclaimed P6-C/§A/AGENTS
+  funnel sentences are corrected to one-shared-executor/two-lifecycles.
+  Unification stays a flagged P5-scope option for Codex dispatch.
+
+### 3. Reverse-import scan hardened + count accounting corrected
+
+- Production syntax errors now FAIL (were silently skipped); dynamic
+  coverage extended to aliased forms (`il.import_module`,
+  `from importlib import import_module`, bare `__import__`); fixture
+  test proves all 6 guilty forms detected and comments/regex-strings/
+  log lines clean.
+- Count correction: the prior "5 tests pass on both trees" omitted the
+  overlay mechanics. Exact accounting — baseline is the 6971f472 tree via
+  same-dir stash (5-test enforcement file): **28 failed / 2006 passed /
+  79 skipped**. Current tree: **28 failed / 2014 passed / 79 skipped**,
+  FAILED byte-identical (`diff` clean). Delta = **+8 passed = exactly the
+  8 added enforcement tests**, all green. A `/tmp` worktree baseline was
+  attempted and DISCARDED (39 failures — CWD-sensitive suites like
+  agent_context_all_clis/runtime_paths key off repo location; wrong env,
+  reported not used). No repeated broads beyond these corrections.
+
+### Gates, files, status
+
+- Enforcement file 13/13 (was 5). Neighbor router/dashboards/subagents/
+  coordinator/harness set: no regressions (failures ⊆ baseline, all
+  pre-existing; dashboards/drift/router items fail identically on the
+  clean tree).
+- Production delta this turn: 12 import-direction rewrites (listed
+  above) — semantics-preserving by construction (same module objects and
+  order), import- and test-verified. Everything else is tests + docs.
+- Composition acceptance from the prior report stands, with the funnel
+  correction above replacing the overclaim; no invented changes.
+- Spend: flags unset, smoke excluded, no prompts/installs/network.
+  Manual/browser: N/A (no user-visible change).
+- Files: `src/tests/test_architecture_boundaries.py` (5→13 tests),
+  12 prod import-direction files, `AGENTS.md` (funnel row),
+  `docs/architecture/extension-boundaries.md` (§A split), this log.
+- Commit independently. **STOP for Codex final review; no push/restart.**
+  Deferred items unchanged.

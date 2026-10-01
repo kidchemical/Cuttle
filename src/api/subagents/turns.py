@@ -6,7 +6,7 @@ import threading
 from dataclasses import replace
 from typing import Any, Callable, Dict, Optional
 
-from api.subagents import store
+import api.subagents.store as store
 from api.subagents.types import (
     ChildRecord,
     ChildSpec,

@@ -9,7 +9,7 @@ from typing import Any, Callable, Dict, Optional
 
 import yaml
 
-from api.dashboards import deepswe
+import api.dashboards.deepswe as deepswe
 from api.dashboards.http_fetch import get_json, get_text
 
 SWE_BENCH_URL = "https://raw.githubusercontent.com/SWE-bench/swe-bench.github.io/master/data/leaderboards.json"

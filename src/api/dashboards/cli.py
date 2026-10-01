@@ -8,7 +8,9 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from api.dashboards import catalog, service, usage
+import api.dashboards.catalog as catalog
+import api.dashboards.service as service
+import api.dashboards.usage as usage
 
 
 def main(argv: Optional[list[str]] = None) -> int:

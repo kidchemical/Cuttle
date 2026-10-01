@@ -5,7 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
-from api.dashboards import benchmarklist, catalog, deepswe, integrations
+import api.dashboards.benchmarklist as benchmarklist
+import api.dashboards.catalog as catalog
+import api.dashboards.deepswe as deepswe
+import api.dashboards.integrations as integrations
 
 JsonFetcher = Callable[[str], Any]
 

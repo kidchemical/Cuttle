@@ -5,7 +5,8 @@ from __future__ import annotations
 import time
 from typing import Any, Dict, List, Optional
 
-from api.subagents import extras, store
+import api.subagents.extras as extras
+import api.subagents.store as store
 from api.subagents.profiles import apply_profile
 from api.subagents.spec import apply_router, parse_children, public_launcher
 from api.subagents.turns import TurnRunner, run_child_turn, run_child_turn_async

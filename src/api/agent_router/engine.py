@@ -6,7 +6,7 @@ import contextvars
 import re
 from typing import Any, Dict, Optional, Tuple
 
-from api.agent_router import logging_events as log
+import api.agent_router.logging_events as log
 from api.agent_router.config import load_router_config
 from api.agent_router.policy import looks_like_code_change_request
 from api.agent_router.providers import (
