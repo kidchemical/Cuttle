@@ -218,9 +218,9 @@ def busy_since(session_id) -> Optional[float]:
 def _session_has_live_work(session_id) -> bool:
     """True if live status or a tracked subprocess still backs this busy lock."""
     try:
-        from api.web_chat_api import get_chat_live_status
+        from api.chat_live_status import get_live_status
 
-        live = get_chat_live_status(session_id)
+        live = get_live_status(session_id)
         if live and live.get("active"):
             return True
     except Exception:
@@ -263,9 +263,9 @@ def reconcile_zombie_busy(now: Optional[float] = None) -> List[str]:
         end(bare)
         cleared.append(bare)
         try:
-            from api.web_chat_api import clear_chat_live_status
+            from api.chat_live_status import clear_live_status
 
-            clear_chat_live_status(bare)
+            clear_live_status(bare)
         except Exception:
             pass
     return cleared

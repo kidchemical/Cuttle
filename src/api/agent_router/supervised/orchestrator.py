@@ -222,9 +222,9 @@ def _emit_parent_progress(session_id: Any, message: str) -> None:
     if not session_id or not message:
         return
     try:
-        from api.web_chat_api import set_chat_live_status
+        from api.chat_live_status import set_live_status
 
-        set_chat_live_status(session_id, message, active=False)
+        set_live_status(session_id, message, active=False)
     except Exception:
         pass
 

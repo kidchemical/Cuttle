@@ -773,9 +773,9 @@ def cancel_session_runs(session_id) -> Dict[str, Any]:
             pass
 
     try:
-        from api.web_chat_api import clear_chat_live_status
+        from api.chat_live_status import clear_live_status
 
-        clear_chat_live_status(session_id)
+        clear_live_status(session_id)
     except Exception:
         pass
 

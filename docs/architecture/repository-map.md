@@ -66,6 +66,14 @@ User (web)
 
 **Live turn:** `api.chat_delivery` + `api.chat_run_registry` + `/api/chat-steer` / `/api/chat-cancel`.
 
+**Live status (Phase 4 P4-1):** `api.chat_live_status` owns the
+process-lifetime cross-device status store (get/set/clear/active ids,
+TTL eviction); `web_chat_api` keeps thin wrappers that inject the
+delivery cancel predicate at the composition root. Delivery, auth,
+run-registry, and supervised orchestration import the service — never
+the Flask entry module. Restart wipes the store (chats default idle
+until live-status confirms); never move it into per-request objects.
+
 **History:** `api.auth_db` SQLite (`src/data/db/`, gitignored). Pairing store for **users** is separate from **worker** enroll.
 
 ---

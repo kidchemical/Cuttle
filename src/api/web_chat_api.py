@@ -266,6 +266,11 @@ def _no_cache_ui_assets(response):
 from api.limiter import limiter
 limiter.init_app(app)
 
+# Live-status store — owned service (chat_live_status.py). Delivery, auth,
+# run-registry, and supervised orchestration import the service directly;
+# this module keeps thin wrappers so existing callers/tests are untouched.
+from api import chat_live_status as _live_status_svc
+
 from api.http_authz import (
     authenticated_required,
     current_user,
@@ -447,23 +452,18 @@ def get_or_create_session(session_id=None):
 # Keys: session_id, Values: queue.Queue that receives ('status', message) or ('done', result)
 _chat_status_queues: dict = {}
 
-# Latest in-flight status for cross-device viewers (phone + PC).
-# Keys: normalized session ids ("db_session_12" and "12"); Values: status dict.
-_chat_live_status: dict = {}
-_chat_live_status_lock = threading.Lock()
-# Drop live-status rows that have not been refreshed — otherwise a crashed
-# worker leaves history spinners spinning forever (busy has its own TTL).
-_CHAT_LIVE_STATUS_TTL = 45 * 60
-# Initial SSE status is "Connecting..."; if nothing else arrives, expire much sooner
-# so Electron/history don't sit on that label until a full Cuttle restart.
-_CHAT_LIVE_STATUS_CONNECTING_TTL = 90
+# Latest in-flight status store + lock live in the owned service
+# (api.chat_live_status — process lifetime, same semantics as before).
+# These aliases preserve the existing module attributes (tests and
+# external readers poke the single shared store, never a replica).
+_chat_live_status = _live_status_svc._STORE
+_chat_live_status_lock = _live_status_svc._LOCK
+_CHAT_LIVE_STATUS_TTL = _live_status_svc.TTL_SECONDS
+_CHAT_LIVE_STATUS_CONNECTING_TTL = _live_status_svc.CONNECTING_TTL_SECONDS
 
 
 def _live_status_ttl_seconds(entry: dict) -> float:
-    status = (entry or {}).get('status') or ''
-    if status.strip() == 'Connecting...':
-        return float(_CHAT_LIVE_STATUS_CONNECTING_TTL)
-    return float(_CHAT_LIVE_STATUS_TTL)
+    return _live_status_svc._ttl_seconds(entry)
 
 # Serialize local LLM (Ollama) requests: Ollama processes one request at a time per model.
 # When multiple pipelines call Ollama, later requests wait; we emit "Waiting for local LLM..." for the UI.
@@ -471,9 +471,8 @@ _ollama_request_lock = threading.Lock()
 
 
 def _live_status_keys(session_id) -> list:
-    from api.session_keys import chat_session_keys
-
-    return chat_session_keys(session_id)
+    # Alias to the owned service (single key-mapping implementation).
+    return _live_status_svc.live_status_keys(session_id)
 
 
 def _chat_turn_cancelled(session_id) -> bool:
@@ -495,52 +494,29 @@ def set_chat_live_status(
     query_id: str = None,
 ) -> None:
     """Publish (or refresh) live generation status for all devices watching this session."""
-    keys = _live_status_keys(session_id)
-    if not keys:
-        return
+    # Owned service; the cancel predicate is injected here at the
+    # composition root (service never imports delivery/monolith state).
     # Stop already cleared this chat. A dying Codex/Cursor worker must not
     # republish active=True — refresh polls this and resurrects the spinner
     # (CH-000522: activity flashed multiple times after Stop + reload).
-    if active and _chat_turn_cancelled(session_id):
-        return
-    now = time.time()
-    with _chat_live_status_lock:
-        prev = _chat_live_status.get(keys[0]) or {}
-        entry = {
-            'active': bool(active),
-            'status': (message if message is not None else prev.get('status')) or 'Connecting...',
-            'updated_at': now,
-            'report_url': report_url if report_url is not None else prev.get('report_url'),
-            'query_id': query_id if query_id is not None else prev.get('query_id'),
-        }
-        for k in keys:
-            _chat_live_status[k] = entry
+    return _live_status_svc.set_live_status(
+        session_id,
+        message,
+        active=active,
+        report_url=report_url,
+        query_id=query_id,
+        is_cancelled=_chat_turn_cancelled,
+    )
 
 
 def clear_chat_live_status(session_id) -> None:
-    keys = _live_status_keys(session_id)
-    if not keys:
-        return
-    with _chat_live_status_lock:
-        for k in keys:
-            _chat_live_status.pop(k, None)
+    # Owned service (composition root delegates; no route/logic change).
+    return _live_status_svc.clear_live_status(session_id)
 
 
 def get_chat_live_status(session_id) -> dict:
-    keys = _live_status_keys(session_id)
-    now = time.time()
-    with _chat_live_status_lock:
-        for k in keys:
-            entry = _chat_live_status.get(k)
-            if not entry:
-                continue
-            updated = float(entry.get('updated_at') or 0)
-            if entry.get('active') and updated and (now - updated) > _live_status_ttl_seconds(entry):
-                for kk in keys:
-                    _chat_live_status.pop(kk, None)
-                break
-            return dict(entry)
-    return {'active': False, 'status': None, 'updated_at': None, 'report_url': None, 'query_id': None}
+    # Owned service (composition root delegates; no route/logic change).
+    return _live_status_svc.get_live_status(session_id)
 
 
 def _public_live_generating(session_id, live=None):
@@ -604,25 +580,8 @@ def _clear_live_status_on_stream_done(session_id, *, stale: bool, cancelled: boo
 
 def active_live_session_ids() -> list:
     """Bare session ids with an active live-status entry (for history spinners)."""
-    out = []
-    seen = set()
-    now = time.time()
-    with _chat_live_status_lock:
-        for k, entry in list(_chat_live_status.items()):
-            if not entry or not entry.get('active'):
-                continue
-            updated = float(entry.get('updated_at') or 0)
-            if updated and (now - updated) > _live_status_ttl_seconds(entry):
-                bare = k[len('db_session_'):] if k.startswith('db_session_') else k
-                for kk in _live_status_keys(bare):
-                    _chat_live_status.pop(kk, None)
-                continue
-            bare = k[len('db_session_'):] if k.startswith('db_session_') else k
-            if not bare or bare in seen:
-                continue
-            seen.add(bare)
-            out.append(bare)
-    return out
+    # Owned service (composition root delegates; no route/logic change).
+    return _live_status_svc.active_live_session_ids()
 
 
 def emit_chat_status(session_id: str, message: str) -> None:

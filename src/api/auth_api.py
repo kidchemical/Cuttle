@@ -618,7 +618,7 @@ def get_chat_sessions():
         # Mark chats that still have an in-flight reply (history spinner after refresh).
         try:
             from api import chat_delivery as _chat_delivery
-            from api.web_chat_api import active_live_session_ids as _active_live_ids
+            from api.chat_live_status import active_live_session_ids as _active_live_ids
             # busy_session_ids() reconciles zombie locks (busy with no live work).
             busy = set(_chat_delivery.busy_session_ids())
             busy.update(_active_live_ids())
@@ -693,7 +693,7 @@ def search_chat_sessions():
         sessions = db.search_user_chats(user['id'], query)
         try:
             from api import chat_delivery as _chat_delivery
-            from api.web_chat_api import active_live_session_ids as _active_live_ids
+            from api.chat_live_status import active_live_session_ids as _active_live_ids
             busy = set(_chat_delivery.busy_session_ids())
             busy.update(_active_live_ids())
             awaiting_action = set()

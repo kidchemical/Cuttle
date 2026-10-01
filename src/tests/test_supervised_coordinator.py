@@ -626,7 +626,7 @@ def test_parent_not_blocked_by_worker_live_status(supervised_env, monkeypatch):
         seen["active"] = active
         seen["message"] = message
 
-    monkeypatch.setattr("api.web_chat_api.set_chat_live_status", fake_set)
+    monkeypatch.setattr("api.chat_live_status.set_live_status", fake_set)
     _emit_parent_progress("parent1", "Worker running…")
     assert seen.get("active") is False
 

@@ -5042,3 +5042,109 @@ whole was rejected as monolith-shifting. The owned seam is
   sticky/starred executors). Each needs Codex dispatch.
 - Commit independently on main. No push, no restart.
   **STOP for Codex review before Phase 4.**
+
+## Prior approval recorded: 9E 415bf3a7 and Phase 3 closure
+
+- Codex review **APPROVED** Slice 9E (`chat_generation.js`, token-scoped
+  stale-release race fix — explicitly intentional and tested, the one
+  exception to behavior preservation) and the Phase 3 closure. Next:
+  Phase 4 Shared Chat Lifecycle Backend P4-1 only; no Phase 5/6
+  changes. No push/restart.
+
+## Phase 4 baseline — dependency / lifetime / reverse-import map
+
+- Scope correction applied: Phase 4 prepares owned interfaces/services
+  and reduces reverse imports; it is NOT turn-coordinator extraction
+  (Phase 5) nor router/harness redesign (Phase 6). Runner functions
+  (`_run_*_web_command`), the coordinator workflow, and router brains
+  stay untouched.
+- Production reverse imports into `web_chat_api.py` before P4-1: 15
+  `from` sites (method: `grep -rn "from api.web_chat_api import\|from
+  api import web_chat_api" src/ --include="*.py" excluding tests,
+  before/after file lists diffed). Of those, 6 are live-status store
+  users: `chat_delivery` (get/clear), `chat_run_registry` (clear),
+  `auth_api` (active ids ×2), supervised `orchestrator` (set). The
+  rest are out of P4-1 scope: harness runner fns (`adapters` ×2,
+  `dispatch` — Phase 5), `internal_http` test-client transport,
+  `_default_chat_cwd` / badge/metadata helpers (later P4 slices),
+  status-queue emit, `doctor` noqa.
+- Current state owners/lifetimes: live-status dict — process lifetime,
+  in-memory, wiped on Flask restart (chats default idle until
+  live-status confirms; detached watchers re-poll); SQLite auth/chat
+  history — persistent; delivery busy/cancel sticky — process lifetime
+  (`chat_delivery` module state); run registry — process lifetime with
+  SQLite task rows (daemon-owned workers); session/project resolution —
+  per-request; restart status file — daemon-owned. Critical rule:
+  restart-sensitive process state must never move into transient
+  per-request objects.
+- First boundary (P4-1): live-status store service — lowest risk (pure
+  store + TTL, single writer semantics already lock-guarded), removes
+  6 reverse imports including the hidden `chat_delivery ↔ web_chat_api`
+  cycle (delivery imported live-status from the monolith while the
+  monolith imports delivery's cancel/busy predicates).
+
+## P4-1 report — `api.chat_live_status` service
+
+- New `src/api/chat_live_status.py`: owns `_STORE` + `_LOCK` (process
+  lifetime, same semantics), `TTL_SECONDS` (45 min) +
+  `CONNECTING_TTL_SECONDS` (90 s), key-variant mapping (via leaf
+  `api.session_keys`, no cycle), `set/get/clear_live_status` +
+  `active_live_session_ids` moved verbatim. Cancel predicate is an
+  injected per-call dep (`is_cancelled`) — the service imports nothing
+  but `session_keys`/`threading`/`time` (verified by test). No routes,
+  no persistence writes, no orchestration.
+- `web_chat_api.py` keeps thin wrappers under the existing names (all
+  ~20 internal call sites + tests untouched) and injects
+  `chat_delivery.is_turn_cancelled` at the composition root; keeps
+  `_chat_live_status`/`_lock`/`_keys`/TTL names as aliases to the
+  single shared store (never a replica). Routes
+  (`/api/chat-live-status`), `_public_live_generating` composition, and
+  `_chat_status_queues` streaming queues stay put (routes/composition
+  are not extracted for size).
+- Consumers rewired to the service: `chat_delivery` (2),
+  `chat_run_registry` (1), `auth_api` (2), supervised `orchestrator`
+  (1). One test-target update required by the move:
+  `test_supervised_coordinator.py` monkeypatch now targets
+  `api.chat_live_status.set_live_status` (same call-time import
+  pattern, still effective).
+- Reverse imports: 15 → 9 (all 6 live-status sites gone; remaining 9
+  listed in the baseline above for later P4 slices).
+- Coverage (committed `src/tests/test_chat_live_status_service.py`,
+  13 tests, all green): 8 behavior tests written and run BEFORE the
+  move (roundtrip/key variants, field preservation, TTL + Connecting
+  fast-path eviction, clear, active ids, Stop cancel guard, unknown
+  idle) + 5 post-move tests (no-monolith-import source guard, store
+  identity across service/wrapper both directions, module-cache single
+  instance, orchestrator inactive-row integration, wrapper-guard vs
+  service-default). Lifetime proof: `wca._chat_live_status is
+  svc._STORE` and shared lock — the original instance, not a replica.
+- Gates (same env/invocation/scope: `.venv`, `pytest -q -p no:warnings
+  src/tests/ --ignore=src/tests/unit`, unit exclusion still the proven
+  `test_security.py` collection error): focused + lifecycle neighbors
+  (steer/stop/followup/restart/recovery/supervised) green; broad **28
+  failed / 1893 passed / 79 skipped** with sorted FAILED identities
+  `diff`-clean against the 9E baseline (28/1880/79; +13 = new tests,
+  −0/+0 failures).
+- Spend audit: `CUTTLE_AGENT_SMOKE`/`CUTTLE_ALLOW_SPEND` unset; no
+  paid/token prompt tests run (fake executors not needed — no
+  executor paths touched; no new prompt-sending tests added).
+- Manual validation N/A (backend service; no UI change). No Flask
+  restart/kill performed.
+- Files: `src/api/chat_live_status.py` (new),
+  `src/api/web_chat_api.py` (wrappers + aliases),
+  `src/api/chat_delivery.py`, `src/api/chat_run_registry.py`,
+  `src/api/auth_api.py`,
+  `src/api/agent_router/supervised/orchestrator.py` (consumer rewires),
+  `src/tests/test_chat_live_status_service.py` (new),
+  `src/tests/test_supervised_coordinator.py` (monkeypatch target),
+  this section + `docs/architecture/repository-map.md` (service row).
+- Remaining Phase 4 slices + completion criteria: P4-2 status-queue +
+  emit service (`_chat_status_queues`, `emit_chat_status` consumers);
+  P4-3 small pure helpers (`_default_chat_cwd`, badge/metadata
+  fns — verify no hidden state first); runner fns and coordinator stay
+  for Phase 5, router brains for Phase 6. Phase 4 done when production
+  reverse imports into `web_chat_api.py` are only the Phase-5-owned
+  runner calls + `internal_http` transport (counted by the same grep
+  method, target ≤ 4 with justification).
+- Commit independently on main. No push, no restart.
+  **STOP for Codex review before P4-2/Phase 5.**
