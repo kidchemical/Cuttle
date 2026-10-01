@@ -3578,3 +3578,239 @@ harnesses; the harness-repair cost is a consequence, not the reason.
   non-test, non-docs paths).
 - Commit: independent follow-up commit on main (see `git log`).
   No push, no restart. **STOP — Slice 8 not started.**
+
+---
+
+# Phase 3 — Slice 7 approval (recorded at the Slice 8 append boundary)
+
+- Slice 7 (`901bf260`, agent/model controls) and its test-only
+  follow-up (`18268ead`, execution-level duplicate-guard test) are
+  **approved** per the worker brief for Slice 8; prior sections above
+  are preserved verbatim — reviewer last read line 3580, and these
+  notes sit at the append boundary rather than rewriting them.
+- Slice 7 review follow-ups honored: (1) the Slice 6 regression
+  protection is now node-executed against the real `sendMessage`
+  (in-flight + queued duplicates preserve staged attachments/cards;
+  follow-up control takes them; mutation proof observed fail then
+  restored); the fix was test-only, zero production delta.
+  (2) Duplicate-send branch behavior is now stated unambiguously:
+  duplicates clear composer text but never staged attachments/cards.
+  (3) Session-restoration deferral is recorded as ownership/scope
+  (restore spans prefs IO + render + badge refresh + live-status
+  ordering as one pinned unit), not harness-repair cost.
+
+---
+
+# Phase 3 — Slice 8: Messages/History, first sub-slice
+(record normalization + history windowing)
+
+## Phase status
+
+- Slice: Phase 3 Slice 8 — message-record normalization + history
+  windowing decisions → `src/web/js/chat_messages.js`
+  (`window.CuttleChatMessages`). No subdivision beyond this was
+  needed: the boundary is coherent, reviewable, and leaves
+  display formatting, sync machinery, and panel/search UI for later.
+- Git baseline before work: `18268ead` (Slice 7 follow-up); tree
+  clean except pre-existing untracked `work/` (scratch, untouched).
+- Git commit after work: the single `Phase 3 slice 8: messages/
+  history records and windowing` commit on main (see `git log`).
+- Completion status: **complete, awaiting Codex review**. Streaming
+  / Slice 9 NOT started.
+
+## Original problem
+
+`chat_page.js` owned every message-record decision inline as
+closures over page state: which metadata shape wins per record
+(string/object/absent), report-URL precedence, timestamp/attachment/
+usage delegation, project stamp resolution and backward fill,
+visible-bubble counting, history dump windowing (server-paged vs
+newest-page + buffer), page-meta application, and the
+transcript-end predicate — interleaved with transcript DOM paint,
+sync/poll machinery, persistence, session restore + ordering, and
+the DOM-coupled predicates. Record/window logic had no direct
+module tests (only structural pins and full-flow suites).
+
+## Before implementation (inventory)
+
+Messages/History responsibilities triaged (25,386-line page):
+
+1. **Record normalization** (moved): `authMessageOptsFromServer`
+   (30-field view over msg/meta/_project), `preferredModelFromMessages`.
+2. **Project annotation** (moved resolve + fill, kept IO/DOM):
+   `projectFromMessageRecord`, `annotateMessageProjects` (in-place
+   backward fill); project-domain resolution stays in
+   `CuttleChatProject`, injected as a callback.
+3. **History windowing** (moved plan, kept application):
+   `windowChatHistoryMessages` → `windowHistoryMessages` (pure
+   paint/buffer/meta plan); `applyChatHistoryPageMeta` →
+   `historyPageMeta`; `countVisibleChatMessages`; page globals +
+   load-older indicator stay.
+4. **Transcript predicate** (moved): `transcriptEndsWithAssistant`
+   (pure); same-named adapter keeps the followup-heal span pin.
+5. **Staying (explicit)**: transcript DOM paint/append/prepend/
+   update/reorder, sync/poll machinery, persistence, session
+   restore + ordering (untouched per the checklist rule),
+   search/history-panel/prompt-history UI, streaming + live-status
+   orchestration, DOM-coupled predicates
+   (`thisTurnHasAssistantReply`, `transcriptEndsWithGenerationStop`
+   with its DOM fallback, `uiAlreadyHasMessage`,
+   `openTranscriptMissingThisTurnReply`), display formatting
+   (`formatUserMessageForDisplay`), timestamp/usage parsers
+   (injected as callbacks, not moved).
+6. **Explicitly NOT absorbed**: backend routing, new features,
+   dependency/preflight tooling. No backend changes. No paid
+   (token-costing) smoke tests run — the touched paths are
+   client-side record/window decisions fully covered under node.
+
+Shared state the moved logic needed: timestamp/attachment/usage
+helpers + project resolver + project lists (passed as an explicit
+`deps` snapshot via one `messageRecordDeps()` gatherer — never live
+page reads from the module); page size as a number; nothing else.
+No moved function touches `document` / `window` / `localStorage` /
+`fetch`.
+
+## Changes made
+
+- **Added `src/web/js/chat_messages.js`** (258 L): 8 pure
+  functions behind `CuttleChatMessages` (classic script + node
+  exports; TDZ-proof `globalThis` footer, same pattern as prior
+  domain modules).
+- **chat_page.js keeps**: all DOM/IO/sync/persistence/restore,
+  plus thin same-signature adapters (pure delegations +
+  gather-then-delegate for record deps; plan-apply for windowing).
+  `windowChatHistoryMessages` keeps its non-array guard and
+  indicator sync; `applyChatHistoryPageMeta` keeps its guard.
+- chat_page.js: 25,386 → 25,306 lines (−80 net).
+- `chat_page.html`: `chat_messages.js` script tag before
+  `chat_page.js` (page `?v=20261001slice8`; domain tags keep slice
+  versions).
+- **Tests:** new `src/tests/test_chat_messages.py` (7 tests,
+  node-executed against the real module + one adapter-delegation
+  structural test). No existing suites needed repointing (only the
+  followup-heal name/span pins, which the adapters preserve).
+- Execution-level composer duplicate tests untouched and green.
+
+## Architecture after
+
+```
+chat_page.js (globals, DOM paint, sync/poll, persistence, restore
+              + ordering, indicators, orchestration)
+      │  same-signature adapters / gather-then-delegate / plan-apply
+      ▼
+chat_messages.js (record opts + model recovery + project
+                  annotate + visible count + window plan +
+                  page meta + transcript-end) ──inject──▶ page
+                  helpers (parseTs, attachments, usage) and
+                  CuttleChatProject (resolution — never duplicated)
+```
+
+One-way dependency (page → namespace); module holds no state.
+
+## Dependencies and state
+
+- Removed: page closures over record building, model recovery,
+  project fill, visible counting, window branching, meta
+  application, transcript-end check.
+- Introduced: `CuttleChatMessages` namespace (no new runtime deps).
+  `oldestId` is `undefined` where the page must keep its value
+  (empty dump) and `null` only where the page nulled it
+  (non-finite id in a large window) — keep-vs-null preserved.
+- Reverse deps: none. Callers (loadChatSession, sync paths, paint
+  paths) unchanged — adapters preserve signatures and application
+  order. Backend `/api/chat` untouched.
+
+## Tests and verification
+
+- New `test_chat_messages.py`: 7/7 (metadata shapes, report/
+  attachment/usage precedence, model recovery, project
+  resolve + backward fill, visible counting, paged/small/large/
+  exact windows + standalone meta incl. keep-vs-null edges,
+  transcript-end, module parses, delegation structure).
+- Differential proof (scratch `/tmp/diff_messages.js`, not
+  committed): HEAD originals (eval'd with stubbed helpers) vs new
+  module + replicated adapter application over a 32-case battery —
+  paint arrays AND resulting buffer/flag/count/id state —
+  **32/32 match, zero mismatches**.
+- Focused + neighbors (messages, composer, agent-model, pins,
+  codex-effort, bare-sticky, starred-removal, bubble-badge,
+  badge-segments, starred-slash, agent-defaults, message
+  project-meta/share/pagination, history-search, find,
+  followup-heal, stop-refresh, slash-consistency, attachments,
+  activity, attention-dots, action-forms, supervised ×2,
+  restart ×2, history-delete-modal): **305 passed, 10 failed** —
+  all 10 identity-match the Slice 7 baseline list; zero new.
+- Broad with node on PATH: post-change **1,821 passed, 28 failed,
+  60 skipped**; clean HEAD (`18268ead`, via `git stash -u`)
+  **1,814 passed, 28 failed, 60 skipped**; sorted FAILED
+  identities **byte-identical (diff empty)** — +7 = new tests.
+- `node --check` clean on all touched JS.
+- Manual validation: not performed — no browser/Flask served from
+  this session and no visual change exists to inspect; the gap is
+  recorded, not waived. Node-level execution covers the moved
+  decisions (record shapes, windowing branches, keep-vs-null
+  edges) directly.
+
+## Metrics
+
+| Metric | Before (`18268ead`) | After | Method |
+|---|---|---|---|
+| `chat_page.js` lines | 25,386 | 25,306 (−80) | `wc -l` |
+| Record/window decision fns needing page scope | ~8 (all) | 0 in module (explicit inputs) | grep |
+| Record/window behavior tests | none direct | +7 module tests | pytest |
+| Differential old-vs-new (paint + state) | — | 32/32 match | node harness |
+| Full suite (node on PATH) | 1,814 / 28 / 60 | 1,821 / 28 (identical list) / 60 | pytest + diff |
+
+## Remaining concerns
+
+1. Display formatting (`formatUserMessageForDisplay`, ~860 L with
+   attachment/action-form/badge integration), sync/poll machinery,
+   prompt-history nav, search + history-panel UI, and DOM-coupled
+   predicates stay in the page — natural follow-up sub-slices that
+   must each respect render/persistence/streaming ownership.
+2. `restoreSessionStickySlash` + loadChatSession ordering untouched
+   per the checklist rule; the windowing adapter it calls preserves
+   the restore-before-remote-waiting order asserted by the
+   working-bubble suite (green).
+3. Stale `test_chat_page_asset_versions_bump...` pin and 28 baseline
+   failures remain untouched (identical pre/post).
+4. No system `node` on PATH; pre-existing `/tmp/nodeshim/node`
+   (v18.18.2) used.
+
+## Diff summary
+
+- Added: `src/web/js/chat_messages.js` (258 L),
+  `src/tests/test_chat_messages.py` (7 tests).
+- Modified: `src/web/js/chat_page.js` (+38/−118: 8 spans rewired),
+  `src/web/chat_page.html` (+2/−1: script tag, page `?v` bump),
+  `docs/reviews/architecture-stabilization.md` (this section +
+  Slice 7 approval boundary note).
+- Deleted: no files. No existing test files modified.
+
+## External Review Summary
+
+1. **What changed architecturally?** Record normalization, model
+   recovery, project annotation, visible counting, history
+   windowing/meta, and the transcript-end predicate moved to owned
+   pure `chat_messages.js`; the page keeps globals, DOM, sync,
+   persistence, restore + ordering, indicators, and orchestration
+   behind same-signature adapters.
+2. **What behavior intentionally changed?** Nothing. Differential
+   32/32 on paint + resulting state; callers and application order
+   unchanged; keep-vs-null oldest-id semantics preserved.
+3. **What should be identical?** History ordering/pagination,
+   record normalization + metadata, attachment/action-form/agent
+   badge integration points, search/history restoration,
+   persistence semantics, caller contracts, duplicate-suppression
+   execution behavior.
+4. **What remains coupled or messy?** Display formatting, sync
+   machinery, panel/search UI, DOM-coupled predicates in the
+   25.3k-line page; 28 unrelated baseline failures; stale
+   asset-version pin.
+5. **What should be reviewed before the next sub-slice?** Whether
+   the next Messages/History piece is display formatting
+   (`formatUserMessageForDisplay`) or sync machinery — and its
+   render/persistence/streaming seams — before any Streaming work.
+6. **Is Streaming safe to begin?** No — not part of this slice.
+   Do NOT continue past Messages/History until review approves.
+   **STOP for Codex review — Slice 9 not started.**

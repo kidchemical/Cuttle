@@ -1253,9 +1253,7 @@
 
     /** Server transcript ends on an assistant turn → treat live-status as idle. */
     function transcriptEndsWithAssistant(messages) {
-        if (!Array.isArray(messages) || !messages.length) return false;
-        const last = messages[messages.length - 1];
-        return !!(last && last.role === 'assistant');
+        return CuttleChatMessages.transcriptEndsWithAssistant(messages);
     }
 
     /** Persisted Stop notice — survives refresh; in-memory stop flags do not. */
@@ -13487,12 +13485,7 @@
 
     /** Count non-system rows (same filter as message-nav / CH-refs). */
     function countVisibleChatMessages(messages) {
-        if (!Array.isArray(messages)) return 0;
-        let n = 0;
-        for (const m of messages) {
-            if (m && m.role !== 'system') n += 1;
-        }
-        return n;
+        return CuttleChatMessages.countVisibleChatMessages(messages);
     }
 
     /**
@@ -13501,45 +13494,34 @@
      */
     function windowChatHistoryMessages(data) {
         if (!data || !Array.isArray(data.messages)) return [];
-        const all = data.messages;
-        // Server already paged (has_more present, even when false).
-        if (typeof data.has_more === 'boolean') {
-            chatHistoryClientBuffer = [];
-            applyChatHistoryPageMeta(data, all);
-            return all;
+        const plan = CuttleChatMessages.windowHistoryMessages({
+            messages: data.messages,
+            hasMore: data.has_more,
+            olderVisibleCount: data.older_visible_count,
+            pageSize: CHAT_HISTORY_PAGE_SIZE,
+        });
+        chatHistoryClientBuffer = plan.buffer;
+        chatHistoryHasMore = plan.hasMore;
+        if (plan.olderVisibleCount !== undefined) {
+            chatHistoryOlderVisibleCount = plan.olderVisibleCount;
         }
-        if (all.length <= CHAT_HISTORY_PAGE_SIZE) {
-            chatHistoryClientBuffer = [];
-            chatHistoryHasMore = false;
-            chatHistoryOlderVisibleCount = 0;
-            if (all.length) {
-                const oid = Number(all[0].id);
-                if (Number.isFinite(oid)) chatHistoryOldestId = oid;
-            }
-            syncChatHistoryLoadOlderIndicator();
-            return all;
-        }
-        chatHistoryClientBuffer = all.slice(0, -CHAT_HISTORY_PAGE_SIZE);
-        const windowed = all.slice(-CHAT_HISTORY_PAGE_SIZE);
-        chatHistoryHasMore = chatHistoryClientBuffer.length > 0;
-        chatHistoryOlderVisibleCount = countVisibleChatMessages(chatHistoryClientBuffer);
-        const oid = Number(windowed[0] && windowed[0].id);
-        chatHistoryOldestId = Number.isFinite(oid) ? oid : null;
+        if (plan.oldestId !== undefined) chatHistoryOldestId = plan.oldestId;
         syncChatHistoryLoadOlderIndicator();
-        return windowed;
+        return plan.paint;
     }
 
     function applyChatHistoryPageMeta(data, messages) {
         if (!data || typeof data !== 'object') return;
-        if (typeof data.has_more === 'boolean') chatHistoryHasMore = data.has_more;
-        if (data.older_visible_count != null) {
-            chatHistoryOlderVisibleCount = Math.max(0, Number(data.older_visible_count) || 0);
+        const meta = CuttleChatMessages.historyPageMeta({
+            hasMore: data.has_more,
+            olderVisibleCount: data.older_visible_count,
+            messages,
+        });
+        if (meta.hasMore !== undefined) chatHistoryHasMore = meta.hasMore;
+        if (meta.olderVisibleCount !== undefined) {
+            chatHistoryOlderVisibleCount = meta.olderVisibleCount;
         }
-        if (Array.isArray(messages) && messages.length) {
-            const first = messages[0];
-            const oid = first && first.id != null ? Number(first.id) : NaN;
-            if (Number.isFinite(oid)) chatHistoryOldestId = oid;
-        }
+        if (meta.oldestId !== undefined) chatHistoryOldestId = meta.oldestId;
         syncChatHistoryLoadOlderIndicator();
     }
 
@@ -13712,94 +13694,32 @@
         scheduleNextMessageSync();
     }
 
-    function authMessageOptsFromServer(msg) {
-        let meta = msg.metadata;
-        if (typeof meta === 'string') {
-            try { meta = JSON.parse(meta); } catch (_) { meta = {}; }
-        }
-        if (!meta || typeof meta !== 'object') meta = {};
-        const reportUrl = msg.report_url || meta.report_url || (
-            (msg.query_id || meta.query_id)
-                ? `/query_log.html?id=${msg.query_id || meta.query_id}`
-                : null
-        );
-        // SQLite CURRENT_TIMESTAMP is UTC "YYYY-MM-DD HH:MM:SS". Raw Date.parse
-        // treats that as local time, so in US timezones messages look hours in
-        // the future and formatTimeAgo always shows "Just now".
-        const parsed = parseSessionTimestamp(msg.timestamp);
-        const attachments = normalizeAttachmentList(
-            msg.attachments || meta.attachments || []
-        );
+    function messageRecordDeps() {
         return {
-            message_id: msg.id,
-            timestamp: parsed > 0 ? parsed : Date.now(),
-            report_url: reportUrl,
-            query_id: msg.query_id || meta.query_id || undefined,
-            slash_command: msg.slash_command || meta.slash_command,
-            slash_command_failed: !!(msg.slash_command_failed || meta.slash_command_failed),
-            cursor_run: meta.cursor_run || msg.cursor_run || undefined,
-            usage: normalizeUsagePayload(meta.usage || msg.usage) || undefined,
-            user_feedback: meta.user_feedback || undefined,
-            attachments: attachments.length ? attachments : undefined,
-            project_id: msg.project_id != null ? msg.project_id : (meta.project_id != null ? meta.project_id : (msg._project && msg._project.id)),
-            project_name: msg.project_name || meta.project_name || (msg._project && msg._project.name),
-            project_path: msg.project_path || meta.project_path || (msg._project && msg._project.path),
-            speaker: meta.speaker || msg.speaker || undefined,
-            speaker_kind: meta.speaker_kind || msg.speaker_kind || undefined,
-            avatar: meta.avatar || msg.avatar || undefined,
-            parent_session_id: meta.parent_session_id != null ? meta.parent_session_id : msg.parent_session_id,
-            parent_handle: meta.parent_handle || msg.parent_handle || undefined,
-            parent_label: meta.parent_label || msg.parent_label || undefined,
-            origin: meta.origin || msg.origin || undefined,
-            control_request_id: meta.control_request_id || msg.control_request_id || undefined,
-            supervised_task_id: meta.supervised_task_id || undefined,
-            supervised_phase: meta.supervised_phase || undefined,
-            supervised_terminal: !!meta.supervised_terminal,
-            supervised_delivery_event_id: meta.supervised_delivery_event_id || undefined,
-            parent_user_message_id: meta.parent_user_message_id || undefined,
-            coordinator_response_message_id: meta.coordinator_response_message_id || undefined,
-            kind: meta.kind || msg.kind || undefined,
-            subagents: meta.subagents || msg.subagents || undefined,
-            subagent_batch_id: meta.subagent_batch_id || undefined,
+            parseSessionTimestamp,
+            normalizeAttachmentList,
+            normalizeUsagePayload,
+            projectFromMessageOpts,
+            projects,
+            currentProject,
         };
+    }
+
+    function authMessageOptsFromServer(msg) {
+        return CuttleChatMessages.authMessageOptsFromServer(msg, messageRecordDeps());
     }
 
     /** Pull the latest requested Cursor model from assistant message metadata. */
     function preferredModelFromMessages(messages) {
-        if (!Array.isArray(messages)) return null;
-        for (let i = messages.length - 1; i >= 0; i--) {
-            const m = messages[i];
-            if (!m || m.role !== 'assistant') continue;
-            let meta = m.metadata;
-            if (typeof meta === 'string') {
-                try { meta = JSON.parse(meta); } catch (_) { meta = null; }
-            }
-            if (!meta || typeof meta !== 'object') continue;
-            const cr = meta.cursor_run;
-            const req = cr && (cr.requested_model || '').trim();
-            if (req) return req;
-        }
-        return null;
+        return CuttleChatMessages.preferredModelFromMessages(messages);
     }
 
     function projectFromMessageRecord(msg) {
-        if (!msg) return null;
-        if (msg._project) return msg._project;
-        return projectFromMessageOpts(authMessageOptsFromServer(msg), projects, currentProject);
+        return CuttleChatMessages.projectFromMessageRecord(msg, messageRecordDeps());
     }
 
     function annotateMessageProjects(messages) {
-        if (!Array.isArray(messages)) return;
-        let pending = null;
-        for (let i = messages.length - 1; i >= 0; i--) {
-            const found = projectFromMessageRecord(messages[i]);
-            if (found) {
-                pending = found;
-                messages[i]._project = found;
-            } else if (pending) {
-                messages[i]._project = pending;
-            }
-        }
+        return CuttleChatMessages.annotateMessageProjects(messages, messageRecordDeps());
     }
 
     function appendServerMessageToUI(msg, opts = {}) {
