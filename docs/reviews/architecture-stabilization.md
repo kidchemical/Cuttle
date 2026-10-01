@@ -1432,3 +1432,163 @@ enforced transport-side via the untouched resolver calls.
 6. **Is the next domain safe to begin?** This slice is self-contained
    (no chat/router/workers touched; failures identical to baseline).
    Do NOT begin it in this track until this review is approved.
+
+---
+
+# Phase 2 — Slice 4: Tasks HTTP Transport Extraction
+
+## Phase status
+
+- Slice: Phase 2 Slice 4 — Tasks HTTP transport → `api.task_routes`
+  (`tasks_bp`).
+- Git baseline before work: `130efda7` ("Phase 2 slice 3B: git HTTP
+  blueprint extraction"), clean tree.
+- Git commit after work: the single `Phase 2 slice 4: tasks HTTP
+  transport extraction` commit on main (identify via `git log --oneline`).
+- Completion status: **complete, awaiting external review**. No
+  miscellaneous-route cleanup started.
+
+## Original problem
+
+The 8 `/api/tasks*` handlers lived inline in the Flask monolith (~260
+lines) while task behavior already had an owner (`managers.task_manager`,
+SQLite-backed). Transport, validation, and one composite workflow were
+fused into the composition root; the first-ever task tests had nowhere
+obvious to live.
+
+## Before implementation (inventory per route)
+
+| Route | Auth | Manager call | Notes |
+|---|---|---|---|
+| `GET /api/tasks` | owner | `get_all_tasks` | returns raw list (no envelope) |
+| `POST /api/tasks` | owner | `create_task` | 400 without title; 201 + defaults |
+| `GET /api/tasks/<id>` | **none (public)** | `get_task` | 404 shape; pinned as-is, not fixed |
+| `PUT /api/tasks/<id>` | owner | `update_task` | 400 without title; 404 |
+| `DELETE /api/tasks/<id>` | owner | `delete_task` | 404 / `{success:True}` |
+| `POST .../comments` | owner | `add_comment` | 400 without content; 201; orphan comments allowed (manager has no existence check — pinned) |
+| `DELETE .../comments/<cid>` | owner | `delete_comment` | 404 `Comment or task not found`; 200 message |
+| `POST .../close-via-commit` | owner | get/update/comment + git | NOT thin: embeds `git add`/`commit` in `os.getcwd()` (no identity, no allowlist); live caller `task_management.js:914` |
+
+- Project/session relationships: none — `task_manager` has no project
+  FK; tasks are global. Supervised overlap: none — supervised routes
+  (`/api/supervised/...`) use `supervised.store`, untouched and
+  explicitly excluded.
+- Reverse deps on handler symbols: none (verified). Frontend callers:
+  `task_management.js` only; shapes preserved.
+- Tests pre-existing: none (first task tests written in this slice).
+
+## Changes made
+
+- **Added `src/api/task_routes.py`** (285 L): `tasks_bp` blueprint
+  (`url_prefix="/api"`, short `/tasks/*` paths), 7 thin handlers moved
+  verbatim (lazy `task_manager` imports kept, so existing patch points
+  hold). Module docstring states the transport-only contract and the
+  Phase 2 rule (never imports `api.web_chat_api` — verified).
+- **close-via-commit** moved with its orchestration shape intact; its
+  git step delegates to new `git_service.stage_and_commit` (frozen
+  legacy semantics: raw `files` string split, `'.'` stages all,
+  process cwd passed by the handler, bare environment/identity,
+  `Git command failed: <str(exc)>` errors). Not a redesign: the
+  `os.getcwd()` semantic and missing identity are pinned quirks for a
+  later cleanup, not fixed here.
+- **Monolith:** registers `tasks_bp`; deleted the ~260-line block.
+  Remaining `*task*` defs are other domains (page server, 2 supervised
+  routes) and stay. Monolith: 10,406 → 10,152 lines (−254 net).
+- **Tests:** new `src/tests/test_task_routes.py` (5 tests, written
+  pre-move, green both sides): route-registration contract; anon
+  401/guest 403 matrix (+ public-GET pin); CRUD shapes incl. 201
+  defaults and 400/404s; comment shapes incl. orphan pin; close flow
+  (400/404/success, `Closes <taskId>` in body, status Closed) in a real
+  repo via monkeypatched cwd.
+- Moved vs deleted: handlers relocated (moved); nothing deleted.
+
+## Architecture after
+
+```
+web_chat_api.py ──registers──▶ tasks_bp (api/task_routes.py)
+                                   ├─▶ managers.task_manager (SQLite)
+                                   └──▶ api.git_service.stage_and_commit
+                                        (close-via-commit git step only)
+```
+
+One-way dependencies; no new shared state; lazy manager imports
+preserved so `managers.task_manager.task_manager` remains the single
+stub point (no holder-split: handlers bind at request time).
+
+## Dependencies and state
+
+- Removed: 8 route registrations from the composition root.
+- Introduced: `api/task_routes` + one narrow `git_service` op (sole
+  caller: the moved route). No new runtime deps, no new mutable state.
+- Reverse deps: none existed; none created. Supervised task system
+  untouched.
+- Persistence: unchanged (`tasks.db` via manager; per-test isolated DBs
+  in the new tests).
+- Auth/ownership: byte-identical matrix, including the public
+  single-task GET (documented, not altered).
+
+## Tests and verification
+
+- New `test_task_routes.py`: 5/5 pre-move AND post-move.
+- Neighbors: project routes + auth + git service suites 62/62 combined;
+  supervised suites untouched and unaffected (full-suite diff clean).
+- Broad: `.venv/bin/python -m pytest -q` → **1,766 passed, 28 failed,
+  60 skipped**; the 28 failures byte-identical to the established
+  baseline (verified via `diff`).
+- `ast.parse` clean; grep confirms no task handlers in the monolith, no
+  monolith import in the blueprint, single registration per route.
+- A mid-slice double-prefix fault (`/api/api/...`) was caught by the
+  new contract test and fixed to short paths (same lesson as Slice 3B).
+- Manual workflows: none applicable (no UI changed). Not exercised:
+  live Flask boot, chat round-trip.
+
+## Metrics
+
+| Metric | Before (`130efda7`) | After | Method |
+|---|---|---|---|
+| `web_chat_api.py` lines | 10,406 | 10,152 (−254) | `wc -l` |
+| Task handlers owned by monolith | 8 | 0 | grep |
+| New owned modules | — | `api/task_routes.py` (8 routes) | — |
+| Task behavior tests | 0 | +5 contract/auth/shape/flow tests | pytest |
+| Full suite | 1,761 / 28 / 60 | 1,766 / 28 (identical list) / 60 | pytest + diff |
+
+## Remaining concerns
+
+1. `close-via-commit` frozen quirks (process-cwd commits, no identity,
+   string `files.split()`, orphan comments, public single-task GET)
+   are pinned tech debt for a later task-domain cleanup — not this slice.
+2. Supervised task routes (`/api/supervised/...`) are a separate domain
+   and stay; similar names must not merge ownership (verified disjoint).
+3. The 28 baseline failures are untouched and unrelated.
+
+## Diff summary
+
+- Added: `src/api/task_routes.py` (285 L),
+  `src/tests/test_task_routes.py` (5 tests).
+- Modified: `src/api/web_chat_api.py` (−254 net: block delete +7
+  registration), `src/api/git_service.py` (+27: one narrow op).
+- Deleted: no files.
+- `git status --short` before commit: 3 modified + 2 new paths (above).
+
+## External Review Summary
+
+1. **What changed architecturally?** Task HTTP transport moved to
+   owned `tasks_bp`; the monolith only composes it. One composite
+   workflow kept its shape with its git step delegated to a narrow,
+   frozen-semantics service op.
+2. **What behavior intentionally changed?** Nothing (one addition:
+   a service op that did not exist; its semantics equal the inline
+   code it replaces).
+3. **What behavior should be identical?** All 8 route paths/methods/
+   auth/shapes/codes; CRUD defaults; comment and close flows;
+   error strings including git failure mapping.
+4. **What remains coupled or messy?** Misc routes still inline;
+   close-via-commit quirks pinned as debt; supervised system separate;
+   28 unrelated baseline failures preserved.
+5. **What should be reviewed before reassessment?** The `tasks_bp`
+   ownership header; whether Phase 2 closes here or one more bounded
+   slice (tasks-adjacent misc) is justified — chat lifecycle stays out.
+6. **Is anything else safe to begin?** This slice is self-contained
+   (no chat/router/workers/supervised touched; failures identical to
+   baseline). Do NOT begin misc cleanup in this track until review
+   decides Phase 2's end.

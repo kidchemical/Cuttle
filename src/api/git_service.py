@@ -431,6 +431,29 @@ def push_repo(cwd: str, remote: str, branch: str) -> subprocess.CompletedProcess
             args=['git', *argv], returncode=127, stdout="", stderr=str(e))
 
 
+def stage_and_commit(cwd: str, message: str, files: Any = '.') -> str:
+    """Stage and commit for the task close-via-commit route (its only
+    caller). Semantics frozen from the legacy handler: ``files`` is the raw
+    request value (a space-separated string; ``'.'`` stages everything —
+    a list input raises AttributeError like the original), bare process
+    environment and identity (no ``-c`` flags, no env override), errors as
+    ``Git command failed: <CalledProcessError str>``."""
+    import subprocess as _sp
+
+    try:
+        if files != '.':
+            for file in files.split():
+                _sp.run(['git', 'add', file], check=True, cwd=cwd)
+        else:
+            _sp.run(['git', 'add', '.'], check=True, cwd=cwd)
+        result = _sp.run(['git', 'commit', '-m', message], check=True, cwd=cwd,
+                         capture_output=True, text=True)
+    except _sp.CalledProcessError as e:
+        raise GitError(f'Git command failed: {str(e)}',
+                       returncode=e.returncode, stderr=e.stderr)
+    return (result.stdout or '')
+
+
 def branch_operation(cwd: str, action: str, branch: str) -> Dict[str, str]:
     """create / switch / delete a branch. Unknown actions raise ValueError
     (the route maps this to 400); git failures raise GitError."""
