@@ -19,6 +19,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHAT_JS = REPO_ROOT / "src" / "web" / "js" / "chat_page.js"
+CHAT_PROJECT_JS = REPO_ROOT / "src" / "web" / "js" / "chat_project.js"
 
 node_only = pytest.mark.skipif(
     shutil.which("node") is None, reason="node not available"
@@ -43,7 +44,11 @@ def _extract(src: str, start_marker: str, end_marker: str) -> str:
 
 
 def _run_project_chip_js(script: str) -> dict:
+    # Phase 3 Slice 1: project decision logic lives in chat_project.js and
+    # is required directly (no source slicing — slicing is what rotted these
+    # tests). Chat-page orchestration shells are still sliced by markers.
     src = CHAT_JS.read_text(encoding="utf-8")
+    mod_path = str(CHAT_PROJECT_JS).replace("\\", "\\\\")
 
     id_helpers = _extract(
         src,
@@ -55,25 +60,25 @@ def _run_project_chip_js(script: str) -> dict:
         "    const SESSION_PREFS_STORAGE_KEY = 'cuttleChatSessionPrefs';",
         "    function clearSessionPrefs(sessionId) {",
     )
-    server_project = _extract(
+    session_lookup = _extract(
         src,
-        "    function projectFieldsFromServerSession(serverSession) {",
-        "    /** Max chats shown per project group before \"Show all\". */",
+        "    function findAuthServerSession(sessionId) {",
+        "    function resolveSessionProjectInfo(sessionId, sessionObj) {",
     )
-    find_project = _extract(
+    stored_check = _extract(
         src,
-        "    function findProjectById(id) {",
-        "    function renderProjectChips() {",
+        "    function sessionHasStoredProject(sessionId, sessionObj) {",
+        "    function isHistoryProjectSectionExpanded(",
     )
     set_chat = _extract(
         src,
         "    /**\n"
         "     * Keep the in-memory auth session + last /messages hydrate in sync with the\n",
-        "    // --- Pending changes strip (git working tree for the chat project) ---",
+        "    // --- Pending changes strip",
     )
     reconcile = _extract(
         src,
-        "    function projectObjectFromStoredFields(fields) {",
+        "    /** Resolve the chat's project from the active session, falling back to the Cuttle default. */",
         "    async function switchChatProject() {",
     )
     persist = _extract(
@@ -83,6 +88,7 @@ def _run_project_chip_js(script: str) -> dict:
     )
 
     harness = f"""
+const CuttleChatProject = require({json.dumps(mod_path)});
 const localStore = {{}};
 const localStorage = {{
     getItem: (k) => (Object.prototype.hasOwnProperty.call(localStore, k) ? localStore[k] : null),
@@ -95,6 +101,7 @@ const window = {{
         getSessions: () => authSessions,
     }},
 }};
+const inAppShell = false;
 let authSessions = [
     {{
         id: 204,
@@ -114,20 +121,22 @@ let lastHydratedSessionProject = {{
 }};
 function isAuthMode() {{ return true; }}
 function readStarredProject() {{ return null; }}
-function normalizeStarredProjectPath(p) {{
-    return String(p || '').replace(/\\\\/g, '/').replace(/\\/+$/, '').toLowerCase();
-}}
+function findProjectById(id) {{ return CuttleChatProject.findProjectById(projects, id); }}
+function findDefaultProject() {{ return CuttleChatProject.findDefaultProject(projects, readStarredProject()); }}
+function projectFieldsFromServerSession(s) {{ return CuttleChatProject.projectFieldsFromServerSession(s); }}
 function renderProjectChips() {{}}
 function refreshTypingIndicatorProjectChip() {{}}
 function schedulePendingChangesRefresh() {{}}
+function reportProjectToShell() {{}}
+function refreshChatWidgets() {{}}
 function loadProjectCommandsForPalette() {{}}
 function loadHarnessAgentsForPalette() {{}}
 function addSystemMessage() {{}}
 const fetch = () => Promise.resolve({{ ok: true, json: async () => ({{ success: true }}) }});
 {id_helpers}
 {prefs_map}
-{server_project}
-{find_project}
+{session_lookup}
+{stored_check}
 {persist}
 {set_chat}
 {reconcile}
@@ -145,7 +154,7 @@ def test_project_chip_survives_reconcile_after_user_pick():
     """CH-000204: /project → Escape Purgatory must not snap back to Cuttle on reconcile."""
     res = _run_project_chip_js(
         """
-const ep = projects.find((p) => p.name === 'Escape Purgatory');
+const ep = projects.find((p) => p.name === 'Demo Game');
 setChatProject(ep, { silent: true });
 // Send path / loadProjects / session settle all call this.
 reconcileChatProject();
@@ -177,7 +186,7 @@ def test_set_chat_project_updates_hydrated_snapshot():
     """User pick must refresh lastHydrated so server-first reconcile cannot resurrect Cuttle."""
     res = _run_project_chip_js(
         """
-const ep = projects.find((p) => p.name === 'Escape Purgatory');
+const ep = projects.find((p) => p.name === 'Demo Game');
 setChatProject(ep, { silent: true });
 process.stdout.write(JSON.stringify({
     hydrated: lastHydratedSessionProject,

@@ -421,9 +421,7 @@
     let _gitReposCache = { path: '', repos: [], at: 0 };
 
     function currentProjectPathKey() {
-        return currentProject && currentProject.path
-            ? String(currentProject.path)
-            : '';
+        return CuttleChatProject.currentProjectPathKey(currentProject);
     }
 
     /** Sync known repos for the current project (cache or pending-changes panel). */
@@ -2109,14 +2107,7 @@
     }
 
     function projectFieldsFromServerSession(serverSession) {
-        if (!serverSession || typeof serverSession !== 'object') return null;
-        const id = serverSession.project_id != null
-            ? serverSession.project_id
-            : (serverSession.projectId != null ? serverSession.projectId : null);
-        const name = serverSession.project_name || serverSession.projectName || '';
-        const path = serverSession.project_path || serverSession.projectPath || '';
-        if (id == null && !name && !path) return null;
-        return { projectId: id, projectName: name, projectPath: path };
+        return CuttleChatProject.projectFieldsFromServerSession(serverSession);
     }
 
     function findAuthServerSession(sessionId) {
@@ -5699,11 +5690,7 @@
     }
 
     function normalizeStarredProjectPath(path) {
-        return String(path || '')
-            .trim()
-            .replace(/\\/g, '/')
-            .replace(/\/+$/, '')
-            .toLowerCase();
+        return CuttleChatProject.normalizeProjectPath(path);
     }
 
     function readStarredProject() {
@@ -8440,55 +8427,17 @@
         return agent.concat(command);
     }
 
+    // Project mapping lives in chat_project.js (pure over explicit inputs).
     function projectFromPath(path) {
-        const raw = String(path || '').trim();
-        if (!raw) return null;
-        const norm = raw.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
-        let best = null;
-        let bestLen = -1;
-        (projects || []).forEach((p) => {
-            const pp = String((p && p.path) || '').trim();
-            if (!pp) return;
-            const have = pp.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
-            if (norm === have || norm.startsWith(have + '/') || have.startsWith(norm + '/')) {
-                if (have.length > bestLen) {
-                    best = p;
-                    bestLen = have.length;
-                }
-            }
-        });
-        if (best) {
-            return { id: best.id, name: best.name || 'Project', path: best.path || raw };
-        }
-        const parts = raw.split(/[\\/]/).filter(Boolean);
-        return { id: null, name: parts[parts.length - 1] || raw, path: raw };
+        return CuttleChatProject.projectFromPath(path, projects);
     }
 
-    function projectFromMessageOpts(opts) {
-        opts = opts || {};
-        const id = opts.project_id != null ? opts.project_id : opts.projectId;
-        const name = opts.project_name || opts.projectName || '';
-        const path = opts.project_path || opts.projectPath || '';
-        if (id != null || name || path) {
-            const byId = id != null ? findProjectById(id) : null;
-            return {
-                id: id != null ? id : (byId && byId.id),
-                name: name || (byId && byId.name) || (path ? projectFromPath(path).name : 'Project'),
-                path: path || (byId && byId.path) || '',
-            };
-        }
-        const cwd = opts.cursor_run && opts.cursor_run.cwd;
-        if (cwd) return projectFromPath(cwd);
-        const chips = opts.slash_command && opts.slash_command.chips;
-        if (Array.isArray(chips)) {
-            for (let i = 0; i < chips.length; i++) {
-                const meta = String((chips[i] && chips[i].meta) || '');
-                const m = meta.match(/\bcwd\s+(\S+)/i);
-                if (m && m[1]) return projectFromPath(m[1]);
-            }
-        }
-        if (opts.live && currentProject) return currentProject;
-        return null;
+    function projectFromMessageOpts(opts, projectsArg, current) {
+        return CuttleChatProject.projectFromMessageOpts(
+            opts,
+            projectsArg !== undefined ? projectsArg : projects,
+            current !== undefined ? current : currentProject
+        );
     }
 
     function messageHeaderBadgesHtml(chipList, isError, project) {
@@ -12235,37 +12184,14 @@
     }
 
     // --- Per-chat project ("cwd") via the /project (/cd) slash command ---
+    // Pure lookups live in chat_project.js; wrappers bind the registry.
     function findProjectById(id) {
-        if (id === null || id === undefined) return null;
-        return (projects || []).find((p) => String(p.id) === String(id)) || null;
+        return CuttleChatProject.findProjectById(projects, id);
     }
 
     function findDefaultProject() {
         // Starred project wins (exclusive default for new chats).
-        const starred = readStarredProject();
-        if (starred) {
-            if (starred.id != null) {
-                const byId = findProjectById(starred.id);
-                if (byId) return byId;
-            }
-            const want = normalizeStarredProjectPath(starred.path);
-            if (want) {
-                const byPath = (projects || []).find(
-                    (p) => normalizeStarredProjectPath(p.path) === want
-                );
-                if (byPath) return byPath;
-            }
-            if (starred.name) {
-                const byName = (projects || []).find(
-                    (p) => String(p.name || '').toLowerCase() === String(starred.name).toLowerCase()
-                );
-                if (byName) return byName;
-            }
-        }
-        const byName = (projects || []).find(
-            (p) => /cuttle/i.test(String(p.name || '')) || /cuttle/i.test(String(p.path || ''))
-        );
-        return byName || (projects || [])[0] || null;
+        return CuttleChatProject.findDefaultProject(projects, readStarredProject());
     }
 
     function renderProjectChips() {
@@ -12959,117 +12885,36 @@
         });
     }
 
-    function projectObjectFromStoredFields(fields) {
-        if (!fields) return null;
-        if (fields.projectId != null) {
-            const byId = findProjectById(fields.projectId);
-            if (byId) {
-                return { id: byId.id, name: byId.name, path: byId.path || '' };
-            }
-        }
-        if (fields.projectName) {
-            const byName = (projects || []).find(
-                (p) => String(p.name || '').toLowerCase() === String(fields.projectName).toLowerCase()
-            );
-            if (byName) {
-                return { id: byName.id, name: byName.name, path: byName.path || '' };
-            }
-        }
-        if (fields.projectPath || fields.projectName || fields.projectId != null) {
-            return {
-                id: fields.projectId != null ? fields.projectId : null,
-                name: fields.projectName || 'Project',
-                path: fields.projectPath || '',
-            };
-        }
-        return null;
-    }
-
     /** Resolve the chat's project from the active session, falling back to the Cuttle default. */
     function reconcileChatProject() {
-        let proj = null;
-        let hadStored = false;
+        // Gather session inputs (chat-page owns all session IO); the priority
+        // chain itself lives in chat_project.js (pure over explicit inputs).
+        let serverProj = null;
+        let mergedPrefs = null;
+        let stored = null;
         if (currentSessionId) {
-            const serverProj = projectFieldsFromServerSession(findAuthServerSession(currentSessionId));
-            proj = projectObjectFromStoredFields(serverProj);
-            if (proj) hadStored = true;
-
+            serverProj = projectFieldsFromServerSession(findAuthServerSession(currentSessionId));
             const prefs = getSessionPrefs(currentSessionId);
             const barePrefs = getSessionPrefs(toAuthDbSessionId(currentSessionId));
-            const mergedPrefs = Object.assign({}, barePrefs || {}, prefs || {});
-            if (!proj && mergedPrefs && mergedPrefs.projectId !== undefined && mergedPrefs.projectId !== null) {
-                proj = findProjectById(mergedPrefs.projectId);
-                hadStored = true;
-            }
-            if (!proj && mergedPrefs && mergedPrefs.projectPath) {
-                proj = {
-                    id: mergedPrefs.projectId,
-                    name: mergedPrefs.projectName || 'Project',
-                    path: mergedPrefs.projectPath,
-                };
-                hadStored = true;
-            }
-            // Id lookup can fail when the projects list is empty/wrong DB; recover by name.
-            if (!proj && mergedPrefs && mergedPrefs.projectName) {
-                const byName = (projects || []).find(
-                    (p) => String(p.name || '').toLowerCase() === String(mergedPrefs.projectName).toLowerCase()
-                );
-                if (byName) {
-                    proj = byName;
-                    hadStored = true;
-                } else {
-                    proj = {
-                        id: mergedPrefs.projectId,
-                        name: mergedPrefs.projectName,
-                        path: mergedPrefs.projectPath || '',
-                    };
-                    hadStored = true;
-                }
-            }
-            if (!proj) {
-                try {
-                    const sessions = JSON.parse(localStorage.getItem('chatSessions') || '{}');
-                    const s = sessions[currentSessionId];
-                    if (s && s.projectId !== undefined && s.projectId !== null) {
-                        proj = findProjectById(s.projectId);
-                        hadStored = true;
-                    }
-                    if (!proj && s && s.projectPath) {
-                        proj = { id: s.projectId, name: s.projectName || 'Project', path: s.projectPath };
-                        hadStored = true;
-                    }
-                    if (!proj && s && s.projectName) {
-                        const byName = (projects || []).find(
-                            (p) => String(p.name || '').toLowerCase() === String(s.projectName).toLowerCase()
-                        );
-                        proj = byName || {
-                            id: s.projectId,
-                            name: s.projectName,
-                            path: s.projectPath || '',
-                        };
-                        hadStored = true;
-                    }
-                } catch (_) {}
+            mergedPrefs = Object.assign({}, barePrefs || {}, prefs || {});
+            try {
+                const sessions = JSON.parse(localStorage.getItem('chatSessions') || '{}');
+                stored = sessions[currentSessionId] || null;
+            } catch (_) {
+                stored = null;
             }
         }
-        // Unsaved new chat: keep the project the user already picked (/project chip
-        // or history "+"). There is no session row yet, so falling through to
-        // findDefaultProject() snapped the chip back to Cuttle on first send.
-        if (!proj && !currentSessionId && currentProject) {
-            proj = currentProject;
-        }
-        // Backfill path from the live projects list when we only have an id/name.
-        if (proj && !proj.path && proj.id != null) {
-            const byId = findProjectById(proj.id);
-            if (byId && byId.path) proj = { ...proj, path: byId.path, name: proj.name || byId.name };
-        }
-        if (proj && !proj.path && proj.name) {
-            const byName = (projects || []).find(
-                (p) => String(p.name || '').toLowerCase() === String(proj.name).toLowerCase()
-            );
-            if (byName && byName.path) proj = { ...proj, id: proj.id != null ? proj.id : byName.id, path: byName.path };
-        }
-        if (!proj) proj = findDefaultProject();
+        const decided = CuttleChatProject.resolveChatProject({
+            projects,
+            currentSessionId,
+            currentProject,
+            serverFields: serverProj,
+            prefs: mergedPrefs,
+            stored,
+            starred: readStarredProject(),
+        });
+        const proj = decided.proj;
+        const hadStored = decided.hadStored;
         currentProject = proj || null;
         // Stamp the default onto prefs so history grouping matches the cwd chip
         // (auth sessions do not store project_id on the server).
@@ -13103,50 +12948,17 @@
         if (!keepWelcomePick) {
             reconcileChatProject();
         }
-        let proj = currentProject;
         // Always re-bind path from the live projects list when we have an id/name.
         // Stale localStorage often keeps name "Escape Purgatory" with path Cuttle.
-        if (proj && proj.id != null) {
-            const byId = findProjectById(proj.id);
-            if (byId && byId.path) {
-                const fixed = {
-                    id: byId.id,
-                    name: byId.name || proj.name,
-                    path: byId.path,
-                };
-                if (!proj.path || String(proj.path) !== String(byId.path) || proj.name !== fixed.name) {
-                    currentProject = fixed;
-                    if (currentSessionId) persistProjectForCurrentSession();
-                } else {
-                    currentProject = fixed;
-                }
-                return currentProject;
-            }
-        }
-        if (proj && proj.name) {
-            const byName = (projects || []).find(
-                (p) => String(p.name || '').toLowerCase() === String(proj.name).toLowerCase()
-            );
-            if (byName && byName.path) {
-                currentProject = {
-                    id: proj.id != null ? proj.id : byName.id,
-                    name: byName.name || proj.name,
-                    path: byName.path,
-                };
-                if (currentSessionId) persistProjectForCurrentSession();
-                return currentProject;
-            }
-        }
-        if (proj && proj.path) return proj;
-        return proj;
+        const rebound = CuttleChatProject.rebindProjectToRegistry(currentProject, projects);
+        currentProject = rebound.proj;
+        if (rebound.changed && currentSessionId) persistProjectForCurrentSession();
+        return currentProject;
     }
 
     function applyOutboundProjectToRequest(requestBody) {
-        const proj = resolveOutboundProject();
-        if (!proj) return;
-        if (proj.id != null) requestBody.project_id = proj.id;
-        if (proj.name) requestBody.project_name = proj.name;
-        if (proj.path) requestBody.project_path = proj.path;
+        CuttleChatProject.applyOutboundProjectToRequest(
+            requestBody, resolveOutboundProject());
     }
     
     async function switchChatProject() {
@@ -13602,16 +13414,7 @@
         const id = rawId ? rawId : null;
         const name = btn.getAttribute('data-project-name') || '';
         const path = btn.getAttribute('data-project-path') || '';
-        let proj = id != null ? findProjectById(id) : null;
-        if (!proj && path) {
-            proj = (projects || []).find((p) => String(p.path || '') === path) || null;
-        }
-        if (!proj && name) {
-            proj = (projects || []).find(
-                (p) => String(p.name || '').toLowerCase() === name.toLowerCase()
-            ) || null;
-        }
-        if (!proj) proj = { id: id != null ? id : null, name: name || 'Project', path };
+        const proj = CuttleChatProject.findProject(projects, { id, path, name });
         Promise.resolve(createNewChat()).then(() => {
             // Runs after createNewChat's reconcile so the group's project wins
             // over the Cuttle default fallback.
@@ -14936,7 +14739,7 @@
     function projectFromMessageRecord(msg) {
         if (!msg) return null;
         if (msg._project) return msg._project;
-        return projectFromMessageOpts(authMessageOptsFromServer(msg));
+        return projectFromMessageOpts(authMessageOptsFromServer(msg), projects, currentProject);
     }
 
     function annotateMessageProjects(messages) {
@@ -21645,7 +21448,7 @@
         const timeAgo = formatTimeAgo(ts);
         const timeLabel = timeAgo === 'now' ? 'Just now' : 'Sent ' + timeAgo + ' ago';
         const sc = normalizeSlashCommandStored(opts.slash_command);
-        let project = projectFromMessageOpts(opts);
+        let project = projectFromMessageOpts(opts, projects, currentProject);
         if (!project && opts.message_id == null && currentProject) {
             project = currentProject;
         }

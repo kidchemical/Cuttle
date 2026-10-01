@@ -1681,3 +1681,203 @@ missed in Phase 0 now recorded): `agent_harness/kernel`
 (clear status), and `doctor.py` (importability health-check only —
 not a real dependency). None were widened by Phase 2; narrowing them
 is Phase 4 work, gated on the same per-slice evidence standard.
+
+---
+
+# Phase 3 — Slice 1: Project Context Domain (chat_page.js)
+
+## Phase status
+
+- Slice: Phase 3 Slice 1 — project-context pure domain →
+  `src/web/js/chat_project.js` (`window.CuttleChatProject`).
+- Git baseline before work: `fad46b4c` ("Phase 2 closure summary"),
+  clean tree.
+- Git commit after work: the single `Phase 3 slice 1: chat project
+  context domain` commit on main (identify via `git log --oneline`).
+- Completion status: **complete, awaiting external review**. No further
+  chat-page domains started (streaming, messages/history, composer,
+  slash registry, agent/model controls, attachments, action forms
+  untouched).
+
+## Original problem
+
+`chat_page.js` (26.7k lines, single IIFE) owned project-context
+resolution — the reconcile priority chain (server → prefs → stored →
+keep-unsaved-pick → backfills → default), registry lookups, outbound
+stamping, and message-metadata mapping — as closures over chat globals.
+This logic already caused regressions (CH-000204 snap-back, Escape
+Purgatory), yet its only tests extracted source slices by comment
+markers, which rotted: both chip tests failed at baseline on a stale
+end marker, never executing.
+
+## Before implementation (inventory)
+
+- 97 name-matched functions triaged; true slice: `findProjectById`,
+  `projectObjectFromStoredFields`, `projectFieldsFromServerSession`,
+  `resolveSessionProjectInfo` (history use, kept in place),
+  `reconcileChatProject`, `resolveOutboundProject`,
+  `applyOutboundProjectToRequest`, `projectFromPath`,
+  `projectFromMessageOpts`, `findDefaultProject`,
+  `currentProjectPathKey`, `newChatForProject` fallback chain,
+  starred-path normalize.
+- False friends explicitly excluded: attachment drafts (`take/…Pending
+  Attachments`), follow-up queue (`pendingSlash…`, `collectPendingResult`),
+  history grouping/filtering, starred settings IO, slash palette/dispatch,
+  pending-diff modal render (~500 L, rendering-last), git push modal and
+  commit-viewer wiring, chip HTML render, project selector/display DOM,
+  persistence writes, shell postMessage, palette refresh, fetch transport.
+- Already-extracted companions (not re-touched):
+  `pending_changes_panel.js` (`window.CuttlePendingChangesPanel`,
+  chat_page keeps a thin `pendingChangesCtl` adapter),
+  `git_ui.js`, `git_commit_viewer.js`.
+- Shared bindings the slice reads: `projects`, `currentProject`,
+  `currentSessionId`, `lastHydratedSessionProject` singletons; session
+  helpers (`getSessionPrefs`, `toAuthDbSessionId`, `sessionIdsEqual`,
+  `sessionHasStoredProject`, `authSessionListHas`,
+  `findAuthServerSession`); starred prefs IO; render/persist/palette
+  callbacks. Iframe/shell/backend contracts: `cuttle-pending-project`
+  postMessage (stays), `/api/projects` + `/api/projects/<id>/switch`
+  fetches (stay), `/api/auth/sessions PATCH` persist (stays).
+- `window.*` exposure: only `newChatForProject` + `switchChatProject`
+  (orchestration, stay). No moved function was externally exposed.
+
+## Changes made
+
+- **Added `src/web/js/chat_project.js`** (359 L): pure lookups
+  (`findProjectById/ByName/ByPath`, `findProject` fallback chain,
+  `findDefaultProject` with injected starred, `normalizeProjectPath`),
+  mappers (`projectFieldsFromServerSession`,
+  `projectObjectFromStoredFields`, `projectFromPath`,
+  `projectFromMessageOpts`), decision core
+  (`resolveChatProject(inputs)` — the reconcile priority chain over
+  explicit `{projects, currentSessionId, currentProject, serverFields,
+  prefs, stored, starred}`), `rebindProjectToRegistry` (stale
+  name/path repair with `{proj, changed}`), `applyOutboundProjectToRequest`,
+  `currentProjectPathKey`. No DOM/window/localStorage/fetch; node-
+  requirable (footer uses `globalThis` directly — TDZ-proof for
+  importers that declare a lexical `window`).
+- **chat_page.js keeps**: singletons, session/prefs/server IO gathering,
+  DOM, persistence writes, slash/palette/history/shell/push/fetch, and
+  thin orchestration shells (`reconcileChatProject` gathers →
+  `resolveChatProject` → applies + unchanged persist/render tails;
+  `resolveOutboundProject` keeps the welcome-pick guard, delegates the
+  rebind; `newChatForProject` delegates its fallback chain) plus
+  singleton-binding wrappers (`findProjectById`,
+  `projectFieldsFromServerSession`, `findDefaultProject`,
+  `projectFromPath`, `projectFromMessageOpts`) so ~30 unrelated call
+  sites don't churn. Deleted outright: `projectObjectFromStoredFields`
+  (sole caller moved into the module).
+- chat_page.js: 26,700 → 26,503 lines (−197 net).
+- `chat_page.html`: `chat_project.js` script tag before `chat_page.js`
+  (both `?v=20261001slice1` cache-busted).
+- **Tests:** new `src/tests/test_chat_project.py` (5 tests,
+  node-executed against the real module): lookups/mappers, full
+  reconcile priority matrix, rebind/outbound, message-opts mapping,
+  parse check. Repaired `test_project_chip_persistence.py` to
+  `require()` the module instead of source-slicing moved code (slicing
+  is what rotted it), repaired its stale fixture name, and added the
+  missing harness stubs the old slices never provided — converting
+  both baseline failures to passes.
+- Moved vs deleted: decision/mapping logic relocated verbatim
+  (moved, two fidelity fixes during porting: id-tier `hadStored`
+  unconditionality, rebind persist-condition parity); dead def removed.
+
+## Architecture after
+
+```
+chat_page.js (orchestration: gather → decide → apply/render/persist)
+      │  explicit inputs / narrow wrappers
+      ▼
+chat_project.js (pure: lookups, resolveChatProject, rebind, outbound)
+```
+
+One-way dependency (page → namespace); module holds no state and
+reads no chat globals. Pending Changes/Git UI stay in their existing
+companion modules behind thin adapters.
+
+## Dependencies and state
+
+- Removed: chat-page closures over singletons for all moved decision
+  logic; one dead def.
+- Introduced: `CuttleChatProject` namespace (classic script + node
+  exports; no new runtime deps). No shared state added or moved —
+  singletons stay in the page and are passed explicitly.
+- Reverse deps: none existed on these functions outside the page (only
+  the repaired test); none created.
+- Persistence/restart semantics: unchanged (all writes stay in the
+  page's persist path).
+- Two porting fidelity items preserved exactly (hadStored-on-miss,
+  rebind persist conditions); verified by the matrix tests.
+
+## Tests and verification
+
+- New `test_chat_project.py`: 5/5 (covers every preserved contract in
+  the slice brief: command-adjacent resolution, chip inputs, picker
+  registry, new/existing-chat behavior, per-chat persistence inputs,
+  switching inputs, outbound/CWD stamping).
+- Repaired chip tests: 2/2 pass (were baseline failures on marker rot;
+  now execute the CH-000204 scenario against module + mirrored shells).
+- Neighbors: project routes + auth + git service + attachments suites
+  green except 3 pre-existing attachments failures.
+- Broad: `.venv/bin/python -m pytest -q` → **1,773 passed, 26 failed,
+  60 skipped**; the 26 failures are the baseline 28 minus the 2
+  repaired chip tests (verified via `diff` — strictly fewer, no new).
+- `node --check` clean on both JS files.
+- Manual workflows: none applicable beyond prior passes (no UI changed;
+  DOM-level project gestures were covered by the Phase 1 browser pass
+  on the same surfaces). Not exercised: live Flask boot, chat round-trip.
+
+## Metrics
+
+| Metric | Before (`fad46b4c`) | After | Method |
+|---|---|---|---|
+| `chat_page.js` lines | 26,700 | 26,503 (−197) | `wc -l` |
+| Project decision fns needing chat globals | ~14 (all) | 0 in module (explicit inputs) | grep |
+| Project behavior tests | 0 green (2 rotten) | +5 module +2 repaired | pytest |
+| Full suite | 1,766 / 28 / 60 | 1,773 / 26 (28 minus 2 fixed) / 60 | pytest + diff |
+
+## Remaining concerns
+
+1. Rendering, persistence writes, slash, palette, history, shell/push/
+   fetch, starred IO, and the pending-diff modal stay in the page
+   (correct per phase plan: rendering/DOM last, one domain per slice).
+2. The repaired chip harness still slices orchestration shells by
+   markers (unavoidable until those shells decompose); markers
+   re-verified unique in this slice.
+3. History grouping/filtering duplicates some lookup chains inline
+   (`resolveSessionProjectInfo` etc.) — future slice may route them
+   through the module; left untouched to bound blast radius.
+4. 26 remaining baseline failures are untouched and unrelated.
+
+## Diff summary
+
+- Added: `src/web/js/chat_project.js` (359 L),
+  `src/tests/test_chat_project.py` (5 tests).
+- Modified: `src/web/js/chat_page.js` (−197 net: delegation + one dead
+  def removed), `src/web/chat_page.html` (+1 script tag, `?v` bump),
+  `src/tests/test_project_chip_persistence.py` (module require + stubs).
+- Deleted: no files.
+- `git status --short` before commit: 3 modified + 2 new paths (above).
+
+## External Review Summary
+
+1. **What changed architecturally?** Project-context decision logic
+   moved from the chat-page IIFE to owned pure `chat_project.js`;
+   the page keeps singletons, IO, DOM, and orchestration shells.
+2. **What behavior intentionally changed?** Nothing (two porting
+   details matched to the original: unconditional id-tier `hadStored`,
+   rebind persist parity).
+3. **What behavior should be identical?** Reconcile outcomes for every
+   session state, outbound stamping, chip inputs, picker/new-chat
+   fallback, message metadata mapping.
+4. **What remains coupled or messy?** All rendering/persistence/slash/
+   history/shell/push/fetch in the page; chip harness still slices
+   orchestration shells; 26 unrelated baseline failures remain.
+5. **What should be reviewed before the next chat domain?** The
+   `resolveChatProject` input contract (gathering stays in the page by
+   design); whether the next slice is Pending Changes modal, slash
+   registry, or composer.
+6. **Is the next domain safe to begin?** This slice is self-contained
+   (no streaming/messages/composer/agent/attachment/action-form code
+   touched; failures strictly decreased). Do NOT continue in this track
+   until this review is approved.
