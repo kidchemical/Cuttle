@@ -4446,3 +4446,113 @@ whole was rejected as monolith-shifting. The owned seam is
   unavailable (node/fake-DOM only) — reported, not waived.
 - Commit independently on main. No push, no restart.
   **STOP for Codex review before 8F/next portion or Streaming.**
+
+## Prior approval recorded: Slice 8E 21537f00
+
+- External review approves 8E. Reviewer last read line 4448; this
+  section appends only beyond that boundary; earlier sections preserved.
+
+## Slice 8F report — prompt-history navigation ownership + closure review
+
+- New owner `src/web/js/chat_prompt_history.js`
+  (`CuttlePromptHistory`, IIFE + `module.exports`, zero DOM/storage):
+  single browse-state shape `{ list, index, draft }` (`createState`),
+  `appendRecord` (trim/dedupe-newest/cap-100/browse-reset, bool),
+  `captureDraft` (sticks only on fresh browse), `step` (older/newer
+  index machine returning `none`/`oldest`/`text`/`draft`),
+  `mergeSessionHistories` (longer stored side wins, live fallback,
+  cap), `deriveFromUserMessages` (user-role trim/filter/cap),
+  `atStartAnchor`/`atEndAnchor` caret predicates. The three page-scope
+  `let`s collapse into one `promptHistoryState` instance — state shape
+  and transitions owned in exactly one place, never split.
+- Page keeps: the state instance, all localStorage IO + session-id
+  wiring (`read/writePromptHistoryMap`, load/migrate/persist shells),
+  DOM (`applyHistoryTextToTextarea`, caret reads, keydown glue, typing
+  listeners), slash integration (draft composition via
+  `composeMessageWithSlashChip`, chip clearing). `navigatePromptHistory`
+  keeps its signature and consumed semantics; capture/apply stay
+  page-side. Typing in either composer calls `resetBrowse` (draft-clear
+  is unobservable: the next older-step recaptures since index is -1).
+  Five `recordPromptHistory` send-path call sites unchanged (persist
+  fires only on real appends, as before).
+- Coverage (committed, real module execution): new
+  `test_chat_prompt_history.py` (7 tests: record trim/dedupe/cap incl.
+  105-item overflow, full browse cycle both directions with draft
+  restore, single/empty/fresh-down edges, draft-capture-once, all six
+  merge choices, derivation, anchor table, tag pin). Pre-move
+  differential `/tmp/diff_prompt.js` (scratch): real page spans vs
+  module over record/browse/migrate/derive/anchor vectors — IDENTICAL
+  throughout, plus one documented hardening: a null transcript entry
+  used to trip the page try/catch and drop the WHOLE derivation, the
+  module skips nulls and recovers the rest (pinned as hardening, not
+  equivalence — same precedent as 8D null tolerance).
+- Gates, same controlled scope (`--ignore=src/tests/unit`, spend flags
+  verified unset, zero `SPENDING REAL TOKENS` trips): focused +
+  neighbors 242 passed with only the 5 known pre-existing failures
+  (composer duplicate, steer, starred-removal all green); broad **28
+  failed / 1839 passed / 79 skipped** with FAILED identities
+  byte-identical to the 8D/8E 28 (`diff` clean; +7 passed = 7 new
+  tests). `node --check` clean on all touched JS.
+- Cache: `chat_page.html` adds versioned
+  `chat_prompt_history.js?v=20261001slice8f` (after markdown, before
+  page) and bumps `chat_page.js` to `slice8f`; all other assets
+  untouched with matching fingerprints.
+- Files: `src/web/js/chat_prompt_history.js` (new),
+  `src/web/js/chat_page.js` (−~90: split state + five inline decision
+  bodies out, one state object + delegations in),
+  `src/web/chat_page.html` (+2/−1 tags),
+  `src/tests/test_chat_prompt_history.py` (new), this section. No
+  backend/routing/product-behavior changes.
+
+## Messages/History closure status (against the Phase 3 goal)
+
+- Owned and tested: message records (`chat_messages.js`: normalize,
+  dispatch, windowing, pagination), user/assistant rendering
+  (extract planning + restore protocol), markdown (`chat_markdown.js`:
+  inline/tables/block loop), activation (`chat_activate.js`: vega,
+  copy, highlight, terminal), prompt navigation
+  (`chat_prompt_history.js`), attachments (`chat_attachments.js`),
+  action forms (`chat_action_forms.js`), agent badges/slash
+  (`chat_agent_model.js`, `chat_slash.js`), activity
+  (`chat_activity.js`), projects (`chat_project.js`), composer
+  decisions (`chat_composer.js`).
+- Search: split by feature, no new extraction. In-chat find decisions
+  are owned by `chat_find.js` (`CuttleChatFindApi`: electron detect,
+  key actions, match offsets, step index). History-panel search stays
+  page orchestration (`historySearchLiveQuery` state + paint gates in
+  `loadChatHistory`/panel paths) because the query state gates live
+  server/local session paint, not a pure match — gate tests
+  (`test_chat_history_search.py`, incl. the hard full-list-paint gate)
+  are the contract; navigability via those tests.
+- Panel/delete/rename/persistence + DOM predicates stay page
+  orchestration: `paintHistoryEntries`/`createHistoryItemHTML`/
+  `createAuthHistoryItemHTML`, `deleteChatSession` (16383),
+  `renameChatSession` (16943), `isChatSessionDeleted`,
+  `closeHistoryItemMenu` — they compose auth state, localStorage, live
+  DOM, and server sessions per paint; extracting them would strand
+  paint order in callback bags. Contracts: history-delete-modal,
+  pagination, and search gate tests. Feature navigability: panel paint
+  flows through `loadChatHistory` → `paintHistoryEntries`.
+- Assigned to Slice 9 ONLY on streaming/lifecycle evidence (not
+  size): `loadChatHistory` (17331) consumes live server sessions
+  (`CuttleAuth.getSessions`), generation flags
+  (`applyGeneratingFlagsFromSessions`), and shares paint gates with
+  the poll timers (`messageSyncTimer` 13496,
+  `historyGeneratingPollTimer` 12053); transcript poll/append,
+  session restore ordering (prefs/render/live-status), and
+  `migrateLocalChatSession` (runs inside session-remap lifecycle).
+  Required Slice 9 acceptance: (1) preserve search-gate semantics
+  (no full-list paint over an active query); (2) preserve
+  last-message-time sort stability; (3) preserve
+  prefs/render/live-status restore order with existing
+  execution-level tests green; (4) keep prompt-history session
+  migration (`migratePromptHistorySession` + `loadPromptHistory-
+  ForSession`) wired to remap events. No other Messages/History
+  logic is known-unowned: domain work is complete except the Slice 9
+  lifecycle items above. Streaming itself is NOT started here.
+- Risks/limits: null-transcript hardening is new-tolerant by design
+  (documented); browser/Flask manual validation unavailable
+  (node/fake-DOM only); `migrateLocalChatSession` merge stays inline
+  (lifecycle-adjacent, Slice 9).
+- Commit independently on main. No push, no restart.
+  **STOP for Codex review before Slice 9/Streaming.**

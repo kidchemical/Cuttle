@@ -3012,15 +3012,14 @@
     }
 
 
-    /** User-sent prompts for ↑/↓ recall (newest at end). */
-    const PROMPT_HISTORY_CAP = 100;
+    /** User-sent prompts for ↑/↓ recall (newest at end). Single browse
+        session owned by chat_prompt_history.js; the page holds this
+        instance plus storage/session/DOM/slash IO. */
     const PROMPT_HISTORY_STORAGE_KEY = 'cuttlePromptHistoryBySession';
     const INFERENCE_MODE_STORAGE_KEY = 'cuttleChatInferenceMode';
     /** Temporarily off — agent router owns routing; re-enable UI when needed. */
     const INFERENCE_MODE_TOGGLE_ENABLED = false;
-    let promptHistory = [];
-    let promptHistoryBrowseIndex = -1;
-    let promptHistoryDraft = '';
+    const promptHistoryState = CuttlePromptHistory.createState();
 
     function readPromptHistoryMap() {
         try {
@@ -3042,13 +3041,8 @@
     function migratePromptHistorySession(oldId, newId) {
         if (!oldId || !newId || oldId === newId) return;
         const map = readPromptHistoryMap();
-        const fromOld = Array.isArray(map[oldId]) ? map[oldId] : [];
-        const fromNew = Array.isArray(map[newId]) ? map[newId] : [];
-        let merged = fromOld.length >= fromNew.length ? fromOld.slice() : fromNew.slice();
-        if (merged.length === 0 && promptHistory.length) {
-            merged = promptHistory.slice();
-        }
-        while (merged.length > PROMPT_HISTORY_CAP) merged.shift();
+        const merged = CuttlePromptHistory.mergeSessionHistories(
+            map[oldId], map[newId], promptHistoryState.list);
         if (merged.length) {
             map[newId] = merged;
         } else {
@@ -3092,10 +3086,9 @@
     }
 
     function loadPromptHistoryForSession(sessionId) {
-        promptHistoryBrowseIndex = -1;
-        promptHistoryDraft = '';
+        CuttlePromptHistory.resetBrowse(promptHistoryState);
         if (!sessionId) {
-            promptHistory = [];
+            promptHistoryState.list = [];
             return;
         }
         const map = readPromptHistoryMap();
@@ -3105,14 +3098,7 @@
                 const sessions = JSON.parse(localStorage.getItem('chatSessions') || '{}');
                 const s = sessions[sessionId];
                 if (s && Array.isArray(s.messages)) {
-                    const fromMsgs = s.messages
-                        .filter((m) => m.role === 'user')
-                        .map((m) => String(m.content || '').trim())
-                        .filter(Boolean);
-                    arr =
-                        fromMsgs.length > PROMPT_HISTORY_CAP
-                            ? fromMsgs.slice(-PROMPT_HISTORY_CAP)
-                            : fromMsgs.slice();
+                    arr = CuttlePromptHistory.deriveFromUserMessages(s.messages);
                 }
             } catch (_) {}
             if (arr.length) {
@@ -3120,13 +3106,13 @@
                 writePromptHistoryMap(map);
             }
         }
-        promptHistory = arr;
+        promptHistoryState.list = arr;
     }
 
     function persistPromptHistoryForCurrentSession() {
         if (!currentSessionId) return;
         const map = readPromptHistoryMap();
-        map[currentSessionId] = promptHistory.slice();
+        map[currentSessionId] = promptHistoryState.list.slice();
         writePromptHistoryMap(map);
     }
 
@@ -3183,33 +3169,22 @@
     }
 
     function recordPromptHistory(composedMessage) {
-        const m = String(composedMessage || '').trim();
-        if (!m || !currentSessionId) return;
-        const last = promptHistory[promptHistory.length - 1];
-        if (last === m) return;
-        promptHistory.push(m);
-        if (promptHistory.length > PROMPT_HISTORY_CAP) {
-            promptHistory.shift();
+        if (!currentSessionId) return;
+        if (CuttlePromptHistory.appendRecord(promptHistoryState, composedMessage)) {
+            persistPromptHistoryForCurrentSession();
         }
-        promptHistoryBrowseIndex = -1;
-        promptHistoryDraft = '';
-        persistPromptHistoryForCurrentSession();
     }
 
     function textareaAtHistoryAnchor(textarea) {
         if (!textarea) return false;
-        const s = textarea.selectionStart;
-        const e = textarea.selectionEnd;
-        return s === e && s === 0;
+        return CuttlePromptHistory.atStartAnchor(textarea.selectionStart, textarea.selectionEnd);
     }
 
     /** Caret at end of text — ↓ walks toward newer history / draft (symmetric to ↑ at start). */
     function textareaAtHistoryEndAnchor(textarea) {
         if (!textarea) return false;
-        const s = textarea.selectionStart;
-        const e = textarea.selectionEnd;
-        const len = (textarea.value || '').length;
-        return s === e && s === len;
+        return CuttlePromptHistory.atEndAnchor(
+            textarea.selectionStart, textarea.selectionEnd, (textarea.value || '').length);
     }
 
     function applyHistoryTextToTextarea(textarea, text) {
@@ -3237,33 +3212,17 @@
      * @returns {boolean} true if the key event was consumed
      */
     function navigatePromptHistory(textarea, direction) {
-        const n = promptHistory.length;
-        if (!n) return false;
-
-        if (direction < 0) {
-            if (promptHistoryBrowseIndex === -1) {
-                promptHistoryDraft = composeMessageWithSlashChip(textarea).trim();
-            }
-            if (promptHistoryBrowseIndex >= n - 1) {
-                return true;
-            }
-            promptHistoryBrowseIndex += 1;
-            const text = promptHistory[n - 1 - promptHistoryBrowseIndex];
-            applyHistoryTextToTextarea(textarea, text);
-            return true;
+        const st = promptHistoryState;
+        // Draft capture (slash chips) and textarea apply (DOM) stay here;
+        // index stepping lives in the owned state machine.
+        if (direction < 0 && st.list.length && st.index === -1) {
+            CuttlePromptHistory.captureDraft(st, composeMessageWithSlashChip(textarea).trim());
         }
-
-        if (promptHistoryBrowseIndex < 0) {
-            return false;
+        const r = CuttlePromptHistory.step(st, direction);
+        if (r.status === 'none') return false;
+        if (r.status === 'text' || r.status === 'draft') {
+            applyHistoryTextToTextarea(textarea, r.text);
         }
-        if (promptHistoryBrowseIndex === 0) {
-            promptHistoryBrowseIndex = -1;
-            applyHistoryTextToTextarea(textarea, promptHistoryDraft);
-            return true;
-        }
-        promptHistoryBrowseIndex -= 1;
-        const text = promptHistory[n - 1 - promptHistoryBrowseIndex];
-        applyHistoryTextToTextarea(textarea, text);
         return true;
     }
 
@@ -3274,7 +3233,7 @@
             if (consumed) event.preventDefault();
             return consumed;
         }
-        if (event.key === 'ArrowDown' && promptHistoryBrowseIndex >= 0 && textareaAtHistoryEndAnchor(textarea)) {
+        if (event.key === 'ArrowDown' && promptHistoryState.index >= 0 && textareaAtHistoryEndAnchor(textarea)) {
             const consumed = navigatePromptHistory(textarea, 1);
             if (consumed) event.preventDefault();
             return consumed;
@@ -23872,7 +23831,7 @@
             welcomeInput.addEventListener('keydown', handleWelcomeInputKeyDown);
             welcomeInput.addEventListener('input', function (e) {
                 applyComposerEmoticons(welcomeInput, e);
-                promptHistoryBrowseIndex = -1;
+                CuttlePromptHistory.resetBrowse(promptHistoryState);
                 syncSlashMenuFromInput(welcomeInput);
                 scheduleSaveComposerDraft();
             });
@@ -23885,7 +23844,7 @@
             chatInput.addEventListener('keydown', handleInputKeyDown);
             chatInput.addEventListener('input', function (e) {
                 applyComposerEmoticons(chatInput, e);
-                promptHistoryBrowseIndex = -1;
+                CuttlePromptHistory.resetBrowse(promptHistoryState);
                 syncSlashMenuFromInput(chatInput);
                 scheduleSaveComposerDraft();
             });
