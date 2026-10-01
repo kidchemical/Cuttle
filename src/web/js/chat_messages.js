@@ -1,12 +1,14 @@
 /* ================================================================
    Cuttle Chat — messages/history record domain (chat_messages.js).
-   Owner: message-record normalization and history-window decisions
-   as pure functions over explicit inputs: no document, no window,
-   no localStorage, no fetch here. Loaded before chat_page.js; the
-   page owns transcript DOM paint, message sync/poll machinery,
-   persistence, session restore + ordering, search/history-panel UI,
-   prompt history, streaming and live-status orchestration, and calls
-   into `CuttleChatMessages.*`.
+   Owner: message-record normalization, history-window decisions,
+   and user-bubble display dispatch as pure functions over explicit
+   inputs: no document, no window, no localStorage, no fetch here.
+   Loaded before chat_page.js; the page owns transcript DOM paint,
+   message sync/poll machinery, persistence, session restore +
+   ordering, search/history-panel UI, prompt history, streaming and
+   live-status orchestration, leaf renderers (markdown, attachment
+   HTML, form-reply/button, slash chips), and calls into
+   `CuttleChatMessages.*`.
 
    Cross-domain rule: attachment list shape stays in
    `CuttleChatAttachments` (injected as `normalizeAttachmentList`,
@@ -237,6 +239,98 @@
         return !!(last && last.role === 'assistant');
     }
 
+    /**
+     * User-bubble display dispatch: which body HTML a user turn paints.
+     * Owns the branch order only — every leaf renderer stays in its
+     * owner and arrives via `deps` (all required):
+     * - attachments owned (`CuttleChatAttachments` via the page's
+     *   adapters): normalizeAttachmentList, stripAttachedNote,
+     *   inferAttachmentsFromContent.
+     * - action-form leaves (page): parseButtonClickFromContent,
+     *   formatFormReplyHtml.
+     * - attachment HTML leaf (page): buildMessageAttachmentsHtml.
+     * - markdown leaf (page, also paints assistant turns):
+     *   formatMessage.
+     * - slash parse (page adapter over `CuttleChatSlash` with
+     *   pipeline/model resolvers): parseStoredSlashCommandMessage.
+     * - slash chip leaves (page, shared with badge/palette paths):
+     *   collapseCursorSlashChips, slashCommandChipHistoryHtml.
+     * - shared util (page): escapeHtmlInline.
+     *
+     * Preserves the page contract exactly: `Selected:` / button /
+     * form-reply shortcuts win over slash parsing; chips already in
+     * the header (`suppressInlineSlashChips`) render body only; the
+     * attachment-only placeholder hides when thumbs show; otherwise
+     * body + thumbs compose, and bare text falls back to markdown.
+     */
+    function formatUserMessageForDisplay(content, opts, deps) {
+        const d = deps || {};
+        const o = opts || {};
+        const normalizeAttachmentList = d.normalizeAttachmentList;
+        const stripAttachedNote = d.stripAttachedNote;
+        const inferAttachmentsFromContent = d.inferAttachmentsFromContent;
+        const buildMessageAttachmentsHtml = d.buildMessageAttachmentsHtml;
+        const parseButtonClickFromContent = d.parseButtonClickFromContent;
+        const formatFormReplyHtml = d.formatFormReplyHtml;
+        const formatMessage = d.formatMessage;
+        const parseStoredSlashCommandMessage = d.parseStoredSlashCommandMessage;
+        const collapseCursorSlashChips = d.collapseCursorSlashChips;
+        const slashCommandChipHistoryHtml = d.slashCommandChipHistoryHtml;
+        const escapeHtmlInline = d.escapeHtmlInline;
+        let attachments = normalizeAttachmentList(o.attachments);
+        if (!attachments.length) {
+            attachments = inferAttachmentsFromContent(content);
+        }
+        const attHtml = buildMessageAttachmentsHtml(attachments);
+        let displayContent = attachments.length ? stripAttachedNote(content) : content;
+        // Attachment-only send used this placeholder outbound; hide it when thumbs show.
+        if (attHtml && (!displayContent || displayContent === '(see attached files)')) {
+            displayContent = '';
+        }
+
+        let bodyHtml = '';
+        if (displayContent) {
+            const sel = String(displayContent ?? '').trim().match(/^Selected:\s*(.+)$/i);
+            if (sel) {
+                bodyHtml = `<div class="cuttle-button-selection">Selected: <strong>${escapeHtmlInline(sel[1].trim())}</strong></div>`;
+            } else {
+                const btnClick = parseButtonClickFromContent(displayContent);
+                if (btnClick) {
+                    bodyHtml = `<div class="cuttle-button-selection">Selected: <strong>${escapeHtmlInline(btnClick.label)}</strong></div>`;
+                } else {
+                    const renderBody = (text) => formatFormReplyHtml(text) || formatMessage(text);
+                    const parsed = parseStoredSlashCommandMessage(displayContent);
+                    if (!parsed) {
+                        bodyHtml = renderBody(displayContent);
+                    } else if (o.suppressInlineSlashChips) {
+                        // Chips already shown in the message header row; just render the body.
+                        bodyHtml = parsed.body ? renderBody(parsed.body) : '';
+                    } else {
+                        const chipsHtml = collapseCursorSlashChips(parsed.chips)
+                            .map((c) => slashCommandChipHistoryHtml(c.label, c.meta, c.category))
+                            .join('');
+                        const inline = '<span class="slash-chips-inline">' + chipsHtml + '</span>';
+                        if (!parsed.body) {
+                            bodyHtml = '<div class="user-message-with-slash">' + inline + '</div>';
+                        } else {
+                            bodyHtml = (
+                                '<div class="user-message-with-slash">'
+                                + inline
+                                + '<div class="user-slash-body">'
+                                + renderBody(parsed.body)
+                                + '</div></div>'
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!attHtml) return bodyHtml || formatMessage(content);
+        if (!bodyHtml) return attHtml;
+        return '<div class="user-message-with-attachments">' + bodyHtml + attHtml + '</div>';
+    }
+
     const api = {
         authMessageOptsFromServer,
         preferredModelFromMessages,
@@ -246,6 +340,7 @@
         historyPageMeta,
         windowHistoryMessages,
         transcriptEndsWithAssistant,
+        formatUserMessageForDisplay,
     };
 
     const ns = (root.CuttleChatMessages = root.CuttleChatMessages || {});

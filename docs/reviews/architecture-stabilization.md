@@ -3814,3 +3814,150 @@ One-way dependency (page → namespace); module holds no state.
 6. **Is Streaming safe to begin?** No — not part of this slice.
    Do NOT continue past Messages/History until review approves.
    **STOP for Codex review — Slice 9 not started.**
+
+---
+
+# Phase 3 — Slice 8A approval + wording clarification
+(recorded at the Slice 8B append boundary)
+
+- `8058127b` is **approved as Phase 3 Slice 8A** — message-record
+  normalization + history windowing — per the worker brief for
+  Slice 8B. Prior sections above are preserved verbatim — reviewer
+  last read line 3816, and these notes sit at the append boundary.
+- Clarification appended, no rewrite: the Slice 8 review's "Slice 8
+  complete / no subdivision" wording is superseded — only **8A** is
+  complete. Messages/History remains open with the sub-slices
+  inventoried below; the domain is NOT labeled complete while they
+  remain.
+
+---
+
+# Phase 3 — Slice 8B: message display formatting / render planning
+
+## Phase status
+
+- Slice: Phase 3 Slice 8B — user-bubble display dispatch →
+  `CuttleChatMessages.formatUserMessageForDisplay` (extends the 8A
+  module; no new script tag — `chat_messages.js` already loads).
+- Git baseline before work: `8058127b` (Slice 8A); tree clean
+  except pre-existing untracked `work/` (scratch, untouched).
+- Git commit after work: the single `Phase 3 slice 8B: user-bubble
+  display dispatch` commit on main (see `git log`).
+- Completion status: **complete, awaiting Codex review**. Further
+  8C+ sub-slices and Streaming / Slice 9 NOT started.
+
+## Inventory (actual, not estimated)
+
+- `formatUserMessageForDisplay` is 54 lines (10381–10434), not ~860
+  — the estimate counted following unrelated page functions. It is
+  a pure dispatch tree with exactly one caller (the `addMessageToUI`
+  paint path): no state, no DOM, no IO of its own.
+- Inputs: `content` (nullable), `opts.attachments`,
+  `opts.suppressInlineSlashChips`.
+- Seams and owners: attachments decisions stay in
+  `CuttleChatAttachments` (normalize/strip/infer — page adapters
+  already delegate); slash parse stays in `CuttleChatSlash`
+  (consumed via the page's `parseStoredSlashCommandMessage` adapter
+  carrying pipeline/model resolvers); markdown (`formatMessage`,
+  also paints assistant turns), attachment HTML
+  (`buildMessageAttachmentsHtml`), form-reply/button leaves
+  (`parseButtonClickFromContent`, `formatFormReplyHtml`), and slash
+  chip leaves (`collapseCursorSlashChips`,
+  `slashCommandChipHistoryHtml`, shared with badge/palette paths)
+  stay in the page; `escapeHtmlInline` is a shared util.
+- Boundary chosen: the module owns branch order only; all 11 leaf
+  seams arrive as named, ownership-documented injected deps — not a
+  generic bag, and nothing owned elsewhere was relocated. A whole-
+  closure move was never needed (54 lines, zero reverse deps).
+
+## Changes made
+
+- `chat_messages.js`: +`formatUserMessageForDisplay(content, opts,
+  deps)` verbatim (95 L with ownership docblock); header updated to
+  name display dispatch + leaf-renderer ownership. Module 258 → 353 L.
+- `chat_page.js`: 54-line body replaced by a same-signature
+  gather-then-delegate adapter (−39 net; page 25,306 → 25,267).
+- `chat_page.html`: unchanged (no new script).
+- **Tests:** 3 rendered-output tests appended to
+  `test_chat_messages.py`, executed against the REAL module + REAL
+  attachments/slash modules + REAL extracted leaf bodies
+  (escape, button parse + real labels, form-reply + real icons,
+  attachment HTML + real mediaDownloadUrl); only markdown and chip
+  HTML leaves are labeled stubs. Covers Selected/button (known,
+  generic, XSS-escaped id)/form-selection/form-answers/slash
+  chips+body/chips-only/suppressed-header/attachment-only
+  placeholder hiding/text+attachment composition/empty/null/
+  inferred-history-attachment. Repointed 1 pin
+  (`test_cursor_chip_labels.py` canonical-collapse assertion now
+  targets the owned module).
+- Execution-level composer duplicate tests untouched and green;
+  session-restore ordering untouched.
+
+## Tests and verification
+
+- New format tests failed 3/3 before the move (authentic failure),
+  pass after; full messages + chip-label files 12/12.
+- Differential proof (scratch `/tmp/diff_format.js`, not committed):
+  HEAD page original vs module over a 23-case battery (plain,
+  empty, null, whitespace, Selected/button/forms, slash variants
+  incl. suppressed + `/model` + `/codex` + `/restart`, attachment
+  Only/text/compose/empty-staged, inferred refs, trailing-button,
+  bare `Selected:`) — **23/23 byte-identical outputs**.
+- Focused message/chip/badge/composer run: 41 passed.
+- Broad with node on PATH: post-change **1,824 passed, 28 failed,
+  60 skipped**; clean HEAD (`8058127b`, via `git stash -u`)
+  **1,821 passed, 28 failed, 60 skipped**; sorted FAILED
+  identities **byte-identical (diff empty)** — +3 = new tests.
+- `node --check` clean on both touched JS files. No paid
+  (token-costing) tests run — touched paths are client-side
+  render decisions fully covered under node.
+
+## Metrics
+
+| Metric | Before (`8058127b`) | After | Method |
+|---|---|---|---|
+| `chat_page.js` lines | 25,306 | 25,267 (−39) | `wc -l` |
+| Display-dispatch fns needing page scope | 1 | 0 (explicit deps) | grep |
+| Rendered-output behavior tests | none | +3 (real module + real leaves) | pytest |
+| Differential old-vs-new (exact HTML) | — | 23/23 match | node harness |
+| Full suite (node on PATH) | 1,821 / 28 / 60 | 1,824 / 28 (identical list) / 60 | pytest + diff |
+
+## Remaining Messages/History ownership work (inventoried)
+
+1. **Assistant/markdown render path** (`formatMessage` + think/
+   widget/vega activation, ~large, DOM-mounting) — next coherent
+   boundary candidate: render planning vs DOM activation split.
+2. **Message sync machinery** (poll, windowing application already
+   owned, dedup `uiAlreadyHasMessage`, reconcile) — seams into
+   persistence + Streaming; needs care.
+3. **Prompt-history nav** (map IO stays; key handling + anchor
+   application are composer-adjacent).
+4. **Search + history-panel UI** (panel DOM, delete/rename modals,
+   attention indicators — Activity-adjacent parts stay).
+5. **DOM-coupled predicates** (`thisTurnHasAssistantReply`,
+   `transcriptEndsWithGenerationStop`, `uiAlreadyHasMessage`,
+   `openTranscriptMissingThisTurnReply`) — orchestration inputs,
+   likely stay with explicit-input wrappers at most.
+6. 28 baseline failures + stale asset-version pin remain untouched.
+
+## Limitations
+
+- Manual browser/Flask validation not performed (no UI served;
+  no visual change to inspect) — recorded, not waived. Rendered
+  HTML is asserted byte-exact under node except the two labeled
+  stub leaves (markdown body, chip HTML), whose own units own
+  their internals.
+- The harness pins real leaf bodies by exact source markers; a
+  leaf rename breaks the harness loudly (intended).
+
+## Diff summary
+
+- Modified: `src/web/js/chat_messages.js` (+102: formatter + docs),
+  `src/web/js/chat_page.js` (+13/−52: adapter),
+  `src/tests/test_chat_messages.py` (+139: harness + 3 tests),
+  `src/tests/test_cursor_chip_labels.py` (+6/−1: repoint),
+  `docs/reviews/architecture-stabilization.md` (this section +
+  8A approval/clarification).
+- Added/deleted files: none. `chat_page.html` untouched.
+- Commit independently on main. No push, no restart.
+  **STOP before further sub-slices or Streaming.**

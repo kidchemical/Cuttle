@@ -224,6 +224,145 @@ def test_chat_messages_module_parses():
     assert proc.returncode == 0, proc.stderr
 
 
+CHAT_ATTACHMENTS_JS = REPO_ROOT / "src" / "web" / "js" / "chat_attachments.js"
+CHAT_SLASH_JS = REPO_ROOT / "src" / "web" / "js" / "chat_slash.js"
+
+# Renders through the REAL moved formatter (chat_messages.js) with the
+# REAL page leaf bodies that the formatter consumes (extracted by exact
+# markers, never copied): escapeHtmlInline, parseButtonClickFromContent
+# (+ real button labels), formatFormReplyHtml (+ real icon),
+# buildMessageAttachmentsHtml (+ real mediaDownloadUrl) and the REAL
+# attachments/slash modules. Only the markdown renderer and the slash
+# chip HTML leaves are thin labeled stubs — their own units own their
+# internals; the assertions pin the formatter's dispatch structure,
+# composition order, and the escaping it performs itself.
+FORMAT_HARNESS = """
+const fs = require('fs');
+const SRC = fs.readFileSync(process.env.CHAT_PAGE_JS, 'utf-8');
+const span = (s, e) => SRC.slice(SRC.indexOf(s), SRC.indexOf(e, SRC.indexOf(s)));
+const CuttleChatAttachments = require(process.env.CHAT_ATTACHMENTS_JS);
+const CuttleChatSlash = require(process.env.CHAT_SLASH_JS);
+const A = require(process.env.MOD_JS);
+const normalizeAttachmentList = CuttleChatAttachments.normalizeAttachmentList;
+eval(span('    function escapeHtmlInline(s) {',
+          '    function windowsPathToFileUrl(path) {'));
+eval(span('    const CUTTLE_KNOWN_BUTTON_LABELS = {',
+          '    function parseButtonClickFromContent(content) {')
+  .replace('const CUTTLE_KNOWN_BUTTON_LABELS = {',
+           'globalThis.CUTTLE_KNOWN_BUTTON_LABELS = {'));
+eval(span('    function parseButtonClickFromContent(content) {',
+          '    function parseButtonClickFromMessage(msg) {'));
+eval(span('    function formatFormReplyHtml(content) {',
+          '    function formatUserMessageForDisplay(content, opts = {}) {'));
+eval(span('    function mediaDownloadUrl(src) {',
+          '    function mediaDownloadFilename(src, title) {'));
+eval(span('    function buildMessageAttachmentsHtml(attachments) {',
+          '    function formatMessageWithAttachments(message, attachments) {'));
+for (const iconName of ['FORM_REPLY_ICON_PICK', 'FORM_REPLY_ICON_ANSWERS']) {
+  const at = SRC.indexOf('    const ' + iconName + ' =');
+  const line = SRC.slice(at);
+  const stmt = line.slice(0, line.indexOf('\\n'))
+    .replace('    const ' + iconName + ' =', 'globalThis.' + iconName + ' =')
+    .replace(/;\s*$/, '');
+  eval(stmt);
+}
+const formatMessage = (t) => '<md>' + String(t ?? '') + '</md>';
+const collapseCursorSlashChips = (chips) => (Array.isArray(chips) ? chips.slice() : []);
+const slashCommandChipHistoryHtml = (label, meta, cat) =>
+  '<chip:' + String(label) + '|' + String(meta) + '>';
+const parseStoredSlashCommandMessage = (t) =>
+  CuttleChatSlash.parseStoredSlashCommandMessage(t);
+const deps = { normalizeAttachmentList,
+  stripAttachedNote: CuttleChatAttachments.stripAttachedNote,
+  inferAttachmentsFromContent: (c) => CuttleChatAttachments.inferAttachmentsFromContent({ content: c, sessionId: '' }),
+  buildMessageAttachmentsHtml, parseButtonClickFromContent, formatFormReplyHtml,
+  formatMessage, parseStoredSlashCommandMessage,
+  collapseCursorSlashChips, slashCommandChipHistoryHtml, escapeHtmlInline };
+const F = (content, opts) => A.formatUserMessageForDisplay(content, opts, deps);
+const out = {};
+out.plain = F('hello world', {});
+out.selected = F('Selected:  Foo <bar>', {});
+out.buttonKnown = F('[button:launch-local-llm-yes]', {});
+out.buttonGeneric = F('[button:approve-this]', {});
+out.buttonXss = F('[button:<img src=x>]', {});
+out.formSel = F('[form-selection] Pick A (a), Pick B (b)', {});
+out.formAns = F('[form-answers]\\n- Color: red\\n- Size: (no answer)', {});
+out.slashBody = F('/cursor fix it', {});
+out.slashBare = F('/cursor', {});
+out.slashSuppressed = F('/cursor fix it', { suppressInlineSlashChips: true });
+out.attachOnly = F('(see attached files)',
+  { attachments: [{ filename: 'a.png', url: '/output/uploads/s/a.png' }] });
+out.textAttach = F('see this', { attachments: [{ filename: 'a.png', url: '/output/uploads/s/a.png' }] });
+out.empty = F('', {});
+out.nullContent = F(null, {});
+out.inferred = F('look [Attached: old.png]', {});
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+def _run_format():
+    import os
+    proc = subprocess.run(
+        ["node", "-e", FORMAT_HARNESS],
+        capture_output=True, text=True, timeout=30,
+        env={"PATH": os.environ["PATH"], "MOD_JS": str(MOD_JS),
+             "CHAT_PAGE_JS": str(CHAT_PAGE_JS),
+             "CHAT_ATTACHMENTS_JS": str(CHAT_ATTACHMENTS_JS),
+             "CHAT_SLASH_JS": str(CHAT_SLASH_JS)},
+    )
+    assert proc.returncode == 0, proc.stderr or proc.stdout
+    return json.loads(proc.stdout)
+
+
+@node_only
+def test_user_bubble_selection_button_form_branches():
+    res = _run_format()
+    assert res["plain"] == "<md>hello world</md>"
+    assert res["selected"] == (
+        '<div class="cuttle-button-selection">Selected: '
+        "<strong>Foo &lt;bar&gt;</strong></div>")
+    assert res["buttonKnown"] == (
+        '<div class="cuttle-button-selection">Selected: '
+        "<strong>Yes, launch llama.cpp</strong></div>")
+    assert "approve this" in res["buttonGeneric"]
+    # angle brackets in a button id are escaped, not emitted as markup
+    assert "&lt;img src=x&gt;" in res["buttonXss"]
+    assert "<img src=x>" not in res["buttonXss"]
+    assert 'class="cuttle-form-reply"' in res["formSel"]
+    assert "Pick A, Pick B" in res["formSel"]
+    assert "(a)" not in res["formSel"]
+    assert "Color" in res["formAns"] and "red" in res["formAns"]
+    assert "is-empty" in res["formAns"]
+
+
+@node_only
+def test_user_bubble_slash_chip_branches():
+    res = _run_format()
+    assert 'class="user-message-with-slash"' in res["slashBody"]
+    assert "<chip:Cursor Agent|/cursor>" in res["slashBody"]
+    assert "<md>fix it</md>" in res["slashBody"]
+    assert 'class="user-message-with-slash"' in res["slashBare"]
+    assert "user-slash-body" not in res["slashBare"]
+    assert "slash-chips-inline" not in res["slashSuppressed"]
+    assert "<md>fix it</md>" in res["slashSuppressed"]
+
+
+@node_only
+def test_user_bubble_attachment_composition_and_fallbacks():
+    res = _run_format()
+    assert "msg-attach-thumb" in res["attachOnly"]
+    assert "(see attached files)" not in res["attachOnly"]
+    assert 'class="user-message-with-attachments"' in res["textAttach"]
+    assert "<md>see this</md>" in res["textAttach"]
+    assert "msg-attach-thumb" in res["textAttach"]
+    assert res["empty"] == "<md></md>"
+    # null content falls through to the markdown leaf like empty text
+    assert res["nullContent"] == res["empty"]
+    # history text without metadata infers the attachment ref
+    assert "msg-attach-thumb" in res["inferred"]
+    assert "old.png" in res["inferred"]
+
+
 def test_page_delegates_message_history_decisions_to_owned_module():
     """Narrow page adapters: same signatures, no duplicated decision logic."""
     src = CHAT_PAGE_JS.read_text(encoding="utf-8")

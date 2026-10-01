@@ -65,4 +65,9 @@ def test_composer_does_not_use_agent_middot_format():
     src = CHAT_JS.read_text(encoding="utf-8")
     assert "chip.label + ' · ' + preferredModelLabel" not in src
     assert "cursorChipDisplayLabel(preferred)" in src
-    assert "collapseCursorSlashChips(parsed.chips)" in src
+    # User-bubble display dispatch lives in the owned Messages module
+    # (Phase 3 Slice 8B); the canonical collapse call moved with it.
+    mod = (REPO_ROOT / "src" / "web" / "js" / "chat_messages.js").read_text(
+        encoding="utf-8"
+    )
+    assert "collapseCursorSlashChips(parsed.chips)" in mod

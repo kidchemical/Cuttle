@@ -10379,58 +10379,19 @@
     }
 
     function formatUserMessageForDisplay(content, opts = {}) {
-        let attachments = normalizeAttachmentList(opts.attachments);
-        if (!attachments.length) {
-            attachments = inferAttachmentsFromContent(content);
-        }
-        const attHtml = buildMessageAttachmentsHtml(attachments);
-        let displayContent = attachments.length ? stripAttachedNote(content) : content;
-        // Attachment-only send used this placeholder outbound; hide it when thumbs show.
-        if (attHtml && (!displayContent || displayContent === '(see attached files)')) {
-            displayContent = '';
-        }
-
-        let bodyHtml = '';
-        if (displayContent) {
-            const sel = String(displayContent ?? '').trim().match(/^Selected:\s*(.+)$/i);
-            if (sel) {
-                bodyHtml = `<div class="cuttle-button-selection">Selected: <strong>${escapeHtmlInline(sel[1].trim())}</strong></div>`;
-            } else {
-                const btnClick = parseButtonClickFromContent(displayContent);
-                if (btnClick) {
-                    bodyHtml = `<div class="cuttle-button-selection">Selected: <strong>${escapeHtmlInline(btnClick.label)}</strong></div>`;
-                } else {
-                    const renderBody = (text) => formatFormReplyHtml(text) || formatMessage(text);
-                    const parsed = parseStoredSlashCommandMessage(displayContent);
-                    if (!parsed) {
-                        bodyHtml = renderBody(displayContent);
-                    } else if (opts.suppressInlineSlashChips) {
-                        // Chips already shown in the message header row; just render the body.
-                        bodyHtml = parsed.body ? renderBody(parsed.body) : '';
-                    } else {
-                        const chipsHtml = collapseCursorSlashChips(parsed.chips)
-                            .map((c) => slashCommandChipHistoryHtml(c.label, c.meta, c.category))
-                            .join('');
-                        const inline = '<span class="slash-chips-inline">' + chipsHtml + '</span>';
-                        if (!parsed.body) {
-                            bodyHtml = '<div class="user-message-with-slash">' + inline + '</div>';
-                        } else {
-                            bodyHtml = (
-                                '<div class="user-message-with-slash">'
-                                + inline
-                                + '<div class="user-slash-body">'
-                                + renderBody(parsed.body)
-                                + '</div></div>'
-                            );
-                        }
-                    }
-                }
-            }
-        }
-
-        if (!attHtml) return bodyHtml || formatMessage(content);
-        if (!bodyHtml) return attHtml;
-        return '<div class="user-message-with-attachments">' + bodyHtml + attHtml + '</div>';
+        return CuttleChatMessages.formatUserMessageForDisplay(content, opts, {
+            normalizeAttachmentList,
+            stripAttachedNote,
+            inferAttachmentsFromContent,
+            buildMessageAttachmentsHtml,
+            parseButtonClickFromContent,
+            formatFormReplyHtml,
+            formatMessage,
+            parseStoredSlashCommandMessage,
+            collapseCursorSlashChips,
+            slashCommandChipHistoryHtml,
+            escapeHtmlInline,
+        });
     }
 
     function buildVegaWrapHtml(rawSpec) {
