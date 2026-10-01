@@ -1014,8 +1014,11 @@ def test_cursor_palette_has_cost_and_sendable_gate():
     start = slash_js.find("const CURSOR_AGENT_SLASH_COMMANDS = [")
     block = slash_js[start : slash_js.find("];", start)]
     assert "prefix: '/cost'" in block and "category: 'cursor-cmd'" in block
-    sendable = js[js.find("function isSendableComposerMessage(") :][:2400]
-    assert "usage|cost" in sendable
+    # Phase 3 Slice 6: sendability lives in chat_composer.js (page keeps a
+    # thin adapter); pin the one-shot patterns at their owned module.
+    composer_js = (WEB / "js" / "chat_composer.js").read_text(encoding="utf-8")
+    assert "usage|cost" in composer_js
+    assert "function isSendableComposerMessage(message, attachments)" in js
     # Never a global sticky/agent command.
     base = slash_js[slash_js.find("const SLASH_COMMANDS = [") : slash_js.find("const CURSOR_AGENT_SLASH_COMMANDS")]
     assert "prefix: '/cost'" not in base

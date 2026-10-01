@@ -541,13 +541,13 @@ def test_palette_chip_categories_map_usage_to_agent():
 
 
 def test_is_sendable_treats_nested_usage_as_real_turn():
+    # Phase 3 Slice 6: sendability lives in chat_composer.js (page keeps a
+    # thin adapter); pin the nested one-shot patterns at their owned module.
+    composer_js = (WEB / "js" / "chat_composer.js").read_text(encoding="utf-8")
+    assert "usage" in composer_js
+    assert re.search(r"\/\(usage\|", composer_js) or "/usage" in composer_js
     js = CHAT_JS.read_text(encoding="utf-8")
-    body = js[
-        js.find("function isSendableComposerMessage(")
-        : js.find("function isSendableComposerMessage(") + 2200
-    ]
-    assert "usage" in body
-    assert re.search(r"\/\(usage\|", body) or "/usage" in body
+    assert "function isSendableComposerMessage(message, attachments)" in js
 
 
 # ---------------------------------------------------------------------------

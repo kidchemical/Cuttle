@@ -31,6 +31,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHAT_JS = REPO_ROOT / "src" / "web" / "js" / "chat_page.js"
 SLASH_JS = REPO_ROOT / "src" / "web" / "js" / "chat_slash.js"
+COMPOSER_JS = REPO_ROOT / "src" / "web" / "js" / "chat_composer.js"
 CHAT_HTML = REPO_ROOT / "src" / "web" / "chat_page.html"
 
 pytestmark = pytest.mark.skipif(
@@ -110,6 +111,7 @@ def _run_js(script: str) -> dict:
     # also serves the delegating wrappers sliced from chat_page.js.
     slash_src = _slash_src()
     slash_mod = str(SLASH_JS)
+    composer_mod = str(COMPOSER_JS)
     commands = _extract_inclusive(slash_src, "const SLASH_COMMANDS = [", "\n];")
     cursor_cmds = _extract_inclusive(
         slash_src, "const CURSOR_AGENT_SLASH_COMMANDS = [", "\n];"
@@ -203,6 +205,7 @@ function isHarnessNestedCommandChip(chip) {
 
     harness = f"""
 const CuttleChatSlash = require("{slash_mod}");
+const CuttleChatComposer = require("{composer_mod}");
 {commands}
 {cursor_cmds}
 {helpers}

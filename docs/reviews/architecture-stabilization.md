@@ -2900,3 +2900,302 @@ the page reassigns, persists, and re-renders. Cross-domain needs
    rendering, Streaming, Agent/Model, Slash, Action Forms, or
    Activity logic touched; failures identical to baseline). Do
    NOT continue in this track until this review is approved.
+
+---
+
+# Phase 3 — Slice 6: Composer Domain (chat_page.js)
+
+## Phase status
+
+- Slice: Phase 3 Slice 6 — send eligibility, keyboard-submit
+  interpretation, sticky resolution after send, control-lane text
+  classification, and the send-dispatch plan →
+  `src/web/js/chat_composer.js` (`window.CuttleChatComposer`).
+- Git baseline before work: `38484204` ("Phase 3 slice 5:
+  attachments domain"), clean tree.
+- Git commit after work: the single `Phase 3 slice 6: composer
+  domain` commit on main (identify via `git log --oneline`).
+- Completion status: **complete, awaiting external review**. No
+  further chat-page domains started (Streaming, generic
+  Messages/History, Agent/Model controls untouched except the
+  narrow adapter interface described below).
+
+## Original problem
+
+`chat_page.js` owned the entire composer decision layer — what
+counts as sendable, what Enter means, which sticky chip survives a
+send, what bypasses the follow-up queue, and the guard/duplicate/
+follow-up/normal dispatch through `sendMessage` — as closures
+interleaved with textarea DOM, draft persistence, fetch/SSE
+initiation, streaming lifecycle, and history persistence. The
+branchiest logic (`isSendableComposerMessage`'s strip loop,
+`sendMessage`'s dispatch) could only be tested by slicing source
+text, and several suites did exactly that (bare-sticky,
+palette-consistency, cost/usage one-shot pins).
+
+## Before implementation (17-class inventory)
+
+~25 name-matched bindings triaged (25,422-line page):
+
+1. **Composer text/input state** (draft save/restore/clear/
+   migrate, `_readComposerDraftText`) — stays (persistence IO).
+2. **Send eligibility** (moved): `isSendableComposerMessage`
+   (attachments win; sticky-only tokens not prompts; control +
+   nested one-shots sendable; lone `/model` not).
+3. **Send-mode decisions** (moved plan): `composerSendPlan`
+   (ignore-guard / ignore-empty / ignore-duplicate / followup /
+   normal + outbound + controlLane).
+4. **Enter/Shift+Enter/control-key interpretation** (moved):
+   `enterSubmits` (Shift never submits; touch needs Ctrl/Meta).
+5. **Empty-input handling**: inside sendability (moved) +
+   send-path early return (stays, calls via adapter).
+6. **Attachment-aware send decisions**: sendability head +
+   outbound fallback (moved); take/clear/queue (stay, ordered by
+   plan).
+7. **Slash/sticky interaction** (moved resolution, kept
+   application): `stickyCommandAfterSend`; `composeMessage-
+   WithSlashChip`, chip render/persist stay. Slash parsing itself
+   stays in `CuttleChatSlash`, injected as callbacks.
+8. **Project-context stamping**: `applyOutboundProjectToRequest`
+   (project domain) — called, not moved.
+9. **Agent/model request inputs**: `ensureCodexEffortForSend`,
+   `maybeRefreshCursorModelsCatalogFromOutbound` — called, not
+   moved (Agent/Model slice input).
+10. **Follow-up vs normal-turn decisions** (moved plan,
+    executed by page): steer-or-queue stays (agent controls).
+11. **Running-turn steer/queue decisions**: `trySteerRunningTurn`
+    stays; the plan only selects the follow-up action.
+12. **Request payload planning**: `requestBody.attachments` map
+    owned by Slice 5; control-lane flags stay in send flow.
+13. **Input clearing/restoration**: `clearComposer` closure, draft
+    fns stay (DOM + persistence).
+14. **DOM/textarea rendering** (resize, focus, hints, emoticons,
+    keydown wiring, stop-button sync) — stay.
+15. **Fetch/stream initiation** (`processMessage`,
+    `beginLocalGeneration`, guard claim/release) — stay.
+16. **Persistence/history side effects** (save, prompt history,
+    pending clear, card dismiss) — stay, ordered by plan.
+17. **False friends** (verified out of scope):
+    `enhanceComposerPrompt` (Enhance feature),
+    `sendVoiceUtterance`/voice-silence fns (voice modality —
+    duplicates the steer/queue decision inline via adapters),
+    `stopGenerating`, `sendWelcomeMessage`'s welcome→chat handoff
+    screens (stays; delegates to `sendMessage`),
+    `collectPendingResult` (Streaming slice input, per Slice 4).
+
+Shared bindings the moved logic needed: `slashCtx` chips (sticky
+application stays; resolution moves), `sendDispatchGuard`,
+`isSessionGenerating()` (read twice — pre/post-heal; both reads
+preserved as plan inputs), `inFlightUserMessage` + queued
+contents (page normalizes via the message domain, plan compares
+strings), composer text/attachments. No moved function was
+exposed on `window.*` (`window.sendMessage` etc. expose the
+orchestrators, which stay). No callers exist outside `chat_page.js`
+except `landing_page.html`'s `sendMessage` override (different
+surface, untouched — verified by grep).
+
+## Changes made
+
+- **Added `src/web/js/chat_composer.js`** (179 L): 5 pure
+  functions behind `CuttleChatComposer` (classic script + node
+  exports; footer uses TDZ-proof `globalThis`). New names with no
+  page original (all covered by new tests): `enterSubmits`,
+  `stickyCommandAfterSend`, `composerSendPlan`. No `document`/
+  `window`/`localStorage`/`fetch` in the module.
+- **chat_page.js keeps**: textarea DOM, focus/caret, event wiring,
+  draft persistence, fetch/SSE, streaming lifecycle, history
+  persistence, message rendering, guard flag, follow-up
+  steer/queue execution, control-lane supervised delegation,
+  plus thin same-signature adapters (2 pure delegations + 2
+  gather-then-delegate with injected slash callbacks).
+- `applyStickySlashAfterComposerSend` refactored to resolve via
+  `stickyCommandAfterSend` — control branch, chip application,
+  menu/render/persist calls, and `stickyCmd` return preserved
+  verbatim.
+- `sendMessage` refactored to execute `composerSendPlan` — guard
+  read (pre-heal), input read, sendability gate, heal, branch,
+  control-bypass log, effort fetch, area swap, paint/save/history,
+  clear/chips/resize, generation claim, `processMessage`, guard
+  release all preserved in order; proven equivalent by
+  full-effect differential below. `ensureCodexEffortForSend`
+  still precedes `addMessageToUI` in both send paths (contract
+  pinned by `test_codex_starred_effort`).
+- chat_page.js: 25,422 → 25,396 lines (−26 net).
+- `chat_page.html`: `chat_composer.js` script tag before
+  `chat_page.js` (page `?v=20261001slice6` cache-busted; domain
+  tags keep their slice versions).
+- **Tests:** new `src/tests/test_chat_composer.py` (5 tests,
+  node-executed against the real module): enter matrix,
+  sendability matrix (bare tokens, control, one-shots, model
+  chips, attachments, missing deps), control-lane text + sticky
+  resolution, full dispatch-plan matrix incl. heal semantics.
+  Repaired 4 slicing suites (bare-sticky + palette harnesses gain
+  one require line; cost/usage one-shot pins repointed at the
+  owned module).
+- Moved vs deleted: decision logic relocated verbatim (moved);
+  original bodies + inline strip/branch code deleted (rewire
+  asserts: brace balance, `}`/`;` endings, single-occurrence
+  spans).
+
+## Architecture after
+
+```
+chat_page.js (textarea DOM, drafts, events, fetch/SSE, streaming,
+              history, guard flag, steer/queue, paint/save)
+      │  same-signature adapters / dispatch plan / sticky resolution
+      ▼
+chat_composer.js (sendable + enter + sticky-after-send + lane text +
+                  send plan) ──inject──▶ CuttleChatSlash (stickyOf,
+                  isControl — never duplicated)
+```
+
+One-way dependency (page → namespace); module holds no state and
+reads no page globals. Slash parsing, attachment notes, and
+follow-up interpretation stay in their domains; the composer
+consumes them via callbacks and pre-resolved inputs. The guard
+flag and generating state stay in the page; the plan reads both
+heal snapshots.
+
+## Dependencies and state
+
+- Removed: chat-page closures over sendability, enter meaning,
+  sticky-after-send resolution, lane-text fallback, and dispatch
+  branching.
+- Introduced: `CuttleChatComposer` namespace (classic script +
+  node exports; no new runtime deps). No shared state added or
+  moved.
+- Reverse deps: none created (landing page's own `sendMessage`
+  override is a separate surface, untouched).
+- Persistence/streaming/agent state: unchanged (drafts, guard,
+  generation claim, effort fetch, `processMessage` stay).
+  Backend `/api/chat` behavior untouched.
+- Compatibility: same-named adapters preserve every internal call
+  signature; `window.sendMessage` / `window.sendWelcomeMessage` /
+  `window.handleInputKeyDown` exposures unchanged.
+
+## Tests and verification
+
+- New `test_chat_composer.py`: 5/5 (node-executed; covers the
+  brief: plain/whitespace/attachment-only/text+attachment sends,
+  Enter vs Shift+Enter, touch rules, disabled/busy via guard +
+  generating inputs, duplicate suppression, normal vs follow-up,
+  steer/queue selection input, slash/sticky inputs, control
+  inputs, clear/retain is structural in the page and covered by
+  differential, malformed state).
+- Differential proof (scratch `/tmp/diff_composer.js`, not
+  committed): pre-rewire page originals (from a pre-edit backup)
+  vs new module + rewired adapters over a 39-case battery — pure
+  fns, sticky application full effect (chips/prefs/return), and
+  `sendMessage` full side-effect log + guard/pending/in-flight/
+  input state across 12 scenarios (normal, guard idle/generating,
+  empty, bare chip, attachment-only, follow-up, duplicate
+  in-flight/queued, control-while-generating, missing input,
+  steer) — **39/39 match, zero mismatches**. The harness caught
+  one genuine regression mid-slice (see below); after the fix,
+  clean.
+- Genuine catch during verification: the first refactor hoisted
+  `takePendingAttachments` + `dismissOpenInteractiveCards` above
+  the duplicate check, so ignored duplicates would have swallowed
+  staged attachments and dismissed cards. Fixed to preserve the
+  original order (duplicate returns before take/dismiss);
+  differential confirms. Also normalized `enterSubmits`
+  `undefined` → `false` (all 3 call sites use truthiness —
+  verified by grep).
+- Focused + repaired: composer (5 new), bare-sticky, palette
+  consistency, cost, usage, codex-effort, restart composer +
+  native, page-syntax → **188 passed**.
+- Neighbors (project, slash, attachments ×2, activity,
+  attention, follow-up heal, stop-then-followup, pagination,
+  history search, action forms, supervised ×2, restart): 178
+  passed; 7 failures all proven pre-existing on clean HEAD
+  (`git stash -u`).
+- Broad: `.venv/bin/python -m pytest -q` → **1,807 passed, 26
+  failed, 60 skipped**; the 26 failures byte-identical to the
+  pre-change set (verified via `diff` of sorted FAILED lists —
+  no new failures; +5 passed = the new tests).
+- `node --check` clean on all touched JS (vendored electron
+  binary + `/tmp/nodeshim/node` shim as in prior slices).
+- Manual workflows: none applicable (no UI changed). Not exercised:
+  live Flask boot, chat round-trip, browser Enter/send/chip
+  click-through.
+
+## Metrics
+
+| Metric | Before (`38484204`) | After | Method |
+|---|---|---|---|
+| `chat_page.js` lines | 25,422 | 25,396 (−26) | `wc -l` |
+| Composer decision fns needing page scope | ~5 (all) | 0 in module (explicit inputs) | grep |
+| Composer behavior tests | string pins + slices | +5 module tests; 4 files repaired to require | pytest |
+| Differential old-vs-new | — | 39/39 match | node harness |
+| Full suite | 1,802 / 26 / 60 | 1,807 / 26 (identical list) / 60 | pytest + diff |
+
+## Remaining concerns
+
+1. Textarea DOM, focus/caret, event wiring, draft persistence,
+   fetch/SSE, streaming lifecycle, history persistence, message
+   rendering, guard flag, steer/queue execution stay in the page
+   (correct per slice scope).
+2. `sendWelcomeMessage`'s welcome→chat handoff and voice's inline
+   steer/queue duplicate stay as orchestration (they delegate to
+   the same adapters/plan inputs where they overlap).
+3. `collectPendingResult` remains Streaming-slice input (per
+   Slice 4); send-path normalization stays in the message domain.
+4. No system `node` on this machine's PATH (vendored electron
+   binary used, as in prior slices).
+5. 26 baseline failures remain untouched and unrelated (exact same
+   set before/after).
+
+## Diff summary
+
+- Added: `src/web/js/chat_composer.js` (179 L),
+  `src/tests/test_chat_composer.py` (5 tests).
+- Modified: `src/web/js/chat_page.js` (−26 net: 5 spans rewired),
+  `src/web/chat_page.html` (+1 script tag, page `?v` bump),
+  4 test files (require lines + pin repoints),
+  `docs/reviews/architecture-stabilization.md` (this section).
+- Deleted: no files.
+- Insertions/deletions (`git diff --numstat`): chat_page.js
+  +49/−75; chat_page.html +2/−1; test repairs +14/−8 total
+  (new files untracked: `chat_composer.js` 179 L,
+  `test_chat_composer.py` ~200 L).
+- `git status --short` before commit: 6 modified
+  (`src/web/js/chat_page.js`, `src/web/chat_page.html`, 4 test
+  files) + 2 new (`src/web/js/chat_composer.js`,
+  `src/tests/test_chat_composer.py`).
+
+## External Review Summary
+
+1. **What changed architecturally?** Send eligibility,
+   keyboard-submit meaning, sticky-after-send resolution,
+   control-lane text classification, and send dispatch moved to
+   owned pure `chat_composer.js`; the page keeps textarea DOM,
+   drafts, events, fetch/SSE, streaming, history, guard state,
+   and steer/queue execution behind thin adapters and a dispatch
+   plan.
+2. **What behavior intentionally changed?** Nothing except
+   `enterSubmits` normalizing `undefined` → `false` (all call
+   sites use truthiness — verified). Differential 39/39;
+   adapters preserve signatures; send side effects preserved in
+   order.
+3. **What behavior should be identical?** Enter/Shift+Enter,
+   send-button flow, empty composer, attachment-only and
+   text+attachment sends, slash/sticky behavior, `/project`
+   interactions, project stamping, follow-up queueing,
+   running-turn steer/queue selection, input clearing, enable
+   rules, duplicate suppression, new/existing chats, payload
+   semantics, agent/model/effort selection.
+4. **What remains coupled or messy?** All DOM/IO/fetch/streaming
+   in the 25.4k-line page; welcome handoff and voice inline
+   duplicates stay as orchestration; 26 unrelated baseline
+   failures remain.
+5. **What should be reviewed before the next chat domain?** The
+   plan + injected-callback shape as the pattern for remaining
+   slices; whether the next slice is Agent/Model controls,
+   Messages/History, or Streaming; the duplicate-guard/take
+   ordering as a pinned subtlety for send-flow refactors.
+6. **Is the next domain safe to begin?** This slice is
+   self-contained (no Streaming implementation, generic message
+   rendering, Agent/Model controls, attachments UX, or palette
+   refactors; no backend changes; failures identical to
+   baseline). Do NOT continue in this track until this review is
+   approved.

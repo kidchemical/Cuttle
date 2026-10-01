@@ -8648,31 +8648,12 @@
      * Supervised / restart control-lane messages must never enter the pending-prompt
      * queue while a worker (or any generating turn) is active.
      */
+    // Owned by chat_composer.js — DOM/state gather, domain decides.
     function isImmediateControlLaneMessage(text) {
         if (window.CuttleSupervised && typeof window.CuttleSupervised.isImmediateControlLaneMessage === 'function') {
             return window.CuttleSupervised.isImmediateControlLaneMessage(text);
         }
-        const raw = String(text || '').trim();
-        if (!raw.startsWith('/')) return false;
-        // Drop sticky agent chip if present: /cursor /coordinate status
-        const t = raw.replace(
-            /^\/(?:cursor|codex|claude|hermes|muse|deepseek|claw)(?:\s+[^\s/]+)?\s+(?=\/(?:coordinate|coordinator|restart)\b)/i,
-            ''
-        ).trim().toLowerCase();
-        if (t === '/restart' || t.startsWith('/restart ')) return true;
-        if (t === '/coordinator' || t.startsWith('/coordinator ')) {
-            const rest = t.slice('/coordinator'.length).trim();
-            if (!rest) return true;
-            const head = rest.split(/\s+/)[0];
-            return ['status', 'show', 'mode', 'profile', 'worker', 'review-loops', 'review_loops', 'followups', 'reset'].includes(head);
-        }
-        if (t === '/coordinate' || t.startsWith('/coordinate ')) {
-            const rest = t.slice('/coordinate'.length).trim();
-            if (!rest) return true;
-            const head = rest.split(/\s+/)[0];
-            return ['status', 'show', 'cancel', 'stop', 'abort', 'followup', 'follow-up', 'follow_up'].includes(head);
-        }
-        return false;
+        return CuttleChatComposer.isImmediateControlLaneText(text);
     }
 
     const seenControlRequestIds = new Set();
@@ -8718,42 +8699,12 @@
      * not a prompt — Enter must no-op. Native control commands (``/restart``)
      * and real user text remain sendable.
      */
+    // Owned by chat_composer.js — DOM/state gather, domain decides.
     function isSendableComposerMessage(message, attachments) {
-        if (attachments && attachments.length) return true;
-        let rest = String(message || '').trim();
-        if (!rest) return false;
-        if (isNativeControlCommand(rest)) return true;
-        // Strip leading sticky agent prefixes (bare token or spaced prefix).
-        for (;;) {
-            const cmd = getStickySlashCommandFromMessage(rest);
-            if (!cmd) break;
-            const token = cmd.prefix.replace(/\s+$/, '');
-            const low = rest.toLowerCase();
-            if (low === token.toLowerCase()) return false;
-            if (low.startsWith(token.toLowerCase() + ' ')) {
-                rest = rest.slice(token.length).trim();
-                continue;
-            }
-            if (rest.startsWith(cmd.prefix)) {
-                rest = rest.slice(cmd.prefix.length).trim();
-                continue;
-            }
-            break;
-        }
-        if (!rest) return false;
-        // ``/cursor /restart status`` after strip — control still wins.
-        if (isNativeControlCommand(rest)) return true;
-        // Nested agent one-shots / mode cmds are real turns (CH-000482).
-        if (/^\/(usage|cost|about|clear|agent)(\s|$)/i.test(rest)) return true;
-        if (/^(usage|cost|about|clear|agent)(\s|$)/i.test(rest)) return true;
-        if (/^\/(plan|ask|sandbox)(\s|$)/i.test(rest)) return true;
-        if (/^\/model\s+refresh\b/i.test(rest)) return true;
-        // Model setting chips alone (/model auto) are not a user prompt either.
-        if (/^\/model(\s+\S+)?$/i.test(rest)) return false;
-        if (/^\/model\s+\S+/i.test(rest)) {
-            rest = rest.replace(/^\/model\s+\S+\s*/i, '').trim();
-        }
-        return !!rest;
+        return CuttleChatComposer.isSendableComposerMessage(message, attachments, {
+            stickyOf: getStickySlashCommandFromMessage,
+            isControl: isNativeControlCommand,
+        });
     }
 
     function clearAllSlashChips() {
@@ -8769,6 +8720,7 @@
 
     /** After send (or queueing a follow-up): keep sticky agent chips (/cursor, /claude, …);
      *  clear non-sticky chips. Mirrors welcome + chat composers. */
+    // Owned by chat_composer.js — DOM/state gather, domain decides.
     function applyStickySlashAfterComposerSend(message) {
         // A native control command is a one-off; it must not evict the sticky
         // agent chip the chat was already using.
@@ -8784,7 +8736,9 @@
             renderSlashChips('chat', document.getElementById('chatInput'));
             return null;
         }
-        const stickyCmd = getStickySlashCommandFromMessage(message);
+        const stickyCmd = CuttleChatComposer.stickyCommandAfterSend({ message }, {
+            stickyOf: getStickySlashCommandFromMessage,
+        });
         if (!stickyCmd) {
             clearAllSlashChips();
             return null;
@@ -20117,6 +20071,7 @@
         }
     }
     
+    // Owned by chat_composer.js — DOM/state gather, domain decides.
     async function sendMessage(opts) {
         LOG('sendMessage called');
         // opts.text: send this instead of the composer (form resume). The
@@ -20127,7 +20082,8 @@
         // isSessionGenerating() is true, fall through so follow-ups can queue —
         // the guard used to stay set for the whole processMessage await and
         // silently dropped every follow-up send.
-        if (sendDispatchGuard && !isSessionGenerating()) {
+        const generatingBeforeHeal = isSessionGenerating();
+        if (sendDispatchGuard && !generatingBeforeHeal) {
             LOG('sendMessage: ignored (dispatch guard)');
             return;
         }
@@ -20155,18 +20111,31 @@
         // queue follow-ups instead of starting a second request — EXCEPT for
         // supervised/restart control-lane commands, which must execute immediately.
         healStaleGeneratingState();
-        if (isSessionGenerating() && !isImmediateControlLaneMessage(message)) {
-            const norm = normalizeMessageContentForMatch(message);
-            if (
-                normalizeMessageContentForMatch(inFlightUserMessage) === norm
-                || pendingFollowups.some((x) => normalizeMessageContentForMatch(x.content) === norm)
-            ) {
-                LOG('sendMessage: ignored duplicate of in-flight/queued message');
-                clearComposer();
-                applyStickySlashAfterComposerSend(message);
-                autoResizeTextarea();
-                return;
-            }
+        const plan = CuttleChatComposer.composerSendPlan({
+            guardSet: !!sendDispatchGuard,
+            generatingBeforeHeal,
+            generating: isSessionGenerating(),
+            sendable: true,
+            control: isImmediateControlLaneMessage(message),
+            message,
+            normalizedMessage: normalizeMessageContentForMatch(message),
+            inFlightMessage: normalizeMessageContentForMatch(inFlightUserMessage),
+            queuedMessages: pendingFollowups.map((x) => normalizeMessageContentForMatch(x.content)),
+        });
+        if (plan.action === 'ignore-guard') {
+            // Unreachable here (guard already returned above); kept so the
+            // plan's full action space stays handled if this flow changes.
+            LOG('sendMessage: ignored (dispatch guard)');
+            return;
+        }
+        if (plan.action === 'ignore-duplicate') {
+            LOG('sendMessage: ignored duplicate of in-flight/queued message');
+            clearComposer();
+            applyStickySlashAfterComposerSend(message);
+            autoResizeTextarea();
+            return;
+        }
+        if (plan.action === 'followup') {
             LOG('sendMessage: follow-up while generating — steer or queue');
             // Attachments on a queued follow-up: take them with this item
             const queuedText = formatMessageWithAttachments(message, attachments);
@@ -20221,8 +20190,8 @@
             // Claim generating before the long await so a follow-up send hits
             // isSessionGenerating() (and queues) instead of the dispatch guard.
             // Control-lane commands skip this — they must not monopolize the chat.
-            const outbound = message || '(see attached files)';
-            const controlLane = isImmediateControlLaneMessage(outbound);
+            const outbound = plan.outbound;
+            const controlLane = plan.controlLane;
             if (!controlLane) {
                 beginLocalGeneration();
                 inFlightUserMessage = outbound;
@@ -24566,10 +24535,15 @@
     function isTouchComposer() {
         return !!(composerTouchMq && composerTouchMq.matches) || /CuttleMobile/.test(navigator.userAgent || '');
     }
+    // Owned by chat_composer.js — DOM/state gather, domain decides.
     function composerEnterSends(event) {
-        if (event.key !== 'Enter' || event.shiftKey) return false;
-        if (isTouchComposer()) return event.ctrlKey || event.metaKey;
-        return true;
+        return CuttleChatComposer.enterSubmits({
+            key: event && event.key,
+            shiftKey: !!(event && event.shiftKey),
+            ctrlKey: !!(event && event.ctrlKey),
+            metaKey: !!(event && event.metaKey),
+            touchMode: isTouchComposer(),
+        });
     }
     function syncComposerEnterKeyHint() {
         const hint = isTouchComposer() ? 'enter' : 'send';
