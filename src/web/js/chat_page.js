@@ -736,7 +736,11 @@
     let messageSyncTimer = null;
     let messageSyncInFlight = false;
     let messageSyncStartedAt = 0;
-    let suppressStreamAbortUi = false;
+    // Stop/cancel lifecycle flags { userStopped, abortSuppressed,
+    // waitingSuppressed }, owned by chat_stop_state.js. One instance;
+    // transitions via CuttleStopState, never direct writes. After Stop,
+    // the waiting latch suppresses "waiting for reply" until next send.
+    const stopState = CuttleStopState.createStopState();
     /**
      * Bumped on New Chat / history switch so an orphaned SSE or pending waiter
      * from the previous chat cannot paint status or re-adopt into the open UI
@@ -774,10 +778,6 @@
     let followupDrainTimer = null;
     let followupDirty = false;
     let followupTakeInFlight = false;
-    let userStoppedGeneration = false;
-    /** After Stop, suppress "waiting for reply" remote indicator until the next send. */
-    let suppressRemoteWaitingAfterStop = false;
-
     /** Uploaded file refs awaiting the next send: {filename, path, mime, size?} */
     let pendingAttachments = [];
     function _pendingKey(sid) { return `cuttle.pendingAttachments.${sid || 'anon'}`; }
@@ -932,7 +932,7 @@
      * without cancelling the server run. Aborting the tab's fetch/SSE stops
      * painting here; the agent keeps going and message sync can collect later.
      *
-     * Leave suppressStreamAbortUi true until the next beginLocalGeneration so
+     * Leave stopState.abortSuppressed true until the next beginLocalGeneration so
      * orphaned collectPendingResult loops exit instead of painting into the
      * next chat. CuttleTurnGuard.bump(turnGeneration) invalidates canPaintTurnHere for that turn.
      *
@@ -943,7 +943,7 @@
      */
     function detachLocalGenerationForNavigation() {
         CuttleTurnGuard.bump(turnGeneration);
-        suppressStreamAbortUi = true;
+        CuttleStopState.markStreamDetached(stopState);
         try {
             if (activeEventSource) {
                 activeEventSource.close();
@@ -996,7 +996,7 @@
      * on screen, so keep recovery polls and let the reply paint.
      */
     function releaseLocalStreamForShellPause(teardown) {
-        suppressStreamAbortUi = true;
+        CuttleStopState.markStreamDetached(stopState);
         try {
             if (activeRequestController) activeRequestController.abort();
         } catch (_) {}
@@ -1213,7 +1213,7 @@
      * indicator was present).
      */
     function healStaleGeneratingState() {
-        if (userStoppedGeneration || suppressRemoteWaitingAfterStop) {
+        if (stopState.userStopped || stopState.waitingSuppressed) {
             return false;
         }
         // Orphan isLoading with no in-flight request/SSE and no tracked user
@@ -2611,7 +2611,7 @@
 
     /**
      * After detachLocalGenerationForNavigation, the in-flight processMessage
-     * waiter stops (suppressStreamAbortUi / nav-gen). Keep a quiet poll so a
+     * waiter stops (stopState.abortSuppressed / nav-gen). Keep a quiet poll so a
      * finished reply still marks unread + chirps — only when pending has a
      * real body and the server is no longer generating.
      */
@@ -12002,7 +12002,7 @@
      */
     function consumeCancelledAgentReply(text, opts = {}) {
         if (!isCancelledAgentText(text)) return false;
-        const live = userStoppedGeneration || isLoading;
+        const live = stopState.userStopped || isLoading;
         if (opts.announce === true || (opts.announce !== false && live)) {
             ensureGenerationStopNotice('⏹ Generation cancelled.');
         }
@@ -12404,7 +12404,7 @@
         }
         stopMessageSync({ resetCursor: true });
         clearFollowupQueue();
-        suppressRemoteWaitingAfterStop = false;
+        CuttleStopState.clearWaitingSuppression(stopState);
         syncChatUrl(null);
         reportSessionToShell(null);
         restoreComposerDraft('new', { force: true });
@@ -12646,7 +12646,7 @@
             saveComposerDraft('new');
         }
         clearAllSlashChips();
-        suppressRemoteWaitingAfterStop = false;
+        CuttleStopState.clearWaitingSuppression(stopState);
         sessionId = canonicalizeChatSessionId(sessionId);
         const loadSeq = ++_loadSessionSeq;
         // Close immediately on tap — don't wait for message fetch (felt stuck open on mobile).
@@ -13145,7 +13145,7 @@
                 );
             } catch (_) {}
             await syncSessionMessagesFromServer();
-            if (isLoadingThisSession() && !userStoppedGeneration) {
+            if (isLoadingThisSession() && !stopState.userStopped) {
                 const recovered = await recoverChatResultFromServer(currentSessionId);
                 if (recovered && String(recovered.response || '').trim()) {
                     if (consumeCancelledAgentReply(recovered.response)) {
@@ -14199,11 +14199,11 @@
         }
         // User pressed Stop — don't resurrect a "generating" indicator for the
         // cancelled turn (last message is still the user bubble).
-        // After refresh, in-memory userStoppedGeneration is gone; honor the
+        // After refresh, in-memory stopState.userStopped is gone; honor the
         // persisted Stop notice and the live-status cancelled flag.
         if (
-            suppressRemoteWaitingAfterStop
-            || userStoppedGeneration
+            stopState.waitingSuppressed
+            || stopState.userStopped
             || (liveStatus && liveStatus.cancelled)
             || transcriptEndsWithGenerationStop(messages)
         ) {
@@ -14242,7 +14242,7 @@
             // drain follow-ups queued while isSessionGenerating() was true.
             // Drain on any generating UI clear, not only when the remote indicator
             // was present — history "generating" flags alone used to queue forever.
-            if (wasGeneratingUi && !isLoading && !suppressRemoteWaitingAfterStop) {
+            if (wasGeneratingUi && !isLoading && !stopState.waitingSuppressed) {
                 scheduleFollowupDrain(80);
             }
         }
@@ -14262,7 +14262,7 @@
         let polls = 0;
         for (;;) {
             if (CuttleTurnGuard.isStale(turnNavGen, turnGeneration)) return null;
-            if (userStoppedGeneration || suppressStreamAbortUi) return null;
+            if (stopState.userStopped || stopState.abortSuppressed) return null;
             // Sync may have already painted the assistant for THIS turn.
             // Don't wait on leftover typing UI — phone WebView often keeps the
             // indicator after the reply bubble is already visible.
@@ -14286,13 +14286,13 @@
             } catch (_) {
                 // Timed out / network blip — keep waiting while the deadline allows.
                 if (CuttleTurnGuard.isStale(turnNavGen, turnGeneration)) return null;
-                if (userStoppedGeneration || suppressStreamAbortUi) return null;
+                if (stopState.userStopped || stopState.abortSuppressed) return null;
                 if (Date.now() >= deadline) return null;
                 await new Promise((r) => setTimeout(r, pollMs));
                 continue;
             }
             if (CuttleTurnGuard.isStale(turnNavGen, turnGeneration)) return null;
-            if (userStoppedGeneration || suppressStreamAbortUi) return null;
+            if (stopState.userStopped || stopState.abortSuppressed) return null;
             if (!data || !data.success) {
                 // Auth blip / transient — don't abandon a live agent run.
                 const live = await fetchChatLiveStatus(sessionId);
@@ -14323,7 +14323,7 @@
                 ? (getCachedHubLiveStatus(sessionId) || await fetchChatLiveStatus(sessionId))
                 : await fetchChatLiveStatus(sessionId);
             if (CuttleTurnGuard.isStale(turnNavGen, turnGeneration)) return null;
-            if (userStoppedGeneration || suppressStreamAbortUi) return null;
+            if (stopState.userStopped || stopState.abortSuppressed) return null;
             if (live && live.status && isViewingSession(sessionId)) {
                 updateTypingStatus(live.status);
             }
@@ -15475,7 +15475,7 @@
         const n = Math.max(1, attempts || 1);
         const gap = gapMs != null ? gapMs : 1500;
         for (let i = 0; i < n; i++) {
-            if (userStoppedGeneration || suppressStreamAbortUi) return null;
+            if (stopState.userStopped || stopState.abortSuppressed) return null;
             const got = await recoverChatResultFromServer(sessionId);
             if (got && String(got.response || '').trim()) return got;
             if (i + 1 < n) {
@@ -15545,7 +15545,7 @@
 
     function finishLocalStreamFromServerSync() {
         if (!isLoading) return;
-        suppressStreamAbortUi = true;
+        CuttleStopState.markStreamDetached(stopState);
         try {
             if (activeRequestController) activeRequestController.abort();
         } catch (_) {}
@@ -15569,7 +15569,7 @@
             stopButton.style.display = 'none';
         }
         setWelcomeComposerEnabled(true);
-        if (pendingFollowups.length && !suppressRemoteWaitingAfterStop) {
+        if (pendingFollowups.length && !stopState.waitingSuppressed) {
             scheduleFollowupDrain(80);
         }
     }
@@ -15712,7 +15712,7 @@
                     continue;
                 }
 
-                if (msg.role === 'assistant' && userStoppedGeneration) {
+                if (msg.role === 'assistant' && stopState.userStopped) {
                     // Stop already dropped this turn. A late DB write must not
                     // paint the reply the user cancelled.
                     continue;
@@ -17016,7 +17016,7 @@
 
     function beginLocalGeneration() {
         isLoading = true;
-        suppressStreamAbortUi = false;
+        CuttleStopState.clearAbortSuppression(stopState);
         localGeneratingSessionId = currentSessionId || authSessionIdForRequest() || null;
         if (localGeneratingSessionId) {
             setHistorySessionRunning(localGeneratingSessionId, true);
@@ -17264,7 +17264,7 @@
             currentWasRunning
             && !currentStillRunning
             && !isLoading
-            && !suppressRemoteWaitingAfterStop
+            && !stopState.waitingSuppressed
             && pendingFollowups.length
         ) {
             scheduleFollowupDrain(80);
@@ -18859,7 +18859,7 @@
     function syncComposerStopWithWatch() {
         const stopButton = document.getElementById('stopButton');
         if (!stopButton) return;
-        if (userStoppedGeneration || isLoading) return;
+        if (stopState.userStopped || isLoading) return;
         if (chatHasRunningWatchJob()) {
             stopButton.style.display = 'flex';
             stopButton.disabled = false;
@@ -18874,9 +18874,7 @@
         const inflight = inFlightUserMessage;
         const watchIds = runningWatchJobIds();
         const cancelJobs = (!inflight && watchIds.length > 0) || isProjectShellTurn(inflight);
-        userStoppedGeneration = true;
-        suppressStreamAbortUi = true;
-        suppressRemoteWaitingAfterStop = true;
+        CuttleStopState.requestStop(stopState);
         inFlightUserMessage = null;
         clearTimeout(followupDrainTimer);
         followupDrainTimer = null;
@@ -18932,8 +18930,7 @@
         const prevInFlight = inFlightUserMessage;
         const prevController = activeRequestController;
         if (!controlLane) {
-            userStoppedGeneration = false;
-            suppressRemoteWaitingAfterStop = false;
+            CuttleStopState.beginSend(stopState);
             inFlightUserMessage = message;
             beginLocalGeneration();
         }
@@ -19257,7 +19254,7 @@
                     // inFlightUserMessage / typing UI, and any assistant in the
                     // new transcript would look "painted" → false Reply ready.
                     const navAway = (
-                        suppressStreamAbortUi
+                        stopState.abortSuppressed
                         || CuttleTurnGuard.isStale(turnNavGen, turnGeneration)
                     );
                     const painted = navAway ? null : assistantElAfterInFlightUser();
@@ -19275,7 +19272,7 @@
                     // going, keep polling; otherwise let message-sync pick up
                     // a late DB write instead of "No response received."
                     const liveNow = await fetchChatLiveStatus(pendingSid).catch(() => null);
-                    if (liveNow && liveStatusLooksActive(liveNow) && !userStoppedGeneration) {
+                    if (liveNow && liveStatusLooksActive(liveNow) && !stopState.userStopped) {
                         if (canPaintTurnHere()) {
                             updateTypingStatus(liveNow.status || 'Working… (waiting for reply)');
                         }
@@ -19422,7 +19419,7 @@
                 if (
                     readySid
                     && data
-                    && !userStoppedGeneration
+                    && !stopState.userStopped
                     && !data.busy
                     && !data.no_reply
                     // Require a real body — success+whitespace used to chirp from
@@ -19444,7 +19441,7 @@
                         });
                     }
                 }
-            } else if (userStoppedGeneration) {
+            } else if (stopState.userStopped) {
                 consumeCancelledAgentReply(data && (data.response || data.output));
                 // Stop already cleaned UI; don't append a partial/error reply.
             } else if (consumeCancelledAgentReply(data && (data.response || data.output))) {
@@ -19716,13 +19713,13 @@
                 }
             }
         } catch (error) {
-            const syncRecovered = suppressStreamAbortUi && error?.name === 'AbortError';
-            if (syncRecovered || userStoppedGeneration) {
-                // Nav abort (syncRecovered): keep suppressStreamAbortUi true until
-                // beginLocalGeneration so orphaned collectPendingResult loops exit.
-                // Explicit Stop: clear so a later recovery path is not stuck suppressed.
-                if (!syncRecovered) {
-                    suppressStreamAbortUi = false;
+            // Classified by chat_stop_state.js: navigation aborts keep
+            // suppression (orphaned waiters exit); explicit Stop clears it
+            // so a later recovery path is not stuck suppressed.
+            const abortClass = CuttleStopState.classifySendAbort(stopState, error?.name);
+            if (abortClass === 'detached' || abortClass === 'stopped') {
+                if (abortClass === 'stopped') {
+                    CuttleStopState.clearAbortSuppression(stopState);
                 }
                 removeTypingIndicator();
             } else if (error?.name === 'AbortError') {
@@ -19763,7 +19760,7 @@
             }
         } finally {
             // Re-enable inputs
-            const wasStopped = userStoppedGeneration;
+            const wasStopped = stopState.userStopped;
             if (controlLane) {
                 // Restore in-flight agent turn bookkeeping; do not end generation.
                 inFlightUserMessage = prevInFlight;

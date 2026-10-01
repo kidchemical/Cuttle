@@ -67,7 +67,7 @@ def test_pending_wait_does_not_require_typing_indicator_gone():
 
 def test_message_sync_skips_late_assistant_after_stop():
     src = CHAT_JS.read_text(encoding="utf-8")
-    assert "if (msg.role === 'assistant' && userStoppedGeneration)" in src
+    assert "if (msg.role === 'assistant' && stopState.userStopped)" in src
     assert "paint the reply the user cancelled" in src
 
 

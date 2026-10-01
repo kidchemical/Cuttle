@@ -118,8 +118,9 @@ def test_pending_status_poll_gated_by_turn_view():
 def test_detach_does_not_reenable_orphan_pending_waiter():
     """New Chat must keep suppressStreamAbortUi true for the aborted turn."""
     body = _fn_body(_src(), "function detachLocalGenerationForNavigation")
-    assert "suppressStreamAbortUi = true" in body
-    assert "suppressStreamAbortUi = false" not in body
+    # Owned transition (Slice 9B); detach marks detached, never lifts it.
+    assert "CuttleStopState.markStreamDetached(stopState)" in body
+    assert "CuttleStopState.clearAbortSuppression" not in body
 
 
 def test_sse_session_adopt_not_from_zombie_when_welcome():

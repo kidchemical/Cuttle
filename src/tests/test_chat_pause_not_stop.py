@@ -50,9 +50,10 @@ def _fn_body(src: str, name: str) -> str:
 
 def test_shell_pause_suppresses_stop_notice_and_keeps_sync():
     body = _fn_body(_src(), "function releaseLocalStreamForShellPause")
-    assert "suppressStreamAbortUi = true" in body
+    # Owned transition (Slice 9B): pause marks detached, never a user stop.
+    assert "CuttleStopState.markStreamDetached(stopState)" in body
     assert "ensureGenerationStopNotice" not in body
-    assert "userStoppedGeneration = true" not in body
+    assert "CuttleStopState.requestStop" not in body
     # Sibling pane stays on screen — keep polling for the real reply.
     assert "startMessageSync()" in body
     # Only the iframe that is actually going away drops message sync.

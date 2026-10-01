@@ -4648,3 +4648,82 @@ whole was rejected as monolith-shifting. The owned seam is
   verified by search.
 - Commit independently on main. No push, no restart.
   **STOP for Codex review before 9B or Phase 4.**
+
+## Prior approval recorded: Slice 9A 321f5c9b
+
+- External review approves 9A. Reviewer last read line 4650; this
+  section appends only beyond that boundary; earlier sections preserved.
+
+## Slice 9B report — stop/cancel lifecycle ownership
+
+- New owner `src/web/js/chat_stop_state.js` (`CuttleStopState`, IIFE +
+  `module.exports`, zero DOM/fetch/timers/transports): the three
+  stop flags as ONE state object `{ userStopped, abortSuppressed,
+  waitingSuppressed }` plus the transition table — `requestStop`
+  (terminal, idempotent), `beginSend` (clears stop latches, keeps
+  orphan suppression), `markStreamDetached` (navigation/shell-pause/
+  server-sync finish), `clearAbortSuppression` (generation begin +
+  explicit-stop recovery), `clearWaitingSuppression` (new chat /
+  switch), and `classifySendAbort` (`detached` keeps suppression,
+  `stopped` clears it, `dropped`/`other` leave it). Turn-guard tokens
+  stay owned by `chat_turn_guard.js`; follow-up queue timer state
+  stays in the page (9C); backend cancel transport
+  (`requestServerCancelCurrentRun`) and local teardown try/catch
+  lines stay page-side (divergent null semantics kept verbatim).
+- Page rewire: 3 `let`s → 1 `stopState` instance; all writers →
+  transitions (stop, send, detach, shell-pause, server-sync finish,
+  generation begin, new-chat/switch ×2, send-catch classify); all 29
+  readers → `stopState.*` fields. No split state, no other writers
+  (verified by search).
+- Coverage (committed, executed BEFORE moves where it matters): new
+  `test_chat_stop_state.py` (7 tests). Module truth table + race
+  sequences + abort-classification matrix ran green pre-rewire. The
+  adapter suite executes the REAL page `stopGenerating` / detach /
+  shell-pause / begin / server-sync-finish bodies with fake
+  AbortController/EventSource/fetch/DOM/timers over idle, live,
+  repeat, throwing-transport, detach, pause/teardown, begin, and
+  finish-idle/live scenarios — green pre-rewire (pinning old-code
+  effects, incl. the throwing-close-skips-its-null asymmetry) and
+  green post-rewire with identical assertions: the pre/post
+  differential. Three pins repointed to the new call shapes
+  (cross-session detach, followup-heal reader, pause-not-stop);
+  stop-refresh prose mentions need no change.
+- Gates, same controlled scope (`--ignore=src/tests/unit`, spend flags
+  verified unset, zero `SPENDING REAL TOKENS` trips): neighbors 279
+  passed with only the 7 accounted pre-existing failures (composer
+  duplicate, steer, starred-removal, turn-guard, cross-session gating
+  green); broad **28 failed / 1851 passed / 79 skipped** with FAILED
+  identities byte-identical to the 8F/9A 28 (`diff` clean; +7 passed
+  = 7 new tests). `node --check` clean on all touched JS.
+- Cache: `chat_page.html` adds versioned
+  `chat_stop_state.js?v=20261001slice9b` (after turn-guard, before
+  page) and bumps `chat_page.js` to `slice9b`; all other assets
+  untouched with matching fingerprints.
+- Files: `src/web/js/chat_stop_state.js` (new),
+  `src/web/js/chat_page.js` (state object + transitions + reader
+  renames), `src/web/chat_page.html` (+2/−1 tags),
+  `src/tests/test_chat_stop_state.py` (new),
+  `src/tests/test_chat_cross_session_activity.py`,
+  `src/tests/test_chat_followup_heal.py`,
+  `src/tests/test_chat_pause_not_stop.py` (pin repoints), this
+  section. No backend/routing/product-behavior changes.
+
+## Remaining Slice 9 + Phase 3 closure acceptance (unchanged)
+
+- 9C: follow-up queue (`pendingFollowups` + drain timer +
+  take/reconcile + pause/resume render; combine-on-idle and Stop-liter
+  semantics preserved). 9D: pending-result waiter + replay/reconcile/
+  dedup + message-sync poll timers + busy lock/heal; exactly-once
+  append/persist and disconnect/reconnect pinned first.
+- Closure acceptance carried: search gate over active query;
+  last-message-time sort stability; prefs/render/live-status restore
+  order; prompt-history migration wired to remap; loadChatHistory/poll
+  generation-flag interfaces explicit; no paid-prompt tests run;
+  manual browser/Flask validation unavailable (node/fake-DOM only).
+- Risks/limits: teardown null-semantics asymmetry (throwing close
+  skips its null) pinned as-is, not normalized; send-catch
+  classification verified branch-identical by construction + adapter
+  effects, not by executing the full send flow (too DOM-deep for the
+  span harness — noted honestly).
+- Commit independently on main. No push, no restart.
+  **STOP for Codex review before 9C or Phase 4.**
