@@ -10399,55 +10399,8 @@
     }
 
     function activateVegaEmbeds(containerEl) {
-        if (!containerEl) return;
-        const nodes = containerEl.querySelectorAll
-            ? containerEl.querySelectorAll('[data-vega-spec]')
-            : [];
-        if (!nodes.length) return;
-        if (!window.vegaEmbed) {
-            // CDN still loading — leave pending placeholder; cuttle-vega-ready retries.
-            return;
-        }
-        nodes.forEach(async (el) => {
-            if (el.__vega_done) return;
-            el.__vega_done = true;
-            const raw = el.getAttribute('data-vega-spec');
-            if (!raw) {
-                el.classList.add('vega-wrap--error');
-                el.textContent = 'Empty Vega chart';
-                return;
-            }
-            let spec;
-            try {
-                spec = JSON.parse(raw);
-            } catch (err) {
-                el.classList.add('vega-wrap--error');
-                el.textContent = 'Invalid Vega JSON: ' + ((err && err.message) || 'parse error');
-                return;
-            }
-            try {
-                el.innerHTML = '';
-                // Force transparent view — stock themes paint a solid analytics card bg.
-                if (!spec.config) spec.config = {};
-                if (!spec.config.background && spec.config.background !== null) {
-                    spec.config.background = null;
-                }
-                if (spec.background === undefined) spec.background = null;
-                if (!spec.config.view) spec.config.view = {};
-                if (spec.config.view.stroke === undefined) spec.config.view.stroke = null;
-                await window.vegaEmbed(el, spec, {
-                    actions: false,
-                    renderer: 'svg',
-                    // No named theme — themes force opaque backgrounds.
-                    config: {
-                        background: null,
-                        view: { stroke: null },
-                    },
-                });
-            } catch (err) {
-                el.classList.add('vega-wrap--error');
-                el.textContent = 'Vega render failed: ' + ((err && err.message) || String(err));
-            }
+        return CuttleChatActivate.activateVegaEmbeds(containerEl, {
+            vegaEmbed: window.vegaEmbed,
         });
     }
 
@@ -10459,34 +10412,13 @@
     }
 
     function attachCodeCopyButtons(containerEl) {
-        containerEl.querySelectorAll('pre > code').forEach((codeEl) => {
-            const pre = codeEl.parentElement;
-            if (!pre || pre.querySelector(':scope > .code-copy-btn')) return;
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'code-copy-btn';
-            btn.title = 'Copy code';
-            btn.setAttribute('aria-label', 'Copy code');
-            btn.innerHTML = COPY_ICON;
-            btn.addEventListener('click', async (ev) => {
-                ev.preventDefault();
-                ev.stopPropagation();
-                const ok = await copyTextToClipboard(cleanCodeCopyText(codeEl.textContent));
-                btn.classList.toggle('is-copied', ok);
-                btn.title = ok ? 'Copied!' : 'Copy failed';
-                if (ok) {
-                    btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>';
-                } else {
-                    (window.showToast || function () {})('Could not copy code block', 'error');
-                }
-                setTimeout(() => {
-                    btn.classList.remove('is-copied');
-                    btn.innerHTML = COPY_ICON;
-                    btn.title = 'Copy code';
-                }, 1500);
-            });
-            pre.classList.add('has-code-copy');
-            pre.appendChild(btn);
+        return CuttleChatActivate.attachCodeCopyButtons(containerEl, {
+            createElement: (tag) => document.createElement(tag),
+            copyIcon: COPY_ICON,
+            copiedIcon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>',
+            copyText: copyTextToClipboard,
+            notifyError: (message) => (window.showToast || function () {})(message, 'error'),
+            later: (fn, ms) => setTimeout(fn, ms),
         });
     }
 
@@ -23726,48 +23658,17 @@
             return placeholder;
         });
 
-        // Fenced code blocks BEFORE escapeHtml + line splitting. Doing this after
-        // escape (old path) left raw <pre><code>… across newlines; the line loop
-        // shredded them into <p> tags and highlight.js warned about unescaped HTML.
-        const codeBlocks = [];
-        // Allow ```, ```lang, or ``` lang — require a newline after the opener.
-        text = text.replace(/```([^\n`]*)\r?\n([\s\S]*?)```/g, function(_, langRaw, code) {
-            const lang = String(langRaw || '').trim().split(/\s+/)[0] || '';
-            const safeLang = /^[a-zA-Z0-9_+#.-]+$/.test(lang) ? lang : '';
-            const safe = escapeHtmlInline(String(code ?? '').replace(/\n$/, ''));
-            const cls = safeLang ? (' class="language-' + escapeHtmlInline(safeLang) + '"') : '';
-            const placeholder = '{{CUTTLE_CODE_' + codeBlocks.length + '}}';
-            codeBlocks.push('<pre class="message-code-block"><code' + cls + '>' + safe + '</code></pre>');
-            return placeholder;
+        const codeLinkStructured = CuttleChatMessages.extractCodeLinkBlocks(text, {
+            escapeHtmlInline,
+            renderMdLinkChip,
+            isSafeMdHref,
         });
+        text = codeLinkStructured.text;
+        // Live array: handle/git linking below pushes chips the restore
+        // protocol later reads through structuredBlocks.
+        const linkChips = codeLinkStructured.blocks.link;
+        Object.assign(structuredBlocks, codeLinkStructured.blocks);
 
-        // Markdown links → chips (file://, vscode://, http(s)://, local Windows paths)
-        // Allow spaces in destinations (CommonMark <url> or bare paths with spaces).
-        const linkChips = [];
-        text = text.replace(/\[([^\]]*)]\(([^)]+)\)/g, function(_, label, url) {
-            const placeholder = '{{CUTTLE_LINK_' + linkChips.length + '}}';
-            linkChips.push(renderMdLinkChip(label, String(url || '').trim()));
-            return placeholder;
-        });
-        // Bare deep links / URLs (skip ones already turned into chips)
-        text = text.replace(
-            /(^|[\s(\[{·])((?:https?:\/\/|file:\/\/\/|vscode:\/\/|cursor:\/\/)[^\s<>\]"'`]+)/g,
-            function(_, lead, url) {
-                let u = url;
-                let trail = '';
-                const m = u.match(/^(.*?)([.,;:!?)}\]]+)$/);
-                if (m) {
-                    u = m[1];
-                    trail = m[2];
-                }
-                if (!isSafeMdHref(u)) return lead + url;
-                const placeholder = '{{CUTTLE_LINK_' + linkChips.length + '}}';
-                linkChips.push(renderMdLinkChip(u, u));
-                return lead + placeholder + trail;
-            }
-        );
-
-        // Bare chat handles: CH-000431 / CH-000431-23 → in-pane session links.
         text = linkifyChatHandlesInText(text, linkChips);
         // Bare / backticked git SHAs → in-pane commit modal (same as Git page).
         if (window.CuttleGitCommitViewer && typeof window.CuttleGitCommitViewer.linkifyGitHashesInText === 'function') {
@@ -23958,7 +23859,12 @@
         }
         
         let result = formatted.join('');
-        result = CuttleChatMessages.restoreStructuredBlocks(result, structuredBlocks);
+        // Code/link chips restore after forms/buttons exactly as before: a
+        // literal {{CUTTLE_FORM_0}}-style token inside a fenced block must not
+        // be substituted, and vice versa. structuredBlocks stays the live
+        // owner; only this pass order is pinned here.
+        result = CuttleChatMessages.restoreStructuredBlocks(
+            result, Object.assign({}, structuredBlocks, { code: [], link: [] }));
         // Restore supervised Activity disclosure
         for (let i = 0; i < supervisedActivityBlocks.length; i++) {
             result = result.split('{{CUTTLE_SUP_ACT_' + i + '}}').join(supervisedActivityBlocks[i]);
@@ -23972,11 +23878,11 @@
         for (let i = 0; i < buttonBlocks.length; i++) {
             result = result.split('{{CUTTLE_BTN_' + i + '}}').join(buttonBlocks[i]);
         }
-        for (let i = 0; i < codeBlocks.length; i++) {
-            result = result.split('{{CUTTLE_CODE_' + i + '}}').join(codeBlocks[i]);
+        for (let i = 0; i < structuredBlocks.code.length; i++) {
+            result = result.split('{{CUTTLE_CODE_' + i + '}}').join(structuredBlocks.code[i]);
         }
-        for (let i = 0; i < linkChips.length; i++) {
-            result = result.split('{{CUTTLE_LINK_' + i + '}}').join(linkChips[i]);
+        for (let i = 0; i < structuredBlocks.link.length; i++) {
+            result = result.split('{{CUTTLE_LINK_' + i + '}}').join(structuredBlocks.link[i]);
         }
         return result;
     }

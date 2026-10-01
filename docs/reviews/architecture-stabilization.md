@@ -4147,3 +4147,105 @@ whole was rejected as monolith-shifting. The owned seam is
 - Added/deleted files: none.
 - Commit independently on main. No push, no restart.
   **STOP for Codex review before 8D or Streaming.**
+
+## Baseline reconciliation (8B vs 8C, same-environment) — clarification
+
+- 8B report's `adcce8c5: 1824 passed / 28 failed / 60 skipped` and the 8C
+  report's "8B HEAD 1821" differ because they were taken on different trees:
+  the 1824 figure was the 8B worktree run, the 1821 figure the 8A baseline
+  the 8C author first compared against. Neither was a same-environment
+  8B-vs-8C comparison, and the "8 = 3 8B tests + 5 8C tests" split
+  mislabeled pre-existing tests as new. Correction: the true
+  same-environment, same-invocation comparison is HEAD (`f4ba9cd1`, the 8C
+  tip) broad minus `src/tests/unit` (whose `test_security.py` collection
+  error, `ModuleNotFoundError: core.multi_stage_processor`, is pre-existing
+  on HEAD and unrelated to this domain): **28 failed / 1814 passed /
+  79 skipped**, with all 28 FAILED identities recorded in
+  `/tmp/failed_head.txt` (kept out of tree). The earlier 1829/60 figures
+  came from a different invocation scope; the 1814/79 figures above are the
+  controlled baseline the 8D gate below is diffed against.
+- Paid-prompt audit: no smoke/e2e prompt-sending tests were run for 8D.
+  Verification is node fake-DOM harnesses + the repo pytest suite only;
+  `src/tests/spend_guard.py` reports zero "SPENDING REAL TOKENS". No paid
+  or token-consuming test was executed or repeated.
+
+## 8C approval (recorded post-reconciliation)
+
+- 8C `f4ba9cd1` (structured-block boundary + cache fixes) is accepted on the
+  reconciled baseline above: same-environment HEAD broad shows the 28
+  pre-existing failures with no slice regression, and the `?v` fingerprint
+  bumps for the already-loaded assets were verified in `chat_page.html`.
+- Approval recorded here at the append boundary; no prior section rewritten.
+
+## Slice 8D report — markdown code/link extraction + bounded activation seam
+
+- Owned boundary (narrow, explicit inputs):
+  `CuttleChatMessages.extractCodeLinkBlocks(text, { escapeHtmlInline,
+  renderMdLinkChip, isSafeMdHref })` → `{ text, blocks: { code, link } }`
+  owns fenced-code + markdown/bare-link extraction (pure HTML planning; head/
+  tail extraction already owned). `src/web/js/chat_activate.js`
+  (`CuttleChatActivate`, IIFE + `module.exports` dual export, zero
+  `window`/`document`/`navigator`/`setTimeout`/icon references) owns the
+  bounded post-paint activation seam: `activateVegaEmbeds(containerEl,
+  deps)` and `attachCodeCopyButtons(containerEl, deps)` with explicit dep
+  injection (`vegaEmbed`, `createElement`, `copyIcon`/`copiedIcon`,
+  `copyText`, `notifyError`, `later`). Supervised-activity, widgets,
+  action-forms/buttons, markdown tables, and the main line loop stay in the
+  page for the next boundary (8E candidate).
+- Page adapters stay with identical signatures: vega/copy activation
+  adapters supply `window.vegaEmbed`, `document.createElement`,
+  `COPY_ICON`/`COPIED_ICON`, clipboard, toast, `setTimeout`; code/link
+  extraction replaced by the module call with the live `linkChips` array
+  bound for the handle/git linking stages below it.
+- Restore pass order pinned byte-exact: the bulk
+  `restoreStructuredBlocks` call redacts code/link
+  (`Object.assign({}, structuredBlocks, { code: [], link: [] })`) and the
+  page restores code then link after forms/buttons exactly as pre-change,
+  so literal `{{CUTTLE_FORM_0}}`-style tokens inside fenced code are never
+  substituted (and the reverse HEAD-faithful direction is preserved).
+  `structuredBlocks` remains the live owner; only pass order is pinned.
+- Differentials: module extract vs HEAD page span, 16 inputs × 3 channels
+  (text/code/link) byte-identical (`/tmp/diff_codelink.js`, scratch only);
+  `null` input is new-tolerant in the module (page threw; unreachable —
+  `formatMessage` coerces upstream) and is pinned as hardening, not as
+  equivalence. Activation functions diffed identical modulo the declared
+  dep rewiring (plus a brace-balance slicer artifact in the scratch
+  script; both files `node --check` clean).
+- Tests (all node-executed real module/page spans, committed):
+  `test_chat_activate.py` (5: vega embed-error/skip paths, no-library
+  noop, copy-button lifecycle incl. idempotence/click/re-arm/failure,
+  module parse, versioned script-tag + load order) and
+  `test_chat_messages.py` (+4: code-fence planning, link chips/safety,
+  full-pipeline interleave, restore-pass-order adversarial interleave
+  executing the real page extract + restore spans). Three 8C-era wiring
+  pins (`test_agent_cost_slash`, `test_agent_usage_slash`,
+  `test_cursor_agent_slash_commands`) updated to the redacted restore call
+  shape — same contract (page wired through the restore protocol), new
+  call text; behavioral equivalence carried by the order test.
+- Gates, same invocation (`--ignore=src/tests/unit`, pre-existing
+  collection error): focused/neighbor suites green (24/24 messages +
+  activate); broad **28 failed / 1823 passed / 79 skipped** with FAILED
+  identities byte-identical to HEAD (`diff` clean; +9 passed = 8 new tests
+  + 1 rename, exactly one test ID removed). The 5 neighbor failures in
+  `test_chat_attachments.py` / `test_chat_history_search.py` (incl. the
+  stale `20260927graphsGone` asset pin) reproduce identically on HEAD —
+  pre-existing, untouched. `node --check` clean for all touched JS.
+- Cache: `chat_page.html` bumps `chat_messages.js` and `chat_page.js` to
+  `?v=20261001slice8d` and adds versioned `chat_activate.js?v=
+  20261001slice8d` (messages < activate < page order); `?v`-fingerprinted
+  `/js/` assets serve immutable, so existing clients refetch.
+- Files: `src/web/js/chat_page.js` (−~110: extraction + activation moved
+  out, order-pin comment + code/link loops), `src/web/js/chat_messages.js`
+  (+57: `extractCodeLinkBlocks`), `src/web/js/chat_activate.js` (new),
+  `src/web/chat_page.html` (+3/−2: `?v` bumps + new tag),
+  `src/tests/test_chat_messages.py` (+263: harnesses + order test),
+  `src/tests/test_chat_activate.py` (new), 3 wiring-pin updates, this
+  section. No backend, routing, or product-behavior changes.
+- Remaining Messages/History scope for the next boundary: markdown table
+  restore + main line loop (stays in page; the risky move 8D explicitly
+  declined), sync/history navigation/search/panel seam disposition with
+  ownership-based acceptance criteria. Session restore still deferred for
+  ownership/scope reasons. Manual browser/Flask validation unavailable
+  (node/fake-DOM only) — reported, not waived.
+- Commit independently on main. No push, no restart.
+  **STOP for Codex review before 8E or Streaming.**

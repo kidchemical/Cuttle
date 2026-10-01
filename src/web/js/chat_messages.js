@@ -607,6 +607,61 @@
     }
 
     /**
+     * Fenced-code + markdown/bare-URL link extraction. Runs after the
+     * form/button stages and before chat-handle linking, so extracted
+     * code never yields links and link chips are in place for the
+     * handle pass. Returns { text, blocks: { code, link } }.
+     */
+    function extractCodeLinkBlocks(text, deps) {
+        const d = deps || {};
+        text = String(text || '');
+            // Fenced code blocks BEFORE escapeHtml + line splitting. Doing this after
+            // escape (old path) left raw <pre><code>… across newlines; the line loop
+            // shredded them into <p> tags and highlight.js warned about unescaped HTML.
+            const codeBlocks = [];
+            // Allow ```, ```lang, or ``` lang — require a newline after the opener.
+            text = text.replace(/```([^\n`]*)\r?\n([\s\S]*?)```/g, function(_, langRaw, code) {
+                const lang = String(langRaw || '').trim().split(/\s+/)[0] || '';
+                const safeLang = /^[a-zA-Z0-9_+#.-]+$/.test(lang) ? lang : '';
+                const safe = d.escapeHtmlInline(String(code ?? '').replace(/\n$/, ''));
+                const cls = safeLang ? (' class="language-' + d.escapeHtmlInline(safeLang) + '"') : '';
+                const placeholder = '{{CUTTLE_CODE_' + codeBlocks.length + '}}';
+                codeBlocks.push('<pre class="message-code-block"><code' + cls + '>' + safe + '</code></pre>');
+                return placeholder;
+            });
+
+            // Markdown links → chips (file://, vscode://, http(s)://, local Windows paths)
+            // Allow spaces in destinations (CommonMark <url> or bare paths with spaces).
+            const linkChips = [];
+            text = text.replace(/\[([^\]]*)]\(([^)]+)\)/g, function(_, label, url) {
+                const placeholder = '{{CUTTLE_LINK_' + linkChips.length + '}}';
+                linkChips.push(d.renderMdLinkChip(label, String(url || '').trim()));
+                return placeholder;
+            });
+            // Bare deep links / URLs (skip ones already turned into chips)
+            text = text.replace(
+                /(^|[\s(\[{·])((?:https?:\/\/|file:\/\/\/|vscode:\/\/|cursor:\/\/)[^\s<>\]"'`]+)/g,
+                function(_, lead, url) {
+                    let u = url;
+                    let trail = '';
+                    const m = u.match(/^(.*?)([.,;:!?)}\]]+)$/);
+                    if (m) {
+                        u = m[1];
+                        trail = m[2];
+                    }
+                    if (!d.isSafeMdHref(u)) return lead + url;
+                    const placeholder = '{{CUTTLE_LINK_' + linkChips.length + '}}';
+                    linkChips.push(d.renderMdLinkChip(u, u));
+                    return lead + placeholder + trail;
+                }
+            );
+
+            // Bare chat handles: CH-000431 / CH-000431-23 → in-pane session links.
+
+        return { text, blocks: { code: codeBlocks, link: linkChips } };
+    }
+
+    /**
      * Restore moved structured-block placeholders after the escaped
      * line rendering. Unknown prefixes and missing arrays pass
      * through untouched; restore order across prefixes is irrelevant
@@ -620,6 +675,7 @@
             ['CUTTLE_METERS_', b.meters], ['CUTTLE_PRICING_', b.pricing],
             ['CUTTLE_TERM_', b.terminal], ['CUTTLE_MEDIA_', b.media],
             ['CUTTLE_VEGA_', b.vega],
+            ['CUTTLE_CODE_', b.code], ['CUTTLE_LINK_', b.link],
         ];
         let out = String(html || '');
         for (const [prefix, arr] of table) {
@@ -801,6 +857,7 @@
         cleanCodeCopyText,
         extractHeadStructuredBlocks,
         extractTailStructuredBlocks,
+        extractCodeLinkBlocks,
         restoreStructuredBlocks,
     };
 

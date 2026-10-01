@@ -675,7 +675,13 @@ def test_frontend_wires_pricing_renderer_and_styles():
     # the page stays wired through the structured-block planning calls, and
     # the pricing HTML leaf stays in the page for the renderer tests below.
     assert "extractTailStructuredBlocks" in js
-    assert "restoreStructuredBlocks(result, structuredBlocks)" in js
+    assert "restoreStructuredBlocks(" in js
+    # Slice 8D redacts code/link from the bulk pass and restores them after
+    # forms/buttons (pre-change pass order); the page stays wired through
+    # the structured-block restore protocol either way.
+    assert "structuredBlocks, { code: [], link: [] }" in js
+    assert "structuredBlocks.code.length" in js
+    assert "structuredBlocks.link.length" in js
     assert "<cuttle_pricing>" in mod
     assert "{{CUTTLE_PRICING_" in mod
     assert "function renderCuttlePricingHtml(" in js

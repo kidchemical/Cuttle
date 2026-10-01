@@ -118,7 +118,13 @@ def test_cuttle_meters_renderer_wired_in_frontend():
     # Meters planning lives in the owned Messages module (Phase 3 Slice 8C);
     # the page stays wired through the structured-block planning calls.
     assert "extractTailStructuredBlocks" in js
-    assert "restoreStructuredBlocks(result, structuredBlocks)" in js
+    assert "restoreStructuredBlocks(" in js
+    # Slice 8D redacts code/link from the bulk pass and restores them after
+    # forms/buttons (pre-change pass order); the page stays wired through
+    # the structured-block restore protocol either way.
+    assert "structuredBlocks, { code: [], link: [] }" in js
+    assert "structuredBlocks.code.length" in js
+    assert "structuredBlocks.link.length" in js
     assert "cuttle_meters" in mod
     assert "CUTTLE_METERS_" in mod
     assert "cuttle-meters" in css

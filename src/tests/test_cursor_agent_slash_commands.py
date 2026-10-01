@@ -492,7 +492,13 @@ def test_cuttle_meters_tag_wired_in_chat_page():
     # Meters planning lives in the owned Messages module (Phase 3 Slice 8C);
     # the page stays wired through the structured-block planning calls.
     assert "extractTailStructuredBlocks" in text
-    assert "restoreStructuredBlocks(result, structuredBlocks)" in text
+    assert "restoreStructuredBlocks(" in text
+    # Slice 8D redacts code/link from the bulk pass and restores them after
+    # forms/buttons (pre-change pass order); the page stays wired through
+    # the structured-block restore protocol either way.
+    assert "structuredBlocks, { code: [], link: [] }" in text
+    assert "structuredBlocks.code.length" in text
+    assert "structuredBlocks.link.length" in text
     assert "cuttle_meters" in owned
     assert "CUTTLE_METERS_" in owned
     assert "cuttle-meters" in styles

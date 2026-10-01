@@ -412,29 +412,8 @@ out.restoreEmpty = A.restoreStructuredBlocks('plain', { think: [], tool: [] });
 out.copyClean = A.cleanCodeCopyText
   ? A.cleanCodeCopyText('a\\u200Bb\\u00A0c\\r\\n\\n')
   : 'module-has-no-cleanCodeCopyText';
-// vega activation executes the REAL page function with a fake DOM
-eval(span('    function activateVegaEmbeds(containerEl) {',
-          '    function cleanCodeCopyText(raw) {'));
-const embedCalls = [];
-const mkEl = (spec) => {
-  const el = { __vega_done: false, _spec: spec, _c: null, _text: null, _html: 'x',
-    getAttribute: function (k) { return this._spec; } };
-  el.classList = { add: (c) => { el._c = c; } };
-  Object.defineProperty(el, 'textContent', {
-    set(v) { el._text = v; }, get() { return el._text; } });
-  Object.defineProperty(el, 'innerHTML', {
-    set(v) { el._html = v; }, get() { return el._html; } });
-  return el;
-};
-globalThis.window = { vegaEmbed: async (el, spec, opts) => { embedCalls.push({ spec, opts }); } };
-const good = mkEl('{"mark": "point"}');
-const bad = mkEl('{oops');
-const done = mkEl('{"a": 1}'); done.__vega_done = true;
-activateVegaEmbeds({ querySelectorAll: () => [good, bad, done] });
-out.vegaActivate = { embedCalls: embedCalls.length,
-  goodDone: good.__vega_done, badError: bad._c, badText: bad._text,
-  doneSkipped: embedCalls.filter((c) => c.spec.a === 1).length };
-delete globalThis.window;
+// Post-paint activation lives in chat_activate.js (test_chat_activate.py
+// executes it); planning coverage here stops at the wrap HTML above.
 process.stdout.write(JSON.stringify(out));
 """
 
@@ -499,7 +478,7 @@ def test_structured_tail_blocks_attributes_and_fallbacks():
 
 
 @node_only
-def test_vega_wrap_planning_and_activation_order():
+def test_vega_wrap_planning():
     res = _run_structured()
     assert res["vegaEmpty"] == (
         '<div class="vega-wrap vega-wrap--error">Empty Vega chart</div>')
@@ -507,12 +486,6 @@ def test_vega_wrap_planning_and_activation_order():
     assert "</div><script>" not in res["vegaXss"]
     assert "{{CUTTLE_VEGA_0}}" in res["vegaTag"]["text"]
     assert "{{CUTTLE_VEGA_0}}" in res["vegaFence"]["text"]
-    act = res["vegaActivate"]
-    assert act["embedCalls"] == 1
-    assert act["goodDone"] is True
-    assert act["badError"] == "vega-wrap--error"
-    assert "Invalid Vega JSON" in act["badText"]
-    assert act["doneSkipped"] == 0
 
 
 @node_only
@@ -529,6 +502,176 @@ def test_structured_restore_and_copy_text():
         "terminal": [], "media": [], "vega": []}}
     # zero-width chars drop (no space), exotic spaces flatten
     assert res["copyClean"] == "ab c"
+
+
+CODELINK_HARNESS = """
+const fs = require('fs');
+const SRC = fs.readFileSync(process.env.CHAT_PAGE_JS, 'utf-8');
+const span = (s, e) => { const h = SRC.indexOf(s); const t = SRC.indexOf(e, h);
+  if (h < 0 || t < 0) throw new Error('bad marker: ' + s.slice(0, 50)); return SRC.slice(h, t); };
+const A = require(process.env.MOD_JS);
+eval(span('    function escapeHtmlInline(s) {', '    function windowsPathToFileUrl(path) {'));
+eval(span('    function windowsPathToFileUrl(path) {', '    function normalizeMdHref(url) {'));
+eval(span('    function normalizeMdHref(url) {', '    function isSafeMdHref(url) {'));
+eval(span('    function isSafeMdHref(url) {', '    function mdLinkChipLabel(label, url) {'));
+eval(span('    function mdLinkChipLabel(label, url) {', '    function renderMdLinkChip(label, url) {'));
+const renderMdLinkChip = (label, url) => '<mdchip label="' + label + '" url="' + url + '">';
+const deps = { escapeHtmlInline, renderMdLinkChip, isSafeMdHref };
+const E = (text) => A.extractCodeLinkBlocks(text, deps);
+const out = {};
+out.code = E('before\\n```python\\nprint("<x>")\\n```\\nafter');
+out.codeNoLang = E('```\\nplain\\n```');
+out.codeBadLang = E('```<bad lang!>\\nx\\n```');
+out.codeUnclosed = E('text ```js\\nopen');
+out.codeTrailNl = E('```\\ncode\\n```');
+out.link = E('See [docs](https://example.com/a).');
+out.linkUnsafe = E('[x](javascript:alert(1))');
+out.bare = E('go https://example.com/b, now');
+out.bareUnsafe = E('go javascript:alert(1) now');
+out.bareFtp = E('get ftp://h/f now');
+out.linkInCode = E('```\\n[not a link](https://example.com/z)\\n```\\n[real](https://example.com/r)');
+out.fakePlaceholder = E('keep {{CUTTLE_CODE_9}} and {{CUTTLE_LINK_9}}');
+out.empty = E('');
+out.nullText = E(null);
+const combinedBlocks = {};
+for (const part of [out.code.blocks, out.link.blocks, out.bare.blocks]) {
+  for (const k of Object.keys(part)) combinedBlocks[k] = (combinedBlocks[k] || []).concat(part[k]);
+}
+out.restored = A.restoreStructuredBlocks(
+  out.code.text + ' ' + out.link.text + ' ' + out.bare.text, combinedBlocks);
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+def _run_codelink():
+    import os
+    proc = subprocess.run(
+        ["node", "-e", CODELINK_HARNESS],
+        capture_output=True, text=True, timeout=30,
+        env={"PATH": os.environ["PATH"], "MOD_JS": str(MOD_JS),
+             "CHAT_PAGE_JS": str(CHAT_PAGE_JS)},
+    )
+    assert proc.returncode == 0, proc.stderr or proc.stdout
+    return json.loads(proc.stdout)
+
+
+@node_only
+def test_code_fence_planning_escapes_and_protects():
+    res = _run_codelink()
+    code = res["code"]
+    assert "{{CUTTLE_CODE_0}}" in code["text"]
+    assert "before" in code["text"] and "after" in code["text"]
+    assert 'class="language-python"' in code["blocks"]["code"][0]
+    assert "print(&quot;&lt;x&gt;&quot;)" in code["blocks"]["code"][0]
+    assert "<code>plain</code>" in res["codeNoLang"]["blocks"]["code"][0]
+    assert 'class="language-' not in res["codeBadLang"]["blocks"]["code"][0]
+    assert res["codeUnclosed"]["blocks"]["code"] == []
+    assert "```js" in res["codeUnclosed"]["text"]
+    assert res["codeTrailNl"]["blocks"]["code"][0].endswith("<code>code</code></pre>")
+
+
+@node_only
+def test_link_planning_chips_and_safety():
+    res = _run_codelink()
+    assert "{{CUTTLE_LINK_0}}" in res["link"]["text"]
+    assert 'url="https://example.com/a"' in res["link"]["blocks"]["link"][0]
+    assert 'label="x"' in res["linkUnsafe"]["blocks"]["link"][0]
+    assert "{{CUTTLE_LINK_0}}" in res["bare"]["text"]
+    assert res["bare"]["text"].endswith(", now")
+    assert "javascript:" in res["bareUnsafe"]["text"]
+    assert "{{CUTTLE_LINK_" not in res["bareUnsafe"]["text"]
+    assert "{{CUTTLE_LINK_" not in res["bareFtp"]["text"]
+    assert len(res["linkInCode"]["blocks"]["code"]) == 1
+    assert len(res["linkInCode"]["blocks"]["link"]) == 1
+    assert res["empty"] == {"text": "", "blocks": {"code": [], "link": []}}
+    assert res["nullText"] == {"text": "", "blocks": {"code": [], "link": []}}
+    assert "{{CUTTLE_" not in res["restored"]
+    assert "message-code-block" in res["restored"]
+
+
+FULL_PIPELINE_HARNESS = """
+const fs = require('fs');
+const SRC = fs.readFileSync(process.env.CHAT_PAGE_JS, 'utf-8');
+const span = (s, e) => { const h = SRC.indexOf(s); const t = SRC.indexOf(e, h);
+  if (h < 0 || t < 0) throw new Error('bad marker: ' + s.slice(0, 50)); return SRC.slice(h, t); };
+const calls = {};
+const rec = (n, fn) => (...a) => { (calls[n] = calls[n] || []).push(a.map((x) => String(x).slice(0, 80))); return fn(...a); };
+// Real pure leaves (extracted, never copied).
+eval(span('    function escapeHtmlInline(s) {', '    function windowsPathToFileUrl(path) {'));
+eval(span('    function windowsPathToFileUrl(path) {', '    function normalizeMdHref(url) {'));
+eval(span('    function normalizeMdHref(url) {', '    function isSafeMdHref(url) {'));
+eval(span('    function isSafeMdHref(url) {', '    function mdLinkChipLabel(label, url) {'));
+eval(span('    function mdLinkChipLabel(label, url) {', '    function renderMdLinkChip(label, url) {'));
+eval(span('    function renderMdLinkChip(label, url) {', '    async function openFileInDefaultApp(href) {'));
+eval(span('    function safeJsonParse(s) {', '    function slashCommandsForCurrentMode() {'));
+eval(span('    function clamp(n, min, max) {', '    function safeJsonParse(s) {'));
+eval(span('    function mediaKindFromUrl(url) {', '    function mediaPosterUrl(src) {'));
+eval(span('    function splitMarkdownTableRow(line) {', '    function fmtPricingContext(v) {'));
+// escapeHtml is DOM-backed in the page; the equivalent inline escape is the
+// documented premise (escape degrees are unit-covered, not pipeline-covered).
+const escapeHtml = (t) => escapeHtmlInline(String(t ?? ''));
+const structuredRenderDeps = () => ({ escapeHtmlInline, clamp,
+  renderMdLinkChip, renderCuttlePricingHtml: (r) => '<price:' + r + '>',
+  mediaKindFromUrl, buildMediaThumbHtml: (s, o) => '<thumb src="' + s + '">' });
+// Owned-elsewhere leaves as labeled premises (own suites own internals;
+// handle links have test_chat_handle_links.py).
+const parseChatHandleToken = rec('handleTok', (t) => null);
+const ingestAndStripCuttleWidgets = rec('ingest', (t) => t);
+const linkifyChatHandlesInText = rec('handles', (t) => t);
+const renderActionFormCard = rec('afcard', () => '<afcard>');
+const renderCuttlePricingHtml = (r) => '<price:' + r + '>';
+const buildMediaThumbHtml = (s, o) => '<thumb src="' + s + '">';
+globalThis.CuttleChatMessages = require(process.env.MOD_JS);
+globalThis.CuttleChatAttachments = require(process.env.CHAT_ATTACHMENTS_JS);
+globalThis.window = { CuttleSupervised: {
+    buildActivityDisclosureHtml: () => '<supact>', buildLiveIndicatorHtml: () => '<live>' },
+  CuttleGitCommitViewer: { linkifyGitHashesInText: rec('git', (t) => t) } };
+eval(span('    function formatMessage(text) {', '    function isTouchComposer() {'));
+const MSG = ['Hey <think>because <b>reasons</b></think> done.',
+  '```js', 'const a = 1;', '```',
+  'See [docs](https://example.com/a) and https://example.com/b, plus CH-1x (not a handle).',
+  '<cuttle_supervised_activity>{"status_text": "Working", "terminal": false}</cuttle_supervised_activity>',
+  '<cuttle_trace>ran t</cuttle_trace>',
+  '<progress id="p1" label="Loading" value="30"/> tail {{CUTTLE_FAKE_0}} end.',
+  '<tool_output>plain output here</tool_output>'].join('\\n\\n');
+const out = formatMessage(MSG);
+const order = ['thinking-block', 'message-code-block', 'md-link-chip', 'example.com/b',
+  '<supact>', 'pipeline-trace-block', 'data-progress-id="p1"', '{{CUTTLE_FAKE_0}}'];
+const positions = order.map((s) => out.indexOf(s));
+process.stdout.write(JSON.stringify({ out, positions, calls,
+  linkPlaceholdersLeft: (out.match(/\\{\\{CUTTLE_LINK_\\d+\\}\\}/g) || []).length }));
+"""
+
+
+def _run_full_pipeline():
+    import os
+    proc = subprocess.run(
+        ["node", "-e", FULL_PIPELINE_HARNESS],
+        capture_output=True, text=True, timeout=30,
+        env={"PATH": os.environ["PATH"], "MOD_JS": str(MOD_JS),
+             "CHAT_PAGE_JS": str(CHAT_PAGE_JS),
+             "CHAT_ATTACHMENTS_JS": str(CHAT_ATTACHMENTS_JS)},
+    )
+    assert proc.returncode == 0, proc.stderr or proc.stdout
+    return json.loads(proc.stdout)
+
+
+@node_only
+def test_format_message_pipeline_interleaves_all_stages():
+    """Real formatMessage end to end: every planning stage restores in
+    order, unknown placeholders pass through, nested markup inside an
+    extracted block does not start a second block."""
+    res = _run_full_pipeline()
+    assert res["linkPlaceholdersLeft"] == 0
+    assert all(p >= 0 for p in res["positions"]), res["positions"]
+    assert res["positions"] == sorted(res["positions"])
+    assert "&lt;b&gt;reasons" in res["out"]
+    assert "const a = 1" in res["out"]
+    assert "not a handle" in res["out"]
+    assert "tool-block" in res["out"]
+    assert "plain output here" in res["out"]
+    assert res["out"].count("thinking-block") == 1
+    assert res["calls"].get("handles") and res["calls"].get("git")
 
 
 def test_format_message_orders_structured_extraction_around_supervised():
@@ -548,7 +691,8 @@ def test_format_message_orders_structured_extraction_around_supervised():
     sup = body.index("supervisedActivityBlocks")
     tail = body.index("extractTailStructuredBlocks")
     assert head < sup < tail
-    assert "restoreStructuredBlocks(result, structuredBlocks)" in body
+    assert "restoreStructuredBlocks(" in body
+    assert "structuredBlocks, { code: [], link: [] }" in body
     for leftover in (
         "pushThinkBlock",
         "extractThinkTags",
@@ -592,3 +736,60 @@ def test_page_delegates_message_history_decisions_to_owned_module():
     ):
         assert adapter in src, f"page adapter {adapter} must stay (same signature)"
         assert owned in src, f"page must delegate to {owned}"
+
+
+ORDER_HARNESS = """
+const fs = require('fs');
+const SRC = fs.readFileSync(process.env.CHAT_PAGE_JS, 'utf-8');
+const span = (s, e) => { const h = SRC.indexOf(s); const t = SRC.indexOf(e, h);
+  if (h < 0 || t < 0) throw new Error('bad marker: ' + s.slice(0, 50)); return SRC.slice(h, t); };
+const CuttleChatMessages = require(process.env.MOD_JS);
+eval(span('    function escapeHtmlInline(s) {', '    function windowsPathToFileUrl(path) {'));
+eval(span('    function normalizeMdHref(url) {', '    function isSafeMdHref(url) {'));
+eval(span('    function isSafeMdHref(url) {', '    function mdLinkChipLabel(label, url) {'));
+eval(span('    function mdLinkChipLabel(label, url) {', '    function renderMdLinkChip(label, url) {'));
+eval(span('    function renderMdLinkChip(label, url) {', '    function mediaKindFromUrl(url) {'));
+// --- real page extract call-site (module call + live linkChips bind) ---
+let text = 'Talk {{CUTTLE_FORM_0}} here\\n```\\nvalue {{CUTTLE_FORM_0}} and {{CUTTLE_LINK_7}}\\n```';
+const structuredBlocks = {};
+eval(span('        const codeLinkStructured = CuttleChatMessages.extractCodeLinkBlocks(text, {',
+           '        text = linkifyChatHandlesInText(text, linkChips);'));
+// --- real page restore tail (bulk-redacted restore, then ordered loops) ---
+const formatted = [text];
+const supervisedActivityBlocks = [];
+const formBlocks = ['<form>{{CUTTLE_CODE_0}}</form>'];
+const actionFormBlocks = [];
+const buttonBlocks = [];
+var result = formatted.join('');
+eval(span('        result = CuttleChatMessages.restoreStructuredBlocks(',
+           '        return result;'));
+const out = { result };
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+def _run_order():
+    import os
+    proc = subprocess.run(
+        ["node", "-e", ORDER_HARNESS],
+        capture_output=True, text=True, timeout=30,
+        env={"PATH": os.environ["PATH"], "MOD_JS": str(MOD_JS),
+             "CHAT_PAGE_JS": str(CHAT_PAGE_JS)},
+    )
+    assert proc.returncode == 0, proc.stderr or proc.stdout
+    return json.loads(proc.stdout)
+
+
+@node_only
+def test_restore_pass_order_pinned_against_placeholder_interleaving():
+    res = _run_order()["result"]
+    # HEAD pass order: forms restore before code, so a form block carrying a
+    # literal code token receives the code block (same as pre-change page).
+    assert ("<form><pre class=\"message-code-block\"><code>value "
+            "{{CUTTLE_FORM_0}} and {{CUTTLE_LINK_7}}</code></pre></form>") in res
+    # The reverse direction stays protected: literal form/link tokens inside
+    # fenced code are NOT substituted when the code chip restores.
+    assert "value {{CUTTLE_FORM_0}} and {{CUTTLE_LINK_7}}" in res
+    # The fenced block itself still restores exactly once per fence.
+    assert res.count("message-code-block") == 2
+    assert "{{CUTTLE_CODE_0}}" not in res
