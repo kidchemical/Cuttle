@@ -270,6 +270,10 @@ limiter.init_app(app)
 # run-registry, and supervised orchestration import the service directly;
 # this module keeps thin wrappers so existing callers/tests are untouched.
 from api import chat_live_status as _live_status_svc
+# Status-queue registry + emit fanout — owned service (chat_status.py).
+# Turn producers import the service directly; this module keeps a thin
+# cancel-injecting wrapper so existing call sites are untouched.
+from api import chat_status as _status_svc
 
 from api.http_authz import (
     authenticated_required,
@@ -448,9 +452,11 @@ def get_or_create_session(session_id=None):
     return chat_sessions[session_id]
 
 
-# Session-scoped queues for streaming status updates during pipeline execution.
-# Keys: session_id, Values: queue.Queue that receives ('status', message) or ('done', result)
-_chat_status_queues: dict = {}
+# Session-scoped status-queue registry lives in the owned service
+# (api.chat_status — process lifetime, same semantics as before).
+# This alias preserves the existing module attribute (transports and
+# tests poke the single shared registry, never a replica).
+_chat_status_queues = _status_svc._QUEUES
 
 # Latest in-flight status store + lock live in the owned service
 # (api.chat_live_status — process lifetime, same semantics as before).
@@ -586,19 +592,15 @@ def active_live_session_ids() -> list:
 
 def emit_chat_status(session_id: str, message: str) -> None:
     """Emit a status update to the streaming chat UI if this session has a status queue registered."""
-    if _chat_turn_cancelled(session_id):
-        return
-    if message:
-        try:
-            set_chat_live_status(session_id, message, active=True)
-        except Exception:
-            pass
-    q = _chat_status_queues.get(session_id)
-    if q:
-        try:
-            q.put_nowait(('status', message))
-        except queue_module.Full:
-            pass
+    # Owned service; cancel policy + live publish injected here at the
+    # composition root (service defines no silent defaults for active
+    # writes — every producer supplies both explicitly).
+    return _status_svc.emit_status(
+        session_id,
+        message,
+        is_cancelled=_chat_turn_cancelled,
+        publish_live=lambda text: set_chat_live_status(session_id, text, active=True),
+    )
 
 
 def _require_mobile_token(token: Optional[str]) -> bool:
@@ -992,8 +994,13 @@ def process_message_with_bot(
         }
 
     if status_queue:
-        _chat_status_queues[session_id] = status_queue
-        emit_pipeline_status(session_id, PHASE_ROUTE, "Routing to top-level agent...")
+        _status_svc.register_status_queue(session_id, status_queue)
+        emit_pipeline_status(
+            session_id,
+            PHASE_ROUTE,
+            "Routing to top-level agent...",
+            emit_fn=emit_chat_status,
+        )
 
     try:
         # Get session for context
@@ -1130,8 +1137,8 @@ def process_message_with_bot(
             'response': f"I encountered an error processing your request: {str(e)}. Please try again or rephrase your request."
         }
     finally:
-        if status_queue and session_id in _chat_status_queues:
-            _chat_status_queues.pop(session_id, None)
+        if status_queue:
+            _status_svc.unregister_status_queue(session_id)
 
 
 def _resolve_request_project_path(data: Optional[dict] = None) -> str:

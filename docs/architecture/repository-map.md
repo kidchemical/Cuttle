@@ -74,6 +74,16 @@ run-registry, and supervised orchestration import the service — never
 the Flask entry module. Restart wipes the store (chats default idle
 until live-status confirms); never move it into per-request objects.
 
+**Status queues (Phase 4 P4-2):** `api.chat_status` owns the
+process-lifetime session→transport-queue registry plus the emit fanout
+(live publish + `('status', msg)` put, full-queue drop). Emit requires
+an explicit cancel predicate and publish callback per call — no silent
+unguarded defaults. `web_chat_api` keeps a thin wrapper injecting the
+turn-cancelled guard; queue creation/drain, the `('done', result)`
+completion put, and the SSE pump loop stay in transport/route code.
+`api.chat_status_phases` is a leaf formatter taking an injected
+`emit_fn`, never importing the entry module.
+
 **History:** `api.auth_db` SQLite (`src/data/db/`, gitignored). Pairing store for **users** is separate from **worker** enroll.
 
 ---

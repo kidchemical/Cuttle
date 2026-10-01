@@ -5148,3 +5148,86 @@ whole was rejected as monolith-shifting. The owned seam is
   method, target ≤ 4 with justification).
 - Commit independently on main. No push, no restart.
   **STOP for Codex review before P4-2/Phase 5.**
+
+## Prior approval recorded: P4-1 bff30cc6
+
+- Codex review **APPROVED** P4-1 (`api.chat_live_status` service) at
+  `bff30cc6`. No production changes requested. Next: P4-2 status
+  queue/emit service only; no coordinator extraction, no Phase 5/6.
+  No push/restart.
+
+## P4-2 report — `api.chat_status` status-queue/emit service
+
+- New `src/api/chat_status.py`: owns the process-lifetime
+  session→transport-queue registry (`_QUEUES`; register replaces,
+  unregister pops, lookup returns None when detached) plus the emit
+  fanout (cancel check → live publish → `put_nowait(('status', msg))`
+  with `Full` dropped), moved verbatim. Queue objects are created and
+  drained by the transport/route layer; the service never touches
+  Flask routes, SSE serialization, delivery orchestration, or
+  persistence. Imports nothing but `queue`/`typing` (verified by
+  test) — no entry-module, delivery, or duplicate-cache dependency.
+- `emit_status` requires explicit `is_cancelled` + `publish_live`
+  keyword args (no defaults — enforced by signature test), so no
+  consumer can silently call an unguarded default for active writes.
+  `web_chat_api.emit_chat_status` is a thin wrapper injecting
+  `_chat_turn_cancelled` and the live-status publish; all ~20 producer
+  call sites (turn workflow, Phase 5 territory) are byte-untouched.
+  Registration/unregistration in `process_message_with_bot` delegate
+  (`finally` semantics preserved: pop exactly when a local queue was
+  passed). Queue creation, the `('done', result)` completion put, and
+  the SSE `pump_status` loop (stale/cancel narration guards, live
+  publish on status events, done handling) stay in transport/route
+  code — not extracted for size.
+- `chat_status_phases.emit_pipeline_status` now takes an injected
+  `emit_fn` (single production caller passes `emit_chat_status`);
+  the leaf no longer reverse-imports the entry module. P4-1 writer is
+  inactive (orchestrator publishes `active=False`); verified no new
+  active writers: every `emit_status`/`emit_chat_status` call path
+  carries the turn-cancelled predicate (wrapper or explicit arg).
+- Reverse imports: 9 → 8 (the phases reverse import is gone;
+  remaining: harness `kernel`, router `dispatch` + `adapters` ×2,
+  `doctor` noqa, `internal_http` transport, subagent
+  `identity`/`turns` helpers — same grep method, before/after file
+  lists diffed).
+- Coverage (committed `src/tests/test_chat_status_service.py`, 17
+  tests, all green): 10 behavior tests written and run BEFORE the
+  move (register/lookup/unregister, fanout to queue + live, FIFO,
+  no-queue live-only, full-queue drop, cancel suppresses both arms,
+  emit-after-unregister, overwrite replaces, concurrent
+  emit/unregister consistency, phase formatting via wrapper path) + 7
+  post-move tests (injected phase formatting, phase leaf import
+  guard, phases-through-guarded-wrapper, service import guard,
+  registry identity both directions, module-cache single instance,
+  end-to-end emit with fakes incl. raising publisher, explicit-policy
+  signature). Lifetime proof: `wca._chat_status_queues is svc._QUEUES`
+  — the original registry, not a replica. Restart behavior simulated
+  without a process restart: unregister + live-store clear returns
+  the session to idle/None (covered by clear/unregister tests).
+  Discrimination: cancel-guard-disabled mutation fails the cancel
+  suppression + end-to-end tests; restored byte-identical.
+- Gates (same env/invocation/scope: `.venv`, `pytest -q -p no:warnings
+  src/tests/ --ignore=src/tests/unit`, unit exclusion still the proven
+  `test_security.py` collection error): focused + neighbors
+  (live-status, launch-gate, steer/stop/followup/restart/supervised)
+  green; broad **28 failed / 1910 passed / 79 skipped** with sorted
+  FAILED identities `diff`-clean against the P4-1 baseline
+  (28/1893/79; +17 = new tests, −0/+0 failures).
+- Spend audit: `CUTTLE_AGENT_SMOKE`/`CUTTLE_ALLOW_SPEND` unset (verified
+  zero in this shell); no paid/token prompt tests run (no executor
+  paths touched).
+- Manual validation N/A (backend service; no UI change). No Flask
+  restart/kill performed.
+- Files: `src/api/chat_status.py` (new),
+  `src/api/chat_status_phases.py` (injected `emit_fn`),
+  `src/api/web_chat_api.py` (import + alias + wrapper + register/
+  unregister/call-site delegation),
+  `src/tests/test_chat_status_service.py` (new), this section +
+  `docs/architecture/repository-map.md` (service row).
+- Remaining P4-3/closure: small pure helpers (`_default_chat_cwd`,
+  badge/metadata fns — verify no hidden state first). Runner fns,
+  coordinator, and router brains stay for Phase 5/6. Completion per
+  P4-1 criteria: production reverse imports only the Phase-5 runner
+  calls + `internal_http` transport (same grep method).
+- Commit independently on main. No push, no restart.
+  **STOP for Codex review before P4-3 or Phase 5.**
