@@ -24,8 +24,11 @@ the sync skeleton `run_agent_sync_turn`); stream agent turns
 (router-family and harness lanes) run through its stream twin
 (`api.chat_coordinator.submit_agent_stream_turn`, which owns the stream
 skeleton `run_agent_stream_turn`: claim → persist → worker → rewrite →
-shared finalize → token-guarded release). SSE framing, live-status
-delivery, and the pump loops stay transport in the route. The leftover
+shared finalize → token-guarded release). Live-status publication and
+terminal cleanup belong to the workflow's producer-side status queue;
+they continue after SSE detaches. A subscriber may not release a running
+worker's busy slot or republish drained progress into live status. SSE
+framing and the pump loops stay transport in the route. The leftover
 pipeline path (plain-router attempt + native no-LLM fallback — graphs
 retired) is owned end to end: the coordinator submits never return None
 (pipeline arm / plain-router abstain return the owned

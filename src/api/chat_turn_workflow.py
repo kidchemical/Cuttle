@@ -282,10 +282,11 @@ def run_agent_stream_turn(
     begin (busy yields ``("busy", body)``) → persist → run in a worker
     thread → stale/cancel-filtered progress → rewrite → shared finalize
     (save/park/notify/end-by-token) → belt-and-suspenders end-by-token in
-    the pump ``finally``. Both ends are token-guarded no-ops once the
+    the pump ``finally`` after receiving done. Both ends are token-guarded no-ops once the
     turn is over (``delivery.end`` skips a slot owned by a newer turn),
     so logically the slot is released once while a stale worker can never
-    free a newer turn — two guarded ``end`` calls, one release.
+    free a newer turn — two guarded ``end`` calls, one release. Closing a
+    subscriber before done leaves the started worker's busy slot intact.
 
     Distinctions from the sync skeleton, preserved deliberately: executor
     errors become the standard error result instead of propagating (the
@@ -299,15 +300,15 @@ def run_agent_stream_turn(
     stream order. The harness/router arms rewrite in the worker.
 
     ``completion`` is an optional out-dict carrying the turn identity the
-    transport needs for the done-clear: when the terminal event is
+    subscriber can use for completion diagnostics: when the terminal event is
     yielded, ``completion["stale"]`` / ``completion["cancelled"]`` are
     set from this turn's own token (same point-in-time the old pump read
-    them). Transport must never infer freshness from the busy boolean —
-    a free slot does not mean this turn is current. Every stream lane
-    (harness, router, pipeline) passes it for the live-status done-clear.
+    them). Live publication and cleanup happen at the producer, guarded
+    by this token, regardless of whether a subscriber drains the events.
     """
-    import queue as _queue_mod
     import threading as _threads
+    from api import chat_live_status
+    from api.chat_status import TurnStatusQueue, turn_status_scope
 
     token = begin_sync_turn(delivery, session_id)
     if token is None and session_id is not None:
@@ -333,11 +334,39 @@ def run_agent_stream_turn(
             },
         )
         return
-    events: Any = _queue_mod.Queue()
+
+    def _publish_live(kind, payload):
+        if kind == "query_started":
+            query = payload or {}
+            chat_live_status.set_live_status(
+                session_id, query_id=query.get("query_id"),
+                report_url=query.get("report_url"),
+                turn=token,
+                is_cancelled=lambda sid: is_turn_superseded(delivery, sid, token),
+            )
+        else:
+            chat_live_status.set_live_status(
+                session_id, payload, turn=token,
+                is_cancelled=lambda sid: is_turn_superseded(delivery, sid, token),
+            )
+
+    def _clear_live():
+        if not delivery.is_stale_turn(session_id, token):
+            chat_live_status.clear_live_status(session_id, turn=token)
+        elif delivery.is_turn_cancelled(session_id):
+            chat_live_status.clear_live_status(session_id, turn=token)
+
+    events = TurnStatusQueue(
+        is_superseded=lambda: is_turn_superseded(delivery, session_id, token),
+        publish_live=_publish_live, clear_live=_clear_live,
+    )
+    worker_started = False
+    terminal_received = False
 
     def _worker() -> None:
         try:
-            result = run(events)
+            with turn_status_scope(session_id, events):
+                result = run(events)
         except Exception as exc:
             import traceback
             traceback.print_exc()
@@ -357,6 +386,7 @@ def run_agent_stream_turn(
                 )
             except Exception:
                 display = result
+        events.finish()
         finalize_stream_result(
             delivery,
             session_id,
@@ -368,20 +398,19 @@ def run_agent_stream_turn(
         events.put(("done", display if isinstance(display, dict) else result))
 
     try:
-        # Liveness marker BEFORE the worker starts: the transport
-        # publishes Connecting/progress only after claim + persist, and a
-        # stale turn must never repaint a newer turn's status. The old
-        # pump ordered claim → persist → Connecting → worker; the marker
-        # restores that order (framing ignores it). Abandoning the
-        # generator here still releases via the finally below.
+        # Publish before the worker starts, after claim + persist. The wire
+        # marker preserves event order; live status belongs to this worker.
+        events.publish("status", "Connecting...")
         yield ("connecting", None)
         _thread = _threads.Thread(target=_worker, daemon=True)
         _thread.start()
+        worker_started = True
         while True:
             kind, payload = events.get()
             if kind != "done" and is_turn_superseded(delivery, session_id, token):
                 continue
             if kind == "done":
+                terminal_received = True
                 if completion is not None:
                     completion["stale"] = bool(
                         delivery.is_stale_turn(session_id, token)
@@ -396,4 +425,10 @@ def run_agent_stream_turn(
                 break
             yield (kind, payload)
     finally:
-        release_sync_turn(delivery, session_id, token)
+        # A disconnected subscriber must not release a still-running turn.
+        # The worker owns finalization; an unstarted worker has no owner.
+        if not worker_started:
+            events.finish()
+            release_sync_turn(delivery, session_id, token)
+        elif terminal_received:
+            release_sync_turn(delivery, session_id, token)

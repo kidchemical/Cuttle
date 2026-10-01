@@ -35,15 +35,6 @@
         branches: document.getElementById('gitGraphBranches'),
         branchesList: document.getElementById('gitGraphBranchesList'),
         laneTip: document.getElementById('gitGraphLaneTip'),
-        diffModal: document.getElementById('gitDiffModal'),
-        diffFileSelect: document.getElementById('gitDiffFileSelect'),
-        diffStatus: document.getElementById('gitDiffStatus'),
-        diffStats: document.getElementById('gitDiffStats'),
-        diffCommit: document.getElementById('gitDiffCommit'),
-        diffLoading: document.getElementById('gitDiffLoading'),
-        diffEmpty: document.getElementById('gitDiffEmpty'),
-        diffHunks: document.getElementById('gitDiffHunks'),
-        diffClose: document.getElementById('gitDiffClose'),
     };
 
     let projects = [];
@@ -117,18 +108,10 @@
         ? window.CuttleGitCommitViewer.create({
             getProjectPath: currentProjectPath,
             getRepoRoot: currentRepoRoot,
+            getPendingFiles: (root) => pendingChangesCtl ? pendingChangesCtl.getFilesForRepo(root) : [],
             els: {
                 detailTitle: els.detailTitle,
                 detailBody: els.detailBody,
-                diffModal: els.diffModal,
-                diffFileSelect: els.diffFileSelect,
-                diffStatus: els.diffStatus,
-                diffStats: els.diffStats,
-                diffCommit: els.diffCommit,
-                diffLoading: els.diffLoading,
-                diffEmpty: els.diffEmpty,
-                diffHunks: els.diffHunks,
-                diffClose: els.diffClose,
             },
         })
         : null;
@@ -1335,7 +1318,7 @@
             setBranchesMenuOpen(false);
             return;
         }
-        if (els.diffModal && els.diffModal.open) {
+        if (window.CuttleDiffModal.isOpen()) {
             e.preventDefault();
             if (commitViewer) commitViewer.closeDiffModal();
             return;

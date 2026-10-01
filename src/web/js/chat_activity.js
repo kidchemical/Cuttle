@@ -479,6 +479,17 @@
         return ageMs < 180000; // 3 minutes
     }
 
+    /** A delayed status snapshot from a turn whose reply already painted. */
+    function liveStatusPredatesReply(live, reply) {
+        if (!live || !reply) return false;
+        if (live.query_id && reply.queryId) {
+            return String(live.query_id) === String(reply.queryId);
+        }
+        const updatedMs = Number(live.updated_at) * 1000;
+        const repliedMs = Number(reply.timestamp);
+        return updatedMs > 0 && repliedMs > 0 && updatedMs <= repliedMs;
+    }
+
     /**
      * History-row class → activity kind for the shell broadcast snapshot
      * (Spaces activity indicators consume the posted array, not the DOM).
@@ -522,6 +533,7 @@
         partitionFollowupForDrain,
         combineFollowupBatch,
         liveStatusLooksActive,
+        liveStatusPredatesReply,
         activityClassToKind,
     };
 

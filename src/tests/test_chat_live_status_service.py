@@ -51,6 +51,20 @@ def test_set_get_roundtrip_across_key_variants():
     assert got_prefixed == got_bare
 
 
+def test_old_turn_cannot_overwrite_or_clear_new_turn_status():
+    from api import chat_live_status as live
+
+    live.set_live_status("db_session_12", "old", query_id="old-query", turn=10)
+    live.set_live_status("12", "new", turn=11)
+    # New turn does not inherit the old query link or identity.
+    assert live.get_live_status("12")["query_id"] is None
+    live.set_live_status("12", "late old tool", turn=10)
+    live.clear_live_status("db_session_12", turn=10)
+    assert live.get_live_status("12")["status"] == "new"
+    live.clear_live_status("12", turn=11)
+    assert not live.get_live_status("12")["active"]
+
+
 def test_set_preserves_prior_fields_and_defaults_connecting():
     wca.set_chat_live_status("s1", active=True)
     first = wca.get_chat_live_status("s1")

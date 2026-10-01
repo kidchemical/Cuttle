@@ -43,7 +43,9 @@ def test_chat_wires_hash_chips_and_modals():
     assert "git_commit_viewer.js" in html
     assert "git_commit_viewer.css" in html
     assert 'id="gitCommitModal"' in html
-    assert 'id="gitDiffModal"' in html
+    assert 'diff_modal.js' in html
+    assert 'diff_modal.css' in html
+    assert 'id="gitDiffModal"' not in html
 
 
 def test_linkify_hash_rules_via_node():

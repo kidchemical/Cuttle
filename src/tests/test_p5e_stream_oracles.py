@@ -325,6 +325,65 @@ def test_router_family_stream_done_clears_live_status(authed_client, monkeypatch
     chat_delivery.end(sid)
 
 
+@pytest.mark.parametrize("failed", [False, True])
+def test_slow_sse_reader_cannot_republish_terminal_status(
+    authed_client, monkeypatch, failed,
+):
+    """Worker is done before buffered progress is drained by the subscriber."""
+    import threading
+    from api import chat_live_status as live
+
+    reply = (
+        "[FAIL] Cursor Agent: ActionRequiredError: Request blocked by Anthropic "
+        "under Anthropic's Usage Policy."
+    ) if failed else "finished reply"
+
+    def run(agent_id, prompt, chat_session_id, **kwargs):
+        kwargs["status_queue"].put(("query_started", {"query_id": "old-query"}))
+        kwargs["status_queue"].put(("status", "thinking: old progress"))
+        return {"success": not failed, "response": reply, "type": "fake"}
+
+    monkeypatch.setattr(wca, "_run_pinned_harness_turn", run)
+    client, db, uid = authed_client
+    sid = db.create_chat_session(uid)
+    res = client.post("/api/chat", json={"message": "/cursor test", "session_id": sid})
+    chunks = iter(res.response)
+    try:
+        # Start the worker, then pause the reader with progress still queued.
+        while True:
+            chunk = next(chunks)
+            if b'"type": "query_started"' in chunk:
+                break
+        for _ in range(300):
+            if chat_delivery.peek_result(sid):
+                break
+            threading.Event().wait(.01)
+        assert chat_delivery.peek_result(sid)["response"] == reply
+        assert live.get_live_status(sid)["active"] is False
+        for chunk in chunks:
+            assert live.get_live_status(sid)["active"] is False, chunk
+        assert [m["content"] for m in db.get_messages(sid) if m["role"] == "assistant"] == [reply]
+    finally:
+        res.close()
+        chat_delivery.end(sid)
+        chat_delivery.clear_result(sid)
+        live.clear_live_status(sid)
+
+
+def test_http_close_before_worker_start_releases_claim(authed_client, fake_harness):
+    from api import chat_live_status as live
+
+    client, db, uid = authed_client
+    sid = db.create_chat_session(uid)
+    res = client.post("/api/chat", json={"message": "/cursor test", "session_id": sid})
+    # test_client has read just the head's session event, before worker start.
+    assert chat_delivery.is_busy(sid)
+    res.close()
+    assert not fake_harness
+    assert not chat_delivery.is_busy(sid)
+    assert not live.get_live_status(sid)["active"]
+
+
 def test_oracle_stream_busy_shape(authed_client, fake_harness):
     client, db, uid = authed_client
     sid = db.create_chat_session(uid)

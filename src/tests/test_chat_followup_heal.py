@@ -50,7 +50,7 @@ def test_create_new_chat_reables_welcome_composer():
 def test_live_waiting_uses_this_turn_not_previous_assistant():
     src = CHAT_JS.read_text(encoding="utf-8")
     assert "function thisTurnHasAssistantReply(messages)" in src
-    waiting = src.split("const liveActiveRaw = liveStatusLooksActive(liveStatus);", 1)[1]
+    waiting = src.split("const liveActiveRaw = remoteLiveStatusLooksActive(liveStatus);", 1)[1]
     waiting = waiting.split("const statusLabel", 1)[0]
     assert "thisTurnHasAssistantReply(messages)" in waiting
     assert "transcriptEndsWithAssistant(messages)" not in waiting

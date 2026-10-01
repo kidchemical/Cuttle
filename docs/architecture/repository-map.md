@@ -242,6 +242,17 @@ Graph JSON pipelines and the node editor are **retired**. Jobs live path: `/api/
 
 ---
 
+### Cuttle Development
+
+Before making non-trivial changes, read:
+- `docs/architecture/ARCHITECTURE_PRINCIPLES.md`
+- `docs/architecture/repository-map.md`
+
+For harnesses, integrations, surfaces, or agent operations, also read:
+- `docs/architecture/extension-boundaries.md`
+
+---
+
 ## Important invariants
 
 - Never kill Flask from an agent it hosts; use daemon `/restart`.

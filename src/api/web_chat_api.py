@@ -4891,10 +4891,6 @@ def _stream_connecting_head(session_id):
     _sid = session_id
     if _sid is not None:
         yield _sse_session_event(_sid)
-    try:
-        set_chat_live_status(_sid, 'Connecting...', active=True)
-    except Exception:
-        pass
     yield f"data: {json.dumps({'type': 'status', 'message': 'Connecting...'}, ensure_ascii=False)}\n\n"
     yield ": " + (" " * 128) + "\n\n"
 
@@ -4908,10 +4904,8 @@ def _stream_agent_turn_response(prepared, *, io):
     lifecycle event verbatim. Claim/persist/run/rewrite/finalize/release
     all live in the coordinator entry, never here.
 
-    Live-status is transport state: each progress event is published and
-    the done event clears it (token-guarded via ``completion``). Without
-    the clear, the head's "Connecting..." row outlives the reply and
-    live-status pollers repaint a waiting bubble after the answer.
+    The owned workflow publishes/clears live status from the worker, even
+    after the client detaches. This subscriber only frames queued events.
     """
     from api import chat_delivery as _chat_delivery
     from api.chat_coordinator import (
@@ -4934,42 +4928,24 @@ def _stream_agent_turn_response(prepared, *, io):
 
     def _stream_gen():
         _sid = prepared.session_id
-        yield from _stream_connecting_head(_sid)
-        if _first is None:
-            _first_event = (
-                "done",
-                {
-                    "success": False,
-                    "response": "Stream ended unexpectedly.",
-                    "type": "stream_error",
-                },
-            )
-        else:
-            _first_event = _first
-        import itertools as _it
-        for _kind, _payload in _it.chain([_first_event], _events):
-            try:
-                if _kind == "status":
-                    set_chat_live_status(_sid, _payload, active=True)
-                elif _kind == "query_started":
-                    _pq = _payload or {}
-                    set_chat_live_status(
-                        _sid,
-                        None,
-                        active=True,
-                        query_id=_pq.get("query_id"),
-                        report_url=_pq.get("report_url"),
-                    )
-            except Exception:
-                pass
-            if _kind == "done":
-                _clear_live_status_on_stream_done(
-                    _sid,
-                    stale=bool(_completion.get("stale", False)),
-                    cancelled=bool(_completion.get("cancelled", False)),
+        from contextlib import closing
+        with closing(_events):
+            yield from _stream_connecting_head(_sid)
+            if _first is None:
+                _first_event = (
+                    "done",
+                    {
+                        "success": False,
+                        "response": "Stream ended unexpectedly.",
+                        "type": "stream_error",
+                    },
                 )
-            for _chunk in _frame_stream_lifecycle_event(_kind, _payload, _sid):
-                yield _chunk
+            else:
+                _first_event = _first
+            import itertools as _it
+            for _kind, _payload in _it.chain([_first_event], _events):
+                for _chunk in _frame_stream_lifecycle_event(_kind, _payload, _sid):
+                    yield _chunk
 
     return Response(
         stream_with_context(_stream_gen()),
@@ -4986,72 +4962,46 @@ def _pipeline_progress_chunks(first, events, session_id, completion):
     """Connecting head + framed owned pipeline lifecycle events.
 
     Transport only, shared by the pipeline lane adapter and the
-    ``_generate_chat_stream`` compat adapter: per-event live-status
-    publish, the belt-and-suspenders wire rewrite of confirms on done,
-    and the live-status clear on done. ``first`` is the peeked head
-    event (or None); ``events`` is the remaining owned event iterator;
-    ``completion`` is the workflow's turn-identity out-dict (stale/
-    cancelled at done time) — the ONLY freshness signal the clear may
-    use. A free busy slot never implies this turn is current.
+    ``_generate_chat_stream`` compat adapter: framing plus the
+    belt-and-suspenders wire rewrite of confirms on done. Live status
+    belongs to the owned workflow, not this subscriber. ``first`` is
+    the peeked head event; ``events`` is the remaining owned iterator.
     """
-    _sid = session_id
-    yield from _stream_connecting_head(_sid)
-    if first is None:
-        _rest = iter([(
-            "done",
-            {
-                "success": False,
-                "response": "Stream ended unexpectedly.",
-                "type": "stream_error",
-            },
-        )])
-    else:
-        import itertools as _it
-        _rest = _it.chain([first], events)
-    for _kind, _payload in _rest:
-        try:
-            if _kind == "status":
-                set_chat_live_status(_sid, _payload, active=True)
-            elif _kind == "query_started":
-                _pq = _payload or {}
-                set_chat_live_status(
-                    _sid,
-                    None,
-                    active=True,
-                    query_id=_pq.get("query_id"),
-                    report_url=_pq.get("report_url"),
-                )
-        except Exception:
-            pass
-        if _kind == "done":
-            _result = _payload or {}
-            # Belt-and-suspenders: rewrite confirms here too in case
-            # on_result was missing/failed — client must never see
-            # stuck "Waiting…" cards. Verbatim from the old SSE loop.
-            try:
-                _result = _rewrite_assistant_response_actions(
-                    _result,
-                    _sid,
-                    (_result.get("cursor_run") or {}).get("cwd")
-                    or _result.get("project_path")
-                    or "",
-                ) or _result
-            except Exception as _rw_err:
-                print(f"[CHAT] SSE confirm rewrite failed: {_rw_err}", flush=True)
-            # Freshness comes from the owned entry's own turn token
-            # (captured in ``completion`` at done time), never from the
-            # busy boolean: a stale completion must not clear a newer
-            # turn's status, including a newer turn that already finished
-            # but left its entry behind.
-            _flags = completion if isinstance(completion, dict) else {}
-            _clear_live_status_on_stream_done(
-                _sid,
-                stale=bool(_flags.get("stale", False)),
-                cancelled=bool(_flags.get("cancelled", False)),
-            )
-            _payload = _result
-        for _chunk in _frame_stream_lifecycle_event(_kind, _payload, _sid):
-            yield _chunk
+    from contextlib import closing
+    with closing(events):
+        _sid = session_id
+        yield from _stream_connecting_head(_sid)
+        if first is None:
+            _rest = iter([(
+                "done",
+                {
+                    "success": False,
+                    "response": "Stream ended unexpectedly.",
+                    "type": "stream_error",
+                },
+            )])
+        else:
+            import itertools as _it
+            _rest = _it.chain([first], events)
+        for _kind, _payload in _rest:
+            if _kind == "done":
+                _result = _payload or {}
+                # Belt-and-suspenders: rewrite confirms here too in case
+                # on_result was missing/failed — client must never see
+                # stuck "Waiting…" cards. Verbatim from the old SSE loop.
+                try:
+                    _result = _rewrite_assistant_response_actions(
+                        _result,
+                        _sid,
+                        (_result.get("cursor_run") or {}).get("cwd")
+                        or _result.get("project_path")
+                        or "",
+                    ) or _result
+                except Exception as _rw_err:
+                    print(f"[CHAT] SSE confirm rewrite failed: {_rw_err}", flush=True)
+                _payload = _result
+            for _chunk in _frame_stream_lifecycle_event(_kind, _payload, _sid):
+                yield _chunk
 
 
 def _stream_pipeline_turn_response(prepared, *, io):

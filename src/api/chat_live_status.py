@@ -64,6 +64,7 @@ def set_live_status(
     report_url: Optional[str] = None,
     query_id: Optional[str] = None,
     is_cancelled: Optional[Callable[[Any], bool]] = None,
+    turn: Optional[int] = None,
 ) -> None:
     """Publish (or refresh) live generation status for all devices watching this session."""
     keys = live_status_keys(session_id)
@@ -80,23 +81,33 @@ def set_live_status(
     now = time.time()
     with _LOCK:
         prev = _STORE.get(keys[0]) or {}
+        # A producer that passed its freshness check just before Stop/re-send
+        # still cannot overwrite a status already published by the newer turn.
+        previous_turn = prev.get("turn")
+        if turn is not None and previous_turn is not None and previous_turn > turn:
+            return
+        if turn is not None and previous_turn != turn:
+            prev = {}
         entry = {
             "active": bool(active),
             "status": (message if message is not None else prev.get("status")) or "Connecting...",
             "updated_at": now,
             "report_url": report_url if report_url is not None else prev.get("report_url"),
             "query_id": query_id if query_id is not None else prev.get("query_id"),
+            "turn": turn if turn is not None else previous_turn,
         }
         for k in keys:
             _STORE[k] = entry
 
 
-def clear_live_status(session_id: Any) -> None:
+def clear_live_status(session_id: Any, *, turn: Optional[int] = None) -> None:
     keys = live_status_keys(session_id)
     if not keys:
         return
     with _LOCK:
         for k in keys:
+            if turn is not None and (_STORE.get(k) or {}).get("turn") not in (None, turn):
+                continue
             _STORE.pop(k, None)
 
 

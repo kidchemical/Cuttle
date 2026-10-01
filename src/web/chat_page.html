@@ -15,11 +15,12 @@
     <noscript><link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet"></noscript>
     <link rel="stylesheet" href="css/shared_navigation.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/auth_modal.css?v=20260926authLogin">
-    <link rel="stylesheet" href="css/chat_page.css?v=20260929pendingDiffFileLink">
+    <link rel="stylesheet" href="css/chat_page.css?v=20261001sharedDiff">
     <link rel="stylesheet" href="/css/query_log_inspector.css?v=20260927qlJson">
     <link rel="stylesheet" href="/css/chat_lightbox.css?v=20260922imgCtxMenu">
     <link rel="stylesheet" href="/css/pending_changes.css?v=20260920multiRepo">
-    <link rel="stylesheet" href="/css/git_commit_viewer.css?v=20260929openFile">
+    <link rel="stylesheet" href="/css/diff_modal.css?v=20261001sharedDiff">
+    <link rel="stylesheet" href="/css/git_commit_viewer.css?v=20261001sharedDiff">
     <!-- Deep-linked chat (?chat=): flag the restore before first paint so the
          welcome splash never flashes, and start the transcript fetch right here.
          chat_page.js can't ask for it until auth.js has finished /api/auth/me
@@ -398,39 +399,6 @@
                 <div class="history-rename-status" id="historyRenameStatus" hidden></div>
             </div>
         </div>
-        <div class="pending-diff-modal" id="pendingDiffModal" hidden role="dialog" aria-modal="true" aria-labelledby="pendingDiffTitle">
-            <button type="button" class="pending-diff-side-nav is-prev" id="pendingDiffSidePrev" title="Previous file (←)" aria-label="Previous file" hidden>‹</button>
-            <div class="pending-diff-modal-card">
-                <header class="pending-diff-modal-header">
-                    <div class="pending-diff-modal-heading">
-                        <h2 class="pending-diff-modal-title"><a href="#" id="pendingDiffTitle" title="Open file in its default application">File diff</a></h2>
-                        <div class="pending-diff-modal-meta">
-                            <span class="pending-diff-modal-badge" id="pendingDiffStatus"></span>
-                            <span class="pending-diff-modal-stats" id="pendingDiffStats"></span>
-                            <div class="pending-diff-view-toggle" id="pendingDiffViewToggle" role="group" aria-label="Diff view mode">
-                                <button type="button" class="pending-diff-view-btn" data-pending-diff-view="split" aria-pressed="true" title="Separate Added and Removed sections">Split</button>
-                                <button type="button" class="pending-diff-view-btn" data-pending-diff-view="unified" aria-pressed="false" title="Preserve hunk line order (adds and removes interleaved)">Unified</button>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="pending-diff-file-nav" id="pendingDiffFileNav" hidden>
-                        <button type="button" class="pending-diff-file-nav-btn" id="pendingDiffPrev" title="Previous file (←)" aria-label="Previous file">‹</button>
-                        <span class="pending-diff-file-nav-pos" id="pendingDiffNavPos" aria-live="polite"></span>
-                        <button type="button" class="pending-diff-file-nav-btn" id="pendingDiffNext" title="Next file (→)" aria-label="Next file">›</button>
-                    </div>
-                    <button type="button" class="pending-diff-modal-close" id="pendingDiffClose" title="Close diff" aria-label="Close diff">×</button>
-                </header>
-                <div class="pending-diff-modal-body" id="pendingDiffBody">
-                    <div class="pending-diff-modal-loading" id="pendingDiffLoading" hidden>
-                        <span class="pending-diff-modal-spinner" aria-hidden="true"></span>
-                        <span>Loading diff…</span>
-                    </div>
-                    <div class="pending-diff-modal-empty" id="pendingDiffEmpty" hidden></div>
-                    <div class="pending-diff-modal-hunks" id="pendingDiffHunks" hidden></div>
-                </div>
-            </div>
-            <button type="button" class="pending-diff-side-nav is-next" id="pendingDiffSideNext" title="Next file (→)" aria-label="Next file" hidden>›</button>
-        </div>
         <dialog class="pending-diff-modal git-commit-modal" id="gitCommitModal" aria-labelledby="gitCommitModalTitle">
             <div class="pending-diff-modal-card git-commit-modal-card">
                 <header class="pending-diff-modal-header git-commit-modal-header">
@@ -442,35 +410,7 @@
                 </div>
             </div>
         </dialog>
-        <dialog class="pending-diff-modal" id="gitDiffModal" aria-labelledby="gitDiffTitle">
-            <div class="pending-diff-modal-card">
-                <header class="pending-diff-modal-header">
-                    <div class="pending-diff-modal-heading">
-                        <div class="git-diff-file-row">
-                            <span class="pending-diff-modal-title sr-only" id="gitDiffTitle">File diff</span>
-                            <a href="#" class="git-diff-open-file is-disabled" id="gitDiffOpenFile" aria-disabled="true" title="Open file in its default application">Open file</a>
-                            <label class="git-diff-file-picker" for="gitDiffFileSelect" title="Switch changed file">
-                                <select id="gitDiffFileSelect" class="git-diff-file-select" aria-label="Switch changed file"></select>
-                            </label>
-                        </div>
-                        <div class="pending-diff-modal-meta">
-                            <span class="pending-diff-modal-badge" id="gitDiffStatus"></span>
-                            <span class="pending-diff-modal-stats" id="gitDiffStats"></span>
-                            <span class="git-diff-commit" id="gitDiffCommit"></span>
-                        </div>
-                    </div>
-                    <button type="button" class="pending-diff-modal-close" id="gitDiffClose" title="Close diff" aria-label="Close diff">×</button>
-                </header>
-                <div class="pending-diff-modal-body" id="gitDiffBody">
-                    <div class="pending-diff-modal-loading" id="gitDiffLoading" hidden>
-                        <span class="pending-diff-modal-spinner" aria-hidden="true"></span>
-                        <span>Loading diff…</span>
-                    </div>
-                    <div class="pending-diff-modal-empty" id="gitDiffEmpty" hidden></div>
-                    <div class="pending-diff-modal-hunks" id="gitDiffHunks" hidden></div>
-                </div>
-            </div>
-        </dialog>
+
     </div>
     
     <!-- Auth modal lives on the app shell only. A duplicate here (even hidden)
@@ -486,12 +426,13 @@
     <script src="/js/chat_find.js?v=20260819find"></script>
     <script src="/js/chat_widgets.js?v=20260922widgetstrip"></script>
     <script src="/js/pending_changes_panel.js?v=20260920multiRepo"></script>
-    <script src="/js/git_commit_viewer.js?v=20260929openFile"></script>
+    <script src="/js/diff_modal.js?v=20261001sharedDiff"></script>
+    <script src="/js/git_commit_viewer.js?v=20261001sharedDiff"></script>
     <script src="/js/query_log_inspector.js?v=20260927qlJson"></script>
     <script src="/js/chat_project.js?v=20261001slice1"></script>
     <script src="/js/chat_slash.js?v=20261001search"></script>
     <script src="/js/chat_action_forms.js?v=20261001slice3"></script>
-    <script src="/js/chat_activity.js?v=20261001slice4"></script>
+    <script src="/js/chat_activity.js?v=20261001terminalstatus"></script>
     <script src="/js/chat_attachments.js?v=20261001slice5"></script>
     <script src="/js/chat_composer.js?v=20261001slice6"></script>
     <script src="/js/chat_agent_model.js?v=20261001slice7"></script>
@@ -504,7 +445,7 @@
     <script src="/js/chat_followup_queue.js?v=20261001slice9c"></script>
     <script src="/js/chat_pending_result.js?v=20261001slice9d"></script>
     <script src="/js/chat_generation.js?v=20261001slice9e"></script>
-    <script src="/js/chat_page.js?v=20261001search"></script>
+    <script src="/js/chat_page.js?v=20261001sharedDiff"></script>
     <!-- highlight.js / Vega: load after boot so offline WAN never blocks the chat UI -->
     <script src="/js/optional_cdn.js?v=20260815vegaReady"></script>
 </body>

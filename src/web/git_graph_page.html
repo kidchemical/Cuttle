@@ -14,8 +14,9 @@
     <noscript><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"></noscript>
     <link rel="stylesheet" href="/css/compact_page.css">
     <link rel="stylesheet" href="/css/pending_changes.css?v=20260920multiRepo">
-    <link rel="stylesheet" href="/css/git_commit_viewer.css?v=20260929openFile">
-    <link rel="stylesheet" href="/css/git_graph_page.css?v=20260920multiRepo">
+    <link rel="stylesheet" href="/css/diff_modal.css?v=20261001sharedDiff">
+    <link rel="stylesheet" href="/css/git_commit_viewer.css?v=20261001sharedDiff">
+    <link rel="stylesheet" href="/css/git_graph_page.css?v=20261001sharedDiff">
     <script src="/js/toast.js"></script>
 </head>
 <body class="compact-shell-page git-graph-body">
@@ -73,39 +74,9 @@
         </div>
     </div>
 
-    <!-- Native <dialog> top-layer popup — same chrome as chat pending-diff-modal -->
-    <dialog class="pending-diff-modal" id="gitDiffModal" aria-labelledby="gitDiffTitle">
-        <div class="pending-diff-modal-card">
-            <header class="pending-diff-modal-header">
-                <div class="pending-diff-modal-heading">
-                    <div class="git-diff-file-row">
-                        <span class="pending-diff-modal-title sr-only" id="gitDiffTitle">File diff</span>
-                        <a href="#" class="git-diff-open-file is-disabled" id="gitDiffOpenFile" aria-disabled="true" title="Open file in its default application">Open file</a>
-                        <label class="git-diff-file-picker" for="gitDiffFileSelect" title="Switch changed file">
-                            <select id="gitDiffFileSelect" class="git-diff-file-select" aria-label="Switch changed file"></select>
-                        </label>
-                    </div>
-                    <div class="pending-diff-modal-meta">
-                        <span class="pending-diff-modal-badge" id="gitDiffStatus"></span>
-                        <span class="pending-diff-modal-stats" id="gitDiffStats"></span>
-                        <span class="git-diff-commit" id="gitDiffCommit"></span>
-                    </div>
-                </div>
-                <button type="button" class="pending-diff-modal-close" id="gitDiffClose" title="Close diff" aria-label="Close diff">×</button>
-            </header>
-            <div class="pending-diff-modal-body" id="gitDiffBody">
-                <div class="pending-diff-modal-loading" id="gitDiffLoading" hidden>
-                    <span class="pending-diff-modal-spinner" aria-hidden="true"></span>
-                    <span>Loading diff…</span>
-                </div>
-                <div class="pending-diff-modal-empty" id="gitDiffEmpty" hidden></div>
-                <div class="pending-diff-modal-hunks" id="gitDiffHunks" hidden></div>
-            </div>
-        </div>
-    </dialog>
-
     <script src="/js/pending_changes_panel.js?v=20260920multiRepo"></script>
-    <script src="/js/git_commit_viewer.js?v=20260929openFile"></script>
-    <script src="/js/git_graph_page.js?v=20260926commitModal"></script>
+    <script src="/js/diff_modal.js?v=20261001sharedDiff"></script>
+    <script src="/js/git_commit_viewer.js?v=20261001sharedDiff"></script>
+    <script src="/js/git_graph_page.js?v=20261001sharedDiff"></script>
 </body>
 </html>

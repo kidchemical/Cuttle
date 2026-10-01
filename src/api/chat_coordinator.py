@@ -306,12 +306,13 @@ def submit_agent_stream_turn(
     ``("done", result)``. Transport (SSE framing, pump loop) stays with
     the caller; busy/turn-token ownership, persist ordering, rewrite,
     finalize, and release live in the owned skeleton. Release is
-    token-guarded (finalize end + pump-finally end; a stale worker never
+    token-guarded (finalize end + pump-finally end after done; a stale worker never
     frees a newer turn) — logically one release, two guarded end calls.
 
     ``completion`` forwards the workflow's turn-identity out-dict
-    (stale/cancelled at done time) for transports that clear per-turn
-    state on completion.
+    (stale/cancelled at done time). The workflow owns live-status fanout
+    and terminal cleanup; a detached subscriber never releases a running
+    worker's busy slot.
 
     Always claims: every stream ingress is claimed (the unclaimed compat
     entry is sync-only by transport).

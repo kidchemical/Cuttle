@@ -3,12 +3,30 @@
 Pytest suite. Default entry (per AGENTS.md):
 
 ```bash
+.venv/bin/python -m pytest src/tests/  # Linux / macOS
 .venv\Scripts\python.exe -m pytest src/tests/
 # Single file
 .venv\Scripts\python.exe -m pytest src/tests/test_foo.py
 # Never pytest the whole tree against a live server unless you mean it:
 # integration/test_discord_api_e2e.py hits http://127.0.0.1:8080 when up, skips when down.
 ```
+
+## Chat lifecycle regression gate
+
+Keep Node.js on `PATH` when validating frontend changes. The behavioral JS
+tests otherwise skip; a green Python-only run does not verify browser logic.
+These tests execute the shipped modules/page adapters without a live provider:
+
+```bash
+node --version
+.venv/bin/python -m pytest -q src/tests/test_stream_detach_status.py src/tests/test_chat_terminal_status.py src/tests/test_p5e_stream_oracles.py src/tests/test_p5f_pipeline_oracles.py src/tests/test_chat_generation.py src/tests/test_chat_activity.py src/tests/test_chat_pending_result.py src/tests/test_architecture_boundaries.py
+```
+
+Lifecycle coverage must include a **detached and slow subscriber**, as well as
+fully drained SSE: progress still updates, busy remains held until the worker
+finishes, success/failure clears live status, and Stop → resend rejects the
+old producer's status and result. Test the polling UI after its in-flight
+prompt has cleared, including shell hub calls with an empty message list.
 
 ## Layout
 

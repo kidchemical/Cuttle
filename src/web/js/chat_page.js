@@ -1151,6 +1151,8 @@
             try { meta = JSON.parse(meta); } catch (_) { meta = {}; }
         }
         if (!meta || typeof meta !== 'object') meta = {};
+        const queryId = msg.query_id || meta.query_id;
+        if (queryId) el.dataset.queryId = String(queryId);
         if (msg.slash_command_failed) meta = Object.assign({}, meta, { slash_command_failed: true });
         if (assistantReplyLooksLikeError(raw, meta)) el.dataset.failed = '1';
         else delete el.dataset.failed;
@@ -11163,7 +11165,6 @@
 
     // --- Pending changes strip (shared module; multi-repo aware) ---
     let pendingChangesCtl = null;
-    let pendingDiffRepoRoot = null;
 
     function schedulePendingChangesRefresh(delayMs, refreshOpts) {
         if (!pendingChangesCtl) return;
@@ -11225,516 +11226,19 @@
         if (!inAppShell) schedulePendingChangesRefresh(120);
     }
 
-    let pendingDiffFetchGen = 0;
-    let pendingDiffModalState = { path: null, full: false, maxLines: 300 };
-    let pendingDiffLastData = null;
-    const PENDING_DIFF_VIEW_MODE_KEY = 'cuttlePendingDiffViewMode';
-
-    // Kept in chat_page (not only pending_changes_panel): renderPendingDiffModal
-    // still needs these. The multi-repo extract removed the panel copies and left
-    // the modal calling undefined names → blank body after open.
-    function formatPendingStat(n, sign) {
-        const v = Number(n) || 0;
-        if (v <= 0) return '';
-        return sign + (v > 9999 ? '9999+' : String(v));
-    }
-
-    function statusBadgeLabel(status) {
-        const s = String(status || 'modified');
-        if (s === 'untracked') return 'U';
-        if (s === 'added') return 'A';
-        if (s === 'deleted') return 'D';
-        if (s === 'renamed') return 'R';
-        if (s === 'conflict') return '!';
-        return 'M';
-    }
-
-    function readPendingDiffViewMode() {
-        try {
-            const v = localStorage.getItem(PENDING_DIFF_VIEW_MODE_KEY);
-            if (v === 'unified' || v === 'split') return v;
-        } catch (_) {}
-        return 'split';
-    }
-
-    function writePendingDiffViewMode(mode) {
-        const next = mode === 'unified' ? 'unified' : 'split';
-        try {
-            localStorage.setItem(PENDING_DIFF_VIEW_MODE_KEY, next);
-        } catch (_) {}
-        return next;
-    }
-
-    function syncPendingDiffViewToggle(mode) {
-        const active = mode === 'unified' ? 'unified' : 'split';
-        document.querySelectorAll('[data-pending-diff-view]').forEach((btn) => {
-            const on = btn.getAttribute('data-pending-diff-view') === active;
-            btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-        });
-    }
-
-    function pendingDiffModalEl() {
-        return document.getElementById('pendingDiffModal');
-    }
-
-    function isPendingDiffModalOpen() {
-        const modal = pendingDiffModalEl();
-        return !!(modal && !modal.hidden);
-    }
-
-    function closePendingDiffModal() {
-        pendingDiffFetchGen += 1;
-        pendingDiffLastData = null;
-        pendingDiffModalState = { path: null, full: false, maxLines: 300, repoRoot: null };
-        pendingDiffRepoRoot = null;
-        const modal = pendingDiffModalEl();
-        if (modal) modal.hidden = true;
-        updatePendingDiffFileNav();
-    }
-
-    function pendingDiffFilePaths() {
-        const root = pendingDiffRepoRoot
-            || (pendingDiffModalState && pendingDiffModalState.repoRoot)
-            || null;
-        let paths = [];
-        if (pendingChangesCtl && root) {
-            paths = pendingChangesCtl.getFilesForRepo(root) || [];
-        } else if (pendingChangesCtl && typeof pendingChangesCtl.getRepos === 'function') {
-            const repos = pendingChangesCtl.getRepos() || [];
-            if (repos.length === 1) {
-                paths = pendingChangesCtl.getFilesForRepo(repos[0].repo_root) || [];
-            }
-        }
-        paths = paths.map((p) => String(p || '').trim()).filter(Boolean);
-        const current = String((pendingDiffModalState && pendingDiffModalState.path) || '').trim();
-        if (current && !paths.includes(current)) {
-            return [current].concat(paths);
-        }
-        return paths;
-    }
-
-    function pendingDiffFileIndex() {
-        const paths = pendingDiffFilePaths();
-        const current = String((pendingDiffModalState && pendingDiffModalState.path) || '').trim();
-        if (!current || !paths.length) return -1;
-        return paths.indexOf(current);
-    }
-
-    function updatePendingDiffFileNav() {
-        const nav = document.getElementById('pendingDiffFileNav');
-        const posEl = document.getElementById('pendingDiffNavPos');
-        const prevBtn = document.getElementById('pendingDiffPrev');
-        const nextBtn = document.getElementById('pendingDiffNext');
-        const sidePrev = document.getElementById('pendingDiffSidePrev');
-        const sideNext = document.getElementById('pendingDiffSideNext');
-        const open = isPendingDiffModalOpen();
-        const paths = pendingDiffFilePaths();
-        const idx = pendingDiffFileIndex();
-        const show = open && paths.length > 1 && idx >= 0;
-        const atStart = idx <= 0;
-        const atEnd = idx < 0 || idx >= paths.length - 1;
-
-        if (nav) nav.hidden = !show;
-        if (sidePrev) sidePrev.hidden = !show;
-        if (sideNext) sideNext.hidden = !show;
-        if (posEl) {
-            posEl.textContent = show ? ((idx + 1) + ' / ' + paths.length) : '';
-        }
-        [prevBtn, sidePrev].forEach((btn) => {
-            if (!btn) return;
-            btn.disabled = !show || atStart;
-        });
-        [nextBtn, sideNext].forEach((btn) => {
-            if (!btn) return;
-            btn.disabled = !show || atEnd;
-        });
-    }
-
-    function navigatePendingDiffFile(delta) {
-        if (!isPendingDiffModalOpen()) return false;
-        const paths = pendingDiffFilePaths();
-        const idx = pendingDiffFileIndex();
-        if (idx < 0 || paths.length < 2) return false;
-        const nextIdx = idx + Number(delta || 0);
-        if (nextIdx < 0 || nextIdx >= paths.length) return false;
-        openPendingDiffModal(paths[nextIdx]);
-        return true;
-    }
-
-    function setPendingDiffModalLoading(loading) {
-        const loadingEl = document.getElementById('pendingDiffLoading');
-        const emptyEl = document.getElementById('pendingDiffEmpty');
-        const hunksEl = document.getElementById('pendingDiffHunks');
-        if (loadingEl) loadingEl.hidden = !loading;
-        if (loading) {
-            if (emptyEl) emptyEl.hidden = true;
-            if (hunksEl) {
-                hunksEl.hidden = true;
-                hunksEl.innerHTML = '';
-            }
-        }
-    }
-
-    function formatPendingDiffLineNo(n) {
-        if (n == null || n === '' || Number(n) <= 0) return '';
-        return String(n);
-    }
-
-    function renderPendingDiffLineHTML(line) {
-        const type = String((line && line.type) || 'context');
-        if (type === 'meta') {
-            return '<div class="pending-diff-line is-meta">' + escapeHtmlInline(String(line.text || '')) + '</div>';
-        }
-        const cls = type === 'add' ? 'is-add' : (type === 'del' ? 'is-del' : 'is-context');
-        const ch = type === 'add' ? '+' : (type === 'del' ? '-' : ' ');
-        const oldNo = formatPendingDiffLineNo(line.old_no);
-        const newNo = formatPendingDiffLineNo(line.new_no);
-        // Prefer the side that still exists for this line (new for adds, old for dels).
-        const ln = newNo || oldNo || '';
-        return (
-            '<div class="pending-diff-line ' + cls + '">'
-            + '<span class="pending-diff-ln">' + escapeHtmlInline(ln) + '</span>'
-            + '<span class="pending-diff-ch">' + ch + '</span>'
-            + '<span class="pending-diff-txt">' + escapeHtmlInline(String(line.text || '')) + '</span>'
-            + '</div>'
-        );
-    }
-
-    function renderPendingDiffHunksHTML(hunks) {
-        const list = Array.isArray(hunks) ? hunks : [];
-        if (!list.length) return '';
-        return list.map((hunk) => {
-            const lines = Array.isArray(hunk.lines) ? hunk.lines : [];
-            const header = escapeHtmlInline(String(hunk.header || ''));
-            const body = lines.map(renderPendingDiffLineHTML).join('');
-            return (
-                '<section class="pending-diff-hunk">'
-                + '<div class="pending-diff-hunk-header">' + header + '</div>'
-                + '<div class="pending-diff-lines">' + body + '</div>'
-                + '</section>'
-            );
-        }).join('');
-    }
-
-    function renderPendingDiffSectionHTML(kind, section, opts) {
-        const sec = section || {};
-        const hunks = Array.isArray(sec.hunks) ? sec.hunks : [];
-        const hasLines = hunks.some((h) => Array.isArray(h.lines) && h.lines.length);
-        if (!hasLines && !(sec.total > 0)) return '';
-
-        const label = kind === 'removed' ? 'Removed' : 'Added';
-        const tone = kind === 'removed' ? 'is-removed' : 'is-added';
-        const shown = Number(sec.shown) || 0;
-        const total = Number(sec.total) || shown;
-        const truncated = !!sec.truncated;
-        const alreadyFull = !!(opts && opts.full);
-
-        let html =
-            '<section class="pending-diff-side ' + tone + '">'
-            + '<div class="pending-diff-side-header">'
-            + '<span class="pending-diff-side-title">' + label + '</span>'
-            + '<span class="pending-diff-side-count">'
-            + escapeHtmlInline(String(shown))
-            + (truncated ? ' of ' + escapeHtmlInline(String(total)) : '')
-            + '</span>'
-            + '</div>';
-
-        if (hasLines) {
-            html += renderPendingDiffHunksHTML(hunks);
-        } else {
-            html += '<div class="pending-diff-side-empty">No ' + label.toLowerCase() + ' lines</div>';
-        }
-
-        if (truncated && !alreadyFull) {
-            html +=
-                '<div class="pending-diff-truncated-note">'
-                + '<span>Showing '
-                + escapeHtmlInline(String(shown))
-                + ' of '
-                + escapeHtmlInline(String(total))
-                + ' '
-                + label.toLowerCase()
-                + ' lines.</span>'
-                + '<span class="pending-diff-truncate-actions">'
-                + '<button type="button" class="pending-diff-expand-btn" data-pending-diff-more="'
-                + escapeHtmlInline(kind)
-                + '">Show more</button>'
-                + '<button type="button" class="pending-diff-expand-btn" data-pending-diff-all="'
-                + escapeHtmlInline(kind)
-                + '">Show all</button>'
-                + '</span>'
-                + '</div>';
-        }
-        html += '</section>';
-        return html;
-    }
-
-    function bindPendingDiffExpandButtons(data) {
-        const hunksEl = document.getElementById('pendingDiffHunks');
-        if (!hunksEl) return;
-        const relPath = String((data && data.path) || pendingDiffModalState.path || '');
-        if (!relPath) return;
-        const currentMax = Math.max(
-            50,
-            Number((data && data.max_lines_per_side) || pendingDiffModalState.maxLines || 300)
-        );
-
-        hunksEl.querySelectorAll('[data-pending-diff-more]').forEach((btn) => {
-            btn.addEventListener('click', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                openPendingDiffModal(relPath, {
-                    maxLines: Math.min(currentMax * 3, 100000),
-                    full: false,
-                });
-            });
-        });
-        hunksEl.querySelectorAll('[data-pending-diff-all]').forEach((btn) => {
-            btn.addEventListener('click', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                openPendingDiffModal(relPath, { full: true, maxLines: 100000 });
-            });
-        });
-    }
-
-    function renderPendingDiffModal(data) {
-        const titleEl = document.getElementById('pendingDiffTitle');
-        const statusEl = document.getElementById('pendingDiffStatus');
-        const statsEl = document.getElementById('pendingDiffStats');
-        const loadingEl = document.getElementById('pendingDiffLoading');
-        const emptyEl = document.getElementById('pendingDiffEmpty');
-        const hunksEl = document.getElementById('pendingDiffHunks');
-
-        pendingDiffLastData = data || null;
-        const viewMode = readPendingDiffViewMode();
-        syncPendingDiffViewToggle(viewMode);
-
-        const relPath = String((data && data.path) || '');
-        const status = String((data && data.status) || 'modified');
-        if (titleEl) titleEl.textContent = relPath || 'File diff';
-        if (statusEl) {
-            statusEl.textContent = statusBadgeLabel(status);
-            statusEl.setAttribute('data-status', status);
-        }
-        if (statsEl) {
-            const a = formatPendingStat(data && data.additions, '+');
-            const d = formatPendingStat(data && data.deletions, '-');
-            statsEl.innerHTML =
-                (a ? '<span class="pending-changes-add">' + a + '</span>' : '')
-                + (d ? '<span class="pending-changes-del">' + d + '</span>' : '');
-        }
-        if (loadingEl) loadingEl.hidden = true;
-        if (relPath) {
-            pendingDiffModalState = Object.assign({}, pendingDiffModalState, { path: relPath });
-        }
-        updatePendingDiffFileNav();
-
-        const message = String((data && data.message) || '').trim();
-        const sections = data && data.sections;
-        const hasSections = !!(sections && (sections.added || sections.removed));
-        const hunks = Array.isArray(data && data.hunks) ? data.hunks : [];
-        const hasLegacyHunks = hunks.some((h) => Array.isArray(h.lines) && h.lines.length);
-        const sectionHasLines = (sec) =>
-            sec
-            && (
-                (Number(sec.total) || 0) > 0
-                || (Array.isArray(sec.hunks) && sec.hunks.some((h) => Array.isArray(h.lines) && h.lines.length))
-            );
-        const hasContent = hasSections
-            ? (sectionHasLines(sections.added) || sectionHasLines(sections.removed))
-            : hasLegacyHunks;
-
-        if (emptyEl) {
-            if (hasContent) {
-                emptyEl.hidden = true;
-                emptyEl.textContent = '';
-            } else {
-                emptyEl.hidden = false;
-                if (data && data.secret_redacted) {
-                    emptyEl.textContent = message || 'Diff hidden for credential-like paths';
-                } else if (data && data.binary) {
-                    emptyEl.textContent = message || 'Binary file (no text preview)';
-                } else {
-                    emptyEl.textContent = message || 'No line changes to show';
-                }
-            }
-        }
-        if (hunksEl) {
-            if (hasContent) {
-                let html = '';
-                const useUnified = viewMode === 'unified' && hasLegacyHunks;
-                if (useUnified) {
-                    html = renderPendingDiffHunksHTML(hunks);
-                    if (data && data.truncated) {
-                        html +=
-                            '<div class="pending-diff-truncated-note">'
-                            + '<span>Diff truncated — file has more changes than shown.</span>'
-                            + '<span class="pending-diff-truncate-actions">'
-                            + '<button type="button" class="pending-diff-expand-btn" data-pending-diff-more="all">Show more</button>'
-                            + '<button type="button" class="pending-diff-expand-btn" data-pending-diff-all="all">Show all</button>'
-                            + '</span>'
-                            + '</div>';
-                    }
-                } else if (hasSections) {
-                    html += renderPendingDiffSectionHTML('added', sections.added, data);
-                    html += renderPendingDiffSectionHTML('removed', sections.removed, data);
-                } else {
-                    html = renderPendingDiffHunksHTML(hunks);
-                    if (data && data.truncated) {
-                        html +=
-                            '<div class="pending-diff-truncated-note">'
-                            + '<span>Diff truncated — file has more changes than shown.</span>'
-                            + '<span class="pending-diff-truncate-actions">'
-                            + '<button type="button" class="pending-diff-expand-btn" data-pending-diff-more="all">Show more</button>'
-                            + '<button type="button" class="pending-diff-expand-btn" data-pending-diff-all="all">Show all</button>'
-                            + '</span>'
-                            + '</div>';
-                    }
-                }
-                hunksEl.innerHTML = html;
-                hunksEl.hidden = false;
-                bindPendingDiffExpandButtons(data);
-            } else {
-                hunksEl.hidden = true;
-                hunksEl.innerHTML = '';
-            }
-        }
-    }
-
-    async function openPendingDiffModal(relPath, opts) {
+    // The shared popup owns rendering, navigation, focus and file opening.
+    function openPendingDiffModal(relPath, opts) {
         if (!currentProject || !currentProject.path || !relPath) return;
-        const modal = pendingDiffModalEl();
-        if (!modal) return;
-
         const options = opts || {};
-        const full = !!options.full;
-        const maxLines = full
-            ? 100000
-            : Math.max(50, Math.min(Number(options.maxLines) || 300, 100000));
-        if (options.repoRoot) pendingDiffRepoRoot = String(options.repoRoot);
-        const repoRoot = pendingDiffRepoRoot || null;
-        pendingDiffModalState = { path: String(relPath), full, maxLines, repoRoot };
-
-        modal.hidden = false;
-        updatePendingDiffFileNav();
-        setPendingDiffModalLoading(true);
-        const titleEl = document.getElementById('pendingDiffTitle');
-        const statusEl = document.getElementById('pendingDiffStatus');
-        const statsEl = document.getElementById('pendingDiffStats');
-        if (titleEl) titleEl.textContent = String(relPath);
-        if (statusEl) {
-            statusEl.textContent = '';
-            statusEl.removeAttribute('data-status');
-        }
-        if (statsEl) statsEl.textContent = '';
-
-        const fetchGen = ++pendingDiffFetchGen;
-        try {
-            const qs = new URLSearchParams();
-            qs.set('path', currentProject.path);
-            qs.set('file', relPath);
-            qs.set('context', '3');
-            qs.set('max_lines', String(maxLines));
-            if (full) qs.set('full', '1');
-            if (repoRoot) qs.set('repo_root', repoRoot);
-            const resp = await fetchWithTimeout(
-                '/api/git/pending-diff?' + qs.toString(),
-                { credentials: 'include', cache: 'no-store' },
-                30000
-            );
-            const data = await resp.json().catch(() => null);
-            if (fetchGen !== pendingDiffFetchGen) return;
-            if (!data || !data.success) {
-                const err = (data && data.error) || 'Could not load diff';
-                renderPendingDiffModal({ path: relPath, hunks: [], message: err });
-                (window.showToast || function () {})(err, 'error');
-                return;
-            }
-            renderPendingDiffModal(data);
-        } catch (e) {
-            if (fetchGen !== pendingDiffFetchGen) return;
-            const err = (e && e.message) || 'Diff failed';
-            renderPendingDiffModal({ path: relPath, hunks: [], message: err });
-            (window.showToast || function () {})(err, 'error');
-        } finally {
-            if (fetchGen === pendingDiffFetchGen) setPendingDiffModalLoading(false);
-        }
-
-        const closeBtn = document.getElementById('pendingDiffClose');
-        if (closeBtn) closeBtn.focus();
-    }
-
-    function setupPendingDiffModal() {
-        const modal = pendingDiffModalEl();
-        if (!modal || modal.dataset.bound === '1') return;
-        modal.dataset.bound = '1';
-        syncPendingDiffViewToggle(readPendingDiffViewMode());
-        const titleEl = document.getElementById('pendingDiffTitle');
-        if (titleEl) {
-            titleEl.addEventListener('click', async (e) => {
-                e.preventDefault();
-                const file = pendingDiffModalState && pendingDiffModalState.path;
-                if (!currentProject || !currentProject.path || !file) return;
-                try {
-                    const resp = await fetch('/api/git/open-file', {
-                        method: 'POST', credentials: 'include',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            path: currentProject.path,
-                            project_id: currentProject.id,
-                            repo_root: (pendingDiffModalState && pendingDiffModalState.repoRoot) || undefined,
-                            file: file,
-                        }),
-                    });
-                    const data = await resp.json().catch(() => null);
-                    if (!resp.ok || !data || !data.success) {
-                        throw new Error((data && data.error) || ('HTTP ' + resp.status));
-                    }
-                } catch (err) {
-                    (window.showToast || function () {})(
-                        'Could not open file: ' + ((err && err.message) || err),
-                        'error'
-                    );
-                }
-            });
-        }
-        const closeBtn = document.getElementById('pendingDiffClose');
-        if (closeBtn) {
-            closeBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                closePendingDiffModal();
-            });
-        }
-        const bindNavBtn = (id, delta) => {
-            const btn = document.getElementById(id);
-            if (!btn) return;
-            btn.addEventListener('click', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                navigatePendingDiffFile(delta);
-            });
-        };
-        bindNavBtn('pendingDiffPrev', -1);
-        bindNavBtn('pendingDiffNext', 1);
-        bindNavBtn('pendingDiffSidePrev', -1);
-        bindNavBtn('pendingDiffSideNext', 1);
-        const viewToggle = document.getElementById('pendingDiffViewToggle');
-        if (viewToggle) {
-            viewToggle.addEventListener('click', (e) => {
-                const btn = e.target && e.target.closest
-                    ? e.target.closest('[data-pending-diff-view]')
-                    : null;
-                if (!btn) return;
-                e.preventDefault();
-                e.stopPropagation();
-                const next = writePendingDiffViewMode(btn.getAttribute('data-pending-diff-view'));
-                syncPendingDiffViewToggle(next);
-                if (pendingDiffLastData) renderPendingDiffModal(pendingDiffLastData);
-            });
-        }
-        modal.addEventListener('click', (e) => {
-            if (e.target === modal) closePendingDiffModal();
+        const repos = pendingChangesCtl ? pendingChangesCtl.getRepos() : [];
+        const repoRoot = options.repoRoot || (repos.length === 1 ? repos[0].repo_root : null);
+        return window.CuttleDiffModal.open({
+            projectPath: currentProject.path,
+            repoRoot: repoRoot,
+            file: relPath,
+            files: pendingChangesCtl && repoRoot ? pendingChangesCtl.getFilesForRepo(repoRoot) : [relPath],
+            full: options.full,
+            maxLines: options.maxLines,
         });
     }
 
@@ -12098,23 +11602,8 @@
         }
     }
 
-    // Diff modal file nav + Escape / overlay dismiss.
+    // Page Escape shortcuts; the shared diff popup handles its own keyboard input.
     document.addEventListener('keydown', function (e) {
-        if (isPendingDiffModalOpen()) {
-            if (e.key === 'ArrowLeft') {
-                if (navigatePendingDiffFile(-1)) e.preventDefault();
-                return;
-            }
-            if (e.key === 'ArrowRight') {
-                if (navigatePendingDiffFile(1)) e.preventDefault();
-                return;
-            }
-            if (e.key === 'Escape') {
-                closePendingDiffModal();
-                e.preventDefault();
-                return;
-            }
-        }
         if (e.key !== 'Escape') return;
         const menu = document.getElementById('historyItemOverflowMenu');
         if (isHistoryDeleteModalOpen()) {
@@ -13764,6 +13253,18 @@
         return CuttleChatActivity.liveStatusLooksActive(liveStatus);
     }
 
+    function remoteLiveStatusLooksActive(liveStatus) {
+        const last = lastVisibleChatMessageEl();
+        const isReply = last && last.classList.contains('assistant');
+        const stamp = isReply && last.querySelector('.message-timestamp[data-ts]');
+        const reply = isReply ? {
+            queryId: last.dataset.queryId,
+            timestamp: stamp && stamp.dataset.ts,
+        } : null;
+        return liveStatusLooksActive(liveStatus)
+            && !CuttleChatActivity.liveStatusPredatesReply(liveStatus, reply);
+    }
+
     const SUPERVISED_PHASE_LABELS = (window.CuttleSupervised && window.CuttleSupervised.PHASE_LABELS) || {
         coordinating: 'Planning task…',
         delegated: 'Working…',
@@ -14181,7 +13682,7 @@
         // Generating in another chat in this tab — don't steal that stream's UI.
         if (generation.loading) {
             removeRemoteWaitingIndicator();
-            const liveActiveOther = liveStatusLooksActive(liveStatus);
+            const liveActiveOther = remoteLiveStatusLooksActive(liveStatus);
             if (currentSessionId && liveActiveOther) {
                 setHistorySessionRunning(currentSessionId, true);
                 const statusLabel = (liveStatus && liveStatus.status) || 'Waiting for reply…';
@@ -14207,7 +13708,7 @@
         }
         // live-status is fetched in parallel with messages; a reply can already be
         // in history while that snapshot still says active. Prefer the transcript.
-        const liveActiveRaw = liveStatusLooksActive(liveStatus);
+        const liveActiveRaw = remoteLiveStatusLooksActive(liveStatus);
         const liveActive = liveActiveRaw
             && !thisTurnHasAssistantReply(messages)
             && !turnAlreadyShowsAssistantReply();
@@ -19847,6 +19348,7 @@
         const messageDiv = document.createElement('div');
         messageDiv.className = `message ${role}`;
         messageDiv.dataset.rawContent = String(content ?? '');
+        if (opts.query_id) messageDiv.dataset.queryId = String(opts.query_id);
         if (opts.message_id != null && opts.message_id !== '') {
             messageDiv.dataset.messageId = String(opts.message_id);
         }
@@ -23784,7 +23286,6 @@
         setupHistoryDeleteModal();
         setupGitPushConfirmModal();
         setupHistoryRenameModal();
-        setupPendingDiffModal();
 
         // Cross-device: refresh open session when tab becomes visible / focused
         const syncIfVisible = function () {
