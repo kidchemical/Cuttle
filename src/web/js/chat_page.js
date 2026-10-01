@@ -1322,7 +1322,7 @@
                 remove.addEventListener('click', (e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    pendingAttachments.splice(idx, 1);
+                    pendingAttachments = CuttleChatAttachments.removeAttachmentAt(pendingAttachments, idx);
                     _savePendingAttachments();
                     renderAttachmentChips();
                 });
@@ -1346,64 +1346,37 @@
         return copy;
     }
 
+    // Owned by chat_attachments.js — thin adapter.
     function isImageAttachment(att) {
-        if (!att) return false;
-        const mime = String(att.mime || '').toLowerCase();
-        if (mime.startsWith('image/')) return true;
-        const name = String(att.filename || att.url || '').toLowerCase();
-        return /\.(png|jpe?g|gif|webp|bmp)$/i.test(name);
+        return CuttleChatAttachments.isImageAttachment(att);
     }
 
+    // Owned by chat_attachments.js — thin adapter.
     function normalizeAttachmentList(list) {
-        if (!Array.isArray(list)) return [];
-        return list
-            .filter((a) => a && typeof a === 'object')
-            .map((a) => ({
-                filename: a.filename || 'file',
-                path: a.path || '',
-                mime: a.mime || '',
-                size: a.size,
-                url: a.url || '',
-            }));
+        return CuttleChatAttachments.normalizeAttachmentList(list);
     }
 
     /** Strip trailing `[Attached: …]` note used in stored history text. */
+    // Owned by chat_attachments.js — thin adapter.
     function stripAttachedNote(content) {
-        return String(content || '')
-            .replace(/\n?\[Attached:[^\]]*\]\s*$/i, '')
-            .trim();
+        return CuttleChatAttachments.stripAttachedNote(content);
     }
 
     /** Parse `[Attached: a.png, b.pdf]` names from stored message text. */
+    // Owned by chat_attachments.js — thin adapter.
     function parseAttachedFilenames(content) {
-        const m = String(content || '').match(/\[Attached:\s*([^\]]+)\]\s*$/i);
-        if (!m) return [];
-        return m[1]
-            .split(',')
-            .map((s) => s.trim())
-            .filter(Boolean);
+        return CuttleChatAttachments.parseAttachedFilenames(content);
     }
 
     /**
      * Infer attachment refs from history text when metadata is missing
      * (older messages). Tries current session folder, then anon.
      */
+    // Owned by chat_attachments.js — DOM/state gather, domain decides.
     function inferAttachmentsFromContent(content) {
-        const names = parseAttachedFilenames(content);
-        if (!names.length) return [];
-        const folders = [];
-        if (currentSessionId != null && currentSessionId !== '') {
-            folders.push(String(currentSessionId));
-        }
-        folders.push('anon');
-        const folder = folders[0];
-        return names.map((filename) => {
-            const url = '/output/uploads/' + encodeURIComponent(folder) + '/' + encodeURIComponent(filename);
-            return {
-                filename,
-                mime: isImageAttachment({ filename }) ? 'image/*' : '',
-                url,
-            };
+        return CuttleChatAttachments.inferAttachmentsFromContent({
+            content,
+            sessionId: currentSessionId,
         });
     }
 
@@ -1414,7 +1387,7 @@
             const name = escapeHtmlInline(att.filename || 'file');
             const url = String(att.url || '').trim();
             const safeUrl = escapeHtmlInline(url).replace(/"/g, '&quot;');
-            if (isImageAttachment(att) && url) {
+            if (CuttleChatAttachments.messageAttachmentKind(att) === 'thumb') {
                 return (
                     '<button type="button" class="msg-attach-thumb cuttle-media-thumb" data-src="' +
                     safeUrl +
@@ -1433,7 +1406,7 @@
                     '</button>'
                 );
             }
-            if (url) {
+            if (CuttleChatAttachments.messageAttachmentKind(att) === 'link') {
                 return (
                     '<a class="msg-attach-file" href="' +
                     safeUrl +
@@ -1459,14 +1432,12 @@
         return '<div class="msg-attachments">' + parts.join('') + '</div>';
     }
 
+    // Owned by chat_attachments.js — thin adapter.
     function formatMessageWithAttachments(message, attachments) {
-        const text = (message || '').trim();
-        if (!attachments || !attachments.length) return text;
-        const names = attachments.map((a) => a.filename || 'file').join(', ');
-        const note = `[Attached: ${names}]`;
-        return text ? `${text}\n${note}` : note;
+        return CuttleChatAttachments.formatMessageWithAttachments(message, attachments);
     }
 
+    // Owned by chat_attachments.js — DOM/state gather, domain decides.
     async function uploadChatFiles(fileList) {
         const files = Array.from(fileList || []).filter(Boolean);
         if (!files.length) return;
@@ -1484,20 +1455,17 @@
         } catch (_) {
             data = null;
         }
-        if (!resp.ok || !data || !data.success) {
-            const err = (data && data.error) || `Upload failed (HTTP ${resp.status})`;
-            (window.showToast || function (m) { alert(m); })(err, 'error');
+        const plan = CuttleChatAttachments.uploadResultPlan({
+            ok: resp.ok,
+            status: resp.status,
+            data,
+        });
+        if (!plan.ok) {
+            (window.showToast || function (m) { alert(m); })(plan.error, 'error');
             return;
         }
-        for (const f of data.files || []) {
-            pendingAttachments.push({
-                filename: f.filename,
-                path: f.path,
-                mime: f.mime || '',
-                size: f.size,
-                url: f.url || '',
-            });
-        }
+        pendingAttachments = CuttleChatAttachments.addAttachmentsToPending(
+            pendingAttachments, plan.items);
         _savePendingAttachments();
         renderAttachmentChips();
     }
@@ -19374,12 +19342,7 @@
                 requestBody.stream = false;
             }
             if (attachments.length) {
-                requestBody.attachments = attachments.map((a) => ({
-                    filename: a.filename,
-                    path: a.path,
-                    mime: a.mime || '',
-                    url: a.url || '',
-                }));
+                requestBody.attachments = CuttleChatAttachments.requestAttachmentPayload(attachments);
             }
 
             // Include current project if available (path + id + name so /cursor

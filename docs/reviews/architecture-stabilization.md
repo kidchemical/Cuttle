@@ -2632,3 +2632,271 @@ the module does not import the slash or message domains.
    Forms, or slash logic touched; failures identical to
    baseline). Do NOT continue in this track until this review is
    approved.
+
+---
+
+# Phase 3 — Slice 5: Attachments Domain (chat_page.js)
+
+## Phase status
+
+- Slice: Phase 3 Slice 5 — attachment normalization, classification,
+  pending-list transitions, upload planning, message/request mapping,
+  and history-note parsing → `src/web/js/chat_attachments.js`
+  (`window.CuttleChatAttachments`).
+- Git baseline before work: `dd09fd6d` ("Phase 3 slice 4:
+  activity/unread/follow-up domain") plus `5d72e8ad` (venv-rebuild
+  `.gitignore` housekeeping; no product code), clean tree.
+- Environment note: suite runs on the rebuilt Python 3.14 venv
+  (see gray-screen recovery); baseline below is on that env.
+- Git commit after work: the single `Phase 3 slice 5: attachments
+  domain` commit on main (identify via `git log --oneline`).
+- Completion status: **complete, awaiting external review**. No
+  further chat-page domains started (Composer send flow, generic
+  Message Rendering, Streaming, Agent/Model controls untouched
+  except the narrow adapter interface described below).
+
+## Original problem
+
+`chat_page.js` owned the entire attachments decision layer —
+image/file classification, item normalization, pending-list
+append/remove, upload-result interpretation, request-payload and
+message-HTML branch mapping, outbound note formatting, and legacy
+history-note inference — as closures interleaved with chip DOM,
+upload fetch, persistence IO, message rendering, and send
+orchestration. There were no frontend behavior tests at all for
+this domain (the existing `test_chat_attachments.py` covers only
+the backend vision pre-pass, and 3 of its tests fail at baseline).
+
+## Before implementation (13-class inventory)
+
+~20 name-matched bindings triaged (25,459-line page):
+
+1. **Pending attachment state** (`pendingAttachments` let,
+   `_pendingKey`, save/restore/clear, `take/clearPending-
+   Attachments`) — stays (mutable runtime state + storage IO).
+2. **Attachment normalization** (moved): `normalizeAttachmentList`
+   (canonical `{filename, path, mime, size, url}` shape).
+3. **File/media type classification** (moved): `isImageAttachment`
+   (mime, then png/jpg/gif/webp/bmp extension; PDFs never thumbs).
+4. **Upload/staging metadata** (moved plan): `uploadResultPlan`
+   (server-error precedence, HTTP fallback message); FormData/
+   fetch/session-id stay in the page.
+5. **Message attachment mapping** (moved decision, kept
+   assembly): `messageAttachmentKind` (thumb vs link vs span);
+   `buildMessageAttachmentsHtml` stays (escaping + media download
+   URLs live in the message/media domains).
+6. **Request payload construction** (moved):
+   `requestAttachmentPayload` (`{filename, path, mime, url}` — no
+   `size`; server resolves content from path/url).
+7. **Display/thumbnail metadata decisions** (moved kind only):
+   chip classes/thumbnails stay (composer DOM rendering).
+8. **Attachment removal/reordering** (moved transitions):
+   `removeAttachmentAt` (chip ✕ by index, out-of-range safe),
+   `addAttachmentsToPending` (order-preserving append, no dedupe —
+   documents historical push behavior). No reorder UI exists.
+9. **Drag/drop/picker interpretation**: no drag/drop or paste
+   handlers exist — uploads enter only via the picker
+   (`wireAttachControls`, stays). Nothing to extract; documented.
+10. **DOM rendering** (`renderAttachmentChips`,
+    `buildMessageAttachmentsHtml`, chip builders) — stay.
+11. **Upload/fetch transport** (`uploadChatFiles` fetch flow) —
+    stays as orchestrator, now executing the plan.
+12. **Persistence/history interaction** (pending localStorage,
+    `formatUserMessageForDisplay` note flow, send-path `format` /
+    `take` calls) — stay, calling via adapters.
+13. **False friends** (verified out of scope):
+    `attachAgentIdentityToRequest` (agent pins),
+    `attachCodeCopyButtons` (code rendering), `mediaDownloadUrl` /
+    `mediaDownloadFilename` (media/lightbox domain),
+    `pendingDiff*` (Git UI), `trySteerRunningTurn` (agent steer).
+
+Shared bindings the moved logic needed: `currentSessionId`
+(infer folders), `pendingAttachments` (transitions return new
+arrays; the page reassigns + persists), fetch results — all
+explicit inputs or narrow adapters. No moved function was exposed
+on `window.*`; no callers exist outside `chat_page.js` (verified
+by repo-wide grep), and no existing test slices these functions
+(verified — zero test references). Backend contract verified
+read-only: `POST /api/upload` → `{success, files: [{filename,
+path, mime, size, url}]}` (png/jpg/jpeg/gif/webp/bmp/pdf, 25MB).
+
+## Changes made
+
+- **Added `src/web/js/chat_attachments.js`** (174 L): 11 pure
+  functions behind `CuttleChatAttachments` (classic script + node
+  exports; footer uses TDZ-proof `globalThis`). New names with no
+  page original (all covered by new tests):
+  `requestAttachmentPayload`, `addAttachmentsToPending`,
+  `removeAttachmentAt`, `messageAttachmentKind`,
+  `uploadResultPlan`. No `document`/`window`/`localStorage`/
+  `fetch` in the module.
+- **chat_page.js keeps**: pending state + storage key + persistence
+  IO, chip rendering, picker wiring, upload fetch flow,
+  message-HTML assembly, history/persist/send orchestration, plus
+  thin same-signature adapters (6 pure delegations + 1
+  gather-then-delegate for session folders).
+- `uploadChatFiles` refactored to execute `uploadResultPlan` —
+  every transport/state side effect preserved verbatim (FormData,
+  session id, fetch, toast, push, save, render); proven equivalent
+  by full-effect differential below.
+- Send flow: request-payload map now calls the owned mapping
+  (output byte-identical). Message HTML: thumb/link branch
+  conditions now call the owned kind (rendered HTML proven
+  identical). Chip ✕: splice now calls the owned transition.
+- chat_page.js: 25,459 → 25,422 lines (−37 net).
+- `chat_page.html`: `chat_attachments.js` script tag before
+  `chat_page.js` (page `?v=20261001slice5` cache-busted; domain
+  tags keep their slice versions).
+- **Tests:** new `src/tests/test_chat_attachments_frontend.py`
+  (8 tests, node-executed against the real module — the domain's
+  first frontend tests): classification, normalization,
+  note strip/parse, legacy inference, outbound formatting,
+  pending/payload/kind mapping, upload plans, parse check. No
+  existing-test repairs needed (nothing sliced these functions).
+- Moved vs deleted: decision logic relocated verbatim (moved);
+  original bodies + inline request-map/push/splice code deleted
+  (rewire asserts: brace balance, `}`/`;` endings,
+  single-occurrence targeted replaces).
+
+## Architecture after
+
+```
+chat_page.js (pending state, persistence, chips, picker, upload fetch,
+              message-HTML assembly, history/send orchestration)
+      │  same-signature adapters / upload plan / kind + payload mapping
+      ▼
+chat_attachments.js (classify + normalize + infer + format + plan +
+                     pending transitions + request/display mapping)
+```
+
+One-way dependency (page → namespace); module holds no state and
+reads no page globals. Pending-list mutations return new arrays;
+the page reassigns, persists, and re-renders. Cross-domain needs
+(escaping, media download URLs, sticky context) stay in the page.
+
+## Dependencies and state
+
+- Removed: chat-page closures over classification/normalization/
+  inference/formatting/upload-interpretation/mapping for all moved
+  decisions.
+- Introduced: `CuttleChatAttachments` namespace (classic script +
+  node exports; no new runtime deps). No shared state added or
+  moved.
+- Reverse deps: none existed outside the page; none created.
+- Persistence/upload-sensitive state: unchanged (pending
+  localStorage, session folders, `/api/upload` flow stay in the
+  page). Backend vision/upload contracts untouched.
+- Compatibility: same-named adapters preserve every internal call
+  signature; Slice 4's `combineFollowupBatch` adapter keeps
+  receiving the page's `formatMessageWithAttachments` reference
+  (now an adapter — resolution unchanged).
+
+## Tests and verification
+
+- New `test_chat_attachments_frontend.py`: 8/8 (node-executed;
+  covers the brief: normalization, duplicate inputs kept in
+  order, add/remove transitions incl. out-of-range, malformed
+  metadata, image vs non-image, staged/uploaded mapping, request
+  payload mapping, stored-message note mapping, empty state,
+  filename/path edges).
+- Differential proof (scratch `/tmp/diff_attachments.js`, not
+  committed): pre-rewire page originals (from a pre-edit backup)
+  vs new module + rewired adapters over a 47-case battery — pure
+  fns, session-scoped inference, rendered message HTML under
+  stubbed escaping (thumb/link/span/evil-input/empty), upload
+  flow full side-effect log + state (ok/server-error/HTTP-500),
+  chip removal, request payload — **47/47 match, zero
+  mismatches**.
+- Focused: frontend (8 new) + backend attachments + page-syntax
+  + activity/project/slash → 41 passed; the only 3 failures are
+  the known backend baseline failures (proven pre-existing in
+  Slices 3–4).
+- Neighbors (message pagination, history search, follow-up ×2,
+  stop-then-followup, action forms, restart): 89 passed; 2
+  failures both known pre-existing (stale `?v` pins, unchanged by
+  the slice5 bump which keeps them failing identically).
+- Broad: `.venv/bin/python -m pytest -q` → **1,802 passed, 26
+  failed, 60 skipped**; the 26 failures byte-identical to the
+  pre-change set (verified via `diff` of sorted FAILED lists —
+  no new failures; +8 passed = the new tests).
+- `node --check` clean on all touched JS (vendored electron
+  binary + `/tmp/nodeshim/node` shim as in prior slices).
+- Manual workflows: none applicable (no UI changed). Not exercised:
+  live Flask boot, chat round-trip, browser picker/upload/chip
+  click-through.
+
+## Metrics
+
+| Metric | Before (`dd09fd6d`) | After | Method |
+|---|---|---|---|
+| `chat_page.js` lines | 25,459 | 25,422 (−37) | `wc -l` |
+| Attachment decision fns needing page scope | ~11 (all) | 0 in module (explicit inputs) | grep |
+| Attachment frontend behavior tests | 0 (backend only) | +8 module tests, real `require` | pytest |
+| Differential old-vs-new | — | 47/47 match | node harness |
+| Full suite | 1,794 / 26 / 60 | 1,802 / 26 (identical list) / 60 | pytest + diff |
+
+## Remaining concerns
+
+1. Pending state, storage key/format, chip rendering, picker
+   wiring, upload fetch, message-HTML assembly, history/send
+   orchestration stay in the page (correct per slice scope).
+2. No drag/drop or paste upload path exists (picker-only) — a
+   future composer enhancement, not stabilization work.
+3. `uploadResultPlan` items flow through `addAttachmentsToPending`
+   (re-normalization is idempotent; proven by differential).
+4. Backend `test_chat_attachments.py` 3 failures remain untouched
+   (documented baseline; backend vision behavior out of scope).
+5. No system `node` on this machine's PATH (vendored electron
+   binary used, as in prior slices).
+
+## Diff summary
+
+- Added: `src/web/js/chat_attachments.js` (174 L),
+  `src/tests/test_chat_attachments_frontend.py` (8 tests).
+- Modified: `src/web/js/chat_page.js` (−37 net: 7 spans rewired
+  + 4 targeted delegation replaces), `src/web/chat_page.html`
+  (+1 script tag, page `?v` bump),
+  `docs/reviews/architecture-stabilization.md` (this section).
+- Deleted: no files. No existing-test repairs needed.
+- Insertions/deletions (`git diff --numstat`): chat_page.js
+  +28/−65; chat_page.html +2/−1 (new files untracked:
+  `chat_attachments.js` 174 L,
+  `test_chat_attachments_frontend.py` ~200 L).
+- `git status --short` before commit: 2 modified
+  (`src/web/js/chat_page.js`, `src/web/chat_page.html`) + 2 new
+  (`src/web/js/chat_attachments.js`,
+  `src/tests/test_chat_attachments_frontend.py`).
+
+## External Review Summary
+
+1. **What changed architecturally?** Attachment classification,
+   normalization, pending transitions, upload planning, and
+   message/request mapping moved to owned pure
+   `chat_attachments.js`; the page keeps pending state,
+   persistence, chips, picker, upload fetch, HTML assembly, and
+   send/history orchestration behind thin adapters and an upload
+   plan.
+2. **What behavior intentionally changed?** Nothing —
+   differential 47/47 (including rendered-HTML equivalence);
+   adapters preserve signatures; upload/send/payload side
+   effects preserved verbatim.
+3. **What behavior should be identical?** Picker behavior, multiple
+   attachments, upload/staging, removal, request metadata, message
+   metadata, thumbnail/link/fallback rendering, image/non-image
+   classification, names/labels, ordering (incl. duplicate
+   staging), draft/pending behavior, new/existing chats, payload
+   format, history re-render.
+4. **What remains coupled or messy?** All rendering/IO/fetch in
+   the 25.4k-line page; chip rendering unowned by the module by
+   design; no drag/drop path exists; 26 unrelated baseline
+   failures remain (incl. 3 backend attachment tests).
+5. **What should be reviewed before the next chat domain?** The
+   plan + kind-decision shape for composer-adjacent work; whether
+   the next slice is Composer, Messages/History, Streaming, or
+   Agent/Model controls; the picker-only upload path as composer
+   input.
+6. **Is the next domain safe to begin?** This slice is
+   self-contained (no Composer send flow, generic message
+   rendering, Streaming, Agent/Model, Slash, Action Forms, or
+   Activity logic touched; failures identical to baseline). Do
+   NOT continue in this track until this review is approved.
