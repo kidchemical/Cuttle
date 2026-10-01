@@ -5,21 +5,26 @@ from __future__ import annotations
 from pathlib import Path
 
 CHAT_JS = Path(__file__).resolve().parents[2] / "src" / "web" / "js" / "chat_page.js"
+MOD_PR = Path(__file__).resolve().parents[2] / "src" / "web" / "js" / "chat_pending_result.js"
 
 
 def test_heal_clears_stuck_local_generating_when_reply_visible():
     src = CHAT_JS.read_text(encoding="utf-8")
     assert "function healStaleGeneratingState()" in src
+    assert "CuttleChatPendingResult.decideStaleHeal(" in src
     assert "finishLocalStreamFromServerSync()" in src
-    # Must not bail on isLoading before checking the transcript.
-    assert "if (isLoading || userStoppedGeneration" not in src
-    assert "if (isLoading && activeEventSource) return false;" in src
-    heal = src.split("function healStaleGeneratingState()", 1)[1].split("\n    function ", 1)[0]
+    mod = MOD_PR.read_text(encoding="utf-8")
+    heal = mod.split("function decideStaleHeal(snap)", 1)[1].split(
+        "\n    // ---------- Send-failure recovery sequence ----------", 1
+    )[0]
+    # Must not bail on loading before checking the transcript: the orphan
+    # finish comes first, then the reply gate, then the live-SSE guard.
+    assert heal.find("why: 'orphan'") < heal.find("!snap.replyOnScreen")
+    assert "snap.loading && snap.hasEventSource" in heal
     # Previous-turn assistant must not abort this turn (CH-000199-3).
     assert "lastVisibleChatMessageIsAssistant()" not in heal
-    assert "turnAlreadyShowsAssistantReply()" in heal
     # Orphan isLoading with no SSE/fetch/in-flight user turn must clear.
-    assert "!inFlightUserMessage" in heal
+    assert "hasTrackedTurn" in heal
 
 
 def test_is_session_generating_scopes_local_loading():
@@ -57,7 +62,9 @@ def test_live_waiting_uses_this_turn_not_previous_assistant():
 
 def test_pending_wait_does_not_require_typing_indicator_gone():
     src = CHAT_JS.read_text(encoding="utf-8")
-    assert "pending-skip-ui-has-reply" in src
+    assert "CuttleChatPendingResult.waitForPendingResult(" in src
+    mod = MOD_PR.read_text(encoding="utf-8")
+    assert "pending-skip-ui-has-reply" in mod
     assert (
         "if (inFlightUserMessage && turnAlreadyShowsAssistantReply()\n"
         "                && !document.getElementById('typing-indicator'))"
@@ -67,8 +74,11 @@ def test_pending_wait_does_not_require_typing_indicator_gone():
 
 def test_message_sync_skips_late_assistant_after_stop():
     src = CHAT_JS.read_text(encoding="utf-8")
-    assert "if (msg.role === 'assistant' && stopState.userStopped)" in src
-    assert "paint the reply the user cancelled" in src
+    assert "CuttleChatPendingResult.classifyServerMessage(" in src
+    assert "stopped: stopState.userStopped" in src
+    mod = MOD_PR.read_text(encoding="utf-8")
+    assert "skip-stopped" in mod
+    assert "paint the reply the user cancelled" in mod
 
 
 def test_iframe_uses_parent_visibility_for_background():

@@ -1213,45 +1213,38 @@
      * queue the user's next send forever (drain only ran when the remote
      * indicator was present).
      */
+    // Owned by chat_pending_result.js — thin adapter: the page builds the
+    // snapshot from live state and applies the decided effects.
     function healStaleGeneratingState() {
-        if (stopState.userStopped || stopState.waitingSuppressed) {
-            return false;
-        }
-        // Orphan isLoading with no in-flight request/SSE and no tracked user
-        // turn — common after New Chat aborted a prior fetch. Clear so sends
-        // are not parked in the follow-up queue.
-        if (
-            isLoading
-            && !activeEventSource
-            && !activeRequestController
-            && !inFlightUserMessage
-        ) {
+        const decision = CuttleChatPendingResult.decideStaleHeal({
+            stopped: stopState.userStopped,
+            suppressed: stopState.waitingSuppressed,
+            loading: isLoading,
+            hasEventSource: !!activeEventSource,
+            hasRequest: !!activeRequestController,
+            hasTrackedTurn: !!inFlightUserMessage,
+            replyOnScreen: turnAlreadyShowsAssistantReply(),
+            hasRemoteWait: !!document.getElementById('typing-indicator-remote'),
+            sessionRunning: currentSessionId != null
+                && [...runningSessionIds].some((rid) => sessionIdsEqual(rid, currentSessionId)),
+            queueLength: followupQueue.items.length,
+        });
+        if (decision.kind === 'finish') {
             finishLocalStreamFromServerSync();
             return true;
         }
-        if (!turnAlreadyShowsAssistantReply()) return false;
-        // Live EventSource still painting into an assistant bubble (Cursor
-        // streaming) — don't treat that as idle.
-        if (isLoading && activeEventSource) return false;
-        if (isLoading) {
-            // Reply is already on screen; the local SSE/fetch wait is a zombie
-            // (common on phone WebView after HTTPS detach). Finish so follow-ups drain.
-            finishLocalStreamFromServerSync();
+        if (decision.kind === 'clear-remote') {
+            removeRemoteWaitingIndicator();
+            if (currentSessionId) setHistorySessionRunning(currentSessionId, false);
+            const stopButton = document.getElementById('stopButton');
+            if (stopButton) {
+                stopButton.disabled = true;
+                stopButton.style.display = 'none';
+            }
+            if (decision.drain) scheduleFollowupDrain(0);
             return true;
         }
-        const hadRemote = !!document.getElementById('typing-indicator-remote');
-        const hadRunning = currentSessionId != null
-            && [...runningSessionIds].some((rid) => sessionIdsEqual(rid, currentSessionId));
-        if (!hadRemote && !hadRunning) return false;
-        removeRemoteWaitingIndicator();
-        if (currentSessionId) setHistorySessionRunning(currentSessionId, false);
-        const stopButton = document.getElementById('stopButton');
-        if (stopButton) {
-            stopButton.disabled = true;
-            stopButton.style.display = 'none';
-        }
-        if (followupQueue.items.length) scheduleFollowupDrain(0);
-        return true;
+        return false;
     }
 
     /** Server transcript ends on an assistant turn → treat live-status as idle. */
@@ -14251,116 +14244,59 @@
 
     // A finished reply whose SSE stream died (refresh, network blip, Flask
     // hiccup) is parked server-side. Collect it instead of losing the run.
+    // Owned by chat_pending_result.js — thin adapter: the page owns the
+    // pending/live transport, paint, clock, and turn/stop guards; the wait
+    // decisions live in the owner. After stream detach: one short poll at a
+    // time — 2s dual GETs were starving chat reloads / YouTube while a long
+    // agent ran.
     async function collectPendingResult(sessionId, opts = {}) {
-        if (sessionId == null) return null;
-        const deadline = Date.now() + (opts.waitMs || 0);
-        // After stream detach: one short poll at a time. 2s dual GETs were
-        // starving chat reloads / YouTube while a long agent ran.
-        const pollMs = opts.pollMs != null ? opts.pollMs : 4000;
-        // Caller turn's nav generation — New Chat bumps turnGeneration and
-        // this waiter must stop (and never paint into another transcript).
-        const turnNavGen = opts.navGen;
-        let polls = 0;
-        for (;;) {
-            if (CuttleTurnGuard.isStale(turnNavGen, turnGeneration)) return null;
-            if (stopState.userStopped || stopState.abortSuppressed) return null;
-            // Sync may have already painted the assistant for THIS turn.
-            // Don't wait on leftover typing UI — phone WebView often keeps the
-            // indicator after the reply bubble is already visible.
-            if (inFlightUserMessage && turnAlreadyShowsAssistantReply()) {
-                try {
-                    window.CuttleNetDebug && window.CuttleNetDebug.event(
-                        'pending-skip-ui-has-reply',
-                        'session=' + sessionId
-                    );
-                } catch (_) {}
-                return null;
-            }
-            let data = null;
-            try {
+        return CuttleChatPendingResult.waitForPendingResult(sessionId, opts, {
+            isStaleNav: () => CuttleTurnGuard.isStale(opts.navGen, turnGeneration),
+            isStopped: () => stopState.userStopped || stopState.abortSuppressed,
+            hasReplyForTurn: () => !!(inFlightUserMessage && turnAlreadyShowsAssistantReply()),
+            fetchPending: async (sid) => {
                 const resp = await fetchWithTimeout(
-                    `/api/chat-pending-result?session_id=${encodeURIComponent(sessionId)}`,
+                    `/api/chat-pending-result?session_id=${encodeURIComponent(sid)}`,
                     { credentials: 'include', cache: 'no-store' },
                     8000
                 );
-                data = await resp.json();
-            } catch (_) {
-                // Timed out / network blip — keep waiting while the deadline allows.
-                if (CuttleTurnGuard.isStale(turnNavGen, turnGeneration)) return null;
-                if (stopState.userStopped || stopState.abortSuppressed) return null;
-                if (Date.now() >= deadline) return null;
-                await new Promise((r) => setTimeout(r, pollMs));
-                continue;
-            }
-            if (CuttleTurnGuard.isStale(turnNavGen, turnGeneration)) return null;
-            if (stopState.userStopped || stopState.abortSuppressed) return null;
-            if (!data || !data.success) {
-                // Auth blip / transient — don't abandon a live agent run.
-                const live = await fetchChatLiveStatus(sessionId);
-                if (Date.now() < deadline) {
-                    if (live && live.status && isViewingSession(sessionId)) {
-                        updateTypingStatus(live.status);
-                    }
-                    await new Promise((r) => setTimeout(r, pollMs));
-                    continue;
-                }
-                return null;
-            }
-            if (data.pending && data.result) {
-                const r = data.result;
-                // Peek-only poll — consume after we know the client has the payload.
-                consumeParkedChatResult(sessionId);
-                return {
-                    success: !!r.success,
-                    response: r.response || '',
-                    session_id: r.session_id,
-                    type: r.type,
-                    query_id: r.query_id,
-                    report_url: r.report_url,
-                };
-            }
+                return resp.json();
+            },
             // Prefer hub cache for live-status when in the app shell (no extra GET).
-            const live = (inAppShell && shellHubSeen)
-                ? (getCachedHubLiveStatus(sessionId) || await fetchChatLiveStatus(sessionId))
-                : await fetchChatLiveStatus(sessionId);
-            if (CuttleTurnGuard.isStale(turnNavGen, turnGeneration)) return null;
-            if (stopState.userStopped || stopState.abortSuppressed) return null;
-            if (live && live.status && isViewingSession(sessionId)) {
-                updateTypingStatus(live.status);
-            }
-            if (live && live.report_url && isViewingSession(sessionId)) {
-                updateTypingIndicatorQueryLink(live.report_url);
-            }
-            const stillGoing = !!(data.generating || liveStatusLooksActive(live));
-            // Every few idle polls, try history — pending may have been cleared
-            // after an SSE write the client never read.
-            polls += 1;
-            if (!stillGoing || polls % 3 === 0) {
-                const fromHistory = await recoverChatResultFromServer(sessionId);
-                if (fromHistory && String(fromHistory.response || '').trim()) {
-                    return fromHistory;
-                }
-            }
-            if (!stillGoing || Date.now() >= deadline) {
-                // Pending empty but worker finished — often the SSE loop had
-                // already wiped pending after a write the client never read.
-                // Fall through so caller can recover from persisted history.
-                return null;
-            }
-            await new Promise((r) => setTimeout(r, pollMs));
-        }
+            fetchLive: (sid) => (inAppShell && shellHubSeen)
+                ? (getCachedHubLiveStatus(sid) || fetchChatLiveStatus(sid))
+                : fetchChatLiveStatus(sid),
+            liveLooksActive: (live) => liveStatusLooksActive(live),
+            recoverFromHistory: (sid) => recoverChatResultFromServer(sid),
+            onLiveStatus: (live) => {
+                if (isViewingSession(sessionId)) updateTypingStatus(live.status);
+            },
+            onReportUrl: (url) => {
+                if (isViewingSession(sessionId)) updateTypingIndicatorQueryLink(url);
+            },
+            consume: (sid) => consumeParkedChatResult(sid),
+            netDebug: (name, info) => {
+                try {
+                    window.CuttleNetDebug && window.CuttleNetDebug.event(name, info);
+                } catch (_) {}
+            },
+            sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+            now: () => Date.now(),
+        });
     }
 
     /** Ack/consume a parked reply after the browser actually received it via SSE. */
+    // Owned by chat_pending_result.js — thin adapter: the page owns the URL.
     function consumeParkedChatResult(sessionId) {
-        if (sessionId == null) return;
-        try {
-            fetchWithTimeout(
-                `/api/chat-pending-result?session_id=${encodeURIComponent(sessionId)}&consume=1`,
-                { credentials: 'include', cache: 'no-store' },
-                5000
-            ).catch(() => {});
-        } catch (_) {}
+        CuttleChatPendingResult.consumeParkedChatResult(sessionId, (sid) => {
+            try {
+                fetchWithTimeout(
+                    `/api/chat-pending-result?session_id=${encodeURIComponent(sid)}&consume=1`,
+                    { credentials: 'include', cache: 'no-store' },
+                    5000
+                ).catch(() => {});
+            } catch (_) {}
+        });
     }
 
     /**
@@ -14369,68 +14305,38 @@
      */
     let _restartRecoverInFlight = false;
     let _lastRestartNotifiedId = null;
+    // Owned by chat_pending_result.js — thin adapter: the page holds the
+    // in-flight guard + notified-id set and owns status/health transport,
+    // paint, and history sync effects; the poll decisions live in the owner.
     async function recoverAfterFlaskRestart(opts = {}) {
         if (_restartRecoverInFlight) return null;
         _restartRecoverInFlight = true;
-        const maxWait = opts.waitMs != null ? opts.waitMs : 90000;
-        const pollMs = opts.pollMs != null ? opts.pollMs : 2500;
-        const deadline = Date.now() + maxWait;
         try {
-            updateTypingStatus('Server restarting — reconnecting…');
-            while (Date.now() < deadline) {
-                let data = null;
-                try {
+            return await CuttleChatPendingResult.waitForServerRecovery(opts, {
+                fetchRestartStatus: async () => {
                     const resp = await fetchWithTimeout(
                         '/api/flask/restart/status?consume=1',
                         { credentials: 'include', cache: 'no-store' },
                         6000
                     );
-                    data = await resp.json();
-                } catch (_) {
-                    await new Promise((r) => setTimeout(r, pollMs));
-                    continue;
-                }
-                const st = (data && data.status) || {};
-                const state = String(st.state || '');
-                const rid = st.restart_id || null;
-                if (state === 'healthy' || state === 'failed' || state === 'timed_out') {
-                    // Card-driven restarts report on their card; a toast here
-                    // would just repeat it.
-                    if (rid && rid !== _lastRestartNotifiedId && st.chat_notify !== false) {
-                        _lastRestartNotifiedId = rid;
-                        const msg = data.completion_message
-                            || (state === 'healthy'
-                                ? `Flask restart complete (${rid}).`
-                                : `Flask restart ${state} (${rid}).`);
-                        try {
-                            (window.showToast || function () {})(msg, state === 'healthy' ? 'success' : 'error');
-                        } catch (_) {}
-                    }
-                    try {
-                        await syncSessionMessagesFromServer();
-                    } catch (_) {}
-                    removeTypingIndicator();
-                    return data;
-                }
-                if (state && state !== 'none') {
-                    updateTypingStatus(`Flask restart: ${state}…`);
-                }
-                // Also try health — daemon may have respawned without status file.
-                try {
+                    return resp.json();
+                },
+                fetchHealthOk: async () => {
                     const h = await fetchWithTimeout('/api/status', {
                         credentials: 'include',
                         cache: 'no-store',
                     }, 4000);
-                    if (h.ok) {
-                        try {
-                            await syncSessionMessagesFromServer();
-                        } catch (_) {}
-                        // Keep polling status briefly so we still surface completion.
-                    }
-                } catch (_) {}
-                await new Promise((r) => setTimeout(r, pollMs));
-            }
-            return null;
+                    return !!h.ok;
+                },
+                syncMessages: () => syncSessionMessagesFromServer(),
+                paintStatus: (text) => updateTypingStatus(text),
+                clearTyping: () => removeTypingIndicator(),
+                toast: (msg, kind) => (window.showToast || function () {})(msg, kind),
+                sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+                now: () => Date.now(),
+                wasNotified: (id) => id === _lastRestartNotifiedId,
+                markNotified: (id) => { _lastRestartNotifiedId = id; },
+            });
         } finally {
             _restartRecoverInFlight = false;
         }
@@ -15390,103 +15296,47 @@
      * When pending-result is empty after a detached stream, pull the assistant
      * reply that follows this turn's user message from auth history (DB).
      */
+    // Owned by chat_pending_result.js — thin adapter: the page owns the
+    // messages transport; match decisions live in the owner.
     async function recoverChatResultFromServer(sessionId) {
-        if (!isAuthMode() || sessionId == null) return null;
-        try {
-            const authSid = toAuthDbSessionId(sessionId);
-            const resp = await fetchWithTimeout(
-                sessionMessagesUrl(authSid, { limit: Math.max(CHAT_HISTORY_PAGE_SIZE, 20) }),
-                { credentials: 'include', cache: 'no-store' },
-                8000
-            );
-            if (!resp.ok) return null;
-            const data = await resp.json();
-            if (!data.success || !Array.isArray(data.messages) || !data.messages.length) return null;
-
-            const messages = data.messages;
-            const wantUser = normalizeMessageContentForMatch(inFlightUserMessage);
-            let userIdx = -1;
-            if (wantUser) {
-                for (let i = messages.length - 1; i >= 0; i--) {
-                    const m = messages[i];
-                    if (!m || m.role !== 'user') continue;
-                    const got = normalizeMessageContentForMatch(m.content);
-                    if (got === wantUser || got.endsWith(wantUser) || wantUser.endsWith(got)) {
-                        userIdx = i;
-                        break;
-                    }
-                }
-            }
-
-            let asst = null;
-            if (userIdx >= 0) {
-                for (let i = userIdx + 1; i < messages.length; i++) {
-                    const m = messages[i];
-                    if (m && m.role === 'assistant' && String(m.content || '').trim()) {
-                        asst = m;
-                        break;
-                    }
-                }
-            } else {
-                // No in-flight text to match — only accept a trailing assistant
-                // that is not already painted (avoids resurrecting an older turn).
-                for (let i = messages.length - 1; i >= 0; i--) {
-                    const m = messages[i];
-                    if (!m || m.role !== 'assistant' || !String(m.content || '').trim()) continue;
-                    if (uiAlreadyHasMessage('assistant', m.content)) return null;
-                    // A cancelled row is never painted, so it stays "unseen" forever
-                    // and would otherwise be re-recovered on later turns.
-                    if (isCancelledAgentText(m.content)) return null;
-                    asst = m;
-                    break;
-                }
-            }
-            if (!asst) return null;
-            // Skip the synthetic client error if a real reply exists later — not applicable here.
-
-            try {
-                window.CuttleNetDebug && window.CuttleNetDebug.event(
-                    'history-recover',
-                    'session=' + sessionId
+        return CuttleChatPendingResult.recoverChatResult(sessionId, {
+            isAuthMode: () => isAuthMode(),
+            toAuthDbSessionId: (sid) => toAuthDbSessionId(sid),
+            fetchMessages: async (authSid, limit) => {
+                const resp = await fetchWithTimeout(
+                    sessionMessagesUrl(authSid, { limit }),
+                    { credentials: 'include', cache: 'no-store' },
+                    8000
                 );
-            } catch (_) {}
-
-            return {
-                success: true,
-                response: String(asst.content || ''),
-                session_id: sessionId,
-                type: asst.type || 'unknown',
-                query_id: asst.query_id,
-                report_url: asst.report_url,
-                usage: (function () {
-                    let meta = asst.metadata;
-                    if (typeof meta === 'string') {
-                        try { meta = JSON.parse(meta); } catch (_) { meta = {}; }
-                    }
-                    return normalizeUsagePayload((meta && meta.usage) || asst.usage) || undefined;
-                })(),
-            };
-        } catch (_) {
-            return null;
-        }
+                if (!resp.ok) return { ok: false };
+                return { ok: true, data: await resp.json() };
+            },
+            pageSize: CHAT_HISTORY_PAGE_SIZE,
+            inFlightText: inFlightUserMessage,
+            norm: (text) => normalizeMessageContentForMatch(text),
+            alreadyOnScreen: (role, content) => uiAlreadyHasMessage(role, content),
+            isCancelledText: (text) => isCancelledAgentText(text),
+            normalizeUsage: (usage) => normalizeUsagePayload(usage),
+            netDebug: (name, info) => {
+                try {
+                    window.CuttleNetDebug && window.CuttleNetDebug.event(name, info);
+                } catch (_) {}
+            },
+        });
     }
 
     /** Extra history polls before giving up with "No response received." */
+    // Owned by chat_pending_result.js — thin adapter.
     async function recoverChatResultWithRetries(sessionId, attempts, gapMs) {
-        const n = Math.max(1, attempts || 1);
-        const gap = gapMs != null ? gapMs : 1500;
-        for (let i = 0; i < n; i++) {
-            if (stopState.userStopped || stopState.abortSuppressed) return null;
-            const got = await recoverChatResultFromServer(sessionId);
-            if (got && String(got.response || '').trim()) return got;
-            if (i + 1 < n) {
-                if (isViewingSession(sessionId)) {
-                    updateTypingStatus('Working… (syncing reply)');
-                }
-                await new Promise((r) => setTimeout(r, gap));
+        return CuttleChatPendingResult.recoverChatResultWithRetries(
+            sessionId, attempts, gapMs, {
+                isStopped: () => stopState.userStopped || stopState.abortSuppressed,
+                recover: (sid) => recoverChatResultFromServer(sid),
+                isViewing: () => isViewingSession(sessionId),
+                paintSyncing: () => updateTypingStatus('Working… (syncing reply)'),
+                sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
             }
-        }
-        return null;
+        );
     }
 
     function fetchWithTimeout(url, opts = {}, timeoutMs = 5000) {
@@ -15667,125 +15517,121 @@
              *  "chip" ~sync-interval after the first. */
             let appendedNewAssistant = false;
 
+            // Exactly-once control_request_id lookup (DOM read; the page
+            // stamps the id in the claim-control effect below).
+            const controlClaimEl = (crid, role) => {
+                const byControl = document.querySelector(
+                    `#chatMessages .message[data-control-request-id="${CSS.escape(String(crid))}"][class*="${role}"]`
+                );
+                if (byControl) return { el: byControl, exact: true };
+                // Also match role more reliably
+                const allCr = document.querySelectorAll(
+                    `#chatMessages .message[data-control-request-id="${CSS.escape(String(crid))}"]`
+                );
+                for (const node of allCr) {
+                    if (node.classList.contains(role)) return { el: node, exact: false };
+                }
+                return null;
+            };
             for (const msg of data.messages) {
                 if (msg == null || msg.id == null) continue;
                 const mid = Number(msg.id);
                 if (mid > lastSeenServerMessageId) lastSeenServerMessageId = mid;
 
-                const existing = document.querySelector(`#chatMessages .message[data-message-id="${mid}"]`);
-                if (existing) {
-                    updateServerMessageInPlace(existing, msg, { notifyTerminal: true });
-                    continue;
-                }
-
-                // Exactly-once: skip a second history row with the same control_request_id.
-                let metaEarly = msg.metadata;
-                if (typeof metaEarly === 'string') {
-                    try { metaEarly = JSON.parse(metaEarly); } catch (_) { metaEarly = {}; }
-                }
-                const crid = metaEarly && metaEarly.control_request_id;
-                if (crid) {
-                    const byControl = document.querySelector(
-                        `#chatMessages .message[data-control-request-id="${CSS.escape(String(crid))}"][class*="${msg.role}"]`
-                    );
-                    if (byControl) {
-                        if (!byControl.dataset.messageId) {
-                            byControl.dataset.messageId = String(mid);
+                // Owned by chat_pending_result.js — exactly-once replay
+                // classification; the page applies the existing effect per
+                // decision and accumulates the flags exactly as before.
+                // Peek queries re-run in the effect on the same tick, so the
+                // claim/settle outcome is identical to the decided one.
+                const syncDecision = CuttleChatPendingResult.classifyServerMessage(
+                    msg,
+                    { stopped: stopState.userStopped },
+                    {
+                        hasDomId: (id) => !!document.querySelector(
+                            `#chatMessages .message[data-message-id="${Number(id)}"]`
+                        ),
+                        findControlClaim: (crid, role) => {
+                            const hit = controlClaimEl(crid, role);
+                            return hit ? (hit.exact ? 'exact' : 'role') : null;
+                        },
+                        isCancelledText: (text) => isCancelledAgentText(text),
+                        claimableUnmarked: (role, content) => !!claimUnmarkedMessageEl(role, content),
+                        loadingThisSession: isLoadingThisSession(),
+                        replyShownFor: (content) => turnAlreadyShowsAssistantReply(content),
+                        hasUnmarkedAssistant: () => !!claimLastUnmarkedAssistantEl(),
+                        alreadyOnScreen: (role, content) => uiAlreadyHasMessage(role, content),
+                    }
+                );
+                switch (syncDecision.decision) {
+                    case 'update-in-place': {
+                        const existing = document.querySelector(
+                            `#chatMessages .message[data-message-id="${mid}"]`
+                        );
+                        if (existing) {
+                            updateServerMessageInPlace(existing, msg, { notifyTerminal: true });
                         }
                         continue;
                     }
-                    // Also match role more reliably
-                    const allCr = document.querySelectorAll(
-                        `#chatMessages .message[data-control-request-id="${CSS.escape(String(crid))}"]`
-                    );
-                    let matched = false;
-                    allCr.forEach((node) => {
-                        if (matched) return;
-                        if (node.classList.contains(msg.role)) {
-                            if (!node.dataset.messageId) node.dataset.messageId = String(mid);
-                            matched = true;
+                    case 'claim-control': {
+                        const hit = controlClaimEl(syncDecision.crid, msg.role);
+                        if (hit && !hit.el.dataset.messageId) {
+                            hit.el.dataset.messageId = String(mid);
                         }
-                    });
-                    if (matched) continue;
-                }
-
-                if (msg.role === 'assistant' && consumeCancelledAgentReply(msg.content, { announce: false })) {
-                    continue;
-                }
-
-                if (msg.role === 'assistant' && stopState.userStopped) {
-                    // Stop already dropped this turn. A late DB write must not
-                    // paint the reply the user cancelled.
-                    continue;
-                }
-
-                const claimed = claimUnmarkedMessageEl(msg.role, msg.content);
-                if (claimed) {
-                    if (msg.role === 'assistant') {
-                        stampAssistantElFromServer(claimed, msg);
-                        appendedAssistant = true;
-                    } else {
-                        claimed.dataset.messageId = String(mid);
-                        claimed.dataset.rawContent = String(msg.content || '');
+                        continue;
                     }
-                    continue;
-                }
-
-                // Local stream still owns this turn — don't append a second assistant
-                // bubble; finishLocalStreamFromServerSync will adopt the server result.
-                if (isLoadingThisSession() && msg.role === 'assistant') {
-                    if (turnAlreadyShowsAssistantReply(msg.content)) {
+                    case 'skip-cancelled':
+                        consumeCancelledAgentReply(msg.content, { announce: false });
+                        continue;
+                    case 'skip-stopped':
+                    case 'skip-dup-user':
+                    case 'skip-invalid':
+                        continue;
+                    case 'claim-unmarked': {
+                        const claimed = claimUnmarkedMessageEl(msg.role, msg.content);
+                        if (claimed) {
+                            if (msg.role === 'assistant') {
+                                stampAssistantElFromServer(claimed, msg);
+                                appendedAssistant = true;
+                            } else {
+                                claimed.dataset.messageId = String(mid);
+                                claimed.dataset.rawContent = String(msg.content || '');
+                            }
+                        }
+                        continue;
+                    }
+                    case 'already-shown':
+                        appendedAssistant = true;
+                        continue;
+                    case 'adopt-last': {
+                        const adopted = claimLastUnmarkedAssistantEl();
+                        if (adopted) {
+                            stampAssistantElFromServer(adopted, msg);
+                            appendedAssistant = true;
+                        }
+                        continue;
+                    }
+                    case 'stamp-duplicate': {
+                        const stamped = claimUnmarkedMessageEl('assistant', msg.content)
+                            || claimLastUnmarkedAssistantEl();
+                        if (stamped) stampAssistantElFromServer(stamped, msg);
                         appendedAssistant = true;
                         continue;
                     }
-                    // Prefer adopting the unmarked stream bubble even when the
-                    // server text differs slightly (Cursor banners, trailing
-                    // whitespace, etc.) — exact match already failed above.
-                    const adopted = claimLastUnmarkedAssistantEl();
-                    if (adopted) {
-                        stampAssistantElFromServer(adopted, msg);
+                    case 'append-new':
+                        appendServerMessageToUI(msg);
+                        addedAny = true;
                         appendedAssistant = true;
+                        appendedNewAssistant = true;
                         continue;
-                    }
-                    // No local bubble to claim (detached wait / lost SSE) — paint
-                    // from history so the user sees the reply without refreshing.
-                    appendServerMessageToUI(msg);
-                    addedAny = true;
-                    appendedAssistant = true;
-                    appendedNewAssistant = true;
-                    continue;
-                }
-
-                // Avoid appending a second copy of a user prompt already on screen
-                // (match can fail on whitespace while the optimistic bubble is present).
-                if (msg.role === 'user' && uiAlreadyHasMessage('user', msg.content)) {
-                    continue;
-                }
-
-                // Same for assistant: stream already painted the reply; sync
-                // must not add a second bubble (second slash chip) a few
-                // seconds later when text differs slightly from the DB row.
-                if (msg.role === 'assistant' && uiAlreadyHasMessage('assistant', msg.content)) {
-                    const stamped = claimUnmarkedMessageEl('assistant', msg.content)
-                        || claimLastUnmarkedAssistantEl();
-                    if (stamped) stampAssistantElFromServer(stamped, msg);
-                    appendedAssistant = true;
-                    continue;
-                }
-                if (msg.role === 'assistant') {
-                    const adopted = claimLastUnmarkedAssistantEl();
-                    if (adopted) {
-                        stampAssistantElFromServer(adopted, msg);
-                        appendedAssistant = true;
+                    case 'append':
+                    default:
+                        appendServerMessageToUI(msg);
+                        addedAny = true;
+                        if (msg.role === 'assistant') {
+                            appendedAssistant = true;
+                            appendedNewAssistant = true;
+                        }
                         continue;
-                    }
-                }
-
-                appendServerMessageToUI(msg);
-                addedAny = true;
-                if (msg.role === 'assistant') {
-                    appendedAssistant = true;
-                    appendedNewAssistant = true;
                 }
             }
 
@@ -19139,11 +18985,15 @@
                             if (chunk.startsWith('data: ')) {
                                 try {
                                     const ev = JSON.parse(chunk.slice(6));
-                                    if (ev.type === 'status' && ev.message) {
+                                    // Owned by chat_pending_result.js — event
+                                    // classification; the page applies paint,
+                                    // session-adopt, and finalResult effects.
+                                    const streamEv = CuttleChatPendingResult.classifyStreamEvent(ev);
+                                    if (streamEv.kind === 'status') {
                                         sawProgress = true;
-                                        if (canPaintTurnHere()) updateTypingStatus(ev.message);
-                                    } else if (ev.type === 'session' && ev.session_id != null) {
-                                        const sid = canonicalizeChatSessionId(ev.session_id);
+                                        if (canPaintTurnHere()) updateTypingStatus(streamEv.message);
+                                    } else if (streamEv.kind === 'session') {
+                                        const sid = canonicalizeChatSessionId(streamEv.sessionId);
                                         requestBody.session_id = sid;
                                         if (boundSessionId == null) boundSessionId = sid;
                                         // Never yank the open chat to a different id mid-turn.
@@ -19159,29 +19009,21 @@
                                         ) {
                                             adoptChatSessionId(sid);
                                         }
-                                    } else if (ev.type === 'busy') {
-                                        finalResult = {
-                                            success: false,
-                                            busy: true,
-                                            session_id: ev.session_id,
-                                            response: (
-                                                '⏳ Still working on your previous message in this chat. '
-                                                + 'Wait for it to finish, or stop it first.'
-                                            ),
-                                        };
-                                    } else if (ev.type === 'query_started') {
+                                    } else if (streamEv.kind === 'busy') {
+                                        finalResult = streamEv.result;
+                                    } else if (streamEv.kind === 'query') {
                                         sawProgress = true;
-                                        if (ev.report_url && canPaintTurnHere()) {
-                                            updateTypingIndicatorQueryLink(ev.report_url);
-                                            const qid = ev.query_id || '';
+                                        if (streamEv.reportUrl && canPaintTurnHere()) {
+                                            updateTypingIndicatorQueryLink(streamEv.reportUrl);
+                                            const qid = streamEv.queryId || '';
                                             (window.showToast || function() {})('Running…', 'info', {
                                                 linkUrl: qid
                                                     ? ('/query_log.html?id=' + encodeURIComponent(qid))
-                                                    : ev.report_url,
+                                                    : streamEv.reportUrl,
                                                 linkText: 'View query log'
                                             });
                                         }
-                                    } else if (ev.type === 'response') {
+                                    } else if (streamEv.kind === 'response') {
                                         finalResult = ev;
                                     }
                                 } catch (e) { /* skip */ }
@@ -19214,69 +19056,44 @@
                     }
                     // Detached or stream ended without a final event — wait for
                     // the parked reply (short polls; does not hold a socket open).
-                    if (canPaintTurnHere()) {
-                        updateTypingStatus('Working… (waiting for reply)');
-                    }
+                    // Owned by chat_pending_result.js — recovery sequence; the
+                    // page owns transport, paint, and turn/stop guards.
                     const pendingSid = turnSessionId() || requestBody.session_id;
-                    const recovered = await collectPendingResult(
-                        pendingSid,
-                        {
+                    const pendingPollMs = (inAppShell && !shellPaneFocused) ? 8000 : 4000;
+                    const pendingDeps = {
+                        // Unfocused split panes poll slower so the focused
+                        // pane keeps connection-pool headroom.
+                        wait: (sid) => collectPendingResult(sid, {
                             waitMs: 90 * 60 * 1000,
-                            // Unfocused split panes poll slower so the focused
-                            // pane keeps connection-pool headroom.
-                            pollMs: (inAppShell && !shellPaneFocused) ? 8000 : 4000,
+                            pollMs: pendingPollMs,
                             navGen: turnNavGen,
-                        }
+                        }),
+                        retries: (sid) => recoverChatResultWithRetries(sid, 5, 1600),
+                        fetchLive: (sid) => fetchChatLiveStatus(sid).catch(() => null),
+                        liveLooksActive: (live) => liveStatusLooksActive(live),
+                        canPaint: () => canPaintTurnHere(),
+                        paintStatus: (text) => updateTypingStatus(text),
+                        uiPaintedReply: () => {
+                            const el = assistantElAfterInFlightUser();
+                            return el
+                                ? { present: true, raw: (el.dataset && el.dataset.rawContent) || '' }
+                                : null;
+                        },
+                        hasTyping: () => !!document.getElementById('typing-indicator'),
+                        isNavAway: () => stopState.abortSuppressed
+                            || CuttleTurnGuard.isStale(turnNavGen, turnGeneration),
+                        isStopped: () => stopState.userStopped,
+                        netDebug: (name, info) => {
+                            try {
+                                window.CuttleNetDebug && window.CuttleNetDebug.event(name, info);
+                            } catch (_) {}
+                        },
+                        waitOpts: {},
+                    };
+                    const settled = await CuttleChatPendingResult.recoverAfterStreamDetach(
+                        pendingSid, turnNavGen, pendingDeps
                     );
-                    if (recovered) {
-                        try { window.CuttleNetDebug && window.CuttleNetDebug.event('pending-got', 'session=' + (recovered.session_id || '')); } catch (_) {}
-                        return recovered;
-                    }
-                    // Pending slot empty (or cleared after an unread SSE write) —
-                    // the reply is still in auth history. Retry: another device may
-                    // have consumed pending, or DB commit may lag the agent finish.
-                    const fromHistory = await recoverChatResultWithRetries(pendingSid, 5, 1600);
-                    if (fromHistory) {
-                        try { window.CuttleNetDebug && window.CuttleNetDebug.event('pending-miss-history', 'recovered'); } catch (_) {}
-                        return fromHistory;
-                    }
-                    // Hub/status-poll may have already painted + cleared isLoading.
-                    // Never use this shortcut after a chat switch: detach clears
-                    // inFlightUserMessage / typing UI, and any assistant in the
-                    // new transcript would look "painted" → false Reply ready.
-                    const navAway = (
-                        stopState.abortSuppressed
-                        || CuttleTurnGuard.isStale(turnNavGen, turnGeneration)
-                    );
-                    const painted = navAway ? null : assistantElAfterInFlightUser();
-                    if (!document.getElementById('typing-indicator') && painted) {
-                        try { window.CuttleNetDebug && window.CuttleNetDebug.event('pending-miss-ui-ok', 'already painted'); } catch (_) {}
-                        const raw = painted.dataset ? (painted.dataset.rawContent || '') : '';
-                        return { success: true, response: raw || ' ', session_id: pendingSid };
-                    }
-                    if (navAway) {
-                        try { window.CuttleNetDebug && window.CuttleNetDebug.event('pending-miss-nav', 'detached — no false ready'); } catch (_) {}
-                        return { success: true, response: '', no_reply: true, session_id: pendingSid };
-                    }
-                    try { window.CuttleNetDebug && window.CuttleNetDebug.event('pending-miss', 'no parked reply'); } catch (_) {}
-                    // Don't invent an assistant bubble. If the worker is still
-                    // going, keep polling; otherwise let message-sync pick up
-                    // a late DB write instead of "No response received."
-                    const liveNow = await fetchChatLiveStatus(pendingSid).catch(() => null);
-                    if (liveNow && liveStatusLooksActive(liveNow) && !stopState.userStopped) {
-                        if (canPaintTurnHere()) {
-                            updateTypingStatus(liveNow.status || 'Working… (waiting for reply)');
-                        }
-                        const again = await collectPendingResult(pendingSid, {
-                            waitMs: 90 * 60 * 1000,
-                            pollMs: (inAppShell && !shellPaneFocused) ? 8000 : 4000,
-                            navGen: turnNavGen,
-                        });
-                        if (again) return again;
-                        const fromHistory2 = await recoverChatResultWithRetries(pendingSid, 5, 1600);
-                        if (fromHistory2) return fromHistory2;
-                    }
-                    return { success: true, response: '', no_reply: true, session_id: pendingSid };
+                    return settled.data;
                 }
                 return parseChatJsonBody(response);
             }
@@ -19293,14 +19110,18 @@
                     // already applied; recover from history / live status instead.
                     console.warn('[Cuttle Chat] Control-lane request failed; not retrying POST:', streamErr);
                     const sid = turnSessionId() || requestBody.session_id;
-                    const fromHistory = await recoverChatResultWithRetries(sid, 3, 800);
-                    if (fromHistory) {
-                        data = Object.assign({}, fromHistory, {
-                            reconcile_only: true,
-                            control_request_id: requestBody.control_request_id,
-                        });
+                    // Owned by chat_pending_result.js — recovery decision; the
+                    // page owns transport/guards.
+                    const laneOutcome = await CuttleChatPendingResult.recoverControlLaneFailure(
+                        sid, streamErr, {
+                            retries: (rsid) => recoverChatResultWithRetries(rsid, 3, 800),
+                            controlRequestId: requestBody.control_request_id,
+                        }
+                    );
+                    if (laneOutcome.outcome === 'data') {
+                        data = laneOutcome.data;
                     } else {
-                        throw streamErr;
+                        throw laneOutcome.error;
                     }
                 } else {
                 console.warn('[Cuttle Chat] Streaming chat failed; retrying with stream=false:', streamErr);
@@ -19311,39 +19132,38 @@
                     // Phone sleep / Wi‑Fi blip: stream + retry both died, but the
                     // agent often keeps running server-side. Recover instead of
                     // inventing a "connection failed" assistant bubble.
+                    // Owned by chat_pending_result.js — recovery sequence; the
+                    // page owns transport, paint, and turn/stop guards.
                     const sid = turnSessionId() || requestBody.session_id;
                     console.warn('[Cuttle Chat] Chat request dropped; waiting for pending result:', retryErr);
-                    if (canPaintTurnHere()) {
-                        updateTypingStatus('Connection interrupted — waiting for reply…');
-                    }
-                    // Flask restart may be in progress — recover durable status + history
-                    // without requiring another user message.
-                    try {
-                        await recoverAfterFlaskRestart({ waitMs: 45000, pollMs: 2000 });
-                    } catch (_) {}
-                    const recovered = await collectPendingResult(sid, {
-                        waitMs: 90 * 60 * 1000,
-                        navGen: turnNavGen,
-                    });
-                    if (recovered) {
-                        data = recovered;
-                    } else {
-                        const fromHistory = await recoverChatResultWithRetries(sid, 5, 1600);
-                        if (fromHistory) {
-                            data = fromHistory;
-                        } else {
-                            const live = await fetchChatLiveStatus(sid);
-                            if (live && (live.active || live.generating)) {
-                                // Hand off to remote waiting + poll; don't fake an error.
-                                removeTypingIndicator();
-                                // Clear local generating before remote-waiting UI (it no-ops while isLoading).
-                                if (!controlLane) endLocalGeneration();
-                                startMessageSync();
-                                updateRemoteWaitingFromMessages([], live);
-                                return;
-                            }
-                            throw retryErr;
+                    const transportOutcome = await CuttleChatPendingResult.recoverAfterTransportFailure(
+                        sid, turnNavGen, retryErr, {
+                            canPaint: () => canPaintTurnHere(),
+                            paintStatus: (text) => updateTypingStatus(text),
+                            // Flask restart may be in progress — recover durable
+                            // status + history without another user message.
+                            recoverServer: (opts) => recoverAfterFlaskRestart(opts),
+                            wait: (wsid) => collectPendingResult(wsid, {
+                                waitMs: 90 * 60 * 1000,
+                                navGen: turnNavGen,
+                            }),
+                            retries: (rsid) => recoverChatResultWithRetries(rsid, 5, 1600),
+                            fetchLive: (fsid) => fetchChatLiveStatus(fsid),
+                            waitOpts: {},
                         }
+                    );
+                    if (transportOutcome.outcome === 'data') {
+                        data = transportOutcome.data;
+                    } else if (transportOutcome.outcome === 'handoff-remote') {
+                        // Hand off to remote waiting + poll; don't fake an error.
+                        removeTypingIndicator();
+                        // Clear local generating before remote-waiting UI (it no-ops while isLoading).
+                        if (!controlLane) endLocalGeneration();
+                        startMessageSync();
+                        updateRemoteWaitingFromMessages([], transportOutcome.live);
+                        return;
+                    } else {
+                        throw transportOutcome.error;
                     }
                 }
                 }

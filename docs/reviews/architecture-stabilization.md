@@ -4806,3 +4806,118 @@ whole was rejected as monolith-shifting. The owned seam is
   page-side as the scheduler effect.
 - Commit independently on main. No push, no restart.
   **STOP for Codex review before 9D or Phase 4.**
+
+## Prior approval recorded: 9C 5f0fa257
+
+- Codex review **APPROVED** Slice 9C (follow-up queue ownership) at
+  `5f0fa257`. No production changes requested. Next: Slice 9D
+  pending-result/replay/reconcile/dedup/poll/busy-heal lifecycle only;
+  stop before any further portion or Phase 4. No push/restart.
+
+## Slice 9D report — pending-result / replay / reconcile lifecycle
+  (`chat_pending_result.js`, closes carried 9B send-catch gap at decision
+  level)
+
+- Owner: `src/web/js/chat_pending_result.js` (`CuttleChatPendingResult`,
+  loaded after turn-guard + stop-state, before page). Owns result-lifecycle
+  decisions + injected-effect async orchestration with explicit narrow
+  interfaces; no document/window/fetch/timers. Page keeps timers
+  (`messageSyncTimer`, `historyGeneratingPollTimer`), transport URLs,
+  DOM/persistence, busy-lock set/clear (`begin/endLocalGeneration`),
+  session-adopt nav guards, and applies every effect.
+- Boundary (each verified below):
+  `classifyStreamEvent` (pure SSE status/session/busy/query/response —
+  busy bubble text preserved exactly); `waitForPendingResult` (waiter loop:
+  stale-nav/stop/peek-skip/transient-deadline/consume-on-hit/3rd-poll
+  history/deadline-miss); `findRecoverableAssistant` (pure match) +
+  `recoverChatResult`/`WithRetries` + `consumeParkedChatResult`;
+  `classifyServerMessage` (12 exactly-once sync decisions incl.
+  control_request_id claim, skip-cancelled/stopped, claim/adopt/append,
+  dup-user/assistant stamping); `decideStaleHeal`
+  (finish-orphan/zombie, clear-remote+drain, none); send-catch sequence
+  `recoverAfterStreamDetach` (detach tail incl. painted-shortcut, nav-away
+  guard, live second round), `recoverAfterTransportFailure` (restart poll +
+  exactly one waiter/history attempt, then live handoff or rethrow —
+  deliberately NOT the detach tail: no painted-shortcut, no second
+  90-min round), `recoverControlLaneFailure` (history-only, no POST
+  retry); `waitForServerRecovery` (restart poll, page-held in-flight
+  guard + notified ids).
+- Turn/stop/queue composed through owned interfaces only
+  (`CuttleTurnGuard`, `CuttleStopState`, queue drain callback) — never
+  reimplemented or duplicated. Message/record helpers
+  (`normalizeMessageContentForMatch`, `normalizeUsagePayload`,
+  `isCancelledAgentText`, `uiAlreadyHasMessage`, claim/stamp fns) used as
+  injected deps. Session-adopt guards stay page-side (nav state).
+- Diffs: page bodies (`collectPendingResult`,
+  `recoverChatResultFromServer/WithRetries`, `consumeParkedChatResult`,
+  `recoverAfterFlaskRestart`, heal, sync per-message chain, SSE fold,
+  detach/control/transport catch blocks) become thin adapters with
+  identical call sites, flag accumulation, strings, and ordering. Two
+  near-miss drifts caught during authoring and corrected before commit:
+  transport path briefly shared the detach tail (would have added a
+  painted-shortcut + second 90-min wait before throw); painted-shortcut
+  first used raw-string presence (empty-raw reply would have been
+  skipped) — contract is now `{ present, raw }`.
+- Coverage (committed `src/tests/test_chat_pending_result.py`, 12 tests,
+  node-executed real module with fake fetch/clock, all green):
+  ORACLE differentials captured by executing pre-change page functions
+  with equivalent fakes BEFORE the move (scratch `/tmp/pre9d_oracle.js`,
+  out of tree) — waiter hit shape + consume count, stale/no-fetch,
+  stopped, peek-skip + debug name, transient-`!success` deadline-null
+  with history never consulted, idle miss, match/trailing/painted/
+  cancelled recovery, orphan-finish/live-none/stopped-none/
+  remote-clear+drain/idle-none heal — embedded as literals, all equal
+  post-move. Post-move integration (scratch `/tmp/post9d_adapter.js`):
+  real page adapters + real module reproduce the oracle values.
+  Discrimination: duplicate→append mutation fails
+  `test_sync_classification`; dropped-consume mutation fails
+  `test_waiter_hit_consume_and_shape`; both restored byte-identical
+  (`cmp` clean). Structural pin updates required by the intended move
+  (behavior preserved, previously green on HEAD): 3 heal/wait/sync pins
+  in `test_chat_followup_heal.py`, nav-away pin in
+  `test_chat_false_reply_ready.py`, `_sse_event_arms` in
+  `test_chat_cross_session_activity.py` (now asserts
+  `streamEv.kind` arms + owned classification). 9B send-catch gap:
+  closed at decision level — catch blocks now route through the owner
+  with fake-testable deps (detach/transport/control/handoff/throw all
+  executed); byte-level SSE transport loop remains page orchestration.
+- Gates (same env/invocation/scope throughout: main-repo `.venv`,
+  node shim on `PATH`, `pytest -q -p no:warnings src/tests/
+  --ignore=src/tests/unit`, unit exclusion still the proven
+  `test_security.py` collection error): focused+neighbors green;
+  broad **28 failed / 1870 passed / 79 skipped** with sorted FAILED
+  identities `diff`-clean against the same-tree HEAD baseline
+  (`git stash -u` round-trip, 28 failed / 1858 passed / 79 skipped;
+  +12 passed = 12 new tests, −0/+0 failures). A detached-worktree
+  baseline attempt showed 39 failures (untracked `src/.env` and
+  machine state do not carry into worktrees) and was discarded in favor
+  of the same-tree stash comparison. `node --check` clean on all
+  touched JS.
+- Cache: `chat_page.html` adds versioned
+  `chat_pending_result.js?v=20261001slice9d` (after followup-queue,
+  before page) and bumps `chat_page.js` to `slice9d`; no other assets
+  changed.
+- Spend audit: `CUTTLE_AGENT_SMOKE`/`CUTTLE_ALLOW_SPEND` unset (verified
+  empty in this shell); no paid/token prompt tests run; paid suites
+  self-skip per `spend_guard.py`.
+- Manual validation unavailable (node/fake-DOM only — no browser/Flask);
+  no visible UI changes. Untouched by design: search gate over active
+  query, last-message-time sort, prefs/render/live-status restore
+  order, prompt-history remap, `loadChatHistory`/poll generation-flag
+  interfaces, backend routing/lifecycle (Phase 4/5).
+- Files: `src/web/js/chat_pending_result.js` (new),
+  `src/web/js/chat_page.js` (adapters only),
+  `src/web/chat_page.html` (+1 tag, +2 version bumps),
+  `src/tests/test_chat_pending_result.py` (new),
+  `src/tests/test_chat_followup_heal.py`,
+  `src/tests/test_chat_false_reply_ready.py`,
+  `src/tests/test_chat_cross_session_activity.py` (pin updates), this
+  section. No backend/routing/product-behavior changes.
+- Remaining 9E/closure question for review: message-sync + history poll
+  *timers* and the busy-lock primitives remain page-side schedulers by
+  design; SSE byte-transport loop remains page orchestration. If the
+  reviewer wants those under explicit owners, that is the exact 9E
+  boundary (timer scheduler owner + busy-lock owner) — otherwise Phase 3
+  page-orchestration remainder is declared and Phase 4 may proceed.
+- Commit independently on main. No push, no restart.
+  **STOP for Codex review before 9E/Phase 4.**

@@ -14,6 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 
 CHAT_JS = Path(__file__).resolve().parents[1] / "web" / "js" / "chat_page.js"
+MOD_PR = Path(__file__).resolve().parents[1] / "web" / "js" / "chat_pending_result.js"
 
 
 def _src() -> str:
@@ -63,8 +64,11 @@ def test_assistant_el_requires_in_flight_user():
 
 def test_pending_miss_skips_painted_after_nav():
     src = _src()
-    assert "pending-miss-nav" in src
-    assert "navAway ? null : assistantElAfterInFlightUser()" in src
+    assert "CuttleChatPendingResult.recoverAfterStreamDetach(" in src
+    assert "isNavAway: () => stopState.abortSuppressed" in src
+    mod = MOD_PR.read_text(encoding="utf-8")
+    assert "pending-miss-nav" in mod
+    assert "detached — no false ready" in mod
     # Detach starts a quiet completion poll instead of an immediate chirp.
     detach = _fn_body(src, "function detachLocalGenerationForNavigation")
     assert "watchDetachedSessionForCompletion(keepRunningId)" in detach

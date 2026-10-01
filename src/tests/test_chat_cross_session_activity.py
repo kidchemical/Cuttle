@@ -62,20 +62,23 @@ def _fn_body(src: str, name: str) -> str:
 
 
 def _sse_event_arms(src: str) -> dict[str, str]:
-    """Map SSE ``ev.type === '…'`` arms inside fetchChatPayload's stream loop."""
-    anchor = src.find("ev.type === 'status' && ev.message")
-    assert anchor >= 0
-    window = src[anchor - 200 : anchor + 3500]
+    """Map SSE arms inside fetchChatPayload's stream loop.
+
+    Event classification is owned by chat_pending_result.js
+    (``classifyStreamEvent``); the page applies the gated paint/adopt
+    effects per ``streamEv.kind`` arm.
+    """
+    assert "CuttleChatPendingResult.classifyStreamEvent(" in src
     arms: dict[str, str] = {}
     status_m = re.search(
-        r"if \(ev\.type === 'status' && ev\.message\) \{[\s\S]*?(?=\} else if \(ev\.type ===)",
-        window,
+        r"if \(streamEv\.kind === 'status'\) \{[\s\S]*?(?=\} else if \(streamEv\.kind ===)",
+        src,
     )
     assert status_m, "SSE status arm not found"
     arms["status"] = status_m.group(0)
     session_m = re.search(
-        r"else if \(ev\.type === 'session' && ev\.session_id != null\) \{[\s\S]*?(?=\} else if \(ev\.type ===)",
-        window,
+        r"else if \(streamEv\.kind === 'session'\) \{[\s\S]*?(?=\} else if \(streamEv\.kind ===)",
+        src,
     )
     assert session_m, "SSE session arm not found"
     arms["session"] = session_m.group(0)
