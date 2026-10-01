@@ -105,6 +105,18 @@ delivery stay in the entry module for P5-B. Runner reverse imports
 (`dispatch`, `supervised/adapters`) intentionally untouched until the
 core workflow moves.
 
+**Turn workflow (Phase 5 P5-B):** `api.chat_turn_workflow` owns the
+lane orchestration — `run_agent_sync_turn` (harness + router-family
+sync lanes), `run_pipeline_sync_turn` (leftover-pipeline sync lane with
+stale/cancel no-persist), `finalize_stream_result` (stream completion
+tail: save → notify → park → release), `build_pipeline_body`,
+`busy_response_body`, `is_turn_superseded`. Deps are narrow callables
+plus the `chat_delivery` service; Flask serialize/SSE transport stays
+in the route. `api.agent_harness.runners` owns all seven
+`run_*_web_command` entries — the router imports the owner, and the
+only remaining entry-module import in production is the `doctor`
+smoke probe.
+
 **History:** `api.auth_db` SQLite (`src/data/db/`, gitignored). Pairing store for **users** is separate from **worker** enroll.
 
 ---

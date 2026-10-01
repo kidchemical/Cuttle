@@ -100,11 +100,11 @@ def _default_codex_runner() -> RunnerFn:
     from api.agent_router.supervised.test_isolation import guard_external_runner
 
     guard_external_runner("Codex CLI")
-    from api import web_chat_api as w
+    from api.agent_harness.runners import run_codex_web_command as _run_owned
 
     def run(prompt, chat_session_id, status_queue=None, project_path=None, model=None, **kw):
         guard_external_runner("Codex CLI")
-        return w._run_codex_web_command(
+        return _run_owned(
             prompt,
             chat_session_id,
             status_queue=status_queue,
@@ -120,11 +120,11 @@ def _default_cursor_runner() -> RunnerFn:
     from api.agent_router.supervised.test_isolation import guard_external_runner
 
     guard_external_runner("Cursor Agent CLI")
-    from api import web_chat_api as w
+    from api.agent_harness.runners import run_cursor_web_command as _run_owned
 
     def run(prompt, chat_session_id, status_queue=None, project_path=None, model=None, **_kw):
         guard_external_runner("Cursor Agent CLI")
-        return w._run_cursor_web_command(
+        return _run_owned(
             prompt,
             chat_session_id,
             status_queue=status_queue,

@@ -1399,9 +1399,10 @@ def _run_hermes_web_command(
     project_path=None,
     model_override=None,
 ) -> dict:
-    """Deprecated shim — Hermes lives under ``agent_harness/agents/hermes/``."""
-    return _run_harness_web_command(
-        "hermes",
+    """Deprecated shim — owned by api.agent_harness.runners."""
+    from api.agent_harness.runners import run_hermes_web_command as _owned
+
+    return _owned(
         prompt,
         chat_session_id,
         status_queue=status_queue,
@@ -1439,10 +1440,10 @@ def _run_harness_web_command(
     model_override=None,
     execute_kwargs=None,
 ) -> dict:
-    """Shared entry for harness agents (Cursor, Codex, Muse, Claude, …)."""
-    from api.agent_harness.kernel import run_agent_web_command
+    """Shared entry for harness agents — owned by api.agent_harness.runners."""
+    from api.agent_harness.runners import run_harness_web_command as _owned
 
-    return run_agent_web_command(
+    return _owned(
         agent_id,
         prompt,
         chat_session_id,
@@ -1459,21 +1460,9 @@ def _run_pinned_harness_turn(agent_id: str, prompt: str, chat_session_id, **kwar
     Router turns record their own attempts in ``agent_router.dispatch``; only
     call this from paths that bypass the router.
     """
-    started = time.perf_counter()
-    body = _run_harness_web_command(agent_id, prompt, chat_session_id, **kwargs)
-    try:
-        from api.agent_router.pinned_outcomes import record_pinned_turn
+    from api.agent_harness.runners import run_pinned_harness_turn as _owned
 
-        record_pinned_turn(
-            agent_id,
-            body,
-            latency_ms=(time.perf_counter() - started) * 1000.0,
-            session_id=chat_session_id,
-            project_path=kwargs.get("project_path"),
-        )
-    except Exception as exc:
-        print(f"[CHAT] pinned outcome record failed: {str(exc)[:200]}", flush=True)
-    return body
+    return _owned(agent_id, prompt, chat_session_id, **kwargs)
 
 
 def _run_cursor_web_command(
@@ -1483,9 +1472,10 @@ def _run_cursor_web_command(
     project_path=None,
     model_override=None,
 ) -> dict:
-    """Deprecated shim — Cursor lives under ``agent_harness/agents/cursor/``."""
-    return _run_harness_web_command(
-        "cursor",
+    """Deprecated shim — owned by api.agent_harness.runners."""
+    from api.agent_harness.runners import run_cursor_web_command as _owned
+
+    return _owned(
         prompt,
         chat_session_id,
         status_queue=status_queue,
@@ -1502,18 +1492,16 @@ def _run_codex_web_command(
     model_override=None,
     reasoning_effort=None,
 ) -> dict:
-    """Deprecated shim — Codex lives under ``agent_harness/agents/codex/``."""
-    extra = {}
-    if reasoning_effort:
-        extra["reasoning_effort"] = reasoning_effort
-    return _run_harness_web_command(
-        "codex",
+    """Deprecated shim — owned by api.agent_harness.runners."""
+    from api.agent_harness.runners import run_codex_web_command as _owned
+
+    return _owned(
         prompt,
         chat_session_id,
         status_queue=status_queue,
         project_path=project_path,
         model_override=model_override,
-        execute_kwargs=extra or None,
+        reasoning_effort=reasoning_effort,
     )
 
 
@@ -1524,9 +1512,10 @@ def _run_muse_web_command(
     project_path=None,
     model_override=None,
 ) -> dict:
-    """Deprecated shim — Muse lives under ``agent_harness/agents/muse/``."""
-    return _run_harness_web_command(
-        "muse",
+    """Deprecated shim — owned by api.agent_harness.runners."""
+    from api.agent_harness.runners import run_muse_web_command as _owned
+
+    return _owned(
         prompt,
         chat_session_id,
         status_queue=status_queue,
@@ -1542,9 +1531,10 @@ def _run_claude_web_command(
     project_path=None,
     model_override=None,
 ) -> dict:
-    """Deprecated shim — Claude Code lives under ``agent_harness/agents/claude/``."""
-    return _run_harness_web_command(
-        "claude",
+    """Deprecated shim — owned by api.agent_harness.runners."""
+    from api.agent_harness.runners import run_claude_web_command as _owned
+
+    return _owned(
         prompt,
         chat_session_id,
         status_queue=status_queue,
@@ -1830,43 +1820,23 @@ def _generate_chat_stream(process_fn, session_id_for_status, on_result=None, on_
                 'response': f'I encountered an error: {str(e)}. Please try again.'
             }
         result = result_holder['result'] or {}
-        superseded = chat_delivery.is_stale_turn(session_id_for_status, turn_token)
-        try:
-            superseded = superseded or chat_delivery.is_turn_cancelled(session_id_for_status)
-        except Exception:
-            pass
-        if superseded:
-            print(
-                f"[CHAT] discarding late reply for session {session_id_for_status}: "
-                f"turn {turn_token} was superseded",
-                flush=True,
-            )
-        # Persist here rather than in the SSE loop below: the loop dies with the
-        # browser connection, this thread does not. Also save failure replies that
-        # still have response text (timeouts / errors) so closed tabs keep them.
-        if not superseded and on_result and (result.get('success') or result.get('response')):
-            try:
-                on_result(result)
-            except Exception as save_err:
-                print(f"[CHAT] on_result persistence failed: {save_err}")
-        # Cursor / Codex / other harness replies never go through process_message_with_bot,
-        # so the phone listener only hears about them from this stream completion.
-        if not superseded and (result.get('success') or result.get('response')):
-            try:
-                _emit_chat_complete_mobile(session_id_for_status, result)
-            except Exception:
-                pass
-        if not superseded:
-            try:
-                chat_delivery.store_result(session_id_for_status, result)
-            except Exception:
-                pass
-        try:
-            # Passing the token keeps a stale worker from releasing the lock of
-            # the turn that replaced it.
-            chat_delivery.end(session_id_for_status, turn=turn_token)
-        except Exception:
-            pass
+        # Completion policy owned by api.chat_turn_workflow (P5-B): persist
+        # here rather than in the SSE loop below (the loop dies with the
+        # browser connection, this thread does not). Failure replies that
+        # still have response text are saved so closed tabs keep them.
+        # Cursor / Codex / other harness replies never go through
+        # process_message_with_bot, so the phone listener only hears about
+        # them from this stream completion.
+        from api.chat_turn_workflow import finalize_stream_result as _finalize
+
+        _finalize(
+            chat_delivery,
+            session_id_for_status,
+            turn_token,
+            result,
+            on_result=on_result,
+            notify_mobile=lambda _r: _emit_chat_complete_mobile(session_id_for_status, _r),
+        )
         status_queue.put(('done', result))
 
     thread = threading.Thread(target=run_process, daemon=True)
@@ -5995,34 +5965,36 @@ def chat_endpoint():
                     },
                 )
             from api import chat_delivery as _chat_delivery
-            if chat_session_id is not None and not _chat_delivery.try_begin(chat_session_id):
-                return jsonify(_chat_busy_response(chat_session_id)), 409
-            _turn_token = _chat_delivery.current_turn(chat_session_id)
-            try:
-                if _auth_user:
-                    _persist_user_turn(chat_session_id)
+            from api.chat_turn_workflow import run_agent_sync_turn as _run_lane
+
+            def _router_after_run(_body):
+                _body.setdefault('session_id', chat_session_id)
+                if _auth_user and _body.get('success'):
+                    _saver = _make_auth_assistant_saver(chat_session_id, chat_inference_mode)
+                    if _saver:
+                        try:
+                            _saver(_body)
+                        except Exception as _se:
+                            print(f"[CHAT] router persist failed: {_se}")
+
+            def _router_run():
                 from api.agent_router.integration import handle_router_family_command as _hrf2
-                body = _hrf2(
+                return dict(_hrf2(
                     message_content,
                     session_id=chat_session_id,
                     project_path=_router_proj,
-                ) or {}
-                body = dict(body)
-                body.setdefault('session_id', chat_session_id)
-                if _auth_user and body.get('success'):
-                    saver = _make_auth_assistant_saver(chat_session_id, chat_inference_mode)
-                    if saver:
-                        try:
-                            saver(body)
-                        except Exception as _se:
-                            print(f"[CHAT] router persist failed: {_se}")
-                return jsonify(body)
-            finally:
-                if chat_session_id is not None:
-                    try:
-                        _chat_delivery.end(chat_session_id, turn=_turn_token)
-                    except Exception:
-                        pass
+                ) or {})
+
+            _lane_body, _lane_status = _run_lane(
+                chat_session_id,
+                delivery=_chat_delivery,
+                persist_user=lambda: (_persist_user_turn(chat_session_id) if _auth_user else None),
+                run=_router_run,
+                after_run=_router_after_run,
+            )
+            if _lane_status == 409:
+                return jsonify(_lane_body), 409
+            return jsonify(_lane_body)
 
         # Cloud CLI slash commands require Auto/Cloud inference mode
         from api.inference_mode import is_cloud_cli_slash_command, cloud_cli_slash_blocked_message
@@ -6099,38 +6071,37 @@ def chat_endpoint():
                     },
                 )
             from api import chat_delivery as _chat_delivery
-            if chat_session_id is not None and not _chat_delivery.try_begin(chat_session_id):
-                return jsonify(_chat_busy_response(chat_session_id)), 409
-            _turn_token = _chat_delivery.current_turn(chat_session_id)
-            try:
-                if _auth_user:
-                    _persist_user_turn(chat_session_id)
-                body = _run_pinned_harness_turn(
-                    _hid, prompt, chat_session_id, project_path=project_path,
-                    **_ident_run_kw,
-                )
-                if isinstance(body, dict):
-                    _emit_chat_complete_mobile(chat_session_id, body)
-                if isinstance(body, dict) and chat_session_id is not None:
-                    body.setdefault('session_id', chat_session_id)
-                    if _auth_user and body.get('success'):
-                        saver = _make_auth_assistant_saver(
+            from api.chat_turn_workflow import run_agent_sync_turn as _run_lane
+
+            def _harness_after_run(_body):
+                _emit_chat_complete_mobile(chat_session_id, _body)
+                if chat_session_id is not None:
+                    _body.setdefault('session_id', chat_session_id)
+                    if _auth_user and _body.get('success'):
+                        _saver = _make_auth_assistant_saver(
                             chat_session_id,
                             chat_inference_mode,
                             project_path=project_path,
                         )
-                        if saver:
+                        if _saver:
                             try:
-                                saver(body)
+                                _saver(_body)
                             except Exception as _se:
                                 print(f'[CHAT] harness persist failed: {_se}')
-                return jsonify(body)
-            finally:
-                if chat_session_id is not None:
-                    try:
-                        _chat_delivery.end(chat_session_id, turn=_turn_token)
-                    except Exception:
-                        pass
+
+            _lane_body, _lane_status = _run_lane(
+                chat_session_id,
+                delivery=_chat_delivery,
+                persist_user=lambda: (_persist_user_turn(chat_session_id) if _auth_user else None),
+                run=lambda: _run_pinned_harness_turn(
+                    _hid, prompt, chat_session_id, project_path=project_path,
+                    **_ident_run_kw,
+                ),
+                after_run=_harness_after_run,
+            )
+            if _lane_status == 409:
+                return jsonify(_lane_body), 409
+            return jsonify(_lane_body)
 
         # Per-agent /cursor|/muse|/codex|/claude|/hermes elifs removed —
         # those slash commands are handled only via `_match_harness_slash` above.
@@ -6213,84 +6184,58 @@ def chat_endpoint():
             _user_is_owner = (not _OWNER_EMAIL) or (_email == _OWNER_EMAIL) or (_uname and _uname == _OWNER_EMAIL)
             _session_id = f"db_session_{chat_session_id}"
             if not wants_stream:
-                if not _chat_delivery.try_begin(chat_session_id):
-                    return jsonify({
-                        'success': False,
-                        'error': 'busy',
-                        'busy': True,
-                        'session_id': chat_session_id,
-                        'response': (
-                            '⏳ Still working on your previous message in this chat. '
-                            'Wait for it to finish, or stop it first.'
-                        ),
-                    }), 409
-                _turn_token = _chat_delivery.current_turn(chat_session_id)
-                try:
-                    # Add user message only after we own the busy slot
+                from api.chat_turn_workflow import run_pipeline_sync_turn as _run_lane
+                from api.chat_turn_workflow import build_pipeline_body as _build_body
+
+                def _pipeline_save_assistant(_res):
+                    try:
+                        _proj = _resolve_request_project_path({
+                            **(data or {}),
+                            'session_id': chat_session_id,
+                        })
+                    except Exception:
+                        _proj = ''
+                    _res = _rewrite_assistant_response_actions(
+                        _res, _session_id, _proj or ''
+                    ) or _res
+                    _asst_meta = _assistant_message_metadata(_res)
                     db.add_message(
+                        chat_session_id,
+                        'assistant',
+                        _res.get('response', ''),
+                        metadata=_asst_meta or None,
+                    )
+                    try:
+                        from api.chat_titler import schedule_session_autoname
+                        schedule_session_autoname(chat_session_id, chat_inference_mode)
+                    except Exception as _te:
+                        print(f"[TITLER] hook failed: {_te}")
+                    return _res
+
+                _lane_body, _lane_status = _run_lane(
+                    chat_session_id,
+                    delivery=_chat_delivery,
+                    persist_user=lambda: db.add_message(
                         chat_session_id,
                         'user',
                         history_message,
                         metadata=_user_msg_meta,
-                    )
-                    res = process_message_with_bot(
+                    ),
+                    run=lambda: process_message_with_bot(
                         message_content, _session_id,
                         session_kind='web_user', routing_key=f'web_user_{user["id"]}',
                         is_owner=_user_is_owner, status_queue=None,
                         inference_mode=chat_inference_mode,
-                    )
-                    # A reply that outlived its turn still goes back to the
-                    # caller, but must not land in the newer turn's history.
-                    _superseded = _chat_delivery.is_stale_turn(
-                        chat_session_id, _turn_token
-                    ) or _chat_delivery.is_turn_cancelled(chat_session_id)
-                    if res.get('success') and not _superseded:
-                        try:
-                            _proj = _resolve_request_project_path({
-                                **(data or {}),
-                                'session_id': chat_session_id,
-                            })
-                        except Exception:
-                            _proj = ''
-                        res = _rewrite_assistant_response_actions(
-                            res, _session_id, _proj or ''
-                        ) or res
-                        _asst_meta = _assistant_message_metadata(res)
-                        db.add_message(
-                            chat_session_id,
-                            'assistant',
-                            res.get('response', ''),
-                            metadata=_asst_meta or None,
-                        )
-                        try:
-                            from api.chat_titler import schedule_session_autoname
-                            schedule_session_autoname(chat_session_id, chat_inference_mode)
-                        except Exception as _te:
-                            print(f"[TITLER] hook failed: {_te}")
-                    body = {
-                        'success': bool(res.get('success')),
-                        'response': res.get('response', '') or '',
-                        'session_id': chat_session_id,
-                        'type': res.get('type', 'pipeline_execution'),
-                    }
-                    if res.get('query_id'):
-                        body['query_id'] = res['query_id']
-                    if res.get('report_url'):
-                        body['report_url'] = res['report_url']
-                    if res.get('cursor_run'):
-                        body['cursor_run'] = res['cursor_run']
-                    try:
-                        _usage = _usage_meta_from_assistant_result(res)
-                        if _usage:
-                            body['usage'] = _usage
-                    except Exception:
-                        pass
-                    return jsonify(body)
-                finally:
-                    try:
-                        _chat_delivery.end(chat_session_id, turn=_turn_token)
-                    except Exception:
-                        pass
+                    ),
+                    save_assistant=_pipeline_save_assistant,
+                    build_body=lambda _res: _build_body(
+                        _res, chat_session_id,
+                        usage_meta_fn=_usage_meta_from_assistant_result,
+                    ),
+                )
+                if _lane_status == 409:
+                    return jsonify(_lane_body), 409
+                return jsonify(_lane_body)
             _process_fn = lambda status_queue: process_message_with_bot(
                 message_content, _session_id,
                 session_kind='web_user', routing_key=f'web_user_{user["id"]}',

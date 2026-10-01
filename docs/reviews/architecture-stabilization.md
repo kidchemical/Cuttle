@@ -5443,3 +5443,100 @@ whole was rejected as monolith-shifting. The owned seam is
   Deferred dependency/startup tooling unchanged.
 - Commit independently on main. No push, no restart.
   **STOP for Codex review before P5-B/Phase 6.**
+
+## P5-A approval + P5-B core turn-workflow ownership
+
+- P5-A `3ff1f8bf` and the factual Phase-4 readiness/closure
+  APPROVED. Reviewer last read line 5445; this section appended only
+  below that boundary; prior sections preserved.
+- P5-B inventory (actual analysis, corrected mid-work): the ROUTE is
+  the real coordinator for authed web turns — `process_message_with_bot`
+  serves only local-mode/Discord/`sessions_send`/leftover paths. Route
+  lanes found: `/restart` native, supervised control lane,
+  router-family lane (`/route|/retry|/router|/coordinate`, sync +
+  stream via `_make_auth_assistant_saver`), cloud-mode block, harness
+  lane (`_match_harness_slash` → empty-prompt / busy-reject / sync /
+  stream), `/pipelines` notice, project-action/action-form no-LLM
+  lanes, launch gate, leftover pipeline lane
+  (`process_message_with_bot` sync + stream). `_execute_remote_agent_tool`
+  no longer exists (AGENTS.md stale on that point); execution is
+  `_run_pinned_harness_turn` → `_run_harness_web_command` →
+  `kernel.run_agent_web_command` plus `maybe_route_plain_message`.
+  Each sync lane repeats busy → persist-user → run → post-turn → release.
+- New `src/api/chat_turn_workflow.py` (no Flask, no DB, no vendor
+  code; deps = narrow callables + `chat_delivery` service object):
+  - `run_agent_sync_turn` — harness + router-family sync order
+    (persist → run → after_run → 200; busy → 409; run() errors
+    propagate after release — matches both lanes' 500 behavior).
+  - `run_pipeline_sync_turn` — leftover order with the
+    success + stale/cancel no-persist gate and rewrite-aware
+    `save_assistant` replacement.
+  - `finalize_stream_result` — stream completion tail (save →
+    notify → park → release-by-token; superseded saves/parks
+    nothing but still releases; save errors contained).
+  - `build_pipeline_body` (verbatim sync body incl
+    query/report/run/usage), `busy_response_body`,
+    `is_turn_superseded`, `begin/release_sync_turn`.
+  - State diagram: route resolves + serializes; coordinator calls
+    `delivery.try_begin → current_turn → (persist → run →
+    save/notify/park) → end(turn=token)`; SQLite rows via injected
+    callables; parked results via delivery. One mutable-state source
+    (`chat_delivery` + SQLite); no per-request caches added.
+- New `src/api/agent_harness/runners.py`: all seven runner entries
+  (`run_harness_web_command`, `run_pinned_harness_turn` with
+  pinned-outcome recording, cursor/codex/muse/claude/hermes shims)
+  moved verbatim. `dispatch.py:48` + `supervised/adapters.py:103,123`
+  now import the owner — production reverse imports into the entry
+  module are down to the single justified `doctor.py:83` smoke probe
+  (verified by grep; dynamic-pattern sweep still zero). Entry keeps
+  same-name aliases, so existing callers/tests patching
+  `wca._run_*` keep working (no test needed retargeting for that).
+- Delegation: router sync lane, harness sync lane, leftover pipeline
+  sync lane, and the `_generate_chat_stream` completion tail call the
+  owner; route keeps auth/busy-reject/SSE framing/`jsonify`,
+  `is_busy` zombie-heal pre-guard, stream thread + pump, saver
+  construction (`_make_auth_assistant_saver` stays — it closes over
+  the Flask request via `_current_request_data`; P5-C candidate).
+  Precedence/semantics untouched; executor errors still 500 on the
+  route lanes and contained only inside `process_message_with_bot`.
+- Coverage (`src/tests/test_chat_turn_workflow.py`, 15 tests green):
+  6 pre-move route/stream integration pins written against current
+  code (real `/api/chat` sync: order + badge meta + release; 500 +
+  user-only + release on executor error; 409 busy with zero rows;
+  cancel-mid-run → 200 + user-only via saver guard; real
+  `_generate_chat_stream`: claim→run→save order + park + release;
+  cancelled stream: SSE still delivers reply, saves/parks nothing).
+  Two pre-move assertions were corrected to real semantics found
+  during pinning (assistant badge needs `cursor_run`; harness lane
+  has no superseded gate — the saver cancel-guard does that work;
+  executor errors 500 rather than 200). 8 owner unit tests (order,
+  409 shape, exception-release, failure/supersede gates, body
+  shape, finalize order/skip/contain) + 1 architectural pin (12
+  owner/router files contain no `web_chat_api` string).
+  Discrimination: persist-after-run mutation failed 3 tests
+  (order unit + 2 route integrations); restored byte-identical.
+- Gates (same command/env/scope; baseline `3ff1f8bf`): focused
+  workflow+seam 38/38; neighbors 208 passed with 3 failures all
+  proven pre-existing (palette pin in the 28; hardening idempotent
+  fails identically on stash; node helper passes with the nodeshim
+  PATH the gate uses — my neighbor invocation lacked it). Broad
+  **28 failed / 1957 passed / 79 skipped**, sorted FAILED
+  `diff`-clean vs P5-A baseline (`/tmp/p5a_failed.txt` vs
+  `/tmp/p5b_failed.txt`); +15 = new workflow tests, −0/+0 failures.
+- Spend audit: flags unset; fakes only; no paid prompts, no process
+  restart/kill. Manual validation N/A (backend-only).
+- Files: `src/api/chat_turn_workflow.py` + `src/tests/
+  test_chat_turn_workflow.py` + `src/api/agent_harness/runners.py`
+  (new); `src/api/web_chat_api.py` (3 lanes + stream tail delegate;
+  runners are aliases); `src/api/agent_router/dispatch.py`,
+  `src/api/agent_router/supervised/adapters.py` (owner imports);
+  this section + repository-map (P5-B row).
+- Limits/risks: `_generate_chat_stream` thread + SSE pump stay in
+  the entry (transport); saver construction still request-bound;
+  `process_message_with_bot` keeps its own selection+fallback head
+  (Discord/local callers). Remaining P5: P5-C (saver/persist-user
+  ownership with explicit request-data + stream-lane closures,
+  `process_message_with_bot` retirement decision); router/harness
+  redesign stays Phase 6. Deferred tooling unchanged.
+- Commit independently on main. No push, no restart.
+  **STOP for Codex review before the next checkpoint/Phase 6.**

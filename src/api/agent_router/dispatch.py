@@ -45,11 +45,11 @@ def clear_last_failure(session_id: Any) -> None:
 
 def _default_runners() -> Dict[str, RunnerFn]:
     """Late-bind runners. Harness agents (cursor/codex/muse/claude/…) come from catalog."""
-    from api import web_chat_api as w
+    from api.agent_harness.runners import run_harness_web_command as _run_owned
 
     def harness_runner_factory(agent_id: str) -> RunnerFn:
         def _runner(prompt, chat_session_id, status_queue=None, project_path=None, model=None, **_kw):
-            return w._run_harness_web_command(
+            return _run_owned(
                 agent_id,
                 prompt,
                 chat_session_id,
