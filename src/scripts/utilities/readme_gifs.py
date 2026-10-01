@@ -2,7 +2,7 @@
 
     .venv/bin/python src/scripts/utilities/readme_gifs.py [customize] [multiplex] [--keep]
 
-Signs in as a throwaway guest, seeds demo chats, drives the app shell with a
+Signs in as the reusable Cuttle Demo guest, seeds demo chats, drives the app shell with a
 drawn cursor, and records frames from the Chrome DevTools screencast. Every
 non-GET API call from the page is stubbed, so the demo cannot change real
 settings, wallpapers, or the pane map agents read. Frames are pasted into the
@@ -480,18 +480,19 @@ def main() -> int:
     with sync_playwright() as p:
         browser = p.chromium.launch(args=["--autoplay-policy=no-user-gesture-required"])
         ctx = browser.new_context(ignore_https_errors=True, viewport=VIEWPORT)
-        user_id = rs.guest_login(ctx, args.base)
-        auth_state = ctx.storage_state()
-        ctx.close()
-        chats = rs.seed_demo_chats(db, user_id)
-        try:
-            for name in args.scenes or SCENES:
-                SCENES[name](browser, auth_state, args.base, chats)
-        finally:
-            browser.close()
-            if not args.keep:
-                for sid in chats.values():
-                    db.delete_chat_session(sid, user_id)
+        with rs.fixture_browser_auth(ctx, args.base, db=db) as user_id:
+            auth_state = ctx.storage_state()
+            ctx.close()
+            chats = {}
+            try:
+                chats = rs.seed_demo_chats(db, user_id)
+                for name in args.scenes or SCENES:
+                    SCENES[name](browser, auth_state, args.base, chats)
+            finally:
+                browser.close()
+                if not args.keep:
+                    for sid in chats.values():
+                        db.delete_chat_session(sid, user_id)
     return 0
 
 

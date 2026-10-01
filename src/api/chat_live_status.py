@@ -100,15 +100,33 @@ def set_live_status(
             _STORE[k] = entry
 
 
+def _clear_keys_locked(keys: List[str], *, turn: Optional[int] = None) -> None:
+    """Clear presentation state while retaining the newest producer's identity.
+
+    A writer may already have passed its external freshness check. Removing
+    the turn marker lets it resurrect status after a newer turn finishes or
+    expires. This inactive marker lives in the existing process-lifetime store.
+    Caller holds ``_LOCK``.
+    """
+    for k in keys:
+        previous_turn = (_STORE.get(k) or {}).get("turn")
+        if turn is not None and previous_turn not in (None, turn):
+            continue
+        if previous_turn is None:
+            _STORE.pop(k, None)
+        else:
+            _STORE[k] = {
+                "active": False, "status": None, "updated_at": None,
+                "report_url": None, "query_id": None, "turn": previous_turn,
+            }
+
+
 def clear_live_status(session_id: Any, *, turn: Optional[int] = None) -> None:
     keys = live_status_keys(session_id)
     if not keys:
         return
     with _LOCK:
-        for k in keys:
-            if turn is not None and (_STORE.get(k) or {}).get("turn") not in (None, turn):
-                continue
-            _STORE.pop(k, None)
+        _clear_keys_locked(keys, turn=turn)
 
 
 def get_live_status(session_id: Any) -> Dict[str, Any]:
@@ -121,8 +139,7 @@ def get_live_status(session_id: Any) -> Dict[str, Any]:
                 continue
             updated = float(entry.get("updated_at") or 0)
             if entry.get("active") and updated and (now - updated) > _ttl_seconds(entry):
-                for kk in keys:
-                    _STORE.pop(kk, None)
+                _clear_keys_locked(keys)
                 break
             return dict(entry)
     return {"active": False, "status": None, "updated_at": None, "report_url": None, "query_id": None}
@@ -140,8 +157,7 @@ def active_live_session_ids() -> List[str]:
             updated = float(entry.get("updated_at") or 0)
             if updated and (now - updated) > _ttl_seconds(entry):
                 bare = k[len("db_session_") :] if k.startswith("db_session_") else k
-                for kk in live_status_keys(bare):
-                    _STORE.pop(kk, None)
+                _clear_keys_locked(live_status_keys(bare))
                 continue
             bare = k[len("db_session_") :] if k.startswith("db_session_") else k
             if not bare or bare in seen:

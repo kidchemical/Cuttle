@@ -948,6 +948,10 @@ def handle_agent_usage_slash(agent_id: str, prompt: str) -> Optional[str]:
     If ``prompt`` is a usage command for ``agent_id``, return markdown reply.
     Otherwise None.
     """
+    live = re.fullmatch(r"/?usage-live(?:\s+(.*))?", (prompt or "").strip(), re.I | re.S)
+    if live and (agent_id or "").strip().lower() in {"codex", "muse", "hermes", "opencode"}:
+        from api.usage_live import live_usage_reply
+        return live_usage_reply(agent_id.strip().lower(), live.group(1) or "")
     args = parse_usage_slash(prompt)
     if args is None:
         return None

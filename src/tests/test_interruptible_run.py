@@ -118,3 +118,43 @@ def test_format_interrupt_notice_mentions_resume():
     assert "interrupted after 61s" in text
     assert "/codex" in text
     assert "resume" in text.lower()
+
+
+@pytest.mark.asyncio
+async def test_normal_exit_drains_late_stderr_session_trailer():
+    """Hermes-style session ids arrive after stdout EOF and process exit."""
+    exited = asyncio.Event()
+    seen = []
+
+    class Stdout:
+        async def readline(self):
+            return b""
+
+    class Stderr:
+        delivered = False
+
+        async def read(self, size):
+            if self.delivered:
+                return b""
+            await exited.wait()
+            await asyncio.sleep(0)  # trailer follows the process wait callback
+            self.delivered = True
+            return b"session_id: saved-at-exit\n"
+
+    class Process:
+        stdout = Stdout()
+        stderr = Stderr()
+        returncode = None
+
+        async def wait(self):
+            self.returncode = 0
+            exited.set()
+            return 0
+
+    result = await run_interruptible(
+        Process(), timeout=3, on_stderr_chunk=seen.append,
+    )
+    assert result.returncode == 0
+    assert result.stderr == b"session_id: saved-at-exit\n"
+    assert seen == [result.stderr]
+    assert not result.timed_out and not result.cancelled

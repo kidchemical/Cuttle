@@ -12,7 +12,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Optional, List, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # Lazy: read-only agent tools (python -m api.chat_cli) must not require bcrypt
 # just to open the SQLite transcript store. Password hashing still needs it.
@@ -363,6 +363,82 @@ class AuthDatabase:
         return conn
     
     # ==================== User Management ====================
+
+    def layout_test_accounts(self) -> List[Dict[str, Any]]:
+        """Inventory the exact usernames emitted by the old Apps layout tests.
+
+        No credentials or message contents leave this maintenance interface.
+        """
+        conn = self._get_connection()
+        try:
+            rows = conn.execute('''
+                SELECT u.id, u.username, u.email, u.auth_provider,
+                       u.provider_user_id, u.is_active,
+                       (SELECT COUNT(*) FROM chat_messages m JOIN chat_sessions s
+                        ON s.id = m.chat_session_id WHERE s.user_id = u.id) AS messages,
+                       (SELECT COUNT(*) FROM chat_widgets w WHERE w.user_id = u.id) AS widgets,
+                       (SELECT COUNT(*) FROM subagent_batches b WHERE b.user_id = u.id) AS batches
+                FROM users u ORDER BY u.id
+            ''').fetchall()
+            return [dict(row) for row in rows
+                    if re.fullmatch(r'(?:lo|lp)_[0-9a-f]{10}', row['username'] or '')]
+        finally:
+            conn.close()
+
+    def retire_empty_layout_test_accounts(self, user_ids: List[int]) -> List[int]:
+        """Reversibly disable confirmed empty layout fixtures and revoke login tokens.
+
+        Recheck identity/content under a write transaction, so an audit followed
+        by new user activity cannot retire a now-used account. No user/chat rows
+        are deleted. The oldest active account is always protected.
+        """
+        conn = self._get_connection()
+        retired = []
+        try:
+            conn.execute('BEGIN IMMEDIATE')
+            oldest = conn.execute('SELECT MIN(id) FROM users WHERE is_active = 1').fetchone()[0]
+            for uid in set(map(int, user_ids)):
+                row = conn.execute('SELECT * FROM users WHERE id = ?', (uid,)).fetchone()
+                if not row or uid == oldest or not row['is_active']:
+                    continue
+                name = row['username'] or ''
+                if (not re.fullmatch(r'(?:lo|lp)_[0-9a-f]{10}', name)
+                        or row['auth_provider'] != 'local' or row['provider_user_id']
+                        or row['email'] != name + '@local'):
+                    continue
+                used = conn.execute('''
+                    SELECT EXISTS(SELECT 1 FROM chat_messages m JOIN chat_sessions s
+                                  ON s.id = m.chat_session_id WHERE s.user_id = ?)
+                         OR EXISTS(SELECT 1 FROM chat_widgets WHERE user_id = ?)
+                         OR EXISTS(SELECT 1 FROM subagent_batches WHERE user_id = ?)
+                ''', (uid, uid, uid)).fetchone()[0]
+                if used:
+                    continue
+                conn.execute('UPDATE users SET is_active = 0 WHERE id = ?', (uid,))
+                conn.execute('DELETE FROM auth_sessions WHERE user_id = ?', (uid,))
+                retired.append(uid)
+            conn.commit()
+            return sorted(retired)
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def restore_layout_test_account(self, user_id: int) -> bool:
+        """Undo retirement without restoring previously revoked login tokens."""
+        conn = self._get_connection()
+        try:
+            row = conn.execute('SELECT * FROM users WHERE id = ?', (int(user_id),)).fetchone()
+            if (not row or not re.fullmatch(r'(?:lo|lp)_[0-9a-f]{10}', row['username'] or '')
+                    or row['auth_provider'] != 'local'
+                    or row['email'] != row['username'] + '@local' or row['provider_user_id']):
+                return False
+            conn.execute('UPDATE users SET is_active = 1 WHERE id = ?', (int(user_id),))
+            conn.commit()
+            return True
+        finally:
+            conn.close()
     
     def create_user(self, email: str, display_name: str, auth_provider: str,
                    password: Optional[str] = None, provider_user_id: Optional[str] = None,
@@ -534,7 +610,7 @@ class AuthDatabase:
         on successful login with an old hash, the hash is re-stored as bcrypt.
         """
         user = self.get_user_by_login(login)
-        if not user or not user.get('password_hash'):
+        if not user or not user.get('is_active', 1) or not user.get('password_hash'):
             return None
 
         stored_hash = user['password_hash']
@@ -581,7 +657,8 @@ class AuthDatabase:
     def create_auth_session(self, user_id: int, expires_hours: int = 720) -> str:
         """Create auth session and return token (default 30 days)"""
         session_token = secrets.token_urlsafe(32)
-        expires_at = datetime.now() + timedelta(hours=expires_hours)
+        # SQLite CURRENT_TIMESTAMP is UTC, even when the host runs in PDT/etc.
+        expires_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=expires_hours)
         
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -605,7 +682,7 @@ class AuthDatabase:
             SELECT u.*, s.session_token 
             FROM auth_sessions s
             JOIN users u ON s.user_id = u.id
-            WHERE s.session_token = ? AND s.expires_at > CURRENT_TIMESTAMP
+            WHERE s.session_token = ? AND s.expires_at > CURRENT_TIMESTAMP AND u.is_active = 1
         ''', (session_token,))
         
         row = cursor.fetchone()
@@ -2008,4 +2085,3 @@ def get_auth_db() -> AuthDatabase:
         # Pass DB_PATH explicitly so monkeypatches / env redirects apply.
         _db_instance = AuthDatabase(DB_PATH)
     return _db_instance
-

@@ -1,6 +1,6 @@
 """Capture README screenshots (WebP) of the running web UI into docs/media/.
 
-Signs in as a throwaway guest (so no real chats appear), seeds demo chats with
+Signs in as the reusable Cuttle Demo guest (so no real chats appear), seeds demo chats with
 fake content, captures them in the light theme at 2x, frames each capture as a
 landing-page style promo (see readme_promo.py), then soft-deletes the demo chats.
 
@@ -26,6 +26,7 @@ sys.path.insert(0, str(SRC))
 from playwright.sync_api import sync_playwright  # noqa: E402
 
 from api.auth_db import get_auth_db  # noqa: E402
+from api.fixture_accounts import fixture_browser_auth  # noqa: E402
 from api.chat_widgets import rewrite_assistant_text_widgets  # noqa: E402
 from api.project_actions import prepare_assistant_text_for_actions  # noqa: E402
 
@@ -164,13 +165,6 @@ def seed_demo_chats(db, user_id: int) -> dict[str, int]:
     }
 
 
-def guest_login(ctx, base: str) -> int:
-    resp = ctx.request.post(f"{base}/api/auth/guest")
-    if not resp.ok:
-        raise SystemExit(f"guest login failed: {resp.status} {resp.text()[:200]}")
-    return int(resp.json()["user"]["id"])
-
-
 def seed_chat(db, user_id: int, title: str, turns: list[tuple[str, str, dict]]) -> int:
     sid = db.create_chat_session(user_id, title)
     for role, content, meta in turns:
@@ -217,7 +211,7 @@ FRAMES = {
 
 def fresh_page(browser, auth_state: dict, viewport: dict = VIEWPORT, **ctx_args):
     # The shell restores the last-open chat from browser storage, so every shot
-    # gets its own context seeded with only the guest cookie.
+    # gets its own context seeded with only the demo cookie.
     ctx = browser.new_context(ignore_https_errors=True, viewport=viewport, storage_state=auth_state,
                               device_scale_factor=ctx_args.pop("device_scale_factor", SCALE), **ctx_args)
     ctx.add_init_script(CAPTURE_INIT)
@@ -313,27 +307,26 @@ def main() -> int:
     with sync_playwright() as p:
         browser = p.chromium.launch()
         ctx = browser.new_context(ignore_https_errors=True, viewport=VIEWPORT)
-        user_id = guest_login(ctx, args.base)
-        auth_state = ctx.storage_state()
-        ctx.close()
-
-        chats = seed_demo_chats(db, user_id)
-        try:
-            capture_hero(browser, auth_state, args.base, chats)
-            capture(open_chat(browser, auth_state, args.base, chats["standup"], PHONE_VIEWPORT,
-                              device_scale_factor=3, is_mobile=True, has_touch=True),
-                    "phone", park=(380, 600))
-            capture(open_chat(browser, auth_state, args.base, chats["hero"], top=False), "chat-hero")
-            capture(open_chat(browser, auth_state, args.base, chats["cost"]), "chat-charts")
-
-            capture_dashboards(browser, auth_state, args.base)
-            reframe(browser)
-        finally:
-            browser.close()
-            if not args.keep:
-                for sid in chats.values():
-                    db.delete_chat_session(sid, user_id)
-    print(json.dumps({"guest_user_id": user_id, "chats": chats, "kept": args.keep}))
+        with fixture_browser_auth(ctx, args.base, db=db) as user_id:
+            auth_state = ctx.storage_state()
+            ctx.close()
+            chats = {}
+            try:
+                chats = seed_demo_chats(db, user_id)
+                capture_hero(browser, auth_state, args.base, chats)
+                capture(open_chat(browser, auth_state, args.base, chats["standup"], PHONE_VIEWPORT,
+                                  device_scale_factor=3, is_mobile=True, has_touch=True),
+                        "phone", park=(380, 600))
+                capture(open_chat(browser, auth_state, args.base, chats["hero"], top=False), "chat-hero")
+                capture(open_chat(browser, auth_state, args.base, chats["cost"]), "chat-charts")
+                capture_dashboards(browser, auth_state, args.base)
+                reframe(browser)
+            finally:
+                browser.close()
+                if not args.keep:
+                    for sid in chats.values():
+                        db.delete_chat_session(sid, user_id)
+    print(json.dumps({"demo_user_id": user_id, "chats": chats, "kept": args.keep}))
     return 0
 
 

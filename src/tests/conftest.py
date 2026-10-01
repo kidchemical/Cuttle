@@ -279,6 +279,20 @@ def _no_live_steer_servers(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolated_restart_files(tmp_path, monkeypatch):
+    """Delivery end/cancel hooks must never consume a live pending restart.
+
+    Tests have independent in-memory work registries; sharing the daemon's
+    control files let an ordinary turn test declare the real Flask idle.
+    """
+    from api import flask_restart as restart
+
+    monkeypatch.setattr(restart, 'STATUS_PATH', tmp_path / 'flask-restart-status.json')
+    monkeypatch.setattr(restart, 'REQUEST_PATH', tmp_path / 'flask-restart-request.json')
+    monkeypatch.setattr(restart, 'EVENTS_PATH', tmp_path / 'flask-restart-events.jsonl')
+
+
+@pytest.fixture(autouse=True)
 def _isolated_auth_db(tmp_path, monkeypatch):
     """Tests never read or write the live ``cuttle_auth.db``.
 

@@ -44,6 +44,7 @@ const ctx = {
   addRemoteWaitingIndicator: () => {remote = true},
   removeRemoteWaitingIndicator: () => {remote = false},
   updateRemoteWaitingStatus: () => {}, syncSubagentOrbs: () => {},
+  syncComposerStopWithWatch: () => {},
   scheduleFollowupDrain: () => {},
 };
 vm.createContext(ctx);

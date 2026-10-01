@@ -859,6 +859,12 @@ def maybe_fire_when_idle() -> Optional[Dict[str, Any]]:
         cur = read_status()
         if str(cur.get("state")) != "waiting_for_idle":
             return None
+        # Delivery callbacks also run in agent tools and pytest subprocesses.
+        # Only the Flask process that scheduled this wait owns its registries
+        # and may decide that work has drained. Inherited generation env vars
+        # are insufficient: children have different PIDs and empty registries.
+        if _waiting_idle_orphaned(cur):
+            return None
         restart_id = str(cur.get("restart_id") or "")
         if not restart_id:
             return None

@@ -160,6 +160,13 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
         keywords: 'cursor about version whoami',
     },
     {
+        prefix: '/usage-live',
+        label: 'Live usage',
+        hint: 'Usage refreshed every minute while visible (shared across panes)',
+        category: 'cursor-cmd',
+        keywords: 'cursor usage live quota billing',
+    },
+    {
         prefix: '/usage',
         label: 'Usage',
         hint: 'Show Cursor plan usage for the current billing cycle',
@@ -892,7 +899,7 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
             .trim();
         // Nested one-shots — never the sticky badge (incl. legacy wrong category).
         if (
-            /^\/(usage|cost)(\s|$)/.test(hay)
+            /^\/(usage-live|usage|cost)(\s|$)/.test(hay)
             || /^\/model\s+refresh\b/.test(hay)
             || /^\/(about|clear|plan|ask|sandbox|agent)\b/.test(hay)
             || new RegExp('^/' + id + '\\s+/').test(hay)
@@ -947,7 +954,7 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
         const cat = String(chip.category || '').toLowerCase();
         if (/^(cursor|muse|codex|hermes|opencode|claude|deepseek|antigravity)-cmd$/.test(cat)) return true;
         const pre = String(chip.prefix || chip.meta || '').toLowerCase().trim();
-        return /^\/(usage|cost)(\s|$)/.test(pre)
+        return /^\/(usage-live|usage|cost)(\s|$)/.test(pre)
             || /^\/model\s+refresh\b/.test(pre);
     }
 

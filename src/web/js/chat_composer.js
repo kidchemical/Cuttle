@@ -71,8 +71,8 @@
         // ``/cursor /restart status`` after strip — control still wins.
         if (isControl && isControl(rest)) return true;
         // Nested agent one-shots / mode cmds are real turns (CH-000482).
-        if (/^\/(usage|cost|about|clear|agent)(\s|$)/i.test(rest)) return true;
-        if (/^(usage|cost|about|clear|agent)(\s|$)/i.test(rest)) return true;
+        if (/^\/(usage|cost|usage-live|about|clear|agent)(\s|$)/i.test(rest)) return true;
+        if (/^(usage|cost|usage-live|about|clear|agent)(\s|$)/i.test(rest)) return true;
         if (/^\/(plan|ask|sandbox)(\s|$)/i.test(rest)) return true;
         if (/^\/model\s+refresh\b/i.test(rest)) return true;
         // Model setting chips alone (/model auto) are not a user prompt either.

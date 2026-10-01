@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 # Commands that Cuttle can honor for `/cursor <cmd> …` (web / Discord bridge).
 _CURSOR_AGENT_SLASH_RE = re.compile(
-    r"^/(model|plan|ask|agent|clear|new-chat|newchat|new|about|sandbox|usage|compact|summarize|compress)\b(.*)$",
+    r"^/(model|plan|ask|agent|clear|new-chat|newchat|new|about|sandbox|usage-live|usage|compact|summarize|compress)\b(.*)$",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -610,6 +610,10 @@ def handle_cursor_agent_slash(
         if recent_block:
             about = about.rstrip() + "\n\n" + recent_block.strip()
         return {"action": "reply", "message": about}
+
+    if cmd == "usage-live":
+        from api.usage_live import live_usage_reply
+        return {"action": "reply", "message": live_usage_reply("cursor", args)}
 
     if cmd == "usage":
         return {"action": "reply", "message": _run_cursor_usage()}

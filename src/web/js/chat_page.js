@@ -5149,6 +5149,10 @@
             const usageTable = CuttleChatSlash.HARNESS_USAGE_SLASH_BY_AGENT;
             if (usageTable[agent]) {
                 out.push(Object.assign({}, usageTable[agent]));
+                out.push(Object.assign({}, usageTable[agent], {
+                    prefix: '/usage-live', label: 'Live usage',
+                    hint: 'Usage refreshed every minute while visible (shared across panes)',
+                }));
             }
             out.push(harnessCostSlashCommand(agent));
             return out;
@@ -13733,6 +13737,9 @@
             }
         } else {
             removeRemoteWaitingIndicator();
+            // Remote completion owns its composer cleanup too. Preserve Stop
+            // for running watch cards; an idle chat must not offer agent Stop.
+            syncComposerStopWithWatch();
             // Idle again (remote run finished, or stale live-status after reply) —
             // drain follow-ups queued while isSessionGenerating() was true.
             // Drain on any generating UI clear, not only when the remote indicator
@@ -22223,6 +22230,8 @@
     }
 
     function formatMessage(text) {
+        const live = CuttleUsageLive.render(text, formatMessage);
+        if (live !== null) return live;
         // Client-side fallback: pin cuttle_widget tags even if Flask missed rewrite.
         if (typeof text === 'string' && /<cuttle_widget\b/i.test(text)) {
             text = ingestAndStripCuttleWidgets(text);
@@ -23000,6 +23009,7 @@
     // Initialize on page load
     document.addEventListener('DOMContentLoaded', function() {
         LOG('DOMContentLoaded: Chat page initializing');
+        CuttleUsageLive.start(formatMessage);
 
         // Initialize theme
         initializeTheme();

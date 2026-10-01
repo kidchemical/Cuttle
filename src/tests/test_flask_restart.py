@@ -36,6 +36,30 @@ def _idle_work(*_args, **_kwargs):
     }
 
 
+@pytest.mark.parametrize('callback', ['direct', 'delivery_end', 'delivery_cancel'])
+def test_foreign_process_cannot_fire_flask_pending_restart(restart_paths, monkeypatch, callback):
+    """A pytest/CLI child has an empty registry, not the host's idle state."""
+    from api import chat_delivery, flask_restart as fr
+
+    pending = fr.write_status({
+        'restart_id': 'host-waiting', 'state': 'waiting_for_idle',
+        'session_id': '849', 'flask_pid': os.getpid() + 100000,
+        'generation': fr.live_flask_generation(),
+    })
+    attempts = []
+    monkeypatch.setattr(fr, 'list_active_work', _idle_work)
+    monkeypatch.setattr(fr, '_begin_handoff', lambda *args: attempts.append(args))
+    if callback == 'direct':
+        fr.maybe_fire_when_idle()
+    elif callback == 'delivery_end':
+        chat_delivery.end('test-child')
+    else:
+        chat_delivery.cancel_current_turn('test-child')
+    assert attempts == [], 'Child process scheduled the host restart using its own idle registry'
+    assert fr.read_status() == pending
+    assert not restart_paths['request'].exists()
+
+
 def _busy_work(session="99"):
     return {
         "busy_sessions": [session],

@@ -46,6 +46,20 @@ type: discord.post       # or shell
 # run: python .cuttle/scripts/do_thing.py
 ```
 
+## Live usage reports
+
+With a Cursor, Codex, Muse, Hermes, or OpenCode agent badge selected, `/usage`
+shows a fixed snapshot and `/usage-live` shows a report that refreshes every
+minute while visible. Explicit forms such as `/codex /usage-live` also work.
+Hermes, Muse, and OpenCode retain their optional day range (`/usage-live 7d`).
+
+Chat panes share one shell polling scheduler and one request per agent/day range.
+`GET /api/usage-live?agent=codex&days=30` requires owner authentication and uses
+a 60-second provider cache with per-key request coalescing across windows and
+devices. Hidden/offscreen reports stop polling; scrolling back or restoring the
+page resumes updates. Refreshes change the displayed report without adding chat
+messages or starting agent turns. No background polling runs without a viewer.
+
 ## Chat UI tags (side effects)
 
 Emit from the agent reply — Cuttle rewrites to cards; clicks hit Flask with **no LLM**:

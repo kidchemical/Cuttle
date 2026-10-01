@@ -28,6 +28,28 @@ finishes, success/failure clears live status, and Stop → resend rejects the
 old producer's status and result. Test the polling UI after its in-flight
 prompt has cleared, including shell hub calls with an empty message list.
 
+Real Chromium rendering of this race (desktop + phone, success + refusal,
+brief bubble flashes, newer remote activity, idle Stop cleanup, and refresh):
+
+```bash
+.venv/bin/python -m pytest src/tests/e2e/test_chat_terminal_activity.py -q
+```
+
+Requires Playwright and Chromium from `src/requirements/requirements-dev.txt`.
+This test serves production assets with an isolated API; it never reaches the
+running Flask or a provider. Set `CUTTLE_API_URL=http://127.0.0.1:9` for a full
+offline suite so older live-server E2E fixtures skip instead of touching an
+install. Unit/layout tests always use temporary auth databases. Reusable
+live QA/demo identities are described in `.cuttle/docs/fixture-accounts.md`.
+
+Every test also uses temporary Flask restart status/request/event files.
+Delivery completion/cancellation hooks can consult a pending restart, so
+isolating only the dedicated restart test files is insufficient. The runtime
+also rejects idle handoff from a process other than the PID/generation that
+scheduled the wait. `test_flask_restart.py::test_foreign_process_cannot_fire_flask_pending_restart`
+reproduces direct, completion-hook, and cancellation-hook attempts; it must
+remain blocked without changing the pending status or writing a daemon request.
+
 ## Layout
 
 ```

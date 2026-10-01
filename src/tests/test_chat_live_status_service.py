@@ -65,6 +65,58 @@ def test_old_turn_cannot_overwrite_or_clear_new_turn_status():
     assert not live.get_live_status("12")["active"]
 
 
+@pytest.mark.parametrize("cleanup", ["clear", "read_expiry", "list_expiry"])
+def test_old_writer_cannot_republish_after_newer_status_is_removed(cleanup):
+    """Freshness check passes, then the writer stalls until a newer turn ends."""
+    import threading
+    from api import chat_live_status as live
+
+    checked = threading.Event()
+    resume = threading.Event()
+    errors = []
+
+    def checked_before_resend(sid):
+        checked.set()
+        assert resume.wait(3)
+        return False  # valid at the time of the old check
+
+    def old_writer():
+        try:
+            live.set_live_status(
+                "db_session_12", "old late tool", turn=10,
+                is_cancelled=checked_before_resend,
+            )
+        except Exception as exc:
+            errors.append(exc)
+
+    writer = threading.Thread(target=old_writer)
+    writer.start()
+    try:
+        assert checked.wait(3)
+        live.set_live_status("12", "new work", turn=11)
+        if cleanup == "clear":
+            live.clear_live_status("12", turn=11)
+        else:
+            with live._LOCK:
+                live._STORE["12"]["updated_at"] = time.time() - live.TTL_SECONDS - 1
+            if cleanup == "read_expiry":
+                live.get_live_status("12")
+            else:
+                live.active_live_session_ids()
+        resume.set()
+        writer.join(3)
+        assert not writer.is_alive()
+        assert not errors
+        status = live.get_live_status("12")
+        assert not status["active"]
+        assert status["status"] is None
+        assert "12" not in live.active_live_session_ids()
+    finally:
+        resume.set()
+        writer.join(3)
+        live.clear_live_status("12")
+
+
 def test_set_preserves_prior_fields_and_defaults_connecting():
     wca.set_chat_live_status("s1", active=True)
     first = wca.get_chat_live_status("s1")

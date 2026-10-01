@@ -29,6 +29,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MOD_JS = REPO_ROOT / "src" / "web" / "js" / "chat_messages.js"
 MOD_MD = REPO_ROOT / "src" / "web" / "js" / "chat_markdown.js"
+MOD_USAGE = REPO_ROOT / "src" / "web" / "js" / "chat_usage_live.js"
 CHAT_PAGE_JS = REPO_ROOT / "src" / "web" / "js" / "chat_page.js"
 
 node_only = pytest.mark.skipif(
@@ -610,6 +611,7 @@ eval(span('    function mediaKindFromUrl(url) {', '    function mediaPosterUrl(s
 // Block/inline markdown + tables moved to chat_markdown.js (Slice 8E);
 // the pipeline executes the real module, not page spans.
 globalThis.CuttleChatMarkdown = require(process.env.MOD_MD);
+globalThis.CuttleUsageLive = require(process.env.MOD_USAGE);
 // escapeHtml is DOM-backed in the page; the equivalent inline escape is the
 // documented premise (escape degrees are unit-covered, not pipeline-covered).
 const escapeHtml = (t) => escapeHtmlInline(String(t ?? ''));
@@ -662,7 +664,7 @@ def _run_full_pipeline():
         env={"PATH": os.environ["PATH"], "MOD_JS": str(MOD_JS),
              "CHAT_PAGE_JS": str(CHAT_PAGE_JS),
              "CHAT_ATTACHMENTS_JS": str(CHAT_ATTACHMENTS_JS),
-             "MOD_MD": str(MOD_MD)},
+             "MOD_MD": str(MOD_MD), "MOD_USAGE": str(MOD_USAGE)},
     )
     assert proc.returncode == 0, proc.stderr or proc.stdout
     return json.loads(proc.stdout)

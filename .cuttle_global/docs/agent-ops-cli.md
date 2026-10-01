@@ -19,6 +19,7 @@ agent toolkit.
 |---|---|---|
 | Chat handles / transcripts | `python -m api.chat_cli` | `chat-history.md` |
 | Tasks widgets | `python -m api.widgets_cli` | `widgets.md` |
+| Cuttle QA / promo accounts | `python -m api.fixture_accounts` | Cuttle project `.cuttle/docs/fixture-accounts.md` |
 | Discord reads | `python -m api.discord_cli` | `discord.md` (posts stay on `discord.post`) |
 | Gitea issues | `python -m api.gitea` | `gitea.md` |
 | Live split panes | `python -m api.panes_cli` | `chat-history.md` |

@@ -1016,12 +1016,12 @@ console.log(JSON.stringify(out));
         assert row["stickyLeak"] is False
     # Harnesses with a /usage reporter keep it alongside /cost.
     for agent in ("muse", "codex", "hermes", "opencode"):
-        assert res[agent]["prefixes"] == ["/usage", "/cost"]
+        assert res[agent]["prefixes"] == ["/usage", "/usage-live", "/cost"]
     for agent in ("claude", "deepseek", "antigravity"):
         assert res[agent]["prefixes"] == ["/cost"]
     assert res["none"] == 0
     assert res["localCodex"] == 0
-    assert res["localHermes"] == ["/usage", "/cost"]
+    assert res["localHermes"] == ["/usage", "/usage-live", "/cost"]
 
 
 def test_cursor_palette_has_cost_and_sendable_gate():

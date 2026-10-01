@@ -2,7 +2,7 @@
 
     .venv/bin/python src/scripts/utilities/promo_video.py [--skip-record] [--keep]
 
-Uses the same guest + demo chats as the README captures (no real user data).
+Uses the same Cuttle Demo account and demo chats as the README captures (no real user data).
 UI is driven headed on DISPLAY and recorded with OpenScreen when a window
 match is found; Playwright's own webm is always kept as a fallback plate.
 Titles, logo sweep, and music are cut with ffmpeg (DaVinci Resolve is not
@@ -581,17 +581,18 @@ def main() -> int:
                 args=["--autoplay-policy=no-user-gesture-required", f"--window-size={W},{H}"],
             )
             ctx = browser.new_context(ignore_https_errors=True, viewport=gifs.VIEWPORT)
-            user_id = rs.guest_login(ctx, args.base)
-            auth_state = ctx.storage_state()
-            ctx.close()
-            chats = rs.seed_demo_chats(db, user_id)
-            try:
-                plate, burst_path = record_ui(browser, auth_state, args.base, chats)
-            finally:
-                browser.close()
-                if not args.keep:
-                    for sid in chats.values():
-                        db.delete_chat_session(sid, user_id)
+            with rs.fixture_browser_auth(ctx, args.base, db=db) as user_id:
+                auth_state = ctx.storage_state()
+                ctx.close()
+                chats = {}
+                try:
+                    chats = rs.seed_demo_chats(db, user_id)
+                    plate, burst_path = record_ui(browser, auth_state, args.base, chats)
+                finally:
+                    browser.close()
+                    if not args.keep:
+                        for sid in chats.values():
+                            db.delete_chat_session(sid, user_id)
     assemble(plate, burst_path)
     return 0
 

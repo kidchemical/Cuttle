@@ -305,6 +305,9 @@ def _require_session_actor(session_id):
 # Register authentication blueprint
 app.register_blueprint(auth_bp)
 
+from api.usage_live import usage_live_bp
+app.register_blueprint(usage_live_bp)
+
 # Device workers mesh (host-first coordinator queue)
 try:
     from api.device_workers.routes import workers_bp
