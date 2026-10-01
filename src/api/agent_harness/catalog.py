@@ -9,6 +9,12 @@ Roots (first wins for a given id; bundled always preferred)::
 
 Drop-in folders use the same contract as bundled: ``manifest.yaml`` + ``adapter.py``
 with ``build_adapter()``. Unknown CLIs never require a Cuttle core fork.
+
+Trust: project drop-ins (``{project}/.cuttle/agents/``) execute third-party
+``adapter.py`` ONLY on explicit opt-in (``CUTTLE_ALLOW_PROJECT_ADAPTERS`` /
+``agent_harness.allow_project_adapters``). Manifest identity is validated
+before import, each external adapter executes once, and sibling imports are
+scoped to load time. See ADDING_AN_AGENT.md ("Project drop-in trust model").
 """
 
 from __future__ import annotations
@@ -16,6 +22,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import os
+import re
 import sys
 from functools import lru_cache
 from pathlib import Path
@@ -33,6 +40,41 @@ _INSTANCE_AGENTS_ROOT = _CUTTLE_ROOT / ".cuttle_global" / "agents"
 
 # (manifest, adapter, agent_dir)
 _AgentEntry = Tuple[AgentManifest, AgentAdapter, Path]
+
+# Canonical agent identity: lowercase alnum runs joined by single hyphens.
+# Mirrors get_agent() lookup normalization ("my_agent" -> "my-agent") so a
+# folder that lookup could never reach is rejected instead of half-working.
+_CANONICAL_ID_RE = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
+_CANONICAL_SLASH_RE = re.compile(r"/[a-z0-9]+(-[a-z0-9]+)*")
+
+# External (non-bundled) adapter modules, keyed by resolved agent dir.
+# _discover() re-scans project roots on every call (no project_path cache),
+# so without this each turn would re-execute adapter.py top-level code.
+_EXTERNAL_ADAPTER_CACHE: Dict[str, _AgentEntry] = {}
+
+
+def _canonical_agent_id(folder_name: str) -> str:
+    return folder_name.strip().lower().replace("_", "-")
+
+
+def _canonical_slash(raw_slash: str, agent_id: str) -> str:
+    s = (raw_slash or f"/{agent_id}").strip().lower().replace("_", "-")
+    if not s.startswith("/"):
+        s = "/" + s
+    return s
+
+
+def _identity_error(agent_id: str, slash: str) -> Optional[str]:
+    """Validate manifest identity BEFORE the adapter module executes.
+
+    Slash is canonicalized the same way lookup normalizes (``_`` -> ``-``),
+    so ``/my_agent`` routes exactly where ``get_agent("my_agent")`` resolves.
+    """
+    if not _CANONICAL_ID_RE.fullmatch(agent_id):
+        return f"non-canonical agent id {agent_id!r}"
+    if not _CANONICAL_SLASH_RE.fullmatch(_canonical_slash(slash, agent_id)):
+        return f"non-canonical slash {slash!r}"
+    return None
 
 
 def _load_manifest_dict(agent_dir: Path) -> Dict[str, Any]:
@@ -110,7 +152,7 @@ def _manifest_from_dict(
     return AgentManifest(
         id=mid,
         label=str(data.get("label") or mid).strip(),
-        slash=str(data.get("slash") or f"/{mid}").strip(),
+        slash=_canonical_slash(str(data.get("slash") or ""), mid),
         requires_cloud=bool(data.get("requires_cloud", True)),
         sticky=bool(data.get("sticky", True)),
         default_model=str(data.get("default_model") or "").strip(),
@@ -167,13 +209,46 @@ def _import_external_adapter(agent_dir: Path, agent_id: str) -> AgentAdapter:
     if spec is None or spec.loader is None:
         raise ImportError(f"Cannot load adapter from {adapter_path}")
     mod = importlib.util.module_from_spec(spec)
-    # Ensure sibling imports inside the drop-in resolve if they add agent_dir to path.
     sys.modules[mod_name] = mod
     agent_dir_str = str(agent_dir.resolve())
-    # Append, never insert(0): a drop-in named json.py must not shadow stdlib.
+    # Scope the drop-in dir to load time only: prepend so the drop-in's own
+    # siblings win while it executes, then remove so a later drop-in with a
+    # same-named sibling (helper.py) cannot inherit this one, and this one
+    # cannot shadow stdlib/bundled modules for anyone else afterwards.
+    # Caveat: function-level (lazy) absolute sibling imports must manage
+    # their own path; top-level `import helper` / `from helper import X`
+    # bindings made during exec stay valid because the module object is held.
+    added_path = False
     if agent_dir_str not in sys.path:
-        sys.path.append(agent_dir_str)
-    spec.loader.exec_module(mod)
+        sys.path.insert(0, agent_dir_str)
+        added_path = True
+    modules_before = set(sys.modules.keys())
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        if added_path:
+            try:
+                sys.path.remove(agent_dir_str)
+            except ValueError:
+                pass
+        # Evict bare top-level modules that were loaded FROM this drop-in dir
+        # (e.g. its helper.py): the adapter already bound what it imported at
+        # exec time, and leaving 'helper' in sys.modules would serve this
+        # drop-in's sibling to the next drop-in's `import helper`.
+        for key in [k for k in sys.modules if k not in modules_before]:
+            if "." in key:
+                continue
+            try:
+                mod_file = getattr(sys.modules[key], "__file__", "") or ""
+            except Exception:
+                continue
+            if not mod_file:
+                continue
+            try:
+                if str(Path(mod_file).resolve()).startswith(agent_dir_str + os.sep):
+                    del sys.modules[key]
+            except OSError:
+                continue
     factory = getattr(mod, "build_adapter", None)
     if callable(factory):
         return factory()
@@ -209,9 +284,28 @@ def _load_agent_dir(
         return None
     if not (agent_dir / "adapter.py").is_file():
         return None
-    agent_id = agent_dir.name
+    agent_id = _canonical_agent_id(agent_dir.name)
     try:
         raw = _load_manifest_dict(agent_dir)
+    except Exception as exc:
+        print(f"[agent_harness] skip {agent_dir}: {exc}", flush=True)
+        return None
+    # Identity is validated BEFORE the adapter module executes: a malformed
+    # manifest (hijack slash, non-canonical id) must neither run third-party
+    # code nor enter routing tables.
+    problem = _identity_error(agent_id, str(raw.get("slash") or f"/{agent_id}"))
+    if problem is not None:
+        print(f"[agent_harness] skip {agent_dir}: {problem}", flush=True)
+        return None
+    if not bundled:
+        try:
+            cache_key = str(agent_dir.resolve())
+        except OSError:
+            cache_key = str(agent_dir)
+        cached = _EXTERNAL_ADAPTER_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+    try:
         raw["id"] = agent_id  # folder name is canonical
         manifest = _manifest_from_dict(
             raw, fallback_id=agent_id, source=source, agent_dir=agent_dir
@@ -220,7 +314,10 @@ def _load_agent_dir(
             adapter = _import_bundled_adapter(agent_id)
         else:
             adapter = _import_external_adapter(agent_dir, agent_id)
-        return manifest, adapter, agent_dir
+        entry = (manifest, adapter, agent_dir)
+        if not bundled:
+            _EXTERNAL_ADAPTER_CACHE[cache_key] = entry
+        return entry
     except Exception as exc:
         print(f"[agent_harness] skip {agent_dir}: {exc}", flush=True)
         return None
@@ -344,6 +441,7 @@ def _discover(project_path: Optional[str] = None) -> Dict[str, _AgentEntry]:
 def reload_catalog() -> None:
     """Clear discovery cache (tests / hot-add)."""
     _discover_global.cache_clear()
+    _EXTERNAL_ADAPTER_CACHE.clear()
 
 
 def list_agents(project_path: Optional[str] = None) -> List[str]:

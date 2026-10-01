@@ -5812,3 +5812,104 @@ whole was rejected as monolith-shifting. The owned seam is
   backlog.
 - Commit independently on main. No push, no restart.
   **STOP for Codex review before the next slice/Phase 7.**
+
+## P6-A approval (Codex, 2026-10-01) + Phase 6 Slice P6-B report — project-adapter trust/import/capability boundary
+
+- P6-A `dc6276de` (BYO-CLI executable installer retirement, guidance kept)
+  APPROVED as the intended first Phase 6 slice. No rework requested.
+- P6-B scope: project-adapter (`{project}/.cuttle/agents/<id>/`) trust audit
+  per plan — approval gate, manifest validation, `sys.path`/`sys.modules`
+  import isolation, capability declarations. No permissions framework, no
+  sandbox claims, no vendor installers, no Discord changes.
+
+### Inventory (actual code, `src/api/agent_harness/catalog.py`, 434 lines pre-change)
+
+- Approval gate: `_project_adapters_allowed()` — env
+  `CUTTLE_ALLOW_PROJECT_ADAPTERS` truthy OR
+  `settings → agent_harness.allow_project_adapters`; off by default
+  (`agent_harness` absent from `src/settings.json`). Gate read on every
+  `_discover(project_path)` (uncached project path) — lifetime correct.
+- Pre-hardening gaps demonstrated by failing probes (5 failed / 3 passed
+  before the fix; authentic failures observed, then fixed):
+  1. `_load_agent_dir` imported `adapter.py` BEFORE any identity check —
+     `slash: "/"` (matches nearly every `/`-message via `match_slash_command`)
+     loaded and its top-level code executed.
+  2. Folder names unvalidated: `Evil Agent/` loaded (unreachable via
+     `get_agent`, which lowercases + `_`→`-`, yet slash-routable) and
+     `my_agent/` was lookup-dead while listed.
+  3. `_discover(project_path)` is uncached → project `adapter.py` top-level
+     re-executed on EVERY call (every turn); proven by a counter file
+     (`xxx` per `get_agent` call).
+  4. Persistent `sys.path.append(agent_dir)` (+ never-evicted bare
+     `sys.modules` entries): drop-in A's `helper.py` served drop-in B's
+     `import helper` — proven cross-project sibling shadowing. stdlib and
+     bundled adapters were already protected (append-only + separate
+     package imports), so only drop-in↔drop-in sibling leakage was live.
+- Non-issues verified, intentionally unchanged: unknown
+  `capabilities_inject` falls through to the `once_per_resume` default in
+  `kernel._should_inject_capabilities` (tolerant default, pinned by test);
+  bundled ids can never be shadowed (first-wins + explicit skip); symlink
+  containment inside `.cuttle/agents/` NOT added — with the opt-in gate the
+  project `.cuttle` content is trusted code by definition, and blocking
+  symlinks would break legitimate linked agent dirs (documented assumption).
+
+### Hardening (`catalog.py` only production file; narrow owned interfaces)
+
+- `_canonical_agent_id()` + `_canonical_slash()` + `_identity_error()`:
+  folder id normalized (lower, `_`→`-`, matching `get_agent`) and both id
+  and slash validated against `[a-z0-9]+(-[a-z0-9]+)*` (`/...` for slash)
+  BEFORE `adapter.py` executes; violators skipped with a log line, code
+  never imported. Stored manifest slash is the canonicalized form, so
+  `/my_agent` routes exactly where `get_agent("my_agent")` resolves.
+  Uniform for bundled entries too (all 8 verified canonical, zero drift).
+- `_EXTERNAL_ADAPTER_CACHE` (keyed by resolved agent dir, cleared by
+  `reload_catalog()`): each external adapter executes once per process.
+- Scoped sibling imports in `_import_external_adapter`: dir PREPENDED during
+  `exec_module` (own siblings win at load), removed in `finally`, plus
+  eviction of load-introduced bare top-level modules whose `__file__` sits
+  inside the drop-in dir (stdlib/site-packages untouched). Top-level
+  `import helper` / `from helper import X` bindings stay valid (object held);
+  documented caveat: function-level lazy absolute sibling imports need
+  their own path handling.
+- Docs: `ADDING_AN_AGENT.md` gains "Project drop-in trust model (P6-B)"
+  (opt-in = trusted code, no sandbox, the three rules + caveat); catalog
+  module docstring points at it.
+
+### Tests
+
+- New `src/tests/test_harness_project_adapters.py` (8 tests, real loader,
+  temp projects, sentinel side-effect files, `sys.path`/`sys.modules`
+  snapshot-restore, no network/vendors/prompts): opt-in load, unapproved
+  code never executes (not listed + side-effect file absent), load-once
+  counter, sibling isolation (`AAA`/`BBB` markers), hijack-slash rejected
+  pre-import, non-canonical folder rejected pre-import, underscore
+  normalization, unknown-capability tolerance. Pre-fix: 5 failed / 3 passed;
+  post-fix: 8/8 pass. Discrimination is the pre-fix run itself (same tests,
+  same env, only production code changed between runs).
+- Focused + neighbors: new file + `test_agent_harness` + `test_harness_byocli`
+  → 52 passed. Catalog-consumer neighbor set (19 files: harness, steer,
+  stop-then-followup, cost-slash, timeouts, metadata-service,
+  context-compiler, first-turn pins, kernel-usage-cache, codex-starred-effort,
+  cursor-slash, codex/muse/muse-session/hermes/opencode/router/usage) →
+  346 passed / 6 failed with FAILED identities byte-identical (`diff` clean)
+  to the same command on the clean `dc6276de` tree (stash-verified).
+  `test_agent_defaults.py`: 21 passed + 1 failed, the failure
+  (`test_agent_defaults_post_rejects_capability_violations`) also fails on
+  the clean tree — pre-existing, untouched by this slice.
+- Spend audit: no prompt-sending tests run; `CUTTLE_*_SPEND` unset;
+  `test_agent_harness_smoke.py` (real prompts/tokens per its header)
+  deliberately not executed. No installs, no network.
+- Compat risk: drop-ins with non-canonical folder/slash names now skip
+  (previously half-loaded); drop-ins relying on persistent `sys.path`
+  presence for lazy sibling imports need self-managed path (documented).
+  Bundled behavior unchanged (all canonical; consumer pins green).
+
+### Remaining scope / risks
+
+- Surface-adapter vs agent-ops boundary review is the remaining Phase 6
+  slice (P6-C); Phase 6 closure + Phase 7 enforcement after.
+- Symlink-out-of-`.cuttle/agents` follows the target (trusted-code
+  assumption, see above) — flagged, not fixed, by design.
+- Deferred unchanged: reproducibility/preflight, `[ERR-20261001-001]`.
+- Commit: P6-B independently on main. No push, no restart.
+  **STOP for Codex review before P6-C/Phase 7.**

@@ -31,6 +31,31 @@ Bundled ids always win — a drop-in cannot shadow `cursor` / `codex` / `muse` /
 may override user drop-ins of the same id. Palette + `/api/agents` surface `available`,
 `status` (`ready` \| `missing_cli`), and `install_hint`.
 
+### Project drop-in trust model (P6-B)
+
+Project drop-ins execute third-party `adapter.py` code **only** on explicit
+opt-in: `CUTTLE_ALLOW_PROJECT_ADAPTERS=1` (env) or
+`settings → agent_harness.allow_project_adapters`. Without opt-in the folder is
+never imported and never listed — opening an untrusted project cannot run its
+adapters. Opting in means: **that project's `.cuttle/agents/` content is
+trusted code**, same as any installed CLI plugin. There is no Python-level
+sandbox; containment is the opt-in gate plus the rules below.
+
+- **Validate before import.** Folder name is the canonical id
+  (lowercased, `_` → `-`, must match `[a-z0-9]+(-[a-z0-9]+)*`); `slash` is
+  canonicalized the same way and must match `/[a-z0-9]+(-[a-z0-9]+)*`.
+  Anything else (e.g. `slash: "/"`, `Evil Agent/`) is skipped **without
+  importing** `adapter.py`. Unknown `capabilities_inject` / `env_profile` /
+  `activity` values fall back to defaults instead of failing.
+- **Load-once.** Each external `adapter.py` executes once per process
+  (cache cleared by `reload_catalog()`); top-level code must be idempotent
+  anyway, but it will not re-run every turn.
+- **Sibling imports resolve at load time.** The drop-in dir is on `sys.path`
+  only while its `adapter.py` executes; top-level `import helper` /
+  `from helper import X` bindings stay valid, but function-level lazy absolute
+  imports of siblings need their own path handling. Same-named siblings in two
+  drop-ins never leak into each other (see `tests/test_harness_project_adapters.py`).
+
 ## Hard-won gotchas (bake these in — do not rediscover)
 
 Every item below already burned dogfood time. The ADD process and smoke suite exist to
