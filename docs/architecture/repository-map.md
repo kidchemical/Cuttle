@@ -247,15 +247,18 @@ HTTP is extracted: `settings_bp` (`api.settings_routes`, url prefix
 live in `src/managers/settings_manager.py` → `src/settings.json`
 (gitignored). Zero `/api/settings` routes remain on the Flask root.
 
-**Active caveat — bot config path:** `src/core/config.py`
-`BotConfig.config_file` is the cwd-relative `Path("bot_config.json")`,
-so repo-root versus `src/` launch cwd selects a different file. Actual
-callers of `get_config()`: `api.settings_routes` (bot/model settings
-backend), `api.query_tracker`, `core.local_llm`. The Flask root only
-imports it (`web_chat_api.py`, guarded import, never called) for
-`/api/settings` initialization. Do not delete
-this as Discord debris; path selection needs its own scoped pass
-(organization plan B2).
+**Bot config path (deterministic):** `BotConfig.config_file` defaults to the
+canonical checkout path `src/bot_config.json` via `core/runtime_paths.py`
+(`bot_config_path`, beside the existing path helpers) — launch cwd never
+selects the file, which preserves the daemon's historical `cwd=src`
+selection for every launch form. A repo-root `bot_config.json` remains
+untouched legacy input (no automatic merge); when both copies diverge the
+`src/` copy wins. Missing file: defaults stay in memory, nothing is created
+until an explicit save/set writes. Actual callers of `get_config()`:
+`api.settings_routes` (bot/model settings backend), `api.query_tracker`,
+`core.local_llm`. The Flask root only imports it (`web_chat_api.py`, guarded
+import, never called) for `/api/settings` initialization. Optional
+`config_file` constructor injection exists for temporary/isolated use.
 
 ---
 
@@ -328,7 +331,7 @@ identifiers below exist at HEAD; nothing here is a proposed interface.
 | Action-card render | page `formatMessage` + local `renderActionFormCard` + `actionFormBlocks` placeholder array; page `activateEnhancements` (all in `chat_page.js`); pure card model/watch interpretation `CuttleChatActionForms.*` (`chat_action_forms.js`); backend `rewrite_action_forms`, `merge_qa_resume_specs` (`action_forms.py`), `prepare_assistant_text_for_actions` (`project_actions.py`) | card lock/selection attrs, watch timers, HMAC-signed persisted specs, one-writer answer bubble (`sendMessage` only) | `test_chat_action_forms.py`, `test_action_forms.py`, `test_action_form_routes.py` |
 | History sync / recovery | page timers `messageSyncTimer`, `startMessageSync`, `stopMessageSync`, `scheduleNextMessageSync`, `syncSessionMessagesFromServer` (all in `chat_page.js`); `recoverChatResult`, `recoverChatResultWithRetries`, per-message sync classification (`chat_pending_result.js`); generation tokens `createGenerationState`/`beginGeneration`/`endGeneration` (`chat_generation.js`); backend `finalize_stream_result` (`chat_turn_workflow.py`), `make_assistant_saver` skip guards (`chat_turn_persist.py`), `current_turn`/`is_stale_turn`/`is_turn_cancelled` (`chat_delivery.py`) | busy lock, sync cursor/timers, turn tokens, pending-result store, assistant-row skip guards; saver takes explicit `db` + captured `request_data` | `test_chat_turn_persist.py`, `test_chat_turn_workflow.py`, `test_chat_coordinator_acceptance.py`, P5-E/P5-F oracles, `test_stop_refresh_live_status.py` |
 | Pane layout | `snapshotLayoutTree`, `flattenLayoutLeaves`, `pageWithPaneSession`; shell maps `columnState`, `lastChatByColumn`; `CuttleSpaces.*` (`src/web/js/spaces/`); backend `_shell_panes_snapshot`, `GET/POST /api/shell/panes`, `.../panes/<n>/messages` (all in `web_chat_api.py`); agent read `python -m api.panes_cli` | `columnState`, `lastChatByColumn`, saved-layout shape (restore-compatible); leaf/group normalization mixed with DOM reads | `test_shell_panes.py`, `test_shell_workspaces.py`, `test_pane_space_drag.py`, `test_panes_cli.py` |
-| Config | HTTP `settings_routes.py` (`settings_bp`; bot/model branch via `get_config()`); defaults `get_settings_manager()` (`settings_manager.py`); `BotConfig.load_config`/`save_config` (`core/config.py`) — file is cwd-relative `Path("bot_config.json")`; path conventions `core/runtime_paths.py` | `src/settings.json` vs `bot_config.json` (two stores; launch cwd selects the latter); unknown-key preservation on migration | `test_settings_routes.py`, `test_runtime_paths.py` |
+| Config | HTTP `settings_routes.py` (`settings_bp`; bot/model branch via `get_config()`); defaults `get_settings_manager()` (`settings_manager.py`); `BotConfig.load_config`/`save_config` (`core/config.py`) — file defaults to checkout `src/bot_config.json` via `runtime_paths.bot_config_path()` (never cwd); path conventions `core/runtime_paths.py` | `src/settings.json` vs `bot_config.json` (two stores kept; `src/` copy wins on divergence, root untouched, no auto-merge); unknown-key preservation on save | `test_settings_routes.py`, `test_runtime_paths.py`, `test_bot_config_paths.py` |
 
 ---
 

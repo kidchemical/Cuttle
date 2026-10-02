@@ -1,5 +1,11 @@
 """
-Configuration system for the Discord bot with different operation modes.
+Bot/model settings store (core.config).
+
+Backend for the settings API bot/model branch: launch mode, thinking
+responses, auto-restart, debug, LLM thresholds, agent method, stage mode,
+preferred models (LLM/Ollama/tools variants), agent name, LLM fallback, and
+system-prompt mode. Resolved through core.runtime_paths (checkout
+``src/bot_config.json``), never the launch cwd. Not Discord-specific.
 """
 
 import os
@@ -7,10 +13,21 @@ from typing import Dict, Any
 from pathlib import Path
 
 class BotConfig:
-    """Bot configuration with different operation modes"""
-    
-    def __init__(self):
-        self.config_file = Path("bot_config.json")
+    """Bot configuration with different operation modes.
+
+    The config file defaults to the canonical checkout path
+    (``src/bot_config.json`` via ``core.runtime_paths``), never the launch
+    cwd: when both a repo-root and a ``src/`` copy exist, the ``src/`` copy
+    wins and the root copy is left untouched (no automatic merge). Pass an
+    explicit ``config_file`` for temporary/isolated use (e.g. tests).
+    """
+
+    def __init__(self, config_file=None):
+        if config_file is None:
+            from core.runtime_paths import bot_config_path
+
+            config_file = bot_config_path()
+        self.config_file = Path(config_file)
         self.default_config = {
             "mode": "default",  # default, multi_stage, llm_only, regex_only
             "thinking_response": True,  # Show "Thinking..." when using LLM
@@ -33,9 +50,14 @@ class BotConfig:
         self.config = self.load_config()
     
     def load_config(self) -> Dict[str, Any]:
-        """Load configuration from file or create default"""
+        """Load configuration from the file, or defaults held in memory.
+
+        A missing file no longer creates one: defaults stay in memory until
+        an explicit ``save_config()``/``set()`` writes the canonical path.
+        Unknown file keys still merge over (and round-trip on save).
+        """
         import json
-        
+
         if self.config_file.exists():
             try:
                 with open(self.config_file, 'r') as f:
@@ -47,10 +69,7 @@ class BotConfig:
             except Exception as e:
                 print(f"⚠️ Error loading config: {e}, using defaults")
                 return self.default_config.copy()
-        else:
-            # Create default config file
-            self.save_config(self.default_config)
-            return self.default_config.copy()
+        return self.default_config.copy()
     
     def save_config(self, config: Dict[str, Any] = None):
         """Save configuration to file"""

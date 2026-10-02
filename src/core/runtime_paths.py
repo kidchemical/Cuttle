@@ -60,6 +60,18 @@ def data_db_dir(project_root: Optional[Path] = None) -> Path:
     return d
 
 
+def bot_config_path(project_root: Optional[Path] = None) -> Path:
+    """Canonical bot/model config file: ``src/bot_config.json``.
+
+    Resolved from the checkout root, never the launch cwd: this preserves
+    the daemon's historical ``cwd=src`` selection for every launch form. A
+    repo-root ``bot_config.json`` remains untouched legacy input and is
+    never merged automatically. Creates nothing (unlike ``data_db_dir``).
+    """
+    root = Path(project_root) if project_root is not None else _repo_root()
+    return root / "src" / "bot_config.json"
+
+
 def electron_packaged_exe(project_root: Path) -> Optional[Path]:
     root = Path(project_root)
     names: List[Path] = []
