@@ -43,6 +43,9 @@ OPENCODE_REASONING_EFFORTS = (
 
 _THROTTLE_SEC = 1.0
 _HEARTBEAT_SEC = 4.0
+# One ``--format json`` event per line; tool results (file reads, diffs) blow
+# past asyncio's 64 KiB default and readline() raises mid-turn.
+_STREAM_LIMIT = 64 * 1024 * 1024
 _WRITING_BUF_KEY = "__writing_buf__"
 
 
@@ -817,6 +820,7 @@ class Adapter:
                 stdin=asyncio.subprocess.PIPE,
                 cwd=cwd,
                 env=os.environ.copy(),
+                limit=_STREAM_LIMIT,
             )
             attach_to_chat_run(chat_session_id, proc)
 
@@ -896,6 +900,13 @@ class Adapter:
                 await stdin_task
                 await proc.wait()
             finally:
+                # An exception out of the read loop must not orphan the CLI: it
+                # stays attached to the chat run and blocks when-idle restarts.
+                if proc.returncode is None:
+                    try:
+                        await kill_process_tree(proc)
+                    except Exception:
+                        pass
                 err_task.cancel()
                 stdin_task.cancel()
                 for t in (stdin_task, err_task):

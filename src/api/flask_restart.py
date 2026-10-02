@@ -166,6 +166,9 @@ def list_active_work(exclude_session_id: Optional[Any] = None) -> Dict[str, Any]
     busy: List[Dict[str, Any]] = []
     live_procs: List[str] = []
     jobs: List[dict] = []
+    # The route's busy lock and the harness kernel's job use different
+    # query_ids for one turn; the run registry holds both.
+    session_qids: Dict[str, set] = {}
 
     try:
         from api import chat_delivery
@@ -179,12 +182,14 @@ def list_active_work(exclude_session_id: Optional[Any] = None) -> Dict[str, Any]
 
         for entry in busy:
             sid = entry.get("session_id")
+            bare = _bare_session_id(sid) or str(sid)
+            qids = [str(q) for q in (crr.live_query_ids(sid) or []) if q]
+            if qids:
+                session_qids.setdefault(bare, set()).update(qids)
             if crr.has_live_process(sid):
-                live_procs.append(_bare_session_id(sid) or str(sid))
-                if not entry.get("query_id"):
-                    qids = crr.live_query_ids(sid)
-                    if qids:
-                        entry["query_id"] = qids[0]
+                live_procs.append(bare)
+                if not entry.get("query_id") and qids:
+                    entry["query_id"] = sorted(qids)[0]
     except Exception:
         pass
 
@@ -207,6 +212,7 @@ def list_active_work(exclude_session_id: Optional[Any] = None) -> Dict[str, Any]
             if same and bare_sid not in live_procs:
                 if e.get("query_id"):
                     dropped_qids.add(str(e["query_id"]))
+                dropped_qids.update(session_qids.get(bare_sid) or ())
                 continue
             kept.append(e)
         busy = kept
@@ -214,7 +220,17 @@ def list_active_work(exclude_session_id: Optional[Any] = None) -> Dict[str, Any]
             jobs = [j for j in jobs if str(j.get("query_id") or "") not in dropped_qids]
 
     busy_sessions = [str(e.get("session_id")) for e in busy]
-    busy_query_ids = {str(e.get("query_id")) for e in busy if e.get("query_id")}
+
+    def _entry_qids(entry: Dict[str, Any]) -> set:
+        bare = _bare_session_id(entry.get("session_id")) or str(entry.get("session_id") or "")
+        out = set(session_qids.get(bare) or ())
+        if entry.get("query_id"):
+            out.add(str(entry["query_id"]))
+        return out
+
+    busy_query_ids: set = set()
+    for e in busy:
+        busy_query_ids |= _entry_qids(e)
 
     # A job whose query_id is already represented by a busy chat is the same
     # logical task — keep it for identifiers, but do not count it twice.
@@ -231,9 +247,10 @@ def list_active_work(exclude_session_id: Optional[Any] = None) -> Dict[str, Any]
     for entry in busy:
         sid = _bare_session_id(entry.get("session_id")) or str(entry.get("session_id") or "")
         qid = entry.get("query_id")
+        entry_qids = _entry_qids(entry)
         pipeline = None
         for job in duplicate_jobs:
-            if str(job.get("query_id") or "") == str(qid or ""):
+            if str(job.get("query_id") or "") in entry_qids:
                 pipeline = job.get("pipeline_name")
                 break
         tasks.append(

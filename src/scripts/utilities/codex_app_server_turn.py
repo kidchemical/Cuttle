@@ -4,6 +4,10 @@ Same result dict as ``CodexCliTool.execute_prompt`` (``codex exec --json``),
 plus ``token_usage`` (window occupancy) and ``steered``. Returns
 ``{"fallback": True, …}`` when the server could not start a turn, so the
 adapter reruns the prompt on ``exec`` and nothing is lost.
+
+The runner owns its thread id for the whole server lifetime (see
+``api.agent_harness.codex_thread_ownership``): probes and compaction skip
+instead of spawning a competing writer, in either order.
 """
 
 from __future__ import annotations
@@ -151,6 +155,40 @@ def _fallback(error: str) -> Dict[str, Any]:
     return {"success": False, "fallback": True, "error": error, "output": ""}
 
 
+# Bound for waiting out a previous owner at turn start (e.g. resend racing
+# a cancelled turn's reaping). Cancel-aware; the runner never blocks longer.
+_OWNERSHIP_WAIT_SEC = 30.0
+
+# Bound for reaping our own server before freeing its thread: a kill
+# request is not proof of exit, and the lease must not drop while the
+# vendor may still hold the thread writer.
+_REAP_TIMEOUT_SEC = 10.0
+
+
+def _is_cancelled(cancel_event: Any) -> bool:
+    try:
+        return bool(cancel_event is not None and cancel_event.is_set())
+    except Exception:
+        return False
+
+
+def _early_end(thread_id: Optional[str], error: str, *, cancelled: bool) -> Dict[str, Any]:
+    """Fail-closed result before any turn started (no proc to reap)."""
+    return {
+        "usage": {},
+        "codex_session_id": thread_id,
+        "token_usage": None,
+        "steered": 0,
+        "undelivered_steers": [],
+        "transport": "app-server",
+        "success": False,
+        "error": error,
+        "output": "",
+        "timed_out": False,
+        "cancelled": bool(cancelled),
+    }
+
+
 async def run_codex_turn_app_server(
     prompt: str,
     *,
@@ -178,6 +216,35 @@ async def run_codex_turn_app_server(
     from api.agent_harness import steer as steer_registry
     from api.agent_harness.activity import ActivityEmitter
 
+    from api.agent_harness import codex_thread_ownership as _ownership
+
+    # Own the resume thread BEFORE spawning: no child exists while we wait
+    # for the lease, so async cancellation or a setup exception can never
+    # leave a spawned server outside the cleanup scope. The wait is
+    # bounded and cancel-aware; on failure fail closed before touching
+    # the thread.
+    own_token: Optional[int] = None
+    own_tid: Optional[str] = None
+    if _is_cancelled(cancel_event):
+        return _early_end(rid or None, "Codex CLI cancelled", cancelled=True)
+    if rid:
+        own_token = await _ownership.await_acquire(
+            rid,
+            "codex-turn",
+            timeout=_OWNERSHIP_WAIT_SEC,
+            cancel_event=cancel_event,
+        )
+        if own_token is None:
+            if _is_cancelled(cancel_event):
+                return _early_end(rid, "Codex CLI cancelled", cancelled=True)
+            return _early_end(
+                rid,
+                "Codex thread busy "
+                f"(owned by {_ownership.owner_of(rid) or 'another writer'})",
+                cancelled=False,
+            )
+        own_tid = rid
+
     loop = asyncio.get_running_loop()
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -191,7 +258,16 @@ async def run_codex_turn_app_server(
             limit=_STDOUT_LINE_LIMIT,
         )
     except OSError as exc:
+        # No server was spawned; release the just-taken lease, then fail.
+        if own_token is not None and own_tid:
+            _ownership.release(own_tid, own_token)
         return _fallback(f"Failed to spawn Codex app-server: {exc}")
+    except BaseException:
+        # No resume request has been sent while spawning. A cancelled
+        # spawn must not leave a lease held without a running turn.
+        if own_token is not None and own_tid:
+            _ownership.release(own_tid, own_token)
+        raise
     attach_to_chat_run(chat_session_id, proc)
 
     rpc = StdioRpc(proc, loop=loop)
@@ -207,6 +283,8 @@ async def run_codex_turn_app_server(
         "errors": [],
         "token_usage": None,
         "steer_token": None,
+        "own_token": own_token,
+        "own_tid": own_tid,
         "steered": 0,
         "user_items": 0,
         # Codex only splices steer input in at its next sampling step, and echoes
@@ -287,6 +365,19 @@ async def run_codex_turn_app_server(
             _fail_setup(f"{method}: no thread id")
             return
         st["thread_id"] = tid
+        if st.get("own_tid") != tid:
+            if st.get("own_token") is not None:
+                _ownership.release(st.get("own_tid"), st.get("own_token"))
+                st["own_token"] = None
+            tok = _ownership.try_acquire(tid, "codex-turn")
+            if tok is None:
+                _fail_setup(
+                    "Codex thread busy (owned by "
+                    f"{_ownership.owner_of(tid) or 'another writer'})"
+                )
+                return
+            st["own_token"] = tok
+            st["own_tid"] = tid
         if chat_session_id:
             try:
                 from scripts.utilities.codex_cli_session_store import save_codex_resume_id
@@ -503,8 +594,24 @@ async def run_codex_turn_app_server(
             st["steer_token"] = None
         if reap_handle[0] is not None:
             reap_handle[0].cancel()
-        if run is None and proc.returncode is None:
+        if proc.returncode is None:
             await kill_process_tree(proc)
+        # Release ONLY on confirmed exit: a kill request is not proof of
+        # exit, and a still-live server may still hold the vendor thread
+        # writer. On unconfirmed exit the lease is RETAINED fail-closed
+        # (no second writer is admitted); restarting the owning process
+        # is the recovery path for that exceptional held lease.
+        reaped = await _ownership.reap_confirmed(proc, timeout=_REAP_TIMEOUT_SEC)
+        if st.get("own_token") is not None and st.get("own_tid"):
+            if reaped:
+                _ownership.release(st.get("own_tid"), st.get("own_token"))
+            else:
+                print(
+                    f"[CODEX] thread {st.get('own_tid')} lease retained: "
+                    "server exit unconfirmed; restart recovers",
+                    flush=True,
+                )
+            st["own_token"] = None
 
     thread_id = st["thread_id"]
     display = "\n\n".join(messages).strip()

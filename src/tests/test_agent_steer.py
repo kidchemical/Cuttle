@@ -369,3 +369,48 @@ def test_muse_command_id_is_uuid7():
 
     cid = command_id()
     assert cid[14] == "7"
+
+
+def test_chat_steer_endpoint_persists_steered_user_message(tmp_path, monkeypatch):
+    """POST /api/chat-steer persists the user row with steered metadata.
+
+    The chat UI renders its "steer" badge from ``metadata.steered`` /
+    ``metadata.steered_agent`` (both the live bubble and history reload),
+    so this pins the server half of that contract.
+    """
+    from api import auth_db as auth_db_mod
+    from api import web_chat_api as wca
+
+    db_path = tmp_path / "steer-badge.db"
+    monkeypatch.setattr(auth_db_mod, "DB_PATH", db_path)
+    auth_db_mod._db_instance = None
+    db = auth_db_mod.AuthDatabase(db_path)
+    auth_db_mod._db_instance = db
+    monkeypatch.setattr("api.auth_db.get_auth_db", lambda: db)
+    monkeypatch.setattr("api.web_chat_api.get_auth_db", lambda: db)
+    monkeypatch.delenv("OWNER_USER_EMAIL", raising=False)
+    monkeypatch.setenv("OWNER_USER_EMAIL", "owner@local")
+
+    owner = db.create_user("owner@local", "Owner", "local", password="x")
+    sid = db.create_chat_session(owner, "steer badge")
+    auth_token = db.create_auth_session(owner)
+    reg = steer.register(sid, "codex", lambda _t: _future((True, None)))
+    assert reg is not None
+    try:
+        client = wca.app.test_client()
+        client.set_cookie("session_token", auth_token)
+        resp = client.post(
+            "/api/chat-steer", json={"session_id": sid, "message": "keep going"}
+        )
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["steered"] is True
+        assert body["agent"] == "codex"
+        rows = [m for m in db.get_messages(sid) if m["role"] == "user"]
+        assert rows, "steered user message must be persisted"
+        assert rows[-1]["content"] == "keep going"
+        meta = rows[-1].get("metadata") or {}
+        assert meta.get("steered") is True
+        assert meta.get("steered_agent") == "codex"
+    finally:
+        steer.unregister(sid, reg)

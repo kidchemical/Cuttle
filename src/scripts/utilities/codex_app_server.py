@@ -100,8 +100,14 @@ def _run_app_server_session(
     timeout: float,
     codex_bin: Optional[str],
     after_resume: str,
+    owner: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Shared stdio loop: initialize → resume → (compact | read usage) → unsubscribe.
+    When ``owner`` is set, this session takes thread ownership BEFORE
+    spawning, so a busy caller spawns nothing and returns ``status:
+    "busy"`` without ever resuming the thread. The lease is released only
+    on confirmed server exit; when the exit cannot be confirmed it is
+    retained fail-closed (a restart recovers that exceptional held lease).
 
     ``after_resume`` is ``\"compact\"`` or ``\"usage\"``.
     """
@@ -124,6 +130,17 @@ def _run_app_server_session(
             "method": method_label,
             "error": "Codex CLI not found (set CODEX_CLI_PATH or install Codex)",
         }
+    # Take ownership BEFORE spawning: try_acquire is atomic, so holding the
+    # token from here means no competitor can interleave before our first
+    # resume request. Spawning alone writes nothing, but a busy caller must
+    # not even pay for a proc.
+    token: Optional[int] = None
+    if owner:
+        from api.agent_harness.codex_thread_ownership import try_acquire
+
+        token = try_acquire(tid, owner)
+        if token is None:
+            return _busy_result(tid, method_label)
     work = (cwd or "").strip() or os.getcwd()
     try:
         proc = subprocess.Popen(
@@ -134,6 +151,10 @@ def _run_app_server_session(
             cwd=work if os.path.isdir(work) else None,
         )
     except OSError as exc:
+        if token is not None:
+            from api.agent_harness.codex_thread_ownership import release
+
+            release(tid, token)
         return {
             "success": False,
             "agent_id": "codex",
@@ -302,15 +323,87 @@ def _run_app_server_session(
                 proc.stdin.close()
         except Exception:
             pass
-        try:
-            proc.wait(timeout=5)
-        except Exception:
+        if token is not None:
+            _spawn_reaper(proc, tid, token)
+        else:
             try:
-                proc.kill()
+                proc.wait(timeout=5)
             except Exception:
-                pass
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
 
     return result
+
+
+def _busy_result(thread_id: str, method_label: str) -> Dict[str, Any]:
+    from api.agent_harness.codex_thread_ownership import owner_of
+
+    tid = (thread_id or "").strip()
+    return {
+        "success": False,
+        "agent_id": "codex",
+        "method": method_label,
+        "session_id": tid,
+        "error": (
+            f"Codex thread busy (owned by {owner_of(tid) or 'another writer'}); "
+            "skipping instead of spawning a competing app-server"
+        ),
+        "token_usage": None,
+        "status": "busy",
+    }
+
+
+def _spawn_reaper(
+    proc: "subprocess.Popen[bytes]",
+    thread_id: str,
+    token: Optional[int],
+) -> None:
+    """Release the lease ONLY on confirmed server exit.
+
+    The lease must never drop while the server may still own the vendor
+    thread, and a kill request is not proof of exit — so a daemon thread
+    reaps (bounded wait, kill, then final wait) and releases only when
+    the exit is confirmed, without stalling the caller on a wedged
+    process. When the exit cannot be confirmed the lease is RETAINED
+    fail-closed; restarting the owning process recovers that exceptional
+    held lease.
+    """
+    from api.agent_harness.codex_thread_ownership import release
+
+    try:
+        already_gone = proc.poll() is not None
+    except Exception:
+        already_gone = False
+    if already_gone:
+        if token is not None:
+            release(thread_id, token)
+        return
+
+    def _reap() -> None:
+        try:
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                proc.wait(timeout=5)
+            exited = proc.poll() is not None
+        except Exception:
+            exited = False
+        if token is not None and exited:
+            release(thread_id, token)
+        elif token is not None:
+            print(
+                f"[CODEX] thread {thread_id} lease retained: "
+                "server exit unconfirmed; restart recovers",
+                flush=True,
+            )
+
+    threading.Thread(target=_reap, daemon=True).start()
 
 
 def fetch_codex_thread_token_usage(
@@ -323,6 +416,8 @@ def fetch_codex_thread_token_usage(
     """Resume a Codex thread and read live ``tokenUsage`` (no compact).
 
     ``last.*`` is single-call occupancy; ``total.*`` is turn billing — gauge uses last.
+    Returns ``success: False`` with ``status: "busy"`` (no resume) when
+    another Cuttle writer owns the thread.
     """
     return _run_app_server_session(
         thread_id,
@@ -330,6 +425,7 @@ def fetch_codex_thread_token_usage(
         timeout=timeout,
         codex_bin=codex_bin,
         after_resume="usage",
+        owner="probe",
     )
 
 
@@ -344,6 +440,7 @@ def compact_codex_thread(
 
     Returns a result dict with ``success``, ``method``, ``token_usage`` (normalized),
     and ``error`` when failed. Does not spend a normal agent turn via ``exec``.
+    Returns ``status: "busy"`` (no resume) when another writer owns the thread.
     """
     return _run_app_server_session(
         thread_id,
@@ -351,4 +448,5 @@ def compact_codex_thread(
         timeout=timeout,
         codex_bin=codex_bin,
         after_resume="compact",
+        owner="compact",
     )

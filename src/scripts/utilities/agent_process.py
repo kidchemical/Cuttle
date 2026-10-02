@@ -35,42 +35,114 @@ def attach_to_chat_run(chat_session_id: Optional[str], proc) -> None:
         pass
 
 
-async def kill_process_tree(proc) -> None:
-    """Kill an asyncio-spawned CLI and all of its children (no orphans)."""
+_REAP_WAIT_SEC = 15.0
+_REAP_CONFIRM_SEC = 5.0
+
+
+async def kill_process_tree(proc) -> bool:
+    """Kill an asyncio-spawned CLI and all of its children (no orphans).
+
+    The registry helper blocks (psutil sweep + pid waits), so it runs in a
+    worker thread — never on the caller's event loop. Returns True only
+    when the process exit is actually confirmed via ``returncode``.
+    """
     if proc is None:
-        return
+        return True
     # Prefer the registry helper so descendant snapshots / reparented helpers
-    # (Codex ``codex-code-mode-host``) are swept the same way Stop does.
+    # are swept even if the parent has already exited, as Stop does.
     try:
         from api.chat_run_registry import kill_process_tree as _sync_kill
 
-        _sync_kill(proc)
-        return
+        await asyncio.to_thread(_sync_kill, proc)
+    except Exception:
+        # Retain the standalone Windows tree-kill fallback when registry
+        # cleanup is unavailable. This only targets the supplied child.
+        pid = getattr(proc, "pid", None)
+        if os.name == "nt" and pid:
+            try:
+                killer = await asyncio.create_subprocess_exec(
+                    "taskkill", "/F", "/T", "/PID", str(pid),
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                await asyncio.wait_for(killer.wait(), timeout=15)
+            except Exception:
+                pass
+        try:
+            if proc.returncode is None:
+                proc.kill()
+        except (ProcessLookupError, Exception):
+            pass
+    try:
+        if proc.returncode is not None:
+            return True
     except Exception:
         pass
-    pid = getattr(proc, "pid", None)
-    if os.name == "nt" and pid:
+    # The sync sweep cannot await an asyncio-managed child (its wait is a
+    # coroutine), so confirm here that the loop observed the exit — the
+    # awaits below suspend, they never block the loop.
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=_REAP_WAIT_SEC)
+    except Exception:
         try:
-            killer = await asyncio.create_subprocess_exec(
-                "taskkill",
-                "/F",
-                "/T",
-                "/PID",
-                str(pid),
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            await asyncio.wait_for(killer.wait(), timeout=15)
+            if proc.returncode is None:
+                proc.kill()
+        except ProcessLookupError:
+            pass
+        except Exception:
+            pass
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=_REAP_CONFIRM_SEC)
         except Exception:
             pass
     try:
-        if proc.returncode is None:
-            proc.kill()
-        await proc.wait()
-    except ProcessLookupError:
-        pass
+        return proc.returncode is not None
+    except Exception:
+        return False
+
+
+async def reap_and_confirm(proc, *, timeout: float = _REAP_CONFIRM_SEC) -> bool:
+    """Reap ``proc`` if still live; True only when its exit is confirmed.
+
+    Cleanup after a delivered cancellation can await normally. Shield the
+    cleanup task from a further cancellation; if this caller cannot confirm
+    exit, return False so it retains ownership rather than handing off a
+    live writer. Do not change the calling task's cancellation count.
+    """
+    if proc is None:
+        return True
+    try:
+        if proc.returncode is not None:
+            return True
     except Exception:
         pass
+    async def _reap_once() -> bool:
+        try:
+            await kill_process_tree(proc)
+        except Exception:
+            pass
+        try:
+            if proc.returncode is None:
+                await asyncio.wait_for(proc.wait(), timeout=timeout)
+        except Exception:
+            pass
+        try:
+            return proc.returncode is not None
+        except Exception:
+            return False
+
+    try:
+        task = asyncio.ensure_future(_reap_once())
+    except Exception:
+        return False
+    try:
+        return bool(await asyncio.shield(task))
+    except asyncio.CancelledError:
+        # A further cancellation while reaping: the inner task keeps
+        # running, but this caller cannot confirm the exit — fail closed.
+        return False
+    except Exception:
+        return False
 
 
 @dataclass

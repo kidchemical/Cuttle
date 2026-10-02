@@ -231,9 +231,16 @@ def _proc_alive(proc) -> bool:
     if proc is None:
         return False
     try:
-        return _proc_returncode(proc) is None
+        if _proc_returncode(proc) is not None:
+            return False
     except Exception:
         return False
+    if callable(getattr(proc, "poll", None)):
+        return True
+    # asyncio only sets returncode when its own loop reaps the child; once that
+    # loop is gone (adapter raised mid-read) it reads None forever.
+    pid = getattr(proc, "pid", None)
+    return pid is None or pid_alive(pid)
 
 
 def pid_alive(pid) -> bool:
@@ -248,7 +255,14 @@ def pid_alive(pid) -> bool:
 
         if not psutil.pid_exists(pid_i):
             return False
-        return bool(psutil.Process(pid_i).is_running())
+        p = psutil.Process(pid_i)
+        if not p.is_running():
+            return False
+        try:
+            # An unreaped child has exited; it is not work in flight.
+            return p.status() != psutil.STATUS_ZOMBIE
+        except psutil.ZombieProcess:
+            return False
     except Exception:
         return False
 

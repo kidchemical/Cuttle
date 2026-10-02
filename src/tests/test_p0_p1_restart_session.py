@@ -183,7 +183,7 @@ def test_asyncio_cli_without_poll_still_counts_as_live():
         crr.begin_run("558", query_id="q-asyncio")
 
         class _AsyncioProc:
-            pid = 424242
+            pid = os.getpid()
             returncode = None
 
         crr.attach_process("558", _AsyncioProc())

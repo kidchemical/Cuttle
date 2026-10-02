@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from scripts.utilities.agent_process import (
     attach_to_chat_run,
     format_interrupt_notice,
+    kill_process_tree,
     run_interruptible,
 )
 
@@ -36,6 +37,13 @@ _MAX_PROMPT_FOR_ARGV = 2800 if os.name == "nt" else 12000
 _STDOUT_LINE_LIMIT = 16 * 1024 * 1024
 
 _WRITING_BUF_KEY = "\x00writing"
+
+# Bound for waiting out a previous thread owner at exec start; cancel-aware.
+_OWNERSHIP_WAIT_SEC = 30.0
+
+# Bound for reaping our own exec server before freeing its thread: a kill
+# request is not proof of exit.
+_REAP_TIMEOUT_SEC = 10.0
 
 
 def codex_executable() -> Optional[str]:
@@ -464,6 +472,12 @@ class CodexCliTool:
     ) -> Dict[str, Any]:
         if not (prompt or "").strip():
             return {"success": False, "error": "No prompt provided", "output": ""}
+        if cancel_event is not None and getattr(cancel_event, "is_set", lambda: False)():
+            return {
+                "success": False, "error": "Codex CLI cancelled", "output": "",
+                "usage": {}, "cancelled": True, "timed_out": False,
+                "codex_session_id": (resume or "").strip() or None,
+            }
         exe = codex_executable()
         if not exe:
             return {
@@ -530,13 +544,56 @@ class CodexCliTool:
             )
             activity_state: Dict[str, Any] = {"tool_count": 0}
             stop_hb = asyncio.Event()
-            hb_task = (
-                asyncio.create_task(activity.heartbeat_loop(stop_hb))
-                if status_queue is not None
-                else None
-            )
+            hb_task = None
+
+            from api.agent_harness import codex_thread_ownership as _ownership
+
+            # Own the resume thread BEFORE spawning: a probe, compaction, or
+            # another turn must never write this thread concurrently. The
+            # wait is bounded and cancel-aware; the loop only sleeps. Busy
+            # carries no ``fallback`` key — exec already is the fallback, so
+            # a busy error stays terminal instead of retry-looping.
+            exec_token: Optional[int] = None
+            exec_tid: Optional[str] = rid or None
+            exec_conflict = False
+            proc = None
+            if rid:
+                exec_token = await _ownership.await_acquire(
+                    rid,
+                    "codex-exec",
+                    timeout=_OWNERSHIP_WAIT_SEC,
+                    cancel_event=cancel_event,
+                )
+                if exec_token is None:
+                    if cancel_event is not None and getattr(
+                        cancel_event, "is_set", lambda: False
+                    )():
+                        return {
+                            "success": False,
+                            "error": "Codex CLI cancelled",
+                            "output": "",
+                            "usage": {},
+                            "codex_session_id": rid,
+                            "timed_out": False,
+                            "cancelled": True,
+                        }
+                    return {
+                        "success": False,
+                        "error": (
+                            "Codex thread busy (owned by "
+                            f"{_ownership.owner_of(rid) or 'another writer'})"
+                        ),
+                        "output": "",
+                        "usage": {},
+                        "codex_session_id": rid,
+                    }
 
             try:
+                hb_task = (
+                    asyncio.create_task(activity.heartbeat_loop(stop_hb))
+                    if status_queue is not None
+                    else None
+                )
                 seen_thread: List[Optional[str]] = [None]
                 out_b = b""
                 err_b = b""
@@ -560,6 +617,7 @@ class CodexCliTool:
                     proc.stdin.close()
 
                 def _on_line(line: bytes) -> None:
+                    nonlocal exec_token, exec_tid, exec_conflict
                     try:
                         ev = json.loads(line.decode("utf-8", errors="replace").strip())
                     except (json.JSONDecodeError, UnicodeDecodeError):
@@ -568,8 +626,18 @@ class CodexCliTool:
                         return
                     tid = ev.get("thread_id")
                     if isinstance(tid, str) and tid.strip():
+                        # Fresh threads learn their id mid-run: claim it so a
+                        # later probe skips instead of racing this writer. A
+                        # fresh id is unique, so losing here means genuine
+                        # cross-talk — flag it and fail closed after the run.
+                        if exec_tid is None and not exec_conflict:
+                            tok = _ownership.try_acquire(tid.strip(), "codex-exec")
+                            if tok is None:
+                                exec_conflict = True
+                            else:
+                                exec_tid, exec_token = tid.strip(), tok
                         seen_thread[0] = tid.strip()
-                        if chat_session_id:
+                        if chat_session_id and exec_token is not None and exec_tid == tid.strip():
                             try:
                                 from scripts.utilities.codex_cli_session_store import (
                                     save_codex_resume_id,
@@ -593,6 +661,17 @@ class CodexCliTool:
                 )
                 out_b = run.stdout
                 err_b = run.stderr
+                if exec_conflict:
+                    return {
+                        "success": False,
+                        "error": (
+                            "Codex thread busy "
+                            "(another writer took the thread mid-run)"
+                        ),
+                        "output": "",
+                        "usage": {},
+                        "codex_session_id": exec_tid,
+                    }
             finally:
                 stop_hb.set()
                 if hb_task is not None:
@@ -600,6 +679,24 @@ class CodexCliTool:
                         await asyncio.wait_for(hb_task, timeout=1.0)
                     except Exception:
                         hb_task.cancel()
+                # Release ONLY on confirmed exit: a kill request is not
+                # proof of exit. On unconfirmed exit the lease is RETAINED
+                # fail-closed; restarting the owning process recovers it.
+                if proc is not None and proc.returncode is None:
+                    await kill_process_tree(proc)
+                reaped = await _ownership.reap_confirmed(
+                    proc, timeout=_REAP_TIMEOUT_SEC
+                )
+                if exec_token is not None and exec_tid:
+                    if reaped:
+                        _ownership.release(exec_tid, exec_token)
+                    else:
+                        print(
+                            f"[CODEX] thread {exec_tid} lease retained: "
+                            "server exit unconfirmed; restart recovers",
+                            flush=True,
+                        )
+                    exec_token = None
 
             out = out_b.decode("utf-8", errors="replace") if isinstance(out_b, (bytes, bytearray)) else ""
             err = err_b.decode("utf-8", errors="replace") if isinstance(err_b, (bytes, bytearray)) else ""

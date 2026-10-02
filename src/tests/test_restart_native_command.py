@@ -8,6 +8,9 @@ no model API calls.
 from __future__ import annotations
 
 import re
+import subprocess
+import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -314,6 +317,27 @@ def test_one_agent_turn_is_not_counted_as_both_busy_session_and_job(fake_work):
     assert work["executing_jobs"]
 
 
+def test_harness_job_with_its_own_query_id_is_not_double_counted(fake_work, monkeypatch):
+    """The route's busy lock and the kernel's job carry different query ids."""
+    from api import chat_run_registry, flask_restart as fr
+
+    fake_work["busy"] = [{"session_id": "866", "query_id": "q-route"}]
+    fake_work["live"] = {"866"}
+    fake_work["jobs"] = [{"query_id": "q-kernel", "pipeline_name": "Cursor Agent"}]
+    monkeypatch.setattr(
+        chat_run_registry,
+        "live_query_ids",
+        lambda sid: ["q-route", "q-kernel"] if str(sid) == "866" else [],
+    )
+    monkeypatch.setattr(chat_run_registry, "active_run_session_ids", lambda: ["866"])
+
+    work = fr.list_active_work()
+    assert work["active_count"] == 1
+    assert work["deduped_job_count"] == 1
+    assert work["tasks"][0]["kind"] == "chat_run"
+    assert work["tasks"][0]["pipeline_name"] == "Cursor Agent"
+
+
 def test_ch_handle_live_process_is_not_double_counted(fake_work, monkeypatch):
     """Busy uses bare ids; registry used to emit CH-000… and restart counted 2."""
     from api import chat_run_registry, flask_restart as fr
@@ -357,6 +381,27 @@ def test_active_run_session_ids_collapses_ch_aliases():
         assert ids == ["478"]
     finally:
         crr._runs.clear()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX zombie semantics")
+def test_exited_unreaped_child_is_not_live_work():
+    """An orphaned asyncio CLI whose loop died never gets a returncode."""
+    from api import chat_run_registry as crr
+
+    child = subprocess.Popen(["true"])
+    try:
+        deadline = time.time() + 5
+        while time.time() < deadline and crr.pid_alive(child.pid):
+            time.sleep(0.05)
+        assert crr.pid_alive(child.pid) is False
+
+        class _OrphanedAsyncioProc:
+            pid = child.pid
+            returncode = None
+
+        assert crr._proc_alive(_OrphanedAsyncioProc()) is False
+    finally:
+        child.wait(timeout=5)
 
 
 def test_genuinely_separate_work_is_not_collapsed(fake_work):

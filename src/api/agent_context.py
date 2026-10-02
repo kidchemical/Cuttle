@@ -321,6 +321,17 @@ def _codex_apply_live_or_snapshot(
                 need_fetch = False
         except Exception:
             pass
+    if need_fetch and resume_id:
+        # Same ownership the runner holds from spawn to reaping: skip here
+        # (steer registration alone starts only at turn/start and ends
+        # before the process exits). Never spawn a competing writer.
+        try:
+            from api.agent_harness.codex_thread_ownership import owner_of
+
+            if owner_of(resume_id) is not None:
+                need_fetch = False
+        except Exception:
+            pass
     if need_fetch:
         try:
             from scripts.utilities.codex_app_server import fetch_codex_thread_token_usage
