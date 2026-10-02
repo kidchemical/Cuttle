@@ -36,10 +36,15 @@ def test_list_and_find_project_actions(tmp_path: Path):
             "  feature-updates: '111'\n"
         ),
     )
-    actions = list_project_actions(str(tmp_path))
-    assert len(actions) == 1
-    assert actions[0]["name"] == "discord.post"
-    found = find_project_action(str(tmp_path), "discord.post")
+    # Local inventory only: the default contract also merges the global
+    # catalog (include_global=True), and discovery intentionally walks to
+    # parent projects, so assert the written entry rather than an exact total.
+    actions = list_project_actions(str(tmp_path), include_global=False)
+    by_name = {a["name"]: a for a in actions}
+    assert by_name["discord.post"]["channels"]["feature-updates"] == "111"
+    found = find_project_action(
+        str(tmp_path), "discord.post", include_global=False
+    )
     assert found and found["channels"]["feature-updates"] == "111"
 
 

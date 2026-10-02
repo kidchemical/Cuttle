@@ -410,14 +410,21 @@ def test_slash_evaluate_batch_yes(router_settings, monkeypatch, tmp_path):
 
 
 def test_decide_with_outcome_marks_fallback(router_settings, monkeypatch):
+    # Dummy credential only: the engine credential gate runs before the
+    # mocked provider, and the fake below raises before any network.
+    monkeypatch.setenv("OPENAI_API_KEY", "dummy-test-key")
+    calls = []
+
     class Boom:
         name = "openai_api"
 
         def decide(self, context, config):
+            calls.append(True)
             raise ProviderError("Invalid task_type `nope`", retryable=False)
 
     monkeypatch.setattr("api.agent_router.engine._provider_for", lambda cfg: Boom())
     d, meta = decide_with_outcome(build_context("x"))
+    assert calls == [True]
     assert meta["used_fallback"] is True
     assert meta["invalid_rejected"] is True
     assert d.source == TargetSource.DEFAULT.value

@@ -9,7 +9,12 @@ from urllib.parse import urlparse
 
 import pytest
 
-from .test_shared_diff_modal import browser, static_server, IsolatedAPI  # noqa: F401
+from .test_shared_diff_modal import (  # noqa: F401
+    IsolatedAPI,
+    apply_request_guard,
+    browser,
+    static_server,
+)
 
 
 @pytest.mark.parametrize('reply', ['The work is complete.', '[FAIL] Cursor Agent: upstream policy refusal'])
@@ -24,6 +29,7 @@ def test_completed_reply_ignores_replayed_shell_activity(browser, static_server,
     api = IsolatedAPI()
     errors = []
     page = browser.new_page(viewport=viewport)
+    apply_request_guard(page.context, static_server)
     page.on('pageerror', lambda err: errors.append(str(err)))
     def handle(route):
         path = urlparse(route.request.url).path
@@ -36,12 +42,10 @@ def test_completed_reply_ignores_replayed_shell_activity(browser, static_server,
         else:
             return api.handle(route)
         route.fulfill(status=200, content_type='application/json', body=json.dumps(data))
-    page.route('**/api/**', handle)
-    page.route('https://fonts.googleapis.com/**', lambda route: route.abort())
-    page.route('https://fonts.gstatic.com/**', lambda route: route.abort())
+    page.route(f'{static_server}/api/**', handle)
     # A minimal same-origin host creates the normal app-shell iframe boundary;
     # all chat scripts and the message listener are the production page.
-    page.route('**/qa-host.html', lambda route: route.fulfill(
+    page.route(f'{static_server}/qa-host.html', lambda route: route.fulfill(
         content_type='text/html', body='<iframe style="border:0;width:100%;height:96vh" src="/chat_page.html?chat=42"></iframe>'))
     try:
         page.goto(static_server + '/qa-host.html', wait_until='domcontentloaded')

@@ -411,7 +411,8 @@ def test_kernel_filters_unsupported_execute_kwargs(monkeypatch, tmp_path):
     # Raises TypeError if kernel passes cancel_event without filtering.
 
 
-def test_opencode_model_command_sets_and_lists():
+def test_opencode_model_command_sets_and_lists(monkeypatch):
+    from api.agent_harness.agents.opencode import model_catalog as oc_catalog
     from api.agent_harness.agents.opencode.adapter import (
         DEFAULT_OPENCODE_MODEL,
         Adapter,
@@ -420,6 +421,28 @@ def test_opencode_model_command_sets_and_lists():
         load_opencode_model,
         save_opencode_model,
     )
+
+    # Deterministic fixture at the owner seam: the bare-list branch calls
+    # the owner-exported list_opencode_catalog_models (deferred-imported by
+    # the adapter at call time), which shells to `opencode models --verbose`
+    # when no fresh cache exists — correctly blocked by the vendor guard.
+    # Fake it so the list never depends on host install/network.
+    def _fake_catalog(*, limit=None, **kwargs):
+        models = [
+            {"id": "openrouter/z-ai/glm-5.3-flash", "label": "GLM 5.3 Flash (OpenRouter)"},
+            {"id": "openai/gpt-4o-mini", "label": "GPT-4o mini (OpenAI)"},
+        ]
+        rows = models[: int(limit)] if limit else models
+        return {
+            "models": rows,
+            "source": "test-fixture",
+            "error": None,
+            "fetched_at": 0.0,
+            "count": len(models),
+            "returned": len(rows),
+        }
+
+    monkeypatch.setattr(oc_catalog, "list_opencode_catalog_models", _fake_catalog)
 
     adapter = Adapter()
     sid = "oc-model-session"

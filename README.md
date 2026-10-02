@@ -226,6 +226,11 @@ flowchart LR
 # Windows: .\.venv\Scripts\python.exe -m pytest src/tests/
 ```
 
+The frontend behavior tests shell out to Node to exercise the shipped JS
+directly. Any recent Node on `PATH` is enough — without it those tests skip
+(still green) instead of failing, so install Node when you want full coverage
+of the chat UI helpers.
+
 ### Regenerating README media
 
 With Cuttle running, capture the stills and animations against demo chats (a throwaway guest account; nothing real is shown or changed):

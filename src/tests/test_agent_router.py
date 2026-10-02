@@ -360,12 +360,16 @@ def test_superseded_turn_stops_the_chain(router_settings, monkeypatch):
 
 def test_router_provider_cannot_recursively_route(router_settings, monkeypatch):
     update_router_config(mode="api")
-    seen = {"nested_should": None}
+    # Dummy credential only: the engine credential gate runs before the
+    # mocked provider, and the fake below raises before any network.
+    monkeypatch.setenv("OPENAI_API_KEY", "dummy-test-key")
+    seen = {"nested_should": None, "called": False}
 
     class Nested:
         name = "openai_api"
 
         def decide(self, context, config):
+            seen["called"] = True
             assert routing_brain_active() is True
             # Nested should_invoke must refuse
             should, reason = should_invoke_router("nested task", config=config)
@@ -374,6 +378,7 @@ def test_router_provider_cannot_recursively_route(router_settings, monkeypatch):
 
     monkeypatch.setattr("api.agent_router.engine._provider_for", lambda cfg: Nested())
     decide(RoutingContext(user_request="outer"))
+    assert seen["called"] is True
     assert seen["nested_should"][0] is False
     assert "recursion" in seen["nested_should"][1].lower() or "brain" in seen["nested_should"][1].lower()
 

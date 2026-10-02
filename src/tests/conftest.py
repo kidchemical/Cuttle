@@ -42,13 +42,40 @@ collect_ignore = [
 
 
 def pytest_configure(config):
-    """Fail-closed: unit tests must not launch real Cursor/Codex/API runners."""
-    try:
-        from api.agent_router.supervised.test_isolation import activate_test_isolation
+    """Fail-closed: unit tests must not launch real Cursor/Codex/API runners.
 
+    Any isolation import/activation failure aborts the run instead of
+    collecting tests unguarded.
+    """
+    # Hard offline override FIRST, before any other import below or any
+    # collection-time import of api.mobile_android_update / web_chat_api:
+    # register_mobile_android_update_routes() kicks a background Gradle
+    # assembleDebug on import when the published APK is stale, and its
+    # PYTEST_CURRENT_TEST guard is unset during collection. Test-only;
+    # production default (auto-rebuild on) is unchanged.
+    os.environ["CUTTLE_MOBILE_AUTO_REBUILD"] = "0"
+    try:
+        from api.agent_router.supervised.test_isolation import (
+            activate_test_isolation,
+            is_test_isolation_active,
+        )
+    except Exception as e:
+        raise RuntimeError(
+            "[conftest] supervised test isolation unavailable; "
+            f"refusing to collect/run tests: {e}"
+        )
+    try:
         activate_test_isolation(reason="pytest_configure")
     except Exception as e:
-        print(f"[conftest] supervised test isolation not activated: {e}", flush=True)
+        raise RuntimeError(
+            "[conftest] supervised test isolation activation failed; "
+            f"refusing to collect/run tests: {e}"
+        )
+    if not is_test_isolation_active():
+        raise RuntimeError(
+            "[conftest] supervised test isolation inactive after activation; "
+            "refusing to collect/run tests"
+        )
     _install_test_kill_guard()
 
 

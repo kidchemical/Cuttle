@@ -99,18 +99,45 @@ class IsolatedAPI:
         route.fulfill(status=200, content_type="application/json", body=json.dumps(data))
 
 
+def apply_request_guard(context, allowed_origin):
+    """Share one network allowlist across the isolated browser suites.
+
+    Register on the page's context BEFORE any page-level route: requests
+    to the static fixture server fall through to the fake same-origin API
+    handlers, while every other HTTP(S) destination — CDNs, fonts, sibling
+    localhost services such as a live Flask on :8080 — aborts. Returns the
+    list of aborted URLs so tests can assert the guard fired.
+    """
+    blocked = []
+    prefix = allowed_origin.rstrip("/")
+
+    def guard(route):
+        url = route.request.url
+        scheme = urlparse(url).scheme
+        if scheme not in ("http", "https"):
+            route.fallback()
+            return
+        if url == prefix or url.startswith(prefix + "/"):
+            route.fallback()
+            return
+        blocked.append(url)
+        route.abort()
+
+    context.route("**/*", guard)
+    return blocked
+
+
 @pytest.fixture
 def surface(browser, static_server):
     opened = []
 
     def load(name):
         page = browser.new_page(viewport={"width": 1280, "height": 800})
+        apply_request_guard(page.context, static_server)
         api = IsolatedAPI()
         errors = []
         page.on("pageerror", lambda error: errors.append(str(error)))
-        page.route("**/api/**", api.handle)
-        page.route("https://fonts.googleapis.com/**", lambda route: route.abort())
-        page.route("https://fonts.gstatic.com/**", lambda route: route.abort())
+        page.route(f"{static_server}/api/**", api.handle)
         page.goto(f"{static_server}/{name}", wait_until="domcontentloaded")
         if name == "chat_page.html":
             page.wait_for_function("typeof window.loadChatSession === 'function'")
@@ -121,6 +148,50 @@ def surface(browser, static_server):
     yield load
     for page in opened:
         page.close()
+
+
+def test_request_guard_blocks_external_allows_same_origin(browser, static_server):
+    """The shared guard aborts CDN/live-localhost traffic, keeps fixtures working."""
+    context = browser.new_context(viewport={"width": 1280, "height": 800})
+    try:
+        blocked = apply_request_guard(context, static_server)
+        page = context.new_page()
+        page.goto(f"{static_server}/chat_page.html", wait_until="domcontentloaded")
+        assert page.evaluate("() => document.title.length > 0")
+        same_origin = page.evaluate(
+            "async () => { const r = await fetch('/chat_page.html'); return r.status; }"
+        )
+        assert same_origin == 200
+        page.route(
+            f"{static_server}/api/**",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"ok": true}',
+            ),
+        )
+        ping = page.evaluate(
+            "async () => { const r = await fetch('/api/ping');"
+            " return [r.status, await r.json()]; }"
+        )
+        assert ping == [200, {"ok": True}]
+        for url in (
+            "https://cdn.jsdelivr.net/npm/marked/marked.min.js",
+            "https://fonts.googleapis.com/css2?family=Inter",
+            "http://127.0.0.1:8080/api/health",
+        ):
+            outcome = page.evaluate(
+                "async (u) => { try { await fetch(u); return 'loaded'; }"
+                " catch (e) { return 'blocked'; } }",
+                url,
+            )
+            assert outcome == "blocked", url
+        assert any("cdn.jsdelivr.net" in u for u in blocked)
+        assert any("fonts.googleapis.com" in u for u in blocked)
+        assert any("127.0.0.1:8080" in u for u in blocked)
+        assert not any(u.startswith(static_server) for u in blocked)
+    finally:
+        context.close()
 
 
 def open_pending(page):
