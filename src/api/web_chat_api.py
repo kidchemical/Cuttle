@@ -7324,30 +7324,85 @@ def doctor_endpoint():
 @app.route('/api/wizard/status', methods=['GET'])
 @owner_required
 def wizard_status():
-    """Return setup wizard status: which steps are done (default pipeline, API keys, channels)."""
+    """Return setup wizard status: which steps are done.
+
+    "Do I have an agent that can actually run a turn" is the step that matters
+    on a fresh install, so it is derived from the harness catalog rather than
+    assumed. The retired "default pipeline" step is gone with the graphs: chat
+    dispatches to slash agents, not a configured graph.
+
+    Completion providers are read from ``api.completion_providers`` (the same
+    registry Settings writes) so the wizard never re-derives "do I have a key".
+    """
     try:
         from managers.settings_manager import get_settings_manager
+        from api.completion_providers import list_providers, preferred_provider_id
+        from api.agent_harness.catalog import public_catalog
+
         settings = get_settings_manager()
-        default_pipeline_set = True  # graphs are optional; chat uses slash agents
-        api_keys_set = bool(os.environ.get('OPENAI_API_KEY') or os.environ.get('API_KEY') or os.environ.get('ANTHROPIC_API_KEY'))
+
+        try:
+            agents = public_catalog()
+        except Exception:
+            agents = []
+        ready_agents = [a for a in agents if a.get('ready')]
+        agent_summary = [
+            {
+                'id': a.get('id'),
+                'label': a.get('label') or a.get('id'),
+                'slash': a.get('slash'),
+                'ready': bool(a.get('ready')),
+                'available': bool(a.get('available')),
+                'install_hint': a.get('install_hint') or '',
+                'credential_env': a.get('credential_env') or [],
+                'credential_present': bool(a.get('credential_present')),
+                'auth_command': a.get('auth_command') or '',
+            }
+            for a in agents
+        ]
+
+        providers = list_providers()
+        configured_providers = [p for p in providers if p['configured']]
+        pinned = preferred_provider_id()
+
         channels_cfg = (settings.get_setting('channels') or {})
         webchat_cfg = channels_cfg.get('webchat') or {}
         channels_configured = bool(webchat_cfg.get('allowFrom'))
+
         next_step = None
-        if not api_keys_set:
-            next_step = 'api_keys'
+        next_action = ''
+        if not ready_agents:
+            next_step = 'agent_cli'
+            next_action = 'Install an agent CLI and set its key, or drop in your own adapter.'
+        elif not configured_providers:
+            next_step = 'completion_provider'
+            next_action = (
+                'No cheap-completion provider is configured. Chat titles and commit '
+                'names fall back to nothing until one is.'
+            )
         elif not channels_configured:
             next_step = 'channels'
+            next_action = 'Restrict who may talk to this Cuttle instance.'
         else:
             next_step = 'done'
+            next_action = 'Setup looks complete.'
         return jsonify({
             'success': True,
             'steps': {
-                'default_pipeline': default_pipeline_set,
-                'api_keys': api_keys_set,
+                'agent_cli': bool(ready_agents),
+                'completion_provider': bool(configured_providers),
                 'channels': channels_configured,
             },
+            # Retired with the graphs; kept so an older client reading this key
+            # does not render a step that can never be incomplete.
+            'default_pipeline': True,
             'next_step': next_step,
+            'next_action': next_action,
+            'agents': agent_summary,
+            'agent_count': len(agents),
+            'ready_agent_count': len(ready_agents),
+            'completion_providers': providers,
+            'pinned_provider': pinned or '',
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500

@@ -19,6 +19,15 @@
         .doctor-check.fail { color: #f87171; }
         .suggestions { margin-top: 1rem; padding-left: 1rem; }
         .suggestions li { margin: 0.25rem 0; }
+        .wizard-hint { font-size: 0.8rem; opacity: 0.75; margin: 0.25rem 0 0.75rem 0; }
+        .wizard-agent { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin: 0.35rem 0; }
+        .wizard-agent-name { font-weight: 600; min-width: 9rem; }
+        .wizard-agent-slash { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; opacity: 0.8; }
+        .wizard-agent .hint { flex-basis: 100%; font-size: 0.76rem; opacity: 0.8; line-height: 1.4; overflow-wrap: anywhere; }
+        .wizard-badge { padding: 0 8px; border-radius: 999px; font-size: 0.7rem; border: 1px solid currentColor; }
+        .wizard-badge.ready { color: #4ade80; }
+        .wizard-badge.missing { color: #f87171; }
+        .wizard-badge.unset { color: #fbbf24; }
     </style>
 </head>
 <body data-page="wizard">
@@ -58,7 +67,14 @@
             <div class="wizard-section">
                 <h3>Wizard Status</h3>
                 <div id="wizardStatus">Loading…</div>
-                <p><a href="/settings_page.html">Open Settings</a> to configure API keys, default pipeline, and channels.</p>
+                <p id="wizardNextAction"></p>
+                <p><a href="/settings_page.html?tab=agents">Open Settings → Agents</a> to install an agent CLI or drop in your own adapter. <a href="/settings_page.html?tab=providers">Providers</a> covers keys and cheap completions.</p>
+            </div>
+
+            <div class="wizard-section">
+                <h3>Agent CLIs</h3>
+                <div class="wizard-hint">An agent is a CLI you install yourself; type its <code>/name</code> in a chat to use it. Cuttle does not install them for you.</div>
+                <div id="wizardAgents">Loading…</div>
             </div>
 
             <div class="wizard-section">
@@ -74,6 +90,8 @@
     <script>
         async function loadWizardStatus() {
             const el = document.getElementById('wizardStatus');
+            const action = document.getElementById('wizardNextAction');
+            const agentsEl = document.getElementById('wizardAgents');
             try {
                 const r = await fetch('/api/wizard/status');
                 const d = await r.json();
@@ -81,14 +99,54 @@
                 const steps = d.steps || {};
                 const next = d.next_step || 'done';
                 el.innerHTML = [
-                    '<div class="wizard-step ' + (steps.default_pipeline ? 'done' : 'pending') + '">' + (steps.default_pipeline ? '✅' : '⏳') + ' Default pipeline set</div>',
-                    '<div class="wizard-step ' + (steps.api_keys ? 'done' : 'pending') + '">' + (steps.api_keys ? '✅' : '⏳') + ' API keys configured</div>',
-                    '<div class="wizard-step ' + (steps.channels ? 'done' : 'pending') + '">' + (steps.channels ? '✅' : '⏳') + ' Channels configured</div>',
-                    '<p><strong>Next step:</strong> ' + next + '</p>'
+                    wizardStep(steps.agent_cli, 'An agent CLI is ready to run turns'),
+                    wizardStep(steps.completion_provider, 'A cheap-completion provider is configured'),
+                    wizardStep(steps.channels, 'Web chat access restricted')
                 ].join('');
+                action.innerHTML = next === 'done'
+                    ? '<strong>Ready.</strong> ' + (d.next_action || '')
+                    : '<strong>Next:</strong> ' + (d.next_action || next);
+                renderWizardAgents(agentsEl, d);
             } catch (e) {
                 el.innerHTML = 'Failed to load: ' + e.message;
+                if (agentsEl) agentsEl.innerHTML = '';
             }
+        }
+        function wizardStep(done, label) {
+            return '<div class="wizard-step ' + (done ? 'done' : 'pending') + '">'
+                + (done ? '✅' : '⏳') + ' ' + label + '</div>';
+        }
+        function renderWizardAgents(box, data) {
+            if (!box) return;
+            const agents = data.agents || [];
+            if (!agents.length) {
+                box.innerHTML = '<div class="wizard-hint">No agents found in any discovery root.</div>';
+                return;
+            }
+            box.innerHTML = agents.map(function (a) {
+                let badge, cls;
+                if (a.ready) { badge = 'Ready'; cls = 'ready'; }
+                else if (!a.available) { badge = 'Not installed'; cls = 'missing'; }
+                else { badge = 'Needs ' + (a.credential_env[0] || 'a key'); cls = 'unset'; }
+                let hint = '';
+                if (!a.available && a.install_hint) hint = a.install_hint;
+                else if (a.available && !a.credential_present && a.credential_env.length) {
+                    hint = 'Add ' + a.credential_env.join(' or ') + ' to src/.env.';
+                } else if (a.available && a.auth_command) {
+                    hint = 'Not signed in? Run ' + a.auth_command;
+                }
+                return '<div class="wizard-agent">'
+                    + '<span class="wizard-agent-name">' + esc(a.label) + '</span>'
+                    + '<code class="wizard-agent-slash">' + esc(a.slash || ('/' + a.id)) + '</code>'
+                    + '<span class="wizard-badge ' + cls + '">' + esc(badge) + '</span>'
+                    + (hint ? '<span class="hint">' + esc(hint) + '</span>' : '')
+                    + '</div>';
+            }).join('');
+        }
+        function esc(text) {
+            return String(text == null ? '' : text)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
         }
         async function runDoctor() {
             const el = document.getElementById('doctorResult');

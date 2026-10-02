@@ -1,0 +1,410 @@
+/* Settings page — category tabs.
+   Owner: src/web/js/settings_page_tabs.js (CuttleSettingsTabs)
+   Base .settings-* rules live in css/landing_page.css; compact overrides here so
+   the tab shell is page-owned instead of leaking into the landing page. */
+
+.settings-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px;
+    padding: 3px;
+    margin: 0 0 14px 0;
+    border-radius: 8px;
+    background: var(--section-bg);
+    border: 1px solid var(--border-color);
+}
+
+.settings-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+    font-family: inherit;
+    white-space: nowrap;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.settings-tab:hover {
+    color: var(--text-primary);
+    background: var(--panel-hover);
+}
+
+.settings-tab.active {
+    background: var(--accent-color);
+    color: var(--text-inverse, #fff);
+}
+
+.settings-tab:focus-visible {
+    outline: 2px solid var(--accent-color);
+    outline-offset: 2px;
+}
+
+.settings-panel {
+    display: none;
+}
+
+.settings-panel.active {
+    display: block;
+}
+
+/* Scope badge — settings live in two worlds (this browser vs the server), and
+   nothing on the page used to say which. See .cuttle/docs/settings-modernization.md */
+.settings-scope {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    border: 1px solid var(--border-color);
+    background: var(--panel-hover);
+    color: var(--text-secondary);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    text-transform: none;
+    vertical-align: middle;
+    white-space: nowrap;
+}
+
+.settings-scope[data-scope="server"] {
+    border-color: color-mix(in srgb, var(--accent-color) 45%, transparent);
+    color: var(--accent-color);
+}
+
+.settings-scope[data-scope="mixed"] {
+    border-color: color-mix(in srgb, var(--text-secondary) 45%, transparent);
+}
+
+/* ── Wallpaper playlist rows ────────────────────────────────────────────── */
+
+/* The playlist is a list, not a knob: its control goes on its own line under
+   the label and starts at the left edge, instead of being shoved to the far
+   right of a space-between row. */
+.setting-item--stack {
+    display: block;
+}
+
+.setting-control--stack {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.video-playlist-toolbar {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+/* Tall enough that a normal playlist (5–8 clips) shows without a scrollbar;
+   only a long list scrolls, and then the padding keeps the bottom row from
+   being sliced through the middle. */
+.video-list-container {
+    max-height: clamp(340px, 58vh, 720px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 2px 4px 2px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.video-list-item {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    /* Without this a column flex container squeezes rows to fit max-height
+       instead of scrolling — entries came out cropped mid-row. */
+    flex: 0 0 auto;
+}
+
+/* Derived server-side from the video id, so a wall of rows costs no requests. */
+.video-row-thumb {
+    flex: 0 0 auto;
+    width: 80px;
+    height: 45px;
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--panel-hover, rgba(127, 127, 127, 0.12));
+    border: 1px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.video-row-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.video-row-thumb.is-empty::after {
+    content: '🎬';
+    font-size: 16px;
+    opacity: 0.5;
+}
+
+.video-row-thumb img:not([src]) {
+    display: none;
+}
+
+.video-row-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.video-row-caption {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+    line-height: 1.3;
+}
+
+.video-row-title {
+    font-size: 0.82rem;
+    color: var(--text-primary);
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.video-row-meta {
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 0 1 auto;
+}
+
+.video-row-field {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.video-row-url {
+    flex: 1;
+    min-width: 0;
+}
+
+.video-row-buttons {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+/* Play and remove must be the same width — `.control-button` carries a
+   min-width sized for labelled buttons, which made "−" a 80px slab. */
+.video-list-item .video-row-btn {
+    min-width: 34px;
+    width: 34px;
+    min-height: 28px;
+    padding: 4px 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+    flex: 0 0 auto;
+}
+
+@media (max-width: 640px) {
+    .video-row-thumb {
+        width: 64px;
+        height: 36px;
+    }
+
+    .video-row-title {
+        font-size: 0.78rem;
+    }
+}
+
+/* ── Agent CLI catalog + provider chips ────────────────────────────────── */
+
+.settings-intro {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    line-height: 1.45;
+    margin: 0 0 10px 0;
+}
+
+.settings-intro code,
+.agent-card code {
+    background: var(--panel-hover, rgba(127, 127, 127, 0.14));
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: 0.92em;
+}
+
+.agent-cli-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 8px;
+}
+
+.agent-card {
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 9px 11px;
+    background: var(--panel-hover, rgba(127, 127, 127, 0.06));
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    min-width: 0;
+}
+
+.agent-card-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.agent-card-name {
+    font-weight: 600;
+    font-size: 0.86rem;
+    color: var(--text-primary);
+}
+
+.agent-card-slash {
+    font-size: 0.75rem;
+}
+
+.agent-card-meta {
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+}
+
+.agent-card-hint {
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    line-height: 1.4;
+    /* Install hints are multi-line markdown-ish text from the manifest. */
+    overflow-wrap: anywhere;
+}
+
+.agent-card-hint.is-quiet {
+    opacity: 0.75;
+}
+
+.provider-status {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+}
+
+.provider-picker {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.provider-picker select.setting-input {
+    min-width: 220px;
+}
+
+.provider-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 1px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--border-color);
+    background: var(--panel-hover, rgba(127, 127, 127, 0.1));
+    color: var(--text-secondary);
+    font-size: 0.7rem;
+    white-space: nowrap;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.provider-chip.is-ready,
+.provider-chip.is-pinned {
+    border-color: color-mix(in srgb, var(--accent-color) 55%, transparent);
+    color: var(--accent-color);
+}
+
+.provider-chip.is-missing {
+    border-color: color-mix(in srgb, #d9534f 45%, transparent);
+    color: #d9534f;
+}
+
+.provider-chip.is-unset {
+    border-color: color-mix(in srgb, #e0a800 45%, transparent);
+    color: #b98600;
+}
+
+.provider-chip.is-path,
+.provider-chip.is-source {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.68rem;
+}
+
+@media (max-width: 640px) {
+    .agent-cli-list {
+        grid-template-columns: 1fr;
+    }
+
+    .provider-picker select.setting-input,
+    .provider-picker input.setting-input {
+        min-width: 0;
+        width: 100%;
+    }
+}
+
+/* ── Compact shell overrides ─────────────────────────────────── */
+body.compact-shell-page .settings-tabs {
+    gap: 2px;
+    padding: 2px;
+    margin-bottom: 10px;
+}
+
+body.compact-shell-page .settings-tab {
+    padding: 4px 9px;
+    font-size: 0.76rem;
+    gap: 4px;
+}
+
+body.compact-shell-page .settings-scope {
+    font-size: 9px;
+    padding: 0 5px;
+    margin-left: 6px;
+}
+
+@media (max-width: 640px) {
+    .settings-tabs {
+        overflow-x: auto;
+        flex-wrap: nowrap;
+        scrollbar-width: thin;
+    }
+
+    .settings-tab {
+        padding: 5px 10px;
+        font-size: 0.78rem;
+        /* Same trap as the playlist rows: without this the row squeezes each
+           label to "Prov" instead of scrolling the strip. */
+        flex: 0 0 auto;
+    }
+
+    /* Keep the badge from pushing a tab label out of the strip. */
+    .settings-tab .settings-scope {
+        display: none;
+    }
+}

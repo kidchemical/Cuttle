@@ -3,6 +3,12 @@
 Use this for chat titles, commit subjects, prompt enhance, and the router
 brain. Guest agent CLIs do the actual work. TTS, vision, and Jev keep their
 own clients.
+
+Provider and model resolution is owned by
+:mod:`api.completion_providers` — this module only speaks to whichever
+transport it is handed. Precedence for both: explicit call argument → per-call
+env override (``CUTTLE_LLM_OPENAI_MODEL`` and friends) → Settings → provider
+default.
 """
 
 from __future__ import annotations
@@ -11,8 +17,12 @@ import os
 import re
 from typing import Optional, Sequence
 
+from api.completion_providers import resolve_model, resolve_order
+
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 
+# Kept as module-level names for callers/tests that import them; the values
+# now come from the provider registry rather than being hardcoded here.
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 DEFAULT_ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
 
@@ -92,6 +102,7 @@ def _via_local(
     max_tokens: int,
     temperature: float,
     timeout: float,
+    model: Optional[str] = None,
 ) -> Optional[str]:
     from openai import OpenAI
     from core.local_llm import (
@@ -108,8 +119,13 @@ def _via_local(
         api_key=get_local_api_key(),
         timeout=float(timeout),
     )
+    # An empty registry model hands the decision to resolve_local_model, which
+    # knows the llama.cpp-vs-Ollama difference and the loaded model.
+    resolved = model or resolve_local_model(None)
+    if not resolved:
+        resolved = resolve_local_model(None)
     resp = client.chat.completions.create(
-        model=resolve_local_model(None),
+        model=resolved,
         messages=_messages(user, system),
         temperature=float(temperature),
         max_tokens=int(max_tokens),
@@ -131,26 +147,20 @@ def complete(
     timeout: float = 45.0,
     json_object: bool = False,
     providers: Optional[Sequence[str]] = None,
+    local_model: Optional[str] = None,
 ) -> Optional[str]:
     """Return cleaned completion text, or None if every provider failed.
 
-    ``inference_mode=local`` uses only the local server. Otherwise the default
-    order is OpenAI → Anthropic → local. Pass ``providers`` to pin one hop
+    ``inference_mode=local`` uses only the local server. Otherwise the order is
+    the provider registry's: the user's pinned provider (if any) first, then
+    OpenAI → Anthropic → local. Pass ``providers`` to pin an exact chain
     (wrappers in titler/commit/enhance do this so tests can stub a hop).
     """
     mode = (inference_mode or "auto").strip().lower()
     if providers is None:
-        providers = ("local",) if mode == "local" else ("openai", "anthropic", "local")
-    oai = (
-        openai_model
-        or os.getenv("CUTTLE_LLM_OPENAI_MODEL")
-        or DEFAULT_OPENAI_MODEL
-    ).strip()
-    ant = (
-        anthropic_model
-        or os.getenv("CUTTLE_LLM_ANTHROPIC_MODEL")
-        or DEFAULT_ANTHROPIC_MODEL
-    ).strip()
+        providers = ("local",) if mode == "local" else resolve_order()
+    oai = resolve_model("openai", openai_model)
+    ant = resolve_model("anthropic", anthropic_model)
     for name in providers:
         n = str(name).strip().lower()
         try:
@@ -181,6 +191,7 @@ def complete(
                     max_tokens=max_tokens,
                     temperature=temperature,
                     timeout=max(timeout, 90.0),
+                    model=resolve_model("local", local_model) or None,
                 )
             else:
                 continue

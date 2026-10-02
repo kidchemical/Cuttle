@@ -2,6 +2,10 @@ id: muse
 label: Muse Code
 slash: /muse
 requires_cloud: true
+# Credential the CLI needs. Declared so Settings and the setup
+# wizard can say "add X" instead of the reader parsing prose.
+credential_env:
+  - META_API_KEY
 sticky: true
 # Empty — unpinned turns omit --model so the Muse CLI default wins
 # (often Contributor). Cuttle must never force Standard here.

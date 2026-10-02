@@ -137,6 +137,8 @@ def test_settings_validators_owned():
         "rail_items": ["1"]
     }
     assert "sandbox" in {f["name"] for f in sr.SETTING_FAMILIES}
-    assert {f["write"] for f in sr.SETTING_FAMILIES if f["name"] != "app-settings"} == {
-        "owner"
-    }
+    # Every writable family is owner-only. Read-only lookups declare write
+    # "n/a" (app-settings aggregate, video-metadata proxy) and are exempt.
+    writable = {f["name"] for f in sr.SETTING_FAMILIES if f["write"] != "n/a"}
+    assert "app-settings" not in writable
+    assert {f["write"] for f in sr.SETTING_FAMILIES if f["write"] != "n/a"} == {"owner"}

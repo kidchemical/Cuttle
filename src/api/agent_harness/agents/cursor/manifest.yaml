@@ -2,6 +2,7 @@ id: cursor
 label: Cursor Agent
 slash: /cursor
 requires_cloud: true
+auth_command: cursor-agent login
 sticky: true
 # Effort is baked into the Cursor model id — no separate effort control.
 supports_model_pin: true

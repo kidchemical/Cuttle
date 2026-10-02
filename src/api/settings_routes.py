@@ -71,6 +71,14 @@ SETTING_FAMILIES = (
     {"name": "video-background", "routes": ["GET/POST /settings/video-background"],
      "backend": "api.video_playlists + settings-manager generic key",
      "validator": "apply_video_background_update", "read": "authenticated", "write": "owner"},
+    {"name": "video-metadata", "routes": ["GET /settings/video-metadata"],
+     "backend": "api.video_metadata (YouTube oEmbed proxy, in-process cache)",
+     "validator": "resolve_video_metadata (no writes; read-only lookup)",
+     "read": "authenticated", "write": "n/a"},
+    {"name": "completion-providers", "routes": ["GET/POST /settings/completion-providers"],
+     "backend": "api.completion_providers (provider registry + settings keys)",
+     "validator": "set_preferred_provider / set_provider_model",
+     "read": "authenticated", "write": "owner"},
     {"name": "app-settings", "routes": ["GET /app-settings"],
      "backend": "settings_manager.get_all_settings() (read-only aggregate)",
      "validator": "none (read-only)", "read": "open", "write": "n/a"},
@@ -110,6 +118,43 @@ def validate_lan_access_update(data: dict) -> tuple[bool, str]:
     if 'lan_access_enabled' not in data:
         return False, 'lan_access_enabled required'
     return True, ''
+
+
+def validate_completion_providers_update(data: dict) -> tuple[bool, str, dict]:
+    """Normalize a cheap-completion provider/model write.
+
+    Models are free-form on purpose: a hardcoded allowlist goes stale the day
+    a provider ships a model, and a silently-rejected save is worse than a
+    provider reporting "unknown model" at call time. Only shape is validated
+    here; provider ids are checked against the registry.
+    """
+    from api.completion_providers import get_provider
+
+    patch: dict = {}
+    if 'provider' in data:
+        wanted = str(data.get('provider') or '').strip().lower()
+        if wanted in ('', 'auto', 'none'):
+            patch['provider'] = ''
+        elif get_provider(wanted) is None:
+            return False, f'Unknown completion provider: {wanted}', {}
+        else:
+            patch['provider'] = wanted
+
+    models = data.get('models')
+    if isinstance(models, dict):
+        clean: dict = {}
+        for key, value in models.items():
+            provider_id = str(key or '').strip().lower()
+            model_id = str(value or '').strip()
+            if get_provider(provider_id) is None:
+                return False, f'Unknown completion provider: {provider_id}', {}
+            if model_id:
+                clean[provider_id] = model_id
+        patch['models'] = clean
+
+    if not patch:
+        return False, 'provider or models required', {}
+    return True, '', patch
 
 
 # --- bot/model settings (backend: core.config) ----------------------------
@@ -526,6 +571,72 @@ def update_video_background_setting():
         vb = apply_video_background_update(settings.get_setting('video_background'), data)
         settings.set_setting('video_background', vb)
         return jsonify({'success': True, 'video_background': vb})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# --- completion providers (backend: api.completion_providers) --------------
+
+@settings_bp.route('/settings/completion-providers', methods=['GET'])
+@authenticated_required
+def get_completion_providers_setting():
+    """Which provider/model serves cheap completions (titles, commits, enhance).
+
+    Read-only view of the registry plus what Settings currently pins, so the
+    page never has to reimplement resolution order.
+    """
+    try:
+        from api.completion_providers import describe
+
+        return jsonify({'success': True, **describe()})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@settings_bp.route('/settings/completion-providers', methods=['POST'])
+@owner_required
+def update_completion_providers_setting():
+    """Pin a provider and/or per-provider model ids. Body: { provider?, models? }.
+
+    Replaces the two dead "cheap completion model" dropdowns: these writes are
+    read by api.llm_complete on the next title/commit/enhance call.
+    """
+    try:
+        from api.completion_providers import (
+            describe,
+            set_preferred_provider,
+            set_provider_model,
+        )
+
+        data = request.get_json() or {}
+        ok, error, patch = validate_completion_providers_update(data)
+        if not ok:
+            return jsonify({'success': False, 'message': error}), 400
+
+        if 'provider' in patch:
+            set_preferred_provider(patch['provider'])
+        for provider_id, model_id in (patch.get('models') or {}).items():
+            set_provider_model(provider_id, model_id)
+        return jsonify({'success': True, **describe()})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# --- video-metadata (backend: api.video_metadata; read-only lookup) ---------
+
+@settings_bp.route('/settings/video-metadata', methods=['GET'])
+@authenticated_required
+def get_video_metadata_setting():
+    """Title/author/thumbnail for one wallpaper URL (``?url=``).
+
+    The page cannot ask YouTube directly (oEmbed sends no CORS headers), so the
+    server proxies it and caches per video id. Non-YouTube URLs answer
+    ``supported: false`` and the page falls back to the filename.
+    """
+    try:
+        from api.video_metadata import resolve_video_metadata
+        meta = resolve_video_metadata(request.args.get('url'))
+        return jsonify({'success': True, 'metadata': meta})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 

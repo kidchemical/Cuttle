@@ -81,6 +81,13 @@ class AgentManifest:
     install_sha256_posix: str = ""
     executable_names: List[str] = field(default_factory=list)
     auto_install: bool = False
+    # Credential env vars this CLI needs, most-preferred first. Declarative so
+    # Settings / the OOBE wizard can say "add GEMINI_API_KEY" without parsing
+    # install_hint prose, and so drop-in adapters get it for free. Empty means
+    # the CLI owns its own auth (e.g. `claude auth login`) or needs none.
+    credential_env: List[str] = field(default_factory=list)
+    # Command the user runs to establish auth when no env var is wanted.
+    auth_command: str = ""
     schema_version: int = 1
     # Discovery provenance: bundled | user | project
     source: str = "bundled"
@@ -122,6 +129,8 @@ class AgentManifest:
             "installable": bool(self.install_kind),
             "auto_install": bool(self.auto_install),
             "notes": self.notes,
+            "credential_env": list(self.credential_env or []),
+            "auth_command": self.auth_command or "",
             "harness": True,
             "schema_version": int(self.schema_version or 1),
             "source": self.source or "bundled",

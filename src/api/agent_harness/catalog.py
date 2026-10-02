@@ -153,6 +153,12 @@ def _manifest_from_dict(
     pricing_providers = [
         str(p).strip().lower() for p in providers_raw if str(p or "").strip()
     ]
+    credential_raw = data.get("credential_env") or []
+    if isinstance(credential_raw, str):
+        credential_raw = [credential_raw]
+    credential_env = [
+        str(name).strip() for name in credential_raw if str(name or "").strip()
+    ]
     pricing: Dict[str, Dict[str, Any]] = {}
     pricing_raw = data.get("pricing") or {}
     if isinstance(pricing_raw, dict):
@@ -197,6 +203,8 @@ def _manifest_from_dict(
         install_sha256_posix=str(data.get("install_sha256_posix") or "").strip().lower(),
         executable_names=executable_names,
         auto_install=bool(data.get("auto_install", False)),
+        credential_env=credential_env,
+        auth_command=str(data.get("auth_command") or "").strip(),
         schema_version=schema_version,
         source=source,
     )
@@ -594,6 +602,12 @@ def match_slash_command(
 
 
 def public_catalog(project_path: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Catalog rows for the palette, Settings, and the OOBE wizard.
+
+    ``credential_present`` is resolved here rather than in each consumer: the
+    Settings provider list and the wizard must not each reimplement "is this
+    CLI's key in the environment", and they must agree.
+    """
     rows: List[Dict[str, Any]] = []
     for agent_id in list_agents(project_path):
         pair = get_agent(agent_id, project_path)
@@ -604,7 +618,17 @@ def public_catalog(project_path: Optional[str] = None) -> List[Dict[str, Any]]:
             avail = bool(adapter.available())
         except Exception:
             avail = False
-        rows.append(manifest.to_public_dict(available=avail))
+        row = manifest.to_public_dict(available=avail)
+        names = row.get("credential_env") or []
+        row["credential_present"] = any(
+            (os.environ.get(name) or "").strip() for name in names
+        )
+        # A CLI is usable when its binary exists and (if it needs a key) the key
+        # is present. Surfaced separately so the UI can say which half is wrong.
+        row["ready"] = bool(
+            avail and (row["credential_present"] or not names)
+        )
+        rows.append(row)
     return rows
 
 

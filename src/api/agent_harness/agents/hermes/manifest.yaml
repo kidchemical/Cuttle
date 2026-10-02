@@ -2,6 +2,7 @@ id: hermes
 label: Hermes Agent
 slash: /hermes
 requires_cloud: false
+# Auth is the CLI's own login; no Cuttle-managed credential.
 sticky: true
 # Empty — runtime model comes from Hermes config.yaml (local Qwen or OpenRouter GLM, etc.).
 default_model: ""

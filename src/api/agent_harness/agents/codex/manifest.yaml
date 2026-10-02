@@ -2,6 +2,7 @@ id: codex
 label: Codex
 slash: /codex
 requires_cloud: true
+auth_command: codex login
 sticky: true
 default_model: ""
 smoke_model: gpt-5.5

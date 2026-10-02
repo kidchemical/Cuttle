@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="css/shared_navigation.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/landing_page.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/compact_page.css?v=20260814playBtn">
+    <link rel="stylesheet" href="css/settings_page.css?v=20261001tabs">
 </head>
 <body class="compact-shell-page" data-page="settings">
     <div class="page-content">
@@ -19,9 +20,22 @@
                 <h1>Settings</h1>
                 <p>Configure your Cuttle experience</p>
             </div>
-            
+
+            <div class="settings-tabs" role="tablist" aria-label="Settings categories">
+                <button type="button" class="settings-tab" role="tab" data-tab="general" aria-controls="panel-general" aria-selected="true" id="tab-general">📋 <span>General</span></button>
+                <button type="button" class="settings-tab" role="tab" data-tab="appearance" aria-controls="panel-appearance" aria-selected="false" id="tab-appearance">🎨 <span>Appearance</span></button>
+                <button type="button" class="settings-tab" role="tab" data-tab="agents" aria-controls="panel-agents" aria-selected="false" id="tab-agents">🤖 <span>Agents</span></button>
+                <button type="button" class="settings-tab" role="tab" data-tab="providers" aria-controls="panel-providers" aria-selected="false" id="tab-providers">🔑 <span>Providers</span></button>
+                <button type="button" class="settings-tab" role="tab" data-tab="voice" aria-controls="panel-voice" aria-selected="false" id="tab-voice">🔊 <span>Voice</span></button>
+                <button type="button" class="settings-tab" role="tab" data-tab="devices" aria-controls="panel-devices" aria-selected="false" id="tab-devices">📱 <span>Devices</span></button>
+                <button type="button" class="settings-tab" role="tab" data-tab="data" aria-controls="panel-data" aria-selected="false" id="tab-data">💾 <span>Data</span></button>
+            </div>
+
+            <!-- General is the pre-activation panel: if the tab script fails to
+                 load, the page still renders its settings instead of nothing. -->
+            <section class="settings-panel active" id="panel-general" role="tabpanel" aria-labelledby="tab-general" tabindex="0">
             <div class="settings-group">
-                <h3 class="settings-title"><span class="emoji">📋</span> General</h3>
+                <h3 class="settings-title"><span class="emoji">📋</span> General <span class="settings-scope" data-scope="device" title="Stored in this browser only — other devices and the server are unaffected.">This device</span></h3>
                 <div class="setting-item">
                     <div class="setting-label">
                         <strong>Welcome page</strong>
@@ -34,7 +48,37 @@
             </div>
 
             <div class="settings-group">
-                <h3 class="settings-title"><span class="emoji">🎨</span> Appearance</h3>
+                <h3 class="settings-title"><span class="emoji">🔔</span> Notifications <span class="settings-scope" data-scope="device" title="Stored in this browser only.">This device</span></h3>
+                <div class="setting-item">
+                    <div class="setting-label">
+                        <strong>Desktop Notifications</strong>
+                        <div class="setting-description">Desktop notifications from the Cuttle app</div>
+                    </div>
+                    <div class="setting-control">
+                        <label class="toggle-switch active" id="notificationsToggle" onclick="toggleNotifications(event)">
+                            <input type="checkbox" id="notificationsEnabled" checked style="display: none;">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                </div>
+                <div class="setting-item">
+                    <div class="setting-label">
+                        <strong>Reply ready chirp</strong>
+                        <div class="setting-description">Play a short sound when a chat response finishes (works while minimized in Electron)</div>
+                    </div>
+                    <div class="setting-control">
+                        <label class="toggle-switch active" id="responseChirpToggle" onclick="toggleResponseChirp(event)">
+                            <input type="checkbox" id="responseChirpEnabled" checked style="display: none;">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+            </section>
+
+            <section class="settings-panel" id="panel-appearance" role="tabpanel" aria-labelledby="tab-appearance" tabindex="0" hidden>
+            <div class="settings-group">
+                <h3 class="settings-title"><span class="emoji">🎨</span> Appearance <span class="settings-scope" data-scope="mixed" title="Theme and transitions are per-browser; wallpaper playlists sync to the server.">This device + server</span></h3>
                 <div class="setting-item">
                     <div class="setting-label">
                         <strong>Theme</strong>
@@ -86,25 +130,25 @@
                         </label>
                     </div>
                 </div>
-                <div class="setting-item">
+                <div class="setting-item setting-item--stack">
                     <div class="setting-label">
                         <strong>Background Video Playlist</strong>
                         <div class="setting-description">Pick a playlist to play it; each keeps its own YouTube links. ▶ plays that clip now; + adds, − removes.</div>
                     </div>
-                    <div class="setting-control" style="flex-direction: column; align-items: stretch; gap: 8px;">
-                        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                    <div class="setting-control setting-control--stack">
+                        <div class="video-playlist-toolbar">
                             <select id="videoPlaylistSelect" class="setting-input" style="flex: 1; min-width: 160px;" onchange="switchVideoPlaylist(this.value)" aria-label="Active playlist"></select>
                             <button class="control-button btn-start" id="videoPlaylistNewBtn" onclick="showNewVideoPlaylistInput()" title="Create a playlist">+ New playlist</button>
                             <button class="control-button btn-stop" id="videoPlaylistDeleteBtn" onclick="deleteVideoPlaylist()" title="Delete this playlist">🗑️ Delete</button>
                         </div>
-                        <div id="videoPlaylistNewRow" style="display: none; gap: 8px; align-items: center; flex-wrap: wrap;">
+                        <div id="videoPlaylistNewRow" class="video-playlist-toolbar" style="display: none;">
                             <input type="text" id="videoPlaylistNewName" class="setting-input" maxlength="40" placeholder="Playlist name" style="flex: 1; min-width: 160px;"
                                    onkeydown="if (event.key === 'Enter') createVideoPlaylist(); else if (event.key === 'Escape') hideNewVideoPlaylistInput();">
                             <button class="control-button btn-start" onclick="createVideoPlaylist()">Create</button>
                             <button class="control-button btn-info" onclick="hideNewVideoPlaylistInput()">Cancel</button>
                         </div>
                         <div id="videoBackgroundList" class="video-list-container"></div>
-                        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                        <div class="video-playlist-toolbar">
                             <button class="control-button btn-start" onclick="addVideoBackgroundEntry()" title="Add video">+ Add</button>
                             <button class="control-button btn-stop" onclick="clearVideoBackground()" title="Clear all">🗑️ Clear All</button>
                             <button class="control-button btn-info" onclick="saveVideoBackground()">💾 Save</button>
@@ -155,9 +199,76 @@
                     </div>
                 </div>
             </div>
-            
+            </section>
+
+            <section class="settings-panel" id="panel-agents" role="tabpanel" aria-labelledby="tab-agents" tabindex="0" hidden>
             <div class="settings-group">
-                <h3 class="settings-title"><span class="emoji">🔑</span> API Keys</h3>
+                <h3 class="settings-title"><span class="emoji">🤖</span> Agent CLIs <span class="settings-scope" data-scope="server" title="Detection runs on the server that hosts the agent; a CLI installed on another machine is invisible here.">This server</span></h3>
+                <div class="settings-intro">Every agent is a CLI you install yourself. Pick one with <code>/name</code> in any chat. Cuttle never installs or patches them — add a new one by dropping a folder (see below).</div>
+                <div id="agentCliList" class="agent-cli-list"></div>
+            </div>
+
+            <div class="settings-group">
+                <h3 class="settings-title"><span class="emoji">➕</span> Add your own agent <span class="settings-scope" data-scope="mixed" title="Instance and project roots are read straight from disk; a project root only runs after you opt in.">This instance + project</span></h3>
+                <div class="settings-intro">Drop a folder named after the agent with a <code>manifest.yaml</code> and an <code>adapter.py</code>. It joins the catalog next reload — no Cuttle fork, no core change.</div>
+                <div class="setting-item setting-item--stack">
+                    <div class="setting-label"><strong>Discovery roots</strong></div>
+                    <div class="setting-control setting-control--stack">
+                        <div id="agentDropInRoots" class="provider-status"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-group">
+                <h3 class="settings-title"><span class="emoji">🧭</span> Routing &amp; identity <span class="settings-scope" data-scope="mixed" title="Agent name is per-browser; router settings are stored on the server.">This device + server</span></h3>
+                <div class="setting-item">
+                    <div class="setting-label">
+                        <strong>Agent router</strong>
+                        <div class="setting-description">Routing brain, use cases, and escalation targets. Leaving it off sends every chat straight to the agent you typed.</div>
+                    </div>
+                    <div class="setting-control">
+                        <button class="control-button btn-info" onclick="openRouterEditor()">🧭 Open router editor</button>
+                    </div>
+                </div>
+                <div class="setting-item">
+                    <div class="setting-label">
+                        <strong>Agent Name</strong>
+                        <div class="setting-description">The name your assistant introduces itself by</div>
+                    </div>
+                    <div class="setting-control">
+                        <input type="text" id="agentName" class="setting-input" placeholder="Cuttle" value="Cuttle">
+                        <button class="control-button btn-start" onclick="saveAgentName()"><span class="emoji">💾</span> Save</button>
+                    </div>
+                </div>
+            </div>
+            </section>
+
+            <section class="settings-panel" id="panel-providers" role="tabpanel" aria-labelledby="tab-providers" tabindex="0" hidden>
+            <div class="settings-group">
+                <h3 class="settings-title"><span class="emoji">🧠</span> Cheap completions <span class="settings-scope" data-scope="server" title="Stored in settings.json and read by api.llm_complete on every call.">This server</span></h3>
+                <div class="settings-intro">Cuttle's own small jobs: chat titles, commit names, prompt enhance. Agent work never runs here — it runs on the CLI you picked in the Agents tab.</div>
+                <div class="setting-item setting-item--stack">
+                    <div class="setting-label">
+                        <strong>Provider &amp; model</strong>
+                        <div class="setting-description">Auto tries every configured provider in order. Pinning one makes it the only choice. Models are free-form, so a provider's newest model works the day it ships.</div>
+                    </div>
+                    <div class="setting-control setting-control--stack">
+                        <div class="provider-picker">
+                            <select id="completionProviderSelect" class="setting-input" onchange="onCompletionProviderChanged()">
+                                <option value="">Auto — try each configured provider</option>
+                            </select>
+                            <input type="text" id="completionModelInput" class="setting-input" list="completionModelSuggestions" placeholder="Model id (blank = default)">
+                            <datalist id="completionModelSuggestions"></datalist>
+                            <button class="control-button btn-start" onclick="saveCompletionProviders()"><span class="emoji">💾</span> Save</button>
+                        </div>
+                        <div id="completionProviderStatus" class="provider-status"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-group">
+                <h3 class="settings-title"><span class="emoji">🔑</span> API Keys <span class="settings-scope" data-scope="server" title="Written to the server's .env — every device and agent on this server uses them.">This server</span></h3>
+                <div class="settings-intro">Keys here are used for anything Cuttle calls itself: cheap completions, vision pre-pass, voice, image search. Agent CLIs keep their own auth.</div>
                 <div class="setting-item">
                     <div class="setting-label">
                         <strong>OpenAI API Key</strong>
@@ -181,7 +292,7 @@
                         <button class="control-button btn-start" onclick="saveApiKey('anthropic')"><span class="emoji">💾</span> Save</button>
                     </div>
                 </div>
-                
+
                 <div class="setting-item">
                     <div class="setting-label">
                         <strong>Discord Bot Token</strong>
@@ -194,58 +305,11 @@
                     </div>
                 </div>
             </div>
-            
-            <div class="settings-group">
-                <h3 class="settings-title"><span class="emoji">🤖</span> AI Configuration</h3>
-                <div class="setting-item">
-                    <div class="setting-label">
-                        <strong>Agent Name</strong>
-                        <div class="setting-description">Customize the name of your AI assistant</div>
-                    </div>
-                    <div class="setting-control">
-                        <input type="text" id="agentName" class="setting-input" placeholder="Cuttle" value="Cuttle">
-                        <button class="control-button btn-start" onclick="saveAgentName()"><span class="emoji">💾</span> Save</button>
-                    </div>
-                </div>
-                
-                <div class="setting-item">
-                    <div class="setting-label">
-                        <strong>Cheap completion model</strong>
-                        <div class="setting-description">Used for chat titles, commit names, and prompt enhance — not for Cursor/Codex/Muse. Agent work uses those CLIs.</div>
-                    </div>
-                    <div class="setting-control">
-                        <select id="modelSelect" class="setting-input" style="min-width: 250px;">
-                            <optgroup label="Cloud">
-                                <option value="gpt-4o-mini">GPT-4O Mini (Fast & Cheap)</option>
-                                <option value="gpt-4">GPT-4 (Most Capable)</option>
-                                <option value="gpt-3.5-turbo">GPT-3.5 Turbo (Legacy)</option>
-                            </optgroup>
-                            <optgroup label="Local" id="ollamaModelsOptgroup">
-                                <option value="">Loading...</option>
-                            </optgroup>
-                        </select>
-                        <button class="control-button btn-start" onclick="saveModel()"><span class="emoji">💾</span> Save</button>
-                    </div>
-                </div>
+            </section>
 
-                <div class="setting-item">
-                    <div class="setting-label">
-                        <strong>Local model for cheap completions</strong>
-                        <div class="setting-description">When chat is in Local mode, titles/commits/enhance use this local model instead of OpenAI.</div>
-                    </div>
-                    <div class="setting-control">
-                        <select id="toolOllamaModelSelect" class="setting-input" style="min-width: 250px;">
-                            <optgroup label="Local" id="toolOllamaModelsOptgroup">
-                                <option value="">Loading...</option>
-                            </optgroup>
-                        </select>
-                        <button class="control-button btn-start" onclick="saveToolModel()"><span class="emoji">💾</span> Save</button>
-                    </div>
-                </div>
-            </div>
-
+            <section class="settings-panel" id="panel-voice" role="tabpanel" aria-labelledby="tab-voice" tabindex="0" hidden>
             <div class="settings-group">
-                <h3 class="settings-title"><span class="emoji">🔊</span> Chat voice (TTS)</h3>
+                <h3 class="settings-title"><span class="emoji">🔊</span> Chat voice (TTS) <span class="settings-scope" data-scope="server" title="Stored on the server — every device shares these preferences.">This server</span></h3>
                 <p style="font-size:0.85rem;color:var(--text-secondary);margin:0 0 12px 0;line-height:1.45;max-width:52rem">
                     Play button on assistant bubbles. Click to summarize with a cheap model (optional), then speak via OpenAI TTS.
                     Nothing is generated until you press play.
@@ -331,9 +395,11 @@
                     </div>
                 </div>
             </div>
+            </section>
 
+            <section class="settings-panel" id="panel-devices" role="tabpanel" aria-labelledby="tab-devices" tabindex="0" hidden>
             <div class="settings-group">
-                <h3 class="settings-title">📱 Phone / LAN access</h3>
+                <h3 class="settings-title"><span class="emoji">📱</span> Phone / LAN access <span class="settings-scope" data-scope="server" title="Server-side discovery config. Toggling requires a Flask restart.">This server</span></h3>
                 <div class="setting-item">
                     <div class="setting-label">
                         <strong>Allow phones on home Wi‑Fi</strong>
@@ -363,7 +429,7 @@
             </div>
 
             <div class="settings-group">
-                <h3 class="settings-title">💻 Desktop app</h3>
+                <h3 class="settings-title"><span class="emoji">💻</span> Desktop app <span class="settings-scope" data-scope="server" title="Reports the host's Electron shell state.">This server</span></h3>
                 <div class="setting-item">
                     <div class="setting-label">
                         <strong>Laptop Electron client</strong>
@@ -377,37 +443,11 @@
                     </div>
                 </div>
             </div>
+            </section>
 
+            <section class="settings-panel" id="panel-data" role="tabpanel" aria-labelledby="tab-data" tabindex="0" hidden>
             <div class="settings-group">
-                <h3 class="settings-title">🔔 Notifications</h3>
-                <div class="setting-item">
-                    <div class="setting-label">
-                        <strong>Desktop Notifications</strong>
-                        <div class="setting-description">Desktop notifications from the Cuttle app</div>
-                    </div>
-                    <div class="setting-control">
-                        <label class="toggle-switch active" id="notificationsToggle" onclick="toggleNotifications(event)">
-                            <input type="checkbox" id="notificationsEnabled" checked style="display: none;">
-                            <span class="slider"></span>
-                        </label>
-                    </div>
-                </div>
-                <div class="setting-item">
-                    <div class="setting-label">
-                        <strong>Reply ready chirp</strong>
-                        <div class="setting-description">Play a short sound when a chat response finishes (works while minimized in Electron)</div>
-                    </div>
-                    <div class="setting-control">
-                        <label class="toggle-switch active" id="responseChirpToggle" onclick="toggleResponseChirp(event)">
-                            <input type="checkbox" id="responseChirpEnabled" checked style="display: none;">
-                            <span class="slider"></span>
-                        </label>
-                    </div>
-                </div>
-            </div>
-            
-            <div class="settings-group">
-                <h3 class="settings-title">💾 Data Management</h3>
+                <h3 class="settings-title"><span class="emoji">💾</span> Data Management <span class="settings-scope" data-scope="device" title="Exports the browser-local settings file. Server settings are not included.">This device</span></h3>
                 <div class="setting-item">
                     <div class="setting-label">
                         <strong>Export Settings</strong>
@@ -428,6 +468,7 @@
                     </div>
                 </div>
             </div>
+            </section>
         </div>
     </div>
 
@@ -436,6 +477,7 @@
     <script src="/js/shared_navigation.js"></script>
     <script src="/js/background_effect_blend.js"></script>
     <script src="/js/toast.js"></script>
+    <script src="/js/settings_page_tabs.js?v=20261001tabs"></script>
     <script src="/js/video_background.js?v=20260927blendTarget"></script>
     <script>
         // Settings functions
@@ -557,6 +599,16 @@
             localStorage.removeItem('cuttle_skip_welcome');
             (window.showToast || alert)('Welcome page will show on next app startup.');
         }
+
+        function openRouterEditor() {
+            // Inside the app shell the page lives in an iframe — navigating the
+            // parent keeps the column/route instead of stranding this frame.
+            if (window.parent && window.parent !== window) {
+                window.parent.postMessage({ type: 'cuttle-navigate', page: '/router_editor.html' }, '*');
+            } else {
+                window.location.href = '/router_editor.html';
+            }
+        }
         
         function saveAgentName() {
             const name = document.getElementById('agentName').value;
@@ -564,209 +616,237 @@
             (window.showToast || alert)('Agent name saved successfully!', 'success');
         }
 
-        const CLOUD_MODELS = ['gpt-4o-mini', 'gpt-4', 'gpt-3.5-turbo'];
+        // Cheap-completion providers come from the server registry so this page
+        // never reimplements resolution order (api.completion_providers owns it).
+        let _completionProviders = [];
 
-        function populateOllamaModelsInSettings() {
-            const sel = document.getElementById('modelSelect');
-            const grp = document.getElementById('ollamaModelsOptgroup');
-            if (!sel || !grp) return;
-            const currentVal = localStorage.getItem('selectedModel') || document.getElementById('modelSelect').value || 'gpt-4o-mini';
-            fetch('/api/ollama-models')
-                .then(r => r.json())
-                .then(data => {
-                    grp.innerHTML = '';
-                    grp.label = 'Local (' + (data.backend === 'llamacpp' ? 'llama.cpp' : 'Ollama') + ')';
-                    if (data.success && Array.isArray(data.models) && data.models.length > 0) {
-                        data.models.forEach(name => {
-                            const opt = document.createElement('option');
-                            opt.value = name;
-                            opt.textContent = name;
-                            grp.appendChild(opt);
-                        });
-                    } else {
-                        const opt = document.createElement('option');
-                        opt.value = '';
-                        opt.textContent = 'No local models (is the local LLM server running?)';
-                        grp.appendChild(opt);
-                    }
-                    if (currentVal) {
-                        const hasOpt = Array.from(sel.options).some(o => o.value === currentVal);
-                        if (hasOpt) sel.value = currentVal;
-                    }
-                    syncModelSelectFromBackend();
-                })
-                .catch(() => {
-                    grp.innerHTML = '';
+        function renderCompletionProviders(payload) {
+            _completionProviders = (payload && payload.providers) || [];
+            const sel = document.getElementById('completionProviderSelect');
+            const input = document.getElementById('completionModelInput');
+            const list = document.getElementById('completionModelSuggestions');
+            if (!sel) return;
+            const pinned = (payload && payload.pinned_provider) || '';
+            sel.innerHTML = '<option value="">Auto — try each configured provider</option>';
+            _completionProviders.forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = p.id;
+                opt.textContent = p.label + (p.configured ? '' : ' (not configured)');
+                if (p.id === pinned) opt.selected = true;
+                sel.appendChild(opt);
+            });
+            if (list) {
+                list.innerHTML = '';
+                const current = _completionProviders.find(p => p.id === sel.value);
+                const models = (current && current.suggested_models) || [];
+                models.forEach(name => {
                     const opt = document.createElement('option');
-                    opt.value = '';
-                    opt.textContent = 'Local LLM unavailable';
-                    grp.appendChild(opt);
-                    syncModelSelectFromBackend();
+                    opt.value = name;
+                    list.appendChild(opt);
                 });
+            }
+            paintCompletionStatus(payload);
+            if (input && !input.dataset.touched) {
+                const row = _completionProviders.find(p => p.id === sel.value);
+                input.value = (row && row.effective_model) || '';
+            }
         }
 
-        function populateToolOllamaModelsInSettings() {
-            const sel = document.getElementById('toolOllamaModelSelect');
-            const grp = document.getElementById('toolOllamaModelsOptgroup');
-            if (!sel || !grp) return;
-            const currentVal = localStorage.getItem('selectedToolModel') || document.getElementById('toolOllamaModelSelect').value || '';
-            fetch('/api/ollama-models')
-                .then(r => r.json())
-                .then(data => {
-                    grp.innerHTML = '';
-                    grp.label = 'Local (' + (data.backend === 'llamacpp' ? 'llama.cpp' : 'Ollama') + ')';
-                    if (data.success && Array.isArray(data.models) && data.models.length > 0) {
-                        data.models.forEach(name => {
-                            const opt = document.createElement('option');
-                            opt.value = name;
-                            opt.textContent = name;
-                            grp.appendChild(opt);
-                        });
-                    } else {
-                        const opt = document.createElement('option');
-                        opt.value = '';
-                        opt.textContent = 'No local models (is the local LLM server running?)';
-                        grp.appendChild(opt);
-                    }
-                    if (currentVal) {
-                        const hasOpt = Array.from(sel.options).some(o => o.value === currentVal);
-                        if (hasOpt) sel.value = currentVal;
-                    }
-                    syncModelSelectFromBackend();
-                })
-                .catch(() => {
-                    grp.innerHTML = '';
+        function paintCompletionStatus(payload) {
+            const box = document.getElementById('completionProviderStatus');
+            if (!box) return;
+            const providers = (payload && payload.providers) || _completionProviders;
+            const order = (payload && payload.order) || [];
+            if (!providers.length) {
+                box.textContent = 'No completion providers registered.';
+                return;
+            }
+            box.innerHTML = '';
+            providers.forEach(p => {
+                const chip = document.createElement('span');
+                const ok = !!p.configured;
+                chip.className = 'provider-chip' + (ok ? '' : ' is-unset') + (p.pinned ? ' is-pinned' : '');
+                const src = p.model_from && p.model_from !== 'default'
+                    ? ' · ' + p.model_from + ': ' + (p.effective_model || p.default_model || 'provider default')
+                    : '';
+                chip.textContent = p.label + (ok ? '' : ' — no ' + ((p.credential_env || [])[0] || 'credential')) + src;
+                if (ok && order.indexOf(p.id) === 0 && order.length > 1) chip.title = 'Tried first';
+                box.appendChild(chip);
+            });
+        }
+
+        function loadCompletionProviders() {
+            return fetch('/api/settings/completion-providers')
+                .then(r => (r.ok ? r.json() : null))
+                .then(data => { if (data && data.success) renderCompletionProviders(data); })
+                .catch(() => {});
+        }
+
+        function onCompletionProviderChanged() {
+            const sel = document.getElementById('completionProviderSelect');
+            const input = document.getElementById('completionModelInput');
+            const list = document.getElementById('completionModelSuggestions');
+            const row = _completionProviders.find(p => p.id === sel.value);
+            if (list) {
+                list.innerHTML = '';
+                ((row && row.suggested_models) || []).forEach(name => {
                     const opt = document.createElement('option');
-                    opt.value = '';
-                    opt.textContent = 'Local LLM unavailable';
-                    grp.appendChild(opt);
-                    syncModelSelectFromBackend();
+                    opt.value = name;
+                    list.appendChild(opt);
                 });
+            }
+            if (input) {
+                // Switching provider must not carry the previous provider's
+                // model id across.
+                input.value = (row && row.effective_model) || '';
+                input.dataset.touched = '';
+            }
         }
 
-        async function loadChatTtsSettings() {
+        async function saveCompletionProviders() {
+            const sel = document.getElementById('completionProviderSelect');
+            const input = document.getElementById('completionModelInput');
+            const providerId = sel ? sel.value : '';
+            const model = input ? input.value.trim() : '';
+            if (input) delete input.dataset.touched;
+            const body = { provider: providerId, models: {} };
+            if (providerId && model) body.models[providerId] = model;
             try {
-                const r = await fetch('/api/settings/chat-tts');
-                const d = await r.json();
-                if (!d.success || !d.chat_tts) return;
-                const p = d.chat_tts;
-                const en = document.getElementById('chatTtsEnabled');
-                const enToggle = document.getElementById('chatTtsEnabledToggle');
-                if (en) en.checked = !!p.enabled;
-                if (enToggle) enToggle.classList.toggle('active', !!p.enabled);
-                const sum = document.getElementById('chatTtsSummarize');
-                const sumToggle = document.getElementById('chatTtsSummarizeToggle');
-                if (sum) sum.checked = !!p.summarize;
-                if (sumToggle) sumToggle.classList.toggle('active', !!p.summarize);
-                const model = document.getElementById('chatTtsModel');
-                if (model && p.tts_model) model.value = p.tts_model;
-                const voice = document.getElementById('chatTtsVoice');
-                if (voice && p.voice) voice.value = p.voice;
-                const smodel = document.getElementById('chatTtsSummarizeModel');
-                if (smodel && p.summarize_model) smodel.value = p.summarize_model;
-            } catch (_) {}
-        }
-
-        function toggleChatTtsEnabled(event) {
-            if (event) event.preventDefault();
-            const cb = document.getElementById('chatTtsEnabled');
-            const toggle = document.getElementById('chatTtsEnabledToggle');
-            if (!cb || !toggle) return;
-            cb.checked = !cb.checked;
-            toggle.classList.toggle('active', cb.checked);
-        }
-
-        function toggleChatTtsSummarize(event) {
-            if (event) event.preventDefault();
-            const cb = document.getElementById('chatTtsSummarize');
-            const toggle = document.getElementById('chatTtsSummarizeToggle');
-            if (!cb || !toggle) return;
-            cb.checked = !cb.checked;
-            toggle.classList.toggle('active', cb.checked);
-        }
-
-        async function saveChatTtsSettings() {
-            const body = {
-                enabled: !!(document.getElementById('chatTtsEnabled') && document.getElementById('chatTtsEnabled').checked),
-                summarize: !!(document.getElementById('chatTtsSummarize') && document.getElementById('chatTtsSummarize').checked),
-                tts_model: (document.getElementById('chatTtsModel') && document.getElementById('chatTtsModel').value) || 'gpt-4o-mini-tts',
-                voice: (document.getElementById('chatTtsVoice') && document.getElementById('chatTtsVoice').value) || 'coral',
-                summarize_model: (document.getElementById('chatTtsSummarizeModel') && document.getElementById('chatTtsSummarizeModel').value) || 'gpt-4o-mini'
-            };
-            try {
-                const r = await fetch('/api/settings/chat-tts', {
+                const r = await fetch('/api/settings/completion-providers', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(body)
                 });
                 const d = await r.json();
-                if (d.success) {
-                    (window.showToast || alert)('Chat voice settings saved.', 'success');
-                    loadChatTtsSettings();
-                } else {
-                    (window.showToast || alert)(d.error || 'Save failed', 'error');
+                if (!r.ok || !d.success) {
+                    (window.showToast || alert)(d.message || d.error || 'Save failed', 'error');
+                    return;
                 }
+                renderCompletionProviders(d);
+                (window.showToast || alert)(
+                    providerId
+                        ? 'Cheap completions pinned to ' + providerId + (model ? ' / ' + model : '')
+                        : 'Cheap completions will try every configured provider.',
+                    'success'
+                );
             } catch (e) {
                 (window.showToast || alert)('Error: ' + (e.message || e), 'error');
             }
         }
 
-        function syncModelSelectFromBackend() {
-            fetch('/api/settings').then(r => r.ok ? r.json() : null).then(data => {
-                if (!data || !data.success || !data.settings) return;
-                const sel = document.getElementById('modelSelect');
-                if (!sel) return;
-                const local = (data.settings.preferred_ollama_model || '').trim();
-                const cloud = data.settings.preferred_llm_model || 'gpt-4o-mini';
-                if (local && Array.from(sel.options).some(o => o.value === local)) {
-                    sel.value = local;
-                    localStorage.setItem('selectedModel', local);
-                } else if (cloud && Array.from(sel.options).some(o => o.value === cloud)) {
-                    sel.value = cloud;
-                    localStorage.setItem('selectedModel', cloud);
-                }
-
-                const toolSel = document.getElementById('toolOllamaModelSelect');
-                if (toolSel) {
-                    const toolLocal = (data.settings.preferred_tools_ollama_model || '').trim();
-                    if (toolLocal && Array.from(toolSel.options).some(o => o.value === toolLocal)) {
-                        toolSel.value = toolLocal;
-                        localStorage.setItem('selectedToolModel', toolLocal);
-                    }
-                }
-            }).catch(() => {});
+        // ── Agent CLI catalog (from GET /api/agents) ──────────────────────
+        // Detection, install hints, and credential state all come from the
+        // catalog's public rows; this renders them and nothing else. Adding an
+        // agent is a folder drop, so this list must never hardcode an agent id.
+        function agentStatusChip(agent) {
+            const chip = document.createElement('span');
+            let text, cls;
+            if (agent.available && agent.ready) {
+                text = 'Ready'; cls = 'is-ready';
+            } else if (!agent.available) {
+                text = 'CLI not installed'; cls = 'is-missing';
+            } else if ((agent.credential_env || []).length && !agent.credential_present) {
+                text = 'Needs ' + agent.credential_env[0]; cls = 'is-unset';
+            } else {
+                text = 'Ready'; cls = 'is-ready';
+            }
+            chip.className = 'provider-chip ' + cls;
+            chip.textContent = text;
+            return chip;
         }
 
-        function saveModel() {
-            const model = document.getElementById('modelSelect').value;
-            if (!model) {
-                (window.showToast || alert)('Please select a model', 'error');
+        function renderAgentCliList(payload) {
+            const box = document.getElementById('agentCliList');
+            if (!box) return;
+            const agents = (payload && payload.agents) || [];
+            box.innerHTML = '';
+            if (!agents.length) {
+                const empty = document.createElement('div');
+                empty.className = 'settings-intro';
+                empty.textContent = 'No agents found in any discovery root.';
+                box.appendChild(empty);
                 return;
             }
-            localStorage.setItem('selectedModel', model);
-            const isCloud = CLOUD_MODELS.includes(model);
-            const body = isCloud ? { preferred_llm_model: model } : { preferred_ollama_model: model };
-            fetch('/api/settings', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body)
-            }).then(r => r.json()).then(() => {}).catch(() => {});
-            (window.showToast || alert)('Model selection saved successfully!', 'success');
+            agents.forEach(agent => {
+                const card = document.createElement('div');
+                card.className = 'agent-card';
+
+                const head = document.createElement('div');
+                head.className = 'agent-card-head';
+                const name = document.createElement('span');
+                name.className = 'agent-card-name';
+                name.textContent = agent.label || agent.id;
+                const slash = document.createElement('code');
+                slash.className = 'agent-card-slash';
+                slash.textContent = agent.slash || ('/' + agent.id);
+                slash.title = 'Type this in any chat to use it';
+                head.appendChild(name);
+                head.appendChild(slash);
+                head.appendChild(agentStatusChip(agent));
+                if (agent.source && agent.source !== 'bundled') {
+                    const src = document.createElement('span');
+                    src.className = 'provider-chip is-source';
+                    src.textContent = agent.source;
+                    src.title = 'Drop-in adapter, not bundled with Cuttle';
+                    head.appendChild(src);
+                }
+                card.appendChild(head);
+
+                const meta = document.createElement('div');
+                meta.className = 'agent-card-meta';
+                const bits = [];
+                bits.push((agent.models || []).length + ' model' + ((agent.models || []).length === 1 ? '' : 's'));
+                if (agent.resume) bits.push('resumes sessions');
+                if (agent.env_profile === 'wsl') bits.push('Windows via WSL');
+                if (agent.requires_cloud === false) bits.push('can run locally');
+                meta.textContent = bits.join(' · ');
+                card.appendChild(meta);
+
+                // Only show the actionable line — a ready agent needs no prose.
+                if (!agent.available && agent.install_hint) {
+                    const hint = document.createElement('div');
+                    hint.className = 'agent-card-hint';
+                    hint.textContent = agent.install_hint;
+                    card.appendChild(hint);
+                } else if (agent.available && !agent.credential_present && (agent.credential_env || []).length) {
+                    const hint = document.createElement('div');
+                    hint.className = 'agent-card-hint';
+                    hint.textContent = 'Add ' + agent.credential_env.join(' or ') + ' to src/.env to finish setup.';
+                    card.appendChild(hint);
+                } else if (agent.available && agent.auth_command) {
+                    const hint = document.createElement('div');
+                    hint.className = 'agent-card-hint is-quiet';
+                    hint.textContent = 'Not signed in? Run `' + agent.auth_command + '`.';
+                    card.appendChild(hint);
+                }
+
+                box.appendChild(card);
+            });
         }
 
-        function saveToolModel() {
-            const model = document.getElementById('toolOllamaModelSelect').value;
-            if (!model) {
-                (window.showToast || alert)('Please select a local tool model', 'error');
-                return;
-            }
-            localStorage.setItem('selectedToolModel', model);
-            fetch('/api/settings', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ preferred_tools_ollama_model: model })
-            }).then(r => r.json()).then(() => {}).catch(() => {});
-            (window.showToast || alert)('Tool model saved successfully!', 'success');
+        function renderAgentDropInRoots(payload) {
+            const box = document.getElementById('agentDropInRoots');
+            if (!box) return;
+            const roots = (payload && payload.roots) || [];
+            box.innerHTML = '';
+            roots.forEach(root => {
+                const chip = document.createElement('code');
+                chip.className = 'provider-chip is-path';
+                chip.textContent = (root.source || '?') + ': ' + root.path;
+                chip.title = root.path;
+                box.appendChild(chip);
+            });
+        }
+
+        function loadAgentCatalog() {
+            return fetch('/api/agents')
+                .then(r => (r.ok ? r.json() : null))
+                .then(data => {
+                    if (!data || !data.success) return;
+                    renderAgentCliList(data);
+                    renderAgentDropInRoots(data);
+                })
+                .catch(() => {});
         }
 
         function getVideoBackgroundListFromUI() {
@@ -1036,6 +1116,40 @@
             renderVideoBackgroundList(urls);
         }
 
+        // Wallpaper rows are rebuilt on every add/remove/switch, so resolved
+        // titles are memoized by URL instead of re-fetched per render.
+        const _videoMetaCache = new Map();
+        const _videoMetaPending = new Set();
+
+        function videoMetaCacheKey(url) {
+            return String(url || '').trim();
+        }
+
+        function describeVideoSource(url) {
+            const trimmed = String(url || '').trim();
+            if (!trimmed) return '';
+            const file = trimmed.split(/[?#]/)[0].split('/').pop();
+            return file && file !== trimmed ? file : trimmed;
+        }
+
+        function requestVideoMeta(url, paint) {
+            const key = videoMetaCacheKey(url);
+            if (!key) { paint({ supported: false, title: '' }); return; }
+            const hit = _videoMetaCache.get(key);
+            if (hit) { paint(hit); return; }
+            if (_videoMetaPending.has(key)) return;
+            _videoMetaPending.add(key);
+            fetch('/api/settings/video-metadata?url=' + encodeURIComponent(key))
+                .then(r => (r.ok ? r.json() : null))
+                .then(data => {
+                    const meta = (data && data.metadata) || { supported: false, title: '' };
+                    _videoMetaCache.set(key, meta);
+                    paint(meta);
+                })
+                .catch(() => paint({ supported: false, title: '' }))
+                .finally(() => _videoMetaPending.delete(key));
+        }
+
         function renderVideoBackgroundList(urls) {
             const container = document.getElementById('videoBackgroundList');
             if (!container) return;
@@ -1043,31 +1157,78 @@
             urls.forEach((url, idx) => {
                 const row = document.createElement('div');
                 row.className = 'video-list-item';
-                row.style.cssText = 'display: flex; gap: 6px; align-items: center; margin-bottom: 6px;';
+                const thumb = document.createElement('div');
+                thumb.className = 'video-row-thumb';
+                thumb.setAttribute('aria-hidden', 'true');
+                const thumbImg = document.createElement('img');
+                thumbImg.alt = '';
+                thumbImg.loading = 'lazy';
+                // A dead thumbnail (private/deleted video) must fall back to the
+                // glyph placeholder, not a broken-image icon.
+                thumbImg.addEventListener('error', () => {
+                    thumbImg.removeAttribute('src');
+                    thumb.classList.add('is-empty');
+                });
+                thumb.appendChild(thumbImg);
+                const main = document.createElement('div');
+                main.className = 'video-row-main';
+                const caption = document.createElement('div');
+                caption.className = 'video-row-caption';
+                const captionTitle = document.createElement('span');
+                captionTitle.className = 'video-row-title';
+                captionTitle.textContent = describeVideoSource(url);
+                const captionMeta = document.createElement('span');
+                captionMeta.className = 'video-row-meta';
+                caption.appendChild(captionTitle);
+                caption.appendChild(captionMeta);
                 const inp = document.createElement('input');
                 inp.type = 'text';
-                inp.className = 'setting-input';
+                inp.className = 'setting-input video-row-url';
                 inp.placeholder = 'https://youtube.com/watch?v=...';
                 inp.value = url;
-                inp.style.flex = '1';
-                inp.style.minWidth = '200px';
+                inp.setAttribute('aria-label', 'Video URL');
+                const buttons = document.createElement('div');
+                buttons.className = 'video-row-buttons';
                 const play = document.createElement('button');
                 play.type = 'button';
-                play.className = 'control-button btn-start video-play-btn';
+                // `video-play-btn` is kept for src/scripts/utilities/readme_gifs.py,
+                // which drives the README wallpaper demo by that selector.
+                play.className = 'control-button btn-start video-play-btn video-row-btn';
                 play.innerHTML = '▶';
                 play.title = 'Play this video as the background now';
                 play.setAttribute('aria-label', 'Play this video now');
                 play.onclick = () => previewVideoBackground(idx);
                 const btn = document.createElement('button');
                 btn.type = 'button';
-                btn.className = 'control-button btn-stop';
+                btn.className = 'control-button btn-stop video-row-btn';
                 btn.textContent = '−';
                 btn.title = 'Remove';
+                btn.setAttribute('aria-label', 'Remove this video');
                 btn.onclick = () => removeVideoBackgroundEntry(idx);
-                row.appendChild(inp);
-                row.appendChild(play);
-                row.appendChild(btn);
+                buttons.appendChild(play);
+                buttons.appendChild(btn);
+                const field = document.createElement('div');
+                field.className = 'video-row-field';
+                field.appendChild(inp);
+                field.appendChild(buttons);
+                main.appendChild(caption);
+                main.appendChild(field);
+                row.appendChild(thumb);
+                row.appendChild(main);
                 container.appendChild(row);
+
+                requestVideoMeta(url, meta => {
+                    if (!meta || !meta.supported) {
+                        thumb.classList.add('is-empty');
+                        captionMeta.textContent = '';
+                        return;
+                    }
+                    if (meta.thumbnail) thumbImg.src = meta.thumbnail;
+                    const title = (meta.title || '').trim();
+                    captionTitle.textContent = title || describeVideoSource(url);
+                    captionTitle.title = title || captionTitle.textContent;
+                    captionMeta.textContent = (meta.author || '').trim();
+                });
             });
             if (urls.length === 0) {
                 const empty = document.createElement('div');
@@ -1301,8 +1462,6 @@
         function exportSettings() {
             const settings = {
                 agentName: localStorage.getItem('agentName') || 'Cuttle',
-                selectedModel: localStorage.getItem('selectedModel') || 'gpt-4o-mini',
-                selectedToolModel: localStorage.getItem('selectedToolModel') || '',
                 theme: localStorage.getItem('theme') || 'dark',
                 videoBackgroundList: JSON.parse(localStorage.getItem('cuttleVideoBackgroundList') || '[]'),
                 videoBackgroundPlaylists: currentVideoPlaylistState().playlists,
@@ -1343,8 +1502,6 @@
                     try {
                         const settings = JSON.parse(event.target.result);
                         if (settings.agentName) localStorage.setItem('agentName', settings.agentName);
-                        if (settings.selectedModel) localStorage.setItem('selectedModel', settings.selectedModel);
-                        if (settings.selectedToolModel !== undefined) localStorage.setItem('selectedToolModel', settings.selectedToolModel);
                         if (settings.theme) {
                             localStorage.setItem('theme', settings.theme);
                             if (window.parent !== window) {
@@ -1503,22 +1660,20 @@
             return key.substring(0, 4) + '••••••••' + key.substring(key.length - 4);
         }
 
-        // Load saved settings
+        // Load saved settings.
+        // Paint from localStorage synchronously (cheap, and controls exist even
+        // while their panel is hidden). Anything that hits the network is
+        // registered as a per-tab loader so opening Settings does not fetch API
+        // keys, LAN status, TTS prefs, and the local model list in one burst.
         document.addEventListener('DOMContentLoaded', async function() {
             const agentName = localStorage.getItem('agentName') || 'Cuttle';
-            let selectedModel = localStorage.getItem('selectedModel') || 'gpt-4o-mini';
             const notificationsEnabled = localStorage.getItem('notificationsEnabled') !== 'false';
             const responseChirpEnabled = localStorage.getItem('responseChirpEnabled') !== 'false';
             
             document.getElementById('agentName').value = agentName;
-            document.getElementById('modelSelect').value = selectedModel;
             document.getElementById('notificationsEnabled').checked = notificationsEnabled;
             const chirpCb = document.getElementById('responseChirpEnabled');
             if (chirpCb) chirpCb.checked = responseChirpEnabled;
-            populateOllamaModelsInSettings();
-            populateToolOllamaModelsInSettings();
-            await loadChatTtsSettings();
-            await syncVideoBackgroundWithServer();
             loadVideoBackgroundEnabledToggle();
             const durationVal = localStorage.getItem('cuttleVideoBackgroundDuration');
             const durInput = document.getElementById('videoBackgroundDuration');
@@ -1557,10 +1712,34 @@
                 chirpToggle.classList.toggle('active', responseChirpEnabled);
             }
             
-            // Load API keys (masked)
-            loadApiKeys();
-            loadLanAccessSettings();
-            loadDesktopElectronSettings();
+            // Wallpaper sync stays eager: it drives the page background itself,
+            // not just the Appearance controls, so deferring it would make this
+            // page show a stale playlist until the user opens that tab.
+            await syncVideoBackgroundWithServer();
+
+            // Per-tab loaders: each runs the first time its panel is shown.
+            const tabs = window.CuttleSettingsTabs;
+            if (tabs && typeof tabs.register === 'function') {
+                tabs.register('agents', function () { loadAgentCatalog(); });
+                tabs.register('providers', function () {
+                    loadCompletionProviders();
+                    loadApiKeys();
+                });
+                tabs.register('voice', function () { loadChatTtsSettings(); });
+                tabs.register('devices', function () {
+                    loadLanAccessSettings();
+                    loadDesktopElectronSettings();
+                });
+                tabs.init();
+            } else {
+                // No tab shell (e.g. markup edited by hand): load everything.
+                loadAgentCatalog();
+                loadCompletionProviders();
+                loadChatTtsSettings();
+                loadApiKeys();
+                loadLanAccessSettings();
+                loadDesktopElectronSettings();
+            }
         });
 
         // Add animation styles

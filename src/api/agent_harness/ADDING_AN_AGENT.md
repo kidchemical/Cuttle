@@ -236,6 +236,30 @@ install_hint: >-
   with `tool auth login` or set `TOOL_API_KEY` in `src/.env`.
 ```
 
+### Declare your auth story (required)
+
+Settings → Agents and the setup wizard render straight from the catalog, so an
+agent must say **declaratively** what it needs. Prose in `install_hint` is shown
+but never parsed:
+
+```yaml
+# Pick exactly one:
+credential_env: [TOOL_API_KEY]     # Cuttle-managed key(s), most-preferred first
+# ...or, when the CLI owns its own login:
+auth_command: tool auth login
+```
+
+* `credential_env` — env vars whose presence Cuttle can check. It computes
+  `credential_present` and `ready` in `public_catalog()`. Order is
+  load-bearing: the first entry is what the UI tells the user to create.
+* `auth_command` — shown as "Not signed in? Run …" so a CLI-authed agent never
+  gets nagged about a key it does not use.
+* Neither, with `requires_cloud: false` — a local-only agent needs nothing.
+
+`ready = available() and (credential_present or no credential_env)`, so both
+Settings and the wizard agree on what "installed" means without reimplementing
+it.
+
 When an explicitly selected agent is missing, the kernel answers with
 that guidance and stops; authentication is a separate state and must
 produce a short actionable message. Never add per-adapter install or
@@ -380,6 +404,10 @@ Put the cheap id in `smoke_model` so a forgotten env still does not spend Pro.
    - slash + sticky prefix shape,
    - `match_slash_command('/<id> hi')`,
    - `public_catalog()` row has `available: bool`, `status`, `install_hint`,
+   - `public_catalog()` row has `ready: bool`, `credential_env`,
+     `credential_present`, `auth_command` — and declares an auth story at all
+     (`credential_env`, `auth_command`, or `requires_cloud: false`; see
+     **Declare your auth story**),
    - dispatch runner registered,
    - **project chip cwd**: `resolve_cwd(tmp_project)` stays in that folder even if
      process cwd is somewhere else; kernel must not honor an adapter that returns

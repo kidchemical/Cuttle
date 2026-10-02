@@ -2,6 +2,11 @@ id: antigravity
 label: Antigravity CLI
 slash: /antigravity
 requires_cloud: true
+# Credential the CLI needs. Declared so Settings and the setup
+# wizard can say "add X" instead of the reader parsing prose.
+credential_env:
+  - GEMINI_API_KEY
+auth_command: agy login
 sticky: true
 default_model: ""
 models:

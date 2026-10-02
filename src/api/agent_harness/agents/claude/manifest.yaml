@@ -2,6 +2,7 @@ id: claude
 label: Claude Code
 slash: /claude
 requires_cloud: true
+auth_command: claude auth login
 sticky: true
 # Empty — unpinned turns omit --model so the Claude CLI default wins.
 default_model: ""
