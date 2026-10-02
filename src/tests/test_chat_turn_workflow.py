@@ -279,7 +279,7 @@ def test_owner_agent_lane_exception_still_releases():
     assert chat_delivery.is_busy("seam-own3") is False
 
 
-def test_owner_pipeline_lane_skips_save_on_failure_or_supersede():
+def test_owner_pipeline_lane_keeps_failure_text_but_skips_supersede():
     from api import chat_delivery, chat_turn_workflow as wf
 
     saved = []
@@ -291,10 +291,13 @@ def test_owner_pipeline_lane_skips_save_on_failure_or_supersede():
         save_assistant=lambda r: saved.append(r) or r,
         build_body=lambda r: wf.build_pipeline_body(r, "seam-own4", usage_meta_fn=lambda _r: None),
     )
-    assert status == 200 and saved == []
+    # B1 kept-rule: useful failure text reaches the saver (which applies
+    # the exact skip policy); the wire body is unchanged either way.
+    assert status == 200 and len(saved) == 1
     assert body == {
         "success": False, "response": "bad", "session_id": "seam-own4", "type": "x",
     }
+    saved.clear()
 
     def run_then_cancel():
         chat_delivery.cancel_current_turn("seam-own5")
@@ -401,3 +404,53 @@ def test_stream_cancelled_turn_saves_and_parks_nothing(workflow_env):
     assert chat_delivery.is_busy("seam-w6") is False
     # The caller still sees the reply over SSE; it is just never persisted.
     assert any('"response"' in c and "too late" in c for c in chunks)
+
+
+def test_sync_lane_suppresses_after_run_when_superseded():
+    """Superseded claimed sync: no after_run (save/notify), new busy held."""
+    from api import chat_delivery
+    from api import chat_turn_workflow as wf
+
+    sid = "b1-sup-sync-effect"
+    calls = []
+
+    def run_then_supersede():
+        chat_delivery.end(sid)
+        assert chat_delivery.try_begin(sid) is True  # newer turn takes slot
+        return {"success": True, "response": "stale"}
+
+    body, status = wf.run_agent_sync_turn(
+        sid,
+        delivery=chat_delivery,
+        persist_user=lambda: None,
+        run=run_then_supersede,
+        after_run=lambda _b: calls.append("after"),
+    )
+    assert status == 200 and body["response"] == "stale"
+    assert calls == []
+    assert chat_delivery.try_begin(sid) is False  # newer busy held
+    chat_delivery.end(sid)
+
+
+def test_sync_lane_suppresses_after_run_when_cancelled():
+    """Cancelled claimed sync: no after_run (save/notify)."""
+    from api import chat_delivery
+    from api import chat_turn_workflow as wf
+
+    sid = "b1-cancel-sync-effect"
+    calls = []
+
+    def run_then_cancel():
+        chat_delivery.cancel_current_turn(sid)
+        return {"success": True, "response": "too late"}
+
+    body, status = wf.run_agent_sync_turn(
+        sid,
+        delivery=chat_delivery,
+        persist_user=lambda: None,
+        run=run_then_cancel,
+        after_run=lambda _b: calls.append("after"),
+    )
+    assert status == 200 and body["response"] == "too late"
+    assert calls == []
+    chat_delivery.end(sid)

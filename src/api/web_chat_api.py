@@ -5928,6 +5928,9 @@ def chat_endpoint():
                 PreparedAgentTurn as _PreparedAgentTurn,
                 submit_agent_turn as _submit_turn,
             )
+            from api.chat_turn_workflow import (
+                result_kept_for_history as _result_kept_for_history,
+            )
 
             def _guarded_router_saver():
                 _saver = _make_auth_assistant_saver(chat_session_id, chat_inference_mode)
@@ -5959,7 +5962,9 @@ def chat_endpoint():
                 run_router=_router_run_family,
                 persist_user=lambda: (_persist_user_turn(chat_session_id) if _auth_user else None),
                 make_saver=_guarded_router_saver,
-                should_save=lambda _b: bool(_auth_user and _b.get('success')),
+                should_save=lambda _b: bool(
+                    _auth_user and _result_kept_for_history(_b)
+                ),
                 notify_mobile=None,
                 format_shortcut=_router_unreachable,
             )
@@ -6084,6 +6089,9 @@ def chat_endpoint():
                 PreparedAgentTurn as _PreparedAgentTurn,
                 submit_agent_turn as _submit_turn,
             )
+            from api.chat_turn_workflow import (
+                result_kept_for_history as _result_kept_for_history,
+            )
 
             def _guarded_harness_saver():
                 _saver = _make_auth_assistant_saver(
@@ -6113,7 +6121,9 @@ def chat_endpoint():
                 run_router=_harness_unreachable,
                 persist_user=lambda: (_persist_user_turn(chat_session_id) if _auth_user else None),
                 make_saver=_guarded_harness_saver,
-                should_save=lambda _b: bool(_auth_user and _b.get('success')),
+                should_save=lambda _b: bool(
+                    _auth_user and _result_kept_for_history(_b)
+                ),
                 notify_mobile=lambda _b: _emit_chat_complete_mobile(chat_session_id, _b),
                 format_shortcut=_harness_unreachable,
             )
@@ -6218,28 +6228,21 @@ def chat_endpoint():
                 from api.chat_turn_workflow import build_pipeline_body as _build_body
 
                 def _pipeline_save_assistant(_res):
-                    try:
-                        _proj = _resolve_request_project_path({
-                            **(data or {}),
-                            'session_id': chat_session_id,
-                        })
-                    except Exception:
-                        _proj = ''
-                    _res = _rewrite_assistant_response_actions(
-                        _res, _session_id, _proj or ''
-                    ) or _res
-                    _asst_meta = _assistant_message_metadata(_res)
-                    db.add_message(
-                        chat_session_id,
-                        'assistant',
-                        _res.get('response', ''),
-                        metadata=_asst_meta or None,
+                    # Shared saver (make_assistant_saver) is the sole
+                    # eligibility policy: persist-anything lived here
+                    # ([ERR-20261001-001]). The ingress-resolved
+                    # project_path is supplied as the saver's fallback
+                    # so the turn's action context survives a missing
+                    # session project; action_forms remains authoritative
+                    # for live-session precedence. Return the (possibly
+                    # rewritten-in-place) result for the body.
+                    _saver = _make_auth_assistant_saver(
+                        chat_session_id, chat_inference_mode,
+                        project_path=project_path,
                     )
-                    try:
-                        from api.chat_titler import schedule_session_autoname
-                        schedule_session_autoname(chat_session_id, chat_inference_mode)
-                    except Exception as _te:
-                        print(f"[TITLER] hook failed: {_te}")
+                    if _saver is None:
+                        return _res
+                    _saver(_res)
                     return _res
 
                 _lane_body, _lane_status = _run_lane(
@@ -6274,33 +6277,13 @@ def chat_endpoint():
             def _pipeline_unreachable(*_a, **_k):
                 raise RuntimeError('unreachable arm in pipeline stream lane')
 
-            def _pipeline_save_assistant(_res):
-                # Verbatim from the old on_save: persist-anything (including
-                # [CANCELLED]/system rows the saver-built lanes skip —
-                # [ERR-20261001-001], deliberately unchanged here).
-                try:
-                    _proj = _resolve_request_project_path({
-                        **(data or {}),
-                        'session_id': chat_session_id,
-                    })
-                except Exception:
-                    _proj = ''
-                _res = _rewrite_assistant_response_actions(
-                    _res, _session_id, _proj or ''
-                ) or _res
-                _asst_meta = _assistant_message_metadata(_res)
-                db.add_message(
-                    chat_session_id,
-                    'assistant',
-                    _res.get('response', ''),
-                    metadata=_asst_meta or None,
-                )
-                try:
-                    from api.chat_titler import schedule_session_autoname
-                    schedule_session_autoname(chat_session_id, chat_inference_mode)
-                except Exception as _te:
-                    print(f"[TITLER] hook failed: {_te}")
-
+            # Shared saver (make_assistant_saver) is the sole eligibility
+            # policy: the persist-anything on_save lived here
+            # ([ERR-20261001-001], now unified). The factory runs in the
+            # request thread on first next(); the ingress-resolved
+            # project_path below is the saver's fallback when the
+            # session carries no project. Action_forms keeps live-session
+            # precedence for the card embed itself.
             _stream_pipeline_io = _StreamTurnIO(
                 run_harness=_pipeline_unreachable,
                 run_router=_pipeline_unreachable,
@@ -6310,7 +6293,10 @@ def chat_endpoint():
                     history_message,
                     metadata=_user_msg_meta,
                 ),
-                make_saver=lambda: _pipeline_save_assistant,
+                make_saver=lambda: _make_auth_assistant_saver(
+                    chat_session_id, chat_inference_mode,
+                    project_path=project_path,
+                ),
                 notify_mobile=lambda _b: _emit_chat_complete_mobile(chat_session_id, _b),
                 format_shortcut=_pipeline_unreachable,
                 run_pipeline=lambda status_queue=None: process_message_with_bot(

@@ -15,9 +15,10 @@ oracles must pass unchanged after it; the ``test_submit_*`` direct tests
 encode the NEW contract (owned fallback instead of ``None``) and FAIL
 pre-change. Fakes only: fake plain-router, tmp-DB auth, ``p5f-`` ids.
 
-``[ERR-20261001-001]`` divergence is pinned, NOT fixed: the pipeline
-stream ``on_save`` persists ``[CANCELLED]``/system rows the saver-built
-lanes skip. Do not "fix" these tests by changing persist policy.
+``[ERR-20261001-001]`` is fixed in this isolated branch (pending
+integration, not released): the pipeline stream lane now uses the
+shared saver, so ``[CANCELLED]``/system rows are skipped in every
+lane. The oracle below pins the unified contract.
 """
 
 from __future__ import annotations
@@ -262,12 +263,12 @@ def test_oracle_pipeline_stream_busy_shape(authed_db, router_abstain):
 def test_oracle_pipeline_stream_cancelled_row_divergence(
     authed_db, monkeypatch
 ):
-    """[ERR-20261001-001] pinned: pipeline on_save persists [CANCELLED].
+    """[ERR-20261001-001] unified (B1): pipeline stream skips [CANCELLED].
 
     No turn was cancelled here — the executor itself reports a cancelled
-    line with success set, the turn is kept, and the persist-anything
-    on_save writes it. Saver-built lanes skip such rows. DO NOT FIX by
-    changing persist policy in this slice.
+    line with success set and the turn is kept, but the shared saver now
+    owns pipeline persistence, so the status line never becomes history.
+    Transport still terminates normally for the consumer.
     """
     client, db, uid = authed_db
     sid = db.create_chat_session(uid)
@@ -289,8 +290,7 @@ def test_oracle_pipeline_stream_cancelled_row_divergence(
     assert _event_types(text)[-1] == "done"
     assert _announced_sid(text) == sid
     rows = db.get_messages(sid)
-    assert [m["role"] for m in rows] == ["user", "assistant"]
-    assert rows[1]["content"] == "[CANCELLED] stopped by user"
+    assert [m["role"] for m in rows] == ["user"]
 
 
 def test_oracle_pipeline_stream_cancel_discards(authed_db, monkeypatch):

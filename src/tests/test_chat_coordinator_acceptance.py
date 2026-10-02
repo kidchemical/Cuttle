@@ -321,3 +321,35 @@ def test_sessions_send_compat_contract_preserved(http_env, monkeypatch):
     assert payload["response"] == "coordinated!"
     assert payload["session_id"] == "acc-x"
     assert calls["run"][:2] == ("cursor", "cross-session")
+
+
+def test_unclaimed_sync_still_runs_after_run():
+    """Unclaimed compat surfaces keep inline after_run (no token gating)."""
+    from api import chat_delivery
+    from api import chat_coordinator as coord
+
+    db2 = FakeDB()
+    calls2 = {}
+    parts = _direct_io(db2, calls2)
+    notified = []
+    prepared = coord.PreparedAgentTurn(
+        message="/cursor do the thing", session_id="acc-unclaimed",
+    )
+    io = coord.AgentTurnIO(
+        run_harness=parts["run_harness"],
+        run_router=lambda *, status_queue=None: None,
+        persist_user=parts["persist_user"],
+        make_saver=parts["make_saver"],
+        should_save=lambda body: bool(body.get("success")),
+        notify_mobile=lambda body: notified.append(body),
+        format_shortcut=lambda kind, sel: {"success": True, "response": sel.block_message},
+    )
+    out = coord.submit_agent_turn(
+        prepared, io=io, delivery=chat_delivery, claim=False,
+    )
+    assert out.status == 200
+    assert out.body["response"] == "coordinated!"
+    assert notified and notified[0]["response"] == "coordinated!"
+    assert ("assistant", "coordinated!") in [
+        (r["role"], r["content"]) for r in db2.rows
+    ]

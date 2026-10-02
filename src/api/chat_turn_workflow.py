@@ -59,6 +59,20 @@ def is_turn_superseded(delivery: Any, session_id: Any, token: Any) -> bool:
     )
 
 
+def result_kept_for_history(result: Any) -> bool:
+    """Coarse eligibility pre-gate shared by the sync lanes and the
+    stream finalizer (which calls this helper directly).
+
+    A result with success or response text reaches the saver, which
+    applies the exact skip policy (supervised-owned, empty failures,
+    ``[CANCELLED]``, ``ui == 'system'``, cancelled turns). Never
+    duplicated per lane.
+    """
+    if not isinstance(result, dict):
+        return False
+    return bool(result.get('success') or result.get('response'))
+
+
 def run_agent_sync_turn(
     session_id: Any,
     *,
@@ -69,9 +83,11 @@ def run_agent_sync_turn(
 ) -> Tuple[Dict[str, Any], int]:
     """Harness-lane / router-family-lane sync workflow (order is the contract).
 
-    persist → run → after_run (session stamp + mobile notify + saver).
-    Returns ``(body, status)``; the ingress serializes. ``run()`` errors
-    propagate after release — matching the pre-extraction lanes.
+    persist → run → after_run (session stamp + mobile notify + saver),
+    skipped when the captured turn token was superseded or cancelled
+    while ``run()`` executed. Returns ``(body, status)``; the ingress
+    serializes. ``run()`` errors propagate after release — matching the
+    pre-extraction lanes.
     """
     token = begin_sync_turn(delivery, session_id)
     if token is None and session_id is not None:
@@ -79,7 +95,9 @@ def run_agent_sync_turn(
     try:
         persist_user()
         body = run()
-        if isinstance(body, dict):
+        if isinstance(body, dict) and not is_turn_superseded(
+            delivery, session_id, token
+        ):
             after_run(body)
         return body, 200
     finally:
@@ -95,8 +113,10 @@ def run_pipeline_sync_turn(
     save_assistant: Callable[[Dict[str, Any]], Dict[str, Any]],
     build_body: Callable[[Dict[str, Any]], Dict[str, Any]],
 ) -> Tuple[Dict[str, Any], int]:
-    """Leftover-pipeline sync workflow: stale/cancelled and failed turns are
-    returned to the caller but never persisted into the newer turn's history.
+    """Leftover-pipeline sync workflow: stale/cancelled turns are returned
+    to the caller but never persisted into the newer turn's history.
+    Useful failed text is retained; the shared saver applies the exact
+    skip policy (cancelled markers, system rows, empty failures).
     """
     token = begin_sync_turn(delivery, session_id)
     if token is None and session_id is not None:
@@ -104,7 +124,7 @@ def run_pipeline_sync_turn(
     try:
         persist_user()
         res = run()
-        if isinstance(res, dict) and res.get('success'):
+        if isinstance(res, dict) and result_kept_for_history(res):
             if not is_turn_superseded(delivery, session_id, token):
                 res = save_assistant(res) or res
         return build_body(res), 200
@@ -167,7 +187,7 @@ def finalize_stream_result(
             f"turn {token} was superseded",
             flush=True,
         )
-    kept = bool(result.get('success') or result.get('response'))
+    kept = result_kept_for_history(result)
     if not superseded and on_result is not None and kept:
         try:
             on_result(result)
