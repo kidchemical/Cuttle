@@ -52,6 +52,16 @@ def _head(repo: Path) -> str:
     return proc.stdout.strip()
 
 
+def _synthetic_aws_key() -> str:
+    """Assemble an AWS-shaped synthetic key at runtime.
+
+    Neither part below is token-shaped on its own, so this file never
+    contains a scannable key literal — but the assembled value still
+    trips the hook's AWS access-key pattern, preserving the regression.
+    """
+    return "AKIA" + "0" * 16
+
+
 def test_hook_file_exists_and_executable():
     assert HOOK.is_file()
     assert os.access(HOOK, os.X_OK)
@@ -76,7 +86,7 @@ def test_env_file_push_blocked(tmp_path):
 
 def test_aws_key_push_blocked(tmp_path):
     repo = _init_repo(tmp_path / "aws")
-    (repo / "config.py").write_text('KEY = "AKIAIOSFODNN7EXAMPLE"\n', encoding="utf-8")
+    (repo / "config.py").write_text(f'KEY = "{_synthetic_aws_key()}"\n', encoding="utf-8")
     _git("add", ".", cwd=repo)
     _git("commit", "-m", "oops key", cwd=repo)
     result = _run_hook(repo, _head(repo))

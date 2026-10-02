@@ -71,7 +71,7 @@ was buried in `install_hint` prose:
 `public_catalog()` derives `credential_present` and `ready = available and
 (credential_present or no credential_env)` so Settings and the wizard cannot
 disagree about "installed". Tests:
-`src/tests/test_agent_catalog_credentials.py`,
+`src/tests/test_agent_catalog_auth.py`,
 `src/tests/test_settings_agent_providers_ui.py`.
 
 ## Shipped: wizard reads the same catalog
