@@ -14426,11 +14426,21 @@
                 });
                 data = await resp.json();
             } catch (_) {
+                if (!card.isConnected) {
+                    card.__watchLoop = false;
+                    return;
+                }
                 if (!card.__watchLastData) {
                     applyActionFormWatchProgress(card, { percent: 0, label: 'Waiting for status…' });
                 }
                 await new Promise((r) => setTimeout(r, interval));
                 continue;
+            }
+            if (!card.isConnected) {
+                // Detached while awaiting (plan C2a): never apply,
+                // persist, or resume a late response for a removed card.
+                card.__watchLoop = false;
+                return;
             }
             if (!watchStatusMatchesCard(card, data || {})) {
                 const bind = cardWatchBind(watch);
@@ -14740,7 +14750,7 @@
         if (!opts.quietStart) {
             setActionFormCardProgress(card, 'Restarting Flask…', 'pending');
         }
-        while (Date.now() < deadline) {
+        while (card.isConnected && Date.now() < deadline) {
             let status = null;
             let liveWork = null;
             try {
@@ -14753,10 +14763,20 @@
                 status = (data && data.status) || {};
                 liveWork = (data && data.active_work) || null;
             } catch (_) {
+                if (!card.isConnected) {
+                    card.__restartWatchId = null;
+                    return;
+                }
                 // Expected while the daemon swaps the process.
                 setActionFormCardProgress(card, 'Restarting Flask — reconnecting…', 'pending');
                 await new Promise((r) => setTimeout(r, pollMs));
                 continue;
+            }
+            if (!card.isConnected) {
+                // Detached while awaiting (plan C2a): stop requests and
+                // late UI/history effects for a removed card.
+                card.__restartWatchId = null;
+                return;
             }
             if (String(status.restart_id || '') !== String(restartId)) {
                 // Superseded by a newer restart, or this card is replaying an
@@ -14784,7 +14804,9 @@
             setActionFormCardProgress(card, label, 'pending');
             await new Promise((r) => setTimeout(r, pollMs));
         }
-        setActionFormCardProgress(card, 'Restart status unknown — check /restart status', 'error');
+        if (card.isConnected) {
+            setActionFormCardProgress(card, 'Restart status unknown — check /restart status', 'error');
+        }
         card.__restartWatchId = null;
     }
 
@@ -14793,8 +14815,9 @@
      * well under a second), so the card adopts whatever restart is in flight.
      */
     async function adoptInFlightRestartOnCard(card, opts = {}) {
+        if (!card) return;
         const deadline = Date.now() + 60000;
-        while (Date.now() < deadline) {
+        while (card.isConnected && Date.now() < deadline) {
             try {
                 const resp = await fetchWithTimeout(
                     '/api/flask/restart/status',
@@ -14804,15 +14827,19 @@
                 const data = await resp.json();
                 const rid = ((data && data.status) || {}).restart_id;
                 if (rid) {
+                    if (!card.isConnected) return;
                     return watchFlaskRestartOnCard(card, String(rid), {
                         quietStart: true,
                         ...opts,
                     });
                 }
             } catch (_) {}
+            if (!card.isConnected) return;
             await new Promise((r) => setTimeout(r, 2000));
         }
-        setActionFormCardProgress(card, 'Restart status unavailable', 'error');
+        if (card.isConnected) {
+            setActionFormCardProgress(card, 'Restart status unavailable', 'error');
+        }
     }
 
     /**
