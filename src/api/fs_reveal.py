@@ -1,17 +1,80 @@
-"""Reveal a local path in the OS file manager (Explorer / Finder).
-
-Used by chat file chips (file://) so a click opens the folder with the
-item selected, instead of navigating to a blocked file:// URL.
-"""
+"""Open local files with desktop associations or reveal them in the file manager."""
 from __future__ import annotations
 
 import os
+import logging
 import re
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Any, Dict, Optional
 from urllib.parse import unquote, urlparse
+
+_log = logging.getLogger(__name__)
+
+
+def desktop_launch_environment() -> Dict[str, str]:
+    """Recover stale Xwayland authorization inherited by a persistent daemon.
+
+    Only use a live display server owned by this user, matching DISPLAY. Keep
+    valid inherited credentials and all other environment settings unchanged.
+    """
+    env = os.environ.copy()
+    if not sys.platform.startswith("linux"):
+        return env
+    display = env.get("DISPLAY", "")
+    if not re.fullmatch(r":\d+(?:\.\d+)?", display):
+        return env
+    authority = env.get("XAUTHORITY")
+    if authority and Path(authority).is_file():
+        return env
+    if not authority and (Path.home() / ".Xauthority").is_file():
+        return env
+    display = display.split(".", 1)[0]
+    try:
+        for proc in Path("/proc").iterdir():
+            if not proc.name.isdigit():
+                continue
+            try:
+                if proc.stat().st_uid != os.getuid():
+                    continue
+                argv = proc.joinpath("cmdline").read_bytes().decode().split("\0")
+                if Path(argv[0]).name not in ("Xwayland", "Xorg") or display not in argv:
+                    continue
+                if "-auth" not in argv:
+                    continue
+                candidate = Path(argv[argv.index("-auth") + 1])
+                if candidate.is_file() and candidate.stat().st_uid == os.getuid():
+                    env["XAUTHORITY"] = str(candidate)
+                    break
+            except (OSError, UnicodeError, IndexError):
+                continue  # Processes can exit while the directory is being scanned.
+    except OSError:
+        pass
+    return env
+
+
+def _launch_default_app(argv: list[str]) -> None:
+    """Report immediate launcher failures; let long-lived desktop apps continue."""
+    proc = subprocess.Popen(
+        argv, env=desktop_launch_environment(), stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE, text=True, close_fds=True,
+    )
+    try:
+        _, stderr = proc.communicate(timeout=2)
+    except subprocess.TimeoutExpired:
+        # Some desktop associations run the app in the foreground. Drain its
+        # output without blocking the route or stopping the user's application.
+        def drain() -> None:
+            _, stderr = proc.communicate()
+            if proc.returncode:
+                _log.warning("Desktop opener exited %s: %s", proc.returncode, (stderr or "")[:1000])
+        threading.Thread(target=drain, daemon=True).start()
+        return
+    if proc.returncode:
+        detail = (stderr or "").strip()[:1000] or f"exit code {proc.returncode}"
+        raise OSError(f"{argv[0]} could not open the file: {detail}")
 
 
 def parse_local_path(url_or_path: str) -> str:
@@ -84,7 +147,7 @@ def reveal_in_file_manager(url_or_path: str) -> Dict[str, Any]:
         subprocess.Popen(["open", "-R", resolved], close_fds=True)
     else:
         target = resolved if p.is_dir() else str(p.parent)
-        subprocess.Popen(["xdg-open", target], close_fds=True)
+        subprocess.Popen(["xdg-open", target], env=desktop_launch_environment(), close_fds=True)
         selected = False
 
     return {
@@ -104,9 +167,9 @@ def open_in_default_app(url_or_path: str) -> Dict[str, Any]:
     if sys.platform == "win32":
         os.startfile(resolved)  # type: ignore[attr-defined]
     elif sys.platform == "darwin":
-        subprocess.Popen(["open", resolved], close_fds=True)
+        _launch_default_app(["open", resolved])
     else:
-        subprocess.Popen(["xdg-open", resolved], close_fds=True)
+        _launch_default_app(["xdg-open", resolved])
     return {"path": resolved, "platform": sys.platform}
 
 
