@@ -3,9 +3,11 @@
 These tests reject demonstrated forbidden wiring, not style:
 
 1. No production module may import the Flask monolith ``web_chat_api``
-   (owned layers must never depend upward). Exactly one justification
-   exists: the doctor importability probe. The scanner fails loudly on
-   production syntax errors and covers aliased dynamic imports.
+   (owned layers must never depend upward). Exactly two justifications
+   exist: the doctor importability probe, and the dev-only shadow
+   composition bootstrap (spawned as a child process, never imported by
+   owned layers). The scanner fails loudly on production syntax errors
+   and covers aliased dynamic imports.
 2. The ``src/api`` internal import graph is acyclic at module level.
    Function-level and ``TYPE_CHECKING`` imports are deferred by design
    (documented, counted, allowed) — they break cycles intentionally.
@@ -98,6 +100,11 @@ REVERSE_IMPORT_ALLOWLIST = {
     "src/api/doctor.py": (
         "importability health probe: try/except import, no attribute use, "
         "reports chat_backend ok/fail in /api/doctor"
+    ),
+    "src/scripts/cuttle_shadow_app.py": (
+        "dev-only shadow composition bootstrap: spawned child imports the "
+        "real app after installing deny guards; never imported by owned "
+        "layers (api.dev_instance spawns it as a subprocess)"
     ),
 }
 

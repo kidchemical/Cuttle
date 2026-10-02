@@ -29,6 +29,7 @@ agent toolkit.
 | Job watch bars | `python -m api.job_watch` | `action-forms.md` |
 | Dashboards / Model Benchmarks | `python -m api.dashboards` | `dashboards.md` |
 | Jev judgments | `python -m api.jev` | `jev.md` |
+| Shadow dev instance (implemented, Linux verified) | `PYTHONPATH=src .venv/bin/python -m api.dev_instance prepare --candidate .` then `PYTHONPATH=src .venv/bin/python -m api.dev_instance up --candidate . --port 0` (foreground; Ctrl+C stops only its owned child) | Cuttle project `docs/architecture/development-instance-safety.md` |
 | Agent context fill / compact | `GET/POST /api/agent-context` | `agent-context.md` |
 
 Cuttle-as-MCP-server (`run_cuttle_mcp.py`, Tools-page pack toggles, pipeline MCP toolsets for Ollama) is **retired**. Do not spawn it from Flask or Discord. New agent-facing capabilities go through this table.
