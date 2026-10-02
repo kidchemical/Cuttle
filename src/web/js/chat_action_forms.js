@@ -1,12 +1,13 @@
 /* ================================================================
    Cuttle Chat — action-forms frontend domain (chat_action_forms.js)
    Owner: action-forms UI interpretation. Card model predicates, watch
-   interpretation, restart presentation decisions, and lock/state
-   pure logic: no document, no window, no localStorage, no fetch here
-   (all inputs are explicit arguments). Loaded before chat_page.js; the
-   chat page owns DOM rendering, fetch transport, timers/polling,
-   message-history integration, and orchestration, and calls into
-   `CuttleChatActionForms.*`.
+   interpretation, restart presentation decisions, lock/state pure logic,
+   and card HTML/render planning (`renderActionFormCardHtml`,
+   `renderWatchBarsHtml`): no document, no window, no localStorage, no
+   fetch here (all inputs are explicit arguments). Loaded before
+   chat_page.js; the chat page owns DOM rendering, fetch transport,
+   timers/polling, message-history integration, and orchestration, and
+   calls into `CuttleChatActionForms.*`.
 
    Mirrors the stabilized backend contract (Phase 2 Slice 2): one-shot
    locking, already-locked behavior, watch-state, follow-up and restart
@@ -262,7 +263,301 @@
         return group || fid;
     }
 
+    /** Bar stack HTML from normalized bars (moved from the page, plan C1). */
+    function renderWatchBarsHtml(bars, esc) {
+        return (bars || []).map((b) => {
+            const kind = esc(b.kind || 'secondary');
+            const pct = Math.max(0, Math.min(100, Number(b.percent || 0)));
+            const lab = esc(b.label || '');
+            const detail = b.detail ? `<span class="progress-bar-detail">${esc(b.detail)}</span>` : '';
+            return (
+                `<div class="progress-bar-item progress-bar-item--${kind}" data-bar-id="${esc(b.id || '')}">`
+                + `<div class="progress-bar-head">`
+                + `<span class="progress-bar-name">${lab}</span>`
+                + detail
+                + `<span class="progress-value">${pct}%</span>`
+                + `</div>`
+                + `<div class="progress-row">`
+                + `<div class="progress-track"><div class="progress-bar" style="width:${pct}%"></div></div>`
+                + `</div>`
+                + `</div>`
+            );
+        }).join('');
+    }
+
+    /**
+     * Card HTML + render planning (moved from the page, plan C1).
+     * Pure: same explicit inputs in, same markup out. `parts` carries
+     * exactly what the page call sites already compute:
+     * {spec, formId, fallback, lockedAttr, selectedAttr,
+     *  contentPreviewHtml, esc}.
+     * - `contentPreviewHtml` is the nested `formatMessage` preview,
+     *   pre-rendered by the page (this owner never calls formatMessage and
+     *   never reads page globals; session targeting arrives stamped in
+     *   `spec.session_id`). Balanced-JSON extraction and placeholder
+     *   sequencing stay in the page.
+     * - `esc` is the page's HTML escaper, passed explicitly (pure
+     *   string->string, no DOM).
+     * DOM/fetch/timers/action execution/widget writes stay outside.
+     */
+    function renderActionFormCardHtml(parts) {
+        const p = parts || {};
+        const spec = p.spec;
+        const formId = p.formId;
+        const fallback = p.fallback;
+        const lockedAttr = p.lockedAttr;
+        const selectedAttr = p.selectedAttr;
+        const esc = p.esc;
+
+        const mode = String((spec && spec.mode) || 'choice').toLowerCase();
+        const title = esc((spec && spec.title) || 'Choose an action');
+        const desc = esc((spec && spec.description) || '');
+        const lock = esc((spec && spec.lock) || 'form');
+        const isQaForm = !actionFormHasSideEffect(spec);
+        const submitLabel = esc((spec && spec.submitLabel) || (isQaForm ? 'Submit' : 'Run'));
+        const cancelLabel = esc((spec && spec.cancelLabel) || 'Cancel');
+        const busyLabel = esc((spec && spec.busyLabel) || 'Running…');
+        const selectedIds = Array.isArray(spec && spec.selected)
+            ? spec.selected.map(String)
+            : String(selectedAttr || '')
+                .split(',')
+                .map((s) => s.trim())
+                .filter(Boolean);
+        const contentPreview = String(p.contentPreviewHtml || '');
+        const watchSpec = inferActionFormWatch(spec);
+        const watchSnap = watchSnapshotFromSpec(watchSpec);
+        const watchFail = !!(watchSnap && String(watchSnap.state || '') === 'failed');
+        const watchDone = !!(watchSpec && watchSpec.terminal && watchSnap && (
+            String(watchSnap.state || '') === 'done'
+            || String(watchSnap.state || '') === 'failed'
+            || String(watchSnap.state || '') === 'trellis_ok'
+        ));
+        // Soft follow-up dismiss ("Ignored") must not permanently kill shared
+        // Flask restart controllers — heal on render so a poisoned transcript
+        // becomes clickable again after refresh.
+        const softDismissToast = /^(ignored|cancell?ed)\b/i.test(
+            String((spec && spec.toast) || '').trim()
+        );
+        const restartSoftDismiss = softDismissToast
+            && specLooksLikeFlaskRestart(spec, formId);
+        const alreadyLocked = !restartSoftDismiss && !!(
+            (spec && spec.locked)
+            || lockedAttr === '1'
+            || lockedAttr === 'true'
+            || watchDone
+        );
+        // Flask-restart cards share a generation id. After a real restart the
+        // chat still has the old unlocked markup — collapse until status sync
+        // confirms whether this generation is still live (avoids a few seconds
+        // of clickable Graceful/Force on every refresh).
+        const pendingRestartSync = !alreadyLocked && specLooksLikeFlaskRestart(spec, formId);
+        const controlsDisabled = alreadyLocked || pendingRestartSync;
+        const watchPct = watchSnap && watchSnap.percent != null
+            ? Math.max(0, Math.min(100, Number(watchSnap.percent)))
+            : 8;
+        const watchLabel = watchSnap
+            ? String(watchSnap.label || '')
+            : 'Checking download status…';
+        const restartIdFromSpec = String((spec && spec.restartId) || '').trim();
+        const restartPending = !!(spec && spec.pending);
+        const restartProgressHtml = restartIdFromSpec && alreadyLocked
+            ? (`<div class="cuttle-action-form-progress" data-restart-progress="1">`
+                + `<div class="progress-row">`
+                + `<div class="progress-track"><div class="progress-bar" style="width:${restartPending ? 18 : 100}%"></div></div>`
+                + `<div class="progress-value">${restartPending ? '18%' : '100%'}</div>`
+                + `</div>`
+                + `<div class="cuttle-action-form-progress-label">${esc((spec && spec.toast) || 'Restarting Flask…')}</div>`
+                + `</div>`)
+            : '';
+        const watchBars = normalizeWatchBars(watchSnap || { percent: watchPct, label: watchLabel });
+        const watchHtml = watchSpec
+            ? (`<div class="cuttle-action-form-progress" data-watch-progress="1">`
+                + `<div class="cuttle-action-form-progress-bars" data-watch-bars>${renderWatchBarsHtml(watchBars, esc)}</div>`
+                + `<div class="cuttle-action-form-progress-meta" data-watch-meta hidden></div>`
+                + `<div class="cuttle-action-form-progress-label">${esc(watchLabel)}</div>`
+                + `</div>`)
+            : '';
+        const options = Array.isArray(spec && spec.options) ? spec.options : [];
+        const fields = Array.isArray(spec && spec.fields) ? spec.fields : [];
+        let body = '';
+
+        if (mode === 'choice') {
+            body = `<div class="cuttle-action-form-options" data-mode="choice">` +
+                options.map((o) => {
+                    const oid = esc(o.id || '');
+                    const lab = esc(o.label || o.id || 'Option');
+                    // Q&A options omit `action` on purpose — that is NOT cancel.
+                    // Only id "cancel", cancel:true, or __dismiss__ are cancel.
+                    const isCancel = isExplicitActionFormCancelOption(o);
+                    const isSel = selectedIds.indexOf(String(o.id || '')) >= 0;
+                    return (
+                        `<button type="button" class="cuttle-button${isCancel ? '' : ' cuttle-button--primary'}${isSel ? ' is-selected' : ''}" ` +
+                        `data-action-form-option="${oid}" data-action-form-cancel="${isCancel ? '1' : '0'}"` +
+                        `${controlsDisabled ? ' disabled' : ''}>${lab}</button>`
+                    );
+                }).join('') +
+                `</div>`;
+        } else if (mode === 'multi') {
+            body = `<div class="cuttle-action-form-options" data-mode="multi">` +
+                options.map((o) => {
+                    const oid = esc(o.id || '');
+                    const lab = esc(o.label || o.id || 'Option');
+                    // The card has its own Cancel button; Q&A options omit `action`.
+                    if (isExplicitActionFormCancelOption(o)) return '';
+                    if (!o.action && !isQaForm) return '';
+                    const isSel = selectedIds.indexOf(String(o.id || '')) >= 0;
+                    return (
+                        `<label class="check-item cuttle-action-form-check${isSel ? ' is-selected' : ''}">` +
+                        `<input type="checkbox" data-action-form-option="${oid}"` +
+                        `${isSel ? ' checked' : ''}${controlsDisabled ? ' disabled' : ''}>` +
+                        `<span>${lab}</span></label>`
+                    );
+                }).join('') +
+                `<div class="cuttle-action-form-actions">` +
+                `<button type="button" class="cuttle-button cuttle-button--primary" data-action-form-submit="1" data-label="${submitLabel}" data-busy-label="${busyLabel}"${controlsDisabled ? ' disabled' : ''}>${submitLabel}</button>` +
+                `<button type="button" class="cuttle-button" data-action-form-cancel="1"${controlsDisabled ? ' disabled' : ''}>${cancelLabel}</button>` +
+                `</div></div>`;
+        } else {
+            // form mode
+            const fieldHtml = fields.map((f, idx) => {
+                const fid = esc(f.id || ('field_' + idx));
+                const label = esc(f.label || fid);
+                const type = String(f.type || 'text').toLowerCase();
+                const req = f.required ? '<span class="req">*</span>' : '';
+                const help = f.help ? `<div class="form-help">${esc(f.help)}</div>` : '';
+                const dis = controlsDisabled ? ' disabled' : '';
+                if (type === 'textarea') {
+                    return `<div class="form-field"><label class="form-label">${label}${req}</label>` +
+                        `<textarea class="form-textarea" data-field-id="${fid}" ${f.required ? 'required' : ''}${dis}>${esc(f.value ?? '')}</textarea>${help}</div>`;
+                }
+                if (type === 'select') {
+                    const opts = Array.isArray(f.options) ? f.options : [];
+                    return `<div class="form-field"><label class="form-label">${label}${req}</label>` +
+                        `<select class="form-select" data-field-id="${fid}" ${f.required ? 'required' : ''}${dis}>` +
+                        opts.map((o) => {
+                            const ov = esc(o.value ?? o.id ?? o);
+                            const ol = esc(o.label ?? o.name ?? o.value ?? o);
+                            return `<option value="${ov}">${ol}</option>`;
+                        }).join('') +
+                        `</select>${help}</div>`;
+                }
+                if (type === 'radio') {
+                    const opts = Array.isArray(f.options) ? f.options : [];
+                    const group = `af_${fid}`;
+                    const current = f.value ?? '';
+                    return `<div class="form-field"><div class="form-label">${label}${req}</div>` +
+                        `<div class="radio-group" data-radio-group="${fid}">` +
+                        opts.map((o) => {
+                            const ov = esc(o.value ?? o.id ?? o);
+                            const ol = esc(o.label ?? o.name ?? o.value ?? o);
+                            const checked = String(current) === String(o.value ?? o.id ?? o) ? ' checked' : '';
+                            return `<label class="radio-item"><input type="radio" name="${group}" value="${ov}"${checked}${dis}><span>${ol}</span></label>`;
+                        }).join('') +
+                        `</div>${help}</div>`;
+                }
+                if (type === 'checkboxes') {
+                    const opts = Array.isArray(f.options) ? f.options : [];
+                    const current = (Array.isArray(f.value) ? f.value : []).map(String);
+                    return `<div class="form-field"><div class="form-label">${label}${req}</div>` +
+                        `<div class="radio-group" data-checkbox-group="${fid}">` +
+                        opts.map((o) => {
+                            const raw = String(o.value ?? o.id ?? o);
+                            const ov = esc(raw);
+                            const ol = esc(o.label ?? o.name ?? o.value ?? o);
+                            const checked = current.indexOf(raw) >= 0 ? ' checked' : '';
+                            return `<label class="check-item"><input type="checkbox" value="${ov}"${checked}${dis}><span>${ol}</span></label>`;
+                        }).join('') +
+                        `</div>${help}</div>`;
+                }
+                if (type === 'checkbox' || type === 'toggle') {
+                    const checked = !!(f.value === true || f.value === 'true' || f.value === 1 || f.value === '1');
+                    const rawLine = String(f.line || f.body || '');
+                    const line = esc(rawLine);
+                    // Show the exact text that will be posted, so the card is a
+                    // real preview instead of a list of summaries.
+                    let linePreview = '';
+                    if (rawLine.trim()) {
+                        linePreview = `<div class="form-line-preview">${line}</div>`;
+                    } else if (!isQaForm) {
+                        linePreview = `<div class="form-line-preview is-missing">No post text for this item</div>`;
+                    }
+                    return `<div class="form-field"><label class="check-item">` +
+                        `<input type="checkbox" data-field-id="${fid}" data-line="${line}" ${checked ? 'checked' : ''}${dis}>` +
+                        `<span>${label}${req ? ' ' + req : ''}</span></label>${linePreview}${help}</div>`;
+                }
+                return `<div class="form-field"><label class="form-label">${label}${req}</label>` +
+                    `<input class="form-input" type="text" data-field-id="${fid}" value="${esc(f.value ?? '')}" ${f.required ? 'required' : ''}${dis}>${help}</div>`;
+            }).join('');
+            body = `<div class="cuttle-action-form-fields">${fieldHtml}</div>` +
+                `<div class="cuttle-action-form-actions">` +
+                `<button type="button" class="cuttle-button cuttle-button--primary" data-action-form-submit="1" data-label="${submitLabel}" data-busy-label="${busyLabel}"${controlsDisabled ? ' disabled' : ''}>${submitLabel}</button>` +
+                `<button type="button" class="cuttle-button" data-action-form-cancel="1"${controlsDisabled ? ' disabled' : ''}>${cancelLabel}</button>` +
+                `</div>`;
+        }
+
+        const optionLabelFor = (id) => {
+            const hit = options.find((o) => String(o.id || '') === String(id));
+            return (hit && (hit.label || hit.id)) || id;
+        };
+        const usedSummary = pendingRestartSync
+            ? 'Checking restart status…'
+            : (String((watchSnap && watchSnap.label) || (spec && spec.toast) || '').trim()
+                || (selectedIds.length
+                    ? 'Used — ' + selectedIds.map(optionLabelFor).join(', ')
+                    : 'Used'));
+        const statusHtml = alreadyLocked
+            ? `<div class="cuttle-action-form-status ${watchFail ? 'is-error' : 'is-ok'}">${esc(usedSummary)}</div>`
+            : `<div class="cuttle-action-form-status" hidden></div>`;
+
+        // One-shot cards collapse to this row once used; reusable ones never do.
+        // Pending Flask-restart sync also starts collapsed (non-interactive).
+        const collapsible = (alreadyLocked || pendingRestartSync) && !(spec && spec.reusable);
+        const cancelled = /^cancell?ed/i.test(usedSummary)
+            || selectedIds.indexOf('cancel') >= 0;
+        const showFailIcon = cancelled || watchFail;
+        const summaryPending = (restartPending && !showFailIcon) || pendingRestartSync;
+        const summaryHtml =
+            `<button type="button" class="cuttle-action-form-summary" data-action-form-toggle="1"` +
+            ` aria-expanded="${collapsible ? 'false' : 'true'}">` +
+            `<span class="cuttle-action-form-summary-icon" aria-hidden="true">${showFailIcon ? '✕' : (summaryPending ? '' : '✓')}</span>` +
+            `<span class="cuttle-action-form-summary-text">${title} — ${esc(usedSummary)}</span>` +
+            `<span class="cuttle-action-form-summary-caret" aria-hidden="true">` +
+            `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>` +
+            `</span></button>`;
+
+        const specAttr = esc(JSON.stringify(spec || {}));
+        const cardSession = esc((spec && spec.session_id) || '');
+        const restartId = esc((spec && spec.restartId) || '');
+        const restartGroup = esc(
+            (spec && (spec.restartFormGroup || spec.id)) || formId || ''
+        );
+        return (
+            `<div class="cuttle-action-form${alreadyLocked ? ' cuttle-action-form--locked' : ''}` +
+            `${collapsible ? ' is-collapsible is-collapsed' : ''}${cancelled ? ' is-cancelled' : ''}${watchFail ? ' is-failed' : ''}${summaryPending ? ' is-pending' : ''}" ` +
+            `data-form-id="${esc(formId || '')}" ` +
+            `data-fallback="${esc(fallback || '')}" data-lock="${lock}" ` +
+            `data-locked="${alreadyLocked ? '1' : '0'}" ` +
+            `data-restart-pending-sync="${pendingRestartSync ? '1' : '0'}" ` +
+            `data-session-id="${cardSession}" ` +
+            (restartGroup ? `data-restart-form-group="${restartGroup}" ` : '') +
+            (restartId ? `data-restart-id="${restartId}" ` : '') +
+            `data-spec="${specAttr}">` +
+            summaryHtml +
+            `<div class="cuttle-action-form-body">` +
+            `<div class="cuttle-action-form-title">${title}</div>` +
+            (desc ? `<div class="cuttle-action-form-desc">${desc}</div>` : '') +
+            contentPreview +
+            restartProgressHtml +
+            watchHtml +
+            body +
+            statusHtml +
+            `</div></div>`
+        );
+    }
+
     const api = {
+        renderActionFormCardHtml,
+        renderWatchBarsHtml,
         isExplicitActionFormCancelOption,
         actionFormHasSideEffect,
         isWatchFormAction,
