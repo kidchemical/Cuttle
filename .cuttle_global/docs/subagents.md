@@ -41,10 +41,26 @@ Always pass `--json` when a parent agent will parse the result.
 | `one_shot` (default) | One turn each; batch completes when the collect rule is met |
 | `conversational` | Children stay open. `message` more turns; `close` when done |
 
-`--wait` blocks the CLI until this round finishes (use it for one-shot votes).
-Without `--wait`, spawn returns handles immediately; poll with `status` / `wait`.
+`--wait` is **required** for `spawn` and `message`: child turns run on
+daemon threads of the CLI process, so without `--wait` the process would
+exit immediately, its workers would die with it, and the batch would keep
+pending/running rows no live owner can finish. The CLI rejects a missing
+`--wait` before creating any row. Use `status` to inspect, `wait` to
+re-poll a batch a previous `--wait` already supervised (e.g. after a
+timeout), and `cancel` to terminally stop stuck work.
 
-`--timeout` seconds (default 900).
+`--timeout` seconds (default 900) bounds supervision polling: if the
+round is still unfinished, `spawn --wait` terminally cancels the unfinished
+work it owns and exits nonzero (1) instead of abandoning active rows.
+Serial children run synchronously one at a time, so `--timeout` does not
+deadline-interrupt an individual synchronous turn; cancellation is
+cooperative (rows flip terminal, runners that ignore cancellation run until
+the supervising process exits). `message --wait` runs the follow-up turn to
+completion — its `--timeout` is accepted but not enforced on the turn.
+`wait` is observation-only: it never starts pending work and never cancels
+another owner's batch. Crash/SIGKILL recovery (rows left active with no
+process at all) is explicitly deferred: inspect with `status`, terminally
+stop with `cancel`.
 
 `--route` asks the existing Cuttle router to pick `agent`+`model` for children
 that omitted them (or set `"route": true`).

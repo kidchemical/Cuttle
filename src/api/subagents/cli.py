@@ -61,9 +61,37 @@ def _fail(payload: Dict[str, Any], as_json: bool, code: int = 2) -> int:
     return code
 
 
-def _cmd_spawn(args: argparse.Namespace) -> int:
-    from api.subagents.service import SubagentError, spawn
+def _require_wait(verb: str, args: argparse.Namespace) -> Optional[int]:
+    """One-shot CLI processes cannot own detached work.
 
+    Child turns run on daemon threads of this process; without ``--wait``
+    the process exits immediately, the threads die with it, and the batch
+    is left with pending/running rows no live owner can finish. Reject
+    before any row exists or any worker starts. In-process service callers
+    (which outlive the work) keep their own ``wait=False`` contract.
+    """
+    if args.wait:
+        return None
+    return _fail(
+        {
+            "ok": False,
+            "error": (
+                f"{verb} without --wait is not supported: this CLI process "
+                "would exit immediately and its worker threads would die "
+                "with it, leaving pending/running rows behind. Pass --wait "
+                "so this process supervises the round to completion."
+            ),
+        },
+        args.json,
+    )
+
+
+def _cmd_spawn(args: argparse.Namespace) -> int:
+    from api.subagents.service import SubagentError, cancel_batch, spawn
+
+    denied = _require_wait("spawn", args)
+    if denied is not None:
+        return denied
     parent = _parse_session(args.parent)
     children: List[Any] = list(args.child or [])
     if args.children_json:
@@ -95,6 +123,29 @@ def _cmd_spawn(args: argparse.Namespace) -> int:
         return _fail({"ok": False, "error": str(exc)}, args.json)
     except Exception as exc:
         return _fail({"ok": False, "error": str(exc)}, args.json, code=1)
+    if payload.get("timed_out"):
+        # This CLI created and supervised this round: a normal timeout must
+        # not abandon it with active rows (the same defect as exiting without
+        # --wait). Terminally cancel the unfinished work we own through the
+        # existing cancellation API, then exit nonzero. The observation-only
+        # `wait` verb never cancels another supervisor's batch.
+        try:
+            cancelled = cancel_batch(payload["id"], db=db)
+        except SubagentError as exc:
+            return _fail({"ok": False, "error": str(exc)}, args.json, code=1)
+        out = dict(cancelled)
+        out["ok"] = False
+        out["timed_out"] = True
+        out["error"] = (
+            f"timed out after {float(args.timeout):g}s; "
+            "unfinished work of this batch was cancelled"
+        )
+        _emit(
+            out,
+            as_json=args.json,
+            text=f"batch {payload.get('id')}  timed out — unfinished work cancelled",
+        )
+        return 1
     lines = [
         f"batch {payload.get('id')}  collect={payload.get('collect')}  "
         f"lifetime={payload.get('lifetime')}  status={payload.get('status')}"
@@ -140,7 +191,12 @@ def _cmd_wait(args: argparse.Namespace) -> int:
 
     db = _open_db(args.db)
     try:
-        payload = wait_batch(args.batch, timeout=float(args.timeout), db=db)
+        # Observation only: poll rows another owner may be advancing. Never
+        # start stale pending work and never cancel another owner's batch —
+        # `advance=False` disables serial kick-ahead for this caller.
+        payload = wait_batch(
+            args.batch, timeout=float(args.timeout), db=db, advance=False
+        )
     except SubagentError as exc:
         return _fail({"ok": False, "error": str(exc)}, args.json)
     _emit(payload, as_json=args.json, text=f"batch {payload.get('id')}  {payload.get('status')}")
@@ -150,6 +206,9 @@ def _cmd_wait(args: argparse.Namespace) -> int:
 def _cmd_message(args: argparse.Namespace) -> int:
     from api.subagents.service import SubagentError, message_child
 
+    denied = _require_wait("message", args)
+    if denied is not None:
+        return denied
     sid = _parse_session(args.session)
     db = _open_db(args.db)
     try:
@@ -301,7 +360,11 @@ def build_parser() -> argparse.ArgumentParser:
         default="one_shot",
         help="one_shot | conversational",
     )
-    sp.add_argument("--wait", action="store_true", help="Block until this round finishes")
+    sp.add_argument(
+        "--wait",
+        action="store_true",
+        help="Required: supervise this round to completion in this process",
+    )
     sp.add_argument("--timeout", type=float, default=900.0)
     sp.add_argument("--route", action="store_true", help="Ask the Cuttle router to pick each child's harness")
     sp.add_argument("--watch", action="store_true", help="Write a job_watch status JSON with per-child bars")
@@ -313,7 +376,11 @@ def build_parser() -> argparse.ArgumentParser:
     st.add_argument("--parent", default=None)
     st.set_defaults(func=_cmd_status)
 
-    wt = sub.add_parser("wait", parents=[common], help="Wait for a batch round to finish")
+    wt = sub.add_parser(
+        "wait",
+        parents=[common],
+        help="Poll a batch round (observation only; never starts or cancels work)",
+    )
     wt.add_argument("batch")
     wt.add_argument("--timeout", type=float, default=900.0)
     wt.set_defaults(func=_cmd_wait)
@@ -321,7 +388,11 @@ def build_parser() -> argparse.ArgumentParser:
     msg = sub.add_parser("message", parents=[common], help="Send a follow-up into a child chat")
     msg.add_argument("--session", required=True)
     msg.add_argument("--text", required=True)
-    msg.add_argument("--wait", action="store_true")
+    msg.add_argument(
+        "--wait",
+        action="store_true",
+        help="Required: supervise this round to completion in this process",
+    )
     msg.add_argument("--timeout", type=float, default=900.0)
     msg.set_defaults(func=_cmd_message)
 

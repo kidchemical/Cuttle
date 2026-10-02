@@ -248,10 +248,12 @@ def spawn(
     extras.ensure_parent_tasks(db, batch)
     extras.write_watch(batch)
 
+    timed_out = False
     if collect_n == COLLECT_SERIAL:
         if wait:
             _run_serial(db, batch, created, runner=runner, project_path=project_path)
-            wait_batch(batch.id, timeout=timeout, db=db, runner=None, start=False)
+            waited = wait_batch(batch.id, timeout=timeout, db=db, runner=None, start=False)
+            timed_out = bool(waited.get("timed_out"))
         else:
             # Start only the first; wait/message will continue.
             spec0, child0 = created[0]["spec"], created[0]["child"]
@@ -268,12 +270,14 @@ def spawn(
                 runner=runner,
             )
         if wait:
-            wait_batch(batch.id, timeout=timeout, db=db, runner=runner, start=False)
+            waited = wait_batch(batch.id, timeout=timeout, db=db, runner=runner, start=False)
+            timed_out = bool(waited.get("timed_out"))
 
     batch = _refresh(db, batch.id)
     _maybe_extras(db, batch)
     payload = batch.public()
     payload["ok"] = True
+    payload["timed_out"] = timed_out
     return payload
 
 
@@ -310,7 +314,17 @@ def wait_batch(
     db=None,
     runner: Optional[TurnRunner] = None,
     start: bool = False,
+    advance: bool = True,
 ) -> Dict[str, Any]:
+    """Poll a batch round to terminal-or-timeout, reporting ``timed_out``.
+
+    With ``start=True`` pending children are kicked in this process; serial
+    batches additionally advance one pending child per poll (``advance=True``,
+    the default that preserves in-process supervision). Observation-only
+    callers pass ``start=False, advance=False``: rows are read and finalized
+    but never started, so a ``wait`` on stale pending rows cannot revive
+    execution nobody owns.
+    """
     db = _open_db(db)
     deadline = time.time() + max(1.0, float(timeout))
     batch = _refresh(db, batch_id)
@@ -318,7 +332,7 @@ def wait_batch(
         _kick_pending(db, batch, runner=runner)
     while time.time() < deadline:
         batch = _refresh(db, batch_id)
-        if batch.collect == COLLECT_SERIAL:
+        if advance and batch.collect == COLLECT_SERIAL:
             _kick_next_serial(db, batch, runner=runner)
         batch = _finalize_if_complete(db, batch)
         _maybe_extras(db, batch)
