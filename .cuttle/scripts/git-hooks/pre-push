@@ -1,0 +1,253 @@
+#!/usr/bin/env python3
+"""Cuttle pre-push secret gate.
+
+Runs on every `git push` (terminal, hamburger "Git push" menu, and the
+`git.push` chat action card all shell out to plain `git push`, so this one
+hook covers every push path). Exit non-zero to block the push; the first
+stdout line is kept short on purpose — the web UI shows only the first
+line of a failed push in its error toast.
+
+Checks, in order:
+  1. Blocklisted paths (.env files, private keys, credential dumps).
+  2. gitleaks over the pushed commits (when the binary is installed).
+  3. Built-in high-signal regex scan (always runs; backstop when gitleaks
+     is missing and second opinion when it is present).
+
+Only NEW commits being pushed are scanned, never full history.
+
+Setup (one time per clone — hooksPath is local git config, not committed):
+    git config core.hooksPath .cuttle/scripts/git-hooks
+
+Bypass (emergencies only, leaves no record server-side):
+    git push --no-verify
+
+>>> CUSTOM CHECKS: add your own patterns to CUSTOM_PATH_SUFFIXES /
+    CUSTOM_DIR_NAMES below, or extra regexes to FALLBACK_PATTERNS. <<<
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import PurePosixPath
+
+EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+ZERO_SHA = "0" * 40
+HOOK_FIRST_LINE = "pre-push hook: push blocked"
+
+# --- Custom checks (edit me) -------------------------------------------
+# Path suffixes / names that must never be pushed, ever.
+CUSTOM_PATH_SUFFIXES = (
+    ".env",
+    ".pem",
+    ".key",
+    ".p12",
+    ".pfx",
+    "id_rsa",
+    "id_ed25519",
+    ".gnupg",
+)
+CUSTOM_NAME_SUBSTRINGS = (
+    "credentials",
+    "secret",
+)
+
+
+def _run_git(*args: str, cwd: str | None = None, timeout: int = 120) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", *args], cwd=cwd, capture_output=True, text=True, timeout=timeout,
+    )
+
+
+def _find_gitleaks() -> str | None:
+    found = shutil.which("gitleaks")
+    if found:
+        return found
+    for cand in (
+        os.path.expanduser("~/.local/bin/gitleaks"),
+        "/usr/local/bin/gitleaks",
+    ):
+        if os.path.isfile(cand) and os.access(cand, os.X_OK):
+            return cand
+    return None
+
+
+def _merge_base(local_sha: str) -> str | None:
+    # Remote-tracking refs only: merging against our own branch would
+    # yield base == local_sha and scan an empty range (scan nothing).
+    for ref in ("origin/HEAD", "origin/main", "origin/master"):
+        try:
+            proc = _run_git("merge-base", local_sha, ref)
+        except Exception:
+            continue
+        base = (proc.stdout or "").strip().splitlines()
+        if proc.returncode == 0 and base and not base[0].startswith("0" * 7):
+            return base[0]
+    return None
+
+
+def _pushed_commits(local_sha: str, remote_sha: str) -> tuple[str | None, list[str]]:
+    """Return (base, [new commit SHAs]). Base None means 'everything'."""
+    if remote_sha != ZERO_SHA:
+        proc = _run_git("rev-list", f"{remote_sha}..{local_sha}")
+        commits = (proc.stdout or "").split() if proc.returncode == 0 else []
+        return remote_sha, commits
+    base = _merge_base(local_sha)
+    if base == local_sha:
+        base = None  # degenerate: fall back to scanning everything
+    rev_range = f"{base}..{local_sha}" if base else local_sha
+    proc = _run_git("rev-list", rev_range)
+    commits = (proc.stdout or "").split() if proc.returncode == 0 else []
+    return base, commits
+
+
+def _blocked_path(path: str) -> str | None:
+    name = PurePosixPath(path).name
+    lowered = path.lower()
+    base = os.path.basename(path)
+    if base == ".env" or lowered.endswith("/.env") or lowered.endswith(".env"):
+        return "env file (.env must never be pushed; use .env.example)"
+    for suffix in CUSTOM_PATH_SUFFIXES:
+        if suffix == ".env":
+            continue
+        if lowered.endswith(suffix.lower()):
+            return f"blocked file type (*{suffix})"
+    for sub in CUSTOM_NAME_SUBSTRINGS:
+        if sub in name.lower():
+            return f"suspicious filename (contains '{sub}')"
+    return None
+
+
+def _check_paths(base: str | None, local_sha: str) -> list[str]:
+    start = base if base else EMPTY_TREE
+    proc = _run_git("diff", "--name-only", "-z", start, local_sha)
+    if proc.returncode != 0:
+        return [f"could not list pushed files: {(proc.stderr or '').strip()[:160]}"]
+    findings = []
+    for path in (proc.stdout or "").split("\0"):
+        if not path:
+            continue
+        reason = _blocked_path(path)
+        if reason:
+            findings.append(f"{path} — {reason}")
+    return findings
+
+
+# High-signal fallback patterns (low false-positive rate by design).
+# >>> CUSTOM CHECKS: add your own (name, regex) pairs here. <<<
+FALLBACK_PATTERNS: tuple[tuple[str, str], ...] = (
+    ("AWS access key", r"AKIA[0-9A-Z]{16}"),
+    ("GitHub token", r"(?:ghp|gho|ghu|ghs|ghr|github_pat)_[A-Za-z0-9_]{20,}"),
+    ("Slack token", r"xox[baprs]-[A-Za-z0-9-]{10,}"),
+    ("Discord bot token", r"[MN][A-Za-z\d]{23}\.[A-Za-z\d_-]{6}\.[A-Za-z\d_-]{27}"),
+    ("private key", r"-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----"),
+    ("generic secret assignment", r"(?i)(?:api[_-]?key|api[_-]?secret|secret[_-]?key|auth[_-]?token)\s*[:=]\s*['\"][^'\"]{12,}['\"]"),
+)
+
+
+def _check_diff_regex(base: str | None, local_sha: str) -> list[str]:
+    """Scan added lines of the pushed diff with the fallback patterns."""
+    start = base if base else EMPTY_TREE
+    proc = _run_git("diff", "-U0", start, local_sha, "--")
+    if proc.returncode != 0:
+        return []
+    compiled = [(name, re.compile(rx)) for name, rx in FALLBACK_PATTERNS]
+    findings = []
+    for line in (proc.stdout or "").splitlines():
+        if not line.startswith("+") or line.startswith("+++"):
+            continue
+        body = line[1:]
+        for name, rx in compiled:
+            if rx.search(body):
+                preview = body.strip()[:80]
+                findings.append(f"{name}: {preview}")
+                break
+    return findings
+
+
+def _check_gitleaks(gitleaks: str, base: str | None, local_sha: str) -> tuple[bool, list[str]]:
+    """Return (ran_ok, findings). ran_ok False means tool error (not leaks)."""
+    if base:
+        log_opts: str = f"{base}..{local_sha}"
+    else:
+        log_opts = "--all"
+    try:
+        proc = subprocess.run(
+            [gitleaks, "detect", "--no-banner", "--redact", "--verbose",
+             "--log-opts", log_opts],
+            capture_output=True, text=True, timeout=300,
+        )
+    except Exception as exc:
+        return False, [f"gitleaks error: {exc}"]
+    if proc.returncode == 0:
+        return True, []
+    if proc.returncode == 1:
+        out = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+        hits = [ln.strip() for ln in out.splitlines() if ln.strip()][:8]
+        return True, hits or ["gitleaks reported a finding (no detail)"]
+    return False, [f"gitleaks exited {proc.returncode}: {(proc.stderr or proc.stdout or '').strip()[:200]}"]
+
+
+def main() -> int:
+    stdin_data = ""
+    try:
+        stdin_data = sys.stdin.read()
+    except Exception:
+        pass
+    lines = [ln.split() for ln in stdin_data.splitlines() if ln.strip()]
+    if not lines:
+        return 0  # nothing pushed (e.g. dry-run plumbing)
+
+    blocked: list[str] = []
+    warnings: list[str] = []
+    gitleaks = _find_gitleaks()
+    no_gitleaks = os.environ.get("CUTTLE_PREPUSH_NO_GITLEAKS") == "1"
+    if no_gitleaks:
+        gitleaks = None
+
+    for parts in lines:
+        if len(parts) < 4:
+            continue
+        _local_ref, local_sha, _remote_ref, remote_sha = parts[0], parts[1], parts[2], parts[3]
+        if local_sha.startswith("0" * 7):
+            continue  # branch/tag deletion: nothing to scan
+        base, commits = _pushed_commits(local_sha, remote_sha)
+        if not commits and remote_sha != ZERO_SHA:
+            continue  # already up to date on this ref
+
+        blocked.extend(_check_paths(base, local_sha))
+
+        if gitleaks and not os.environ.get("CUTTLE_PREPUSH_NO_GITLEAKS"):
+            ran_ok, hits = _check_gitleaks(gitleaks, base, local_sha)
+            if ran_ok:
+                blocked.extend(f"gitleaks: {h}" for h in hits)
+            else:
+                warnings.extend(hits)
+        # Fallback regex always runs: backstop without gitleaks,
+        # second opinion with it.
+        blocked.extend(_check_diff_regex(base, local_sha))
+
+    for warn in warnings:
+        print(f"pre-push hook warning: {warn}", file=sys.stderr)
+
+    if blocked:
+        seen: list[str] = []
+        for item in blocked:
+            if item not in seen:
+                seen.append(item)
+        print(f"{HOOK_FIRST_LINE} — possible secret or blocked file in pushed commits")
+        for item in seen[:15]:
+            print(f"  - {item}")
+        if len(seen) > 15:
+            print(f"  ... and {len(seen) - 15} more")
+        print("If this is a false positive, remove the secret from the commit,")
+        print("not the hook. Emergency bypass: git push --no-verify")
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
