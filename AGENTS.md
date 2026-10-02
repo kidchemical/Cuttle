@@ -95,7 +95,10 @@ The web UI is vanilla JS served by Flask at port 8080. Key files:
 
 One subsystem owns each area below. Touch the owner, not the monoliths.
 Enforced by `src/tests/test_architecture_boundaries.py` (no reverse imports
-into `web_chat_api` except the doctor probe; acyclic `src/api`; coordinator
+into `web_chat_api` except the doctor probe and — narrow dev-composition
+exception — the spawned shadow child bootstrap `src/scripts/cuttle_shadow_app.py`
+(recorded in `REVERSE_IMPORT_ALLOWLIST`; parent-side `api.dev_instance` never
+imports the monolith); acyclic `src/api`; coordinator
 funnel + SSE pump proven at runtime; manifest schema).
 
 | Task | Owner (code) | Entry interface | Tests |

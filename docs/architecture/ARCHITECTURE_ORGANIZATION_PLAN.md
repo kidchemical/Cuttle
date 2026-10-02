@@ -1,6 +1,7 @@
 # Architecture organization and optimization — next phase
 
-**Status:** proposed for review; implementation has not started.  
+**Status:** execution authorized; A1/A2 complete; B1 and S1/S2 integrated and live-verified. Codex Stop/resend ownership fix activated; CH-000885 passed the live Stop/refresh/resend check on 2026-10-02. B2/B3 may resume; later slices retain their evidence gates.
+
 **Inspected:** 2026-10-01, HEAD `a70dc21b`, initially clean working tree.  
 **Predecessor:** [architecture stabilization](ARCHITECTURE_STABILIZATION_PLAN.md), completed Phases 0–7. This is a separate follow-up, not a reopening of completed phases.
 
@@ -8,7 +9,7 @@
 
 First make the regression gate trustworthy and fix confirmed inconsistencies. Then reduce the working context required for ordinary frontend fixes by moving bounded rendering and transport responsibilities behind the owners already established. Optimize runtime cost only after measuring it. Remove obsolete material only after verifying its consumers.
 
-Approve the direction of this plan, then execute **one slice at a time**. Stop after each slice with evidence and a reviewable diff. Later phases are candidates, not permission for an uninterrupted restructuring marathon. A slice that finds no meaningful problem should close with “keep as-is,” without inventing a refactor.
+Execute **one slice at a time** with a manager review of the contributor's evidence and diff before assigning the next slice. Course corrections return to the same contributor session where practical. Later phases remain conditional on their stated evidence gates. A slice that finds no meaningful problem should close with “keep as-is,” without inventing a refactor. Stop for user review if a critical issue requires intervention or activation cannot be recovered safely.
 
 The main goal is that an action-card rendering fix, history recovery fix, or pane-layout fix can be understood through its owner, interface, and tests. Smaller composition files are an expected consequence where justified, not a quota.
 
@@ -27,7 +28,7 @@ The main goal is that an action-card rendering fix, history recovery fix, or pan
 | Non-wait child CLI execution lacks a durable process owner | This planning run's `spawn` returned two pending children which remained pending. `subagents.service.spawn(wait=False)` starts `run_child_turn_async`; that function creates `threading.Thread(..., daemon=True)`. The CLI returns and exits; CLI `wait` does not start pending parallel children. | Repair the command/process-lifetime contract in the existing subagent owner; no second scheduler or execution route. |
 | Existing batching already solves some apparent optimization targets | Shell `pollLiveStatusHub` batches session IDs; `refreshPendingChangesPath` coalesces in-flight work; `syncSessionMessagesFromServer` uses hub status; `chat_usage_live.js` has a shared broker | Measure gaps instead of adding another cache, heartbeat, or poll coordinator. |
 
-Most findings are source observations; the child-CLI pending result was observed during planning. The pending batch (CH-000857 and CH-000858) was cancelled, and the audits were completed directly; no child opinion is presented as completed evidence. No full pytest suite, live-provider smoke, or performance benchmark was run while preparing this plan.
+Most findings are source observations; the child-CLI pending result was observed during planning. The pending batch was cancelled and the audits were completed directly. No full pytest suite, live-provider smoke, or performance benchmark was run while preparing this plan. Subsequent slice reports must distinguish newly measured results from this planning snapshot.
 
 ## Preserve these boundaries
 
@@ -53,6 +54,8 @@ Most findings are source observations; the child-CLI pending result was observed
 | G — Clutter and closeout | G1–G2 | G1 can run after A | Consumer evidence before removal; boundary checks before closure. |
 
 Recommended first approval unit: **A1 → A2 → A3 → B1**, with a report after each. Take **B3** next if CLI child delegation is needed. Collect F1 measurements during A2 if convenient. Review those results before authorizing C/D/E implementation. B2 and G1 are independent follow-ups. Do not require every conditional phase to happen before declaring this initiative successful.
+
+**Development-instance sequencing (investigation/recovery):** the startup listener audit (one Flask `app` on :8080 + same-`app` :8000 companion + optional :8888; details in [`development-instance-safety.md`](development-instance-safety.md)) confirms a loopback dev server needs no networking redesign. Only **S1 shadow bootstrap + S2 B1 journey** precede B1 activation (minimum implementation in the CH859 B1 worktree for S1 and CH860 for S2: one loopback HTTP server on the real app, no daemon/main bootstrap); **S3/S4 are deferred followup, not B1 prerequisites**. Final activation still rests on the actual existing external independent recovery, with the plan's remaining work restored after B1 — no permanent staging waits on a new rollback capability.
 
 ## Phase A — Make evidence and navigation reliable
 
@@ -241,6 +244,37 @@ Update the maintained maps and tests guide, close addressed backlog entries, and
 
 ## Slice protocol and scorecard
 
+### Execution record
+
+- **A1 — complete (2026-10-01):** maintained maps reconciled at `4845233c`; removed-launcher references, extracted route registrations, reverse imports, execution/status ownership, and frontend decision/effect distinctions corrected. Added a task/symbol/state/test navigability baseline. The manager checked the contributor's claims against source and reviewed corrections before acceptance. Documentation only; link and whitespace checks passed. No runtime code, historical audit, or live process changed.
+- **A2 — complete (2026-10-01):** test-only fixes developed in a separate worktree at `4845233c` and reviewed before integration. Browser requests now stay within the fixture origin; isolation startup fails closed. Corrected three stale fake/catalog expectations and split the generated Android prerequisite from its tracked-source assertion. Focused gate: **92 passed**. Chromium: **14 passed, no skips**. Broad historical-comparison command: **2,125 passed, 62 skipped, no failures** before the final Android test split; final targeted mobile file: **21 passed, 1 skipped**. The 62 skips are 41 deliberate live/scope opt-ins and 21 platform/fixture gaps, not passing coverage. Initial 29 failures were diagnosed before changes: 25 cleared through proper temp/Git/path/venv isolation, three needed fixture corrections, and one required an explicit generated-asset prerequisite. See `src/tests/README.md` for reproduction; no production source or live process changed.
+- **A2 — startup follow-up reviewed:** log inspection found a failed, unintended Gradle APK build attempt during API import, before pytest's per-test guard existed. `pytest_configure` now disables automatic mobile rebuilding before collection. Added inherited-flag and true collection-state controls (no `PYTEST_CURRENT_TEST`, forced missing APK, fake thread constructor). Focused neighbors: **52 passed, 1 generated-asset skip**; final six hook tests: **6 passed**. No builder ran in the corrected verification. The older broad count is historical evidence, not proof that the original run was fully isolated.
+- **A3 — B1 fences reviewed:** a temporary-database HTTP matrix measured six lanes and nine outcomes (54 cells plus an execution-guard control). Both pipeline lanes persist cancellation/system text and duplicate supervised-owned rows. All sync lanes drop useful failed replies; superseded harness/router sync turns can save stale replies while correctly retaining the newer turn's busy slot. These are intentional policy/lifecycle fixes for B1, not extraction work. The isolated Chromium Stop/resend/refresh fence now passes on desktop and phone, with an ordinary-reply positive control (**3 passed**), and is integrated as a test-only change. Buffered fake SSE does not prove chunk/detach timing or internal turn-guard rejection; fake history is checked separately by the backend matrix. Other journey fences remain prerequisites of their respective slices.
+- **B1 — integrated, activation pending:** pipeline callbacks now use the existing assistant saver; sync lanes retain useful failure text, and superseded claimed sync turns skip post-run effects while preserving the newer busy slot. Stream construction captures the request before worker execution. Current-session action-card project precedence is preserved, with the ingress project used when the session project is absent. A proposed precedence change was rejected and reversed during review. Original scoped gate: **262 passed, 1 unmounted-project skip**; original manager broad gate: **2,194 passed, 62 skipped, no failures**. Production scope is two files, **+65/-59**, including a **14-line root reduction**; tests/backlog bring the selective B1 patch to **+862/-73**. After the shadow gates below, the manager selectively integrated the reviewed patch, preserved all unrelated tracked bytes, and verified that the resulting production source matches the tested combined candidate. The two-file runtime recovery patch passes its reverse check. No runtime activation has occurred; independent recovery and the daemon-owned restart choice remain required.
+- **S1/S2 — implemented and integrated (Linux verified):** `api.dev_instance` snapshots working tracked source into private state/runtime, launches the real Flask app on an OS-assigned loopback port, verifies nonce/PID/source identity, and owns only its child process. The development composition bootstrap blocks vendor execution and external effects before importing the app; deterministic executor seams leave routing, coordination, streaming, auth, and SQLite persistence real. S1 isolation/negative gates: **37 passed**. Real HTTP policy/lifecycle gates: **34 passed**, **66 executions**, zero guard denials. The pre-B1 source control reproduces the unwanted assistant row. Manager verification against current main source plus B1: broad **2,255 passed, 61 skipped, no failures**; final focused shadow/HTTP/boundary **71 passed**; actual desktop/phone Stop-resend-reload and ordinary-reply browser journeys **3 passed, no skips**. Browser optional probes remain explicit real 403s; external fonts/CDN assets are aborted. The durable Stop SYSTEM notice is preserved independently of assistant-history policy. S3/S4 remain deferred follow-ups and are not activation prerequisites. Resume B2/B3 and the original conditional slices after B1 activation is verified.
+
+- **Codex ownership handoff — integrated (2026-10-02):** CH-000878 took over the blocker from CH-000856. Muse implementation/review ran through supervised Cuttle children CH-000880 and CH-000879. A concurrent fix landed in main; integration hashes rejected overwriting it. The manager preserved that implementation and its 19 tests, then added cancellation-before-acquisition, task-cancellation cleanup, bounded probe reaping, owned-only resume publication, and heartbeat lifetime corrections. The shared process owner now offloads the registry sweep while preserving Windows fallback and descendant cleanup. Final main gate: **132 passed, 1 obsolete unsupported-agent case skipped**; neighboring Muse/harness/process gate: **88 passed, 41 platform/live/scope skips**. Only the current parent remained active at the runtime handoff check. Thread ownership is process-local; the earlier incident's exact competing writer remains unproven. The fix has not been activated by this manager, and the live Stop → refresh → resend test remains pending. Recovery for these manager corrections is checksum-guarded under `temp/codex-handoff-final-backup/`; it restores the preceding integrated fix without discarding unrelated changes. Resume B2/B3 after activation/live validation; C/D/E remain conditional on their evidence gates. Commentary/final concatenation is recorded separately as ERR-20261002-002.
+
+### Development and activation safety
+
+Documentation-only changes can use the active checkout with one writer per file. Test-harness changes and risky runtime slices use separate worktrees with explicitly assigned paths. Do not let parallel contributors edit the same files; integrate only after the manager reviews each result. Keep test databases, restart files, provider fakes, and captured logs isolated from the running install. A second checkout alone does not isolate process side effects or shared user-level stores.
+
+Existing imports usually retain Python code until process replacement, but lazy imports, new CLI processes, configuration reads, and frontend reloads may observe changes earlier. Treat development, integration, and activation as separate steps. Retain a known-good checkpoint and consistent backups before persistent-data/config changes. The daemon restart protocol checks liveness; it does not roll back code or prove the chat journey works.
+
+Before activating changes to startup, chat execution/recovery, persistent config, or the restart path, establish a recovery path independent of Cuttle chat. Complete offline verification first, report the concrete change, and use the appropriate restart choice card when required. If independent recovery is unavailable, keep the verified work isolated and stop before activation. Do not autonomously replace the active Flask/daemon to test a risky slice.
+
+### Independent recovery and shadow instances
+
+The Linux-verified shadow-app capability is now implemented; its runbook and
+listener audit live in [development-instance-safety.md](development-instance-safety.md).
+It starts no second daemon and does not activate code in the running host.
+Daemon process-name ownership and fixed-port readiness remain separate S3
+follow-ups; immutable-runtime rollback remains S4. Neither blocks B1 after
+the candidate gates pass. Final activation still requires independent recovery
+and the existing daemon-owned restart choice, followed by live verification.
+
+### Review record
+
 Before editing: recheck HEAD/working tree; read AGENTS, principles, and maintained map; identify behavior owner, state lifetime/reset, input/output interface, and neighboring contracts. Preserve pre-existing user changes. Characterize risky behavior before moving it. Commit a completed slice separately when authorized; do not push from the agent shell.
 
 Each slice report must include:
@@ -250,7 +284,7 @@ Each slice report must include:
 - Focused tests, neighboring gates, explicit browser checks, pass/fail/skip identities, and gaps.
 - Page/root LOC delta **and** total code delta including new modules, retained wrappers, and tests. Moving lines without reducing feature working context is not a success.
 - For performance slices: workload, before/after metric, variability, and regression budget.
-- Deferred issues, rollback path, current Git status, and the next proposed slice. Stop for review.
+- Deferred issues, rollback path, current Git status, and the next proposed slice. The manager reviews before dispatching more work; escalate critical issues to the user.
 
 **Reject or split a slice** if it introduces generic dependency bags, copies mutable state, imports upward, adds a parallel executor, changes persistence/event ordering accidentally, needs several unrelated owners, or cannot demonstrate the proposed benefit. Do not compensate for a weak boundary with another thousand-line controller.
 

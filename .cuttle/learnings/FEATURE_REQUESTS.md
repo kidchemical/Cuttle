@@ -166,3 +166,12 @@ User-requested capabilities. Format: `[FEAT-YYYYMMDD-XXX] capability_name`
 - **Notes:** Claim protocol already has capability ads, leases, heartbeats; multihoming would still need cross-coordinator capacity accounting to avoid double-booking a GPU. Queue beats mesh gossip on fairness, persistence, debuggability. Do not build until a second Host needs the farm.
 - **Complexity:** M (shared queue posture) / XL (true multihoming — not recommended)
 - **Related:** `.cuttle_global/docs/cuttle-workers.md`, `src/api/cuttle_jobs/`, `src/api/device_workers/worker_loop.py`, `[FEAT-20260928-002]`
+
+## [FEAT-20261001-001] development_shadow_instance_and_daemon_rollback
+
+- **Priority:** High · **Status:** Proposed · **Area:** dev lifecycle
+- **Requested capability:** Ephemeral real-app validation (shadow Flask on an isolated port/DB, no daemon) plus daemon fallback: known-good immutable snapshot, fault-injection fallback proofs, and one-production-writer rollback before any automatic recovery. Phased S1 shadow bootstrap → S2 B1 journey → S3 daemon shadow → S4 rollback plane (S5 blue/green only on need).
+- **User context:** CH-000856 — safe self-test path while the manager is hosted by Flask; no safe activation without independent recovery.
+- **Notes:** Design proposed, not implemented: `docs/architecture/development-instance-safety.md` (baseline `4845233c`). Reuses existing owners (`runtime_paths`, settings/auth/project/persist, execution seams); no new product shell/MCP; no `src/api` module importing `web_chat_api`. Multi-daemon blocked on process-ownership fixes first. S1 assigned CH859 B1 worktree, S2 assigned CH860 (neither done yet); S3/S4 deferred followup, not B1 prerequisites — existing external independent recovery stays valid for final activation.
+- **Complexity:** L
+- **Related:** `docs/architecture/development-instance-safety.md`, `src/tests/test_action_form_process_restart.py`, `src/scripts/cuttle_daemon.py`, `src/api/agent_router/supervised/test_isolation.py`

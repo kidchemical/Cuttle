@@ -42,6 +42,101 @@ offline suite so older live-server E2E fixtures skip instead of touching an
 install. Unit/layout tests always use temporary auth databases. Reusable
 live QA/demo identities are described in `.cuttle/docs/fixture-accounts.md`.
 
+Isolated suites (`e2e/test_shared_diff_modal.py`,
+`e2e/test_chat_terminal_activity.py`) share `apply_request_guard`: a
+context-level route registered before any page route that falls through
+same-origin fixture/API traffic and aborts everything else (CDNs, fonts,
+sibling localhost services). Page-level API intercepts are scoped to the
+fixture origin (`<static_server>/api/**`, `<static_server>/qa-host.html`),
+never bare `**` patterns. `test_request_guard_blocks_external_allows_same_origin`
+pins the guard plus a same-origin fake-API round trip. No service-worker
+registration exists in the served pages, so no worker block is installed.
+Reproduce offline from a repo/worktree root (substitute that checkout's own
+`.venv` python when one exists there; otherwise reuse an existing venv
+interpreter, e.g. via symlink, without copying environments):
+
+```bash
+(
+set -e
+mkdir -p temp
+export PATH="<node-dir>:$PATH"
+node --version  # required gate: missing node silently skips frontend validation
+export TMPDIR="$PWD/temp" GIT_CEILING_DIRECTORIES="$PWD/temp"
+export CUTTLE_API_URL=http://127.0.0.1:9 CUTTLE_AGENT_STEER=0 CUTTLE_JEV_WATCH=0 CUTTLE_MOBILE_AUTO_REBUILD=0
+export CUTTLE_WINDOWS_PREFIXES=C:/Projects/Cuttle  # intentional Windows-path
+  # mapping so Windows-path fixtures resolve under an arbitrary worktree folder name
+unset CUTTLE_ALLOW_SPEND CUTTLE_AGENT_SMOKE CUTTLE_AGENT_SMOKE_SCOPE \
+  CUTTLE_TEST_ALLOW_EXTERNAL_RUNNERS CUTTLE_ROUTER_DB CUTTLE_JEV_LABEL_CACHE \
+  CUTTLE_DEVICE_WORKERS_DB OPENAI_API_KEY ANTHROPIC_API_KEY API_KEY \
+  GOOGLE_API_KEY AZURE_OPENAI_API_KEY DEEPSEEK_API_KEY GROK_API_KEY \
+  XAI_API_KEY OPENROUTER_API_KEY META_API_KEY MODEL_API_KEY GOVEE_API_KEY \
+  DISCORD_TOKEN DISCORD_BOT_TOKEN
+.venv/bin/python -m pytest -q \
+  --basetemp=temp/pytest-a2-browser \
+  src/tests/e2e/test_shared_diff_modal.py \
+  src/tests/e2e/test_chat_terminal_activity.py
+)
+```
+
+(`CUTTLE_TEST_CHROMIUM` overrides the default `/opt/google/chrome/chrome`;
+`--basetemp=temp/...` keeps pytest temp dirs inside the ignored `temp/`;
+`TMPDIR` under the same temp keeps the fake-vendor `tempfile.gettempdir`
+allowance aligned; `GIT_CEILING_DIRECTORIES` keeps intentional non-repo
+fixtures from resolving into the real checkout. Run everything in a
+subshell so the scrubbed/exported env never alters the user shell. This
+recipe assumes an isolated checkout with no live `src/.env`, live DB,
+settings, or resume copies — root imports can reload keys from `src/.env`
+(`override=False`), so no existing worktree is automatically safe. Not
+main-checkout-only: any isolated worktree runs the same recipe.)
+
+Offline broad gate (same env, historical exclusions): `.venv/bin/python -m
+pytest -q -p no:warnings src/tests/ --ignore=src/tests/unit -rf -rs
+--basetemp=temp/pytest-a2-broad` (never bare `pytest`). Skip reasons are
+reported by `-rs`, not asserted and not passing coverage — 2026-10-01
+baseline snapshot: 41 spend/scope-gated live tests, 21 platform/fixture
+cases (incl. the generated-Android-config skip). Measured 2026-10-01:
+broad 2125 passed / 62 skipped, focused gate 92 passed, browser suites 14
+passed (13 pre-existing + 1 guard test). The broad measurement preceded
+the Android test split; the final targeted file run reported 21 passed /
+1 skipped, with the tracked-source assertion counted separately. The
+initial broad run is a historical measurement only: its logs show an
+unintended `[MOBILE]` APK rebuild attempt (`JAVA_HOME` missing) during
+API module import/collection (`PYTEST_CURRENT_TEST` is unset at
+collection, so that guard did not apply). Corrected by the
+`pytest_configure` hard override (`CUTTLE_MOBILE_AUTO_REBUILD=0`) plus
+focused verification in `test_pytest_configure_isolation.py` that the
+configured env beats an inherited `1` and collection-style route
+registration starts no thread/Gradle. Latest focused gate (hook + mobile
+Android + mobile webview + boundary): 52 passed / 1 skipped.
+
+## Shadow gates (S1/S2, Linux-only)
+
+Real-app shadow suites run the production Flask from an isolated snapshot —
+never the live server. **Linux only**: `test_dev_instance.py`, `test_shadow_chat_journeys.py`, and
+`e2e/test_shadow_chat_stop_resend.py` skip off-Linux (`sys.platform !=
+"linux"`); pure B1 tests stay platform-neutral. S1 passed 37 (22 dev + 15
+architecture). S2 real-HTTP run: 34 passed / 66
+executions / zero guard denials. Manager combined candidate: all three real
+browser tests passed with no skips (4.80 s), and all 71 shadow/HTTP/boundary
+tests passed (8.47 s). Earlier broad result kept: 2255 passed / 61 skipped /
+zero failures. Candidate verification is complete; live activation remains pending.
+Details: `docs/architecture/development-instance-safety.md`.
+
+Run from the repo root with the same scrubbed offline env as above (plus the
+shadow CLI owns its ports — `prepare` then `up`, ephemeral by default, live
+`8080/8000/8888` refused):
+
+Candidate application modules must be tracked; the snapshot intentionally
+omits other untracked files. For a deeply nested checkout on Linux, keep
+`TMPDIR` in a short project-owned `temp/` path: Chromium's singleton socket
+can exceed the Unix socket path limit. A browser skip is an unmet gate,
+not passing coverage.
+
+```bash
+.venv/bin/python -m pytest -q src/tests/test_dev_instance.py src/tests/test_architecture_boundaries.py src/tests/test_shadow_chat_journeys.py
+.venv/bin/python -m pytest -q src/tests/e2e/test_shadow_chat_stop_resend.py
+```
+
 Every test also uses temporary Flask restart status/request/event files.
 Delivery completion/cancellation hooks can consult a pending restart, so
 isolating only the dedicated restart test files is insufficient. The runtime

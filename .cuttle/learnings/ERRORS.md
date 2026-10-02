@@ -124,8 +124,21 @@ message instead of a wall of stack traces. See `src/api/agent_harness/ADDING_AN_
 - **Suggested Fix / Done:** Rewrote as `test_flask_performance_route_requires_owner` asserting 401 for anonymous (gate contract). Service payload shape remains covered by `test_dashboards_catalog_performance_is_live`. Deliberately did not loosen the gate.
 
 ### [ERR-20261001-001] chat stream lanes — pipeline `on_save` persists `[CANCELLED]`/`system` rows the saver skips
-- **Priority:** Low · **Status:** Open (deferred, pre-existing divergence) · **Area:** web_chat_api stream lanes / chat_turn_persist
-- **Summary:** The leftover-pipeline stream `on_save` persists any result with success-or-text, including `[CANCELLED]` status lines and `ui == 'system'` rows. The saver-built lanes (harness, router-family, sync pipeline via `run_pipeline_sync_turn`) skip all of those via `make_assistant_saver` guards.
+- **Priority:** Low · **Status:** Integrated; live Stop/resend verification pending (B1 unified policy) · **Area:** web_chat_api stream lanes / chat_turn_persist
+- **Summary:** The leftover-pipeline stream `on_save` persisted any result with success-or-text, including `[CANCELLED]` status lines and `ui == 'system'` rows. The saver-built lanes skipped all of those via `make_assistant_saver` guards.
 - **Error:** Inconsistent history contents for cancelled/system turns depending on which lane streamed them; no crash, no data loss.
 - **Context:** Found during Phase 5 P5-C extraction (commit `764d4a78`); deliberately not fixed there — unifying the guards would change persisted history shape, which needs its own scoped defect pass with before/after row evidence.
-- **Suggested Fix / Done:** Route the pipeline stream `on_save` through `make_assistant_saver` (like the other lanes) or document the pipeline lane's persist-anything as intentional; add a row-level test pinning the chosen contract. See architecture-stabilization review log P5-C section.
+- **Suggested Fix / Done:** B1 routed both pipeline savers through `make_assistant_saver`, added the captured-token guard to `run_agent_sync_turn`, and aligned the coarse sync gates to the kept-rule. Pinned by `test_chat_persistence_policy.py` (6 lanes × 9 outcomes, unified expectations) and the updated `test_oracle_pipeline_stream_cancelled_row_divergence`. See architecture-stabilization review log P5-C section.
+
+### [ERR-20261002-001] Codex thread probes and turns can compete for one writer
+- **Priority:** High · **Status:** Integrated; restart/live verification pending · **Area:** Codex harness / agent context / process lifecycle
+- **Summary:** Stop, refresh, then resend hit `thread-store conflict: already has an active writer`. Steering readiness did not cover the writer's entire startup/shutdown lifetime; token probes could resume the same thread from another server. Exec also needed the same ownership contract.
+- **Done:** Process-local, token-checked thread leases coordinate app-server turns, exec, observation, and compaction. Cancellation wins over acquisition; task cancellation reaps owned children; confirmed exit gates release. Registry cleanup runs off the event loop. The exact conflicting writer in the reported incident is not established.
+- **Validation:** Main Codex/context/process/boundary gate: 132 passed, 1 obsolete case skipped. Neighbor gate: 88 passed, 41 explicit platform/live/scope skips. No live provider smoke. Restart and live Stop/resend remain pending.
+- **Metadata:** Source CH-000856-22; handoff CH-000878; children CH-000879 / CH-000880. Manager recovery: `temp/codex-handoff-final-backup/recover.py` (checksum guard, no service restart).
+
+### [ERR-20261002-002] Codex progress and final text concatenate into one saved reply
+- **Priority:** Medium · **Status:** Open · **Area:** Codex output extraction / chat presentation
+- **Summary:** CH-000856-29 contains successive running/finished updates and a repeated final conclusion in one bubble. The app-server runner appends every completed `agentMessage` text and joins them for its output; it does not distinguish message phases.
+- **Suggested Fix:** Investigate phase-aware extraction in the existing Codex owner. Preserve structured cards/widgets and useful interrupted output; characterize the event contract before changing persistence. Keep separate from the thread ownership fix.
+- **Metadata:** Source CH-000856-29; observed in `scripts.utilities.codex_app_server_turn`, `item/completed` handling and output assembly. No presentation change made in this handoff.
