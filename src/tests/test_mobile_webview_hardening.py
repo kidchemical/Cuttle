@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[2]
 MAIN = REPO / "apps" / "mobile" / "android" / "app" / "src" / "main" / "java" / "com" / "cuttle" / "mobile" / "MainActivity.java"
 NOTIFY = REPO / "apps" / "mobile" / "android" / "app" / "src" / "main" / "java" / "com" / "cuttle" / "mobile" / "notify" / "EventStreamService.java"
@@ -122,15 +124,22 @@ def test_manifest_adjusts_for_keyboard():
     assert 'android:windowSoftInputMode="adjustResize"' in xml
 
 
-def test_capacitor_allownavigation_includes_tailscale():
+def test_capacitor_ts_allownavigation_includes_tailscale():
     cfg = (REPO / "apps" / "mobile" / "capacitor.config.ts").read_text(encoding="utf-8")
     assert "100.*.*.*" in cfg
     assert "*.ts.net" in cfg
+
+
+def test_generated_android_capacitor_config_matches_tailscale():
     android = (
         REPO / "apps" / "mobile" / "android" / "app" / "src" / "main" / "assets" / "capacitor.config.json"
-    ).read_text(encoding="utf-8")
-    assert "100.*.*.*" in android
-    assert "*.ts.net" in android
+    )
+    if not android.is_file():
+        # Generated build artifact (gitignored); absence skips only this test.
+        pytest.skip("generated android capacitor.config.json absent")
+    text = android.read_text(encoding="utf-8")
+    assert "100.*.*.*" in text
+    assert "*.ts.net" in text
 
 
 def test_mobile_setup_remembers_recent_hosts():

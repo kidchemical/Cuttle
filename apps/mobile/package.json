@@ -1,0 +1,29 @@
+{
+  "name": "cuttle-mobile",
+  "version": "0.1.0",
+  "description": "Cuttle LAN mobile client (Capacitor)",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "icons": "..\\..\\.venv\\Scripts\\python.exe scripts\\generate_icons.py",
+    "sync": "npm run build && cap sync",
+    "build:android": "npm run sync && build-android-debug.bat",
+    "open:android": "cap open android",
+    "open:ios": "cap open ios"
+  },
+  "dependencies": {
+    "@capacitor-community/safe-area": "^7.0.0",
+    "@capacitor/android": "^7.2.0",
+    "@capacitor/app": "^7.0.1",
+    "@capacitor/core": "^7.2.0",
+    "@capacitor/ios": "^7.2.0",
+    "@capacitor/preferences": "^7.0.1"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.2.0",
+    "typescript": "^5.8.2",
+    "vite": "^6.2.2"
+  }
+}
