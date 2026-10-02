@@ -45,6 +45,10 @@ def cuttle_meters_markdown(
         if not label:
             continue
         entry: Dict[str, Any] = {"label": label}
+        if row.get("tooltip"):
+            entry["tooltip"] = str(row["tooltip"])
+        if row.get("tooltip_at") is not None:
+            entry["tooltip_at"] = row["tooltip_at"]
         if row.get("disabled"):
             entry["disabled"] = True
             if row.get("status") is not None:
@@ -172,6 +176,33 @@ def _codex_access_token(auth: Dict[str, Any]) -> Tuple[Optional[str], Optional[s
 
 
 def fetch_codex_account_usage() -> Dict[str, Any]:
+    # The supported CLI protocol also supplies individual saved resets.
+    try:
+        from scripts.utilities.codex_account import read_codex_account_limits
+        snapshot = read_codex_account_limits()
+        rate = snapshot.get("rateLimits") or {}
+        def window(value):
+            if not isinstance(value, dict):
+                return {}
+            return {"used_percent": value.get("usedPercent"),
+                    "reset_at": value.get("resetsAt")}
+        credits = rate.get("credits") or {}
+        resets = snapshot.get("rateLimitResetCredits")
+        return {"success": True, "source": "app-server", "account_id": snapshot.get("accountId"),
+                "plan_type": rate.get("planType"),
+                "rate_limit": {"primary_window": window(rate.get("primary")),
+                               "secondary_window": window(rate.get("secondary")),
+                               "limit_reached": bool(rate.get("rateLimitReachedType")),
+                               "allowed": snapshot.get("ordinaryUsageAllowed")},
+                "credits": {"has_credits": credits.get("hasCredits"),
+                            "unlimited": credits.get("unlimited"), "balance": credits.get("balance")},
+                "rate_limit_reset_credits": {
+                    "available_count": resets.get("availableCount", 0),
+                    "credits": resets.get("credits")
+                } if isinstance(resets, dict) else {}}
+    except Exception:
+        # Older CLIs can still report windows. Never use private redemption APIs.
+        pass
     auth = _read_codex_auth()
     if not auth:
         return {
@@ -247,6 +278,20 @@ def _window_reset_label(window: Dict[str, Any]) -> str:
     return f"in {mins}m"
 
 
+def _window_reset_timestamp(window: Dict[str, Any]) -> Optional[int]:
+    """Keep reset times timezone-neutral until the viewer's browser formats them."""
+    try:
+        reset_at = int(window.get("reset_at") or 0)
+        if reset_at > 0:
+            return reset_at
+        seconds = int(window.get("reset_after_seconds") or 0)
+        if seconds > 0:
+            return int(datetime.now(timezone.utc).timestamp()) + seconds
+    except (ValueError, TypeError, OverflowError):
+        pass
+    return None
+
+
 def format_codex_usage_markdown(data: Dict[str, Any]) -> str:
     if not data.get("success"):
         err = (data.get("error") or "Unknown error").strip()
@@ -289,20 +334,22 @@ def format_codex_usage_markdown(data: Dict[str, Any]) -> str:
         except (TypeError, ValueError):
             pct = 0.0
         label = "5-hour"
-        reset = _window_reset_label(primary)
+        reset = _window_reset_timestamp(primary)
+        row = {"label": label, "pct": round(pct, 2)}
         if reset:
-            label = f"5-hour (resets {reset})"
-        meter_rows.append({"label": label, "pct": round(pct, 2)})
+            row.update(tooltip="Resets", tooltip_at=reset)
+        meter_rows.append(row)
     if secondary:
         try:
             pct = 100.0 - float(secondary.get("used_percent") or 0)
         except (TypeError, ValueError):
             pct = 0.0
         label = "Weekly"
-        reset = _window_reset_label(secondary)
+        reset = _window_reset_timestamp(secondary)
+        row = {"label": label, "pct": round(pct, 2)}
         if reset:
-            label = f"Weekly (resets {reset})"
-        meter_rows.append({"label": label, "pct": round(pct, 2)})
+            row.update(tooltip="Resets", tooltip_at=reset)
+        meter_rows.append(row)
 
     has_credits = bool(credits.get("has_credits") or credits.get("unlimited"))
     try:
@@ -341,10 +388,18 @@ def format_codex_usage_markdown(data: Dict[str, Any]) -> str:
         lines.append("")
         lines.append(f"Rate-limit resets available: **{avail}**")
 
+    details = resets.get("credits")
+    if isinstance(details, list):
+        body = {"available_count": avail, "credits": details, "account_id": data.get("account_id")}
+        lines.extend(["", "<cuttle_codex_resets>" + json.dumps(body).replace("<", "\\u003c")
+                      + "</cuttle_codex_resets>"])
+    elif avail:
+        lines.append("Reset details and expiration dates unavailable. Update Codex CLI and retry.")
+
     lines.append("")
     lines.append(
         "_5-hour / Weekly bars show remaining capacity from ChatGPT Codex plan "
-        "windows (`GET /backend-api/wham/usage`)._"
+        "windows._"
     )
     lines.append(
         "Dashboard: [chatgpt.com](https://chatgpt.com) → Settings → Usage"

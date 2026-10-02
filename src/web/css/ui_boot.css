@@ -149,3 +149,30 @@ body.light-mode .cuttle-tooltip {
 .cuttle-tooltip[hidden] {
     display: none !important;
 }
+
+/* Reusable contextual help: <button type="button" class="cuttle-info"
+   data-tooltip="Help text" aria-label="About this setting">…</button>.
+   ui_boot.js provides hover/focus help, tap toggle, and Escape dismissal. */
+button.cuttle-info {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 20px;
+    height: 20px;
+    margin: 0 0 0 5px;
+    padding: 0;
+    border: 1px solid currentColor;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--text-tertiary, #858b99);
+    font: 600 12px/1 Georgia, serif;
+    vertical-align: middle;
+    cursor: help;
+}
+button.cuttle-info:hover,
+button.cuttle-info:focus-visible {
+    color: var(--accent-color, #667eea);
+    background: color-mix(in srgb, currentColor 10%, transparent);
+}
+button.cuttle-info:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }

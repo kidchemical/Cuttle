@@ -671,9 +671,10 @@
 
 /* Cuttle styled tooltips — promote native title= and show a floating tip
    matching the left-rail look. Skip .icon-rail (CSS ::after already).
-   Touch / coarse pointers: never open tips on tap/focus — that stuck a
+   Touch / coarse pointers: ordinary controls never open tips on tap/focus — that stuck a
    "Chat history" tip above the Search row into the status-bar unsafe area
-   on phones when opening the history panel. */
+   on phones when opening the history panel. Explicit button.cuttle-info
+   controls opt into tap-to-toggle help (also keyboard focus + Escape). */
 (function () {
     'use strict';
 
@@ -684,11 +685,13 @@
     var showTimer = null;
     var mo = null;
     var lastPointerType = '';
+    var dismissedInfo = null;
 
     function ensureTip() {
         if (tipEl && tipEl.isConnected) return tipEl;
         tipEl = document.createElement('div');
         tipEl.className = 'cuttle-tooltip';
+        tipEl.id = 'cuttle-shared-tooltip';
         tipEl.setAttribute('role', 'tooltip');
         tipEl.hidden = true;
         (document.body || document.documentElement).appendChild(tipEl);
@@ -763,6 +766,12 @@
             clearTimeout(showTimer);
             showTimer = null;
         }
+        if (activeEl && tipEl) {
+            var ids = String(activeEl.getAttribute('aria-describedby') || '').split(/\s+/)
+                .filter(function (id) { return id && id !== tipEl.id; });
+            if (ids.length) activeEl.setAttribute('aria-describedby', ids.join(' '));
+            else activeEl.removeAttribute('aria-describedby');
+        }
         activeEl = null;
         if (!tipEl) return;
         tipEl.hidden = true;
@@ -772,11 +781,16 @@
 
     function placeTip(anchor) {
         var text = String(anchor.getAttribute('data-tooltip') || '').trim();
-        if (!text || isRailManaged(anchor)) {
+        if (!text || !anchor.isConnected || isRailManaged(anchor)) {
             hideTip();
             return;
         }
         var tip = ensureTip();
+        if (anchor.matches('button.cuttle-info')) {
+            var ids = String(anchor.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean);
+            if (ids.indexOf(tip.id) < 0) ids.push(tip.id);
+            anchor.setAttribute('aria-describedby', ids.join(' '));
+        }
         tip.textContent = text;
         var wrap = text.length > 42 || (text.indexOf(' ') >= 0 && text.length > 28);
         tip.classList.toggle('is-wrap', wrap);
@@ -802,10 +816,11 @@
         tip.classList.add('is-visible');
     }
 
-    function scheduleShow(el) {
+    function scheduleShow(el, keyboardInfo) {
         if (!el || isRailManaged(el)) return;
         if (!el.hasAttribute('data-tooltip')) return;
-        if (!tipHoverCapable()) return;
+        if (!tipHoverCapable() && !keyboardInfo) return;
+        if (activeEl && activeEl !== el) hideTip();
         if (activeEl === el && tipEl && !tipEl.hidden) {
             placeTip(el);
             return;
@@ -841,20 +856,37 @@
 
     function onPointerDown(e) {
         if (e && e.pointerType) lastPointerType = e.pointerType;
+        var info = e.target && e.target.closest && e.target.closest('button.cuttle-info[data-tooltip]');
+        dismissedInfo = info && info === activeEl && tipEl && !tipEl.hidden ? info : null;
         // Any press dismisses — tips are hover affordances, not tap labels.
         hideTip();
     }
 
     function onFocusIn(e) {
         // Tap-to-focus on phones must not open tips (history button → panel).
-        if (!tipHoverCapable()) return;
         if (lastPointerType === 'touch' || lastPointerType === 'pen') return;
         var t = e.target;
         if (!t || !t.closest) return;
         var el = t.closest('[data-tooltip], [title]');
         if (!el) return;
+        if (!tipHoverCapable() && !el.matches('button.cuttle-info')) return;
         promote(el);
-        scheduleShow(el);
+        scheduleShow(el, el.matches('button.cuttle-info'));
+    }
+
+    function onInfoClick(e) {
+        var el = e.target && e.target.closest && e.target.closest('button.cuttle-info[data-tooltip]');
+        if (!el || el.disabled) return;
+        if (dismissedInfo === el) { dismissedInfo = null; return; }
+        if (activeEl === el && tipEl && !tipEl.hidden) { hideTip(); return; }
+        hideTip();
+        activeEl = el;
+        placeTip(el);
+    }
+
+    function onKeyDown(e) {
+        if (e.key === 'Tab') lastPointerType = '';
+        if (e.key === 'Escape') { hideTip(); dismissedInfo = null; }
     }
 
     function onFocusOut() {
@@ -873,11 +905,14 @@
         document.addEventListener('pointerdown', onPointerDown, true);
         document.addEventListener('focusin', onFocusIn, true);
         document.addEventListener('focusout', onFocusOut, true);
+        document.addEventListener('click', onInfoClick, true);
+        document.addEventListener('keydown', onKeyDown, true);
         window.addEventListener('scroll', onScroll, true);
         window.addEventListener('resize', hideTip);
 
         if (typeof MutationObserver !== 'undefined') {
             mo = new MutationObserver(function (muts) {
+                if (activeEl && !activeEl.isConnected) hideTip();
                 for (var i = 0; i < muts.length; i++) {
                     var m = muts[i];
                     if (m.type === 'attributes' && m.attributeName === 'title') {

@@ -448,7 +448,29 @@
             };
             const rowHtml = rows.map((row) => {
                 if (!row || typeof row !== 'object') return '';
-                const label = d.escapeHtmlInline(String(row.label || '').trim() || '—');
+                let labelText = String(row.label || '').trim() || '—';
+                let tooltip = typeof row.tooltip === 'string' ? row.tooltip.trim() : '';
+                // Persisted reports from before the tooltip field was introduced.
+                const legacyReset = labelText.match(/^(5-hour|Weekly) \((resets .+)\)$/i);
+                if (legacyReset) {
+                    labelText = legacyReset[1];
+                    if (!tooltip) tooltip = legacyReset[2];
+                }
+                if (row.tooltip_at != null) {
+                    const date = new Date(Number(row.tooltip_at) * 1000);
+                    if (Number.isFinite(date.getTime())) {
+                        tooltip = (tooltip || 'Resets') + ' ' + date.toLocaleString(undefined, {timeZoneName: 'short'});
+                    }
+                } else if (/^resets .+ UTC$/i.test(tooltip)) {
+                    // Old persisted/cached reports also follow the viewer's timezone.
+                    const date = new Date(tooltip.replace(/^resets /i, ''));
+                    if (Number.isFinite(date.getTime())) tooltip = 'Resets ' + date.toLocaleString(undefined, {timeZoneName: 'short'});
+                }
+                const label = d.escapeHtmlInline(labelText);
+                const info = tooltip ? '<button type="button" class="cuttle-info" data-tooltip="'
+                    + d.escapeHtmlInline(tooltip) + '" aria-label="'
+                    + d.escapeHtmlInline(labelText + ': ' + tooltip)
+                    + '"><span aria-hidden="true">i</span></button>' : '';
                 const disabled = !!row.disabled;
                 const status = row.status != null ? String(row.status).trim() : '';
                 const pctNum = d.clamp(row.pct != null ? row.pct : 0, 0, 100);
@@ -459,7 +481,7 @@
                 const disClass = disabled ? ' cuttle-meter-row--disabled' : '';
                 return (
                     '<div class="cuttle-meter-row' + disClass + '">'
-                    + '<span class="cuttle-meter-label">' + label + '</span>'
+                    + '<span class="cuttle-meter-label">' + label + info + '</span>'
                     + '<span class="cuttle-meter-pct">' + pctLabel + '</span>'
                     + '<div class="cuttle-meter-track" aria-hidden="true">'
                     + '<div class="cuttle-meter-fill" style="width:' + fillW + '%"></div>'

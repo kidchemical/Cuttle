@@ -135,3 +135,49 @@ setImmediate(() => {
 });
 '''
     subprocess.run(["node", "-e", code, str(script)], check=True, capture_output=True, text=True)
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_all_usage_reports_share_layout_without_losing_provider_details():
+    from tests.test_agent_usage_slash import (
+        CURSOR_USAGE_FAKE, CODEX_USAGE_FAKE, MUSE_USAGE_FAKE,
+        HERMES_INSIGHTS_SAMPLE, OPENCODE_STATS_SAMPLE,
+    )
+    from api.cursor_agent_commands import format_cursor_usage_markdown
+    reports = {
+        "cursor": format_cursor_usage_markdown(CURSOR_USAGE_FAKE),
+        "codex": agent_usage.format_codex_usage_markdown(CODEX_USAGE_FAKE),
+        "muse": agent_usage.format_muse_usage_markdown(MUSE_USAGE_FAKE),
+        "hermes": agent_usage.format_hermes_usage_markdown({
+            **agent_usage.parse_hermes_insights_text(HERMES_INSIGHTS_SAMPLE), "success": True}),
+        "opencode": agent_usage.format_opencode_usage_markdown({
+            **agent_usage.parse_opencode_stats_text(OPENCODE_STATS_SAMPLE), "success": True}),
+    }
+    script = Path(__file__).parents[1] / "web/js/chat_usage_live.js"
+    code = r'''
+const assert = require('assert');
+const U = require(process.argv[1]);
+const reports = JSON.parse(process.argv[2]);
+const format = text => U.render(text, format) ?? text;
+for (const [agent, text] of Object.entries(reports)) {
+  const staticHtml = format(text);
+  assert(staticHtml.includes('class="usage-report-heading"'), agent);
+  assert(staticHtml.includes('class="usage-report-details"'), agent);
+  assert(staticHtml.includes('<cuttle_meters>'), agent);
+  const liveHtml = format('<cuttle_usage_live>'+JSON.stringify({agent, markdown:text})+'</cuttle_usage_live>');
+  assert(liveHtml.includes(staticHtml), agent);
+}
+assert(format(reports.hermes).includes('Local Hermes insights'));
+assert(format(reports.opencode).includes('Local OpenCode stats'));
+assert(format(reports.muse).includes('Meta does not expose Muse'));
+assert(format(reports.cursor).includes('<dt>Plan</dt>'));
+assert(!format(reports.opencode).includes('last **30** days'));
+assert(format(reports.opencode).includes('last <strong>30</strong> days'));
+assert.equal(U.render('ordinary message', format), null);
+assert.equal(U.render('❌ **Cursor usage**\n\nUnavailable', format), null);
+const untrusted = format('**Cursor — usage**\n\n- Plan: <img src=x onerror=evil>\n\nBody');
+assert(untrusted.includes('&lt;img'));
+assert(!untrusted.includes('<img'));
+'''
+    subprocess.run(["node", "-e", code, str(script), json.dumps(reports)],
+                   check=True, capture_output=True, text=True)

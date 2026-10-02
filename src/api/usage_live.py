@@ -2,6 +2,7 @@
 import json
 import threading
 import time
+import uuid
 
 from flask import Blueprint, jsonify, request
 from api.http_authz import owner_required
@@ -19,7 +20,7 @@ def usage_snapshot(agent, days=30):
     days = max(1, min(int(days), 365)) if agent in {"muse", "hermes", "opencode"} else 30
     key = (agent, days)
     with _guard:
-        lock = _locks.setdefault(key, threading.Lock())
+        lock = _locks.setdefault(key, threading.RLock())
     # Concurrent panes/devices wait for the same refresh, including failed refreshes.
     with lock:
         cached = _cache.get(key)
@@ -64,5 +65,50 @@ def get_usage_live():
     except (ValueError, TypeError):
         return jsonify({"error": "Invalid usage agent or day range"}), 400
     response = jsonify(result)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@usage_live_bp.post("/api/usage/codex/reset")
+@owner_required
+def redeem_codex_reset():
+    """Redeem only the explicitly selected credit; retries keep the same key."""
+    if not request.is_json:
+        return jsonify({"error": "JSON body required"}), 415
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"error": "Invalid request"}), 400
+    credit_id = body.get("credit_id")
+    account_id = body.get("account_id")
+    try:
+        key = str(uuid.UUID(body.get("idempotency_key", "")))
+    except (ValueError, TypeError, AttributeError):
+        return jsonify({"error": "Invalid redemption key"}), 400
+    if (not isinstance(credit_id, str) or not credit_id.strip() or len(credit_id) > 512
+            or body.get("confirmed") is not True
+            or (account_id is not None and not isinstance(account_id, str))):
+        return jsonify({"error": "Select and confirm a reset credit"}), 400
+    from scripts.utilities.codex_account import consume_codex_reset
+    with _guard:
+        lock = _locks.setdefault(("codex", 30), threading.RLock())
+    with lock:
+        try:
+            result = consume_codex_reset(credit_id, key, account_id)
+        except ValueError:
+            return jsonify({"error": "Codex account changed. Request a new usage report."}), 409
+        except Exception:
+            return jsonify({"error": "Redemption could not be verified. Retry this button to check the same attempt."}), 502
+        outcome = result.get("outcome")
+        messages = {
+            "reset": "Reset redeemed.",
+            "alreadyRedeemed": "This reset was already redeemed.",
+            "nothingToReset": "No usage window is eligible for a reset.",
+            "noCredit": "This reset is no longer available.",
+        }
+        if outcome not in messages:
+            return jsonify({"error": "Unexpected redemption response. Retry the same attempt."}), 502
+        _cache.pop(("codex", 30), None)
+        snapshot = usage_snapshot("codex")
+    response = jsonify({"outcome": outcome, "message": messages[outcome], "snapshot": snapshot})
     response.headers["Cache-Control"] = "no-store"
     return response

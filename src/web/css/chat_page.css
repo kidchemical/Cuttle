@@ -8205,3 +8205,53 @@ body.voice-mode .chat-chrome-menu {
         transition: none;
     }
 }
+
+/* Shared layout for every supported static and live agent usage report. */
+.cuttle-usage-report { min-width: 0; }
+.usage-report-heading { display: flex; flex-direction: column; gap: 4px; margin-bottom: 14px; }
+.usage-report-heading > strong { font-size: 1.05em; letter-spacing: -.015em; }
+.usage-report-details { display: grid; gap: 4px; margin: 0; font-size: .85em; line-height: 1.5; }
+.usage-report-detail { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.usage-report-detail dt { flex-shrink: 0; color: var(--text-tertiary); }
+.usage-report-detail dt::after { content: ':'; }
+.usage-report-detail dd { margin: 0; min-width: 0; color: var(--text-secondary); overflow-wrap: anywhere; }
+.usage-report-body > br { display: none; }
+.message-content .usage-report-body > p { margin: 6px 0; }
+.message-content .usage-report-body > ul { margin: 6px 0; }
+.usage-report-body > p:has(> strong:only-child) { margin-top: 14px; font-size: .9em; }
+.usage-report-body > p:has(> em:only-child) { font-size: .8em; color: var(--text-tertiary); }
+@media (max-width: 480px) {
+    .usage-report-detail { flex-wrap: wrap; gap: 0 6px; }
+}
+
+/* Saved Codex usage-limit reset controls. */
+.codex-reset-credits { display: grid; gap: 10px; margin-top: 18px; }
+.codex-reset-heading { display: flex; align-items: center; gap: 9px; margin-bottom: 2px; }
+.codex-reset-heading > strong { font-size: .9em; }
+.codex-reset-count { padding: 2px 8px; border-radius: 20px; background: var(--bg-secondary); color: var(--text-secondary); font-size: .72em; }
+.codex-reset-row { display: flex; align-items: center; gap: 12px; padding: 14px; border: 1px solid var(--border-color); border-radius: 12px; background: color-mix(in srgb, var(--bg-secondary) 65%, transparent); }
+.codex-reset-row--soon { border-color: color-mix(in srgb, #e8ad55 45%, var(--border-color)); }
+.codex-reset-icon { display: grid; place-items: center; flex: 0 0 34px; height: 34px; border-radius: 10px; font-size: 24px; line-height: 1; color: var(--accent-color); background: color-mix(in srgb, var(--accent-color) 12%, transparent); }
+.codex-reset-info { flex: 1; min-width: 0; }
+.codex-reset-title { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; line-height: 1.4; }
+.codex-reset-title > strong { font-size: .88em; font-weight: 600; }
+.codex-reset-badge { color: #e8ad55; background: color-mix(in srgb, #e8ad55 12%, transparent); border-radius: 5px; padding: 2px 6px; font-size: .65em; font-weight: 600; }
+.light-mode .codex-reset-badge { color: #80500b; }
+.codex-reset-expiry { display: block; margin-top: 4px; color: var(--text-secondary); font-size: .77em; }
+.message-content .codex-reset-description { margin: 5px 0 0; color: var(--text-tertiary); font-size: .75em; line-height: 1.45; }
+.codex-reset-button { flex-shrink: 0; display: inline-flex; justify-content: center; align-items: center; min-height: 36px; padding: 8px 14px; border: 1px solid color-mix(in srgb, var(--accent-color) 75%, white); border-radius: 8px; background: var(--accent-color); color: #fff; font: inherit; font-size: .8em; font-weight: 600; line-height: 1.2; cursor: pointer; transition: background .15s, box-shadow .15s; }
+.codex-reset-button:hover { background: var(--accent-hover); box-shadow: 0 2px 10px color-mix(in srgb, var(--accent-color) 22%, transparent); }
+.codex-reset-button:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 3px; }
+.codex-reset-button:disabled { opacity: .55; cursor: wait; box-shadow: none; }
+.codex-reset-unavailable { color: var(--text-tertiary); font-size: .75em; }
+.codex-reset-status:empty { display: none; }
+.message-content .codex-reset-status { margin: 0; font-size: .8em; color: var(--text-secondary); }
+.codex-usage-footer { margin-top: 14px; font-size: .75em; color: var(--text-tertiary); }
+.message-content .codex-usage-footer p { margin: 4px 0; }
+.codex-usage-footer > br { display: none; }
+.usage-live-status { display: block; margin-top: 10px; color: var(--text-tertiary); font-size: .7em; }
+@media (max-width: 480px) {
+    .codex-reset-row { flex-wrap: wrap; gap: 10px; padding: 12px; }
+    .codex-reset-info { flex-basis: calc(100% - 46px); }
+    .codex-reset-button { width: 100%; min-height: 40px; }
+}

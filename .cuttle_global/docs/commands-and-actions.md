@@ -73,3 +73,18 @@ Emit from the agent reply — Cuttle rewrites to cards; clicks hit Flask with **
 Also: Cursor skill `cuttle-project-commands`.
 Live example project: Escape Purgatory (`.cuttle/commands/discord-update.md`,
 `.cuttle/actions/discord-post.yaml`, `.cuttle/docs/discord.md`).
+
+### Codex saved usage resets
+
+With a Codex badge, `/usage` and `/usage-live` list saved usage-limit resets,
+with expiration dates in the viewer's local timezone and a **Use reset** button
+for each eligible credit. The button asks for confirmation before spending the
+selected reset. The owner-authenticated endpoint refreshes the usage report
+after redemption; retries reuse the same idempotency key.
+
+Cuttle uses the installed Codex CLI's supported app-server methods
+`account/rateLimits/read` and `account/rateLimitResetCredit/consume` with the
+existing Codex login. No model turn is started. Older CLIs fall back to the
+existing account usage report; if only a reset count is available, expiration
+and redemption controls remain unavailable. Codex may return fewer detail rows
+than the total count; the report explains when that happens.
