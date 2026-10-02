@@ -482,7 +482,16 @@
         const repoLabel = repoRoot
             ? String(repoRoot).replace(/\\/g, '/').split('/').filter(Boolean).pop()
             : '';
-        toast('Pushing ' + (repoLabel || name) + '…', 'info');
+        const closePushProgress = function () {
+            try {
+                if (typeof window.closeCuttleToast === 'function') window.closeCuttleToast('git-push');
+            } catch (_) {}
+        };
+        toast('Pushing ' + (repoLabel || name) + '…', 'info', {
+            toastId: 'git-push',
+            sticky: true,
+            progress: true
+        });
         try {
             const body = {};
             if (path) body.path = path;
@@ -502,6 +511,7 @@
                 ).trim();
                 err = err.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)[0] || err;
                 if (err.length > 220) err = err.slice(0, 217) + '…';
+                closePushProgress();
                 toast(err, 'error');
                 return;
             }
@@ -517,8 +527,10 @@
                 okMsg = 'Pushed ' + branch;
             }
             if (repoLabel) okMsg = repoLabel + ': ' + okMsg;
+            closePushProgress();
             toast(okMsg, 'success');
         } catch (err) {
+            closePushProgress();
             toast((err && err.message) || 'Git push failed', 'error');
         } finally {
             _gitPushInFlight = false;

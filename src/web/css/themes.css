@@ -359,12 +359,19 @@
 
 @keyframes cuttle-glitch-bands {
     0%, 88%, 100% { opacity: 0; transform: translateY(0); }
-    89% { opacity: 1; transform: translateY(12vh); }
-    90% { opacity: 0.7; transform: translateY(47vh); }
-    91% { opacity: 1; transform: translateY(29vh); }
+    89% { opacity: 0.5; transform: translateY(12vh); }
+    90% { opacity: 0.35; transform: translateY(47vh); }
+    91% { opacity: 0.5; transform: translateY(29vh); }
     92% { opacity: 0; transform: translateY(71vh); }
-    96% { opacity: 0.8; transform: translateY(58vh); }
+    96% { opacity: 0.4; transform: translateY(58vh); }
     97% { opacity: 0; }
+}
+
+/* Glitchy activity status while the assistant is generating: same chromatic
+   split + random jitter as the headings, layered over the sweep. */
+:root.theme-glitch .typing-status {
+    filter: drop-shadow(-1px 0 rgba(255, 42, 109, 0.75)) drop-shadow(1px 0 rgba(5, 217, 232, 0.75));
+    animation: typing-status-sweep 2s ease-in-out infinite, cuttle-glitch-jitter 7s steps(1) infinite;
 }
 
 /* Scanlines (static) + tearing bands (brief bursts), top-level only. */
@@ -384,13 +391,12 @@
     left: 0;
     right: 0;
     top: 0;
-    height: 14px;
-    z-index: 2147481001;
+    height: 5px;
+    z-index: 1;
     pointer-events: none;
-    mix-blend-mode: screen;
     background:
-        linear-gradient(90deg, transparent 0 8%, rgba(255, 42, 109, 0.55) 8% 36%, transparent 36% 52%,
-            rgba(5, 217, 232, 0.55) 52% 81%, transparent 81%);
+        linear-gradient(90deg, transparent 0 8%, rgba(255, 42, 109, 0.22) 8% 36%, transparent 36% 52%,
+            rgba(5, 217, 232, 0.22) 52% 81%, transparent 81%);
     opacity: 0;
     animation: cuttle-glitch-bands 5.5s steps(1) infinite;
 }
@@ -444,7 +450,8 @@
 :root.cuttle-bg-paused.theme-custom body,
 :root.cuttle-bg-paused.theme-custom body::after,
 :root.cuttle-bg-paused.theme-custom h1,
-:root.cuttle-bg-paused.theme-custom h2 {
+:root.cuttle-bg-paused.theme-custom h2,
+:root.cuttle-bg-paused.theme-custom .typing-status {
     animation-play-state: paused;
 }
 
@@ -454,7 +461,8 @@
     :root.theme-custom body,
     :root.theme-custom body::after,
     :root.theme-custom h1,
-    :root.theme-custom h2 {
+    :root.theme-custom h2,
+    :root.theme-custom .typing-status {
         animation: none !important;
     }
 }

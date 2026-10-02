@@ -145,9 +145,14 @@ body.compact-shell-page .control-button {
     min-height: 0;
 }
 
-body.compact-shell-page .video-list-item .video-play-btn {
-    min-width: 32px;
-    padding: 4px 9px;
+/* Playlist row action buttons (play + remove) share one width — see
+   .video-row-btn in settings_page.css. Keyed on video-row-btn, not
+   video-play-btn, so removing the video is not a 80px slab. */
+body.compact-shell-page .video-list-item .video-row-btn {
+    min-width: 30px;
+    width: 30px;
+    min-height: 24px;
+    padding: 3px 0;
 }
 
 body.compact-shell-page .service-info {

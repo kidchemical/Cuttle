@@ -124,9 +124,19 @@
             <span class="cuttle-toast-message">${escapeHtml(String(message))}${linkHtml}</span>
             <button type="button" class="cuttle-toast-close" aria-label="Close">&times;</button>
         `;
+        if (options && options.progress) {
+            const bar = document.createElement('div');
+            bar.className = 'cuttle-toast-progress';
+            bar.setAttribute('aria-hidden', 'true');
+            const fill = document.createElement('span');
+            fill.style.background = v.border;
+            bar.appendChild(fill);
+            el.appendChild(bar);
+        }
         el.style.cssText = `
             display: flex;
             align-items: center;
+            flex-wrap: wrap;
             gap: 12px;
             padding: 14px 12px 14px 20px;
             background: ${v.bg};
@@ -242,15 +252,34 @@
 
         pushNotificationHistory(message, variant, options);
 
+        const toastId = options.toastId != null ? String(options.toastId) : '';
+        const sticky = !!options.sticky;
+        if (toastId) closeStickyToast(toastId); // replace same-id toast
+
         const container = ensureContainer();
         const el = createToastEl(message, variant, options);
+        if (toastId) el.dataset.toastId = toastId;
         container.appendChild(el);
+        if (sticky && toastId) stickyToasts[toastId] = el;
 
+        const dropStickyRef = () => {
+            const key = el.dataset && el.dataset.toastId;
+            if (key && stickyToasts[key] === el) delete stickyToasts[key];
+        };
         const animateOut = () => {
+            dropStickyRef();
             el.style.animation = 'cuttle-toast-out 0.25s ease forwards';
             setTimeout(() => el.remove(), 250);
         };
 
+        if (sticky) {
+            // No auto-dismiss and no body-click dismiss; × still closes it.
+            el.querySelector('.cuttle-toast-close')?.addEventListener('click', (e) => {
+                e.stopPropagation();
+                animateOut();
+            });
+            return;
+        }
         const timeout = setTimeout(animateOut, TOAST_DURATION);
 
         const dismiss = (e) => {
@@ -298,6 +327,20 @@
         }
     }
 
+    // Sticky (persistent, manually dismissed) toasts, keyed by toastId so a
+    // long job can show progress and close it when done. Progress is
+    // indeterminate: the push path is one POST with no server-sent phases.
+    const stickyToasts = {};
+
+    function closeStickyToast(id) {
+        const key = id != null ? String(id) : '';
+        const el = key && stickyToasts[key];
+        if (!el) return false;
+        delete stickyToasts[key];
+        try { el.remove(); } catch (_) {}
+        return true;
+    }
+
     function showToast(message, variant, options) {
         if (!message) return;
         options = options && typeof options === 'object' ? options : {};
@@ -311,11 +354,26 @@
                 actionId: options.actionId || null,
                 unread: !!options.unread,
                 sessionId: options.sessionId != null ? String(options.sessionId) : null,
-                kind: options.kind || null
+                kind: options.kind || null,
+                sticky: !!options.sticky,
+                progress: !!options.progress,
+                toastId: options.toastId != null ? String(options.toastId) : null
             }, '*');
             return;
         }
         displayToast(message, variant, options);
+    }
+
+    // Close a sticky toast by id. Forwards to the shell from iframes.
+    function closeCuttleToast(id) {
+        if (id == null) return false;
+        if (window.parent !== window) {
+            try {
+                window.parent.postMessage({ type: 'cuttle-toast-close', toastId: String(id) }, '*');
+            } catch (_) {}
+            return true;
+        }
+        return closeStickyToast(id);
     }
 
     function handleMessage(e) {
@@ -331,13 +389,20 @@
             } catch (_) {}
             return;
         }
+        if (e.data && e.data.type === 'cuttle-toast-close' && e.data.toastId != null) {
+            closeStickyToast(e.data.toastId);
+            return;
+        }
         if (e.data && e.data.type === 'cuttle-toast') {
             const { message, variant, linkUrl, linkText, unread, sessionId, kind, actionId } = e.data;
             const options = {
                 unread: !!unread,
                 sessionId: sessionId != null ? String(sessionId) : null,
                 kind: kind || null,
-                actionId: actionId || null
+                actionId: actionId || null,
+                sticky: !!e.data.sticky,
+                progress: !!e.data.progress,
+                toastId: e.data.toastId != null ? String(e.data.toastId) : null
             };
             if (linkUrl) {
                 options.linkUrl = linkUrl;
@@ -350,6 +415,7 @@
 
     window.addEventListener('message', handleMessage);
     window.showToast = window.showCuttleToast = showToast;
+    window.closeCuttleToast = closeCuttleToast;
     window.getCuttleNotificationHistory = function() { return notificationHistory.slice(); };
     window.getCuttleUnreadNotificationCount = countUnreadNotifications;
     window.markCuttleNotificationsRead = markNotificationsRead;
@@ -370,8 +436,17 @@
             from { opacity: 1; transform: translateY(0) scale(1); }
             to   { opacity: 0; transform: translateY(-10px) scale(0.95); }
         }
-        .cuttle-toast { pointer-events: auto; cursor: pointer; }
+        @keyframes cuttle-toast-progress-slide {
+            from { transform: translateX(-110%); }
+            to   { transform: translateX(300%); }
+        }
+        .cuttle-toast { pointer-events: auto; cursor: pointer; position: relative; }
         .cuttle-toast-close { margin-left: auto; }
+        .cuttle-toast-progress { flex-basis: 100%; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.12); overflow: hidden; }
+        .cuttle-toast-progress > span { display: block; height: 100%; width: 35%; border-radius: 2px; animation: cuttle-toast-progress-slide 1.2s ease-in-out infinite; }
+        @media (prefers-reduced-motion: reduce) {
+            .cuttle-toast-progress > span { animation: none; width: 100%; }
+        }
     `;
     document.head.appendChild(style);
 })();

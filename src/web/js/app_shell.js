@@ -2442,7 +2442,7 @@ function replaceFrameInPlace(colIdx, page) {
         frame.frameBorder = '0';
         frame.allowFullscreen = true;
         frame.allow = 'clipboard-read; clipboard-write';
-        frame.title = 'Cuttle Content';
+        frame.setAttribute('aria-label', 'Cuttle Content');
         if (colIdx === 0) {
             frame.id = 'contentFrame';
             frame.name = 'contentFrame';
@@ -2486,7 +2486,7 @@ function replaceFrame(colIdx, page) {
     newFrame.frameBorder = '0';
     newFrame.allowFullscreen = true;
     newFrame.allow = 'clipboard-read; clipboard-write';
-    newFrame.title = 'Cuttle Content';
+    newFrame.setAttribute('aria-label', 'Cuttle Content');
     if (colIdx === 0) {
         oldFrames.forEach((f) => {
             f.removeAttribute('id');
@@ -2929,7 +2929,7 @@ function createSplitLeafColumn(page, leafId) {
         frame.frameBorder = '0';
         frame.allowFullscreen = true;
         frame.allow = 'clipboard-read; clipboard-write';
-        frame.title = 'Cuttle Content';
+        frame.setAttribute('aria-label', 'Cuttle Content');
         mainEl.appendChild(frame);
     }
     ensurePaneDropOverlay(clone);

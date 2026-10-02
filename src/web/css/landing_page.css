@@ -1484,11 +1484,9 @@
             overflow-y: auto;
             margin-bottom: 8px;
         }
-        
-        .video-list-item input {
-            flex: 1;
-            min-width: 200px;
-        }
+
+        /* Row layout (thumb + caption + url + action buttons) is owned by
+           css/settings_page.css, which loads later and raises the cap. */
         
         .toggle-switch {
             position: relative;

@@ -106,6 +106,7 @@
             });
             var cached = overlay._payload;
             if (cached) renderBody(cached);
+            if (lastTab === 'timeline') tick();
         });
         document.addEventListener('keydown', function (e) {
             if (e.key === 'Escape' && overlay && !overlay.hidden) closeInspector();
@@ -155,8 +156,116 @@
         return fallbackJsonHtml(raw);
     }
 
-    function eventBodyHtml(ev) {
+    function relSecs(ev, t0) {
+        var t = Number(ev && ev.t);
+        if (!isFinite(t) || !isFinite(t0)) return null;
+        var d = t - t0;
+        if (!isFinite(d) || d < 0) d = 0;
+        return d;
+    }
+
+    function formatRel(d) {
+        if (d == null) return '';
+        var s = Math.floor(d);
+        if (s < 60) return s + 's';
+        var m = Math.floor(s / 60);
+        var r = s % 60;
+        if (m < 60) return m + 'm ' + r + 's';
+        var h = Math.floor(m / 60);
+        var rm = m % 60;
+        if (h < 24) return h + 'h ' + rm + 'm';
+        var dd = Math.floor(h / 24);
+        var rh = h % 24;
+        if (dd < 7) return dd + 'd ' + rh + 'h';
+        if (dd < 30) return Math.floor(dd / 7) + 'w ' + (dd % 7) + 'd';
+        var mo = Math.floor(dd / 30);
+        if (mo < 12) return mo + 'mo ' + (dd % 30) + 'd';
+        return Math.floor(dd / 365) + 'y ' + Math.floor((dd % 365) / 30) + 'mo';
+    }
+
+    function stepDuration(i, events) {
+        if (i + 1 >= events.length) return '';
+        var a = Number(events[i] && events[i].t);
+        var b = Number(events[i + 1] && events[i + 1].t);
+        if (!isFinite(a) || !isFinite(b) || !a || !b) return '';
+        var d = b - a;
+        if (!isFinite(d) || d < 0) return '';
+        return formatRel(d);
+    }
+
+    // Cuttle agent-ops CLIs (`python -m api.<module> …`). Native means the tool
+    // *ran* one of these — not that a search pattern or echo merely mentions one.
+    var NATIVE_API_MODS = 'subagents|chat_cli|panes_cli|widgets_cli|discord_cli|device_workers|gitea|dashboards|jev|cuttle_brain';
+    var NATIVE_ACTION_RE = /^(discord\.post|flask\.restart|git\.push|cuttle_action_form|cuttle_confirm)\b/i;
+    // Shell heads, path-aware: `bash …`, `/bin/bash -lc "…"`, `cmd …`.
+    var SHELL_HEAD_RE = /^\s*(?:\S*\/)?(bash|sh|exec|shell|run|terminal|command|cmd|powershell)\b/i;
+    // Read-only tools never execute a CLI, even when their pattern mentions one.
+    var READONLY_HEAD_RE = /^\s*(?:\S*\/)?(search|rg|grep|find|sed|tail|head|cat|less|ls|read_file|read_skill|edit_file|edit|write_todos)\b/i;
+    var BARE_NATIVE_CMD_RE = new RegExp('^\\s*(?:\\S*/)?python\\d?\\s+-m\\s+api\\.(' + NATIVE_API_MODS + ')\\b', 'i');
+    var SHELL_NATIVE_CMD_RE = new RegExp('(^|\\s|/)python\\d?\\s+-m\\s+api\\.(' + NATIVE_API_MODS + ')\\b', 'i');
+
+    function isNativeTool(ev) {
+        if (!ev || ev.kind !== 'tool') return false;
+        // Structured tool name is authoritative when present.
+        if (ev.args && typeof ev.args.name === 'string' &&
+            /^(subagents?|api[_-]?subagents|discord[_-]?post|flask[_-]?restart|git[_-]?push|cuttle_action_form|cuttle_confirm)$/i.test(ev.args.name.trim())) {
+            return true;
+        }
+        var s = String(ev.summary || ev.text || '');
+        // Native action id invoked as a tool.
+        if (NATIVE_ACTION_RE.test(s)) return true;
+        // Bare `python -m api.chat_cli …` command as the whole summary.
+        if (BARE_NATIVE_CMD_RE.test(s)) return true;
+        // Read-only tools (`search api.subagents…`, `rg …`, `sed …`) merely
+        // mention module names — they never ran them.
+        if (READONLY_HEAD_RE.test(s)) return false;
+        // Shell executions of an agent-ops CLI: `bash python -m api.subagents
+        // spawn …`, `/bin/bash -lc "PYTHONPATH=src .venv/bin/python -m …"`.
+        return SHELL_HEAD_RE.test(s) && SHELL_NATIVE_CMD_RE.test(s);
+    }
+
+    function hasFinishEvent(data) {
+        var evs = (data && data.events) || [];
+        for (var i = 0; i < evs.length; i++) {
+            if (evs[i] && evs[i].kind === 'finish') return true;
+        }
+        return false;
+    }
+
+    function isLive(data) {
+        return !!(data && data.executing && !hasFinishEvent(data));
+    }
+
+    function tzAbbr() {
+        try {
+            var parts = new Date().toLocaleTimeString('en-US', { timeZoneName: 'short' }).split(' ');
+            return parts[parts.length - 1] || '';
+        } catch (_) { return ''; }
+    }
+
+    function formatAbs(t) {
+        var n = Number(t);
+        if (!isFinite(n) || !n) return '';
+        var d = new Date(n * 1000);
+        var y = d.getFullYear();
+        var mo = String(d.getMonth() + 1).padStart(2, '0');
+        var da = String(d.getDate()).padStart(2, '0');
+        var h24 = d.getHours();
+        var ap = h24 >= 12 ? 'pm' : 'am';
+        var h12 = h24 % 12;
+        if (h12 === 0) h12 = 12;
+        var mi = String(d.getMinutes()).padStart(2, '0');
+        var tz = tzAbbr();
+        return y + '-' + mo + '-' + da + ' @ ' + h12 + ':' + mi + ap + (tz ? ' ' + tz : '');
+    }
+
+    function eventBodyHtml(ev, durText) {
         var extra = '';
+        var abs = formatAbs(ev && ev.t);
+        var tsBits = [];
+        if (durText) tsBits.push(esc(durText));
+        if (abs) tsBits.push(esc(abs));
+        if (tsBits.length) extra += '<div class="query-log-ts">' + tsBits.join(' · ') + '</div>';
         if (ev.text) extra += '<pre class="query-log-pre">' + esc(ev.text) + '</pre>';
         if (ev.args) extra += '<pre class="query-log-pre query-log-pre--json"><code class="language-json">' + jsonToHighlightedHtml(ev.args) + '</code></pre>';
         if (ev.layers && ev.layers.length) extra += '<div>' + esc(ev.layers.join(', ')) + '</div>';
@@ -167,11 +276,11 @@
         return extra;
     }
 
-    function fillEventBody(detailsEl, ev) {
+    function fillEventBody(detailsEl, ev, durText) {
         var slot = detailsEl && detailsEl.querySelector('.query-log-event-body');
         if (!slot || slot.getAttribute('data-filled') === '1') return;
         slot.setAttribute('data-filled', '1');
-        slot.innerHTML = eventBodyHtml(ev);
+        slot.innerHTML = eventBodyHtml(ev, durText);
     }
 
     function renderTimeline(data) {
@@ -179,35 +288,54 @@
         if (!events.length) {
             return '<p class="query-log-empty">No harness events yet. Live turns fill this as Brain, thinking, and tools fire.</p>';
         }
-        return events.map(function (ev, i) {
+        var t0 = null;
+        for (var k = 0; k < events.length; k++) {
+            var tk = Number(events[k] && events[k].t);
+            if (isFinite(tk) && tk) { t0 = tk; break; }
+        }
+        var html = events.map(function (ev, i) {
             var fail = ev.failed || (ev.kind === 'finish' && ev.success === false);
             var line = oneLiner(ev);
             var head = esc(ev.kind || 'event') + (ev.phase ? ' · ' + esc(ev.phase) : '');
             if (ev.mode && ev.kind === 'brain') head += ' · ' + esc(ev.mode);
             var failCls = fail ? ' is-fail' : '';
+            var isNative = isNativeTool(ev);
+            var nativeAttr = isNative ? ' data-native="1"' : '';
+            var nativePill = isNative ? '<span class="query-log-pill query-log-pill--native">native</span>' : '';
+            var step = '<span class="query-log-step">' + (i + 1) + '</span>';
+            var rel = formatRel(t0 == null ? null : relSecs(ev, t0));
+            var relHtml = rel ? '<span class="query-log-rel" title="Elapsed since first step">@ ' + esc(rel) + '</span>' : '';
+            var abs = formatAbs(ev && ev.t);
+            var absTitle = abs ? ' title="' + esc(abs) + '"' : '';
             if (!eventHasBody(ev)) {
-                return '<article class="query-log-event query-log-event--flat' + failCls + '" data-kind="' + esc(ev.kind) + '">' +
-                    '<div class="query-log-k">' + head + '</div>' +
+                return '<article class="query-log-event query-log-event--flat' + failCls + '" data-kind="' + esc(ev.kind) + '"' + nativeAttr + absTitle + '>' +
+                    '<div class="query-log-top">' + step +
+                    '<div class="query-log-k">' + head + '</div>' + nativePill + relHtml + '</div>' +
                     (line ? '<div class="query-log-line">' + esc(line) + '</div>' : '') +
                     '</article>';
             }
-            return '<details class="query-log-event' + failCls + '" data-kind="' + esc(ev.kind) + '" data-i="' + i + '">' +
-                '<summary><span class="query-log-k">' + head + '</span>' +
-                (line ? '<span class="query-log-line">' + esc(line) + '</span>' : '') +
+            return '<details class="query-log-event' + failCls + '" data-kind="' + esc(ev.kind) + '" data-i="' + i + '"' + nativeAttr + absTitle + '>' +
+                '<summary>' + step + '<span class="query-log-k">' + head + '</span>' + nativePill +
+                (line ? '<span class="query-log-line">' + esc(line) + '</span>' : '') + relHtml +
                 '</summary>' +
                 '<div class="query-log-event-body"></div>' +
                 '</details>';
         }).join('');
+        if (isLive(data)) {
+            html += '<div class="query-log-live" aria-live="polite"><span class="query-log-spinner" aria-hidden="true"></span><span>Live…</span></div>';
+        }
+        return html;
     }
 
     function bindTimeline(body, events) {
         body.querySelectorAll('details.query-log-event').forEach(function (d) {
             d.addEventListener('toggle', function () {
                 var i = d.getAttribute('data-i');
-                var ev = events[Number(i)];
+                var n = Number(i);
+                var ev = events[n];
                 if (d.open) {
                     openKeys[eventKey(i)] = true;
-                    fillEventBody(d, ev);
+                    fillEventBody(d, ev, stepDuration(n, events));
                 } else {
                     delete openKeys[eventKey(i)];
                 }
@@ -215,7 +343,7 @@
             var i = d.getAttribute('data-i');
             if (openKeys[eventKey(i)]) {
                 d.open = true;
-                fillEventBody(d, events[Number(i)]);
+                fillEventBody(d, events[Number(i)], stepDuration(Number(i), events));
             }
         });
     }
@@ -275,8 +403,14 @@
                 });
             }
         } else {
+            var nearBottom = (body.scrollHeight - body.scrollTop - body.clientHeight) < 140;
             body.innerHTML = renderTimeline(data);
             bindTimeline(body, data.events || []);
+            if (nearBottom && isLive(data)) {
+                var liveEl = body.querySelector('.query-log-live');
+                if (liveEl && liveEl.scrollIntoView) liveEl.scrollIntoView({ block: 'nearest' });
+                else body.scrollTop = body.scrollHeight;
+            }
         }
     }
 
@@ -304,6 +438,8 @@
 
     function tick() {
         if (!currentId) return;
+        var overlay = document.getElementById('queryLogOverlay');
+        if ((overlay && overlay.hidden) || lastTab !== 'timeline') return;
         fetchLog(currentId).then(function (res) {
             if (!res.ok) {
                 var body = document.getElementById('queryLogBody');
@@ -313,7 +449,7 @@
                 return;
             }
             paint(res.j, false);
-            if (!res.j.executing) {
+            if (!res.j.executing || hasFinishEvent(res.j)) {
                 if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
             }
         }).catch(function () {});
@@ -330,7 +466,7 @@
         if (body) body.innerHTML = '<p class="query-log-empty">Loading…</p>';
         if (pollTimer) clearInterval(pollTimer);
         tick();
-        pollTimer = setInterval(tick, 1500);
+        pollTimer = setInterval(tick, 1000);
     }
 
     function closeInspector() {
@@ -342,6 +478,17 @@
 
     window.openQueryLogInspector = openInspector;
     window.closeQueryLogInspector = closeInspector;
+    // Pure helpers for the node characterization suite (no DOM needed).
+    window.CuttleQueryLogFuncs = {
+        formatRel: formatRel,
+        formatAbs: formatAbs,
+        relSecs: relSecs,
+        stepDuration: stepDuration,
+        isNativeTool: isNativeTool,
+        hasFinishEvent: hasFinishEvent,
+        isLive: isLive,
+        renderTimeline: renderTimeline,
+    };
 
     document.addEventListener('click', function (e) {
         var a = e.target.closest && e.target.closest('.message-query-log-link');
