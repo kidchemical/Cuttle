@@ -3672,26 +3672,14 @@ pre.has-code-copy:hover .code-copy-btn,
 }
 
 .typing-subagent-orb {
-    display: flex;
-    flex-direction: column;
+    display: inline-flex;
     align-items: center;
-    gap: 4px;
+    justify-content: center;
     background: none;
     border: 0;
     padding: 0;
     color: inherit;
     cursor: pointer;
-    min-width: 44px;
-}
-
-.typing-subagent-label {
-    font-size: 10px;
-    line-height: 1.1;
-    color: var(--text-secondary);
-    max-width: 72px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
 }
 
 .typing-orbit--subagent {
@@ -3775,6 +3763,21 @@ pre.has-code-copy:hover .code-copy-btn,
 .subagent-launcher-agent {
     color: var(--text-secondary);
     font-size: 11px;
+}
+
+/* Thinking orbs: bare orbit + title, no pill backdrop. The orb buttons
+   share the .subagent-launcher class for click handling, and that rule
+   sorts later in this file — so this needs the higher specificity to win. */
+.typing-subagent-orb.subagent-launcher {
+    background: none;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    padding: 0;
+}
+
+.typing-subagent-orb.subagent-launcher:hover {
+    background: none;
 }
 
 .chat-history-item.is-subagent {

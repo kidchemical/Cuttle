@@ -137,12 +137,129 @@ def test_subagent_ui_helpers():
     assert proc.returncode == 0, proc.stderr or proc.stdout
 
 
+_ORB_HELPERS = (
+    "escapeHtmlInline",
+    "formatChatDisplayId",
+    "parseChatHandleToken",
+    "normalizeSubagentList",
+    "renderSubagentLaunchersHtml",
+    "mountSubagentLaunchers",
+    "profileAvatarInnerHtml",
+    "typingOrbitMiniHtml",
+    "rememberSubagentOrbList",
+    "paintSubagentOrbs",
+    "syncSubagentOrbs",
+    "clearSubagentOrbs",
+    "mountLiveSubagentBadges",
+)
+
+_ORB_DRIVER = r"""
+let _subagentOrbList = [];
+%s
+const assert = require('assert');
+
+function makeOrbBox() { return { hidden: true, innerHTML: '' }; }
+const orbBox = makeOrbBox();
+let inserted = [];
+let removed = 0;
+function makeLaunchersStub() {
+  return { outerHTML: '', remove() { removed += 1; } };
+}
+const fakeWrap = {
+  _launchers: null,
+  querySelector(sel) {
+    if (sel === '.subagent-launchers') return fakeWrap._launchers;
+    if (sel === '.message-footer') {
+      return {
+        insertAdjacentHTML(pos, html) {
+          inserted.push([pos, html]);
+          fakeWrap._launchers = makeLaunchersStub();
+          fakeWrap._launchers.outerHTML = html;
+        },
+      };
+    }
+    return null;
+  },
+  insertAdjacentHTML(pos, html) {
+    inserted.push([pos, html]);
+    fakeWrap._launchers = makeLaunchersStub();
+    fakeWrap._launchers.outerHTML = html;
+  },
+};
+const typingEl = { querySelector(sel) {
+  if (sel === '.message-content-wrapper') return fakeWrap;
+  return fakeWrap.querySelector(sel);
+} };
+global.document = {
+  querySelectorAll(sel) {
+    if (sel.indexOf('typing-subagent-orbs') >= 0) return [orbBox];
+    if (sel.indexOf('typing-indicator') >= 0) return [typingEl];
+    return [];
+  },
+};
+
+// Orbs: orbit-only, no visible name; tooltip kept for hover/a11y.
+syncSubagentOrbs([
+  { handle: 'CH-000540', label: 'Chef A', agent: 'cursor', generating: true },
+]);
+assert.strictEqual(orbBox.hidden, false);
+assert.ok(orbBox.innerHTML.includes('typing-subagent-orb'), orbBox.innerHTML);
+assert.ok(orbBox.innerHTML.includes('data-chat-handle="CH-000540"'), orbBox.innerHTML);
+assert.ok(!orbBox.innerHTML.includes('typing-subagent-label'), orbBox.innerHTML);
+assert.ok(!orbBox.innerHTML.includes('subagent-launcher-label'), orbBox.innerHTML);
+assert.ok(orbBox.innerHTML.includes('aria-label="Chef A'), orbBox.innerHTML);
+
+// Badges mount onto the live bubble as soon as the subagent attaches.
+assert.strictEqual(inserted.length, 1);
+assert.strictEqual(inserted[0][0], 'beforebegin');
+assert.ok(inserted[0][1].includes('subagent-launchers'), inserted[0][1]);
+assert.ok(inserted[0][1].includes('data-chat-handle="CH-000540"'), inserted[0][1]);
+assert.ok(inserted[0][1].includes('Chef A'), inserted[0][1]);
+
+// Second attach updates the badges in place instead of duplicating.
+syncSubagentOrbs([
+  { handle: 'CH-000540', label: 'Chef A', agent: 'cursor', generating: true },
+  { session_id: 541, title: 'Chef B', agent: 'codex' },
+]);
+assert.strictEqual(inserted.length, 1);
+assert.ok(fakeWrap._launchers.outerHTML.includes('CH-000541'), fakeWrap._launchers.outerHTML);
+
+// Clearing (new turn) hides orbs and unmounts live badges.
+clearSubagentOrbs();
+assert.strictEqual(orbBox.hidden, true);
+assert.strictEqual(orbBox.innerHTML, '');
+assert.strictEqual(removed, 1);
+
+console.log('ok');
+"""
+
+
+@node_only
+def test_subagent_live_orbs_and_badges():
+    src = CHAT_JS.read_text(encoding="utf-8")
+    blob = "\n".join(_extract_function(src, name) for name in _ORB_HELPERS)
+    # Same as test_subagent_ui_helpers: formatChatDisplayId delegates to the
+    # CuttleChatActivity global, so the activity module must be required first.
+    driver = "require(%s);\n" % json.dumps(str(ACTIVITY_JS)) + (_ORB_DRIVER % blob)
+    proc = subprocess.run(
+        ["node", "-e", driver],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert proc.returncode == 0, proc.stderr or proc.stdout
+
+
 def test_subagent_markup_present():
     js = CHAT_JS.read_text(encoding="utf-8")
     css = CHAT_CSS.read_text(encoding="utf-8")
     assert "typing-subagent-orbs" in js
     assert "syncSubagentOrbs" in js
     assert "paintSubagentOrbs" in js
+    assert "clearSubagentOrbs" in js
+    assert "mountLiveSubagentBadges" in js
+    assert "typing-subagent-label" not in js
     assert "is-parent-speaker" in js
     assert "parentRefsFromOpts" in js
     assert "applySessionIdentity" in js
@@ -155,6 +272,8 @@ def test_subagent_markup_present():
     assert ".history-subagent-group.is-collapsed" in css
     assert ".history-subagent-toggle" in css
     assert ".typing-orbit--subagent" in css
+    assert ".typing-subagent-orb.subagent-launcher" in css
+    assert "typing-subagent-label" not in css
     assert ".typing-orbit-core--glyph" in css
     assert "parentSpeaker ? null" in js
     assert "stickyChipsFromAssistantSlash" in js

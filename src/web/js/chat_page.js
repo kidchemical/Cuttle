@@ -7784,6 +7784,24 @@
         );
     }
 
+    /**
+     * Badge for a user message that was steered into a live agent turn
+     * (POST /api/chat-steer) instead of starting a new turn. Tint matches
+     * the steered harness so the odd position — below the still-running
+     * assistant bubble — reads as intentional.
+     */
+    function steerBadgeHtml(agent) {
+        const id = String(agent || '').trim().toLowerCase();
+        const label = id === 'codex' ? 'Codex' : (id === 'muse' ? 'Muse Code' : 'agent');
+        const category = (id === 'codex' || id === 'muse') ? id : 'command';
+        return slashCommandChipHeaderHtml(
+            'steer',
+            'Steered into the running ' + label + ' turn',
+            category,
+            false
+        );
+    }
+
     function renderSlashChips(key, textarea) {
         const row = document.getElementById(slashChipsRowId(key));
         if (!row) return;
@@ -18008,7 +18026,11 @@
         }
         if (!data || !data.steered) return false;
         if (sessionIdsEqual(currentSessionId, sid)) {
-            addMessageToUI(text, 'user', { timestamp: Date.now() });
+            addMessageToUI(text, 'user', {
+                timestamp: Date.now(),
+                steered: true,
+                steered_agent: data.agent,
+            });
             autoScrollChatToBottom(true);
             saveChatSession(text, 'user');
         }
@@ -18311,6 +18333,10 @@
 
         const replySlash = slashCommandMetaFromUserMessage(message);
 
+        // New turn owns the typing indicator — drop the previous turn's
+        // sub-agent orbs first so they never bleed into a turn that uses none.
+        // Live-status / stream syncs repopulate when this turn spawns sub-agents.
+        try { clearSubagentOrbs(); } catch (_) {}
         // Add typing indicator — pass slash meta so chip appears immediately
         const pendingSlash = replySlash
             ? pendingSlashForTypingIndicator(replySlash, stickyCmd)
@@ -19370,6 +19396,9 @@
         if (parentSpeaker) {
             messageDiv.classList.add('is-parent-speaker');
         }
+        if (role === 'user' && opts.steered) {
+            messageDiv.classList.add('is-steered');
+        }
         if (
             role === 'assistant'
             && (
@@ -19448,6 +19477,7 @@
                 ? normalizeAgentSlashChips(userSc.chips, null)
                 : [];
             headerChip = messageHeaderBadgesHtml(chips, false, project);
+            if (opts.steered) headerChip += steerBadgeHtml(opts.steered_agent);
             if (chips.length) suppressInlineSlashChips = true;
         } else {
             headerChip = messageHeaderBadgesHtml([], false, project);
@@ -21959,25 +21989,39 @@
             box.hidden = false;
             box.innerHTML = list.map((s) => {
                 const handle = escapeHtmlInline(s.handle);
-                const label = escapeHtmlInline(s.label);
                 const title = escapeHtmlInline(s.label + ' · ' + s.handle);
                 const busy = s.generating || !s.status || s.status === 'pending' || s.status === 'running'
                     ? ' is-generating'
                     : '';
                 return (
                     '<button type="button" class="typing-subagent-orb subagent-launcher' + busy +
-                    '" data-chat-handle="' + handle + '" title="' + title + '">' +
+                    '" data-chat-handle="' + handle + '" title="' + title + '" aria-label="' + title + '">' +
                     typingOrbitMiniHtml(s.avatar) +
-                    '<span class="typing-subagent-label">' + label + '</span>' +
                     '</button>'
                 );
             }).join('');
         });
+        mountLiveSubagentBadges();
     }
 
     function syncSubagentOrbs(subagents) {
         rememberSubagentOrbList(subagents);
         paintSubagentOrbs();
+    }
+
+    function clearSubagentOrbs() {
+        _subagentOrbList = [];
+        paintSubagentOrbs();
+    }
+
+    function mountLiveSubagentBadges() {
+        if (typeof document === 'undefined' || !document.querySelectorAll) return;
+        // Badges link to the child sessions as soon as they attach — mount
+        // onto the in-progress bubble, not just the finalized reply.
+        // Empty list unmounts (mountSubagentLaunchers removes on empty html).
+        document.querySelectorAll('#typing-indicator, #typing-indicator-remote').forEach((el) => {
+            try { mountSubagentLaunchers(el, _subagentOrbList); } catch (_) {}
+        });
     }
 
     function updateTypingStatus(statusText) {
