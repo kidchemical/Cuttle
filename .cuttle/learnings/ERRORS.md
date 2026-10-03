@@ -124,17 +124,17 @@ message instead of a wall of stack traces. See `src/api/agent_harness/ADDING_AN_
 - **Suggested Fix / Done:** Rewrote as `test_flask_performance_route_requires_owner` asserting 401 for anonymous (gate contract). Service payload shape remains covered by `test_dashboards_catalog_performance_is_live`. Deliberately did not loosen the gate.
 
 ### [ERR-20261001-001] chat stream lanes — pipeline `on_save` persists `[CANCELLED]`/`system` rows the saver skips
-- **Priority:** Low · **Status:** Integrated; live Stop/resend verification pending (B1 unified policy) · **Area:** web_chat_api stream lanes / chat_turn_persist
+- **Priority:** Low · **Status:** Fixed; live Stop/resend verified 2026-10-02 (B1 unified policy) · **Area:** web_chat_api stream lanes / chat_turn_persist
 - **Summary:** The leftover-pipeline stream `on_save` persisted any result with success-or-text, including `[CANCELLED]` status lines and `ui == 'system'` rows. The saver-built lanes skipped all of those via `make_assistant_saver` guards.
 - **Error:** Inconsistent history contents for cancelled/system turns depending on which lane streamed them; no crash, no data loss.
 - **Context:** Found during Phase 5 P5-C extraction (commit `764d4a78`); deliberately not fixed there — unifying the guards would change persisted history shape, which needs its own scoped defect pass with before/after row evidence.
 - **Suggested Fix / Done:** B1 routed both pipeline savers through `make_assistant_saver`, added the captured-token guard to `run_agent_sync_turn`, and aligned the coarse sync gates to the kept-rule. Pinned by `test_chat_persistence_policy.py` (6 lanes × 9 outcomes, unified expectations) and the updated `test_oracle_pipeline_stream_cancelled_row_divergence`. See architecture-stabilization review log P5-C section.
 
 ### [ERR-20261002-001] Codex thread probes and turns can compete for one writer
-- **Priority:** High · **Status:** Integrated; restart/live verification pending · **Area:** Codex harness / agent context / process lifecycle
+- **Priority:** High · **Status:** Fixed; activation and real resumed-thread Stop/resend verified in CH-000885 · **Area:** Codex harness / agent context / process lifecycle
 - **Summary:** Stop, refresh, then resend hit `thread-store conflict: already has an active writer`. Steering readiness did not cover the writer's entire startup/shutdown lifetime; token probes could resume the same thread from another server. Exec also needed the same ownership contract.
 - **Done:** Process-local, token-checked thread leases coordinate app-server turns, exec, observation, and compaction. Cancellation wins over acquisition; task cancellation reaps owned children; confirmed exit gates release. Registry cleanup runs off the event loop. The exact conflicting writer in the reported incident is not established.
-- **Validation:** Main Codex/context/process/boundary gate: 132 passed, 1 obsolete case skipped. Neighbor gate: 88 passed, 41 explicit platform/live/scope skips. No live provider smoke. Restart and live Stop/resend remain pending.
+- **Validation:** Main Codex/context/process/boundary gate: 132 passed, 1 obsolete case skipped. Neighbor gate: 88 passed, 41 explicit platform/live/scope skips. Later live acceptance in CH-000885 verified one stopped turn followed by a successful resumed-thread reply, with no stale assistant row, duplicate, error bubble, or active-writer conflict. That specific user-run acceptance is distinct from an exhaustive provider smoke.
 - **Metadata:** Source CH-000856-22; handoff CH-000878; children CH-000879 / CH-000880. Manager recovery: `temp/codex-handoff-final-backup/recover.py` (checksum guard, no service restart).
 
 ### [ERR-20261002-002] Codex progress and final text concatenate into one saved reply
@@ -150,3 +150,18 @@ message instead of a wall of stack traces. See `src/api/agent_harness/ADDING_AN_
 - **Suggested Fix:** Characterize shared rewrite/persistence behavior and thread one prepared result through the existing workflow/saver boundary. Preserve saver cancellation guards, project precedence, signatures, and one-writer Q&A semantics. Do not use content-derived IDs or duplicate registration rules as a shortcut.
 - **Validation:** Manager ran four shadow browser journeys with zero skips, including independent verification of signed SSE and history cards, denied-run token identity, separate composer answer persistence, reload, and existing Stop/resend journeys. Equality/inequality is not frozen as a test contract.
 - **Metadata:** Parent CH-000856; investigation CH-000860; candidate test `temp/architecture-c2-shadow/src/tests/e2e/test_shadow_action_card_resume.py`; production unchanged for this finding.
+
+
+### [ERR-20261002-004] Widget server rewrite reverses mutations within one reply
+- **Priority:** Medium · **Status:** Integrated; normal Flask activation pending · **Area:** api.chat_widgets / assistant widget rewrite
+- **Summary:** Database writes ran inside reversed tag iteration intended for text offsets. A base followed by a same-id patch in one assistant reply lost the patch; separate messages worked.
+- **Done:** Apply store operations and return touched rows in document order; collect replacements and splice text backward. Keep later replacement semantics and existing type/status/scope/description owners.
+- **Validation:** Seven new regression cases within 24 passing widget tests; 42 workflow/persistence/coordinator neighbors; five cases fail against old code. Manager independently passed the combined candidate real-shadow SSE/history/widget-HTTP/reload journey without guard widening or client fallback writes.
+- **Metadata:** Parent CH-000856; contributor CH-000860; review `docs/reviews/card-controller-widget-order.md`.
+
+### [ERR-20261002-005] Raw widget history fallback suppresses context and patch operations
+- **Priority:** Low · **Status:** Open; separate from C3 structural work · **Area:** chat_page widget fallback / api.chat_widgets identity and replay
+- **Summary:** The page-global id-keyed two-second dedupe suppresses another session’s same-id raw widget and a same-pass base-plus-patch. Replaying raw history can also replace patched state or repeat non-idempotent add operations. Server-rewritten chips avoid this client path.
+- **Suggested Fix:** Decide canonical widget identity and replay semantics with the existing backend/widget owners before changing fallback ingestion. Current rows are keyed by user and widget id; merely clearing/keying the dedupe or moving DOM code cannot establish safe replay.
+- **Validation:** Six isolated production-asset characterization journeys and source review establish the current suppression; defect assertions remain private characterization, not desired regression contracts. Normal server mutation order is fixed separately under ERR-20261002-004.
+- **Metadata:** Parent CH-000856; investigation CH-000860. Existing paint/navigation owners retained.

@@ -109,10 +109,12 @@ accuracy is made. One unrelated stale title-test expectation was corrected to
 match the existing production anti-anchoring behavior; production title code
 was preserved.
 
-The Python changes require the normal user-selected Flask restart before they
-affect the hosted instance. No daemon restart, additional listener, or networking
-redesign is part of this checkpoint. Existing import/lifecycle owners and the
-full-once/resume model remain in place.
+The user-selected Flask restart completed healthy. A completed supervised Muse
+turn recorded one selected context excerpt and acknowledged the exact delivered
+snapshot; its next turn used ordinary resume without repeating the envelope.
+This verifies activation and delivery bookkeeping, not general semantic ranking
+accuracy. No additional listener or networking redesign was required. Existing
+import/lifecycle owners and the full-once/resume model remain in place.
 
 `test_context_policy_rules.py` compiles matched isolated Cuttle and synthetic
 guest contexts and asserts: Cuttle-only principles/map/safety pointers appear
