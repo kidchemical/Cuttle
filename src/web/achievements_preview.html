@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cuttle Achievements — celebration preview</title>
+<style>
+    :root {
+        --bg: #0d1117;
+        --panel: #161b22;
+        --border: #30363d;
+        --text: #e6edf3;
+        --muted: #8b949e;
+        --accent: #58a6ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+        margin: 0;
+        padding: 32px 20px 64px;
+        background: var(--bg);
+        color: var(--text);
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+    .wrap { max-width: 880px; margin: 0 auto; }
+    h1 { font-size: 22px; margin: 0 0 4px; }
+    p.sub { color: var(--muted); font-size: 13px; margin: 0 0 28px; line-height: 1.6; }
+    h2 {
+        font-size: 12px; text-transform: uppercase; letter-spacing: .07em;
+        color: var(--muted); margin: 28px 0 10px; font-weight: 600;
+    }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+    button.tier {
+        width: 100%;
+        padding: 16px 12px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: var(--panel);
+        color: var(--text);
+        cursor: pointer;
+        font: inherit;
+        text-align: center;
+        transition: transform .12s ease, filter .12s ease;
+    }
+    button.tier:hover { transform: translateY(-2px); filter: brightness(1.15); }
+    button.tier:active { transform: translateY(0); }
+    button.tier .ic { font-size: 32px; display: block; }
+    button.tier .nm { font-size: 13px; font-weight: 600; margin-top: 6px; }
+    button.tier .rr {
+        font-size: 10px; text-transform: uppercase; letter-spacing: .06em;
+        margin-top: 3px; color: var(--muted);
+    }
+    .common    { border-color: #8b949e; }
+    .rare      { border-color: #58a6ff; }
+    .epic      { border-color: #a371f7; }
+    .legendary { border-color: #d29922; }
+    .mythic    { border-color: #f85149; }
+
+    .row { display: flex; flex-wrap: wrap; gap: 10px; }
+    .row button {
+        padding: 9px 14px; border-radius: 8px; border: 1px solid var(--border);
+        background: var(--panel); color: var(--text); cursor: pointer; font: inherit; font-size: 13px;
+    }
+    .row button:hover { filter: brightness(1.2); }
+
+    .legend {
+        margin-top: 30px; padding: 16px; border: 1px solid var(--border);
+        border-radius: 10px; background: var(--panel); font-size: 13px; line-height: 1.7;
+    }
+    .legend code {
+        background: rgba(127,127,127,.18); padding: 1px 5px; border-radius: 4px; font-size: 12px;
+    }
+    .legend b { color: var(--accent); }
+    .warn { color: #d29922; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12.5px; }
+    th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--border); }
+    th { color: var(--muted); font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="wrap">
+    <h1>🏆 Celebration preview</h1>
+    <p class="sub">
+        Fires the real <code>CuttleCelebrate</code> path — same toast card, same particle
+        layer, same sound escalation the chat shell uses. No API call and no
+        achievements flag needed: this page calls <code>CuttleCelebrate.celebrate()</code>
+        directly with sample unlock payloads.<br>
+        Works from <code>file://</code> and from Flask (after a restart, the sound resolves
+        through <code>/sounds/</code>).
+    </p>
+
+    <h2>One unlock, by rarity tier</h2>
+    <div class="grid" id="tiers"></div>
+
+    <h2>Bursts</h2>
+    <div class="row">
+        <button onclick="fireBurst(4)">4 unlocks (typical)</button>
+        <button onclick="fireBurst(12)">12 unlocks (first-enable backfill)</button>
+        <button onclick="fireAllTiers()">All five tiers, one after another</button>
+        <button onclick="confetti(200)">Raw confetti only</button>
+        <button onclick="CuttleCelebrate.shimmer()">Mythic shimmer only</button>
+        <button onclick="CuttleCelebrate.playSfx()">Sound only</button>
+    </div>
+
+    <div class="legend">
+        <b>How it behaves in the app</b>
+        <table>
+            <tr><th>Tier</th><th>Confetti</th><th>Sound</th><th>Toast</th></tr>
+            <tr><td class="common">Common</td><td>—</td><td>—</td><td>auto-dismiss (5s)</td></tr>
+            <tr><td class="rare">Rare</td><td>—</td><td>chime</td><td>auto-dismiss (5s)</td></tr>
+            <tr><td class="epic">Epic</td><td>60</td><td>chime</td><td>sticky (× to close)</td></tr>
+            <tr><td class="legendary">Legendary</td><td>120</td><td>chime</td><td>sticky + glow</td></tr>
+            <tr><td class="mythic">Mythic</td><td>200</td><td>chime</td><td>sticky + screen shimmer</td></tr>
+        </table>
+        <p class="warn" style="margin-bottom:0">
+            Confetti is skipped when animations are off — <code>prefers-reduced-motion</code>,
+            Settings → Appearance → Page Transitions off, or notifications disabled.
+            Test that by unchecking the animations toggle and firing Epic.
+        </p>
+    </div>
+</div>
+
+<!-- Must be set before achievements.js loads, otherwise its auto-start poller
+     fires a real GET /api/achievements/pending against Flask. -->
+<script>window.__CUTTLE_ACHIEVEMENTS_MANUAL = true;</script>
+<script src="js/toast.js"></script>
+<script src="js/chat_vfx.js?v=20261003vfx1"></script>
+<script src="js/celebrate.js"></script>
+<script src="js/achievements.js"></script>
+<script>
+    const SAMPLES = {
+        common:    { icon: '🐙', title: 'First Dive',      description: 'Send Cuttle its very first agent turn.',       progress: 'Progress 1 / 1' },
+        rare:      { icon: '🌊', title: 'A Million',       description: 'Push one million tokens through Cuttle.',        progress: 'Progress 1.0M / 1.0M' },
+        epic:      { icon: '🦈', title: 'Thousand Tides',  description: 'Run a thousand agent turns.',                    progress: '' },
+        legendary: { icon: '🐙', title: 'Kraken',          description: 'Burn 100,000,000 tokens in ONE message. Sub-agent turns do not count toward this.', progress: '' },
+        mythic:    { icon: '🦑', title: 'Devourer',        description: 'Burn a quarter of a billion tokens in a single message.', progress: '' }
+    };
+
+    const host = document.getElementById('tiers');
+    Object.keys(SAMPLES).forEach(function (rarity) {
+        const s = SAMPLES[rarity];
+        const b = document.createElement('button');
+        b.className = 'tier ' + rarity;
+        b.innerHTML = '<span class="ic">' + s.icon + '</span>'
+            + '<span class="nm">' + s.title + '</span>'
+            + '<span class="rr">' + rarity + '</span>';
+        b.onclick = function () { CuttleCelebrate.celebrate(Object.assign({ id: rarity, rarity: rarity }, s)); };
+        host.appendChild(b);
+    });
+
+    function fireBurst(n) {
+        const rarities = ['common', 'rare', 'epic', 'legendary', 'mythic'];
+        for (let i = 0; i < n; i += 1) {
+            const rarity = rarities[i % rarities.length];
+            const s = SAMPLES[rarity];
+            setTimeout(function () {
+                CuttleCelebrate.celebrate(Object.assign({ id: rarity + i, rarity: rarity }, s));
+            }, i * 500);
+        }
+    }
+
+    function fireAllTiers() {
+        Object.keys(SAMPLES).forEach(function (rarity, i) {
+            const s = SAMPLES[rarity];
+            setTimeout(function () {
+                CuttleCelebrate.celebrate(Object.assign({ id: rarity, rarity: rarity }, s));
+            }, i * 900);
+        });
+    }
+</script>
+</body>
+</html>

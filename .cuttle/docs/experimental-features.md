@@ -4,7 +4,7 @@ How-to for the shipped experimental flag surface and the Achievements feature.
 Design record + full teardown checklist:
 [experimental-features-plan.md](experimental-features-plan.md).
 
-Both are **opt-in and off by default**.
+Achievements is **opt-in and off by default**. The flag-management API is always available.
 
 ---
 
@@ -16,9 +16,7 @@ so anything listed there is a real flag on the server.
 **Kill switch** (process level, overrides stored settings for every flag): add
 `CUTTLE_EXPERIMENTAL=0` to `src/.env` and restart Flask.
 
-```bash
-.venv/bin/python -m src.scripts.cuttle_daemon.py   # or your normal start
-```
+Use the daemon-owned Flask restart action after changing the process environment.
 
 **Agent CLI**:
 
@@ -76,8 +74,7 @@ cd src && ../.venv/bin/python -m api.achievements reset
 | POST | `/api/achievements/<id>/ack` | authenticated |
 | POST | `/api/achievements/scan` \| `/reset` \| `/<id>/grant` | owner |
 
-Both surfaces answer `200 {success: false, disabled: true}` while the flag is
-off — clients silently skip rather than erroring.
+Achievements HTTP routes answer `200 {success: false, disabled: true}` while its flag is off. Flag-management routes remain available.
 
 ---
 
@@ -123,6 +120,15 @@ isolated entry.
 
 ---
 
+## Previewing the celebration
+
+`/achievements_preview.html` (owner-only) fires the real toast + confetti + sfx
+path with sample payloads for all five rarity tiers, plus burst buttons. No flag,
+no restart, no real unlocks. The file also opens directly from disk
+(`file://`) since its script paths are relative.
+
+---
+
 ## Where things live
 
 | Thing | Path |
@@ -136,3 +142,7 @@ isolated entry.
 | Client slices | `src/web/js/achievements.js`, `src/web/js/celebrate.js` |
 | Trophy grid | `settings_page.html` → `#panel-experimental` → `#achievementsGrid` |
 | Settings storage | `experimental_flags` key in `src/settings.json` |
+
+Flag CLI commands emit JSON and return a nonzero exit code on errors. Toggles made by a separate local agent process become visible to Flask without a restart. The kill switch still overrides stored toggles.
+
+Generic confetti and toast triggers belong to `api.chat_vfx`; see [chat-vfx.md](../../.cuttle_global/docs/chat-vfx.md). They do not grant achievements or change experimental flags. Removing achievements leaves the generic VFX owner intact.

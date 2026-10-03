@@ -661,6 +661,17 @@
 
     // State Management
     let currentSessionId = null;
+    if (window.CuttleChatVfx) {
+        const vfxController = window.CuttleChatVfx.create({
+            getSessionId: () => currentSessionId,
+            fetch: window.fetch.bind(window), now: Date.now,
+            setTimeout: window.setTimeout.bind(window), clearTimeout: window.clearTimeout.bind(window),
+            confetti: window.CuttleChatVfx.confetti,
+            toast: (message, variant) => (window.showToast || function () {})(message, variant),
+        });
+        window.addEventListener('pagehide', event => { if (!event.persisted) vfxController.dispose(); });
+    }
+
     /** Distance from the bottom that still counts as following the conversation. */
     const AUTOSCROLL_STICK_PX = 120;
     /** Sticky follow: measured on user scroll, not after we insert a tall bubble. */

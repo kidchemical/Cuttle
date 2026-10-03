@@ -139,7 +139,10 @@ def _stored_flags() -> Dict[str, Any]:
     try:
         from managers.settings_manager import get_settings_manager
 
-        raw = get_settings_manager().get_setting(SETTINGS_KEY, None)
+        sm = get_settings_manager()
+        if hasattr(sm, "reload"):
+            sm.reload()  # local agent CLI writes must become visible in Flask
+        raw = sm.get_setting(SETTINGS_KEY, None)
     except Exception:
         raw = None
     return raw if isinstance(raw, dict) else {}
@@ -188,7 +191,9 @@ def set_enabled(flag_id: Any, value: Any) -> Dict[str, Any]:
     spec = get_flag(flag_id)
     if spec is None:
         raise ValueError(f"unknown experimental flag: {flag_id}")
-    enabled = bool(value)
+    if not isinstance(value, bool):
+        raise ValueError("enabled must be a boolean")
+    enabled = value
 
     from managers.settings_manager import get_settings_manager
 
@@ -199,7 +204,8 @@ def set_enabled(flag_id: Any, value: Any) -> Dict[str, Any]:
         updated.pop(spec.id, None)  # keep settings.json free of redundant defaults
     else:
         updated[spec.id] = enabled
-    sm.set_setting(SETTINGS_KEY, updated)
+    if sm.set_setting(SETTINGS_KEY, updated) is False:
+        raise OSError("Could not persist experimental flags")
     return spec.to_dict(is_enabled(spec.id))
 
 
@@ -207,7 +213,11 @@ def reset_all() -> List[Dict[str, Any]]:
     """Drop every stored override so all flags return to spec defaults."""
     from managers.settings_manager import get_settings_manager
 
-    get_settings_manager().set_setting(SETTINGS_KEY, {})
+    sm = get_settings_manager()
+    if hasattr(sm, "reload"):
+        sm.reload()
+    if sm.set_setting(SETTINGS_KEY, {}) is False:
+        raise OSError("Could not persist experimental flags")
     return [spec.to_dict(is_enabled(spec.id)) for spec in FLAG_SPECS.values()]
 
 

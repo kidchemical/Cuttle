@@ -1,4 +1,4 @@
-"""``python -m api.experimental list|get|on|off|reset``.
+"""``python -m api.experimental list|get|set|reset``.
 
 Agent/human toolkit for the generic flag surface. One-shot JSON output; no
 wait loops (see ``.cuttle_global/docs/headless-turns.md``).
@@ -14,7 +14,7 @@ from typing import List, Optional
 
 def _emit(payload) -> int:
     print(json.dumps(payload, indent=2, default=str))
-    return 0
+    return 0 if payload.get("success", True) else 2
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -55,12 +55,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.cmd == "set":
         try:
             spec = flags.set_enabled(args.flag_id, args.value == "on")
-        except ValueError as e:
+        except (ValueError, OSError) as e:
             return _emit({"success": False, "error": str(e)})
-        return _emit({"success": True, "flag": spec})
+        return _emit({"success": True, "flag": spec, "kill_switch": flags.kill_switch_active()})
 
     if args.cmd == "reset":
-        return _emit({"success": True, "flags": flags.reset_all()})
+        try:
+            return _emit({"success": True, "flags": flags.reset_all(), "kill_switch": flags.kill_switch_active()})
+        except OSError as e:
+            return _emit({"success": False, "error": str(e)})
 
     parser.print_help()
     return 2

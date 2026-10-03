@@ -239,6 +239,8 @@ Removing achievements completely, leaving the experimental system intact:
 8. `rm src/web/sounds/achievement-unlock.wav electron/assets/achievement-unlock.wav
    .cuttle/scripts/make_achievement_chime.py`; drop the `achievement-unlock`
    entry from `NATIVE_SFX_FILES` (`electron/main.js`);
+8b. delete `src/web/achievements_preview.html` and its route block in
+   `src/api/web_chat_api.py`;
 9. optionally delete `src/data/db/achievements.db`.
 
 Adding a *second* experimental feature is cheaper: one `FlagSpec` row + the
@@ -253,6 +255,14 @@ package + the gated call sites. No new UI, no new settings route, no new tab.
 | `test_experimental_flags.py` (22) | unknown-id-off, precedence, kill-switch values, duplicate rejection, redundant-default pruning, HTTP auth matrix, validation, CLI |
 | `test_achievements.py` (39) | catalog integrity (≥40, unique ids, known metrics, hidden hints), evaluator math + sub-agent exclusion, monotonic progress, unlock idempotency, pending/ack, flag gating, HTTP contract |
 | `test_achievements_js.py` (7) | node harness for both slices' pure helpers, shell load order, settings-page poller suppression, wav/electron-asset sync, Electron SFX allowlist |
+
+### Dev preview
+
+`src/web/achievements_preview.html` (owner-only route `/achievements_preview.html`)
+fires `CuttleCelebrate.celebrate()` with sample payloads — every rarity tier plus
+burst buttons — so the celebration can be inspected without turning the flag on,
+without a Flask restart, and without polluting real unlock state. Relative script
+paths, so it also works straight off disk via `file://`.
 
 Existing suites updated: none needed — the settings tab satisfied
 `test_settings_page_tabs.py` for free, and `test_settings_routes.py` does not

@@ -312,6 +312,14 @@ decisions. Effects live in `chat_activate` helpers, the
 `chat_action_cards` controller, `chat_usage_live.start`, and the page —
 do not describe all frontend modules as pure.
 
+**Chat VFX:** `api.chat_vfx` owns validated transient confetti/toast events and
+session-scoped SQLite delivery (`python -m api.chat_vfx`); `chat_vfx.routes`
+owns authenticated HTTP transport. `chat_vfx.js` owns the renderer and a
+polling controller with injected session/transport/timer capabilities;
+`chat_page.js` composes its page lifetime. The achievement presenter delegates
+confetti to this renderer, while keeping durable unlock/ack delivery separate.
+VFX is independent of experimental flags. Runbook: `.cuttle_global/docs/chat-vfx.md`.
+
 **Spaces:** `src/web/js/spaces/` (`CuttleSpaces.*`: state, groups, order,
 activity, drop); the shell owns the singleton, DOM, frames, and
 persistence effects.

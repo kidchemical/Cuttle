@@ -344,6 +344,12 @@ try:
 except Exception as _achievements_err:
     print(f"[ACHIEVEMENTS] Failed to register routes: {_achievements_err}")
 
+try:
+    from api.chat_vfx.routes import chat_vfx_bp
+    app.register_blueprint(chat_vfx_bp)
+except Exception as _vfx_err:
+    print(f"[CHAT VFX] Failed to register routes: {_vfx_err}")
+
 # Projects (transport owned by api.project_routes; logic in managers.project_manager)
 try:
     from api.project_routes import projects_bp
@@ -1955,6 +1961,17 @@ def serve_pipeline_chat():
 def serve_settings_page():
     """Serve the settings page"""
     return send_from_directory(project_root / 'web', 'settings_page.html')
+
+@app.route('/achievements_preview.html')
+@owner_required
+def serve_achievements_preview():
+    """Achievement celebration preview (toast + confetti + sfx).
+
+    Fires CuttleCelebrate directly with sample payloads, so it needs neither the
+    achievements flag nor any API route. Owner-only: it is a dev/demo surface.
+    """
+    return send_from_directory(project_root / 'web', 'achievements_preview.html')
+
 
 @app.route('/tools_page.html')
 def serve_tools_page():
