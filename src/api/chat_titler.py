@@ -109,6 +109,61 @@ def compose_session_title(descriptive: str, messages) -> str:
     return prefixes or desc
 
 
+# Greeting-only openers carry no topic — the fallback must skip past them
+# to the last substantive user message instead of titling the chat "hello".
+_GREETING_ONLY_RE = re.compile(r"^[hi!?.'\-, ]*$", re.IGNORECASE)
+_GREETINGS = frozenset({
+    "hello", "hi", "hey", "yo", "sup", "hiya", "howdy",
+    "hello there", "hey there", "hi there",
+    "good morning", "good afternoon", "good evening",
+    "greetings", "aloha",
+})
+
+
+def _is_greeting_only(text: str) -> bool:
+    t = _strip_slash_lead((text or "").strip()).lower()
+    t = re.sub(r"\s+", " ", t).strip("!?.',- ")
+    if not t:
+        return True
+    if t in _GREETINGS:
+        return True
+    return bool(_GREETING_ONLY_RE.match(t)) and len(t) <= 24
+
+
+def fallback_from_messages(messages) -> str:
+    """Best-effort title without an LLM: last substantive user message.
+
+    Scans user messages newest-first, skipping greeting-only openers
+    ("/muse hello" must not title the chat "hello") and pasted terminal
+    output (long dumps truncate into gibberish). Falls back to the
+    first user message only when nothing substantive exists.
+    """
+    # Pasted shell output truncates into gibberish — prefer a short,
+    # human-typed message when one exists.
+    _PASTE_MAX_LEN = 400
+    first_user = next(
+        (m.get("content") or "" for m in (messages or [])
+         if (m.get("role") or "").lower() == "user"),
+        "",
+    )
+    users = [
+        m.get("content") or "" for m in (messages or [])
+        if (m.get("role") or "").lower() == "user"
+    ]
+    for allow_paste in (False, True):
+        for content in reversed(users):
+            if _is_greeting_only(content):
+                continue
+            if not allow_paste and len(content) > _PASTE_MAX_LEN:
+                continue
+            fb = fallback_title(_strip_slash_lead(content))
+            if fb:
+                return fb
+    if first_user:
+        return fallback_title(first_user)
+    return ""
+
+
 def fallback_title(text: str) -> str:
     """Single-line truncation of a message, used as the instant title.
 
@@ -169,7 +224,14 @@ def _build_prompt(
     current_title: str = "",
     avoid_titles=None,
 ) -> str:
-    """Compact transcript excerpt: first 2 + last 4 messages, truncated."""
+    """Compact transcript excerpt: first 2 + last 4 messages, truncated.
+
+    ``current_title`` is accepted for API compatibility but deliberately
+    NOT echoed into the prompt: echoing a stale/greeting title (e.g. the
+    instant-fallback "hello" from the first user message) anchors the LLM
+    and it just repeats it. De-dup against prior names is handled by
+    ``avoid_titles`` instead.
+    """
     if len(messages) <= 6:
         excerpt = [_clip_message(m) for m in messages]
     else:
@@ -179,8 +241,6 @@ def _build_prompt(
             + [_clip_message(m) for m in messages[-4:]]
         )
 
-    current = _strip_slash_lead((current_title or "").strip())
-    current_line = f"Current title: {current}\n" if current else ""
     avoid = []
     seen = set()
     for raw in avoid_titles or []:
@@ -207,8 +267,9 @@ def _build_prompt(
         "If no emoji fits, skip it. "
         "Never start with a slash command (no /cursor, /muse, etc.). "
         "Avoid vague titles like 'general' or 'chat' — use concrete words from the messages. "
+        "Weigh the most recent messages most heavily; ignore greetings "
+        "(hello, hi, hey) and restate the actual topic being discussed. "
         "Reply with ONLY the title — no quotes, no trailing period, no explanation.\n"
-        + current_line
         + avoid_line
         + "\n"
         + "\n".join(excerpt)
@@ -354,11 +415,7 @@ def suggest_session_title(
             if descriptive:
                 return _pack_title_result(descriptive, messages, "llm")
 
-            first_user = next(
-                (m for m in messages if (m.get("role") or "").lower() == "user"),
-                None,
-            )
-            fb = fallback_title(first_user.get("content")) if first_user else ""
+            fb = fallback_from_messages(messages)
             fb_desc = _strip_slash_lead(fb)
             if fb_desc and not _is_avoided_title(fb_desc, avoid):
                 return _pack_title_result(fb_desc, messages, "fallback")
@@ -423,12 +480,13 @@ def schedule_session_autoname(chat_session_id: int, inference_mode: str = "auto"
         # Instant fallback for sessions still carrying the default name.
         name = info.get("session_name") or ""
         if not name or re.match(r"^Chat Session \d+$", name):
-            first_user = next(
-                (m for m in db.get_messages(chat_session_id, limit=None)
-                 if m.get("role") == "user"), None)
-            fb = fallback_title(first_user.get("content")) if first_user else ""
+            all_messages = db.get_messages(chat_session_id, limit=None) or []
+            fb = fallback_from_messages(all_messages)
             if fb:
-                db.set_session_name(chat_session_id, fb, auto=True)
+                # Keep slash chips so the history UI can render the agent badge.
+                prefixes = collect_slash_prefixes(all_messages)
+                composed = f"{prefixes} {fb}".strip() if prefixes else fb
+                db.set_session_name(chat_session_id, composed, auto=True)
 
         if not _should_retitle(int(info.get("user_message_count") or 0)):
             return

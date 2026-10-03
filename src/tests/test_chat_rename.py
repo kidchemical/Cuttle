@@ -81,6 +81,63 @@ def test_suggest_session_title_avoids_previous(tmp_path: Path, monkeypatch):
     assert "💬 general" in seen[0]
 
 
+def test_build_prompt_omits_stale_current_title():
+    from api import chat_titler
+
+    messages = [
+        {"role": "user", "content": "/muse hello"},
+        {"role": "assistant", "content": "Hello!"},
+        {"role": "user", "content": "/muse why is double-checking slow? RCA it"},
+    ]
+    prompt = chat_titler._build_prompt(messages, current_title="hello")
+    assert "Current title" not in prompt
+    assert "double-checking slow" in prompt
+
+
+def test_fallback_skips_greeting_opener():
+    from api import chat_titler
+
+    messages = [
+        {"role": "user", "content": "/muse hello"},
+        {"role": "assistant", "content": "Hello!"},
+        {"role": "user", "content": "/muse Why is muse code slow to double check?"},
+    ]
+    assert "double check" in chat_titler.fallback_from_messages(messages).lower()
+    assert chat_titler.fallback_from_messages(messages[:1]) == "/muse hello"
+
+
+def test_fallback_skips_pasted_terminal_output():
+    from api import chat_titler
+
+    paste = "/muse " + "…/cuttle-pet  ❯ muse export --session 01a0fdf3 " + ("x" * 600)
+    messages = [
+        {"role": "user", "content": "/muse hello"},
+        {"role": "assistant", "content": "Hello!"},
+        {"role": "user", "content": "/muse Why is double-checking slow? RCA it"},
+        {"role": "user", "content": paste},
+    ]
+    assert "double-checking" in chat_titler.fallback_from_messages(messages).lower()
+    # Paste-only chats still get a (truncated) title rather than nothing.
+    assert chat_titler.fallback_from_messages(messages[:1] + messages[-1:])
+
+
+def test_suggest_falls_back_to_recent_topic(tmp_path: Path, monkeypatch):
+    from api import chat_titler
+    from api.auth_db import AuthDatabase
+
+    db = AuthDatabase(tmp_path / "cuttle_auth.db")
+    owner = db.create_user("owner@local", "Owner", "local", password="x")
+    sid = db.create_chat_session(owner, "Chat Session 1")
+    db.add_message(sid, "user", "/muse hello")
+    db.add_message(sid, "assistant", "Hello!")
+    db.add_message(sid, "user", "/muse Why is double-checking slow? RCA it")
+    monkeypatch.setattr("api.auth_db.get_auth_db", lambda: db)
+    monkeypatch.setattr(chat_titler, "_generate_title", lambda *_a, **_k: None)
+    out = chat_titler.suggest_session_title(sid, inference_mode="cloud")
+    assert out["source"] == "fallback"
+    assert "double-checking" in out["title"].lower()
+
+
 def test_patch_and_suggest_title_api(tmp_path: Path, monkeypatch):
     from api import web_chat_api as wca
     from api import chat_titler

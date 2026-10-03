@@ -15865,7 +15865,6 @@
     let renameSuggestGen = 0;
     let renameSuggestInFlight = false;
     let renameAvoidTitles = [];
-    let renameSlashPrefixes = '';
 
     function historyRenameModalEl() {
         return document.getElementById('historyRenameModal');
@@ -15897,29 +15896,6 @@
         // Title was only slash chips — leave the editable field empty.
         if (parsed.chips && parsed.chips.length) return '';
         return String(fullTitle || '').trim();
-    }
-
-    function setHistoryRenameChips(prefixesOrTitle, sessionId) {
-        const el = document.getElementById('historyRenameChips');
-        if (!el) return;
-        const raw = String(prefixesOrTitle || '').trim();
-        let chipsHtml = '';
-        try {
-            // chatTitleParts renders slash chips from a stored title; sticky session
-            // chips fill in when the string has none yet.
-            const seed = raw || 'Chat';
-            const parts = chatTitleParts(seed, sessionId);
-            chipsHtml = parts.chipsHtml || '';
-        } catch (_) {
-            chipsHtml = '';
-        }
-        if (chipsHtml) {
-            el.innerHTML = chipsHtml;
-            el.hidden = false;
-        } else {
-            el.innerHTML = '';
-            el.hidden = true;
-        }
     }
 
     function rememberRenameAvoid(title) {
@@ -16006,7 +15982,6 @@
         renameSuggestGen += 1;
         renameSuggestInFlight = false;
         renameAvoidTitles = [];
-        renameSlashPrefixes = '';
         const modal = historyRenameModalEl();
         if (modal) modal.hidden = true;
         const saveBtn = document.getElementById('historyRenameSave');
@@ -16021,11 +15996,6 @@
         if (input) input.value = '';
         const preview = document.getElementById('historyRenamePreview');
         if (preview) preview.textContent = '';
-        const chips = document.getElementById('historyRenameChips');
-        if (chips) {
-            chips.innerHTML = '';
-            chips.hidden = true;
-        }
     }
 
     function resolveRenameCurrentTitle(sessionId, kind) {
@@ -16060,7 +16030,6 @@
         const canSuggest = pendingRenameKind === 'chat' && isAuthMode() && toAuthDbSessionId(sessionId) != null;
         if (!canSuggest) {
             const current = descriptiveRenameTitle(resolveRenameCurrentTitle(sessionId, pendingRenameKind));
-            setHistoryRenameChips(resolveRenameCurrentTitle(sessionId, pendingRenameKind), sessionId);
             if (input) input.value = current;
             setHistoryRenameSuggesting(false);
             applyHistoryRenameEditMode(false);
@@ -16102,11 +16071,6 @@
                 String(data.title || '').trim()
                 || resolveRenameCurrentTitle(sessionId, pendingRenameKind)
             );
-            renameSlashPrefixes = String(data.slash_prefixes || '').trim();
-            setHistoryRenameChips(
-                renameSlashPrefixes || String(data.composed || data.current_title || ''),
-                sessionId
-            );
             if (input) input.value = title;
             rememberRenameAvoid(title);
             setHistoryRenameSuggesting(false);
@@ -16119,7 +16083,6 @@
         } catch (err) {
             if (gen !== renameSuggestGen) return null;
             const fallback = descriptiveRenameTitle(resolveRenameCurrentTitle(sessionId, pendingRenameKind));
-            setHistoryRenameChips(resolveRenameCurrentTitle(sessionId, pendingRenameKind), sessionId);
             if (input) input.value = fallback;
             setHistoryRenameSuggesting(false);
             applyHistoryRenameEditMode(true);
@@ -16143,7 +16106,6 @@
         closeHistoryDeleteModal();
         pendingRenameSessionId = sessionId;
         renameAvoidTitles = [];
-        renameSlashPrefixes = '';
         const isTerminal = !!(item && item.getAttribute('data-kind') === 'terminal')
             || isTerminalSessionId(sessionId);
         if (isTerminal) {
@@ -16166,7 +16128,6 @@
         const currentFull = resolveRenameCurrentTitle(sessionId, pendingRenameKind);
         const current = descriptiveRenameTitle(currentFull);
         rememberRenameAvoid(current);
-        setHistoryRenameChips(currentFull, sessionId);
         const input = document.getElementById('historyRenameInput');
         if (input) input.value = current;
 

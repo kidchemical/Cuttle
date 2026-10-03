@@ -1940,23 +1940,6 @@ body.light-mode .chat-session-title-text {
     text-align: center;
 }
 
-.history-rename-chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    justify-content: center;
-    margin: -4px 0 10px;
-}
-
-.history-rename-chips[hidden] {
-    display: none !important;
-}
-
-.history-rename-chips .slash-command-chip,
-.history-rename-chips .slash-chips-inline {
-    pointer-events: none;
-}
-
 .history-rename-header {
     display: flex;
     align-items: center;
