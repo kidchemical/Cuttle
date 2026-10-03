@@ -29,6 +29,12 @@ MAX_DEPTH = 3
 DEFAULT_TIMEOUT_SEC = 900.0
 DEFAULT_POLL_SEC = 0.35
 
+# A child row left non-terminal because the process running its turn died.
+ORPHAN_ERROR = (
+    "Sub-agent turn ended without a reply: the process running it exited "
+    "(cancelled, timed out, or killed) before it could report back."
+)
+
 ORIGIN_SUBAGENT = "subagent"
 
 
@@ -110,6 +116,8 @@ class ChildRecord:
     result: str = ""
     error: str = ""
     pid: Optional[int] = None
+    owner_pid: Optional[int] = None
+    query_id: str = ""
     profile_id: str = ""
     display_name: str = ""
     avatar: str = ""
@@ -131,6 +139,7 @@ class ChildRecord:
             "generating": self.status in (STATUS_PENDING, STATUS_RUNNING),
             "result": self.result,
             "error": self.error,
+            "query_id": self.query_id or None,
             "profile_id": self.profile_id,
             "display_name": self.display_name or self.label,
             "avatar": self.avatar,

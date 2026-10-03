@@ -84,6 +84,17 @@ out.doneRows = F.renderTimeline({ executing: false, events: [{ kind: 'status', t
 // Absolute timestamp shape (timezone-dependent values asserted in Python).
 out.abs = F.formatAbs(1785716220);
 out.absBad = F.formatAbs(null);
+// Click routing: a running turn's button paints before a query id exists, and
+// following its bare href replaced the whole chat panel with the standalone
+// log page (full-bleed purple body). It must stay inert instead.
+out.clickLivePending = F.resolveQueryLogClick({ href: '/query_log.html', pending: true });
+out.clickIndex = F.resolveQueryLogClick({ href: '/query_log.html', pending: false });
+out.clickHrefId = F.resolveQueryLogClick({ href: '/query_log.html?id=abc12345' });
+out.clickDataId = F.resolveQueryLogClick({
+  href: '/query_log.html', queryId: 'deadbeef', pending: false,
+});
+out.clickLegacyReport = F.resolveQueryLogClick({ href: '/query_report_98765432.html' });
+out.clickNoHref = F.resolveQueryLogClick({});
 process.stdout.write(JSON.stringify(out));
 """
 
@@ -171,3 +182,36 @@ def test_finish_live_and_absolute_shape():
     assert res["liveDone"] is False
     assert re.match(r"^\d{4}-\d{2}-\d{2} @ \d{1,2}:\d{2}(am|pm)( \S+)?$", res["abs"])
     assert res["absBad"] == ""
+
+
+@node_only
+def test_query_log_click_never_navigates_the_chat_panel():
+    """A running turn has no query id yet — the button must not navigate away."""
+    res = _run()
+    # Live/pending button: inert, no navigation, no overlay.
+    assert res["clickLivePending"]["action"] == "pending"
+    assert res["clickLivePending"]["queryId"] == ""
+    # A bare index link opens a new tab instead of replacing the transcript.
+    assert res["clickIndex"]["action"] == "new-tab"
+    assert res["clickIndex"]["href"] == "/query_log.html"
+    # Any real id — from data-query-id or the href — opens the overlay.
+    assert res["clickHrefId"] == {
+        "action": "inspect",
+        "queryId": "abc12345",
+        "href": "/query_log.html?id=abc12345",
+    }
+    assert res["clickDataId"]["action"] == "inspect"
+    assert res["clickDataId"]["queryId"] == "deadbeef"
+    assert res["clickLegacyReport"]["queryId"] == "98765432"
+    assert res["clickNoHref"]["action"] == "ignore"
+
+
+@node_only
+def test_running_turn_button_ships_pending_not_a_navigable_index():
+    """chat_page.js typing indicators must paint a pending, non-navigable button."""
+    page = (REPO_ROOT / "src" / "web" / "js" / "chat_page.js").read_text(
+        encoding="utf-8"
+    )
+    assert "getLiveQueryLogFooterHtml()" in page
+    # The old footers hardcoded the bare index page as a live link.
+    assert "getAssistantMessageFooterHtml('/query_log.html', false)" not in page

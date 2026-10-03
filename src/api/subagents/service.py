@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from typing import Any, Dict, List, Optional
 
@@ -23,6 +24,7 @@ from api.subagents.types import (
     STATUS_CLOSED,
     STATUS_DONE,
     STATUS_FAILED,
+    STATUS_PENDING,
     STATUS_RUNNING,
     TERMINAL_BATCH,
     TERMINAL_CHILD,
@@ -75,6 +77,22 @@ def _refresh(db, batch_id: str) -> BatchRecord:
 def _maybe_extras(db, batch: BatchRecord) -> None:
     extras.write_watch(batch)
     extras.patch_parent_tasks(db, batch)
+
+
+def _reconcile(db, batch: Optional[BatchRecord] = None) -> None:
+    """Flip children whose owning process died to terminal, then re-read.
+
+    A child turn lives inside the process that spawned it. When that host dies
+    the row is left saying ``running`` with no agent behind it, so the pane
+    spins forever and the batch never finalizes. Every observation point calls
+    this; ``batch`` short-circuits when nothing is outstanding.
+    """
+    if batch is not None and all(c.status in TERMINAL_CHILD for c in batch.children):
+        return
+    try:
+        store.reconcile_orphan_children(db)
+    except Exception:
+        pass
 
 
 def _finalize_if_complete(db, batch: BatchRecord) -> BatchRecord:
@@ -332,6 +350,8 @@ def wait_batch(
         _kick_pending(db, batch, runner=runner)
     while time.time() < deadline:
         batch = _refresh(db, batch_id)
+        _reconcile(db, batch)
+        batch = _refresh(db, batch_id)
         if advance and batch.collect == COLLECT_SERIAL:
             _kick_next_serial(db, batch, runner=runner)
         batch = _finalize_if_complete(db, batch)
@@ -421,7 +441,12 @@ def message_child(
         raise SubagentError(f"session {session_id} is not a sub-agent chat")
     if child.status == STATUS_CANCELLED:
         raise SubagentError("that sub-agent was cancelled")
-    store.update_child(db, child.id, status="pending", result="", error="")
+    # This process runs the turn below, so record it as the owner now: a host
+    # death between here and the turn start must not leave an ownerless
+    # pending row nobody can reconcile.
+    store.update_child(
+        db, child.id, status="pending", result="", error="", owner_pid=os.getpid()
+    )
     spec = ChildSpec(
         title=child.label,
         message=text,
@@ -506,9 +531,14 @@ def status_payload(batch_id: Optional[str] = None, parent_session_id: Optional[i
         batch = store.get_batch(db, batch_id)
         if not batch:
             return {"ok": False, "error": "not_found"}
+        _reconcile(db, batch)
+        batch = _refresh(db, batch_id)
+        _finalize_if_complete(db, batch)
         return {"ok": True, **batch.public()}
     if parent_session_id is None:
         return {"ok": False, "error": "batch or parent required"}
+    for batch in store.list_batches_for_parent(db, int(parent_session_id)):
+        _reconcile(db, batch)
     batches = [b.public() for b in store.list_batches_for_parent(db, int(parent_session_id))]
     return {
         "ok": True,
@@ -592,9 +622,23 @@ def child_live_status(session_id: Any, *, db=None) -> Optional[Dict[str, Any]]:
         return None
     if not child:
         return None
+    # Repair before reporting: a non-terminal row whose host died must not be
+    # reported as generating, or the pane spins forever with no agent behind it.
+    # Gated on an actual outstanding child so ordinary live-status polls for
+    # non-sub-agent chats stay a single indexed read.
+    if child.status in (STATUS_PENDING, STATUS_RUNNING) and child.owner_pid:
+        _reconcile(db)
+        child = store.get_child_by_session(db, int(sid)) or child
     generating = child.status in ("pending", STATUS_RUNNING)
+    report_url = (
+        f"/query_log.html?id={child.query_id}" if child.query_id else None
+    )
     return {
         "generating": generating,
         "status": f"{child.label or 'Subagent'} — {child.status}",
         "subagent": child.public(),
+        # Carried so the child pane's query-log button gets a real id while the
+        # sub-agent is still working, not only after its reply is persisted.
+        "query_id": child.query_id or None,
+        "report_url": report_url,
     }

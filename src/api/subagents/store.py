@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from typing import Any, Dict, List, Optional
 
 from api.subagents.types import (
+    ORPHAN_ERROR,
     BatchRecord,
     ChildRecord,
     ChildSpec,
     STATUS_PENDING,
     STATUS_RUNNING,
     STATUS_CANCELLED,
+    STATUS_FAILED,
     TERMINAL_BATCH,
     TERMINAL_CHILD,
 )
@@ -34,6 +37,8 @@ def _row_child(row: Any) -> ChildRecord:
         result=str(d.get("result") or ""),
         error=str(d.get("error") or ""),
         pid=d.get("pid"),
+        owner_pid=d.get("owner_pid"),
+        query_id=str(d.get("query_id") or ""),
         profile_id=str(d.get("profile_id") or ""),
         display_name=str(d.get("display_name") or d.get("label") or ""),
         avatar=str(d.get("avatar") or ""),
@@ -261,6 +266,8 @@ def update_child(
     result: Optional[str] = None,
     error: Optional[str] = None,
     pid: Optional[int] = None,
+    owner_pid: Optional[int] = None,
+    query_id: Optional[str] = None,
     started: bool = False,
     finished: bool = False,
 ) -> None:
@@ -278,6 +285,12 @@ def update_child(
     if pid is not None:
         sets.append("pid = ?")
         args.append(int(pid))
+    if owner_pid is not None:
+        sets.append("owner_pid = ?")
+        args.append(int(owner_pid))
+    if query_id is not None:
+        sets.append("query_id = ?")
+        args.append(str(query_id) or None)
     if started:
         sets.append("started_at = CURRENT_TIMESTAMP")
     if finished:
@@ -345,6 +358,56 @@ def update_batch(
     )
     conn.commit()
     conn.close()
+
+
+def _pid_alive(pid: Any) -> bool:
+    """True while *pid* still names a live process."""
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # alive, just not ours to signal
+    except OSError:
+        return False
+    return True
+
+
+def reconcile_orphan_children(db) -> List[str]:
+    """Fail non-terminal children whose owning process is gone.
+
+    A child turn runs inside the process that spawned it (the
+    ``python -m api.subagents`` CLI, itself a tool child of a parent agent). If
+    that host dies — SIGKILL runs no cleanup — the row keeps saying ``running``
+    forever: the child pane spins with no agent behind it and the batch never
+    finalizes. Flip those rows terminal so observers recover on the next poll.
+    Returns the reconciled child ids.
+    """
+    conn = db._get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, owner_pid FROM subagent_children "
+            "WHERE status IN (?, ?) AND owner_pid IS NOT NULL",
+            (STATUS_PENDING, STATUS_RUNNING),
+        )
+        rows = cur.fetchall()
+    finally:
+        conn.close()
+    orphans = [
+        str(r["id"]) for r in rows if not _pid_alive(r["owner_pid"])
+    ]
+    for cid in orphans:
+        update_child(
+            db, cid, status=STATUS_FAILED, error=ORPHAN_ERROR, finished=True
+        )
+    return orphans
 
 
 def latest_assistant_text(db, session_id: int) -> str:

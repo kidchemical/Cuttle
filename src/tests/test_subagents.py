@@ -683,3 +683,186 @@ def test_hub_rule_mentions_cli():
 
     names = [n for n, _ in load_global_rules()]
     assert any("03-subagents" in n for n in names)
+
+
+def test_child_query_log_id_reaches_the_live_overlay(tmp_path: Path):
+    """A running child pane needs the query id, not just a status string.
+
+    Sub-agent turns execute in the `api.subagents` CLI process, so Flask's
+    process-local live-status store never sees their `query_started` event. The
+    id has to travel through the child row for the pane's query-log button to
+    become inspectable mid-turn.
+    """
+    db, _db_path, _owner, parent = _seed(tmp_path)
+    spawned = service.spawn(
+        parent_session_id=parent,
+        children=[{"title": "Logged", "message": "go"}],
+        wait=True,
+        timeout=6,
+        runner=_runner_factory(),
+        db=db,
+    )
+    child = spawned["children"][0]
+    from api.subagents import store
+
+    store.update_child(db, child["id"], query_id="abc12345")
+    overlay = service.child_live_status(child["session_id"], db=db)
+    assert overlay["query_id"] == "abc12345"
+    assert overlay["report_url"] == "/query_log.html?id=abc12345"
+    # No id yet -> no bogus report_url (a bare one navigated the panel away).
+    store.update_child(db, child["id"], query_id="")
+    assert service.child_live_status(child["session_id"], db=db)["report_url"] is None
+
+
+def test_child_status_sink_persists_query_started(tmp_path: Path):
+    """The kernel only emits `query_started` when a status_queue is supplied.
+
+    `api.subagents` ran without one, so sub-agent panes had no query id for the
+    whole turn. The sink stands in for a queue and pins the id to the row.
+    """
+    from api.subagents import store
+    from api.subagents.turns import ChildStatusSink
+    from api.subagents.types import ChildSpec
+
+    db, _db_path, _owner, _parent = _seed(tmp_path)
+    batch = store.insert_batch(
+        db, parent_session_id=1, user_id=1, collect="all", lifetime="one_shot",
+    )
+    child = store.insert_child(
+        db, batch_id=batch.id, session_id=1, sort_index=0,
+        spec=ChildSpec(title="Sink", message="go"), prompt="go",
+    )
+    sink = ChildStatusSink(db, child.id)
+
+    sink.put(("query_started", {"query_id": "feed1234", "report_url": "/x"}))
+    assert sink.query_id == "feed1234"
+    assert store.get_child(db, child.id).query_id == "feed1234"
+
+    sink.put_nowait(("status", "Muse: reading files"))
+    assert sink.last_status == "Muse: reading files"
+
+    # Noise and malformed items must never break the turn.
+    sink.put(("query_started", {}))
+    sink.put("not-a-tuple")
+    sink.put(("query_started", None))
+    assert store.get_child(db, child.id).query_id == "feed1234"
+
+
+def test_orphan_running_child_is_reconciled(tmp_path: Path, monkeypatch):
+    """A child whose host process died must not report 'running' forever.
+
+    `run_child_turn` runs inside the process that spawned it; when that host is
+    SIGKILLed no cleanup runs, so the row kept saying `running` and the child
+    pane spun with no agent behind it.
+    """
+    import os
+
+    from api.subagents import store
+    from api.subagents.types import ORPHAN_ERROR, ChildSpec
+
+    db, _db_path, owner_id, parent = _seed(tmp_path)
+    batch = store.insert_batch(
+        db, parent_session_id=parent, user_id=owner_id,
+        collect="all", lifetime="one_shot",
+    )
+    child_sid = db.create_subagent_chat_session(
+        owner_id, parent_session_id=parent, session_name="Orphan",
+    )
+    child_id = store.insert_child(
+        db,
+        batch_id=batch.id,
+        session_id=child_sid,
+        sort_index=0,
+        spec=ChildSpec(title="Orphan", message="go"),
+        prompt="go",
+    ).id
+
+    # Liveness is stubbed: the repo's test guard blocks real cross-process
+    # os.kill probes, and the point here is the reconcile decision.
+    alive = {os.getpid()}
+    monkeypatch.setattr(
+        store, "_pid_alive", lambda pid: int(pid) in alive
+    )
+
+    # A live owner (this very process) is left alone.
+    store.update_child(db, child_id, status="running", owner_pid=os.getpid())
+    assert store.reconcile_orphan_children(db) == []
+    assert store.get_child(db, child_id).status == "running"
+
+    # A dead owner is flipped terminal by the next observation.
+    alive.clear()
+    store.update_child(db, child_id, owner_pid=999_999)
+    assert store.reconcile_orphan_children(db) == [child_id]
+    row = store.get_child(db, child_id)
+    assert row.status == "failed"
+    assert row.error == ORPHAN_ERROR
+
+    overlay = service.child_live_status(child_sid, db=db)
+    assert overlay["generating"] is False
+    assert "failed" in overlay["status"]
+
+    # The batch can now finalize instead of waiting out its whole timeout.
+    assert service.wait_batch(
+        batch.id, timeout=6, db=db, advance=False
+    )["timed_out"] is False
+
+
+def test_pid_alive_ignores_junk():
+    import os
+
+    from api.subagents.store import _pid_alive
+
+    assert _pid_alive(None) is False
+    assert _pid_alive(0) is False
+    assert _pid_alive(-1) is False
+    assert _pid_alive("not-a-pid") is False
+    assert _pid_alive(os.getpid()) is True
+
+
+def test_cancelled_child_is_never_reconciled_to_failed(tmp_path, monkeypatch):
+    from api.subagents import store
+    from api.subagents.types import ChildSpec
+
+    db, _db_path, owner_id, parent = _seed(tmp_path)
+    batch = store.insert_batch(
+        db, parent_session_id=parent, user_id=owner_id,
+        collect="all", lifetime="one_shot",
+    )
+    child_sid = db.create_subagent_chat_session(
+        owner_id, parent_session_id=parent, session_name="Cancelled",
+    )
+    child_id = store.insert_child(
+        db, batch_id=batch.id, session_id=child_sid, sort_index=0,
+        spec=ChildSpec(title="Cancelled", message="go"), prompt="go",
+    ).id
+    monkeypatch.setattr(store, "_pid_alive", lambda pid: False)
+    store.update_child(db, child_id, status="cancelled", finished=True)
+    store.update_child(db, child_id, owner_pid=999_999)
+    assert store.reconcile_orphan_children(db) == []
+    assert store.get_child(db, child_id).status == "cancelled"
+
+
+def test_run_child_turn_stamps_the_owning_process(tmp_path: Path):
+    import os
+
+    from api.subagents import store
+
+    db, _db_path, _owner, parent = _seed(tmp_path)
+    seen = {}
+
+    def runner(**kwargs):
+        seen["owner"] = store.get_child(db, kwargs["child"].id).owner_pid
+        seen["query_id"] = store.get_child(db, kwargs["child"].id).query_id
+        return {"success": True, "response": "ok", "query_id": "cafe1234"}
+
+    service.spawn(
+        parent_session_id=parent,
+        children=[{"title": "Owner", "message": "go"}],
+        wait=True,
+        timeout=6,
+        runner=runner,
+        db=db,
+    )
+    assert seen["owner"] == os.getpid()
+    assert seen["query_id"] == ""
+

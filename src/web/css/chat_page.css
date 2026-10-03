@@ -6505,6 +6505,13 @@ pre.has-code-copy:hover .code-copy-btn,
     background: linear-gradient(90deg, var(--accent-color), #8b9cf0);
 }
 
+.cuttle-meter-unblock {
+    font-size: 0.85em;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-secondary);
+    padding-top: 2px;
+}
+
 /* Harness /cost price table — active model row highlighted */
 .message-content table.cuttle-pricing td.cuttle-pricing-num {
     text-align: right;

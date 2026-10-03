@@ -31,6 +31,29 @@
      * `deps`: { parseSessionTimestamp, normalizeAttachmentList,
      * normalizeUsagePayload } — page-owned helpers.
      */
+    /**
+     * Compact relative countdown for usage-limit resets ("in 2h 13m",
+     * "in 42m 10s"). Pure string helper shared by the meters footer and
+     * the live ticker in chat_usage_live.js (via CuttleChatMessages).
+     */
+    function formatUnblockCountdown(ms) {
+        if (!Number.isFinite(ms) || ms <= 0) return 'now — refresh /usage';
+        const sec = Math.floor(ms / 1000);
+        const min = Math.floor(sec / 60);
+        const hr = Math.floor(min / 60);
+        const days = Math.floor(hr / 24);
+        if (days > 0) return 'in ' + days + 'd ' + (hr % 24) + 'h';
+        if (hr > 0) return 'in ' + hr + 'h ' + (min % 60) + 'm';
+        if (min > 0) return 'in ' + min + 'm ' + (sec % 60) + 's';
+        return 'in ' + sec + 's';
+    }
+    function unblockFooterText(atSeconds, label, absText) {
+        const remaining = Number(atSeconds) * 1000 - Date.now();
+        let text = '⏳ Unblocked ' + formatUnblockCountdown(remaining);
+        if (label && absText) text += ' · ' + label + ' resets ' + absText;
+        return text;
+    }
+
     function authMessageOptsFromServer(msg, deps) {
         const d = deps || {};
         const parseTs = typeof d.parseSessionTimestamp === 'function'
@@ -448,9 +471,14 @@
                 if (Math.abs(n - Math.round(n)) < 0.05) return String(Math.round(n)) + '%';
                 return n.toFixed(1).replace(/\.0$/, '') + '%';
             };
+            const metersResets = [];
             const rowHtml = rows.map((row) => {
                 if (!row || typeof row !== 'object') return '';
                 let labelText = String(row.label || '').trim() || '—';
+                if (row.tooltip_at != null) {
+                    const at = Number(row.tooltip_at);
+                    if (Number.isFinite(at)) metersResets.push({label: labelText, at});
+                }
                 let tooltip = typeof row.tooltip === 'string' ? row.tooltip.trim() : '';
                 // Persisted reports from before the tooltip field was introduced.
                 const legacyReset = labelText.match(/^(5-hour|Weekly) \((resets .+)\)$/i);
@@ -494,9 +522,21 @@
             const varClass = variant
                 ? ' cuttle-meters--' + d.escapeHtmlInline(variant.replace(/[^a-z0-9_-]/gi, ''))
                 : '';
+            let unblockHtml = '';
+            if (metersResets && metersResets.length) {
+                const next = metersResets.slice().sort((a, b) => a.at - b.at)[0];
+                const absDate = new Date(next.at * 1000);
+                const absText = Number.isFinite(absDate.getTime())
+                    ? absDate.toLocaleString(undefined, {timeZoneName: 'short'}) : '';
+                unblockHtml = '<div class="cuttle-meter-unblock" data-unblock-at="' + next.at
+                    + '" data-unblock-label="' + d.escapeHtmlInline(next.label) + '"'
+                    + (absText ? ' data-unblock-abs="' + d.escapeHtmlInline(absText) + '"' : '') + '>'
+                    + d.escapeHtmlInline(unblockFooterText(next.at, next.label, absText)) + '</div>';
+            }
             metersBlocks.push(
                 '<div class="cuttle-meters' + varClass + '" role="group">'
                 + rowHtml
+                + unblockHtml
                 + '</div>'
             );
             return placeholder;
@@ -883,6 +923,8 @@
         extractTailStructuredBlocks,
         extractCodeLinkBlocks,
         restoreStructuredBlocks,
+        formatUnblockCountdown,
+        unblockFooterText,
     };
 
     const ns = (root.CuttleChatMessages = root.CuttleChatMessages || {});

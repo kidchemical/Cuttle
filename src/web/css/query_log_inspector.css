@@ -375,3 +375,14 @@ body.query-log-standalone .query-log-sheet {
     color: var(--text-primary, #f8fafc);
     margin-left: 0;
 }
+
+/* A running turn's query-log button, painted before a query id exists. Dimmed
+   and non-navigable — applyQueryLogTarget() promotes it once the id lands. */
+.message-query-log-link.is-pending {
+    opacity: 0.4;
+    cursor: default;
+    pointer-events: auto;
+}
+.message-query-log-link.is-pending:hover {
+    opacity: 0.55;
+}

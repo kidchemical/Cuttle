@@ -560,6 +560,14 @@ def _public_live_generating(session_id, live=None):
             if not (live.get('status') or '').strip():
                 live['status'] = overlay.get('status') or 'Subagent working…'
             live_active = True
+            # A sub-agent turn runs in the CLI process, so its query log never
+            # touches this process's live-status store. Carry the id the child
+            # row captured at query_started, else the child pane's query-log
+            # button stays inert for the whole turn.
+            if not live.get('report_url') and overlay.get('report_url'):
+                live['report_url'] = overlay['report_url']
+            if not live.get('query_id') and overlay.get('query_id'):
+                live['query_id'] = overlay['query_id']
     except Exception:
         pass
     return generating, live_active, False, live or {}

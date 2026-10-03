@@ -476,6 +476,31 @@
         if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
     }
 
+    /**
+     * Pure decision for one `.message-query-log-link` click.
+     * attrs: { href, queryId, pending } → { action, queryId, href } where
+     * action is 'inspect' (open the overlay), 'pending' (stay put, inert), or
+     * 'new-tab' (index link, never navigate this panel in place).
+     *
+     * An id-less button must never navigate in place: typing indicators paint
+     * one before the harness mints a query id, and following its bare
+     * `/query_log.html` href swapped the whole transcript for the standalone
+     * log page (full-bleed purple body).
+     */
+    function resolveQueryLogClick(attrs) {
+        var a = attrs || {};
+        var href = a.href || '';
+        var qid = String(a.queryId || '').trim();
+        if (!qid) {
+            var m = /[?&]id=([A-Za-z0-9_-]+)/.exec(href)
+                || /query_report_([A-Za-z0-9_-]+)\.html/.exec(href);
+            qid = m ? m[1] : '';
+        }
+        if (qid) return { action: 'inspect', queryId: qid, href: href };
+        if (a.pending) return { action: 'pending', queryId: '', href: href };
+        return { action: href ? 'new-tab' : 'ignore', queryId: '', href: href };
+    }
+
     window.openQueryLogInspector = openInspector;
     window.closeQueryLogInspector = closeInspector;
     // Pure helpers for the node characterization suite (no DOM needed).
@@ -488,20 +513,25 @@
         hasFinishEvent: hasFinishEvent,
         isLive: isLive,
         renderTimeline: renderTimeline,
+        resolveQueryLogClick: resolveQueryLogClick,
     };
 
     document.addEventListener('click', function (e) {
         var a = e.target.closest && e.target.closest('.message-query-log-link');
         if (!a) return;
-        var href = a.getAttribute('href') || '';
-        var qid = a.getAttribute('data-query-id') || '';
-        if (!qid) {
-            var m = /[?&]id=([A-Za-z0-9_-]+)/.exec(href)
-                || /query_report_([A-Za-z0-9_-]+)\.html/.exec(href);
-            qid = m ? m[1] : '';
+        var decision = resolveQueryLogClick({
+            href: a.getAttribute('href') || '',
+            queryId: a.getAttribute('data-query-id') || '',
+            pending: !!a.getAttribute('data-query-pending'),
+        });
+        if (decision.action === 'inspect') {
+            e.preventDefault();
+            openInspector(decision.queryId);
+            return;
         }
-        if (!qid) return;
         e.preventDefault();
-        openInspector(qid);
+        if (decision.action === 'new-tab' && typeof window.open === 'function') {
+            window.open(decision.href, '_blank', 'noopener');
+        }
     }, true);
 })();

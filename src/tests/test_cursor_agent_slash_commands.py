@@ -440,7 +440,8 @@ def test_format_cursor_usage_markdown_included_plan():
     assert "<cuttle_meters>" in md
     compact = md.replace(" ", "")
     # Meters show remaining quota: 100 - CLI percent used.
-    assert '{"label":"Included","pct":97.0}' in compact
+    # Included carries the billing-cycle reset so chat can count down to unblock.
+    assert '{"label":"Included","pct":97.0,"tooltip":"Resets","tooltip_at":1790014290}' in compact
     assert '{"label":"Auto","pct":97.0}' in compact
     assert '{"label":"API","pct":100.0}' in compact
     assert "<vega>" not in md
@@ -480,7 +481,7 @@ def test_format_cursor_usage_prefers_cli_pct_over_dollar_display_message():
     )
     assert "<cuttle_meters>" in md
     # Remaining = 100 - CLI totalPercentUsed (2.61), not 100 - dollar 60%.
-    assert '{"label":"Included","pct":97.39}' in md.replace(" ", "")
+    assert '{"label":"Included","pct":97.39,"tooltip":"Resets","tooltip_at":1792606290}' in md.replace(" ", "")
     assert '"pct":40' not in md.replace(" ", "")
     assert "Included: 60%" not in md
     assert "<vega>" not in md

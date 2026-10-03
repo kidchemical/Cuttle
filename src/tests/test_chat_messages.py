@@ -393,6 +393,11 @@ out.tail = T(tailIn);
 out.meters = T('<cuttle_meters>{"rows": [{"label": "M<x", "pct": 33}]}</cuttle_meters>');
 out.metersBad = T('<cuttle_meters>not json</cuttle_meters>');
 out.metersDisabled = T('<cuttle_meters>{"rows": [{"label": "D", "pct": 90, "disabled": true, "status": "off"}]}</cuttle_meters>');
+out.metersReset = T('<cuttle_meters>{"rows": [{"label": "5-hour", "pct": 0, "tooltip": "Resets", "tooltip_at": 1893456000}, {"label": "Weekly", "pct": 50}]}</cuttle_meters>');
+out.metersNoReset = T('<cuttle_meters>{"rows": [{"label": "Credits", "pct": 0, "disabled": true, "status": "None"}]}</cuttle_meters>');
+out.unblockFmtHour = A.formatUnblockCountdown(3*3600*1000 + 13*60*1000);
+out.unblockFmtMin = A.formatUnblockCountdown(42*60*1000 + 10*1000);
+out.unblockFmtPast = A.formatUnblockCountdown(-1000);
 out.pricing = T('<cuttle_pricing>{"model": "m1"}</cuttle_pricing>');
 out.mediaAudio = T('<media type="audio" src="s.mp3" title="T\\"t"></media>');
 out.mediaImg = T('<media src="pic.png" title="P"></media>');
@@ -469,6 +474,15 @@ def test_structured_tail_blocks_attributes_and_fallbacks():
     assert res["meters"]["blocks"]["meters"][0].count("cuttle-meter-row") >= 1
     assert res["metersBad"]["blocks"]["meters"][0].count("cuttle-meter-row") == 0
     assert "cuttle-meter-row--disabled" in res["metersDisabled"]["blocks"]["meters"][0]
+    reset_html = res["metersReset"]["blocks"]["meters"][0]
+    assert "cuttle-meter-unblock" in reset_html
+    assert 'data-unblock-at="1893456000"' in reset_html
+    assert "Unblocked in" in reset_html
+    assert "5-hour" in reset_html
+    assert "cuttle-meter-unblock" not in res["metersNoReset"]["blocks"]["meters"][0]
+    assert res["unblockFmtHour"] == "in 3h 13m"
+    assert res["unblockFmtMin"] == "in 42m 10s"
+    assert "refresh /usage" in res["unblockFmtPast"]
     assert res["pricing"]["blocks"]["pricing"] == ['<price:{"model": "m>']
     assert "msg-audio" not in res["mediaAudio"]["blocks"]["media"][0]
     assert "<audio" in res["mediaAudio"]["blocks"]["media"][0]

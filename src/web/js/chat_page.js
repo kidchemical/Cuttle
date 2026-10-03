@@ -12847,12 +12847,7 @@
         }
         const link = indicator.querySelector('.message-query-log-link');
         if (link && reportUrl) {
-            link.href = reportUrl;
-            link.title = 'View query log (in progress)';
-            const qid = (typeof queryIdFromReportUrl === 'function')
-                ? queryIdFromReportUrl(reportUrl)
-                : '';
-            if (qid) link.setAttribute('data-query-id', qid);
+            applyQueryLogTarget(link, reportUrl);
         }
     }
 
@@ -12902,7 +12897,7 @@
                     </div>
                     <div class="typing-status" aria-live="polite" role="status">${escapeHtml(statusLabel)}</div>
                 </div>
-                ${getAssistantMessageFooterHtml('/query_log.html', false)}
+                ${getLiveQueryLogFooterHtml()}
             </div>
         `;
         messagesContainer.appendChild(typingDiv);
@@ -19472,6 +19467,36 @@
         return `<a class="message-query-log-link message-icon-btn" href="${href}"${qAttr} rel="noopener" title="${title}">${QUERY_LOG_ICON}</a>`;
     }
 
+    /**
+     * Footer for a *running* turn. The button paints immediately, before the
+     * harness mints a query id, so it ships `data-query-pending` and stays
+     * inert — clicking it must never navigate the chat panel away.
+     * `applyQueryLogTarget` promotes it to a real inspector link.
+     */
+    function getLiveQueryLogFooterHtml() {
+        return (
+            `<div class="message-footer">` +
+            `<div class="message-footer-icons">` +
+            `<a class="message-query-log-link message-icon-btn is-pending" href="/query_log.html" ` +
+            `data-query-pending="1" aria-disabled="true" ` +
+            `title="Query log appears once the agent starts working">${QUERY_LOG_ICON}</a>` +
+            `</div></div>`
+        );
+    }
+
+    /** Point a typing indicator's query-log button at a real log. */
+    function applyQueryLogTarget(link, reportUrl) {
+        if (!link || !reportUrl) return;
+        link.href = reportUrl;
+        link.title = 'View query log (in progress)';
+        link.removeAttribute('data-query-pending');
+        link.removeAttribute('aria-disabled');
+        link.classList.remove('is-pending');
+        const qid = queryIdFromReportUrl(reportUrl);
+        if (qid) link.setAttribute('data-query-id', qid);
+        else link.removeAttribute('data-query-id');
+    }
+
     function getCopyButtonHtml() {
         return `<button type="button" class="message-copy-btn message-icon-btn" title="Copy to clipboard" onclick="window.chatPageCopyMessage(this)">${COPY_ICON}</button>`;
     }
@@ -20660,7 +20685,7 @@
                     </div>
                     <div class="typing-status" id="typing-status" aria-live="polite" role="status">Connecting...</div>
                 </div>
-                ${getAssistantMessageFooterHtml('/query_log.html', false)}
+                ${getLiveQueryLogFooterHtml()}
             </div>
         `;
         
@@ -20939,10 +20964,7 @@
         const indicator = document.getElementById('typing-indicator');
         const link = indicator?.querySelector('.message-query-log-link');
         if (link && reportUrl) {
-            link.href = reportUrl;
-            link.title = 'View query log (in progress)';
-            const qid = queryIdFromReportUrl(reportUrl);
-            if (qid) link.setAttribute('data-query-id', qid);
+            applyQueryLogTarget(link, reportUrl);
         }
     }
     

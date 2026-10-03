@@ -278,6 +278,21 @@ def _ms_to_utc_date(value: Any) -> str:
         return ""
 
 
+def _ms_to_epoch_seconds(value: Any) -> Optional[int]:
+    try:
+        if isinstance(value, str) and value.strip().isdigit():
+            ms = int(value.strip())
+        elif isinstance(value, (int, float)):
+            ms = int(value)
+        else:
+            return None
+        if ms > 10_000_000_000:  # ms vs seconds
+            ms = int(ms / 1000.0)
+        return ms if ms > 0 else None
+    except Exception:
+        return None
+
+
 def _cents_to_usd(value: Any) -> Optional[float]:
     try:
         return float(value) / 100.0
@@ -474,10 +489,17 @@ def format_cursor_usage_markdown(data: Dict[str, Any]) -> str:
     # Show remaining quota: Included / Auto / API / On-demand.
     # Primary UI is the meter strip (not duplicate bullet % + analytics chart).
     meter_rows: List[Dict[str, Any]] = []
+    cycle_reset = _ms_to_epoch_seconds(
+        period.get("billingCycleEnd") or plan_info.get("billingCycleEnd")
+    )
     if included_pct is not None:
-        meter_rows.append(
-            {"label": "Included", "pct": round(100.0 - float(included_pct), 2)}
-        )
+        included_row: Dict[str, Any] = {
+            "label": "Included",
+            "pct": round(100.0 - float(included_pct), 2),
+        }
+        if cycle_reset:
+            included_row.update(tooltip="Resets", tooltip_at=cycle_reset)
+        meter_rows.append(included_row)
     if auto_pct is not None:
         meter_rows.append(
             {"label": "Auto", "pct": round(100.0 - float(auto_pct), 2)}

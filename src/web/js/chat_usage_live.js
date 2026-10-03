@@ -131,6 +131,42 @@
             },
         };
     }
+    // One shared 5s ticker rewrites every visible "Unblocked …" footer from
+    // its data-unblock-at epoch. Pure text updates — no fetch; fresh reset
+    // times still arrive via the existing 60s usage-live refresh.
+    let countdownTimer = null;
+    function tickCountdowns() {
+        try {
+            if (root.document.hidden) return;
+            const helpers = root.CuttleChatMessages || {};
+            const nodes = root.document.querySelectorAll('[data-unblock-at]');
+            nodes.forEach(node => {
+                if (!node.isConnected) return;
+                const at = Number(node.getAttribute('data-unblock-at'));
+                if (!Number.isFinite(at)) return;
+                const label = node.getAttribute('data-unblock-label') || '';
+                const abs = node.getAttribute('data-unblock-abs') || '';
+                const text = typeof helpers.unblockFooterText === 'function'
+                    ? helpers.unblockFooterText(at, label, abs)
+                    : 'Unblocked';
+                if (node.textContent !== text) node.textContent = text;
+            });
+        } catch (_) { /* ticker must never break chat */ }
+    }
+    function ensureCountdownTicker(host) {
+        if (countdownTimer !== null) return;
+        tickCountdowns();
+        countdownTimer = host.setInterval(() => {
+            try { tickCountdowns(); } catch (_) { /* keep ticking */ }
+        }, 5000);
+        // Never hold a script host open for a text ticker (node harnesses).
+        if (countdownTimer && typeof countdownTimer.unref === 'function') {
+            try { countdownTimer.unref(); } catch (_) { /* browser handles */ }
+        }
+        root.addEventListener('pagehide', () => {
+            if (countdownTimer !== null) { host.clearInterval(countdownTimer); countdownTimer = null; }
+        });
+    }
     function start(format) {
         let host = root;
         try { if (root.top.location.origin === root.location.origin) host = root.top; } catch (_) { /* standalone */ }
@@ -212,7 +248,8 @@
             }
         });
         broker.add(source);
+        ensureCountdownTicker(host);
     }
-    root.CuttleUsageLive = {render, start, createBroker};
+    root.CuttleUsageLive = {render, start, createBroker, tickCountdowns};
     if (typeof module !== 'undefined' && module.exports) module.exports = root.CuttleUsageLive;
 })(globalThis);

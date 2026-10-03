@@ -245,6 +245,8 @@ class AuthDatabase:
                 result TEXT,
                 error TEXT,
                 pid INTEGER,
+                owner_pid INTEGER,
+                query_id TEXT,
                 started_at TIMESTAMP,
                 finished_at TIMESTAMP,
                 FOREIGN KEY (batch_id) REFERENCES subagent_batches(id) ON DELETE CASCADE,
@@ -267,6 +269,14 @@ class AuthDatabase:
             'ALTER TABLE subagent_children ADD COLUMN profile_id TEXT',
             'ALTER TABLE subagent_children ADD COLUMN display_name TEXT',
             'ALTER TABLE subagent_children ADD COLUMN avatar TEXT',
+            # owner_pid: process running the child turn, so an orphaned 'running'
+            # row (host killed mid-turn) can be reconciled instead of spinning
+            # forever. NOT the `pid` column: that one is SIGTERMed on cancel and
+            # must never name a Cuttle host process.
+            'ALTER TABLE subagent_children ADD COLUMN owner_pid INTEGER',
+            # query_id: the harness query log for this turn, captured at
+            # query_started so a child pane can inspect a live sub-agent run.
+            'ALTER TABLE subagent_children ADD COLUMN query_id TEXT',
         ):
             try:
                 cursor.execute(col_sql)

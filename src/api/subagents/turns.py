@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import threading
 from dataclasses import replace
 from typing import Any, Callable, Dict, Optional
@@ -20,6 +21,63 @@ from api.subagents.types import (
 TurnRunner = Callable[..., Dict[str, Any]]
 
 
+class ChildStatusSink:
+    """``status_queue`` stand-in for a child turn running outside Flask.
+
+    ``api.subagents`` executes child turns in the CLI process, so the
+    process-local live-status store in Flask never sees them — the only channel
+    that crosses the process boundary is SQLite. This sink captures the
+    harness's ``query_started`` event and pins the query id onto the child row,
+    which is what lets a child pane open the live query log mid-turn. Without a
+    status_queue the kernel skips that emit entirely (kernel.py gates it on
+    ``if status_queue``), which is why sub-agent panes had no log to open.
+    """
+
+    def __init__(self, db, child_id: str):
+        self._db = db
+        self._child_id = child_id
+        self._inner = None
+        self._lock = threading.Lock()
+        self.query_id = ""
+        self.last_status = ""
+
+    def put(self, item: Any, *args: Any, **kwargs: Any) -> Any:
+        self._ingest(item)
+        if self._inner is None:
+            return None
+        return self._inner.put(item, *args, **kwargs)
+
+    def put_nowait(self, item: Any) -> Any:
+        self._ingest(item)
+        if self._inner is None:
+            return None
+        put_nowait = getattr(self._inner, "put_nowait", None)
+        if callable(put_nowait):
+            return put_nowait(item)
+        return self._inner.put(item)
+
+    def _ingest(self, item: Any) -> None:
+        try:
+            if not (isinstance(item, tuple) and len(item) >= 2):
+                return
+            kind, payload = item[0], item[1]
+            if kind == "query_started":
+                qid = str((payload or {}).get("query_id") or "").strip()
+                if not qid:
+                    return
+                with self._lock:
+                    self.query_id = qid
+                store.update_child(self._db, self._child_id, query_id=qid)
+            elif kind == "status":
+                with self._lock:
+                    self.last_status = str(payload or "")
+        except Exception:
+            pass
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
 def default_runner(
     *,
     agent: str,
@@ -28,6 +86,7 @@ def default_runner(
     project_path: str = "",
     model_override: str = "",
     execute_kwargs: Optional[Dict[str, Any]] = None,
+    status_queue: Any = None,
 ) -> Dict[str, Any]:
     from api.agent_harness.kernel import run_agent_web_command
 
@@ -36,6 +95,8 @@ def default_runner(
         kw["model_override"] = model_override
     if execute_kwargs:
         kw["execute_kwargs"] = execute_kwargs
+    if status_queue is not None:
+        kw["status_queue"] = status_queue
     return run_agent_web_command(
         agent,
         prompt,
@@ -191,6 +252,13 @@ def run_child_turn(
     if _cancelled(db, child.id):
         return {"success": False, "cancelled": True, "response": ""}
     store.update_child(db, child.id, status=STATUS_RUNNING, started=True)
+    # owner_pid names the process responsible for this turn. If that process
+    # dies (SIGKILL runs no cleanup) reconcile_orphan_children flips the row
+    # terminal instead of leaving the child pane spinning forever.
+    store.update_child(db, child.id, owner_pid=os.getpid())
+    # Sink (not a real queue): captures the harness query_started emit so a
+    # child pane can open the live query log while the sub-agent works.
+    sink = ChildStatusSink(db, child.id)
 
     try:
         from api import chat_delivery
@@ -223,6 +291,7 @@ def run_child_turn(
             project_path=kw.get("project_path") or project_path,
             model_override=kw.get("model_override") or model_id,
             execute_kwargs=kw.get("execute_kwargs") or exec_kw,
+            status_queue=sink,
         )
     )
     try:
@@ -255,6 +324,12 @@ def run_child_turn(
 
     if not isinstance(result, dict):
         result = {"success": True, "response": str(result)}
+
+    # The kernel reports query_id on the returned body; fall back to the sink
+    # for turns whose reply text came from somewhere other than that result.
+    if sink.query_id and not result.get("query_id"):
+        result["query_id"] = sink.query_id
+        result["report_url"] = f"/query_log.html?id={sink.query_id}"
 
     text = str(result.get("response") or result.get("output") or "").strip()
     already = store.latest_assistant_text(db, child.session_id)
