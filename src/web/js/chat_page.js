@@ -1037,12 +1037,17 @@
         return !!document.hidden;
     }
 
+    // Activity bubbles have no persisted message index or assistant reply.
+    // Keep them visible without including them in record/navigation decisions.
+    const CHAT_RECORD_SELECTOR =
+        '.message:not(#typing-indicator):not(#typing-indicator-remote):not([data-stopped="true"])';
+
     /** Last real chat bubble in the open transcript (ignores typing placeholders). */
     function lastVisibleChatMessageEl() {
         const box = document.getElementById('chatMessages');
         if (!box) return null;
         const nodes = box.querySelectorAll(
-            '.message:not(#typing-indicator):not(#typing-indicator-remote)'
+            CHAT_RECORD_SELECTOR
         );
         return nodes.length ? nodes[nodes.length - 1] : null;
     }
@@ -1072,7 +1077,7 @@
         const box = document.getElementById('chatMessages');
         if (!box) return null;
         const nodes = Array.from(box.querySelectorAll(
-            '.message:not(#typing-indicator):not(#typing-indicator-remote)'
+            CHAT_RECORD_SELECTOR
         ));
         let seenUser = false;
         let asst = null;
@@ -1277,7 +1282,7 @@
         // older turn's notice must not hide a newer run started elsewhere.
         const box = document.getElementById('chatMessages');
         if (!box) return false;
-        const rows = box.querySelectorAll('.message');
+        const rows = box.querySelectorAll(CHAT_RECORD_SELECTOR);
         for (let i = rows.length - 1; i >= 0; i--) {
             const el = rows[i];
             if (el.id === 'typing-indicator' || el.id === 'typing-indicator-remote') continue;
@@ -1504,7 +1509,7 @@
     function recentMessagesForEnhance(limit = 4) {
         const box = document.getElementById('chatMessages');
         if (!box) return [];
-        const nodes = Array.from(box.querySelectorAll('.message:not(.system)')).slice(-limit);
+        const nodes = Array.from(box.querySelectorAll(CHAT_RECORD_SELECTOR + ':not(.system)')).slice(-limit);
         const out = [];
         for (const el of nodes) {
             const content = el.querySelector('.message-content');
@@ -10296,7 +10301,7 @@
 
     function reconcileCuttleButtonLocks(messages) {
         if (!Array.isArray(messages) || !messages.length) return;
-        const nodes = document.querySelectorAll('#chatMessages .message');
+        const nodes = document.querySelectorAll('#chatMessages ' + CHAT_RECORD_SELECTOR);
         for (let i = 0; i < messages.length; i++) {
             const msg = messages[i];
             const click = parseButtonClickFromMessage(msg);
@@ -12761,7 +12766,7 @@
         const node = box.querySelector(`.message[data-message-id="${mid}"]`);
         if (!node) return;
         const messages = Array.from(box.querySelectorAll('.message')).filter(
-            (el) => el.id !== 'typing-indicator' && el.id !== 'typing-indicator-remote'
+            (el) => el.id !== 'typing-indicator' && el.id !== 'typing-indicator-remote' && el.dataset.stopped !== 'true'
         );
         let insertBefore = null;
         for (const el of messages) {
@@ -12803,7 +12808,7 @@
         const want = normalizeMessageContentForMatch(content);
         const nodes = Array.from(
             document.querySelectorAll(`#chatMessages .message.${role}:not([data-message-id])`)
-        ).filter((el) => el.id !== 'typing-indicator' && el.id !== 'typing-indicator-remote');
+        ).filter((el) => el.id !== 'typing-indicator' && el.id !== 'typing-indicator-remote' && el.dataset.stopped !== 'true');
         for (const el of nodes) {
             const raw = normalizeMessageContentForMatch(
                 el.dataset.rawContent != null ? el.dataset.rawContent : ''
@@ -12823,7 +12828,7 @@
     function claimLastUnmarkedAssistantEl() {
         const nodes = Array.from(
             document.querySelectorAll('#chatMessages .message.assistant:not([data-message-id])')
-        ).filter((el) => el.id !== 'typing-indicator' && el.id !== 'typing-indicator-remote');
+        ).filter((el) => el.id !== 'typing-indicator' && el.id !== 'typing-indicator-remote' && el.dataset.stopped !== 'true');
         if (nodes.length !== 1) return null;
         const el = nodes[0];
         // Only the current turn's optimistic assistant (last real bubble).
@@ -13873,7 +13878,7 @@
 
     function uiAlreadyHasMessage(role, content) {
         const want = normalizeMessageContentForMatch(content);
-        const nodes = document.querySelectorAll(`#chatMessages .message.${role}`);
+        const nodes = document.querySelectorAll(`#chatMessages ${CHAT_RECORD_SELECTOR}.${role}`);
         for (const el of nodes) {
             if (el.id === 'typing-indicator' || el.id === 'typing-indicator-remote') continue;
             const raw = normalizeMessageContentForMatch(
@@ -17118,8 +17123,9 @@
         inFlightUserMessage = null;
         clearTimeout(followupDrainTimer);
         followupDrainTimer = null;
-        // Instant transcript line — don't wait for /api/chat-cancel (killing
-        // Cursor Agent can take seconds). Confirmation updates this same line.
+        // Keep the stopped activity and durable notice immediately; cancellation
+        // can take seconds, and its acknowledgment must not replace the notice.
+        retainStoppedAgentBubble();
         if (announce) ensureGenerationStopNotice('⏹ Stopped generating.');
         try {
             if (activeRequestController) activeRequestController.abort();
@@ -17153,9 +17159,6 @@
             cancelJobs,
             jobIds: cancelJobs ? watchIds : [],
         }).then((info) => {
-            if (info && (info.cancelled || Number(info.killed_procs) > 0 || Number(info.killed_jobs) > 0)) {
-                ensureGenerationStopNotice('⏹ Generation cancelled.');
-            }
             syncComposerStopWithWatch();
         });
         // Do not auto-drain the follow-up queue after an explicit Stop — that
@@ -19209,7 +19212,7 @@
     function lastAssistantMessageEl() {
         const box = document.getElementById('chatMessages');
         if (!box) return null;
-        const list = box.querySelectorAll('.message.assistant:not(#typing-indicator)');
+        const list = box.querySelectorAll(CHAT_RECORD_SELECTOR + '.assistant');
         return list.length ? list[list.length - 1] : null;
     }
 
@@ -20036,12 +20039,12 @@
 
     function getMessageRefForButton(btn) {
         const messageEl = btn && btn.closest ? btn.closest('.message') : null;
-        if (!messageEl) return null;
+        if (!messageEl || messageEl.dataset.stopped === 'true') return null;
         let idx = parseInt(messageEl.dataset.messageIndex || '', 10);
         if (!Number.isFinite(idx) || idx < 1) {
             const box = document.getElementById('chatMessages');
             const list = box
-                ? Array.from(box.querySelectorAll('.message:not(.system)'))
+                ? Array.from(box.querySelectorAll(CHAT_RECORD_SELECTOR + ':not(.system)'))
                 : [];
             idx = list.indexOf(messageEl) + 1;
             if (idx > 0) messageEl.dataset.messageIndex = String(idx);
@@ -20248,7 +20251,7 @@
         const messagesContainer = document.getElementById('chatMessages');
         if (!nav || !messagesContainer) return;
 
-        const messages = Array.from(messagesContainer.querySelectorAll('.message:not(.system)'));
+        const messages = Array.from(messagesContainer.querySelectorAll(CHAT_RECORD_SELECTOR + ':not(.system)'));
         if (messages.length === 0) {
             nav.innerHTML = '';
             nav.style.display = 'none';
@@ -20361,7 +20364,7 @@
         const checkActive = () => {
             syncChatPinnedFromScroll();
             syncMessageNavPinnedFromScroll();
-            const messages = Array.from(messagesContainer.querySelectorAll('.message:not(.system)'));
+            const messages = Array.from(messagesContainer.querySelectorAll(CHAT_RECORD_SELECTOR + ':not(.system)'));
             const navItems = document.querySelectorAll('.message-nav-item');
             if (navItems.length) {
                 const rect = messagesContainer.getBoundingClientRect();
@@ -20968,6 +20971,39 @@
         }
     }
     
+    /** Finalize the live placeholder before Stop tears down its transports. */
+    function retainStoppedAgentBubble() {
+        clearConnectingWatchdog();
+        clearStreamStatusPoll();
+        document.querySelectorAll('#typing-indicator, #typing-indicator-remote').forEach((bubble) => {
+            // Release live ids so later cleanup cannot remove the stopped activity.
+            bubble.removeAttribute('id');
+            bubble.dataset.stopped = 'true';
+            bubble.removeAttribute('data-message-index');
+            bubble.removeAttribute('data-pin-key');
+            bubble.classList.remove('is-pinned-message');
+            bubble.dataset.rawContent = 'Agent stopped.';
+            bubble.querySelector('.typing-indicator')?.remove();
+            const status = bubble.querySelector('.typing-status');
+            if (status) {
+                status.removeAttribute('id');
+                status.textContent = 'Agent stopped.';
+            }
+            bubble.querySelectorAll('.slash-command-chip--header').forEach((chip) => {
+                chip.classList.add('slash-command-chip--error');
+                chip.setAttribute('aria-label', 'Stopped command: ' + (chip.dataset.fullLabel || chip.textContent));
+            });
+            const link = bubble.querySelector('.message-query-log-link');
+            if (link) {
+                // Stop can beat query-id creation: retain a usable index link.
+                link.removeAttribute('data-query-pending');
+                link.removeAttribute('aria-disabled');
+                link.classList.remove('is-pending');
+                link.title = link.dataset.queryId ? 'View query log' : 'View query log index';
+            }
+        });
+    }
+
     function removeTypingIndicator() {
         clearConnectingWatchdog();
         clearStreamStatusPoll();

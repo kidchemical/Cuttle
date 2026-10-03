@@ -223,14 +223,17 @@ def test_stop_resend_refresh_no_stale_duplicate(browser, static_server,
                     "first POST arrival")
         frame.locator("#stopButton").wait_for(state="visible")
         frame.locator("#stopButton").click()
-        # Settled contract: stopGenerating shows the interim notice, then
-        # the immediate cancelled:true confirmation rewrites the SAME
-        # system line to '⏹ Generation cancelled.'. Waiting on the interim
-        # text races the overwrite; wait on the settled text instead.
-        frame.get_by_text("⏹ Generation cancelled.").wait_for(
-            state="visible")
-        assert frame.get_by_text("⏹ Generation cancelled.").count() == 1
-        assert frame.get_by_text("⏹ Stopped generating.").count() == 0
+        # Stop keeps one activity bubble and the same durable notice even
+        # after the server acknowledges cancellation.
+        frame.get_by_text("⏹ Stopped generating.").wait_for(state="visible")
+        assert frame.get_by_text("⏹ Stopped generating.").count() == 1
+        assert frame.get_by_text("⏹ Generation cancelled.").count() == 0
+        stopped = frame.locator('#chatMessages [data-stopped="true"]')
+        assert stopped.count() == 1
+        assert stopped.locator('.slash-command-chip--header').count() > 0
+        assert stopped.locator('.slash-command-chip--header:not(.slash-command-chip--error)').count() == 0
+        assert stopped.locator('.message-query-log-link').get_attribute('aria-disabled') is None
+        assert stopped.get_attribute('data-message-index') is None
         assert frame.locator("#stopButton").is_visible() is False
         cancels = world.cancels()
         assert len(cancels) == 1
@@ -264,7 +267,8 @@ def test_stop_resend_refresh_no_stale_duplicate(browser, static_server,
         assert frame.get_by_text(STALE_REPLY).count() == 0
         assert frame.get_by_text(SECOND_REPLY).count() == 1
         assert frame.locator(
-            "#chatMessages .message.assistant").count() == 1
+            "#chatMessages .message.assistant:not([data-stopped='true'])").count() == 1
+        assert stopped.count() == 1
 
         # Refresh/history: exactly the persisted rows, no stale duplicate.
         page.reload(wait_until="domcontentloaded")
@@ -273,6 +277,7 @@ def test_stop_resend_refresh_no_stale_duplicate(browser, static_server,
         page.wait_for_timeout(1000)
         assert frame.get_by_text(STALE_REPLY).count() == 0
         assert frame.get_by_text(SECOND_REPLY).count() == 1
+        assert stopped.count() == 0
         users = frame.locator("#chatMessages .message.user").count()
         assert users == 3
         page.screenshot(path=str(tmp_path / "stop-resend.png"))

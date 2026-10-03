@@ -424,19 +424,16 @@ def test_shadow_stop_resend_no_stale(shadow, browser, viewport):
                     "page posted into our session")
         page.locator("#stopButton").wait_for(state="visible")
         page.locator("#stopButton").click()
-        # Confirmation the cancel landed; the text is transient (a later
-        # history repaint restores the durable ledger wording below).
-        page.get_by_text("⏹ Generation cancelled.").wait_for(
-            state="visible")
+        # Stop retains local activity, while only the system notice is durable.
+        page.get_by_text("⏹ Stopped generating.").wait_for(state="visible")
         assert page.locator("#stopButton").is_visible() is False
+        stopped = page.locator('#chatMessages [data-stopped="true"]')
+        assert stopped.count() == 1
+        assert stopped.locator('.slash-command-chip--header').count() > 0
+        assert stopped.locator('.slash-command-chip--header:not(.slash-command-chip--error)').count() == 0
+        assert stopped.get_attribute('data-message-index') is None
 
-        # Real persistence barrier: the user-facing Stop durably posts
-        # ONLY a system row (production post_session_message rejects
-        # non-system roles). The durable ledger wording is the interim
-        # '⏹ Stopped generating.' (preexisting owner behavior — the
-        # settled confirmation updates the same DOM line but the early
-        # persist guard suppresses a second POST). Wait for that exact
-        # row over the private history GET before the resend click.
+        # Wait for the exact production system row before sending again.
         def _stop_persisted():
             try:
                 return _history_rows(origin, token, sid) == [

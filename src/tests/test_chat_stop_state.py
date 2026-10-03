@@ -186,6 +186,7 @@ const mkSSE = (throwing) => ({ closed: 0,
   close() { if (throwing) throw new Error('close boom'); this.closed++; } });
 const mkEl = () => ({ disabled: false, style: {}, value: '' });
 globalThis.document = { getElementById: () => mkEl() };
+function retainStoppedAgentBubble() { fx.push(['bubble', 'stopped']); }
 function ensureGenerationStopNotice(t) { fx.push(['notice', t]); }
 function removeTypingIndicator() { fx.push(['typing', 'off']); }
 function removeRemoteWaitingIndicator() { fx.push(['remote', 'off']); }
@@ -285,6 +286,7 @@ def test_stop_adapter_idle_and_live_effects():
     idle = res["idle"]
     assert idle["flags"] == [True, True, True]
     assert ["notice", "⏹ Stopped generating."] in idle["fx"]
+    assert idle["fx"].index(["bubble", "stopped"]) < idle["fx"].index(["notice", "⏹ Stopped generating."])
     assert ["cancel", False, []] in idle["fx"]
     live = res["live"]
     assert live["flags"] == [True, True, True]
@@ -326,3 +328,51 @@ def test_chat_stop_state_script_tag_versioned_and_ordered():
     assert html.index("chat_turn_guard.js") < html.index("chat_stop_state.js") < html.index(
         "chat_page.js?v="
     ), "load order: owned modules before the page orchestrator"
+
+
+@node_only
+def test_stopped_bubble_retains_query_target_and_failed_badge():
+    import os
+    harness = ADAPTER_HARNESS[:ADAPTER_HARNESS.index('// ---- live page-scope state')]
+    harness += r"""
+const make = (pending) => {
+  const removed = [];
+  const classes = new Set(pending ? ['is-pending'] : []);
+  const link = { href: pending ? '/query_log.html' : '/query_log.html?id=turn123',
+    dataset: pending ? {} : {queryId: 'turn123'},
+    removeAttribute: (k) => removed.push(k), classList: {remove: (k) => classes.delete(k)} };
+  const chip = {dataset: {fullLabel: 'Codex'}, classList: {add: (k) => classes.add(k)}, setAttribute() {} };
+  const status = {textContent: 'Thinking', removeAttribute: (k) => removed.push(k)};
+  const bubble = {dataset: {}, classList: {remove: (k) => classes.delete(k)}, removeAttribute: (k) => removed.push(k),
+    querySelector: (q) => q === '.typing-status' ? status : q === '.message-query-log-link' ? link : {remove() {removed.push('animation');}},
+    querySelectorAll: () => [chip]};
+  return {bubble, link, classes, removed, status};
+};
+const ready = make(false), pending = make(true);
+globalThis.document = {querySelectorAll: () => [ready.bubble, pending.bubble]};
+function clearConnectingWatchdog() {}
+function clearStreamStatusPoll() {}
+eval(fnBody('retainStoppedAgentBubble'));
+retainStoppedAgentBubble();
+process.stdout.write(JSON.stringify([ready, pending].map(x => ({
+  stopped: x.bubble.dataset.stopped, href: x.link.href, title: x.link.title,
+  status: x.status.textContent, classes: [...x.classes], removed: x.removed
+}))));
+})().catch(e => {console.error(e); process.exit(2);});
+"""
+    proc = subprocess.run(['node', '-e', harness], capture_output=True, text=True,
+                          env={**os.environ, 'CHAT_PAGE_JS': str(CHAT_PAGE_JS)}, timeout=30)
+    assert proc.returncode == 0, proc.stderr
+    ready, pending = json.loads(proc.stdout)
+    assert ready['href'] == '/query_log.html?id=turn123'
+    assert pending['href'] == '/query_log.html'
+    for result in (ready, pending):
+        assert result['stopped'] == 'true'
+        assert result['status'] == 'Agent stopped.'
+        assert 'slash-command-chip--error' in result['classes']
+        assert 'is-pending' not in result['classes']
+        assert 'animation' in result['removed']
+        assert 'id' in result['removed']
+        assert 'data-message-index' in result['removed']
+        assert 'data-pin-key' in result['removed']
+        assert 'aria-disabled' in result['removed']

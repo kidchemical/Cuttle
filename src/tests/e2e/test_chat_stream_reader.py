@@ -28,6 +28,8 @@ from __future__ import annotations
 import json
 import time
 
+import pytest
+
 from .test_shared_diff_modal import (  # noqa: F401
     IsolatedAPI,
     apply_request_guard,
@@ -307,10 +309,11 @@ def _rescue_marks(world):
 
 
 def _assistant_count(frame):
-    # The live typing indicator carries .message.assistant: exclude it so
-    # only painted reply bubbles count.
+    # Live and stopped activity carries .message.assistant; only persisted
+    # or optimistic reply bubbles count as answers.
     return frame.locator(
-        "#chatMessages .message.assistant:not(#typing-indicator)").count()
+        "#chatMessages .message.assistant:not(#typing-indicator)"
+        ":not(#typing-indicator-remote):not([data-stopped='true'])").count()
 
 
 def _assistant_texts(frame):
@@ -549,7 +552,7 @@ def test_stop_aborts_stream_read(browser, static_server):
         frame.locator("#stopButton").wait_for(state="visible", timeout=15000)
         _push_text(frame, _session_frame())
         frame.locator("#stopButton").click()
-        frame.get_by_text("⏹ Generation cancelled.").wait_for(
+        frame.get_by_text("⏹ Stopped generating.").wait_for(
             state="visible", timeout=15000)
         assert _js(frame, "() => window.__streamState().aborted") >= 1, \
             "stop never reached the stream transport"
@@ -658,7 +661,7 @@ def test_standalone_stop_after_timeout_cannot_revive(
         assert _js(frame, "() => window.__streamState().readCalls") == 2
         frame.locator("#stopButton").wait_for(state="visible", timeout=15000)
         frame.locator("#stopButton").click()
-        frame.get_by_text("⏹ Generation cancelled.").wait_for(
+        frame.get_by_text("⏹ Stopped generating.").wait_for(
             state="visible", timeout=15000)
         assert _js(frame, "() => window.__streamState().aborted") >= 1
         assert len(world.cancel_posts) == 1
@@ -676,6 +679,58 @@ def test_standalone_stop_after_timeout_cannot_revive(
         assert _assistant_count(frame) == 0
         assert _js(frame, "() => window.__streamState().readCalls") == 2, \
             "cancelled turn must not issue another native read"
+        assert errors == []
+    finally:
+        page.close()
+
+
+# The retained Stop activity is visible, but is not a persisted assistant row.
+# Exercise the production page, native AbortSignal, and public stream events.
+@pytest.mark.parametrize('query_ready', [False, True])
+def test_stopped_activity_preserves_query_without_consuming_message_ref(
+        browser, static_server, query_ready):
+    world = StreamWorld()
+    page, frame, errors = _open_stream(browser, static_server, world)
+    try:
+        _send(frame, '/cursor stop me')
+        frame.locator('#stopButton').wait_for(state='visible')
+        _push_text(frame, _session_frame())
+        if query_ready:
+            _push_text(frame, _frame({'type': 'query_started',
+                                     'query_id': 'stop-test',
+                                     'report_url': '/query_log.html?id=stop-test'}))
+            frame.locator('#typing-indicator [data-query-id="stop-test"]').wait_for()
+        frame.locator('#stopButton').click()
+        frame.get_by_text('⏹ Stopped generating.').wait_for(state='visible')
+        stopped = frame.locator('#chatMessages [data-stopped="true"]')
+        assert stopped.count() == 1
+        assert stopped.locator('.slash-command-chip--header').count() > 0
+        assert stopped.locator('.slash-command-chip--header:not(.slash-command-chip--error)').count() == 0
+        assert stopped.locator('.typing-indicator').count() == 0
+        assert stopped.get_attribute('data-message-index') is None
+        link = stopped.locator('.message-query-log-link')
+        assert link.get_attribute('href') == (
+            '/query_log.html?id=stop-test' if query_ready else '/query_log.html')
+        assert link.get_attribute('aria-disabled') is None
+        assert link.get_attribute('data-query-pending') is None
+        assert _assistant_count(frame) == 0
+
+        # A real answer can have exactly the same text as the retained status.
+        # It must paint separately and keep its canonical CH-000042-4 index:
+        # seed user, stopped user, resend user, assistant (system not counted).
+        _send(frame, '/cursor answer normally')
+        frame.locator('#typing-indicator').wait_for(state='visible')
+        _push_text(frame, _session_frame() + _response_frame('Agent stopped.')
+                   + _frame({'type': 'done'}))
+        reply = frame.locator('#chatMessages .message.assistant:not([data-stopped="true"])')
+        reply.wait_for(state='visible')
+        assert _assistant_count(frame) == 1
+        assert reply.locator('.message-content').inner_text().strip() == 'Agent stopped.'
+        assert reply.get_attribute('data-message-index') == '4'
+        assert 'CH-000042-4' in reply.locator('.message-share-ref-btn').get_attribute('aria-label')
+        assert stopped.get_attribute('data-message-index') is None
+        assert stopped.count() == 1
+        assert len(world.cancel_posts) == 1
         assert errors == []
     finally:
         page.close()
