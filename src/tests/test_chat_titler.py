@@ -61,16 +61,18 @@ def test_should_retitle_progressive_thresholds():
     assert not _should_retitle(16)
 
 
-def test_build_prompt_asks_for_emoji_and_includes_current_title():
-    prompt = _build_prompt(
-        [
-            {"role": "user", "content": "/cursor auto name chat sessions"},
-            {"role": "assistant", "content": "I'll wire OpenAI titling."},
-        ],
-        current_title="Chat Session 4",
-    )
+def test_build_prompt_asks_for_emoji_and_omits_current_title():
+    messages = [
+        {"role": "user", "content": "/cursor auto name chat sessions"},
+        {"role": "assistant", "content": "I'll wire OpenAI titling."},
+    ]
+    prompt = _build_prompt(messages, current_title="Chat Session 4")
     assert "emoji" in prompt.lower()
-    assert "Current title: Chat Session 4" in prompt
+    # current_title is API-compatible only: never echoed (avoids
+    # placeholder/greeting anchoring); dedup lives in avoid_titles.
+    assert "Current title" not in prompt
+    assert "Chat Session 4" not in prompt
+    assert _build_prompt(messages, current_title="💬 general") == prompt
     assert "user: auto name chat sessions" in prompt
     assert "user: /cursor" not in prompt
     assert "Never start with a slash" in prompt
