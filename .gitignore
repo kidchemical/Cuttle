@@ -137,6 +137,9 @@ electron/out/
 # Generated YouTube/promo renders (rebuild via src/scripts/utilities/promo_video.py)
 docs/media/promo/
 
+# Marketing scratch (launch copy, storyboards; not product docs)
+docs/marketing/
+
 # Opt-in third-party harness (clone locally; not redistributed)
 /vendor/claw-code/
 

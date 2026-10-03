@@ -89,7 +89,7 @@ The codebase is set up so an agent can do that well:
 Ubuntu / Linux:
 
 ```bash
-git clone <repo-url> cuttle && cd cuttle
+git clone https://github.com/kidchemical/Cuttle.git cuttle && cd cuttle
 python3 -m venv .venv
 .venv/bin/pip install -r src/requirements/requirements.txt
 cp src/.env.example src/.env
@@ -100,7 +100,7 @@ cp src/.env.example src/.env
 Windows:
 
 ```powershell
-git clone <repo-url> cuttle; cd cuttle
+git clone https://github.com/kidchemical/Cuttle.git cuttle; cd cuttle
 python -m venv .venv
 .\.venv\Scripts\pip.exe install -r src\requirements\requirements.txt
 copy src\.env.example src\.env
