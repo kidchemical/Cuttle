@@ -2,7 +2,8 @@
 
 Executes the real generation-lifecycle module (busy-lock transitions
 with token-scoped release, sync cadence, detached-poll classification,
-session-open flags) over scripted snapshots. Values marked ORACLE were
+session-open flags, sync claim lifetime with token-scoped finish)
+over scripted snapshots. Values marked ORACLE were
 captured by executing the pre-extraction page functions
 (begin/endLocalGeneration, detach, messageSyncDelayMs,
 isLoadingThisSession, scheduler mechanics) with equivalent fakes before
@@ -137,6 +138,44 @@ const out = {};
   out.openSame = G.decideSessionOpen({ switchingAway: false });
   out.openSwitch = G.decideSessionOpen({ switchingAway: true });
 }
+// ---------- sync claim lifetime (D2b; clock passed explicitly) ----------
+{
+  const st = G.createSyncState();
+  const c1 = G.claimSync(st, 1000);
+  out.syncClaim = [c1, st.inFlight, st.startedAt,
+    G.isSyncCurrent(st, c1.token)];
+}
+{
+  const st = G.createSyncState();
+  const c1 = G.claimSync(st, 1000);
+  const c2 = G.claimSync(st, 1500); // fresh overlap coalesces
+  out.syncFresh = [c2, st.seq, st.inFlight, st.startedAt,
+    G.isSyncCurrent(st, c1.token)];
+}
+{
+  const st = G.createSyncState();
+  G.claimSync(st, 1000);
+  const edge = G.claimSync(st, 21000); // exactly inflightMax: coalesce
+  const past = G.claimSync(st, 21001); // replacement takes ownership
+  out.syncBoundary = [edge, past && past.token, st.inFlight, st.startedAt];
+}
+{
+  const st = G.createSyncState();
+  const c1 = G.claimSync(st, 1000);
+  const c2 = G.claimSync(st, 21001);
+  const stale = G.finishSync(st, c1.token); // must not clear c2's claim
+  out.syncStale = [stale, st.inFlight, st.startedAt,
+    G.isSyncCurrent(st, c2.token), G.isSyncCurrent(st, c1.token)];
+  const ok = G.finishSync(st, c2.token);
+  const again = G.finishSync(st, c2.token); // repeated finish safe
+  out.syncFinish = [ok, again, st.inFlight, st.startedAt];
+}
+{
+  // Zero startedAt with an outstanding claim preserves the old guard.
+  const st = G.createSyncState();
+  G.claimSync(st, 0);
+  out.syncZeroStart = G.claimSync(st, 50000);
+}
 process.stdout.write(JSON.stringify(out));
 })().catch((e) => { console.error('HARNESS-ERROR', e); process.exit(2); });
 """
@@ -187,6 +226,43 @@ def test_stale_token_never_releases_newer_turn():
     assert d == {"keepRunningId": "sA"}
     assert loading2 is False and local2 is None
     assert stale2 == {"released": False, "sessionId": None}
+
+
+@node_only
+def test_sync_claim_release_and_fresh_overlap():
+    res = _run()
+    # D2b move: ordinary claim takes ownership with explicit now.
+    assert res["syncClaim"][0] == {"token": 1}
+    assert res["syncClaim"][1:] == [True, 1000, True]
+    # D2b move: fresh overlap coalesces, first token stays current.
+    assert res["syncFresh"][0] is None
+    assert res["syncFresh"][1:] == [1, True, 1000, True]
+
+
+@node_only
+def test_sync_timeout_replacement_boundary():
+    res = _run()
+    # D2b move: exactly inflightMax still coalesces (strict > preserved).
+    assert res["syncBoundary"][0] is None
+    # D2b move: past the boundary the replacement owns the claim.
+    assert res["syncBoundary"][1] == 2
+    assert res["syncBoundary"][2:] == [True, 21001]
+    # D2b move: zero startedAt with a live flag still coalesces.
+    assert res["syncZeroStart"] is None
+
+
+@node_only
+def test_sync_stale_finish_and_repeat_safe():
+    res = _run()
+    # D2b move: stale finish cannot clear the newer claim.
+    stale, flying, started, cur2, cur1 = res["syncStale"]
+    assert stale == {"released": False}
+    assert flying is True and started == 21001
+    assert cur2 is True and cur1 is False
+    # D2b move: owning finish releases; repeating it is safe.
+    ok, again, flying2, started2 = res["syncFinish"]
+    assert ok == {"released": True} and again == {"released": True}
+    assert flying2 is False and started2 == 0
 
 
 @node_only

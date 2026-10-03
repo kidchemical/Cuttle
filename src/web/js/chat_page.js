@@ -748,8 +748,11 @@
      */
     let chatHistoryClientBuffer = [];
     let messageSyncTimer = null;
-    let messageSyncInFlight = false;
-    let messageSyncStartedAt = 0;
+    // Message-sync claim lifetime, owned by CuttleChatGeneration (D2b):
+    // one page-held state; claim, current-token test, and token-scoped
+    // finish all go through the owner. Navigation fencing still uses the
+    // existing _loadSessionSeq captured per sync below.
+    const messageSync = CuttleChatGeneration.createSyncState();
     // Stop/cancel lifecycle flags { userStopped, abortSuppressed,
     // waitingSuppressed }, owned by chat_stop_state.js. One instance;
     // transitions via CuttleStopState, never direct writes. After Stop,
@@ -13891,16 +13894,6 @@
 
     async function syncSessionMessagesFromServer() {
         if (!isAuthMode() || currentSessionId == null) return;
-        // A hung messages/live-status fetch used to leave this true forever,
-        // which silently stopped all recovery sync until Electron refresh.
-        if (messageSyncInFlight) {
-            if (messageSyncStartedAt
-                && (Date.now() - messageSyncStartedAt) > CuttleChatGeneration.SYNC_MS.inflightMax) {
-                messageSyncInFlight = false;
-            } else {
-                return;
-            }
-        }
         // Background / minimized: skip churn; visibilitychange triggers a sync on return.
         if (pageIsBackgrounded()) return;
         const chatArea = document.getElementById('chatArea');
@@ -13910,10 +13903,27 @@
         // when only runningSessionIds / remote-wait is stale — that trapped
         // follow-ups on the phone while the PC could send.
         const recoveringLocal = !!isLoadingThisSession();
+        // Claim lifetime is owner-held (CuttleChatGeneration): claim only
+        // when this sync will actually dispatch, so skipped ticks never
+        // advance the request token. A fresh claim coalesces; a stale one
+        // is replaced here (a hung fetch used to block recovery sync
+        // until refresh).
+        const syncClaim = CuttleChatGeneration.claimSync(messageSync, Date.now());
+        if (!syncClaim) return;
 
-        messageSyncInFlight = true;
-        messageSyncStartedAt = Date.now();
+        const syncSeq = syncClaim.token;
         const sessionAtStart = String(currentSessionId);
+        // Capture the existing navigation sequence for A->B->A fencing
+        // (no second generation).
+        const navAtStart = _loadSessionSeq;
+        // True only while this request is still the current one: it owns
+        // the claim, no navigation happened since, and the session still
+        // matches. Required before ANY body-derived effect, including the
+        // malformed active-status branch below.
+        const syncStillCurrent = () =>
+            CuttleChatGeneration.isSyncCurrent(messageSync, syncSeq)
+            && _loadSessionSeq === navAtStart
+            && String(currentSessionId) === sessionAtStart;
         try {
             const authSid = toAuthDbSessionId(currentSessionId);
             let msgResp;
@@ -13942,12 +13952,12 @@
             }
             const data = await msgResp.json();
             if (!data.success || !Array.isArray(data.messages)) {
-                if (liveStatus && liveStatus.active && !generation.loading) {
+                if (syncStillCurrent() && liveStatus && liveStatus.active && !generation.loading) {
                     updateRemoteWaitingFromMessages([], liveStatus);
                 }
                 return;
             }
-            if (String(currentSessionId) !== sessionAtStart) return;
+            if (!syncStillCurrent()) return;
             applyServerFollowups(data.followups);
             // Keep badges truthful on incremental syncs too (same seeding as open).
             seedMuseSupplementFromSessionData(data, currentSessionId);
@@ -14120,8 +14130,11 @@
         } catch (e) {
             console.warn('[Cuttle Chat] message sync failed:', e);
         } finally {
-            messageSyncInFlight = false;
-            messageSyncStartedAt = 0;
+            // Token-scoped cleanup via the owner: a stale finisher whose
+            // claim was replaced (timeout) must not clear the newer
+            // owner's in-flight state. finishSync is a no-op on token
+            // mismatch, so this stays safe to call unconditionally.
+            CuttleChatGeneration.finishSync(messageSync, syncSeq);
         }
     }
 
@@ -17323,9 +17336,6 @@
                 const contentType = response.headers.get('content-type') || '';
 
                 if (contentType.includes('text/event-stream') && response.ok) {
-                    const reader = response.body.getReader();
-                    const decoder = new TextDecoder();
-                    let buffer = '';
                     let finalResult = null;
                     // Hold the SSE socket briefly so short replies stream live.
                     // Detach early — long holds pin Chromium's ~6-conn pool and
@@ -17334,89 +17344,20 @@
                     // reader.read() can hang forever on a half-open HTTPS body —
                     // never reach the detach check. Cap each read so we can exit.
                     const STREAM_READ_TIMEOUT_MS = 8000;
-                    const streamStartedAt = Date.now();
                     let sawProgress = false;
                     try { window.CuttleNetDebug && window.CuttleNetDebug.event('stream-hold', 'POST /api/chat'); } catch (_) {}
 
-                    // At most one pending read: a timeout tick only
-                    // rejects its own race. The handle is retained until
-                    // readStreamChunk actually returns the result, so a
-                    // read that settles between timeout and catch still
-                    // delivers its bytes instead of being discarded.
-                    let pendingRead = null;
-                    async function readStreamChunk() {
-                        if (!pendingRead) {
-                            pendingRead = reader.read();
-                        }
-                        let timer = null;
-                        let result;
-                        try {
-                            result = await Promise.race([
-                                pendingRead,
-                                new Promise((_, reject) => {
-                                    timer = setTimeout(
-                                        () => reject(Object.assign(new Error('stream-read-timeout'), { name: 'StreamReadTimeout' })),
-                                        STREAM_READ_TIMEOUT_MS
-                                    );
-                                }),
-                            ]);
-                        } catch (err) {
-                            if (err && err.name === 'StreamReadTimeout') {
-                                throw err;
-                            }
-                            pendingRead = null;
-                            throw err;
-                        } finally {
-                            if (timer) clearTimeout(timer);
-                        }
-                        pendingRead = null;
-                        return result;
-                    }
-
-                    while (true) {
-                        if ((Date.now() - streamStartedAt) >= STREAM_HOLD_MAX_MS) {
-                            try { await reader.cancel(); } catch (_) {}
-                            try {
-                                window.CuttleNetDebug && window.CuttleNetDebug.event(
-                                    'stream-detach',
-                                    (sawProgress ? 'hold after ' : 'silent hold after ')
-                                    + Math.round((Date.now() - streamStartedAt) / 1000) + 's'
-                                );
-                            } catch (_) {}
-                            break;
-                        }
-                        let readResult;
-                        try {
-                            readResult = await readStreamChunk();
-                        } catch (readErr) {
-                            if (readErr && readErr.name === 'StreamReadTimeout') {
-                                // No bytes for a while — if past hold window, detach;
-                                // otherwise keep waiting (status poll covers UI).
-                                if ((Date.now() - streamStartedAt) >= STREAM_HOLD_MAX_MS) {
-                                    try { await reader.cancel(); } catch (_) {}
-                                    try {
-                                        window.CuttleNetDebug && window.CuttleNetDebug.event(
-                                            'stream-detach',
-                                            'read-timeout after '
-                                            + Math.round((Date.now() - streamStartedAt) / 1000) + 's'
-                                        );
-                                    } catch (_) {}
-                                    break;
-                                }
-                                continue;
-                            }
-                            throw readErr;
-                        }
-                        const { done, value } = readResult;
-                        if (done) break;
-                        buffer += decoder.decode(value, { stream: true });
-                        const lines = buffer.split('\n\n');
-                        buffer = lines.pop() || '';
-
-                        for (const chunk of lines) {
-                            if (chunk.startsWith('data: ')) {
+                    // Bytes/framing live in chat_stream.js; the page keeps
+                    // request, classification, session, paint, and turn
+                    // effects. onEvents applies the whole batch, then
+                    // reports stop — last final frame wins, as before.
+                    const streamOutcome = await CuttleChatStream.readEvents(response.body, {
+                        holdMs: STREAM_HOLD_MAX_MS,
+                        readTimeoutMs: STREAM_READ_TIMEOUT_MS,
+                        signal: requestSignal,
+                        onEvents: (events) => {
+                            for (const ev of events) {
                                 try {
-                                    const ev = JSON.parse(chunk.slice(6));
                                     // Owned by chat_pending_result.js — event
                                     // classification; the page applies paint,
                                     // session-adopt, and finalResult effects.
@@ -17460,8 +17401,19 @@
                                     }
                                 } catch (e) { /* skip */ }
                             }
-                        }
-                        if (finalResult) break;
+                            return finalResult != null;
+                        },
+                    });
+                    if (streamOutcome.status === 'detached') {
+                        try {
+                            window.CuttleNetDebug && window.CuttleNetDebug.event(
+                                'stream-detach',
+                                (streamOutcome.reason === 'read-timeout'
+                                    ? 'read-timeout after '
+                                    : (sawProgress ? 'hold after ' : 'silent hold after '))
+                                + Math.round(streamOutcome.elapsedMs / 1000) + 's'
+                            );
+                        } catch (_) {}
                     }
                     if (finalResult) {
                         try { window.CuttleNetDebug && window.CuttleNetDebug.event('stream-done', 'got response event'); } catch (_) {}

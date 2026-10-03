@@ -2,8 +2,11 @@
    Cuttle Chat — busy-generation lifecycle (chat_generation.js).
    Owner: the local generation busy-lock as ONE explicit state object
    { loading, localSessionId, seq } plus its transitions, the message-sync
-   poll cadence decision, the detached-completion poll classification, and
-   the session-open generation-flag decision.
+   poll cadence decision, the detached-completion poll classification, the
+   session-open generation-flag decision, and the message-sync claim
+   lifetime as one page-held state { inFlight, startedAt, seq } with a
+   token claim/finish interface (D2b: preserves the page's claim
+   contract — same 20 s replacement and fresh-coalescing boundary).
    - Token-scoped release: every begin bumps the token (re-begin while
      loading reuses it — begin is idempotent, as the composer +
      processMessage double-begin requires); end releases ONLY on a token
@@ -113,6 +116,61 @@
     }
 
     /**
+     * Message-sync claim lifetime (D2b: preserves the page's claim
+     * contract for the inFlight/startedAt/seq fields). One page-held
+     * state { inFlight, startedAt, seq }; the single monotonic seq is
+     * both the token and the claim owner (no parallel owner field).
+     * Pure: now is passed explicitly, no Date, no timers, no DOM/fetch.
+     */
+    function createSyncState() {
+        return { inFlight: false, startedAt: 0, seq: 0 };
+    }
+
+    /**
+     * Claim a sync at explicit now. A fresh outstanding claim coalesces
+     * (null); a claim older than SYNC_MS.inflightMax is replaced (the
+     * stale holder's token stops matching). Boundary preserved exactly:
+     * only strictly-greater-than replaces; a zero startedAt coalesces.
+     * Returns { token } — the page captures nav/session guards with it.
+     */
+    function claimSync(state, now) {
+        if (state.inFlight) {
+            if (state.startedAt && (now - state.startedAt) > SYNC_MS.inflightMax) {
+                // Timeout replacement: fall through and take ownership.
+            } else {
+                return null;
+            }
+        }
+        state.inFlight = true;
+        state.startedAt = now;
+        state.seq += 1;
+        return { token: state.seq };
+    }
+
+    /**
+     * True when token matches the latest claim, including after finish.
+     * A newer claim invalidates older tokens; finish does not bump seq,
+     * so repeated finish of the same token stays safe.
+     */
+    function isSyncCurrent(state, token) {
+        return token === state.seq;
+    }
+
+    /**
+     * Finish only the owning token. A stale token (replaced claim) must
+     * not clear the newer in-flight state. Returns { released } — the
+     * page performs no further effect on release.
+     */
+    function finishSync(state, token) {
+        if (token !== state.seq) {
+            return { released: false };
+        }
+        state.inFlight = false;
+        state.startedAt = 0;
+        return { released: true };
+    }
+
+    /**
      * Message-sync poll cadence. snap: { backgrounded, shellUnfocused,
      * loading, generating }. Branch order preserved exactly.
      */
@@ -161,6 +219,10 @@
     var api = {
         SYNC_MS: SYNC_MS,
         createGenerationState: createGenerationState,
+        createSyncState: createSyncState,
+        claimSync: claimSync,
+        isSyncCurrent: isSyncCurrent,
+        finishSync: finishSync,
         currentToken: currentToken,
         beginGeneration: beginGeneration,
         endGeneration: endGeneration,
