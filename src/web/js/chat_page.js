@@ -10526,374 +10526,11 @@
             });
         } catch (_) {}
 
-        // Action forms → POST /api/action-form/run (no LLM, no chat reply by default)
-        // Only real `line` bodies get posted. A checkbox label is a UI summary —
-        // posting it sent the card's own bullets to Discord instead of the update.
-        const composeActionFormContent = (card, fields) => {
-            let spec = {};
-            try { spec = JSON.parse(card.getAttribute('data-spec') || '{}') || {}; } catch (_) {}
-            const defs = Array.isArray(spec.fields) ? spec.fields : [];
-            const title = String((fields && fields.title) || '').trim();
-            const lines = [];
-            const missing = [];
-            card.querySelectorAll('input[type="checkbox"][data-field-id]').forEach((el) => {
-                if (!el.checked) return;
-                const fid = el.getAttribute('data-field-id') || '';
-                if (fid === 'title' || fid === 'channel') return;
-                let line = String(el.getAttribute('data-line') || '').trim();
-                if (!line) {
-                    const def = defs.find((f) => String(f.id) === String(fid));
-                    line = String((def && (def.line || def.body)) || '').trim();
-                }
-                if (!line) {
-                    const lab = (el.closest('label') && el.closest('label').textContent) || '';
-                    missing.push(String(lab).trim() || fid);
-                    return;
-                }
-                lines.push(line);
-            });
-            return {
-                content: lines.length ? (title ? title + '\n\n' : '') + lines.join('\n') : '',
-                missing,
-            };
-        };
+        // Action-card effects (mount, submit, watch, restart link) are owned
+        // by CuttleChatActionCards (chat_action_cards.js). The page supplies
+        // transport/session/paint capabilities through the controller host.
         try {
-            containerEl.querySelectorAll('.cuttle-action-form').forEach((card) => {
-                if (card.__wired_action_form) return;
-                card.__wired_action_form = true;
-
-                // Collapsed cards stay expandable, so wire this before the
-                // already-consumed bail-out below.
-                const toggleEl = card.querySelector('[data-action-form-toggle]');
-                if (toggleEl) {
-                    toggleEl.addEventListener('click', () => {
-                        if (!card.classList.contains('is-collapsible')) return;
-                        const nowCollapsed = card.classList.toggle('is-collapsed');
-                        toggleEl.setAttribute('aria-expanded', nowCollapsed ? 'false' : 'true');
-                    });
-                }
-
-                if (card.getAttribute('data-locked') === '1'
-                    || card.classList.contains('cuttle-action-form--locked')) {
-                    // Consumed card: no handlers, but a restart it started may
-                    // still be in flight (reload / reconnect during downtime).
-                    const pendingRestart = (card.getAttribute('data-restart-id') || '').trim();
-                    if (pendingRestart) {
-                        const toast = (card.querySelector('.cuttle-action-form-summary-text') || {}).textContent || '';
-                        const short = toast.includes('—') ? toast.split('—').slice(1).join('—').trim() : 'Restarting Flask…';
-                        setActionFormCardProgress(card, short || 'Restarting Flask…', 'pending');
-                        watchFlaskRestartOnCard(card, pendingRestart, { quietStart: true });
-                    }
-                    watchActionFormJob(card, { restoreChoice: true });
-                    return;
-                }
-
-                watchActionFormJob(card, { restoreChoice: true });
-
-                const statusEl = card.querySelector('.cuttle-action-form-status');
-                const lockMode = (card.getAttribute('data-lock') || 'form').toLowerCase();
-
-                const setStatus = (text, ok) => {
-                    if (!statusEl) return;
-                    statusEl.hidden = !text;
-                    statusEl.textContent = text || '';
-                    statusEl.classList.toggle('is-error', ok === false);
-                    statusEl.classList.toggle('is-ok', ok === true);
-                };
-
-                const lockCard = (selectedIds, summary) => {
-                    collapseLockedActionForm(card, selectedIds, summary);
-                };
-
-                const lockField = (optionId) => {
-                    const hit = card.querySelector(
-                        `[data-action-form-option="${CSS.escape(String(optionId))}"]`
-                    );
-                    if (!hit) return;
-                    if (hit.tagName === 'INPUT') {
-                        hit.disabled = true;
-                        const lab = hit.closest('label');
-                        if (lab) lab.classList.add('is-selected');
-                    } else {
-                        hit.disabled = true;
-                        hit.classList.add('is-selected');
-                    }
-                };
-
-                const tokenForCard = () => {
-                    const fallback = (card.getAttribute('data-fallback') || '').trim();
-                    const formId = (card.getAttribute('data-form-id') || '').trim();
-                    if (fallback && formId) return formId + ' ' + fallback;
-                    return fallback || formId;
-                };
-
-                const runSubmission = async (selection) => {
-                    if (card.classList.contains('cuttle-action-form--locked')) return;
-                    if (card.getAttribute('data-restart-pending-sync') === '1') return;
-                    if (card.__busy) return;
-                    card.__busy = true;
-                    setStatus('Running…', null);
-                    try {
-                        // Programmatic native restart / dismiss — never route button
-                        // labels through the agent router.
-                        try {
-                            const spec0 = JSON.parse(card.getAttribute('data-spec') || '{}');
-                            const ids0 = selection.options
-                                || (selection.option ? [selection.option] : []);
-                            const opts0 = Array.isArray(spec0.options) ? spec0.options : [];
-                            const hit0 = opts0.find((o) => ids0.includes(String(o.id))
-                                || String(o.id) === String(selection.option));
-                            if (hit0 && String(hit0.action || '') === '__dismiss__') {
-                                setStatus('Dismissed.', true);
-                                card.setAttribute('data-locked', '1');
-                                lockCard(ids0, 'Dismissed.');
-                                return;
-                            }
-                            if (hit0 && isWatchFormAction(hit0.action)) {
-                                if (String(hit0.action) === '__watch_resume__'
-                                    || String(hit0.action) === '__watch_park__') {
-                                    rememberActionFormWatchChoice(
-                                        card,
-                                        String(hit0.action) === '__watch_resume__' ? 'resume' : 'park'
-                                    );
-                                }
-                                // Fall through to POST /api/action-form/run so the
-                                // lock is persisted and other devices collapse too.
-                            } else if (hit0 && String(hit0.action || '') === '__native_restart__') {
-                                const mode = String((hit0.params || {}).mode || 'status');
-                                const msg = '/restart ' + mode;
-                                await processMessage(msg, { controlLane: true });
-                                const soft = 'Restart command sent: ' + mode;
-                                setStatus(soft, true);
-                                (window.showToast || function () {})(soft, 'success');
-                                card.setAttribute('data-locked', '1');
-                                lockCard(ids0, soft);
-                                return;
-                            }
-                        } catch (_) {}
-                        const tokenParts = tokenForCard().split(/\s+/).filter(Boolean);
-                        // Prefer a still-valid pending id or a server-signed
-                        // inline token. Never mint unsigned inline.* in the
-                        // browser — HMAC lives only on the server.
-                        let token = tokenParts.find((t) => t.startsWith('inline.')) || tokenParts[0] || '';
-                        let specFromCard = null;
-                        try {
-                            specFromCard = JSON.parse(card.getAttribute('data-spec') || 'null');
-                            if (specFromCard && typeof specFromCard !== 'object') specFromCard = null;
-                        } catch (_) {
-                            specFromCard = null;
-                        }
-                        if (specFromCard && !specFromCard.project_path && currentProject && currentProject.path) {
-                            specFromCard.project_path = String(currentProject.path);
-                        }
-                        if (!token && !specFromCard) {
-                            const msg = 'Form token missing — refresh the chat or ask for a new restart card.';
-                            setStatus(msg, false);
-                            (window.showToast || function () {})(msg, 'error');
-                            return;
-                        }
-                        // The card's own chat, not the pane's current one: a
-                        // stale global used to send restart acks (and the user)
-                        // into an unrelated chat.
-                        const cardSession = (card.getAttribute('data-session-id') || '').trim();
-                        const body = {
-                            token,
-                            selection,
-                            session_id: cardSession || currentSessionId,
-                            form_id: (card.getAttribute('data-form-id') || '').trim() || undefined,
-                            project_path:
-                                (currentProject && currentProject.path)
-                                    ? String(currentProject.path)
-                                    : undefined,
-                        };
-                        if (specFromCard) body.spec = specFromCard;
-                        const resp = await fetch('/api/action-form/run', {
-                            method: 'POST',
-                            credentials: 'include',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(body),
-                        });
-                        const data = await resp.json().catch(() => ({}));
-                        const ok = !!(data && data.success);
-                        const toast = (data && data.toast) || (ok ? 'Done.' : 'Failed.');
-                        const restartId = ok && data && data.flask_restart
-                            ? String(data.flask_restart.restart_id || '')
-                            : '';
-                        const watchAct = ((data && data.actions) || []).find(isWatchFormAction) || '';
-                        const alreadyLocked = !!(data && data.already_locked);
-                        if (!restartId && !watchAct && !alreadyLocked) {
-                            (window.showToast || function () {})(toast, ok ? 'success' : 'error');
-                            setStatus(toast, ok);
-                        } else if (watchAct || alreadyLocked) {
-                            setStatus(toast, ok || alreadyLocked);
-                        }
-                        const selected = (data && data.selected) || selection.options || (selection.option ? [selection.option] : []);
-                        const effectiveLock = (data && data.lock) || lockMode;
-                        const reusable = !!(data && data.reusable);
-                        // One-shot: lock on cancel or successful run — not on errors
-                        // (so a bad project path can be fixed and retried).
-                        if (alreadyLocked || (!reusable && (selection.cancel || (ok && effectiveLock === 'form')))) {
-                            card.setAttribute('data-locked', '1');
-                            lockCard(selected, toast);
-                        } else if (ok && effectiveLock === 'field') {
-                            (selected || []).forEach((id) => lockField(id));
-                        }
-                        // This send is the only writer of the answer bubble —
-                        // /api/action-form/run no longer persists its own copy.
-                        const resumeSid = String((data && data.session_id) || cardSession || '')
-                            .replace(/^db_session_/, '');
-                        const openSid = String(currentSessionId || '').replace(/^db_session_/, '');
-                        if (data && data.should_resume && data.injected_user_message
-                            && (!resumeSid || !openSid || resumeSid === openSid)) {
-                            try {
-                                const send = (typeof sendMessage === 'function') ? sendMessage : window.sendMessage;
-                                if (typeof send === 'function') {
-                                    send({ text: String(data.injected_user_message) });
-                                }
-                            } catch (_) {}
-                        }
-                        if (restartId) {
-                            // Card owns the progress from here — no toast, no bubble.
-                            setActionFormCardProgress(card, toast, 'pending');
-                            watchFlaskRestartOnCard(card, restartId, { quietStart: true });
-                            broadcastLinkedFlaskRestart({
-                                formId: (card.getAttribute('data-form-id') || '').trim(),
-                                restartId,
-                                selected,
-                                toast: toast || 'Restarting Flask…',
-                            });
-                        } else if (ok && watchAct === '__watch_cancel__') {
-                            setActionFormCardProgress(card, toast, 'ok');
-                            applyActionFormWatchProgress(card, {
-                                ...(card.__watchLastData || {}),
-                                state: 'failed',
-                                label: 'Cancelled',
-                            });
-                            syncComposerStopWithWatch();
-                        } else if (ok && (watchAct === '__watch_resume__' || watchAct === '__watch_park__')) {
-                            setActionFormCardProgress(card, toast, 'pending');
-                            watchActionFormJob(card, { restoreChoice: false });
-                        }
-                    } catch (err) {
-                        const msg = (err && err.message) || 'Request failed';
-                        // Self-restart can drop the socket after scheduling — treat as OK.
-                        let restartish = false;
-                        try {
-                            const spec = JSON.parse(card.getAttribute('data-spec') || '{}');
-                            const ids = selection.options
-                                || (selection.option ? [selection.option] : []);
-                            const opts = Array.isArray(spec.options) ? spec.options : [];
-                            restartish = ids.some((id) => {
-                                const hit = opts.find((o) => String(o.id) === String(id));
-                                return hit && String(hit.action || '') === 'flask.restart';
-                            });
-                        } catch (_) {}
-                        if (restartish && /failed to fetch|networkerror|load failed/i.test(msg)) {
-                            const soft = 'Restarting Flask…';
-                            card.setAttribute('data-locked', '1');
-                            lockCard(
-                                selection.options || (selection.option ? [selection.option] : []),
-                                soft
-                            );
-                            setActionFormCardProgress(card, soft, 'pending');
-                            adoptInFlightRestartOnCard(card);
-                        } else {
-                            setStatus(msg, false);
-                            (window.showToast || function () {})(msg, 'error');
-                        }
-                    } finally {
-                        card.__busy = false;
-                    }
-                };
-
-                card.querySelectorAll('[data-action-form-option]').forEach((el) => {
-                    if (el.tagName === 'INPUT') return; // multi checkboxes
-                    el.addEventListener('click', () => {
-                        const oid = el.getAttribute('data-action-form-option') || '';
-                        // Prefer data-spec over the cancel attr: older cards marked
-                        // every no-action Q&A option as cancel and showed "Cancelled."
-                        let isCancel = el.getAttribute('data-action-form-cancel') === '1';
-                        try {
-                            const spec = JSON.parse(card.getAttribute('data-spec') || '{}');
-                            const opts = Array.isArray(spec.options) ? spec.options : [];
-                            const hit = opts.find((o) => String(o.id) === String(oid));
-                            if (hit) isCancel = isExplicitActionFormCancelOption(hit);
-                        } catch (_) {}
-                        if (isCancel) {
-                            runSubmission({ cancel: true, option: oid, options: [oid] });
-                        } else {
-                            runSubmission({ option: oid, options: [oid] });
-                        }
-                    });
-                });
-
-                const submitBtn = card.querySelector('[data-action-form-submit]');
-                if (submitBtn) {
-                    submitBtn.addEventListener('click', () => {
-                        const modeWrap = card.querySelector('[data-mode="multi"]');
-                        if (modeWrap) {
-                            const opts = [];
-                            modeWrap.querySelectorAll('input[data-action-form-option]:checked').forEach((inp) => {
-                                opts.push(inp.getAttribute('data-action-form-option'));
-                            });
-                            runSubmission({ options: opts });
-                            return;
-                        }
-                        // form mode — collect fields
-                        const fields = {};
-                        card.querySelectorAll('[data-field-id]').forEach((el) => {
-                            const fid = el.getAttribute('data-field-id');
-                            if (!fid) return;
-                            if (el.tagName === 'INPUT' && (el.type || '').toLowerCase() === 'checkbox') {
-                                fields[fid] = !!el.checked;
-                            } else {
-                                fields[fid] = el.value ?? '';
-                            }
-                        });
-                        card.querySelectorAll('[data-radio-group]').forEach((wrap) => {
-                            const fid = wrap.getAttribute('data-radio-group');
-                            if (!fid) return;
-                            const chosen = wrap.querySelector('input[type="radio"]:checked');
-                            fields[fid] = chosen ? chosen.value : '';
-                        });
-                        card.querySelectorAll('[data-checkbox-group]').forEach((wrap) => {
-                            const fid = wrap.getAttribute('data-checkbox-group');
-                            if (!fid) return;
-                            fields[fid] = Array.from(wrap.querySelectorAll('input[type="checkbox"]:checked'))
-                                .map((inp) => inp.value);
-                        });
-                        let cardSpec = {};
-                        try { cardSpec = JSON.parse(card.getAttribute('data-spec') || '{}') || {}; } catch (_) {}
-                        if (!actionFormHasSideEffect(cardSpec)) {
-                            runSubmission({ fields });
-                            return;
-                        }
-                        const composed = composeActionFormContent(card, fields);
-                        if (composed.missing.length) {
-                            const msg = 'No post text for: ' + composed.missing.join(', ')
-                                + '. Ask the agent to resend the form with a body for each item.';
-                            setStatus(msg, false);
-                            (window.showToast || function () {})(msg, 'error');
-                            return;
-                        }
-                        const selection = { fields };
-                        if (composed.content) {
-                            fields.content = composed.content;
-                            selection.contentSource = 'lines';
-                        }
-                        runSubmission(selection);
-                    });
-                }
-
-                const cancelBtn = card.querySelector('[data-action-form-cancel="1"]:not([data-action-form-option])');
-                if (cancelBtn) {
-                    cancelBtn.addEventListener('click', () => {
-                        runSubmission({ cancel: true });
-                    });
-                }
-            });
-            ensureFlaskRestartLinkPoller();
-            syncHistoryFormAwaitingFromDom();
+            actionCardsController().mount(containerEl);
         } catch (_) {}
 
         // Slider value live updates
@@ -13886,6 +13523,90 @@
      * collapse every preference click to "Cancelled.").
      */
     // Owned by chat_action_forms.js — thin adapter.
+    let _actionCardsController = null;
+    /**
+     * Single CuttleChatActionCards instance for this chat root. The page
+     * keeps every send lane, the history panel, the composer, and all
+     * message transport; the controller receives them as explicit host
+     * capabilities and never reads page scope directly. Identity matching
+     * reuses CuttleChatActivity (sessionIdsEqual) and the pure watch
+     * predicates in CuttleChatActionForms, same as before.
+     */
+    function actionCardsController() {
+        if (!_actionCardsController) {
+            // Explicit chat root: the controller validates it and throws
+            // on anything else — never a whole-document fallback.
+            _actionCardsController = CuttleChatActionCards.mountCards(
+                document.getElementById('chatMessages'),
+                {
+                    request: (url, reqOpts) => {
+                        const o = reqOpts || {};
+                        const init = Object.assign({}, o.options || {});
+                        if (o.signal) init.signal = o.signal;
+                        // No invented timeouts: plain fetch unless the
+                        // controller passes an explicit timeout through.
+                        if (o.timeout != null) {
+                            return fetchWithTimeout(url, init, o.timeout);
+                        }
+                        return fetch(url, init);
+                    },
+                    // Q&A resume lane: exactly sendMessage({ text }).
+                    sendAnswerText: (msg) => {
+                        try {
+                            const text = String((msg && msg.text != null) ? msg.text : msg);
+                            const send = (typeof sendMessage === 'function') ? sendMessage : window.sendMessage;
+                            if (typeof send === 'function') send({ text });
+                        } catch (_) {}
+                    },
+                    // Watch-resume lane: exactly processMessage(text).
+                    resumeWithStatus: (text) => processMessage(String(text)),
+                    // Native restart lane: exactly
+                    // processMessage(text, { controlLane: true }).
+                    sendControlCommand: (text) => processMessage(String(text), { controlLane: true }),
+                    context: () => ({
+                        sessionId: currentSessionId,
+                        projectPath: (currentProject && currentProject.path)
+                            ? String(currentProject.path)
+                            : undefined,
+                        authSessionId: authSessionIdForRequest(),
+                        isAuthMode: isAuthMode(),
+                    }),
+                    // Deferred storage: sessionStorage is only touched
+                    // inside these calls (each call site stays guarded),
+                    // never read at controller construction.
+                    storage: {
+                        getItem: (k) => sessionStorage.getItem(k),
+                        setItem: (k, v) => sessionStorage.setItem(k, v),
+                        removeItem: (k) => sessionStorage.removeItem(k),
+                    },
+                    notify: (text, kind) => {
+                        try { (window.showToast || function () {})(text, kind); } catch (_) {}
+                    },
+                    syncMessages: () => syncSessionMessagesFromServer(),
+                    publishRestartEvent: (payload) => {
+                        try {
+                            window.parent.postMessage({
+                                type: 'cuttle-flask-restart-linked',
+                                ...payload,
+                            }, '*');
+                        } catch (_) {}
+                    },
+                    setHistoryAwaiting: (sessionId, on) => {
+                        // pending=true sets this session; pending=false
+                        // recomputes from all cards (another may be active).
+                        if (on) setHistorySessionFormAwaiting(sessionId, true);
+                        else syncHistoryFormAwaitingFromDom();
+                    },
+                    syncHistoryAwaiting: () => syncHistoryFormAwaitingFromDom(),
+                    syncComposerStop: () => syncComposerStopWithWatch(),
+                    paintAssistantMessage: (content) => addMessageToUI(content, 'assistant'),
+                    escapeHtml: (value) => escapeHtmlInline(value),
+                }
+            );
+        }
+        return _actionCardsController;
+    }
+
     function isExplicitActionFormCancelOption(opt) {
         return CuttleChatActionForms.isExplicitActionFormCancelOption(opt);
     }
@@ -13906,73 +13627,6 @@
         return CuttleChatActionForms.isWatchFormAction(action);
     }
 
-    function collapseLockedActionForm(card, selectedIds, summary) {
-        if (!card) return;
-        card.removeAttribute('data-restart-pending-sync');
-        const optionLabelFor = (id) => {
-            const hit = card.querySelector(
-                `[data-action-form-option="${CSS.escape(String(id))}"]`
-            );
-            const text = hit
-                ? (hit.tagName === 'INPUT'
-                    ? (hit.closest('label') || {}).textContent
-                    : hit.textContent)
-                : '';
-            return String(text || id).trim() || String(id);
-        };
-        const text = String(summary || '').trim()
-            || ((selectedIds || []).length
-                ? 'Used — ' + selectedIds.map(optionLabelFor).join(', ')
-                : 'Used');
-        const titleText = (card.querySelector('.cuttle-action-form-title') || {}).textContent || '';
-        const out = card.querySelector('.cuttle-action-form-summary-text');
-        if (out) out.textContent = (titleText ? titleText.trim() + ' — ' : '') + text;
-        const cancelled = /^(cancell?ed|ignored)\b/i.test(text);
-        const icon = card.querySelector('.cuttle-action-form-summary-icon');
-        if (icon) icon.textContent = cancelled ? '✕' : '✓';
-        card.classList.toggle('is-cancelled', cancelled);
-        card.classList.remove('is-pending');
-        card.classList.add('cuttle-action-form--locked', 'is-collapsible', 'is-collapsed');
-        card.setAttribute('data-locked', '1');
-        card.querySelectorAll('.cuttle-action-form-body button, input, textarea, select')
-            .forEach((el) => { el.disabled = true; });
-        if (Array.isArray(selectedIds)) {
-            selectedIds.forEach((id) => {
-                const hit = card.querySelector(
-                    `[data-action-form-option="${CSS.escape(String(id))}"]`
-                );
-                if (hit) {
-                    const btn = hit.tagName === 'INPUT' ? hit.closest('label') : hit;
-                    if (btn) btn.classList.add('is-selected');
-                }
-            });
-        }
-        const toggleEl = card.querySelector('[data-action-form-toggle]');
-        if (toggleEl) toggleEl.setAttribute('aria-expanded', 'false');
-    }
-
-    /** Linked Flask-restart cards start collapsed until /restart/status says the generation is still live. */
-    function unlockFlaskRestartPendingSyncCard(card) {
-        if (!card || card.getAttribute('data-restart-pending-sync') !== '1') return;
-        if (card.getAttribute('data-locked') === '1'
-            || card.classList.contains('cuttle-action-form--locked')) {
-            card.removeAttribute('data-restart-pending-sync');
-            return;
-        }
-        card.removeAttribute('data-restart-pending-sync');
-        card.classList.remove('is-collapsible', 'is-collapsed', 'is-pending');
-        const titleText = String(
-            (card.querySelector('.cuttle-action-form-title') || {}).textContent || ''
-        ).trim() || 'Restart Flask';
-        const out = card.querySelector('.cuttle-action-form-summary-text');
-        if (out) out.textContent = titleText;
-        const icon = card.querySelector('.cuttle-action-form-summary-icon');
-        if (icon) icon.textContent = '';
-        card.querySelectorAll('.cuttle-action-form-body button, input, textarea, select')
-            .forEach((el) => { el.disabled = false; });
-        const toggleEl = card.querySelector('[data-action-form-toggle]');
-        if (toggleEl) toggleEl.setAttribute('aria-expanded', 'true');
-    }
 
     // Owned by chat_action_forms.js — thin adapter.
     function specLooksLikeFlaskRestart(spec, formId) {
@@ -13983,40 +13637,17 @@
      * User sent a follow-up instead of clicking open cards — lock + collapse
      * one-shot action forms (and disable open confirms) so they stop competing.
      */
+    /**
+     * User sent a follow-up instead of clicking open cards — lock + collapse
+     * one-shot action forms (and disable open confirms) so they stop competing.
+     * Card effects live in CuttleChatActionCards; the page keeps the
+     * confirm-button half and the send-trigger call sites.
+     */
     function dismissOpenInteractiveCards(reason) {
-        const summary = String(reason || 'Ignored').trim() || 'Ignored';
+        const dismissed = actionCardsController().dismissOpenActionForms(reason);
+        const summary = dismissed.summary;
         const root = document.getElementById('chatMessages');
         if (!root) return;
-        const formIds = [];
-        root.querySelectorAll('.cuttle-action-form').forEach((card) => {
-            if (card.getAttribute('data-locked') === '1'
-                || card.classList.contains('cuttle-action-form--locked')) {
-                return;
-            }
-            // Still waiting on /restart/status — don't mark as ignored mid-heal.
-            if (card.getAttribute('data-restart-pending-sync') === '1') return;
-            // Flask restart controllers share form id across chats until generation
-            // bumps. Soft-dismissing them as "Ignored" (on any follow-up send)
-            // poisons every later restart card in this generation — click then
-            // returns already_locked with toast "Ignored".
-            if (isLinkedFlaskRestartCard(card)) return;
-            const lockMode = String(card.getAttribute('data-lock') || 'form').toLowerCase();
-            if (lockMode === 'none') return;
-            try {
-                const spec = JSON.parse(card.getAttribute('data-spec') || '{}') || {};
-                if (spec.reusable) return;
-                if (String(spec.lock || '').toLowerCase() === 'none') return;
-            } catch (_) {}
-            collapseLockedActionForm(card, [], summary);
-            try {
-                const spec = JSON.parse(card.getAttribute('data-spec') || '{}') || {};
-                spec.locked = true;
-                spec.toast = summary;
-                card.setAttribute('data-spec', JSON.stringify(spec));
-            } catch (_) {}
-            const fid = String(card.getAttribute('data-form-id') || '').trim();
-            if (fid) formIds.push(fid);
-        });
         root.querySelectorAll('.cuttle-confirm:not(.cuttle-buttons-locked)').forEach((card) => {
             lockCuttleButtonsInContainer(card, null, summary);
             card.classList.add('cuttle-buttons-locked', 'is-ignored');
@@ -14028,19 +13659,7 @@
             }
             card.querySelectorAll('button').forEach((btn) => { btn.disabled = true; });
         });
-        if (!formIds.length || !isAuthMode()) return;
-        const sid = currentSessionId;
-        if (sid == null || sid === '') return;
-        fetch('/api/action-form/dismiss', {
-            method: 'POST',
-            credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                form_ids: formIds,
-                session_id: sid,
-                toast: summary,
-            }),
-        }).catch(() => {});
+        actionCardsController().sendDismissNotice(dismissed.formIds, summary);
     }
 
     // Owned by chat_action_forms.js — thin adapter.
@@ -14048,50 +13667,6 @@
         return CuttleChatActionForms.inferActionFormWatch(spec);
     }
 
-    function actionFormWatchSpec(card) {
-        try {
-            const spec = JSON.parse(card.getAttribute('data-spec') || '{}') || {};
-            return inferActionFormWatch(spec);
-        } catch (_) {
-            return null;
-        }
-    }
-
-    // Owned by chat_action_forms.js — DOM gather, domain decides.
-    function actionFormWatchStorageKey(card) {
-        const formId = String(card.getAttribute('data-form-id') || '').trim();
-        const watch = actionFormWatchSpec(card) || {};
-        const sid = String(card.getAttribute('data-session-id') || currentSessionId || '').trim();
-        return CuttleChatActionForms.actionFormWatchStorageKey({ formId, watch, sessionId: sid });
-    }
-
-    function rememberActionFormWatchChoice(card, mode) {
-        try {
-            sessionStorage.setItem(actionFormWatchStorageKey(card), JSON.stringify({
-                mode: String(mode || ''),
-                resumed: false,
-            }));
-        } catch (_) {}
-    }
-
-    function loadActionFormWatchChoice(card) {
-        try {
-            const raw = sessionStorage.getItem(actionFormWatchStorageKey(card));
-            return raw ? (JSON.parse(raw) || {}) : {};
-        } catch (_) {
-            return {};
-        }
-    }
-
-    function markActionFormWatchResumed(card) {
-        try {
-            const prev = loadActionFormWatchChoice(card);
-            sessionStorage.setItem(actionFormWatchStorageKey(card), JSON.stringify({
-                mode: prev.mode || 'resume',
-                resumed: true,
-            }));
-        } catch (_) {}
-    }
 
     // Owned by chat_action_forms.js — thin adapter.
     function safeActionFormWatchUrl(url) {
@@ -14108,29 +13683,6 @@
         return CuttleChatActionForms.cardWatchBind(watch);
     }
 
-    function watchCardsSharingUrl(card, url) {
-        const root = (card && card.closest('#chatMessages, .chat-messages')) || document.getElementById('chatMessages') || document;
-        return Array.prototype.filter.call(root.querySelectorAll('.cuttle-action-form'), (c) => {
-            const w = actionFormWatchSpec(c);
-            return !!(w && safeActionFormWatchUrl(w.url) === url);
-        });
-    }
-
-    function isLiveWatchCardForUrl(card, url) {
-        const same = watchCardsSharingUrl(card, url);
-        return same.length <= 1 || same[same.length - 1] === card;
-    }
-
-    function watchStatusMatchesCard(card, data) {
-        const watch = actionFormWatchSpec(card) || {};
-        const bind = cardWatchBind(watch);
-        const key = watchRunKey(data);
-        if (bind) return !!(key && key === bind);
-        // Legacy cards (no stamp): only the newest form with this URL follows live status.
-        const url = safeActionFormWatchUrl(watch.url);
-        if (!url) return false;
-        return isLiveWatchCardForUrl(card, url);
-    }
 
     // Owned by chat_action_forms.js — thin adapter.
     function watchSnapshotFromSpec(watch) {
@@ -14142,117 +13694,6 @@
         return CuttleChatActionForms.watchIsTerminalState(watch, data, doneStates, failStates);
     }
 
-    function lockWatchFormCard(card, summary, failed) {
-        if (!card || card.getAttribute('data-locked') === '1') return;
-        let shouldLock = true;
-        try {
-            const spec = JSON.parse(card.getAttribute('data-spec') || '{}') || {};
-            const lockMode = String(spec.lock || card.getAttribute('data-lock') || 'form').toLowerCase();
-            shouldLock = !spec.reusable && lockMode === 'form';
-        } catch (_) {}
-        if (!shouldLock) return;
-        const text = String(summary || '').trim() || (failed ? 'Failed' : 'Finished');
-        collapseLockedActionForm(card, [], text);
-        try {
-            const spec = JSON.parse(card.getAttribute('data-spec') || '{}') || {};
-            spec.locked = true;
-            if (text) spec.toast = text;
-            card.setAttribute('data-spec', JSON.stringify(spec));
-        } catch (_) {}
-    }
-
-    function persistActionFormWatchSnapshot(card, data, terminal) {
-        if (!card || !data || typeof data !== 'object') return;
-        if (!data.state && !data.started_at && !data.run_id && !data.label && !data.bars) return;
-        const snapshot = {
-            state: String(data.state || ''),
-            percent: Number(data.percent != null ? data.percent : 0),
-            label: String(data.label || data.file || ''),
-            version: String(data.version || ''),
-            elapsed: String(data.elapsed || ''),
-            elapsed_sec: Number(data.elapsed_sec != null ? data.elapsed_sec : 0),
-            started_at: String(data.started_at || ''),
-            run_id: String(data.run_id || ''),
-            action: String(data.action || ''),
-            detail: String(data.detail || ''),
-        };
-        if (Array.isArray(data.bars) && data.bars.length) {
-            snapshot.bars = data.bars;
-        }
-        try {
-            const spec = JSON.parse(card.getAttribute('data-spec') || '{}') || {};
-            spec.watch = spec.watch && typeof spec.watch === 'object' ? spec.watch : {};
-            spec.watch.snapshot = snapshot;
-            spec.watch.terminal = !!terminal;
-            if (terminal && snapshot.label) spec.toast = snapshot.label;
-            if (terminal) {
-                const lockMode = String(spec.lock || card.getAttribute('data-lock') || 'form').toLowerCase();
-                if (!spec.reusable && lockMode === 'form') spec.locked = true;
-            }
-            if (snapshot.started_at && !spec.watch.started_at) spec.watch.started_at = snapshot.started_at;
-            if (snapshot.run_id && !spec.watch.run_id) spec.watch.run_id = snapshot.run_id;
-            if (snapshot.action && !spec.watch.action) spec.watch.action = snapshot.action;
-            card.setAttribute('data-spec', JSON.stringify(spec));
-        } catch (_) {}
-        const formId = String(card.getAttribute('data-form-id') || '').trim();
-        const sid = String(card.getAttribute('data-session-id') || currentSessionId || '').trim();
-        if (!formId || !sid) return;
-        let shouldLock = false;
-        try {
-            const spec = JSON.parse(card.getAttribute('data-spec') || '{}') || {};
-            shouldLock = !!(terminal && spec.locked);
-        } catch (_) {}
-        fetch('/api/action-form/watch-state', {
-            method: 'POST',
-            credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                form_id: formId,
-                session_id: sid,
-                snapshot,
-                terminal: !!terminal,
-                lock: shouldLock,
-                toast: terminal ? snapshot.label : '',
-            }),
-        }).catch(() => {});
-    }
-
-    async function offerJobSuccessDiscordForm(card, data) {
-        const spec = data && data.discord_form;
-        if (!spec || typeof spec !== 'object') return;
-        if (card.__discordFollowup) return;
-        card.__discordFollowup = true;
-        const sid = String(card.getAttribute('data-session-id') || currentSessionId || '');
-        const key = 'cuttle.discordFollowup.' + sid + '.' + String((data && (data.build_id || data.time)) || '');
-        try {
-            if (sessionStorage.getItem(key) === '1') return;
-        } catch (_) {}
-        const preface = 'Steam upload succeeded. Confirm the Discord note below, or Cancel to skip.';
-        let content = preface + '\n\n<cuttle_action_form>\n' + JSON.stringify(spec) + '\n</cuttle_action_form>';
-        let persisted = false;
-        try {
-            const resp = await fetch('/api/action-form/followup-message', {
-                method: 'POST',
-                credentials: 'include',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    spec,
-                    preface,
-                    session_id: sid,
-                    project_path: (typeof currentProject !== 'undefined' && currentProject && currentProject.path) || '',
-                }),
-            });
-            const j = await resp.json();
-            if (j && j.success && j.response) {
-                content = j.response;
-                persisted = true;
-            }
-        } catch (_) {}
-        if (persisted) {
-            try { sessionStorage.setItem(key, '1'); } catch (_) {}
-        }
-        addMessageToUI(content, 'assistant');
-    }
 
     // Owned by chat_action_forms.js — thin adapter.
     function formatWatchElapsedSeconds(sec) {
@@ -14275,273 +13716,6 @@
         return CuttleChatActionForms.renderWatchBarsHtml(bars, escapeHtmlInline);
     }
 
-    function applyActionFormWatchProgress(card, data) {
-        const wrap = card.querySelector('[data-watch-progress]');
-        if (!wrap) return;
-        card.__watchLastData = data || {};
-        const bars = normalizeWatchBars(data || {});
-        const stack = wrap.querySelector('[data-watch-bars]');
-        if (stack) {
-            stack.innerHTML = renderWatchBarsHtml(bars);
-        } else {
-            // Legacy single-bar markup
-            const pct = bars[0] ? bars[0].percent : 0;
-            const bar = wrap.querySelector('.progress-bar');
-            const val = wrap.querySelector('.progress-value');
-            if (bar) bar.style.width = pct + '%';
-            if (val) val.textContent = pct + '%';
-        }
-        const lab = wrap.querySelector('.cuttle-action-form-progress-label');
-        const meta = wrap.querySelector('[data-watch-meta]');
-        if (lab) lab.textContent = String((data && (data.label || data.file)) || '');
-        const ver = String((data && data.version) || '').trim();
-        const elapsed = watchElapsedText(data);
-        const parts = [];
-        if (ver) parts.push(ver);
-        if (elapsed) {
-            parts.push(String((data && data.state) || '') === 'running' ? elapsed + ' elapsed' : elapsed);
-        }
-        if (meta) {
-            meta.textContent = parts.join(' · ');
-            meta.hidden = parts.length === 0;
-        }
-        const running = String((data && data.state) || '') === 'running';
-        if (running && data && data.started_at) {
-            if (!card.__watchElapsedTimer) {
-                card.__watchElapsedTimer = setInterval(() => {
-                    if (!card.isConnected) {
-                        clearInterval(card.__watchElapsedTimer);
-                        card.__watchElapsedTimer = null;
-                        return;
-                    }
-                    applyActionFormWatchProgress(card, card.__watchLastData || data);
-                }, 1000);
-            }
-        } else if (card.__watchElapsedTimer) {
-            clearInterval(card.__watchElapsedTimer);
-            card.__watchElapsedTimer = null;
-        }
-        syncComposerStopWithWatch();
-    }
-
-    async function watchActionFormJob(card, opts = {}) {
-        if (!card) return;
-        const watch = actionFormWatchSpec(card);
-        const url = watch ? safeActionFormWatchUrl(watch.url) : '';
-        if (!url) return;
-        if (card.__watchLoop) return;
-        const doneStates = Array.isArray(watch.done_states) && watch.done_states.length
-            ? watch.done_states.map(String)
-            : ['done', 'trellis_ok'];
-        const failStates = Array.isArray(watch.fail_states) && watch.fail_states.length
-            ? watch.fail_states.map(String)
-            : ['failed'];
-        const snap = watchSnapshotFromSpec(watch);
-        if (snap) {
-            const snapTerminal = watchIsTerminalState(watch, snap, doneStates, failStates);
-            if (!snapTerminal || watch.terminal) {
-                applyActionFormWatchProgress(card, snap);
-                if (snapTerminal && watch.terminal) {
-                    const failed = failStates.indexOf(String(snap.state || '')) >= 0;
-                    setActionFormCardProgress(
-                        card,
-                        String(snap.label || (failed ? 'Failed' : 'Finished')),
-                        failed ? 'error' : 'ok'
-                    );
-                    lockWatchFormCard(card, snap.label, failed);
-                    return;
-                }
-            } else {
-                applyActionFormWatchProgress(card, { state: 'running', percent: 0, label: 'Starting…' });
-            }
-        } else {
-            applyActionFormWatchProgress(card, { state: 'running', percent: 0, label: 'Starting…' });
-        }
-        if (watch && watch.terminal) return;
-        card.__watchLoop = true;
-        const interval = Math.max(1500, Number(watch.interval_ms || 4000));
-        const resumeMsg = String(watch.resume_message || 'The background job finished. Continue from the latest status.').trim();
-        if (opts.restoreChoice) {
-            const saved = loadActionFormWatchChoice(card);
-            if ((saved.mode === 'resume' || saved.mode === 'park')
-                && card.getAttribute('data-locked') !== '1') {
-                const summary = saved.mode === 'park'
-                    ? "Locked — reply here when it's done."
-                    : 'Waiting until this finishes, then I will continue in this chat.';
-                collapseLockedActionForm(card, [], summary);
-                setActionFormCardProgress(card, summary, 'pending');
-            }
-        }
-
-        const maybeResume = async (data) => {
-            const saved = loadActionFormWatchChoice(card);
-            if (saved.resumed) return;
-            if (saved.mode !== 'resume') return;
-            const cardSid = String(card.getAttribute('data-session-id') || '').trim();
-            const liveSid = String(authSessionIdForRequest() || currentSessionId || '').trim();
-            if (cardSid && liveSid && !sessionIdsEqual(cardSid, liveSid)) {
-                setActionFormCardProgress(card, 'Finished — reopen this chat to continue.', 'ok');
-                return;
-            }
-            markActionFormWatchResumed(card);
-            const detail = String((data && data.label) || 'done');
-            setActionFormCardProgress(card, 'Finished — continuing…', 'ok');
-            try {
-                await processMessage(resumeMsg + '\n\nStatus: ' + detail);
-            } catch (_) {}
-        };
-
-        const finishWatch = async (data, state) => {
-            const failed = failStates.indexOf(state) >= 0;
-            const summary = String((data && data.label) || (failed ? 'Failed' : 'Finished'));
-            persistActionFormWatchSnapshot(card, data || {}, true);
-            lockWatchFormCard(card, summary, failed);
-            if (failed) {
-                card.__watchLoop = false;
-                return;
-            }
-            applyActionFormWatchProgress(card, Object.assign({}, data, { percent: 100 }));
-            const saved = loadActionFormWatchChoice(card);
-            const hasDiscord = data && data.discord_form && typeof data.discord_form === 'object';
-            if (hasDiscord) {
-                await offerJobSuccessDiscordForm(card, data);
-                setActionFormCardProgress(card, 'Finished — Discord confirm is below (Post or Cancel).', 'ok');
-                card.__watchLoop = false;
-                return;
-            }
-            if (saved.mode === 'resume') {
-                await maybeResume(data);
-            } else if (saved.mode === 'park') {
-                setActionFormCardProgress(card, 'Finished — waiting for your reply.', 'ok');
-            }
-            card.__watchLoop = false;
-        };
-
-        while (card.isConnected) {
-            let data = null;
-            try {
-                const resp = await fetch(url + (url.indexOf('?') >= 0 ? '&' : '?') + 't=' + Date.now(), {
-                    credentials: 'include',
-                    cache: 'no-store',
-                });
-                data = await resp.json();
-            } catch (_) {
-                if (!card.isConnected) {
-                    card.__watchLoop = false;
-                    return;
-                }
-                if (!card.__watchLastData) {
-                    applyActionFormWatchProgress(card, { percent: 0, label: 'Waiting for status…' });
-                }
-                await new Promise((r) => setTimeout(r, interval));
-                continue;
-            }
-            if (!card.isConnected) {
-                // Detached while awaiting (plan C2a): never apply,
-                // persist, or resume a late response for a removed card.
-                card.__watchLoop = false;
-                return;
-            }
-            if (!watchStatusMatchesCard(card, data || {})) {
-                const bind = cardWatchBind(watch);
-                const polledState = String((data && data.state) || '');
-                const polledTerminal = failStates.indexOf(polledState) >= 0 || doneStates.indexOf(polledState) >= 0;
-                // Status file may still show the previous run for a moment after /build.
-                if (!bind || polledTerminal) {
-                    if (!card.__watchLastData || !cardWatchBind(actionFormWatchSpec(card) || {})) {
-                        applyActionFormWatchProgress(card, { state: 'running', percent: 0, label: 'Starting…' });
-                    }
-                    await new Promise((r) => setTimeout(r, Math.min(interval, 1200)));
-                    continue;
-                }
-                // Another job reused this status URL. Freeze this card; do not
-                // paint the later run's success/failure onto it.
-                persistActionFormWatchSnapshot(card, card.__watchLastData || snap || {}, true);
-                card.__watchLoop = false;
-                return;
-            }
-            applyActionFormWatchProgress(card, data || {});
-            if (!card.__watchBindPersisted && data && (data.started_at || data.run_id)) {
-                card.__watchBindPersisted = true;
-                try {
-                    const spec = JSON.parse(card.getAttribute('data-spec') || '{}') || {};
-                    spec.watch = spec.watch && typeof spec.watch === 'object' ? spec.watch : {};
-                    if (data.run_id) spec.watch.run_id = String(data.run_id);
-                    if (data.started_at) spec.watch.started_at = String(data.started_at);
-                    card.setAttribute('data-spec', JSON.stringify(spec));
-                } catch (_) {}
-                persistActionFormWatchSnapshot(card, data, false);
-            }
-            const state = String((data && data.state) || '');
-            if (failStates.indexOf(state) >= 0 || doneStates.indexOf(state) >= 0) {
-                await finishWatch(data, state);
-                return;
-            }
-            const saved = loadActionFormWatchChoice(card);
-            if (saved.mode === 'resume') {
-                setActionFormCardProgress(
-                    card,
-                    String((data && data.label) || 'Working…'),
-                    'pending'
-                );
-            }
-            await new Promise((r) => setTimeout(r, interval));
-        }
-        card.__watchLoop = false;
-    }
-
-
-    function updateRestartCardProgressBar(card, pct, label) {
-        const wrap = card && card.querySelector('[data-restart-progress]');
-        if (!wrap) return;
-        const clamped = Math.max(0, Math.min(100, Number(pct) || 0));
-        const bar = wrap.querySelector('.progress-bar');
-        const val = wrap.querySelector('.progress-value');
-        const lab = wrap.querySelector('.cuttle-action-form-progress-label');
-        if (bar) bar.style.width = clamped + '%';
-        if (val) val.textContent = clamped + '%';
-        if (lab && label) lab.textContent = String(label);
-    }
-
-    function setActionFormCardProgress(card, text, state) {
-        if (!card) return;
-        const label = String(text || '');
-        const statusEl = card.querySelector('.cuttle-action-form-status');
-        if (statusEl) {
-            statusEl.hidden = !label;
-            statusEl.textContent = label;
-            statusEl.classList.toggle('is-ok', state === 'ok');
-            statusEl.classList.toggle('is-error', state === 'error');
-            statusEl.classList.toggle('is-pending', state === 'pending');
-        }
-        const titleEl = card.querySelector('.cuttle-action-form-title');
-        const titleText = titleEl ? String(titleEl.textContent || '').trim() : '';
-        const summaryText = card.querySelector('.cuttle-action-form-summary-text');
-        if (summaryText) {
-            summaryText.textContent = (titleText ? titleText + ' — ' : '') + label;
-        }
-        card.classList.toggle('is-pending', state === 'pending');
-        card.classList.toggle('is-failed', state === 'error');
-        const icon = card.querySelector('.cuttle-action-form-summary-icon');
-        if (icon) {
-            icon.textContent = state === 'pending' ? '' : (state === 'error' ? '✕' : '✓');
-        }
-        // History panel: same spinner while a form is waiting (e.g. when-idle restart).
-        const awaitSid = formAwaitingSessionIdFromCard(card);
-        if (state === 'pending') {
-            setHistorySessionFormAwaiting(awaitSid, true);
-        } else {
-            // Recompute from all cards — another pending form may still be active.
-            syncHistoryFormAwaitingFromDom();
-        }
-        if (card && card.getAttribute('data-restart-id')) {
-            const pct = card.__restartPct != null
-                ? card.__restartPct
-                : (state === 'ok' ? 100 : state === 'error' ? 100 : 18);
-            updateRestartCardProgressBar(card, pct, label);
-        }
-    }
-
 
     // Owned by chat_action_forms.js — thin adapter.
     function restartProgressLabel(status, liveWork) {
@@ -14559,288 +13733,14 @@
         return CuttleChatActionForms.flaskRestartFormEpoch(formId);
     }
 
-    // Owned by chat_action_forms.js — DOM gather, domain decides.
-    function isLinkedFlaskRestartCard(card) {
-        if (!card) return false;
-        try {
-            const spec = JSON.parse(card.getAttribute('data-spec') || '{}');
-            const fid = String(card.getAttribute('data-form-id') || '').trim();
-            return CuttleChatActionForms.specLooksLikeFlaskRestart(spec, fid);
-        } catch (_) {
-            return false;
-        }
-    }
 
     // Owned by chat_action_forms.js — DOM gather, domain decides.
-    function linkedFlaskRestartFormId(card) {
-        const fid = String(card.getAttribute('data-form-id') || '').trim();
-        const group = String(
-            card.getAttribute('data-restart-form-group')
-            || (JSON.parse(card.getAttribute('data-spec') || '{}').restartFormGroup || '')
-        ).trim();
-        return CuttleChatActionForms.linkedRestartFormId({ formId: fid, group });
-    }
 
-    function broadcastLinkedFlaskRestart(payload) {
-        try {
-            window.parent.postMessage({
-                type: 'cuttle-flask-restart-linked',
-                ...payload,
-            }, '*');
-        } catch (_) {}
-        try {
-            applyLinkedFlaskRestartEvent(payload);
-        } catch (_) {}
-    }
-
-    function applyLinkedFlaskRestartEvent(payload) {
-        if (!payload) return;
-        const formId = String(payload.formId || payload.form_id || '').trim();
-        const restartId = String(payload.restartId || payload.restart_id || '').trim();
-        const selected = payload.selected || [];
-        const toast = String(payload.toast || 'Restarting Flask…');
-        const superseded = !!payload.superseded;
-        document.querySelectorAll('.cuttle-action-form').forEach((card) => {
-            if (!isLinkedFlaskRestartCard(card)) return;
-            const cardId = linkedFlaskRestartFormId(card);
-            if (formId && cardId && cardId !== formId) {
-                // Different generation — leave alone unless superseded for that id.
-                if (!(superseded && cardId === formId)) return;
-            }
-            if (superseded || payload.done) {
-                if (!card.classList.contains('cuttle-action-form--locked')) {
-                    collapseLockedActionForm(card, selected.length ? selected : ['graceful'], toast);
-                }
-                setActionFormCardProgress(
-                    card,
-                    toast || (payload.ok === false ? 'Restart failed' : 'Flask restarted'),
-                    payload.ok === false ? 'error' : 'ok'
-                );
-                return;
-            }
-            if (!restartId) return;
-            if (!card.classList.contains('cuttle-action-form--locked')) {
-                card.setAttribute('data-locked', '1');
-                collapseLockedActionForm(card, selected.length ? selected : ['graceful'], toast);
-            }
-            setActionFormCardProgress(card, toast, 'pending');
-            watchFlaskRestartOnCard(card, restartId, { quietStart: true });
-        });
-    }
-
-    let _flaskRestartLinkPoll = null;
-    async function syncLinkedFlaskRestartCardsFromStatus() {
-        const cards = Array.from(document.querySelectorAll('.cuttle-action-form'))
-            .filter(isLinkedFlaskRestartCard);
-        if (!cards.length) return;
-        let data = null;
-        try {
-            const resp = await fetchWithTimeout(
-                '/api/flask/restart/status',
-                { credentials: 'include', cache: 'no-store' },
-                6000
-            );
-            data = await resp.json();
-        } catch (_) {
-            // Don't leave brand-new cards stuck on "Checking restart status…".
-            cards.forEach((card) => unlockFlaskRestartPendingSyncCard(card));
-            return;
-        }
-        const liveGen = data && data.live_generation != null
-            ? Number(data.live_generation)
-            : null;
-        const currentFormId = String((data && data.restart_form_id) || '').trim();
-        const st = (data && data.status) || {};
-        const state = String(st.state || '');
-        const rid = String(st.restart_id || '').trim();
-        const inFlight = !!(rid && state && CuttleChatActionForms.RESTART_TERMINAL_STATES.indexOf(state) < 0);
-        const terminal = !!(rid && CuttleChatActionForms.RESTART_TERMINAL_STATES.indexOf(state) >= 0);
-
-        cards.forEach((card) => {
-            const cardId = linkedFlaskRestartFormId(card);
-            const epoch = flaskRestartFormEpoch(cardId);
-            // Heal soft follow-up dismiss ("Ignored") left on shared restart controllers.
-            try {
-                const spec = JSON.parse(card.getAttribute('data-spec') || '{}') || {};
-                const toast = String(spec.toast || '').trim();
-                if (/^(ignored|cancell?ed)\b/i.test(toast)
-                    && (card.getAttribute('data-locked') === '1'
-                        || card.classList.contains('cuttle-action-form--locked'))) {
-                    spec.locked = false;
-                    delete spec.toast;
-                    card.setAttribute('data-spec', JSON.stringify(spec));
-                    card.setAttribute('data-locked', '0');
-                    card.classList.remove(
-                        'cuttle-action-form--locked',
-                        'is-cancelled',
-                        'is-collapsed',
-                        'is-collapsible',
-                        'is-pending'
-                    );
-                    card.removeAttribute('data-restart-pending-sync');
-                    card.querySelectorAll('.cuttle-action-form-body button, input, textarea, select')
-                        .forEach((el) => { el.disabled = false; });
-                    const titleText = String(
-                        (card.querySelector('.cuttle-action-form-title') || {}).textContent || ''
-                    ).trim() || 'Restart Flask';
-                    const out = card.querySelector('.cuttle-action-form-summary-text');
-                    if (out) out.textContent = titleText;
-                    const icon = card.querySelector('.cuttle-action-form-summary-icon');
-                    if (icon) icon.textContent = '';
-                }
-            } catch (_) {}
-            // Prior generation → already restarted since this card was offered.
-            if (epoch != null && liveGen != null && liveGen > epoch) {
-                if (!card.classList.contains('cuttle-action-form--locked')
-                    || card.classList.contains('is-pending')) {
-                    collapseLockedActionForm(card, ['graceful'], 'Flask already restarted');
-                    setActionFormCardProgress(card, 'Flask already restarted', 'ok');
-                }
-                return;
-            }
-            if (inFlight && rid && (!currentFormId || !cardId || cardId === currentFormId
-                || (epoch != null && liveGen != null && epoch === liveGen))) {
-                card.removeAttribute('data-restart-pending-sync');
-                // Already following this restart — do not clobber the watcher's
-                // "Health check…" / phase label every poll (that caused the
-                // Restarting ↔ Health check flicker on a stuck status file).
-                if (card.__restartWatchId === String(rid)) {
-                    return;
-                }
-                if (!card.classList.contains('cuttle-action-form--locked')) {
-                    card.setAttribute('data-locked', '1');
-                    collapseLockedActionForm(card, ['graceful'], 'Restarting Flask…');
-                }
-                setActionFormCardProgress(card, 'Restarting Flask…', 'pending');
-                watchFlaskRestartOnCard(card, rid, { quietStart: true });
-                return;
-            }
-            if (terminal && rid && state === 'healthy'
-                && (!currentFormId || !cardId || cardId === currentFormId)) {
-                // Only auto-settle unlocked peers that shared this generation;
-                // avoid collapsing a brand-new card after a finished restart.
-                if (!card.classList.contains('cuttle-action-form--locked')
-                    && card.__restartWatchId) {
-                    setActionFormCardProgress(card, 'Flask restarted', 'ok');
-                    return;
-                }
-            }
-            // Generation still live (or unknown) and nothing in flight — open for click.
-            unlockFlaskRestartPendingSyncCard(card);
-        });
-    }
-
-    function ensureFlaskRestartLinkPoller() {
-        if (_flaskRestartLinkPoll) return;
-        _flaskRestartLinkPoll = setInterval(() => {
-            syncLinkedFlaskRestartCardsFromStatus().catch(() => {});
-            syncHistoryFormAwaitingFromDom();
-        }, 2500);
-        syncLinkedFlaskRestartCardsFromStatus().catch(() => {});
-        syncHistoryFormAwaitingFromDom();
-    }
-
-    async function watchFlaskRestartOnCard(card, restartId, opts = {}) {
-        if (!card || !restartId) return;
-        if (card.__restartWatchId === String(restartId)) return;
-        card.__restartWatchId = String(restartId);
-        card.setAttribute('data-restart-id', String(restartId));
-        const deadline = Date.now() + (opts.waitMs != null ? opts.waitMs : 600000);
-        const pollMs = opts.pollMs != null ? opts.pollMs : 2000;
-        if (!opts.quietStart) {
-            setActionFormCardProgress(card, 'Restarting Flask…', 'pending');
-        }
-        while (card.isConnected && Date.now() < deadline) {
-            let status = null;
-            let liveWork = null;
-            try {
-                const resp = await fetchWithTimeout(
-                    '/api/flask/restart/status',
-                    { credentials: 'include', cache: 'no-store' },
-                    6000
-                );
-                const data = await resp.json();
-                status = (data && data.status) || {};
-                liveWork = (data && data.active_work) || null;
-            } catch (_) {
-                if (!card.isConnected) {
-                    card.__restartWatchId = null;
-                    return;
-                }
-                // Expected while the daemon swaps the process.
-                setActionFormCardProgress(card, 'Restarting Flask — reconnecting…', 'pending');
-                await new Promise((r) => setTimeout(r, pollMs));
-                continue;
-            }
-            if (!card.isConnected) {
-                // Detached while awaiting (plan C2a): stop requests and
-                // late UI/history effects for a removed card.
-                card.__restartWatchId = null;
-                return;
-            }
-            if (String(status.restart_id || '') !== String(restartId)) {
-                // Superseded by a newer restart, or this card is replaying an
-                // old one after a reload — either way it is done.
-                if (card.classList.contains('is-pending')) {
-                    setActionFormCardProgress(card, 'Restart finished', 'ok');
-                }
-                card.__restartWatchId = null;
-                return;
-            }
-            const state = String(status.state || '');
-            card.__restartState = state;
-            card.__restartPct = CuttleChatActionForms.RESTART_PROGRESS_PCT[state] != null
-                ? CuttleChatActionForms.RESTART_PROGRESS_PCT[state]
-                : 25;
-            const label = restartProgressLabel(status, liveWork);
-            if (CuttleChatActionForms.RESTART_TERMINAL_STATES.indexOf(state) >= 0) {
-                const ok = state === 'healthy';
-                setActionFormCardProgress(card, label, ok ? 'ok' : 'error');
-                card.__restartWatchId = null;
-                // The transcript may have advanced while Flask was down.
-                try { await syncSessionMessagesFromServer(); } catch (_) {}
-                return;
-            }
-            setActionFormCardProgress(card, label, 'pending');
-            await new Promise((r) => setTimeout(r, pollMs));
-        }
-        if (card.isConnected) {
-            setActionFormCardProgress(card, 'Restart status unknown — check /restart status', 'error');
-        }
-        card.__restartWatchId = null;
-    }
 
     /**
      * The request itself can die with Flask (idle graceful restarts hand off in
      * well under a second), so the card adopts whatever restart is in flight.
      */
-    async function adoptInFlightRestartOnCard(card, opts = {}) {
-        if (!card) return;
-        const deadline = Date.now() + 60000;
-        while (card.isConnected && Date.now() < deadline) {
-            try {
-                const resp = await fetchWithTimeout(
-                    '/api/flask/restart/status',
-                    { credentials: 'include', cache: 'no-store' },
-                    6000
-                );
-                const data = await resp.json();
-                const rid = ((data && data.status) || {}).restart_id;
-                if (rid) {
-                    if (!card.isConnected) return;
-                    return watchFlaskRestartOnCard(card, String(rid), {
-                        quietStart: true,
-                        ...opts,
-                    });
-                }
-            } catch (_) {}
-            if (!card.isConnected) return;
-            await new Promise((r) => setTimeout(r, 2000));
-        }
-        if (card.isConnected) {
-            setActionFormCardProgress(card, 'Restart status unavailable', 'error');
-        }
-    }
 
     /**
      * When pending-result is empty after a detached stream, pull the assistant
@@ -16345,15 +15245,7 @@
     }
 
     function formAwaitingSessionIdFromCard(card) {
-        if (!card) return null;
-        const fromAttr = String(card.getAttribute('data-session-id') || '').trim();
-        if (fromAttr) return fromAttr;
-        try {
-            const spec = JSON.parse(card.getAttribute('data-spec') || '{}') || {};
-            const sid = String(spec.session_id || '').trim();
-            if (sid) return sid;
-        } catch (_) {}
-        return currentSessionId || null;
+        return actionCardsController().awaitingSessionId(card);
     }
 
     /** Keep history spinners in sync with pending action forms (restart / watch). */
@@ -18202,18 +17094,7 @@
     }
 
     function runningWatchJobIds() {
-        const ids = [];
-        document.querySelectorAll('#chatMessages .cuttle-action-form').forEach((card) => {
-            const watch = actionFormWatchSpec(card);
-            if (!watch || !watch.id) return;
-            if (watch.terminal) return;
-            const last = card.__watchLastData || watchSnapshotFromSpec(watch) || {};
-            const st = String(last.state || '');
-            if (st !== 'running') return;
-            if (!watchStatusMatchesCard(card, last)) return;
-            ids.push(String(watch.id));
-        });
-        return ids;
+        return actionCardsController().runningWatchJobIds();
     }
 
     function chatHasRunningWatchJob() {
@@ -22717,7 +21598,6 @@
     }
     
 
-    
     // Input Handling
     // Touch keyboards have no Shift+Enter, so Enter must stay a newline there; Send button sends.
     const composerTouchMq = window.matchMedia ? window.matchMedia('(hover: none) and (pointer: coarse)') : null;
@@ -23141,7 +22021,7 @@
                     return;
                 }
                 if (e.data.type === 'cuttle-flask-restart-linked') {
-                    try { applyLinkedFlaskRestartEvent(e.data); } catch (_) {}
+                    try { actionCardsController().handleExternalRestart(e.data); } catch (_) {}
                     return;
                 }
                 if (e.data.type === 'cuttle-open-panes') {

@@ -1170,10 +1170,17 @@ def test_form_resume_has_a_single_bubble_writer():
     route = api[start : api.index("@action_forms_bp.route", start)]
     assert "add_message" not in route
     assert "injected_user_message" in route
+    # Plan C2: the run submission moved to the card-effects controller; the
+    # page keeps the send lane itself as a host capability. Still one writer:
+    # the controller's single sendAnswerText call, served by the page lane.
+    cards = (root / "web" / "js" / "chat_action_cards.js").read_text(encoding="utf-8")
+    assert "host.sendAnswerText({ text: String(data.injected_user_message) })" in cards
+    assert "if (specFromCard) body.spec = specFromCard" in cards
+    assert "token = 'inline.' + btoa(unescape(encodeURIComponent(json)))" not in cards
     js = (root / "web" / "js" / "chat_page.js").read_text(encoding="utf-8")
-    assert "send({ text: String(data.injected_user_message) })" in js
+    assert "send({ text });" in js  # host serves the answer lane, nothing else
+    assert "injected_user_message" not in js
     assert "inp.value = String(data.injected_user_message)" not in js
-    assert "if (specFromCard) body.spec = specFromCard" in js
     assert "token = 'inline.' + btoa(unescape(encodeURIComponent(json)))" not in js
 
 
