@@ -1,19 +1,16 @@
 # Development-instance safety: shadow app first, daemon ownership before multi-daemon
 
-Status: **B1 and S1/S2 integrated in main; runtime activation pending**.
-S1 passed 37 (22 dev + 15 architecture). S2 real-HTTP
-run: 34 passed / 66 executions / zero guard denials. Manager combined
-candidate: all three real browser tests passed with no skips (4.80 s), and
-all 71 shadow/HTTP/boundary tests passed (8.47 s). A separate guarded shadow
-with pre-B1 production bytes reproduced the expected extra assistant row.
-Earlier broad result kept: 2255 passed / 61 skipped / zero failures. Candidate
-verification is complete; live activation remains pending. Baseline: source snapshot
-`4845233c`; live `ss`/PID evidence is transient runtime state, not source.
+Status: **B1 and S1/S2 integrated and live; Stop/resend acceptance completed**,
+including the user's successful real vendor test (independently verified).
+Historical gate runs below (S1 37 pass; S2 real-HTTP 34 pass / 66 executions /
+zero guard denials; combined real-browser 3 pass no skips; shadow/HTTP/boundary
+71 pass; broad 2255 pass / 61 skipped) remain historical evidence, not a current
+activation block. Baseline: source snapshot `4845233c`; live `ss`/PID evidence is
+transient runtime state, not source.
 
 Scope: S1/S2 only before B1; S3/S4 are deferred followup, not B1 prerequisites.
-B1 and S1/S2 are integrated in main with runtime activation pending; this doc
-supports one loopback HTTP server running the real app — no daemon, no main
-bootstrap.
+This doc supports one loopback HTTP server running the real app — no daemon, no
+main bootstrap.
 
 ## 1. Listener audit
 

@@ -3,8 +3,8 @@
 Applies only when the chat targets the Cuttle repo itself. Global etiquette
 (always-on for every project) lives in `.cuttle_global/rules/` — do not duplicate it here.
 
-These files under `.cuttle/rules/` are compiled into every Cuttle-chat agent turn by the
-**Context Compiler** (Cuttle Brain). Keep them short — how-to lives in `.cuttle/docs/`.
+These files under `.cuttle/rules/` are compiled into the fresh/full Cuttle-chat context by the
+**Context Compiler** (Cuttle Brain) and ride change-deltas on resume. Keep them short — how-to lives in `.cuttle/docs/`.
 
 ## Project layout
 
@@ -20,12 +20,21 @@ These files under `.cuttle/rules/` are compiled into every Cuttle-chat agent tur
 
 ## Hard rules
 
+0. **Coding intent router** — on Cuttle bug investigation, feature/fix
+   implementation, or refactoring (including read-only investigations), read
+   `AGENTS.md` first, then `docs/architecture/ARCHITECTURE_PRINCIPLES.md` and
+   `docs/architecture/repository-map.md` for the owning slice before editing.
+   Read `docs/architecture/development-instance-safety.md` before risky changes to
+   the hosting runtime, execution/process ownership, restart behavior, auth/state,
+   OR starting another instance. General conversation gets pointers, not full
+   procedures; relevant architecture questions may read the docs they need.
 1. **Versioning** — SemVer bump at release time only, never per push; git hash
    owns staleness/update checks → `04-versioning.md`, how-to
    `.cuttle/docs/cuttle-release.md`.
-2. **Mesh-visible runtime changes need a version bump first** — Workers advertise
-   `electron/package.json` `version` as `cuttle_version`. Bump via
-   `.cuttle/scripts/bump-cuttle-version.ps1` → commit → emit the `git.push`
+2. **Mesh updates ride git revs, not version bumps** — `needs_update` is SemVer
+   mismatch OR git-rev mismatch OR stale boot rev (`platform.py`); a push without
+   a bump still flags Clients behind. Bump `electron/package.json` SemVer at
+   release time only (`04-versioning.md`), then commit → emit the `git.push`
    action form (do not `git push` from the agent shell) → `workers.self-update`
    for Clients. Details → `.cuttle/docs/cuttle-release.md`.
 3. **Reload ladder (least disruptive first)** — (1) hard-refresh the Cuttle shell

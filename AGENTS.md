@@ -2,6 +2,9 @@
 
 Guidance for Cursor, Muse, Codex, Claude Code, Hermes, and other agents working in this repository.
 
+Coding tasks: read this brief, then `docs/architecture/ARCHITECTURE_PRINCIPLES.md` and
+`docs/architecture/repository-map.md` for the owning slice before editing.
+
 ## Flask / daemon restart safety
 
 Cuttle’s Flask API is a child of `cuttle_daemon`.
