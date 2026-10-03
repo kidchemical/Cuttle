@@ -17340,11 +17340,21 @@
                     let sawProgress = false;
                     try { window.CuttleNetDebug && window.CuttleNetDebug.event('stream-hold', 'POST /api/chat'); } catch (_) {}
 
+                    // At most one pending read: a timeout tick only
+                    // rejects its own race. The handle is retained until
+                    // readStreamChunk actually returns the result, so a
+                    // read that settles between timeout and catch still
+                    // delivers its bytes instead of being discarded.
+                    let pendingRead = null;
                     async function readStreamChunk() {
+                        if (!pendingRead) {
+                            pendingRead = reader.read();
+                        }
                         let timer = null;
+                        let result;
                         try {
-                            return await Promise.race([
-                                reader.read(),
+                            result = await Promise.race([
+                                pendingRead,
                                 new Promise((_, reject) => {
                                     timer = setTimeout(
                                         () => reject(Object.assign(new Error('stream-read-timeout'), { name: 'StreamReadTimeout' })),
@@ -17352,9 +17362,17 @@
                                     );
                                 }),
                             ]);
+                        } catch (err) {
+                            if (err && err.name === 'StreamReadTimeout') {
+                                throw err;
+                            }
+                            pendingRead = null;
+                            throw err;
                         } finally {
                             if (timer) clearTimeout(timer);
                         }
+                        pendingRead = null;
+                        return result;
                     }
 
                     while (true) {
