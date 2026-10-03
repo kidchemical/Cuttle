@@ -7,9 +7,10 @@ Run:
   cd C:\\Projects\\Cuttle
   .venv\\Scripts\\python.exe -m pytest src/tests/e2e/test_app_shell_navigation.py -v
 
-Start Flask first:
-  cd electron && npm start
-  # or: .venv\\Scripts\\python.exe src/scripts/start_api_server.py
+Start Flask first (canonical daemon or direct API module):
+  ./start_cuttle.sh
+  # or: .venv/bin/python src/scripts/cuttle_daemon.py
+  # or: .venv/bin/python src/api/web_chat_api.py
 """
 import json
 import os

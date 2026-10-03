@@ -2,7 +2,8 @@
 """
 Start the time series API server for dynamic chart updates (port 5000).
 
-For the main Cuttle web app (Tools page, chat, node editor on port 8080), run:
+This is an optional legacy test-analytics entrypoint, not current chat startup.
+For the main Cuttle web app (Tools page, chat on port 8080), run:
   python src/api/web_chat_api.py
 or from project root:
   .venv\\Scripts\\python.exe src\\api\\web_chat_api.py

@@ -165,3 +165,9 @@ message instead of a wall of stack traces. See `src/api/agent_harness/ADDING_AN_
 - **Suggested Fix:** Decide canonical widget identity and replay semantics with the existing backend/widget owners before changing fallback ingestion. Current rows are keyed by user and widget id; merely clearing/keying the dedupe or moving DOM code cannot establish safe replay.
 - **Validation:** Six isolated production-asset characterization journeys and source review establish the current suppression; defect assertions remain private characterization, not desired regression contracts. Normal server mutation order is fixed separately under ERR-20261002-004.
 - **Metadata:** Parent CH-000856; investigation CH-000860. Existing paint/navigation owners retained.
+
+### [ERR-20261003-001] Jobs links active harness runs to retired graph insight
+- **Priority:** Low · **Status:** Open; characterized in G1, not changed · **Area:** Jobs UI / graph-era Job insight
+- **Summary:** Active non-cuttle_jobs executions still link to `/job_insight.html?pipeline=…`, whose API resolves graph JSON through `SettingsManager.get_pipeline_path`. The execution tracker and query-log link remain current; this insight chain does not use their live model.
+- **Next:** Pin a real Jobs harness-card journey and choose its supported insight destination before removing or rewriting the surviving consumer chain. Keep required compatibility responses and active tracking intact.
+- **Metadata:** Parent CH-000856; contributor CH-000860; `docs/reviews/architecture-clutter-review.md`.

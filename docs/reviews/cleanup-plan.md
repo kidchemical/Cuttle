@@ -106,7 +106,7 @@ Only called from graph HTTP. `_execute_remote_agent_tool` has **no** chat caller
 | Step | Change | Verify |
 |---|---|---|
 | 3.1 | Single `bot_config.json` owner after cwd trace | Discord + Flask start |
-| 3.2 | Stop tracking `landing_page_backup.html` if still unrouted | Grep routes |
+| 3.2 | ✅ DONE (G1): `landing_page_backup.html` removed — no route/static/startup/test consumer; historical doc mentions kept as history | web_chat_api routes 1847-1948; explicit per-file serving, no HTML wildcard |
 | 3.3 | Document `*.json` allowlist | New templates listed |
 
 ---

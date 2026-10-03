@@ -347,8 +347,10 @@ Canonical: `python -m api.*` (`.cuttle_global/docs/agent-ops-cli.md`). Global ac
 Graph JSON pipelines and the node editor are **retired**. Jobs live path: `/api/cuttle-jobs` + workers. Graph `fetch` leftovers remain in `jobs_page.html` / `job_insight.html` until stream 1. Telegram/Slack HTTP is **unwanted**. Discord REST read/post does **not** use a gateway process. Extension map: [`extension-boundaries.md`](extension-boundaries.md). Historical consumer tables: [`../reviews/graph-discord-consumers.md`](../reviews/graph-discord-consumers.md).
 
 Still present (verified): port-5000 time-series stack
-(`src/scripts/start_api_server.py`), `landing_page_backup.html`, control
-panel HTML. Gone (prior map references corrected above):
+(`src/scripts/start_api_server.py`), control panel HTML. Removed (G1, proved
+unrouted — explicit per-file routes only, no HTML wildcard, no startup/test
+consumer): `landing_page_backup.html` (historical mentions in reviews stay as
+history). Gone (prior map references corrected above):
 `src/scripts/launchers/`, `src/launcher.py`. “Pipeline” still names the
 active no-LLM fallback: do not delete it by keyword. Keep Discord REST
 operations, active execution tracking, query tracking, and live BotConfig
