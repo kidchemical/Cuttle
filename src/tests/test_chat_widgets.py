@@ -951,3 +951,142 @@ ctrl.refresh().then(() => {
     )
     assert proc.returncode == 0, proc.stderr + "\n---\n" + proc.stdout
     assert "widget-strip-labels-ok" in proc.stdout
+
+
+def _order_db(tmp_path):
+    # Explicit temporary AuthDatabase only: the module singleton and DB_PATH
+    # are never touched, so all prior global state is preserved.
+    from api import auth_db as auth_db_mod
+
+    db = auth_db_mod.AuthDatabase(tmp_path / "widget_order.db")
+    uid = db.create_user("order@example.com", "Order", "local", password="x")
+    sess_id = db.create_chat_session(uid, "Order chat")
+    return db, uid, sess_id
+
+
+def _tag(wid, body, op=""):
+    op_attr = f' op="{op}"' if op else ""
+    return (
+        f'<cuttle_widget id="{wid}" type="tasks" title="T-{wid}"'
+        f' scope="session"{op_attr}>'
+        f"{json.dumps(body)}</cuttle_widget>"
+    )
+
+
+def test_tag_order_base_then_set_done_patch(tmp_path):
+    """Single message [base, patch(set_done)]: patch wins (D3 fix)."""
+    db, uid, sess_id = _order_db(tmp_path)
+    text = "n1 %s mid %s end" % (
+        _tag("w1", {"items": [{"id": "1", "text": "a", "done": False}]}),
+        _tag("w1", {"set_done": ["1"]}, op="patch"),
+    )
+    rewritten, touched = apply_widget_tags_to_store(
+        text, user_id=uid, session_id=sess_id, project_path="", db=db)
+    assert "<cuttle_widget" not in rewritten.lower()
+    assert [t["id"] for t in touched] == ["w1", "w1"]
+    row = db.get_chat_widget("w1", user_id=uid)
+    assert row["payload"]["items"] == [
+        {"id": "1", "text": "a", "done": True, "children": []}]
+
+
+def test_tag_order_base_then_add_patch(tmp_path):
+    """Single message [base, add-patch]: added item present exactly once."""
+    db, uid, sess_id = _order_db(tmp_path)
+    text = "%s %s" % (
+        _tag("w1", {"items": [{"id": "1", "text": "a", "done": False}]}),
+        _tag("w1", {"add": [{"id": "2", "text": "b"}]}, op="patch"),
+    )
+    rewritten, _ = apply_widget_tags_to_store(
+        text, user_id=uid, session_id=sess_id, project_path="", db=db)
+    assert "<cuttle_widget" not in rewritten.lower()
+    items = db.get_chat_widget("w1", user_id=uid)["payload"]["items"]
+    assert [(i["id"], i["done"]) for i in items] == [("1", False), ("2", False)]
+
+
+def test_tag_order_patch_then_base_replaces(tmp_path):
+    """Single message [patch, base]: the later base intentionally replaces."""
+    db, uid, sess_id = _order_db(tmp_path)
+    text = "%s %s" % (
+        _tag("w1", {"set_done": ["1"]}, op="patch"),
+        _tag("w1", {"items": [{"id": "1", "text": "a", "done": False}]}),
+    )
+    _, touched = apply_widget_tags_to_store(
+        text, user_id=uid, session_id=sess_id, project_path="", db=db)
+    assert [t["id"] for t in touched] == ["w1", "w1"]
+    row = db.get_chat_widget("w1", user_id=uid)
+    assert row["payload"]["items"] == [
+        {"id": "1", "text": "a", "done": False, "children": []}]
+
+
+def test_tag_order_interleaved_ids_and_successive_patches(tmp_path):
+    """Interleaved w1/w2 plus two successive w1 patches settle in order."""
+    db, uid, sess_id = _order_db(tmp_path)
+    text = " ".join([
+        _tag("w1", {"items": [{"id": "1", "text": "a", "done": False}]}),
+        _tag("w2", {"items": [{"id": "9", "text": "z", "done": False}]}),
+        _tag("w1", {"set_done": ["1"]}, op="patch"),
+        _tag("w1", {"set_text": {"1": "A!"}}, op="patch"),
+    ])
+    rewritten, touched = apply_widget_tags_to_store(
+        text, user_id=uid, session_id=sess_id, project_path="", db=db)
+    assert "<cuttle_widget" not in rewritten.lower()
+    assert [t["id"] for t in touched] == ["w1", "w2", "w1", "w1"]
+    assert db.get_chat_widget("w1", user_id=uid)["payload"]["items"] == [
+        {"id": "1", "text": "A!", "done": True, "children": []}]
+    assert db.get_chat_widget("w2", user_id=uid)["payload"]["items"] == [
+        {"id": "9", "text": "z", "done": False, "children": []}]
+
+
+def test_tag_order_chips_keep_place_with_noise(tmp_path):
+    """Unrelated text and an UNSUPPORTED widget type stay put; supported
+    chips land in order around them."""
+    db, uid, sess_id = _order_db(tmp_path)
+    skipped = (
+        '<cuttle_widget id="wx" type="frobnicate" title="Skip me">'
+        '{"nonsense": true}</cuttle_widget>'
+    )
+    text = "hello %s %s world %s !" % (
+        _tag("w1", {"items": [{"id": "1", "text": "a", "done": False}]}),
+        skipped,
+        _tag("w1", {"set_done": ["1"]}, op="patch"),
+    )
+    rewritten, touched = apply_widget_tags_to_store(
+        text, user_id=uid, session_id=sess_id, project_path="", db=db)
+    assert rewritten.startswith("hello")
+    assert skipped in rewritten  # unsupported type: exact text survives
+    assert db.get_chat_widget("wx", user_id=uid) is None
+    assert [t["id"] for t in touched] == ["w1", "w1"]
+    assert rewritten.count("pinned above composer") == 1  # base chip
+    assert "archived — done" in rewritten  # patched chip: all done → archived
+    base_chip = rewritten.index("pinned above composer")
+    patch_chip = rewritten.index("archived — done")
+    assert (rewritten.index("hello") < base_chip < rewritten.index(skipped)
+            < rewritten.index("world") < patch_chip < rewritten.rindex("!"))
+    assert db.get_chat_widget("w1", user_id=uid)["payload"]["items"][0]["done"] is True
+
+
+def test_tag_order_leaves_global_db_state_untouched(tmp_path):
+    """Order rewrites use the explicit DB only; singleton/DB_PATH unchanged."""
+    from api import auth_db as auth_db_mod
+
+    before_instance = auth_db_mod._db_instance
+    before_path = auth_db_mod.DB_PATH
+    db, uid, sess_id = _order_db(tmp_path)
+    apply_widget_tags_to_store(
+        _tag("w1", {"items": [{"id": "1", "text": "a", "done": False}]}),
+        user_id=uid, session_id=sess_id, project_path="", db=db)
+    assert auth_db_mod._db_instance is before_instance
+    assert auth_db_mod.DB_PATH == before_path
+
+
+def test_tag_order_separate_messages_unchanged(tmp_path):
+    """Two per-message rewrites: base then patch still applies cleanly."""
+    db, uid, sess_id = _order_db(tmp_path)
+    apply_widget_tags_to_store(
+        _tag("w1", {"items": [{"id": "1", "text": "a", "done": False}]}),
+        user_id=uid, session_id=sess_id, project_path="", db=db)
+    _, touched = apply_widget_tags_to_store(
+        _tag("w1", {"set_done": ["1"]}, op="patch"),
+        user_id=uid, session_id=sess_id, project_path="", db=db)
+    assert len(touched) == 1
+    assert db.get_chat_widget("w1", user_id=uid)["payload"]["items"][0]["done"] is True

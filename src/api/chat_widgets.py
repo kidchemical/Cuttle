@@ -367,7 +367,14 @@ def apply_widget_tags_to_store(
     project_path: str = "",
     db: Any = None,
 ) -> Tuple[str, List[Dict[str, Any]]]:
-    """Upsert widgets from tags; return rewritten text + touched widget rows."""
+    """Upsert widgets from tags; return rewritten text + touched widget rows.
+
+    Store operations follow tag DOCUMENT order, so a base tag followed by a
+    patch tag in one message settles base-then-patch (a later base tag
+    intentionally replaces). ``touched`` likewise follows document order.
+    Text splices are applied from the end inward so offsets stay valid; that
+    string-edit detail never reorders the store operations above.
+    """
     tags = parse_widget_tags(text)
     if not tags:
         return text, []
@@ -378,9 +385,11 @@ def apply_widget_tags_to_store(
         db = get_auth_db()
 
     touched: List[Dict[str, Any]] = []
-    # Replace from end so offsets stay valid.
+    splices: List[Tuple[int, int, str]] = []
+    # Store operations run in document order; text splices are collected here
+    # and applied from the end inward below so offsets stay valid.
     new_text = text
-    for tag in reversed(tags):
+    for tag in tags:
         attrs = tag["attrs"]
         wtype = str(attrs.get("type") or "tasks").strip().lower()
         if wtype not in SUPPORTED_TYPES:
@@ -487,7 +496,10 @@ def apply_widget_tags_to_store(
                 else "*(pinned above composer)*"
             )
             replacement = f"\n\n> 📌 {chip} {pin_note}\n\n"
-            new_text = new_text[: tag["start"]] + replacement + new_text[tag["end"] :]
+            splices.append((tag["start"], tag["end"], replacement))
+
+    for start, end, replacement in reversed(splices):
+        new_text = new_text[:start] + replacement + new_text[end:]
 
     # Collapse excess blank lines from replacements
     new_text = re.sub(r"\n{3,}", "\n\n", new_text).strip()
