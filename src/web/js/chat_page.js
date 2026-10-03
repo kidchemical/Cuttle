@@ -10952,6 +10952,7 @@
         const proj = decided.proj;
         const hadStored = decided.hadStored;
         currentProject = proj || null;
+        reportProjectToShell(currentProject && currentProject.path);
         // Stamp the default onto prefs so history grouping matches the cwd chip
         // (auth sessions do not store project_id on the server).
         if (currentSessionId && currentProject && !hadStored

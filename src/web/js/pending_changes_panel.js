@@ -1159,7 +1159,9 @@
             };
         }
 
-        pollTimer = setInterval(function () {
+        // The shell owns periodic scans for embedded panes, deduped by project.
+        // Standalone pages retain their cadence; explicit refreshes still work.
+        if (!useShellHub) pollTimer = setInterval(function () {
             if (destroyed) return;
             if (isPageBackgrounded()) return;
             const p = currentProject();
