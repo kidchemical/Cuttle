@@ -1,8 +1,8 @@
 # Card controller and widget ordering review
 
 Reviewed 2026-10-02 against main `5f217773`. C2b and the separate C3 widget
-ordering fix are integrated. The widget Python change awaits the normal
-user-selected Flask restart; no live service was restarted by the manager.
+ordering fix are integrated. The user-selected Flask restart completed healthy on a new process; the
+manager did not restart a live service. Tested source hashes remain unchanged.
 
 ## C2b: one owner for card effects
 

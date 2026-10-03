@@ -153,7 +153,7 @@ message instead of a wall of stack traces. See `src/api/agent_harness/ADDING_AN_
 
 
 ### [ERR-20261002-004] Widget server rewrite reverses mutations within one reply
-- **Priority:** Medium · **Status:** Integrated; normal Flask activation pending · **Area:** api.chat_widgets / assistant widget rewrite
+- **Priority:** Medium · **Status:** Fixed; user-selected activation verified healthy 2026-10-03 · **Area:** api.chat_widgets / assistant widget rewrite
 - **Summary:** Database writes ran inside reversed tag iteration intended for text offsets. A base followed by a same-id patch in one assistant reply lost the patch; separate messages worked.
 - **Done:** Apply store operations and return touched rows in document order; collect replacements and splice text backward. Keep later replacement semantics and existing type/status/scope/description owners.
 - **Validation:** Seven new regression cases within 24 passing widget tests; 42 workflow/persistence/coordinator neighbors; five cases fail against old code. Manager independently passed the combined candidate real-shadow SSE/history/widget-HTTP/reload journey without guard widening or client fallback writes.
