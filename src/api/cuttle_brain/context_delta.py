@@ -17,11 +17,13 @@ from typing import Any, Dict, List, Optional, Tuple
 from api.cuttle_brain.context_compiler import (
     CONTEXT_SCHEMA_VERSION,
     _USER_REQUEST_HEADER,
+    _apply_router_to_global_rules,
     _cuttle_global_config,
     load_global_rules,
     load_project_rules,
     project_inventory,
 )
+from api.cuttle_brain.personal_overlay import list_merged_names
 
 _OPEN = "<cuttle_context>"
 _CLOSE = "</cuttle_context>"
@@ -34,6 +36,18 @@ _DELTA_PREAMBLE = (
 _lock = threading.Lock()
 _MAX_RULE_CHARS = 3500
 _MAX_DELTA_CHARS = 6000
+
+# Truncation markers. A delta carrying either marker withholds instructions
+# the agent never saw, so it must never be acknowledged as delivered: the
+# kernel falls back to a full briefing instead (see prepare_resume_delta).
+RULE_TRUNC_MARKER = "\n… (truncated)"
+DELTA_TRUNC_MARKER = "\n\n… (delta truncated)"
+
+
+def is_truncated_delta_text(text: str) -> bool:
+    """True when a delta body withholds instructions behind a truncation marker."""
+    body = text or ""
+    return RULE_TRUNC_MARKER in body or DELTA_TRUNC_MARKER in body
 
 
 def _repo_root() -> Path:
@@ -109,17 +123,32 @@ class ContextSnapshot:
 
 
 def compute_snapshot(project_path: Optional[str]) -> ContextSnapshot:
+    """Capture the exact context state the fresh envelope would send.
+
+    Applies the same GLOBAL.ini policy as ``compile_context`` (rules
+    off/shadow, docs off; safety core always retained) and the same merged
+    inventory owners (install-local personal overlays included), so a resume
+    delta diffs what the agent actually saw — never suppressed legs.
+    """
+    from api.cuttle_brain.global_layers import load_global_layers
+
+    router = load_global_layers(project_path)
+    project_rules = load_project_rules(project_path)
+    visible_global = _apply_router_to_global_rules(
+        load_global_rules(), [n for n, _ in project_rules], router
+    )
     inv = project_inventory(project_path)
-    global_config = _cuttle_global_config()
     global_docs: List[str] = []
-    if global_config:
-        docs_dir = global_config / "docs"
-        if docs_dir.is_dir():
-            global_docs = sorted(p.name for p in docs_dir.glob("*.md"))
+    if router.docs:
+        global_config = _cuttle_global_config()
+        if global_config is not None:
+            docs_dir = global_config / "docs"
+            if docs_dir.is_dir():
+                global_docs = list_merged_names(docs_dir, ("*.md",), limit=40)
     return ContextSnapshot(
         schema_version=CONTEXT_SCHEMA_VERSION,
-        global_rules=_rules_map(load_global_rules()),
-        project_rules=_rules_map(load_project_rules(project_path)),
+        global_rules=_rules_map(visible_global),
+        project_rules=_rules_map(project_rules),
         global_docs=tuple(global_docs),
         project_docs=tuple(sorted(inv.get("docs") or [])),
         project_actions=tuple(sorted(inv.get("actions") or [])),
@@ -168,19 +197,41 @@ def load_injected_snapshot(
         return None
 
 
+def record_snapshot(
+    chat_session_id: Any,
+    agent_id: str,
+    project_path: str,
+    snapshot: ContextSnapshot,
+) -> None:
+    """Acknowledge a previously prepared snapshot as delivered.
+
+    Callers must pass the exact snapshot captured for the prompt that was
+    sent — never a recomputed one — so files edited mid-turn stay pending
+    for the next delta instead of being silently marked as known.
+    """
+    key = _store_key(chat_session_id, agent_id, project_path)
+    if not key:
+        return
+    with _lock:
+        data = _load_all()
+        data[key] = {"snapshot": snapshot.to_dict()}
+        _write_all(data)
+
+
 def record_injected_snapshot(
     chat_session_id: Any,
     agent_id: str,
     project_path: str,
 ) -> None:
-    key = _store_key(chat_session_id, agent_id, project_path)
-    if not key:
-        return
-    snap = compute_snapshot(project_path)
-    with _lock:
-        data = _load_all()
-        data[key] = {"snapshot": snap.to_dict()}
-        _write_all(data)
+    """Capture the current state and acknowledge it immediately.
+
+    Retained for compatibility (tests, debug flows). The kernel delivery
+    path must prefer ``compute_snapshot`` + ``record_snapshot`` so only
+    successfully delivered context is acknowledged.
+    """
+    record_snapshot(
+        chat_session_id, agent_id, project_path, compute_snapshot(project_path)
+    )
 
 
 def clear_injected_snapshot(
@@ -249,14 +300,14 @@ def _format_rule_changes(
         if len(text) <= _MAX_RULE_CHARS:
             lines.append(text)
         else:
-            lines.append(text[:_MAX_RULE_CHARS].rstrip() + "\n… (truncated)")
+            lines.append(text[:_MAX_RULE_CHARS].rstrip() + RULE_TRUNC_MARKER)
     for name in changed:
         text = _rule_text_by_name(rules_list, name) or ""
         lines.append(f"- **Updated** rule `{name}`:")
         if len(text) <= _MAX_RULE_CHARS:
             lines.append(text)
         else:
-            lines.append(text[:_MAX_RULE_CHARS].rstrip() + "\n… (truncated)")
+            lines.append(text[:_MAX_RULE_CHARS].rstrip() + RULE_TRUNC_MARKER)
     return lines
 
 
@@ -350,7 +401,7 @@ def build_delta_text(
 
     body = "\n".join(parts).strip()
     if len(body) > _MAX_DELTA_CHARS:
-        body = body[: _MAX_DELTA_CHARS - 40].rstrip() + "\n\n… (delta truncated)"
+        body = body[: _MAX_DELTA_CHARS - 40].rstrip() + DELTA_TRUNC_MARKER
     return body
 
 
@@ -359,12 +410,44 @@ def wrap_delta_block(delta_text: str) -> str:
     return f"{_OPEN}\nschema_version: {CONTEXT_SCHEMA_VERSION}\n\n{inner}\n{_CLOSE}"
 
 
-def build_resume_delta(
+@dataclass(frozen=True)
+class PreparedDelta:
+    """A resume delta ready to send, with the exact snapshot it describes.
+
+    ``snapshot`` is the state the delta text was computed from. Acknowledge
+    it (via ``record_snapshot``) only after the delta text is successfully
+    delivered — never at prepare time, so interrupted or failed turns keep
+    their notices pending. ``truncated`` means the text withholds
+    instructions and must fall back to a full briefing instead.
+    """
+
+    text: str
+    snapshot: ContextSnapshot
+    truncated: bool
+
+
+class UnstablePreparationError(Exception):
+    """Delta preparation raced a context edit: text may not match the receipt.
+
+    Callers must not send the prepared text as a delta and must not
+    acknowledge anything. The kernel handles this as a preparation failure
+    and falls back to the full briefing (which prepares its own receipt).
+    """
+
+
+def prepare_resume_delta(
     chat_session_id: Any,
     agent_id: str,
     project_path: str,
-) -> Optional[str]:
-    """Return a compact delta block when context changed since last full inject."""
+) -> Optional[PreparedDelta]:
+    """Diff against the last acknowledged snapshot without acknowledging.
+
+    Returns None when no snapshot was acknowledged or nothing changed.
+    Raises :class:`UnstablePreparationError` when preparation raced a
+    context edit (the formatter re-reads rule bodies after the snapshot,
+    so the text may not match the receipt) — the notice must be
+    delivered via the full fallback, never as a bare resume that drops it.
+    """
     previous = load_injected_snapshot(chat_session_id, agent_id, project_path)
     if previous is None:
         return None
@@ -372,7 +455,36 @@ def build_resume_delta(
     delta = build_delta_text(previous, current, project_path)
     if not delta:
         return None
-    return wrap_delta_block(delta)
+    text = wrap_delta_block(delta)
+    if compute_snapshot(project_path) != current:
+        raise UnstablePreparationError(
+            "context changed during delta preparation; falling back to full"
+        )
+    return PreparedDelta(
+        text=text, snapshot=current, truncated=is_truncated_delta_text(text)
+    )
+
+
+def build_resume_delta(
+    chat_session_id: Any,
+    agent_id: str,
+    project_path: str,
+) -> Optional[str]:
+    """Return a compact delta block when context changed since last full inject.
+
+    Retained for compatibility. Preparing without acknowledging is
+    ``prepare_resume_delta``; the kernel delivery path must use that and
+    acknowledge only after successful delivery. An unstable preparation
+    yields no delta here (legacy callers cannot fall back); use
+    ``prepare_resume_delta`` to distinguish it from unchanged context.
+    """
+    try:
+        plan = prepare_resume_delta(chat_session_id, agent_id, project_path)
+    except UnstablePreparationError:
+        return None
+    if plan is None:
+        return None
+    return plan.text
 
 
 def append_user_request(delta_or_body: str, user_prompt: str) -> str:

@@ -219,7 +219,13 @@ def _compile_agent_prompt(
 ) -> tuple:
     """Build the outbound prompt via Context Compiler + hot-swap handoff + context delta.
 
-    Returns ``(prompt_text, brain_meta)``.
+    Returns ``(prompt_text, brain_meta, receipt)`` where ``receipt`` is the
+    exact ``ContextSnapshot`` the outbound text describes (None when nothing
+    new was sent). The receipt is private delivery bookkeeping: callers must
+    acknowledge it only after the prompt is successfully delivered — never
+    at compile time and never recomputed — so failed, cancelled, or
+    interrupted turns keep their notices pending and mid-turn edits are not
+    swallowed. Keep it out of query-log metadata and sent payloads.
     """
     from api.cuttle_brain.context_compiler import _USER_REQUEST_HEADER
 
@@ -231,13 +237,26 @@ def _compile_agent_prompt(
     except Exception:
         handoff = None
 
-    full_layers = not has_resume
+    def _full_envelope(reason=None):
+        """Fresh full briefing plus the exact snapshot it sends (ack after delivery).
 
-    if full_layers:
+        The snapshot is captured before and after compilation: a context
+        file can change between the reads, and only a stable state proves
+        the receipt represents the compiled bytes. When preparation raced
+        an edit, the envelope is still sent but the receipt is None, so a
+        successful turn acknowledges nothing and the notice stays pending.
+        """
         inject_caps = _should_inject_capabilities(manifest, has_resume=False)
+        # Receipt bookkeeping is optional and isolated: a snapshot I/O
+        # failure must never prevent an otherwise successful compilation.
+        try:
+            from api.cuttle_brain.context_delta import compute_snapshot
+
+            stable_before = compute_snapshot(cwd)
+        except Exception:
+            stable_before = None
         try:
             from api.cuttle_brain.context_compiler import compile_context
-            from api.cuttle_brain.context_delta import record_injected_snapshot
 
             compiled = compile_context(
                 prompt,
@@ -252,50 +271,100 @@ def _compile_agent_prompt(
                 wsl=(manifest.env_profile or "").strip().lower() == "wsl",
                 chat_session_id=chat_session_id,
             )
-            record_injected_snapshot(chat_session_id, manifest.id, cwd)
-            meta = dict(compiled.meta or {})
-            inv = meta.get("inventory") if isinstance(meta.get("inventory"), dict) else {}
-            brain = {
-                "mode": "full",
-                "layers": list(compiled.layers_used or []),
-                "envelope_chars": len(compiled.envelope or ""),
-                "prompt_chars": len(compiled.prompt or ""),
-                "rules_count": meta.get("rules_count"),
-                "global_rules_count": meta.get("global_rules_count"),
-                "inventory": {
-                    "commands": list(inv.get("commands") or [])[:40],
-                    "docs": list(inv.get("docs") or [])[:40],
-                    "actions": list(inv.get("actions") or [])[:40],
-                    "rules": list(inv.get("rules") or [])[:40],
-                },
-                "handoff_from": meta.get("handoff_from"),
-                "handoff_to": meta.get("handoff_to"),
-            }
-            return compiled.prompt, brain
         except Exception:
             if handoff and handoff.text.strip():
                 text = f"{handoff.text.strip()}\n\n{_USER_REQUEST_HEADER}\n{prompt}"
-                return text, {"mode": "fallback_handoff", "prompt_chars": len(text)}
+                return text, {"mode": "fallback_handoff", "prompt_chars": len(text)}, None
             try:
                 from api.cuttle_ui_capabilities import with_cuttle_ui_capabilities
 
                 text = with_cuttle_ui_capabilities(prompt, inject=True)
-                return text, {"mode": "fallback_caps", "prompt_chars": len(text)}
+                return text, {"mode": "fallback_caps", "prompt_chars": len(text)}, None
             except Exception:
-                return prompt, {"mode": "fallback_bare", "prompt_chars": len(prompt or "")}
+                return prompt, {"mode": "fallback_bare", "prompt_chars": len(prompt or "")}, None
+        try:
+            from api.cuttle_brain.context_delta import compute_snapshot
 
-    # Resumed session — delta + optional handoff, never full re-inject.
-    parts: List[str] = []
-    delta_text = ""
+            prepared = compute_snapshot(cwd)
+            if stable_before is None or prepared != stable_before:
+                prepared = None
+        except Exception:
+            prepared = None
+        meta = dict(compiled.meta or {})
+        inv = meta.get("inventory") if isinstance(meta.get("inventory"), dict) else {}
+        brain = {
+            "mode": "full",
+            "layers": list(compiled.layers_used or []),
+            "envelope_chars": len(compiled.envelope or ""),
+            "prompt_chars": len(compiled.prompt or ""),
+            "rules_count": meta.get("rules_count"),
+            "global_rules_count": meta.get("global_rules_count"),
+            "inventory": {
+                "commands": list(inv.get("commands") or [])[:40],
+                "docs": list(inv.get("docs") or [])[:40],
+                "actions": list(inv.get("actions") or [])[:40],
+                "rules": list(inv.get("rules") or [])[:40],
+            },
+            "handoff_from": meta.get("handoff_from"),
+            "handoff_to": meta.get("handoff_to"),
+        }
+        ranked_meta = meta.get("ranked_context")
+        if isinstance(ranked_meta, dict):
+            # Visibility into the existing selection only: bounded choice,
+            # confidence, injected IDs, excerpt and skip/error status. No
+            # bodies, receipts, snapshots, or prompt duplication.
+            err = ranked_meta.get("error")
+            raw_choice = ranked_meta.get("choice")
+            brain["ranked"] = {
+                "choice": (str(raw_choice)[:120] if raw_choice else None),
+                "confidence": ranked_meta.get("confidence"),
+                "injected": [str(i)[:120] for i in (ranked_meta.get("injected") or [])][:8],
+                "excerpt": bool(ranked_meta.get("excerpt")),
+                "skipped": bool(ranked_meta.get("skipped", True)),
+                "error": (str(err)[:200] if err else None),
+            }
+        if reason:
+            brain["full_reason"] = reason
+        return compiled.prompt, brain, prepared
+
+    if not has_resume:
+        return _full_envelope()
+
+    # Resumed session: only a known acknowledged briefing earns the delta
+    # path. A missing or unreadable snapshot means the agent never
+    # confirmed this context — send the full briefing, never a bare prompt
+    # that assumes it knows the rules. No receipt is fabricated here; the
+    # full path prepares its own stability-checked snapshot.
     try:
-        from api.cuttle_brain.context_delta import build_resume_delta
+        from api.cuttle_brain.context_delta import load_injected_snapshot
 
-        delta = build_resume_delta(chat_session_id, manifest.id, cwd)
-        if delta:
-            parts.append(delta)
-            delta_text = delta
+        acknowledged = load_injected_snapshot(chat_session_id, manifest.id, cwd)
     except Exception:
-        pass
+        acknowledged = None
+    if acknowledged is None:
+        return _full_envelope(reason="missing_snapshot")
+
+    # Delta + optional handoff, never a full re-inject. Preparation never
+    # acknowledges. A preparation failure falls back to the full briefing
+    # (which prepares its own receipt) rather than a bare resume.
+    prepare_failed = False
+    plan = None
+    try:
+        from api.cuttle_brain.context_delta import prepare_resume_delta
+
+        plan = prepare_resume_delta(chat_session_id, manifest.id, cwd)
+    except Exception:
+        prepare_failed = True
+    if prepare_failed:
+        return _full_envelope(reason="delta_prepare_failed")
+    if plan is not None and plan.truncated:
+        # A truncated delta withholds instructions: never acknowledge it as
+        # delivered — fall back to the full briefing (ack its snapshot).
+        return _full_envelope(reason="truncated_delta")
+    parts: List[str] = []
+    delta_text = plan.text if plan is not None else ""
+    if delta_text:
+        parts.append(delta_text)
     if handoff and handoff.text.strip():
         parts.append(handoff.text.strip())
     if parts:
@@ -306,8 +375,8 @@ def _compile_agent_prompt(
             "prompt_chars": len(text),
             "delta_chars": len(delta_text),
             "handoff_from": getattr(handoff, "from_agent", None) if handoff else None,
-        }
-    return prompt, {"mode": "resume", "prompt_chars": len(prompt or "")}
+        }, (plan.snapshot if plan is not None else None)
+    return prompt, {"mode": "resume", "prompt_chars": len(prompt or "")}, None
 
 
 def run_agent_web_command(
@@ -487,6 +556,7 @@ def run_agent_web_command(
         meta_handler = getattr(adapter, "handle_meta", None)
         result: Optional[AgentResult] = None
         resume = None
+        brain_receipt = None
         if callable(meta_handler):
             try:
                 result = meta_handler(
@@ -510,9 +580,13 @@ def run_agent_web_command(
             if isinstance(compiled, tuple):
                 agent_prompt = compiled[0]
                 brain_meta = compiled[1] if len(compiled) > 1 and isinstance(compiled[1], dict) else {}
+                # Private delivery receipt (3rd element when the compiler
+                # provides one; older stubs return 2-tuples). Never logged.
+                brain_receipt = compiled[2] if len(compiled) > 2 else None
             else:
                 agent_prompt = compiled
                 brain_meta = {}
+                brain_receipt = None
             try:
                 tr = get_query_tracker(query_id)
                 if tr and tr.query_id == query_id:
@@ -643,6 +717,27 @@ def run_agent_web_command(
                 record_last_agent(sid, manifest.id)
             except Exception:
                 pass
+            # Delivery evidence is intentionally conservative: generic
+            # adapters expose no common delivery acknowledgement, so a
+            # successful non-meta result is the delivery signal, while
+            # failed turns keep their notices pending and repeat them.
+            # A success that raced a cancellation acknowledges nothing, and
+            # meta answers (never sent to a CLI) never acknowledge.
+            if (
+                not handled_by_meta
+                and brain_receipt is not None
+                and not _run_was_cancelled(chat_session_id)
+                and not _run_was_cancelled(sid)
+            ):
+                # Acknowledge exactly the snapshot prepared for the prompt
+                # that was sent — never recompute here, so context files
+                # edited mid-turn stay pending for the next delta.
+                try:
+                    from api.cuttle_brain.context_delta import record_snapshot
+
+                    record_snapshot(sid, manifest.id, cwd, brain_receipt)
+                except Exception:
+                    pass
 
         tracker = get_query_tracker(query_id)
         usage_payload = _usage_from_result(result.usage)

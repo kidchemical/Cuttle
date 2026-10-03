@@ -130,6 +130,14 @@ def test_kernel_same_agent_skips_handoff_but_uses_resume(monkeypatch, tmp_path):
 
     monkeypatch.setattr(ho, "_map_file", lambda: tmp_path / "last_agent.json")
     ho.record_last_agent("9001", "fakeprobe")
+    # Delivery-ack contract: the resume continues a previously *acknowledged*
+    # briefing (recorded here as the prior successful full turn). A resumed
+    # native session with no acknowledged snapshot gets a full briefing, not
+    # a bare prompt (see test_context_policy_audit.py).
+    from api.cuttle_brain import context_delta as cd
+
+    monkeypatch.setattr(cd, "_map_file", lambda: tmp_path / "snapshots.json")
+    cd.record_injected_snapshot("9001", "fakeprobe", str(tmp_path))
 
     seen = {"resume": None, "prompt": None}
 
@@ -195,6 +203,13 @@ def test_kernel_switch_injects_handoff_and_keeps_target_resume(monkeypatch, tmp_
         lambda *a, **k: [{"role": "user", "content": "from antigravity era"}],
     )
     ho.record_last_agent("9002", "antigravity")
+    # Delivery-ack contract: the target resume continues a previously
+    # *acknowledged* briefing (see note above); the handoff covers the
+    # agent switch, not the context rules.
+    from api.cuttle_brain import context_delta as cd
+
+    monkeypatch.setattr(cd, "_map_file", lambda: tmp_path / "snapshots.json")
+    cd.record_injected_snapshot("9002", "opencode", str(tmp_path))
 
     seen = {"resume": None, "prompt": None}
 
