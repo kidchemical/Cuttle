@@ -3,11 +3,39 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from api.jev import thresholds as T
 from api.jev.client import JevError, get_client, jev_available
 from api.jev.types import choice, noul
+
+# Truncation marker: an injected body that withholds source text must say so
+# and point back at the full runbook/skill before any procedure is acted on.
+EXCERPT_MARKER = "\n\n… (excerpt — open the full runbook/skill source before acting)"
+
+# Candidate summaries stay informative, not huge: a bounded title plus the
+# first meaningful intro line when it adds a useful distinction.
+_SUMMARY_TITLE_CHARS = 80
+_SUMMARY_INTRO_CHARS = 140
+
+
+def _doc_title_intro(name: str, project_path: Optional[str]) -> Tuple[str, str]:
+    """(title, intro) from the merged doc body (project-first, overlays in).
+
+    Title is the first content line; intro is the next distinct content
+    line, or "" when nothing usefully distinguishes it from the title.
+    Neither claims to carry the whole document (overlays included).
+    """
+    distinct: List[str] = []
+    for line in (_read_doc_body(name, project_path) or "").splitlines():
+        text = line.strip().lstrip("#").strip()
+        if text and text not in distinct:
+            distinct.append(text)
+        if len(distinct) >= 2:
+            break
+    title = distinct[0][:_SUMMARY_TITLE_CHARS].rstrip() if distinct else ""
+    intro = distinct[1][:_SUMMARY_INTRO_CHARS].rstrip() if len(distinct) > 1 else ""
+    return title, intro
 
 
 def _doc_summaries(project_path: Optional[str], inventory: Dict[str, List[str]]) -> List[Dict[str, str]]:
@@ -24,16 +52,26 @@ def _doc_summaries(project_path: Optional[str], inventory: Dict[str, List[str]])
         global_config = None
     out: List[Dict[str, str]] = []
     seen = set()
-    for name in global_names + names:
+    # Project-first ownership at candidate selection (not just body
+    # resolution): project names lead, then remaining global names, under
+    # the same cap — so a full global catalog can never crowd out a
+    # distinct project runbook. Twins are listed once (project wins).
+    for name in names + global_names:
         if name in seen:
             continue
         seen.add(name)
+        title, intro = _doc_title_intro(name, project_path)
+        summary = f"Cuttle runbook `{name}`"
+        if title:
+            summary += f" — {title}"
+        if intro:
+            summary += f" — {intro}"
         out.append(
             {
                 "id": f"doc:{name}",
                 "kind": "doc",
                 "name": name,
-                "summary": f"Cuttle runbook `{name}`",
+                "summary": summary,
             }
         )
         if len(out) >= 40:
@@ -106,6 +144,9 @@ def rank_context(
     empty = {"items": [], "meta": {"skipped": True}}
     if not (user_prompt or "").strip():
         return empty
+    if max_items is not None and max_items <= 0:
+        # No room for even the winner: skip before any judge call or read.
+        return {"items": [], "meta": {"skipped": True, "injected": [], "excerpt": False}}
     if client is None and not jev_available():
         return empty
 
@@ -151,56 +192,47 @@ def rank_context(
     if needs < T.NEEDS_EXTRA_CONTEXT_NOUL or conf < T.RANK_CONFIDENCE_FLOOR or not pick.choice:
         return {"items": [], "meta": meta}
 
-    # Winner plus up to two runners-up from the distribution.
-    ranked_ids = [pick.choice]
-    rest = sorted(
-        ((k, v) for k, v in pick.probabilities.items() if k != pick.choice),
-        key=lambda kv: kv[1],
-        reverse=True,
-    )
-    for k, _p in rest:
-        if k not in ranked_ids:
-            ranked_ids.append(k)
-        if len(ranked_ids) >= max_items:
-            break
-
+    # Winner only. The choice distribution holds alternative hypotheses, not
+    # independent relevance evidence, so runners-up are never injected no
+    # matter how high their probability is.
+    meta["excerpt"] = False
     by_id = {c["id"]: c for c in candidates}
-    items: List[Dict[str, str]] = []
-    used = 0
-    for cid in ranked_ids:
-        info = by_id.get(cid)
-        if not info:
-            continue
-        if info["kind"] == "doc":
-            body = _read_doc_body(info["name"], project_path)
+    winner = by_id.get(pick.choice)
+    if winner is None:
+        meta["injected"] = []
+        return {"items": [], "meta": meta}
+    if winner["kind"] == "doc":
+        body = _read_doc_body(winner["name"], project_path)
+    else:
+        body = _read_skill_body(winner["name"])
+    body = (body or "").strip()
+    if not body:
+        meta["injected"] = []
+        return {"items": [], "meta": meta}
+    # Marker space is reserved inside the budgets: the whole injected body
+    # stays within min(per-item, total). When the budgets cannot hold even
+    # the marker, the body stays within them and the excerpt status below
+    # carries the signal instead of a silently re-truncated marker.
+    cap = min(T.PER_ITEM_CHARS, T.MAX_INJECT_CHARS)
+    excerpted = len(body) > cap
+    if excerpted:
+        if cap > len(EXCERPT_MARKER):
+            body = body[: cap - len(EXCERPT_MARKER)].rstrip() + EXCERPT_MARKER
         else:
-            body = _read_skill_body(info["name"])
-        body = (body or "").strip()
-        if not body:
-            continue
-        if len(body) > T.PER_ITEM_CHARS:
-            body = body[: T.PER_ITEM_CHARS].rstrip() + "\n…"
-        if used + len(body) > T.MAX_INJECT_CHARS:
-            remain = T.MAX_INJECT_CHARS - used
-            if remain < 400:
-                break
-            body = body[:remain].rstrip() + "\n…"
-        items.append(
-            {
-                "id": cid,
-                "kind": info["kind"],
-                "name": info["name"],
-                "body": body,
-            }
-        )
-        used += len(body)
-        if len(items) >= max_items:
-            break
-    meta["injected"] = [i["id"] for i in items]
-    return {"items": items, "meta": meta}
+            body = body[:cap]
+    item = {
+        "id": pick.choice,
+        "kind": winner["kind"],
+        "name": winner["name"],
+        "body": body,
+        "excerpt": excerpted,
+    }
+    meta["excerpt"] = excerpted
+    meta["injected"] = [item["id"]]
+    return {"items": [item], "meta": meta}
 
 
-def format_ranked_block(items: List[Dict[str, str]]) -> str:
+def format_ranked_block(items: List[Dict[str, Any]]) -> str:
     if not items:
         return ""
     parts = [
@@ -208,11 +240,22 @@ def format_ranked_block(items: List[Dict[str, str]]) -> str:
         "",
         "Cuttle selected these because they likely apply. Follow them when relevant; "
         "ignore sections that do not. Always-on rules above still win on conflict.",
+        "Injected bodies can be excerpts (marked …); open the named runbook or "
+        "skill source before acting on a procedure.",
         "",
     ]
     for it in items:
-        parts.append(f"### {it.get('kind', 'item')} `{it.get('name')}`")
-        parts.append(it.get("body") or "")
+        body = it.get("body") or ""
+        # A tiny budget can hold the excerpt status but not the textual
+        # marker: label from the explicit flag so the agent sees it, not
+        # just the query logger.
+        excerpt_label = (
+            " (excerpt — open the full source before acting)"
+            if it.get("excerpt") and "(excerpt" not in body
+            else ""
+        )
+        parts.append(f"### {it.get('kind', 'item')} `{it.get('name')}`{excerpt_label}")
+        parts.append(body)
         parts.append("")
     return "\n".join(parts).strip()
 
