@@ -36,9 +36,11 @@ retired) is owned end to end: the coordinator submits never return None
 streams run the owned entry, and `_generate_chat_stream` plus the lane
 response builders are transport-only adapters over it. The compat entry
 (`process_message_with_bot`, `/api/sessions/send`) submits unclaimed
-with no persist. The pipeline stream saver's persist-anything policy
-(including `[CANCELLED]` rows, `[ERR-20261001-001]`) is pinned unchanged
-pending its own defect pass. No surface implements an independent
+with no persist. The pipeline savers route through the shared
+`make_assistant_saver`, so `[CANCELLED]`/system rows never become assistant
+history while user cancellation feedback is retained independently
+(`[ERR-20261001-001]`, fixed by B1; pinned by the updated pipeline oracle
+and `test_chat_persistence_policy.py`). No surface implements an independent
 execution path or its own executor — the declared sync/stream
 serialization, error, and delivery distinctions are pinned by HTTP tests.
 Cuttle never installs

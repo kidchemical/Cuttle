@@ -1,6 +1,6 @@
 # Architecture organization and optimization — next phase
 
-**Status:** execution authorized. A1/A2, B1–B3, C1, and the Brain policy audit are integrated and activated. C2b is reviewed and integrated; the separate C3 server widget-order fix is integrated and activation is verified healthy. Existing message paint paths are retained, and client fallback identity/replay defects remain recorded separately. Latest combined candidate passed 39 card/Stop-resend browser cases plus one real-shadow widget journey. Later transport, shell, optimization, and clutter slices retain their evidence gates.
+**Status:** selected initiative complete (2026-10-03). A/B/C/D/G accepted; E1 kept the existing shell and E2 was skipped; F1 measured, F2 fixes confirmed redundant pending-change polling, F3 skipped without a reproducible paint hotspot. The last round was completed directly, without subagents. See [closeout outcomes, evidence, limits and deferred owners](../reviews/architecture-organization-closeout.md). S3/S4 and the explicitly listed behavior defects remain separate follow-ups, not prerequisites. Execution entries below are historical checkpoints; their earlier “pending” states are superseded by this status and the closeout.
 
 **Inspected:** 2026-10-01, HEAD `a70dc21b`, initially clean working tree.  
 **Predecessor:** [architecture stabilization](ARCHITECTURE_STABILIZATION_PLAN.md), completed Phases 0–7. This is a separate follow-up, not a reopening of completed phases.
@@ -321,3 +321,24 @@ The user may stop after any accepted slice. Successful completion means the actu
 - **G1 — bounded clutter slice integrated (2026-10-03):** removed the unrouted 1,538-line landing backup after route/static/startup/navigation/packaging consumer checks; corrected two misleading startup docstrings. Preserved the uncertain optional :5000 analytics HTTP pair and active in-process reporters. Surviving Jobs-to-retired-graph insight mismatch is recorded separately (ERR-20261003-001), not silently deleted. Runtime AST of both touched Python files is unchanged beyond module docstrings. See `docs/reviews/architecture-clutter-review.md`; G2 closeout still follows transport/performance review.
 
 - **D1a — behavior fix integrated (2026-10-03):** retain one native read until consumption across 8-second timeout observations, including a controlled settlement-before-catch edge. Preserve hold/parse/application policies. Final contributor 13 browser cases; manager 7 final targeted read/Stop/real-shadow cases, earlier 27 combined and 86 lifecycle/architecture checks; selected skips zero. Page +18 lines; reader module move is a separate follow-up. Source-only checksum recovery proved in a disposable copy. No restart/push. See `docs/reviews/chat-stream-reader.md`.
+
+
+## Direct final closeout — 2026-10-03
+
+D1b moves only native reader/framing/cleanup into `CuttleChatStream.readEvents`;
+D2 uses one `CuttleChatGeneration` sync-claim state plus the existing page
+navigation sequence to fix stale malformed status, A→B→A title rollback and
+replacement-claim cleanup. HTTP/semantic events/session paint and established
+Stop/persistence/recovery owners remain in place. A3's selected structural
+journey fences now pass; this is not exhaustive coverage of every proposed
+scenario or a live vendor/platform smoke.
+
+F1's corrected profile covers three fresh contexts per workload, separate
+initial/paging/steady windows, native detach/recovery, synthetic visibility
+and private real SQLite reads. F2 uses the existing shell hub and removes
+only the embedded panel's redundant periodic clock, preserving standalone
+and explicit refresh behavior. F3 is skipped without a repeatable render
+hotspot. G2 updates maintained maps and compares four representative A1
+tasks with their current owners. Final gates, measured request counts,
+source deltas, activation/recovery and all remaining defects are in the
+linked public closeout. No second daemon, forced restart or S3/S4 dependency.

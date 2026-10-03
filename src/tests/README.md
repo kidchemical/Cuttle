@@ -119,7 +119,8 @@ architecture). S2 real-HTTP run: 34 passed / 66
 executions / zero guard denials. Manager combined candidate: all three real
 browser tests passed with no skips (4.80 s), and all 71 shadow/HTTP/boundary
 tests passed (8.47 s). Earlier broad result kept: 2255 passed / 61 skipped /
-zero failures. Candidate verification is complete; live activation remains pending.
+zero failures. S1/S2 implementation is verified and activated (Linux);
+historical counts above are the acceptance evidence.
 Details: `docs/architecture/development-instance-safety.md`.
 
 Run from the repo root with the same scrubbed offline env as above (plus the
@@ -144,6 +145,37 @@ also rejects idle handoff from a process other than the PID/generation that
 scheduled the wait. `test_flask_restart.py::test_foreign_process_cannot_fire_flask_pending_restart`
 reproduces direct, completion-hook, and cancellation-hook attempts; it must
 remain blocked without changing the pending status or writing a daemon request.
+
+## Architecture transport and history-sync gates
+
+Run in the scrubbed isolated environment above (no `src/.env` or user data):
+
+```bash
+.venv/bin/python -m pytest -q src/tests/test_chat_stream.py src/tests/test_chat_generation.py src/tests/test_architecture_boundaries.py
+.venv/bin/python -m pytest -q src/tests/e2e/test_chat_stream_reader.py src/tests/e2e/test_chat_sync_lifetime.py src/tests/e2e/test_chat_stop_resend.py src/tests/e2e/test_shadow_chat_stop_resend.py
+```
+
+Sync tests hold real native response bodies after headers, including old
+malformed status, A→B→A navigation and stale cleanup of a replaced claim.
+Synthetic visibility input proves policy, not OS-minimize behavior. Stream
+tests use native readers/AbortSignal with empty recovery controls. Shadow
+journeys separately prove real Flask/auth/SQLite cancellation and persistence.
+
+Optional cost measurements reuse the same guarded browser fixtures:
+
+```bash
+CUTTLE_COST_PROFILE=1 .venv/bin/python -m pytest -q src/tests/e2e/test_chat_cost_profile.py
+```
+
+The per-project polling regression is also a normal explicit browser gate:
+`src/tests/e2e/test_pending_changes_polling.py` (shared/different projects and
+standalone native intervals).
+
+Three fresh contexts/databases per workload; output defaults to ignored
+`temp/f1-measurements.json` (`CUTTLE_COST_PROFILE_OUT` overrides it). This is
+a measurement aid, not a timing-threshold CI gate. See the closeout review
+for environment, measured scope and omitted production costs. Browser skips
+remain unmet validation gates.
 
 ## Layout
 

@@ -1,6 +1,6 @@
 # Cuttle architecture map (repository-wide)
 
-**Date:** 2026-10-01 · **HEAD:** `4845233c` · **Code:** not modified (docs-only A1 slice of the [organization plan](ARCHITECTURE_ORGANIZATION_PLAN.md)).
+**Date:** 2026-10-01 · **Baseline HEAD:** `4845233c` (original A1 audit snapshot) · Selected ownership rows maintained through later slices — not a claim that current source matches the baseline tree. Slice history lives in the [organization plan](ARCHITECTURE_ORGANIZATION_PLAN.md).
 Prior snapshot: 2026-09-27 at `4f2880c`. Inventory review status: [`../reviews/repository-inventory.md`](../reviews/repository-inventory.md).
 
 Companion: [`docs/guides/WEB_CHAT_API.md`](../guides/WEB_CHAT_API.md) (Flask composition root only), [`docs/guides/MODULARITY.md`](../guides/MODULARITY.md), this audit’s [`../reviews/repository-audit.md`](../reviews/repository-audit.md).
@@ -44,8 +44,7 @@ exist. Do not follow old references to them.
 `src/api/web_chat_api.py` owns the `Flask app`, HTML routes, chat-turn HTTP,
 process-control 410s, TLS helpers, and **registers**. Only the `try/except`
 rows below are nonfatal (failure logged, boot continues); `auth_bp` and
-`usage_live_bp` register unconditionally at `web_chat_api.py:306/309` and a
-failure there is fatal:
+`usage_live_bp` register unconditionally (a failure there is fatal):
 
 | Blueprint / register | Package | Notes |
 |---|---|---|
@@ -66,10 +65,14 @@ their absence is completed extraction work to retain, not a gap.
 
 **Reverse imports:** exactly one production module imports the entry module —
 `api.doctor` (importability health probe: `try/except` import, no attribute
-use, reports `chat_backend` ok/fail). Enforced by
+use, reports `chat_backend` ok/fail). The only other permitted importer is
+`src/scripts/cuttle_shadow_app.py`: a dev-only spawned-child composition,
+not an owned layer and never imported by one (`api.dev_instance` spawns it
+as a subprocess; it imports the real app only after installing deny
+guards). Both entries are enforced by
 `src/tests/test_architecture_boundaries.py` (`REVERSE_IMPORT_ALLOWLIST`,
-AST scanner covering static and dynamic import forms; the allowlist entry
-must still resolve or the test fails). The older “bottleneck” list of lazy importers (`chat_delivery`,
+AST scanner covering static and dynamic import forms; an allowlist entry
+that stops resolving fails the test). The older “bottleneck” list of lazy importers (`chat_delivery`,
 `auth_api`, `agent_router.dispatch`, `subagents`, kernel cwd) is obsolete —
 the AST import scan finds no import of the entry module in any of them.
 Plain comment/string mentions remain (e.g. `limiter.py`,
@@ -107,12 +110,14 @@ pipeline lane submits through the coordinator. Graph-era HTTP and the node
 editor are retired; `retired_pipeline_registry` is an always-empty shape
 stub. Do not delete pipeline code by keyword.
 
-**Active divergence (do not “fix” by moving code):** the leftover-pipeline
-stream `on_save` persists any success-or-text result, including
-`[CANCELLED]` and `ui == 'system'` rows that `make_assistant_saver` skips —
-pinned by `test_oracle_pipeline_stream_cancelled_row_divergence` and logged
-as `[ERR-20261001-001]` (Open). Unifying the guards is a scoped behavior
-change (organization plan B1), not a refactor step.
+**Unified saver policy (B1, integrated):** both pipeline savers route
+through the shared `make_assistant_saver`, so cancellation/system rows
+(`[CANCELLED]`, `ui == 'system'`) never become assistant history while
+transport completion and user cancellation feedback are preserved
+independently. Pinned by the updated
+`test_oracle_pipeline_stream_cancelled_row_divergence` and
+`test_chat_persistence_policy.py`; logged as `[ERR-20261001-001]`
+(Fixed). Do not reintroduce a lane-local persist-anything saver.
 
 **Discord inbound chat gateway:** retired (2026-09). See [`extension-boundaries.md`](extension-boundaries.md) and [`../reviews/discord-cleanup-2026-09.md`](../reviews/discord-cleanup-2026-09.md).
 
@@ -280,7 +285,7 @@ Vanilla JS: `src/web/js/app_shell.js` (shell), `chat_page.js` (chat). No bundler
 
 **Chat frontend ownership:** `chat_page.js` is the page orchestrator — it
 owns DOM, transport URLs, timer handles, and persistence effects.
-Decisions/state live in one owner module each (loaded before the page;
+Decisions/state and bounded transport/controller effects have explicit owners (loaded before the page;
 owners never touch page globals — capabilities arrive as explicit
 arguments or injected host interfaces):
 
@@ -290,7 +295,9 @@ arguments or injected host interfaces):
 | `chat_stop_state.js` (`CuttleStopState`) | stop/cancel flags + abort classification (pure) | notices, transport abort, dispatch |
 | `chat_followup_queue.js` (`CuttleFollowupQueue`) | follow-up queue state + take/reconcile, composes `chat_activity.js` items (pure) | drain timer, persistence, edit UI |
 | `chat_pending_result.js` (`CuttleChatPendingResult`) | SSE event classification, pending-result waiter, history-recovery match, exactly-once sync classification, stale-heal, send-failure recovery (pure decisions; async flows take transport/paint/clock as `deps`) | fetch/paint/clock, session-adopt guards, timers, busy lock |
-| `chat_generation.js` (`CuttleChatGeneration`) | busy-lock `{loading, localSessionId, seq}` + token-scoped release, sync cadence, detached-poll classes, session-open flags | timers, transport, voice, running-flag paint |
+| `chat_stream.js` (`CuttleChatStream`) | SSE byte transport: `readEvents(body, {holdMs, readTimeoutMs, signal?, onEvents})` owns the native reader, one retained read promise across timeout observations, read timers, TextDecoder + LF-double-newline framing + JSON decode, reader cancel on hold detach/abort, and lock release on terminal/eof/error | fetch request, HTTP status/content-type/JSON fallback, event classification, session adoption, DOM paint, sawProgress, final-result mapping, turn/Stop/busy ownership, pending recovery, debug messages |
+| `pending_changes_panel.js` (`CuttlePendingChangesPanel`) | standalone periodic scans and explicit panel refresh/actions; embedded panes use existing shell per-project polling hub | `app_shell.js` owns periodic shared scans; page project reconciliation reports path through `reportProjectToShell`; no duplicate embedded interval |
+| `chat_generation.js` (`CuttleChatGeneration`) | busy-lock `{loading, localSessionId, seq}` + token-scoped release, sync cadence, detached-poll classes, session-open flags; one sync-claim state `{inFlight, startedAt, seq}` through `createSyncState`, `claimSync`, `isSyncCurrent`, `finishSync` | timers, transport, voice, running-flag paint |
 | `chat_messages.js` (`CuttleChatMessages`) | records/windowing, display dispatch as pure functions | transcript DOM paint, sync/poll, session restore, streaming orchestration, leaf renderers |
 | `chat_action_forms.js` (`CuttleChatActionForms`) | pure card model/watch interpretation (`isExplicitActionFormCancelOption`, `actionFormHasSideEffect`, `isWatchFormAction`, `cardWatchBind`, `normalizeWatchBars` formatting transforms, restart-link helpers) plus card HTML/render planning (`renderActionFormCardHtml`, `renderWatchBarsHtml` — no render target, no DOM) | card DOM/button/watch wiring moved to `chat_action_cards` (`CuttleChatActionCards`, plan C2 done), never into this pure module |
 | `chat_markdown.js` | markdown/block composition (pure) | page render orchestration |
@@ -313,25 +320,31 @@ persistence effects.
 layout from the live DOM while reading shell maps (`columnState`,
 `lastChatByColumn`, `pageWithPaneSession`); `flattenLayoutLeaves` is
 nearby in `app_shell.js`. There is no standalone pure pane-tree module —
-extracting one is **proposed** (plan E1), not done.
+E1 kept this boundary after task-local review and real layout fences; E2 was skipped without a demonstrated extraction benefit.
 
 Streaming lifecycle fixes belong in the lifecycle/state owners plus
 page adapters/tests — not in unrelated page regions. Deferred, still
-page-side by design: message-sync/history timer mechanics, SSE byte
-transport, session-adopt nav guards, running-flag store/paint.
+page-side by design: message-sync/history timer mechanics, session-adopt
+nav guards, running-flag store/paint. Byte framing/reader cleanup belongs
+to `chat_stream`; sync claim/replacement/release belongs to `chat_generation`.
 
 ---
 
 ## Navigability baseline (current regions, state, gates)
 
-Recorded pre-move so later slices can compare working context. All
-identifiers below exist at HEAD; nothing here is a proposed interface.
+Recorded pre-move at the A1 baseline (`4845233c`) and maintained
+since, so later slices can compare working context against that commit.
+Identifiers below are current guidance, not an untouched snapshot —
+card render/effects, config path, and stream fixes have since moved to
+their owners, while pane layout and page-side sync/transport effects
+remain where they were. Nothing here is a proposed interface.
 
 | Task | Regions / symbols | Mutable state + interfaces touched | Tests |
 |---|---|---|---|
 | Action-card render | page `formatMessage` + `actionFormBlocks` placeholder array + narrow `renderActionFormCard` adapter (pre-rendered preview, explicit session/esc in; all in `chat_page.js`); card HTML/render planning `CuttleChatActionForms.renderActionFormCardHtml` (`chat_action_forms.js`, pure no-DOM); page `activateEnhancements` (non-card helpers only) + narrow adapters (`dismissOpenInteractiveCards`, `runningWatchJobIds`, `formAwaitingSessionIdFromCard`, cross-pane listener) delegating to the card-effects controller; card mount/submission/dismissal, lock/progress DOM, watch/restart loops, choice storage, adoption and linked-restart recovery in `CuttleChatActionCards.mountCards` (`chat_action_cards.js`, one instance per chat root, explicit host capabilities); backend `rewrite_action_forms`, `merge_qa_resume_specs` (`action_forms.py`), `prepare_assistant_text_for_actions` (`project_actions.py`) | card lock/selection attrs, watch timers, HMAC-signed persisted specs, one-writer answer bubble (`sendMessage` only) | `test_chat_action_forms.py`, `test_action_forms.py`, `test_action_form_routes.py`, `test_chat_action_card_render.py` (Node render battery, 16), `test_chat_action_cards.py` (Node controller contract, 3), `e2e/test_chat_action_card_render.py` (isolated browser, 3), `e2e/test_chat_action_cards_controller.py` (isolated browser, 7), `e2e/test_chat_action_card_effects.py` (23 lifecycle/submission/delivery cases) |
-| History sync / recovery | page timers `messageSyncTimer`, `startMessageSync`, `stopMessageSync`, `scheduleNextMessageSync`, `syncSessionMessagesFromServer` (all in `chat_page.js`); `recoverChatResult`, `recoverChatResultWithRetries`, per-message sync classification (`chat_pending_result.js`); generation tokens `createGenerationState`/`beginGeneration`/`endGeneration` (`chat_generation.js`); backend `finalize_stream_result` (`chat_turn_workflow.py`), `make_assistant_saver` skip guards (`chat_turn_persist.py`), `current_turn`/`is_stale_turn`/`is_turn_cancelled` (`chat_delivery.py`) | busy lock, sync cursor/timers, turn tokens, pending-result store, assistant-row skip guards; saver takes explicit `db` + captured `request_data` | `test_chat_turn_persist.py`, `test_chat_turn_workflow.py`, `test_chat_coordinator_acceptance.py`, P5-E/P5-F oracles, `test_stop_refresh_live_status.py` |
+| History sync / recovery | page timers `messageSyncTimer`, `startMessageSync`, `stopMessageSync`, `scheduleNextMessageSync`, `syncSessionMessagesFromServer` (all in `chat_page.js`); `recoverChatResult`, `recoverChatResultWithRetries`, per-message sync classification (`chat_pending_result.js`); generation tokens `createGenerationState`/`beginGeneration`/`endGeneration` and sync claim transitions `createSyncState`/`claimSync`/`isSyncCurrent`/`finishSync` (`chat_generation.js`); byte reads `CuttleChatStream.readEvents` (`chat_stream.js`); backend `finalize_stream_result` (`chat_turn_workflow.py`), `make_assistant_saver` skip guards (`chat_turn_persist.py`), `current_turn`/`is_stale_turn`/`is_turn_cancelled` (`chat_delivery.py`) | busy lock, one sync-claim state (replacement invalidates old finishers), existing page navigation sequence (A→B→A fence), sync cursor/timers, turn tokens, pending-result store, assistant-row skip guards; saver takes explicit `db` + captured `request_data` | `test_chat_turn_persist.py`, `test_chat_turn_workflow.py`, `test_chat_coordinator_acceptance.py`, P5-E/P5-F oracles, `test_stop_refresh_live_status.py`, `test_chat_stream.py`, `test_chat_generation.py`, `e2e/test_chat_stream_reader.py`, `e2e/test_chat_sync_lifetime.py`, `e2e/test_shadow_chat_stop_resend.py` |
 | Pane layout | `snapshotLayoutTree`, `flattenLayoutLeaves`, `pageWithPaneSession`; shell maps `columnState`, `lastChatByColumn`; `CuttleSpaces.*` (`src/web/js/spaces/`); backend `_shell_panes_snapshot`, `GET/POST /api/shell/panes`, `.../panes/<n>/messages` (all in `web_chat_api.py`); agent read `python -m api.panes_cli` | `columnState`, `lastChatByColumn`, saved-layout shape (restore-compatible); leaf/group normalization mixed with DOM reads | `test_shell_panes.py`, `test_shell_workspaces.py`, `test_pane_space_drag.py`, `test_panes_cli.py`; isolated `e2e/test_app_shell_layout.py` (6: nested restore/flex, real close, pointer focus, Spaces/reload and v1 compatibility; shell kept as-is, see `docs/reviews/pane-layout-fences.md`) |
+| Pending-change polling | `reconcileChatProject` → `reportProjectToShell` (`chat_page.js`); `CuttlePendingChangesPanel.create` (`pending_changes_panel.js`); existing `pollPendingChangesHub` / `refreshPendingChangesPath` (`app_shell.js`) | shell column→project map, per-path in-flight coalescing; standalone-only panel interval; explicit refresh messages retained | `e2e/test_pending_changes_polling.py`, `e2e/test_shared_diff_modal.py`; opt-in `e2e/test_chat_cost_profile.py` |
 | Config | HTTP `settings_routes.py` (`settings_bp`; bot/model branch via `get_config()`); defaults `get_settings_manager()` (`settings_manager.py`); `BotConfig.load_config`/`save_config` (`core/config.py`) — file defaults to checkout `src/bot_config.json` via `runtime_paths.bot_config_path()` (never cwd); path conventions `core/runtime_paths.py` | `src/settings.json` vs `bot_config.json` (two stores kept; `src/` copy wins on divergence, root untouched, no auto-merge); unknown-key preservation on save | `test_settings_routes.py`, `test_runtime_paths.py`, `test_bot_config_paths.py` |
 
 ---

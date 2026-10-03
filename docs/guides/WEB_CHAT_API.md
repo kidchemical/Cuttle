@@ -145,12 +145,15 @@ Worker **HTTP** is not in this table; it is `workers_bp`.
 
 ## Reverse dependencies (production `src/api`)
 
-Exactly one, per the AST import scan
+Exactly one production import, per the AST import scan
 (`src/tests/test_architecture_boundaries.py::test_no_reverse_imports_into_web_chat_api`,
 `REVERSE_IMPORT_ALLOWLIST`; the scanner covers static and dynamic import
 forms, and a stale allowlist entry fails the test): `api.doctor` imports
 `api.web_chat_api` as an importability health probe (`try/except`, no
 attribute use, reports `chat_backend` ok/fail in `/api/doctor`).
+The only other permitted importer is the dev-only spawned-child
+composition `src/scripts/cuttle_shadow_app.py` (never imported by an
+owned layer; it imports the real app after installing deny guards).
 Everything else — coordinators, runners, delivery, status services,
 subagents, auth — imports its owner service directly. (Plain
 comment/string mentions of the module name remain in a few headers and

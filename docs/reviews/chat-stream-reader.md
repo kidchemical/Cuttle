@@ -46,3 +46,22 @@ venv from an independent terminal. It touches no state/database or service.
 Newer overlapping source changes make it refuse; do not apply older recovery
 patches blindly. This frontend checkpoint takes effect on normal page reload;
 no Flask restart is required.
+
+
+## D1b transport owner — closeout
+
+`CuttleChatStream.readEvents(body, {holdMs, readTimeoutMs, signal, onEvents})`
+now owns the native reader, one retained read, timeout cleanup, UTF-8 decode,
+existing LF-double-newline JSON framing, and reader-lock cleanup. The page
+keeps HTTP requests/fallback, semantic event classification, session adoption,
+progress/reply paint, final-result mapping, Stop/busy ownership and recovery.
+All events in a decoded batch are applied before its stop decision, preserving
+the last final event in that batch. This is a bounded byte transport, not a
+general SSE parser or a new lifecycle owner.
+
+Eleven public-owner Node cases and the production-page browser suite cover
+framing, timeout/settlement ordering, abort, errors, lock/listener cleanup, and
+unchanged final-event ordering. Combined closeout validation and limitations
+are recorded in [architecture organization closeout](architecture-organization-closeout.md).
+The earlier page-only recovery artifact is historical and rejects overlapping
+changes; use the combined closeout recovery described in that review.
