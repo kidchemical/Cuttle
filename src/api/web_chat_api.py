@@ -328,6 +328,22 @@ try:
 except Exception as _settings_err:
     print(f"[SETTINGS] Failed to register routes: {_settings_err}")
 
+# Experimental feature flags (generic toggle surface) + achievements (first
+# experimental feature). To remove achievements: drop its row in
+# api/experimental/features.py, delete api/achievements/, its two web/js
+# slices + <script> lines, and these two blocks.
+try:
+    from api.experimental.routes import experimental_bp
+    app.register_blueprint(experimental_bp)
+except Exception as _experimental_err:
+    print(f"[EXPERIMENTAL] Failed to register routes: {_experimental_err}")
+
+try:
+    from api.achievements.routes import achievements_bp
+    app.register_blueprint(achievements_bp)
+except Exception as _achievements_err:
+    print(f"[ACHIEVEMENTS] Failed to register routes: {_achievements_err}")
+
 # Projects (transport owned by api.project_routes; logic in managers.project_manager)
 try:
     from api.project_routes import projects_bp

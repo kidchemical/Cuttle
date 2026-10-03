@@ -114,6 +114,8 @@ funnel + SSE pump proven at runtime; manifest schema).
 | Project drop-in adapter | catalog contract: opt-in, validate-before-import, relative-only on-demand namespaced load | `manifest.yaml` + `adapter.py` | `test_harness_project_adapters.py` |
 | External service op | `src/api/discord_ops/` pattern (`discord.post`); never branches in project actions, never a chat surface | `python -m api.discord_cli` | discord suites |
 | Flask/daemon lifetime | daemon owns; Flask only via `/restart` → `src/api/flask_restart.py` | `flask.restart` action form | restart suites |
+| New experimental feature | one `FlagSpec` row in `src/api/experimental/features.py`; gates call `api.experimental.is_enabled()` (settings key `experimental_flags`, kill switch `CUTTLE_EXPERIMENTAL=0`); Settings → Experimental tab renders from the registry | `is_enabled(id)` / `python -m api.experimental list` | `test_experimental_flags.py` |
+| Achievements (experimental) | `src/api/achievements/` — `catalog` (vocabulary) / `evaluator` (reads `router_outcomes` + `cuttle_auth`, excludes sub-agent child sessions) / `store` (SQLite state) / `unlocks` / `routes`; client `CuttleAchievements.*` + `CuttleCelebrate.*` | `on_turn_saved()` seam in `chat_turn_persist`; `python -m api.achievements list\|scan\|progress` | `test_achievements.py`, `test_achievements_js.py` |
 
 Direction rule: owned layers (`agent_harness`, `agent_router`,
 `chat_coordinator`, `chat_turn*`, `chat_delivery`, `discord_ops`, …) must

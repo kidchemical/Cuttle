@@ -213,5 +213,13 @@ def make_assistant_saver(
             schedule_autoname(chat_session_id, inference_mode)
         except Exception as _te:
             print(f"[TITLER] hook failed: {_te}")
+        # Experimental (opt-in, no-op when the flag is off): reward progress for
+        # the completed turn. Fire-and-forget — never delay reply delivery.
+        try:
+            from api import achievements as _achievements
+
+            _achievements.on_turn_saved(chat_session_id, nonlocal_res)
+        except Exception:
+            pass
 
     return on_save

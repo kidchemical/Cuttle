@@ -141,6 +141,10 @@ class SettingsManager:
                     "ordered": [{"agent": "codex", "model": ""}]
                 },
             },
+            # Experimental feature flags: {flag_id: bool}. Owned by
+            # api.experimental (registry + resolver live there); this key is
+            # just the storage. Absent ids fall back to the registry default.
+            "experimental_flags": {},
         }
     
     def _save_settings(self, settings: Dict[str, Any]) -> bool:

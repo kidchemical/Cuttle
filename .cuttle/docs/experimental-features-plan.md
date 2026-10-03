@@ -1,388 +1,275 @@
-# Design — Experimental Features & Achievements
+# Experimental Features & Achievements — shipped design
 
-Plan for two connected subsystems:
+Two connected subsystems:
 
-1. **Experimental feature flags** — a single, server-owned toggle surface for beta /
+1. **Experimental feature flags** — one server-owned toggle surface for beta /
    non-default features.
-2. **Achievements** — the first consumer of that flag, a Steam-style unlock system
-   with toast + sfx + confetti.
+2. **Achievements** — the first consumer of that flag: a Steam-style unlock
+   system with toast + sfx + confetti.
 
-Status: plan only (no code committed). Researched against `2bc22c4c`.
+Status: **implemented** (Python + client + Electron + tests). This file is the
+design record and the teardown checklist; it replaces the original plan's
+"decision requested" section with the decisions actually taken.
 
-Architecture rules followed: owned slices under `src/api/`, never imported by
-`web_chat_api` in reverse, settings owned by `settings_manager` + `settings_routes`,
-pure-logic JS slices as `Cuttle*` namespaces, imperative idempotent SQLite DDL.
+Decisions taken (owner calls, 2026-10-03):
+
+| Question | Decision |
+|---|---|
+| Where does the flags UI live? | **A tab in the settings page** (`/settings_page.html?tab=experimental`) |
+| "100M tokens" semantics | **From a single message.** Sub-agent child chats are excluded from every turn metric, so the parent message alone must earn it |
+| Default state | **Off.** Experimental features are opt-in |
+| Achievements surface | Trophy-case grid lives in the same Experimental tab (no second nav entry) |
+
+Architecture rules held: owned slices under `src/api/`, no reverse import of
+`web_chat_api`, settings stored via `settings_manager`, client logic as pure
+`Cuttle*` namespaces, imperative idempotent SQLite DDL.
 
 ---
 
-## 0. Findings that shape the design
+## 0. Findings that shaped the design
 
 | Question | Answer | Consequence |
 |---|---|---|
-| Is there an existing feature-flag system? | **No.** Grep for `experimental|feature_flag|beta` finds nothing relevant. Closest precedents: `agent_harness/steer.py:58-73` (`agent_steer` dict + `CUTTLE_AGENT_STEER=0` kill switch) and `chat_tts.py:88-147` (own module + own settings key + own routes + allowlist normalizer). | Build the registry; copy the `chat_tts` shape. |
-| Does `SettingsManager` validate keys? | No — permissive both directions (`settings_manager.py:264-287`). Typed getters do their own default merge (`:297-325`). | A new flag needs **its own** allowlist normalizer, or the UI can persist junk. |
-| Where do settings routes live? | `settings_routes.py`, `SETTING_FAMILIES` registry at `:48-85`. Module docstring `:1-19` **forbids** touching `web_chat_api.py`. | Add a family row + validator, or register a dedicated blueprint like `chat_tts` does. |
-| Settings tab shell? | `settings_page_tabs.js` — tab ids read **from markup**, order-sensitive, contract-tested by `test_settings_page_tabs.py`. | A new tab is a markup-only addition + one `tabs.register()`. |
-| Toast system? | `src/web/js/toast.js` — global `showToast(msg, variant, options)`; `VARIANTS` at `:10-17`; iframe→parent postMessage handoff `:344-365`; **no custom icon/duration**; CSS lives in JS only. | Add an `achievement` variant + `icon`/`duration` options, or render a bespoke card. |
-| Confetti? | **None.** Only ambient particles on `landing_page.html:1968-2022` (not reusable, not gated). | New module needed. Must respect `uiAnimationsEnabled()` (`app_shell.js:1904-1910`) + `prefers-reduced-motion`. |
-| SFX? | Exactly one asset: `src/web/sounds/completion-chirp.wav`, served by `/sounds/<path>` (`web_chat_api.py:3393`). Player `playWebChirp()` at `toast.js:37-51`, escalation ladder at `:66-110`. | New wav is zero-backend-cost. Minimized-window playback needs new Electron IPC. |
-| Electron renderer? | **Same web UI**, loaded over HTTP (`electron/main.js:485-492`, `:832`). No renderer bundle. | Toast + confetti are free. SFX-when-obscured is the only Electron work. |
-| Token accounting? | `router_outcomes` table (`agent_router/outcomes.py:29-58`) with `total_tokens`, `latency_ms`, `recorded_at`; written live from `runners.py:46-57` and `dispatch.py:231-242`; read via `all_outcomes()`. `metrics_summary()` at `:407-437` is the aggregate precedent. | Achievements read this table; no new telemetry needed for token/duration ones. |
-| Long-turn caveat | `pinned_outcomes.py:207` `_MAX_BACKFILL_DURATION_S = 4h` — backfilled turns longer than 4h are treated as *queued*, so `latency_ms` is clamped. | "24hr prompt" only counts for turns measured live via `perf_counter`. Acceptable; note it in the achievement description. |
-| Server → client push channel? | `POST /api/toast` → `notify_tray`, drained by `GET /api/ui-toasts`, polled by `pollUiToasts()` (`app_shell.js:7230-7250`). | Reuse as the achievement event bus; no new SSE. |
+| Is there an existing feature-flag system? | **No.** Grep for `experimental|feature_flag|beta` finds nothing relevant. Closest precedents: `agent_harness/steer.py:58-73` (`agent_steer` dict + `CUTTLE_AGENT_STEER=0` kill switch) and `chat_tts.py:88-147` (own module + own settings key + own routes + allowlist normalizer). | Copied the `chat_tts` shape. |
+| Does `SettingsManager` validate keys? | No — permissive both directions (`settings_manager.py:264-287`). Typed getters do their own default merge (`:297-325`). | The flag registry is the allowlist; `set_enabled` drops ids that are not registered. |
+| Where do settings routes live? | `settings_routes.py`, `SETTING_FAMILIES` at `:48-85`; module docstring `:1-19` forbids touching `web_chat_api.py`. | Self-registering blueprint instead (the `chat_tts` precedent), registered in the same block as the rest. |
+| Settings tab shell? | `settings_page_tabs.js` — ids read **from markup**, order-sensitive, contract-tested by `test_settings_page_tabs.py`. | A new tab is a markup-only addition + one `tabs.register()`. |
+| Toast system? | `src/web/js/toast.js` — `showToast(msg, variant, options)`; iframe→parent handoff; CSS lives in JS only. | Extended `options` with `achievement` + `duration`; all ~125 existing call sites untouched. |
+| Confetti? | **None.** Only ambient particles on `landing_page.html:1968-2022`. | New self-contained particle layer in `celebrate.js` — no CDN dependency. |
+| SFX? | One asset (`completion-chirp.wav`), served free at `/sounds/<path>`, escalation ladder at `toast.js:66-110`. | New wav = zero backend cost; Electron IPC added for the obscured-window case. |
+| Electron renderer? | **Same web UI** over HTTP (`electron/main.js:485-492`). | Toast + confetti are free; only sound-while-obscured needed IPC. |
+| Token/duration telemetry? | `router_outcomes` already carries `total_tokens`, `latency_ms`, `recorded_at`, `target_agent/model`, `attempt_index` (`agent_router/outcomes.py:29-58`). | Achievements read it; no new instrumentation. |
+| Long-turn caveat | `pinned_outcomes.py:207` clamps backfilled latency at 4h. | "24hr prompt" can only be earned by turns measured live via `perf_counter`. Documented in the achievement description. |
 
 ---
 
 ## 1. Experimental feature flags
 
-### 1.1 Decision: where does the UI live?
-
-**Recommended: a tab in the settings page** (`/settings_page.html`), id `experimental`.
-
-Why not a standalone page with a Flask icon:
-
-- The tab shell already exists and is contract-tested; a new tab is markup + one
-  `tabs.register()` line (`settings_page.html:1720-1742`).
-- Feature flags are *settings* — they should be in the same place as `sandbox`,
-  `discovery`, `chat_tts`, with the same scope badges and save semantics.
-- A separate page means new nav plumbing (`shared_navigation.js:167` currently
-  hardcodes the settings URL), a second lazy-load surface, and a second place to
-  keep in sync.
-
-Compromise worth keeping open: **Achievements** may deserve its own trophy page
-(`/achievements_page.html`) for the grid/badges view, while the *flag* lives in
-settings. Flags = configuration; achievements = content.
-
-### 1.2 Owned module
+### 1.1 Owned module
 
 ```
-src/api/experimental/__init__.py      # public surface: is_enabled, enabled_flags, specs
-src/api/experimental/flags.py         # registry + resolver  (OWNER)
-src/api/experimental/normalize.py     # allowlist merge/normalize (mirrors chat_tts.py:92-126)
-src/api/experimental/routes.py        # blueprint /api/experimental
-src/api/experimental/__main__.py      # python -m api.experimental list|get|set|reset
+src/api/experimental/__init__.py    # public surface (is_enabled, enabled_flags, …)
+src/api/experimental/flags.py       # registry + resolver (OWNER)
+src/api/experimental/features.py    # THE registry rows (the only feature-aware file)
+src/api/experimental/routes.py      # blueprint /api/experimental (transport only)
+src/api/experimental/__main__.py    # python -m api.experimental list|get|set|reset
 ```
 
-Storage: settings key **`experimental_flags`** — `{ "<flag_id>": bool }`.
+Storage: settings key **`experimental_flags`** → `{ "<flag_id>": bool }`.
+An absent id falls back to the spec default (no migration for new flags);
+an id not in the registry resolves **False**.
 
-### 1.3 Registry is the single source of truth
+### 1.2 Registry = single source of truth
 
-```python
-FLAG_SPECS: dict[str, FlagSpec] = {
-    "achievements": FlagSpec(
-        id="achievements",
-        label="🏆 Achievements",
-        description="Unlock Steam-style achievements as you use Cuttle.",
-        default=True,            # opt-out: on for everyone, but hideable
-        category="fun",
-        since="0.0.0",
-        risk="low",              # low | medium | high -> UI styling + warning copy
-        needs_restart=False,
-    ),
-}
-```
+`FlagSpec(id, label, description, *, default, category, risk, since, needs_restart)`
+drives the GET response, the Settings tab rendering, `python -m api.experimental list`,
+and the runtime gates. Adding a feature = one row in `features.py`.
 
-One row drives: the `GET` response, the settings-tab rendering, the `GET`
-progress/unlock polling gate, and `python -m api.experimental list`. Adding a
-flag is one dict row plus the code that calls `is_enabled("new_flag")`.
+### 1.3 Resolver precedence
 
-### 1.4 Resolver (mirrors `steer.py:58-73`)
+`CUTTLE_EXPERIMENTAL=0` kill switch → stored value → spec default → `False`.
+Mirrors `steer.py:58-73`. The kill switch is **never persisted** — it is an
+operator escape hatch, so a toggle during a kill switch reports the kill switch
+instead of lying.
 
-```python
-def is_enabled(flag_id: str) -> bool:
-    if (os.getenv("CUTTLE_EXPERIMENTAL") or "").strip().lower() in ("0", "false", "off", "no"):
-        return False                      # global kill switch
-    spec = FLAG_SPECS.get((flag_id or "").strip().lower())
-    if spec is None:
-        return False                      # unknown flag = off, never on
-    try:
-        raw = get_settings_manager().get_setting(SETTINGS_KEY, None)
-    except Exception:
-        raw = None
-    if isinstance(raw, dict) and flag_id in raw:
-        return bool(raw[flag_id])
-    return spec.default
-```
-
-`enabled_flags() -> dict[str, bool]` for bulk client delivery.
-
-### 1.5 Runtime gate idiom
+### 1.4 Runtime gate idiom
 
 ```python
 from api.experimental import is_enabled
-
-if not is_enabled("achievements"):
-    return  # silent no-op; the feature simply does not exist for this install
+if not is_enabled("my_feature"):
+    return  # behaves exactly as if the feature were never built
 ```
 
-This is the `chat_tts.py:309-311` pattern. Rule: **gated code must behave
-exactly as if the feature were never built** — no half-UI, no dead nav entries.
-Where the UI can hide itself, the shell fetches `enabled_flags()` and hides.
+The `chat_tts.py:309-311` pattern. Every HTTP endpoint answers
+`200 {success: false, disabled: true}` when off, so clients silently no-op.
 
-### 1.6 Routes
+### 1.5 Routes
 
-Follow the `chat_tts` precedent (self-registering blueprint) rather than adding a
-row to `SETTING_FAMILIES`, because achievements is a feature domain, not a settings
-family — but keep the same auth contract.
+| Method | Path | Auth |
+|---|---|---|
+| GET | `/api/experimental/flags` | `@authenticated_required` |
+| POST | `/api/experimental/flags/<flag_id>` | `@owner_required` |
+| POST | `/api/experimental/flags/reset` | `@owner_required` |
 
-| Method | Path | Auth | Notes |
-|---|---|---|---|
-| GET | `/api/experimental/flags` | `@authenticated_required` | `{success, flags:[{...spec, enabled}], kill_switch}` |
-| POST | `/api/experimental/flags/<flag_id>` | `@owner_required` | body `{enabled: bool}`; rejects unknown ids with 400 |
-| POST | `/api/experimental/flags/reset` | `@owner_required` | back to spec defaults |
+Validator `validate_flag_update()` mirrors `validate_completion_providers_update`
+(`settings_routes.py:123-157`).
 
-Validator: `validate_flag_update(flag_id, data) -> (ok, err, patch)` — shape of
-`validate_completion_providers_update` (`settings_routes.py:123-157`).
+### 1.6 Settings tab
 
-### 1.7 SettingsManager additions
-
-- Add `"experimental_flags": {}` to `_get_default_settings()` (`settings_manager.py:51-144`)
-  and to `src/settings.json`.
-- `get_experimental_flags()` / `set_experimental_flag(flag_id, value)` /
-  `reset_experimental_flags()` in `settings_manager.py`, each delegating to
-  `api.experimental.normalize` — but the manager must not import the feature module
-  (direction rule). Cleaner: keep normalization inside `api/experimental/normalize.py`
-  and have the manager expose only generic `get_setting`/`set_setting`. **Decision needed.**
-
-### 1.8 Settings tab markup
-
-```html
-<button type="button" class="settings-tab" role="tab" data-tab="experimental"
-        aria-controls="panel-experimental" aria-selected="false" id="tab-experimental">
-  🧪 <span>Experimental</span>
-</button>
-...
-<section class="settings-panel" id="panel-experimental" hidden>
-  <div class="settings-group">
-    <h3 class="settings-title"><span class="emoji">🧪</span> Experimental Features
-      <span class="settings-scope" data-scope="server"
-            title="Stored on the server — affects every device and client.">All devices</span>
-    </h3>
-    <!-- one .setting-item per flag, id="expFlag-<id>" -->
-  </div>
-</section>
-```
-
-Tab + panel must be inserted **in matching positions** (`test_settings_page_tabs.py`
-asserts tab order == panel order). Placement: after `appearance`, before `agents`.
-
-Toggle handler = clone of `toggleLanAccess` (`settings_page.html:1394-1423`):
-`preventDefault()` → optimistic `.active` → `POST` → re-`GET` → revert-on-error +
-`showToast(..., 'error')`. Register the loader: `tabs.register('experimental', loadExperimentalFlags)`.
-
-Add a **"Restart required"** hint on flags with `needs_restart=True` (mirrors the
-existing hint pattern; reload ladder in `.cuttle/rules/00-core.md` §3).
+`data-tab="experimental"` + `#panel-experimental`, inserted between Agents and
+Providers in matching order (tab order == panel order is asserted by
+`test_settings_page_tabs.py`). Rows render from the registry, so the UI never
+drifts from the backend. Toggle handler clones the LAN pattern
+(`preventDefault` → optimistic → POST → re-GET → revert-on-error + toast).
+The trophy case only appears while achievements are on.
 
 ---
 
-## 2. Achievements (first experimental feature)
+## 2. Achievements (the first experimental feature)
 
 ### 2.1 Owned module
 
 ```
-src/api/achievements/__init__.py      # progress(), unlock_count(), check_and_unlock()
-src/api/achievements/catalog.py       # ACHIEVEMENTS defs (pure data + pure evaluators)
-src/api/achievements/store.py         # SQLite store (OWNER of schema + reads)
-src/api/achievements/evaluator.py     # aggregate source data -> metric values
-src/api/achievements/unlocks.py       # diff progress -> newly unlocked -> enqueue event
-src/api/achievements/routes.py        # /api/achievements
-src/api/achievements/__main__.py      # python -m api.achievements list|progress|scan|grant
+src/api/achievements/__init__.py    # public surface + on_turn_saved() seam
+src/api/achievements/catalog.py     # 75 achievements (pure data)
+src/api/achievements/evaluator.py   # telemetry → metric numbers (read-only)
+src/api/achievements/store.py       # progress/unlock state (SQLite)
+src/api/achievements/unlocks.py     # snapshot → progress → diff → events
+src/api/achievements/routes.py      # /api/achievements (transport only)
+src/api/achievements/__main__.py    # python -m api.achievements list|progress|scan|…
 ```
 
-Store: new DB `src/data/db/achievements.db` (per `src/data/db/README.md` convention,
-`data_db_dir()` from `core/runtime_paths.py`).
+Store: `src/data/db/achievements.db` (per `src/data/db/README.md`, resolved via
+`core.runtime_paths.data_db_dir()`). Vocabulary in code, state in SQL —
+same split as `outcomes.py`.
 
-Schema (idempotent DDL in `store._connect()`, mirroring `outcomes.py:22-76`):
+### 2.2 Sub-agent exclusion (the load-bearing rule)
 
-```sql
-CREATE TABLE IF NOT EXISTS achievement_state (
-    achievement_id TEXT PRIMARY KEY,
-    progress      REAL NOT NULL DEFAULT 0,
-    target        REAL,
-    unlocked_at   REAL,                -- unix epoch, NULL = locked
-    seen_at       REAL,                -- client acked the celebration
-    detail        TEXT                 -- JSON: e.g. {"query_id": "...", "session_id": 922}
-);
-CREATE TABLE IF NOT EXISTS achievement_events (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    achievement_id TEXT NOT NULL,
-    unlocked_at   REAL NOT NULL,
-    delivered     INTEGER NOT NULL DEFAULT 0
-);
-```
+A sub-agent's turn rolls up into the parent chat's history, so counting children
+would let a fan-out earn the single-message achievements. Every turn-based
+metric filters `CAST(session_id AS TEXT) NOT IN (<chat_sessions where
+parent_session_id IS NOT NULL>)`. Pinned by
+`test_snapshot_excludes_subagent_child_sessions`.
 
-Separation follows the `outcomes.py` precedent: **vocabulary in code, state in SQL.**
+### 2.3 The single-message ladder (the headline)
 
-### 2.2 Catalog + rarity (Steam vocabulary)
+| Metric | Meaning |
+|---|---|
+| `max_single_turn_tokens` | `MAX(SUM(total_tokens) GROUP BY decision_id)` over non-child sessions — a routing decision is one user message |
+| `max_single_turn_input_tokens` | same over `prompt_tokens` |
 
-```python
-ACHIEVEMENTS = [
-    Achievement(id="tokens_100m", title="Ocean", icon="🌊", rarity="legendary",
-                description="Push 100,000,000 tokens through Cuttle.",
-                threshold=100_000_000, metric="lifetime_total_tokens"),
-    Achievement(id="turn_24h", title="Long Haul", icon="⏳", rarity="epic",
-                description="Run a single agent turn for 24 hours.",
-                threshold=86_400_000, metric="max_turn_latency_ms"),
-    Achievement(id="first_turn", title="First Dive", icon="🐙", rarity="common", ...),
-]
-```
+Ladder: 1M → 10M → 50M → **100M "Kraken"** → 250M → 1B (hidden "Singularity").
+Lifetime 100M is a *separate* achievement ("Ocean") so the two never collide.
 
-Rarity → toast styling + confetti intensity: `common` (toast only), `rare`
-(toast + sfx), `epic` (+ confetti), `legendary` (+ full-screen + sfx).
+### 2.4 Catalog (75 achievements)
 
-### 2.3 Metrics — sourced from existing telemetry
-
-| Metric | Source | Notes |
+| Category | Count | Examples |
 |---|---|---|
-| `lifetime_total_tokens` | `SUM(total_tokens)` over `router_outcomes` | precedent: `outcomes.metrics_summary()` `:407-437`; also `dashboards/usage.py:_row_metrics` `:203-213` |
-| `max_turn_latency_ms` | `MAX(latency_ms)` over `router_outcomes` | live-only above 4h (see `_MAX_BACKFILL_DURATION_S`) |
-| `turns_completed`, `agent_hours`, `distinct_harnesses`, `distinct_models` | same table | `SUM(latency_ms)/3.6e6` |
-| `night_owl` / `weekend_warrior` | `recorded_at` bucketed local time | `_bucket_start` pattern from `dashboards/usage.py:66-79` |
-| `streak_days` | distinct local days with ≥1 turn | same |
+| Milestones | 9 | First Dive → Thousand Tides (Leviathan) |
+| Token Ocean | 16 | A Million → Supernova (1B); Kraken (100M in one message) |
+| Marathon | 13 | Warm Up → Night Shift (6h) → **Long Haul (24h)** → Never Sleeping (72h, hidden) |
+| Variety | 7 | 3 / 5 / 8 harnesses; 10 / 25 / 50 / 100 models |
+| The Router | 4 | Patience Pays → Escalation King (500) |
+| Swarm | 4 | Spawner → Legion (1,000 sub-agent children) |
+| Clockwork | 13 | After Hours (midnight–5am) → Around the Clock (all 24 hours) → Century Streak |
+| Many Rooms | 5 | Polyglot Dev → Hall of Chats (100 chats) |
+| The Wallet | 4 | Investment → Broke (10k USD, hidden) |
 
-`evaluator.py` reads one `all_outcomes()` snapshot and returns
-`{metric: value}` — one query per evaluation, not per achievement.
+Every family is a visible ladder (first rung `common`, last `legendary`/`mythic`).
+Hidden entries ship a `hint` and hide their description until earned.
+`catalog.py` raises at import if any row references an unknown metric, so a typo
+fails loudly instead of never unlocking.
 
-### 2.4 Unlock flow
+### 2.5 Unlock flow
 
-1. **Trigger** — after a turn completes. Hook where the result is already final:
-   `api/chat_turn_workflow` or `chat_turn_persist.make_assistant_saver` tail, guarded
-   by `is_enabled("achievements")` and fire-and-forget (never block reply delivery).
-2. **Evaluate** — `evaluator.snapshot()` → per-achievement progress → `store.upsert`.
-3. **Diff** — a `progress` value crossing `threshold` with `unlocked_at IS NULL`
-   writes `unlocked_at` + an `achievement_events` row.
-4. **Deliver** — `notify_tray`-style event onto the existing tray channel so the
-   shell picks it up on its heartbeat (`pollUiToasts`, `app_shell.js:7230`).
-   Add `variant: 'achievement'` carrying `{achievement_id, title, icon, rarity, sfx}`.
-5. **Celebrate (client)** — `achievements.js` listener → `celebrate.js`.
-6. **Ack** — `POST /api/achievements/<id>/ack` sets `seen_at`; missed celebrations
-   are shown as a quiet badge (the notification-history pattern in `toast.js:189-212`
-   already models unread state).
+1. **Trigger** — `on_turn_saved()` from the `chat_turn_persist` assistant-saver
+   tail, fire-and-forget on a daemon thread; never delays reply delivery.
+2. **Evaluate** — one read-only `evaluator.snapshot()` pass.
+3. **Diff** — progress is monotonic; crossing the threshold with
+   `unlocked_at IS NULL` writes `unlocked_at` + an event row (idempotent).
+4. **Deliver** — the client polls `GET /api/achievements/pending` on its own
+   timer (20s active / 120s hidden). No new SSE, no tray integration, no shell
+   heartbeat change — which is also what keeps the feature removable.
+5. **Celebrate** — `CuttleAchievements.poll` → `CuttleCelebrate.celebrate`.
+6. **Ack** — `POST /api/achievements/<id>/ack`, plus a localStorage set so a
+   reload does not re-toast.
 
-Also expose `POST /api/achievements/scan` + `python -m api.achievements scan` so
-historical `router_outcomes` can be backfilled into unlocks on first enable
-(same spirit as `dashboards/cli.py backfill-performance`).
+Bursts are batched 4 at a time with a 1.4s gap so a first-time backfill reads as
+a sequence rather than a wall of toasts.
 
-### 2.5 Routes
-
-| Method | Path | Auth |
-|---|---|---|
-| GET | `/api/achievements` | `@authenticated_required` — full catalog + progress + unlocked/seen |
-| GET | `/api/achievements/pending` | `@authenticated_required` — unacked unlocks |
-| POST | `/api/achievements/<id>/ack` | `@authenticated_required` |
-| POST | `/api/achievements/scan` | `@owner_required` |
-| POST | `/api/achievements/<id>/grant` | `@owner_required` (manual unlock for testing) |
-
-All return 200 with `{success: false, error}` (never 403 from the flag) when the
-flag is off, so the client can silently no-op.
-
-### 2.6 Client slices (vanilla, `Cuttle*` namespaces)
-
-New files, loaded in `app_shell.html` **before** `app_shell.js` with the `?v=` bust:
+### 2.6 Client slices
 
 | File | Namespace | Responsibility |
 |---|---|---|
-| `src/web/js/achievements.js` | `CuttleAchievements` | registry + progress math + reduced/unlock filtering (pure logic, node-testable) |
-| `src/web/js/celebrate.js` | `CuttleCelebrate` | toast card, confetti, sfx, rarity tiers |
+| `src/web/js/celebrate.js` | `CuttleCelebrate` | rarity tiers, toast card, confetti layer, sfx escalation |
+| `src/web/js/achievements.js` | `CuttleAchievements` | polling, batching, ack bookkeeping, grid grouping, formatters |
 
-Follow the `spaces_activity.js:130-136` tail exactly:
+Both follow the `spaces_*.js` IIFE tail (`window` + `module.exports`) and are
+loaded in `app_shell.html` **before** `app_shell.js` with the `?v=` bust.
+`achievements.js` self-schedules its timer, so `app_shell.js` contains zero
+achievement code. The settings page sets `__CUTTLE_ACHIEVEMENTS_MANUAL = true`
+so it renders the grid itself without also polling.
 
-```js
-const ns = (root.CuttleAchievements = root.CuttleAchievements || {});
-Object.assign(ns, api);
-if (typeof module !== 'undefined' && module.exports) Object.assign(module.exports, api);
-```
+**Confetti** — self-contained fixed/pointer-events-none particle layer, scaled by
+rarity (0 / 0 / 60 / 120 / 200), self-removing, gated on `animationsEnabled()`
+(`prefers-reduced-motion` + `cuttleUiAnimations` + `notificationsEnabled`).
 
-**Confetti** (new; ~60 lines): DOM/canvas particles injected into a fixed,
-`pointer-events:none` layer in the shell document. Gate on
-`uiAnimationsEnabled()` (`app_shell.js:1904-1910`) + `prefers-reduced-motion`;
-skip entirely for `common` rarity; scale count by rarity. Do **not** pull in
-canvas-confetti via CDN — `optional_cdn.js` exists but an offline-safe local
-implementation avoids a new failure mode.
+**SFX** — `src/web/sounds/achievement-unlock.wav` (1.6s C6→E6→G6→C7 chime,
+generated by `.cuttle/scripts/make_achievement_chime.py`, stdlib only). Played
+in-page when focused; `electron.playSfx('achievement-unlock')` when obscured —
+without that escalation a background unlock is silently dropped by autoplay
+policy, which is exactly when a long-turn achievement fires.
 
-**SFX**: `new Audio('/sounds/achievement-unlock.wav')`, lazily constructed, `.play()`
-rejection swallowed (`toast.js:46`). Add `electron/assets/achievement-unlock.wav`
-(check-in, must stay in sync) and generalize Electron playback:
-- `preload.js` → `playSfx: (name) => ipcRenderer.send('play-sfx', name)` (allowlisted names)
-- `main.js:1209-1225` → `resolveSfxWavPath(name)` (chirp path stays the default)
-- `main.js:1267` → `ipcMain.on('play-sfx', …)` reusing the obscured-window logic at `:1270-1274`
+**Electron** — `resolveSfxWavPath(name)` replaces `resolveChirpWavPath()` behind
+an allowlist (`NATIVE_SFX_FILES`); `ipcMain.on('play-sfx')` + `preload.playSfx`.
+The renderer passes a **name**, never a path. `electron/assets/*.wav` is checked
+in, so the new wav is duplicated there (asserted byte-identical by a test).
 
-Escalation ladder mirrors `playCuttleCompletionChirp` (`toast.js:66-110`): in-page
-when focused, Electron-native when hidden/minimized/in-tray. Without this the
-sound is dropped by autoplay policy whenever the unlock happens while the user is
-away — which is exactly when a long-running-turn unlock fires.
+### 2.7 Routes
 
-**Toast**: extend `showToast` options with `icon` + `duration` (currently hardcoded
-`TOAST_DURATION` at `toast.js:283`, icon from `VARIANTS`), or render the achievement
-as its own card component. Prefer extending options — 125 existing call sites stay valid.
-
-### 2.7 Achievements page (optional, phase 5)
-
-`/achievements_page.html` + `src/web/js/achievements_page.js`: Steam-style grid,
-grouped by rarity, locked ones showing hint text (unless `hidden: true`).
-Nav entry via `shared_navigation.js` + a rail trophy button with an unread badge
-patterned on `.rail-badge-notifications` (`app_shell.css:1838-2007`).
+| Method | Path | Auth |
+|---|---|---|
+| GET | `/api/achievements` | `@authenticated_required` |
+| GET | `/api/achievements/pending` | `@authenticated_required` |
+| POST | `/api/achievements/<id>/ack` | `@authenticated_required` |
+| POST | `/api/achievements/scan` | `@owner_required` |
+| POST | `/api/achievements/<id>/grant` | `@owner_required` |
+| POST | `/api/achievements/reset` | `@owner_required` |
 
 ---
 
-## 3. Phasing
+## 3. Teardown (the reason the feature is split the way it is)
 
-| Phase | Work | Gate |
-|---|---|---|
-| 0 | `api/experimental` registry + normalize + resolver + CLI. Tests only. | `is_enabled` unit tests incl. kill switch + unknown-id |
-| 1 | Routes + `SettingsManager` key + settings tab markup + toggle handler | `test_settings_routes.py` READS/WRITES matrices; `test_settings_page_tabs.py` markup contract |
-| 2 | `api/achievements` store + catalog + evaluator + unlock diff + CLI | pytest with seeded `router_outcomes` db (pattern: `test_dashboards_usage.py:11-16`) |
-| 3 | Event delivery on the tray channel + `GET/ack` routes + flag gate | end-to-end unlock → `GET /api/achievements/pending` |
-| 4 | `achievements.js` + `celebrate.js` (toast card, confetti, sfx) + Electron `play-sfx` | node-harness slice tests; load-order test like `test_space_tab_groups.py:179-187` |
-| 5 | Achievements page + backfill scan on first enable | manual UX pass |
+Removing achievements completely, leaving the experimental system intact:
 
-Each phase is independently shippable; 0–2 are invisible to users.
+1. delete the `register_flag(FlagSpec(id="achievements", …))` block in
+   `src/api/experimental/features.py`;
+2. `rm -rf src/api/achievements/ src/tests/test_achievements.py
+   src/tests/test_achievements_js.py`;
+3. delete the achievements blueprint block in `src/api/web_chat_api.py`;
+4. delete the `on_turn_saved()` tail in `src/api/chat_turn_persist.py`;
+5. delete `src/web/js/achievements.js` + `src/web/js/celebrate.js` and their two
+   `<script>` lines in `src/web/app_shell.html`;
+6. delete the `#experimentalAchievementsGroup` + trophy-case markup, the
+   `__CUTTLE_ACHIEVEMENTS_MANUAL` script line, and the
+   `loadAchievementsSummary` / `renderAchievementsGrid` / `rescanAchievements`
+   functions + `loadExperimentalFlags` call in `settings_page.html`;
+7. delete the `.achievements-*` CSS blocks in `settings_page.css` and the
+   achievement card CSS in `toast.js`;
+8. `rm src/web/sounds/achievement-unlock.wav electron/assets/achievement-unlock.wav
+   .cuttle/scripts/make_achievement_chime.py`; drop the `achievement-unlock`
+   entry from `NATIVE_SFX_FILES` (`electron/main.js`);
+9. optionally delete `src/data/db/achievements.db`.
+
+Adding a *second* experimental feature is cheaper: one `FlagSpec` row + the
+package + the gated call sites. No new UI, no new settings route, no new tab.
 
 ---
 
 ## 4. Tests
 
-- `test_experimental_flags.py` — resolver precedence (spec default < stored value < env kill
-  switch), unknown id → off, normalization drops junk keys.
-- `test_settings_routes.py` — add the new read/write rows to the `READS`/`WRITES`
-  matrices (`:13-35`); auth enforced by decorator only (module docstring `:10-15`).
-- `test_settings_page_tabs.py` — new tab satisfies the existing markup contract for free
-  if ids/order/aria are right.
-- `test_achievements.py` — catalog uniqueness, threshold crossing idempotency (re-scan
-  does not re-unlock), progress monotonicity, metrics against a seeded DB.
-- Node harness tests for `achievements.js` / `celebrate.js` pure logic, guarded by
-  `shutil.which("node")` (pattern: `test_spaces_order_activity.py:16-56`).
-- `test_architecture_boundaries.py` must stay green: `api/experimental` and
-  `api/achievements` must not import `web_chat_api`.
+| Suite | Covers |
+|---|---|
+| `test_experimental_flags.py` (22) | unknown-id-off, precedence, kill-switch values, duplicate rejection, redundant-default pruning, HTTP auth matrix, validation, CLI |
+| `test_achievements.py` (39) | catalog integrity (≥40, unique ids, known metrics, hidden hints), evaluator math + sub-agent exclusion, monotonic progress, unlock idempotency, pending/ack, flag gating, HTTP contract |
+| `test_achievements_js.py` (7) | node harness for both slices' pure helpers, shell load order, settings-page poller suppression, wav/electron-asset sync, Electron SFX allowlist |
+
+Existing suites updated: none needed — the settings tab satisfied
+`test_settings_page_tabs.py` for free, and `test_settings_routes.py` does not
+enumerate non-`/api/settings` blueprints.
 
 ---
 
-## 5. Risks / open questions
+## 5. Known limitations
 
-1. **Autoplay policy** — a sound fired as a side effect of a background event is silently
-   dropped. The obscured-window Electron escalation is required, not optional.
-2. **Reduced motion** — confetti must respect `uiAnimationsEnabled()`.
-3. **Electron asset duplication** — `electron/assets/*.wav` is check-in and hand-synced;
-   a new sound adds a manual step to the release checklist.
-4. **4h backfill clamp** — `pinned_outcomes._MAX_BACKFILL_DURATION_S` means "24hr prompt"
-   can only be earned by turns measured live. Either accept it or relax the clamp.
-5. **Token double-counting** — `router_outcomes` records per *attempt* (fallback chain
-   included) and Cursor usage blobs are cumulative billing (`cursor_cli_tool.py:508-524`).
-   The 100M number is therefore "tokens billed through Cuttle", not "tokens in one prompt".
-   Pick the wording deliberately — the user asked for "a 100M token *prompt*", which is a
-   different metric (`SUM(prompt_tokens)` over a single `query_id`, groupable via
-   `dashboards/usage.py:_prompt_handles`).
-6. **Settings permissiveness** — `SettingsManager` accepts arbitrary keys, so the
-   normalizer is the only guard on flag shape.
-7. **Manager↔feature import direction** — decide whether `settings_manager` knows about
-   `api.experimental` (suggested: it does not; keep the feature module owning its own key).
-
----
-
-## 6. Decisions requested before implementation
-
-1. Settings tab (recommended) vs standalone page for flags?
-2. Lifetime totals vs single-prompt tokens for the first achievement?
-3. Should achievements default **on** (opt-out) or **off** (opt-in)? Given they are the
-   poster child for the experimental surface, default-on + easy opt-out showcases the
-   system; default-off is more honest about "experimental".
+1. **4h backfill clamp** — `pinned_outcomes._MAX_BACKFILL_DURATION_S` means
+   turns longer than 4h only count when measured live (`perf_counter`).
+2. **Token semantics** — `router_outcomes` records *billed* tokens per attempt;
+   Cursor usage blobs are cumulative billing. "100M in one message" therefore
+   means 100M billed to a single routing decision, not 100M of raw text.
+3. **`turns_total` is per-decision** — a fallback chain is one message, so the
+   count is of messages, not harness invocations.
+4. **`escalations` counts attempts with `attempt_index > 0`**, which is the
+   escalation/fallback-chain signal.
+5. **Autoplay policy** — in-browser unlocks can still be silent on a cold page;
+   only the Electron path guarantees sound while obscured.

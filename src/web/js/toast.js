@@ -118,12 +118,30 @@
         const el = document.createElement('div');
         el.className = 'cuttle-toast cuttle-toast-' + (variant || 'info');
         el.setAttribute('role', 'alert');
+        // Achievement cards carry their own icon + rarity accent + progress
+        // line, so they render as a small card instead of icon + text.
+        const ach = options && options.achievement;
+        if (ach) {
+            el.classList.add('cuttle-toast-achievement');
+            el.innerHTML = `
+                <span class="cuttle-toast-icon">${escapeHtml(String(ach.icon || '\u{1F3C6}'))}</span>
+                <span class="cuttle-toast-message">
+                    <strong class="cuttle-toast-ach-title">${escapeHtml(String(ach.title || message))}</strong>
+                    ${ach.description ? `<span class="cuttle-toast-ach-desc">${escapeHtml(String(ach.description))}</span>` : ''}
+                    ${ach.progress ? `<span class="cuttle-toast-ach-progress">${escapeHtml(String(ach.progress))}</span>` : ''}
+                </span>
+                <button type="button" class="cuttle-toast-close" aria-label="Close">&times;</button>
+            `;
+            el.style.borderColor = ach.color || v.border;
+            el.style.boxShadow = `0 10px 40px rgba(0,0,0,0.45), 0 0 24px ${ach.color || v.border}55 inset`;
+        } else {
         const linkHtml = linkUrl ? ` <a href="${escapeHtml(linkUrl)}" target="_blank" rel="noopener" class="cuttle-toast-link">${escapeHtml(linkText)}</a>` : '';
         el.innerHTML = `
             <span class="cuttle-toast-icon">${v.icon}</span>
             <span class="cuttle-toast-message">${escapeHtml(String(message))}${linkHtml}</span>
             <button type="button" class="cuttle-toast-close" aria-label="Close">&times;</button>
         `;
+        }
         if (options && options.progress) {
             const bar = document.createElement('div');
             bar.className = 'cuttle-toast-progress';
@@ -280,7 +298,7 @@
             });
             return;
         }
-        const timeout = setTimeout(animateOut, TOAST_DURATION);
+        const timeout = setTimeout(animateOut, options.duration > 0 ? options.duration : TOAST_DURATION);
 
         const dismiss = (e) => {
             if (e && e.target && e.target.classList && e.target.classList.contains('cuttle-toast-close')) return;
@@ -357,6 +375,8 @@
                 kind: options.kind || null,
                 sticky: !!options.sticky,
                 progress: !!options.progress,
+                duration: options.duration > 0 ? options.duration : null,
+                achievement: options.achievement || null,
                 toastId: options.toastId != null ? String(options.toastId) : null
             }, '*');
             return;
@@ -402,6 +422,8 @@
                 actionId: actionId || null,
                 sticky: !!e.data.sticky,
                 progress: !!e.data.progress,
+                duration: e.data.duration > 0 ? e.data.duration : null,
+                achievement: e.data.achievement || null,
                 toastId: e.data.toastId != null ? String(e.data.toastId) : null
             };
             if (linkUrl) {
@@ -444,6 +466,12 @@
         .cuttle-toast-close { margin-left: auto; }
         .cuttle-toast-progress { flex-basis: 100%; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.12); overflow: hidden; }
         .cuttle-toast-progress > span { display: block; height: 100%; width: 35%; border-radius: 2px; animation: cuttle-toast-progress-slide 1.2s ease-in-out infinite; }
+        .cuttle-toast-achievement { min-width: 260px; }
+        .cuttle-toast-achievement .cuttle-toast-icon { font-size: 30px; line-height: 1; }
+        .cuttle-toast-achievement .cuttle-toast-message { display: flex; flex-direction: column; gap: 3px; }
+        .cuttle-toast-ach-title { font-size: 15px; font-weight: 700; letter-spacing: 0.01em; }
+        .cuttle-toast-ach-desc { font-size: 12.5px; font-weight: 400; color: rgba(230,237,243,0.82); }
+        .cuttle-toast-ach-progress { font-size: 11px; font-weight: 500; color: rgba(230,237,243,0.6); }
         @media (prefers-reduced-motion: reduce) {
             .cuttle-toast-progress > span { animation: none; width: 100%; }
         }

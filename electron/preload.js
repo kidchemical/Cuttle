@@ -58,6 +58,8 @@ contextBridge.exposeInMainWorld('electron', {
     },
     /** Play the reply-ready chirp via main process (works while minimized / in tray). */
     playChirp: () => ipcRenderer.send('play-chirp'),
+    /** Play an allowlisted SFX by name (e.g. 'achievement-unlock') natively. */
+    playSfx: (name) => ipcRenderer.send('play-sfx', String(name || '')),
     isWindowObscured: () => ipcRenderer.invoke('window-is-obscured'),
     windowControls: {
         minimize: () => ipcRenderer.send('window-minimize'),

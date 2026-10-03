@@ -1207,13 +1207,25 @@ ipcMain.handle('window-is-fullscreen', (event) => {
     return win ? win.isFullScreen() : false;
 });
 
-/** Short two-tone WAV played when a chat reply finishes (works while minimized/tray). */
-function resolveChirpWavPath() {
+/**
+ * Allowlisted SFX WAV names. The renderer may only ask for one of these —
+ * never a path — so a compromised page cannot make the main process play
+ * arbitrary files from disk.
+ */
+const NATIVE_SFX_FILES = {
+    'completion-chirp': 'completion-chirp.wav',
+    'achievement-unlock': 'achievement-unlock.wav',
+};
+
+/** Resolve an allowlisted SFX name to a WAV path (works minimized/in-tray). */
+function resolveSfxWavPath(name) {
+    const file = NATIVE_SFX_FILES[String(name || 'completion-chirp')];
+    if (!file) return null;
     const candidates = [
-        path.join(__dirname, 'assets', 'completion-chirp.wav'),
+        path.join(__dirname, 'assets', file),
         // Packaged: extraResources copies src → resources/app/src
-        path.join(process.resourcesPath || '', 'app', 'src', 'web', 'sounds', 'completion-chirp.wav'),
-        path.join(PROJECT_ROOT, 'src', 'web', 'sounds', 'completion-chirp.wav'),
+        path.join(process.resourcesPath || '', 'app', 'src', 'web', 'sounds', file),
+        path.join(PROJECT_ROOT, 'src', 'web', 'sounds', file),
     ];
     for (const p of candidates) {
         try {
@@ -1223,10 +1235,20 @@ function resolveChirpWavPath() {
     return null;
 }
 
+/** Short two-tone WAV played when a chat reply finishes. */
+function resolveChirpWavPath() {
+    return resolveSfxWavPath('completion-chirp');
+}
+
 let _chirpPlaying = false;
 let _lastNativeChirpAt = 0;
 const NATIVE_CHIRP_DEBOUNCE_MS = 2500;
-function playCompletionChirpNative() {
+/**
+ * Play an allowlisted SFX natively. Needed because in-page <audio> is silent
+ * (or autoplay-blocked) whenever the window is hidden, minimized, or in tray —
+ * which is exactly when a long-running-turn achievement unlocks.
+ */
+function playNativeSfx(name, debounceMs) {
     if (process.platform !== 'win32') {
         try {
             require('electron').shell.beep();
@@ -1234,8 +1256,9 @@ function playCompletionChirpNative() {
         return;
     }
     const now = Date.now();
-    if (_chirpPlaying || (now - _lastNativeChirpAt) < NATIVE_CHIRP_DEBOUNCE_MS) return;
-    const wav = resolveChirpWavPath();
+    const minGap = Number(debounceMs) > 0 ? Number(debounceMs) : NATIVE_CHIRP_DEBOUNCE_MS;
+    if (_chirpPlaying || (now - _lastNativeChirpAt) < minGap) return;
+    const wav = resolveSfxWavPath(name);
     if (!wav) {
         try {
             require('electron').shell.beep();
@@ -1265,7 +1288,13 @@ function playCompletionChirpNative() {
 }
 
 ipcMain.on('play-chirp', () => {
-    playCompletionChirpNative();
+    playNativeSfx('completion-chirp', NATIVE_CHIRP_DEBOUNCE_MS);
+});
+
+// Achievement unlocks (experimental feature — achievements.js asks by name).
+ipcMain.on('play-sfx', (event, name) => {
+    if (!NATIVE_SFX_FILES[String(name || '')]) return; // allowlist gate
+    playNativeSfx(name, 1200);
 });
 ipcMain.handle('window-is-obscured', (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
