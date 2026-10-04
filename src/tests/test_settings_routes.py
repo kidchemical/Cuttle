@@ -18,6 +18,7 @@ READS = [
     "/api/settings/starred-project",
     "/api/settings/ui-layout",
     "/api/settings/video-background",
+    "/api/settings/github-app",
     "/api/app-settings",
 ]
 
@@ -31,6 +32,9 @@ WRITES = [
     ("POST", "/api/settings/starred-project", {"project": None}),
     ("POST", "/api/settings/ui-layout", {"rail_items": []}),
     ("POST", "/api/settings/video-background", {"enabled": False}),
+    ("POST", "/api/settings/github-app", {"app_id": "1", "installation_id": "2"}),
+    ("POST", "/api/settings/github-app/test", {}),
+    ("DELETE", "/api/settings/github-app", {}),
 ]
 
 

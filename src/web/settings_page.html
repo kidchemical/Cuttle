@@ -30,6 +30,7 @@
                 <button type="button" class="settings-tab" role="tab" data-tab="voice" aria-controls="panel-voice" aria-selected="false" id="tab-voice">🔊 <span>Voice</span></button>
                 <button type="button" class="settings-tab" role="tab" data-tab="devices" aria-controls="panel-devices" aria-selected="false" id="tab-devices">📱 <span>Devices</span></button>
                 <button type="button" class="settings-tab" role="tab" data-tab="data" aria-controls="panel-data" aria-selected="false" id="tab-data">💾 <span>Data</span></button>
+                <button type="button" class="settings-tab" role="tab" data-tab="account" aria-controls="panel-account" aria-selected="false" id="tab-account">👤 <span>Account</span></button>
             </div>
 
             <!-- General is the pre-activation panel: if the tab script fails to
@@ -483,6 +484,87 @@
                     </div>
                     <div class="setting-control">
                         <button class="control-button btn-restart" onclick="importSettings()">📤 Import Settings</button>
+                    </div>
+                </div>
+            </div>
+            </section>
+
+            <section class="settings-panel" id="panel-account" role="tabpanel" aria-labelledby="tab-account" tabindex="0" hidden>
+            <div class="settings-group">
+                <h3 class="settings-title"><span class="emoji">👤</span> GitHub App <span class="settings-scope" data-scope="server" title="Stored on this server — App ID in settings.json, private key in a server-local file. Every device on this server shares it.">This server</span></h3>
+                <div class="settings-intro">Connect and verify your GitHub App to attribute commits made through Cuttle’s Git controls to its bot account. This applies to GitHub repositories owned by the verified installation account. The private key stays on this server; verification uses short-lived tokens.</div>
+                <div id="githubAppEntry" hidden>
+                    <div class="setting-item">
+                        <div class="setting-label">
+                            <strong id="githubAppEntryTitle">GitHub App</strong>
+                            <div class="setting-description" id="githubAppEntryDetail"></div>
+                        </div>
+                        <div class="setting-control">
+                            <span id="githubAppEntryStatus" class="provider-status">Connected</span>
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <div class="setting-label">
+                            <strong>Manage connection</strong>
+                            <div class="setting-description" id="githubAppEntryHint">Verified against github.com.</div>
+                        </div>
+                        <div class="setting-control">
+                            <button class="control-button btn-info" onclick="testGitHubApp()"><span class="emoji">🔄</span> Re-check</button>
+                            <button class="control-button btn-start" onclick="githubAppEdit()">✏️ Edit</button>
+                            <button class="control-button btn-stop" onclick="githubAppRemove()">🗑️ Remove</button>
+                        </div>
+                    </div>
+                </div>
+                <div id="githubAppSetup" hidden>
+                    <div class="setting-item">
+                        <div class="setting-label">
+                            <strong>App ID</strong>
+                            <div class="setting-description">Numeric ID from your app's settings page</div>
+                        </div>
+                        <div class="setting-control">
+                            <input type="text" id="githubAppId" class="setting-input" placeholder="e.g. 5093587" inputmode="numeric" autocomplete="off">
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <div class="setting-label">
+                            <strong>Installation ID</strong>
+                            <div class="setting-description">Number in the URL after installing the app on your account</div>
+                        </div>
+                        <div class="setting-control">
+                            <input type="text" id="githubAppInstallationId" class="setting-input" placeholder="e.g. 12345678" inputmode="numeric" autocomplete="off">
+                        </div>
+                    </div>
+                    <div class="setting-item setting-item--stack">
+                        <div class="setting-label">
+                            <strong>Private key</strong>
+                            <div class="setting-description">Paste the full .pem contents. Leave blank to keep the saved key. Never displayed back.</div>
+                        </div>
+                        <div class="setting-control setting-control--stack">
+                            <textarea id="githubAppPrivateKey" class="setting-input" rows="4" placeholder="-----BEGIN RSA PRIVATE KEY-----" autocomplete="off" spellcheck="false" style="width: 100%; font-family: monospace;"></textarea>
+                            <div>
+                                <button class="control-button btn-start" onclick="saveGitHubApp()"><span class="emoji">💾</span> Save</button>
+                                <button class="control-button btn-info" id="githubAppCancelBtn" onclick="loadGitHubAppSettings()" hidden>Cancel</button>
+                            </div>
+                            <div id="githubAppStatus" class="provider-status">Not connected yet.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-group">
+                <h3 class="settings-title"><span class="emoji">📋</span> Setup steps <span class="settings-scope" data-scope="server" title="One-time setup on github.com; the values land in the form above.">github.com</span></h3>
+                <div class="setting-item setting-item--stack">
+                    <div class="setting-label">
+                        <strong>One-time setup</strong>
+                        <div class="setting-description">Create the app once, then paste the three values above.</div>
+                    </div>
+                    <div class="setting-control setting-control--stack">
+                        <ol style="margin: 0; padding-left: 1.2rem; font-size: 0.85rem; line-height: 1.6;">
+                            <li>Create an app at <code>Settings → Developer settings → GitHub Apps → New GitHub App</code>.</li>
+                            <li>Generate a private key on the app page and paste it above.</li>
+                            <li>Install the app on your account (sidebar → Install App) and copy the installation ID from the URL.</li>
+                            <li>Save, then Test connection. New commits made as the app show its badge.</li>
+                        </ol>
                     </div>
                 </div>
             </div>
@@ -1751,6 +1833,133 @@
             return key.substring(0, 4) + '••••••••' + key.substring(key.length - 4);
         }
 
+        // GitHub App (Account tab). Connected installs see a status entry,
+        // not the config form; the form only appears for setup or editing.
+        // The server never returns the private key, so the textarea is
+        // write-only: blank keeps the saved key.
+        function paintGitHubAppEntry(cfg) {
+            const entry = document.getElementById('githubAppEntry');
+            const setup = document.getElementById('githubAppSetup');
+            const cancel = document.getElementById('githubAppCancelBtn');
+            if (!entry || !setup) return;
+            if (cfg && cfg.connected) {
+                const verified = cfg.last_verified || {};
+                const ready = verified.bot_user_id && verified.app_id === cfg.app_id && verified.installation_id === cfg.installation_id;
+                const title = document.getElementById('githubAppEntryTitle');
+                const detail = document.getElementById('githubAppEntryDetail');
+                const status = document.getElementById('githubAppEntryStatus');
+                const hint = document.getElementById('githubAppEntryHint');
+                if (title) title.textContent = verified.app_slug ? verified.app_slug + ' (GitHub App)' : 'GitHub App ' + cfg.app_id;
+                if (detail) detail.textContent = ready && verified.account
+                    ? 'Installed on ' + verified.account + ' · commits as ' + verified.commit_as
+                    : 'App ' + cfg.app_id + ' · install ' + cfg.installation_id;
+                if (status) status.textContent = ready ? '● Connected' : '● Configured — re-check to verify';
+                if (hint) hint.textContent = verified.verified_at ? 'Last verified ' + verified.verified_at + '.' : 'Saved, not yet verified against github.com.';
+                entry.hidden = false;
+                setup.hidden = true;
+                if (cancel) cancel.hidden = true;
+            } else {
+                entry.hidden = true;
+                setup.hidden = false;
+                const box = document.getElementById('githubAppStatus');
+                if (box) box.textContent = 'Not connected yet.';
+            }
+        }
+
+        function githubAppEdit() {
+            const entry = document.getElementById('githubAppEntry');
+            const setup = document.getElementById('githubAppSetup');
+            const cancel = document.getElementById('githubAppCancelBtn');
+            if (entry) entry.hidden = true;
+            if (setup) setup.hidden = false;
+            if (cancel) cancel.hidden = false;
+        }
+
+        async function githubAppRemove() {
+            if (!confirm('Remove the GitHub App connection? This deletes the saved private key from this server.')) return;
+            try {
+                const response = await fetch('/api/settings/github-app', { method: 'DELETE' });
+                const result = await response.json();
+                if (result.success) {
+                    showNotification('GitHub App removed');
+                    document.getElementById('githubAppPrivateKey').value = '';
+                    paintGitHubAppEntry(result.github_app);
+                } else {
+                    showNotification(`❌ ${result.error || 'Remove failed'}`);
+                }
+            } catch (error) {
+                showNotification(`❌ Error removing GitHub App: ${error.message}`);
+            }
+        }
+
+        async function loadGitHubAppSettings() {
+            try {
+                const response = await fetch('/api/settings/github-app');
+                const result = await response.json();
+                if (result.success && result.github_app) {
+                    const cfg = result.github_app;
+                    const idInput = document.getElementById('githubAppId');
+                    const instInput = document.getElementById('githubAppInstallationId');
+                    if (idInput && document.activeElement !== idInput) idInput.value = cfg.app_id || '';
+                    if (instInput && document.activeElement !== instInput) instInput.value = cfg.installation_id || '';
+                    paintGitHubAppEntry(cfg);
+                }
+            } catch (error) {
+                console.error('Error loading GitHub App settings:', error);
+            }
+        }
+
+        async function saveGitHubApp() {
+            const appId = document.getElementById('githubAppId').value.trim();
+            const installationId = document.getElementById('githubAppInstallationId').value.trim();
+            const keyInput = document.getElementById('githubAppPrivateKey');
+            const privateKey = keyInput.value.trim();
+
+            if (!appId || !installationId) {
+                showNotification('⚠️ App ID and installation ID are required');
+                return;
+            }
+
+            showNotification('💾 Saving GitHub App...');
+            try {
+                const response = await fetch('/api/settings/github-app', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        app_id: appId,
+                        installation_id: installationId,
+                        private_key: privateKey
+                    })
+                });
+                const result = await response.json();
+                if (result.success) {
+                    showNotification('✅ GitHub App saved');
+                    keyInput.value = '';
+                    paintGitHubAppEntry(result.github_app);
+                } else {
+                    showNotification(`❌ ${result.error || 'Save failed'}`);
+                }
+            } catch (error) {
+                showNotification(`❌ Error saving GitHub App: ${error.message}`);
+            }
+        }
+
+        async function testGitHubApp() {
+            try {
+                const response = await fetch('/api/settings/github-app/test', { method: 'POST' });
+                const result = await response.json();
+                if (result.success) {
+                    const who = result.app_slug ? result.app_slug + ' on ' + result.account : result.account;
+                    showNotification(`✅ Connected as ${who}`);
+                    loadGitHubAppSettings();
+                } else {
+                    showNotification(`❌ ${result.error || 'Connection failed'}`);
+                }
+            } catch (error) {
+                showNotification(`❌ Error testing GitHub App: ${error.message}`);
+            }
+        }
+
         // Load saved settings.
         // Paint from localStorage synchronously (cheap, and controls exist even
         // while their panel is hidden). Anything that hits the network is
@@ -1822,6 +2031,7 @@
                     loadLanAccessSettings();
                     loadDesktopElectronSettings();
                 });
+                tabs.register('account', function () { loadGitHubAppSettings(); });
                 tabs.init();
             } else {
                 // No tab shell (e.g. markup edited by hand): load everything.
@@ -1832,6 +2042,7 @@
                 loadExperimentalFlags();
                 loadLanAccessSettings();
                 loadDesktopElectronSettings();
+                loadGitHubAppSettings();
             }
         });
 

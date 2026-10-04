@@ -432,13 +432,18 @@ def push_repo(cwd: str, remote: str, branch: str) -> subprocess.CompletedProcess
 
 
 def stage_and_commit(cwd: str, message: str, files: Any = '.') -> str:
-    """Stage and commit for the task close-via-commit route (its only
-    caller). Semantics frozen from the legacy handler: ``files`` is the raw
-    request value (a space-separated string; ``'.'`` stages everything —
-    a list input raises AttributeError like the original), bare process
-    environment and identity (no ``-c`` flags, no env override), errors as
-    ``Git command failed: <CalledProcessError str>``."""
+    """Task close-via-commit, sharing GitHub App attribution with the Git UI.
+
+    Existing staging/message/error semantics remain unchanged. Verified app
+    identity overrides this commit's environment without changing gitconfig.
+    """
     import subprocess as _sp
+    from api.github_app import commit_env
+
+    try:
+        app_env = commit_env(cwd, os.environ.copy())
+    except ValueError as exc:
+        raise GitError(str(exc)) from exc
 
     try:
         if files != '.':
@@ -447,7 +452,8 @@ def stage_and_commit(cwd: str, message: str, files: Any = '.') -> str:
         else:
             _sp.run(['git', 'add', '.'], check=True, cwd=cwd)
         result = _sp.run(['git', 'commit', '-m', message], check=True, cwd=cwd,
-                         capture_output=True, text=True)
+                         capture_output=True, text=True,
+                         **({"env": app_env} if app_env is not None else {}))
     except _sp.CalledProcessError as e:
         raise GitError(f'Git command failed: {str(e)}',
                        returncode=e.returncode, stderr=e.stderr)

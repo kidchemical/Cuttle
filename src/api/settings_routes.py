@@ -79,6 +79,9 @@ SETTING_FAMILIES = (
      "backend": "api.completion_providers (provider registry + settings keys)",
      "validator": "set_preferred_provider / set_provider_model",
      "read": "authenticated", "write": "owner"},
+    {"name": "github-app", "routes": ["GET/POST/DELETE /settings/github-app", "POST /settings/github-app/test"],
+     "backend": "api.github_app + settings-manager key 'github_app' (+ server-local key file)",
+     "validator": "validate_github_app_update", "read": "authenticated", "write": "owner"},
     {"name": "app-settings", "routes": ["GET /app-settings"],
      "backend": "settings_manager.get_all_settings() (read-only aggregate)",
      "validator": "none (read-only)", "read": "open", "write": "n/a"},
@@ -618,6 +621,91 @@ def update_completion_providers_setting():
         for provider_id, model_id in (patch.get('models') or {}).items():
             set_provider_model(provider_id, model_id)
         return jsonify({'success': True, **describe()})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# --- github-app (backend: api.github_app + settings-manager key) -----------
+
+def validate_github_app_update(data: dict, has_existing_key: bool = False) -> tuple[bool, str, dict]:
+    """Validate a GitHub App save through its crypto/config owner."""
+    from api.github_app import validate_save
+
+    return validate_save(data, has_existing_key)
+
+
+@settings_bp.route('/settings/github-app', methods=['GET'])
+@authenticated_required
+def get_github_app_setting():
+    """Public (non-secret) GitHub App config: ids plus key presence only."""
+    try:
+        from api.github_app import get_config
+
+        settings = get_settings_manager()
+        return jsonify({'success': True, 'github_app': get_config(settings)})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@settings_bp.route('/settings/github-app', methods=['POST'])
+@owner_required
+def update_github_app_setting():
+    """Save App ID / installation ID / private key (.pem contents).
+
+    An empty ``private_key`` keeps the stored key; the response never
+    contains key material.
+    """
+    try:
+        from api.github_app import get_config, save_config
+
+        data = request.get_json() or {}
+        settings = get_settings_manager()
+        ok, error, clean = validate_github_app_update(
+            data, get_config(settings)['key_configured']
+        )
+        if not ok:
+            return jsonify({'success': False, 'error': error}), 400
+        saved = save_config(
+            settings,
+            clean['app_id'],
+            clean['installation_id'],
+            clean.get('private_key'),
+        )
+        return jsonify({'success': True, 'github_app': saved})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@settings_bp.route('/settings/github-app', methods=['DELETE'])
+@owner_required
+def delete_github_app_setting():
+    """Disconnect the app: drop stored ids and delete the key file."""
+    try:
+        from api.github_app import remove_config
+
+        settings = get_settings_manager()
+        return jsonify({'success': True, 'github_app': remove_config(settings)})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@settings_bp.route('/settings/github-app/test', methods=['POST'])
+@owner_required
+def test_github_app_setting():
+    """Mint an installation token and prove the installation exists.
+
+    Reachable GitHub failures answer 200 with ``success: false`` (this is a
+    probe, not a crash); the token itself is never returned.
+    """
+    try:
+        from api.github_app import test_connection
+
+        settings = get_settings_manager()
+        try:
+            result = test_connection(settings)
+        except RuntimeError as e:
+            return jsonify({'success': False, 'error': str(e)}), 200
+        return jsonify(result)
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 

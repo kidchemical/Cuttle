@@ -259,6 +259,11 @@ Existing `src/bot_config.json` remains authoritative until the guarded offline
 migration; the repo-root legacy copy is never read or merged. Missing reads keep
 defaults in memory; explicit saves create the parent and preserve unknown keys.
 Live consumers are `api.settings_routes`, `api.query_tracker`, and `core.local_llm`.
+
+GitHub App credentials and verified commit identity belong to `api.github_app`.
+`settings_routes` owns the Account settings HTTP surface; Cuttle Git commits
+consume the shared identity through `git_service.stage_and_commit` and
+`scripts.utilities.git_pending_changes`. See `.cuttle/docs/github-app.md`.
 `src/settings.json` still owns shell/router/LAN settings; these two stores are not
 merged. `src/bot.py` and its obsolete gateway-owner tests are removed.
 

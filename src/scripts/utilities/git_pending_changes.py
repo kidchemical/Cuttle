@@ -1455,6 +1455,11 @@ def _git_commit_env(cwd: str) -> Dict[str, str]:
     fill the gap.
     """
     env = os.environ.copy()
+    from api.github_app import commit_env
+
+    app_env = commit_env(cwd, env)
+    if app_env is not None:
+        return app_env
     ident = git_run(["var", "GIT_AUTHOR_IDENT"], cwd, timeout=5.0)
     if ident.returncode == 0 and "@" in (ident.stdout or ""):
         return env
@@ -1513,6 +1518,7 @@ def commit_pending_changes(
     root = resolve_git_workdir(cwd)
     if not root:
         raise ValueError("Not a git repository")
+    commit_env = _git_commit_env(root)
     clear_stale_index_lock(root)
 
     # Status-only + wait: do not race UI polls or pay for full-repo numstat.
@@ -1670,7 +1676,6 @@ def commit_pending_changes(
         attribution = {}
         commit_msg = msg + ("\n" if not msg.endswith("\n") else "")
 
-    commit_env = _git_commit_env(root)
     author_name = commit_env.get("GIT_AUTHOR_NAME") or "Cuttle"
     author_email = commit_env.get("GIT_AUTHOR_EMAIL") or "cuttle@localhost"
     commit_r = subprocess.run(

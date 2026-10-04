@@ -150,6 +150,7 @@ FETCH_LOADERS = {
     "loadDesktopElectronSettings": "devices",
     "loadChatTtsSettings": "voice",
     "loadAgentCatalog": "agents",
+    "loadGitHubAppSettings": "account",
 }
 
 # Wallpaper sync paints this page, not just the Appearance panel, so it stays
