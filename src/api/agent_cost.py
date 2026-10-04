@@ -144,6 +144,13 @@ def _session_pin(agent_id: str, sid: Optional[str], cwd: str) -> Tuple[str, str]
             )
 
             return load_codex_model(sid) or "", load_codex_effort(sid) or ""
+        if agent_id == "claude":
+            from scripts.utilities.claude_cli_session_store import (
+                load_claude_effort,
+                load_claude_model,
+            )
+
+            return load_claude_model(sid) or "", load_claude_effort(sid) or ""
         if agent_id == "muse":
             from scripts.utilities.muse_cli_session_store import (
                 load_muse_effort,
@@ -252,6 +259,13 @@ def _codex_catalog(refresh: bool) -> Tuple[List[Dict[str, Any]], str]:
     return list(result.get("models") or []), "`codex debug models`"
 
 
+def _claude_catalog(refresh: bool) -> Tuple[List[Dict[str, Any]], str]:
+    from api.agent_harness.agents.claude.model_catalog import list_claude_catalog_models
+
+    result = list_claude_catalog_models(refresh=refresh)
+    return list(result.get("models") or []), "Claude Code CLI"
+
+
 def _muse_catalog(refresh: bool) -> Tuple[List[Dict[str, Any]], str]:
     from scripts.utilities.muse_cli_tool import list_muse_catalog_models
 
@@ -275,6 +289,7 @@ def _opencode_catalog(refresh: bool) -> Tuple[List[Dict[str, Any]], str]:
 _CATALOG_LOADERS: Dict[str, Callable[[bool], Tuple[List[Dict[str, Any]], str]]] = {
     "cursor": _cursor_catalog,
     "codex": _codex_catalog,
+    "claude": _claude_catalog,
     "muse": _muse_catalog,
     "hermes": _hermes_catalog,
     "opencode": _opencode_catalog,

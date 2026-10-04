@@ -57,7 +57,7 @@ def test_failure_keeps_snapshot_and_is_cached(monkeypatch):
     assert usage_live.usage_snapshot("codex") == result
 
 
-@pytest.mark.parametrize("agent", ["codex", "muse", "hermes", "opencode"])
+@pytest.mark.parametrize("agent", ["codex", "muse", "hermes", "opencode", "claude"])
 def test_live_command_and_static_command_stay_separate(monkeypatch, agent):
     calls = []
     monkeypatch.setattr(agent_usage, "run_" + agent + "_usage", lambda **kwargs: calls.append(kwargs) or "static meters")

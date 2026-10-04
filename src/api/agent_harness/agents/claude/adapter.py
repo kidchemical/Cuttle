@@ -1,4 +1,9 @@
-"""Claude Code CLI harness adapter — native ``claude -p`` with per-chat resume."""
+"""Claude Code CLI harness adapter — native ``claude -p`` with per-chat resume.
+
+Per-chat ``/claude model`` + ``/claude effort`` pins mirror the Codex / Muse /
+OpenCode badge-gated palette controls. Refresh re-reads the installed CLI's
+model catalog (SDK ``initialize``; no turn runs).
+"""
 
 from __future__ import annotations
 
@@ -7,14 +12,23 @@ import re
 from typing import Any, Optional
 
 from api.agent_harness.activity import heartbeat_status, put_status
+from api.agent_harness.agents.claude.model_catalog import (
+    claude_efforts_for_model,
+    claude_model_label,
+    list_claude_catalog_models,
+    refresh_claude_catalog,
+)
 from api.agent_harness.cwd import resolve_harness_cwd
 from api.agent_harness.types import AgentResult
 from scripts.utilities.claude_cli_tool import ClaudeCliTool, claude_executable
+
+_EFFORT_WORDS = ("low", "medium", "high", "xhigh", "max")
 
 
 def _handle_claude_model_slash(
     prompt: str, chat_session_id: Optional[str], active_model: str
 ) -> Optional[AgentResult]:
+    """Native ``/claude model …`` without starting a CLI turn."""
     raw = (prompt or "").strip()
     match = re.match(r"^(/?)models?\b[\s:=]*(\S*)\s*$", raw, flags=re.I)
     if not match:
@@ -25,53 +39,239 @@ def _handle_claude_model_slash(
     )
 
     arg = (match.group(2) or "").strip().strip('"').strip("'")
-    if not match.group(1) and arg and arg.lower() not in (
-        "haiku",
-        "sonnet",
-        "opus",
-        "default",
-        "reset",
-        "clear",
-        "list",
-        "ls",
-        "?",
-    ) and not arg.lower().startswith("claude-"):
-        # Likely a task ("model the auth flow"), not a pin.
-        return None
+    # Bare "model the auth flow" is a task, not a model switch.
+    if not match.group(1) and arg and not re.match(
+        r"^(claude-|default$|reset$|clear$|refresh$|reload$|sync$|list$|ls$|\?$)",
+        arg,
+        flags=re.I,
+    ):
+        known_ids = {
+            str(m.get("id") or "").lower()
+            for m in (list_claude_catalog_models().get("models") or [])
+            if isinstance(m, dict)
+        }
+        if arg.lower() not in known_ids:
+            return None
+
+    if arg.lower() in ("refresh", "reload", "sync"):
+        result = refresh_claude_catalog()
+        count = int(result.get("count") or 0)
+        err = result.get("error")
+        source = result.get("source") or "unknown"
+        if err and source == "static_fallback" and count == 0:
+            return AgentResult(
+                success=False,
+                output="",
+                error=f"Claude Code model refresh failed: {err}",
+                model=active_model,
+            )
+        note = (
+            f" (CLI catalog unavailable — {err}; showing the manifest snapshot)"
+            if err and source == "static_fallback"
+            else " from the Claude Code CLI"
+        )
+        return AgentResult(
+            success=True,
+            output=(
+                f"**Claude Code:** Refreshed model catalog{note} — "
+                f"{count} models available in the `/` palette.\n\n"
+                "Filter in chat (with a Claude badge): type `opus`, `sonnet`, "
+                "`fable`, … then pick a row. "
+                "Each model row includes its supported effort levels. "
+                "Refresh reloads models and effort support from the installed CLI; "
+                "the manifest is the offline fallback."
+            ),
+            model=active_model,
+            meta={
+                "agent_model": active_model,
+                "claude_catalog_count": count,
+                "claude_catalog_source": source,
+            },
+        )
 
     if not arg or arg.lower() in ("list", "ls", "?"):
-        pinned = load_claude_model(chat_session_id)
+        catalog = list_claude_catalog_models()
         lines = [
             "**Claude Code models** (pin with `/claude model <id>`):",
             "",
-            "- `haiku` — fast / cheap",
-            "- `sonnet` — balanced default",
-            "- `opus` — strongest",
-            "- or a full id like `claude-sonnet-4-6`",
+            f"Palette catalog: {int(catalog.get('count') or 0)} models "
+            f"(source `{catalog.get('source')}`). "
+            "Refresh with `/claude model refresh`.",
             "",
         ]
+        for known in catalog.get("models") or []:
+            if not isinstance(known, dict):
+                continue
+            kid = str(known.get("id") or "").strip()
+            if not kid:
+                continue
+            mark = " ✅ current" if kid == active_model else ""
+            lines.append(f"- `{kid}` — {known.get('label') or kid}{mark}")
+            if known.get("description"):
+                lines.append(f"  _{known['description']}_")
+            supported = [str(level) for level in (known.get("efforts") or [])]
+            if supported:
+                lines.append(
+                    "  Effort levels: " + ", ".join(f"`{level}`" for level in supported)
+                )
+        pinned = load_claude_model(chat_session_id)
+        lines.append("")
         if pinned:
-            lines.append(f"Pinned for this chat: `{pinned}`.")
+            lines.append(
+                f"Pinned for this chat: `{pinned}` ({claude_model_label(pinned)})."
+            )
         else:
             lines.append(
-                f"No pin — using `{active_model or 'CLI default'}`."
+                f"No pin — using `{active_model or 'CLI default'}`"
+                + (f" ({claude_model_label(active_model)})" if active_model else "")
+                + "."
             )
         return AgentResult(success=True, output="\n".join(lines), model=active_model)
 
     if arg.lower() in ("default", "reset", "clear"):
+        from api.agent_harness.agent_defaults import get_starred_model as _sm
+
         save_claude_model(chat_session_id, None)
+        back = _sm("claude") or ""
         return AgentResult(
             success=True,
-            output="**Claude Code:** Cleared model pin — next turn uses the CLI default.",
-            model=active_model,
+            output=(
+                f"**Claude Code:** Model reset to starred default `{back}`."
+                if back
+                else "**Claude Code:** Model pin cleared — using the Claude CLI default."
+            ),
+            model=back,
+            meta={
+                "agent_model": back,
+                "model_source": ("starred" if back else "cli_default"),
+            },
         )
 
-    save_claude_model(chat_session_id, arg)
+    saved = save_claude_model(chat_session_id, arg) or arg
     return AgentResult(
         success=True,
-        output=f"**Claude Code:** Pinned model `{arg}` for this chat.",
-        model=arg,
-        meta={"agent_model": arg},
+        output=(
+            f"**Claude Code:** Model set to `{saved}` "
+            f"({claude_model_label(saved)}) for this chat."
+        ),
+        model=saved,
+        meta={"agent_model": saved, "model_source": "session"},
+    )
+
+
+def _handle_claude_effort_slash(
+    prompt: str,
+    chat_session_id: Optional[str],
+    model: Optional[str] = None,
+) -> Optional[AgentResult]:
+    """Native ``/claude effort …`` without starting a CLI turn."""
+    raw = (prompt or "").strip()
+    match = re.match(r"^(/?)efforts?\b[\s:=]*(\S*)\s*$", raw, flags=re.I)
+    if not match:
+        return None
+    from scripts.utilities.claude_cli_session_store import (
+        load_claude_effort,
+        load_claude_model,
+        save_claude_effort,
+    )
+    from api.agent_harness.agent_defaults import (
+        get_starred_effort,
+        resolve_effective_effort,
+        resolve_effective_model,
+    )
+
+    arg = (match.group(2) or "").strip().strip('"').strip("'").lower()
+    if not match.group(1) and arg and arg not in (
+        *_EFFORT_WORDS, "default", "reset", "clear", "none", "list", "ls", "?",
+    ):
+        # "effort estimate for X" is a task, not an effort pin.
+        return None
+
+    active, _src = resolve_effective_model(
+        "claude",
+        session_model=load_claude_model(chat_session_id),
+        kernel_override=model,
+        cli_default="",
+    )
+    known = claude_efforts_for_model(active or None)
+    pinned = load_claude_effort(chat_session_id) or ""
+    effective_effort, effort_source = resolve_effective_effort(
+        "claude", session_effort=pinned
+    )
+    base_meta = {
+        "agent_model": active or "",
+        "agent_effort": effective_effort or "",
+        "effort_source": effort_source,
+    }
+
+    if not arg or arg in ("list", "ls", "?"):
+        lines = [
+            "**Claude Code effort** (pin with `/claude effort <level>`):",
+            "",
+            f"Model `{active}` supports:" if active else "The CLI default model supports:",
+            "",
+            "Maps to Claude Code `--effort`.",
+            "",
+        ]
+        for e in known:
+            mark = " ✅ current" if e == effective_effort else ""
+            lines.append(f"- `{e}`{mark}")
+        if not known:
+            lines.append(
+                "This model takes no effort level. "
+                "Refresh with `/claude model refresh` or pick another model."
+            )
+        lines.append("")
+        if pinned:
+            lines.append(f"Pinned for this chat: `{pinned}`.")
+        elif effective_effort:
+            lines.append(f"Starred default for new chats: `{effective_effort}`.")
+        else:
+            lines.append("No pin — Claude Code uses its configured default.")
+        return AgentResult(
+            success=True, output="\n".join(lines), model=active or "", meta=dict(base_meta)
+        )
+
+    if arg in ("default", "reset", "clear", "none"):
+        save_claude_effort(chat_session_id, None)
+        back = get_starred_effort("claude") or ""
+        return AgentResult(
+            success=True,
+            output=(
+                f"**Claude Code:** Effort reset to starred default `{back}`."
+                if back
+                else "**Claude Code:** Effort pin cleared — using the Claude CLI default."
+            ),
+            model=active or "",
+            meta={
+                "agent_model": active or "",
+                "agent_effort": back,
+                "effort_source": ("starred" if back else "none"),
+            },
+        )
+
+    if arg not in known:
+        supported = (
+            "Supported levels: " + ", ".join(f"`{e}`" for e in known) + "."
+            if known
+            else "This model takes no effort level; try `/claude model refresh`."
+        )
+        return AgentResult(
+            success=True,
+            output=(
+                f"Effort `{arg}` is not supported for "
+                f"`{active or 'the CLI default model'}`. {supported}"
+            ),
+            model=active or "",
+            meta=dict(base_meta),
+        )
+
+    save_claude_effort(chat_session_id, arg)
+    return AgentResult(
+        success=True,
+        output=f"**Claude Code:** Effort set to `{arg}` for this chat.",
+        model=active or "",
+        meta={**base_meta, "agent_effort": arg, "effort_source": "session"},
     )
 
 
@@ -107,24 +307,25 @@ class Adapter:
         chat_session_id: Optional[str] = None,
         model: Optional[str] = None,
     ) -> Optional[AgentResult]:
-        from scripts.utilities.claude_cli_session_store import load_claude_model
+        """Handle model/effort/usage commands before Context Compiler wraps the prompt."""
+        from api.agent_harness.agent_defaults import resolve_effective_model
         from api.agent_usage import handle_agent_usage_slash
+        from scripts.utilities.claude_cli_session_store import load_claude_model
 
+        active, _ = resolve_effective_model(
+            "claude",
+            session_model=load_claude_model(chat_session_id),
+            kernel_override=model,
+            cli_default="",
+        )
         usage_md = handle_agent_usage_slash("claude", prompt)
         if usage_md is not None:
-            active = (
-                load_claude_model(chat_session_id)
-                or (str(model).strip() if model else "")
-                or ""
-            )
             return AgentResult(success=True, output=usage_md, model=active or "")
 
-        active = (
-            load_claude_model(chat_session_id)
-            or (str(model).strip() if model else "")
-            or ""
-        )
-        return _handle_claude_model_slash(prompt, chat_session_id, active)
+        effort_result = _handle_claude_effort_slash(prompt, chat_session_id, model)
+        if effort_result is not None:
+            return effort_result
+        return _handle_claude_model_slash(prompt, chat_session_id, active or "")
 
     async def execute(
         self,
@@ -136,9 +337,13 @@ class Adapter:
         status_queue: Any = None,
         chat_session_id: Optional[str] = None,
         timeout: float = 3600.0,
+        reasoning_effort: Optional[str] = None,
         cancel_event: Any = None,
     ) -> AgentResult:
-        from scripts.utilities.claude_cli_session_store import load_claude_model
+        from scripts.utilities.claude_cli_session_store import (
+            load_claude_effort,
+            load_claude_model,
+        )
         from scripts.utilities.claude_cli_tool import usage_for_query_report
 
         from api.agent_harness.agent_defaults import (
@@ -147,6 +352,7 @@ class Adapter:
             SOURCE_SESSION,
             SOURCE_STARRED,
             badge_meta,
+            get_starred_effort,
             get_starred_model,
         )
 
@@ -163,6 +369,49 @@ class Adapter:
         else:
             _model_source = SOURCE_CLI_DEFAULT
 
+        sess_effort = load_claude_effort(chat_session_id)
+        star_effort = get_starred_effort("claude")
+        effort = (
+            (str(reasoning_effort).strip().lower() if reasoning_effort else "")
+            or (sess_effort or "")
+            or (star_effort or "")
+            or None
+        )
+        effort_source = (
+            SOURCE_OVERRIDE
+            if reasoning_effort
+            else (
+                SOURCE_SESSION
+                if sess_effort
+                else (SOURCE_STARRED if star_effort else SOURCE_CLI_DEFAULT)
+            )
+        )
+        if effort:
+            supported_efforts = claude_efforts_for_model(mid)
+            if effort not in supported_efforts:
+                detail = (
+                    "Supported levels for `{}`: {}.".format(
+                        mid or "the CLI default model",
+                        ", ".join(f"`{level}`" for level in supported_efforts),
+                    )
+                    if supported_efforts
+                    else "This model takes no effort level; refresh with `/claude model refresh`."
+                )
+                return AgentResult(
+                    success=True,
+                    output=(
+                        f"Claude Code was not started: effort `{effort}` is not supported for "
+                        f"`{mid or 'the CLI default model'}`. {detail} "
+                        "Change the effort pin or reset it with `/claude effort default`."
+                    ),
+                    model=mid or "",
+                    meta={
+                        "agent_model": mid or "",
+                        "agent_effort": effort,
+                        "effort_source": effort_source,
+                    },
+                )
+
         put_status(status_queue, "Calling Claude Code…")
         # No mid-run NDJSON — coarse tick only (Cursor-style agents stream instead).
         stop = asyncio.Event()
@@ -176,7 +425,7 @@ class Adapter:
             )
         )
         try:
-            tool = ClaudeCliTool(model=mid)
+            tool = ClaudeCliTool(model=mid, reasoning_effort=effort)
             raw = await tool.execute_prompt(
                 prompt,
                 cwd=cwd,
@@ -218,6 +467,9 @@ class Adapter:
                 pass
 
         meta = badge_meta("claude", mid or "", _model_source)
+        if effort:
+            meta["agent_effort"] = effort
+            meta["effort_source"] = effort_source
         sid = raw.get("claude_session_id")
         # Prefer last-call occupancy for the gauge (not multi-step billing).
         if not usage.get("context_tokens") and usage.get("prompt_tokens"):

@@ -49,6 +49,11 @@ def _model_key(cuttle_session_id: Any) -> str:
     return f"model\x1f{sid}"
 
 
+def _effort_key(cuttle_session_id: Any) -> str:
+    sid = _normalize_session_id(cuttle_session_id) or "_no_session"
+    return f"effort\x1f{sid}"
+
+
 def _load_all() -> Dict[str, Any]:
     path = _map_file()
     if not path.is_file():
@@ -211,20 +216,28 @@ def load_claude_effort(cuttle_session_id: Optional[Any]) -> Optional[str]:
     if not _normalize_session_id(cuttle_session_id):
         return None
     with _lock:
-        value = _load_all().get("effort\x1f" + _normalize_session_id(cuttle_session_id))
-    return value.strip().lower() or None if isinstance(value, str) else None
+        data = _load_all()
+    raw = data.get(_effort_key(cuttle_session_id))
+    if not isinstance(raw, str):
+        return None
+    return raw.strip().lower() or None
 
 
-def save_claude_effort(cuttle_session_id: Optional[Any], effort: Optional[str]) -> Optional[str]:
+def save_claude_effort(
+    cuttle_session_id: Optional[Any], effort: Optional[str]
+) -> Optional[str]:
+    """Pin ``--effort`` for one chat; blank clears the pin."""
     if not _normalize_session_id(cuttle_session_id):
         return None
-    key = "effort\x1f" + _normalize_session_id(cuttle_session_id)
-    value = str(effort or "").strip().lower()
+    key = _effort_key(cuttle_session_id)
+    e = str(effort or "").strip().lower()
     with _lock:
         data = _load_all()
-        if value:
-            data[key] = value
+        if e:
+            data[key] = e
+        elif key in data:
+            del data[key]
         else:
-            data.pop(key, None)
+            return None
         _write_all(data)
-    return value or None
+    return e or None

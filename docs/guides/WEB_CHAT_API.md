@@ -61,6 +61,7 @@ is a logged, nonfatal `try/except`:
 | Action forms | `api.action_form_routes` (`action_forms_bp`, url prefix `/api`) | blueprint — transport; logic in `api.action_forms` / `api.project_actions` |
 | Git | `api.git_routes` (`git_bp`, url prefix `/api`) | blueprint — transport; behavior in `api.git_service` |
 | Tasks | `api.task_routes` (`tasks_bp`, url prefix `/api`) | blueprint — transport; logic in `managers.task_manager` |
+| Claude Code palette pins (`/api/claude/models\|model\|effort`) | `api.agent_harness.agents.claude.routes` (`claude_bp`) | blueprint — owned by the Claude agent slice; catalog in `agents/claude/model_catalog.py` |
 | Chat widgets | `api.chat_widgets.register_chat_widget_routes` | `register_*(app)` |
 | Chat TTS | `api.chat_tts` | `register_*(app)` |
 | Web terminal | `api.web_terminal` | `register_*(app)` |

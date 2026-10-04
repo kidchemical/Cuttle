@@ -154,6 +154,21 @@ def require_chat_session_access(
     return user, nid, None
 
 
+def require_session_actor(
+    session_id: Any,
+) -> Tuple[Optional[Dict[str, Any]], Any, Optional[JsonError]]:
+    """Signed-in caller; numeric chat ids must be owned by that user.
+
+    Non-numeric (pre-mint) session keys only need an authenticated caller.
+    """
+    if numeric_chat_session_id(session_id) is not None:
+        return require_chat_session_access(session_id)
+    user, err = require_authenticated()
+    if err:
+        return None, None, err
+    return user, session_id, None
+
+
 def require_loopback() -> Optional[JsonError]:
     """Daemon → Flask and Host Electron loopback callers."""
     if not request_is_loopback():

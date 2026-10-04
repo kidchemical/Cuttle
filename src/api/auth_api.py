@@ -1099,7 +1099,7 @@ def get_session_messages(session_id):
         except Exception:
             pass
         
-        # Session-level Muse/Hermes/OpenCode/Codex pins so the UI can seed badges before
+        # Session-level Muse/Hermes/OpenCode/Codex/Claude pins so the UI can seed badges before
         # first paint instead of flashing defaults while /api/*/model|effort
         # round-trips.
         muse_model = None
@@ -1110,6 +1110,8 @@ def get_session_messages(session_id):
         opencode_effort = ''
         codex_model = None
         codex_effort = ''
+        claude_model = None
+        claude_effort = ''
         try:
             from scripts.utilities.muse_cli_session_store import (
                 load_muse_effort,
@@ -1152,6 +1154,16 @@ def get_session_messages(session_id):
             codex_effort = load_codex_effort(session_id) or ''
         except Exception:
             pass
+        try:
+            from api.agent_harness.agent_defaults import get_starred_model as _star_claude
+            from scripts.utilities.claude_cli_session_store import (
+                load_claude_effort,
+                load_claude_model,
+            )
+            claude_model = load_claude_model(session_id) or _star_claude('claude') or ''
+            claude_effort = load_claude_effort(session_id) or ''
+        except Exception:
+            pass
 
         return jsonify({
             'success': True,
@@ -1175,6 +1187,7 @@ def get_session_messages(session_id):
                 'hermes': {'model': hermes_model, 'effort': hermes_effort},
                 'opencode': {'model': opencode_model, 'effort': opencode_effort},
                 'codex': {'model': codex_model, 'effort': codex_effort},
+                'claude': {'model': claude_model, 'effort': claude_effort},
             },
         })
         

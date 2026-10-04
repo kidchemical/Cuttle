@@ -6,26 +6,30 @@ auth_command: claude auth login
 sticky: true
 # Empty — unpinned turns omit --model so the Claude CLI default wins.
 default_model: ""
+# Snapshot from `claude 2.1.289` → SDK `initialize` (`/claude model refresh`).
+# The palette reads the installed CLI live; these rows are the offline fallback.
 models:
-  - haiku
-  - sonnet
   - opus
+  - sonnet
   - fable
+  - haiku
   - claude-opus-5-5
   - claude-sonnet-5-5
   - claude-fable-5-1
-# Offline snapshot; native SDK initialization supplies account/provider-specific rows.
+  - claude-sonnet-4-6
 supports_model_pin: true
 supports_effort: true
+# `--effort` levels for the CLI default model (unpinned turns).
 efforts: [low, medium, high, xhigh, max]
 model_efforts:
-  haiku: []
-  sonnet: [low, medium, high, xhigh, max]
   opus: [low, medium, high, xhigh, max]
+  sonnet: [low, medium, high, xhigh, max]
   fable: [low, medium, high, xhigh, max]
+  haiku: []
   claude-opus-5-5: [low, medium, high, xhigh, max]
   claude-sonnet-5-5: [low, medium, high, xhigh, max]
   claude-fable-5-1: [low, medium, high, xhigh, max]
+  claude-sonnet-4-6: [low, medium, high, max]
 pricing_source: models_dev
 pricing_providers: [anthropic]
 resume: true
@@ -45,3 +49,5 @@ executable_names:
 notes: >-
   Native `claude -p --output-format json` against the project cwd.
   Resume via `--resume` + claude_cli_session_store. Compact via `/compact`.
+  Per-chat `/claude model …` / `/claude effort …` pins map to `--model` /
+  `--effort`; refresh via `/claude model refresh`.

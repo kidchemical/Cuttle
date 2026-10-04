@@ -87,12 +87,12 @@ def test_cursor_usage_palette_gated_to_cursor_chip():
 
 
 def test_harness_usage_palette_gated_per_agent():
-    """Muse/Codex/Hermes/OpenCode each get a chip-gated `/usage` row."""
+    """Muse/Codex/Hermes/OpenCode/Claude each get a chip-gated `/usage` row."""
     js = CHAT_JS.read_text(encoding="utf-8")
     slash_js = SLASH_JS.read_text(encoding="utf-8")
     assert "HARNESS_USAGE_SLASH_BY_AGENT" in slash_js
     assert "function harnessUsageSlashCommandsForPalette(" in js
-    for cat in ("muse-cmd", "codex-cmd", "hermes-cmd", "opencode-cmd"):
+    for cat in ("muse-cmd", "codex-cmd", "hermes-cmd", "opencode-cmd", "claude-cmd"):
         assert f"category: '{cat}'" in slash_js
     base = _slash_commands_block(slash_js)
     assert "prefix: '/usage'" not in base

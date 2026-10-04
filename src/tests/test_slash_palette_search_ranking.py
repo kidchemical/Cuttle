@@ -50,6 +50,8 @@ const buildMuseEffortPaletteItems = () => [];
 const buildHermesModelPaletteItems = () => [];
 const buildHermesEffortPaletteItems = () => [];
 const buildOpenCodeEffortPaletteItems = () => [];
+const buildClaudeModelPaletteItems = () => [];
+const buildClaudeEffortPaletteItems = () => [];
 const readStarredSlashPrefixes = () => stars;
 const readStarredProject = () => null;
 const normalizeStarredProjectPath = () => '';

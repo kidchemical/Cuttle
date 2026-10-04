@@ -174,6 +174,16 @@ def pin_child_session(session_id: Any, spec: ChildSpec, *, project_path: str = "
             if effort:
                 save_codex_effort(session_id, effort)
             return
+        if agent == "claude":
+            from scripts.utilities.claude_cli_session_store import (
+                save_claude_effort,
+                save_claude_model,
+            )
+            if model:
+                save_claude_model(session_id, model)
+            if effort:
+                save_claude_effort(session_id, effort)
+            return
         if agent == "hermes":
             from scripts.utilities.hermes_cli_session_store import (
                 save_hermes_effort,

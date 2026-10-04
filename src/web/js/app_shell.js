@@ -1716,14 +1716,17 @@ window.addEventListener('message', function(e) {
     } else if (e.data.type === 'cuttle-pane-activity') {
         setFocusedColumn(findColumnIndexForSource(e.source));
     } else if (e.data.type === 'cuttle-chat-activity') {
-        // Per-chat dot/spinner snapshot from a chat iframe (immediate) —
-        // the poll fallback covers inactive spaces with no live iframe.
+        // Snapshot of the chats this frame owns (immediate). Replaces the
+        // frame's previous snapshot; the server poll stays authoritative.
         try {
-            const list = Array.isArray(e.data.sessions) ? e.data.sessions : [];
-            list.forEach((entry) => {
-                if (!entry || entry.id == null || entry.id === '') return;
-                noteSpaceSessionActivity(entry.id, entry.activity || '', entry.running);
-            });
+            if (e.source) {
+                CuttleSpaces.notePushSnapshot(
+                    e.source,
+                    Array.isArray(e.data.sessions) ? e.data.sessions : [],
+                    Array.isArray(e.data.owned) ? e.data.owned : null
+                );
+            }
+            refreshSpaceActivityLocalState();
             syncSpaceActivityTabs();
         } catch (_) {}
     } else if (
@@ -5414,20 +5417,17 @@ let spaceActivityPollInFlight = false;
 let spaceActivityLastPollAt = 0;
 let spaceActivitySig = '';
 
-function spaceSidVariants(sid) {
-    return CuttleSpaces.sidVariants(sid);
-}
-
-function noteSpaceSessionActivity(sid, activity, running) {
-    CuttleSpaces.noteSessionActivity(sid, activity, running);
-}
-
 function lookupSpaceSessionActivity(sid) {
     return CuttleSpaces.lookupSessionActivity(sid);
 }
 
-function clearSpaceSessionActivity(sid) {
-    CuttleSpaces.clearSessionActivity(sid);
+/** Forget snapshots from chat frames that were replaced or closed. */
+function pruneSpaceActivitySources() {
+    const live = new Set();
+    document.querySelectorAll('iframe').forEach((fr) => {
+        try { if (fr.contentWindow) live.add(fr.contentWindow); } catch (_) {}
+    });
+    CuttleSpaces.pruneSources((win) => live.has(win));
 }
 
 /** Chat session ids belonging to a space. Active space reads live panes;
@@ -5486,6 +5486,7 @@ function spaceActivityFor(space) {
 function syncSpaceActivityTabs() {
     const tabs = document.querySelectorAll('.shell-space-tab');
     if (!tabs.length) return;
+    pruneSpaceActivitySources();
     const sigParts = [];
     tabs.forEach((tab) => {
         const space = spacesState.spaces.find((s) => s.id === tab.dataset.spaceId);
@@ -5552,125 +5553,123 @@ function readLocalChatSessions() {
     }
 }
 
-/** Poll fallback so inactive spaces (no live iframe) still show dots.
- *  Push messages from chat iframes give immediacy; this gives coverage. */
-async function refreshSpaceActivityFromServer() {
-    if (spaceActivityPollInFlight) return;
-    const ids = allSpaceChatIds();
-    // Unread prefs are local-only but same-origin — always refresh them.
-    try {
-        const prefs = readChatPrefsMap();
-        Object.keys(prefs || {}).forEach((sid) => {
-            const p = prefs[sid];
-            if (!p || typeof p !== 'object') return;
-            if (p.hasUnread) {
-                const prev = lookupSpaceSessionActivity(sid);
-                noteSpaceSessionActivity(sid, p.unreadIsError ? 'error' : 'unread', !!(prev && prev.running));
-            } else if (prev && (prev.activity === 'unread' || prev.activity === 'error') && !prev.running) {
-                // Cleared elsewhere (chat opened) with no fresh push yet.
-                clearSpaceSessionActivity(sid);
-            }
-        });
-    } catch (_) {}
-    // Local-mode followups live in localStorage.
+/** Unread flags + local-mode queues are same-origin localStorage. */
+function refreshSpaceActivityLocalState() {
+    try { CuttleSpaces.setUnreadPrefs(readChatPrefsMap()); } catch (_) {}
     try {
         const local = readLocalChatSessions();
+        const queues = {};
         Object.keys(local || {}).forEach((sid) => {
             const obj = local[sid];
             if (!obj || typeof obj !== 'object') return;
-            const kind = CuttleSpaces.followupKind(obj.followup_queue != null ? obj.followup_queue : obj.followups);
-            if (kind) {
-                const prev = lookupSpaceSessionActivity(sid);
-                if (!prev || (!prev.running && (!prev.activity || CuttleSpaces.RANK[kind] > (CuttleSpaces.RANK[prev.activity] || 0)))) {
-                    noteSpaceSessionActivity(sid, kind, !!(prev && prev.running));
-                }
-            }
+            queues[sid] = obj.followup_queue != null ? obj.followup_queue : obj.followups;
         });
+        CuttleSpaces.setLocalQueues(queues);
     } catch (_) {}
+}
+
+/** A chat in a background space finished with no frame watching it — flag
+ *  it unread (same prefs row the history panel reads) so its tab goes green. */
+function markFinishedBackgroundChatsUnread(finished) {
+    if (!finished || !finished.length) return;
+    const visible = new Set([...visibleActiveSpaceChatIds()].map((s) => CuttleSpaces.bareSid(s)));
+    const targets = finished.filter((bare) => bare && !visible.has(bare));
+    if (!targets.length) return;
+    try {
+        const prefs = readChatPrefsMap();
+        let changed = false;
+        targets.forEach((bare) => {
+            const key = Object.keys(prefs).find((k) => CuttleSpaces.bareSid(k) === bare) || bare;
+            const row = prefs[key] && typeof prefs[key] === 'object' ? prefs[key] : {};
+            if (row.hasUnread) return;
+            prefs[key] = Object.assign({}, row, { hasUnread: true, unreadIsError: false });
+            changed = true;
+        });
+        if (changed) localStorage.setItem('cuttleChatSessionPrefs', JSON.stringify(prefs));
+    } catch (_) {}
+}
+
+async function fetchSpaceSessionsList() {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 6000);
+    try {
+        const r = await fetch('/api/auth/sessions', {
+            cache: 'no-store', credentials: 'same-origin', signal: controller.signal,
+        });
+        if (!r.ok) return null;
+        const data = await r.json().catch(() => null);
+        return data && data.success && Array.isArray(data.sessions) ? data.sessions : null;
+    } catch (_) {
+        return null;
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+/** Not authenticated — live-status knows only `generating`. */
+async function fetchSpaceLiveStatusRows(ids) {
+    const rows = [];
+    for (let i = 0; i < ids.length; i += 12) {
+        const chunk = ids.slice(i, i + 12);
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+        try {
+            const r = await fetch(
+                '/api/chat-live-status-batch?session_ids=' + encodeURIComponent(chunk.join(',')),
+                { credentials: 'include', cache: 'no-store', signal: controller.signal }
+            );
+            if (!r.ok) continue;
+            const data = await r.json().catch(() => null);
+            if (!data || !data.success) continue;
+            const statuses = data.statuses || {};
+            chunk.forEach((sid) => {
+                const st = statuses[String(sid)] || statuses[CuttleSpaces.bareSid(sid)] || null;
+                rows.push({ id: sid, running: !!(st && st.generating), queue: null });
+            });
+        } catch (_) {
+        } finally {
+            clearTimeout(timeout);
+        }
+    }
+    return rows;
+}
+
+/** Server truth for every chat in every space (inactive spaces have no
+ *  live frame). Frame pushes add immediacy between polls. */
+async function refreshSpaceActivityFromServer() {
+    if (spaceActivityPollInFlight) return;
+    refreshSpaceActivityLocalState();
+    const ids = allSpaceChatIds();
     if (!ids.length) {
         syncSpaceActivityTabs();
         return;
     }
     spaceActivityPollInFlight = true;
+    const startedAt = Date.now();
     try {
-        // One sessions fetch covers generating + followup_queue in auth mode.
-        let sessionsByBare = null;
-        try {
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 6000);
-            let data = null;
-            try {
-                const r = await fetch('/api/auth/sessions', {
-                    cache: 'no-store', credentials: 'same-origin', signal: controller.signal,
-                });
-                if (r.ok) data = await r.json().catch(() => null);
-            } finally {
-                clearTimeout(timeout);
-            }
-            if (data && data.success && Array.isArray(data.sessions)) {
-                sessionsByBare = new Map();
-                data.sessions.forEach((s) => {
-                    if (!s || s.id == null) return;
-                    sessionsByBare.set(String(s.id), s);
-                });
-            }
-        } catch (_) {
-            sessionsByBare = null;
-        }
-        if (sessionsByBare) {
+        let rows = null;
+        const sessions = await fetchSpaceSessionsList();
+        if (sessions) {
+            const byBare = new Map();
+            sessions.forEach((s) => {
+                if (s && s.id != null) byBare.set(CuttleSpaces.bareSid(s.id), s);
+            });
+            rows = [];
             ids.forEach((sid) => {
-                const variants = spaceSidVariants(sid);
-                const bare = variants.length > 1 ? variants[1] : variants[0];
-                const s = sessionsByBare.get(bare) || sessionsByBare.get(variants[0]);
+                const s = byBare.get(CuttleSpaces.bareSid(sid));
                 if (!s) return;
-                const running = !!(s.generating || s.awaiting_action);
-                let kind = CuttleSpaces.followupKind(s.followup_queue != null ? s.followup_queue : s.followups);
-                const prev = lookupSpaceSessionActivity(sid);
-                // A pushed unread/error outranks a polled queue state.
-                if (prev && (prev.activity === 'unread' || prev.activity === 'error')) {
-                    kind = prev.activity;
-                }
-                if (running || kind) {
-                    noteSpaceSessionActivity(sid, kind, running);
-                } else if (prev && prev.running) {
-                    clearSpaceSessionActivity(sid);
-                }
+                rows.push({
+                    id: sid,
+                    running: !!(s.generating || s.awaiting_action),
+                    queue: CuttleSpaces.followupKind(parseSpaceFollowupQueue(
+                        s.followup_queue != null ? s.followup_queue : s.followups)),
+                });
             });
         } else {
-            // Not authenticated (or fetch failed) — ask live-status for running.
-            const chunks = [];
-            for (let i = 0; i < ids.length; i += 12) chunks.push(ids.slice(i, i + 12));
-            for (const chunk of chunks) {
-                try {
-                    const controller = new AbortController();
-                    const timeout = setTimeout(() => controller.abort(), 5000);
-                    let data = null;
-                    try {
-                        const r = await fetch(
-                            '/api/chat-live-status-batch?session_ids=' + encodeURIComponent(chunk.join(',')),
-                            { credentials: 'include', cache: 'no-store', signal: controller.signal }
-                        );
-                        if (r.ok) data = await r.json();
-                    } finally {
-                        clearTimeout(timeout);
-                    }
-                    const statuses = (data && data.statuses) || {};
-                    chunk.forEach((sid) => {
-                        const st = statuses[String(sid)] || statuses[spaceSidVariants(sid)[1]] || null;
-                        if (st && st.generating) {
-                            const prev = lookupSpaceSessionActivity(sid);
-                            noteSpaceSessionActivity(sid, (prev && prev.activity) || '', true);
-                        } else {
-                            const prev = lookupSpaceSessionActivity(sid);
-                            if (prev && prev.running) {
-                                if (prev.activity) noteSpaceSessionActivity(sid, prev.activity, false);
-                                else clearSpaceSessionActivity(sid);
-                            }
-                        }
-                    });
-                } catch (_) {}
-            }
+            rows = await fetchSpaceLiveStatusRows(ids);
         }
+        markFinishedBackgroundChatsUnread(CuttleSpaces.noteServerSnapshot(rows, startedAt));
+        refreshSpaceActivityLocalState();
     } finally {
         spaceActivityPollInFlight = false;
         spaceActivityLastPollAt = Date.now();
@@ -5678,9 +5677,24 @@ async function refreshSpaceActivityFromServer() {
     }
 }
 
+/** followup_queue arrives as an array or a JSON string. */
+function parseSpaceFollowupQueue(raw) {
+    if (Array.isArray(raw)) return raw;
+    if (typeof raw === 'string' && raw.trim()) {
+        try {
+            const parsed = JSON.parse(raw);
+            return Array.isArray(parsed) ? parsed : [];
+        } catch (_) {
+            return [];
+        }
+    }
+    return [];
+}
+
 function scheduleSpaceActivityPoll(immediate) {
     const since = Date.now() - spaceActivityLastPollAt;
     if (!immediate && since < 8000) {
+        refreshSpaceActivityLocalState();
         syncSpaceActivityTabs();
         return;
     }

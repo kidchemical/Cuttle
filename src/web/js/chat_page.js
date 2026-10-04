@@ -1732,6 +1732,13 @@
         try { scheduleChatActivityBroadcast(); } catch (_) {}
     }
 
+    // Another pane (or the shell, for chats that finish in a background
+    // space) changed unread flags — repaint this pane's history dots.
+    window.addEventListener('storage', (e) => {
+        if (!e || e.key !== SESSION_PREFS_STORAGE_KEY) return;
+        try { syncHistoryUnreadIndicators(); } catch (_) {}
+    });
+
     /** Manual "Mark as unread" while still viewing — don't let focus/visibility clear it. */
     let _manualUnreadHoldId = null;
 
@@ -5155,7 +5162,7 @@
     }
 
     /**
-     * Nested ``/usage`` for Muse / Codex / Hermes / OpenCode — same chip
+     * Nested ``/usage`` for Muse / Codex / Hermes / OpenCode / Claude — same chip
      * pattern as Cursor's Usage row (gated to the active agent badge).
      * Cursor keeps its own entry inside CuttleChatSlash.CURSOR_AGENT_SLASH_COMMANDS.
      */
@@ -5489,6 +5496,18 @@
         codexEffort: '',
         codexEffortLoading: false,
         codexEffortKey: '',
+        claudeModels: [],
+        claudeModel: '',
+        claudeModelsLoading: false,
+        claudeModelsKey: '',
+        claudeModelsSource: '',
+        claudeModelsCount: 0,
+        claudeCommonEfforts: [],
+        claudeModelDirty: false,
+        claudeEffortDirty: false,
+        claudeEffort: '',
+        claudeEffortLoading: false,
+        claudeEffortKey: '',
         projectCommandsLoading: false,
         harnessAgents: [],
         harnessAgentsPath: '',
@@ -5507,6 +5526,7 @@
         hermesModelsGen: 0,
         opencodeModelsGen: 0,
         codexModelsGen: 0,
+        claudeModelsGen: 0,
     };
 
     function cursorAgentSessionOptionsKey() {
@@ -5522,7 +5542,8 @@
         'hermes-model', 'hermes-effort', 'hermes-cmd',
         'opencode-model', 'opencode-effort', 'opencode-cmd',
         'codex-model', 'codex-effort', 'codex-cmd',
-        'claude-cmd', 'deepseek-cmd', 'antigravity-cmd',
+        'claude-model', 'claude-effort', 'claude-cmd',
+        'deepseek-cmd', 'antigravity-cmd',
     ];
 
     const MODEL_STAR_SPEC_BY_CATEGORY = {
@@ -5535,6 +5556,8 @@
         'opencode-effort': { agent: 'opencode', kind: 'effort' },
         'codex-model': { agent: 'codex', kind: 'model' },
         'codex-effort': { agent: 'codex', kind: 'effort' },
+        'claude-model': { agent: 'claude', kind: 'model' },
+        'claude-effort': { agent: 'claude', kind: 'effort' },
     };
 
     function loadAgentCapabilities() {
@@ -5593,11 +5616,11 @@
         return CuttleChatAgentModel.isAgentDefaultStarred(spec, cmd, star);
     }
 
-    /** Starred muse/hermes/opencode/codex defaults (cursor has its own loader above). */
+    /** Starred muse/hermes/opencode/codex/claude defaults (cursor has its own loader above). */
     function loadAllStarredDefaults() {
         if (slashPaletteSupplement.starredDefaultsLoaded || slashPaletteSupplement.starredDefaultsLoading) return;
         slashPaletteSupplement.starredDefaultsLoading = true;
-        const agents = ['muse', 'hermes', 'opencode', 'codex'];
+        const agents = ['muse', 'hermes', 'opencode', 'codex', 'claude'];
         Promise.all(agents.map((a) =>
             fetch('/api/agent-defaults/' + a, { cache: 'no-store' })
                 .then((r) => r.json())
@@ -5692,6 +5715,11 @@
             slashPaletteSupplement.codexEffortKey = '';
             loadCodexModelsForPalette(true);
             loadCodexEffortForPalette();
+        } else if (aid === 'claude') {
+            slashPaletteSupplement.claudeModelsKey = '';
+            slashPaletteSupplement.claudeEffortKey = '';
+            loadClaudeModelsForPalette(true);
+            loadClaudeEffortForPalette();
         } else if (aid === 'cursor') {
             slashPaletteSupplement.cursorModelsLoaded = false;
             loadCursorAgentModelsForPalette(true);
@@ -5713,6 +5741,12 @@
             slashPaletteSupplement.codexModelsKey = '';
             slashPaletteSupplement.codexModels = [];
             loadCodexModelsForPalette(true, { refresh: true });
+            return;
+        }
+        if (/\b\/claude\b/.test(low) || hasActiveHarnessAgentChip('claude')) {
+            slashPaletteSupplement.claudeModelsKey = '';
+            slashPaletteSupplement.claudeModels = [];
+            loadClaudeModelsForPalette(true, { refresh: true });
             return;
         }
         if (/\b\/opencode\b/.test(low) || hasActiveOpenCodeAgentChip()) {
@@ -6086,6 +6120,7 @@
         'hermes',
         'opencode',
         'codex',
+        'claude',
     ];
     const SLASH_PALETTE_TYPE_FILTER_KEY = 'cuttleSlashPaletteTypeFilter';
     let slashPaletteTypeFilter = 'all';
@@ -6345,15 +6380,20 @@
         S.codexModels = [];
         S.codexModelsKey = '';
         S.codexModelsLoading = false;
+        S.claudeModels = [];
+        S.claudeModelsKey = '';
+        S.claudeModelsLoading = false;
         S.museEffortKey = '';
         S.hermesEffortKey = '';
         S.opencodeEffortKey = '';
         S.codexEffortKey = '';
+        S.claudeEffortKey = '';
         S.cursorModelsGen = (S.cursorModelsGen || 0) + 1;
         S.museModelsGen = (S.museModelsGen || 0) + 1;
         S.hermesModelsGen = (S.hermesModelsGen || 0) + 1;
         S.opencodeModelsGen = (S.opencodeModelsGen || 0) + 1;
         S.codexModelsGen = (S.codexModelsGen || 0) + 1;
+        S.claudeModelsGen = (S.claudeModelsGen || 0) + 1;
         if (prev && next) {
             S.preferredModel = 'auto';
             S.lastReportedModel = null;
@@ -6377,6 +6417,11 @@
             S.codexModelDirty = false;
             S.codexEffortDirty = false;
             S.codexEffortLoading = false;
+            S.claudeModel = '';
+            S.claudeEffort = '';
+            S.claudeModelDirty = false;
+            S.claudeEffortDirty = false;
+            S.claudeEffortLoading = false;
         } else if (!next) {
             S.preferredModel = 'auto';
             S.lastReportedModel = null;
@@ -6396,6 +6441,10 @@
             S.codexEffort = '';
             S.codexModelDirty = false;
             S.codexEffortDirty = false;
+            S.claudeModel = '';
+            S.claudeEffort = '';
+            S.claudeModelDirty = false;
+            S.claudeEffortDirty = false;
         }
     }
 
@@ -7292,6 +7341,10 @@
                     model: S.codexModel, effort: S.codexEffort,
                     modelDirty: S.codexModelDirty, effortDirty: S.codexEffortDirty,
                 },
+                claude: {
+                    model: S.claudeModel, effort: S.claudeEffort,
+                    modelDirty: S.claudeModelDirty, effortDirty: S.claudeEffortDirty,
+                },
             },
         });
         if (Object.keys(pins).length) requestBody.agent_pins = pins;
@@ -7398,6 +7451,356 @@
         return items;
     }
 
+    /** anyChat: load even without a /claude chip (user typed "claude" in the palette). */
+    function loadClaudeModelsForPalette(anyChat, opts) {
+        if (!anyChat && !hasActiveHarnessAgentChip('claude')) return;
+        const key = currentSessionId != null ? String(currentSessionId) : '';
+        const forceRefresh = !!(opts && opts.refresh);
+        if (
+            !forceRefresh
+            && (
+                slashPaletteSupplement.claudeModelsLoading
+                || slashPaletteSupplement.claudeModelDirty
+                || (slashPaletteSupplement.claudeModels.length
+                    && slashPaletteSupplement.claudeModelsKey === key)
+            )
+        ) {
+            return;
+        }
+        slashPaletteSupplement.claudeModelsLoading = true;
+        const params = new URLSearchParams();
+        if (key) params.set('session', key);
+        if (forceRefresh) params.set('refresh', '1');
+        const qs = params.toString();
+        const url = qs ? '/api/claude/models?' + qs : '/api/claude/models';
+        fetch(url, { cache: 'no-store' })
+            .then((r) => r.json())
+            .then((j) => {
+                slashPaletteSupplement.claudeModels =
+                    j && j.success && Array.isArray(j.models) ? j.models : [];
+                slashPaletteSupplement.claudeModel =
+                    (j && j.preferredModel) || '';
+                slashPaletteSupplement.claudeModelsKey = key;
+                slashPaletteSupplement.claudeModelsSource =
+                    (j && j.source) || '';
+                slashPaletteSupplement.claudeModelsCount =
+                    (j && (j.count != null ? j.count : slashPaletteSupplement.claudeModels.length)) || 0;
+                slashPaletteSupplement.claudeCommonEfforts =
+                    j && Array.isArray(j.commonEfforts) ? j.commonEfforts : [];
+                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
+                renderSlashChips('chat', document.getElementById('chatInput'));
+                repaintClaudeUserBadges();
+                persistStickySlashForCurrentSession();
+                refreshHistoryAgentChips();
+                if (forceRefresh && window.showToast) {
+                    const n = slashPaletteSupplement.claudeModelsCount || 0;
+                    const err = j && j.error ? String(j.error) : '';
+                    window.showToast(
+                        err && !n
+                            ? ('Claude Code models refresh failed: ' + err)
+                            : ('Claude Code models and effort support refreshed (' + n + ')'),
+                        err && !n ? 'error' : 'success'
+                    );
+                }
+            })
+            .catch(() => {})
+            .finally(() => {
+                slashPaletteSupplement.claudeModelsLoading = false;
+                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
+                renderSlashChips('chat', document.getElementById('chatInput'));
+                const welcomeInput = document.getElementById('welcomeChatInput');
+                const chatInput = document.getElementById('chatInput');
+                if (welcomeInput && document.activeElement === welcomeInput) {
+                    syncSlashMenuFromInput(welcomeInput);
+                }
+                if (chatInput && document.activeElement === chatInput) {
+                    syncSlashMenuFromInput(chatInput);
+                }
+            });
+    }
+
+    function persistClaudeModelSelection(modelId) {
+        const id = String(modelId || '').trim();
+        if (!id) return;
+        if (id.toLowerCase() === 'refresh' || id.toLowerCase() === '__refresh__') {
+            slashPaletteSupplement.claudeModelsKey = '';
+            slashPaletteSupplement.claudeModels = [];
+            loadClaudeModelsForPalette(true, { refresh: true });
+            return;
+        }
+        slashPaletteSupplement.claudeModel = id;
+        slashPaletteSupplement.claudeModels = (slashPaletteSupplement.claudeModels || []).map((m) => ({
+            ...m,
+            current: String(m && m.id) === id,
+        }));
+        const sid = currentSessionId != null ? String(currentSessionId) : '';
+        if (!sid) {
+            slashPaletteSupplement.claudeModelDirty = true;
+            slashPaletteSupplement.claudeModelsKey = '';
+            return;
+        }
+        slashPaletteSupplement.claudeModelDirty = true;
+        fetch('/api/claude/model', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session: sid, model: id }),
+        })
+            .then((r) => r.json())
+            .then((j) => {
+                if (j && j.success) {
+                    slashPaletteSupplement.claudeModel = id;
+                    slashPaletteSupplement.claudeModelDirty = false;
+                    slashPaletteSupplement.claudeModelsKey = sid;
+                    repaintClaudeUserBadges();
+                    persistStickySlashForCurrentSession();
+                    refreshHistoryAgentChips();
+                }
+            })
+            .catch(() => {});
+    }
+
+    function buildClaudeModelPaletteItems(filterLower) {
+        if (!hasActiveHarnessAgentChip('claude')) return [];
+        const f = (filterLower || '').toLowerCase().trim();
+        if (!f) return [];
+        loadClaudeModelsForPalette(true);
+        const models = slashPaletteSupplement.claudeModels || [];
+        let modelFilter = f
+            .replace(/^claude\s+/, '')
+            .replace(/^models?\b\s*/, '')
+            .trim();
+        if (modelFilter === 'claude') modelFilter = '';
+        const preferred = String(slashPaletteSupplement.claudeModel || '').toLowerCase();
+        // Stage as nested cmd chip — no instant run (same as Codex). Composes as
+        // `/claude /model refresh` after the sticky agent prefix.
+        const refreshItem = {
+            category: 'claude-cmd',
+            prefix: '/model refresh',
+            label: 'Refresh Claude Code models',
+            hint: 'Refresh Claude Code models and per-model effort levels from the installed CLI',
+            meta: 'refresh',
+            keywords: 'claude model refresh reload sync catalog',
+        };
+        const items = [];
+        if (
+            !modelFilter
+            || slashPaletteItemMatches(refreshItem, modelFilter)
+        ) {
+            items.push(refreshItem);
+        }
+        if (slashPaletteSupplement.claudeModelsLoading && !models.length) {
+            items.push({
+                category: 'claude-model',
+                prefix: '/claude model',
+                label: 'Loading Claude Code models…',
+                hint: 'Reading the Claude Code CLI model catalog',
+                meta: '',
+                keywords: 'claude model loading',
+                modelId: '',
+                claudeModel: true,
+                disabled: true,
+            });
+            return items;
+        }
+        const mapped = models
+            .map((m) => {
+                const id = String((m && m.id) || '').trim();
+                if (!id) return null;
+                const label = String((m && m.label) || id).trim() || id;
+                const current = id.toLowerCase() === preferred;
+                const fav = !!(m && (m.favorite === true || m.favorite === '1' || m.favorite === 1));
+                const modelEfforts = Array.isArray(m && m.efforts) ? m.efforts : [];
+                const effortHint = modelEfforts.length
+                    ? 'Supported efforts: ' + modelEfforts.join(', ')
+                    : 'No effort levels for this model';
+                return {
+                    category: 'claude-model',
+                    prefix: '/claude model ' + id,
+                    label: (fav ? '★ ' : '') + label + (current ? ' (current)' : ''),
+                    hint: [
+                        (m && m.description) || ('Set Claude Code model to ' + id),
+                        effortHint,
+                    ].filter(Boolean).join(' · '),
+                    meta: id,
+                    keywords: 'claude model ' + id + ' ' + label + ' ' + id.replace(/[-_/]+/g, ' '),
+                    modelId: id,
+                    claudeModel: true,
+                };
+            })
+            .filter(Boolean)
+            .filter((item) => (modelFilter ? slashPaletteItemMatches(item, modelFilter) : true));
+        const MAX = 40;
+        // Rank before clipping so a name hit cannot be hidden by description hits.
+        mapped.sort((a, b) => CuttleChatSlash.slashPaletteItemSearchRank(a, f)
+            - CuttleChatSlash.slashPaletteItemSearchRank(b, f));
+        const clipped = mapped.length > MAX ? mapped.slice(0, MAX) : mapped;
+        if (mapped.length > MAX) {
+            items.push({
+                category: 'claude-model',
+                prefix: '/claude model',
+                label: '… ' + (mapped.length - MAX) + ' more — type to narrow (e.g. opus)',
+                hint: 'Claude Code catalog has ' + (slashPaletteSupplement.claudeModelsCount || mapped.length) + ' models',
+                meta: '',
+                keywords: 'claude model more filter',
+                modelId: '',
+                claudeModel: true,
+                disabled: true,
+            });
+        }
+        return items.concat(clipped);
+    }
+
+    function seedClaudeSupplementFromSessionData(data, sessionId) {
+        if (!data || typeof data !== 'object') return;
+        const key = sessionId != null ? String(sessionId) : '';
+        const serverModel = sessionPin(data, 'claude', 'model');
+        if (serverModel) {
+            slashPaletteSupplement.claudeModel = serverModel;
+            if (key) slashPaletteSupplement.claudeModelsKey = key;
+        }
+        const serverEffort = sessionPin(data, 'claude', 'effort').toLowerCase();
+        if (serverEffort) {
+            slashPaletteSupplement.claudeEffort = serverEffort;
+            if (key) slashPaletteSupplement.claudeEffortKey = key;
+        } else if (key && data && ((data.agent_pins && data.agent_pins.claude) || ('claude_effort' in data))) {
+            slashPaletteSupplement.claudeEffort = '';
+            slashPaletteSupplement.claudeEffortKey = key;
+        }
+    }
+
+    function loadClaudeEffortForPalette() {
+        if (!hasActiveHarnessAgentChip('claude')) return;
+        const key = currentSessionId != null ? String(currentSessionId) : '';
+        if (
+            slashPaletteSupplement.claudeEffortLoading
+            || (slashPaletteSupplement.claudeEffortKey === key && key)
+        ) {
+            return;
+        }
+        slashPaletteSupplement.claudeEffortLoading = true;
+        const url = key
+            ? '/api/claude/effort?session=' + encodeURIComponent(key)
+            : '/api/claude/effort';
+        fetch(url, { cache: 'no-store' })
+            .then((r) => r.json())
+            .then((j) => {
+                if (slashPaletteSupplement.claudeEffortDirty) return;
+                slashPaletteSupplement.claudeEffort =
+                    (j && j.preferredEffort) || '';
+                slashPaletteSupplement.claudeEffortKey = key;
+                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
+                renderSlashChips('chat', document.getElementById('chatInput'));
+                repaintClaudeUserBadges();
+                persistStickySlashForCurrentSession();
+                refreshHistoryAgentChips();
+            })
+            .catch(() => {})
+            .finally(() => {
+                slashPaletteSupplement.claudeEffortLoading = false;
+            });
+    }
+
+    function persistClaudeEffortSelection(effort) {
+        const id = String(effort || '').trim().toLowerCase();
+        if (!id) return;
+        slashPaletteSupplement.claudeEffort = id;
+        const sid = currentSessionId != null ? String(currentSessionId) : '';
+        if (!sid) {
+            slashPaletteSupplement.claudeEffortDirty = true;
+            slashPaletteSupplement.claudeEffortKey = '';
+            return;
+        }
+        slashPaletteSupplement.claudeEffortKey = sid;
+        slashPaletteSupplement.claudeEffortDirty = true;
+        fetch('/api/claude/effort', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                session: sid,
+                effort: id,
+                model: slashPaletteSupplement.claudeModel || '',
+            }),
+        })
+            .then((r) => r.json())
+            .then((j) => {
+                if (j && j.success) {
+                    slashPaletteSupplement.claudeEffortKey = sid;
+                    slashPaletteSupplement.claudeEffortDirty = false;
+                }
+            })
+            .catch(() => {});
+    }
+
+    function buildClaudeEffortPaletteItems(filterLower) {
+        if (!agentSupportsEffort('claude')) return [];
+        if (!hasActiveHarnessAgentChip('claude')) return [];
+        const f = (filterLower || '').toLowerCase().trim();
+        if (!f) return [];
+        loadClaudeEffortForPalette();
+        let effortFilter = f
+            .replace(/^claude\s+/, '')
+            .replace(/^efforts?\b\s*/, '')
+            .trim();
+        if (effortFilter === 'effort') effortFilter = '';
+        const preferred = String(slashPaletteSupplement.claudeEffort || '').toLowerCase();
+        const selectedModel = String(slashPaletteSupplement.claudeModel || '').toLowerCase();
+        const selectedRow = selectedModel
+            ? (slashPaletteSupplement.claudeModels || []).find((m) =>
+                String(m && m.id || '').toLowerCase() === selectedModel
+            )
+            : null;
+        const levels = selectedRow && Array.isArray(selectedRow.efforts)
+            ? selectedRow.efforts
+            : selectedModel
+                ? []
+                : (slashPaletteSupplement.claudeCommonEfforts || []);
+        if (!levels.length) {
+            return [{
+                category: 'claude-effort',
+                prefix: '/claude effort',
+                label: slashPaletteSupplement.claudeModelsLoading
+                    ? 'Loading Claude Code effort support…'
+                    : 'No verified effort levels for ' + (selectedModel || 'the CLI default'),
+                hint: slashPaletteSupplement.claudeModelsLoading
+                    ? 'Reading per-model levels from the Claude Code CLI'
+                    : 'This model takes no --effort level; refresh the Claude Code catalog if that looks wrong',
+                meta: '',
+                keywords: 'claude effort loading supported levels refresh',
+                modelId: '',
+                claudeEffort: true,
+                disabled: true,
+            }];
+        }
+        const items = levels
+            .map((id) => ({
+                category: 'claude-effort',
+                prefix: '/claude effort ' + id,
+                label: 'Effort ' + id + (id.toLowerCase() === preferred ? ' (current)' : ''),
+                hint: 'Set Claude Code effort (--effort) to ' + id
+                    + (selectedModel ? ' for ' + selectedModel : ' (CLI default model)'),
+                meta: id,
+                keywords: 'claude effort ' + id,
+                modelId: id,
+                claudeEffort: true,
+            }))
+            .filter((item) => (effortFilter ? slashPaletteItemMatches(item, effortFilter) : true));
+        if (!items.length && effortFilter) {
+            return [{
+                category: 'claude-effort',
+                prefix: '/claude effort',
+                label: '`' + effortFilter + '` is not supported'
+                    + (selectedModel ? ' by ' + selectedModel : ' by the CLI default model'),
+                hint: 'Supported: ' + levels.join(', '),
+                meta: '',
+                keywords: 'claude effort unsupported ' + effortFilter,
+                modelId: '',
+                claudeEffort: true,
+                disabled: true,
+            }];
+        }
+        return items;
+    }
+
     /** `/restart <mode>` entries. Native Cuttle control — never an agent prompt. */
     function buildRestartPaletteItems(filterLower) {
         const f = (filterLower || '').trim();
@@ -7471,6 +7874,8 @@
         const opencodeEfforts = buildOpenCodeEffortPaletteItems(f);
         const codexModels = buildCodexModelPaletteItems(f);
         const codexEfforts = buildCodexEffortPaletteItems(f);
+        const claudeModels = buildClaudeModelPaletteItems(f);
+        const claudeEfforts = buildClaudeEffortPaletteItems(f);
         const restartCmds = buildRestartPaletteItems(f).filter((c) =>
             slashPaletteItemMatches(c, f)
         );
@@ -7534,6 +7939,8 @@
                     .concat(opencodeEfforts)
                     .concat(codexModels)
                     .concat(codexEfforts)
+                    .concat(claudeModels)
+                    .concat(claudeEfforts)
             );
         }
 
@@ -7874,6 +8281,7 @@
                 const isHermes = isStickyHermesAgentChip(chip);
                 const isOpenCode = isStickyOpenCodeAgentChip(chip);
                 const isCodex = isStickyCodexAgentChip(chip);
+                const isClaude = isStickyAgentChip(chip, 'claude');
                 const museModel = (slashPaletteSupplement.museModel || '').trim();
                 const museEffortBadge = (slashPaletteSupplement.museEffort || '').trim();
                 const hermesModel = (slashPaletteSupplement.hermesModel || '').trim();
@@ -7882,6 +8290,8 @@
                 const opencodeEffortBadge = (slashPaletteSupplement.opencodeEffort || '').trim();
                 const codexModel = (slashPaletteSupplement.codexModel || '').trim();
                 const codexEffortBadge = (slashPaletteSupplement.codexEffort || '').trim();
+                const claudeModel = (slashPaletteSupplement.claudeModel || '').trim();
+                const claudeEffortBadge = (slashPaletteSupplement.claudeEffort || '').trim();
                 let displayLabel = chip.label;
                 if (isCursor && preferred) {
                     // Same format as bubble / queue badges — not "Cursor Agent · Auto".
@@ -7910,6 +8320,12 @@
                         codexModel ? prettyCodexModelLabel(codexModel) : '',
                         codexEffortBadge
                     ) || chip.label;
+                } else if (isClaude) {
+                    displayLabel = agentModelEffortBadgeLabel(
+                        'Claude Code',
+                        claudeModel ? prettyClaudeModelLabel(claudeModel) : '',
+                        claudeEffortBadge
+                    ) || chip.label;
                 }
                 const safeLabel = escapeHtmlInline(displayLabel);
                 const starred = isSlashCommandStarred(chip.prefix);
@@ -7936,6 +8352,9 @@
                 } else if (isCodex && codexModel) {
                     tipBase += ' · model `' + codexModel + '` · /codex model … to change';
                     if (codexEffortBadge) tipBase += ' · effort `' + codexEffortBadge + '`';
+                } else if (isClaude && claudeModel) {
+                    tipBase += ' · model `' + claudeModel + '` · /claude model … to change';
+                    if (claudeEffortBadge) tipBase += ' · effort `' + claudeEffortBadge + '`';
                 }
                 const tip = escapeHtmlInline(tipBase).replace(/"/g, '&quot;');
                 const catClass = slashCommandChipCategoryClass(
@@ -7944,7 +8363,7 @@
                 const labelInner = slashChipLabelInnerHtml(displayLabel);
                 // Agent badges: multi-tone segments (model truncates; effort stays).
                 // Bare agent chips still skip hyphen-chop.
-                const noShortenClass = (isCursor || isMuse || isHermes || isOpenCode || isCodex || labelInner.segmented)
+                const noShortenClass = (isCursor || isMuse || isHermes || isOpenCode || isCodex || isClaude || labelInner.segmented)
                     ? ' slash-command-chip--no-shorten'
                     : '';
                 const segmentedClass = labelInner.segmented
@@ -8010,6 +8429,10 @@
         if (hasActiveCodexAgentChip(key)) {
             loadCodexModelsForPalette();
             loadCodexEffortForPalette();
+        }
+        if (hasActiveHarnessAgentChip('claude', key)) {
+            loadClaudeModelsForPalette();
+            loadClaudeEffortForPalette();
         }
         row.querySelectorAll('.slash-chip-remove').forEach((btn) => {
             btn.addEventListener('click', () => {
@@ -8467,6 +8890,67 @@
             repaintCodexUserBadges();
             (window.showToast || function () {})(
                 'Codex reasoning effort: ' + (eid || 'default'),
+                'success'
+            );
+            try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
+            if (key === 'chat') autoResizeTextarea();
+            else autoResizeWelcomeTextarea();
+            return;
+        }
+
+        // Claude model picks — chat setting, no message sent (badge-gated).
+        if (cmd.category === 'claude-model') {
+            textarea.value = v.slice(0, from) + v.slice(to);
+            const mid =
+                String(cmd.modelId || '').trim()
+                || String(cmd.prefix || '').replace(/^\/claude\s+model\s+/i, '').trim();
+            if (!mid || mid === '__refresh__' || cmd.claudeRefresh || cmd.disabled) {
+                if (mid === '__refresh__' || cmd.claudeRefresh) {
+                    persistClaudeModelSelection('__refresh__');
+                }
+                ctx.replaceRange = null;
+                ctx.filtered = [];
+                ctx.paletteDismissed = false;
+                hideSlashMenu(key);
+                try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
+                if (key === 'chat') autoResizeTextarea();
+                else autoResizeWelcomeTextarea();
+                return;
+            }
+            persistClaudeModelSelection(mid);
+            ctx.replaceRange = null;
+            ctx.filtered = [];
+            ctx.paletteDismissed = false;
+            hideSlashMenu(key);
+            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
+            renderSlashChips('chat', document.getElementById('chatInput'));
+            (window.showToast || function () {})(
+                'Claude Code model: ' + claudeModelLabel(mid),
+                'success'
+            );
+            try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
+            if (key === 'chat') autoResizeTextarea();
+            else autoResizeWelcomeTextarea();
+            return;
+        }
+
+        // Claude effort picks — chat setting like model picks.
+        if (cmd.category === 'claude-effort') {
+            if (cmd.disabled) return;
+            textarea.value = v.slice(0, from) + v.slice(to);
+            const eid =
+                String(cmd.modelId || '').trim()
+                || String(cmd.prefix || '').replace(/^\/claude\s+effort\s+/i, '').trim();
+            persistClaudeEffortSelection(eid);
+            ctx.replaceRange = null;
+            ctx.filtered = [];
+            ctx.paletteDismissed = false;
+            hideSlashMenu(key);
+            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
+            renderSlashChips('chat', document.getElementById('chatInput'));
+            repaintClaudeUserBadges();
+            (window.showToast || function () {})(
+                'Claude Code effort: ' + (eid || 'default'),
                 'success'
             );
             try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
@@ -9376,6 +9860,15 @@
                 effort
             );
         }
+        if (id === 'claude') {
+            const model = String(slashPaletteSupplement.claudeModel || '').trim();
+            const effort = String(slashPaletteSupplement.claudeEffort || '').trim();
+            return agentModelEffortBadgeLabel(
+                'Claude Code',
+                model ? prettyClaudeModelLabel(model) : '',
+                effort
+            );
+        }
         return '';
     }
 
@@ -9388,6 +9881,7 @@
         if (id === 'hermes') return /^hermes(\s+agent)?$/i.test(lab);
         if (id === 'opencode') return /^opencode$/i.test(lab);
         if (id === 'codex') return /^codex$/i.test(lab);
+        if (id === 'claude') return /^claude(\s+code)?$/i.test(lab);
         return false;
     }
 
@@ -9425,7 +9919,8 @@
                 || paletteCat === 'muse-model' || paletteCat === 'muse-effort' || paletteCat === 'muse-cmd'
                 || paletteCat === 'hermes-model' || paletteCat === 'hermes-effort' || paletteCat === 'hermes-cmd'
                 || paletteCat === 'opencode-model' || paletteCat === 'opencode-effort' || paletteCat === 'opencode-cmd'
-                || paletteCat === 'codex-model' || paletteCat === 'codex-effort' || paletteCat === 'codex-cmd')
+                || paletteCat === 'codex-model' || paletteCat === 'codex-effort' || paletteCat === 'codex-cmd'
+                || paletteCat === 'claude-model' || paletteCat === 'claude-effort' || paletteCat === 'claude-cmd')
                 ? paletteCat
                 : (id || paletteCat || c.category || 'command');
             if (label === String(c.label || '').trim() && nextCat === c.category) return c;
@@ -9630,6 +10125,11 @@
                 slashPaletteSupplement.codexModel,
                 slashPaletteSupplement.codexEffort
             );
+            slash = enrichSlashCommandWithClaudeModel(
+                slash,
+                slashPaletteSupplement.claudeModel,
+                slashPaletteSupplement.claudeEffort
+            );
             return slash;
         }
         const preferred = (slashPaletteSupplement.preferredModel || 'auto').trim() || 'auto';
@@ -9735,6 +10235,24 @@
             slashPaletteSupplement.codexModel = codexModel;
             renderSlashChips('chat', document.getElementById('chatInput'));
             renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
+        }
+        if (String((data && data.agent_id) || '').toLowerCase() === 'claude'
+            || hasActiveHarnessAgentChip('claude')) {
+            const claudeModel = String((data && data.agent_model) || '').trim();
+            const claudeEff = String((data && data.agent_effort) || '').trim();
+            let claudeChanged = false;
+            if (claudeModel && slashPaletteSupplement.claudeModel !== claudeModel) {
+                slashPaletteSupplement.claudeModel = claudeModel;
+                claudeChanged = true;
+            }
+            if (claudeEff && slashPaletteSupplement.claudeEffort !== claudeEff) {
+                slashPaletteSupplement.claudeEffort = claudeEff;
+                claudeChanged = true;
+            }
+            if (claudeChanged) {
+                renderSlashChips('chat', document.getElementById('chatInput'));
+                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
+            }
         }
         const pref =
             (data.preferred_model || data.preferredModel || '').trim()
@@ -10165,6 +10683,37 @@
         repaintAgentUserBadges(/^Codex\b/i, next);
     }
 
+    function prettyClaudeModelLabel(model) {
+        const raw = String(model || '').trim();
+        if (!raw) return 'Claude Code';
+        const known = (slashPaletteSupplement.claudeModels || []).find(
+            (m) => m && String(m.id).toLowerCase() === raw.toLowerCase()
+        );
+        if (known && known.label) return String(known.label);
+        const leaf = raw.includes('/') ? raw.split('/').pop() : raw;
+        return String(leaf || raw).replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+    }
+
+    function claudeModelLabel(model) {
+        const raw = String(model || '').trim();
+        const known = (slashPaletteSupplement.claudeModels || []).find(
+            (m) => m && String(m.id).toLowerCase() === raw.toLowerCase()
+        );
+        return (known && known.label) || raw || 'default';
+    }
+
+    function repaintClaudeUserBadges() {
+        const model = String(slashPaletteSupplement.claudeModel || '').trim();
+        const eff = String(slashPaletteSupplement.claudeEffort || '').trim();
+        const next = agentModelEffortBadgeLabel(
+            'Claude Code',
+            model ? prettyClaudeModelLabel(model) : '',
+            eff
+        );
+        if (!next) return;
+        repaintAgentUserBadges(/^Claude\b/i, next);
+    }
+
     /**
      * Single agent-badge entry point (CH-000419 guideline 5). Reads the
      * canonical backend keys — agent_model / model_source / agent_effort /
@@ -10180,7 +10729,8 @@
         const isHermes = agentId === 'hermes' || stickyPrefix.startsWith('/hermes');
         const isOpenCode = agentId === 'opencode' || stickyPrefix.startsWith('/opencode');
         const isCodex = agentId === 'codex' || stickyPrefix.startsWith('/codex');
-        if (!isMuse && !isHermes && !isOpenCode && !isCodex) return replySlash || null;
+        const isClaude = agentId === 'claude' || stickyPrefix.startsWith('/claude');
+        if (!isMuse && !isHermes && !isOpenCode && !isCodex && !isClaude) return replySlash || null;
         const model = String(
             (data && (data.agent_model || data.model)) || ''
         ).trim();
@@ -10191,6 +10741,7 @@
                 slashPaletteSupplement.hermesEffort,
                 slashPaletteSupplement.opencodeEffort,
                 slashPaletteSupplement.codexEffort,
+                slashPaletteSupplement.claudeEffort,
             ],
         });
         let out = replySlash || null;
@@ -10198,6 +10749,7 @@
         else if (isHermes) out = enrichSlashCommandWithHermesModel(out, model, effort);
         else if (isOpenCode) out = enrichSlashCommandWithOpenCodeModel(out, model, effort);
         else if (isCodex) out = enrichSlashCommandWithCodexModel(out, model, effort);
+        else if (isClaude) out = enrichSlashCommandWithClaudeModel(out, model, effort);
         const warn = String((data && (data.drift_warning || data.effort_ignored)) || '').trim();
         if (warn) {
             try { console.warn('[badge-drift]', warn); } catch (_) {}
@@ -10238,6 +10790,23 @@
                 const src = String((chip && (chip.meta || chip.prefix || chip.label)) || '');
                 const label = String((chip && chip.label) || '');
                 return /^\/codex\b/i.test(src) || /^Codex\b/i.test(label);
+            },
+        });
+    }
+
+    /** Add the actual Claude model (+ pinned effort) to its live reply badge. */
+    function enrichSlashCommandWithClaudeModel(replySlash, model, effort) {
+        return enrichSlashCommandWithAgentPin(replySlash, {
+            agentName: 'Claude Code',
+            category: 'claude',
+            model: model,
+            effort: effort,
+            prettyModel: prettyClaudeModelLabel(model),
+            slashMeta: '/claude',
+            matchChip: (chip) => {
+                const src = String((chip && (chip.meta || chip.prefix || chip.label)) || '');
+                const label = String((chip && chip.label) || '');
+                return /^\/claude\b/i.test(src) || /^Claude\b/i.test(label);
             },
         });
     }
@@ -11866,6 +12435,16 @@
                 slashPaletteSupplement.codexEffort = '';
                 slashPaletteSupplement.codexEffortKey = '';
                 slashPaletteSupplement.codexEffortLoading = false;
+                slashPaletteSupplement.claudeModel = '';
+                slashPaletteSupplement.claudeModels = [];
+                slashPaletteSupplement.claudeCommonEfforts = [];
+                slashPaletteSupplement.claudeModelsKey = '';
+                slashPaletteSupplement.claudeModelsLoading = false;
+                slashPaletteSupplement.claudeModelDirty = false;
+                slashPaletteSupplement.claudeEffortDirty = false;
+                slashPaletteSupplement.claudeEffort = '';
+                slashPaletteSupplement.claudeEffortKey = '';
+                slashPaletteSupplement.claudeEffortLoading = false;
             }
             releaseManualUnreadHoldIfLeaving(sessionId);
             const prevSessionId = currentSessionId;
@@ -11993,6 +12572,7 @@
                     seedHermesSupplementFromSessionData(data, sessionId);
                     seedOpenCodeSupplementFromSessionData(data, sessionId);
                     seedCodexSupplementFromSessionData(data, sessionId);
+                    seedClaudeSupplementFromSessionData(data, sessionId);
                     applySessionIdentity(data);
                     // Title from the same payload — don't wait for the session
                     // list (history panel) or the delayed title-refresh timers.
@@ -12404,6 +12984,14 @@
         if (slashPaletteSupplement.codexEffortDirty) {
             slashPaletteSupplement.codexEffortDirty = false;
             persistCodexEffortSelection(slashPaletteSupplement.codexEffort);
+        }
+        if (slashPaletteSupplement.claudeModelDirty) {
+            slashPaletteSupplement.claudeModelDirty = false;
+            persistClaudeModelSelection(slashPaletteSupplement.claudeModel);
+        }
+        if (slashPaletteSupplement.claudeEffortDirty) {
+            slashPaletteSupplement.claudeEffortDirty = false;
+            persistClaudeEffortSelection(slashPaletteSupplement.claudeEffort);
         }
         // Owned by chat_generation.js — rebind the local lock to the newly
         // bound session while loading; idle means no lock to move.
@@ -13961,6 +14549,7 @@
             seedHermesSupplementFromSessionData(data, currentSessionId);
             seedOpenCodeSupplementFromSessionData(data, currentSessionId);
             seedCodexSupplementFromSessionData(data, currentSessionId);
+            seedClaudeSupplementFromSessionData(data, currentSessionId);
             applySessionIdentity(data);
             if (data.session_name) {
                 rememberChatSessionTitle(currentSessionId, data.session_name);
@@ -15339,38 +15928,37 @@
         scheduleChatActivityBroadcast();
     }
 
-    /** Space tabs (app shell) mirror these dots — push a compact snapshot so
-     *  the shell can show one indicator per space (priority: running >
-     *  error > unread > queued > paused). Same classes the history panel
-     *  already maintains; the shell poll covers spaces with no live iframe. */
+    /** Space tabs (app shell) mirror these dots. Push only the chats this
+     *  frame owns — the open chat, its local turn, and pending action forms.
+     *  History rows for other chats can hold stale `is-running` classes
+     *  (generating flags refresh only while the panel is open); the shell
+     *  polls the server for those, and re-pushing them revived dead spinners.
+     *  Idle owned chats are listed in `owned` so the shell clears them. */
     let _chatActivityBroadcastTimer = null;
     function collectChatActivitySnapshot() {
-        const out = new Map();
-        document.querySelectorAll('.chat-history-item').forEach((item) => {
-            const sid = item.dataset && item.dataset.sessionId;
+        const owned = new Map();
+        const own = (sid) => {
             if (sid == null || sid === '') return;
-            const running = item.classList.contains('is-running');
-            const activity = CuttleChatActivity.activityClassToKind(item.classList);
-            if (running || activity) out.set(String(sid), { id: String(sid), activity, running });
+            const key = String(canonicalizeChatSessionId(sid));
+            if (key && !owned.has(key)) owned.set(key, sid);
+        };
+        own(currentSessionId);
+        own(generation.localSessionId);
+        formAwaitingSessionIds.forEach(own);
+        const sessions = [];
+        owned.forEach((sid, key) => {
+            const running = sessionShowsHistorySpinner(sid);
+            let activity = '';
+            try {
+                const kind = sessionHistoryAttentionKind(sid, null);
+                if (kind === 'error' || kind === 'unread'
+                    || kind === 'queued' || kind === 'paused') {
+                    activity = kind;
+                }
+            } catch (_) {}
+            if (running || activity) sessions.push({ id: key, activity, running });
         });
-        if (currentSessionId != null && currentSessionId !== '') {
-            const key = String(currentSessionId);
-            if (!out.has(key)) {
-                const running = sessionShowsHistorySpinner(currentSessionId);
-                let activity = '';
-                try {
-                    if (typeof sessionHistoryAttentionKind === 'function') {
-                        const kind = sessionHistoryAttentionKind(currentSessionId, null);
-                        if (kind === 'error' || kind === 'unread'
-                            || kind === 'queued' || kind === 'paused') {
-                            activity = kind;
-                        }
-                    }
-                } catch (_) {}
-                if (running || activity) out.set(key, { id: key, activity, running });
-            }
-        }
-        return [...out.values()].slice(0, 120);
+        return { sessions, owned: [...owned.keys()] };
     }
     function scheduleChatActivityBroadcast() {
         if (!inAppShell) return;
@@ -15378,9 +15966,11 @@
         _chatActivityBroadcastTimer = setTimeout(() => {
             _chatActivityBroadcastTimer = null;
             try {
+                const snap = collectChatActivitySnapshot();
                 window.parent.postMessage({
                     type: 'cuttle-chat-activity',
-                    sessions: collectChatActivitySnapshot(),
+                    sessions: snap.sessions,
+                    owned: snap.owned,
                 }, '*');
             } catch (_) {}
         }, 150);
@@ -18287,7 +18877,7 @@
             const baseSc = hasStoredChips
                 ? sc
                 : (parentSpeaker ? null : slashCommandMetaFromUserMessage(content));
-            const userSc = hasStoredChips || parentSpeaker ? baseSc : enrichSlashCommandWithCodexModel(
+            const userSc = hasStoredChips || parentSpeaker ? baseSc : enrichSlashCommandWithClaudeModel(enrichSlashCommandWithCodexModel(
                 enrichSlashCommandWithOpenCodeModel(
                     enrichSlashCommandWithHermesModel(
                         enrichSlashCommandWithMuseModel(
@@ -18303,7 +18893,7 @@
                 ),
                 slashPaletteSupplement.codexModel,
                 slashPaletteSupplement.codexEffort
-            );
+            ), slashPaletteSupplement.claudeModel, slashPaletteSupplement.claudeEffort);
             const chips = (userSc && userSc.chips)
                 ? normalizeAgentSlashChips(userSc.chips, null)
                 : [];

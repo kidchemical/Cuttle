@@ -3,8 +3,9 @@ Account / local usage reporters for harness agents (``/usage``).
 
 Cursor already lives in ``api.cursor_agent_commands``. This module covers Codex
 (ChatGPT plan windows), OpenCode (``opencode stats``), Hermes
-(``hermes insights``), and Muse Code (account + local session rollup — Meta
-does not expose subscription % via API).
+(``hermes insights``), Muse Code (account + local session rollup — Meta
+does not expose subscription % via API), and Claude Code (plan windows from
+the Claude Code OAuth usage endpoint + local ``~/.claude/projects`` rollup).
 """
 
 from __future__ import annotations
@@ -32,7 +33,12 @@ def parse_usage_slash(prompt: str) -> Optional[str]:
     m = _USAGE_SLASH_RE.match(text)
     if not m:
         return None
-    return (m.group(2) or "").strip()
+    args = (m.group(2) or "").strip()
+    # Bare "usage" is only a command when nothing but a day range follows;
+    # prose like "Usage-live doesn't work" must reach the agent.
+    if not m.group(1) and args and not re.fullmatch(r"\d+\s*d?", args, re.I):
+        return None
+    return args
 
 
 def cuttle_meters_markdown(
@@ -983,6 +989,385 @@ def run_muse_usage(*, days: int = 30) -> str:
     return format_muse_usage_markdown(fetch_muse_account_usage(days=days))
 
 
+# ---------------------------------------------------------------------------
+# Claude Code (OAuth plan windows + local transcript rollup)
+# ---------------------------------------------------------------------------
+
+
+def _claude_projects_root() -> Path:
+    override = (os.environ.get("CLAUDE_CONFIG_DIR") or "").strip()
+    if override:
+        return Path(override) / "projects"
+    return Path.home() / ".claude" / "projects"
+
+
+def _aggregate_claude_local_usage(*, days: int = 30) -> Dict[str, Any]:
+    """Roll up ``message.usage`` from recent ``~/.claude/projects`` transcripts."""
+    root = _claude_projects_root()
+    days_i = max(1, min(int(days or 30), 365))
+    empty: Dict[str, Any] = {
+        "sessions": 0,
+        "messages": 0,
+        "input": 0,
+        "cache_creation": 0,
+        "cache_read": 0,
+        "output": 0,
+        "by_model": {},
+    }
+    if not root.is_dir():
+        return empty
+
+    cutoff = datetime.now(tz=timezone.utc).timestamp() - days_i * 86400.0
+    by_model: Dict[str, Dict[str, int]] = {}
+    sessions = 0
+    messages = 0
+    input_total = 0
+    cache_creation_total = 0
+    cache_read_total = 0
+    output_total = 0
+
+    try:
+        files = sorted(root.rglob("*.jsonl"))
+    except OSError:
+        return empty
+    for path in files:
+        try:
+            if path.stat().st_mtime < cutoff:
+                continue
+        except OSError:
+            continue
+        saw_message = False
+        try:
+            handle = path.open(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        with handle:
+            for line in handle:
+                line = line.strip()
+                if not line.startswith("{"):
+                    continue
+                try:
+                    entry = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                if not isinstance(entry, dict) or entry.get("type") != "assistant":
+                    continue
+                msg = entry.get("message")
+                if not isinstance(msg, dict):
+                    continue
+                usage = msg.get("usage")
+                if not isinstance(usage, dict):
+                    continue
+                saw_message = True
+                messages += 1
+                mid = str(msg.get("model") or "unknown").strip() or "unknown"
+                bucket = by_model.setdefault(
+                    mid,
+                    {"input": 0, "cache_creation": 0, "cache_read": 0, "output": 0, "messages": 0},
+                )
+                try:
+                    it = int(usage.get("input_tokens") or 0)
+                except (TypeError, ValueError):
+                    it = 0
+                try:
+                    cct = int(usage.get("cache_creation_input_tokens") or 0)
+                except (TypeError, ValueError):
+                    cct = 0
+                try:
+                    crt = int(usage.get("cache_read_input_tokens") or 0)
+                except (TypeError, ValueError):
+                    crt = 0
+                try:
+                    ot = int(usage.get("output_tokens") or 0)
+                except (TypeError, ValueError):
+                    ot = 0
+                bucket["input"] += it
+                bucket["cache_creation"] += cct
+                bucket["cache_read"] += crt
+                bucket["output"] += ot
+                bucket["messages"] += 1
+                input_total += it
+                cache_creation_total += cct
+                cache_read_total += crt
+                output_total += ot
+        if saw_message:
+            sessions += 1
+
+    return {
+        "sessions": sessions,
+        "messages": messages,
+        "input": input_total,
+        "cache_creation": cache_creation_total,
+        "cache_read": cache_read_total,
+        "output": output_total,
+        "by_model": by_model,
+    }
+
+
+def _claude_credentials_path() -> Path:
+    override = (os.environ.get("CLAUDE_CONFIG_DIR") or "").strip()
+    base = Path(override) if override else Path.home() / ".claude"
+    return base / ".credentials.json"
+
+
+def _read_claude_oauth() -> Optional[Dict[str, Any]]:
+    try:
+        raw = json.loads(_claude_credentials_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    oauth = raw.get("claudeAiOauth") if isinstance(raw, dict) else None
+    return oauth if isinstance(oauth, dict) else None
+
+
+def _iso_to_epoch(value: Any) -> Optional[int]:
+    if not value:
+        return None
+    try:
+        return int(datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp())
+    except (TypeError, ValueError):
+        return None
+
+
+_CLAUDE_LIMIT_LABELS = {
+    "session": "5-hour",
+    "five_hour": "5-hour",
+    "weekly_all": "Weekly",
+    "seven_day": "Weekly",
+    "seven_day_opus": "Weekly Opus",
+    "seven_day_sonnet": "Weekly Sonnet",
+}
+
+
+def _claude_limit_label(kind: str) -> str:
+    key = (kind or "").strip().lower()
+    if key in _CLAUDE_LIMIT_LABELS:
+        return _CLAUDE_LIMIT_LABELS[key]
+    return key.replace("weekly_", "Weekly ").replace("_", " ").strip().title() or "Limit"
+
+
+def _claude_plan_windows(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Normalize ``limits`` (current shape) or legacy ``five_hour``/``seven_day*`` keys."""
+    out: List[Dict[str, Any]] = []
+    limits = payload.get("limits")
+    if isinstance(limits, list) and limits:
+        for item in limits:
+            if not isinstance(item, dict):
+                continue
+            try:
+                used = float(item.get("percent") or 0)
+            except (TypeError, ValueError):
+                used = 0.0
+            out.append({"label": _claude_limit_label(str(item.get("kind") or "")),
+                        "used_percent": used,
+                        "reset_at": _iso_to_epoch(item.get("resets_at")),
+                        "severity": item.get("severity")})
+        return out
+    for key in ("five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet"):
+        win = payload.get(key)
+        if not isinstance(win, dict):
+            continue
+        try:
+            used = float(win.get("utilization") or 0)
+        except (TypeError, ValueError):
+            used = 0.0
+        out.append({"label": _claude_limit_label(key), "used_percent": used,
+                    "reset_at": _iso_to_epoch(win.get("resets_at")),
+                    "locked_reason": win.get("locked_reason")})
+    return out
+
+
+def fetch_claude_plan_limits() -> Dict[str, Any]:
+    """Plan windows from the Claude Code OAuth usage endpoint (same data as ``claude /usage``).
+
+    Read-only: never refreshes or rewrites Claude Code credentials.
+    """
+    oauth = _read_claude_oauth()
+    if not oauth or not oauth.get("accessToken"):
+        return {"success": False, "error": (
+            "No Claude Code login found (`~/.claude/.credentials.json`). "
+            "Run `claude` and `/login`, then try `/usage` again.")}
+    try:
+        expires_ms = int(oauth.get("expiresAt") or 0)
+    except (TypeError, ValueError):
+        expires_ms = 0
+    if expires_ms and expires_ms / 1000.0 < datetime.now(timezone.utc).timestamp():
+        return {"success": False, "error": (
+            "Claude Code login token expired. Run any Claude turn (it refreshes the "
+            "token), then try `/usage` again.")}
+    req = urllib.request.Request(
+        "https://api.anthropic.com/api/oauth/usage",
+        headers={
+            "Authorization": f"Bearer {oauth['accessToken']}",
+            "anthropic-beta": "oauth-2025-04-20",
+            "User-Agent": "Cuttle-ClaudeUsage/1.0",
+            "Accept": "application/json",
+        },
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        return {"success": False, "error": (
+            f"Claude usage API returned HTTP {exc.code}. "
+            "Run a Claude turn (or `claude` → `/login`) and retry.")}
+    except Exception as exc:
+        return {"success": False, "error": f"Claude usage request failed: {exc}"}
+    try:
+        payload = json.loads(raw) if raw.strip() else {}
+    except json.JSONDecodeError:
+        return {"success": False, "error": "Claude usage API returned invalid JSON."}
+    if not isinstance(payload, dict):
+        return {"success": False, "error": "Unexpected Claude usage payload."}
+    return {
+        "success": True,
+        "plan_type": oauth.get("subscriptionType"),
+        "windows": _claude_plan_windows(payload),
+        "extra_usage": payload.get("extra_usage") if isinstance(payload.get("extra_usage"), dict) else {},
+        "spend": payload.get("spend") if isinstance(payload.get("spend"), dict) else {},
+    }
+
+
+def fetch_claude_usage(*, days: int = 30) -> Dict[str, Any]:
+    days_i = max(1, min(int(days or 30), 365))
+    try:
+        from scripts.utilities.claude_cli_tool import claude_executable
+
+        cli_found = bool(claude_executable())
+    except Exception:
+        cli_found = None
+    data = _aggregate_claude_local_usage(days=days_i)
+    data["success"] = True
+    data["days"] = days_i
+    data["cli_found"] = cli_found
+    data["plan"] = fetch_claude_plan_limits()
+    return data
+
+
+def _claude_minor_to_amount(money: Any) -> Optional[float]:
+    if not isinstance(money, dict):
+        return None
+    try:
+        return int(money.get("amount_minor") or 0) / (10 ** int(money.get("exponent") or 2))
+    except (TypeError, ValueError):
+        return None
+
+
+def _claude_credits_row(plan: Dict[str, Any]) -> Dict[str, Any]:
+    """Usage credits (extra usage) — Claude's only way past a plan limit; no reset credits exist."""
+    spend = plan.get("spend") if isinstance(plan.get("spend"), dict) else {}
+    extra = plan.get("extra_usage") if isinstance(plan.get("extra_usage"), dict) else {}
+    enabled = bool(spend.get("enabled") or extra.get("is_enabled"))
+    if not enabled:
+        return {"label": "Usage credits", "pct": 0, "disabled": True, "status": "Off"}
+    balance = _claude_minor_to_amount(spend.get("balance"))
+    used = _claude_minor_to_amount(spend.get("used"))
+    limit = _claude_minor_to_amount(spend.get("limit"))
+    if balance is not None:
+        return {"label": "Usage credits", "pct": 0, "disabled": True,
+                "status": f"{_fmt_usd(balance)} left"}
+    if limit:
+        try:
+            pct = 100.0 - float(spend.get("percent") or 0)
+        except (TypeError, ValueError):
+            pct = 0.0
+        return {"label": "Usage credits", "pct": round(max(0.0, pct), 2),
+                "tooltip": f"{_fmt_usd(used or 0)} of {_fmt_usd(limit)} monthly limit used"}
+    return {"label": "Usage credits", "pct": 0, "disabled": True,
+            "status": f"On · {_fmt_usd(used or 0)} used"}
+
+
+def format_claude_usage_markdown(data: Dict[str, Any]) -> str:
+    if not data.get("success"):
+        err = (data.get("error") or "Unknown error").strip()
+        return f"❌ **Claude Code usage**\n\n{err}"
+
+    days = int(data.get("days") or 30)
+    lines = ["**Claude Code — usage**", ""]
+    plan = data.get("plan") if isinstance(data.get("plan"), dict) else {}
+    if plan.get("success"):
+        plan_type = str(plan.get("plan_type") or "claude").strip() or "claude"
+        lines.append(f"- Plan: {plan_type.title()}")
+        windows = [w for w in plan.get("windows") or [] if isinstance(w, dict)]
+        blocked = [w for w in windows if float(w.get("used_percent") or 0) >= 100 or w.get("locked_reason")]
+        if blocked:
+            lines.append("- Status: limit reached")
+        meter_rows: List[Dict[str, Any]] = []
+        for win in windows:
+            row = {"label": win["label"],
+                   "pct": round(max(0.0, 100.0 - float(win.get("used_percent") or 0)), 2)}
+            if win.get("reset_at"):
+                row.update(tooltip="Resets", tooltip_at=win["reset_at"])
+            meter_rows.append(row)
+        meter_rows.append(_claude_credits_row(plan))
+        lines.append("")
+        lines.append(cuttle_meters_markdown(meter_rows))
+        lines.append("")
+        lines.append("Rate-limit resets: Claude plans have none to redeem — usage "
+                     "credits (extra usage) are the only way past a limit.")
+        lines.append("")
+        lines.append("_5-hour / Weekly bars show remaining capacity from Claude plan windows._")
+        lines.append("Dashboard: [claude.ai/settings/usage](https://claude.ai/settings/usage)")
+    elif plan:
+        lines.append(f"- Plan limits unavailable: {str(plan.get('error') or 'unknown error').strip()}")
+    lines.extend(["", f"**Local transcripts — last {days} days**", ""])
+    sessions = int(data.get("sessions") or 0)
+    messages = int(data.get("messages") or 0)
+    lines.append(f"- Sessions: **{sessions}**" + (f" · Assistant messages: {messages}" if messages else ""))
+    tok_bits = []
+    if data.get("input"):
+        tok_bits.append(f"In {_fmt_tokens(data['input'])}")
+    if data.get("cache_creation"):
+        tok_bits.append(f"Cache write {_fmt_tokens(data['cache_creation'])}")
+    if data.get("cache_read"):
+        tok_bits.append(f"Cache read {_fmt_tokens(data['cache_read'])}")
+    if data.get("output"):
+        tok_bits.append(f"Out {_fmt_tokens(data['output'])}")
+    if tok_bits:
+        lines.append(f"- Tokens: {' · '.join(tok_bits)}")
+
+    by_model = data.get("by_model") if isinstance(data.get("by_model"), dict) else {}
+    model_parts: List[Tuple[str, float]] = []
+    for mid, bucket in by_model.items():
+        if not isinstance(bucket, dict):
+            continue
+        weight = float(
+            int(bucket.get("input") or 0)
+            + int(bucket.get("cache_creation") or 0)
+            + int(bucket.get("cache_read") or 0)
+            + int(bucket.get("output") or 0)
+        )
+        if weight > 0:
+            model_parts.append((str(mid), weight))
+    model_rows = _relative_pct(model_parts)
+    if model_rows:
+        lines.append("")
+        lines.append("**By model (share of tokens)**")
+        lines.append("")
+        lines.append(cuttle_meters_markdown(model_rows, variant="usage"))
+    else:
+        lines.append("")
+        lines.append(
+            "_No recent local Claude Code transcripts found — run a Claude turn, then `/usage` again._"
+        )
+
+    if data.get("cli_found") is False:
+        lines.append("")
+        lines.append(
+            "_Claude Code CLI not found on PATH (`claude`). "
+            "Transcripts above are from past runs; install the CLI to start new turns._"
+        )
+    lines.append("")
+    lines.append(
+        "_Local rollup from `~/.claude/projects` transcripts._"
+    )
+    return "\n".join(lines)
+
+
+def run_claude_usage(*, days: int = 30) -> str:
+    return format_claude_usage_markdown(fetch_claude_usage(days=days))
+
+
 def _days_from_args(args: str, default: int = 30) -> int:
     text = (args or "").strip().lower()
     if not text:
@@ -1007,7 +1392,7 @@ def handle_agent_usage_slash(agent_id: str, prompt: str) -> Optional[str]:
     Otherwise None.
     """
     live = re.fullmatch(r"/?usage-live(?:\s+(.*))?", (prompt or "").strip(), re.I | re.S)
-    if live and (agent_id or "").strip().lower() in {"codex", "muse", "hermes", "opencode"}:
+    if live and (agent_id or "").strip().lower() in {"codex", "muse", "hermes", "opencode", "claude"}:
         from api.usage_live import live_usage_reply
         return live_usage_reply(agent_id.strip().lower(), live.group(1) or "")
     args = parse_usage_slash(prompt)
@@ -1023,4 +1408,6 @@ def handle_agent_usage_slash(agent_id: str, prompt: str) -> Optional[str]:
         return run_hermes_usage(days=days)
     if aid == "muse":
         return run_muse_usage(days=days)
+    if aid == "claude":
+        return run_claude_usage(days=days)
     return None

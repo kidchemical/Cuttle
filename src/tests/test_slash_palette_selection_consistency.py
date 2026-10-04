@@ -95,6 +95,7 @@ USAGE_REFRESH_AGENTS = (
     "muse",
     "hermes",
     "opencode",
+    "claude",
 )
 
 
@@ -592,6 +593,7 @@ def test_harness_usage_and_refresh_consistent_across_agents():
         ("muse", "/muse ", "muse", "muse-cmd", "Muse Code"),
         ("hermes", "/hermes ", "hermes", "hermes-cmd", "Hermes"),
         ("opencode", "/opencode ", "opencode", "opencode-cmd", "OpenCode"),
+        ("claude", "/claude ", "claude", "claude-cmd", "Claude Code"),
     ]
     assert [a[0] for a in agents] == list(USAGE_REFRESH_AGENTS)
     res = _run_js(

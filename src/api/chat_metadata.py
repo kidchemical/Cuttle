@@ -92,7 +92,7 @@ def user_badge_metadata(message_text: str, session_id, identity: Optional[dict] 
     import re as _re
 
     text = str(message_text or '').lstrip()
-    m = _re.match(r'^/(muse|hermes|opencode|codex|cursor)\b', text, _re.IGNORECASE)
+    m = _re.match(r'^/(muse|hermes|opencode|codex|claude|cursor)\b', text, _re.IGNORECASE)
     if not m:
         return None
     agent = m.group(1).lower()
@@ -246,6 +246,37 @@ def user_badge_metadata(message_text: str, session_id, identity: Optional[dict] 
             label += f' · {effort}'
             meta += f' · effort {effort}'
         return {'slash_command': {'chips': [{'label': label, 'meta': meta, 'category': 'codex'}]}}
+    if agent == 'claude':
+        model = effort = ''
+        if ident is not None:
+            model, effort = ident_model, ident_effort
+        else:
+            try:
+                from scripts.utilities.claude_cli_session_store import (
+                    load_claude_effort,
+                    load_claude_model,
+                )
+                if sid:
+                    model = str(load_claude_model(sid) or '').strip()
+                    effort = str(load_claude_effort(sid) or '').strip()
+            except Exception:
+                pass
+            if not model or not effort:
+                sm, se = _starred(aid='claude')
+                model = model or sm
+                effort = effort or se
+        label_model = model
+        try:
+            from api.agent_harness.agents.claude.model_catalog import claude_model_label
+            label_model = claude_model_label(model) if model else model
+        except Exception:
+            pass
+        label = 'Claude Code' + (f' - {label_model}' if label_model else '')
+        meta = '/claude' + (f' · model {model}' if model else '')
+        if effort:
+            label += f' · {effort}'
+            meta += f' · effort {effort}'
+        return {'slash_command': {'chips': [{'label': label, 'meta': meta, 'category': 'claude'}]}}
     # Cursor effort is baked into the model id.
     model = ident_model if ident is not None else ''
     try:

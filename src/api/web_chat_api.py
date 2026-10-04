@@ -289,20 +289,11 @@ from api.http_authz import (
     require_authenticated,
     require_chat_session_access,
     require_owner,
+    require_session_actor,
 )
 
 
-def _require_session_actor(session_id):
-    """Signed-in caller; numeric chat ids must be owned by that user."""
-    from api.cuttle_ui_capabilities import numeric_chat_session_id
-
-    nid = numeric_chat_session_id(session_id)
-    if nid is not None:
-        return require_chat_session_access(nid)
-    user, err = require_authenticated()
-    if err:
-        return None, None, err
-    return user, session_id, None
+_require_session_actor = require_session_actor
 
 # Register authentication blueprint
 app.register_blueprint(auth_bp)
@@ -374,6 +365,13 @@ try:
     app.register_blueprint(git_bp)
 except Exception as _git_err:
     print(f"[GIT] Failed to register routes: {_git_err}")
+
+# Claude Code palette pins (owned by the Claude agent slice)
+try:
+    from api.agent_harness.agents.claude.routes import claude_bp
+    app.register_blueprint(claude_bp)
+except Exception as _claude_err:
+    print(f"[CLAUDE] Failed to register routes: {_claude_err}")
 
 # Tasks (transport owned by api.task_routes; logic in managers.task_manager)
 try:
@@ -4069,13 +4067,29 @@ def _apply_request_agent_pins(session_id, data) -> None:
     except Exception as exc:
         print(f"[CHAT] apply opencode agent_pins failed: {exc}", flush=True)
 
+    try:
+        claude = _entry('claude')
+        if claude:
+            from scripts.utilities.claude_cli_session_store import (
+                save_claude_effort,
+                save_claude_model,
+            )
+            model = str(claude.get('model') or '').strip()
+            effort = str(claude.get('effort') or '').strip().lower()
+            if model:
+                save_claude_model(session_id, model)
+            if effort and effort not in ('default', 'reset', 'clear', 'none'):
+                save_claude_effort(session_id, effort)
+    except Exception as exc:
+        print(f"[CHAT] apply claude agent_pins failed: {exc}", flush=True)
 
-_HARNESS_IDENTITY_AGENTS = frozenset({'muse', 'hermes', 'opencode', 'codex'})
+
+_HARNESS_IDENTITY_AGENTS = frozenset({'muse', 'hermes', 'opencode', 'codex', 'claude'})
 
 
 def _harness_agent_from_message(message_text: str) -> Optional[str]:
     m = re.match(
-        r'^/(muse|hermes|opencode|codex|cursor)\b',
+        r'^/(muse|hermes|opencode|codex|claude|cursor)\b',
         str(message_text or '').lstrip(),
         re.IGNORECASE,
     )
@@ -4118,6 +4132,13 @@ def _load_harness_session_model_effort(agent: str, session_id) -> tuple:
             )
             model = str(load_codex_model(sid) or '').strip()
             effort = str(load_codex_effort(sid) or '').strip()
+        elif aid == 'claude':
+            from scripts.utilities.claude_cli_session_store import (
+                load_claude_effort,
+                load_claude_model,
+            )
+            model = str(load_claude_model(sid) or '').strip()
+            effort = str(load_claude_effort(sid) or '').strip()
     except Exception:
         return '', ''
     return model, effort
@@ -4349,6 +4370,9 @@ def _harness_pretty_model_label(agent: str, model: str) -> str:
         if aid == 'codex':
             from api.agent_harness.agents.codex.model_catalog import codex_model_label
             return codex_model_label(mid)
+        if aid == 'claude':
+            from api.agent_harness.agents.claude.model_catalog import claude_model_label
+            return claude_model_label(mid)
     except Exception:
         pass
     return mid
@@ -4371,6 +4395,9 @@ def _harness_session_effort(agent: str, session_id) -> str:
         if aid == 'codex':
             from scripts.utilities.codex_cli_session_store import load_codex_effort
             return str(load_codex_effort(sid) or '').strip()
+        if aid == 'claude':
+            from scripts.utilities.claude_cli_session_store import load_claude_effort
+            return str(load_claude_effort(sid) or '').strip()
     except Exception:
         pass
     return ''
@@ -5376,6 +5403,7 @@ def chat_endpoint():
 • `/codex /usage` - ChatGPT Codex plan windows (5-hour / weekly)
 • `/hermes /usage` - Hermes local insights (tokens, tools, models)
 • `/opencode /usage` - OpenCode local stats (cost, tools, models)
+• `/claude /usage` - Claude Code local session usage (tokens, models)
 • `/hermes "prompt"` - Hermes on local llama.cpp (also works in Local mode)
 • `/deepseek "prompt"` - DeepSeek Harness CLI (`dsh --profile headless`; Flash by default)
 
@@ -8062,7 +8090,7 @@ def set_agent_defaults_api(agent_id):
 
         caps = agent_capabilities(aid)
         data = request.get_json(silent=True) or {}
-        if aid == 'codex':
+        if aid in ('codex', 'claude'):
             model_key = 'starred_model' if 'starred_model' in data else 'starredModel'
             effort_key = 'starred_effort' if 'starred_effort' in data else 'starredEffort'
             has_model = 'starred_model' in data or 'starredModel' in data
@@ -8080,20 +8108,29 @@ def set_agent_defaults_api(agent_id):
             if target_effort in ('default', 'reset', 'clear', 'none'):
                 target_effort = ''
             if target_effort:
-                from api.agent_harness.agents.codex.model_catalog import codex_efforts_for_model
+                if aid == 'claude':
+                    from api.agent_harness.agents.claude.model_catalog import (
+                        claude_efforts_for_model as _efforts_for_model,
+                    )
+                    agent_label, default_note = 'Claude Code', ' for the CLI default model'
+                else:
+                    from api.agent_harness.agents.codex.model_catalog import (
+                        codex_efforts_for_model as _efforts_for_model,
+                    )
+                    agent_label, default_note = 'Codex', ' across all Codex models'
 
-                supported = codex_efforts_for_model(target_model or None)
+                supported = _efforts_for_model(target_model or None)
                 if target_effort not in supported:
                     model_note = (
                         f" for `{target_model}`"
                         if target_model
-                        else " across all Codex models"
+                        else default_note
                     )
                     values = ', '.join(supported) or 'none verified'
                     return jsonify({
                         'success': False,
                         'error': (
-                            f"Codex effort `{target_effort}` is not supported{model_note}. "
+                            f"{agent_label} effort `{target_effort}` is not supported{model_note}. "
                             f"Supported levels: {values}."
                         ),
                     }), 400

@@ -1015,9 +1015,9 @@ console.log(JSON.stringify(out));
         assert row["nested"] is True
         assert row["stickyLeak"] is False
     # Harnesses with a /usage reporter keep it alongside /cost.
-    for agent in ("muse", "codex", "hermes", "opencode"):
+    for agent in ("muse", "codex", "hermes", "opencode", "claude"):
         assert res[agent]["prefixes"] == ["/usage", "/usage-live", "/cost"]
-    for agent in ("claude", "deepseek", "antigravity"):
+    for agent in ("deepseek", "antigravity"):
         assert res[agent]["prefixes"] == ["/cost"]
     assert res["none"] == 0
     assert res["localCodex"] == 0

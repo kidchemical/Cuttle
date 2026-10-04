@@ -17,7 +17,7 @@
    flat keys, the active harness always attaches its current composer
    pins (dirty-only for the rest), the Codex pre-send fetch never
    clobbers a dirty pick, and badge effort prefers run data over
-   composer pins in muse → hermes → opencode → codex order.
+   composer pins in muse → hermes → opencode → codex → claude order.
    ================================================================ */
 (function (root) {
     'use strict';
@@ -63,7 +63,7 @@
      * Send-time model/effort identity for one POST, as a pins object
      * ({} when nothing applies — the page skips `agent_pins` then).
      *
-     * `models`: { muse, hermes, opencode, codex } each with
+     * `models`: { muse, hermes, opencode, codex, claude } each with
      * { model, effort, modelDirty, effortDirty }.
      *
      * Always include the active harness's current composer pins (not
@@ -85,12 +85,13 @@
             if (Object.keys(entry).length) pins[agent] = entry;
         };
         const msg = String(p.message || '');
-        const activeMatch = msg.match(/^\/(muse|hermes|opencode|codex)\b/i);
+        const activeMatch = msg.match(/^\/(muse|hermes|opencode|codex|claude)\b/i);
         const aid = activeMatch ? String(activeMatch[1]).toLowerCase() : '';
         if (aid === 'muse') put('muse', S.muse);
         else if (aid === 'hermes') put('hermes', S.hermes);
         else if (aid === 'opencode') put('opencode', S.opencode);
         else if (aid === 'codex') put('codex', S.codex);
+        else if (aid === 'claude') put('claude', S.claude);
         const dirtyPut = (agent, slot) => {
             if (!slot || (!slot.modelDirty && !slot.effortDirty)) return;
             put(agent, slot);
@@ -99,6 +100,7 @@
         dirtyPut('hermes', S.hermes);
         dirtyPut('opencode', S.opencode);
         dirtyPut('codex', S.codex);
+        dirtyPut('claude', S.claude);
         return pins;
     }
 
@@ -129,7 +131,7 @@
     /**
      * Badge effort resolution: run data first (generic agent_effort,
      * then per-harness keys), then composer pins in muse → hermes →
-     * opencode → codex order. Matches the page's original `||` chain
+     * opencode → codex → claude order. Matches the page's original `||` chain
      * exactly, including end-only trimming (a blank data value still
      * beats a pinned one, then trims to '').
      */
@@ -144,6 +146,7 @@
             || pinned[1]
             || pinned[2]
             || pinned[3]
+            || pinned[4]
             || ''
         );
         return raw.trim();

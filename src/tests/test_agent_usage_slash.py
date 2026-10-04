@@ -3,7 +3,7 @@
 Coverage matrix
 ---------------
 * **Cursor** — ``handle_cursor_agent_slash`` / Cursor adapter ``handle_meta``
-* **Muse / Codex / Hermes / OpenCode** — adapter ``handle_meta`` via
+* **Muse / Codex / Hermes / OpenCode / Claude** — adapter ``handle_meta`` via
   ``api.agent_usage.handle_agent_usage_slash``
 * Shared ``<cuttle_meters>`` contract (same bar UI Cursor ``/usage`` uses)
 * Palette gating (chip-scoped ``/usage``, never a global sticky command)
@@ -23,7 +23,9 @@ from unittest.mock import patch
 import pytest
 
 from api.agent_usage import (
+    _aggregate_claude_local_usage,
     cuttle_meters_markdown,
+    format_claude_usage_markdown,
     format_codex_usage_markdown,
     format_hermes_usage_markdown,
     format_muse_usage_markdown,
@@ -44,10 +46,10 @@ SLASH_JS = WEB / "js" / "chat_slash.js"
 CHAT_CSS = WEB / "css" / "chat_page.css"
 
 # Harnesses that expose a nested ``/usage`` one-shot in Cuttle chat.
-USAGE_HARNESS_IDS = ("cursor", "muse", "codex", "hermes", "opencode")
+USAGE_HARNESS_IDS = ("cursor", "muse", "codex", "hermes", "opencode", "claude")
 
 # Bundled agents that intentionally do *not* go through agent_usage.py.
-NO_SHARED_USAGE_IDS = ("claude", "deepseek", "antigravity")
+NO_SHARED_USAGE_IDS = ("deepseek", "antigravity")
 
 
 def _meters_payload(md: str) -> Dict[str, Any]:
@@ -88,7 +90,10 @@ def _assert_usage_reply(md: str, *, title_substr: str) -> Dict[str, Any]:
         ("/usage 7d", "7d"),
         ("usage", ""),
         ("usage 14", "14"),
+        ("usage 7d", "7d"),
         ("/USAGE now", "now"),
+        ("Usage command work. Usage-live doesnt", None),
+        ("usage is weird today", None),
         ("/model", None),
         ("hello", None),
         ("", None),
@@ -238,6 +243,167 @@ MUSE_USAGE_FAKE = {
     },
 }
 
+CLAUDE_USAGE_FAKE = {
+    "success": True,
+    "days": 30,
+    "sessions": 2,
+    "messages": 5,
+    "input": 1200,
+    "cache_creation": 23000,
+    "cache_read": 9000,
+    "output": 450,
+    "cli_found": True,
+    "by_model": {
+        "claude-opus-5-5": {
+            "input": 1000,
+            "cache_creation": 20000,
+            "cache_read": 8000,
+            "output": 400,
+            "messages": 4,
+        },
+        "claude-sonnet-4-6": {
+            "input": 200,
+            "cache_creation": 3000,
+            "cache_read": 1000,
+            "output": 50,
+            "messages": 1,
+        },
+    },
+}
+
+
+def _write_claude_transcript(path, entries):
+    import json as _json
+
+    with open(path, "w", encoding="utf-8") as fh:
+        for entry in entries:
+            fh.write(_json.dumps(entry) + "\n")
+
+
+def _claude_assistant(model, *, it=0, cct=0, crt=0, ot=0):
+    return {
+        "type": "assistant",
+        "timestamp": "2026-09-30T12:00:00.000Z",
+        "message": {
+            "model": model,
+            "usage": {
+                "input_tokens": it,
+                "cache_creation_input_tokens": cct,
+                "cache_read_input_tokens": crt,
+                "output_tokens": ot,
+            },
+        },
+    }
+
+
+def test_claude_aggregate_rolls_up_transcripts_by_model(tmp_path, monkeypatch):
+    from api import agent_usage as au
+
+    proj = tmp_path / "projects" / "proj"
+    proj.mkdir(parents=True)
+    _write_claude_transcript(
+        proj / "s1.jsonl",
+        [
+            {"type": "user", "message": {"content": "hi"}},
+            _claude_assistant("claude-opus-5-5", it=10, cct=100, crt=50, ot=5),
+            _claude_assistant("claude-opus-5-5", it=20, cct=200, crt=0, ot=15),
+            "not json at all",
+        ],
+    )
+    _write_claude_transcript(
+        proj / "s2.jsonl",
+        [_claude_assistant("claude-sonnet-4-6", it=7, crt=30, ot=3)],
+    )
+    monkeypatch.setattr(au, "_claude_projects_root", lambda: tmp_path / "projects")
+    data = _aggregate_claude_local_usage(days=30)
+    assert data["sessions"] == 2
+    assert data["messages"] == 3
+    assert data["input"] == 37
+    assert data["cache_creation"] == 300
+    assert data["cache_read"] == 80
+    assert data["output"] == 23
+    assert set(data["by_model"]) == {"claude-opus-5-5", "claude-sonnet-4-6"}
+
+    md = format_claude_usage_markdown({**data, "success": True, "days": 30, "cli_found": True})
+    payload = _assert_usage_reply(md, title_substr="Claude")
+    labels = [r["label"] for r in payload["rows"]]
+    assert "claude-opus-5-5" in labels
+
+
+def test_claude_aggregate_empty_root(tmp_path, monkeypatch):
+    from api import agent_usage as au
+
+    monkeypatch.setattr(au, "_claude_projects_root", lambda: tmp_path / "projects")
+    data = _aggregate_claude_local_usage(days=30)
+    assert data["sessions"] == 0
+    md = format_claude_usage_markdown({**data, "success": True, "days": 30})
+    assert "claude" in md.lower()
+    assert "<cuttle_meters>" not in md
+
+
+CLAUDE_OAUTH_USAGE_SAMPLE = {
+    "five_hour": {"utilization": 100.0, "resets_at": "2026-10-04T13:50:00+00:00"},
+    "seven_day": {"utilization": 5.0, "resets_at": "2026-10-05T10:00:00+00:00"},
+    "extra_usage": {"is_enabled": False},
+    "limits": [
+        {"kind": "session", "percent": 100, "resets_at": "2026-10-04T13:50:00+00:00"},
+        {"kind": "weekly_all", "percent": 5, "resets_at": "2026-10-05T10:00:00+00:00"},
+    ],
+    "spend": {"enabled": False, "used": {"amount_minor": 0, "exponent": 2}},
+}
+
+
+def test_claude_plan_limits_show_resets_and_credits(tmp_path, monkeypatch):
+    from api import agent_usage as au
+
+    creds = tmp_path / ".credentials.json"
+    creds.write_text(json.dumps({"claudeAiOauth": {
+        "accessToken": "tok", "expiresAt": 9_999_999_999_999, "subscriptionType": "pro"}}))
+    monkeypatch.setattr(au, "_claude_credentials_path", lambda: creds)
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return json.dumps(CLAUDE_OAUTH_USAGE_SAMPLE).encode()
+
+    seen = {}
+
+    def fake_urlopen(req, timeout=0):
+        seen["auth"] = req.get_header("Authorization")
+        seen["beta"] = req.get_header("Anthropic-beta")
+        return _Resp()
+
+    monkeypatch.setattr(au.urllib.request, "urlopen", fake_urlopen)
+    plan = au.fetch_claude_plan_limits()
+    assert plan["success"] and seen == {"auth": "Bearer tok", "beta": "oauth-2025-04-20"}
+    md = format_claude_usage_markdown({**CLAUDE_USAGE_FAKE, "plan": plan})
+    payload = _assert_usage_reply(md, title_substr="Claude")
+    rows = {r["label"]: r for r in payload["rows"]}
+    assert rows["5-hour"]["pct"] == 0 and rows["5-hour"]["tooltip_at"] == 1791121800
+    assert rows["Weekly"]["pct"] == 95
+    assert rows["Usage credits"]["status"] == "Off"
+    assert "Plan: Pro" in md and "limit reached" in md
+    assert "Rate-limit resets" in md
+
+
+def test_claude_plan_limits_expired_token_is_reported(tmp_path, monkeypatch):
+    from api import agent_usage as au
+
+    creds = tmp_path / ".credentials.json"
+    creds.write_text(json.dumps({"claudeAiOauth": {"accessToken": "tok", "expiresAt": 1}}))
+    monkeypatch.setattr(au, "_claude_credentials_path", lambda: creds)
+    monkeypatch.setattr(au.urllib.request, "urlopen", lambda *a, **k: pytest.fail("no network"))
+    plan = au.fetch_claude_plan_limits()
+    assert not plan["success"] and "expired" in plan["error"]
+    md = format_claude_usage_markdown({**CLAUDE_USAGE_FAKE, "plan": plan})
+    assert "Plan limits unavailable" in md and "expired" in md
+
+
 HERMES_INSIGHTS_SAMPLE = """
   Period: Sep 17, 2026 — Sep 18, 2026
 
@@ -292,6 +458,7 @@ OPENCODE_STATS_SAMPLE = """
         (format_cursor_usage_markdown, CURSOR_USAGE_FAKE, "Cursor"),
         (format_codex_usage_markdown, CODEX_USAGE_FAKE, "Codex"),
         (format_muse_usage_markdown, MUSE_USAGE_FAKE, "Muse"),
+        (format_claude_usage_markdown, CLAUDE_USAGE_FAKE, "Claude"),
     ],
 )
 def test_formatters_emit_cuttle_meters(formatter, payload, title):
@@ -328,6 +495,7 @@ def test_opencode_parse_and_format_meters():
         format_muse_usage_markdown,
         format_hermes_usage_markdown,
         format_opencode_usage_markdown,
+        format_claude_usage_markdown,
     ],
 )
 def test_formatters_error_path(formatter):
@@ -364,11 +532,16 @@ def test_handle_agent_usage_slash_routes_all_non_cursor(monkeypatch):
         ),
     )
 
+    monkeypatch.setattr(
+        "api.agent_usage.run_claude_usage",
+        lambda days=30: format_claude_usage_markdown({**CLAUDE_USAGE_FAKE, "days": days}),
+    )
     for agent_id, title in (
         ("codex", "Codex"),
         ("muse", "Muse"),
         ("hermes", "Hermes"),
         ("opencode", "OpenCode"),
+        ("claude", "Claude"),
     ):
         for prompt in ("/usage", "usage", "/usage 7d"):
             md = handle_agent_usage_slash(agent_id, prompt)
@@ -475,6 +648,27 @@ def test_hermes_handle_meta_usage(monkeypatch):
     _assert_usage_reply(result.output, title_substr="Hermes")
 
 
+def test_claude_handle_meta_usage(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "api.agent_usage.run_claude_usage",
+        lambda days=30: format_claude_usage_markdown({**CLAUDE_USAGE_FAKE, "days": days}),
+    )
+    monkeypatch.setattr(
+        "scripts.utilities.claude_cli_session_store.load_claude_model",
+        lambda _sid: None,
+    )
+    from api.agent_harness.agents.claude.adapter import Adapter
+
+    cwd = str(tmp_path / "proj")
+    (tmp_path / "proj").mkdir()
+    result = Adapter().handle_meta("/usage", cwd=cwd, chat_session_id="42", model=None)
+    assert result is not None and result.success
+    payload = _assert_usage_reply(result.output, title_substr="Claude")
+    labels = " ".join(r["label"] for r in payload["rows"]).lower()
+    assert "claude-" in labels
+    assert Adapter().handle_meta("write a test", cwd=cwd, chat_session_id="42", model=None) is None
+
+
 def test_opencode_handle_meta_usage(monkeypatch):
     monkeypatch.setattr(
         "api.agent_usage.run_opencode_usage",
@@ -536,6 +730,7 @@ def test_palette_usage_gated_per_harness_not_global():
         ("codex", "codex-cmd"),
         ("hermes", "hermes-cmd"),
         ("opencode", "opencode-cmd"),
+        ("claude", "claude-cmd"),
     ):
         assert f"category: '{cat}'" in slash_js
         assert agent in slash_js  # agent key present in HARNESS_USAGE_SLASH_BY_AGENT
@@ -573,6 +768,7 @@ def test_palette_chip_categories_map_usage_to_agent():
         ("codex-cmd", "codex"),
         ("hermes-cmd", "hermes"),
         ("opencode-cmd", "opencode"),
+        ("claude-cmd", "claude"),
         ("cursor-cmd", "cursor"),
     ):
         assert pair[0] in body and pair[1] in body
@@ -627,6 +823,10 @@ def test_all_usage_harnesses_produce_meters_via_adapters(monkeypatch, tmp_path):
             {**parse_opencode_stats_text(OPENCODE_STATS_SAMPLE), "success": True, "days": days}
         ),
     )
+    monkeypatch.setattr(
+        "api.agent_usage.run_claude_usage",
+        lambda days=30: format_claude_usage_markdown({**CLAUDE_USAGE_FAKE, "days": days}),
+    )
 
     # Session/model loaders used by handle_meta — keep them no-ops.
     monkeypatch.setattr(
@@ -651,6 +851,9 @@ def test_all_usage_harnesses_produce_meters_via_adapters(monkeypatch, tmp_path):
         lambda _s: None,
     )
     monkeypatch.setattr(
+        "scripts.utilities.claude_cli_session_store.load_claude_model", lambda _s: None
+    )
+    monkeypatch.setattr(
         "api.agent_harness.agent_defaults.get_starred_model", lambda _a: None
     )
 
@@ -659,6 +862,7 @@ def test_all_usage_harnesses_produce_meters_via_adapters(monkeypatch, tmp_path):
     from api.agent_harness.agents.codex.adapter import Adapter as CodexAdapter
     from api.agent_harness.agents.hermes.adapter import Adapter as HermesAdapter
     from api.agent_harness.agents.opencode.adapter import Adapter as OpenCodeAdapter
+    from api.agent_harness.agents.claude.adapter import Adapter as ClaudeAdapter
 
     cases: List[tuple] = [
         ("cursor", CursorAdapter(), "Cursor", {"cwd": cwd}),
@@ -666,6 +870,7 @@ def test_all_usage_harnesses_produce_meters_via_adapters(monkeypatch, tmp_path):
         ("codex", CodexAdapter(), "Codex", {}),
         ("hermes", HermesAdapter(), "Hermes", {}),
         ("opencode", OpenCodeAdapter(), "OpenCode", {}),
+        ("claude", ClaudeAdapter(), "Claude", {"cwd": cwd}),
     ]
 
     seen = []

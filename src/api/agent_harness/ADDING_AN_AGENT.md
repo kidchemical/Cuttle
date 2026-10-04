@@ -400,7 +400,7 @@ Put the cheap id in `smoke_model` so a forgotten env still does not spend Pro.
 | `cursor` | `agent -p` | stream-json, multi-segment continue; meta `/model` `/plan` in adapter |
 | `codex` | `codex exec` | resume via thread id; optional `reasoning_effort`; Cursor-style JSONL activity (`tool N:` / `thinking:` / `writing:`) |
 | `muse` | `muse exec` (WSL) | `--prompt-file` for long prompts; `/muse model` in adapter |
-| `claude` | `claude --print` | no native per-chat resume yet; auto-install npm package |
+| `claude` | `claude -p` | per-chat `--resume`; `/claude model [refresh]` + `/claude effort` pins → `--model` / `--effort`; catalog from SDK `initialize` (no turn) |
 | `opencode` | `opencode run` | native CLI authentication |
 | `antigravity` | `agy` | auto-install |
 | `hermes` | `hermes chat -Q -q` | local or OpenRouter via config.yaml; `requires_cloud: false`; per-chat `--resume` + state.db status poll |

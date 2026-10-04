@@ -218,6 +218,13 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
             category: 'opencode-cmd',
             keywords: 'opencode usage stats cost tokens tools models',
         },
+        claude: {
+            prefix: '/usage',
+            label: 'Usage',
+            hint: 'Show Claude Code local session usage (tokens, models)',
+            category: 'claude-cmd',
+            keywords: 'claude usage tokens models session transcript',
+        },
     };
 
     /** Nested ``/cost`` (per-model token prices) for every non-Cursor harness. */
@@ -545,7 +552,7 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
         if (cat === 'hermes' || cat === 'hermes-model' || cat === 'hermes-effort' || cat === 'hermes-cmd') return 'Hermes';
         if (cat === 'opencode' || cat === 'opencode-model' || cat === 'opencode-effort' || cat === 'opencode-cmd') return 'OpenCode';
         if (cat === 'codex' || cat === 'codex-model' || cat === 'codex-effort' || cat === 'codex-cmd') return 'Codex';
-        if (cat === 'claude-cmd') return 'Claude';
+        if (cat === 'claude' || cat === 'claude-model' || cat === 'claude-effort' || cat === 'claude-cmd') return 'Claude';
         if (cat === 'deepseek-cmd') return 'DeepSeek';
         if (cat === 'antigravity-cmd') return 'Antigravity';
         return 'Command';
@@ -559,6 +566,7 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
         if (c === 'hermes-model' || c === 'hermes-effort' || c === 'hermes-cmd') return 'hermes';
         if (c === 'opencode-model' || c === 'opencode-effort' || c === 'opencode-cmd') return 'opencode';
         if (c === 'codex-model' || c === 'codex-effort' || c === 'codex-cmd') return 'codex';
+        if (c === 'claude-model' || c === 'claude-effort' || c === 'claude-cmd') return 'claude';
         return c;
     }
 
@@ -574,6 +582,7 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
         if (bucket === 'hermes') return 'Hermes';
         if (bucket === 'opencode') return 'OpenCode';
         if (bucket === 'codex') return 'Codex';
+        if (bucket === 'claude') return 'Claude';
         return slashPaletteCategoryLabel(bucket);
     }
 
@@ -814,6 +823,7 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
                     || isStickyAgentChip(c, 'hermes')
                     || isStickyAgentChip(c, 'opencode')
                     || isStickyAgentChip(c, 'codex')
+                    || isStickyAgentChip(c, 'claude')
                 ) {
                     return c;
                 }
@@ -928,6 +938,9 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
     function isStickyCodexAgentChip(chip) {
         return isStickyAgentChip(chip, 'codex');
     }
+    function isStickyClaudeAgentChip(chip) {
+        return isStickyAgentChip(chip, 'claude');
+    }
     function isStickyHermesAgentChip(chip) {
         return isStickyAgentChip(chip, 'hermes');
     }
@@ -967,7 +980,8 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
         if (/^(cursor|muse|codex|hermes|opencode|claude|deepseek|antigravity)-cmd$/.test(cat)) return false;
         if (isHarnessNestedCommandChip(chip) && !isStickyAgentChip(chip, 'cursor')
             && !isStickyAgentChip(chip, 'muse') && !isStickyAgentChip(chip, 'codex')
-            && !isStickyAgentChip(chip, 'hermes') && !isStickyAgentChip(chip, 'opencode')) {
+            && !isStickyAgentChip(chip, 'hermes') && !isStickyAgentChip(chip, 'opencode')
+            && !isStickyAgentChip(chip, 'claude')) {
             return false;
         }
         if (
@@ -976,6 +990,7 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
             || cat === 'codex' || cat === 'codex-model' || cat === 'codex-effort'
             || cat === 'hermes' || cat === 'hermes-model' || cat === 'hermes-effort'
             || cat === 'opencode' || cat === 'opencode-model' || cat === 'opencode-effort'
+            || cat === 'claude' || cat === 'claude-model' || cat === 'claude-effort'
             || cat === 'agent'
         ) {
             // Model/effort companions are not the primary agent header chip.
@@ -984,7 +999,7 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
         }
         if (isStickyCursorAgentChip(chip) || isStickyMuseAgentChip(chip)
             || isStickyCodexAgentChip(chip) || isStickyHermesAgentChip(chip)
-            || isStickyOpenCodeAgentChip(chip)) {
+            || isStickyOpenCodeAgentChip(chip) || isStickyClaudeAgentChip(chip)) {
             return true;
         }
         const hay = String((chip && (chip.prefix || chip.meta || chip.label)) || '');
@@ -1012,7 +1027,7 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
             'hermes': 'hermes', 'hermes-model': 'hermes', 'hermes-effort': 'hermes', 'hermes-cmd': 'hermes',
             'opencode': 'opencode', 'opencode-model': 'opencode', 'opencode-effort': 'opencode', 'opencode-cmd': 'opencode',
             'codex': 'codex', 'codex-model': 'codex', 'codex-effort': 'codex', 'codex-cmd': 'codex',
-            'claude': 'claude', 'claude-cmd': 'claude',
+            'claude': 'claude', 'claude-model': 'claude', 'claude-effort': 'claude', 'claude-cmd': 'claude',
             'deepseek': 'deepseek', 'deepseek-cmd': 'deepseek',
             'antigravity': 'antigravity', 'antigravity-cmd': 'antigravity',
         };
@@ -1128,6 +1143,7 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
         isStickyCursorAgentChip,
         isStickyMuseAgentChip,
         isStickyCodexAgentChip,
+        isStickyClaudeAgentChip,
         isStickyHermesAgentChip,
         isStickyOpenCodeAgentChip,
         isCursorNestedCommandChip,

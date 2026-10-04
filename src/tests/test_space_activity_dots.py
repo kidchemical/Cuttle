@@ -45,7 +45,21 @@ def test_chat_pushes_activity_snapshot_to_shell():
     assert "cuttle-chat-activity" in chat
     assert "collectChatActivitySnapshot" in chat
     assert "cuttle-chat-activity" in shell
-    assert "noteSpaceSessionActivity" in shell
+    assert "CuttleSpaces.notePushSnapshot(" in shell
+    # Frames push only the chats they own (stale history-row spinners for
+    # other chats used to re-arm space tabs after the poll cleared them).
+    snap = chat.split("function collectChatActivitySnapshot()", 1)[1].split(
+        "function scheduleChatActivityBroadcast()", 1
+    )[0]
+    assert ".chat-history-item" not in snap
+    assert "owned:" in snap
+
+
+def test_background_finish_marks_unread_and_queue_strings_parse():
+    shell = SHELL_JS.read_text(encoding="utf-8")
+    assert "markFinishedBackgroundChatsUnread(CuttleSpaces.noteServerSnapshot(" in shell
+    # followup_queue is a TEXT column — the sessions list returns a JSON string.
+    assert "parseSpaceFollowupQueue(" in shell
 
 
 def test_space_activity_css_matches_chat_palette():

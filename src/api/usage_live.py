@@ -7,7 +7,7 @@ import uuid
 from flask import Blueprint, jsonify, request
 from api.http_authz import owner_required
 
-AGENTS = frozenset({"cursor", "codex", "muse", "hermes", "opencode"})
+AGENTS = frozenset({"cursor", "codex", "muse", "hermes", "opencode", "claude"})
 TTL = 60
 _cache = {}
 _locks = {}
@@ -17,7 +17,7 @@ _guard = threading.Lock()
 def usage_snapshot(agent, days=30):
     if agent not in AGENTS:
         raise ValueError("Unsupported usage agent")
-    days = max(1, min(int(days), 365)) if agent in {"muse", "hermes", "opencode"} else 30
+    days = max(1, min(int(days), 365)) if agent in {"muse", "hermes", "opencode", "claude"} else 30
     key = (agent, days)
     with _guard:
         lock = _locks.setdefault(key, threading.RLock())

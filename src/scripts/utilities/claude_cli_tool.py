@@ -8,8 +8,6 @@ Auth: the user's native Claude login/config; host API credentials are isolated.
 
 from __future__ import annotations
 
-from core.agent_cli_env import agent_cli_env
-
 import asyncio
 import json
 import os
@@ -17,6 +15,7 @@ import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
+from core.agent_cli_env import agent_cli_env
 from scripts.utilities.agent_process import (
     attach_to_chat_run,
     format_interrupt_notice,
@@ -262,7 +261,7 @@ class ClaudeCliTool:
     """Non-interactive Claude Code runs for Cuttle slash + harness backends."""
 
     def __init__(self, model: Optional[str] = None, reasoning_effort: Optional[str] = None):
-        self.reasoning_effort = reasoning_effort
+        self.reasoning_effort = (reasoning_effort or "").strip().lower() or None
         env_model = (os.getenv("CLAUDE_MODEL") or "").strip()
         self.model = (model or env_model or "").strip() or None
 

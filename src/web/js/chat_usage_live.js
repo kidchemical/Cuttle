@@ -2,11 +2,11 @@
  * the API also coalesces requests from separate windows/devices. */
 (function (root) {
     'use strict';
-    const AGENTS = new Set(['cursor', 'codex', 'muse', 'hermes', 'opencode']);
+    const AGENTS = new Set(['cursor', 'codex', 'muse', 'hermes', 'opencode', 'claude']);
     const PERIOD = 60000;
     const escape = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
     function reportBody(text, format) {
-        const title = text.match(/^\*\*((?:Cursor|Codex|Muse Code|Hermes|OpenCode) — usage)\*\*(?:\r?\n|$)/);
+        const title = text.match(/^\*\*((?:Cursor|Codex|Muse Code|Hermes|OpenCode|Claude Code) — usage)\*\*(?:\r?\n|$)/);
         if (!title) return format(text);
         const lines = text.slice(title[0].length).trim().split('\n');
         const metadata = [];
@@ -66,7 +66,7 @@
         }
         const match = text.match(/^\s*<cuttle_usage_live>([\s\S]*?)<\/cuttle_usage_live>\s*$/i);
         if (!match) {
-            if (/^\*\*(?:Cursor|Codex|Muse Code|Hermes|OpenCode) — usage\*\*(?:\r?\n|$)/.test(text)) {
+            if (/^\*\*(?:Cursor|Codex|Muse Code|Hermes|OpenCode|Claude Code) — usage\*\*(?:\r?\n|$)/.test(text)) {
                 return '<section class="cuttle-usage-report">' + reportBody(text, format) + '</section>';
             }
             return null;
