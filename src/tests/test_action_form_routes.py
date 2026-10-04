@@ -409,3 +409,49 @@ def test_native_restart_card_still_requires_owner(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert response.get_json()['success'] is False
     assert 'Owner privileges required' in response.get_json()['toast']
+
+
+def test_when_idle_returns_own_restart_identity_without_reading_global_status(tmp_path, monkeypatch):
+    from api import action_forms as af, flask_restart as restart
+    ctx = _ctx(tmp_path, monkeypatch)
+    monkeypatch.setattr(restart, 'request_restart', lambda **kw: {
+        'success': True, 'restart_id': 'this-request', 'state': 'waiting_for_idle',
+        'active_work': {'total': 3}, 'response': 'Waiting for 3 active tasks',
+    })
+    monkeypatch.setattr(restart, 'read_status', lambda: {})
+    spec = af.normalize_action_form_spec({
+        'title': 'Reload anything — custom agent title',
+        'options': [{'id': 'idle', 'label': 'Custom idle label', 'action': 'flask.restart', 'params': {'mode': 'when-idle'}}],
+    }, project_path=str(tmp_path))
+    assert spec['title'] == 'Restart Flask (daemon-owned)'
+    assert [o['params'].get('mode', 'health') for o in spec['options']] == ['status', 'graceful', 'when-idle', 'force', 'health']
+    fid = af.register_action_form(session_id=f"db_session_{ctx['owner_sid']}", project_path=str(tmp_path), spec=spec)
+    result = _as(ctx['client'], ctx['owner']).post('/api/action-form/run', json={
+        'token': fid, 'selection': {'option': 'idle'}, 'session_id': ctx['owner_sid'],
+    }).get_json()
+    assert result['success']
+    assert result['flask_restart'] == {'restart_id': 'this-request', 'state': 'waiting_for_idle', 'mode': 'when-idle', 'active_work': {'total': 3}}
+
+
+def test_previous_acknowledgement_does_not_replay_as_completed_green_result(tmp_path, monkeypatch):
+    from api import action_forms as af, flask_restart as restart
+    ctx = _ctx(tmp_path, monkeypatch)
+    monkeypatch.setattr(af, 'read_action_form_lock_from_history', lambda *a: {
+        'selected': ['when-idle'], 'toast': '**Flask restart acknowledged** (`old-request`)',
+    })
+    calls = []
+    def request(**kw):
+        calls.append(kw)
+        return {'success': True, 'restart_id': 'current-request', 'state': 'waiting_for_idle', 'response': 'Waiting for 2 active tasks'}
+    monkeypatch.setattr(restart, 'request_restart', request)
+    spec = af.normalize_action_form_spec({'title': 'Different restart title', 'options': [
+        {'id': 'idle', 'label': 'Wait', 'action': 'flask.restart', 'params': {'mode': 'when-idle'}},
+    ]}, project_path=str(tmp_path))
+    fid = af.register_action_form(session_id=f"db_session_{ctx['owner_sid']}", project_path=str(tmp_path), spec=spec)
+    result = _as(ctx['client'], ctx['owner']).post('/api/action-form/run', json={
+        'token': fid, 'selection': {'option': 'idle'}, 'session_id': ctx['owner_sid'],
+    }).get_json()
+    assert calls and calls[0]['mode'] == 'when-idle'
+    assert not result.get('already_locked')
+    assert result['flask_restart']['restart_id'] == 'current-request'
+    assert 'old-request' not in result['toast']

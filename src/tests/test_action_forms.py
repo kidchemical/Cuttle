@@ -1142,7 +1142,7 @@ def test_rewrite_merge_keeps_side_effect_cards_separate(tmp_path: Path):
     out, n = rewrite_action_forms(text, session_id="db_session_mix", project_path=str(tmp_path))
     assert n == 2
     specs = _form_bodies(out)
-    assert [s["title"] for s in specs] == ["Questions", "Restart"]
+    assert [s["title"] for s in specs] == ["Questions", "Restart Flask (daemon-owned)"]
     assert [f["label"] for f in specs[0]["fields"]] == ["Q1", "Q2"]
 
 

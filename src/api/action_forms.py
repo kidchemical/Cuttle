@@ -260,7 +260,8 @@ def normalize_action_form_spec(
     watch = _normalize_watch(spec.get("watch"))
     if watch:
         out["watch"] = watch
-    return out
+    from api.flask_restart import canonicalize_restart_form
+    return canonicalize_restart_form(out)
 
 
 _WATCH_SNAPSHOT_KEYS = (
@@ -1159,7 +1160,9 @@ def _is_restart_in_progress_toast(toast: Any) -> bool:
     """when-idle / restarting card is locked but Force/Status must still run."""
     t = str(toast or "").strip().lower()
     return bool(
-        t.startswith("waiting for")
+        t.startswith("**flask restart acknowledged**")
+        or t.startswith("flask restart acknowledged")
+        or t.startswith("waiting for")
         or t.startswith("restarting flask")
         or t.startswith("postponed")
         or t.startswith("force restart")
@@ -1521,6 +1524,7 @@ def execute_action_form_submission(
         return out
 
     results = []
+    restart_result = None
     all_ok = True
     toasts = []
     project_path = str(spec.get("project_path") or "")
@@ -1551,6 +1555,9 @@ def execute_action_form_submission(
                     chat_notify=False,
                 )
                 res = {**restart, "response": restart.get("response") or restart.get("error") or restart.get("state") or "Restart requested."}
+                if restart.get('success') and restart.get('restart_id') and run_params.get('mode') != 'status':
+                    restart_result = {key: restart.get(key) for key in ('restart_id', 'state', 'mode', 'active_work')}
+                    restart_result['mode'] = run_params.get('mode') or 'graceful'
         else:
             action_obj, resolved_path = find_project_action_resolved(
                 run_project, str(action), channel=channel_hint
@@ -1617,6 +1624,8 @@ def execute_action_form_submission(
         "session_id": session_id or None,
         "actions": [str(r.get("action") or "") for r in runs if r.get("action")],
     }
+    if restart_result:
+        out['flask_restart'] = restart_result
     return out
 
 

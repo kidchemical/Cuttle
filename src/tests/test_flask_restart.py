@@ -361,3 +361,15 @@ def test_status_snapshot_heals_stale_health_checking(restart_paths, monkeypatch)
     assert st.get("state") in ("failed", "healthy", "cancelled", "timed_out", "rejected")
     assert st.get("state") != "health_checking"
     assert st.get("cleared_stale") is True or st.get("superseded") is True
+
+
+def test_restart_chooser_standardizes_agent_variations_but_not_mixed_actions():
+    from api.flask_restart import canonicalize_restart_form
+    first = {'title': 'A', 'options': [{'id': 'idle', 'label': 'Wait', 'action': 'flask.restart', 'params': {'mode': 'when-idle'}}]}
+    second = {'title': 'B', 'options': [{'id': 'go', 'label': 'Now', 'action': 'flask.restart', 'params': {'mode': 'graceful'}}]}
+    a, b = canonicalize_restart_form(first), canonicalize_restart_form(second)
+    assert a['title'] == b['title'] == 'Restart Flask (daemon-owned)'
+    assert [(o['label'], o['action'], o['params']) for o in a['options']] == [(o['label'], o['action'], o['params']) for o in b['options']]
+    assert next(o for o in a['options'] if o['params'].get('mode') == 'when-idle')['id'] == 'idle'
+    mixed = dict(first, options=first['options'] + [{'id': 'push', 'action': 'git.push'}])
+    assert canonicalize_restart_form(mixed) == mixed

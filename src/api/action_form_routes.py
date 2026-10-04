@@ -194,7 +194,9 @@ def api_action_form_run():
             and r.get('success')
             for r in (result.get('results') or [])
         )
-        if scheduled_restart:
+        if result.get('flask_restart', {}).get('restart_id'):
+            spec_patch['restartId'] = result['flask_restart']['restart_id']
+        elif scheduled_restart:
             try:
                 from api.flask_restart import read_status
 

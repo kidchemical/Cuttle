@@ -98,6 +98,48 @@ def is_flask_restart_controller_spec(spec: Any) -> bool:
     return "restart flask" in title or title.startswith("flask restart")
 
 
+
+def canonicalize_restart_form(spec: Dict[str, Any]) -> Dict[str, Any]:
+    """One server-owned chooser; preserve old option ids for history clicks.
+
+    Mixed-action forms are left alone. Labels/title never select restart mode.
+    """
+    options = spec.get('options') or []
+    allowed = {'flask.restart', '__native_restart__', 'flask.health'}
+    if not options or not any(o.get('action') in ('flask.restart', '__native_restart__') for o in options):
+        return spec
+    if any(o.get('action') and o.get('action') not in allowed for o in options):
+        return spec
+    modes = ('status', 'graceful', 'when-idle', 'force', 'health')
+    labels = {
+        'status': 'Status — show restart state + active work',
+        'graceful': 'Graceful — restart now (rejects if busy)',
+        'when-idle': 'When idle — wait for active jobs to finish',
+        'force': 'Force — interrupt active work',
+        'health': 'Health check only (no restart)',
+    }
+    previous = {}
+    for option in options:
+        if not option.get('action'):
+            continue
+        mode = 'health' if option['action'] == 'flask.health' else str((option.get('params') or {}).get('mode') or 'graceful').lower()
+        if mode not in modes:
+            return spec
+        previous.setdefault(mode, option['id'])
+    used = set(previous.values())
+    standard = []
+    for mode in modes:
+        identifier = previous.get(mode, mode)
+        if mode not in previous and identifier in used:
+            identifier = 'restart-' + mode
+        used.add(identifier)
+        standard.append({'id': identifier, 'label': labels[mode],
+                         'action': 'flask.health' if mode == 'health' else 'flask.restart',
+                         'params': {} if mode == 'health' else {'mode': mode}, 'lock': None})
+    return {**spec, 'title': 'Restart Flask (daemon-owned)', 'mode': 'choice',
+            'lock': 'form', 'silent': True, 'resume': False, 'reusable': False,
+            'options': standard, 'fields': [], 'watch': None}
+
 def _atomic_write_json(path: Path, data: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")

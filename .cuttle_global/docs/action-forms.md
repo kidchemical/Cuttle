@@ -285,3 +285,17 @@ Do not report "restart complete" until `/api/health` (or restart status
 - Layout / authoring: [commands-and-actions.md](commands-and-actions.md)
 - Discord read/post: [discord.md](discord.md)
 - Skill (deeper examples): `.cuttle_global/skills/cuttle-project-commands/SKILL.md`
+
+### Standard restart controller
+
+Standalone restart choosers are normalized by `api.flask_restart` to one title,
+button order, labels, and explicit modes. Agent-authored wording does not select
+behavior. Existing option ids are preserved for transcript compatibility; mixed
+forms containing other actions are not replaced. All restart controllers retain
+the shared generation identity.
+
+Authenticated restart submissions carry the actual request's restart id/state
+back to the card directly. Progress must not depend on rereading a global status
+file. A persisted “Flask restart acknowledged” message is an acceptance receipt,
+not a completion lock; it must not be replayed as a green finished result on a
+later card in the same generation.
