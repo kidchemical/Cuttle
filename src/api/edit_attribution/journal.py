@@ -13,6 +13,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+from core.runtime_paths import runtime_state_path
+
 _lock = threading.Lock()
 
 _SCHEMA = """
@@ -42,8 +44,8 @@ def _cuttle_root() -> Path:
 
 
 def _db_path() -> Path:
-    d = _cuttle_root() / "src" / "data" / "workspace" / "edit_attribution"
-    d.mkdir(parents=True, exist_ok=True)
+    d = runtime_state_path("edit_attribution", project_root=_cuttle_root(),
+                           legacy="workspace/edit_attribution")
     return d / "edit_journal.sqlite3"
 
 

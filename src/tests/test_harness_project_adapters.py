@@ -679,3 +679,15 @@ def test_edited_adapter_reloads_on_next_discovery(
         encoding="utf-8",
     )
     assert get_agent("hotedit", str(proj))[1].marker == "V2"
+
+
+def test_personal_instance_pack_is_discovered(tmp_path, monkeypatch, clean_import_state):
+    personal = tmp_path / "personal/agents"
+    _write_agent(personal, "local-pack")
+    monkeypatch.setattr(catalog, "_PERSONAL_AGENTS_ROOT", personal)
+    reload_catalog()
+    try:
+        assert "local-pack" in catalog._discover_global()
+        assert any(row["path"] == str(personal) for row in catalog.discovery_roots())
+    finally:
+        reload_catalog()

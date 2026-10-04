@@ -60,16 +60,72 @@ def data_db_dir(project_root: Optional[Path] = None) -> Path:
     return d
 
 
-def bot_config_path(project_root: Optional[Path] = None) -> Path:
-    """Canonical bot/model config file: ``src/bot_config.json``.
+def runtime_data_dir(project_root: Optional[Path] = None) -> Path:
+    """Install-wide runtime state, independent of the selected guest project."""
+    root = Path(project_root) if project_root is not None else _repo_root()
+    return root / "src" / "data"
 
-    Resolved from the checkout root, never the launch cwd: this preserves
-    the daemon's historical ``cwd=src`` selection for every launch form. A
-    repo-root ``bot_config.json`` remains untouched legacy input and is
-    never merged automatically. Creates nothing (unlike ``data_db_dir``).
+
+def runtime_state_path(owner: str, name: str = "", *,
+                       project_root: Optional[Path] = None,
+                       legacy: Optional[str] = None) -> Path:
+    """Resolve owned state without moving files underneath a running process.
+
+    Existing legacy state remains authoritative until the offline migration.
+    New installations use the canonical owner directory immediately.
+    """
+    base = runtime_data_dir(project_root)
+    if legacy is not None and (base / legacy).exists():
+        path = base / legacy
+    else:
+        path = base / owner / name
+    (path.parent if name else path).mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def runtime_cache_path(name: str, project_root: Optional[Path] = None) -> Path:
+    return runtime_state_path("cache", name, project_root=project_root,
+                              legacy=f"workspace/{name}")
+
+
+def home_automation_path(name: str, project_root: Optional[Path] = None) -> Path:
+    """Keep daemon/Flask settings and their lock in one storage generation."""
+    base = runtime_data_dir(project_root)
+    legacy_names = ("devices", "schedule", "auto_state", "daemon_heartbeat")
+    if any((base / f"home_automation_{key}.json").exists() for key in legacy_names):
+        base.mkdir(parents=True, exist_ok=True)
+        filename = name if name == "govee_api_batch.lock" else f"home_automation_{name}"
+        return base / filename
+    return runtime_state_path("home_automation", name, project_root=project_root)
+
+
+def secrets_dir(project_root: Optional[Path] = None) -> Path:
+    """Install-local secret files: ``.cuttle/personal/secrets/`` (gitignored).
+
+    Key material that is file-shaped (PEM keys, TLS certs, token files).
+    Environment-variable secrets stay in ``src/.env``. Creates nothing.
     """
     root = Path(project_root) if project_root is not None else _repo_root()
-    return root / "src" / "bot_config.json"
+    return root / ".cuttle" / "personal" / "secrets"
+
+
+def runtime_config_path(project_root: Optional[Path] = None) -> Path:
+    """Model/runtime preferences, independent of cwd and guest project.
+
+    Existing ``src/bot_config.json`` remains authoritative until the guarded
+    offline migration. The repo-root copy is never read or merged. Missing
+    reads create nothing; RuntimeConfig creates the parent only when saving.
+    """
+    root = Path(project_root) if project_root is not None else _repo_root()
+    legacy = root / "src" / "bot_config.json"
+    if legacy.exists():
+        return legacy
+    return runtime_data_dir(root) / "config" / "runtime_config.json"
+
+
+def bot_config_path(project_root: Optional[Path] = None) -> Path:
+    """Compatibility alias for integrations using the former helper name."""
+    return runtime_config_path(project_root)
 
 
 def electron_packaged_exe(project_root: Path) -> Optional[Path]:

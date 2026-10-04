@@ -9,6 +9,8 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from core.runtime_paths import runtime_state_path
+
 _lock = threading.Lock()
 
 
@@ -18,9 +20,8 @@ def _repo_root() -> Path:
 
 
 def _map_file() -> Path:
-    d = _repo_root() / "src" / "data" / "workspace"
-    d.mkdir(parents=True, exist_ok=True)
-    return d / "opencode_cli_session_map.json"
+    return runtime_state_path("sessions", "opencode_cli_session_map.json", project_root=_repo_root(),
+                              legacy="workspace/opencode_cli_session_map.json")
 
 
 def _session_key(cwd: str, cuttle_session_id: Any) -> str:

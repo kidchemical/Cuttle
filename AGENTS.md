@@ -36,6 +36,9 @@ Windows PowerShell, from the repository root:
 
 **Environment:** optional provider/API keys and Discord REST agent-ops token
 live in `src/.env`; the daemon loads this before spawning child processes.
+File-shaped secrets (TLS cert/key, GitHub App `.pem`, token files) live only in
+`.cuttle/personal/secrets/` via `core.runtime_paths.secrets_dir()` — never
+`src/data/`, `_personal/`, or a new ad-hoc folder.
 Vendor CLI authentication is separate (see the agent catalog manifests).
 
 ## Development dependencies and tests

@@ -19,6 +19,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from core.runtime_paths import runtime_cache_path
+
 _lock = threading.Lock()
 
 # Soft TTL for the on-disk cache; ``refresh=True`` bypasses and rewrites.
@@ -37,9 +39,7 @@ def _repo_root() -> Path:
 
 
 def _cache_path() -> Path:
-    d = _repo_root() / "src" / "data" / "workspace"
-    d.mkdir(parents=True, exist_ok=True)
-    return d / "opencode_models_cache.json"
+    return runtime_cache_path("opencode_models_cache.json", project_root=_repo_root())
 
 
 def _label_from_id(model_id: str) -> str:

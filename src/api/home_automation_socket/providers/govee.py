@@ -23,8 +23,8 @@ class GoveeProvider:
             return ""
         return (
             "Set GOVEE_API_KEY in src/.env (Govee Home → Settings → About → Apply for API key). "
-            "Optional device list: copy src/data/home_automation_devices.example.json "
-            "→ home_automation_devices.json."
+            "Optional device list: copy src/data/home_automation/devices.example.json "
+            "→ devices.json."
         )
 
     def capabilities(self) -> List[str]:

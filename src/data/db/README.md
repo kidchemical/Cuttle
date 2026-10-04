@@ -9,3 +9,8 @@
 | `tasks.db` | Legacy local kanban UI |
 
 Paths are resolved from `core.runtime_paths.data_db_dir()`.
+
+Additional active stores: `achievements.db` (achievement progress/unlocks) and
+`chat_vfx.db` (transient chat effect delivery). The edit attribution SQLite journal
+is owned separately under `src/data/edit_attribution/`. `action_hmac_secret` is
+existing signing state; preserve it when backing up/restoring chat action cards.

@@ -18,6 +18,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from core.runtime_paths import runtime_cache_path
+
 _MODELS_DEV_URL = "https://models.dev/api.json"
 _CACHE_VERSION = 2
 _CACHE_TTL_SEC = 24 * 60 * 60
@@ -58,9 +60,7 @@ def _repo_root() -> Path:
 
 
 def _cache_path() -> Path:
-    d = _repo_root() / "src" / "data" / "workspace"
-    d.mkdir(parents=True, exist_ok=True)
-    return d / "models_dev_pricing_cache.json"
+    return runtime_cache_path("models_dev_pricing_cache.json", project_root=_repo_root())
 
 
 def _normalize_key(value: str) -> str:

@@ -13,8 +13,9 @@ def load_discord_bot_token() -> Optional[str]:
         if val and not val.startswith("your_"):
             return val
     try:
-        here = Path(__file__).resolve()
-        secret = here.parents[2] / ".secret_DONOTSHIP" / "discord bot token.txt"
+        from core.runtime_paths import secrets_dir
+
+        secret = secrets_dir() / "discord bot token.txt"
         if secret.is_file():
             tok = secret.read_text(encoding="utf-8").strip()
             if tok:

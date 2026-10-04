@@ -38,7 +38,6 @@ src/.pytest_cache/
 venv/
 env/
 .venv_wsl/
-.secret_DONOTSHIP/
 
 # Output directory
 output/
@@ -70,7 +69,9 @@ cuttle_flask_restart_request.json.tmp
 .DS_Store
 Thumbs.db
 
-# Certs and keys (never commit)
+# Secret files live in .cuttle/personal/secrets/ (covered by .cuttle/personal/).
+# Retired secret locations stay ignored so older checkouts never commit them.
+.secret_DONOTSHIP/
 src/data/certs/
 .cuttle/certs/
 
@@ -159,3 +160,22 @@ docs/marketing/
 # Retired shared mesh key directories; identities belong in ~/.ssh
 /.cuttle_global/keys/
 /.cuttle/keys/
+
+# Owned install-local runtime state (legacy paths above remain ignored).
+src/data/sessions/
+src/data/brain/
+src/data/cache/
+src/data/supervised_tasks/
+src/data/edit_attribution/
+src/data/archive/
+src/data/harness_agents/
+src/data/home_automation/*
+!src/data/home_automation/devices.example.json
+!src/data/home_automation/README.md
+
+# Developer test artifacts live with tests, never with production scripts.
+src/tests/results/
+src/tests/test-results/
+src/test-results/
+src/scripts/output/
+src/data/config/

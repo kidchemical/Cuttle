@@ -1,32 +1,30 @@
 """
-Bot/model settings store (core.config).
+Model/runtime preferences (core.config).
 
 Backend for the settings API bot/model branch: launch mode, thinking
 responses, auto-restart, debug, LLM thresholds, agent method, stage mode,
 preferred models (LLM/Ollama/tools variants), agent name, LLM fallback, and
 system-prompt mode. Resolved through core.runtime_paths (checkout
-``src/bot_config.json``), never the launch cwd. Not Discord-specific.
+``src/data/config/runtime_config.json``), never the launch cwd. Not Discord-specific.
+Existing ``src/bot_config.json`` stays authoritative until offline migration.
 """
 
 import os
 from typing import Dict, Any
 from pathlib import Path
 
-class BotConfig:
-    """Bot configuration with different operation modes.
+class RuntimeConfig:
+    """Persistent runtime and model settings, separate from shell settings.
 
-    The config file defaults to the canonical checkout path
-    (``src/bot_config.json`` via ``core.runtime_paths``), never the launch
-    cwd: when both a repo-root and a ``src/`` copy exist, the ``src/`` copy
-    wins and the root copy is left untouched (no automatic merge). Pass an
-    explicit ``config_file`` for temporary/isolated use (e.g. tests).
+    Resolved through ``runtime_config_path`` with legacy-path compatibility.
+    Pass ``config_file`` for an isolated store. Unknown keys survive saves.
     """
 
     def __init__(self, config_file=None):
         if config_file is None:
-            from core.runtime_paths import bot_config_path
+            from core.runtime_paths import runtime_config_path
 
-            config_file = bot_config_path()
+            config_file = runtime_config_path()
         self.config_file = Path(config_file)
         self.default_config = {
             "mode": "default",  # default, multi_stage, llm_only, regex_only
@@ -79,6 +77,7 @@ class BotConfig:
             config = self.config
         
         try:
+            self.config_file.parent.mkdir(parents=True, exist_ok=True)
             with open(self.config_file, 'w') as f:
                 json.dump(config, f, indent=2)
         except Exception as e:
@@ -243,17 +242,20 @@ class BotConfig:
         """Get the default system prompt"""
         return """You are Cuttle, an AI-powered development assistant. You help users with coding tasks, automation, debugging, and development workflows. You are knowledgeable about various programming languages, frameworks, and development tools. You provide clear, helpful, and accurate responses while being professional and friendly."""
 
-# Global config instance
-config = BotConfig()
+# Compatibility for external consumers of the old class name.
+BotConfig = RuntimeConfig
 
-def get_config() -> BotConfig:
+# One shared store; aliases never create a second singleton.
+config = RuntimeConfig()
+
+def get_config() -> RuntimeConfig:
     """Get global config instance"""
     return config
 
 def set_mode(mode: str) -> bool:
-    """Set bot operation mode"""
+    """Set runtime operation mode"""
     return config.set_mode(mode)
 
 def get_mode() -> str:
-    """Get current bot operation mode"""
+    """Get current runtime operation mode"""
     return config.get_mode()

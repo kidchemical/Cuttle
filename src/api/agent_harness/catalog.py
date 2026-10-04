@@ -3,8 +3,9 @@
 Roots (first wins for a given id; bundled always preferred)::
 
 1. ``src/api/agent_harness/agents/<id>/`` — shipped connectors
-2. ``CUTTLE_AGENTS_DIR`` (os.pathsep-separated) + ``src/data/harness_agents/``
-3. ``{Cuttle}/.cuttle_global/agents/<id>/`` — instance-level drop-ins
+2. ``CUTTLE_AGENTS_DIR`` (os.pathsep-separated) + legacy ``src/data/harness_agents/``
+3. ``{Cuttle}/.cuttle_global/personal/agents/<id>/`` — install-local drop-ins
+   + ``{Cuttle}/.cuttle_global/agents/<id>/`` — shared instance drop-ins
 4. ``{project}/.cuttle/agents/<id>/`` — project drop-ins (when ``project_path`` given)
 
 Drop-in folders use the same contract as bundled: ``manifest.yaml`` + ``adapter.py``
@@ -43,6 +44,7 @@ _AGENTS_ROOT = Path(__file__).resolve().parent / "agents"
 _CUTTLE_ROOT = Path(__file__).resolve().parents[3]  # .../Cuttle
 _USER_AGENTS_ROOT = _CUTTLE_ROOT / "src" / "data" / "harness_agents"
 _INSTANCE_AGENTS_ROOT = _CUTTLE_ROOT / ".cuttle_global" / "agents"
+_PERSONAL_AGENTS_ROOT = _CUTTLE_ROOT / ".cuttle_global" / "personal" / "agents"
 
 # (manifest, adapter, agent_dir)
 _AgentEntry = Tuple[AgentManifest, AgentAdapter, Path]
@@ -496,7 +498,8 @@ def _discover_global() -> Dict[str, _AgentEntry]:
 
     for root in _env_agent_roots():
         _merge_dropins(root, "user")
-    _merge_dropins(_USER_AGENTS_ROOT, "user")
+    _merge_dropins(_USER_AGENTS_ROOT, "user")  # Legacy packs; offline migration consolidates them.
+    _merge_dropins(_PERSONAL_AGENTS_ROOT, "user")
     # Instance .cuttle_global/agents — skip if it's the same path we already scanned as project later
     if _INSTANCE_AGENTS_ROOT.resolve() != _AGENTS_ROOT.resolve():
         _merge_dropins(_INSTANCE_AGENTS_ROOT, "user")
@@ -640,6 +643,7 @@ def discovery_roots(project_path: Optional[str] = None) -> List[Dict[str, str]]:
     for p in _env_agent_roots():
         rows.append({"source": "user", "path": str(p)})
     rows.append({"source": "user", "path": str(_USER_AGENTS_ROOT)})
+    rows.append({"source": "user", "path": str(_PERSONAL_AGENTS_ROOT)})
     rows.append({"source": "user", "path": str(_INSTANCE_AGENTS_ROOT)})
     for p in _project_agent_roots(project_path):
         rows.append({"source": "project", "path": str(p)})

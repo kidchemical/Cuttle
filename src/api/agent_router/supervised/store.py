@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from core.runtime_paths import runtime_state_path
+
 from api.agent_router.supervised.types import SupervisedTask
 
 _lock = threading.RLock()
@@ -19,8 +21,8 @@ def _repo_root() -> Path:
 
 
 def store_dir() -> Path:
-    d = _repo_root() / "src" / "data" / "workspace" / "supervised_tasks"
-    d.mkdir(parents=True, exist_ok=True)
+    d = runtime_state_path("supervised_tasks", project_root=_repo_root(),
+                           legacy="workspace/supervised_tasks")
     return d
 
 

@@ -22,9 +22,12 @@ Shared project context (rules, inventory, handoff) comes from **Cuttle Brain** �
 | Root | Purpose |
 |---|---|
 | `src/api/agent_harness/agents/<id>/` | **Bundled** first-party connectors (shipped with Cuttle) |
-| `CUTTLE_AGENTS_DIR` (pathsep list) + `src/data/harness_agents/<id>/` | **User / instance** drop-ins |
-| `{Cuttle}/.cuttle/agents/<id>/` | Instance-level drop-ins (same contract) |
+| `CUTTLE_AGENTS_DIR` (pathsep list) + `.cuttle_global/personal/agents/<id>/` | **User / instance** drop-ins |
+| `{Cuttle}/.cuttle_global/agents/<id>/` | Shared instance drop-ins (same contract) |
 | `{project}/.cuttle/agents/<id>/` | **Project** drop-ins (chat project path) |
+
+Legacy `src/data/harness_agents/` packs remain discoverable until the offline
+runtime migration moves them into the personal instance root.
 
 Bundled ids always win — a drop-in cannot shadow `cursor` / `codex` / `muse` /
 `claude` / `opencode` / `antigravity` / `hermes` / `deepseek`. Project drop-ins
@@ -389,7 +392,7 @@ Put the cheap id in `smoke_model` so a forgotten env still does not spend Pro.
 
 1. **Write the folder** — `manifest.yaml` + `adapter.py`. Keep CLI-specific quirks in the adapter.
    Put first-party agents under the bundled root; put experiments / third-party packs under
-   `src/data/harness_agents/` or `{project}/.cuttle/agents/`.
+   `.cuttle_global/personal/agents/` or `{project}/.cuttle/agents/`.
    For a bundled agent, add a declarative installer when an official source exists.
 2. **Inspect the real CLI.** Install it, run `--version`, `--help`, and any `help` subcommand,
    then map its non-interactive prompt, structured output, resume, model, timeout, permission,

@@ -2,7 +2,7 @@
 Map Cuttle chat session + working directory → Muse Code session UUID for --session-id,
 plus the per-chat Muse model preference set from the slash palette.
 
-Stored under src/data/workspace/ (gitignored workspace data). Thread-safe.
+Stored under src/data/sessions/ (gitignored runtime state). Thread-safe.
 """
 
 from __future__ import annotations
@@ -12,6 +12,8 @@ import re
 import threading
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+from core.runtime_paths import runtime_state_path
 
 _lock = threading.Lock()
 
@@ -27,9 +29,8 @@ def _repo_root() -> Path:
 
 
 def _map_file() -> Path:
-    d = _repo_root() / "src" / "data" / "workspace"
-    d.mkdir(parents=True, exist_ok=True)
-    return d / "muse_cli_session_map.json"
+    return runtime_state_path("sessions", "muse_cli_session_map.json", project_root=_repo_root(),
+                              legacy="workspace/muse_cli_session_map.json")
 
 
 def _normalize_session_id(cuttle_session_id: Optional[Any]) -> str:

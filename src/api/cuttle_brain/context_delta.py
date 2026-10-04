@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from core.runtime_paths import runtime_state_path
+
 from api.cuttle_brain.context_compiler import (
     CONTEXT_SCHEMA_VERSION,
     _USER_REQUEST_HEADER,
@@ -55,9 +57,8 @@ def _repo_root() -> Path:
 
 
 def _map_file() -> Path:
-    d = _repo_root() / "src" / "data" / "workspace"
-    d.mkdir(parents=True, exist_ok=True)
-    return d / "context_inject_snapshots.json"
+    return runtime_state_path("brain", "context_inject_snapshots.json", project_root=_repo_root(),
+                              legacy="workspace/context_inject_snapshots.json")
 
 
 def _sid_key(chat_session_id: Any) -> Optional[str]:

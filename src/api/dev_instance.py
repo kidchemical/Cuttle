@@ -34,7 +34,7 @@ RESERVED_PORTS = frozenset({8080, 8000, 8888})
 # Snapshot deny rules: credentials, private/local state, and heavy ignored
 # trees never enter the candidate snapshot.
 _SNAPSHOT_DENY_NAMES = frozenset({
-    ".env", "settings.json", "GLOBAL.ini", "bot_config.json",
+    ".env", "settings.json", "GLOBAL.ini", "bot_config.json", "runtime_config.json",
 })
 _SNAPSHOT_DENY_SUFFIXES = (".db", ".sqlite", ".sqlite3", ".pem", ".key", ".p12")
 _SNAPSHOT_DENY_DIRNAMES = frozenset({

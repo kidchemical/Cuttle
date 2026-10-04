@@ -1,4 +1,4 @@
-"""B2 path contract: BotConfig resolves checkout ``src/bot_config.json``.
+"""Runtime settings path contract, including the former BotConfig alias.
 
 Launch cwd must never select the file: repo-root and ``src/`` cwds resolve
 identically through the production resolver, divergent files stay untouched,
@@ -78,7 +78,8 @@ _PROBE = (
 
 def _canonical(pkgroot: Path) -> Path:
     """Where the production resolver roots the copied package under test."""
-    return pkgroot / "src" / "bot_config.json"
+    legacy = pkgroot / "src" / "bot_config.json"
+    return legacy if legacy.exists() else pkgroot / "src/data/config/runtime_config.json"
 
 
 def _run_probe(pkgroot: Path, cwd: Path) -> dict:
@@ -161,7 +162,8 @@ def test_default_save_reaches_canonical_path_from_both_cwds(tmp_path):
         assert lines["path"] == str(_canonical(pkgroot))
         assert lines["back"] == "Shadow"
     created = sorted(pkgroot.rglob("bot_config.json"))
-    assert created == [pkgroot / "bot_config.json", _canonical(pkgroot)]
+    assert created == [pkgroot / "bot_config.json"]
+    assert _canonical(pkgroot).is_file()
     assert (pkgroot / "bot_config.json").read_bytes() == root_before
     data = json.loads(_canonical(pkgroot).read_text(encoding="utf-8"))
     assert data["agent_name"] == "Shadow"
@@ -246,3 +248,41 @@ def test_settings_routes_use_singleton_file(tmp_path, monkeypatch):
     )
     # Legacy root-style sibling the test never pointed at stays absent.
     assert not (tmp_path / "bot_config.json").exists()
+
+
+def test_runtime_config_migration_preserves_values_and_legacy_root(tmp_path):
+    from core.runtime_data import migrate
+    from core.runtime_paths import runtime_config_path
+    from core.config import RuntimeConfig
+
+    root = tmp_path / "checkout"
+    old = root / "src/bot_config.json"
+    old.parent.mkdir(parents=True)
+    payload = b'{"agent_name":"Custom", "unknown_preference":123}'
+    old.write_bytes(payload)
+    root_copy = root / "bot_config.json"
+    root_copy.write_text('{"agent_name":"Unused legacy"}')
+    assert runtime_config_path(root) == old
+    migrate(root)
+    new = root / "src/data/config/runtime_config.json"
+    assert runtime_config_path(root) == new
+    assert new.read_bytes() == payload
+    assert not old.exists()
+    assert root_copy.read_text() == '{"agent_name":"Unused legacy"}'
+    assert BotConfig is RuntimeConfig
+    cfg = RuntimeConfig(config_file=new)
+    assert cfg.get_agent_name() == "Custom"
+    assert cfg.set_agent_name("Updated")
+    assert json.loads(new.read_text())["unknown_preference"] == 123
+
+
+def test_new_install_read_has_no_filesystem_effects(tmp_path):
+    from core.runtime_paths import runtime_config_path
+    from core.config import RuntimeConfig
+
+    path = runtime_config_path(tmp_path)
+    assert path == tmp_path / "src/data/config/runtime_config.json"
+    cfg = RuntimeConfig(config_file=path)
+    assert not path.parent.exists()
+    assert cfg.set_agent_name("New installation")
+    assert RuntimeConfig(config_file=path).get_agent_name() == "New installation"

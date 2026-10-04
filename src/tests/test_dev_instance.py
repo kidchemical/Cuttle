@@ -130,6 +130,7 @@ def test_snapshot_excludes_personal_and_fails_symlink(tiny_repo):
 def test_snapshot_excludes_secrets(tiny_repo):
     (tiny_repo / ".env").write_text("K=v\n", encoding="utf-8")
     (tiny_repo / "s.db").write_text("x", encoding="utf-8")
+    (tiny_repo / "runtime_config.json").write_text('{"sentinel": true}\n', encoding="utf-8")
     (tiny_repo / "bot_config.json").write_text('{"sentinel": true}\n',
                                                 encoding="utf-8")
     _git("add", "-A", cwd=tiny_repo)
@@ -138,6 +139,7 @@ def test_snapshot_excludes_secrets(tiny_repo):
     assert ".env" not in rels
     assert "s.db" not in rels
     assert "bot_config.json" not in rels
+    assert "runtime_config.json" not in rels
     assert "src/mod.py" in rels
     assert "tracked.txt" in rels
 

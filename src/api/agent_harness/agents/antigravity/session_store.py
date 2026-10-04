@@ -7,14 +7,15 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
+from core.runtime_paths import runtime_state_path
+
 _lock = threading.Lock()
 
 
 def _map_file() -> Path:
     root = Path(__file__).resolve().parents[5]
-    directory = root / "src" / "data" / "workspace"
-    directory.mkdir(parents=True, exist_ok=True)
-    return directory / "antigravity_cli_session_map.json"
+    return runtime_state_path("sessions", "antigravity_cli_session_map.json",
+                              project_root=root, legacy="workspace/antigravity_cli_session_map.json")
 
 
 def _key(cwd: str, cuttle_session_id: Any) -> str:

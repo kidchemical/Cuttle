@@ -1,8 +1,8 @@
 """
 Home automation presets (Govee) — themes, time-of-day schedule, auto-apply state.
 
-Schedule file: src/data/home_automation_schedule.json
-Auto state:    src/data/home_automation_auto_state.json
+Schedule file: src/data/home_automation/schedule.json
+Auto state:    src/data/home_automation/auto_state.json
 """
 
 from __future__ import annotations
@@ -14,13 +14,15 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional
 
+from core.runtime_paths import home_automation_path, runtime_state_path
+
 _SRC = Path(__file__).resolve().parent.parent
-DATA_DIR = _SRC / "data"
-SCHEDULE_PATH = DATA_DIR / "home_automation_schedule.json"
-AUTO_STATE_PATH = DATA_DIR / "home_automation_auto_state.json"
-HEARTBEAT_PATH = DATA_DIR / "home_automation_daemon_heartbeat.json"
-DEVICES_PATH = DATA_DIR / "home_automation_devices.json"
-DEVICES_EXAMPLE_PATH = DATA_DIR / "home_automation_devices.example.json"
+DATA_DIR = runtime_state_path("home_automation", project_root=_SRC.parent)
+SCHEDULE_PATH = home_automation_path("schedule.json", _SRC.parent)
+AUTO_STATE_PATH = home_automation_path("auto_state.json", _SRC.parent)
+HEARTBEAT_PATH = home_automation_path("daemon_heartbeat.json", _SRC.parent)
+DEVICES_PATH = home_automation_path("devices.json", _SRC.parent)
+DEVICES_EXAMPLE_PATH = DATA_DIR / "devices.example.json"
 
 # Must match ``run_home_automation_loop`` in cuttle_daemon.py (single source for UI countdown).
 DAEMON_SCHEDULE_CHECK_INTERVAL_SEC = 60
@@ -34,7 +36,7 @@ GOVEE_V1_SPACING_SEC = 0.45
 GOVEE_V2_SCENE_GAP_SEC = 7.5
 
 # One burst at a time (theme apply vs multi-device status) across Flask and the Cuttle daemon.
-GOVEE_API_BATCH_LOCK_PATH = DATA_DIR / "govee_api_batch.lock"
+GOVEE_API_BATCH_LOCK_PATH = home_automation_path("govee_api_batch.lock", _SRC.parent)
 # Status polls should not sit on the lock for minutes while a theme apply runs.
 GOVEE_STATUS_LOCK_WAIT_SEC = 8.0
 

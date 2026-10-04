@@ -203,7 +203,7 @@ flowchart LR
 | `.cuttle/` | Cuttle repository project configuration ([reference](.cuttle/README.md)). |
 | `.cuttle_global/personal/` | Install-local global overlay (gitignored). |
 | `.cuttle/personal/` | Install-local project overlay (gitignored). Rule/doc Markdown appends a delta; supported YAML overlays replace by basename. See the [overlay contract](.cuttle_global/personal/README.md). |
-| `src/data/home_automation_devices.json` | Optional Govee device inventory (gitignored); copy from `.example.json` |
+| `src/data/home_automation/devices.json` | Optional Govee device inventory (gitignored); copy from `.example.json` |
 | `_personal/` | Your dogfood skills and docs (gitignored); not part of the product |
 | `/wizard_page.html` | Setup status and Doctor health checks |
 | `/settings_page.html` | API keys and preferences in the UI |

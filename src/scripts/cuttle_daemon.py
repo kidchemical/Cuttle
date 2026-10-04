@@ -1331,6 +1331,17 @@ def run_daemon():
     signal.signal(signal.SIGINT, handler)
     signal.signal(signal.SIGTERM, handler)
 
+    # Migrate storage only before any owned services or scheduler threads start.
+    # An already-running host or destination conflict leaves legacy state in use.
+    try:
+        from core.runtime_data import migrate_when_stopped
+
+        moved = migrate_when_stopped(PROJECT_ROOT)
+        if moved:
+            print(f"[DAEMON] Migrated {len(moved)} runtime data paths to owned folders")
+    except Exception as e:
+        print(f"[DAEMON] Runtime data migration skipped; retaining legacy paths: {e}")
+
     # Start system tray icon (runs in separate thread)
     tray_thread = threading.Thread(target=_setup_tray, daemon=False)
     tray_thread.start()

@@ -52,14 +52,9 @@ def _remote_agent_project_map() -> dict:
         pass
     return mapping
 
-# Paths for self-signed certificate
-CERT_DIR = actual_project_root / ".cuttle" / "certs"
-CERT_FILE = CERT_DIR / "localhost.pem"
-KEY_FILE = CERT_DIR / "localhost-key.pem"
-
 def generate_self_signed_cert(lan_ip: Optional[str] = None, force_regenerate: bool = False):
     """Generate or reuse a self-signed SSL certificate for localhost (+ optional LAN IP)."""
-    CERT_DIR.mkdir(parents=True, exist_ok=True)
+    CERT_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
 
     if not force_regenerate and not cert_needs_regeneration(CERT_FILE, lan_ip):
         print("[HTTPS] Using existing SSL certificate.")
@@ -147,6 +142,13 @@ for _env_path in _env_candidates:
         break
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
+
+# Paths for self-signed certificate
+from core.runtime_paths import secrets_dir as _secrets_dir
+
+CERT_DIR = _secrets_dir(actual_project_root)
+CERT_FILE = CERT_DIR / "localhost.pem"
+KEY_FILE = CERT_DIR / "localhost-key.pem"
 
 from api.chat_status_phases import (
     PHASE_LLM,

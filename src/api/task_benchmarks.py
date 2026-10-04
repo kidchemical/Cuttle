@@ -10,7 +10,7 @@ Sources, in preference order:
 Costs from different benchmarks are on different scales (task size, harness),
 so a ``/cost`` table uses **one** benchmark: the one covering the most rows.
 
-Cache: ``src/data/workspace/task_benchmarks_cache.json`` (24h TTL).
+Cache: ``src/data/cache/task_benchmarks_cache.json`` (24h TTL).
 """
 
 from __future__ import annotations
@@ -25,6 +25,8 @@ import urllib.request
 import zipfile
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
+
+from core.runtime_paths import runtime_cache_path
 
 EPOCH_ZIP_URL = "https://epoch.ai/data/benchmark_data.zip"
 SWEBENCH_URL = (
@@ -94,9 +96,7 @@ _mem: Dict[str, Any] = {}
 
 
 def _cache_path() -> Path:
-    d = Path(__file__).resolve().parents[2] / "src" / "data" / "workspace"
-    d.mkdir(parents=True, exist_ok=True)
-    return d / "task_benchmarks_cache.json"
+    return runtime_cache_path("task_benchmarks_cache.json", project_root=Path(__file__).resolve().parents[2])
 
 
 def normalize_effort(value: Any) -> str:

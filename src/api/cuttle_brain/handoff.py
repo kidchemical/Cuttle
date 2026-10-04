@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from core.runtime_paths import runtime_state_path
+
 
 _lock = threading.Lock()
 
@@ -24,9 +26,8 @@ def _repo_root() -> Path:
 
 
 def _map_file() -> Path:
-    d = _repo_root() / "src" / "data" / "workspace"
-    d.mkdir(parents=True, exist_ok=True)
-    return d / "harness_last_agent_map.json"
+    return runtime_state_path("sessions", "harness_last_agent_map.json", project_root=_repo_root(),
+                              legacy="workspace/harness_last_agent_map.json")
 
 
 def _sid_key(chat_session_id: Any) -> Optional[str]:
