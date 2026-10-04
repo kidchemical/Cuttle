@@ -33,7 +33,7 @@ When the user asks you to **create, register, or set up a Cuttle project**
 
 **Convention:** every Cuttle-registered project owns its own `.cuttle/` tree.
 Cuttle’s repo (`/path/to/Cuttle/.cuttle/`, shared config in `/path/to/Cuttle/.cuttle_global/`) is the **master layout + docs** —
-other projects (Escape Purgatory, etc.) mirror that shape with their own commands,
+other registered projects mirror that shape with their own commands,
 actions, and runbooks. They do **not** inherit Cuttle’s actions at runtime.
 
 For any registered project root:

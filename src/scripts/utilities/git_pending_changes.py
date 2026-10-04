@@ -1602,6 +1602,21 @@ def commit_pending_changes(
         )
 
     # Drop other staged paths so a partial commit cannot pick them up.
+    # Preserve explicitly staged executable-bit changes. With core.filemode=false,
+    # reset followed by add would otherwise silently erase them.
+    mode_changes = {}
+    raw_index = git_run(["diff", "--cached", "--raw", "-z", "--no-renames"], root)
+    if raw_index.returncode != 0:
+        raise RuntimeError((raw_index.stderr or "Could not read staged modes").strip())
+    records = (raw_index.stdout or "").split("\0")
+    selected_paths = {str(f.get("path") or "") for f in files_to_commit}
+    for i in range(0, len(records) - 1, 2):
+        fields = records[i].split()
+        rel = records[i + 1]
+        if len(fields) == 5 and rel in selected_paths:
+            before, after = fields[0].lstrip(":"), fields[1]
+            if before in ("100644", "100755") and after in ("100644", "100755") and before != after:
+                mode_changes[rel] = after
     reset_r = git_run(["reset", "HEAD", "--", "."], root, timeout=30.0)
     if reset_r.returncode != 0:
         raise RuntimeError((reset_r.stderr or reset_r.stdout or "git reset failed").strip())
@@ -1627,6 +1642,11 @@ def commit_pending_changes(
         _stage_repo_paths(root, path_args)
     else:
         _git_add_all(root, timeout=120.0)
+
+    for rel, mode in mode_changes.items():
+        changed = git_run(["update-index", "--chmod=" + ("+x" if mode == "100755" else "-x"), "--", rel], root)
+        if changed.returncode != 0:
+            raise RuntimeError((changed.stderr or "Could not preserve staged mode").strip())
 
     # Confirm index has something to commit.
     staged = git_run(["diff", "--cached", "--name-only"], root)

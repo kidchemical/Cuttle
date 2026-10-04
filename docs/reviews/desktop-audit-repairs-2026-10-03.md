@@ -158,3 +158,33 @@ is not a claim that arbitrary edits to the live Flask/auth/restart implementatio
 are safe. Self-development validation must include cached-old/new-module
 transitions and isolated candidate testing. Existing hosting-process recovery
 still requires the native command/owner endpoint once to load these changes.
+
+## Second audit cross-check
+
+Re-read both complete Desktop audits against committed snapshot `5b8840d1` and
+current source. The 26 documentation dispositions and eight confirmed scope
+loader gaps still map to implemented repairs. Two omissions were corrected:
+
+- The five Linux executable modes had reverted to 100644 in the latest commit.
+  Restored staged 100755 modes for startup, Host/Client launchers and the voice/main
+  mobile Gradle wrappers. The Git UI commit helper now preserves selected,
+  explicitly staged executable-bit changes through its reset/add sequence when
+  core.filemode=false. A disposable repository regression proves the final
+  committed tree mode, not just the working filesystem permission.
+- Two global documentation/skill references still named an unrelated personal
+  project. Removed those remaining named examples.
+
+Fresh audit-focused gate: **89 passed** (loaders, integration gating, updater
+preservation, ComfyUI configuration, pairing, commands, skills, restart cards and
+architecture). Git pending-change suite: **31 passed**, including preservation of
+staged executable modes and recovery from partially staged deletions.
+
+Outstanding acceptance evidence remains: clean dependency installation, Windows
+PowerShell/Electron builds, Android APK/device and trusted-proxy connectivity,
+external Tailscale CLI/proxy behavior, actual guest MCP and GPU/service workflows.
+In particular documentation finding 20 has a corrected supported transport
+contract, but that contract has not been demonstrated on a physical Android
+companion. Do not label these live-validation targets complete. Optional wrapper
+recommendations retain supported explicit entry points rather than deleting them
+solely because there is no internal caller. No release/push/restart was performed
+by this second cross-check.

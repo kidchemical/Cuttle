@@ -71,8 +71,8 @@ Emit from the agent reply — Cuttle rewrites to cards; clicks hit Flask with **
 [action-forms.md](action-forms.md). Agents should open that before emitting a form.
 
 Also: Cursor skill `cuttle-project-commands`.
-Live example project: Escape Purgatory (`.cuttle/commands/discord-update.md`,
-`.cuttle/actions/discord-post.yaml`, `.cuttle/docs/discord.md`).
+Project commands, actions and runbooks belong to the registered project's own
+`.cuttle/` tree; install-local workflows belong in its personal overlay.
 
 ### Codex saved usage resets
 

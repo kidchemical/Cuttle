@@ -924,3 +924,21 @@ def test_selected_commit_recovers_partially_staged_deletion(tmp_path):
     assert '.cuttle/actions/workflow.yaml' not in git('ls-files').stdout
     assert git('show', 'HEAD:.cuttle/personal/README.md').stdout == 'new'
     assert '.gitignore' in git('status', '--porcelain').stdout
+
+
+def test_commit_preserves_explicit_staged_executable_mode(tmp_path):
+    from scripts.utilities.git_pending_changes import commit_pending_changes
+    repo = tmp_path / 'repo'
+    repo.mkdir()
+    def git(*args):
+        return subprocess.run(['git', *args], cwd=repo, capture_output=True, text=True, check=True)
+    git('init')
+    git('config', 'user.name', 'Test')
+    git('config', 'user.email', 'test@example.com')
+    git('config', 'core.filemode', 'false')
+    (repo / 'launch.sh').write_text('#!/bin/sh\n')
+    git('add', '.')
+    git('commit', '-m', 'initial')
+    git('update-index', '--chmod=+x', 'launch.sh')
+    commit_pending_changes(str(repo), 'Make launcher executable', paths=['launch.sh'])
+    assert git('ls-tree', 'HEAD', 'launch.sh').stdout.startswith('100755 ')
