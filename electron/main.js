@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, dialog, Tray, ipcMain, nativeImage } = require('electron');
+const { app, BrowserWindow, Menu, dialog, Tray, ipcMain, nativeImage, screen } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -932,6 +932,86 @@ async function applyDesktopUpdate() {
     return { ok: true };
 }
 
+/**
+ * Restore the last window position, but only if it is still on a connected
+ * display. Otherwise fall back to a centered default so the window never
+ * opens straddling two monitors after a display layout change.
+ */
+function resolveWindowBounds() {
+    const fallback = { width: 1400, height: 900, center: true, maximized: false };
+    let saved = null;
+    try {
+        saved = loadDesktopConfig().windowBounds || null;
+    } catch (_) {
+        saved = null;
+    }
+    let displays = [];
+    try {
+        displays = screen.getAllDisplays() || [];
+    } catch (_) {
+        displays = [];
+    }
+    const primary = (() => {
+        try {
+            return screen.getPrimaryDisplay();
+        } catch (_) {
+            return displays[0] || null;
+        }
+    })();
+    const clampTo = (area, w, h) => ({
+        width: Math.max(800, Math.min(Number(w) || fallback.width, area ? area.width : 1400)),
+        height: Math.max(600, Math.min(Number(h) || fallback.height, area ? area.height : 900)),
+    });
+    if (saved && Number.isFinite(saved.width) && Number.isFinite(saved.height) &&
+        Number.isFinite(saved.x) && Number.isFinite(saved.y)) {
+        // Visible if any display workArea contains the saved top-left corner
+        // (with a small tolerance so title-bar grabs still work).
+        const visible = displays.some((d) => {
+            const a = d.workArea || d.bounds;
+            if (!a) return false;
+            return saved.x >= a.x - 50 && saved.x <= a.x + a.width - 50 &&
+                saved.y >= a.y - 50 && saved.y <= a.y + a.height - 50;
+        });
+        if (visible) {
+            const hostArea = (() => {
+                const host = displays.find((d) => {
+                    const a = d.workArea || d.bounds;
+                    return saved.x >= a.x && saved.x < a.x + a.width &&
+                        saved.y >= a.y && saved.y < a.y + a.height;
+                });
+                return host ? (host.workArea || host.bounds) : null;
+            })();
+            const size = clampTo(hostArea, saved.width, saved.height);
+            return { x: Math.round(saved.x), y: Math.round(saved.y), ...size, maximized: !!saved.maximized };
+        }
+    }
+    const area = primary ? (primary.workArea || primary.bounds) : null;
+    const size = clampTo(area, fallback.width, fallback.height);
+    return { ...size, center: true, maximized: false };
+}
+
+let _saveBoundsTimer = null;
+/** Persist normal (unmaximized) bounds, debounced, so reopen restores position. */
+function scheduleSaveWindowBounds() {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (_saveBoundsTimer) clearTimeout(_saveBoundsTimer);
+    _saveBoundsTimer = setTimeout(() => {
+        _saveBoundsTimer = null;
+        try {
+            if (!mainWindow || mainWindow.isDestroyed()) return;
+            if (mainWindow.isMinimized() || mainWindow.isFullScreen()) return;
+            const maximized = mainWindow.isMaximized();
+            // getBounds while maximized reports the fullscreen rect — keep the
+            // last normal bounds and just remember the maximized flag.
+            const prev = loadDesktopConfig().windowBounds || {};
+            const patch = maximized
+                ? { ...prev, maximized: true }
+                : { ...mainWindow.getBounds(), maximized: false };
+            saveDesktopConfig({ windowBounds: patch });
+        } catch (_) {}
+    }, 400);
+}
+
 // Create the main application window
 async function createWindow(opts = {}) {
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -940,9 +1020,13 @@ async function createWindow(opts = {}) {
         return;
     }
 
+    const bounds = resolveWindowBounds();
     mainWindow = new BrowserWindow({
-        width: 1400,
-        height: 900,
+        ...(Number.isFinite(bounds.x) ? { x: bounds.x } : {}),
+        ...(Number.isFinite(bounds.y) ? { y: bounds.y } : {}),
+        width: bounds.width,
+        height: bounds.height,
+        ...(bounds.center ? { center: true } : {}),
         minWidth: 800,
         minHeight: 600,
         frame: false,
@@ -1074,10 +1158,32 @@ async function createWindow(opts = {}) {
         }
     });
 
-    mainWindow.once('ready-to-show', () => { mainWindow.show(); });
+    mainWindow.once('ready-to-show', () => {
+        mainWindow.show();
+        if (bounds.maximized && !mainWindow.isMaximized()) {
+            try { mainWindow.maximize(); } catch (_) {}
+        }
+    });
+    mainWindow.on('resize', scheduleSaveWindowBounds);
+    mainWindow.on('move', scheduleSaveWindowBounds);
+    mainWindow.on('maximize', scheduleSaveWindowBounds);
+    mainWindow.on('unmaximize', scheduleSaveWindowBounds);
 
     // Minimize to tray on close instead of quitting
+    // (flush bounds synchronously — the debounced saver may not fire on quit)
     mainWindow.on('close', (e) => {
+        try {
+            if (_saveBoundsTimer) { clearTimeout(_saveBoundsTimer); _saveBoundsTimer = null; }
+            if (!mainWindow.isMinimized() && !mainWindow.isFullScreen()) {
+                const maximized = mainWindow.isMaximized();
+                const prev = loadDesktopConfig().windowBounds || {};
+                saveDesktopConfig({
+                    windowBounds: maximized
+                        ? { ...prev, maximized: true }
+                        : { ...mainWindow.getBounds(), maximized: false },
+                });
+            }
+        } catch (_) {}
         if (!app.isQuitting) {
             e.preventDefault();
             mainWindow.hide();
