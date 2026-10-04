@@ -295,6 +295,10 @@ async def run_codex_turn_app_server(
         "writing_buf": "",
         "snapshot_at": 0.0,
     }
+    from api.agent_harness.questions import QuestionBridge
+    from scripts.utilities.codex_cli_tool import _capture_codex_question
+
+    questions = QuestionBridge()
     messages: List[str] = []
     reap_handle: List[Optional[asyncio.TimerHandle]] = [None]
 
@@ -425,6 +429,20 @@ async def run_codex_turn_app_server(
 
     def _handle_server_request(msg: Dict[str, Any]) -> None:
         method = str(msg.get("method") or "")
+        params = msg.get("params") if isinstance(msg.get("params"), dict) else {}
+        if method.rsplit("/", 1)[-1] in ("requestUserInput", "requestUserInputAsync", "request_user_input"):
+            if st["thread_id"] and params.get("threadId") not in (None, st["thread_id"]):
+                rpc.respond(msg.get("id"), error={"code": -32000, "message": "Input request belongs to another session"})
+                return
+            if st["turn_id"] and params.get("turnId") not in (None, st["turn_id"]):
+                rpc.respond(msg.get("id"), error={"code": -32000, "message": "Stale input request"})
+                return
+            questions.capture(params)
+            rpc.respond(msg.get("id"), error={"code": -32000, "message":
+                "Input deferred to a Cuttle form. No user answer supplied; resume on the next turn."})
+            activity.emit("Preparing Cuttle question form…", force=True)
+            _finish_connection()
+            return
         if method in _APPROVAL_METHODS or "approval" in method.lower():
             rpc.respond(msg.get("id"), {"decision": "accept"})
             return
@@ -488,6 +506,12 @@ async def run_codex_turn_app_server(
 
         if method in ("item/started", "item/completed"):
             item = params.get("item") if isinstance(params.get("item"), dict) else {}
+            if st["turn_id"] and params.get("turnId") not in (None, st["turn_id"]):
+                return
+            if _capture_codex_question(questions, item, complete=method == "item/completed"):
+                activity.emit("Preparing Cuttle question form…", force=True)
+                _finish_connection()
+                return
             itype = str(item.get("type") or "")
             if itype == "userMessage":
                 if method == "item/completed":
@@ -655,6 +679,10 @@ async def run_codex_turn_app_server(
             "timed_out": run.timed_out,
             "cancelled": run.cancelled,
         }
+
+    if questions.pending:
+        return {**base, "success": True, "output": questions.render(display),
+                "error": None, "awaiting_input": bool(questions.questions)}
 
     if st["turn_id"] is None:
         stderr = (run.stderr if run is not None else b"").decode("utf-8", errors="replace").strip()

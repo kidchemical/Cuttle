@@ -484,3 +484,29 @@ Put the cheap id in `smoke_model` so a forgotten env still does not spend Pro.
 Adapters and the kernel are imported by Flask (production mode, no reloader), so Python changes go
 live only after a **daemon-owned** restart (`/restart graceful` or the `flask.restart` action card).
 Never `taskkill` `web_chat_api` from an agent hosted by that Flask.
+
+
+## Native questions and user input
+
+Global rules describe Cuttle forms, never vendor tool names. Native tool/event
+recognition belongs to each adapter (or its CLI transport helper). Use
+`api.agent_harness.questions.QuestionBridge` to normalize captured arguments,
+deduplicate repeated events and render one resuming Q&A card. Never fabricate an
+answer, cancellation or approval when the native UI is unavailable. Malformed
+recognized payloads must yield a visible recovery error.
+
+Server transports stop their owned connection on a recovered question, preserving
+the saved session id. The native RPC receives a deferral error, not an answer.
+Normal chat persistence/rewrite delivers the card; the existing form submission
+sends the answer as a new user turn and resumes that session. No vendor RPC or
+process must remain waiting for a picker that Cuttle cannot display. User Stop
+still takes precedence and must never become a question or fallback run.
+
+Supported recovery paths: Cursor stream-json AskQuestion; Codex app-server
+requestUserInput and exported input-tool items; Muse serve input-tool items and
+input RPCs, plus exported exec tool/lifecycle payloads; OpenCode exported question
+parts; Claude print mode disables AskUserQuestion and recovers attempted calls
+when permission_denials includes their arguments. CLI versions that do not export
+question arguments cannot be reconstructed: use the form instruction and the
+vendor's native-tool disabling mechanism where available. Test vendor recognition
+with fake processes/event fixtures, never paid CLI calls in ordinary tests.

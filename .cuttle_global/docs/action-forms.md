@@ -98,10 +98,17 @@ Several questions, one card:
 </cuttle_action_form>
 ```
 
-**Never call Cursor's `AskQuestion` tool in Cuttle chat.** Headless `agent -p` has no
-picker UI, so the tool returns "skipped" instantly. Cuttle bridges it into a card
-as a safety net (`src/api/cursor_question_bridge.py`), but emit the form yourself
-and never tell the user they skipped a question.
+**Use Cuttle forms for user input, never native harness question/input tools.**
+Native picker UIs are not the Cuttle chat UI. Emit the card yourself and end the
+turn; unavailable input is neither an answer nor user cancellation.
+
+Harness adapters recover supported native question events into the shared form
+contract (`src/api/agent_harness/questions.py`). Server transports close the native
+request without supplying an answer and return the card through normal chat
+persistence. Submission starts the next turn using the saved native session;
+Cuttle does not retain a live input RPC across turns. Invalid payloads produce a
+visible recovery error. Vendor event recognition belongs to harness integrations,
+not global rules. See `src/api/agent_harness/ADDING_AN_AGENT.md`.
 
 **Never invent** placeholder actions for Q&A. These all fail or used to fail at click time:
 

@@ -215,8 +215,14 @@ def _parse_claude_json(raw: str) -> Dict[str, Any]:
         elif isinstance(err, dict) and err.get("message"):
             errors.append(str(err.get("message")))
 
+    from api.agent_harness.questions import QuestionBridge
+
+    questions = QuestionBridge()
+    for denied in obj.get("permission_denials") or []:
+        if isinstance(denied, dict) and denied.get("tool_name") == "AskUserQuestion":
+            questions.capture(denied.get("tool_input"))
     return {
-        "output": output or (text if not is_error else ""),
+        "output": questions.render(output or (text if not is_error else "")),
         "session_id": session_id,
         "usage": usage,
         "errors": errors,
@@ -303,6 +309,8 @@ class ClaudeCliTool:
             "-p",
             "--output-format",
             "json",
+            "--disallowedTools",
+            "AskUserQuestion",
             "--permission-mode",
             permission_mode or "bypassPermissions",
         ]

@@ -69,6 +69,7 @@ cd src && ../.venv/bin/python -m api.achievements reset
 | GET | `/api/experimental/flags` | authenticated |
 | POST | `/api/experimental/flags/<flag_id>` | owner |
 | POST | `/api/experimental/flags/reset` | owner |
+| GET | `/achievements_page.html` | authenticated |
 | GET | `/api/achievements` | authenticated |
 | GET | `/api/achievements/pending` | authenticated |
 | POST | `/api/achievements/<id>/ack` | authenticated |
@@ -78,17 +79,47 @@ Achievements HTTP routes answer `200 {success: false, disabled: true}` while its
 
 ---
 
+## Design practice for new Cuttle features
+
+When adding a new Cuttle capability, prefer shipping it as an opt-in experimental
+feature first. This is a default development practice, not a requirement for every
+change: bug fixes, established behavior, and capabilities ready for general use
+may ship directly. Record the reason when bypassing the experimental stage.
+
+Experimental status governs rollout, not UI placement. Settings → Experimental
+is a registry-driven enable/disable surface, with feature descriptions and rollout
+metadata. Do not put feature workflows, dashboards, trophy cases, or controls
+for operating a feature in that tab.
+
+Choose the surface that fits the feature:
+
+- A standalone tool or content view can register a Cuttle App in the Apps launcher.
+- Feature configuration can extend an appropriate Settings tab or introduce one.
+- A small enhancement can integrate with its existing surface and need neither
+  an App nor a settings tab. Do not create empty surfaces just for consistency.
+
+Keep feature logic in its owned API package and expose library/agent CLI verbs
+when agents should operate it. Gate behavior with the registry flag; respect the
+process kill switch. A discoverable App may show a disabled state with a link to
+Experimental settings, while its functionality remains gated.
+
 ## Adding a new experimental feature
 
-1. Add one row in `src/api/experimental/features.py`.
-2. Gate the code: `if not is_enabled("your_flag"): return …`.
-3. Nothing else — the Settings tab, the CLI, and `flags_payload()` all read the
-   registry.
+1. Add one row in `src/api/experimental/features.py`, normally default-off.
+2. Gate behavior with `api.experimental.is_enabled("your_flag")`.
+3. Put feature UI in its own appropriate surface, following the design practice
+   above. Register an App with the shell's canonical rail catalog if appropriate;
+   start it stashed so it appears in Apps and can be pinned by the user.
+4. The generic Experimental tab and flag CLI automatically read the registry.
+   Do not add a feature-specific toggle route or bespoke block to that tab.
+5. Document agent operations, tests, and teardown in the feature owner.
 
-Never add a flag-specific settings route or UI block. That is the whole point of
-the registry.
+## Achievements App
 
----
+Open **Apps → Achievements** for the trophy case, unlock summary, and progress
+rescan. It starts unpinned; Apps can pin it to the blade bar. When disabled, the
+App shows an explanation and a link to Settings → Experimental. Existing progress
+is retained. Turning Achievements off does not erase unlocks.
 
 ## Adding an achievement
 
@@ -140,7 +171,7 @@ no restart, no real unlocks. The file also opens directly from disk
 | Progress/unlock state | `src/data/db/achievements.db` via `api/achievements/store.py` |
 | Turn seam | `on_turn_saved()` in `src/api/chat_turn_persist.py` |
 | Client slices | `src/web/js/achievements.js`, `src/web/js/celebrate.js` |
-| Trophy grid | `settings_page.html` → `#panel-experimental` → `#achievementsGrid` |
+| Trophy grid | `achievements_page.html` + `js/achievements_page.js` + `css/achievements_page.css` |
 | Settings storage | `experimental_flags` key in `src/settings.json` |
 
 Flag CLI commands emit JSON and return a nonzero exit code on errors. Toggles made by a separate local agent process become visible to Flask without a restart. The kill switch still overrides stored toggles.

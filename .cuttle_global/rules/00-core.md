@@ -16,10 +16,10 @@ how-to lives in `.cuttle_global/docs/`. Rules for the Cuttle repo itself (not gu
    tracked file as a delta; other personal files replace by basename.
 2. User-visible choices, confirmations, watches, and progress → `cuttle_action_form`
    (`action-forms.md`). Side effects need real allowlisted ids (`discord.post`,
-   `flask.restart`, `git.push`, …). **Asking the user a question:** never call the
-   `AskQuestion` tool in Cuttle chat — headless it returns "skipped" with nothing shown.
-   Emit one Q&A `<cuttle_action_form>` with `"resume": true` and end the turn; never tell
-   the user they "skipped". On preference cards omit `action` entirely; never invent
+   `flask.restart`, `git.push`, …). **Asking the user a question:** emit one Q&A
+   `<cuttle_action_form>` with `"resume": true`, then end the turn. Do not use native
+   harness question or input tools. Never treat unavailable input as a user answer
+   or cancellation. On preference cards omit `action` entirely; never invent
    `none` / `noop` / `__agent_reply__`. Mesh watch cards need overall + per-worker `bars`.
 3. Discord reads → `python -m api.discord_cli`, posts stay on `discord.post` (`discord.md`).
 4. Forge / issue tracker → the enabled integration runbook for the active project.

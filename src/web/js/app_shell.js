@@ -589,6 +589,7 @@ const CANONICAL_RAIL_ITEM_ORDER = [
     'nav-jobs',
     'nav-dashboards',
     'nav-automation',
+    'nav-achievements',
     'nav-apps',
 ];
 // 'nav-tools' retired from the rail (static CLI reference; the page itself
@@ -600,9 +601,9 @@ const CANONICAL_RAIL_FOOTER_ORDER = ['nav-account', 'nav-notifications', 'nav-wo
 // The Apps launcher is the way back to every stashed app, so it can never be removed.
 const RAIL_LOCKED_IDS = new Set(['nav-apps']);
 // Cuttle web apps that live in the Apps grid (not the blade bar) until the user pins them.
-const DEFAULT_RAIL_HIDDEN = ['nav-tasks', 'nav-automation'];
+const DEFAULT_RAIL_HIDDEN = ['nav-tasks', 'nav-automation', 'nav-achievements'];
 // Bump when defaults change; saved layouts below this version get DEFAULT_RAIL_HIDDEN merged in once.
-const RAIL_LAYOUT_VERSION = 4;
+const RAIL_LAYOUT_VERSION = 5;
 
 const DEFAULT_LAYOUT = {
     rail_items: CANONICAL_RAIL_ITEM_ORDER.filter(id => !DEFAULT_RAIL_HIDDEN.includes(id)),
@@ -1754,6 +1755,7 @@ const PAGE_TITLES = {
     '/control_panel.html': 'Control Panel',
     '/tools_page.html': 'Tools',
     '/apps_page.html': 'Apps',
+    '/achievements_page.html': 'Achievements',
     '/settings_page.html': 'Settings',
     '/landing_page.html': 'Welcome',
     '/home_automation.html': 'Home Automation',
@@ -4004,7 +4006,9 @@ function migrateUILayout(saved) {
     if (!Array.isArray(saved.rail_hidden)) delete layout.rail_hidden;
     if ((Number(saved.layout_version) || 0) >= RAIL_LAYOUT_VERSION) return { layout, changed: false };
     const hidden = new Set(Array.isArray(saved.rail_hidden) ? saved.rail_hidden : []);
-    DEFAULT_RAIL_HIDDEN.forEach(id => hidden.add(id));
+    // Existing v4 user pins remain intact; only the new App starts stashed.
+    const additions = (Number(saved.layout_version) || 0) >= 4 ? ['nav-achievements'] : DEFAULT_RAIL_HIDDEN;
+    additions.forEach(id => hidden.add(id));
     const known = new Set(CANONICAL_RAIL_ITEM_ORDER);
     layout.rail_hidden = Array.from(hidden).filter(id => known.has(id));
     layout.rail_items = (Array.isArray(saved.rail_items) ? saved.rail_items : CANONICAL_RAIL_ITEM_ORDER)

@@ -339,8 +339,9 @@ except Exception as _experimental_err:
     print(f"[EXPERIMENTAL] Failed to register routes: {_experimental_err}")
 
 try:
-    from api.achievements.routes import achievements_bp
+    from api.achievements.routes import achievements_bp, achievements_pages_bp
     app.register_blueprint(achievements_bp)
+    app.register_blueprint(achievements_pages_bp)
 except Exception as _achievements_err:
     print(f"[ACHIEVEMENTS] Failed to register routes: {_achievements_err}")
 

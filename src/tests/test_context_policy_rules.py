@@ -128,7 +128,7 @@ def test_safety_survives_policy_off_and_shadow_twin(tmp_path):
     env = _env("hello", _guest(tmp_path, global_rules_mode="off"))
     assert "taskkill" in env
     assert "cuttle_confirm" in env
-    assert "AskQuestion" not in env
+    assert "Do not use native\n   harness question or input tools" not in env
     # Shadow with a project safety twin: twin appends, base survives.
     twin = "# Guest safety\n\nGuest confirm marker.\n"
     env = _env("hello", _guest(
@@ -154,3 +154,14 @@ def test_global_rule_body_budget_with_counts(tmp_path, capsys):
     print(f"global_rule_bodies={total} "
           f"files={len(bodies)} envelope={len(env)}")
     assert total < GLOBAL_RULE_BODY_BUDGET
+
+
+@pytest.mark.parametrize("prompt", ["hello", "Fix the native input integration"])
+@pytest.mark.parametrize("project", ["cuttle", "guest"])
+def test_question_rule_is_harness_neutral(prompt, project, tmp_path):
+    path = _cuttle_project(tmp_path) if project == "cuttle" else _guest(tmp_path)
+    env = _env(prompt, path)
+    assert 'Do not use native\n   harness question or input tools' in env
+    core = dict(_compiler.load_global_rules())["00-core.md"]
+    assert "AskQuestion" not in core and "request_user_input" not in core
+    assert '<cuttle_action_form>' in core and '"resume": true' in core

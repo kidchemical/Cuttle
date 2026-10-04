@@ -9,7 +9,8 @@ the feature as an error.
 
 from __future__ import annotations
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, send_from_directory
+from pathlib import Path
 
 from api.achievements import catalog, store, unlocks
 from api.experimental import is_enabled
@@ -85,3 +86,12 @@ def reset_achievements():
         return jsonify(_DISABLED)
     cleared = store.reset()
     return jsonify({"success": True, "cleared": cleared})
+
+achievements_pages_bp = Blueprint('achievements_pages', __name__)
+
+
+@achievements_pages_bp.route('/achievements_page.html')
+@authenticated_required
+def achievements_page():
+    """Feature App shell; the existing data endpoints enforce its flag."""
+    return send_from_directory(Path(__file__).resolve().parents[2] / 'web', 'achievements_page.html')

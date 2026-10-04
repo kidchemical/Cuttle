@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="css/shared_navigation.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/landing_page.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/compact_page.css?v=20260814playBtn">
-    <link rel="stylesheet" href="css/settings_page.css?v=20261001tabs">
+    <link rel="stylesheet" href="css/settings_page.css?v=20261003achApp">
 </head>
 <body class="compact-shell-page" data-page="settings">
     <div class="page-content">
@@ -246,7 +246,8 @@
 
             <section class="settings-panel" id="panel-experimental" role="tabpanel" aria-labelledby="tab-experimental" tabindex="0" hidden>
             <div class="settings-intro" style="margin-bottom:16px">
-                Beta and non-default features live here. Everything here is
+                Enable or disable experimental features here. Their tools and content live
+                in Apps or the relevant settings tab. These features are
                 <strong>off unless you turn it on</strong>, can change any time, and
                 removing a flag from Cuttle leaves the rest untouched.
                 Set <code>CUTTLE_EXPERIMENTAL=0</code> in <code>src/.env</code> to
@@ -256,24 +257,6 @@
                 <h3 class="settings-title"><span class="emoji">🧪</span> Features <span class="settings-scope" data-scope="server" title="Stored in settings.json — these apply to every device and client that talks to this Cuttle.">All devices</span></h3>
                 <div id="experimentalFlagList" class="experimental-flag-list">
                     <div class="provider-status">Loading experimental features…</div>
-                </div>
-            </div>
-            <div class="settings-group" id="experimentalAchievementsGroup" hidden>
-                <h3 class="settings-title"><span class="emoji">🏆</span> Achievements <span class="settings-scope" data-scope="server" title="Progress is stored locally on this machine.">Progress: this server</span></h3>
-                <div class="setting-item setting-item--stack">
-                    <div class="setting-label">
-                        <strong>Your unlocks</strong>
-                        <div class="setting-description" id="achievementsSummary">Loading…</div>
-                    </div>
-                    <div class="setting-control setting-control--stack">
-                        <button class="control-button btn-info" onclick="rescanAchievements()">🔄 Rescan progress</button>
-                    </div>
-                </div>
-                <div class="setting-item setting-item--stack">
-                    <div class="setting-label"><strong>Trophy case</strong></div>
-                    <div id="achievementsGrid" class="achievements-grid">
-                        <div class="provider-status">Loading achievements…</div>
-                    </div>
                 </div>
             </div>
             </section>
@@ -512,13 +495,6 @@
     <script src="/js/shared_navigation.js"></script>
     <script src="/js/background_effect_blend.js"></script>
     <script src="/js/toast.js"></script>
-    <!-- Achievements (experimental): the trophy-case grid below uses only the
-         pure helpers; polling is disabled here because the settings page
-         fetches /api/achievements itself. -->
-    <script>window.__CUTTLE_ACHIEVEMENTS_MANUAL = true;</script>
-    <script src="/js/chat_vfx.js?v=20261003vfx1"></script>
-<script src="/js/celebrate.js?v=20261003vfx1"></script>
-    <script src="/js/achievements.js?v=20261003ach1"></script>
     <script src="/js/settings_page_tabs.js?v=20261001tabs"></script>
     <script src="/js/video_background.js?v=20260927blendTarget"></script>
     <script>
@@ -1399,10 +1375,6 @@
                     list.innerHTML += '<div class="provider-status" style="margin-top:12px">'
                         + '⚠️ CUTTLE_EXPERIMENTAL=0 is set — every flag is forced off at the process level.</div>';
                 }
-                const achievementsOn = (d.flags || []).some(f => f.id === 'achievements' && f.enabled);
-                const group = document.getElementById('experimentalAchievementsGroup');
-                if (group) group.hidden = !achievementsOn;
-                if (achievementsOn) loadAchievementsSummary();
             } catch (e) {
                 list.innerHTML = '<div class="provider-status">Could not load experimental features: '
                     + escapeHtml(String(e.message || e)) + '</div>';
@@ -1460,72 +1432,6 @@
                 checkbox.checked = !next;
                 if (toggle) toggle.classList.toggle('active', !next);
                 (window.showToast || alert)('Failed to update ' + flagId + ': ' + (e.message || e), 'error');
-            }
-        }
-
-        async function loadAchievementsSummary() {
-            const el = document.getElementById('achievementsSummary');
-            if (!el) return;
-            try {
-                const r = await fetch('/api/achievements', { cache: 'no-store' });
-                const d = await r.json();
-                if (!d.success) { el.textContent = d.disabled ? 'Disabled.' : (d.error || 'Unavailable'); return; }
-                const next = (d.items || [])
-                    .filter(i => !i.unlocked && i.percent > 0 && !i.hidden)
-                    .sort((a, b) => b.percent - a.percent)[0];
-                el.innerHTML = '<strong>' + (d.unlocked || 0) + ' / ' + (d.total || 0) + '</strong> unlocked'
-                    + (d.unseen ? ' · ' + d.unseen + ' unseen' : '')
-                    + (next ? ' · closest: ' + escapeHtml(next.icon + ' ' + next.title)
-                             + ' (' + next.percent.toFixed(1) + '%)' : '');
-                renderAchievementsGrid(d);
-            } catch (e) {
-                el.textContent = 'Could not load: ' + String(e.message || e);
-            }
-        }
-
-        function renderAchievementsGrid(payload) {
-            const grid = document.getElementById('achievementsGrid');
-            if (!grid) return;
-            const NS = window.CuttleAchievements;
-            const groups = NS ? NS.groupByCategory(payload.items || []) : [];
-            if (!groups.length) { grid.innerHTML = '<div class="provider-status">No achievements.</div>'; return; }
-            const sections = groups.map(function (group) {
-                const cards = group.items.map(function (item) {
-                    const cls = 'achievement-card'
-                        + (item.unlocked ? ' is-unlocked' : '')
-                        + ' rarity-' + escapeHtml(item.rarity || 'common');
-                    const pct = Math.max(0, Math.min(100, Number(item.percent) || 0));
-                    const title = item.hidden && !item.unlocked ? '???' : escapeHtml(item.title);
-                    const blurb = item.hidden && !item.unlocked
-                        ? escapeHtml(item.hint || 'Hidden achievement')
-                        : escapeHtml(item.description || '');
-                    return '<div class="' + cls + '" title="' + blurb + '">'
-                        + '<div class="achievement-icon">' + (item.unlocked ? escapeHtml(item.icon) : (item.hidden ? '❔' : escapeHtml(item.icon))) + '</div>'
-                        + '<div class="achievement-title">' + title + '</div>'
-                        + '<div class="achievement-rarity">' + escapeHtml(item.rarity_label || '') + '</div>'
-                        + (item.unlocked ? '' : '<div class="achievement-bar"><span style="width:' + pct.toFixed(1) + '%"></span></div>')
-                        + '</div>';
-                }).join('');
-                return '<div class="achievements-group">'
-                    + '<h4 class="achievements-group-title">' + escapeHtml(group.label) + '</h4>'
-                    + '<div class="achievements-group-grid">' + cards + '</div></div>';
-            }).join('');
-            grid.innerHTML = sections;
-        }
-
-        async function rescanAchievements() {
-            (window.showToast || alert)('Scanning…', 'info');
-            try {
-                const r = await fetch('/api/achievements/scan', { method: 'POST' });
-                const d = await r.json();
-                if (!d.success) throw new Error(d.error || 'Scan failed');
-                await loadAchievementsSummary();
-                (window.showToast || alert)(
-                    d.unlocked && d.unlocked.length
-                        ? 'Unlocked ' + d.unlocked.length + ' achievement(s)!' : 'Scan complete — nothing new.',
-                    'success');
-            } catch (e) {
-                (window.showToast || alert)('Scan failed: ' + (e.message || e), 'error');
             }
         }
 

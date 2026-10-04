@@ -868,13 +868,47 @@ def _merge_muse_usage(parts: List[Dict[str, Any]]) -> Dict[str, Any]:
     return chosen
 
 
-def _parse_muse_jsonl(raw: str) -> Dict[str, Any]:
+def _capture_muse_question(bridge, item: Dict[str, Any], *, complete: bool = True) -> bool:
+    """Recognize muse's native input tool items; never infer from prose."""
+    name = str(item.get("tool") or item.get("toolName") or item.get("name") or "")
+    if name.rsplit(".", 1)[-1] not in ("request_user_input", "request_user_input_async"):
+        return False
+    args = item.get("args") or item.get("arguments") or item.get("input")
+    # Some transports announce the tool before its arguments are complete.
+    if not args and not item.get("questions") and not complete:
+        return False
+    bridge.capture(args or item)
+    return True
+
+
+def _capture_muse_question_event(bridge, event: Dict[str, Any]) -> bool:
+    payload = event.get("payload") or {}
+    if not isinstance(payload, dict):
+        return False
+    if str(event.get("payload_type") or "").startswith("tool."):
+        return _capture_muse_question(bridge, payload, complete=event.get("payload_type") == "tool.result")
+    inner = payload.get("event") or {}
+    if isinstance(inner, dict) and str(inner.get("task_kind") or "").rsplit(".", 1)[-1] in (
+        "request_user_input", "request_user_input_async"
+    ):
+        args = inner.get("args") or inner.get("input")
+        if not args and not inner.get("questions") and event.get("payload_type") != "task.lifecycle.failed":
+            return False
+        bridge.capture(args or inner)
+        return True
+    return False
+
+
+def _parse_muse_jsonl(raw: str, *, recover_questions: bool = True) -> Dict[str, Any]:
     """Parse ``muse exec --json`` stdout into display text, session id, errors.
 
     Terminal ``text`` wins when present. Otherwise streamed ``run.output.delta``
     chunks are joined so a killed/timed-out turn still surfaces partial reply
     text instead of an empty bubble.
     """
+    from api.agent_harness.questions import QuestionBridge
+
+    questions = QuestionBridge()
     session_id: Optional[str] = None
     messages: List[str] = []
     delta_chunks: List[str] = []
@@ -901,6 +935,8 @@ def _parse_muse_jsonl(raw: str) -> Dict[str, Any]:
 
         pt = (ev.get("payload_type") or "").strip()
         payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
+
+        _capture_muse_question_event(questions, ev)
 
         if pt == "run.output.delta":
             text = payload.get("text")
@@ -945,7 +981,7 @@ def _parse_muse_jsonl(raw: str) -> Dict[str, Any]:
         display = "".join(delta_chunks).strip()
     return {
         "session_id": session_id,
-        "output": display,
+        "output": questions.render(display) if recover_questions else display,
         "errors": errors,
         "usage": usage,
         "terminal": terminal,
@@ -995,7 +1031,7 @@ def _interrupted_muse_result(
     """Build a failure result that keeps session id + partial work for the chat."""
     out = b"".join(stdout_parts).decode("utf-8", errors="replace")
     err = b"".join(stderr_parts).decode("utf-8", errors="replace")
-    parsed = _parse_muse_jsonl(out)
+    parsed = _parse_muse_jsonl(out, recover_questions=not cancelled)
     partial = (parsed.get("output") or "").strip()
     writing = str(tool_labels.get(_WRITING_BUF_KEY) or "").strip()
     if not partial and writing:
@@ -1272,6 +1308,9 @@ class MuseCliTool:
             "Resuming Muse Code…" if (resume or "").strip() else "Starting Muse Code…",
         )
 
+        from api.agent_harness.questions import QuestionBridge
+
+        pending_questions = QuestionBridge()
         stdout_parts: List[bytes] = []
         stderr_parts: List[bytes] = []
         task_labels: Dict[str, Any] = {}
@@ -1406,6 +1445,10 @@ class MuseCliTool:
                             continue
                         if not isinstance(ev, dict):
                             continue
+                        if _capture_muse_question_event(pending_questions, ev):
+                            _emit("Preparing Cuttle question form…")
+                            await kill_process_tree(proc)
+                            break
                         sid = _muse_session_id_from_event(ev)
                         if sid:
                             _persist_resume_early(sid)
@@ -1485,6 +1528,9 @@ class MuseCliTool:
             ok = False
 
         display = parsed.get("output") or ""
+        if pending_questions.pending:
+            ok = True
+            display = pending_questions.render(display)
         if not ok and not display and err.strip():
             display = err.strip()
         error_msg = None

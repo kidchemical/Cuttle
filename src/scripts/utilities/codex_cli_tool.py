@@ -290,8 +290,24 @@ def _codex_activity_for_event(
     return None
 
 
-def _parse_codex_jsonl(raw: str) -> Dict[str, Any]:
+def _capture_codex_question(bridge, item: Dict[str, Any], *, complete: bool = True) -> bool:
+    """Recognize codex's native input tool items; never infer from prose."""
+    name = str(item.get("tool") or item.get("toolName") or item.get("name") or "")
+    if name.rsplit(".", 1)[-1] not in ("request_user_input", "request_user_input_async"):
+        return False
+    args = item.get("args") or item.get("arguments") or item.get("input")
+    # Some transports announce the tool before its arguments are complete.
+    if not args and not item.get("questions") and not complete:
+        return False
+    bridge.capture(args or item)
+    return True
+
+
+def _parse_codex_jsonl(raw: str, *, recover_questions: bool = True) -> Dict[str, Any]:
     """Parse ``codex exec --json`` stdout into display text, thread id, usage, errors."""
+    from api.agent_harness.questions import QuestionBridge
+
+    questions = QuestionBridge()
     thread_id: Optional[str] = None
     messages: List[str] = []
     errors: List[str] = []
@@ -309,6 +325,8 @@ def _parse_codex_jsonl(raw: str) -> Dict[str, Any]:
         if not isinstance(ev, dict):
             continue
         et = (ev.get("type") or "").strip()
+        if et in ("item.started", "item.completed") and isinstance(ev.get("item"), dict):
+            _capture_codex_question(questions, ev["item"], complete=et == "item.completed")
         if et == "thread.started":
             tid = ev.get("thread_id")
             if isinstance(tid, str) and tid.strip():
@@ -396,6 +414,8 @@ def _parse_codex_jsonl(raw: str) -> Dict[str, Any]:
         if cache_write_sum:
             usage["cache_write_input_tokens"] = cache_write_sum
     display = "\n\n".join(messages).strip()
+    if recover_questions:
+        display = questions.render(display)
     return {
         "thread_id": thread_id,
         "output": display,
@@ -542,6 +562,9 @@ class CodexCliTool:
                 "Resuming Codex…" if rid else "Starting Codex…",
                 force=True,
             )
+            from api.agent_harness.questions import QuestionBridge
+
+            pending_questions = QuestionBridge()
             activity_state: Dict[str, Any] = {"tool_count": 0}
             stop_hb = asyncio.Event()
             hb_task = None
@@ -648,6 +671,12 @@ class CodexCliTool:
                                 )
                             except Exception:
                                 pass
+                    if ev.get("type") in ("item.started", "item.completed"):
+                        item = ev.get("item") or {}
+                        if isinstance(item, dict) and not pending_questions.pending and _capture_codex_question(pending_questions, item, complete=ev.get("type") == "item.completed"):
+                            activity.emit("Preparing Cuttle question form…", force=True)
+                            asyncio.create_task(kill_process_tree(proc))
+                            return
                     line_status = _codex_activity_for_event(ev, activity_state)
                     if line_status:
                         activity.emit(line_status)
@@ -700,7 +729,7 @@ class CodexCliTool:
 
             out = out_b.decode("utf-8", errors="replace") if isinstance(out_b, (bytes, bytearray)) else ""
             err = err_b.decode("utf-8", errors="replace") if isinstance(err_b, (bytes, bytearray)) else ""
-            parsed = _parse_codex_jsonl(out)
+            parsed = _parse_codex_jsonl(out, recover_questions=not (run and run.cancelled))
             display = (parsed.get("output") or "").strip()
             if not display and last_msg_path and os.path.isfile(last_msg_path):
                 try:
@@ -744,6 +773,16 @@ class CodexCliTool:
                     "codex_session_id": thread_id,
                     "timed_out": run.timed_out,
                     "cancelled": run.cancelled,
+                }
+
+            if pending_questions.pending:
+                return {
+                    "success": True,
+                    "output": pending_questions.render(display),
+                    "error": None,
+                    "usage": usage,
+                    "codex_session_id": thread_id,
+                    "awaiting_input": bool(pending_questions.questions),
                 }
 
             rc = run.returncode if run is not None else None

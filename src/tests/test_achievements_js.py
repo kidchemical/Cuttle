@@ -119,13 +119,23 @@ def test_slices_load_before_app_shell():
     assert order["achievements.js"] < order["app_shell.js"]
 
 
-def test_settings_page_does_not_start_the_poller():
-    """The settings page renders the grid itself; it must not also poll."""
+def test_settings_page_only_manages_flags():
     html = SETTINGS_HTML.read_text(encoding="utf-8")
-    assert "__CUTTLE_ACHIEVEMENTS_MANUAL = true" in html
-    assert "achievements.js" in html
+    assert "achievements.js" not in html
+    assert "achievementsGrid" not in html
+    assert "rescanAchievements" not in html
     assert "loadExperimentalFlags" in html
     assert "tabs.register('experimental'" in html
+
+
+def test_trophy_case_is_a_discoverable_app():
+    html = (REPO / "src/web/achievements_page.html").read_text()
+    assert 'id="achievementsGrid"' in html
+    assert '__CUTTLE_ACHIEVEMENTS_MANUAL = true' in html
+    assert 'achievements_page.js' in html
+    shell = SHELL_HTML.read_text()
+    assert 'data-page="/achievements_page.html"' in shell
+    assert 'data-id="nav-achievements"' in shell
 
 
 def test_settings_page_has_the_experimental_tab():

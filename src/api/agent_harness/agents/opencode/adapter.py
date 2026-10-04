@@ -308,6 +308,17 @@ def _extract_opencode_event_model(obj: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+def _capture_opencode_question(bridge, event: Dict[str, Any]) -> bool:
+    part = event.get("part") or {}
+    if not isinstance(part, dict) or part.get("tool") != "question":
+        return False
+    state = part.get("state") or {}
+    if not isinstance(state, dict) or "input" not in state:
+        return False
+    bridge.capture(state["input"])
+    return True
+
+
 def _parse_opencode_stdout(raw: str) -> Tuple[str, Optional[str], Dict[str, Any], Optional[str]]:
     """
     Prefer ``--format json`` event stream / object; fall back to plain text.
@@ -320,6 +331,9 @@ def _parse_opencode_stdout(raw: str) -> Tuple[str, Optional[str], Dict[str, Any]
     if not stripped:
         return "", None, {}, None
 
+    from api.agent_harness.questions import QuestionBridge
+
+    questions = QuestionBridge()
     session_id: Optional[str] = None
     usage: Dict[str, Any] = {}
     texts: List[str] = []
@@ -345,6 +359,7 @@ def _parse_opencode_stdout(raw: str) -> Tuple[str, Optional[str], Dict[str, Any]
                 session_id = sid.strip()
             if detected_model is None:
                 detected_model = _extract_opencode_event_model(obj)
+            _capture_opencode_question(questions, obj)
             _accumulate_opencode_usage(obj, usage)
             # Common shapes: type=text / message / part / content
             t = obj.get("type") or obj.get("event")
@@ -368,8 +383,8 @@ def _parse_opencode_stdout(raw: str) -> Tuple[str, Optional[str], Dict[str, Any]
             if isinstance(props.get("text"), str) and props["text"].strip():
                 texts.append(props["text"].strip())
         usage = _finalize_opencode_usage(usage)
-        if texts or usage or detected_model:
-            return ("\n".join(texts).strip() if texts else ""), session_id, usage, detected_model
+        if texts or usage or detected_model or questions.pending:
+            return questions.render("\n".join(texts).strip()), session_id, usage, detected_model
 
     # Single JSON object
     if stripped.startswith("{"):
@@ -382,6 +397,8 @@ def _parse_opencode_stdout(raw: str) -> Tuple[str, Optional[str], Dict[str, Any]
             if isinstance(sid, str) and sid.strip():
                 session_id = sid.strip()
             detected_model = _extract_opencode_event_model(parsed)
+            if _capture_opencode_question(questions, parsed):
+                return questions.render(""), session_id, usage, detected_model
             for key in ("response", "text", "output", "message", "content"):
                 val = parsed.get(key)
                 if isinstance(val, str) and val.strip():
@@ -771,6 +788,9 @@ class Adapter:
                 # OpenCode maps ``--variant`` to provider reasoning-effort overlays.
                 cmd.extend(["--variant", effort])
 
+        from api.agent_harness.questions import QuestionBridge
+
+        pending_questions = QuestionBridge()
         activity_state: Dict[str, Any] = {"tool_count": 0}
         started_at = time.monotonic()
         last_emit = [started_at]
@@ -887,15 +907,20 @@ class Adapter:
                         break  # stdout EOF — process finished
                     deadline.poke()
                     out_buf.append(line)
+                    try:
+                        ev = json.loads(line.decode("utf-8", errors="replace"))
+                    except (json.JSONDecodeError, UnicodeError):
+                        continue
+                    if not isinstance(ev, dict):
+                        continue
+                    if _capture_opencode_question(pending_questions, ev):
+                        _emit("Preparing Cuttle question form…")
+                        await kill_process_tree(proc)
+                        break
                     if status_queue is not None:
-                        try:
-                            ev = json.loads(line.decode("utf-8", errors="replace"))
-                        except (json.JSONDecodeError, UnicodeError):
-                            pass
-                        else:
-                            activity = _opencode_activity_for_event(ev, activity_state)
-                            if activity:
-                                _emit(activity)
+                        activity = _opencode_activity_for_event(ev, activity_state)
+                        if activity:
+                            _emit(activity)
 
                 await stdin_task
                 await proc.wait()
@@ -935,7 +960,7 @@ class Adapter:
         out = b"".join(out_buf).decode("utf-8", errors="replace")
         err = b"".join(err_buf).decode("utf-8", errors="replace")
         display, sid, usage, detected = _parse_opencode_stdout(out)
-        ok = proc.returncode == 0
+        ok = proc.returncode == 0 or pending_questions.pending
         from api.agent_harness.agent_defaults import badge_meta as _badge_meta
 
         # Precedence: per-chat pin → explicit override → starred → executed

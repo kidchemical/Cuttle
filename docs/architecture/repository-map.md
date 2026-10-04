@@ -312,6 +312,13 @@ decisions. Effects live in `chat_activate` helpers, the
 `chat_action_cards` controller, `chat_usage_live.start`, and the page —
 do not describe all frontend modules as pure.
 
+**Experimental feature UI:** `api.experimental` owns rollout flags, and Settings
+→ Experimental renders only generic flag controls. Feature workflows own their
+surfaces: Achievements uses `/achievements_page.html` (page blueprint in
+`api.achievements.routes`, `achievements_page.js` presentation), registered as a
+stashed App in the shell. New features generally start experimental; surface
+selection and exceptions are documented in `.cuttle/docs/experimental-features.md`.
+
 **Chat VFX:** `api.chat_vfx` owns validated transient confetti/toast events and
 session-scoped SQLite delivery (`python -m api.chat_vfx`); `chat_vfx.routes`
 owns authenticated HTTP transport. `chat_vfx.js` owns the renderer and a

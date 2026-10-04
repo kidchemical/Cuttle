@@ -18,7 +18,7 @@ Decisions taken (owner calls, 2026-10-03):
 | Where does the flags UI live? | **A tab in the settings page** (`/settings_page.html?tab=experimental`) |
 | "100M tokens" semantics | **From a single message.** Sub-agent child chats are excluded from every turn metric, so the parent message alone must earn it |
 | Default state | **Off.** Experimental features are opt-in |
-| Achievements surface | Trophy-case grid lives in the same Experimental tab (no second nav entry) |
+| Achievements surface | Apps → Achievements owns the trophy case; Experimental settings owns its toggle |
 
 Architecture rules held: owned slices under `src/api/`, no reverse import of
 `web_chat_api`, settings stored via `settings_manager`, client logic as pure
@@ -101,7 +101,7 @@ Providers in matching order (tab order == panel order is asserted by
 `test_settings_page_tabs.py`). Rows render from the registry, so the UI never
 drifts from the backend. Toggle handler clones the LAN pattern
 (`preventDefault` → optimistic → POST → re-GET → revert-on-error + toast).
-The trophy case only appears while achievements are on.
+The trophy case lives in the Achievements App, with a disabled state when the flag is off.
 
 ---
 
@@ -187,8 +187,8 @@ a sequence rather than a wall of toasts.
 Both follow the `spaces_*.js` IIFE tail (`window` + `module.exports`) and are
 loaded in `app_shell.html` **before** `app_shell.js` with the `?v=` bust.
 `achievements.js` self-schedules its timer, so `app_shell.js` contains zero
-achievement code. The settings page sets `__CUTTLE_ACHIEVEMENTS_MANUAL = true`
-so it renders the grid itself without also polling.
+achievement code. The Achievements App sets `__CUTTLE_ACHIEVEMENTS_MANUAL = true`
+so its presentation controller renders the grid without starting a second celebration poller. Settings loads no achievement scripts.
 
 **Confetti** — self-contained fixed/pointer-events-none particle layer, scaled by
 rarity (0 / 0 / 60 / 120 / 200), self-removing, gated on `animationsEnabled()`
@@ -230,12 +230,10 @@ Removing achievements completely, leaving the experimental system intact:
 4. delete the `on_turn_saved()` tail in `src/api/chat_turn_persist.py`;
 5. delete `src/web/js/achievements.js` + `src/web/js/celebrate.js` and their two
    `<script>` lines in `src/web/app_shell.html`;
-6. delete the `#experimentalAchievementsGroup` + trophy-case markup, the
-   `__CUTTLE_ACHIEVEMENTS_MANUAL` script line, and the
-   `loadAchievementsSummary` / `renderAchievementsGrid` / `rescanAchievements`
-   functions + `loadExperimentalFlags` call in `settings_page.html`;
-7. delete the `.achievements-*` CSS blocks in `settings_page.css` and the
-   achievement card CSS in `toast.js`;
+6. delete `achievements_page.html`, `js/achievements_page.js`, and
+   `css/achievements_page.css`; unregister `achievements_pages_bp`;
+7. remove `nav-achievements` from the shell rail markup/catalog/default-hidden
+   list and page title map; remove achievement card CSS from `toast.js`;
 8. `rm src/web/sounds/achievement-unlock.wav electron/assets/achievement-unlock.wav
    .cuttle/scripts/make_achievement_chime.py`; drop the `achievement-unlock`
    entry from `NATIVE_SFX_FILES` (`electron/main.js`);
@@ -244,7 +242,7 @@ Removing achievements completely, leaving the experimental system intact:
 9. optionally delete `src/data/db/achievements.db`.
 
 Adding a *second* experimental feature is cheaper: one `FlagSpec` row + the
-package + the gated call sites. No new UI, no new settings route, no new tab.
+package + the gated call sites. Choose feature UI independently: an App, a settings tab, or an existing surface as appropriate. The Experimental tab remains generic.
 
 ---
 
@@ -254,7 +252,7 @@ package + the gated call sites. No new UI, no new settings route, no new tab.
 |---|---|
 | `test_experimental_flags.py` (22) | unknown-id-off, precedence, kill-switch values, duplicate rejection, redundant-default pruning, HTTP auth matrix, validation, CLI |
 | `test_achievements.py` (39) | catalog integrity (≥40, unique ids, known metrics, hidden hints), evaluator math + sub-agent exclusion, monotonic progress, unlock idempotency, pending/ack, flag gating, HTTP contract |
-| `test_achievements_js.py` (7) | node harness for both slices' pure helpers, shell load order, settings-page poller suppression, wav/electron-asset sync, Electron SFX allowlist |
+| `test_achievements_js.py` (7) | node harness for both slices' pure helpers, shell load order, settings flag-only surface and App discovery, wav/electron-asset sync, Electron SFX allowlist |
 
 ### Dev preview
 
@@ -283,3 +281,10 @@ enumerate non-`/api/settings` blueprints.
    escalation/fallback-chain signal.
 5. **Autoplay policy** — in-browser unlocks can still be silent on a cold page;
    only the Electron path guarantees sound while obscured.
+
+### Achievements App placement update
+
+The trophy case and rescan workflow now belong to `achievements_page.html`,
+`achievements_page.js`, and `achievements_page.css`. `test_achievements_app.py`
+checks authenticated page access, existing rail pins, disabled/enabled states,
+rescan, hidden achievements, and responsive layout in an isolated browser.

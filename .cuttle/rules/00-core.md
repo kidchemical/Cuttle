@@ -47,3 +47,8 @@ These files under `.cuttle/rules/` are compiled into the fresh/full Cuttle-chat 
 4. **Dashboards** — usage → global `.cuttle_global/docs/dashboards.md`; adding a
    dashboard (catalog/service/routes/JS) → `.cuttle/docs/dashboards-dev.md`.
 5. **Agent router backlog** — `.cuttle/docs/agent-router-todo.md` (product TODO, not a runbook).
+
+6. **New Cuttle feature / experimental UI** — follow `.cuttle/docs/experimental-features.md`
+   for default rollout practice and surface placement. The Experimental tab owns
+   toggles, not feature workflows. This guidance applies to Cuttle development,
+   not features in guest projects.
