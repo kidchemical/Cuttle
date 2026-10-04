@@ -61,7 +61,7 @@ Snapshot: `git ls-files` working bytes + ONLY 2 extras
 untracked code omitted. Required application modules must be tracked before
 launching; the runner does not silently include unrelated untracked files.
 Denied basenames anywhere: `.env`, `settings.json`,
-`GLOBAL.ini`, `bot_config.json`; suffixes `.db/.sqlite*/.pem/.key/.p12`; dirs
+`GLOBAL.ini`, `bot_config.json`, `runtime_config.json`; suffixes `.db/.sqlite*/.pem/.key/.p12`; dirs
 `.git/.venv/__pycache__/node_modules/temp`; `personal` at any depth.
 Fingerprint sha256 + 4 anchors (`web_chat_api`, `chat_turn_workflow`,
 `chat_turn_persist`, `chat_coordinator` by `__file__` + bytes, re-verified

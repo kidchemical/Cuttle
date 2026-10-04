@@ -13,9 +13,9 @@ import sqlite3
 class TestHistoryManager:
     """Manages historical test data storage and retrieval"""
     
-    def __init__(self, db_path: str = "output/test_history.db"):
+    def __init__(self, db_path=None):
         """Initialize the test history manager"""
-        self.db_path = db_path
+        self.db_path = str(db_path or (Path(__file__).resolve().parents[1] / "results" / "test_history.db"))
         self.ensure_db_exists()
     
     def ensure_db_exists(self):
@@ -295,73 +295,3 @@ class TestHistoryManager:
             conn.commit()
             
             return cursor.rowcount
-
-def create_sample_data(manager: TestHistoryManager, days_back: int = 30):
-    """Create sample historical data for testing"""
-    import random
-    
-    now = datetime.now()
-    
-    for day in range(days_back):
-        for hour in range(0, 24, 2):  # Every 2 hours
-            timestamp = now - timedelta(days=day, hours=hour)
-            
-            # Simulate realistic test patterns
-            total_tests = random.randint(3, 8)
-            success_rate = random.uniform(0.6, 1.0)
-            
-            # Simulate some failure spikes
-            if random.random() < 0.1:  # 10% chance of failure spike
-                success_rate = random.uniform(0.2, 0.7)
-            
-            successful_tests = int(total_tests * success_rate)
-            failed_tests = total_tests - successful_tests
-            
-            sample_results = {
-                'overall_stats': {
-                    'total_tests': total_tests,
-                    'successful_tests': successful_tests,
-                    'failed_tests': failed_tests,
-                    'success_rate': success_rate * 100
-                },
-                'environment_info': {
-                    'test_mode': 'SAFE'
-                },
-                'detailed_results': {
-                    f'test_{i}': {
-                        'success': i < successful_tests,
-                        'duration': random.uniform(0.5, 3.0)
-                    }
-                    for i in range(total_tests)
-                },
-                'total_duration': random.uniform(10, 60),
-                'ai_summary': f'Sample test run at {timestamp.strftime("%Y-%m-%d %H:%M")}'
-            }
-            
-            manager.store_test_session(sample_results)
-
-if __name__ == "__main__":
-    # Test the history manager
-    manager = TestHistoryManager()
-    
-    # Create sample data if database is empty
-    with sqlite3.connect(manager.db_path) as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM test_sessions")
-        count = cursor.fetchone()[0]
-        
-        if count == 0:
-            print("Creating sample historical data...")
-            create_sample_data(manager, days_back=30)
-            print(f"Created sample data for 30 days")
-        else:
-            print(f"Database already contains {count} test sessions")
-    
-    # Test time series data retrieval
-    print("\nTesting time series data retrieval...")
-    data = manager.get_time_series_data("1d", "hour")
-    print(f"Retrieved {len(data['data_points'])} data points for 1 day with hourly granularity")
-    
-    # Test failure trends
-    trends = manager.get_failure_trends("1d")
-    print(f"Failure trends: {trends}")

@@ -592,10 +592,8 @@ const CANONICAL_RAIL_ITEM_ORDER = [
     'nav-achievements',
     'nav-apps',
 ];
-// 'nav-tools' retired from the rail (static CLI reference; the page itself
-// is still served at /tools_page.html and the runbook lives in
-// .cuttle_global/docs/agent-ops-cli.md). Saved layouts referencing it are
-// filtered out by the layout restore below.
+// 'nav-tools' and its static reference page are retired. Saved layouts
+// referencing the retired rail entry are filtered out during restore.
 // Footer may only contain these (do not put page nav buttons here — breaks reorder on load).
 const CANONICAL_RAIL_FOOTER_ORDER = ['nav-account', 'nav-notifications', 'nav-workspace', 'nav-settings', 'panelToggle'];
 // The Apps launcher is the way back to every stashed app, so it can never be removed.
@@ -1753,7 +1751,6 @@ const PAGE_TITLES = {
     '/dashboards_page.html': 'Dashboards',
     '/job_insight.html': 'Job Insight',
     '/control_panel.html': 'Control Panel',
-    '/tools_page.html': 'Tools',
     '/apps_page.html': 'Apps',
     '/achievements_page.html': 'Achievements',
     '/settings_page.html': 'Settings',

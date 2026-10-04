@@ -43,6 +43,8 @@ from api.agent_router.supervised.types import (
 )
 from api.agent_router.types import ExecutionTarget, RoutingDecision, TargetSource
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
 
 @pytest.fixture
 def supervised_env(tmp_path: Path, monkeypatch):
@@ -382,11 +384,11 @@ def test_control_commands_bypass_sticky_prefixes(supervised_env):
 
 def test_palette_control_flags_in_js():
     # Registry lives in chat_slash.js (Phase 3 Slice 2).
-    js = Path("src/web/js/chat_slash.js").read_text(encoding="utf-8")
+    js = (REPO_ROOT / "src/web/js/chat_slash.js").read_text(encoding="utf-8")
     assert "prefix: '/coordinator '" in js
     assert "prefix: '/coordinate '" in js
     assert "controlCommand: true" in js
-    html = Path("src/web/chat_page.html").read_text(encoding="utf-8")
+    html = (REPO_ROOT / "src/web/chat_page.html").read_text(encoding="utf-8")
     assert "supervised" in html
 
 
@@ -605,7 +607,7 @@ def test_control_cannot_target_other_session_task(supervised_env):
 
 
 def test_js_control_lane_bypass_and_sticky(supervised_env):
-    js = Path("src/web/js/chat_page.js").read_text(encoding="utf-8")
+    js = (REPO_ROOT / "src/web/js/chat_page.js").read_text(encoding="utf-8")
     assert "isImmediateControlLaneMessage" in js
     assert "controlLane" in js
     from api.agent_router.supervised.control import (

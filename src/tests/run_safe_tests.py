@@ -36,8 +36,6 @@ def run_safe_tests():
         ("API Key Test", "unit.test_api_key"),
         ("OpenAI Connection", "unit.test_openai_connection"),
         ("Claude Code Integration", "unit.test_claude_code"),
-        ("Security Tests", "unit.test_security"),
-        ("Username Case Tests", "unit.test_username_case"),
     ]
     
     # Unsafe test modules that involve system control (excluded)
@@ -104,8 +102,6 @@ def run_safe_individual_test_files():
         "test_api_key.py",
         "test_openai_connection.py", 
         "test_claude_code.py",
-        "test_security.py",
-        "test_username_case.py",
     ]
     
     # Unsafe test files (excluded)
@@ -208,12 +204,13 @@ def generate_safe_test_summary(safe_results, individual_results):
     else:
         print(f"   [FAIL] .env file missing - Discord bot tests may fail")
     
-    # Check for bot_config.json
-    config_file = Path(__file__).parent.parent / 'bot_config.json'
+    # Report the active runtime/model preference store
+    from core.runtime_paths import runtime_config_path
+    config_file = runtime_config_path()
     if config_file.exists():
-        print(f"   [PASS] bot_config.json exists")
+        print(f"   [PASS] runtime/model config exists")
     else:
-        print(f"   [FAIL] bot_config.json missing - Bot configuration tests may fail")
+        print(f"   [INFO] runtime/model config absent (defaults are valid)")
     
     # Check for requests (Discord REST agent-ops)
     try:

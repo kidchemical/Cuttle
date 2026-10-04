@@ -6,14 +6,14 @@ Simple API endpoint for time series chart updates
 import sys
 from pathlib import Path
 
-# Ensure src is on path so "scripts.test_history_manager" resolves when run as scripts/time_series_api.py
-_src = Path(__file__).resolve().parent.parent
+# Ensure src is on path so "tests.reporting.history" resolves when run as tests/reporting/history_api.py
+_src = Path(__file__).resolve().parents[2]
 if str(_src) not in sys.path:
     sys.path.insert(0, str(_src))
 
 import json
 from flask import Flask, jsonify, request
-from scripts.test_history_manager import TestHistoryManager
+from tests.reporting.history import TestHistoryManager
 
 app = Flask(__name__)
 

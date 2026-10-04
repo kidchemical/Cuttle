@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Run JamBit OS safe tests with comprehensive logging and HTML report generation
+Run Cuttle safe tests with comprehensive logging and HTML report generation
 """
 
 import sys
@@ -12,10 +12,10 @@ from io import StringIO
 from pathlib import Path
 
 # Add the project root to the path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tests.html_reporter import HTMLTestReporter
-from scripts.test_history_manager import TestHistoryManager
+from tests.reporting.history import TestHistoryManager
 
 # Import OpenAI for AI summarization
 try:
@@ -52,7 +52,7 @@ class TestLogger:
                 shell=True,
                 capture_output=True,
                 text=True,
-                cwd=os.path.join(os.path.dirname(__file__), '..')
+                cwd=str(Path(__file__).resolve().parents[2])
             )
             
             # Log the output
@@ -120,7 +120,7 @@ class TestLogger:
             
             # Create a comprehensive summary for the AI
             summary_prompt = f"""
-            Analyze the following JamBit OS test results and provide a comprehensive, actionable summary with detailed insights:
+            Analyze the following Cuttle test results and provide a comprehensive, actionable summary with detailed insights:
 
             Test Statistics:
             - Total Tests: {stats['total_tests']}
@@ -273,7 +273,7 @@ def run_safe_tests_with_logging():
     
     logger = TestLogger()
     
-    logger.log("[START] Starting JamBit OS Safe Test Suite")
+    logger.log("[START] Starting Cuttle Safe Test Suite")
     logger.log("=" * 60)
     logger.log(f"Test session started at: {logger.start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     logger.log("Mode: SAFE (no automation tests)")
@@ -282,7 +282,6 @@ def run_safe_tests_with_logging():
     # Define safe test commands
     safe_tests = [
         ("Security Tests", "python tests/unit/test_security_standalone.py"),
-        ("Username Case Tests", "python tests/unit/test_username_case.py"),
         ("API Key Tests", "python tests/unit/test_api_key.py"),
         ("OpenAI Connection Tests", "python tests/unit/test_openai_connection.py"),
         ("RAG System Tests", "python tests/unit/test_rag_system.py")
@@ -407,7 +406,7 @@ def generate_html_report_with_logs(logger, ai_summary=None, history_manager=None
             print(f'[WARNING] Could not retrieve time series data: {e}')
     
     # Generate report using enhanced HTML reporter
-    reporter = HTMLTestReporter('web/logs')
+    reporter = HTMLTestReporter()
     report_path = reporter.generate_report_with_logs(test_results, time_series_data, failure_trends)
     
     print(f'[REPORT] HTML report generated: {report_path}')

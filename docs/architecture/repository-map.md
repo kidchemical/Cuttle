@@ -27,7 +27,7 @@ start_cuttle.sh | src/scripts/cuttle_daemon.py
 
 **Android:** `apps/mobile` Capacitor shell; `apps/android_companion` / `apps/android_bt_voice` are additional native surfaces.
 
-**Flask-alone:** `python src/api/web_chat_api.py` from the repo root (same as the daemon child). `src/scripts/start_api_server.py` is the separate **time-series** stack on **:5000** (`time_series_api.py`) — not the chat app.
+**Flask-alone:** `python src/api/web_chat_api.py` from the repo root (same as the daemon child). Optional legacy test analytics on **:5000** now lives under `src/tests/reporting/` (`history_api.py`) — not the chat app.
 
 **Startup listener audit** (one Flask `app`, three binds; full table in [`development-instance-safety.md`](development-instance-safety.md) §1): primary HTTPS **:8080** (`127.0.0.1` LAN-off, `0.0.0.0` LAN-on) owned by `web_chat_api.__main__`; companion HTTP **:8000** (same `app`, not a tombstone — CURRENT preferred Electron HTTP origin via `resolveUiBaseUrl` in `electron/main.js`, plus Android cleartext fallback) owned by `lan_access` constants + `__main__` socket setup; optional same-`app` phone TLS **:8888** only with a LAN IP. `lan_access` owns port constants and LAN bind/CORS/firewall; the daemon owns the Flask process and its :8080 health check, not socket setup — one app, multiple listener/server objects, no separate daemon-control listener. No per-listener routes/executors; `:5000` is a separate historical time-series listener.
 
@@ -252,22 +252,29 @@ HTTP is extracted: `settings_bp` (`api.settings_routes`, url prefix
 live in `src/managers/settings_manager.py` → `src/settings.json`
 (gitignored). Zero `/api/settings` routes remain on the Flask root.
 
-**Bot config path (deterministic):** `BotConfig.config_file` defaults to the
-canonical checkout path `src/bot_config.json` via `core/runtime_paths.py`
-(`bot_config_path`, beside the existing path helpers) — launch cwd never
-selects the file, which preserves the daemon's historical `cwd=src`
-selection for every launch form. A repo-root `bot_config.json` remains
-untouched legacy input (no automatic merge); when both copies diverge the
-`src/` copy wins. Missing file: defaults stay in memory, nothing is created
-until an explicit save/set writes. Actual callers of `get_config()`:
-`api.settings_routes` (bot/model settings backend), `api.query_tracker`,
-`core.local_llm`. The Flask root only imports it (`web_chat_api.py`, guarded
-import, never called) for `/api/settings` initialization. Optional
-`config_file` constructor injection exists for temporary/isolated use.
+**Model/runtime preference store:** `core.config.RuntimeConfig` owns
+`src/data/config/runtime_config.json`, resolved by `core.runtime_paths.runtime_config_path`
+independently of cwd. `BotConfig` and `bot_config_path` remain compatibility aliases.
+Existing `src/bot_config.json` remains authoritative until the guarded offline
+migration; the repo-root legacy copy is never read or merged. Missing reads keep
+defaults in memory; explicit saves create the parent and preserve unknown keys.
+Live consumers are `api.settings_routes`, `api.query_tracker`, and `core.local_llm`.
+`src/settings.json` still owns shell/router/LAN settings; these two stores are not
+merged. `src/bot.py` and its obsolete gateway-owner tests are removed.
 
 ---
 
 ## Persistence
+
+Runtime storage layout is owned by `core.runtime_paths`: `src/data/db/`,
+`sessions/`, `brain/`, `supervised_tasks/`, `edit_attribution/`, `cache/`, and
+`home_automation/`. Existing `workspace/` and root-level home automation JSON stay
+authoritative until `core.runtime_data` migrates them offline. The daemon invokes
+the guarded migration before starting services on its next cold launch; a live
+host or destination conflict skips migration. Details: `src/data/README.md`.
+Install-local harness packs belong in `.cuttle_global/personal/agents/`; legacy
+`src/data/harness_agents/` discovery remains compatible until offline migration.
+
 
 | Store | Tracked? |
 |---|---|
@@ -360,7 +367,7 @@ remain where they were. Nothing here is a proposed interface.
 | History sync / recovery | page timers `messageSyncTimer`, `startMessageSync`, `stopMessageSync`, `scheduleNextMessageSync`, `syncSessionMessagesFromServer` (all in `chat_page.js`); `recoverChatResult`, `recoverChatResultWithRetries`, per-message sync classification (`chat_pending_result.js`); generation tokens `createGenerationState`/`beginGeneration`/`endGeneration` and sync claim transitions `createSyncState`/`claimSync`/`isSyncCurrent`/`finishSync` (`chat_generation.js`); byte reads `CuttleChatStream.readEvents` (`chat_stream.js`); backend `finalize_stream_result` (`chat_turn_workflow.py`), `make_assistant_saver` skip guards (`chat_turn_persist.py`), `current_turn`/`is_stale_turn`/`is_turn_cancelled` (`chat_delivery.py`) | busy lock, one sync-claim state (replacement invalidates old finishers), existing page navigation sequence (A→B→A fence), sync cursor/timers, turn tokens, pending-result store, assistant-row skip guards; saver takes explicit `db` + captured `request_data` | `test_chat_turn_persist.py`, `test_chat_turn_workflow.py`, `test_chat_coordinator_acceptance.py`, P5-E/P5-F oracles, `test_stop_refresh_live_status.py`, `test_chat_stream.py`, `test_chat_generation.py`, `e2e/test_chat_stream_reader.py`, `e2e/test_chat_sync_lifetime.py`, `e2e/test_shadow_chat_stop_resend.py` |
 | Pane layout | `snapshotLayoutTree`, `flattenLayoutLeaves`, `pageWithPaneSession`; shell maps `columnState`, `lastChatByColumn`; `CuttleSpaces.*` (`src/web/js/spaces/`); backend `_shell_panes_snapshot`, `GET/POST /api/shell/panes`, `.../panes/<n>/messages` (all in `web_chat_api.py`); agent read `python -m api.panes_cli` | `columnState`, `lastChatByColumn`, saved-layout shape (restore-compatible); leaf/group normalization mixed with DOM reads | `test_shell_panes.py`, `test_shell_workspaces.py`, `test_pane_space_drag.py`, `test_panes_cli.py`; isolated `e2e/test_app_shell_layout.py` (6: nested restore/flex, real close, pointer focus, Spaces/reload and v1 compatibility; shell kept as-is, see `docs/reviews/pane-layout-fences.md`) |
 | Pending-change polling | `reconcileChatProject` → `reportProjectToShell` (`chat_page.js`); `CuttlePendingChangesPanel.create` (`pending_changes_panel.js`); existing `pollPendingChangesHub` / `refreshPendingChangesPath` (`app_shell.js`) | shell column→project map, per-path in-flight coalescing; standalone-only panel interval; explicit refresh messages retained | `e2e/test_pending_changes_polling.py`, `e2e/test_shared_diff_modal.py`; opt-in `e2e/test_chat_cost_profile.py` |
-| Config | HTTP `settings_routes.py` (`settings_bp`; bot/model branch via `get_config()`); defaults `get_settings_manager()` (`settings_manager.py`); `BotConfig.load_config`/`save_config` (`core/config.py`) — file defaults to checkout `src/bot_config.json` via `runtime_paths.bot_config_path()` (never cwd); path conventions `core/runtime_paths.py` | `src/settings.json` vs `bot_config.json` (two stores kept; `src/` copy wins on divergence, root untouched, no auto-merge); unknown-key preservation on save | `test_settings_routes.py`, `test_runtime_paths.py`, `test_bot_config_paths.py` |
+| Config | HTTP `settings_routes.py` (`settings_bp`; bot/model branch via `get_config()`); defaults `get_settings_manager()` (`settings_manager.py`); `RuntimeConfig.load_config`/`save_config` (`core/config.py`) — file defaults to `src/data/config/runtime_config.json` via `runtime_paths.runtime_config_path()` (legacy `src/bot_config.json` retained until migration) (never cwd); path conventions `core/runtime_paths.py` | shell settings vs runtime/model preferences (two stores kept; legacy `src/` copy remains authoritative until migration, repo-root copy untouched, no auto-merge); unknown-key preservation on save | `test_settings_routes.py`, `test_runtime_paths.py`, `test_runtime_config_paths.py` |
 
 ---
 
@@ -375,7 +382,7 @@ Canonical: `python -m api.*` (`.cuttle_global/docs/agent-ops-cli.md`). Global ac
 Graph JSON pipelines and the node editor are **retired**. Jobs live path: `/api/cuttle-jobs` + workers. Graph `fetch` leftovers remain in `jobs_page.html` / `job_insight.html` until stream 1. Telegram/Slack HTTP is **unwanted**. Discord REST read/post does **not** use a gateway process. Extension map: [`extension-boundaries.md`](extension-boundaries.md). Historical consumer tables: [`../reviews/graph-discord-consumers.md`](../reviews/graph-discord-consumers.md).
 
 Still present (verified): port-5000 time-series stack
-(`src/scripts/start_api_server.py`), control panel HTML. Removed (G1, proved
+(`src/tests/reporting/start_history_server.py`), control panel HTML. Removed (G1, proved
 unrouted — explicit per-file routes only, no HTML wildcard, no startup/test
 consumer): `landing_page_backup.html` (historical mentions in reviews stay as
 history). Gone (prior map references corrected above):

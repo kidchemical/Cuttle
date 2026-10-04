@@ -204,3 +204,11 @@ See `src/tests/README.md` for the offline gate (default collection,
 offline gate for structural moves; live smokes are separate and never
 required for docs validation. No paid prompt is needed to validate this
 document.
+
+## Retired developer pages
+
+`test_reports.html`, its `/api/test-reports` listing, and the static `tools_page.html`
+reference are removed. Developer reports belong in `src/tests/results/`; maintained
+agent-operation guidance lives in `.cuttle_global/docs/agent-ops-cli.md`.
+`query_log.html` is an active standalone wrapper around the shared query log
+inspector and remains the target for report deep links and external-tab fallback.

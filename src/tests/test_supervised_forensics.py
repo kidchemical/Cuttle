@@ -28,6 +28,8 @@ from api.agent_router.supervised.store import (
     persist_raw_worker_output,
     save_task,
 )
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 from api.agent_router.supervised.types import TaskPhase, WorkerReport
 
 
@@ -432,14 +434,14 @@ def test_global_default_changes_explicitly_identified(supervised_env):
 
 
 def test_js_uses_canonical_bubble_without_composer_worker_strip(supervised_env):
-    js = Path("src/web/js/chat_page.js").read_text(encoding="utf-8")
-    helper = Path("src/web/js/supervised_control.js").read_text(encoding="utf-8")
+    js = (REPO_ROOT / "src/web/js/chat_page.js").read_text(encoding="utf-8")
+    helper = (REPO_ROOT / "src/web/js/supervised_control.js").read_text(encoding="utf-8")
     assert "updateSupervisedTaskIndicator" in js
     assert "upsertSupervisedActivityCard" in js
     assert "supervised_task" in js
     assert "control_request_id" in js
     assert "buildActivityCardHtml" in helper
-    html = Path("src/web/chat_page.html").read_text(encoding="utf-8")
+    html = (REPO_ROOT / "src/web/chat_page.html").read_text(encoding="utf-8")
     assert "supervisedTaskIndicator" not in html
     assert "Pending-prompt queue only" in html
     assert "supervised_control.js" in html
@@ -447,22 +449,7 @@ def test_js_uses_canonical_bubble_without_composer_worker_strip(supervised_env):
 
 def test_forensic_fixture_links_parse_resilient(supervised_env):
     """Fixture mirrors the truncated Markdown/link content from st_96bc27927bf3."""
-    fixture = Path("src/tests/fixtures/supervised_truncated_worker_report.md")
-    if not fixture.is_file():
-        fixture.parent.mkdir(parents=True, exist_ok=True)
-        fixture.write_text(
-            "**Verdict:** Different panes…\n\n"
-            "### Findings\n\n"
-            "**[P1] Supervised control lane crashes on `_auth_user`** — "
-            "[file:///C:/Projects/Cuttle/src/api/web_chat_api.py]"
-            "(file:///C:/Projects/Cuttle/src/api/web_chat_api.py) / "
-            "[vscode://file/C:/Projects/Cuttle/src/api/web_chat_api.py:5219]"
-            "(vscode://file/C:/Projects/Cuttle/src/api/web_chat_api.py:5219)\n\n"
-            "Side effects happen even though the early path never returns.\n\n"
-            "**[P1] global settings** — more text\n\n"
-            "**[P2] awaiting_user** — more text\n",
-            encoding="utf-8",
-        )
+    fixture = REPO_ROOT / "src/tests/fixtures/supervised_truncated_worker_report.md"
     text = fixture.read_text(encoding="utf-8")
     report = parse_worker_report(text)
     assert report.parse_ok is False

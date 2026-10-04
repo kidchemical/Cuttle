@@ -11,6 +11,19 @@ Pytest suite. Default entry (per AGENTS.md):
 # integration/test_discord_api_e2e.py hits http://127.0.0.1:8080 when up, skips when down.
 ```
 
+## Test tooling and artifacts
+
+Test runners/helpers belong under this tree. Optional historical reporting tools
+live in `reporting/`; generated reports, traces, and test-history databases live
+in the gitignored `results/` directory. Do not generate developer reports under
+`src/scripts/output/`, `src/web/logs/`, or `src/test-results/`. `HTMLTestReporter`
+uses `results/` by default independently of cwd. Old static test-report pages and
+the fabricated sample-report generator are retired.
+
+Operator network diagnostics are the narrow exception: `src/scripts/diagnose_*`
+are manually invoked troubleshooting tools, not pytest tests. The phone connectivity
+diagnostic can change firewall/urlacl settings and requires Administrator on Windows.
+
 ## Chat lifecycle regression gate
 
 Keep Node.js on `PATH` when validating frontend changes. The behavioral JS

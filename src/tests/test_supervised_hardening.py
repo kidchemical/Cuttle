@@ -28,6 +28,8 @@ from api.agent_router.supervised.verification import (
     spot_check_finding,
 )
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
 
 @pytest.fixture
 def supervised_env(tmp_path: Path, monkeypatch):
@@ -54,7 +56,7 @@ def supervised_env(tmp_path: Path, monkeypatch):
 
 
 def test_parse_ok_review_packet_includes_both_findings(supervised_env):
-    fixture = Path("src/tests/fixtures/wr_d49c8d97962e.raw.txt")
+    fixture = REPO_ROOT / "src/tests/fixtures/wr_d49c8d97962e.raw.txt"
     assert fixture.is_file()
     raw = fixture.read_text(encoding="utf-8")
     report = parse_worker_report(raw)
@@ -380,8 +382,8 @@ def test_raw_artifact_viewer_enforces_ownership(supervised_env, monkeypatch):
 
 
 def test_js_activity_card_not_pending_queue(supervised_env):
-    js = Path("src/web/js/chat_page.js").read_text(encoding="utf-8")
-    html = Path("src/web/chat_page.html").read_text(encoding="utf-8")
+    js = (REPO_ROOT / "src/web/js/chat_page.js").read_text(encoding="utf-8")
+    html = (REPO_ROOT / "src/web/chat_page.html").read_text(encoding="utf-8")
     assert "upsertSupervisedActivityCard" in js
     assert "dispatchSupervisedControlMessage" in js
     assert "supervised-activity-card" in js or "buildActivityCardHtml" in Path(
@@ -397,7 +399,7 @@ def test_node_supervised_control_helpers(supervised_env):
     import subprocess
     import sys
 
-    script = Path("src/web/js/supervised_control.js")
+    script = REPO_ROOT / "src/web/js/supervised_control.js"
     node = subprocess.run(
         [
             "node",

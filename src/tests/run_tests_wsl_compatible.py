@@ -56,8 +56,6 @@ def run_wsl_compatible_tests():
         ("Screenshot Tools", "unit.test_screenshot_tools"),
         ("OCR Tools", "unit.test_ocr_tools"),
         ("Windows Tools", "unit.test_windows_tools"),
-        ("Security Tests", "unit.test_security"),
-        ("Username Case Tests", "unit.test_username_case"),
     ]
     
     print("[PASS] WSL-Compatible Tests:")
@@ -196,12 +194,13 @@ def generate_wsl_test_summary(compatible_results, individual_results):
     else:
         print(f"   [FAIL] .env file missing - Discord bot tests may fail")
     
-    # Check for bot_config.json
-    config_file = Path(__file__).parent.parent / 'bot_config.json'
+    # Report the active runtime/model preference store
+    from core.runtime_paths import runtime_config_path
+    config_file = runtime_config_path()
     if config_file.exists():
-        print(f"   [PASS] bot_config.json exists")
+        print(f"   [PASS] runtime/model config exists")
     else:
-        print(f"   [FAIL] bot_config.json missing - Bot configuration tests may fail")
+        print(f"   [INFO] runtime/model config absent (defaults are valid)")
     
     # Check for requests (Discord REST agent-ops)
     try:

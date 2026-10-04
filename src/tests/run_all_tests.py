@@ -49,17 +49,7 @@ try:
 except ImportError as e:
     print(f"WARNING: Could not import test_windows_tools: {e}")
 
-try:
-    from unit.test_security import run_security_tests
-    unit_test_modules.append(("Security Tests", run_security_tests))
-except ImportError as e:
-    print(f"WARNING: Could not import test_security: {e}")
 
-try:
-    from unit.test_username_case import run_username_case_tests
-    unit_test_modules.append(("Username Case Tests", run_username_case_tests))
-except ImportError as e:
-    print(f"WARNING: Could not import test_username_case: {e}")
 
 try:
     from unit.test_claude_code import run_all_claude_tests
@@ -221,12 +211,13 @@ def generate_test_summary(unit_results, integration_results, individual_results)
     else:
         print(f"   [FAIL] .env file missing - Discord bot tests may fail")
     
-    # Check for bot_config.json
-    config_file = Path(__file__).parent.parent / 'bot_config.json'
+    # Report the active runtime/model preference store
+    from core.runtime_paths import runtime_config_path
+    config_file = runtime_config_path()
     if config_file.exists():
-        print(f"   [PASS] bot_config.json exists")
+        print(f"   [PASS] runtime/model config exists")
     else:
-        print(f"   [FAIL] bot_config.json missing - Bot configuration tests may fail")
+        print(f"   [INFO] runtime/model config absent (defaults are valid)")
     
     # Check for WSL
     try:

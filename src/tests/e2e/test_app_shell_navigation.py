@@ -366,26 +366,8 @@ def test_chat_deeplink_paints_transcript_from_boot_prefetch(page):
     assert page.get_attribute("html", "data-chat-restoring") is None
 
 
-def test_tools_page_points_at_agent_ops_cli(page):
-    """Tools rail lists python -m api.* verbs."""
-    page.goto(f"{API_BASE}/app_shell.html")
-    page.wait_for_selector("#contentFrame", timeout=10000)
-    toggle = page.locator(".rail-panel-toggle")
-    if toggle.is_visible():
-        col = page.locator(".split-column[data-column='0']")
-        if "panel-open" not in (col.get_attribute("class") or ""):
-            toggle.click()
-            page.wait_for_timeout(300)
-    tools_btn = page.locator('[data-page="/tools_page.html"]').first
-    tools_btn.click()
-    page.wait_for_timeout(800)
-    frame = page.frame_locator("#contentFrame")
-    frame.locator("#agentOpsCli").wait_for(state="visible", timeout=10000)
-    list_text = frame.locator("#agentOpsCli").inner_text()
-    assert "python -m api.chat_cli" in list_text, f"Tools page should list chat_cli. Got: {list_text[:500]}"
 
-
-def test_chat_page_loads_after_tools_check(page):
+def test_chat_page_loads_from_navigation(page):
     """Chat page loads in app shell (verifies Cuttle is working for chat after Tools changes)."""
     page.goto(f"{API_BASE}/app_shell.html")
     page.wait_for_selector("#contentFrame", timeout=10000)

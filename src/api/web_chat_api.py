@@ -1900,11 +1900,6 @@ def serve_query_log():
     return send_from_directory(project_root / 'web', 'query_log.html')
 
 
-@app.route('/test_reports.html')
-def serve_test_reports():
-    """Serve the test reports page"""
-    return send_from_directory(project_root / 'web', 'test_reports.html')
-
 @app.route('/router_editor.html')
 def serve_router_editor():
     """Serve the Router editor page (replaces the retired pipeline node editor)"""
@@ -1975,11 +1970,6 @@ def serve_achievements_preview():
     """
     return send_from_directory(project_root / 'web', 'achievements_preview.html')
 
-
-@app.route('/tools_page.html')
-def serve_tools_page():
-    """Serve the Tools page (MCP servers and tools)."""
-    return send_from_directory(project_root / 'web', 'tools_page.html')
 
 @app.route('/home_automation.html')
 def serve_home_automation_page():
@@ -3563,23 +3553,6 @@ def serve_logs(filename):
     )
     return resp
 
-@app.route('/api/test-reports')
-@owner_required
-def get_test_reports():
-    """Get list of test reports"""
-    try:
-        test_reports = get_reports_by_type('test_report', limit=100)
-        return jsonify({
-            'success': True,
-            'reports': test_reports,
-            'total': len(test_reports)
-        })
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
 @app.route('/api/test-api-key', methods=['POST'])
 @owner_required
 def test_api_key():
@@ -3990,180 +3963,6 @@ def load_api_keys():
             'success': False,
             'message': str(e)
         }), 500
-
-def get_reports_by_type(report_type, limit=100):
-    """Get reports of a specific type"""
-    try:
-        import os
-        import glob
-        from pathlib import Path
-        
-        # Look for specific report files in the web/logs directory
-        logs_dir = project_root / 'web' / 'logs'
-        if not logs_dir.exists():
-            return []
-        
-        # Find specific report type files
-        pattern = f'{report_type}_*.html'
-        report_files = glob.glob(str(logs_dir / pattern))
-        
-        # Sort by modification time (newest first) and limit
-        report_files.sort(key=os.path.getmtime, reverse=True)
-        report_files = report_files[:limit]
-        
-        reports = []
-        for file_path in report_files:
-            try:
-                filename = os.path.basename(file_path)
-                
-                # Get file modification time and size
-                mod_time = os.path.getmtime(file_path)
-                file_size = os.path.getsize(file_path)
-                import time
-                mod_time_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(mod_time))
-                
-                # Determine report type and extract metadata
-                report_type_name = get_report_type_from_filename(filename)
-                report_data = parse_report_html(file_path, report_type_name)
-                
-                # Create title from filename
-                title = create_report_title(filename, report_data)
-                
-                reports.append({
-                    'filename': filename,
-                    'title': title,
-                    'type': report_type_name,
-                    'date': mod_time_str,
-                    'size': file_size,
-                    'url': f'/logs/{filename}',
-                    'preview': report_data.get('preview', 'No preview available'),
-                    'success': report_data.get('success', True),
-                    'metadata': report_data
-                })
-            except Exception as e:
-                print(f"Error processing report file {file_path}: {e}")
-                continue
-        
-        return reports
-    except Exception as e:
-        print(f"Error getting {report_type} reports: {e}")
-        return []
-
-
-def get_report_type_from_filename(filename):
-    """Determine report type from filename (test reports only)."""
-    if 'test_report' in filename:
-        return 'Test Report'
-    return 'Report'
-
-
-def create_report_title(filename, report_data):
-    """Create a human-readable title for the report."""
-    if 'test_report' in filename:
-        return "System Test Results"
-    return filename.replace('.html', '').replace('_', ' ').title()
-
-
-def parse_report_html(file_path, report_type):
-    """Parse HTML report to extract key data."""
-    try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        if report_type == 'Test Report':
-            return parse_test_report_html(content)
-        return {'preview': 'Report data available', 'success': True}
-    except Exception as e:
-        print(f"Error parsing report HTML {file_path}: {e}")
-        return {'preview': 'Error parsing report', 'success': False}
-
-
-def parse_test_report_html(content):
-    """Parse test report HTML"""
-    import re
-    data = {}
-    
-    # Extract test results - try multiple patterns
-    passed_count = 0
-    failed_count = 0
-    total_count = 0
-    
-    # Pattern 1: Look for stat sections with stat-label and stat-number
-    total_match = re.search(r'<span class="stat-number">(\d+)</span>\s*<span class="stat-label">Total Tests</span>', content, re.IGNORECASE)
-    if total_match:
-        total_count = int(total_match.group(1))
-    
-    passed_match = re.search(r'<span class="stat-number[^"]*">(\d+)</span>\s*<span class="stat-label">Passed</span>', content, re.IGNORECASE)
-    if passed_match:
-        passed_count = int(passed_match.group(1))
-    
-    failed_match = re.search(r'<span class="stat-number[^"]*">(\d+)</span>\s*<span class="stat-label">Failed</span>', content, re.IGNORECASE)
-    if failed_match:
-        failed_count = int(failed_match.group(1))
-    
-    # Pattern 2: "X / Y tests passed"
-    if total_count == 0:
-        success_match = re.search(r'(\d+)\s*/\s*(\d+)\s*tests? passed', content, re.IGNORECASE)
-        if success_match:
-            passed_count = int(success_match.group(1))
-            total_count = int(success_match.group(2))
-            failed_count = total_count - passed_count
-    
-    # Pattern 3: Look for pass/fail counts in stat sections (alternative format)
-    if total_count == 0:
-        passed_match2 = re.search(r'Passed:.*?(\d+)', content, re.IGNORECASE)
-        failed_match2 = re.search(r'Failed:.*?(\d+)', content, re.IGNORECASE)
-        if passed_match2:
-            passed_count = int(passed_match2.group(1))
-        if failed_match2:
-            failed_count = int(failed_match2.group(1))
-        total_count = passed_count + failed_count
-    
-    # Extract success rate if available
-    success_rate_match = re.search(r'<span class="stat-number">([0-9.]+)%</span>\s*<span class="stat-label">Success Rate</span>', content, re.IGNORECASE)
-    success_rate = float(success_rate_match.group(1)) if success_rate_match else (passed_count / total_count * 100 if total_count > 0 else 0)
-    
-    # Extract execution time if available
-    exec_time_match = re.search(r'Execution Time:.*?([0-9.]+)\s*(s|seconds)', content, re.IGNORECASE)
-    exec_time = float(exec_time_match.group(1)) if exec_time_match else None
-    
-    # Extract overall status
-    status_match = re.search(r'Overall Status:\s*(\w+)', content, re.IGNORECASE)
-    overall_status = status_match.group(1).upper() if status_match else None
-    
-    # Determine success status
-    success = failed_count == 0 and total_count > 0
-    if overall_status:
-        success = overall_status in ['PASS', 'SUCCESS']
-    
-    # Create comprehensive preview
-    if total_count > 0:
-        status_icon = "✅" if success else "⚠️" if overall_status == 'PARTIAL' else "❌"
-        
-        preview_parts = [
-            f"{status_icon} {passed_count}/{total_count} passed ({success_rate:.0f}%)"
-        ]
-        
-        if failed_count > 0:
-            preview_parts.append(f"❌ {failed_count} failed")
-        
-        if exec_time is not None:
-            preview_parts.append(f"⏱️ {exec_time:.1f}s")
-        
-        if overall_status and overall_status not in ['PASS', 'SUCCESS', 'FAIL']:
-            preview_parts.append(f"📊 {overall_status}")
-        
-        data['preview'] = " | ".join(preview_parts)
-    else:
-        data['preview'] = "📊 System test results available"
-    
-    data['success'] = success
-    data['passed'] = passed_count
-    data['failed'] = failed_count
-    data['total'] = total_count
-    data['overall_status'] = overall_status
-    
-    return data
-
 
 def _parse_auth_db_session_id(chat_session_id):
     """Accept bare ints, ``db_session_<id>``, or ``CH-000155`` from clients."""

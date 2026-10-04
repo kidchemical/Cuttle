@@ -408,7 +408,7 @@ def test_flask_restart_card_recovers_canonical_spec_after_memory_flush(
     import copy
     import json
     import re
-    from unittest.mock import MagicMock, patch
+    from unittest.mock import patch
 
     from api.auth_db import get_auth_db
 
@@ -440,11 +440,10 @@ def test_flask_restart_card_recovers_canonical_spec_after_memory_flush(
     tampered = copy.deepcopy(spec)
     tampered["options"][0]["params"] = {"mode": "force"}
     ctx["client"].set_cookie("session_token", ctx["token"])
-    proc = MagicMock()
-    proc.returncode = 0
-    proc.stdout = "ok"
-    proc.stderr = ""
-    with patch("api.project_actions.subprocess.run", return_value=proc) as run:
+    # Restart is a native owner call; mocking the retired shell path neither
+    # isolates this request nor verifies the signed mode that reaches the owner.
+    with patch("api.flask_restart.request_restart",
+               return_value={"success": True, "state": "waiting_for_idle"}) as restart:
         res = ctx["client"].post(
             "/api/action-form/run",
             json={
@@ -458,8 +457,9 @@ def test_flask_restart_card_recovers_canonical_spec_after_memory_flush(
     data = res.get_json()
     assert res.status_code == 200, data
     assert data["success"] is True
-    env = run.call_args.kwargs["env"]
-    assert env["CUTTLE_PARAM_MODE"] == "graceful"
+    assert restart.call_count == 1
+    assert restart.call_args.kwargs["mode"] == "graceful"
+    assert restart.call_args.kwargs["force_confirm"] is False
 
 
 def test_action_form_unsigned_token_without_spec_fails_after_flush(tmp_path, monkeypatch):

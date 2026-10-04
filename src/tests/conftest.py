@@ -32,7 +32,6 @@ collect_ignore = [
     "unit/test_windows_tools.py",
     "unit/test_api_key.py",
     "unit/test_openai_connection.py",
-    "unit/test_security.py",
     "unit/test_security_standalone.py",
     "test_claude_usage.py",
     "test_mcp_conversion.py",
