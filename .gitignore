@@ -116,7 +116,6 @@ electron/.cdp-profile*/
 _tmp/
 helloworld.md
 src/scripts/_tmp_*
-src/src/
 
 # Local Claude Code settings
 .claude/settings.local.json
