@@ -98,3 +98,77 @@ def test_branch_deletion_skipped(tmp_path):
     repo = _init_repo(tmp_path / "del")
     result = _run_hook(repo, ZERO_SHA, remote_sha=_head(repo))
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def _report(result):
+    import json
+    from core.git_push_diagnostics import REPORT_PREFIX
+    return json.loads(next(line[len(REPORT_PREFIX):] for line in result.stdout.splitlines() if line.startswith(REPORT_PREFIX)))
+
+
+def test_report_names_commit_file_line_and_redacts_value(tmp_path):
+    repo = _init_repo(tmp_path / 'report')
+    base = _head(repo)
+    secret = _synthetic_aws_key()
+    (repo / 'config.py').write_text('KEY = "' + secret + '"\n')
+    _git('add', '.', cwd=repo)
+    _git('commit', '-m', 'introduce credential', cwd=repo)
+    sha = _head(repo)
+    result = _run_hook(repo, sha, base)
+    report = _report(result)
+    hit = report['findings'][0]
+    assert (hit['hook'], hit['file'], hit['commit'], hit['line']) == ('secret-patterns', 'config.py', sha, 1)
+    assert secret not in result.stdout + result.stderr
+    # A later cleanup does not make the introduced secret safe to publish.
+    (repo / 'config.py').write_text('KEY = None\n')
+    _git('add', '.', cwd=repo)
+    _git('commit', '-m', 'remove credential', cwd=repo)
+    assert _run_hook(repo, _head(repo), base).returncode == 1
+
+
+@pytest.mark.parametrize('secret', [False, True])
+def test_sqlite_committed_cells_checked_without_exposing_values(tmp_path, secret):
+    import sqlite3
+    repo = _init_repo(tmp_path / 'sqlite')
+    base = _head(repo)
+    path = repo / 'fixture.db'
+    with sqlite3.connect(path) as db:
+        db.execute('CREATE TABLE config (value TEXT)')
+        db.execute('INSERT INTO config VALUES (?)', (_synthetic_aws_key() if secret else 'ordinary data',))
+    _git('add', '.', cwd=repo)
+    _git('commit', '-m', 'database', cwd=repo)
+    # The committed blob is authoritative, regardless of subsequent local edits.
+    path.unlink()
+    result = _run_hook(repo, _head(repo), base)
+    assert result.returncode == int(secret)
+    if secret:
+        hit = next(f for f in _report(result)['findings'] if f['hook'] == 'sqlite-secrets')
+        assert (hit['file'], hit['table'], hit['column'], hit['row']) == ('fixture.db', 'config', 'value', 1)
+        assert _synthetic_aws_key() not in result.stdout
+
+
+def test_unknown_database_blocks_with_explicit_inspection_reason(tmp_path):
+    repo = _init_repo(tmp_path / 'unknown-db')
+    base = _head(repo)
+    (repo / 'opaque.db').write_bytes(b'unsupported format')
+    _git('add', '.', cwd=repo)
+    _git('commit', '-m', 'opaque database', cwd=repo)
+    report = _report(_run_hook(repo, _head(repo), base))
+    assert report['findings'][0]['hook'] == 'sqlite-secrets'
+    assert 'inspection unavailable' in report['findings'][0]['rule']
+
+
+def test_sqlite_credential_column_blocks_unrecognizable_tokens(tmp_path):
+    import sqlite3
+    repo = _init_repo(tmp_path / 'sqlite-column')
+    base = _head(repo)
+    with sqlite3.connect(repo / 'config.db') as db:
+        db.execute('CREATE TABLE config (api_key TEXT)')
+        db.execute('INSERT INTO config VALUES (?)', ('opaque credential value',))
+    _git('add', '.', cwd=repo)
+    _git('commit', '-m', 'credential column', cwd=repo)
+    result = _run_hook(repo, _head(repo), base)
+    assert result.returncode == 1
+    hit = _report(result)['findings'][0]
+    assert hit['rule'] == 'Nonempty credential column'
+    assert 'opaque credential value' not in result.stdout

@@ -27,3 +27,33 @@ Do not ask “OK to push?” in prose. Example card (only emit the tagged JSON b
 Adjust `remote` / `branch` / `path` to the repo in the chat project chip. Never force-push from this action.
 
 
+
+## Push-blocker reports and database inspection
+
+Cuttle's pre-push hook emits a redacted structured report. Git push failures in
+chat, the Git page, and push action cards open a report popup naming each check,
+commit, offending file, line, and (for SQLite) table, column, and row position.
+The toast identifies the blocking hook rather than Git's generic stderr footer.
+Source/value previews are redacted. “View flagged commit diff” opens the existing
+shared diff popup only on an explicit click; that local authenticated view can
+show original secret material. Database cell values remain redacted in reports.
+
+The checks are `path-policy`, `secret-patterns`, `gitleaks` (when installed), and
+`sqlite-secrets`. Every introduced commit version is scanned, including a secret
+removed by a later commit. Gitleaks errors are reported as coverage warnings;
+built-in checks still run.
+
+SQLite inspection covers changed committed `.db`, `.db3`, `.sqlite`, and
+`.sqlite3` blobs, not live runtime databases or ignored/untracked files. It scans
+text/blob cells for secret patterns and flags nonempty credential columns.
+Values never enter the report. Inspection is read-only and in memory, with
+extension loading disabled. Bounds: 16 MiB per database, 100,000 rows, three
+seconds, and 1,000 findings. Unsupported formats (including WAL fragments),
+encrypted/unreadable databases, and limit violations block with an inspection
+reason. This is a conservative credential gate, not proof that a clean database
+contains no private information.
+
+Code owners: `.cuttle/scripts/git-hooks/pre-push` (project policy),
+`core.git_push_diagnostics` (inspection/report parsing), `api.git_routes`
+(transport), `CuttleGitPushReport` (shared popup). Existing test-fixture/PEM
+placeholder false positives remain visible for report testing.

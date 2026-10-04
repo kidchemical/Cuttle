@@ -382,7 +382,8 @@
                     const data = await resp.json().catch(() => ({}));
                     if (!isCurrent(card, life)) return;
                     const ok = !!(data && data.success);
-                    const toast = (data && data.toast) || (ok ? 'Done.' : 'Failed.');
+                    const pushSummary = !ok && host.showPushFailure ? host.showPushFailure(data || {}) : '';
+                    const toast = pushSummary || (data && data.toast) || (ok ? 'Done.' : 'Failed.');
                     const restartId = ok && data && data.flask_restart
                         ? String(data.flask_restart.restart_id || '')
                         : '';

@@ -343,3 +343,20 @@ def test_commit_route_registered_once():
     endpoints = [r.endpoint for r in wca.app.url_map.iter_rules()
                  if str(r.rule) == "/api/git/commit" and "POST" in r.methods]
     assert endpoints == ["git.git_commit_pending"]
+
+
+def test_push_failure_exposes_hook_report_and_prefers_hook_summary(tmp_path, monkeypatch):
+    import json
+    import subprocess
+    from api import git_service
+    from core.git_push_diagnostics import REPORT_PREFIX
+    repo = _init_repo(tmp_path / 'hook-report')
+    ctx = _ctx(tmp_path, monkeypatch, repo)
+    report = {'version': 1, 'findings': [{'hook': 'secret-patterns', 'rule': 'private key', 'file': 'test.py', 'commit': 'abc', 'line': 3}], 'warnings': []}
+    monkeypatch.setattr(git_service, 'push_repo', lambda *a: subprocess.CompletedProcess([], 1, REPORT_PREFIX + json.dumps(report), 'error: failed to push some refs'))
+    response = ctx['client'].post('/api/git/push', json={}, environ_base=LAN)
+    assert response.status_code == 500
+    data = response.get_json()
+    assert 'secret-patterns' in data['error']
+    assert data['push_report']['findings'][0]['file'] == 'test.py'
+    assert data['push_report']['findings'][0]['commit'] == 'abc'

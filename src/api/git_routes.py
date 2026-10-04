@@ -1226,9 +1226,10 @@ def git_push():
 
         result = push_repo(git_cwd, remote, branch)
         if result.returncode != 0:
-            detail = sanitize_git_output(
-                (result.stderr or result.stdout or 'git push failed').strip()
-            )
+            from core.git_push_diagnostics import push_failure
+            failure = push_failure(sanitize_git_output(result.stdout or ''),
+                                   sanitize_git_output(result.stderr or ''))
+            detail = failure['error']
             print(f"Error git_push: {detail}", flush=True)
             if 'could not read Username' in detail or 'Authentication failed' in detail:
                 detail = (
@@ -1238,7 +1239,8 @@ def git_push():
             return jsonify({
                 'success': False,
                 'error': detail,
-                'output': sanitize_git_output(result.stdout or ''),
+                'push_report': failure.get('push_report'),
+                'output': failure['output'],
                 'branch': branch or target.get('branch'),
                 'remote': remote or target.get('remote'),
                 'repo': target.get('repo'),

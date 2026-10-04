@@ -385,6 +385,12 @@ remain where they were. Nothing here is a proposed interface.
 
 ## CLI / automation
 
+Git push diagnostics: `.cuttle/scripts/git-hooks/pre-push` owns project policy;
+`core.git_push_diagnostics` owns per-commit/SQLite inspection and redacted reports;
+`api.git_routes` composes HTTP responses; `CuttleGitPushReport` owns the shared
+report popup and delegates explicit commit-file views to `CuttleDiffModal`.
+
+
 Canonical: `python -m api.*` (`.cuttle_global/docs/agent-ops-cli.md`). Global actions: `.cuttle_global/actions/*.yaml`. POSIX launchers: `.cuttle/scripts/*.sh` + `.cuttle_global/scripts/*.sh`. Windows `.bat`/`.ps1` still present for mixed hosts.
 
 ---

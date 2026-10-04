@@ -535,6 +535,10 @@ async function performPush() {
             hideModal('pushModal');
             loadGitData();
         } else {
+            if (data.push_report && window.CuttleGitPushReport) {
+                hideModal('pushModal');
+                window.CuttleGitPushReport.show(data.push_report, {projectPath: data.repo_root || (data.project && data.project.path), repoRoot: data.repo_root});
+            }
             throw new Error(data.error || 'Push failed');
         }
     } catch (error) {
@@ -660,21 +664,17 @@ function showLoading(modalId) {
     const modal = document.getElementById(modalId);
     const footer = modal.querySelector('.git-modal-footer');
     if (footer) {
+        if (footer.__gitOriginalHtml === undefined) footer.__gitOriginalHtml = footer.innerHTML;
         footer.innerHTML = '<div class="git-loading"><div class="git-spinner"></div>Processing...</div>';
     }
 }
 
 function hideLoading(modalId) {
-    // Restore original footer content
     const modal = document.getElementById(modalId);
-    if (modal) {
-        // This would need to be implemented based on the specific modal
-        // For now, we'll just remove the loading state
-        const footer = modal.querySelector('.git-modal-footer');
-        if (footer && footer.innerHTML.includes('git-loading')) {
-            // Restore original buttons - this is a simplified approach
-            location.reload();
-        }
+    const footer = modal && modal.querySelector('.git-modal-footer');
+    if (footer && footer.__gitOriginalHtml !== undefined) {
+        footer.innerHTML = footer.__gitOriginalHtml;
+        delete footer.__gitOriginalHtml;
     }
 }
 

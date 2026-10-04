@@ -505,6 +505,7 @@
             });
             const data = await resp.json().catch(() => ({}));
             if (!resp.ok || !data.success) {
+                if (data.push_report && window.CuttleGitPushReport) window.CuttleGitPushReport.show(data.push_report, {projectPath: path || data.repo_root, repoRoot: data.repo_root});
                 let err = String(
                     (data && (data.error || data.message))
                     || ('Git push failed (' + resp.status + ')')
@@ -13580,6 +13581,7 @@
                     notify: (text, kind) => {
                         try { (window.showToast || function () {})(text, kind); } catch (_) {}
                     },
+                    showPushFailure: data => window.CuttleGitPushReport ? window.CuttleGitPushReport.fromAction(data, {projectPath: currentProject && currentProject.path}) : '',
                     syncMessages: () => syncSessionMessagesFromServer(),
                     publishRestartEvent: (payload) => {
                         try {
