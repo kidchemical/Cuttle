@@ -4,6 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def isolated_global_commands(tmp_path, monkeypatch):
+    monkeypatch.setattr("api.project_commands.GLOBAL_COMMANDS_DIR", tmp_path / "global" / "commands")
+
+
 from api.project_commands import (
     build_agent_prompt,
     find_project_command,

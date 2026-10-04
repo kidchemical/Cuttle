@@ -31,29 +31,13 @@ if (-not (Test-Path -LiteralPath $Repo)) {
     exit 2
 }
 
+$py = Join-Path $Repo '.venv\Scripts\python.exe'
+if (-not (Test-Path -LiteralPath $py)) { $py = 'python' }
 if (-not $SkipPull) {
-    Push-Location $Repo
-    try {
-        Log "git fetch --all --prune"
-        & git fetch --all --prune 2>&1 | ForEach-Object { Log "$_" }
-        if ($LASTEXITCODE -ne 0) { Log "ERROR fetch exit=$LASTEXITCODE"; exit $LASTEXITCODE }
-
-        $branch = (& git rev-parse --abbrev-ref HEAD 2>$null | Out-String).Trim()
-        if (-not $branch) { $branch = 'master' }
-        $upstream = (& git rev-parse --abbrev-ref '@{u}' 2>$null | Out-String).Trim()
-        if (-not $upstream) { $upstream = "origin/$branch" }
-
-        Log "git reset --hard $upstream"
-        & git reset --hard $upstream 2>&1 | ForEach-Object { Log "$_" }
-        if ($LASTEXITCODE -ne 0) { Log "ERROR reset exit=$LASTEXITCODE"; exit $LASTEXITCODE }
-
-        Log "git clean -fd"
-        & git clean -fd 2>&1 | ForEach-Object { Log "$_" }
-        Log "git status"
-        & git status -sb 2>&1 | ForEach-Object { Log "$_" }
-    } finally {
-        Pop-Location
-    }
+    # Shared preservation owner runs before any lifecycle effects.
+    $helper = Join-Path $PSScriptRoot 'client-update-checkout.py'
+    & $py $helper --repo $Repo 2>&1 | ForEach-Object { Log "$_" }
+    if ($LASTEXITCODE -ne 0) { Log "ERROR checkout update refused"; exit 1 }
 } else {
     Log "SkipPull set"
 }
@@ -75,8 +59,6 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
 Start-Sleep -Seconds 3
 
 $electronDir = Join-Path $Repo 'electron'
-$py = Join-Path $Repo '.venv\Scripts\python.exe'
-if (-not (Test-Path -LiteralPath $py)) { $py = 'python' }
 
 $pkgJson = Join-Path $electronDir 'package.json'
 if (Test-Path -LiteralPath $pkgJson) {

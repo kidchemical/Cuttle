@@ -14,12 +14,12 @@ Override host with `CUTTLE_JEV_BASE_URL`. Optional `settings.json → jev`
 ## Agent CLI
 
 ```bash
-.venv/bin/python -m api.jev status
-.venv/bin/python -m api.jev route --prompt "fix the scarecrow spawn"
-.venv/bin/python -m api.jev rank --prompt "post this to discord" --project .
-.venv/bin/python -m api.jev label --limit 40
-.venv/bin/python -m api.jev regress --no-pytest
-.venv/bin/python -m api.jev eval --state "still not fixed" --noul urgent:"Is this a complaint about a prior attempt?"
+PYTHONPATH=src .venv/bin/python -m api.jev status
+PYTHONPATH=src .venv/bin/python -m api.jev route --prompt "fix the scarecrow spawn"
+PYTHONPATH=src .venv/bin/python -m api.jev rank --prompt "post this to discord" --project .
+PYTHONPATH=src .venv/bin/python -m api.jev label --limit 40
+PYTHONPATH=src .venv/bin/python -m api.jev regress --no-pytest
+PYTHONPATH=src .venv/bin/python -m api.jev eval --state "still not fixed" --noul urgent:"Is this a complaint about a prior attempt?"
 ```
 
 Flags after the verb. `--json` is implied: stdout is JSON.
@@ -38,3 +38,17 @@ Flags after the verb. `--json` is implied: stdout is JSON.
 Disable the watcher with `CUTTLE_JEV_WATCH=0`. Disable all Jev with `CUTTLE_JEV_DISABLED=1`.
 
 Thresholds live in `src/api/jev/thresholds.py` (the numbers humans should review).
+
+## Shell environment
+
+Examples run from the Cuttle repository root with the project venv. POSIX
+examples set `PYTHONPATH=src` per invocation. For Windows PowerShell, set
+the path and use the Windows interpreter; for example:
+
+```powershell
+$env:PYTHONPATH = "src"
+.\.venv\Scripts\python.exe -m api.jev status
+```
+
+Use PowerShell backticks for multiline continuation and single-quoted JSON
+arguments; POSIX examples use backslashes for continuation.

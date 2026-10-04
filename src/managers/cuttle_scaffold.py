@@ -16,6 +16,7 @@ CUTTLE_SUBDIRS = (
     "scripts",
     "memory",
     "agents",
+    "skills",
 )
 
 # Project-root scratch dir (gitignored). Created alongside `.cuttle/` so agents
@@ -35,6 +36,7 @@ actions, and docs — it does **not** inherit another project's recipes.
   actions/*.yaml    # allowlisted side effects (forms / confirms)
   docs/             # runbooks
   scripts/          # optional shell helpers
+  skills/<id>/SKILL.md # optional project skills
   agents/<id>/      # optional harness agents
   memory/           # reserved
 ```
@@ -48,7 +50,7 @@ temp/               # agent scratch / redirected stdout (gitignored)
 Install-local overlay (gitignored except README):
 
 ```text
-.cuttle/personal/   # mirrors commands|rules|actions|docs|scripts — supplements tracked (md appends, rest wins)
+.cuttle/personal/   # mirrors commands|rules|actions|docs|scripts|skills — rules/docs append; structured units replace
 ```
 
 Global reference: see this repo's `.cuttle_global/README.md` and `.cuttle_global/docs/commands-and-actions.md`
@@ -72,7 +74,7 @@ These files under `.cuttle/rules/` are compiled into every harness agent turn by
 | Path | Role |
 |---|---|
 | (fill in) | Primary source / content root |
-| `temp/` | Agent scratch / redirected stdout (gitignored; global rule 14) |
+| `temp/` | Agent scratch / redirected stdout (gitignored; global rule 13) |
 | `.cuttle/personal/` | Install-local overlay (gitignored; supplements tracked `.cuttle/`) |
 | `.cuttle/commands/` | Cuttle slash commands (`/name`) |
 | `.cuttle/actions/` | Allowlisted side effects (forms / confirms) |
@@ -82,16 +84,16 @@ These files under `.cuttle/rules/` are compiled into every harness agent turn by
 
 1. Prefer this project's `.cuttle/commands`, `.cuttle/actions`, and `.cuttle/docs` over inventing parallel conventions.
 2. Long OS jobs should use project commands with `execute: shell` + `watch:` when available.
-3. Scratch / `_tmp_*` dumps go in `temp/` (or `scripts/temp/` if this project keeps agent scripts under `scripts/`) — never next to kept helpers or at the repo root. See global `.cuttle_global/rules/00-core.md` rule 14.
+3. Scratch / `_tmp_*` dumps go in `temp/` (or `scripts/temp/` if this project keeps agent scripts under `scripts/`) — never next to kept helpers or at the repo root. See global `.cuttle_global/rules/00-core.md` rule 13.
 4. Machine-specific paths / LAN notes → `.cuttle/personal/` (never commit).
 """
 
 _PERSONAL_README = """# `.cuttle/personal/` — install-local overlay
 
-Gitignored twin of tracked `.cuttle/`. Same-relative-path files here **supplement**
-tracked copies: personal *markdown* is appended after the tracked file as a delta
-(keep it small — never fork the whole file); other personal files replace by
-basename. Put LAN hosts, absolute paths, and guild/repo examples here — not
+Gitignored twin of tracked `.cuttle/`. Rule/doc markdown appends a personal delta
+after tracked text. Commands/actions replace by declared name; skills replace by
+directory id. Personal-only units are supported. A structured unit with
+`disabled: true` hides lower-priority units of the same identity. Put LAN hosts, absolute paths, and guild/repo examples here — not
 in tracked docs. See the Cuttle global `.cuttle_global/personal/README.md` for the full contract.
 """
 
@@ -107,6 +109,12 @@ rules = append
 docs = on
 # actions: on | off (skip the global actions fallback leg for this project)
 actions = on
+# skills/commands: on | off (global discovery, including global personal)
+skills = on
+commands = on
+# Optional integration guidance (default off; no service startup):
+# [integrations]
+# gitea = on
 """
 
 
@@ -204,7 +212,7 @@ def ensure_cuttle_scaffold(
         _RULES_CORE.format(name=display),
     )
     # Keep empty dirs visible in git-friendly trees
-    for name in ("actions", "memory", "scripts", "docs", "agents"):
+    for name in ("actions", "memory", "scripts", "docs", "agents", "skills"):
         keep = cuttle / name / ".gitkeep"
         if name == "agents":
             # agents/ holds subdirs later; .gitkeep is enough
@@ -214,12 +222,12 @@ def ensure_cuttle_scaffold(
     # Install-local overlay (gitignored on global; projects get a README + subdirs)
     personal = cuttle / "personal"
     _mkdir(personal)
-    for sub in ("commands", "rules", "actions", "docs", "scripts"):
+    for sub in ("commands", "rules", "actions", "docs", "scripts", "skills"):
         _mkdir(personal / sub)
     _write_if_missing(personal / "README.md", _PERSONAL_README)
     _ensure_personal_gitignore(root, created)
 
-    # Project-root scratch (global rule 14) — dir + gitignore, never overwrite ignore body
+    # Project-root scratch (global rule 13) — dir + gitignore, never overwrite ignore body
     _mkdir(root / PROJECT_TEMP_DIR)
     _ensure_temp_gitignore(root, created)
 

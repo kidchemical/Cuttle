@@ -94,6 +94,9 @@ def _actions_dirs_for_project(
         if primary.is_dir():
             seen.add(key)
             out.append((primary, owner_r))
+        nested_personal = owner_r / "source" / ".cuttle" / "personal" / "actions"
+        if nested_personal.is_dir():
+            out.append((nested_personal, owner_r))
         nested = owner_r / "source" / ".cuttle" / "actions"
         if nested.is_dir():
             # Owning root for Unity-style nested .cuttle is still the project root.
@@ -175,7 +178,7 @@ def _parse_action_file(path: Path, project_path: str) -> Optional[Dict[str, Any]
 
 
 def list_project_actions(
-    project_path: str, *, include_global: bool = True
+    project_path: str, *, include_global: bool = True, _include_disabled: bool = False
 ) -> List[Dict[str, Any]]:
     if not project_path:
         return []
@@ -198,6 +201,16 @@ def list_project_actions(
             if key in seen:
                 continue
             seen.add(key)
+            if action["raw"].get("disabled") is True and not _include_disabled:
+                continue
+            parts = actions_dir.relative_to(owner_root).parts
+            scope = "global" if ".cuttle_global" in parts else "project"
+            if scope == "project" and "source" in actions_dir.relative_to(owner_root).parts:
+                scope += "-nested"
+            if "personal" in parts:
+                scope += "-personal"
+            action["source"] = scope
+            action["ref"] = f"{scope}/{key}"
             out.append(action)
     out.sort(key=lambda a: (a.get("title") or a.get("name") or "").lower())
     return out
@@ -268,6 +281,10 @@ def find_project_action_resolved(
         include_global = True
 
     if primary:
+        # A local tombstone is terminal, including the cross-project fallback.
+        for effective in list_project_actions(primary, include_global=include_global, _include_disabled=True):
+            if effective["name"] == want and effective["raw"].get("disabled") is True:
+                return None, primary
         _add_candidate(find_project_action(primary, want, include_global=include_global), primary)
 
     paths: List[str] = []

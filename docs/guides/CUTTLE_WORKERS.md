@@ -39,7 +39,7 @@ The user talks to **Cuttle**. Cuttle (orchestrator + Brain) decides when work sh
 1. Restart Flask/daemon so routes + local worker start.
 2. Open Jobs → **Devices** — host worker should show online within ~poll seconds.
 3. Click **Ping local worker** (or `POST /api/workers/jobs` with `{"type":"ping"}`).
-4. On the laptop: Electron **Client** → **Update** if offered (`cuttle-desktop@0.2.2+`), then connect to the PC. Worker **auto-enrolls** — no token to type. Needs a real Python 3.10+ (python.org; **not** the Windows Store stub). It should appear under Devices / green titlebar badge.
+4. On the laptop: Electron **Client** → **Update** if offered (`cuttle-desktop@0.2.2+`), then connect to the PC. Worker **auto-enrolls** — no token to type. Needs a real Python 3.11+ (python.org; **not** the Windows Store stub). It should appear under Devices / green titlebar badge.
 5. If the sidecar dies, open the sidecar log on the laptop — that file has the real traceback.
 6. File copy (paths allowlisted on the **target** worker) — same HTTP envelope; prefer platform verbs once they exist:
 
@@ -93,11 +93,17 @@ Commercial analogies (Incredibuild, Flamenco) solve pieces of this. Cuttle’s d
 
 1. Owns the remote worker claim loop (Electron skips sidecar when daemon heartbeat is fresh).
 2. Accepts allowlisted `shell` recipes (`git_pull`, …) and `cuttle_self_update`.
-3. On `cuttle_self_update`, schedules a **detached** updater (`.cuttle_global/scripts/client-self-update.ps1`): stop Electron → `git pull --ff-only` → restart client daemon + Electron Client.
+3. On `cuttle_self_update`, schedules a **detached** updater (`.cuttle_global/scripts/client-self-update.ps1` on Windows or `client-self-update.sh` on POSIX): check the checkout → `git fetch --all --prune` → `git merge --ff-only --no-overwrite-ignore` the configured upstream → stop Client processes → restart Client daemon + Electron Client.
+
+The updater refuses tracked edits, untracked files, detached HEAD, missing upstream,
+and local commits/divergence, and rechecks cleanliness after fetch. It neither
+stashes nor hard-resets local work. Preserve or reconcile your changes before
+retrying. Earlier updater revisions hard-reset the checkout; refresh those
+scripts before relying on this contract. See the [release runbook](../../.cuttle/docs/cuttle-release.md).
 
 Platform verb: `workers.self-update` (`target` = laptop `worker_id`). This is the mesh dogfood for “host commands Client lifecycle” without opening inbound SSH for updates.
 
-**Version signal:** `cuttle_version` comes from `electron/package.json`. Bump with `.cuttle/scripts/bump-cuttle-version.ps1` before pushing worker/Client runtime changes. Host `workers.list` exposes `host_cuttle_version`, `outdated_workers`, and per-worker `needs_update` so Jobs UI / agents can offer self-update.
+**Version signal:** `cuttle_version` comes from `electron/package.json`. Bump SemVer only at release time using `.cuttle/scripts/bump-cuttle-version.ps1`; see the [release runbook](../../.cuttle/docs/cuttle-release.md). Git revision mismatch and stale boot revision also flag workers after ordinary pushes, without a version bump. Host `workers.list` exposes `host_cuttle_version`, `outdated_workers`, and per-worker `needs_update` so Jobs UI / agents can offer self-update.
 
 ### Shell transports (three tiers)
 
@@ -141,7 +147,7 @@ User (chat on the host)
 ┌───────────────────────────────┐
 │  Cuttle Orchestrator (host)   │  intent classify → schedule → backends
 │  Job queue (host-first)       │  claim / lease / heartbeat
-│  Platform verbs (any brain)   │  actions / MCP — not per-CLI tips
+│  Platform verbs (any brain)   │  actions / agent ops CLIs — not per-CLI tips
 └───────────────┬───────────────┘
                 │
      ┌──────────┼──────────┐
@@ -316,7 +322,7 @@ Success criteria for the benchmark: correct frames, sensible scheduling (idle GP
 
 ## Open questions (defer to implementation)
 
-- Exact shape of workers actions vs MCP tool schemas (prefer one shared implementation behind both).
+- Future extensions to the existing workers actions and agent ops CLI contract.
 - How much W3 classification is rule/heuristic vs cheap router LLM.
 - How Jobs UI merges Gitea jobs vs device-worker jobs in one cockpit (still observability).
 

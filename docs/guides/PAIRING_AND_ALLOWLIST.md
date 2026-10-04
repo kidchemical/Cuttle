@@ -1,53 +1,52 @@
-# Channel-Level Security: Pairing and Allowlist
+# Web Chat pairing and allowlist
 
-Cuttle supports **DM pairing** and **allowFrom** for **Web Chat** so you can safely expose the assistant to untrusted users.
+Channel admission adds a restriction to authenticated `POST /api/chat`
+requests. It runs before native controls, project shell commands, attachment
+analysis, routing, and harness execution, including streaming requests.
+Authentication and chat-session ownership checks still apply. Pairing is not
+an isolation boundary for agents or a substitute for restricting network access,
+owner privileges, action execution, or other API routes.
 
-**Historical:** inbound Discord DM pairing (`channels.discord`) belonged to the retired Discord gateway. Settings keys may still exist; they do not enable a Discord chat surface. Discord **agent-ops** (read/post) use project `discord-post.yaml` allowlists, not this pairing API.
-
-## Concepts
-
-- **dmPolicy**: `"open"` (everyone allowed if in allowFrom) or `"pairing"` (unknown users must complete pairing).
-- **allowFrom**: List of allowed identities. Use `["*"]` to allow everyone when dmPolicy is `"open"`. For Discord, use Discord user IDs; for Web Chat, use `web_user_<id>` or session identifiers.
-- **Pairing**: When dmPolicy is `"pairing"` and a user is not in allowFrom, they receive a one-time **pairing code**. An admin approves the code via API or Settings; the user is then added to the allowlist.
+Discord is REST agent-ops only; the retired inbound Discord DM pairing flow
+is not supported. Worker enrollment uses a separate identity/token system.
 
 ## Configuration
 
-Stored in `settings.json` under `channels`:
+An owner can update channel settings in Settings or through authenticated
+`POST /api/settings/channels`:
 
 ```json
-{
-  "channels": {
-    "webchat": {
-      "dmPolicy": "open",
-      "allowFrom": ["*"]
-    },
-    "discord": {
-      "dmPolicy": "pairing",
-      "allowFrom": ["123456789012345678"]
-    }
-  }
-}
+{"channel":"webchat","dmPolicy":"pairing","allowFrom":["web_user_1"]}
 ```
 
-- **webchat**: `identity` is `web_user_<user_id>` for logged-in users, or session id / IP for guests.
-- **discord**: `identity` is the Discord user ID (`user_context.id`).
+These values are stored under `channels.webchat` in `src/settings.json`.
+Identities are `web_user_<authenticated user id>`, including authenticated
+guest accounts. Client-provided chat/session ids do not identify the sender.
 
-## API
+- `dmPolicy: "open"` and `allowFrom: ["*"]` admit every authenticated user.
+- An explicit empty `allowFrom: []` admits no unapproved identities.
+- `dmPolicy: "pairing"` requires unknown users to obtain owner approval;
+  wildcard entries do not open this policy.
+- Specific allowlist identities and previously approved pairings are admitted
+  under either policy. A pairing-store/configuration error returns HTTP 503.
 
-- **POST /api/pairing/approve** – Approve a code. Body: `{ "code": "ABC123" }`.
-- **GET /api/pairing/pending** – List pending pairing requests (for admin UI).
-- **GET /api/pairing/status?channel=webchat&identity=...** – Check if identity is allowed.
-- **GET /api/settings/channels** – Get channel config (dmPolicy, allowFrom).
-- **POST /api/settings/channels** – Update channel config. Body: `{ "channel": "discord", "dmPolicy": "pairing", "allowFrom": ["id1", "id2"] }`.
+## Flow and API
 
-## Flow
+1. The owner enables pairing and includes their own `web_user_<id>` identity.
+2. An authenticated unknown user sends a chat message. HTTP 403 returns
+   `error: "pairing_required"` and a `pairing_code`; no agent work starts.
+3. The owner reads `GET /api/pairing/pending` and approves the code with
+   `POST /api/pairing/approve`, body `{"code":"ABC123"}`.
+4. The user resends their message; approval permits normal chat dispatch.
 
-1. Set `channels.discord.dmPolicy` to `"pairing"` and `allowFrom` to your Discord user ID(s).
-2. When an unknown user DMs the bot, they receive a message like: "Pairing required. Your code is: XYZ789. An admin must approve this code in Settings or via API."
-3. You run: `POST /api/pairing/approve` with `{ "code": "XYZ789" }` (or approve in Settings UI).
-4. That user is now allowed for future messages.
+All pairing endpoints require an owner session cookie or owner session bearer
+token, including `GET /api/pairing/status?channel=webchat&identity=web_user_2`.
+Channel settings GET/POST also require an owner. In multi-user deployments,
+configure `OWNER_USER_EMAIL`; without it, every authenticated non-guest account
+is treated as an owner. Pairing alone does not change that role policy.
 
-## Data
-
-- Approved and pending pairings are stored in `src/data/pairing_store.json`.
-- Pairing codes expire after 10 minutes if not approved.
+Open-policy allowlist rejection returns `error: "allowlist_denied"` without a
+pairing code. Approved/pending identities live in `src/data/pairing_store.json`;
+unapproved codes expire after ten minutes. Approval is stored separately from
+the settings allowlist, so removing an allowlist entry alone does not revoke an
+existing approval.

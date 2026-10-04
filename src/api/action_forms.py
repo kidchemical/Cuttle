@@ -1531,31 +1531,52 @@ def execute_action_form_submission(
         run_project = str(run.get("project_path") or project_path or "")
         run_params = dict(run.get("params") or {})
         channel_hint = str(run_params.get("channel") or run_params.get("channel_id") or "").strip() or None
-        action_obj, resolved_path = find_project_action_resolved(
-            run_project, str(action), channel=channel_hint
-        )
-        if not action_obj:
-            all_ok = False
-            results.append(
-                {
-                    "success": False,
-                    "action": action,
-                    "error": (
-                        f"Unknown action `{action}` for project path "
-                        f"`{run_project or '(empty)'}`. "
-                        "Set the chat project chip to the project that owns "
-                        "`.cuttle/actions/` (or add it to global `.cuttle_global/actions/`)."
-                    ),
-                }
+        if action == "flask.restart" and owner_user_id is not None:
+            # Recovery controls must not depend on mutable project recipe
+            # discovery. HTTP ingress supplied the authenticated account id;
+            # require the same owner role as /api/flask/restart before effects.
+            from api.auth_db import get_auth_db
+            from api.http_authz import is_owner_user
+            from api.flask_restart import request_restart
+
+            user = get_auth_db().get_user_by_id(int(owner_user_id))
+            if not is_owner_user(user):
+                res = {"success": False, "response": "Owner privileges required."}
+            else:
+                restart = request_restart(
+                    mode=str(run_params.get("mode") or "graceful").strip().lower(),
+                    session_id=session_id,
+                    user_source="flask.restart_action",
+                    force_confirm=str(run_params.get("mode") or "").strip().lower() == "force",
+                    chat_notify=False,
+                )
+                res = {**restart, "response": restart.get("response") or restart.get("error") or restart.get("state") or "Restart requested."}
+        else:
+            action_obj, resolved_path = find_project_action_resolved(
+                run_project, str(action), channel=channel_hint
             )
-            toasts.append(f"Unknown action `{action}`")
-            continue
-        res = _run_one(
-            resolved_path or run_project,
-            str(action),
-            run_params,
-            session_id=session_id,
-        )
+            if not action_obj:
+                all_ok = False
+                results.append(
+                    {
+                        "success": False,
+                        "action": action,
+                        "error": (
+                            f"Unknown action `{action}` for project path "
+                            f"`{run_project or '(empty)'}`. "
+                            "Set the chat project chip to the project that owns "
+                            "`.cuttle/actions/` (or add it to global `.cuttle_global/actions/`)."
+                        ),
+                    }
+                )
+                toasts.append(f"Unknown action `{action}`")
+                continue
+            res = _run_one(
+                resolved_path or run_project,
+                str(action),
+                run_params,
+                session_id=session_id,
+            )
         ok = bool(res.get("success"))
         all_ok = all_ok and ok
         results.append(

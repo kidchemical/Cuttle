@@ -12,8 +12,9 @@ fresh/full context and ride change-deltas on resume — keep them small and load
 - **Project** (`{project}/.cuttle/rules/`): true only for chats targeting that project.
   Never duplicate a global rule; point at it when overlap tempts you.
 - **Personal** (`personal/` beside either tree, install-local preferences): your
-  deltas, which may contain local paths. Personal *markdown* appends after the
-  tracked file; other personal files replace by basename. Open the tracked file
+  deltas, which may contain local paths. Personal rule/doc Markdown appends after the
+  tracked file. Commands/actions replace by declared name, skills by directory id;
+  script recipes keep explicit literal paths. Open the tracked file
   first, then the personal delta. Keep `personal/` gitignored and secrets out of
   it — tracked public guidance must stay portable.
 

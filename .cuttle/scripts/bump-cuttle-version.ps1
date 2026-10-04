@@ -1,6 +1,7 @@
 # Bump Cuttle desktop/mesh version (electron/package.json).
-# Workers advertise this as cuttle_version — bump when Client/worker runtime
-# behavior changes so host can see mismatches and offer self-update.
+# Workers advertise cuttle_version. Bump SemVer only at release time, never per push.
+# Git revision mismatch and stale boot revision also flag workers for self-update.
+# Release procedure: .cuttle/docs/cuttle-release.md.
 #
 # Usage:
 #   .cuttle\scripts\bump-cuttle-version.ps1           # patch 0.2.5 -> 0.2.6

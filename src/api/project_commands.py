@@ -30,6 +30,8 @@ RESERVED_SLASH_NAMES = frozenset({
     "model", "plan", "ask", "agent", "clear", "sandbox", "about",
 })
 
+GLOBAL_COMMANDS_DIR = Path(__file__).resolve().parents[2] / ".cuttle_global" / "commands"
+
 _FRONTMATTER_SPLIT = re.compile(r"\A---\s*\n(.*?)\n---\s*\n?", re.DOTALL)
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
@@ -93,21 +95,10 @@ def _normalize_watch(raw: Any) -> Optional[Dict[str, Any]]:
 
 def _commands_dirs_for_project(project_path: str) -> List[Path]:
     """Prefer ``.cuttle/commands`` at the registered root; also check nested git ``source/``."""
-    try:
-        root = Path(project_path).resolve()
-    except OSError:
-        return []
-    if not root.is_dir():
-        return []
-    dirs: List[Path] = []
-    primary = root / ".cuttle" / "commands"
-    if primary.is_dir():
-        dirs.append(primary)
-    # Unity-style: registered folder is game root, code/git under source/
-    nested = root / "source" / ".cuttle" / "commands"
-    if nested.is_dir() and nested not in dirs:
-        dirs.append(nested)
-    return dirs
+    from api.cuttle_brain.personal_overlay import scoped_unit_dirs
+    from api.cuttle_brain.global_layers import load_global_layers
+    return [path for path, _ in scoped_unit_dirs(project_path, "commands", GLOBAL_COMMANDS_DIR.parent,
+                include_global=load_global_layers(project_path).commands)]
 
 
 def _parse_command_file(path: Path, project_path: str) -> Optional[Dict[str, Any]]:
@@ -115,6 +106,8 @@ def _parse_command_file(path: Path, project_path: str) -> Optional[Dict[str, Any
         raw = path.read_text(encoding="utf-8")
     except OSError:
         return None
+    from api.cuttle_brain.personal_overlay import unit_disabled
+
     meta, body = _split_frontmatter(raw)
     file_stem = path.stem
     name = _slugify(str(meta.get("name") or file_stem))
@@ -151,6 +144,7 @@ def _parse_command_file(path: Path, project_path: str) -> Optional[Dict[str, Any
             timeout = None
 
     return {
+        "disabled": unit_disabled(meta),
         "name": name,
         "title": title,
         "description": description,
@@ -171,6 +165,9 @@ def list_project_commands(project_path: str) -> List[Dict[str, Any]]:
     """Return palette-ready command dicts for a project path (may be empty)."""
     if not project_path:
         return []
+    from api.cuttle_brain.personal_overlay import scoped_unit_dirs
+
+    sources = dict(scoped_unit_dirs(project_path, "commands", GLOBAL_COMMANDS_DIR.parent))
     seen: set = set()
     out: List[Dict[str, Any]] = []
     for commands_dir in _commands_dirs_for_project(project_path):
@@ -188,6 +185,10 @@ def list_project_commands(project_path: str) -> List[Dict[str, Any]]:
             if key in seen:
                 continue
             seen.add(key)
+            if cmd["disabled"]:
+                continue
+            cmd["source"] = sources[commands_dir]
+            cmd["ref"] = f"{cmd['source']}/{key}"
             out.append(cmd)
     out.sort(key=lambda c: (c.get("title") or c.get("name") or "").lower())
     return out
@@ -197,9 +198,11 @@ def find_project_command(project_path: str, name: str) -> Optional[Dict[str, Any
     want = _slugify(name)
     if not want:
         return None
-    for cmd in list_project_commands(project_path):
+    commands = list_project_commands(project_path)
+    for cmd in commands:
         if cmd["name"] == want:
             return cmd
+    for cmd in commands:
         if want in (cmd.get("aliases") or []):
             return cmd
     return None

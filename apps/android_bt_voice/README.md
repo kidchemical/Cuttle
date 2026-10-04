@@ -1,12 +1,13 @@
 # Cuttle Local Voice – Android companion app
 
-Companion app for Cuttle’s **local BT/TCP voice** (no VAPI telephony). Connects to your PC over **WiFi (TCP)** so the PC runs STT/LLM/TTS and this app streams mic audio to the PC and plays TTS back. Optional: PC can send a **dial** command so the phone opens the dialer or places a call (your carrier number).
+Legacy **TCP voice prototype**, not a supported Cuttle voice integration. The repository no longer ships its PC STT/LLM/TTS backend or the `start_local_bt_voice` / `local_bt_voice_start` entry points. Cuttle does not host an MCP server. No maintained external backend is specified here; using this prototype requires supplying a compatible backend yourself. The optional phone HTTPS listener on :8888 is unrelated and cannot speak this TCP protocol.
 
 ## Requirements
 
 - Android 5.0+ (API 21+)
 - Same WiFi as the PC (or Bluetooth SPP if you add it later)
-- PC running Cuttle with local voice server started (e.g. `local_bt_voice_start`)
+- An independently supplied TCP voice backend implementing the framing below
+- A trusted network: the prototype TCP protocol provides no TLS or peer authentication
 
 ## Permissions
 
@@ -18,9 +19,9 @@ Companion app for Cuttle’s **local BT/TCP voice** (no VAPI telephony). Connect
 
 ## Setup
 
-1. **PC**: Start the local voice server (from Cuttle MCP or script): `start_local_bt_voice(port=8888)`.
-2. **Phone**: In the app, set the PC’s IP (e.g. `192.168.1.100`) and port (default `8888`). Find PC IP with `ipconfig` (Windows) or `ifconfig` (Mac/Linux).
-3. Tap **Connect**. When connected, speak; the PC will transcribe, run the LLM, and play TTS back.
+There is no working PC setup recipe in this checkout. If developing a replacement
+backend, select an unused TCP port and point the app at it; do not use Cuttle’s
+HTTPS :8888 listener as a voice endpoint. Bluetooth SPP remains a future extension.
 
 ## Protocol (TCP)
 
@@ -32,17 +33,17 @@ Frames: **1 byte type** + **4 bytes length (big-endian)** + **payload**.
 
 ## Build
 
-**Requirements:** **JDK 11 or higher** (Android Gradle Plugin 8.x needs Java 11+ to run). Android SDK (installed with Android Studio or command-line tools).
+**Requirements:** **JDK 17** (the pinned Android Gradle Plugin 8.2.0 requires JDK 17 to run Gradle). Android SDK (installed with Android Studio or command-line tools).
 
 ### Option 1: Android Studio (recommended)
 
 1. Open the `apps/android_bt_voice` folder in **Android Studio**.
-2. Android Studio uses its bundled JDK 11+ and Android SDK. Sync Gradle and build.
+2. Android Studio uses its bundled JDK 17 and Android SDK. Sync Gradle and build.
 3. Run on a device or emulator.
 
 ### Option 2: Command line
 
-1. Set **JAVA_HOME** to a JDK 11+ installation (e.g. Android Studio’s bundled JDK or a standalone JDK 11+).
+1. Set **JAVA_HOME** to a JDK 17 installation (e.g. Android Studio’s bundled JDK or a standalone JDK 17).
 2. Set **ANDROID_HOME** (or **ANDROID_SDK_ROOT**) to your Android SDK path.
 3. From the project root (`apps/android_bt_voice/`):
    - **Windows:** `.\gradlew.bat assembleDebug`
@@ -52,3 +53,6 @@ Frames: **1 byte type** + **4 bytes length (big-endian)** + **payload**.
 ## Dial
 
 When the PC sends `dial:<number>`, the app uses `Intent.ACTION_DIAL` (opens dialer; user taps Call). With `CALL_PHONE` permission you can switch to `ACTION_CALL` to place the call directly.
+
+The pinned AGP 8.2 JDK requirement is documented in the
+[Android release notes](https://developer.android.com/build/releases/agp-8-2-0-release-notes).

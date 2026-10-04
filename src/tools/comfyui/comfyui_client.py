@@ -1,6 +1,6 @@
 """Talk to a local ComfyUI server (TRELLIS.2 image-to-3D + texturing).
 
-ComfyUI lives outside this repo (default ``F:\\AI\\ComfyUI_windows_portable``).
+ComfyUI lives outside this repo; set ``COMFYUI_ROOT`` to its installed root.
 Cuttle does not vendor the 2GB+ portable install or the ~20GB model weights.
 """
 
@@ -17,12 +17,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
-DEFAULT_ROOT = Path(r"F:\AI\ComfyUI-Trellis")
 DEFAULT_URL = "http://127.0.0.1:8188"
 CONTROL_AFTER = {"fixed", "increment", "decrement", "randomize"}
 SKIP_NODE_TYPES = {"Note", "MarkdownNote", "Reroute", "PrimitiveNode"}
 
-# RTX 3080 10GB: prefer the low-poly textured workflow.
+# Conservative compatibility default; callers can select a workflow explicitly.
 DEFAULT_WORKFLOW = "MeshWithTexturing_LowPoly.json"
 
 
@@ -32,7 +31,9 @@ class ComfyUIError(Exception):
 
 def _root() -> Path:
     raw = (os.environ.get("COMFYUI_ROOT") or "").strip()
-    return Path(raw) if raw else DEFAULT_ROOT
+    if not raw:
+        raise ComfyUIError("Set COMFYUI_ROOT to your optional ComfyUI installation before using local files.")
+    return Path(raw)
 
 
 def _url() -> str:
@@ -105,6 +106,14 @@ def is_running(timeout: float = 2.0) -> bool:
 
 
 def comfyui_status() -> Dict[str, Any]:
+    if not (os.environ.get("COMFYUI_ROOT") or "").strip():
+        return {
+            "configured": False, "installed": False, "running": False,
+            "url": _url(), "root": None, "trellis2_nodes": False,
+            "dinov3_present": False, "output_dir": None, "queue": {},
+            "gpu_note": "GPU capacity is unknown; select a workflow for your configured hardware.",
+            "configuration_error": "Set COMFYUI_ROOT to your optional ComfyUI installation.",
+        }
     root = _root()
     installed = (_python().is_file() and (_comfy_dir() / "main.py").is_file())
     trellis = _comfy_dir() / "custom_nodes" / "ComfyUI-Trellis2"
@@ -117,6 +126,7 @@ def comfyui_status() -> Dict[str, Any]:
         except Exception as e:
             queue = {"error": str(e)}
     return {
+        "configured": True,
         "installed": installed,
         "running": running,
         "url": _url(),
@@ -125,19 +135,17 @@ def comfyui_status() -> Dict[str, Any]:
         "dinov3_present": any(dinov3.glob("*")) if dinov3.is_dir() else False,
         "output_dir": str(_output_dir()),
         "queue": queue,
-        "gpu_note": (
-            "This machine is an RTX 3080 10GB. Use MeshWithTexturing_LowPoly / MeshOnly_LowPoly, "
-            "512 resolution, and --lowvram. Full TRELLIS.2-4B at 1024+ will OOM."
-        ),
+        "gpu_note": "GPU capacity is unknown; select a workflow for your configured hardware.",
     }
 
 
 def comfyui_start(wait_seconds: int = 90) -> Dict[str, Any]:
+    _root()  # Require explicit local configuration before probing or launching.
     if is_running():
         return {"started": False, "already_running": True, "url": _url(), **comfyui_status()}
     if not _start_bat().is_file():
         raise ComfyUIError(
-            f"ComfyUI is not installed at {_root()}. Run .cuttle/scripts/install-comfyui-trellis2.ps1"
+            f"ComfyUI is not installed at {_root()}. Install it separately and set COMFYUI_ROOT."
         )
     log = _log_file()
     creation = 0
@@ -170,6 +178,7 @@ def comfyui_start(wait_seconds: int = 90) -> Dict[str, Any]:
 
 def comfyui_stop() -> Dict[str, Any]:
     """Ask ComfyUI to interrupt, then kill the portable python if it is still up."""
+    _root()  # Require local configuration before interrupting a server.
     interrupted = False
     try:
         requests.post(f"{_url()}/interrupt", timeout=3)
@@ -370,7 +379,7 @@ def _patch_workflow(ui: Dict[str, Any], image_name: str, asset_name: str, low_vr
                 widgets[3] = True
             for i, val in enumerate(widgets):
                 if isinstance(val, str) and val.lower() in {"flash_attn", "flash_attn_3"}:
-                    # sdpa is more forgiving on 10GB cards if flash-attn wheels are missing
+                    # sdpa avoids requiring optional flash-attn wheels in low-VRAM mode
                     widgets[i] = "sdpa"
 
 
@@ -422,10 +431,12 @@ def comfyui_generate_3d(
 ) -> Dict[str, Any]:
     """Image-to-3D (and texture, if the workflow includes it). Returns output GLB paths."""
     status = comfyui_status()
+    if not status["configured"]:
+        raise ComfyUIError(status["configuration_error"])
     if not status["installed"]:
         raise ComfyUIError(f"ComfyUI is not installed at {status['root']}")
     if not status["trellis2_nodes"]:
-        raise ComfyUIError("ComfyUI-Trellis2 custom nodes are missing. Re-run the install script.")
+        raise ComfyUIError("ComfyUI-Trellis2 custom nodes are missing. Install them in your configured ComfyUI root.")
     if start_if_needed and not status["running"]:
         comfyui_start()
     elif not is_running():

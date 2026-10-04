@@ -48,16 +48,14 @@ if [[ ! -d "$REPO" ]]; then
   exit 2
 fi
 
+PY="$REPO/.venv/bin/python3"
+[[ -x "$PY" ]] || PY="$REPO/.venv/bin/python"
+[[ -x "$PY" ]] || PY="python3"
+
 if [[ "$SKIP_PULL" -eq 0 ]]; then
-  log "git fetch --all --prune"
-  git -C "$REPO" fetch --all --prune >>"$LOG" 2>&1 || { log "ERROR fetch failed"; exit 1; }
-  branch="$(git -C "$REPO" rev-parse --abbrev-ref HEAD 2>/dev/null || echo master)"
-  upstream="$(git -C "$REPO" rev-parse --abbrev-ref '@{u}' 2>/dev/null || echo "origin/$branch")"
-  log "git reset --hard $upstream"
-  git -C "$REPO" reset --hard "$upstream" >>"$LOG" 2>&1 || { log "ERROR reset failed"; exit 1; }
-  log "git clean -fd"
-  git -C "$REPO" clean -fd >>"$LOG" 2>&1 || true
-  git -C "$REPO" status -sb >>"$LOG" 2>&1 || true
+  # Shared preservation owner runs before any lifecycle effects.
+  UPDATE_HELPER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/client-update-checkout.py"
+  "$PY" "$UPDATE_HELPER" --repo "$REPO" >>"$LOG" 2>&1 || { log "ERROR checkout update refused; see $LOG"; exit 1; }
 else
   log "SkipPull set"
 fi
@@ -82,9 +80,6 @@ done < <(pgrep -f 'electron|cuttle-desktop|cuttle_client_daemon|cuttle_device_wo
 
 sleep 3
 
-PY="$REPO/.venv/bin/python3"
-[[ -x "$PY" ]] || PY="$REPO/.venv/bin/python"
-[[ -x "$PY" ]] || PY="python3"
 
 pkg="$REPO/electron/package.json"
 if [[ -f "$pkg" ]]; then

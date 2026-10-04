@@ -12,3 +12,6 @@ mss>=9.0.0
 # Web search tool (tools/web_search.py). Currently has no live callers;
 # kept here so the module keeps working if re-enabled.
 duckduckgo-search>=6.0.0
+
+# LAN discovery (api/discovery_mdns.py); LAN access and mdns_enabled must also be enabled.
+zeroconf>=0.131.0

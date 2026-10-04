@@ -7,9 +7,9 @@ the open chat pane and honors reduced-motion, animation, and notification prefer
 From the Cuttle checkout, with the project venv:
 
 ```bash
-.venv/bin/python -m api.chat_vfx confetti --session CH-000927 --count 120
-.venv/bin/python -m api.chat_vfx toast --session CH-000927 "Done" --variant success
-.venv/bin/python -m api.chat_vfx pending --session CH-000927
+PYTHONPATH=src .venv/bin/python -m api.chat_vfx confetti --session CH-000927 --count 120
+PYTHONPATH=src .venv/bin/python -m api.chat_vfx toast --session CH-000927 "Done" --variant success
+PYTHONPATH=src .venv/bin/python -m api.chat_vfx pending --session CH-000927
 ```
 
 Library: `spawn_confetti(session_id, count=120)`, `toast(session_id, message,
@@ -34,3 +34,17 @@ session. The private SQLite store defaults to `src/data/db/chat_vfx.db`;
 Achievements retains its durable unlock/ack flow and shares the generic confetti
 renderer. These preview effects never grant an achievement. Adding sounds or
 other effects later requires an explicit validated type and renderer.
+
+## Shell environment
+
+Examples run from the Cuttle repository root with the project venv. POSIX
+examples set `PYTHONPATH=src` per invocation. For Windows PowerShell, set
+the path and use the Windows interpreter; for example:
+
+```powershell
+$env:PYTHONPATH = "src"
+.\.venv\Scripts\python.exe -m api.chat_vfx pending --session CH-000927
+```
+
+Use PowerShell backticks for multiline continuation and single-quoted JSON
+arguments; POSIX examples use backslashes for continuation.

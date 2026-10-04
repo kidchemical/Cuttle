@@ -111,7 +111,7 @@ User-requested capabilities. Format: `[FEAT-YYYYMMDD-XXX] capability_name`
 - **User context:** Game/Unity asset pipeline (CH-000184). RTX 3080 10GB — low-VRAM workflows. Engine installed at `F:\AI\ComfyUI-Trellis` (Python 3.11), not in the Cuttle git tree.
 - **Notes:** TRELLIS.2-4B weights complete 2026-08-19 (~16.2 GB, 9 safetensors). DINOv3 still gated; generation blocked until HF license + login.
 - **Complexity:** L
-- **Related:** `.cuttle_global/docs/comfyui-trellis2.md`, `src/tools/comfyui/`
+- **Related:** `.cuttle_global/personal/docs/comfyui-trellis2.md` (optional local workflow), `src/tools/comfyui/`
 
 ## [FEAT-20260817-002] cuttle_cli (deferred — product shell)
 

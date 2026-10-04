@@ -204,3 +204,24 @@ def test_suggest_avoids_previous_subjects(monkeypatch):
     )
     assert out["message"] == "Vary commit message suggestions"
     assert calls["n"] >= 2
+
+
+def test_commit_suggestion_honors_completion_preference(monkeypatch):
+    import api.commit_message_suggester as suggester
+    monkeypatch.setattr('api.completion_providers.resolve_order', lambda: ['local', 'openai', 'anthropic'])
+    monkeypatch.setattr(suggester, '_via_local', lambda *a, **k: 'Fix selected file staging')
+    monkeypatch.setattr(suggester, '_via_openai', lambda *a, **k: (_ for _ in ()).throw(AssertionError('wrong provider')))
+    result = suggester.suggest_commit_message({'files': [{'path': 'a.py', 'status': 'modified'}]})
+    assert result['message'] == 'Fix selected file staging'
+
+
+def test_commit_suggestion_delegates_model_selection(monkeypatch):
+    import api.commit_message_suggester as suggester
+    monkeypatch.delenv('COMMIT_MSG_OPENAI_MODEL', raising=False)
+    captured = {}
+    def complete(**kwargs):
+        captured.update(kwargs)
+        return 'Fix selected staging'
+    monkeypatch.setattr('api.llm_complete.complete', complete)
+    assert suggester._via_openai('prompt') == 'Fix selected staging'
+    assert captured['openai_model'] is None

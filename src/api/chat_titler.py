@@ -9,16 +9,16 @@ Strategy (cheapest first):
        - local  → the already-loaded local model (llama.cpp Qwen3 / Ollama).
                   One model server, one model — a title request just queues
                   behind normal traffic, so no second model is needed.
-       - cloud/auto → OpenAI gpt-4o-mini (same as commit auto-naming), then
-                  Anthropic Haiku, then the local backend.
+       - cloud/auto → configured completion provider first, then the
+                  remaining providers in registry order.
   3. Progressive re-titles — as the conversation grows, the title is
      regenerated at increasing user-message counts so it tracks the topic.
 
 Manual renames (name_auto = 0) are never overwritten.
 
 Env overrides:
-  CHAT_TITLE_OPENAI_MODEL  OpenAI model id (default: gpt-4o-mini)
-  CHAT_TITLE_MODEL         Anthropic model id (default: claude-haiku-4-5-20251001)
+  CHAT_TITLE_OPENAI_MODEL  Override the configured OpenAI completion model
+  CHAT_TITLE_MODEL         Override the configured Anthropic completion model
   CHAT_TITLE_DISABLED=1    turn auto-titling off entirely
 """
 
@@ -283,7 +283,7 @@ def _title_via_openai(prompt: str, *, temperature: float = 0.3):
         user=prompt,
         max_tokens=40,
         temperature=float(temperature),
-        openai_model=os.getenv("CHAT_TITLE_OPENAI_MODEL") or _DEFAULT_OPENAI_TITLE_MODEL,
+        openai_model=os.getenv("CHAT_TITLE_OPENAI_MODEL") or None,
         timeout=20,
         providers=("openai",),
     )
@@ -310,7 +310,7 @@ def _title_via_anthropic(prompt: str, *, temperature: float = 0.3):
         user=prompt,
         max_tokens=40,
         temperature=float(temperature),
-        anthropic_model=os.getenv("CHAT_TITLE_MODEL") or _DEFAULT_ANTHROPIC_TITLE_MODEL,
+        anthropic_model=os.getenv("CHAT_TITLE_MODEL") or None,
         providers=("anthropic",),
     )
     return sanitize_chat_title(text) or None
@@ -343,8 +343,10 @@ def _generate_title(
         if not regenerating and temperature is None:
             temp = 0.2
     else:
-        # OpenAI first (same order as commit auto-naming; Anthropic is often billed out).
-        providers = (_title_via_openai, _title_via_anthropic, _title_via_local)
+        from api.completion_providers import resolve_order
+        by_id = {"openai": _title_via_openai, "anthropic": _title_via_anthropic,
+                 "local": _title_via_local}
+        providers = tuple(by_id[name] for name in resolve_order())
 
     attempts = 3 if regenerating else 1
     last = None

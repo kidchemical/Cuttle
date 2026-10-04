@@ -1365,6 +1365,15 @@ def _stage_repo_paths(root: str, path_args: List[str]) -> None:
         if add_r.returncode == 0:
             continue
         for rel in chunk:
+            # A failed batch add can already have staged earlier deletions.
+            # Those paths no longer exist in either the worktree or index;
+            # retrying add/rm reports a false pathspec error.
+            removed = git_run(
+                ["diff", "--cached", "--name-only", "--diff-filter=D", "--", rel], root
+            )
+            if removed.returncode == 0 and rel in (removed.stdout or "").splitlines():
+                if not (Path(root) / rel).exists():
+                    continue
             one = git_run(["add", "-A", "--", rel], root, timeout=30.0)
             if one.returncode == 0:
                 continue
@@ -1593,7 +1602,9 @@ def commit_pending_changes(
         )
 
     # Drop other staged paths so a partial commit cannot pick them up.
-    git_run(["reset", "HEAD", "--", "."], root, timeout=30.0)
+    reset_r = git_run(["reset", "HEAD", "--", "."], root, timeout=30.0)
+    if reset_r.returncode != 0:
+        raise RuntimeError((reset_r.stderr or reset_r.stdout or "git reset failed").strip())
 
     if include_unlisted:
         # Full add then unstage unchecked visible rows — avoids huge argv lists.
@@ -1711,4 +1722,3 @@ def commit_pending_changes(
             "events_settled": settled,
         }
     return out
-

@@ -30,10 +30,10 @@ follows after </cuttle_context>. Keep using these tags on later turns when neede
 
 Per-project Cuttle config (mirror this layout; global `.cuttle_global/` is the pattern reference —
 do not inherit another project’s actions):
-  {project}/.cuttle/commands|rules|actions|agents|docs|scripts|memory
+  {project}/.cuttle/commands|rules|actions|agents|docs|scripts|skills|memory
   {project}/.cuttle/personal/…  — install-local overlay (gitignored); same subdirs.
-    When opening a `.cuttle/` file, open the tracked file first, then its
-    `personal/` twin when one exists (personal markdown is an appended delta).
+    Rules/docs append personal markdown deltas; commands/actions/skills resolve
+    personal replacements. Script recipes use explicit literal paths.
     Global-owned equivalents (every project) live under `.cuttle_global/` in the Cuttle checkout.
 
 Bundled agents: src/api/agent_harness/agents/ (+ CUTTLE_AGENTS_DIR / .cuttle_global/agents / {project}/.cuttle/agents).
@@ -41,11 +41,10 @@ Shared context: Cuttle Brain (`api.cuttle_brain`).
 
 Global runbooks (match intent → open before acting; resolve via personal overlay):
   action-forms.md   — cuttle_action_form, cuttle_confirm, ask/choose/approve, side effects, Flask restart, watch/progress
-  agent-ops-cli.md  — python -m api.* agent toolkit (chat, widgets, discord, gitea, panes, workers, brain)
+  agent-ops-cli.md  — python -m api.* agent toolkit (chat, widgets, discord, panes, workers, brain)
   charts.md         — vega, pipe tables, charts/plots
   chat-media.md     — markdown images/video in chat, lightbox, /output/shared staging (7d TTL)
   discord.md        — Discord reads: `python -m api.discord_cli`; posts: discord.post
-  gitea.md          — Gitea: `python -m api.gitea`; writes may use gitea.issue confirm
   chat-history.md   — CH- handles + `api.chat_cli` / live panes: `api.panes_cli`
   headless-turns.md — one-shot CLI turn, long build/upload, no wait loops
   cursor-plan-bridge.md — CreatePlan must land as markdown (+ form) in Cuttle chat (the tool call alone is not delivered)
@@ -59,8 +58,13 @@ You can share images/video in replies via markdown `![alt](/output/shared/…)`
 """.strip()
 
 
-def cuttle_ui_capabilities_block() -> str:
-    return f"{_CAP_OPEN}\n{CUTTLE_UI_CAPABILITIES_TEXT}\n{_CAP_CLOSE}"
+def cuttle_ui_capabilities_block(*, project_path: Optional[str] = None) -> str:
+    from api.cuttle_brain.global_layers import integration_guidance_enabled, load_global_layers
+
+    text = CUTTLE_UI_CAPABILITIES_TEXT
+    if load_global_layers(project_path).docs and integration_guidance_enabled("gitea", project_path):
+        text += "\nEnabled integration runbook: gitea.md — python -m api.gitea; confirmed writes use gitea.issue."
+    return f"{_CAP_OPEN}\n{text}\n{_CAP_CLOSE}"
 
 
 def chat_store_path() -> Optional[str]:
@@ -195,7 +199,8 @@ def cuttle_chat_store_addon(
         "## Cuttle chat history (not in the working tree)",
         "Transcripts are gitignored SQLite — empty `rg` is not \"no chats\".",
         f"Before reading history, open {runbook_hint}.",
-        "Prefer: `.venv\\Scripts\\python.exe -m api.chat_cli get CH-…-N --json` "
+        "Prefer: `python -m api.chat_cli get CH-…-N --json` with the Cuttle venv "
+        "and src on PYTHONPATH (OS-specific setup in the runbook) "
         "(not hand-rolled SQL).",
     ]
     if read_path:

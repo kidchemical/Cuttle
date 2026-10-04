@@ -1,136 +1,31 @@
-╔════════════════════════════════════════════════════════════════╗
-║                                                                ║
-║     CUTTLE DESKTOP - ELECTRON QUICK START                     ║
-║                                                                ║
-╚════════════════════════════════════════════════════════════════╝
+CUTTLE DESKTOP QUICK START — Windows and Linux
 
-🎯 THREE STEPS TO GET STARTED:
+1. Host: install Python 3.11+ and create the root .venv using README.md.
+   Install src/requirements/requirements.txt with that venv.
+   Client: connect to an existing Host; Python is needed for optional worker mode.
+2. Install Node/npm for source development. From electron/: npm ci
+3. Choose a mode from electron/:
+     npm start -- --mode=host
+     npm start -- --mode=client
+   Linux launchers from the repository root:
+     ./.cuttle/scripts/launch-cuttle-host.sh
+     ./.cuttle/scripts/launch-cuttle-client.sh
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- STEP 1: INSTALL NODE.JS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Host owns the local daemon. Client connects remotely; enable Phone/LAN access
+on the Host first. Electron prefers http://<host>:8000 (trusted LAN only), then
+https://<host>:8080 (self-signed by default).
 
-Download from: https://nodejs.org/
-Choose the "LTS" version (recommended)
+Authenticate each installed vendor CLI independently. Cuttle's optional provider
+keys do not log all harnesses in. See README.md for exact dependency commands.
 
-Verify installation:
-  node --version
-  npm --version
+Build from electron/:
+  Windows: npm run build / npm run build:dir / npm run build:portable
+  Linux:   npm run build:linux / npm run build:linux:dir
+Artifacts: electron/dist/, using <version> from package.json.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- STEP 2: INSTALL DEPENDENCIES
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Do not kill Python to resolve startup or port conflicts. UI close/relaunch keeps
+the daemon alive; Host tray Exit explicitly stops a daemon it spawned. Use the
+Cuttle Flask restart card for daemon-owned restart. Inspect logs before acting.
 
-Just double-click:
-  ► start_electron.bat
-
-OR manually:
-  cd electron
-  npm install
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- STEP 3: RUN THE APPLICATION
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Double-click:
-  ► start_electron.bat
-
-OR manually:
-  cd electron
-  npm start
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- BUILDING AN INSTALLER
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-To create a Windows installer:
-
-Double-click:
-  ► build_electron.bat
-
-Choose your build option:
-  1. Full Installer (NSIS) - Professional installer
-  2. Portable Version - Single .exe file
-  3. Both - Create both versions
-  4. Directory - Unpacked files for testing
-
-Output location:
-  electron/dist/
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- WHAT YOU GET
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-✓ Native Windows application
-✓ Professional installer with wizard
-✓ Portable .exe (no installation required)
-✓ Desktop and Start menu shortcuts
-✓ Custom application icon
-✓ Menu bar with navigation
-✓ Keyboard shortcuts
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- TROUBLESHOOTING
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-⚠ Python not found?
-  → Ensure Python 3.8+ is installed and in PATH
-  → Run: python --version
-
-⚠ Port 8080 in use?
-  → Close other applications using port 8080
-  → Or run: python src/kill_bots.py
-
-⚠ Build fails?
-  → Delete electron/node_modules
-  → Run: npm cache clean --force
-  → Run: npm install
-  → Try again
-
-⚠ Blank window?
-  → Check console for errors
-  → Press Ctrl+Shift+I to open DevTools
-  → Check if Flask server started
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- FILE LOCATIONS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-📁 electron/              - Electron application files
-📁 electron/dist/         - Built installers (after build)
-📄 start_electron.bat     - Quick launcher
-📄 build_electron.bat     - Build wizard
-📄 ELECTRON_SETUP.md      - Detailed documentation
-📄 LICENSE.txt            - MIT License
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- KEYBOARD SHORTCUTS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Ctrl+R             Reload page
-Ctrl+Shift+R       Force reload
-Ctrl+Shift+I       Toggle DevTools (for debugging)
-Ctrl+0             Reset zoom
-Ctrl++             Zoom in
-Ctrl+-             Zoom out
-F11                Toggle fullscreen
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- NEED MORE HELP?
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Read the full guide:
-  ► ELECTRON_SETUP.md
-
-Read electron documentation:
-  ► electron/README.md
-
-Electron docs:
-  → https://www.electronjs.org/docs
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-That's it! You're ready to build your Windows application! 🚀
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
+Detailed setup: electron/README.md
+Troubleshooting: electron/BUILD_TROUBLESHOOTING.md

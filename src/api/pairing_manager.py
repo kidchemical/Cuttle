@@ -1,6 +1,6 @@
 """
 Pairing Manager for Cuttle
-Channel-level security: DM pairing and allowFrom for Web Chat and Discord.
+Channel-level security: pairing and allowFrom for authenticated Web Chat.
 Unknown senders receive a pairing code; approve via API to add to allowlist.
 """
 
@@ -172,7 +172,7 @@ class PairingManager:
                 "allowed": False,
                 "pairing_required": True,
                 "pairing_code": existing,
-                "message": f"Pairing required. Your code is: {existing}. An admin must run: approve {existing}",
+                "message": f"Pairing required. Your code is: {existing}. An owner must approve this code in Settings or via API.",
             }
         code = self.generate_pairing_code(channel, identity, meta)
         return {

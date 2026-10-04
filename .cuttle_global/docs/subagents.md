@@ -10,7 +10,7 @@ Library: `api.subagents`. CLI: `python -m api.subagents`.
 ## Spawn
 
 ```bash
-.venv\Scripts\python.exe -m api.subagents spawn --parent CH-000535 --wait --json \
+PYTHONPATH=src .venv/bin/python -m api.subagents spawn --parent CH-000535 --wait --json \
   --collect all \
   --lifetime one_shot \
   --child "{\"title\":\"Chef A\",\"agent\":\"cursor\",\"message\":\"What should I cook with eggs and spinach?\"}" \
@@ -72,15 +72,15 @@ long). `--tasks` pins a parent Tasks widget with one item per child.
 ## Other verbs
 
 ```bash
-python -m api.subagents status --parent CH-000535 --json
-python -m api.subagents status --batch <batch-id> --json
-python -m api.subagents wait <batch-id> --json
-python -m api.subagents message --session CH-000540 --text "follow up" --wait --json
-python -m api.subagents cancel --batch <batch-id> --json
-python -m api.subagents cancel --session CH-000540 --json
-python -m api.subagents list --parent CH-000535 --json
-python -m api.subagents close <batch-id> --json
-python -m api.subagents profiles list --json
+PYTHONPATH=src .venv/bin/python -m api.subagents status --parent CH-000535 --json
+PYTHONPATH=src .venv/bin/python -m api.subagents status --batch "<batch-id>" --json
+PYTHONPATH=src .venv/bin/python -m api.subagents wait "<batch-id>" --json
+PYTHONPATH=src .venv/bin/python -m api.subagents message --session CH-000540 --text "follow up" --wait --json
+PYTHONPATH=src .venv/bin/python -m api.subagents cancel --batch "<batch-id>" --json
+PYTHONPATH=src .venv/bin/python -m api.subagents cancel --session CH-000540 --json
+PYTHONPATH=src .venv/bin/python -m api.subagents list --parent CH-000535 --json
+PYTHONPATH=src .venv/bin/python -m api.subagents close "<batch-id>" --json
+PYTHONPATH=src .venv/bin/python -m api.subagents profiles list --json
 ```
 
 `--session` / `--parent` accept `CH-000535` or a numeric id. Tests may pass `--db`.
@@ -117,10 +117,10 @@ Built-ins: `cuttle`, `scout`, `critic`, `builder`, `chef`, `muse`, `codex`,
 `hermes`.
 
 ```bash
-python -m api.subagents profiles list --json
-python -m api.subagents profiles get scout --json
-python -m api.subagents profiles save --id dinner-judge --name "Dinner Judge" --avatar "🍽️" --agent cursor --model grok-4.6 --effort low --json
-python -m api.subagents profiles delete --id dinner-judge --json
+PYTHONPATH=src .venv/bin/python -m api.subagents profiles list --json
+PYTHONPATH=src .venv/bin/python -m api.subagents profiles get scout --json
+PYTHONPATH=src .venv/bin/python -m api.subagents profiles save --id dinner-judge --name "Dinner Judge" --avatar "🍽️" --agent cursor --model grok-4.6 --effort low --json
+PYTHONPATH=src .venv/bin/python -m api.subagents profiles delete --id dinner-judge --json
 ```
 
 On `--child` JSON:
@@ -137,3 +137,24 @@ On `--child` JSON:
 After `--wait`, synthesize **one** answer in the parent chat. Cite children with
 bare `CH-000540` tokens (never markdown-wrapped). Do not dump every child
 transcript unless the user asks.
+
+## Shell environment
+
+Examples run from the Cuttle repository root with the project venv. POSIX
+examples set `PYTHONPATH=src` per invocation. For Windows PowerShell, set
+the path and use the Windows interpreter; for example:
+
+```powershell
+$env:PYTHONPATH = "src"
+.\.venv\Scripts\python.exe -m api.subagents --help
+```
+
+Use PowerShell backticks for multiline continuation and single-quoted JSON
+arguments; POSIX examples use backslashes for continuation.
+
+Windows PowerShell spawn (substitute the actual parent chat):
+
+```powershell
+$env:PYTHONPATH = "src"
+.\.venv\Scripts\python.exe -m api.subagents spawn --parent CH-000535 --wait --json --collect all --child '{"title":"Scout","agent":"cursor","message":"Inspect the requested change."}'
+```

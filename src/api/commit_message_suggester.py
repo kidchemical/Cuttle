@@ -1,7 +1,8 @@
 """
 Suggest a git commit message from pending diffs + optional chat prompts.
 
-Cloud order (auto/cloud): OpenAI gpt-4o-mini → Anthropic Haiku → local LLM.
+Cloud order (auto/cloud): configured completion provider first, then remaining
+providers in registry order. Models follow completion settings unless overridden.
 When none work, fall back to an intent heuristic from chat prompts + diff
 signals — never a bare file/directory inventory.
 """
@@ -398,7 +399,7 @@ def _via_openai(prompt: str, *, file_count: int = 0, temperature: float = 0.3) -
         system=_SYSTEM,
         max_tokens=80,
         temperature=float(temperature),
-        openai_model=os.getenv("COMMIT_MSG_OPENAI_MODEL") or _DEFAULT_OPENAI_COMMIT_MODEL,
+        openai_model=os.getenv("COMMIT_MSG_OPENAI_MODEL") or None,
         timeout=60,
         providers=("openai",),
     )
@@ -427,7 +428,7 @@ def _via_anthropic(prompt: str, *, file_count: int = 0, temperature: float = 0.3
         system=_SYSTEM,
         max_tokens=80,
         temperature=float(temperature),
-        anthropic_model=os.getenv("COMMIT_MSG_MODEL") or _DEFAULT_COMMIT_MODEL,
+        anthropic_model=os.getenv("COMMIT_MSG_MODEL") or None,
         providers=("anthropic",),
     )
     return _usable_subject(text or "", file_count=file_count) or None
@@ -468,9 +469,9 @@ def suggest_commit_message(
     if mode == "local":
         providers = (_via_local,)
     else:
-        # OpenAI first (you already have a key; Anthropic is often billed out).
-        # Then Anthropic Haiku, then local, then intent heuristic.
-        providers = (_via_openai, _via_anthropic, _via_local)
+        from api.completion_providers import resolve_order
+        by_id = {"openai": _via_openai, "anthropic": _via_anthropic, "local": _via_local}
+        providers = tuple(by_id[name] for name in resolve_order())
 
     base_temp = 0.95 if regenerating else 0.3
     attempts = 3 if regenerating else 1

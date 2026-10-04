@@ -14,12 +14,12 @@ library the UI uses for share indices):
 
 ```bash
 # From Cuttle repo root — always use the project venv (bcrypt + api on path)
-.venv\Scripts\python.exe -m api.chat_cli get CH-000430-99 --json
-.venv\Scripts\python.exe -m api.chat_cli get CH-000430 --json
-.venv\Scripts\python.exe -m api.chat_cli session CH-000430 --limit 40 --json
-.venv\Scripts\python.exe -m api.chat_cli session CH-000430 --all --json
-.venv\Scripts\python.exe -m api.chat_cli search "flask restart" --from-chat CH-000465 --json
-.venv\Scripts\python.exe -m api.chat_cli parse CH-000430-99 --json
+PYTHONPATH=src .venv/bin/python -m api.chat_cli get CH-000430-99 --json
+PYTHONPATH=src .venv/bin/python -m api.chat_cli get CH-000430 --json
+PYTHONPATH=src .venv/bin/python -m api.chat_cli session CH-000430 --limit 40 --json
+PYTHONPATH=src .venv/bin/python -m api.chat_cli session CH-000430 --all --json
+PYTHONPATH=src .venv/bin/python -m api.chat_cli search "flask restart" --from-chat CH-000465 --json
+PYTHONPATH=src .venv/bin/python -m api.chat_cli parse CH-000430-99 --json
 ```
 
 Do **not** call a bare `python` / system interpreter — missing venv deps used to
@@ -70,8 +70,8 @@ Tables: `chat_sessions(id, user_id, session_name, last_activity, is_active)`,
 Prefer the panes CLI over hand-rolled curl:
 
 ```bash
-.venv\Scripts\python.exe -m api.panes_cli list --json
-.venv\Scripts\python.exe -m api.panes_cli messages 1 --limit 40 --json
+PYTHONPATH=src .venv/bin/python -m api.panes_cli list --json
+PYTHONPATH=src .venv/bin/python -m api.panes_cli messages 1 --limit 40 --json
 ```
 
 (Flask must be up — HTTPS on `127.0.0.1:8080`, self-signed.)
@@ -85,3 +85,17 @@ use `python -m api.chat_cli` / `api.panes_cli` on the Windows host instead.
 
 - Handle recognition (always-on rule): `.cuttle_global/rules/01-chat-handles.md`
 - Agent ops CLI pattern: `.cuttle_global/docs/agent-ops-cli.md` / `.cuttle_global/rules/02-agent-ops-cli.md`
+
+## Shell environment
+
+Examples run from the Cuttle repository root with the project venv. POSIX
+examples set `PYTHONPATH=src` per invocation. For Windows PowerShell, set
+the path and use the Windows interpreter; for example:
+
+```powershell
+$env:PYTHONPATH = "src"
+.\.venv\Scripts\python.exe -m api.chat_cli get CH-000430-99 --json
+```
+
+Use PowerShell backticks for multiline continuation and single-quoted JSON
+arguments; POSIX examples use backslashes for continuation.

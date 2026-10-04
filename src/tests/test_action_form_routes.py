@@ -370,3 +370,42 @@ def test_watch_state_auth_and_shapes(tmp_path, monkeypatch):
     )
     assert res.status_code == 200
     assert set(res.get_json()) == {"success"}
+
+
+@pytest.mark.parametrize('mode', ['status', 'graceful', 'when-idle', 'force'])
+def test_restart_card_bypasses_broken_project_discovery(tmp_path, monkeypatch, mode):
+    from api import action_forms as af, project_actions as pa, flask_restart as restart
+    ctx = _ctx(tmp_path, monkeypatch)
+    calls = []
+    def broken(*args, **kwargs):
+        raise ImportError('simulated partially loaded configuration modules')
+    monkeypatch.setattr(af, 'find_project_action_resolved', broken)
+    monkeypatch.setattr(pa, 'list_project_actions', broken)
+    monkeypatch.setattr(pa, '_execute_shell', broken)
+    monkeypatch.setattr(restart, 'request_restart', lambda **kw: calls.append(kw) or {'success': True, 'state': 'waiting_for_idle'})
+    spec = af.normalize_action_form_spec({
+        'mode': 'choice', 'silent': True,
+        'options': [{'id': 'restart', 'label': 'Restart', 'action': 'flask.restart', 'params': {'mode': mode}}],
+    }, project_path=str(tmp_path))
+    fid = af.register_action_form(session_id=f"db_session_{ctx['owner_sid']}", project_path=str(tmp_path), spec=spec)
+    response = _as(ctx['client'], ctx['owner']).post('/api/action-form/run', json={
+        'token': fid, 'selection': {'option': 'restart'}, 'session_id': ctx['owner_sid'],
+    })
+    assert response.status_code == 200
+    assert response.get_json()['success'] is True, response.get_json()
+    assert calls == [{'mode': mode, 'session_id': f"db_session_{ctx['owner_sid']}",
+                      'user_source': 'flask.restart_action', 'force_confirm': mode == 'force', 'chat_notify': False}]
+
+
+def test_native_restart_card_still_requires_owner(tmp_path, monkeypatch):
+    from api import action_forms as af, flask_restart as restart
+    ctx = _ctx(tmp_path, monkeypatch)
+    monkeypatch.setattr(restart, 'request_restart', lambda **kw: pytest.fail('non-owner reached restart'))
+    spec = af.normalize_action_form_spec(_choice_spec(ctx['guest_sid']), project_path=str(tmp_path))
+    fid = af.register_action_form(session_id=f"db_session_{ctx['guest_sid']}", project_path=str(tmp_path), spec=spec)
+    response = _as(ctx['client'], ctx['guest']).post('/api/action-form/run', json={
+        'token': fid, 'selection': {'option': 'a'}, 'session_id': ctx['guest_sid'],
+    })
+    assert response.status_code == 200
+    assert response.get_json()['success'] is False
+    assert 'Owner privileges required' in response.get_json()['toast']

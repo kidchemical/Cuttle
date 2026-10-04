@@ -2,7 +2,7 @@
 
 ``{project}/.cuttle/GLOBAL.ini`` (install-local twin at
 ``{project}/.cuttle/personal/GLOBAL.ini`` wins for this machine). Absent or
-unparsable file → defaults (everything on, additive).
+unparsable file → defaults (core layers on/additive, integration guidance off).
 
 ``[global]`` keys (all optional):
 
@@ -11,6 +11,11 @@ unparsable file → defaults (everything on, additive).
   ``off`` (project rules only).
 - ``docs``: ``on`` (default) | ``off`` (skip the global docs inventory leg).
 - ``actions``: ``on`` (default) | ``off`` (skip the global actions fallback leg).
+- ``skills`` / ``commands``: ``on`` (default) | ``off`` (skip global discovery,
+  including global personal units; project units remain available).
+
+``[integrations]`` enables optional guidance by id (for example ``gitea=on``).
+Absent entries default off; localhost/runtime fallback defaults never opt in.
 
 Non-severable: ``00-safety.md`` (shared-infra + cross-project rules) always
 compiles; a project ``00-safety.md`` can only append. Unknown keys/values and
@@ -37,6 +42,9 @@ class GlobalLayers:
     rules_mode: str = "append"  # append | shadow | off
     docs: bool = True
     actions: bool = True
+    skills: bool = True
+    commands: bool = True
+    integrations: frozenset[str] = frozenset()
 
 
 DEFAULTS = GlobalLayers()
@@ -60,18 +68,24 @@ def parse_global_ini(text: str) -> GlobalLayers:
         log.warning("GLOBAL.ini unparsable, using defaults: %s", exc)
         return DEFAULTS
     if not parser.has_section("global"):
-        return DEFAULTS
+        parser.add_section("global")
     rules_mode = parser.get("global", "rules", fallback="append").strip().lower()
     if rules_mode not in ("append", "shadow", "off"):
         log.warning("GLOBAL.ini [global] rules=%r unknown, using append", rules_mode)
         rules_mode = "append"
     for key in parser.options("global"):
-        if key not in ("rules", "docs", "actions"):
+        if key not in ("rules", "docs", "actions", "skills", "commands"):
             log.warning("GLOBAL.ini [global] ignoring unknown key %r", key)
     return GlobalLayers(
         rules_mode=rules_mode,
         docs=_as_bool(parser.get("global", "docs", fallback="on"), True),
+        skills=_as_bool(parser.get("global", "skills", fallback="on"), True),
+        commands=_as_bool(parser.get("global", "commands", fallback="on"), True),
         actions=_as_bool(parser.get("global", "actions", fallback="on"), True),
+        integrations=frozenset(
+            name.strip().lower() for name, value in parser.items("integrations")
+            if _as_bool(value, False)
+        ) if parser.has_section("integrations") else frozenset(),
     )
 
 
@@ -105,3 +119,14 @@ def load_global_layers(project_path: Optional[str] = None) -> GlobalLayers:
     if not dirs:
         return DEFAULTS
     return load_global_layers_for_cuttle_dir(dirs[0])
+
+
+def integration_guidance_enabled(integration: str, project_path: Optional[str] = None) -> bool:
+    """Explicit project opt-in for guidance; does not probe/start the service."""
+    return integration.strip().lower() in load_global_layers(project_path).integrations
+
+
+def global_doc_enabled(name: str, project_path: Optional[str] = None) -> bool:
+    """Gate optional shipped runbooks; project-owned runbooks are independent."""
+    integration = {"gitea.md": "gitea"}.get(name.lower())
+    return integration is None or integration_guidance_enabled(integration, project_path)

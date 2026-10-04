@@ -244,13 +244,3 @@ Any attribute other than `action` / labels is stored as a param (`channel`, cust
 3. Hard-refresh Cuttle chat; set the chat project; type `/` — the command should appear.
 4. Prefer **agent instructions** in the body when the procedure needs judgment. Use `run:` for deterministic scripts.
 5. For human-gated side effects, add `.cuttle/actions/*.yaml` and teach the command body to emit `<cuttle_action_form>` or `<cuttle_confirm>`.
-
-## Escape Purgatory examples
-
-Already seeded:
-
-- `/build` — Unity Windows exe
-- `/deploy` — Steampipe / steamcmd upload
-- `/build-deploy` — both
-- `/discord-update` — draft + channel picker action form (`discord.post`)
-- Docs: `.cuttle/docs/discord.md`

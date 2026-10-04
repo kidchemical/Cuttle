@@ -9,7 +9,7 @@ Product decisions for this pass (operator):
 - Graph pipelines and the node editor are **retired** (not a Jobs product fork).
 - Preserve **current** Jobs (`/api/cuttle-jobs` + workers mesh + `/api/executing-jobs`), workers, and **web** agent chat.
 - **Remove** Telegram and Slack routes, settings, and references.
-- **Keep** Discord **channel read** (`python -m api.discord_cli`) and **approved posts** (`discord.post` / `project_actions._execute_discord_post`). That matches hub [`.cuttle/docs/discord.md`](../../.cuttle/docs/discord.md). Per-project aliases live in `{project}/.cuttle/actions/discord-post.yaml` (Escape Purgatory Feature Updates uses that path; this Cuttle workspace did not load EP rules).
+- **Keep** Discord **channel read** (`python -m api.discord_cli`) and **approved posts** (`discord.post` / `project_actions._execute_discord_post`). That matches global [`.cuttle_global/docs/discord.md`](../../.cuttle_global/docs/discord.md). Per-project aliases live in `{project}/.cuttle/actions/discord-post.yaml` (Escape Purgatory Feature Updates uses that path; this Cuttle workspace did not load EP rules).
 - **Investigate** retiring Discord **DM / guild AI chat** and the **daemon `discord_bot.py` process**. **Done** — see [`discord-cleanup-2026-09.md`](discord-cleanup-2026-09.md).
 
 Evidence is grep + route/handler reads, not a production traffic dump.

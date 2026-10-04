@@ -48,8 +48,29 @@ Cuttle-as-MCP-server (`run_cuttle_mcp.py`, Tools-page pack toggles, pipeline MCP
 From the Cuttle repo root with the **project venv** (not bare `python`):
 
 ```bash
-.venv\Scripts\python.exe -m api.chat_cli get CH-000430-99 --json
+PYTHONPATH=src .venv/bin/python -m api.chat_cli get CH-000430-99 --json
 ```
 
-Put flags after the verb. Working directory / `PYTHONPATH` should resolve the `api`
-package (repo root with `src` on path, or `cwd=src` as Flask uses).
+Put flags after the verb. `PYTHONPATH=src` resolves the package under `src/api`;
+pytest configuration does not set the path for ordinary CLI invocations.
+
+## Local planning and execution
+
+For local coding use a configured llama.cpp backend or a guest CLI (`/hermes`,
+`/cursor`, …). Cuttle-owned operations use `python -m api.*`, not a hosted MCP
+server. Ollama remains an optional `/api/llm-request` backend; requests are
+serialized per model. Do not rebuild retired pipeline-node tool loops around it.
+
+## Shell environment
+
+Examples run from the Cuttle repository root with the project venv. POSIX
+examples set `PYTHONPATH=src` per invocation. For Windows PowerShell, set
+the path and use the Windows interpreter; for example:
+
+```powershell
+$env:PYTHONPATH = "src"
+.\.venv\Scripts\python.exe -m api.chat_cli get CH-000430-99 --json
+```
+
+Use PowerShell backticks for multiline continuation and single-quoted JSON
+arguments; POSIX examples use backslashes for continuation.

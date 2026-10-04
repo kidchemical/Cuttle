@@ -31,14 +31,14 @@ Each source has its own score definition: DeepSWE pass@1, SWE-bench Verified res
 ## Agent CLI
 
 ```bash
-.venv/bin/python -m api.dashboards list
-.venv/bin/python -m api.dashboards get model-benchmarks --source aggregate
-.venv/bin/python -m api.dashboards get model-benchmarks --source aider --refresh
-.venv/bin/python -m api.dashboards get model-benchmarks --refresh --no-discovery
-.venv/bin/python -m api.dashboards get cuttle-performance --source pinned --days 0
-.venv/bin/python -m api.dashboards get cuttle-usage --range 7d --group harness
-.venv/bin/python -m api.dashboards get cuttle-usage --start 2026-09-01 --end 2026-09-15 --interval week
-.venv/bin/python -m api.dashboards backfill-performance [--dry-run]
+PYTHONPATH=src .venv/bin/python -m api.dashboards list
+PYTHONPATH=src .venv/bin/python -m api.dashboards get model-benchmarks --source aggregate
+PYTHONPATH=src .venv/bin/python -m api.dashboards get model-benchmarks --source aider --refresh
+PYTHONPATH=src .venv/bin/python -m api.dashboards get model-benchmarks --refresh --no-discovery
+PYTHONPATH=src .venv/bin/python -m api.dashboards get cuttle-performance --source pinned --days 0
+PYTHONPATH=src .venv/bin/python -m api.dashboards get cuttle-usage --range 7d --group harness
+PYTHONPATH=src .venv/bin/python -m api.dashboards get cuttle-usage --start 2026-09-01 --end 2026-09-15 --interval week
+PYTHONPATH=src .venv/bin/python -m api.dashboards backfill-performance [--dry-run]
 ```
 
 (Flags after the verb. `--json` is implied: stdout is JSON.)
@@ -66,3 +66,16 @@ Caches: `src/output/dashboards/` (gitignored with the rest of `src/output/`); ea
 
 Not integrated: OpenRouter benchmarks and Artificial Analysis (commercial).
 
+## Shell environment
+
+Examples run from the Cuttle repository root with the project venv. POSIX
+examples set `PYTHONPATH=src` per invocation. For Windows PowerShell, set
+the path and use the Windows interpreter; for example:
+
+```powershell
+$env:PYTHONPATH = "src"
+.\.venv\Scripts\python.exe -m api.dashboards list
+```
+
+Use PowerShell backticks for multiline continuation and single-quoted JSON
+arguments; POSIX examples use backslashes for continuation.

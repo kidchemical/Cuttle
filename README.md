@@ -39,7 +39,7 @@ Cuttle is MIT-licensed and built to be changed, by you or by the agents it hosts
 The codebase is set up so an agent can do that well:
 
 - **No build step for the UI.** The web app is plain HTML, CSS, and vanilla JS served by Flask, so a refresh shows the change. Python changes go live with one click on the restart card.
-- **Agents arrive briefed.** `AGENTS.md`, Cursor rules and skills, and the `.cuttle/docs/` runbooks explain the architecture and conventions, so a fresh agent knows where things live and what not to break.
+- **Agents arrive briefed.** `AGENTS.md`, `.cuttle/rules/`, `.cuttle_global/rules/`, and their skills and runbooks explain the architecture and conventions, so a fresh agent knows where things live and what not to break.
 - **Customize without forking.** A project's `.cuttle/` folder adds its own slash commands, clickable actions, rules, and docs. `.cuttle/personal/` keeps install-local tweaks out of git.
 - **Swap any part.** Harnesses, the router's brain, and local or cloud models are all sockets ([`MODULARITY.md`](docs/guides/MODULARITY.md)).
 
@@ -69,12 +69,12 @@ The codebase is set up so an agent can do that well:
 | **Agents** | `/cursor`, `/codex`, `/claude`, `/muse`, `/hermes`, `/deepseek`, `/opencode`, `/antigravity`, and more from a shared harness catalog ([`src/api/agent_harness/agents/`](src/api/agent_harness/agents/)). Star one as the default for new chats. |
 | **Agent router** | Picks a harness on clean sessions and escalates on failure (Cursor Auto → Grok → Codex fallback chain). Starred or sticky agents bypass it, and Stop is always terminal. |
 | **Workspace** | Split any pane horizontally or vertically, drag to resize, and keep a separate layout per space. 14 themes plus YouTube or video wallpapers behind the whole UI. |
-| **Sub-agents** | Fan a task out into real child chats across harnesses, then synthesize one reply ([`python -m api.subagents`](.cuttle/docs/subagents.md)). |
+| **Sub-agents** | Fan a task out into real child chats across harnesses, then synthesize one reply ([`python -m api.subagents`](.cuttle_global/docs/subagents.md)). |
 | **Cuttle Workers** | A multi-device LAN mesh: file copy, shell recipes, a Blender render farm with work stealing, and self-update for every client. |
 | **Dashboards** | Model Benchmarks (cost vs. pass rate vs. duration), Jev performance tracking, and per-agent cost. |
 | **Projects** | Every registered project owns a `.cuttle/` tree of commands, rules, actions, and docs, compiled into each agent turn by the Context Compiler (Cuttle Brain). |
 | **Local models** | Ollama and llama.cpp paths for cloud-off work. |
-| **Agent ops CLIs** | Agents drive Cuttle through `python -m api.<module>` verbs (chats, widgets, Discord, workers, brain) instead of raw SQL ([`agent-ops-cli.md`](.cuttle/docs/agent-ops-cli.md)). |
+| **Agent ops CLIs** | Agents drive Cuttle through `python -m api.<module>` verbs (chats, widgets, Discord, workers, brain) instead of raw SQL ([`agent-ops-cli.md`](.cuttle_global/docs/agent-ops-cli.md)). |
 
 ## Quick start
 
@@ -93,7 +93,7 @@ git clone https://github.com/kidchemical/Cuttle.git cuttle && cd cuttle
 python3 -m venv .venv
 .venv/bin/pip install -r src/requirements/requirements.txt
 cp src/.env.example src/.env
-# Edit src/.env and add at least one LLM key if you want cloud agents
+# Edit src/.env for optional direct-LLM, router-brain or vision provider keys
 ./start_cuttle.sh
 ```
 
@@ -104,7 +104,7 @@ git clone https://github.com/kidchemical/Cuttle.git cuttle; cd cuttle
 python -m venv .venv
 .\.venv\Scripts\pip.exe install -r src\requirements\requirements.txt
 copy src\.env.example src\.env
-# Edit src\.env and add at least one LLM key if you want cloud agents
+# Edit src\.env for optional direct-LLM, router-brain or vision provider keys
 .\.venv\Scripts\python.exe src\scripts\cuttle_daemon.py
 ```
 
@@ -113,6 +113,8 @@ Open [https://127.0.0.1:8080](https://127.0.0.1:8080) (self-signed HTTPS). Setup
 The daemon owns Flask (port **8080**), cron, the tray icon, and the local worker loop. It does **not** start a Discord gateway. To run Flask alone (no tray or cron), prefer `python src/api/web_chat_api.py` from the repo (see [`docs/architecture/repository-map.md`](docs/architecture/repository-map.md)).
 
 ### Try it
+
+Install and authenticate the chosen vendor CLI separately: Codex uses `codex login` with a ChatGPT account; Cursor uses its CLI login; Claude supports account login or an Anthropic key. Cuttle provider keys configure the optional routing brain, vision, and direct LLM calls; they do not log every harness in. See the [agent catalog](src/api/agent_harness/agents/) for each harness’s prerequisites.
 
 1. Send `/cursor summarize this repo` (or `/codex`, `/claude`, … for whichever agent CLI you have installed), or send a plain message and let the agent router pick one.
 2. Open the `/` palette and star an agent so every new chat starts with it.
@@ -168,7 +170,7 @@ flowchart LR
   Router --> Harness[Agent harness adapters]
   Harness --> CLIs[Cursor · Codex · Claude · Muse · Hermes · DeepSeek · OpenCode]
   Harness --> Local[Ollama / llama.cpp]
-  API --> Brain[Cuttle Brain<br/>.cuttle/ context compiler]
+  API --> Brain[Cuttle Brain<br/>global + project context compiler]
   API --> Store[(SQLite<br/>chats · auth)]
   API --> Workers[Cuttle Workers]
   Workers --> Mesh[LAN PCs<br/>render · shell · file copy]
@@ -185,7 +187,10 @@ flowchart LR
 | `src/web/` | Vanilla JS web UI: chat, app shell, settings, dashboards. |
 | `electron/` | Desktop Host and LAN Client. |
 | `apps/mobile/` | Android app (Capacitor WebView onto the Host). |
-| `.cuttle/` | Hub commands, rules, actions, and docs; the layout every project mirrors. |
+| `.cuttle_global/` | Shared global rules, docs, actions, scripts, and agent configuration for every project. |
+| `.cuttle/` | Project configuration for Cuttle itself; every registered project has its own tree. |
+| `.cuttle_global/personal/` | Install-local global overlay (gitignored). |
+| `.cuttle/personal/` | Install-local project overlay (gitignored). |
 | `src/tests/` | pytest suite. |
 
 ## Configuration
@@ -194,8 +199,10 @@ flowchart LR
 |------|---------|
 | `src/.env` | Secrets (gitignored). Start from `src/.env.example`. |
 | `src/settings.json` | Runtime preferences, agent router, steering toggles (local; often gitignored via `*.json` rules) |
-| `.cuttle/` | Hub commands, rules, actions, docs, scripts ([`.cuttle/README.md`](.cuttle/README.md)) |
-| `.cuttle/personal/` | Install-local overlay (gitignored); same subdirs, wins over tracked `.cuttle/` files |
+| `.cuttle_global/` | Shared configuration for all projects ([reference](.cuttle_global/README.md)). |
+| `.cuttle/` | Cuttle repository project configuration ([reference](.cuttle/README.md)). |
+| `.cuttle_global/personal/` | Install-local global overlay (gitignored). |
+| `.cuttle/personal/` | Install-local project overlay (gitignored). Rule/doc Markdown appends a delta; supported YAML overlays replace by basename. See the [overlay contract](.cuttle_global/personal/README.md). |
 | `src/data/home_automation_devices.json` | Optional Govee device inventory (gitignored); copy from `.example.json` |
 | `_personal/` | Your dogfood skills and docs (gitignored); not part of the product |
 | `/wizard_page.html` | Setup status and Doctor health checks |
@@ -209,10 +216,10 @@ flowchart LR
 |----------|------------|
 | Overview and architecture | [`docs/README.md`](docs/README.md), [`docs/guides/MODULARITY.md`](docs/guides/MODULARITY.md) |
 | Agent router | [`docs/guides/AGENT_ROUTER.md`](docs/guides/AGENT_ROUTER.md) |
-| Workers mesh | [`docs/guides/CUTTLE_WORKERS.md`](docs/guides/CUTTLE_WORKERS.md), [`.cuttle/docs/cuttle-workers.md`](.cuttle/docs/cuttle-workers.md) |
-| Action forms and commands | [`.cuttle/docs/action-forms.md`](.cuttle/docs/action-forms.md), [`.cuttle/docs/commands-and-actions.md`](.cuttle/docs/commands-and-actions.md) |
-| Agent ops CLIs (`python -m api.*`) | [`.cuttle/docs/agent-ops-cli.md`](.cuttle/docs/agent-ops-cli.md) |
-| Sub-agents | [`.cuttle/docs/subagents.md`](.cuttle/docs/subagents.md) |
+| Workers mesh | [`docs/guides/CUTTLE_WORKERS.md`](docs/guides/CUTTLE_WORKERS.md), [`.cuttle_global/docs/cuttle-workers.md`](.cuttle_global/docs/cuttle-workers.md) |
+| Action forms and commands | [`.cuttle_global/docs/action-forms.md`](.cuttle_global/docs/action-forms.md), [`.cuttle_global/docs/commands-and-actions.md`](.cuttle_global/docs/commands-and-actions.md) |
+| Agent ops CLIs (`python -m api.*`) | [`.cuttle_global/docs/agent-ops-cli.md`](.cuttle_global/docs/agent-ops-cli.md) |
+| Sub-agents | [`.cuttle_global/docs/subagents.md`](.cuttle_global/docs/subagents.md) |
 | Pairing / LAN | [`docs/guides/PAIRING_AND_ALLOWLIST.md`](docs/guides/PAIRING_AND_ALLOWLIST.md), [`docs/guides/REMOTE_ACCESS.md`](docs/guides/REMOTE_ACCESS.md) |
 | Electron desktop | [`electron/README.md`](electron/README.md) |
 | Android app | [`apps/mobile/README.md`](apps/mobile/README.md) |
@@ -221,9 +228,18 @@ flowchart LR
 
 ## Development
 
+Install runtime and development dependencies before testing. POSIX, from the repo root:
+
 ```bash
+.venv/bin/python -m pip install -r src/requirements/requirements.txt -r src/requirements/requirements-dev.txt
 .venv/bin/python -m pytest src/tests/
-# Windows: .\.venv\Scripts\python.exe -m pytest src/tests/
+```
+
+Windows PowerShell, from the repo root:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r src/requirements/requirements.txt -r src/requirements/requirements-dev.txt
+.\.venv\Scripts\python.exe -m pytest src/tests/
 ```
 
 The frontend behavior tests shell out to Node to exercise the shipped JS
@@ -245,7 +261,7 @@ Captures use the Lavender Dream light theme at 2x and are framed by [`readme_pro
 
 ## Security notes
 
-- Cuttle is designed for a trusted LAN. Before exposing the UI beyond it, set `OWNER_USER_EMAIL` and review the CORS allowlist and device pairing.
+- Cuttle is designed for a trusted LAN. Before exposing the UI beyond it, set `OWNER_USER_EMAIL` and review the CORS allowlist and [pairing limitations](docs/guides/PAIRING_AND_ALLOWLIST.md). Pairing does not replace network restrictions or authorization for other API routes.
 - Auth uses bcrypt passwords, a CORS origin allowlist, and rate limits on login and pairing.
 - Keep secrets in `src/.env` (gitignored). Never commit it, certs, `*.db`, or Playwright profiles.
 

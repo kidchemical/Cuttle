@@ -1,13 +1,13 @@
 # Cuttle Mobile — native LAN client
 
-Android/iOS **native shell** for Cuttle — same idea as the Windows **Electron** app:
+Android/iOS **native shell** for Cuttle — same idea as the desktop **Electron** app:
 
 ```
-Electron (PC):     BrowserWindow → https://127.0.0.1:8080/app_shell.html
+Electron (PC):     BrowserWindow → http://127.0.0.1:8000/app_shell.html (HTTPS :8080 fallback)
 Cuttle Mobile:     WebView       → http(s)://<pc-lan-ip>:<port>/app_shell.html
 ```
 
-The phone does **not** run the Python daemon. It is a full-screen native window onto the Cuttle UI on your PC (chat, node editor, settings, etc.), with:
+The phone does **not** run the Python daemon. It is a full-screen native window onto the Cuttle UI on your PC (chat, spaces, settings, dashboards, etc.), with:
 
 - Cold start → opens Cuttle directly (when a server is saved)
 - In-app loading / error screens (not the system browser)
@@ -22,16 +22,32 @@ The phone does **not** run the Python daemon. It is a full-screen native window 
 
 ## Build / install (Android)
 
+From the repository root, Windows PowerShell:
+
+```powershell
+cd apps/mobile
+npm ci
+npm run sync
+.\build-android-debug.bat
+```
+
+POSIX (Android SDK and JDK 17 configured):
+
 ```bash
 cd apps/mobile
-npm install
+npm ci
 npm run sync
-build-android-debug.bat
+cd android
+./gradlew assembleDebug
 ```
 
 APK: `android/app/build/outputs/apk/debug/app-debug.apk`
 
 Use HTTP port **8000** and your PC IP from Settings → Phone / LAN access.
+HTTP sends credentials and chat traffic in cleartext; this client is for a trusted
+LAN. Its WebView self-signed-certificate handling is app-specific and does not
+configure trust in browsers or the separate native notification companion.
+See [remote access](../../docs/guides/REMOTE_ACCESS.md) for private proxy/VPN options.
 
 ## First launch
 

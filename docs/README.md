@@ -26,3 +26,7 @@ Auth (bcrypt, LAN) is in [`ROADMAP.md`](ROADMAP.md). Desktop version lives in `e
 ## Start
 
 From the repo root: `./start_cuttle.sh` (Linux/macOS) or the daemon on Windows — see the [README](../README.md).
+
+For a development checkout, install both runtime and development requirement files
+before pytest; `pytest.ini` requires `pytest-timeout`. See the
+[root development instructions](../README.md#development) for POSIX and Windows commands.

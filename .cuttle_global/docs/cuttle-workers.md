@@ -12,7 +12,7 @@ Match this doc when the user (or a good batch candidate) involves:
 - Multi-device / LAN workers / “use workers”
 - File copy / staging across PCs
 - Blender / render farm / frame sharding
-- **Remote Client update** (git pull + restart Cuttle on laptop from host)
+- **Remote Client update** (checkout update + restart Cuttle on laptop from host)
 - Shell on a worker (recipes, local execute_shell_unsafe, or execute_shell_ssh)
 - Mesh compute, capability ads, claim/lease jobs
 
@@ -47,7 +47,7 @@ Electron alone cannot safely pull+restart itself (same class of problem as killi
 | Electron Client | UI only when client daemon is running (skips sidecar if daemon heartbeat is fresh) |
 
 ```powershell
-cd <CuttleInstall>
+# From the Cuttle repository root
 .venv\Scripts\python.exe src\scripts\cuttle_client_daemon.py
 ```
 
@@ -60,7 +60,7 @@ Connect Electron Client to the host at least once first (writes `desktop-config.
 | `shell` | Named recipes only (`git_pull`, `git_status`, …) | available |
 | `execute_shell_unsafe` | Free-form **local** cmdline on the worker after claim | **off** — `device_workers.execute_shell_unsafe_enabled` |
 | `execute_shell_ssh` | Worker runs OpenSSH `ssh user@host …` | **off** — `execute_shell_ssh_enabled` + `ssh_host` |
-| `cuttle_self_update` | Detached pull + restart Electron/daemon | prefer for Client updates |
+| `cuttle_self_update` | Detached fetch/fast-forward + restart Electron/daemon | prefer for Client updates |
 
 Use **SSH for ad-hoc shell** when you already trust SSH into that machine. Do **not** use SSH for enroll/claim or as a substitute for `cuttle_self_update`.
 
@@ -188,12 +188,12 @@ Large sticky units are fine when units are short, peers are matched, and reclaim
 - Idempotent `frame_NNNN` outputs make small chunks + occasional overlap safe.
 - Use `batch-watch` (auto gap-fill) or `gap-fill` after shard failures — do not babysit missing frames by hand.
 
-```powershell
+```bash
 # Cycles farm — steal-friendly
-python -m api.device_workers.cli blender-shard ... --distribution work_steal --chunk-size 1
+PYTHONPATH=src .venv/bin/python -m api.device_workers.cli blender-shard ... --distribution work_steal --chunk-size 1
 
 # Fast preview — auto chunk OK
-python -m api.device_workers.cli blender-shard ... --distribution work_steal
+PYTHONPATH=src .venv/bin/python -m api.device_workers.cli blender-shard ... --distribution work_steal
 ```
 
 ### Mesh progress bars (hard)
@@ -203,8 +203,8 @@ When emitting a watch card for a multi-worker mesh bake:
 1. Use one overall `kind:primary` bar and one `kind:worker` bar per worker (distinct styling).
 2. Prefer `batch-watch` so status JSON always carries `bars` (do not write overall-only):
 
-```powershell
-python -m api.device_workers.cli batch-watch --batch-id v16-cycles-1080p24 --id v16-cycles-1080p24
+```bash
+PYTHONPATH=src .venv/bin/python -m api.device_workers.cli batch-watch --batch-id v16-cycles-1080p24 --id v16-cycles-1080p24
 # optional loop: --loop --interval 60
 ```
 
@@ -215,7 +215,7 @@ Details / schema → `action-forms.md` (Multi-bar progress).
 
 1. Client: client daemon + Electron Client → online in `workers.list`.
 2. Host (after push to git remote): `workers.self-update` `target=<client_worker_id>`.
-3. Detached updater: `git fetch` + `git reset --hard @{u}` + `git clean -fd` → stop Electron → restart daemon + Client.
+3. Detached updater: `git fetch` + `git merge --ff-only --no-overwrite-ignore @{u}` → stop Electron → restart client daemon + Client.
 4. Confirm with `workers.list` / `shell`+`git_rev_parse`.
 
 Log: `%LOCALAPPDATA%\cuttle-desktop\client-self-update.log`
@@ -226,3 +226,35 @@ Log: `%LOCALAPPDATA%\cuttle-desktop\client-self-update.log`
 - Enable `execute_shell_unsafe` / `execute_shell_ssh` casually on untrusted sessions
 - Expect Electron-only sidecar to self-update (use **client daemon**)
 - Treat Capacitor mobile as a PC mesh worker (no Python claim loop / Blender / shell on phone). **Someday / low priority:** thin sensor+HITL edge only — see `CUTTLE_WORKERS.md` § W5.
+
+## Shell environment
+
+Examples run from the Cuttle repository root with the project venv. POSIX
+examples set `PYTHONPATH=src` per invocation. For Windows PowerShell, set
+the path and use the Windows interpreter; for example:
+
+```powershell
+$env:PYTHONPATH = "src"
+.\.venv\Scripts\python.exe -m api.device_workers.cli list
+```
+
+Use PowerShell backticks for multiline continuation and single-quoted JSON
+arguments; POSIX examples use backslashes for continuation.
+
+## Update checkout and version contract
+
+Self-update scripts require a clean tracking branch, fetch the remote, and merge
+the configured upstream with `--ff-only` before stopping Client processes. They
+refuse tracked edits, untracked files, detached HEAD, missing upstream, and local
+commits/divergence. They recheck cleanliness after fetching. No automatic stash
+or hard reset preserves work: the update stops and the operator must save or
+reconcile it. Older updater revisions used a destructive reset; update those
+scripts before relying on the refusal contract. Consult the Cuttle install's
+`.cuttle/docs/cuttle-release.md` for the release procedure. SemVer bumps happen
+only at release time; git revision mismatch and stale boot revision also cause
+update badges without a bump.
+
+Self-update refuses a dirty/untracked checkout, detached HEAD, missing upstream,
+and local/diverged commits before stopping processes. Ignored personal files stay
+in place; incoming tracked-file collisions are refused. Save/reconcile local work
+explicitly before retrying. It does not stash, hard-reset or clean your checkout.

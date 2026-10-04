@@ -155,3 +155,23 @@ def test_generate_title_local_skips_cloud(monkeypatch):
         "local",
     )
     assert title == "💬 Local title"
+
+
+def test_title_honors_completion_provider_preference(monkeypatch):
+    import api.chat_titler as titler
+    monkeypatch.setattr('api.completion_providers.resolve_order', lambda: ['local', 'openai', 'anthropic'])
+    monkeypatch.setattr(titler, '_title_via_local', lambda *a, **k: 'Fix commit staging')
+    monkeypatch.setattr(titler, '_title_via_openai', lambda *a, **k: (_ for _ in ()).throw(AssertionError('wrong provider')))
+    assert titler._generate_title([{'role': 'user', 'content': 'fix commits'}], 'auto') == 'Fix commit staging'
+
+
+def test_title_delegates_model_selection_to_completion_owner(monkeypatch):
+    import api.chat_titler as titler
+    monkeypatch.delenv('CHAT_TITLE_OPENAI_MODEL', raising=False)
+    captured = {}
+    def complete(**kwargs):
+        captured.update(kwargs)
+        return 'Fix naming'
+    monkeypatch.setattr('api.llm_complete.complete', complete)
+    assert titler._title_via_openai('prompt') == 'Fix naming'
+    assert captured['openai_model'] is None

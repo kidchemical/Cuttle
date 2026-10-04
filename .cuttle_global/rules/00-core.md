@@ -22,7 +22,8 @@ how-to lives in `.cuttle_global/docs/`. Rules for the Cuttle repo itself (not gu
    the user they "skipped". On preference cards omit `action` entirely; never invent
    `none` / `noop` / `__agent_reply__`. Mesh watch cards need overall + per-worker `bars`.
 3. Discord reads → `python -m api.discord_cli`, posts stay on `discord.post` (`discord.md`).
-4. Forge / issue tracker → runbook (defaults to Gitea when configured) (`gitea.md`).
+4. Forge / issue tracker → the enabled integration runbook for the active project.
+   Optional integration guidance requires explicit project configuration (`GLOBAL.ini`).
 5. `vega` / charts / pipe tables → `charts.md`.
 6. `CH-` / transcript / prior chat → `python -m api.chat_cli`, never hand-rolled SQL
    against `cuttle_auth.db` (`chat-history.md`, `01-chat-handles.md` for token shape).

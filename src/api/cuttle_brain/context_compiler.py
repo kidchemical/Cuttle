@@ -214,13 +214,13 @@ _ENVELOPE_PREAMBLE = (
 )
 
 
-def _core_contract_block(*, inject_capabilities: bool) -> str:
+def _core_contract_block(*, inject_capabilities: bool, project_path: Optional[str] = None) -> str:
     parts: List[str] = [_ENVELOPE_PREAMBLE]
     if inject_capabilities:
         try:
             from api.cuttle_ui_capabilities import cuttle_ui_capabilities_block
 
-            caps = cuttle_ui_capabilities_block()
+            caps = cuttle_ui_capabilities_block(project_path=project_path)
             if caps.strip():
                 parts.append(caps.strip())
         except Exception:
@@ -284,8 +284,10 @@ def _runtime_block(
     router = load_global_layers(project_path)
     global_config = _cuttle_global_config()
     if global_config is not None and router.docs:
-        global_docs = _list_names(global_config / "docs", ("*.md",))
-        deltas = _delta_names(global_config / "docs", ("*.md",))
+        from api.cuttle_brain.global_layers import global_doc_enabled
+        global_docs = [name for name in _list_names(global_config / "docs", ("*.md",))
+                       if global_doc_enabled(name, project_path)]
+        deltas = [name for name in _delta_names(global_config / "docs", ("*.md",)) if name in global_docs]
     else:
         global_docs = []
         deltas = []
@@ -400,7 +402,7 @@ def compile_context(
     layers: List[str] = []
     sections: List[str] = []
 
-    core = _core_contract_block(inject_capabilities=inject_capabilities)
+    core = _core_contract_block(inject_capabilities=inject_capabilities, project_path=project_path)
     if core:
         sections.append(core)
         layers.append("core_contract")

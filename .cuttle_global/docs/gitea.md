@@ -43,12 +43,12 @@ Restart Flask after changing `.env`.
 
 From the Cuttle tree:
 
-```powershell
-cd <CuttleInstall>
-.venv\Scripts\python.exe -m api.gitea list <owner>/<repo> --state open --json
-.venv\Scripts\python.exe -m api.gitea show <owner>/<repo> 12 --json
-.venv\Scripts\python.exe -m api.gitea comments <owner>/<repo> 12 --json
-.venv\Scripts\python.exe -m api.gitea labels <owner>/<repo> --json
+```bash
+# From the Cuttle repository root
+PYTHONPATH=src .venv/bin/python -m api.gitea list "<owner>/<repo>" --state open --json
+PYTHONPATH=src .venv/bin/python -m api.gitea show "<owner>/<repo>" 12 --json
+PYTHONPATH=src .venv/bin/python -m api.gitea comments "<owner>/<repo>" 12 --json
+PYTHONPATH=src .venv/bin/python -m api.gitea labels "<owner>/<repo>" --json
 ```
 
 (Legacy shim: `.cuttle_global\scripts\gitea_cli.py` — prefer `python -m api.gitea`.)
@@ -108,3 +108,26 @@ Official docs: https://docs.gitea.com/development/api-usage/
 
 Remote `@cuttle` commands may be handled by the **Cuttle Jobs** stack. See
 `cuttle-jobs.md` and install-local notes under `.cuttle_global/personal/docs/` when present.
+
+## Shell environment
+
+Examples run from the Cuttle repository root with the project venv. POSIX
+examples set `PYTHONPATH=src` per invocation. For Windows PowerShell, set
+the path and use the Windows interpreter; for example:
+
+```powershell
+$env:PYTHONPATH = "src"
+.\.venv\Scripts\python.exe -m api.gitea list "<owner>/<repo>" --state open --json
+```
+
+Use PowerShell backticks for multiline continuation and single-quoted JSON
+arguments; POSIX examples use backslashes for continuation.
+
+## Project guidance opt-in
+
+Gitea runtime integrations and Jobs remain supported. To advertise this global
+runbook in a project's context inventory, ranker, and capability summary, set
+`[integrations] gitea = on` in that project's `.cuttle/GLOBAL.ini` (or its
+install-local personal twin). A default localhost URL/agent username alone does
+not enable guidance. Set up credentials separately using the instructions above.
+Project-owned forge docs remain project-owned even when global guidance is off.

@@ -1,67 +1,39 @@
-# Utility Scripts
+# Utility scripts
 
-## Overview
+Helpers for CLI adapters, diagnostics, testing and documentation media live here.
+Use Python **3.11+** with the repository's root `.venv`; install runtime and dev
+dependencies as shown in the [root README](../../../README.md#development).
+Each utility's arguments and working-directory needs are defined by its source
+and `--help`; do not assume every helper resolves paths the same way.
 
-This directory contains utility scripts for testing, debugging, and automation.
+## CLI adapters and query inspection
 
-## Query logs
+- `claude_cli_tool.py`: Claude Code `claude -p`, resume and JSON usage.
+- `claude_cli_session_store.py`: per-chat resume/model state.
+- `claude_code_tool.py`: legacy re-export of the adapter.
+- Query inspector: `/query_log.html?id=<query_id>`; logs under
+  `src/web/logs/query_data_<id>.json` are indexed by chat `query_id`.
 
-Turn inspectors: `/query_log.html?id=<query_id>`. Source of truth is `src/web/logs/query_data_<id>.json` (SQLite chat rows store `query_id` as the index).
+## API-dependent utilities
 
----
+Only utilities that call the API require an active Host. Start the daemon via
+`./start_cuttle.sh` on POSIX or the root README's Windows daemon command;
+Electron Host can connect to/start it. Do not start Flask directly alongside an
+existing Host. HTTPS uses :8080 (self-signed by default); HTTP :8000 is the
+same-app cleartext portal. Inspect the utility's URL and trust options before
+using it. CLI module examples need the source package on the path:
 
-### Development Tools
-
-- `claude_cli_tool.py` - Claude Code CLI (`claude -p`) with resume + JSON usage
-- `claude_cli_session_store.py` - Per-chat Claude resume id / model pin map
-- `claude_code_tool.py` - Thin re-export of `claude_cli_tool` (legacy import path)
-- `hello_world.py` - Simple test script
-- `update_project_paths.py` - Update project file paths
-
-### System Utilities
-
-- `example_project_setup.py` - Project setup example
-
----
-
-## Requirements
-
-These scripts require:
-- Python 3.8+
-- `requests` library
-- Active API server on http://localhost:8080
-
-## Troubleshooting
-
-### Script can't find files
-
-All scripts use relative paths from their location:
-```python
-script_dir = Path(__file__).parent
-project_root = script_dir.parent.parent.parent
-```
-
-If you move scripts, this automatically adjusts.
-
-### API connection errors
-
-Ensure the server is running:
 ```bash
-python src/api/web_chat_api.py
+# POSIX, from the repository root
+PYTHONPATH=src .venv/bin/python -m api.chat_cli --help
 ```
 
-Or start via Electron:
-```bash
-start_electron.bat
+```powershell
+# Windows PowerShell, from the repository root
+$env:PYTHONPATH = "src"
+.\.venv\Scripts\python.exe -m api.chat_cli --help
 ```
 
----
-
-## Related Documentation
-
-- **Testing Guides:** `../../docs/testing/`
-- **Fix Documentation:** `../../docs/fixes/`
-- **Test Suite:** `../../tests/`
-
-**Last updated:** October 12, 2025
-
+See [agent ops](../../../.cuttle_global/docs/agent-ops-cli.md),
+[architecture map](../../../docs/architecture/repository-map.md),
+[review snapshots](../../../docs/reviews/), and the [test suite](../../tests/).

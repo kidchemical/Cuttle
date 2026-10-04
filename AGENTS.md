@@ -5,26 +5,13 @@ Guidance for Cursor, Muse, Codex, Claude Code, Hermes, and other agents working 
 Coding tasks: read this brief, then `docs/architecture/ARCHITECTURE_PRINCIPLES.md` and
 `docs/architecture/repository-map.md` for the owning slice before editing.
 
-## Flask / daemon restart safety
+## Runtime safety
 
-Cuttle’s Flask API is a child of `cuttle_daemon`.
-
-- **Never** use `taskkill` / `Stop-Process` on `web_chat_api` or `cuttle_daemon` to restart them from an agent session.
-- Use `/restart graceful`, `/restart when-idle`, or `/restart force --yes` (or `POST /api/flask/restart`).
-- In Cuttle chat, propose the restart with the `flask.restart` action form (clickable choice card) rather than asking the user to type a slash command; the slash commands are the fallback.
-- Killing Flask from inside a chat destroys the delivery path for your own reply.
-
-Unrelated `taskkill` of non-Cuttle processes (build tools, test servers you started, etc.) is allowed.
-
-Electron Host exit: only tray **Exit** may stop the daemon it spawned, and it asks first when agent turns are running (`requestHostExit` in `electron/main.js`). SIGTERM/SIGINT, updates, and relaunches close the UI only — the daemon and in-flight turns survive and the next launch reconnects.
-
-Canonical daemon restart (admin / external terminal only):
-- Windows: `.cuttle/scripts/restart-daemon.ps1` from the repo root
-- Linux / macOS: `.cuttle/scripts/restart-daemon.sh` (or `./start_cuttle.sh` after a stop)
-
-Global action forms (`flask.restart`, workers, …) use `run:` (PowerShell) on Windows and `run_posix:` (venv python / bash) on Linux. Do not invoke `.ps1` recipes from Ubuntu.
-
-Details: `.cuttle_global/docs/action-forms.md` (Flask restart), `src/api/flask_restart.py`, `src/api/restart_safety_policy.py`.
+Never force-kill the hosting Flask API or daemon from an agent session.
+The daemon owns Flask lifetime; see [action forms](.cuttle_global/docs/action-forms.md)
+for restart procedures and [development instance safety](docs/architecture/development-instance-safety.md)
+before risky runtime changes. Electron lifetime is owned by the Host; tray Exit
+is the explicit daemon shutdown path, while UI relaunch/update preserves it.
 
 ## What is Cuttle
 
@@ -34,33 +21,41 @@ Project config lives under `.cuttle/` (commands, actions, docs, rules, `GLOBAL.i
 
 ## Starting the Project
 
+POSIX, from the repository root:
+
 ```bash
-# Linux / macOS (repo root)
 ./start_cuttle.sh
-# or: .venv/bin/python src/scripts/cuttle_daemon.py
-
-# Windows
-# cd \path\to\Cuttle
-# .venv\Scripts\python.exe src\scripts\cuttle_daemon.py
+# Or: .venv/bin/python src/scripts/cuttle_daemon.py
 ```
 
-**Venv**: use `.venv/bin/python` (POSIX) or `.venv\Scripts\python.exe` (Windows).
+Windows PowerShell, from the repository root:
 
-**Environment**: secrets (optional `DISCORD_TOKEN` for REST agent-ops, API keys) live in `src/.env`. The daemon loads this file before spawning subprocesses. Setting `DISCORD_TOKEN` does **not** start an inbound Discord gateway.
+```powershell
+.\.venv\Scripts\python.exe src\scripts\cuttle_daemon.py
+```
 
-## Running Tests
+**Environment:** optional provider/API keys and Discord REST agent-ops token
+live in `src/.env`; the daemon loads this before spawning child processes.
+Vendor CLI authentication is separate (see the agent catalog manifests).
+
+## Development dependencies and tests
+
+POSIX, from the repository root:
 
 ```bash
+.venv/bin/python -m pip install -r src/requirements/requirements.txt -r src/requirements/requirements-dev.txt
 .venv/bin/python -m pytest src/tests/
-# Windows: .venv\Scripts\python.exe -m pytest src/tests/
 ```
 
-## Installing Dependencies
+Windows PowerShell, from the repository root:
 
-```bash
-.venv/bin/pip install -r src/requirements/requirements.txt
-# Windows: .venv\Scripts\pip.exe install -r src/requirements/requirements.txt
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r src/requirements/requirements.txt -r src/requirements/requirements-dev.txt
+.\.venv\Scripts\python.exe -m pytest src/tests/
 ```
+
+Use the project venv, not system Python. For `python -m api.*` examples, source
+path setup is required; see [agent ops](.cuttle_global/docs/agent-ops-cli.md).
 
 ## Architecture
 
@@ -143,32 +138,17 @@ Cuttle does **not** host an MCP tool server. Guest CLIs keep their own MCP. Cutt
 - **Mid-turn steering** (`src/api/agent_harness/steer.py`): Codex turns run on `codex app-server` and Muse Code turns on `muse serve`, so a follow-up sent while they work goes into the live turn (`turn/steer`) through `POST /api/chat-steer` instead of waiting in the follow-up queue. The composer tries steer first and queues on `steered: false` (no steerable run, other slash command, attachments, or turn already finished). The server persists the steered user row (`metadata.steered`). Either runner returns `fallback` if it can't start a turn, and the adapter reruns on `exec`. Off switch: `settings.json` → `agent_steer: {"codex": false}` or env `CUTTLE_AGENT_STEER=0`. Codex reads steer input only at its next sampling step: the status strip shows `steer queued: …`, and a steer the turn never echoed back is listed in the reply (`undelivered_steers`) instead of vanishing. While a Codex turn is live, `/api/agent-context` uses the runner's token snapshot and never resumes the busy thread from a second app-server. Cursor `-p` and Claude `-p` have no mid-turn input channel. Tests: `src/tests/test_agent_steer.py`.
 - **Turn guard**: `chat_delivery` hands each turn a token (`current_turn` / `is_stale_turn`). A run whose turn was superseded (Stop → re-send) cannot persist its reply, park it for the client, release the live turn's busy lock, or start another routed target.
 
-### Flask restart (daemon-owned) — expanded
+### Cuttle chat controls
 
-- **Never** `taskkill` `web_chat_api` from a Cursor/Codex/Muse agent hosted by that Flask — the reply is lost.
-- When proposing a restart in Cuttle chat, emit the `flask.restart` action form (choice card: status / graceful / when-idle / force / `flask.health`) instead of asking in prose — see `.cuttle_global/docs/action-forms.md` (Flask restart). Card restarts are `silent`: progress shows on the card (spinner → green check), and no ack/completion bubbles are written to the chat.
-- Action cards carry the `session_id` of the chat they were rendered in; `/api/action-form/run` runs the action in that chat regardless of what the client thinks is open, so a restart can never land its status in another chat.
-- Prefer `/restart status|graceful|when-idle|force --yes` or `POST /api/flask/restart` when action buttons aren't available.
-- `/restart` is a **native Cuttle control command**: it is intercepted in `/api/chat` (and in `process_message_with_bot`) before sticky/starred agent prefixing, the router, and any Cursor/Codex/Hermes dispatch, so it never becomes a model turn or an agent job. Palette entry lives in `SLASH_COMMANDS` (`controlCommand: true`) in `chat_page.js`.
-- Protocol: Flask persists ack + `restart_id` → writes `cuttle_flask_restart_request.json` → daemon stop/start/health → status file + chat completion.
-- **Manual verification 2026-08-16:** `/restart status` → native chip (no agent); `/restart graceful` → ack persisted, auto-reconnect, Flask PID 4856→19048, generation 1→2, health 6798.6 ms, completion delivered without a follow-up message (`restart_id` `f2cb0682…`, status file `healthy`).
-- Daemon helper: `.cuttle/scripts/restart-daemon.sh` (POSIX) or `.cuttle/scripts/restart-daemon.ps1` (Windows).
-- Drain-first: graceful waits/rejects when busy; `when-idle` schedules; force requires confirm.
-- No shell gate ships with this repo; enforcement is the safety core + daemon-owned restart path.
+Restart, push, questions, and chat-handle conventions have single owners:
 
-### Git push (Cuttle chat)
+- Flask restart and question cards: [action-forms.md](.cuttle_global/docs/action-forms.md).
+- Git push/undo: [git.md](.cuttle_global/docs/git.md); never push from the agent shell.
+- Chat handles/history and panes: [chat-history.md](.cuttle_global/docs/chat-history.md).
+  Emit bare CH- handles, never file links.
 
-- **Never** `git push` from the agent shell in Cuttle chat (including `--force`).
-- The user pushing from the Git pending-changes UI is allowed.
-- In chat, emit the `git.push` action form (status / push / don’t) and stop. See `.cuttle_global/docs/git.md`. Do not ask “OK to push?” in prose.
-
-### Asking the user questions (Cuttle chat)
-
-- **Never call the `AskQuestion` tool** when the turn runs through Cuttle (`/cursor`, router, etc.). Headless `agent -p` has no picker, so it returns "skipped" instantly and the user sees nothing.
-- Emit a Q&A `<cuttle_action_form>` with `"resume": true` instead (`choice`, `multi` with Submit/Cancel, or `form` with `radio`/`checkboxes` fields), then end the turn. See `.cuttle_global/docs/action-forms.md`.
-- **One Q&A card per reply.** Several questions → one `form` card with one field per question and a single Submit. Separate resume cards each start a turn on their own click, so the first answer orphans the rest. `rewrite_action_forms` merges stray multi-card replies into one form as a safety net (`merge_qa_resume_specs`).
-- The answer bubble has exactly one writer: the client's resume send (`sendMessage({text})` → `/api/chat`). `/api/action-form/run` returns `injected_user_message` but must not persist it — doing both showed every answer twice. `[form-answers]` lists every field, including unanswered ones.
-- Never tell the user they "skipped" a question. `src/api/cursor_question_bridge.py` converts stray AskQuestion calls into a card as a safety net.
+The native `/restart` palette entry is in `src/web/js/chat_slash.js`
+(`CuttleChatSlash.SLASH_COMMANDS`); it is intercepted before agent dispatch.
 
 ### Split panes (“1st pane”, “2nd pane”, …)
 
@@ -194,7 +174,7 @@ Scheduled `Self_Improvement.json` was removed with the graphs. Process backlog l
 - `project_key = "pc_bot"` is hardcoded as the Claude Code project root in `web_chat_api.py`
 - Turn dispatch lives in owned services, not the entry module: `api.agent_harness.runners` (all harness CLI entries), `api.chat_turn` (request/selection seam), `api.chat_coordinator` (shared transport-neutral submit: `PreparedAgentTurn`/`select_agent_turn`/`submit_agent_turn`; route lanes submit claimed, legacy surfaces unclaimed), `api.chat_turn_workflow` (lane orchestration), `api.chat_turn_persist` (saver/user persist). `process_message_with_bot` in `web_chat_api.py` is only the compat entry for local-mode prompts and `/api/sessions/send`.
 - Flask runs on port **8080** (not 5000)
-- Discord token is read from `src/.env` — the daemon must load this before spawning bot subprocess
+- Discord token is read from `src/.env` — the daemon loads this before child processes; Discord is REST-only, with no inbound bot subprocess
 - **Project commands**: `{project}/.cuttle/commands/*.md` (YAML frontmatter + body) appear in the chat `/` palette for that project. See `.cuttle_global/skills/cuttle-project-commands/SKILL.md`. Invoke as `/{name}` or `/cmd {name}` (works after sticky `/cursor` too).
 
 ### Chat attachments (images / PDFs)
@@ -206,25 +186,8 @@ Scheduled `Self_Improvement.json` was removed with the graphs. Process backlog l
 - Uploads land in `src/output/uploads/{session}/`, served via `/output/…`. `resolve_upload_refs` rejects any client path outside that root.
 - Tests: `src/tests/test_chat_attachments.py`.
 
-## Terminal hyperlink rule
+## Local file references
 
-Whenever referencing local **files or code locations**:
-
-Always output clickable links compatible with Windows Terminal.
-
-Format file paths as:
-
-file:///C:/path/to/file.ext
-
-Also include VSCode deep links:
-
-vscode://file/C:/path/to/file.ext:line
-
-Rules:
-- Never output Windows paths using backslashes
-- Always convert to forward slash URLs
-- Prefer clickable hyperlinks over plain text paths
-- Include both file:// and vscode:// links whenever possible
-- **Not for chat handles:** emit bare `CH-000182` / `CH-000182-23` only — never
-  `[CH-…](file://…)` or other markdown wrappers (those become file chips). See
-  `.cuttle_global/rules/01-chat-handles.md`.
+Use clickable file links appropriate to the current OS and client. On Windows,
+use forward slashes in file/editor URLs; on POSIX use the real checkout path.
+Chat-handle formatting belongs to `.cuttle_global/rules/01-chat-handles.md`.

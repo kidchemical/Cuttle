@@ -1,6 +1,6 @@
 """Install-local ``personal/`` overlay (gitignored).
 
-Mirrors the tracked layout (rules, docs, actions, commands, scripts) beside
+Mirrors the tracked layout (rules, docs, actions, commands, scripts, skills) beside
 whichever cuttle root it belongs to — ``{project}/.cuttle/personal/`` or
 ``{install}/.cuttle_global/personal/``.
 
@@ -9,7 +9,7 @@ Two behaviors, by file kind:
 - **Markdown (rules/docs): supplement, not fork.** A personal twin is *appended*
   after the tracked text (marked install-local), so personal files stay small
   deltas and cannot desync from the baseline.
-- **Everything else (yaml/commands/scripts): basename wins.** Structured files
+- **Everything else (yaml/commands/skills/scripts): basename wins.** Structured files
   cannot concatenate, so the personal twin replaces the tracked one.
 
 ``resolve_cuttle_file`` still returns the personal *path* when present (for
@@ -32,6 +32,7 @@ PERSONAL_SUBDIRS = (
     "actions",
     "docs",
     "scripts",
+    "skills",
 )
 
 
@@ -132,9 +133,11 @@ def read_merged_md(
         tracked = _twin(tracked_dir, name)
         personal = _twin(personal_dir, name)
         text = ""
+        has_tracked_text = False
         if tracked is not None:
             try:
                 text = tracked.read_text(encoding="utf-8").strip()
+                has_tracked_text = bool(text)
             except OSError:
                 text = ""
         if not text and personal is not None:
@@ -145,7 +148,7 @@ def read_merged_md(
                 continue
         if not text:
             continue
-        if tracked is not None and personal is not None:
+        if tracked is not None and personal is not None and has_tracked_text:
             text = _append_delta(text, f"{tracked_dir.name}/{tracked.name}", personal)
         out.append((tracked.name if tracked is not None else name, text))
     return out
@@ -182,19 +185,27 @@ def list_merged_delta_names(
 
 
 def read_cuttle_file_merged(cuttle_root: Path, *parts: str) -> Optional[str]:
-    """Merged text of a tracked file plus its personal delta (None if no tracked file)."""
+    """Merged text of a tracked file plus its personal delta (None if neither file exists)."""
     if not parts:
         return None
     root = Path(cuttle_root)
     tracked = root.joinpath(*parts)
     if not tracked.is_file():
-        return None
+        personal = personal_root(root).joinpath(*parts)
+        try:
+            return personal.read_text(encoding="utf-8").strip() or None
+        except OSError:
+            return None
     try:
         text = tracked.read_text(encoding="utf-8").strip()
     except OSError:
         return None
     if not text:
-        return None
+        personal = personal_root(root).joinpath(*parts)
+        try:
+            return personal.read_text(encoding="utf-8").strip() or None
+        except OSError:
+            return None
     rel = "/".join(parts)
     personal = personal_root(root).joinpath(*parts)
     if personal.is_file():
@@ -228,3 +239,26 @@ def ensure_personal_tree(cuttle_root: Path) -> List[str]:
             d.mkdir(parents=True, exist_ok=True)
             created.append(f".cuttle/{PERSONAL_DIRNAME}/{sub}")
     return created
+
+
+def scoped_unit_dirs(
+    project_path: Optional[str], category: str, global_root: Path, *, include_global: bool = True
+) -> List[Tuple[Path, str]]:
+    """Highest priority first; structured units replace by their declared identity."""
+    out: List[Tuple[Path, str]] = []
+    if project_path:
+        try:
+            root = Path(project_path).resolve()
+        except (OSError, ValueError):
+            return out
+        if root.is_dir():
+            for config, scope in ((root / ".cuttle", "project"), (root / "source" / ".cuttle", "project-nested")):
+                out.extend(((config / "personal" / category, scope + "-personal"), (config / category, scope)))
+    if include_global:
+        out.extend(((global_root / "personal" / category, "global-personal"), (global_root / category, "global")))
+    return out
+
+
+def unit_disabled(meta: dict) -> bool:
+    """Only an explicit boolean true disables a structured unit (not truthy strings)."""
+    return meta.get("disabled") is True

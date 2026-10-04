@@ -95,10 +95,10 @@ In a **chat reply**, keep using `<cuttle_widget>` so the bubble shows the pin.
 From the **shell** (inspect, or patch without a tag):
 
 ```bash
-.venv\Scripts\python.exe -m api.widgets_cli list --session CH-000465 --json
-.venv\Scripts\python.exe -m api.widgets_cli get auth-refactor --json
-.venv\Scripts\python.exe -m api.widgets_cli patch auth-refactor --set-done 1,1a --json
-.venv\Scripts\python.exe -m api.widgets_cli patch auth-refactor --ops "{\"set_done\":[\"1\"],\"description\":\"…\"}" --json
+PYTHONPATH=src .venv/bin/python -m api.widgets_cli list --session CH-000465 --json
+PYTHONPATH=src .venv/bin/python -m api.widgets_cli get auth-refactor --json
+PYTHONPATH=src .venv/bin/python -m api.widgets_cli patch auth-refactor --set-done 1,1a --json
+PYTHONPATH=src .venv/bin/python -m api.widgets_cli patch auth-refactor --ops "{\"set_done\":[\"1\"],\"description\":\"…\"}" --json
 ```
 
 Flags go **after** the verb. `--session` accepts `CH-…` or a numeric id. Patch JSON matches the tag body (`set_done`, `add`, `remove`, `description`, …).
@@ -117,3 +117,17 @@ Active tasks (including description as `intent:`) are injected into the Context
 Compiler runtime digest so mid-work turns can patch by id without re-reading CH history.
 When that digest is present, treat listed ids as authoritative — patch only; do not
 create a second Tasks list for the same work.
+
+## Shell environment
+
+Examples run from the Cuttle repository root with the project venv. POSIX
+examples set `PYTHONPATH=src` per invocation. For Windows PowerShell, set
+the path and use the Windows interpreter; for example:
+
+```powershell
+$env:PYTHONPATH = "src"
+.\.venv\Scripts\python.exe -m api.widgets_cli list --session CH-000465 --json
+```
+
+Use PowerShell backticks for multiline continuation and single-quoted JSON
+arguments; POSIX examples use backslashes for continuation.

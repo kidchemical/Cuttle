@@ -366,6 +366,15 @@ def _isolated_router_outcomes(tmp_path, monkeypatch):
     monkeypatch.setenv("CUTTLE_JEV_LABEL_CACHE", str(tmp_path / "jev_turn_labels.json"))
 
 
+@pytest.fixture(autouse=True)
+def _isolated_pairing_store(tmp_path, monkeypatch):
+    """Chat admission tests must never use or write live approved identities."""
+    from api import pairing_manager
+
+    monkeypatch.setattr(pairing_manager, "PAIRING_STORE_FILE", tmp_path / "pairing.json")
+    monkeypatch.setattr(pairing_manager, "_pairing_manager", None)
+
+
 @pytest.fixture
 def isolated_resume_stores(tmp_path, monkeypatch):
     """All discovered resume stores, redirected to a temp map file."""

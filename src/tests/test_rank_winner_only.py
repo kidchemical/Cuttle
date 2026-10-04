@@ -16,7 +16,7 @@ from api.jev.client import FakeJevClient
 def _docs_only(monkeypatch):
     import api.jev.rank as rank
 
-    monkeypatch.setattr(rank, "_skill_summaries", lambda: [])
+    monkeypatch.setattr(rank, "_skill_summaries", lambda project_path=None: [])
     yield
 
 

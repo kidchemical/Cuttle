@@ -1,4 +1,4 @@
-"""ComfyUI + TRELLIS.2 client used by Cuttle MCP and other harnesses."""
+"""ComfyUI + TRELLIS.2 optional client for Python consumers and guest harness MCP."""
 
 from tools.comfyui.comfyui_client import (
     ComfyUIError,

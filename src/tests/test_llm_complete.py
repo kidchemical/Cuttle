@@ -33,3 +33,13 @@ def test_complete_local_mode_skips_cloud(monkeypatch):
         lambda *a, **k: "on device",
     )
     assert complete(user="x", inference_mode="local") == "on device"
+
+
+def test_provider_failure_is_visible_without_sensitive_body(monkeypatch, caplog):
+    def fail(*args, **kwargs):
+        raise RuntimeError('secret response body')
+    monkeypatch.setattr('api.llm_complete._via_openai', fail)
+    assert complete(user='private prompt', providers=('openai',)) is None
+    assert 'RuntimeError' in caplog.text
+    assert 'secret response body' not in caplog.text
+    assert 'private prompt' not in caplog.text

@@ -4,12 +4,15 @@ Gitignored twin of tracked `.cuttle_global/`. Same subdirs:
 
 ```text
 .cuttle_global/personal/
-  commands/   rules/   actions/   docs/   scripts/
+  commands/   rules/   actions/   docs/   scripts/   skills/
 ```
 
-**Rule:** when the same relative path exists here *and* under tracked `.cuttle_global/`:
-personal *markdown* is appended after the tracked file as a delta (keep it small —
-never fork the whole file); other personal files replace by basename.
+**Resolution:** rule/doc Markdown twins append a marked personal delta after
+tracked text. Personal-only docs are readable too. Commands/actions replace the
+whole unit by normalized declared name; skills replace by directory id. The
+winning source is returned by list/get. Use explicit boolean `disabled: true`
+to suppress lower-priority command/action/skill copies. Script recipes resolve
+literal paths: they must explicitly point to a personal script to execute it.
 Guest projects have their own twin at `{project}/.cuttle/personal/`.
 
 ## What belongs here
@@ -40,7 +43,8 @@ Guest projects have their own twin at `{project}/.cuttle/personal/`.
 
 - Code Cuttle needs to boot (keep that tracked)
 - Secrets (use `src/.env` / `.secret_DONOTSHIP/`)
-- Non-Cuttle home-lab dogfood → repo-root `_personal/`
+- Optional workflows used across projects belong in this global personal tree;
+  workflows for one project belong in that project's `.cuttle/personal/`.
 
 ## Fresh install
 

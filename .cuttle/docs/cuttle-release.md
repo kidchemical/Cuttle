@@ -19,7 +19,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .cuttle\scripts\bump-cuttle-
 # or -Minor / -Major / -Set 0.3.0
 ```
 
-Jobs → Devices shows host version, flags mismatches (⚠), and **Update** queues `cuttle_self_update`. Clients pull from the **git remote** (`git fetch` + `reset --hard @{u}`), not the Host working tree — unpushed Host commits never appear in Update.
+Jobs → Devices shows host version, flags mismatches (⚠), and **Update** queues `cuttle_self_update`. Clients update from the **git remote** (`git fetch --all --prune` + guarded `git merge --ff-only --no-overwrite-ignore` of the configured upstream), not the Host working tree — unpushed Host commits never appear in Update. The updater refuses dirty/untracked files, detached HEAD, missing upstream and local commits/divergence before stopping Client processes; it does not stash or hard-reset local work. Older updater revisions used reset-hard: refresh those scripts before relying on this guard.
 
 **After bump → commit → push (reload ladder, least disruptive first):**
 
@@ -31,3 +31,9 @@ Jobs → Devices shows host version, flags mismatches (⚠), and **Update** queu
 | 4 | Python that Flask imports changed | Emit the **`flask.restart` action form** (prefer graceful). Do **not** autonomously `/restart when-idle` or force — the user may be mid-chat and needs to see/choose |
 
 Do **not** skip Host Electron when you bumped `electron/package.json` — Clients will show the new version while Host Electron still advertises the old badge until step 2.
+
+Client self-update requires a clean tracking branch. It refuses tracked edits,
+staged changes, untracked files, detached HEAD, missing upstream, and local or
+diverged commits before stopping clients. Ignored personal files are retained;
+collisions with incoming tracked files are refused. Resolve/save local work
+explicitly and retry; there is no automatic stash, hard reset, or clean.

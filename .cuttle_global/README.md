@@ -1,53 +1,48 @@
-# `.cuttle/` — per-project Cuttle config
+# `.cuttle_global/` — shared global Cuttle configuration
 
-This folder is the **canonical layout** every Cuttle-registered project should mirror.
-Cuttle (this repo) owns the pattern; Escape Purgatory and any future project copy the
-same shape under *their* project root — they do **not** inherit actions/commands from here.
-
-```text
-{project_root}/.cuttle/
-  commands/*.md     # slash commands (/name) — on-demand expand (YAML frontmatter + body)
-  rules/*.md        # always-on project guidelines (Context Compiler / Cuttle Brain)
-  actions/*.yaml    # allowlisted side effects for <cuttle_action_form> / <cuttle_confirm>
-  docs/             # runbooks agents should open when doing project-specific work
-  scripts/          # optional helpers invoked by shell actions
-  agents/<id>/      # optional drop-in harness agents (manifest + adapter)
-  memory/           # reserved (future Brain memory retrieval — do not dump wholesale)
-  learnings/        # repo-only FEAT/ERR/LRN backlog (not Brain-injected; not scaffolded)
-```
-
-Shared context for *every* agent is assembled by the **Context Compiler**
-(`src/api/cuttle_brain/`). See `src/api/cuttle_brain/CONTEXT_COMPILER.md`.
-
-## Auto-scaffold on register
-
-`ProjectManager.add_local_project` / `add_github_project` / `add_gitlab_project`
-call `managers.cuttle_scaffold.ensure_cuttle_scaffold` after a successful insert
-(idempotent — never overwrites existing files).
-
-Agents who create a project **in chat without** hitting that API must still run:
+This tree supplies shared rules, runbooks, actions, scripts, skills and agent
+configuration for every registered project. A project's `.cuttle/GLOBAL.ini`
+selects which global layers apply; the safety core remains non-severable.
+See [GLOBAL.ini](../.cuttle/GLOBAL.ini) for the selection keys.
 
 ```text
-..\.venv\Scripts\python.exe -m managers.cuttle_scaffold "E:\path\to\project" --name "Display Name"
+.cuttle_global/
+  rules/    docs/    actions/    scripts/    skills/    agents/    keys/
+  personal/   # install-local global overlay (gitignored)
 ```
 
-(from `/path/to/Cuttle/src`).
+Each project owns its own `.cuttle/` commands, rules, actions, docs and scripts;
+it does not inherit another project's commands or actions. See the
+[project reference layout](../.cuttle/README.md) and
+[commands and actions guide](docs/commands-and-actions.md).
 
-Unity-style repos may also keep a nested copy under `source/.cuttle/…`. Cuttle prefers
-the registered project root’s `.cuttle/`, then the nested `source/` copy.
+Install-local facts belong under `.cuttle_global/personal/` for shared configuration
+or `{project}/.cuttle/personal/` for a project. Rule/doc Markdown merges by
+appending a personal delta to tracked text; supported non-Markdown overlays such
+as action YAML replace by basename. This is not a universal replacement promise
+for every loader or literal script path. See the [overlay contract](personal/README.md).
 
-## Rules of thumb
+Scratch belongs under `{project}/temp/`; see the scratch invariant in
+`rules/00-core.md`, rule 13. New projects are scaffolded through
+`managers.cuttle_scaffold.ensure_cuttle_scaffold`; see the project reference.
 
-1. **Per project** — Discord guilds, deploy scripts, and channels live in *that* project’s
-   `.cuttle/actions` and `.cuttle/docs`, not in Cuttle’s global copy.
-2. **Commands teach; actions execute** — command markdown tells the agent *what to draft*;
-   action YAML is the only allowlist Flask will run on Confirm / form submit (no LLM).
-3. **Prefer forms for choices** — `<cuttle_action_form>` for A/B/C or multi; `<cuttle_confirm>`
-   for a single Confirm/Cancel.
-4. **Scratch goes in `{project}/temp/`** — never drive-root dumps or `_tmp_*` next to kept
-   helpers. Scaffold creates `temp/` + a `/temp/` gitignore line. Details: global
-   `.cuttle_global/rules/00-core.md` rule 14.
-5. **Install-local overlay** — `.cuttle_global/personal/` mirrors tracked `.cuttle_global/` (gitignored).
-   Same-relative-path files win over tracked copies. Keep LAN hosts / absolute paths there.
-6. **Details** — authoring guide: Cursor skill `cuttle-project-commands`, or
-   `.cuttle_global/docs/commands-and-actions.md` in this repo.
+Commands/actions/skills replace whole units by their normalized command/action
+name or skill directory id. `disabled: true` in the winning unit hides lower
+copies. List/get use the same winning source; rules/docs still append deltas.
+Script recipes resolve literal paths: a personal script does not redirect a
+tracked recipe unless its action/command explicitly names that script.
+
+`[global]` also supports `skills=off` and `commands=off`, including global personal
+units. Optional integration guidance defaults off; enable it for a project in
+`.cuttle/GLOBAL.ini` or its personal twin:
+
+```ini
+[integrations]
+gitea = on
+```
+
+This admits the global Gitea runbook to inventory/ranking and the capability
+summary. Runtime localhost/username defaults do not enable guidance. A skill
+can declare `integration: gitea` in its frontmatter to use the same gate.
+The flag does not start a service or grant authorization. See the
+[Gitea setup runbook](docs/gitea.md) for credentials and action allowlists.

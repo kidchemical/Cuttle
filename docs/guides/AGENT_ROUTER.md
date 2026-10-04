@@ -229,9 +229,9 @@ See [SUPERVISED_COORDINATOR.md](./SUPERVISED_COORDINATOR.md). Strategy type
   shows current totals.
 - Drift detection is the **basic** version: fail-rate windows + temporary demotion.
   EWMA/CUSUM tuning, soft signals, and learned weights are not implemented yet.
-- Command-based good/bad feedback is available; chat thumbs and automatic retry signals are not yet wired.
-- Parallel multi-agent execution is intentionally not supported.
-- Semantic quality of successful replies is not auto-scored.
+- Command-based good/bad feedback and chat thumbs are recorded. Repeated prompts and frustration signals inform routing; observable failures and explicit `/retry` drive escalation. These signals do not prove semantic correctness.
+- Automatic routing selects attempts and escalation targets sequentially; explicit child chats support parallel multi-agent work.
+- Optional dashboard/Jev model judging can score successful turns. This is separate from the router’s failure/escalation policy; routing does not automatically treat every judged answer as a failure.
 
 ## Future hooks
 

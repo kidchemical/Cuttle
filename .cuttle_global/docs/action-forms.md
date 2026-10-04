@@ -212,6 +212,14 @@ Single-machine jobs may keep a lone top-level `percent`.
 
 ## Flask restart (Cuttle chat)
 
+Authenticated HTTP restart-card submissions call `api.flask_restart.request_restart`
+directly after token/session validation and owner authorization. `flask.restart`
+is a native recovery control on this path: project recipe discovery, personal
+configuration and shell execution cannot override or block it. The legacy shell
+recipe remains for standalone callers. Native `/restart` and the owner-only
+restart endpoint are independent recovery paths.
+
+
 Never `taskkill` / `Stop-Process` Flask, the daemon, or the Discord bot from an agent
 Flask is hosting. After Python changes need a restart, emit:
 

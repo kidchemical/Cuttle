@@ -118,8 +118,12 @@ def test_cursor_policy_in_capabilities_and_agents_md():
     agents = Path(__file__).resolve().parents[2] / "AGENTS.md"
     assert agents.is_file()
     ag = agents.read_text(encoding="utf-8")
-    assert "/restart graceful" in ag
-    assert "web_chat_api" in ag.lower() or "taskkill" in ag.lower()
+    assert "Never force-kill" in ag
+    assert ".cuttle_global/docs/action-forms.md" in ag
+    # Procedures belong to the linked runbook, rather than requiring a
+    # second copy in the agent brief that can drift from its owner.
+    runbook = agents.parent / ".cuttle_global/docs/action-forms.md"
+    assert "/restart graceful" in runbook.read_text(encoding="utf-8")
 
 
 def test_codex_and_hermes_coverage_declared_advisory_not_hard():

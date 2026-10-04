@@ -43,11 +43,12 @@ def _doc_summaries(project_path: Optional[str], inventory: Dict[str, List[str]])
     global_names: List[str] = []
     try:
         from api.cuttle_brain.context_compiler import _cuttle_global_config, _list_names
-        from api.cuttle_brain.global_layers import load_global_layers
+        from api.cuttle_brain.global_layers import load_global_layers, global_doc_enabled
 
         global_config = _cuttle_global_config()
         if global_config and load_global_layers(project_path).docs:
-            global_names = _list_names(global_config / "docs", ("*.md",))
+            global_names = [name for name in _list_names(global_config / "docs", ("*.md",))
+                            if global_doc_enabled(name, project_path)]
     except Exception:
         global_config = None
     out: List[Dict[str, str]] = []
@@ -79,13 +80,13 @@ def _doc_summaries(project_path: Optional[str], inventory: Dict[str, List[str]])
     return out
 
 
-def _skill_summaries() -> List[Dict[str, str]]:
+def _skill_summaries(project_path: Optional[str] = None) -> List[Dict[str, str]]:
     try:
         from api.markdown_skills import list_markdown_skills
     except Exception:
         return []
     out: List[Dict[str, str]] = []
-    for s in list_markdown_skills()[:80]:
+    for s in list_markdown_skills(project_path)[:80]:
         ref = str(s.get("ref") or "")
         if not ref:
             continue
@@ -97,7 +98,7 @@ def _skill_summaries() -> List[Dict[str, str]]:
 def _read_doc_body(name: str, project_path: Optional[str]) -> str:
     from api.cuttle_brain.context_compiler import _cuttle_dirs, _cuttle_global_config
     from api.cuttle_brain.personal_overlay import read_cuttle_file_merged
-    from api.cuttle_brain.global_layers import load_global_layers
+    from api.cuttle_brain.global_layers import load_global_layers, global_doc_enabled
 
     try:
         docs_allowed = load_global_layers(project_path).docs
@@ -108,7 +109,7 @@ def _read_doc_body(name: str, project_path: Optional[str]) -> str:
         if d not in roots:
             roots.append(d)
     global_cuttle = _cuttle_global_config()
-    if global_cuttle and docs_allowed:
+    if global_cuttle and docs_allowed and global_doc_enabled(name, project_path):
         if global_cuttle not in roots:
             roots.append(global_cuttle)
     for root in roots:
@@ -121,12 +122,12 @@ def _read_doc_body(name: str, project_path: Optional[str]) -> str:
     return ""
 
 
-def _read_skill_body(ref: str) -> str:
+def _read_skill_body(ref: str, project_path: Optional[str] = None) -> str:
     try:
         from api.markdown_skills import get_markdown_skill
     except Exception:
         return ""
-    got = get_markdown_skill(ref)
+    got = get_markdown_skill(ref, project_path)
     if not got:
         return ""
     return str(got.get("body_markdown") or "")
@@ -151,7 +152,7 @@ def rank_context(
         return empty
 
     inv = inventory or {}
-    candidates = _doc_summaries(project_path, inv) + _skill_summaries()
+    candidates = _doc_summaries(project_path, inv) + _skill_summaries(project_path)
     if not candidates:
         return empty
     criteria = {c["id"]: c["summary"] for c in candidates[:80]}
@@ -204,7 +205,7 @@ def rank_context(
     if winner["kind"] == "doc":
         body = _read_doc_body(winner["name"], project_path)
     else:
-        body = _read_skill_body(winner["name"])
+        body = _read_skill_body(winner["name"], project_path)
     body = (body or "").strip()
     if not body:
         meta["injected"] = []

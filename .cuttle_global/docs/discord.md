@@ -27,11 +27,11 @@ Bot token — **do not commit**:
 
 Prefer the CLI over inventing `curl` / `python -c` Discord REST:
 
-```powershell
-cd <CuttleInstall>
-.venv\Scripts\python.exe -m api.discord_cli aliases --project "<project>" --json
-.venv\Scripts\python.exe -m api.discord_cli channels --project "<project>" --json
-.venv\Scripts\python.exe -m api.discord_cli messages feature-updates --project "<project>" --limit 20 --json
+```bash
+# From the Cuttle repository root
+PYTHONPATH=src .venv/bin/python -m api.discord_cli aliases --project "<project>" --json
+PYTHONPATH=src .venv/bin/python -m api.discord_cli channels --project "<project>" --json
+PYTHONPATH=src .venv/bin/python -m api.discord_cli messages feature-updates --project "<project>" --limit 20 --json
 ```
 
 - `--project` loads aliases + `guild_id` from that project's `discord-post.yaml`.
@@ -67,3 +67,17 @@ bypass that map.
 - Retries help on Windows (`WinError 10054` TLS resets).
 - There is no daemon Discord gateway process. Flask restart uses `/restart`, not process kill.
 - Message links: `https://discord.com/channels/<guild_id>/<channel_id>/<message_id>`
+
+## Shell environment
+
+Examples run from the Cuttle repository root with the project venv. POSIX
+examples set `PYTHONPATH=src` per invocation. For Windows PowerShell, set
+the path and use the Windows interpreter; for example:
+
+```powershell
+$env:PYTHONPATH = "src"
+.\.venv\Scripts\python.exe -m api.discord_cli aliases --project "<project>" --json
+```
+
+Use PowerShell backticks for multiline continuation and single-quoted JSON
+arguments; POSIX examples use backslashes for continuation.

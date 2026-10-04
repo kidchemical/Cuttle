@@ -1,51 +1,74 @@
-# Remote Access and Discovery
+# Remote access and LAN discovery
 
-You can reach the Cuttle web backend from other devices using **Tailscale**, **SSH tunnels**, or **mDNS** (LAN discovery).
+Cuttle is designed for trusted local users and devices. Its primary listener is
+**HTTPS :8080**, using a self-signed certificate by default. The same Flask app
+also exposes **HTTP :8000**; this is Electron's preferred portal and is cleartext.
+An optional phone HTTPS listener uses :8888. Port 8080 is not cleartext HTTP.
 
-## Tailscale
+## LAN access
 
-If you use [Tailscale](https://tailscale.com), you can expose the Cuttle web server (e.g. port 8080) to your tailnet.
+Enable **Phone/LAN access** in Settings (`discovery.lan_access_enabled: true`).
+With LAN disabled, listeners bind to loopback; enabling it binds for remote
+access. Apply binding changes through the daemon-owned restart path, and permit
+only the intended network/devices in the firewall. In Cuttle chat use the
+restart card; see [action forms](../../.cuttle_global/docs/action-forms.md).
 
-1. Install Tailscale on the machine running Cuttle.
-2. Use **Tailscale Serve** (tailnet-only):
-   ```bash
-   tailscale serve --bg 8080
-   ```
-   Or expose with Funnel (public HTTPS; use auth):
-   ```bash
-   tailscale funnel 8080
-   ```
-3. Access Cuttle via your machine's Tailscale hostname (e.g. `https://your-machine:8080`).
+For a browser, use `https://<host>:8080`. Verify the Host certificate before
+accepting a self-signed warning. Native apps need their own certificate trust;
+accepting a warning in Chrome does not configure OkHttp or Android app trust.
+`http://<host>:8000` is an alternative only on a trusted network where cleartext
+credentials and traffic are acceptable.
 
-Keep the Flask backend bound to `127.0.0.1` or `0.0.0.0` as needed; Tailscale serves as a reverse proxy.
+## mDNS discovery (optional)
 
-## SSH tunnel
+Install the optional dependency from the repository root:
 
-From another device, create an SSH tunnel to the machine running Cuttle:
+```bash
+# POSIX
+.venv/bin/python -m pip install zeroconf
+```
+
+```powershell
+# Windows PowerShell
+.\.venv\Scripts\python.exe -m pip install zeroconf
+```
+
+It is also listed in `src/requirements/requirements-optional.txt`.
+Enable both `discovery.lan_access_enabled` and `discovery.mdns_enabled` in
+Settings. `discovery.mDNS.enabled` is not a recognized key. Apply startup changes
+through the restart card. The advertiser publishes `_cuttle._tcp.local.`;
+clients need mDNS support on the same LAN. Discovery does not authenticate peers
+or make a self-signed certificate trusted. Manual hostname/IP entry still works
+without mDNS.
+
+## VPN, reverse proxy or SSH tunnel
+
+A VPN such as Tailscale or an SSH tunnel can restrict network reachability.
+For TLS-only native clients, use an HTTPS reverse proxy with a certificate whose
+hostname and issuing CA are trusted by the client, forwarding to the loopback
+HTTP portal `http://127.0.0.1:8000`. Keep the backend bound to loopback when the
+proxy is the only remote entry point; ensure it supports SSE streaming without
+buffering and forwards the required auth/session traffic.
+
+[Tailscale Serve](https://tailscale.com/docs/reference/tailscale-cli/serve) is tailnet-only; [Funnel](https://tailscale.com/docs/reference/tailscale-cli/funnel) makes a service public. This guide does
+not prescribe an unverified Serve/Funnel CLI command: check the installed CLI's
+help for backend scheme and external port. A proxy's HTTPS address/port is not
+necessarily the backend's :8080. Public exposure is outside the trusted-LAN
+assumption; pairing alone does not protect other API routes or isolate agent execution.
+
+For an SSH local tunnel:
 
 ```bash
 ssh -L 8080:127.0.0.1:8080 user@cuttle-machine
 ```
 
-Then open `https://localhost:8080` in your browser on that device; traffic is forwarded to Cuttle (self-signed cert).
+Then open `https://localhost:8080` on the client. The tunnel preserves the
+backend certificate; it does not establish trust. SSH remote forwarding is
+not an automatic public listener and depends on the server's bind policy.
 
-For remote port forwarding (expose Cuttle to a server):
+## Authorization
 
-```bash
-ssh -R 8080:127.0.0.1:8080 user@jump-server
-```
-
-Then access Cuttle via the jump server’s address on port 8080.
-
-## mDNS (LAN discovery)
-
-On the same LAN, other devices can discover Cuttle if mDNS is enabled.
-
-- **Option A**: Enable “Advertise Cuttle on LAN” in Settings (or set `discovery.mDNS.enabled: true` in settings). The backend will advertise a service type `_cuttle._tcp` with the local URL (e.g. `https://hostname.local:8080`). Phones/tablets that support mDNS/Bonjour can then discover “Cuttle” in the list of local services.
-- **Option B**: Manually note the machine’s hostname (e.g. `cuttle-pc.local` on macOS/Linux or the Windows name) and port 8080, and open `https://cuttle-pc.local:8080` from another device on the LAN.
-
-## Security
-
-- Prefer Tailscale or SSH over exposing the backend directly to the internet.
-- Use pairing and allowFrom (see [Pairing and Allowlist](PAIRING_AND_ALLOWLIST.md)) when allowing untrusted users.
-- If using Funnel or a public URL, enable authentication and keep the backend and API keys locked down.
+Configure owner/authentication and restrict network access before sharing a
+Host. Review CORS and [pairing/allowlist scope](PAIRING_AND_ALLOWLIST.md).
+Do not treat discovery, a VPN, or a browser certificate exception as permission
+to execute agent turns. Keep tokens and provider secrets out of proxy logs.

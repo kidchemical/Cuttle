@@ -1,27 +1,16 @@
-"""Smoke tests for global SKILL.md discovery (.cuttle_global/skills)."""
-
-from __future__ import annotations
-
-import sys
-from pathlib import Path
-
-_SRC = Path(__file__).resolve().parents[2]
-if str(_SRC) not in sys.path:
-    sys.path.insert(0, str(_SRC))
+"""Offline markdown skill discovery, independent of shipped workflow inventory."""
+from api import markdown_skills
 
 
-def test_list_markdown_includes_cursor_workspace_skills():
-    from api.markdown_skills import list_markdown_skills
-
-    refs = {s["ref"] for s in list_markdown_skills()}
-    assert any(r.startswith("global/") for r in refs)
-    assert not any(r.startswith("core/") for r in refs)
-
-
-def test_get_markdown_skill_govee():
-    from api.markdown_skills import get_markdown_skill
-
-    g = get_markdown_skill("global/govee")
-    assert g is not None
-    assert g["source"] == "global"
-    assert "Govee" in (g.get("body_markdown") or "") or "govee" in (g.get("frontmatter") or {}).get("name", "").lower()
+def test_global_skill_list_get(tmp_path, monkeypatch):
+    root = tmp_path / "global" / "skills"
+    skill = root / "example" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("---\nname: Example\ndescription: Test skill\n---\n# Example\nBody", encoding="utf-8")
+    monkeypatch.setattr(markdown_skills, "GLOBAL_SKILLS_DIR", root)
+    listed = markdown_skills.list_markdown_skills()
+    assert [s["ref"] for s in listed] == ["global/example"]
+    got = markdown_skills.get_markdown_skill(listed[0]["ref"])
+    assert got["source"] == "global"
+    assert got["body_markdown"] == "# Example\nBody"
+    assert got["structure"]["headings"][0]["text"] == "Example"

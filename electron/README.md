@@ -1,276 +1,92 @@
-# Cuttle Desktop - Electron App
+# Cuttle desktop: Host and Client
 
-This directory contains the Electron wrapper for the Cuttle AI Agent Framework, converting the web application into a native Windows desktop application.
+The Electron shell runs on Windows and Linux. **Host** connects to the local
+Cuttle daemon, starting it when needed. **Client** connects to an existing Host
+on a trusted LAN and can enroll a device worker; it does not start a local Flask
+chat server. Client worker mode is enabled by default and can be disabled in
+`desktop-config.json` (`workerMode: false`).
 
-## 🚀 Quick Start
+## Prerequisites
 
-### Prerequisites
+For Host, set up Python **3.11+** and the repository venv using the
+[root quick start](../README.md#quick-start). Python and its dependencies are not
+bundled in the desktop artifacts. A Client that runs a device worker also needs
+Python; a UI-only Client connects to the remote Host.
 
-1. **Node.js and npm** (v18 or higher)
-   - Download from: https://nodejs.org/
-   - Verify installation: `node --version` and `npm --version`
+Source development/builds need Node and npm. Install the chosen vendor CLI and
+authenticate it separately: Codex uses `codex login`, Cursor its CLI login, and
+Claude account login or an Anthropic key. Optional keys in `src/.env` serve
+Cuttle's routing brain, direct LLM calls and vision; they do not log every CLI in.
 
-2. **Python** (v3.8 or higher)
-   - Already required for Cuttle backend
-   - Ensure all Python dependencies are installed (see main README)
-
-### Installation
-
-1. Navigate to the electron directory:
-   ```bash
-   cd electron
-   ```
-
-2. Install Node.js dependencies:
-   ```bash
-   npm install
-   ```
-
-## 🎮 Running the Application
-
-### Development Mode
-
-Run the application in development mode (recommended for testing):
+From the repository root, install Python runtime dependencies:
 
 ```bash
-npm start
+# POSIX
+.venv/bin/python -m pip install -r src/requirements/requirements.txt
 ```
 
-This will:
-- Start the Python Flask backend server
-- Launch the Electron window
-- Connect to `http://localhost:8080`
+```powershell
+# Windows PowerShell
+.\.venv\Scripts\python.exe -m pip install -r src/requirements/requirements.txt
+```
 
-### Features in Development Mode
-- Hot reload support
-- DevTools accessible via `Ctrl+Shift+I` or View menu
-- Console logs visible for debugging
+## Launch from source
 
-## 📦 Building the Application
+Install desktop dependencies from `electron/`:
 
-### Build Options
-
-**1. Build Installer (NSIS)**
 ```bash
-npm run build
+npm ci
+npm start -- --mode=host
+# Or connect to an existing Host:
+npm start -- --mode=client
 ```
 
-Creates a Windows installer:
-- `dist/Cuttle-1.0.0-x64.exe` - Full installer with wizard
-- Allows user to choose installation directory
-- Creates desktop and Start menu shortcuts
-- Includes uninstaller
+Linux repository launchers (from the repository root) handle the Chromium sandbox:
 
-**2. Build Portable Version**
 ```bash
-npm run build:portable
+./.cuttle/scripts/launch-cuttle-host.sh
+./.cuttle/scripts/launch-cuttle-client.sh
 ```
 
-Creates a portable executable:
-- `dist/Cuttle-1.0.0-portable.exe`
-- No installation required
-- Can run from USB drive
-- Doesn't modify system registry
+The Client connection screen selects the Host. Enable **Phone/LAN access** on
+that Host (`discovery.lan_access_enabled`) before connecting from another device.
+Electron prefers the same-app HTTP portal at `http://<host>:8000`, with HTTPS
+`https://<host>:8080` as fallback. HTTP is cleartext: use it only on a trusted
+network. The default HTTPS certificate is self-signed; Electron's local handling
+does not establish browser or native Android trust. See [remote access](../docs/guides/REMOTE_ACCESS.md).
 
-**3. Build Directory (Unpacked)**
+## Build
+
+Run from `electron/` on the target platform:
+
 ```bash
-npm run build:dir
+# Windows
+npm run build           # NSIS and portable targets
+npm run build:dir       # unpacked Windows directory
+npm run build:portable  # portable executable
+# Linux
+npm run build:linux     # AppImage
+npm run build:linux:dir  # unpacked Linux directory
 ```
 
-Creates an unpacked directory for testing:
-- `dist/win-unpacked/`
-- Useful for debugging packaging issues
+Artifacts are under `electron/dist/`, with names derived from `package.json`,
+for example `Cuttle-<version>-portable.exe` and `Cuttle-<version>-x64.AppImage`.
+Use the package's current version; do not hardcode a release number in commands.
+Bump SemVer only for a release, following the [release runbook](../.cuttle/docs/cuttle-release.md).
 
-### Build Output
+## Lifetime and updates
 
-All builds are output to the `electron/dist/` directory:
-```
-electron/dist/
-  ├── Cuttle-1.0.0-x64.exe          # Installer
-  ├── Cuttle-1.0.0-portable.exe      # Portable version
-  └── win-unpacked/                   # Unpacked files
-      └── Cuttle.exe
-```
+Closing/relaunching the UI or applying an update preserves the daemon and active
+turns. Only Host tray **Exit** is the explicit path to stop a daemon it spawned;
+it asks first when agent turns are running. Do not terminate Python processes
+in Task Manager as a restart procedure. Flask restarts are daemon-owned: use the
+Cuttle restart card or native `/restart` control, as described in
+[action forms](../.cuttle_global/docs/action-forms.md).
 
-## 📋 Application Structure
+Desktop update/hash checks and Client worker self-update already exist. Workers
+can be stale because of SemVer mismatch, git revision mismatch or stale boot
+revision. Updates come from the configured git remote, not uncommitted Host
+files. See the [workers guide](../docs/guides/CUTTLE_WORKERS.md) for checkout
+preservation and updater behavior.
 
-```
-electron/
-├── main.js              # Main Electron process
-├── preload.js           # Preload script (security bridge)
-├── package.json         # Dependencies and build config
-├── .npmrc               # npm configuration
-└── README.md           # This file
-
-Packaged Application:
-├── Cuttle.exe           # Main executable
-└── resources/
-    └── app/
-        └── src/         # Python backend and web files
-```
-
-## 🔧 Configuration
-
-### Modify Application Settings
-
-Edit `package.json` to customize:
-
-- **Application Name**: Change `"name"` and `"productName"`
-- **Version**: Update `"version"`
-- **Icon**: Replace reference to icon file in `"build.win.icon"`
-- **Build Targets**: Modify `"build.win.target"` array
-
-### Port Configuration
-
-The Flask server runs on port `8080` by default. To change:
-
-1. Edit `main.js` - change `FLASK_PORT` constant
-2. Ensure Python backend uses the same port
-
-## 🐛 Troubleshooting
-
-### Application Won't Start
-
-1. **Check Python Installation**
-   ```bash
-   python --version
-   ```
-   Should be Python 3.8+
-
-2. **Verify Python Dependencies**
-   ```bash
-   cd ../src
-   pip install -r ../requirements/requirements.txt
-   ```
-
-3. **Check Console Logs**
-   - Run in development mode: `npm start`
-   - Open DevTools: `Ctrl+Shift+I`
-   - Check Console and Terminal output
-
-### Build Fails
-
-1. **Clear npm cache**
-   ```bash
-   npm cache clean --force
-   rm -rf node_modules
-   npm install
-   ```
-
-2. **Check disk space**
-   - Builds require ~500MB free space
-
-3. **Verify file paths**
-   - Ensure `../src` directory exists
-   - Check icon path is correct
-
-### Server Connection Failed
-
-- Verify Flask server starts successfully
-- Check port 8080 is not in use by another application
-- Check firewall settings
-
-### Python Process Doesn't Stop
-
-If the Python process remains after closing:
-1. Open Task Manager
-2. Find `python.exe` processes
-3. End processes manually
-
-If a leftover Python helper is still running after you close the desktop app, stop it from Task Manager (or the Cuttle tray **Exit** / daemon stop). Do not use retired `kill_bots.py` launchers.
-
-## 🌟 Features
-
-### Menu Bar
-
-- **File**: Home, Exit
-- **View**: Reload, DevTools, Zoom controls
-- **Navigate**: Quick access to all pages
-  - Chat
-  - Node Editor
-  - Task Management
-  - Control Panel
-  - Settings
-- **Help**: About, Documentation
-
-### Keyboard Shortcuts
-
-- `Ctrl+R` - Reload page
-- `Ctrl+Shift+R` - Force reload
-- `Ctrl+Shift+I` - Toggle DevTools
-- `Ctrl+0` - Reset zoom
-- `Ctrl++` - Zoom in
-- `Ctrl+-` - Zoom out
-- `F11` - Toggle fullscreen
-
-## 🔐 Security
-
-This Electron app uses best practices:
-
-- **Context Isolation**: Enabled
-- **Node Integration**: Disabled in renderer
-- **Preload Script**: Secure bridge between processes
-- **Web Security**: Enabled
-
-## 📝 Development Notes
-
-### Adding New Features
-
-1. **Modify Python Backend**
-   - Changes in `../src/` are automatically included in builds
-   - No need to rebuild Electron app
-
-2. **Modify Electron Wrapper**
-   - Changes in `main.js` or `preload.js` require restart
-   - Run `npm start` to test
-
-3. **Add Menu Items**
-   - Edit the `template` array in `main.js`
-   - Add new navigation items as needed
-
-### Debugging
-
-**Python Backend Issues**:
-- Check terminal output when running `npm start`
-- Python stdout/stderr is logged to console
-
-**Electron Issues**:
-- Use DevTools: `Ctrl+Shift+I`
-- Check main process logs in terminal
-
-## 📄 License
-
-MIT License - See LICENSE.txt in the root directory
-
-## 🤝 Support
-
-For issues or questions:
-1. Check the main Cuttle documentation
-2. Review the troubleshooting section above
-3. Open an issue on GitHub
-
-## 🎯 Next Steps
-
-After building your application:
-
-1. **Test the installer**
-   - Install on a clean Windows machine
-   - Verify all features work correctly
-
-2. **Code Signing** (Optional but recommended)
-   - Prevents Windows SmartScreen warnings
-   - Requires a code signing certificate
-
-3. **Auto-Updates** (Future enhancement)
-   - Implement electron-updater
-   - Set up update server
-
-4. **Distribution**
-   - Upload to GitHub Releases
-   - Create download page
-   - Provide checksums for security
-
----
-
-Built with ❤️ using Electron
-
+For launch and packaging failures, see [troubleshooting](BUILD_TROUBLESHOOTING.md).

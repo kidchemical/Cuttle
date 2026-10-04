@@ -1,5 +1,5 @@
 """
-Discover Cuttle markdown skills (SKILL.md) under `.cuttle_global/skills`.
+Resolve scoped Cuttle skills; project/personal units precede global defaults.
 """
 
 from __future__ import annotations
@@ -63,82 +63,78 @@ def _outline(body: str) -> List[Dict[str, Any]]:
 def _read_skill_file(path: Path) -> Optional[str]:
     try:
         return path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeError):
         return None
 
 
-def _scan_dir(root: Path, source: str) -> List[Dict[str, Any]]:
-    if not root.is_dir():
-        return []
-    found: List[Dict[str, Any]] = []
-    for child in sorted(root.iterdir(), key=lambda p: p.name.lower()):
-        if not child.is_dir():
+def _resolved_skills(project_path: Optional[str] = None) -> List[Tuple[Dict[str, Any], Path]]:
+    from api.cuttle_brain.personal_overlay import scoped_unit_dirs, unit_disabled
+    from api.cuttle_brain.global_layers import load_global_layers
+
+    found = []
+    seen = set()
+    layers = load_global_layers(project_path)
+    for root, source in scoped_unit_dirs(project_path, "skills", GLOBAL_SKILLS_DIR.parent,
+                                         include_global=layers.skills):
+        if not root.is_dir():
             continue
-        skill_md = child / "SKILL.md"
-        if not skill_md.is_file():
+        try:
+            children = sorted(root.iterdir(), key=lambda p: (p.name.lower(), p.name))
+        except OSError:
             continue
-        raw = _read_skill_file(skill_md)
-        if raw is None:
-            continue
-        fm, body = _split_frontmatter(raw)
-        outline = _outline(body)
-        sid = child.name
-        name = fm.get("name") or sid.replace("-", " ").title()
-        desc = fm.get("description") or ""
-        if isinstance(desc, str):
-            desc = " ".join(desc.split())
-        else:
-            desc = str(desc)
-        found.append(
-            {
-                "ref": f"{source}/{sid}",
-                "id": sid,
-                "source": source,
-                "name": name,
+        for child in children:
+            path = child / "SKILL.md"
+            # Reject symlink escapes; a skill is owned by its configured root.
+            try:
+                path.resolve().relative_to(root.resolve())
+            except (ValueError, OSError):
+                continue
+            raw = _read_skill_file(path)
+            if raw is None:
+                continue
+            sid = child.name
+            key = sid.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            fm, body = _split_frontmatter(raw)
+            if unit_disabled(fm):
+                continue
+            integration = str(fm.get("integration") or "").strip().lower()
+            if integration and integration not in layers.integrations:
+                continue
+            outline = _outline(body)
+            desc = " ".join(str(fm.get("description") or "").split())
+            try:
+                relative = path.relative_to(REPO_ROOT).as_posix()
+            except ValueError:
+                relative = path.as_posix()
+            summary = {
+                "ref": f"{source}/{sid}", "id": sid, "source": source,
+                "name": fm.get("name") or sid.replace("-", " ").title(),
                 "description": desc[:500] + ("…" if len(desc) > 500 else ""),
-                "path_relative": str(skill_md.relative_to(REPO_ROOT)).replace("\\", "/"),
-                "heading_count": len(outline),
-                "top_headings": [h["text"] for h in outline[:5]],
+                "path_relative": relative, "path": str(path),
+                "heading_count": len(outline), "top_headings": [h["text"] for h in outline[:5]],
             }
-        )
+            found.append((summary, path))
     return found
 
 
-def list_markdown_skills() -> List[Dict[str, Any]]:
-    """Lightweight list of global Cuttle skills (no full body)."""
-    return _scan_dir(GLOBAL_SKILLS_DIR, "global")
+def list_markdown_skills(project_path: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Effective skills, project first; personal replaces the whole skill unit."""
+    return [summary for summary, _ in _resolved_skills(project_path)]
 
 
-def get_markdown_skill(skill_ref: str) -> Optional[Dict[str, Any]]:
-    """
-    skill_ref is 'global/<dir>'.
-    """
+def get_markdown_skill(skill_ref: str, project_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Read only an effective ref returned by list for the same project scope."""
     skill_ref = skill_ref.strip().strip("/")
-    if "/" not in skill_ref:
-        return None
-    source, sid = skill_ref.split("/", 1)
-    if source != "global" or not sid or "/" in sid or ".." in sid:
-        return None
-    base = GLOBAL_SKILLS_DIR
-    path = (base / sid / "SKILL.md").resolve()
-    try:
-        path.relative_to(base.resolve())
-    except ValueError:
-        return None
-    if not path.is_file():
-        return None
-    raw = _read_skill_file(path)
-    if raw is None:
-        return None
-    fm, body = _split_frontmatter(raw)
-    outline = _outline(body)
-    return {
-        "ref": skill_ref,
-        "id": sid,
-        "source": source,
-        "path_relative": str(path.relative_to(REPO_ROOT)).replace("\\", "/"),
-        "frontmatter": fm,
-        "structure": {"headings": outline},
-        "body_markdown": body,
-        "char_count": len(body),
-    }
+    for summary, path in _resolved_skills(project_path):
+        if summary["ref"] != skill_ref:
+            continue
+        raw = _read_skill_file(path)
+        if raw is None:
+            return None
+        fm, body = _split_frontmatter(raw)
+        return {**summary, "frontmatter": fm, "structure": {"headings": _outline(body)},
+                "body_markdown": body, "char_count": len(body)}
+    return None

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Standalone stdio MCP server for ComfyUI / TRELLIS.2.
 
-Used by non-Cuttle workspaces (Unity, Escape Purgatory) via Cursor mcp.json.
-Cuttle's own MCP server also exposes the same tools.
+Opt-in guest harness tool server; configure it in the guest MCP settings.
+Cuttle does not host an MCP server. See src/tools/TOOLS_README.md for setup.
 """
 
 from __future__ import annotations
@@ -96,7 +96,7 @@ async def list_tools(request: ListToolsRequest | None = None) -> ListToolsResult
                 description=(
                     "Generate a textured 3D asset (GLB) from a reference image via TRELLIS.2. "
                     "Text-to-3D: first generate/save a concept image, then pass that path here. "
-                    "Default workflow is MeshWithTexturing_LowPoly (RTX 3080 10GB)."
+                    "Default workflow is MeshWithTexturing_LowPoly; choose for your own hardware."
                 ),
                 inputSchema={
                     "type": "object",

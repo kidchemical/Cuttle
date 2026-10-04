@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import re
+import logging
 from typing import Optional, Sequence
 
 from api.completion_providers import resolve_model, resolve_order
@@ -195,7 +196,13 @@ def complete(
                 )
             else:
                 continue
-        except Exception:
+        except Exception as exc:
+            # Report failure metadata without logging credentials, prompts or
+            # provider response bodies. Callers may then fall back honestly.
+            logging.getLogger(__name__).warning(
+                "Completion provider %s failed (%s; status=%s)",
+                n, type(exc).__name__, getattr(exc, "status_code", None),
+            )
             continue
         cleaned = _clean(text or "")
         if cleaned:

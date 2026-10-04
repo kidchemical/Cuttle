@@ -895,3 +895,32 @@ def test_git_push_target_and_auth_helper(tmp_path: Path, monkeypatch: pytest.Mon
     assert env.get("GIT_ASKPASS_PASSWORD") == "unit-test-token"
     helper = git_credential_helper_arg(env)
     assert helper and "git_credential_helper.py" in helper
+
+
+def test_selected_commit_recovers_partially_staged_deletion(tmp_path):
+    from scripts.utilities.git_pending_changes import commit_pending_changes
+    repo = tmp_path / 'repo'
+    repo.mkdir()
+    def git(*args):
+        return subprocess.run(['git', *args], cwd=repo, capture_output=True,
+                              text=True, check=True)
+    git('init')
+    git('config', 'user.name', 'Test')
+    git('config', 'user.email', 'test@example.com')
+    (repo / '.cuttle/actions').mkdir(parents=True)
+    (repo / '.cuttle/personal').mkdir()
+    deleted = repo / '.cuttle/actions/workflow.yaml'
+    deleted.write_text('old')
+    readme = repo / '.cuttle/personal/README.md'
+    readme.write_text('old')
+    git('add', '.')
+    git('commit', '-m', 'initial')
+    deleted.unlink()
+    readme.write_text('new')
+    (repo / '.gitignore').write_text('.cuttle/personal/\n')
+    result = commit_pending_changes(str(repo), 'Remove workflow', paths=[
+        '.cuttle/actions/workflow.yaml', '.cuttle/personal/README.md'])
+    assert result['files_count'] == 2
+    assert '.cuttle/actions/workflow.yaml' not in git('ls-files').stdout
+    assert git('show', 'HEAD:.cuttle/personal/README.md').stdout == 'new'
+    assert '.gitignore' in git('status', '--porcelain').stdout

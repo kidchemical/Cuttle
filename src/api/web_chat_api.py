@@ -5196,6 +5196,30 @@ def chat_endpoint():
         if auth_err:
             return auth_err
 
+        # Authenticate first, then enforce channel admission before any control,
+        # shell, vision, router, or harness lane can perform work.
+        if not PAIRING_AVAILABLE:
+            return jsonify({"success": False, "error": "pairing_unavailable"}), 503
+        try:
+            channel_cfg = get_settings_manager().get_channel_config("webchat")
+            access = get_pairing_manager().check_access(
+                "webchat", f"web_user_{_auth_user_early['id']}",
+                channel_cfg.get("dmPolicy", "open"),
+                channel_cfg.get("allowFrom", ["*"]),
+                meta={"session_id": chat_session_id},
+            )
+        except Exception as e:
+            print(f"[PAIRING] Web chat check error: {e}")
+            return jsonify({"success": False, "error": "pairing_unavailable"}), 503
+        if not access["allowed"]:
+            return jsonify({
+                "success": False,
+                "error": "pairing_required" if access.get("pairing_required") else "allowlist_denied",
+                "response": access["message"],
+                "pairing_code": access.get("pairing_code"),
+                "session_id": chat_session_id,
+            }), 403
+
         # Native Cuttle control command. Handled before sticky/starred agent
         # prefixing, the router, and any agent dispatch so it never becomes a
         # model turn (and never registers as active work against itself).
@@ -6199,35 +6223,6 @@ def chat_endpoint():
                 'type': 'pipelines_removed',
             })
         
-        # Channel-level security: pairing / allowFrom for Web Chat
-        if PAIRING_AVAILABLE:
-            try:
-                settings = get_settings_manager()
-                channel_cfg = settings.get_channel_config("webchat")
-                dm_policy = channel_cfg.get("dmPolicy", "open")
-                allow_from = channel_cfg.get("allowFrom") or ["*"]
-                identity = None
-                if get_request_session_token():
-                    db = get_auth_db()
-                    user = db.verify_auth_session(get_request_session_token())
-                    if user:
-                        identity = f"web_user_{user['id']}"
-                if identity is None:
-                    identity = chat_session_id or request.remote_addr or "web_anon"
-                pm = get_pairing_manager()
-                access = pm.check_access("webchat", identity, dm_policy, allow_from, meta={"session_id": chat_session_id})
-                if not access["allowed"]:
-                    print(f"[API] POST /api/chat: pairing blocked - {access.get('message', 'not allowed')}")
-                    return jsonify({
-                        "success": False,
-                        "error": "pairing_required",
-                        "response": access["message"],
-                        "pairing_code": access.get("pairing_code"),
-                        "session_id": chat_session_id,
-                    }), 403
-            except Exception as e:
-                print(f"[PAIRING] Web chat check error: {e}")
-
         # Attachments were already analyzed above (before slash dispatch); history
         # keeps the short note + metadata instead of the full digest.
         history_message = _attachment_history_text(message_content, _att_note)
@@ -7497,7 +7492,7 @@ def pairing_status():
         settings = get_settings_manager()
         channel_cfg = settings.get_channel_config(channel)
         dm_policy = channel_cfg.get('dmPolicy', 'open')
-        allow_from = channel_cfg.get('allowFrom') or ['*']
+        allow_from = channel_cfg.get('allowFrom', ['*'])
         pm = get_pairing_manager()
         allowed = pm.is_allowed(channel, identity, dm_policy, allow_from)
         return jsonify({
