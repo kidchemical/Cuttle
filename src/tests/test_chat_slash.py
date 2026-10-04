@@ -112,7 +112,9 @@ out.sorted = S.sortChipsAgentThenCommand(
 out.agentId = S.composerChipAgentId({ category: 'codex-model' });
 out.agentIdBare = S.composerChipAgentId({ category: 'command', prefix: '/usage' });
 out.removal = S.composerChipRemovalIndexes(
-  [{ category: 'cursor' }, { category: 'cursor-model' }, { category: 'command' }], 1);
+  [{ category: 'cursor', prefix: '/cursor ' }, { category: 'cursor-model' }, { category: 'command' }], 0);
+out.removalNested = S.composerChipRemovalIndexes(
+  [{ category: 'claude', prefix: '/claude ' }, { category: 'claude-cmd', prefix: '/usage' }], 1);
 out.removalSingle = S.composerChipRemovalIndexes([{ category: 'command' }], 0);
 out.mergeAgents = S.mergeHarnessAgentsIntoSlashCommands(
   [{ prefix: '/cursor ', label: 'Cursor Agent', hint: 'h', category: 'cursor' }],
@@ -244,6 +246,7 @@ def test_classifiers_and_removal():
     assert res["agentIdBare"] == ""
     assert res["removal"] == [0, 1]
     assert res["removalSingle"] == [0]
+    assert res["removalNested"] == [1]
     merged = res["mergeAgents"]
     assert merged[0]["label"] == "Cursor!"
     assert merged[0]["available"] is False

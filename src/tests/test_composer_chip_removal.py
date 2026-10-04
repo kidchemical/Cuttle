@@ -1,7 +1,8 @@
 """Composer chip-group removal (CH-000419 follow-up) — no LLM turns.
 
-Removing a merged agent badge (e.g. ``/cursor`` + ``/model <id>``) must delete
-the whole agent group so no residual subcommand chip is left behind.
+The × removes what that chip shows: the agent badge deletes its whole agent
+group (no orphan subcommand left behind); any other chip — a nested ``/usage``,
+``/cost``, model pick — deletes only itself and never the agent badge.
 Exercises the real pure helpers from chat_page.js under Node.
 """
 
@@ -59,9 +60,23 @@ def test_merged_agent_badge_removes_as_a_whole(tmp_path):
         {"prefix": "/model xyz", "category": "cursor-model", "modelId": "xyz", "label": "X"},
     ]
     cases = [
-        # Either chip of a merged Cursor badge removes the whole group.
+        # The agent badge removes its whole group.
         (cursor_pair, 0, [0, 1]),
-        (cursor_pair, 1, [0, 1]),
+        # A subordinate chip removes only itself, never the agent badge.
+        (cursor_pair, 1, [1]),
+    ] + [
+        (
+            [
+                {"prefix": f"/{agent} ", "category": agent, "label": agent.title()},
+                {"prefix": f"/{cmd}", "category": f"{agent}-cmd", "label": cmd},
+            ],
+            idx,
+            want,
+        )
+        for agent in ("cursor", "muse", "codex", "hermes", "opencode", "claude")
+        for cmd in ("usage", "usage-live", "cost")
+        for idx, want in ((1, [1]), (0, [0, 1]))
+    ] + [
         # Unrelated chips are untouched by an agent removal.
         (cursor_pair + [{"prefix": "/cmd deploy", "category": "project-cmd", "label": "deploy"}], 0, [0, 1]),
         # A lone agent chip removes just itself.

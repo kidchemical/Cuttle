@@ -1060,15 +1060,16 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
     }
 
     /**
-     * Indexes to delete when the × on chips[idx] is clicked. A merged agent
-     * badge (agent + its model/effort/subcommand chips) removes as a whole
-     * so no residual subcommand chip is left behind. Pure.
+     * Indexes to delete when the × on chips[idx] is clicked. The × removes
+     * what that chip shows: the agent badge takes its whole group (model,
+     * effort, nested cmds) so no orphan subcommand is left; any other chip
+     * (/usage, /cost, a model pick, …) removes only itself. Pure.
      */
     function composerChipRemovalIndexes(chips, idx) {
         const list = Array.isArray(chips) ? chips : [];
         if (!Number.isFinite(idx) || idx < 0 || idx >= list.length) return [];
         const agent = composerChipAgentId(list[idx]);
-        if (!agent) return [idx];
+        if (!agent || !isAgentHeaderChip(list[idx])) return [idx];
         const out = [];
         for (let n = 0; n < list.length; n++) {
             if (composerChipAgentId(list[n]) === agent) out.push(n);

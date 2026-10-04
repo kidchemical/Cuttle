@@ -8185,9 +8185,8 @@
     }
 
     /**
-     * Indexes to delete when the × on chips[idx] is clicked. A merged agent
-     * badge (agent + its model/effort/subcommand chips) removes as a whole
-     * so no residual subcommand chip is left behind. Pure.
+     * Indexes to delete when the × on chips[idx] is clicked. The agent badge
+     * removes its whole group; any other chip removes only itself. Pure.
      */
     function composerChipRemovalIndexes(chips, idx) {
         return CuttleChatSlash.composerChipRemovalIndexes(chips, idx);
