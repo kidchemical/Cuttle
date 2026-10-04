@@ -41,11 +41,9 @@ def run_checks() -> Dict[str, Any]:
     has_llm_key = bool(openai_key or anthropic_key)
     checks.append({
         "name": "api_keys",
-        "status": "ok" if has_llm_key else "warn",
-        "message": "At least one LLM API key set (OPENAI_API_KEY or ANTHROPIC_API_KEY)" if has_llm_key else "No OPENAI_API_KEY or ANTHROPIC_API_KEY in environment",
+        "status": "ok",
+        "message": "At least one LLM API key set (OPENAI_API_KEY or ANTHROPIC_API_KEY)" if has_llm_key else "Optional direct API providers unconfigured; agent CLIs use native authentication",
     })
-    if not has_llm_key:
-        suggestions.append("Set OPENAI_API_KEY or ANTHROPIC_API_KEY in .env or environment for cloud LLMs.")
 
     # 6. Chat backend (Flask import)
     try:

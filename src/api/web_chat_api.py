@@ -1631,16 +1631,13 @@ _CHAT_LOOKUP_RE = re.compile(
 def _with_muse_chat_context(prompt: str, chat_session_id=None) -> str:
     """Prepend pane map + chat-store location to a Muse prompt.
 
-    Muse runs inside WSL, where the Flask API on the Windows host is
-    unreachable and the transcripts are a gitignored binary SQLite file. Without
-    this block Muse searches the working tree, finds only source that mentions
-    chats, and reports that there are none.
+    Transcripts are gitignored SQLite, so give the native CLI the runbook
+    and database location instead of relying on working-tree searches.
 
     ``chat_session_id`` scopes the read recipe to the chat the turn belongs to;
     without it an agent asked about "this chat" has no id to use.
     """
     from api.cuttle_ui_capabilities import cuttle_chat_store_addon
-    from scripts.utilities.muse_cli_tool import muse_resolution
 
     blocks = []
     try:
@@ -1652,9 +1649,7 @@ def _with_muse_chat_context(prompt: str, chat_session_id=None) -> str:
 
     if _CHAT_LOOKUP_RE.search(prompt or ""):
         try:
-            in_wsl = (muse_resolution().get("mode") or "") == "wsl"
             store_addon = cuttle_chat_store_addon(
-                wsl=in_wsl,
                 current_session_id=chat_session_id,
             )
             if store_addon:
@@ -6265,6 +6260,7 @@ def health_check():
     this handler can run `claude --version` (3s) then `wsl which claude` (5s),
     which exceeds the watchdog's 5s HTTP timeout and caused false restarts.
     """
+    from core.agent_cli_env import agent_cli_env
     import platform
     import shutil
     import sys
@@ -6278,6 +6274,7 @@ def health_check():
     try:
         r = subprocess.run(
             ["claude", "--version"],
+            env=agent_cli_env(),
             capture_output=True,
             text=True,
             timeout=3,
@@ -6288,7 +6285,8 @@ def health_check():
         try:
             r = subprocess.run(
                 ["wsl", "which", "claude"],
-                capture_output=True,
+                env=agent_cli_env(),
+            capture_output=True,
                 text=True,
                 timeout=5,
                 creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,

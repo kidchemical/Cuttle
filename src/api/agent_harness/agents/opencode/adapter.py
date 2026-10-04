@@ -5,6 +5,8 @@ Uses ``opencode run`` (non-interactive). See https://opencode.ai/docs/cli/
 
 from __future__ import annotations
 
+from core.agent_cli_env import agent_cli_env
+
 import asyncio
 import json
 import os
@@ -413,13 +415,12 @@ def summarize_opencode_error(raw: str, returncode: Optional[int] = None) -> str:
     low = text.lower()
     if "not authenticated" in low or "unauthorized" in low or "auth login" in low:
         return (
-            "OpenCode is not authenticated. Run `opencode auth login`, or sync a key "
-            "via the opencode.sync-auth action (openrouter / openai / anthropic), then retry."
+            "OpenCode is not authenticated. Run `opencode auth login`, then retry."
         )
     if "api key" in low and ("missing" in low or "required" in low or "not set" in low):
         return (
-            "OpenCode needs a provider API key. Set OPENROUTER_API_KEY in src/.env and run "
-            "opencode.sync-auth (provider openrouter), or run `opencode auth login`."
+            "OpenCode needs provider authentication. Run `opencode auth login`. "
+            "Configure credentials in OpenCode itself, then retry."
         )
     if (
         "quota" in low
@@ -429,7 +430,7 @@ def summarize_opencode_error(raw: str, returncode: Optional[int] = None) -> str:
     ):
         return (
             "OpenCode provider quota/credits exhausted. Sync another provider via "
-            "opencode.sync-auth, pin `/opencode model openai/gpt-4o-mini`, and retry."
+            "`opencode auth login`, pin `/opencode model openai/gpt-4o-mini`, and retry."
         )
     compact = re.sub(r"\s+", " ", text)
     if compact:
@@ -839,7 +840,7 @@ class Adapter:
                 stderr=asyncio.subprocess.PIPE,
                 stdin=asyncio.subprocess.PIPE,
                 cwd=cwd,
-                env=os.environ.copy(),
+                env=agent_cli_env(),
                 limit=_STREAM_LIMIT,
             )
             attach_to_chat_run(chat_session_id, proc)

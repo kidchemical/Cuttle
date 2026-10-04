@@ -1,4 +1,6 @@
 """Account-only Codex app-server RPCs; never resume or start a model turn."""
+
+from core.agent_cli_env import agent_cli_env
 from contextlib import contextmanager
 import queue
 import subprocess
@@ -14,7 +16,7 @@ def _account_rpc(timeout=30):
     exe = codex_executable()
     if not exe:
         raise RuntimeError("Codex CLI unavailable")
-    proc = subprocess.Popen([exe, "app-server"], stdin=subprocess.PIPE,
+    proc = subprocess.Popen([exe, "app-server"], env=agent_cli_env(), stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     messages = queue.Queue()
     threading.Thread(target=_reader, args=(proc, messages), daemon=True).start()

@@ -267,7 +267,6 @@ def _runtime_block(
     inventory: Dict[str, List[str]],
     handoff: Optional[AgentHandoff],
     include_chat_store_hint: bool,
-    wsl: bool,
     chat_session_id: Any = None,
     project_path: Optional[str] = None,
 ) -> str:
@@ -342,7 +341,7 @@ def _runtime_block(
         try:
             from api.cuttle_ui_capabilities import cuttle_chat_store_addon
 
-            addon = cuttle_chat_store_addon(wsl=wsl, current_session_id=chat_session_id)
+            addon = cuttle_chat_store_addon(current_session_id=chat_session_id)
             if addon.strip():
                 parts.append("")
                 parts.append(addon.strip())
@@ -390,7 +389,6 @@ def compile_context(
     include_inventory: bool = True,
     handoff: Optional[AgentHandoff] = None,
     include_chat_store_hint: bool = False,
-    wsl: bool = False,
     chat_session_id: Any = None,
 ) -> CompiledContext:
     """Assemble the layered envelope and return ``CompiledContext``.
@@ -444,7 +442,6 @@ def compile_context(
                 inventory=inv,
                 handoff=None,  # appended below once
                 include_chat_store_hint=False,
-                wsl=wsl,
                 project_path=project_path,
             )
         )
@@ -454,7 +451,7 @@ def compile_context(
         try:
             from api.cuttle_ui_capabilities import cuttle_chat_store_addon
 
-            addon = cuttle_chat_store_addon(wsl=wsl, current_session_id=chat_session_id)
+            addon = cuttle_chat_store_addon(current_session_id=chat_session_id)
             if addon.strip():
                 runtime_sections.append(addon.strip())
         except Exception:

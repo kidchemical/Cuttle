@@ -9,6 +9,8 @@ does not expose subscription % via API).
 
 from __future__ import annotations
 
+from core.agent_cli_env import agent_cli_env
+
 import json
 import os
 import re
@@ -113,6 +115,7 @@ def _run_cli(argv: List[str], *, timeout: float = 60.0) -> Tuple[int, str]:
     try:
         r = subprocess.run(
             argv,
+                env=agent_cli_env(),
             capture_output=True,
             text=True,
             timeout=timeout,

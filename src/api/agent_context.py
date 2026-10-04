@@ -8,6 +8,8 @@ and trigger each CLI's best available compact path.
 
 from __future__ import annotations
 
+from core.agent_cli_env import agent_cli_env
+
 import json
 import os
 import re
@@ -921,7 +923,7 @@ def _compact_opencode(cwd: str, resume_id: str) -> Dict[str, Any]:
         "json",
         "--auto",
     ]
-    env = os.environ.copy()
+    env = agent_cli_env()
     # Isolate manual compact from auto-preflight (which can run first and muddy
     # the JSONL / exit semantics). Official path is still --command compact;
     # HTTP POST /session/{id}/compact via `opencode serve` is more reliable but

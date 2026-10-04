@@ -22,6 +22,8 @@ Resolution / config:
 
 from __future__ import annotations
 
+from core.agent_cli_env import agent_cli_env
+
 import asyncio
 import json
 import os
@@ -619,7 +621,7 @@ def ensure_hermes_streaming_enabled() -> bool:
 
 
 def _hermes_subprocess_env() -> Dict[str, str]:
-    env = os.environ.copy()
+    env = agent_cli_env()
     env["HERMES_ACCEPT_HOOKS"] = "1"
     env["HERMES_YOLO_MODE"] = "1"
     git_bash = _resolve_git_bash_path()

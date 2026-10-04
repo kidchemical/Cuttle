@@ -172,3 +172,19 @@ def test_sqlite_credential_column_blocks_unrecognizable_tokens(tmp_path):
     hit = _report(result)['findings'][0]
     assert hit['rule'] == 'Nonempty credential column'
     assert 'opaque credential value' not in result.stdout
+
+
+def test_real_private_key_in_same_test_filename_is_not_excepted(tmp_path):
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    repo = _init_repo(tmp_path / 'real-key')
+    base = _head(repo)
+    path = repo / 'src/tests/test_github_app.py'
+    path.parent.mkdir(parents=True)
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    path.write_bytes(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.TraditionalOpenSSL, serialization.NoEncryption()))
+    _git('add', '.', cwd=repo)
+    _git('commit', '-m', 'credential accidentally committed', cwd=repo)
+    result = _run_hook(repo, _head(repo), base)
+    assert result.returncode == 1
+    assert any(hit['hook'] == 'secret-patterns' and hit['file'] == 'src/tests/test_github_app.py' for hit in _report(result)['findings'])

@@ -607,9 +607,8 @@ def match_slash_command(
 def public_catalog(project_path: Optional[str] = None) -> List[Dict[str, Any]]:
     """Catalog rows for the palette, Settings, and the OOBE wizard.
 
-    ``credential_present`` is resolved here rather than in each consumer: the
-    Settings provider list and the wizard must not each reimplement "is this
-    CLI's key in the environment", and they must agree.
+    Guest authentication belongs to each CLI. Legacy credential fields remain
+    in the wire shape but never consult Cuttle's provider environment.
     """
     rows: List[Dict[str, Any]] = []
     for agent_id in list_agents(project_path):
@@ -622,15 +621,10 @@ def public_catalog(project_path: Optional[str] = None) -> List[Dict[str, Any]]:
         except Exception:
             avail = False
         row = manifest.to_public_dict(available=avail)
-        names = row.get("credential_env") or []
-        row["credential_present"] = any(
-            (os.environ.get(name) or "").strip() for name in names
-        )
-        # A CLI is usable when its binary exists and (if it needs a key) the key
-        # is present. Surfaced separately so the UI can say which half is wrong.
-        row["ready"] = bool(
-            avail and (row["credential_present"] or not names)
-        )
+        row["credential_env"] = []
+        row["credential_present"] = False
+        # Installed is not a claim that the native login is valid.
+        row["ready"] = avail
         rows.append(row)
     return rows
 

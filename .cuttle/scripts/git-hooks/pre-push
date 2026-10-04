@@ -165,6 +165,13 @@ def main() -> int:
             hits, notes = scan_gitleaks(gitleaks, base, local_sha)
             blocked.extend(hits)
             warnings.extend(notes)
+    try:
+        from core.git_push_diagnostics import apply_scanner_exceptions
+        blocked, approved = apply_scanner_exceptions(blocked, Path(__file__).with_name('scanner-exceptions.json'))
+        if approved:
+            print(f'pre-push hook: {len(approved)} findings matched reviewed source-specific exceptions')
+    except (OSError, ValueError, TypeError):
+        blocked.append(finding('pre-push', 'Scanner exception policy could not be validated'))
     if blocked:
         print(HOOK_FIRST_LINE + ' — ' + ', '.join(sorted({f['hook'] for f in blocked})))
         for item in blocked[:15]:

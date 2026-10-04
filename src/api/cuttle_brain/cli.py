@@ -33,7 +33,6 @@ def _cmd_compile(args: argparse.Namespace) -> int:
         inject_capabilities=not args.no_capabilities,
         handoff=handoff,
         include_chat_store_hint=args.chat_store_hint,
-        wsl=args.wsl,
     )
 
     if args.json:
@@ -75,7 +74,6 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--handoff-limit", type=int, default=12)
     c.add_argument("--no-capabilities", action="store_true")
     c.add_argument("--chat-store-hint", action="store_true")
-    c.add_argument("--wsl", action="store_true")
     c.add_argument("--json", action="store_true", help="Emit structured JSON")
     c.set_defaults(func=_cmd_compile)
 

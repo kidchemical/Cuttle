@@ -55,5 +55,9 @@ contains no private information.
 
 Code owners: `.cuttle/scripts/git-hooks/pre-push` (project policy),
 `core.git_push_diagnostics` (inspection/report parsing), `api.git_routes`
-(transport), `CuttleGitPushReport` (shared popup). Existing test-fixture/PEM
-placeholder false positives remain visible for report testing.
+(transport), `CuttleGitPushReport` (shared popup). Reviewed fixture/placeholder exceptions live in
+`.cuttle/scripts/git-hooks/scanner-exceptions.json`. Each matches an exact commit,
+file blob, line number, line digest, scanner, and rule, with a review reason.
+Both built-in and gitleaks findings use this policy. Other commits, changed
+content, wider findings, path-policy findings, and SQLite findings stay blocked.
+The hook prints the number of approved findings; it does not disable scanners.

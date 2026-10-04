@@ -7,6 +7,8 @@ its remote catalog. Falls back to the soft-known list when the CLI is missing.
 
 from __future__ import annotations
 
+from core.agent_cli_env import agent_cli_env
+
 import json
 import subprocess
 import time
@@ -108,6 +110,7 @@ def _run_codex_debug_models(*, refresh: bool) -> Tuple[List[Dict[str, Any]], Opt
     try:
         r = subprocess.run(
             cmd,
+                env=agent_cli_env(),
             capture_output=True,
             text=True,
             timeout=90 if refresh else 45,

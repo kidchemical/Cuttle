@@ -10,6 +10,22 @@ models:
   - haiku
   - sonnet
   - opus
+  - fable
+  - claude-opus-5-5
+  - claude-sonnet-5-5
+  - claude-fable-5-1
+# Offline snapshot; native SDK initialization supplies account/provider-specific rows.
+supports_model_pin: true
+supports_effort: true
+efforts: [low, medium, high, xhigh, max]
+model_efforts:
+  haiku: []
+  sonnet: [low, medium, high, xhigh, max]
+  opus: [low, medium, high, xhigh, max]
+  fable: [low, medium, high, xhigh, max]
+  claude-opus-5-5: [low, medium, high, xhigh, max]
+  claude-sonnet-5-5: [low, medium, high, xhigh, max]
+  claude-fable-5-1: [low, medium, high, xhigh, max]
 pricing_source: models_dev
 pricing_providers: [anthropic]
 resume: true
@@ -20,10 +36,10 @@ hint: Run Anthropic Claude Code CLI (`claude -p`) with per-chat resume (Auto/Clo
 missing_cli_hint: >-
   Install Claude Code (`npm i -g @anthropic-ai/claude-code` or the native
   installer) and ensure `claude` is on PATH. Authenticate with
-  `claude auth login` or `ANTHROPIC_API_KEY`.
+  `claude auth login`.
 install_hint: >-
   Install `@anthropic-ai/claude-code` (or the native build), then
-  `claude auth login` or set `ANTHROPIC_API_KEY` in `src/.env`.
+  `claude auth login`.
 executable_names:
   - claude
 notes: >-

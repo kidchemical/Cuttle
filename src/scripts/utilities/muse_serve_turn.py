@@ -2,11 +2,13 @@
 
 Same result dict as ``MuseCliTool.execute_prompt`` (``muse exec --json``),
 plus ``steered``. Returns ``{"fallback": True, …}`` when the host could not
-start a turn (WSL-only install, resume id unknown to this host, spawn error),
+start a turn (resume id unknown to this host, spawn error),
 so the adapter reruns the prompt on ``exec``.
 """
 
 from __future__ import annotations
+
+from core.agent_cli_env import agent_cli_env
 
 import asyncio
 import concurrent.futures
@@ -135,7 +137,7 @@ async def run_muse_turn_serve(
         return {"success": False, "error": "No prompt provided", "output": ""}
     muse_bin = _which_muse_native()
     if not muse_bin:
-        return _fallback("no native Muse Code binary (WSL installs use exec)")
+        return _fallback("no native Muse Code binary")
     workdir = cwd or os.getcwd()
     if not os.path.isdir(workdir):
         return _fallback(f"Invalid working directory: {workdir}")
@@ -162,7 +164,7 @@ async def run_muse_turn_serve(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=workdir,
-            env=os.environ.copy(),
+            env=agent_cli_env(),
             limit=_STDOUT_LINE_LIMIT,
         )
     except OSError as exc:

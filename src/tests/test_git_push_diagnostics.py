@@ -45,3 +45,28 @@ const html = A.render({summary:'blocked', findings:[{hook:'sqlite-secrets',rule:
 if (html.includes('<script>x') || !html.includes('&lt;script&gt;') || !html.includes('abc123') || !html.includes('sqlite-secrets') || !html.includes('column:')) process.exit(1);
 '''
     subprocess.run(['node', '-e', code, str(script)], check=True)
+
+
+def test_reviewed_exceptions_match_only_exact_historical_finding():
+    from core.git_push_diagnostics import apply_scanner_exceptions
+    repo = Path(__file__).resolve().parents[2]
+    policy = repo / '.cuttle/scripts/git-hooks/scanner-exceptions.json'
+    entry = json.loads(policy.read_text())['exceptions'][0]
+    hit = {'hook': 'gitleaks', 'rule': 'private-key', 'commit': entry['commit'], 'file': entry['file'], 'line': entry['line'], 'end_line': 423}
+    retained, approved = apply_scanner_exceptions([hit], policy)
+    assert retained == [] and approved == [hit]
+    for altered in [dict(hit, commit='0' * 40), dict(hit, file='other.py'), dict(hit, line=373), dict(hit, end_line=424), dict(hit, rule='another-secret'), dict(hit, hook='sqlite-secrets')]:
+        retained, approved = apply_scanner_exceptions([altered], policy)
+        assert retained == [altered] and not approved
+
+
+def test_exception_rejects_wrong_content_digest(tmp_path):
+    from core.git_push_diagnostics import apply_scanner_exceptions
+    repo = Path(__file__).resolve().parents[2]
+    data = json.loads((repo / '.cuttle/scripts/git-hooks/scanner-exceptions.json').read_text())
+    entry = data['exceptions'][0]
+    entry['line_sha256'] = '0' * 64
+    policy = tmp_path / 'policy.json'
+    policy.write_text(json.dumps(data))
+    hit = {'hook': 'secret-patterns', 'rule': 'private key', 'commit': entry['commit'], 'file': entry['file'], 'line': entry['line']}
+    assert apply_scanner_exceptions([hit], policy) == ([hit], [])

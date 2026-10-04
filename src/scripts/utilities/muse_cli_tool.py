@@ -4,24 +4,22 @@ Muse Code CLI integration — Meta's terminal coding agent (`muse exec --json`).
 Resolution order on Windows is native-first:
   ``MUSE_CLI_PATH`` → ``%LOCALAPPDATA%\\Programs\\muse\\muse-bin-*.exe``
   (Meta's official Windows install) → PATH. WSL-forwarding ``muse.cmd`` shims
-  are rejected. Legacy WSL (``MUSE_WSL_BIN`` / distro ``muse``) stays as a
-  deprecated fallback.
+  are rejected. Only the native host installation is supported.
 
-Auth: same as the Muse install (``META_API_KEY`` or prior ``muse`` login).
+Auth: native Muse login/configuration; host API credentials are isolated.
 """
 
 from __future__ import annotations
+
+from core.agent_cli_env import agent_cli_env
 
 import asyncio
 import json
 import os
 import re
-import shlex
 import shutil
 import tempfile
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
@@ -34,8 +32,6 @@ _UUID_RE = re.compile(
     re.I,
 )
 
-_WSL_MUSE_CACHE: Optional[str] = None
-_WSL_MUSE_CACHE_CHECKED = False
 
 # Static fallback when env + Muse CLI settings.json are unavailable.
 # Meta's docs currently recommend 1.3 for new work; the CLI default is whatever
@@ -80,7 +76,6 @@ _SETTINGS_MODEL_CACHE_TTL_SEC = 30.0
 # (monotonic_ts, models_list, source, error_or_None)
 _MUSE_CATALOG_CACHE: Optional[Tuple[float, List[Dict[str, str]], str, Optional[str]]] = None
 _MUSE_CATALOG_CACHE_TTL_SEC = 300.0
-_META_MODELS_URL = "https://api.meta.ai/v1/models"
 
 # Discrete --reasoning-effort levels for --provider meta. "none" is not a CLI
 # level (the CLI rejects it); unpinned turns omit the flag entirely.
@@ -125,41 +120,11 @@ def _read_native_muse_settings_model() -> Optional[str]:
     return None
 
 
-def _read_wsl_muse_settings_model() -> Optional[str]:
-    """Read Muse CLI settings.json from the default WSL distro (Windows host)."""
-    if not _wsl_available():
-        return None
-    import subprocess
-
-    try:
-        proc = subprocess.run(
-            [
-                "wsl",
-                "-e",
-                "bash",
-                "-lc",
-                'cat "${XDG_CONFIG_HOME:-$HOME/.config}/muse/settings.json" 2>/dev/null',
-            ],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        )
-    except Exception:
-        return None
-    if proc.returncode != 0:
-        return None
-    return _parse_muse_settings_model(proc.stdout or "")
 
 
 def read_muse_cli_settings_model() -> Optional[str]:
     """Return the Muse CLI's configured default model, or None if unknown."""
-    found = _read_native_muse_settings_model()
-    if found:
-        return found
-    # On Windows Muse almost always lives in WSL; also try WSL when native
-    # settings are missing (rare dual setups).
-    return _read_wsl_muse_settings_model()
+    return _read_native_muse_settings_model()
 
 
 def resolve_muse_default_model() -> str:
@@ -197,156 +162,28 @@ def clear_muse_catalog_cache() -> None:
     _MUSE_CATALOG_CACHE = None
 
 
-def _muse_api_key() -> str:
-    """Prefer MODEL_API_KEY (Meta Model API docs), fall back to META_API_KEY (Muse CLI)."""
-    return (
-        (os.environ.get("MODEL_API_KEY") or "").strip()
-        or (os.environ.get("META_API_KEY") or "").strip()
-    )
 
 
-def _label_for_muse_id(model_id: str) -> str:
-    mid = (model_id or "").strip()
-    for known in MUSE_KNOWN_MODELS:
-        if known["id"].lower() == mid.lower():
-            return known["label"]
-    # muse-spark-1.3-contributor → Muse Spark 1.3 (Contributor)
-    leaf = re.sub(r"^muse[-_]", "", mid, flags=re.I)
-    parts = leaf.replace("_", "-").split("-")
-    pretty: List[str] = []
-    for p in parts:
-        if not p:
-            continue
-        if p.lower() == "contributor":
-            pretty.append("(Contributor)")
-        elif re.match(r"^\d+(\.\d+)*$", p):
-            pretty.append(p)
-        else:
-            pretty.append(p[:1].upper() + p[1:])
-    return ("Muse " + " ".join(pretty)).strip() or mid
 
 
-def _description_for_muse_id(model_id: str) -> str:
-    mid = (model_id or "").strip()
-    for known in MUSE_KNOWN_MODELS:
-        if known["id"].lower() == mid.lower():
-            return str(known.get("description") or "")
-    if mid.lower().endswith("-contributor"):
-        return "Contributor tier — prompts may train Meta models"
-    if mid.lower().startswith("muse-spark"):
-        return "Muse Spark via Meta Model API"
-    return ""
 
 
-def _fetch_meta_muse_spark_models() -> Tuple[List[Dict[str, str]], Optional[str]]:
-    """GET https://api.meta.ai/v1/models — return Muse Spark rows only."""
-    key = _muse_api_key()
-    if not key:
-        return [], "no MODEL_API_KEY / META_API_KEY"
-    req = urllib.request.Request(
-        _META_MODELS_URL,
-        headers={
-            "Authorization": f"Bearer {key}",
-            "Accept": "application/json",
-            "User-Agent": "Cuttle-MuseCatalog/1.0",
-        },
-        method="GET",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            raw = resp.read().decode("utf-8", errors="replace")
-    except urllib.error.HTTPError as exc:
-        body = ""
-        try:
-            body = exc.read().decode("utf-8", errors="replace")[:200]
-        except Exception:
-            pass
-        return [], f"HTTP {exc.code}: {body or exc.reason}"
-    except Exception as exc:
-        return [], str(exc)[:200]
-
-    try:
-        payload = json.loads(raw or "")
-    except json.JSONDecodeError:
-        return [], "invalid JSON from Meta Model API"
-
-    rows = payload.get("data") if isinstance(payload, dict) else payload
-    if not isinstance(rows, list):
-        return [], "unexpected Meta Model API shape"
-
-    out: List[Dict[str, str]] = []
-    seen = set()
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        mid = str(row.get("id") or "").strip()
-        if not mid or not mid.lower().startswith("muse-spark"):
-            continue
-        key_l = mid.lower()
-        if key_l in seen:
-            continue
-        seen.add(key_l)
-        out.append(
-            {
-                "id": mid,
-                "label": _label_for_muse_id(mid),
-                "description": _description_for_muse_id(mid),
-            }
-        )
-    if not out:
-        return [], "Meta Model API returned no muse-spark models"
-    return out, None
 
 
 def list_muse_catalog_models(*, refresh: bool = False) -> Dict[str, Any]:
-    """Muse Code palette catalog: Meta API (cached) with static fallback.
+    """Shipped CLI model hints; never fetch with Cuttle provider credentials.
 
-    Muse CLI has no ``models list`` subcommand, so refresh pulls
-    ``GET /v1/models`` when an API key is present.
+    Muse has no model-list command. Arbitrary model pins remain supported.
     """
-    global _MUSE_CATALOG_CACHE
-    now = time.monotonic()
     if refresh:
-        clear_muse_catalog_cache()
         clear_muse_default_model_cache()
-
-    if not refresh and _MUSE_CATALOG_CACHE is not None:
-        ts, cached, source, err = _MUSE_CATALOG_CACHE
-        if now - ts < _MUSE_CATALOG_CACHE_TTL_SEC and cached:
-            return {
-                "models": [dict(m) for m in cached],
-                "count": len(cached),
-                "source": source,
-                "error": err,
-                "fetched_at": ts,
-            }
-
-    live, err = _fetch_meta_muse_spark_models()
-    if live:
-        _MUSE_CATALOG_CACHE = (now, list(live), "meta_api", None)
-        return {
-            "models": [dict(m) for m in live],
-            "count": len(live),
-            "source": "meta_api" if not refresh else "meta_api_refresh",
-            "error": None,
-            "fetched_at": now,
-        }
-
-    # Fall back to the static allowlist shipped with Cuttle.
-    static = [dict(m) for m in MUSE_KNOWN_MODELS]
-    source = "static_fallback"
-    _MUSE_CATALOG_CACHE = (now, list(static), source, err)
-    return {
-        "models": static,
-        "count": len(static),
-        "source": source,
-        "error": err,
-        "fetched_at": now,
-    }
+    models = [dict(m) for m in MUSE_KNOWN_MODELS]
+    return {"models": models, "count": len(models), "source": "static",
+            "error": None, "fetched_at": None}
 
 
 def refresh_muse_catalog() -> Dict[str, Any]:
-    """Force-refresh Muse Code models (Meta API when keyed, else static)."""
+    """Refresh native default-model settings and return shipped model hints."""
     return list_muse_catalog_models(refresh=True)
 
 
@@ -510,19 +347,6 @@ def _muse_activity_for_event(
     return None
 
 
-def windows_to_wsl_path(path: str) -> str:
-    """Convert ``E:\\foo\\bar`` → ``/mnt/e/foo/bar`` (best-effort)."""
-    p = (path or "").strip().replace("\\", "/")
-    if not p:
-        return p
-    m = re.match(r"^([A-Za-z]):/(.*)$", p)
-    if m:
-        drive = m.group(1).lower()
-        rest = m.group(2)
-        return f"/mnt/{drive}/{rest}" if rest else f"/mnt/{drive}"
-    if p.startswith("/") and not p.startswith("/mnt/"):
-        return p
-    return p
 
 
 # Batch/script shims look like a binary to `shutil.which`. Two kinds exist on
@@ -534,7 +358,7 @@ def windows_to_wsl_path(path: str) -> str:
 #      ``--workspace`` path; bash then strips backslashes
 #      (``C:\\Projects\\Cuttle`` → ``C:ProjectsCuttle``) and muse dies with
 #      "workspace root does not exist". Reject WSL forwarders so resolution
-#      can use the real native binary (or fall through to `_discover_wsl_muse`).
+#      can use the real native binary .
 _SHIM_EXTENSIONS = {".cmd", ".bat", ".ps1", ".com"}
 
 
@@ -661,59 +485,14 @@ def _which_muse_native() -> Optional[str]:
     return None
 
 
-def _wsl_available() -> bool:
-    if os.name != "nt":
-        return False
-    return bool(shutil.which("wsl"))
 
 
-def _discover_wsl_muse() -> Optional[str]:
-    """Deprecated fallback: muse inside the default WSL distro, or None."""
-    global _WSL_MUSE_CACHE, _WSL_MUSE_CACHE_CHECKED
-    if _WSL_MUSE_CACHE_CHECKED:
-        return _WSL_MUSE_CACHE
-    _WSL_MUSE_CACHE_CHECKED = True
-    override = (os.getenv("MUSE_WSL_BIN") or "").strip()
-    if override:
-        _WSL_MUSE_CACHE = override
-        return _WSL_MUSE_CACHE
-    if not _wsl_available():
-        _WSL_MUSE_CACHE = None
-        return None
-    try:
-        # Login shell so ~/.local/bin from the installer is on PATH.
-        completed = subprocess_run_wsl_which()
-        path = (completed or "").strip()
-        if path and path.startswith("/"):
-            _WSL_MUSE_CACHE = path
-            return path
-    except Exception:
-        pass
-    _WSL_MUSE_CACHE = None
-    return None
 
 
-def subprocess_run_wsl_which() -> str:
-    import subprocess
-
-    proc = subprocess.run(
-        [
-            "wsl",
-            "-e",
-            "bash",
-            "-lc",
-            'export PATH="$HOME/.local/bin:$PATH"; command -v muse',
-        ],
-        capture_output=True,
-        text=True,
-        timeout=20,
-        check=False,
-    )
-    return (proc.stdout or "").strip().splitlines()[0] if proc.returncode == 0 else ""
 
 
 def muse_available() -> bool:
-    return bool(_which_muse_native() or _discover_wsl_muse())
+    return bool(_which_muse_native())
 
 
 def muse_resolution() -> Dict[str, Any]:
@@ -721,9 +500,6 @@ def muse_resolution() -> Dict[str, Any]:
     native = _which_muse_native()
     if native:
         return {"mode": "native", "path": native}
-    wsl_bin = _discover_wsl_muse()
-    if wsl_bin:
-        return {"mode": "wsl", "path": wsl_bin, "deprecated": True}
     return {"mode": "missing", "path": None}
 
 
@@ -1108,15 +884,11 @@ def usage_for_query_report(usage: Dict[str, Any], model: str) -> Dict[str, Any]:
     return out
 
 
-def _map_cwd(cwd: str, *, use_wsl: bool) -> str:
-    resolved = str(Path(cwd).resolve())
-    return windows_to_wsl_path(resolved) if use_wsl else resolved
 
 
 def _build_argv(
     *,
     muse_bin: str,
-    use_wsl: bool,
     prompt: str,
     cwd: str,
     resume: Optional[str],
@@ -1131,9 +903,9 @@ def _build_argv(
     context_compaction_hard_threshold: Optional[float] = None,
 ) -> Tuple[List[str], Optional[str]]:
     """Return (argv_for_create_subprocess_exec, optional_prompt_file_to_cleanup)."""
-    workspace = _map_cwd(cwd, use_wsl=use_wsl)
+    workspace = str(Path(cwd).resolve())
     muse_args: List[str] = [
-        muse_bin if not use_wsl else muse_bin,
+        muse_bin,
         "exec",
         "--json",
         "--workspace",
@@ -1192,27 +964,10 @@ def _build_argv(
             os.close(fd)
             Path(pf).write_text(prompt, encoding="utf-8")
             cleanup = pf
-        mapped = windows_to_wsl_path(str(Path(pf).resolve())) if use_wsl else str(Path(pf).resolve())
+        mapped = str(Path(pf).resolve())
         muse_args.extend(["--prompt-file", mapped])
     else:
         muse_args.append(prompt)
-
-    if use_wsl:
-        # Login shell so PATH from the installer applies. Forward META_API_KEY from
-        # the Windows/Flask process when set (src/.env via daemon).
-        exports = ['export PATH="$HOME/.local/bin:$PATH"']
-        meta_key = (os.environ.get("META_API_KEY") or "").strip()
-        if meta_key:
-            exports.append(f"export META_API_KEY={shlex.quote(meta_key)}")
-        quoted = " ".join(shlex.quote(a) for a in muse_args)
-        argv = [
-            "wsl",
-            "-e",
-            "bash",
-            "-lc",
-            f'{"; ".join(exports)}; exec {quoted}',
-        ]
-        return argv, cleanup
 
     return muse_args, cleanup
 
@@ -1259,21 +1014,13 @@ class MuseCliTool:
         if not (prompt or "").strip():
             return {"success": False, "error": "No prompt provided", "output": ""}
 
-        native = _which_muse_native()
-        use_wsl = False
-        muse_bin = native
-        if not muse_bin:
-            muse_bin = _discover_wsl_muse()
-            use_wsl = bool(muse_bin)
+        muse_bin = _which_muse_native()
         if not muse_bin:
             return {
                 "success": False,
                 "error": (
-                    "Muse Code CLI not found. Install the native Windows build "
+                    "Muse Code CLI not found. Install the native build for this host "
                     "and ensure `muse` is on PATH (or set MUSE_CLI_PATH). "
-                    "Legacy fallback: WSL install via "
-                    "`curl -fsSL https://dev.meta.ai/install.sh | bash` "
-                    "(MUSE_WSL_BIN) — deprecated."
                 ),
                 "output": "",
             }
@@ -1288,7 +1035,6 @@ class MuseCliTool:
 
         argv, cleanup = _build_argv(
             muse_bin=muse_bin,
-            use_wsl=use_wsl,
             prompt=prompt,
             cwd=workdir,
             resume=resume,
@@ -1364,11 +1110,11 @@ class MuseCliTool:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 stdin=asyncio.subprocess.DEVNULL,
-                cwd=workdir if not use_wsl else None,
-                env=os.environ.copy(),
+                cwd=workdir,
+                env=agent_cli_env(),
                 limit=_STDOUT_LINE_LIMIT,
             )
-            # Register with chat_run_registry so Stop can kill the WSL wrapper
+            # Register with chat_run_registry so Stop can cancel the native process
             if chat_session_id:
                 try:
                     from api.chat_run_registry import attach_process

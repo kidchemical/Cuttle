@@ -11,6 +11,8 @@ Per-model ``supports_variant`` is baked from each entry's ``variants`` map
 
 from __future__ import annotations
 
+from core.agent_cli_env import agent_cli_env
+
 import json
 import re
 import subprocess
@@ -237,6 +239,7 @@ def _run_opencode_models(*, refresh: bool = False) -> Tuple[List[Dict[str, Any]]
     try:
         proc = subprocess.run(
             cmd,
+                   env=agent_cli_env(),
             capture_output=True,
             text=True,
             timeout=_CLI_TIMEOUT_SEC,

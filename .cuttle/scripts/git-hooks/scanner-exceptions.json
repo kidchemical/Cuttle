@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "exceptions": [
+    {
+      "commit": "dc85768cbd07b4d5e5dd748ccee411ed3fd72577",
+      "file": "src/tests/test_github_app.py",
+      "blob": "fd56ede78f0f041f1d364aa1fbf38cd25a2dd2a2",
+      "line": 372,
+      "line_sha256": "8f36fd099335f2573556ba559ee6c2eac28351d0bbcf4b6eff240747a60ad3b7",
+      "checks": {
+        "secret-patterns": "private key",
+        "gitleaks": "private-key"
+      },
+      "reason": "Deliberately invalid RSA PEM with garbage body; credential-preservation regression test; gitleaks groups the two invalid literals into one finding spanning lines 372\u2013423",
+      "end_lines": {
+        "gitleaks": 423
+      }
+    },
+    {
+      "commit": "dc85768cbd07b4d5e5dd748ccee411ed3fd72577",
+      "file": "src/tests/test_github_app.py",
+      "blob": "fd56ede78f0f041f1d364aa1fbf38cd25a2dd2a2",
+      "line": 423,
+      "line_sha256": "4271853d834d3fc12d99fba9dd1bc414cbfaa1c44284826ebe1a2214bb6c4ccb",
+      "checks": {
+        "secret-patterns": "private key"
+      },
+      "reason": "Deliberately invalid PEM with garbage body; HTTP replacement rejection regression test"
+    },
+    {
+      "commit": "dc85768cbd07b4d5e5dd748ccee411ed3fd72577",
+      "file": "src/web/settings_page.html",
+      "blob": "8be25054e3932f2fa08c7c915bb458fe8218bdc6",
+      "line": 543,
+      "line_sha256": "9640ee4e2dcb395a1b41f77897c06716439077615d5b7f8ca8055aa6fbbe0546",
+      "checks": {
+        "secret-patterns": "private key"
+      },
+      "reason": "HTML textarea placeholder containing only the PEM header, no key material"
+    }
+  ]
+}

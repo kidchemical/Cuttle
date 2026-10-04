@@ -2,12 +2,6 @@ id: opencode
 label: OpenCode
 slash: /opencode
 requires_cloud: true
-# Credential the CLI needs. Declared so Settings and the setup
-# wizard can say "add X" instead of the reader parsing prose.
-credential_env:
-  - OPENROUTER_API_KEY
-  - OPENAI_API_KEY
-  - ANTHROPIC_API_KEY
 auth_command: opencode auth login
 sticky: true
 # Empty — unpinned turns omit --model so opencode.json wins.
@@ -33,11 +27,8 @@ env_profile: native
 activity: jsonl
 hint: Run OpenCode CLI (`opencode run`) — OpenRouter GLM 5.3 Flash by default
 install_hint: >-
-  Install OpenCode yourself with `npm install -g opencode-ai`. Set
-  OPENROUTER_API_KEY in src/.env, then run the allowlisted opencode.sync-auth
-  action (provider openrouter) to copy the key into OpenCode without the LLM
-  seeing it. Also supports OPENAI_API_KEY / ANTHROPIC_API_KEY, or
-  `opencode auth login`.
+  Install OpenCode yourself with `npm install -g opencode-ai`, then run
+  `opencode auth login`. Authentication belongs to OpenCode.
 missing_cli_hint: >-
   Install OpenCode and ensure `opencode` is on PATH
   (see https://opencode.ai/docs/ — `opencode run "…"`).

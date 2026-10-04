@@ -7,6 +7,8 @@ Auth: same as the user's Codex install (`codex login` / ChatGPT account).
 
 from __future__ import annotations
 
+from core.agent_cli_env import agent_cli_env
+
 import asyncio
 import json
 import os
@@ -552,7 +554,7 @@ class CodexCliTool:
             else:
                 cmd.append(prompt)
 
-            env = os.environ.copy()
+            env = agent_cli_env()
             # Cursor-style strip: event lines + silent contextual heartbeat.
             # Do not also heartbeat from the adapter — that stomps tool lines.
             from api.agent_harness.activity import ActivityEmitter

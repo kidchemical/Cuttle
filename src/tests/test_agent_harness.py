@@ -953,10 +953,11 @@ def test_deepseek_long_prompt_uses_tempfile_not_argv(monkeypatch, tmp_path):
 
     async def _spawn(*args, **kwargs):
         captured["argv"] = args
+        assert "DEEPSEEK_API_KEY" not in kwargs["env"]
         return _Process()
 
     monkeypatch.setattr(ds, "dsh_argv", lambda: ["node.exe", "bin.js"])
-    monkeypatch.setattr(ds, "_ensure_src_env", lambda: None)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "host-only-test-secret")
     monkeypatch.setattr(ds.asyncio, "create_subprocess_exec", _spawn)
     monkeypatch.setattr(ds, "attach_to_chat_run", lambda *a, **k: None)
 

@@ -268,7 +268,6 @@ def _compile_agent_prompt(
                 include_inventory=True,
                 handoff=handoff,
                 include_chat_store_hint=True,
-                wsl=(manifest.env_profile or "").strip().lower() == "wsl",
                 chat_session_id=chat_session_id,
             )
         except Exception:

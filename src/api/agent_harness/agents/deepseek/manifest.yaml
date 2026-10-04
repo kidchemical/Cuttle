@@ -2,10 +2,6 @@ id: deepseek
 label: DeepSeek Harness
 slash: /deepseek
 requires_cloud: true
-# Credential the CLI needs. Declared so Settings and the setup
-# wizard can say "add X" instead of the reader parsing prose.
-credential_env:
-  - DEEPSEEK_API_KEY
 sticky: true
 # Empty — unpinned turns use the dsh CLI default (no model patch).
 default_model: ""
@@ -21,11 +17,11 @@ env_profile: native
 activity: heartbeat
 hint: Run DeepSeek Harness CLI (`dsh --profile headless`) — Flash by default
 missing_cli_hint: >-
-  Install `@deepseek-ai/dsh` (`npm i -g @deepseek-ai/dsh`) and set
-  `DEEPSEEK_API_KEY` in `src/.env`.
+  Install `@deepseek-ai/dsh` (`npm i -g @deepseek-ai/dsh`) and configure
+  authentication in the CLI.
 install_hint: >-
-  Install `@deepseek-ai/dsh` yourself (`npm i -g @deepseek-ai/dsh`). Then set
-  `DEEPSEEK_API_KEY` in `src/.env` (or the daemon env) and restart Flask.
+  Install `@deepseek-ai/dsh` yourself (`npm i -g @deepseek-ai/dsh`). Then configure
+  authentication in the CLI itself.
   Smoke uses Flash, not Pro.
 executable_names:
   - dsh

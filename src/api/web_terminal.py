@@ -9,6 +9,8 @@ to the same shell (cwd, scrollback, running commands) via the CH- session id.
 
 from __future__ import annotations
 
+from core.agent_cli_env import agent_cli_env
+
 import base64
 import json
 import os
@@ -170,7 +172,7 @@ def _resolve_shell_preset(shell_id: str) -> Tuple[Optional[List[str]], str, Dict
             _cuttle_venv_env(),
         ),
         'hermes': _hermes_preset,
-        'claude': lambda: (_claude_command(), cwd, env),
+        'claude': lambda: (_claude_command(), cwd, agent_cli_env()),
         'wsl': lambda: (_wsl_command(), cwd, env),
     }
 

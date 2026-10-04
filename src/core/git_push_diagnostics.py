@@ -117,6 +117,54 @@ def scan_gitleaks(binary, base, head):
             return [], ['gitleaks could not complete; built-in checks still ran']
 
 
+
+def apply_scanner_exceptions(findings, policy_path):
+    """Approve only exact historical source lines; never path/SQLite findings.
+
+    Changing a commit, blob, line, rule, or scanner invalidates the exception.
+    The committed source is verified rather than trusting scanner previews.
+    """
+    import hashlib
+    policy = json.loads(Path(policy_path).read_text())
+    if not isinstance(policy, dict) or policy.get('version') != 1 or not isinstance(policy.get('exceptions'), list):
+        raise ValueError('Invalid scanner exception policy')
+    exceptions = policy['exceptions']
+    for entry in exceptions:
+        if (not isinstance(entry, dict) or
+            not re.fullmatch(r'[0-9a-f]{40}', str(entry.get('commit', ''))) or
+            not re.fullmatch(r'[0-9a-f]{40}', str(entry.get('blob', ''))) or
+            not re.fullmatch(r'[0-9a-f]{64}', str(entry.get('line_sha256', ''))) or
+            type(entry.get('line')) is not int or entry['line'] < 1 or
+            not entry.get('reason') or not entry.get('file') or
+            not isinstance(entry.get('checks'), dict) or not entry['checks'] or
+            any(check not in ('secret-patterns', 'gitleaks') or not isinstance(rule, str) or not rule for check, rule in entry['checks'].items()) or
+            not isinstance(entry.get('end_lines', {}), dict) or
+            any(type(end) is not int or end < entry['line'] for end in entry.get('end_lines', {}).values())):
+            raise ValueError('Scanner exceptions must identify exact source and checks')
+    retained, approved, cache = [], [], {}
+    for hit in findings:
+        allowed = False
+        for entry in exceptions:
+            if (hit.get('commit') != entry['commit'] or hit.get('file') != entry['file'] or
+                hit.get('line') != entry['line'] or
+                hit.get('end_line') not in (None, (entry.get('end_lines') or {}).get(hit.get('hook'), entry['line'])) or
+                entry['checks'].get(hit.get('hook')) != hit.get('rule')):
+                continue
+            key = entry['commit'] + ':' + entry['file']
+            try:
+                if key not in cache:
+                    blob = subprocess.check_output(['git', 'rev-parse', key], text=True).strip()
+                    lines = subprocess.check_output(['git', 'show', key]).splitlines()
+                    cache[key] = blob, lines
+                blob, lines = cache[key]
+                allowed = blob == entry['blob'] and hashlib.sha256(lines[entry['line'] - 1]).hexdigest() == entry['line_sha256']
+            except (subprocess.SubprocessError, IndexError):
+                allowed = False
+            if allowed:
+                break
+        (approved if allowed else retained).append(hit)
+    return retained, approved
+
 def push_failure(stdout, stderr):
     """Prefer the hook's structured reason over Git's generic stderr footer."""
     reports, lines = [], []

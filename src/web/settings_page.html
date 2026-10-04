@@ -286,12 +286,12 @@
             </div>
 
             <div class="settings-group">
-                <h3 class="settings-title"><span class="emoji">🔑</span> API Keys <span class="settings-scope" data-scope="server" title="Written to the server's .env — every device and agent on this server uses them.">This server</span></h3>
-                <div class="settings-intro">Keys here are used for anything Cuttle calls itself: cheap completions, vision pre-pass, voice, image search. Agent CLIs keep their own auth.</div>
+                <h3 class="settings-title"><span class="emoji">🔑</span> API Keys <span class="settings-scope" data-scope="server" title="Used by this server's optional direct API features.">This server</span></h3>
+                <div class="settings-intro">Optional credentials for Cuttle’s direct API features. CLI agents use their own login and configuration; these keys are never passed to them.</div>
                 <div class="setting-item">
                     <div class="setting-label">
                         <strong>OpenAI API Key</strong>
-                        <div class="setting-description">Required for GPT models</div>
+                        <div class="setting-description">Optional: OpenAI titles, commit suggestions, prompt enhancement, API-mode routing, attachment vision, and OpenAI voice.</div>
                     </div>
                     <div class="setting-control">
                         <input type="password" id="openaiKey" class="setting-input" placeholder="sk-...">
@@ -303,7 +303,7 @@
                 <div class="setting-item">
                     <div class="setting-label">
                         <strong>Anthropic API Key</strong>
-                        <div class="setting-description">Required for Claude models</div>
+                        <div class="setting-description">Optional: Anthropic titles, commit suggestions, prompt enhancement, and attachment vision.</div>
                     </div>
                     <div class="setting-control">
                         <input type="password" id="anthropicKey" class="setting-input" placeholder="sk-ant-...">
@@ -897,7 +897,6 @@
                 const bits = [];
                 bits.push((agent.models || []).length + ' model' + ((agent.models || []).length === 1 ? '' : 's'));
                 if (agent.resume) bits.push('resumes sessions');
-                if (agent.env_profile === 'wsl') bits.push('Windows via WSL');
                 if (agent.requires_cloud === false) bits.push('can run locally');
                 meta.textContent = bits.join(' · ');
                 card.appendChild(meta);

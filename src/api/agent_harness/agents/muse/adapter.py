@@ -487,7 +487,7 @@ class Adapter:
         if err and re.search(r"credential|meta_api_key|muse login", err, re.I):
             err = (
                 f"{err}\n\n"
-                "Set `META_API_KEY` in `src/.env` (Flask/daemon reload), or run "
+                "Authenticate in Muse itself: run "
                 "`muse login` / `muse auth set --api-key-stdin`."
             )
         meta = badge_meta("muse", mid, model_source, effort, effort_source)

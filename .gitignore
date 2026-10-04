@@ -16,6 +16,7 @@ src/data/home_automation_devices.json
 # NOTE: bare `*.json` matches at every depth, so every new source-of-truth
 # *.json must get a `!` negation here or it will be silently ignored.
 *.json
+!.cuttle/scripts/git-hooks/scanner-exceptions.json
 !bot_config.json
 !electron/package.json
 !electron/package-lock.json

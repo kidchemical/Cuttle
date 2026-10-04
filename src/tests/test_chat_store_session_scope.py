@@ -45,10 +45,9 @@ def _literal_handles(text: str) -> list[int]:
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("wsl", [False, True])
-def test_addon_carries_no_borrowed_session_id(wsl):
+def test_addon_carries_no_borrowed_session_id():
     """CH-000155: the recipe shipped `sid=147`, so the agent read CH-000147."""
-    addon = cuttle_chat_store_addon(wsl=wsl)
+    addon = cuttle_chat_store_addon()
 
     assert not _literal_sids(addon), (
         "the chat-store recipe assigns a literal session id with no chat to "
@@ -65,7 +64,7 @@ def test_addon_still_teaches_via_runbook_pointer():
     """Thin addon points at the runbook; how-to lives there."""
     from pathlib import Path
 
-    addon = cuttle_chat_store_addon(wsl=False)
+    addon = cuttle_chat_store_addon()
     assert "chat-history.md" in addon
     assert "gitignored" in addon.lower() or "not in the working tree" in addon.lower()
 
@@ -87,7 +86,7 @@ def test_addon_still_teaches_via_runbook_pointer():
 )
 def test_addon_scopes_the_recipe_to_the_current_chat(handle):
     """Every id shape the callers hold must resolve to the same chat."""
-    addon = cuttle_chat_store_addon(wsl=False, current_session_id=handle)
+    addon = cuttle_chat_store_addon(current_session_id=handle)
 
     assert "CH-000155" in addon, "the agent should be told which chat it is in"
     assert _literal_sids(addon) == [155], (
@@ -100,7 +99,7 @@ def test_addon_scopes_the_recipe_to_the_current_chat(handle):
 def test_unresolvable_session_ids_do_not_invent_a_chat():
     """A non-numeric handle must degrade to 'no id', never to a guess."""
     for handle in (None, "", "muse-chat-discovery", "unknown", "CH-000155-0"):
-        addon = cuttle_chat_store_addon(wsl=False, current_session_id=handle)
+        addon = cuttle_chat_store_addon(current_session_id=handle)
         assert not _literal_sids(addon), f"{handle!r} produced a literal sid"
 
 
@@ -139,7 +138,7 @@ def test_muse_prompt_scopes_the_chat_store_block_to_this_chat(monkeypatch):
     from api import web_chat_api as w
     import scripts.utilities.muse_cli_tool as muse_mod
 
-    monkeypatch.setattr(muse_mod, "muse_resolution", lambda: {"mode": "wsl", "path": "/x"})
+    monkeypatch.setattr(muse_mod, "muse_resolution", lambda: {"mode": "native", "path": "/x"})
     monkeypatch.setattr(w, "_build_shell_pane_prompt_addon", lambda _p: "")
 
     prompt = "summarize the history of this chat"
@@ -156,7 +155,7 @@ def test_muse_prompt_never_leaks_a_foreign_id_without_a_session(monkeypatch):
     from api import web_chat_api as w
     import scripts.utilities.muse_cli_tool as muse_mod
 
-    monkeypatch.setattr(muse_mod, "muse_resolution", lambda: {"mode": "wsl", "path": "/x"})
+    monkeypatch.setattr(muse_mod, "muse_resolution", lambda: {"mode": "native", "path": "/x"})
     monkeypatch.setattr(w, "_build_shell_pane_prompt_addon", lambda _p: "")
 
     enriched = w._with_muse_chat_context("what chats do I have open?")

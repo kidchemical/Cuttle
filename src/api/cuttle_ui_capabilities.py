@@ -155,7 +155,6 @@ def resolve_chat_handle_message(
 
 def cuttle_chat_store_addon(
     *,
-    wsl: bool = False,
     current_session_id: Any = None,
 ) -> str:
     """Thin prompt pointer to the chat-history runbook (+ current session scope).
@@ -168,14 +167,6 @@ def cuttle_chat_store_addon(
     """
     db = chat_store_path()
     read_path = db or ""
-    if db and wsl:
-        try:
-            from scripts.utilities.muse_cli_tool import windows_to_wsl_path
-
-            read_path = windows_to_wsl_path(db)
-        except Exception:
-            pass
-
     runbook_hint = (
         "`.cuttle_global/docs/chat-history.md` "
         "(then the install-local delta in `.cuttle_global/personal/docs/` when present)"

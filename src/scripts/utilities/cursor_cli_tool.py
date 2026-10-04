@@ -8,6 +8,8 @@ Repo fallback cwd: Cuttle root (file lives under ``src/scripts/utilities/``).
 
 from __future__ import annotations
 
+from core.agent_cli_env import agent_cli_env
+
 import json
 import os
 import re
@@ -156,7 +158,7 @@ def _resolve_cursor_agent_cli() -> Optional[str]:
 
 def _cursor_agent_subprocess_env() -> Dict[str, str]:
     """Env for direct node+index launches (mirrors agent.ps1 defaults)."""
-    env = os.environ.copy()
+    env = agent_cli_env()
     env.setdefault("CURSOR_INVOKED_AS", "agent")
     if os.name == "nt" and not env.get("NODE_COMPILE_CACHE"):
         cache = os.path.expandvars(r"%LOCALAPPDATA%\cursor-compile-cache")

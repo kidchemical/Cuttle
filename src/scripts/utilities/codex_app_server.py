@@ -7,6 +7,8 @@ usage. Steerable chat turns live in ``codex_app_server_turn``; ``codex exec
 
 from __future__ import annotations
 
+from core.agent_cli_env import agent_cli_env
+
 import json
 import os
 import queue
@@ -145,6 +147,7 @@ def _run_app_server_session(
     try:
         proc = subprocess.Popen(
             [exe, "app-server"],
+            env=agent_cli_env(),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

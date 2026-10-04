@@ -46,16 +46,11 @@ def test_every_bundled_manifest_parses(agent_id):
     assert manifest.slash
 
 
-def test_every_bundled_agent_declares_an_auth_story():
-    """No prose parsing: an agent is either Cuttle-keyed or CLI-authed."""
+def test_every_bundled_agent_declares_native_authentication():
     for agent_id in _bundled_ids():
         manifest = cat.get_agent(agent_id)[0]
-        has_key = bool(manifest.credential_env)
-        has_login = bool(manifest.auth_command)
-        assert has_key or has_login or manifest.requires_cloud is False, (
-            f"{manifest.id} declares no credential_env, no auth_command, and "
-            "requires_cloud=true — Settings cannot tell the user what to do"
-        )
+        assert not manifest.credential_env
+        assert manifest.auth_command or manifest.install_hint or not manifest.requires_cloud
 
 
 def test_credential_env_names_are_uppercase_env_vars():
@@ -66,23 +61,8 @@ def test_credential_env_names_are_uppercase_env_vars():
             assert name.endswith(("_API_KEY", "_KEY", "_TOKEN")), f"{manifest.id}: {name}"
 
 
-def test_credential_env_is_ordered_most_preferred_first():
-    """OpenCode bills through OpenRouter first; the first entry is what the UI
-    tells the user to create, so order is load-bearing."""
-    manifest = cat.get_agent("opencode")[0]
-    assert manifest.credential_env[0] == "OPENROUTER_API_KEY"
-    assert "OPENAI_API_KEY" in manifest.credential_env
 
 
-def test_bundled_agents_that_need_a_key_declare_the_right_one():
-    expected = {
-        "antigravity": "GEMINI_API_KEY",
-        "deepseek": "DEEPSEEK_API_KEY",
-        "muse": "META_API_KEY",
-    }
-    for agent_id, env_name in expected.items():
-        manifest = cat.get_agent(agent_id)[0]
-        assert env_name in manifest.credential_env, agent_id
 
 
 def test_cli_authed_agents_declare_no_cuttle_credential():
@@ -109,17 +89,6 @@ def test_public_rows_expose_the_new_fields():
         assert isinstance(row["ready"], bool)
 
 
-def test_ready_requires_both_the_binary_and_the_key(monkeypatch):
-    monkeypatch.delenv("META_API_KEY", raising=False)
-    row = next(r for r in cat.public_catalog() if r["id"] == "muse")
-    assert row["available"] is True, "muse CLI should be installed in CI-free env"
-    assert row["credential_present"] is False
-    assert row["ready"] is False, "a CLI with no credential is not ready"
-
-    monkeypatch.setenv("META_API_KEY", "k")
-    row = next(r for r in cat.public_catalog() if r["id"] == "muse")
-    assert row["credential_present"] is True
-    assert row["ready"] is True
 
 
 def test_cli_authed_agent_is_ready_without_any_key(monkeypatch):
@@ -225,3 +194,15 @@ def test_wizard_reports_done_when_agents_and_a_provider_exist(tmp_path, monkeypa
     assert payload["steps"]["completion_provider"] is True
     # `channels` is a separate opt-in, so setup is not 'done' until it is set.
     assert payload["next_step"] in ("channels", "done")
+
+def test_muse_readiness_is_independent_of_cuttle_key(monkeypatch):
+    from scripts.utilities import muse_cli_tool
+    monkeypatch.setattr(muse_cli_tool, "muse_available", lambda: True)
+    for value in (None, "host-key"):
+        if value is None:
+            monkeypatch.delenv("META_API_KEY", raising=False)
+        else:
+            monkeypatch.setenv("META_API_KEY", value)
+        row = next(r for r in cat.public_catalog() if r['id'] == 'muse')
+        assert row['available'] and row['ready']
+        assert not row['credential_env']

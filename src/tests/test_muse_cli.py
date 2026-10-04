@@ -1,4 +1,4 @@
-"""Muse Code CLI — JSONL parse, session map, WSL path helpers, and mocked exec."""
+"""Muse Code CLI — JSONL parse, session map, native resolution, and mocked exec."""
 
 from __future__ import annotations
 
@@ -17,7 +17,6 @@ from scripts.utilities.muse_cli_tool import (
     muse_model_label,
     resolve_muse_default_model,
     usage_for_query_report,
-    windows_to_wsl_path,
     MuseCliTool,
 )
 from scripts.utilities import muse_cli_session_store as store
@@ -25,7 +24,7 @@ from scripts.utilities import muse_cli_session_store as store
 
 @pytest.fixture(autouse=True)
 def _isolate_muse_cli_default(monkeypatch):
-    """Don't read the live WSL Muse settings.json during unit tests."""
+    """Don't read the live Muse settings.json during unit tests."""
     clear_muse_default_model_cache()
     from scripts.utilities.muse_cli_tool import clear_muse_catalog_cache
 
@@ -33,11 +32,6 @@ def _isolate_muse_cli_default(monkeypatch):
     monkeypatch.setattr(
         "scripts.utilities.muse_cli_tool.read_muse_cli_settings_model",
         lambda: None,
-    )
-    # Avoid live Meta Model API / env key side effects in unit tests.
-    monkeypatch.setattr(
-        "scripts.utilities.muse_cli_tool._fetch_meta_muse_spark_models",
-        lambda: ([], "no MODEL_API_KEY / META_API_KEY"),
     )
     monkeypatch.setattr(
         "api.agent_harness.agent_defaults.get_starred_model",
@@ -164,10 +158,6 @@ def test_muse_activity_ignores_internal_reminders():
     ) is None
 
 
-def test_windows_to_wsl_path():
-    assert windows_to_wsl_path(r"C:\Projects\Cuttle") == "/mnt/c/Projects/Cuttle"
-    assert windows_to_wsl_path("C:/Projects/Cuttle/src") == "/mnt/c/Projects/Cuttle/src"
-    assert windows_to_wsl_path("/mnt/e/already") == "/mnt/e/already"
 
 
 def test_native_resolver_ignores_wsl_forwarding_shims(tmp_path: Path, monkeypatch):
@@ -176,7 +166,7 @@ def test_native_resolver_ignores_wsl_forwarding_shims(tmp_path: Path, monkeypatc
     Native mode hands muse a Windows workspace path; when the shim re-enters WSL
     bash mangles the backslashes (`C:\\Projects\\Cuttle` -> `E:DevCuttle`) and the run
     dies with "workspace root does not exist". Skipping the shim lets resolution
-    fall through to the real WSL binary, which converts the path to /mnt/e/...
+    reject the obsolete shim and require a native binary
     """
     import scripts.utilities.muse_cli_tool as muse_mod
 
@@ -195,7 +185,7 @@ def test_native_resolver_ignores_wsl_forwarding_shims(tmp_path: Path, monkeypatc
     monkeypatch.delenv("MUSE_CLI_PATH", raising=False)
     monkeypatch.setattr(muse_mod, "_default_windows_muse_install", lambda: None)
 
-    # Shim with no sibling .exe → not native (fall through to WSL).
+    # Shim with no sibling .exe → not native (no fallback).
     monkeypatch.setattr(muse_mod.shutil, "which", lambda name: str(shim))
     assert muse_mod._which_muse_native() is None
 
@@ -326,17 +316,6 @@ def test_messages_payload_carries_muse_pins(tmp_path: Path, monkeypatch):
     assert body["session_name"] == "no pins"
 
 
-def test_wsl_resolution_is_flagged_deprecated(monkeypatch):
-    """WSL path stays as fallback but must advertise itself as deprecated."""
-    import scripts.utilities.muse_cli_tool as muse_mod
-
-    monkeypatch.setattr(muse_mod, "_which_muse_native", lambda: None)
-    monkeypatch.setattr(
-        muse_mod, "_discover_wsl_muse", lambda: "/home/user/.local/bin/muse"
-    )
-    res = muse_mod.muse_resolution()
-    assert res["mode"] == "wsl"
-    assert res["deprecated"] is True
 
 
 def test_parse_muse_jsonl_extracts_session_and_text():
@@ -483,10 +462,7 @@ async def test_execute_prompt_builds_wsl_argv(tmp_path: Path):
         return FakeProc()
 
     with patch(
-        "scripts.utilities.muse_cli_tool._which_muse_native", return_value=None
-    ), patch(
-        "scripts.utilities.muse_cli_tool._discover_wsl_muse",
-        return_value="/home/user/.local/bin/muse",
+        "scripts.utilities.muse_cli_tool._which_muse_native", return_value="/native/muse",
     ), patch("asyncio.create_subprocess_exec", side_effect=fake_exec):
         tool = MuseCliTool(model="muse-spark-1.2")
         statuses = queue.Queue()
@@ -505,16 +481,11 @@ async def test_execute_prompt_builds_wsl_argv(tmp_path: Path):
     activity = [statuses.get_nowait()[1] for _ in range(statuses.qsize())]
     assert activity == ["Resuming Muse Code…", "Muse Code is thinking…", "tool 1: workspace read file"]
     cmd = captured["cmd"]
-    assert cmd[:4] == ["wsl", "-e", "bash", "-lc"]
-    inner = cmd[4]
-    assert "muse" in inner
-    assert "exec" in inner
-    assert "--json" in inner
-    assert "--session-id" in inner
-    assert "--provider" in inner
-    assert "echo" in inner
-    # echo provider must not get --model
-    assert "--model" not in inner
+    assert cmd[0] == "/native/muse"
+    for arg in ("exec", "--json", "--session-id", "--provider", "echo"):
+        assert arg in cmd
+    assert "--model" not in cmd
+    assert captured["kwargs"]["cwd"] == str(cwd)
 
 
 @pytest.mark.asyncio
@@ -593,8 +564,6 @@ async def test_execute_prompt_timeout_preserves_session_and_partial(
     with patch(
         "scripts.utilities.muse_cli_tool._which_muse_native",
         return_value=str(tmp_path / "muse.exe"),
-    ), patch(
-        "scripts.utilities.muse_cli_tool._discover_wsl_muse", return_value=None
     ), patch("asyncio.create_subprocess_exec", side_effect=fake_exec), patch(
         "scripts.utilities.muse_cli_session_store.save_muse_resume_id",
         side_effect=lambda c, s, m: saved.update({"cwd": c, "sid": s, "muse": m}),
@@ -682,8 +651,6 @@ async def test_execute_prompt_cancel_preserves_partial(tmp_path: Path, monkeypat
     with patch(
         "scripts.utilities.muse_cli_tool._which_muse_native",
         return_value=str(tmp_path / "muse.exe"),
-    ), patch(
-        "scripts.utilities.muse_cli_tool._discover_wsl_muse", return_value=None
     ), patch("asyncio.create_subprocess_exec", side_effect=fake_exec):
         tool = MuseCliTool()
         setter = asyncio.create_task(_set_soon())
@@ -1078,36 +1045,12 @@ def test_list_muse_catalog_models_static_fallback(monkeypatch):
     from scripts.utilities import muse_cli_tool as muse_mod
 
     muse_mod.clear_muse_catalog_cache()
-    monkeypatch.setattr(muse_mod, "_fetch_meta_muse_spark_models", lambda: ([], "no key"))
     out = muse_mod.list_muse_catalog_models(refresh=True)
-    assert out["source"] == "static_fallback"
+    assert out["source"] == "static"
     assert out["count"] >= 5
     assert {m["id"] for m in out["models"]} >= {"muse-spark-1.3", "muse-spark-1.1"}
 
 
-def test_list_muse_catalog_models_meta_api(monkeypatch):
-    from scripts.utilities import muse_cli_tool as muse_mod
-
-    muse_mod.clear_muse_catalog_cache()
-    monkeypatch.setattr(
-        muse_mod,
-        "_fetch_meta_muse_spark_models",
-        lambda: (
-            [
-                {"id": "muse-spark-9.9", "label": "Muse Spark 9.9", "description": "future"},
-                {
-                    "id": "muse-spark-9.9-contributor",
-                    "label": "Muse Spark 9.9 (Contributor)",
-                    "description": "future contrib",
-                },
-            ],
-            None,
-        ),
-    )
-    out = muse_mod.list_muse_catalog_models(refresh=True)
-    assert out["source"] == "meta_api_refresh"
-    assert out["count"] == 2
-    assert out["models"][0]["id"] == "muse-spark-9.9"
 
 
 def test_resolve_muse_default_model_reads_cli_settings(monkeypatch):

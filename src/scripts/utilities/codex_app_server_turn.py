@@ -12,6 +12,8 @@ instead of spawning a competing writer, in either order.
 
 from __future__ import annotations
 
+from core.agent_cli_env import agent_cli_env
+
 import asyncio
 import concurrent.futures
 import json
@@ -254,7 +256,7 @@ async def run_codex_turn_app_server(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=workdir,
-            env=os.environ.copy(),
+            env=agent_cli_env(),
             limit=_STDOUT_LINE_LIMIT,
         )
     except OSError as exc:

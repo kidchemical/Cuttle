@@ -592,27 +592,7 @@ def kill_process_tree(proc) -> bool:
 
 
 def _kill_proc(proc) -> bool:
-    killed = kill_process_tree(proc)
-    if killed and os.name == "nt":
-        # WSL Muse runs inside wsl.exe — taskkill kills the wrapper but the
-        # Linux `muse exec` keeps running. Kill it inside WSL too.
-        try:
-            subprocess.run(
-                [
-                    "wsl",
-                    "-e",
-                    "bash",
-                    "-lc",
-                    "pkill -TERM -f 'muse exec' 2>/dev/null; sleep 1; "
-                    "pkill -KILL -f 'muse exec' 2>/dev/null",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-        except Exception:
-            pass
-    return killed
+    return kill_process_tree(proc)
 
 
 def ensure_session_procs_dead(session_id, timeout: float = 15.0) -> bool:

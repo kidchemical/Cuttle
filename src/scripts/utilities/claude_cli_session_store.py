@@ -63,6 +63,7 @@ def _load_all() -> Dict[str, Any]:
 
 def _write_all(data: Dict[str, Any]) -> None:
     path = _map_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, sort_keys=True)
@@ -106,7 +107,7 @@ def resolve_claude_resume(
     for k, v in data.items():
         if not isinstance(k, str) or not k.endswith(suffix):
             continue
-        if k.startswith("model\x1f") or k.startswith("ctx\x1f"):
+        if k.startswith("model\x1f") or k.startswith("ctx\x1f") or k.startswith("effort\x1f"):
             continue
         tid = _valid_session_id(v if isinstance(v, str) else None)
         if tid:
@@ -204,3 +205,26 @@ def save_claude_model(
             return None
         _write_all(data)
     return m or None
+
+
+def load_claude_effort(cuttle_session_id: Optional[Any]) -> Optional[str]:
+    if not _normalize_session_id(cuttle_session_id):
+        return None
+    with _lock:
+        value = _load_all().get("effort\x1f" + _normalize_session_id(cuttle_session_id))
+    return value.strip().lower() or None if isinstance(value, str) else None
+
+
+def save_claude_effort(cuttle_session_id: Optional[Any], effort: Optional[str]) -> Optional[str]:
+    if not _normalize_session_id(cuttle_session_id):
+        return None
+    key = "effort\x1f" + _normalize_session_id(cuttle_session_id)
+    value = str(effort or "").strip().lower()
+    with _lock:
+        data = _load_all()
+        if value:
+            data[key] = value
+        else:
+            data.pop(key, None)
+        _write_all(data)
+    return value or None

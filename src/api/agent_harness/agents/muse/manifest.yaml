@@ -2,10 +2,6 @@ id: muse
 label: Muse Code
 slash: /muse
 requires_cloud: true
-# Credential the CLI needs. Declared so Settings and the setup
-# wizard can say "add X" instead of the reader parsing prose.
-credential_env:
-  - META_API_KEY
 sticky: true
 # Empty — unpinned turns omit --model so the Muse CLI default wins
 # (often Contributor). Cuttle must never force Standard here.
@@ -35,21 +31,18 @@ capabilities_inject: once_per_resume
 env_profile: native
 activity: heartbeat
 hint: Run Meta Muse Code CLI (`muse exec`) with per-chat resume (Auto/Cloud)
+auth_command: muse login
 missing_cli_hint: >-
-  Install the native Muse Code build and ensure `muse` is on PATH, or set
-  `MUSE_CLI_PATH`. Legacy WSL install
-  (`curl -fsSL https://dev.meta.ai/install.sh | bash`, `MUSE_WSL_BIN`) is
-  deprecated but still works as a fallback.
+  Install native Muse Code for this host and ensure `muse` is on PATH,
+  or set `MUSE_CLI_PATH`. Authenticate with `muse login`.
 install_hint: >-
-  Install native Muse Code, set `META_API_KEY` in `src/.env`, or run
-  `muse login`. Optional: `MUSE_CLI_PATH` (native). `MUSE_WSL_BIN` (WSL) is
-  deprecated.
+  Install native Muse Code yourself, then run `muse login`.
+  Optional executable override: `MUSE_CLI_PATH`.
 executable_names:
   - muse
 auto_install: false
 notes: >-
   Bundled harness connector wrapping scripts.utilities.muse_cli_tool.
   Native-first on Windows (Meta install: `%LOCALAPPDATA%\Programs\muse\muse-bin-*.exe`
-  via PATH / MUSE_CLI_PATH). WSL-forwarding muse.cmd shims are rejected. WSL kept only as
-  a deprecated fallback. Long prompts use --prompt-file (no silent argv
+  via PATH / MUSE_CLI_PATH). WSL-forwarding muse.cmd shims are rejected. Only native host execution is supported. Long prompts use --prompt-file (no silent argv
   truncation).

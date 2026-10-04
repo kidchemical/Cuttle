@@ -236,92 +236,16 @@ missing_cli_hint: >-
   Install Tool and ensure `tool` is on PATH (see https://…/docs/).
 install_hint: >-
   Install `tool` yourself (`npm i -g tool-package`), then authenticate
-  with `tool auth login` or set `TOOL_API_KEY` in `src/.env`.
+  with the CLI's native login/configuration (for example `tool auth login`).
 ```
 
-### Declare your auth story (required)
+### Declare native authentication
 
-Settings → Agents and the setup wizard render straight from the catalog, so an
-agent must say **declaratively** what it needs. Prose in `install_hint` is shown
-but never parsed:
-
-```yaml
-# Pick exactly one:
-credential_env: [TOOL_API_KEY]     # Cuttle-managed key(s), most-preferred first
-# ...or, when the CLI owns its own login:
-auth_command: tool auth login
-```
-
-* `credential_env` — env vars whose presence Cuttle can check. It computes
-  `credential_present` and `ready` in `public_catalog()`. Order is
-  load-bearing: the first entry is what the UI tells the user to create.
-* `auth_command` — shown as "Not signed in? Run …" so a CLI-authed agent never
-  gets nagged about a key it does not use.
-* Neither, with `requires_cloud: false` — a local-only agent needs nothing.
-
-`ready = available() and (credential_present or no credential_env)`, so both
-Settings and the wizard agree on what "installed" means without reimplementing
-it.
-
-When an explicitly selected agent is missing, the kernel answers with
-that guidance and stops; authentication is a separate state and must
-produce a short actionable message. Never add per-adapter install or
-update machinery — link the vendor's official installer instead.
-
-Security boundary: automatic installers are accepted only from **bundled** connectors, script
-URLs must use HTTPS and an allowlisted upstream host, installer processes are serialized, and
-project/user drop-ins can never execute installation metadata. Do not turn arbitrary
-`install_hint` text into a shell command.
-
-## Auth sync (API keys) — install / first-use gate
-
-CLI install ≠ authenticated. After a fresh install (or whenever the adapter detects missing /
-unauthorized credentials), the agent author must wire a **human-gated sync step** so the user
-can copy keys from Cuttle into the CLI's credential store **without the LLM ever seeing them**.
-
-### Do not invent a single “provider-agnostic API key”
-
-Providers are not interchangeable:
-
-| Layer | Shared? | Why |
-|---|---|---|
-| Sync *pattern* (allowlisted action → read Cuttle env/`.env` → write CLI auth) | Yes | One security story: silent toast, no key in chat, no agent paste |
-| Env var / secret value (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, …) | No | Different issuers, formats, billing, and CLI auth schemas |
-| Target store (`~/.local/share/opencode/auth.json`, Gemini env-only, `agy` login, …) | No | Each CLI owns its own credential layout |
-
-OpenCode's `opencode.sync-auth` already supports **multiple providers** (`openai` | `anthropic` |
-`both` | `status`) — that is the right shape: one action per *agent*, params select the
-provider. Do **not** collapse into one shared `API_KEY` or one mega-action that guesses which
-vendor key to write where.
-
-### Required authoring checklist (when the agent needs cloud auth)
-
-1. **Declare which Cuttle env vars** the agent can consume (manifest `install_hint` / notes).
-2. **Ship an allowlisted action** under `.cuttle/actions/` (e.g. `opencode.sync-auth`) whose
-   shell script reads env/`.env` and writes the CLI store. Never print the secret — status only.
-3. **Error-shaping** must name that action (or interactive `cli auth login`) in one line when
-   auth/quota fails — see `summarize_opencode_error` / Gemini equivalents.
-4. **On install / first unauthorized use**, the agent (or installer handoff reply) should emit a
-   `<cuttle_action_form>` asking the human to sync — not ask them to paste a key into chat.
-   Example shape (OpenCode):
-
-```text
-<cuttle_action_form>
-{"mode":"choice","title":"Sync API key → OpenCode","lock":"form","silent":true,"options":[
-  {"id":"openai","label":"Sync OpenAI","action":"opencode.sync-auth","params":{"provider":"openai"}},
-  {"id":"anthropic","label":"Sync Anthropic","action":"opencode.sync-auth","params":{"provider":"anthropic"}},
-  {"id":"both","label":"Sync both","action":"opencode.sync-auth","params":{"provider":"both"}},
-  {"id":"status","label":"Status only","action":"opencode.sync-auth","params":{"provider":"status"}}
-]}
-</cuttle_action_form>
-```
-
-5. **Env passthrough alone is not enough** for CLIs that only read their own `auth.json` /
-   interactive login. Prefer sync action when the upstream store is file-based; prefer documenting
-   `GEMINI_API_KEY` / `cli login` when the CLI already honors process env.
-
-Reference implementation: [file:////path/to/Cuttle/.cuttle/scripts/opencode_sync_auth.py](file:////path/to/Cuttle/.cuttle/scripts/opencode_sync_auth.py)
-+ [file:////path/to/Cuttle/.cuttle/actions/opencode-sync-auth.yaml](file:////path/to/Cuttle/.cuttle/actions/opencode-sync-auth.yaml).
+Guest CLIs own authentication. Set `auth_command: tool auth login` when the CLI
+has a login command, and describe its native configuration in `install_hint`.
+Do not declare `credential_env` to request provider keys in Cuttle Settings.
+CLI presence is not proof of a valid login; report authentication failures from
+the CLI and direct the user to its own login/configuration.
 
 ## Frozen adapter contract
 
@@ -409,7 +333,7 @@ Put the cheap id in `smoke_model` so a forgotten env still does not spend Pro.
    - `public_catalog()` row has `available: bool`, `status`, `install_hint`,
    - `public_catalog()` row has `ready: bool`, `credential_env`,
      `credential_present`, `auth_command` — and declares an auth story at all
-     (`credential_env`, `auth_command`, or `requires_cloud: false`; see
+     (`auth_command` or native configuration guidance; see
      **Declare your auth story**),
    - dispatch runner registered,
    - **project chip cwd**: `resolve_cwd(tmp_project)` stays in that folder even if
@@ -424,7 +348,7 @@ Put the cheap id in `smoke_model` so a forgotten env still does not spend Pro.
    Auth failures must mention the sync action or `cli auth login`. See
    adapter stderr summarizers + `src/tests/test_agent_harness_smoke.py`.
    If you added a sync script, cover it with a small unit test that asserts keys never appear in
-   stdout (pattern: `src/tests/test_opencode_sync_auth.py`).
+   stdout (pattern: `src/tests/test_agent_cli_env.py`).
    Also assert **prompt integrity** with a payload longer than any argv threshold and a
    sentinel at the end. Silent truncation is never an acceptable workaround.
 6. **Resume + handoff tests (required).**
@@ -439,7 +363,7 @@ Put the cheap id in `smoke_model` so a forgotten env still does not spend Pro.
      `chat_session_id` asks for it and must get it back (proves native resume works).
 7. **Run the offline suite:**
    ```
-   .venv\Scripts\python.exe -m pytest src/tests/test_agent_harness.py src/tests/test_agent_harness_smoke.py src/tests/test_agent_resume_contract.py src/tests/test_context_compiler.py src/tests/test_opencode_sync_auth.py -q
+   .venv\Scripts\python.exe -m pytest src/tests/test_agent_harness.py src/tests/test_agent_harness_smoke.py src/tests/test_agent_resume_contract.py src/tests/test_context_compiler.py src/tests/test_agent_cli_env.py -q
    ```
 8. **Live smoke (gated) — ask first, then spend.** Never run the unscoped default when adding
    an agent (that fans one_shot + envelope + resume across *every* installed CLI). After the
@@ -477,7 +401,7 @@ Put the cheap id in `smoke_model` so a forgotten env still does not spend Pro.
 | `codex` | `codex exec` | resume via thread id; optional `reasoning_effort`; Cursor-style JSONL activity (`tool N:` / `thinking:` / `writing:`) |
 | `muse` | `muse exec` (WSL) | `--prompt-file` for long prompts; `/muse model` in adapter |
 | `claude` | `claude --print` | no native per-chat resume yet; auto-install npm package |
-| `opencode` | `opencode run` | pilot + sync-auth action |
+| `opencode` | `opencode run` | native CLI authentication |
 | `antigravity` | `agy` | auto-install |
 | `hermes` | `hermes chat -Q -q` | local or OpenRouter via config.yaml; `requires_cloud: false`; per-chat `--resume` + state.db status poll |
 | `deepseek` | `dsh --profile headless` | Flash by default (`smoke_model` = Flash); no native per-chat resume; needs `DEEPSEEK_API_KEY`. Tentacle for DeepSeek Harness — steal kernel ideas separately ([`MODULARITY.md`](../../../docs/guides/MODULARITY.md)); do not treat dsh as Cuttle’s core. |
@@ -513,3 +437,12 @@ when permission_denials includes their arguments. CLI versions that do not expor
 question arguments cannot be reconstructed: use the form instruction and the
 vendor's native-tool disabling mechanism where available. Test vendor recognition
 with fake processes/event fixtures, never paid CLI calls in ordinary tests.
+
+### Guest process environment
+
+Use `core.agent_cli_env.agent_cli_env()` for every CLI subprocess, including
+model discovery, usage probes, and persistent servers. Cuttle provider credentials
+must never override guest CLI authentication. Preserve native configuration paths
+and let the CLI read its own login/configuration. Do not load Cuttle `src/.env`
+in adapters or embed its credentials in argv. Catalog `credential_env` must not
+request Cuttle API keys for guest CLIs.

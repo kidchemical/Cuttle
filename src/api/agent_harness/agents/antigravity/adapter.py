@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from core.agent_cli_env import agent_cli_env
+
 import asyncio
 import json
 import math
@@ -56,7 +58,7 @@ def summarize_antigravity_error(raw: str, returncode: Optional[int] = None) -> s
     if "gemini_api_key" in low and ("missing" in low or "not set" in low):
         return (
             "Antigravity is configured for Gemini API-key auth but GEMINI_API_KEY is not set. "
-            "Set it for the Cuttle daemon or remove the `modelProvider` override."
+            "Configure authentication in Antigravity itself or remove the `modelProvider` override."
         )
     if "quota" in low or "credits" in low and ("exhaust" in low or "insufficient" in low):
         return "Antigravity quota or credits are exhausted. Check `agy -p \"/usage\"` and retry later."
@@ -151,7 +153,7 @@ async def _authentication_preflight(exe: str, cwd: str) -> Optional[str]:
             stderr=asyncio.subprocess.PIPE,
             stdin=asyncio.subprocess.DEVNULL,
             cwd=cwd,
-            env=os.environ.copy(),
+            env=agent_cli_env(),
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=15.0)
     except (OSError, asyncio.TimeoutError):
@@ -242,7 +244,7 @@ class Adapter:
                 stderr=asyncio.subprocess.PIPE,
                 stdin=asyncio.subprocess.DEVNULL,
                 cwd=cwd,
-                env=os.environ.copy(),
+                env=agent_cli_env(),
             )
             attach_to_chat_run(chat_session_id, proc)
             run = await run_interruptible(

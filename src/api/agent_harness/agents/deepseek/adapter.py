@@ -1,7 +1,7 @@
 """DeepSeek Harness (`dsh`) adapter — headless one-shot.
 
 CLI: ``dsh --profile headless "<task>"`` (developer preview). Default model is
-``deepseek-v4-flash``. Auth is ``DEEPSEEK_API_KEY`` (optional ``DEEPSEEK_BASE_URL``).
+``deepseek-v4-flash``. Authentication belongs to the installed CLI.
 
 Headless creates a fresh session every call, so ``resume`` is false. On Windows
 we skip the npm ``dsh.cmd`` shim and run ``node …/bin.js`` so multiline prompts
@@ -9,6 +9,8 @@ are not truncated by ``%*``.
 """
 
 from __future__ import annotations
+
+from core.agent_cli_env import agent_cli_env
 
 import asyncio
 import os
@@ -31,8 +33,6 @@ from scripts.utilities.agent_process import (
 _MAX_PROMPT_FOR_ARGV = 20000
 _DEFAULT_MODEL = "deepseek-v4-flash"
 _MODEL_RE = re.compile(r"^[A-Za-z0-9._-]+$")
-# adapter.py → deepseek → agents → agent_harness → api → src
-_SRC_ENV = Path(__file__).resolve().parents[4] / ".env"
 
 
 def dsh_argv() -> Optional[List[str]]:
@@ -54,38 +54,13 @@ def _safe_model(model: Optional[str]) -> str:
     return mid if _MODEL_RE.fullmatch(mid) else _DEFAULT_MODEL
 
 
-def _ensure_src_env() -> None:
-    """Load ``DEEPSEEK_*`` from ``src/.env`` when the process env does not have them."""
-    if (os.environ.get("DEEPSEEK_API_KEY") or "").strip():
-        return
-    path = _SRC_ENV
-    if not path.is_file():
-        return
-    try:
-        from dotenv import load_dotenv
-
-        load_dotenv(path, override=False)
-    except Exception:
-        try:
-            for line in path.read_text(encoding="utf-8").splitlines():
-                raw = line.strip()
-                if not raw or raw.startswith("#") or "=" not in raw:
-                    continue
-                key, val = raw.split("=", 1)
-                key = key.strip()
-                if key.startswith("DEEPSEEK_"):
-                    os.environ.setdefault(key, val.strip().strip('"').strip("'"))
-        except OSError:
-            pass
-
-
 def summarize_deepseek_error(raw: str, returncode: Optional[int] = None) -> str:
     text = (raw or "").strip()
     low = text.lower()
     if "missing_credential" in low or "no api key" in low or "deepseek_api_key" in low:
         return (
-            "DeepSeek Harness is not authenticated. Set `DEEPSEEK_API_KEY` in `src/.env` "
-            "(optional `DEEPSEEK_BASE_URL`), restart Flask, then retry."
+            "DeepSeek Harness is not authenticated. Configure credentials in the DeepSeek CLI "
+            "itself, then retry."
         )
     if "unauthorized" in low or "invalid api key" in low or "401" in low:
         return (
@@ -166,7 +141,6 @@ class Adapter:
                 model=_safe_model(model),
             )
 
-        _ensure_src_env()
         from api.agent_harness.agent_defaults import (
             SOURCE_CLI_DEFAULT,
             SOURCE_OVERRIDE,
@@ -212,7 +186,7 @@ class Adapter:
         if patch_path:
             cmd.extend(["--patch", patch_path])
         cmd.append(task)
-        env = os.environ.copy()
+        env = agent_cli_env()
         stop = asyncio.Event()
         hb = asyncio.create_task(
             heartbeat_status(

@@ -3,10 +3,12 @@ Claude Code CLI integration — non-interactive ``claude -p`` with JSON output.
 
 Runs against the real project cwd (no sandbox mirror). Resume uses
 ``--resume <session_id>`` from ``claude_cli_session_store``.
-Auth: same as the user's Claude install (`claude auth login` / ANTHROPIC_API_KEY).
+Auth: the user's native Claude login/config; host API credentials are isolated.
 """
 
 from __future__ import annotations
+
+from core.agent_cli_env import agent_cli_env
 
 import asyncio
 import json
@@ -259,7 +261,8 @@ def usage_for_query_report(usage: Dict[str, Any], model: str) -> Dict[str, Any]:
 class ClaudeCliTool:
     """Non-interactive Claude Code runs for Cuttle slash + harness backends."""
 
-    def __init__(self, model: Optional[str] = None):
+    def __init__(self, model: Optional[str] = None, reasoning_effort: Optional[str] = None):
+        self.reasoning_effort = reasoning_effort
         env_model = (os.getenv("CLAUDE_MODEL") or "").strip()
         self.model = (model or env_model or "").strip() or None
 
@@ -316,6 +319,8 @@ class ClaudeCliTool:
         ]
         if self.model:
             cmd.extend(["--model", self.model])
+        if self.reasoning_effort:
+            cmd.extend(["--effort", self.reasoning_effort])
         rid = (resume or "").strip()
         if rid:
             cmd.extend(["--resume", rid])
@@ -328,7 +333,7 @@ class ClaudeCliTool:
             cmd.append(prompt)
 
         _status_put(status_queue, "Calling Claude Code…")
-        env = os.environ.copy()
+        env = agent_cli_env()
         proc = None
         try:
             proc = await asyncio.create_subprocess_exec(
