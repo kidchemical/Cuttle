@@ -28,18 +28,12 @@ UNSAFE_SHELL_KINDS = frozenset({"execute_shell_unsafe", "execute_shell_ssh", "ex
 
 def unsafe_shell_approval_required() -> bool:
     try:
-        from pathlib import Path
-        import json
-
-        path = Path(__file__).resolve().parents[2] / "settings.json"
-        if path.is_file():
-            data = json.loads(path.read_text(encoding="utf-8"))
-            block = data.get("device_workers") if isinstance(data, dict) else None
-            if isinstance(block, dict):
-                if "unsafe_shell_approval_required" in block:
-                    return bool(block.get("unsafe_shell_approval_required"))
-                if "ssh_approval_required" in block:
-                    return bool(block.get("ssh_approval_required"))
+        from api.device_workers.config import _settings_block
+        block = _settings_block()
+        if "unsafe_shell_approval_required" in block:
+            return bool(block["unsafe_shell_approval_required"])
+        if "ssh_approval_required" in block:
+            return bool(block["ssh_approval_required"])
     except Exception:
         pass
     return True

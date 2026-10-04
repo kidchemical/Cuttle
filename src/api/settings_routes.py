@@ -55,10 +55,6 @@ SETTING_FAMILIES = (
     {"name": "channels", "routes": ["GET/POST /settings/channels"],
      "backend": "settings_manager channel config (pairing-gated)",
      "validator": "validate_channel_update", "read": "owner", "write": "owner"},
-    {"name": "sandbox", "routes": ["GET /settings/sandbox", "POST /settings/sandbox"],
-     "backend": "settings_manager sandbox config",
-     "validator": "SANDBOX_WRITABLE_KEYS (unknown ignored; empty POST is no-op 200)",
-     "read": "authenticated", "write": "owner"},
     {"name": "starred-slash", "routes": ["GET/POST /settings/starred-slash"],
      "backend": "api.starred_slash", "validator": "set_starred_prefixes",
      "read": "authenticated", "write": "owner"},
@@ -92,17 +88,9 @@ SETTING_FAMILIES = (
 
 def validate_channel_update(data: dict) -> tuple[bool, str]:
     """Channel writes accept only the live channels."""
-    if data.get('channel') not in ('webchat', 'discord'):
+    if data.get('channel') != 'webchat':
         return False, 'Invalid channel'
     return True, ''
-
-
-SANDBOX_WRITABLE_KEYS = frozenset({
-    'enabled', 'allowed_tools', 'allowed_pipelines', 'denied_tools',
-    'denied_tool_prefixes', 'restrict_for_session_kinds',
-})
-"""Accepted sandbox POST keys. Unknown keys are ignored; an empty POST is a
-no-op 200 (frozen contract) — do not add a required-keys gate here."""
 
 
 def validate_ui_layout_update(data: dict) -> dict:
@@ -346,11 +334,12 @@ def api_settings_lan_access():
             ok, err = validate_lan_access_update(data)
             if not ok:
                 return jsonify({'success': False, 'error': err}), 400
-            discovery['lan_access_enabled'] = bool(data['lan_access_enabled'])
+            patch = {'lan_access_enabled': bool(data['lan_access_enabled'])}
             if 'mdns_enabled' in data:
-                discovery['mdns_enabled'] = bool(data['mdns_enabled'])
-            if not sm.set_setting('discovery', discovery):
+                patch['mdns_enabled'] = bool(data['mdns_enabled'])
+            if not sm.update_setting('discovery', lambda current: {**(current or {}), **patch}):
                 return jsonify({'success': False, 'error': 'Failed to save settings'}), 500
+            discovery = sm.get_setting('discovery')
 
         enabled = bool(discovery.get('lan_access_enabled'))
         # Live process may still reflect env override / pre-restart bind.
@@ -383,13 +372,13 @@ def api_settings_lan_access():
 @settings_bp.route('/settings/channels', methods=['GET'])
 @owner_required
 def get_channel_settings():
-    """Get channel security config (dmPolicy, allowFrom) for webchat and discord."""
+    """Get channel security config (dmPolicy, allowFrom) for Web Chat."""
     if not PAIRING_AVAILABLE:
         return jsonify({'success': False, 'error': 'Pairing not available'}), 503
     try:
         settings = get_settings_manager()
         channels = {}
-        for ch in ('webchat', 'discord'):
+        for ch in ('webchat',):
             channels[ch] = settings.get_channel_config(ch)
         return jsonify({'success': True, 'channels': channels})
     except Exception as e:
@@ -413,38 +402,6 @@ def update_channel_settings():
         if dm_policy is not None or allow_from is not None:
             settings.set_channel_config(channel, dm_policy=dm_policy, allow_from=allow_from)
         return jsonify({'success': True, 'channels': {channel: settings.get_channel_config(channel)}})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-# --- sandbox (backend: settings_manager) ------------------------------------
-
-@settings_bp.route('/settings/sandbox', methods=['GET'])
-@authenticated_required
-def get_sandbox_settings():
-    """Get sandbox config (enabled, restrict_for_session_kinds, allowed/denied tools, allowed_pipelines)."""
-    try:
-        settings = get_settings_manager()
-        return jsonify({'success': True, 'sandbox': settings.get_sandbox_config()})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-@settings_bp.route('/settings/sandbox', methods=['POST'])
-@owner_required
-def update_sandbox_settings():
-    """Update sandbox config. Owner only (decorator is the single enforcement point)."""
-    try:
-        data = request.get_json() or {}
-        settings = get_settings_manager()
-        settings.set_sandbox_config(
-            enabled=data.get('enabled'),
-            allowed_tools=data.get('allowed_tools'),
-            allowed_pipelines=data.get('allowed_pipelines'),
-            denied_tools=data.get('denied_tools'),
-            denied_tool_prefixes=data.get('denied_tool_prefixes'),
-            restrict_for_session_kinds=data.get('restrict_for_session_kinds'),
-        )
-        return jsonify({'success': True, 'sandbox': settings.get_sandbox_config()})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -534,12 +491,17 @@ def update_ui_layout():
     try:
         data = request.get_json() or {}
         settings = get_settings_manager()
-        layout = settings.get_setting('ui_layout') or {}
-        layout.update(validate_ui_layout_update(data))
-        # Drop legacy side-panel layout keys (panel removed; rail-only shell)
-        for legacy in ('panel_sections', 'section_status_items', 'section_nav_items', 'nav_rows_hidden'):
-            layout.pop(legacy, None)
-        settings.set_setting('ui_layout', layout)
+        patch = validate_ui_layout_update(data)
+
+        def apply(current):
+            layout = {**(current or {}), **patch}
+            for legacy in ('panel_sections', 'section_status_items', 'section_nav_items', 'nav_rows_hidden'):
+                layout.pop(legacy, None)
+            return layout
+
+        if not settings.update_setting('ui_layout', apply):
+            return jsonify({'success': False, 'error': 'Failed to save settings'}), 500
+        layout = settings.get_setting('ui_layout')
         return jsonify({'success': True, 'ui_layout': layout})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -571,8 +533,9 @@ def update_video_background_setting():
         from api.video_playlists import apply_video_background_update
         data = request.get_json() or {}
         settings = get_settings_manager()
-        vb = apply_video_background_update(settings.get_setting('video_background'), data)
-        settings.set_setting('video_background', vb)
+        if not settings.update_setting('video_background', lambda current: apply_video_background_update(current, data)):
+            return jsonify({'success': False, 'error': 'Failed to save settings'}), 500
+        vb = settings.get_setting('video_background')
         return jsonify({'success': True, 'video_background': vb})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -738,10 +701,11 @@ def get_all_app_settings():
         from managers.settings_manager import get_settings_manager
         settings_mgr = get_settings_manager()
 
-        return jsonify({
-            'success': True,
-            'settings': settings_mgr.get_all_settings()
-        })
+        snapshot = settings_mgr.get_all_settings()
+        # Legacy installs may still hold a shared bearer token until migration.
+        if isinstance(snapshot.get('device_workers'), dict):
+            snapshot['device_workers'].pop('token', None)
+        return jsonify({'success': True, 'settings': snapshot})
     except Exception as e:
         return jsonify({
             'success': False,

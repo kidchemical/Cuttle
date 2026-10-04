@@ -65,7 +65,7 @@ def main() -> int:
     if not url:
         _log(
             "Set CUTTLE_DEVICE_WORKERS_COORDINATOR_URL "
-            "(or device_workers.coordinator_url in settings.json)"
+            "(or device_workers.coordinator_url in machine_settings.json)"
         )
         return 2
 

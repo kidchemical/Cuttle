@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from core.runtime_paths import runtime_data_dir
+from core.runtime_paths import runtime_data_dir, secrets_dir
 
 SESSION_FILES = (
     "antigravity", "claude", "codex", "cursor", "hermes", "muse", "opencode",
@@ -28,6 +28,7 @@ def migration_pairs(root: Path) -> list[tuple[Path, Path]]:
                base / "home_automation" / f"{name}.json")
               for name in ("devices", "schedule", "auto_state", "daemon_heartbeat")]
     pairs += [(root / "src" / "bot_config.json", base / "config" / "runtime_config.json")]
+    pairs += [(base / "db" / "action_hmac_secret", secrets_dir(root) / "action_hmac_secret")]
     pairs += [(base / "govee_api_batch.lock", base / "home_automation" / "govee_api_batch.lock"),
               (base / "agent_memory", base / "archive" / "agent_memory"),
               (base / "workspace" / "gemini_cli_session_map.json",
@@ -45,17 +46,25 @@ def migrate(root: Path) -> list[tuple[Path, Path]]:
     Preflight every destination before moving anything. Never merge or overwrite.
     Moves preserve bytes and SQLite sidecars because their whole directory moves.
     """
+    from managers.settings_storage import migrate_settings, migration_needed
+
     pairs = migration_pairs(root)
     conflicts = [str(target) for _, target in pairs if target.exists() or target.is_symlink()]
     if conflicts:
         raise FileExistsError("Migration destinations already exist: " + ", ".join(conflicts))
+    if migration_needed(root):
+        for name in ("machine_settings.json", "ui_state.json"):
+            target = runtime_data_dir(root) / "config" / name
+            if target.exists() or target.is_symlink():
+                raise FileExistsError(f"Settings migration destination already exists: {target}")
     moved = []
     try:
         for source, target in pairs:
             target.parent.mkdir(parents=True, exist_ok=True)
             source.rename(target)
             moved.append((source, target))
-    except OSError:
+        settings_changes = migrate_settings(root) if migration_needed(root) else []
+    except (OSError, ValueError):
         # Keep legacy generation coherent if a later rename fails.
         for source, target in reversed(moved):
             target.rename(source)
@@ -63,7 +72,7 @@ def migrate(root: Path) -> list[tuple[Path, Path]]:
     workspace = runtime_data_dir(root) / "workspace"
     if workspace.is_dir() and not any(workspace.iterdir()):
         workspace.rmdir()
-    return pairs
+    return pairs + settings_changes
 
 
 def active_processes(root: Path) -> list[int]:
@@ -101,7 +110,9 @@ def active_processes(root: Path) -> list[int]:
 
 def migrate_when_stopped(root: Path) -> list[tuple[Path, Path]]:
     """Startup/CLI guard; excludes the current daemon before it starts services."""
-    if not migration_pairs(root):
+    from managers.settings_storage import migration_needed
+
+    if not migration_pairs(root) and not migration_needed(root):
         return []
     active = active_processes(root)
     if active:
@@ -121,6 +132,10 @@ def main() -> None:
             parser.error(str(exc))
     else:
         pairs = migration_pairs(root)
+        from managers.settings_storage import migration_needed
+        if migration_needed(root):
+            pairs += [(root / "src/settings.json", runtime_data_dir(root) / "config" / name)
+                      for name in ("machine_settings.json", "ui_state.json")]
     for source, target in pairs:
         print(f"{source.relative_to(root)} -> {target.relative_to(root)}")
 

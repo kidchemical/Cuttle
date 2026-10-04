@@ -71,25 +71,25 @@ def test_signed_inline_token_roundtrip(monkeypatch):
     pa._hmac_secret_cache = None
 
 
-def test_anonymous_sandbox_post_rejected():
+def test_anonymous_channel_post_rejected():
     from api import web_chat_api as wca
 
     client = wca.app.test_client()
     res = client.post(
-        "/api/settings/sandbox",
-        json={"enabled": False},
+        "/api/settings/channels",
+        json={"channel": "webchat"},
         environ_base={"REMOTE_ADDR": "192.168.1.50"},
     )
     assert res.status_code == 401
 
 
-def test_guest_cannot_change_sandbox():
+def test_guest_cannot_change_channel():
     from api import web_chat_api as wca
 
     client = wca.app.test_client()
     guest = client.post("/api/auth/guest", json={})
     assert guest.status_code == 200
-    res = client.post("/api/settings/sandbox", json={"enabled": False})
+    res = client.post("/api/settings/channels", json={"channel": "webchat"})
     assert res.status_code == 403
 
 

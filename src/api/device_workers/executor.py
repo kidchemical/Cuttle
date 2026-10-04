@@ -197,17 +197,7 @@ def execute_job(job: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _dw_settings() -> Dict[str, Any]:
-    """Live device_workers block from settings.json (disk), then settings manager."""
-    try:
-        # Prefer disk so enabling SSH/prefixes applies without relying on a stale singleton.
-        path = Path(__file__).resolve().parents[2] / "settings.json"
-        if path.is_file():
-            data = json.loads(path.read_text(encoding="utf-8"))
-            block = data.get("device_workers") if isinstance(data, dict) else None
-            if isinstance(block, dict):
-                return block
-    except Exception:
-        pass
+    """Live machine settings through the shared persistence owner."""
     try:
         from managers.settings_manager import get_settings_manager
 

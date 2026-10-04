@@ -7782,40 +7782,6 @@ button.cuttle-button.is-unselected {
     opacity: 1;
 }
 
-/* Pipeline config warning banner */
-.pipeline-config-banner {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 14px;
-    background: rgba(245, 158, 11, 0.15);
-    border: 1px solid rgba(245, 158, 11, 0.5);
-    border-radius: 8px;
-    margin: 10px 16px;
-    font-size: 0.9rem;
-    color: var(--text-primary);
-}
-.pipeline-config-banner .banner-icon { font-size: 1.1rem; }
-.pipeline-config-banner .banner-text { flex: 1; }
-.pipeline-config-banner .banner-link {
-    color: var(--accent-color);
-    text-decoration: underline;
-    overflow-wrap: anywhere;
-    word-break: break-word;
-}
-.pipeline-config-banner .banner-dismiss {
-    background: none;
-    border: none;
-    color: var(--text-secondary);
-    font-size: 1.4rem;
-    cursor: pointer;
-    padding: 0 4px;
-    line-height: 1;
-}
-.pipeline-config-banner .banner-dismiss:hover {
-    color: var(--text-primary);
-}
-
 /* ── Message fit: long replies / URLs / code must wrap on all viewports ── */
 .message-content p,
 .message-content li,
@@ -7864,10 +7830,6 @@ button.cuttle-button.is-unselected {
         overflow-x: hidden;
     }
 
-    .pipeline-config-banner {
-        flex-wrap: wrap;
-        margin: 10px 12px;
-    }
 }
 
 /* Pause decorative infinite motion when the shell is backgrounded, or OS

@@ -1,4 +1,4 @@
-"""Config for device workers — settings.json flags + .env secrets."""
+"""Machine settings via SettingsManager; shared secrets via .env/secret files."""
 
 from __future__ import annotations
 
@@ -62,9 +62,14 @@ def device_workers_enabled() -> bool:
 
 def worker_token() -> str:
     """Optional shared bearer override (legacy). Prefer auto-enroll per device."""
-    return _env("CUTTLE_DEVICE_WORKERS_TOKEN") or str(
-        _settings_block().get("token") or ""
-    ).strip()
+    explicit = _env("CUTTLE_DEVICE_WORKERS_TOKEN")
+    if explicit:
+        return explicit
+    from core.runtime_paths import secrets_dir
+    from managers.settings_storage import read_json
+    stored = read_json(secrets_dir() / "worker_shared_token.json").get("token")
+    # Existing installs remain compatible until the guarded cold-start split.
+    return str(stored or _settings_block().get("token") or "").strip()
 
 
 def coordinator_base_url() -> str:
@@ -155,7 +160,6 @@ def default_settings() -> Dict[str, Any]:
         "interactive_priority": "low",
         "local_worker": True,
         "allowed_path_prefixes": [],
-        "token": "",
         # When true, host may auto-suggest/enqueue mesh plans (still prefer explicit verbs).
         "auto_mesh": False,
         # Dangerous: free-form local shell on the worker (prefer recipes / cuttle_self_update).

@@ -249,8 +249,14 @@ Coordinator HTTP: `/api/workers/*` (`device_workers`). Store: gitignored SQLite 
 
 HTTP is extracted: `settings_bp` (`api.settings_routes`, url prefix
 `/api`) owns validation/persistence/defaults/authorization; app defaults
-live in `src/managers/settings_manager.py` → `src/settings.json`
-(gitignored). Zero `/api/settings` routes remain on the Flask root.
+live in `src/managers/settings_manager.py`; `managers.settings_storage` owns
+locked atomic persistence. `src/settings.json` owns server preferences,
+`src/data/config/machine_settings.json` owns `device_workers`/`discovery`, and
+`src/data/config/ui_state.json` owns `ui_layout`/`shell_workspaces` (all gitignored).
+Existing unversioned settings stay monolithic until the guarded cold-start migration;
+`schema_version: 1` records the split, independently of the release SemVer.
+Retired graph settings, node-editor preferences, graph sandbox, and inbound Discord
+channel config are removed. Zero `/api/settings` routes remain on the Flask root.
 
 **Model/runtime preference store:** `core.config.RuntimeConfig` owns
 `src/data/config/runtime_config.json`, resolved by `core.runtime_paths.runtime_config_path`
@@ -264,8 +270,9 @@ GitHub App credentials and verified commit identity belong to `api.github_app`.
 `settings_routes` owns the Account settings HTTP surface; Cuttle Git commits
 consume the shared identity through `git_service.stage_and_commit` and
 `scripts.utilities.git_pending_changes`. See `.cuttle/docs/github-app.md`.
-`src/settings.json` still owns shell/router/LAN settings; these two stores are not
-merged. `src/bot.py` and its obsolete gateway-owner tests are removed.
+Runtime/model preferences remain separate from SettingsManager's scoped stores;
+these stores are not merged. Browser `localStorage` is still device-specific;
+saved server UI state is still install-wide, not newly account-scoped. `src/bot.py` and its obsolete gateway-owner tests are removed.
 
 ---
 

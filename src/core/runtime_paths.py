@@ -123,6 +123,13 @@ def runtime_config_path(project_root: Optional[Path] = None) -> Path:
     return runtime_data_dir(root) / "config" / "runtime_config.json"
 
 
+def action_hmac_secret_path(project_root: Optional[Path] = None) -> Path:
+    """Keep existing action signatures valid until the offline secret move."""
+    root = Path(project_root) if project_root is not None else _repo_root()
+    legacy = runtime_data_dir(root) / "db" / "action_hmac_secret"
+    return legacy if legacy.exists() else secrets_dir(root) / "action_hmac_secret"
+
+
 def bot_config_path(project_root: Optional[Path] = None) -> Path:
     """Compatibility alias for integrations using the former helper name."""
     return runtime_config_path(project_root)

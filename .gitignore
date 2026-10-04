@@ -179,3 +179,7 @@ src/tests/test-results/
 src/test-results/
 src/scripts/output/
 src/data/config/
+
+# Settings atomic-write scratch and stable process lock (install-local).
+src/settings.json.lock
+src/.settings.json.*

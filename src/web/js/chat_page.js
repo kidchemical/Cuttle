@@ -11041,23 +11041,6 @@
         }
     }
     
-    function showPipelineConfigBanner(message) {
-        const main = document.querySelector('.chat-main');
-        if (!main) return;
-        let banner = document.getElementById('pipelineConfigBanner');
-        if (banner) return;
-        banner = document.createElement('div');
-        banner.id = 'pipelineConfigBanner';
-        banner.className = 'pipeline-config-banner';
-        banner.innerHTML = `
-            <span class="banner-icon">⚠️</span>
-            <span class="banner-text">${escapeHtml(message)}</span>
-            <a class="banner-link" href="/settings_page.html" target="_top">Fix in Settings</a>
-            <button class="banner-dismiss" onclick="this.parentElement.remove()" title="Dismiss">×</button>
-        `;
-        main.insertBefore(banner, main.firstChild);
-    }
-
     function addSystemMessage(message, opts = {}) {
         const messagesContainer = document.getElementById('chatMessages');
         if (!messagesContainer) return;
@@ -21805,18 +21788,6 @@
                 if (box) activateVegaEmbeds(box);
             } catch (_) {}
         }
-
-        // Pipeline graphs are optional; chat uses slash agents + the router.
-        fetch('/api/doctor')
-            .then(r => r.json())
-            .then(data => {
-                const webchatCheck = (data.checks || []).find(c => c.name === 'default_pipeline_webchat');
-                if (webchatCheck && webchatCheck.status === 'fail') {
-                    LOG('Pipeline config warning:', webchatCheck.message);
-                    showPipelineConfigBanner(webchatCheck.message);
-                }
-            })
-            .catch(() => {});
 
         // Load chat history from localStorage
         loadChatHistory();

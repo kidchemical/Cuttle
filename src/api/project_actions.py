@@ -41,7 +41,9 @@ _ATTR_RE = re.compile(
 _PENDING_TTL_SEC = 3600
 _pending_lock = threading.RLock()
 _pending: Dict[str, Dict[str, Any]] = {}  # action_id -> record
-_HMAC_SECRET_PATH = Path(__file__).resolve().parents[1] / "data" / "db" / "action_hmac_secret"
+from core.runtime_paths import action_hmac_secret_path
+
+_HMAC_SECRET_PATH = action_hmac_secret_path()
 _hmac_secret_cache: Optional[bytes] = None
 
 _BUTTON_CONFIRM_PREFIX = "project-action-confirm"

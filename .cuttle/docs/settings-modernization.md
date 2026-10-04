@@ -144,7 +144,38 @@ placeholder glyph. Row CSS is page-owned in `css/settings_page.css`
 
 ## Still out of scope
 
-Visual redesign, settings API consolidation, and the per-device vs per-server
-settings split. Those need product decisions (which settings roam, which stay
-local) before code. The tab shell does not pre-commit to either: adding or
-renaming a tab is a markup edit.
+Visual redesign, runtime/model settings API consolidation, and account/device
+roaming policy remain separate work. The storage split below preserves existing
+install-wide UI behavior; it does not make server UI state account-specific.
+
+## Shipped: scoped storage and retired-settings cleanup
+
+`managers.settings_storage` owns persistence behind SettingsManager. Server
+preferences remain in `src/settings.json`; worker/LAN configuration lives in
+`src/data/config/machine_settings.json`; rail/workspace state lives in
+`src/data/config/ui_state.json`. Browser preferences remain in localStorage.
+Router config stays with server preferences, rather than adding a fourth file.
+
+Existing installs split only on a guarded cold daemon start (or the offline
+`core.runtime_data --apply` procedure). Unknown active keys survive; conflicting
+destinations refuse migration. A real integer `schema_version: 1` replaces the
+unused `version: "1.0.0"`. The health API reads the actual release version.
+
+Retired pipeline selection/history/autostart, node-editor user preferences,
+graph sandbox and pipeline limits are removed alongside their dead manager methods,
+sandbox routes, doctor tombstones and chat warning banner. Channel settings now
+cover Web Chat only; optional Discord REST agent-ops use their own configuration.
+Cursor's live `/sandbox` option is independent and remains active.
+
+Updates lock a stable sidecar, re-read current disk state, and atomically replace
+only the owning file. Reads create no files. Corrupt/unsupported JSON cannot be
+silently replaced with defaults. Settings read-modify-write routes use the locked
+update interface; callers replacing an entire key intentionally own its value.
+
+The legacy action HMAC key moves to `.cuttle/personal/secrets/` without rotation;
+a shared worker token, when present in legacy JSON, is extracted there as well.
+API credentials remain in `src/.env`. Auth and worker databases still hold
+sensitive session/enrollment material; see `src/data/README.md`.
+
+Tests: `test_settings_storage.py`, settings/routes, runtime migration, auth,
+worker, GitHub App and architecture-boundary suites.

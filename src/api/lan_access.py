@@ -5,7 +5,7 @@ When enabled, Flask listens on all interfaces (0.0.0.0) so phones/tablets on the
 same Wi‑Fi can open the UI. Inbound access is restricted on Windows to the Private
 firewall profile and LocalSubnet only — not the public internet.
 
-Enable via src/settings.json:
+Enable via Settings → Devices (machine_settings.json after migration):
   "discovery": { "lan_access_enabled": true }
 or env CUTTLE_LAN_ACCESS=1 (overrides settings).
 """

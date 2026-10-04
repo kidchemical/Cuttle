@@ -6309,11 +6309,7 @@ def health_check():
         local_llm_label = 'Ollama'
 
     cursor_exe = bool(shutil.which("agent") or shutil.which("cursor-agent"))
-    try:
-        from managers.settings_manager import get_settings_manager
-        plimits = get_settings_manager().get_pipeline_limits()
-    except Exception:
-        plimits = {"max_tool_nodes_per_execution": 64}
+    from api.device_workers.capabilities import cuttle_version
 
     payload = {
         'status': 'healthy',
@@ -6321,7 +6317,7 @@ def health_check():
         'bot_available': PIPELINE_AVAILABLE,
         'active_sessions': len(chat_sessions),
         'hostname': os.environ.get('COMPUTERNAME', platform.node()),
-        'version': '1.0.0',
+        'version': cuttle_version(),
         'python_version': py_ver,
         'platform': platform.platform(),
         'cwd': cwd,
@@ -6335,11 +6331,9 @@ def health_check():
         'local_llm_reachable': ollama_reachable,
         'local_llm_backend': local_llm_backend,
         'local_llm_label': local_llm_label,
-        'pipeline_limits': plimits,
     }
     if not (request_is_loopback() or is_owner_user(current_user())):
         payload.pop('cwd', None)
-        payload.pop('pipeline_limits', None)
         payload['env'] = {'redacted': True}
         payload['active_sessions'] = None
     return jsonify(payload)
@@ -6698,7 +6692,7 @@ def api_network_info():
                 f'Or use portal_url_http_fallback (plain HTTP on port {LAN_HTTP_FALLBACK_PORT}). '
                 'Same Wi‑Fi required.'
                 if lan_enabled and portal_phone else
-                'LAN access is off. Set discovery.lan_access_enabled in settings.json, then restart Cuttle.'
+                'LAN access is off. Enable LAN access in Settings, then restart Cuttle.'
             ),
             'setup': (
                 [
@@ -7231,9 +7225,6 @@ def wizard_status():
                 'completion_provider': bool(configured_providers),
                 'channels': channels_configured,
             },
-            # Retired with the graphs; kept so an older client reading this key
-            # does not render a step that can never be incomplete.
-            'default_pipeline': True,
             'next_step': next_step,
             'next_action': next_action,
             'agents': agent_summary,

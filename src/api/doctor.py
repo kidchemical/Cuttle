@@ -1,6 +1,6 @@
 """
 Doctor: config and health checks for Cuttle.
-Runs checks (pipeline files, default pipeline, auth, ports, env) and returns suggestions.
+Runs checks for auth, ports, environment, and chat backend availability.
 """
 
 import os
@@ -15,37 +15,6 @@ def run_checks() -> Dict[str, Any]:
     """Run all doctor checks. Returns { success, checks: [...], suggestions: [...] }."""
     checks: List[Dict[str, Any]] = []
     suggestions: List[str] = []
-
-    # 1. Visual graphs removed — chat uses slash agents + router
-    pipelines_dir = PROJECT_ROOT / "pipelines"
-    checks.append({
-        "name": "pipelines_dir",
-        "status": "ok",
-        "message": (
-            "Visual pipeline graphs were removed; slash agents + router handle chat"
-            + (f" ({pipelines_dir} still on disk)" if pipelines_dir.exists() else "")
-        ),
-    })
-    checks.append({
-        "name": "default_pipeline",
-        "status": "ok",
-        "message": "No default graph required",
-    })
-    checks.append({
-        "name": "trigger_webchat",
-        "status": "ok",
-        "message": "Web Chat uses slash agents (no graph trigger)",
-    })
-    checks.append({
-        "name": "trigger_discord",
-        "status": "ok",
-        "message": "No inbound Discord gateway; optional REST agent-ops if DISCORD_TOKEN is set",
-    })
-    checks.append({
-        "name": "default_pipeline_webchat",
-        "status": "ok",
-        "message": "No default webchat pipeline required",
-    })
 
     # 4. Auth DB / pairing store writable
     data_dir = PROJECT_ROOT / "data"

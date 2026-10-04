@@ -13,7 +13,6 @@ READS = [
     "/api/settings",
     "/api/settings/lan-access",
     "/api/settings/channels",
-    "/api/settings/sandbox",
     "/api/settings/starred-slash",
     "/api/settings/starred-project",
     "/api/settings/ui-layout",
@@ -27,7 +26,6 @@ WRITES = [
     ("POST", "/api/settings", {"mode": "open"}),
     ("POST", "/api/settings/lan-access", {"lan_access_enabled": False}),
     ("POST", "/api/settings/channels", {"channel": "webchat"}),
-    ("POST", "/api/settings/sandbox", {"enabled": False}),
     ("POST", "/api/settings/starred-slash", {"prefixes": []}),
     ("POST", "/api/settings/starred-project", {"project": None}),
     ("POST", "/api/settings/ui-layout", {"rail_items": []}),
@@ -113,11 +111,6 @@ def test_settings_owner_write_round_trip(tmp_path, monkeypatch):
     assert "panel_sections" not in body  # legacy keys dropped by validator
 
     res = ctx["client"].post(
-        "/api/settings/sandbox", json={}, environ_base=LAN
-    )
-    assert res.status_code == 200  # empty POST is a no-op 200 (frozen contract)
-
-    res = ctx["client"].post(
         "/api/settings/lan-access", json={}, environ_base=LAN
     )
     assert res.status_code == 400
@@ -140,9 +133,15 @@ def test_settings_validators_owned():
     assert sr.validate_ui_layout_update({"rail_items": [1], "nope": 1}) == {
         "rail_items": ["1"]
     }
-    assert "sandbox" in {f["name"] for f in sr.SETTING_FAMILIES}
+    assert "sandbox" not in {f["name"] for f in sr.SETTING_FAMILIES}
+    assert sr.validate_channel_update({"channel": "discord"})[0] is False
     # Every writable family is owner-only. Read-only lookups declare write
     # "n/a" (app-settings aggregate, video-metadata proxy) and are exempt.
     writable = {f["name"] for f in sr.SETTING_FAMILIES if f["write"] != "n/a"}
     assert "app-settings" not in writable
     assert {f["write"] for f in sr.SETTING_FAMILIES if f["write"] != "n/a"} == {"owner"}
+
+
+def test_retired_graph_settings_routes_are_absent():
+    from api import web_chat_api as wca
+    assert '/api/settings/sandbox' not in {r.rule for r in wca.app.url_map.iter_rules()}
