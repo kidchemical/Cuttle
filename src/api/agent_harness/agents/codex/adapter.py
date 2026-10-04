@@ -505,6 +505,8 @@ class Adapter:
 
         if raw.get("steered"):
             meta["steered"] = int(raw["steered"])
+        if raw.get("compacted"):
+            meta["context_compacted"] = True
 
         # Refresh true window occupancy from app-server (last ≠ turn billing totals).
         tid = raw.get("codex_session_id") or resume

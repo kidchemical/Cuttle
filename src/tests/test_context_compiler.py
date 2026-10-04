@@ -107,8 +107,11 @@ def test_handoff_only_when_agent_changes(tmp_path, monkeypatch):
         {"role": "assistant", "content": "earlier answer"},
     ])
 
-    assert ho.build_handoff("42", to_agent="opencode") is None
-    ho.record_last_agent("42", "antigravity")
+    # First turn of an agent in a chat with history (e.g. plain LLM turns):
+    # it gets the transcript it never saw.
+    first = ho.build_handoff("42", to_agent="opencode")
+    assert first is not None and "earlier question" in first.text
+    ho.record_last_agent("42", "antigravity", through_message_id=0)
     assert ho.get_last_agent(42) == "antigravity"
 
     delta = ho.build_handoff("42", to_agent="opencode")
@@ -118,7 +121,8 @@ def test_handoff_only_when_agent_changes(tmp_path, monkeypatch):
     assert "earlier question" in delta.text
     assert "Agent handoff" in delta.text
 
-    # Same agent again → no handoff
+    # Legacy state (bare last-agent string): the same agent is caught up.
+    ho._write_all({"42": "antigravity"})
     assert ho.build_handoff("42", to_agent="antigravity") is None
 
 

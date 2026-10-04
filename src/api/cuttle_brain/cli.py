@@ -18,12 +18,14 @@ def _cmd_compile(args: argparse.Namespace) -> int:
     from api.cuttle_brain.handoff import build_handoff
 
     handoff = None
-    if args.from_agent and args.agent:
+    if args.agent and args.session_id:
+        # Same selection the kernel makes; --from-agent forces a switch view.
         handoff = build_handoff(
             args.session_id,
             to_agent=args.agent,
-            from_agent=args.from_agent,
+            from_agent=args.from_agent or None,
             limit=args.handoff_limit,
+            current_prompt=args.prompt or None,
         )
 
     compiled = compile_context(
@@ -33,6 +35,7 @@ def _cmd_compile(args: argparse.Namespace) -> int:
         inject_capabilities=not args.no_capabilities,
         handoff=handoff,
         include_chat_store_hint=args.chat_store_hint,
+        chat_session_id=args.session_id,
     )
 
     if args.json:
@@ -57,6 +60,27 @@ def _cmd_inventory(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_prune(args: argparse.Namespace) -> int:
+    from api.cuttle_brain.state import prune
+
+    sys.stdout.write(json.dumps(prune(dry_run=args.dry_run), indent=2) + "\n")
+    return 0
+
+
+def _cmd_metrics(args: argparse.Namespace) -> int:
+    from api.cuttle_brain import metrics
+
+    if args.action == "backfill":
+        out = metrics.backfill_from_query_logs()
+    else:
+        import time
+
+        rows = metrics.fetch_turns(since_ts=time.time() - args.days * 86400)
+        out = {"db": str(metrics.database_path()), "turns": len(rows), "recent": rows[-args.limit:]}
+    sys.stdout.write(json.dumps(out, indent=2, default=str) + "\n")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m api.cuttle_brain",
@@ -71,7 +95,7 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--agent", default="", help="Target agent id (for handoff)")
     c.add_argument("--from-agent", default="", help="Previous agent id (force handoff)")
     c.add_argument("--session-id", default=None, help="Cuttle chat session id")
-    c.add_argument("--handoff-limit", type=int, default=12)
+    c.add_argument("--handoff-limit", type=int, default=40)
     c.add_argument("--no-capabilities", action="store_true")
     c.add_argument("--chat-store-hint", action="store_true")
     c.add_argument("--json", action="store_true", help="Emit structured JSON")
@@ -80,6 +104,19 @@ def build_parser() -> argparse.ArgumentParser:
     i = sub.add_parser("inventory", help="List .cuttle commands/docs/actions/rules")
     i.add_argument("--project", default=".")
     i.set_defaults(func=_cmd_inventory)
+
+    pr = sub.add_parser(
+        "prune",
+        help="Drop briefing/handoff state for deleted chats and pytest leftovers",
+    )
+    pr.add_argument("--dry-run", action="store_true")
+    pr.set_defaults(func=_cmd_prune)
+
+    m = sub.add_parser("metrics", help="Per-turn context metrics (Context dashboard)")
+    m.add_argument("action", choices=("list", "backfill"))
+    m.add_argument("--days", type=int, default=7)
+    m.add_argument("--limit", type=int, default=10)
+    m.set_defaults(func=_cmd_metrics)
 
     return parser
 

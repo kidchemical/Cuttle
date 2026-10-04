@@ -28,6 +28,13 @@ Each source has its own score definition: DeepSWE pass@1, SWE-bench Verified res
 - **Chart**: stacked columns over time, or a breakdown of totals by group. Legend chips hide a group in every chart and in the table.
 - Every attempt counts, including fallbacks and cancelled turns. Cost only includes harnesses that report it (not Cursor).
 
+**Context** (`?d=cuttle-context`) charts what Cuttle sends each agent turn, from the Brain's per-turn metrics store (`src/data/brain/context_metrics.db`, owner `api.cuttle_brain.metrics`; dashboard `src/api/dashboards/context.py`).
+
+- Full briefing size per day, average size by layer (capabilities, global/project rules, inventory + tasks, handoff, …), and the mix of what each turn sent (full briefing / rules-changed note / handoff only / prompt only).
+- Context window fill per chat over time (agent-reported tokens; ◆ marks a compaction). Claude fill comes from its own transcript (input + cache tokens of the last call).
+- Tables: why full briefings were re-sent on resumed sessions, and current always-on rule file sizes.
+- Range pills 7 / 30 / 90 days. Turns before the store existed were imported from query logs (`python -m api.cuttle_brain metrics backfill`): mode and size only.
+
 ## Agent CLI
 
 ```bash
@@ -39,6 +46,8 @@ PYTHONPATH=src .venv/bin/python -m api.dashboards get cuttle-performance --sourc
 PYTHONPATH=src .venv/bin/python -m api.dashboards get cuttle-usage --range 7d --group harness
 PYTHONPATH=src .venv/bin/python -m api.dashboards get cuttle-usage --start 2026-09-01 --end 2026-09-15 --interval week
 PYTHONPATH=src .venv/bin/python -m api.dashboards backfill-performance [--dry-run]
+PYTHONPATH=src .venv/bin/python -m api.dashboards get cuttle-context --range 7d
+PYTHONPATH=src .venv/bin/python -m api.cuttle_brain metrics list --days 1
 ```
 
 (Flags after the verb. `--json` is implied: stdout is JSON.)
@@ -51,6 +60,7 @@ PYTHONPATH=src .venv/bin/python -m api.dashboards backfill-performance [--dry-ru
 | GET | `/api/dashboards/model-benchmarks` | `?source=deepswe\|swebench\|aider\|aggregate`; `?refresh=1` bypasses source caches |
 | GET | `/api/dashboards/cuttle-performance` | Local outcomes. `?source=all\|pinned\|router`, `?days=7\|30\|90\|0`; `?label=1` / `?refresh=1` runs a Jev label pass |
 | GET | `/api/dashboards/cuttle-usage` | `?range=7d\|14d\|30d\|90d\|1y\|all` or `?start=&end=` (YYYY-MM-DD); `?group=model\|harness\|none`, `?interval=auto\|day\|week\|month`, `?source=all\|pinned\|router`, `?tz=<minutes>` |
+| GET | `/api/dashboards/cuttle-context` | `?range=7d\|30d\|90d`, `?tz=<minutes>` |
 | POST | `/api/turn-feedback` | `{session_id, query_id, feedback: "good"\|"bad"\|null}` — thumbs on a reply; stored on the outcome row and message metadata |
 
 Caches: `src/output/dashboards/` (gitignored with the rest of `src/output/`); each feed has a 6h cache.

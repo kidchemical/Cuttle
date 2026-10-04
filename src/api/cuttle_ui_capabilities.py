@@ -54,7 +54,7 @@ Global runbooks (match intent → open before acting; resolve via personal overl
 Hard stops: never force-kill web_chat_api, cuttle_daemon, or the Discord bot
 from an agent Flask hosts. Prefer clickable forms over prose questions.
 You can share images/video in replies via markdown `![alt](/output/shared/…)`
-(or a local path — Cuttle stages on persist); see chat-media.md.
+(or a local path — Cuttle stages on persist), never `file://`; see chat-media.md.
 """.strip()
 
 

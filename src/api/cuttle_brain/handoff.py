@@ -1,9 +1,12 @@
 """Hot-swap handoff: Cuttle-owned transcript deltas between agents.
 
-Each harness agent keeps its own native resume id for a chat. When the sticky
-agent changes, we still prefer the *target* agent's resume (so we do not discard
-its abilities), and inject a short neutral transcript delta covering recent
-turns it may have missed.
+Each harness agent keeps its own native resume id for a chat. Cuttle tracks,
+per chat, the newest message each agent has seen (its *seen cursor*). Before a
+turn the target agent gets every message after its cursor that it did not
+produce itself — turns answered by other agents, plain LLM / router replies,
+or failed turns — within a char budget (older rows are counted as omitted with
+a ``chat_cli`` pointer, never dropped silently). Agents without native resume
+get the recent conversation every turn.
 """
 
 from __future__ import annotations
@@ -57,37 +60,107 @@ def _write_all(data: Dict[str, Any]) -> None:
     tmp.replace(path)
 
 
-def get_last_agent(chat_session_id: Any) -> Optional[str]:
+def _entry(chat_session_id: Any) -> Dict[str, Any]:
+    """Normalized state for one chat: ``{"last_agent": str|None, "seen": {agent: id}}``.
+
+    Legacy rows stored only the last agent id as a bare string; they read as
+    a state with no seen cursors (``legacy`` True).
+    """
     key = _sid_key(chat_session_id)
     if not key:
-        return None
+        return {"last_agent": None, "seen": {}, "legacy": False}
     with _lock:
         raw = _load_all().get(key)
-    if not isinstance(raw, str):
-        return None
-    s = raw.strip()
-    return s or None
+    if isinstance(raw, str):
+        return {"last_agent": raw.strip() or None, "seen": {}, "legacy": True}
+    if not isinstance(raw, dict):
+        return {"last_agent": None, "seen": {}, "legacy": False}
+    last = raw.get("last_agent")
+    seen = raw.get("seen") if isinstance(raw.get("seen"), dict) else {}
+    clean: Dict[str, int] = {}
+    for aid, mid in seen.items():
+        try:
+            clean[str(aid)] = int(mid)
+        except (TypeError, ValueError):
+            continue
+    return {
+        "last_agent": (str(last).strip() or None) if last else None,
+        "seen": clean,
+        "legacy": False,
+    }
 
 
-def record_last_agent(chat_session_id: Any, agent_id: str) -> None:
+def get_last_agent(chat_session_id: Any) -> Optional[str]:
+    return _entry(chat_session_id).get("last_agent")
+
+
+def get_seen_cursor(chat_session_id: Any, agent_id: str) -> Optional[int]:
+    """Newest chat message id ``agent_id`` saw in this chat (None if never)."""
+    return _entry(chat_session_id)["seen"].get((agent_id or "").strip())
+
+
+def _latest_message_id(chat_session_id: Any) -> int:
+    sid = _numeric_session_id(chat_session_id)
+    if sid is None:
+        return 0
+    try:
+        from api.auth_db import get_auth_db
+
+        rows = get_auth_db().get_messages(sid, limit=1)
+    except Exception:
+        return 0
+    try:
+        return int(rows[0].get("id") or 0) if rows else 0
+    except (TypeError, ValueError, AttributeError):
+        return 0
+
+
+def record_last_agent(
+    chat_session_id: Any,
+    agent_id: str,
+    *,
+    through_message_id: Optional[int] = None,
+) -> None:
+    """Record a completed agent turn: last agent + that agent's seen cursor.
+
+    Call after a successful turn that actually reached the CLI (never for
+    meta/settings commands). The cursor defaults to the newest stored chat
+    message — the turn's own user row plus any steers persisted mid-run; the
+    agent's reply lands after it and is skipped as its own on the next build.
+    """
     key = _sid_key(chat_session_id)
     aid = (agent_id or "").strip()
     if not key or not aid:
         return
+    cursor = (
+        int(through_message_id)
+        if through_message_id is not None
+        else _latest_message_id(chat_session_id)
+    )
     with _lock:
         data = _load_all()
-        data[key] = aid
+        raw = data.get(key)
+        seen: Dict[str, int] = {}
+        if isinstance(raw, dict) and isinstance(raw.get("seen"), dict):
+            seen = dict(raw["seen"])
+        seen[aid] = cursor
+        data[key] = {"last_agent": aid, "seen": seen}
         _write_all(data)
 
 
 def clear_last_agent(chat_session_id: Any) -> None:
-    key = _sid_key(chat_session_id)
-    if not key:
+    """Forget handoff state for a chat (all key spellings)."""
+    from api.cuttle_brain.context_delta import sid_variants
+
+    keys = sid_variants(chat_session_id)
+    if not keys:
         return
     with _lock:
         data = _load_all()
-        if key in data:
-            del data[key]
+        hit = [k for k in keys if k in data]
+        if hit:
+            for k in hit:
+                del data[k]
             _write_all(data)
 
 
@@ -136,56 +209,142 @@ def _strip_injected_blocks(content: str) -> str:
     return (text or "").strip()
 
 
+# Handoff budget: newest messages win; older ones are listed as omitted with a
+# pointer to the full transcript instead of being dropped silently.
+_MAX_MESSAGE_CHARS = 1500
+_MAX_HANDOFF_CHARS = 12000
+_RECENT_WINDOW = 40
+
+
 def fetch_recent_transcript(
     chat_session_id: Any,
     *,
-    limit: int = 12,
-) -> List[Dict[str, str]]:
-    """Return chronological recent turns from Cuttle's neutral chat store."""
+    limit: Optional[int] = _RECENT_WINDOW,
+    after_id: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    """Chronological user/assistant turns from Cuttle's neutral chat store.
+
+    ``after_id`` returns every message newer than that id; otherwise the
+    newest ``limit`` messages. Rows keep their ``id``.
+    """
     sid = _numeric_session_id(chat_session_id)
     if sid is None:
         return []
     try:
         from api.auth_db import get_auth_db
 
-        rows = get_auth_db().get_messages(sid, limit=limit)
+        db = get_auth_db()
+        if after_id is not None:
+            rows = db.get_messages(sid, after_id=int(after_id))
+        else:
+            rows = db.get_messages(sid, limit=limit)
     except Exception:
         return []
-    # get_messages with limit returns newest-first; normalize to chronological.
-    if limit:
-        rows = list(reversed(rows))
-    out: List[Dict[str, str]] = []
+    rows = sorted(rows, key=lambda r: int(r.get("id") or 0))
+    out: List[Dict[str, Any]] = []
     for row in rows:
-        role = str(row.get("role") or "").strip().lower() or "unknown"
+        role = str(row.get("role") or "").strip().lower()
+        if role not in ("user", "assistant"):
+            continue
         content = _strip_injected_blocks(str(row.get("content") or ""))
         if not content:
             continue
-        # Keep handoff compact.
-        if len(content) > 1200:
-            content = content[:1197].rstrip() + "..."
-        out.append({"role": role, "content": content})
+        out.append({"id": row.get("id"), "role": role, "content": content})
     return out
+
+
+def _norm(text: str) -> str:
+    return " ".join((text or "").split()).lower()
+
+
+def _drop_current_turn(
+    messages: List[Dict[str, Any]], current_prompt: Optional[str]
+) -> List[Dict[str, Any]]:
+    """Drop the trailing user row when it is the turn being sent right now.
+
+    The user row is persisted before the agent runs, so without this the
+    prompt would appear twice (handoff + ``## User request``).
+    """
+    if not messages or not current_prompt:
+        return messages
+    last = messages[-1]
+    if last.get("role") != "user":
+        return messages
+    probe = _norm(current_prompt)[:80]
+    stored = _norm(str(last.get("content") or ""))
+    if probe and probe in stored:
+        return messages[:-1]
+    return messages
+
+
+def _skip_own_reply(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Rows right after an agent's cursor that are replies are its own answer."""
+    i = 0
+    while i < len(messages) and messages[i].get("role") == "assistant":
+        i += 1
+    return messages[i:]
+
+
+def _fit_budget(
+    messages: List[Dict[str, Any]],
+) -> tuple[List[Dict[str, Any]], int]:
+    """Keep the newest messages within the char budget; return (kept, omitted)."""
+    kept: List[Dict[str, Any]] = []
+    used = 0
+    for msg in reversed(messages):
+        content = str(msg.get("content") or "")
+        if len(content) > _MAX_MESSAGE_CHARS:
+            content = content[: _MAX_MESSAGE_CHARS - 3].rstrip() + "..."
+        if kept and used + len(content) > _MAX_HANDOFF_CHARS:
+            break
+        kept.append({**msg, "content": content})
+        used += len(content)
+    kept.reverse()
+    return kept, len(messages) - len(kept)
+
+
+def _chat_handle(chat_session_id: Any) -> Optional[str]:
+    sid = _numeric_session_id(chat_session_id)
+    return f"CH-{sid:06d}" if sid is not None else None
 
 
 def format_handoff_delta(
     *,
     from_agent: str,
     to_agent: str,
-    messages: List[Dict[str, str]],
+    messages: List[Dict[str, Any]],
+    omitted: int = 0,
+    chat_handle: Optional[str] = None,
+    mode: str = "switch",
 ) -> str:
-    lines = [
-        "## Agent handoff (Cuttle transcript)",
-        (
-            f"Sticky agent changed: `{from_agent}` → `{to_agent}`. "
-            "Prefer your native resume for this chat when available; "
-            "use the delta below for turns you may have missed."
-        ),
-    ]
+    if mode == "history":
+        lines = [
+            "## Conversation so far (Cuttle transcript)",
+            (
+                f"`{to_agent}` keeps no native session for this chat, so this is "
+                "the recent conversation it is continuing."
+            ),
+        ]
+    else:
+        lines = ["## Agent handoff (Cuttle transcript)"]
+        if from_agent and from_agent != to_agent:
+            lines.append(f"Sticky agent changed: `{from_agent}` → `{to_agent}`.")
+        lines.append(
+            "These chat messages happened since your last turn here (other "
+            "agents, models, or interrupted turns). Prefer your native resume "
+            "for everything before them."
+        )
     if not messages:
         lines.append("(No recent Cuttle transcript rows available.)")
         return "\n".join(lines)
+    if omitted > 0:
+        where = (
+            f" — read them with `python -m api.chat_cli get {chat_handle} --json`"
+            if chat_handle
+            else ""
+        )
+        lines.append(f"({omitted} earlier messages not shown{where}.)")
     lines.append("")
-    lines.append("Recent turns:")
     for msg in messages:
         role = msg.get("role") or "unknown"
         content = (msg.get("content") or "").replace("\n", " ").strip()
@@ -198,24 +357,60 @@ def build_handoff(
     *,
     to_agent: str,
     from_agent: Optional[str] = None,
-    limit: int = 12,
+    limit: int = _RECENT_WINDOW,
+    current_prompt: Optional[str] = None,
+    full_history: bool = False,
 ) -> Optional[AgentHandoff]:
-    """Build a handoff when the sticky agent changed; else None."""
+    """Chat messages ``to_agent`` has not seen yet; None when it is caught up.
+
+    * ``full_history`` (agents without native resume): the recent
+      conversation every turn — the agent remembers nothing between turns.
+    * Agent with a seen cursor: every message after it, minus its own reply
+      to that turn. Covers plain-LLM / router turns and settings commands,
+      which never move any agent's cursor.
+    * No cursor yet (first turn of this agent in the chat): the recent
+      window, unless a legacy record says this agent already was last.
+
+    The trailing user row for ``current_prompt`` is excluded either way.
+    """
     target = (to_agent or "").strip()
     if not target:
         return None
-    previous = (from_agent if from_agent is not None else get_last_agent(chat_session_id) or "").strip()
-    if not previous or previous == target:
+    state = _entry(chat_session_id)
+    previous = (
+        from_agent if from_agent is not None else state.get("last_agent") or ""
+    ).strip()
+    mode = "switch"
+    if full_history:
+        mode = "history"
+        messages = fetch_recent_transcript(chat_session_id, limit=limit)
+    else:
+        cursor = state["seen"].get(target)
+        if cursor is not None and from_agent is None:
+            messages = _skip_own_reply(
+                fetch_recent_transcript(chat_session_id, after_id=cursor)
+            )
+        else:
+            if from_agent is None and (not previous or previous == target) and state.get("legacy"):
+                return None
+            if from_agent is not None and (not previous or previous == target):
+                return None
+            messages = fetch_recent_transcript(chat_session_id, limit=limit)
+    messages = _drop_current_turn(messages, current_prompt)
+    if not messages:
         return None
-    messages = fetch_recent_transcript(chat_session_id, limit=limit)
+    kept, omitted = _fit_budget(messages)
     text = format_handoff_delta(
         from_agent=previous,
         to_agent=target,
-        messages=messages,
+        messages=kept,
+        omitted=omitted,
+        chat_handle=_chat_handle(chat_session_id),
+        mode=mode,
     )
     return AgentHandoff(
         from_agent=previous,
         to_agent=target,
         text=text,
-        message_count=len(messages),
+        message_count=len(kept),
     )

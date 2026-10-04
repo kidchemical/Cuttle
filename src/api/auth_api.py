@@ -1008,6 +1008,13 @@ def delete_chat_session(session_id):
                     shutil.rmtree(up, ignore_errors=True)
         except Exception as ce:
             print(f"[AUTH] upload cleanup failed for {session_id}: {ce}")
+
+        # Forget Brain briefing receipts + handoff cursors for this chat.
+        try:
+            from api.cuttle_brain.state import forget_chat
+            forget_chat(session_id)
+        except Exception as ce:
+            print(f"[AUTH] brain state cleanup failed for {session_id}: {ce}")
         
         return jsonify({
             'success': True,

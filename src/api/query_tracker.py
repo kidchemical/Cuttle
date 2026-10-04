@@ -16,7 +16,11 @@ import uuid
 class QueryTracker:
     """Tracks one query; writes JSON sidecars, not HTML."""
     
-    def __init__(self, output_dir: str = "web/logs"):
+    def __init__(self, output_dir: Optional[str] = None):
+        if output_dir is None:
+            from api.query_events import logs_dir
+
+            output_dir = str(logs_dir())
         # Handle both absolute and relative paths
         output_path = Path(output_dir)
         if not output_path.is_absolute():

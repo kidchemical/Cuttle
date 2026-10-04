@@ -57,12 +57,31 @@ native resume id for this chat.
 - **Same agent + resume** → bare user prompt. If global/project rules or inventory
   changed since that snapshot, prepend a **context delta** (changed rules + new
   docs/actions only — not the full briefing).
-- **Agent switch** → target agent's resume when available; handoff transcript delta;
-  plus context delta when rules/inventory drifted.
+- **Agent switch / missed turns** → target agent's resume when available, plus every
+  chat message after that agent's *seen cursor* (the newest message it saw on its
+  last completed turn) minus its own reply and the prompt being sent now. This
+  covers other agents, plain LLM / router replies, and failed turns. Newest rows
+  win a char budget; older ones are counted as omitted with a `chat_cli` pointer.
+  Settings/meta commands never move a cursor. Plus a context delta when
+  rules/inventory drifted. See `handoff.py`.
+- **No native resume** (`resume: false`, e.g. DeepSeek) → full envelope plus the
+  recent conversation every turn ("Conversation so far").
+- **Compaction** → when an adapter reports `context_compacted` (Codex
+  `contextCompaction`, Claude transcript `compact_boundary`) or the user compacts
+  via Cuttle, the stored snapshot is dropped and the next turn re-sends the full
+  briefing.
 - **Session reset** (`new` / `clear`) → clears native resume and stored snapshot;
-  next turn is a fresh full envelope.
+  next turn is a fresh full envelope. Chat delete forgets all Brain state
+  (`state.forget_chat`); `python -m api.cuttle_brain prune` sweeps orphans.
 
 See `context_delta.py`.
+
+## Metrics
+
+Every harness turn appends a row to `src/data/brain/context_metrics.db`
+(`metrics.py`): briefing mode, size per layer, handoff size, agent-reported
+window fill and limit, compaction. The **Context** dashboard reads it
+(`python -m api.cuttle_brain metrics list|backfill`).
 
 ## Transport
 

@@ -26,6 +26,13 @@ DASHBOARDS: List[Dict[str, Any]] = [
         "status": "live",
         "href": "/dashboards_page.html?d=cuttle-usage",
     },
+    {
+        "id": "cuttle-context",
+        "title": "Context",
+        "blurb": "Briefing size by layer, full re-sends and why, and each chat's context window filling up between compactions.",
+        "status": "live",
+        "href": "/dashboards_page.html?d=cuttle-context",
+    },
 ]
 
 

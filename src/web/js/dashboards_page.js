@@ -18,6 +18,7 @@
     const PERF_ID = 'cuttle-performance';
     const PERF_DEFAULT_AXES = { x: 'mean_duration_seconds', y: 'score', z: 'mean_cost_usd' };
     const USAGE_ID = 'cuttle-usage';
+    const CONTEXT_ID = 'cuttle-context';
     const USAGE_COLORS = ['#636efa', '#ef553b', '#00cc96', '#ab63fa', '#ffa15a', '#19d3f3', '#ff6692', '#b6e880', '#ff97ff', '#fecb52'];
     const USAGE_FORMATS = {
         usd: { tick: '$,.2f', hover: '$,.2f' },
@@ -2814,6 +2815,193 @@
         }
     }
 
+    // ── Context dashboard ────────────────────────────────────────────────
+    // Fixed categorical order from the validated reference palette (dark
+    // steps; every Cuttle theme is dark). Color follows the entity: modes,
+    // layers and chats keep their slot when others are hidden.
+    const CONTEXT_COLORS = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9', '#e66767'];
+
+    function contextDayLabels() {
+        return (payload.days || []).map((iso) => {
+            const [y, m, d] = iso.split('-').map(Number);
+            return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+        });
+    }
+
+    function contextTokens(chars) {
+        // The briefing is measured in characters; ~4 chars per token.
+        if (chars == null) return '—';
+        const t = chars / 4;
+        return '~' + (t >= 1000 ? (t / 1000).toFixed(1) + 'k' : String(Math.round(t))) + ' tok';
+    }
+
+    function renderCuttleContext() {
+        const s = payload.stats || {};
+        const range = payload.selected_range;
+        const pills = (payload.available_ranges || []).map((r) =>
+            `<button type="button" class="dash-chip ${r.id === range ? 'is-on' : ''}" data-ctx-range="${escapeAttr(r.id)}">${escapeHtml(r.label)}</button>`
+        ).join('');
+        const pct = (n, d) => (d ? Math.round((100 * n) / d) + '%' : '—');
+        const tiles = [
+            [fmtCount(s.turns), 'Agent turns'],
+            [pct(s.full || 0, s.turns || 0), 'Sent a full briefing'],
+            [contextTokens(s.full_median_chars), 'Median full briefing'],
+            [fmtCount(s.handoffs), 'Turns with a handoff'],
+            [fmtCount(s.compactions), 'Compactions seen'],
+            [s.median_fill_pct == null ? '—' : s.median_fill_pct + '%', 'Median window fill'],
+        ].map(([v, l]) => `<div class="dash-stat-card"><div class="dash-stat-value">${escapeHtml(v)}</div><div class="dash-stat-label">${escapeHtml(l)}</div></div>`).join('');
+        const card = (id, title, note) => `
+            <div class="dash-usage-card">
+                <div class="dash-usage-card-head"><h3>${escapeHtml(title)}</h3>${note ? `<span>${escapeHtml(note)}</span>` : ''}</div>
+                <div class="dash-usage-chart" data-ctx-chart="${id}"></div>
+            </div>`;
+        const layerNote = (payload.layers || []).length ? 'average of full briefings' : 'recorded from new turns only';
+        const fillNote = s.with_fill ? `${s.with_fill} turns report window fill · ◆ = compacted` : 'recorded from new turns only';
+        root.innerHTML = `
+            <div class="dash-page-bar">
+                <button type="button" class="dash-back" id="dashBack">← All dashboards</button>
+                <div class="compact-page-title">
+                    <h1>Context</h1>
+                    <p>What Cuttle sends each agent turn, and how full each chat's context window gets.</p>
+                </div>
+            </div>
+            <div class="dash-usage-range" id="dashCtxRange">${pills}</div>
+            <div class="dash-stats dash-stats--usage">${tiles}</div>
+            ${s.backfilled ? `<p class="dash-chart-hint">${s.backfilled} older turns were imported from query logs: briefing mode and size only (no layer breakdown or window fill).</p>` : ''}
+            ${s.turns ? `<div class="dash-usage-grid" data-view="time">
+                ${card('size', 'Full briefing size', 'median per day')}
+                ${card('layers', 'Full briefing by layer', layerNote)}
+                ${card('modes', 'What each turn sent', 'turns per day')}
+                ${card('fill', 'Context window fill by chat', fillNote)}
+            </div>` : '<p class="dash-empty">No agent turns in this range yet.</p>'}
+            <h2 class="dash-section-title">Why full briefings were re-sent on resumed sessions</h2>
+            <div class="jobs-table-scroll"><table class="hist-table" id="dashCtxReasons"></table></div>
+            <h2 class="dash-section-title">Rule files (always-on, Cuttle project)</h2>
+            <div class="jobs-table-scroll"><table class="hist-table" id="dashCtxRules"></table></div>`;
+
+        document.getElementById('dashBack').addEventListener('click', () => navigateTo(''));
+        document.getElementById('dashCtxRange').addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-ctx-range]');
+            if (btn) switchDataset({ range: btn.getAttribute('data-ctx-range') });
+        });
+        const reasonText = {
+            missing_snapshot: 'No record the agent saw the briefing (first turn after a failure, cancel, or compaction)',
+            truncated_delta: 'Rule changes too large for a change note',
+            delta_prepare_failed: 'Preparing the change note failed',
+        };
+        const reasons = payload.full_reasons || [];
+        document.getElementById('dashCtxReasons').innerHTML = '<thead><tr><th>Reason</th><th>Turns</th></tr></thead><tbody>' +
+            (reasons.length ? reasons.map((r) => `<tr><td class="jobs-cell-wrap">${escapeHtml(reasonText[r.id] || r.id)}</td><td>${r.count}</td></tr>`).join('')
+                : '<tr><td colspan="2">None in this range.</td></tr>') + '</tbody>';
+        const rules = payload.rules || [];
+        document.getElementById('dashCtxRules').innerHTML = '<thead><tr><th>File</th><th>Scope</th><th>Size</th></tr></thead><tbody>' +
+            rules.map((r) => `<tr><td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.scope)}</td><td>${fmtCount(r.chars)} chars (${escapeHtml(contextTokens(r.chars))})</td></tr>`).join('') + '</tbody>';
+        drawContextCharts();
+    }
+
+    function drawContextCharts() {
+        const cells = Array.from(root.querySelectorAll('[data-ctx-chart]'));
+        if (!cells.length) return;
+        if (!window.Plotly) {
+            cells.forEach((el) => { el.innerHTML = '<p class="dash-loading">Loading chart…</p>'; });
+            if (window.CuttleOptionalCdn && typeof window.CuttleOptionalCdn.loadPlotlyExtras === 'function') {
+                window.CuttleOptionalCdn.loadPlotlyExtras();
+            }
+            return;
+        }
+        cells.forEach((el) => drawContextChart(el));
+    }
+
+    function drawContextChart(el) {
+        const colors = themeColors();
+        const labels = contextDayLabels();
+        const kind = el.getAttribute('data-ctx-chart');
+        const axis = (extra) => Object.assign({
+            gridcolor: colors.grid, zerolinecolor: colors.grid, color: colors.muted, rangemode: 'tozero', automargin: true,
+        }, extra || {});
+        const xCat = { type: 'category', color: colors.muted, automargin: true, showgrid: false, tickangle: labels.length > 14 ? -45 : 0 };
+        let traces = [];
+        let layout = {};
+        let empty = '';
+        if (kind === 'size') {
+            const y = payload.full_median_chars || [];
+            if (!y.some((v) => v != null)) empty = 'No full briefings in this range.';
+            traces = [{
+                type: 'scatter', mode: 'lines+markers', x: labels, y, connectgaps: true,
+                line: { color: CONTEXT_COLORS[0], width: 2 }, marker: { size: 8, color: CONTEXT_COLORS[0] },
+                customdata: y.map((v) => (v == null ? null : Math.round(v / 4))),
+                hovertemplate: '%{x}: %{y:,} chars (~%{customdata:,} tokens)<extra></extra>',
+            }];
+            layout = { xaxis: xCat, yaxis: axis({ tickformat: '.2~s', ticksuffix: ' ch' }), hovermode: 'closest' };
+        } else if (kind === 'layers') {
+            const layers = payload.layers || [];
+            if (!layers.length) empty = 'Layer sizes are recorded from new turns; this fills in as you chat.';
+            traces = layers.map((l, i) => ({
+                type: 'bar', name: l.name, x: labels, y: l.series,
+                marker: { color: CONTEXT_COLORS[i % CONTEXT_COLORS.length], line: { color: 'rgba(0,0,0,0.35)', width: 2 } },
+                hovertemplate: `${l.name}: %{y:,} chars<extra></extra>`,
+            }));
+            layout = { barmode: 'stack', xaxis: xCat, yaxis: axis({ tickformat: '.2~s', ticksuffix: ' ch' }), hovermode: 'x unified', showlegend: true };
+        } else if (kind === 'modes') {
+            traces = (payload.modes || []).map((m, i) => ({
+                type: 'bar', name: m.name, x: labels,
+                y: m.series.map((v) => (v ? v : null)),
+                marker: { color: CONTEXT_COLORS[i], line: { color: 'rgba(0,0,0,0.35)', width: 2 } },
+                hovertemplate: `${m.name}: %{y}<extra></extra>`,
+            }));
+            layout = { barmode: 'stack', xaxis: xCat, yaxis: axis({ tickformat: ',d' }), hovermode: 'x unified', showlegend: true };
+        } else if (kind === 'fill') {
+            const sessions = payload.sessions || [];
+            if (!sessions.length) empty = 'Window fill is recorded from new turns; chats appear after two turns that report tokens.';
+            sessions.forEach((sess, i) => {
+                const color = CONTEXT_COLORS[i % CONTEXT_COLORS.length];
+                const pts = sess.points;
+                const x = pts.map((p) => new Date(p.ts * 1000));
+                const text = pts.map((p) => `${p.agent || '?'} · ${p.mode || ''}${p.limit ? ` · ${Math.round((100 * p.tokens) / p.limit)}% of ${fmtCount(p.limit)}` : ''}${p.compacted ? ' · compacted' : ''}`);
+                traces.push({
+                    type: 'scatter', mode: 'lines+markers', name: `${sess.handle} (${sess.agents.join(', ')})`,
+                    x, y: pts.map((p) => p.tokens), text,
+                    line: { color, width: 2 }, marker: { size: 8, color, line: { color: 'rgba(0,0,0,0.5)', width: 2 } },
+                    hovertemplate: `${sess.handle}: %{y:,} tokens<br>%{text}<extra></extra>`,
+                });
+                const comp = pts.filter((p) => p.compacted);
+                if (comp.length) {
+                    traces.push({
+                        type: 'scatter', mode: 'markers', showlegend: false, name: `${sess.handle} compacted`,
+                        x: comp.map((p) => new Date(p.ts * 1000)), y: comp.map((p) => p.tokens),
+                        marker: { symbol: 'diamond', size: 12, color, line: { color: colors.text, width: 2 } },
+                        hovertemplate: `${sess.handle}: compacted at %{y:,} tokens<extra></extra>`,
+                    });
+                }
+            });
+            layout = {
+                xaxis: { type: 'date', color: colors.muted, automargin: true, showgrid: false },
+                yaxis: axis({ tickformat: '.3~s' }), hovermode: 'closest', showlegend: true,
+            };
+        }
+        if (empty && !traces.length) {
+            if (el.data && window.Plotly) window.Plotly.purge(el);
+            el.innerHTML = `<p class="dash-empty">${escapeHtml(empty)}</p>`;
+            return;
+        }
+        Object.assign(layout, {
+            autosize: true,
+            height: el.clientHeight || 260,
+            margin: { l: 8, r: 12, t: 8, b: 8 },
+            paper_bgcolor: 'rgba(0,0,0,0)',
+            plot_bgcolor: 'rgba(0,0,0,0)',
+            font: { color: colors.text, size: 11 },
+            bargap: 0.18,
+            legend: { orientation: 'h', y: -0.25, traceorder: 'normal', font: { color: colors.text, size: 10 } },
+            hoverlabel: { bgcolor: 'rgba(15,23,42,0.92)', bordercolor: colors.grid, font: { color: '#e2e8f0' } },
+        });
+        if (layout.showlegend === undefined) layout.showlegend = false;
+        // Clear placeholders only: wiping a drawn plot's DOM makes react() a no-op.
+        if (!el.data) el.innerHTML = '';
+        window.Plotly.react(el, traces, layout, { responsive: true, displaylogo: false, displayModeBar: false })
+            .catch((err) => { el.innerHTML = '<p class="dash-error">' + escapeHtml((err && err.message) || String(err)) + '</p>'; });
+    }
+
     function renderSoon() {
         const msg = (payload && payload.message) || 'This dashboard is not wired yet.';
         root.innerHTML = `
@@ -2857,12 +3045,17 @@
             });
             params.set('tz', String(new Date().getTimezoneOffset()));
         }
+        if (id === CONTEXT_ID) {
+            if (urlParams.get('range')) params.set('range', urlParams.get('range'));
+            params.set('tz', String(new Date().getTimezoneOffset()));
+        }
         const q = params.toString() ? '?' + params.toString() : '';
         payload = await fetchJson('/api/dashboards/' + encodeURIComponent(id) + q);
         dashMark('fetch-done');
         if (id === 'model-benchmarks') renderModelBenchmarks();
         else if (id === 'cuttle-performance') renderCuttlePerformance();
         else if (id === USAGE_ID) renderCuttleUsage();
+        else if (id === CONTEXT_ID) renderCuttleContext();
         else renderSoon();
     }
 
@@ -2886,6 +3079,13 @@
     });
 
     window.addEventListener('cuttle-plotly-ready', () => {
+        if (payload && payload.id === CONTEXT_ID) {
+            if (window.Plotly) drawContextCharts();
+            else root.querySelectorAll('[data-ctx-chart]').forEach((el) => {
+                el.innerHTML = '<p class="dash-error">Chart library could not load (offline?). The tables below still work.</p>';
+            });
+            return;
+        }
         if (payload && payload.id === USAGE_ID) {
             if (window.Plotly) drawUsageCharts();
             else root.querySelectorAll('.dash-usage-chart').forEach((el) => {

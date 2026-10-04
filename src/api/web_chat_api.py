@@ -224,6 +224,9 @@ except Exception:
 CORS(app, origins=_CORS_ORIGINS, supports_credentials=True)
 
 
+from api import asset_versions  # noqa: E402
+
+
 @app.after_request
 def _no_cache_ui_assets(response):
     """Cache policy for UI assets.
@@ -232,30 +235,46 @@ def _no_cache_ui_assets(response):
     Versioned JS/CSS (`?v=…`) may be cached — forcing no-store on every
     stylesheet made phone LAN cold-starts re-fetch the whole CSS set over
     Werkzeug HTTPS, which often dropped links and painted an unstyled UI
-    (video still worked via inline styles). Bump `?v=` when editing assets.
+    (video still worked via inline styles). HTML stamps each `?v=` with the
+    file's fingerprint (`api.asset_versions`), so only current URLs are cached
+    long-term and a forgotten manual bump can no longer serve stale JS.
     """
     path = (request.path or '').lower()
-    is_html = path.endswith('.html')
+    is_html = path.endswith('.html') or (response.mimetype == 'text/html' and response.status_code == 200)
     is_asset = (
         path.endswith('.js')
         or path.endswith('.css')
         or path.startswith('/js/')
         or path.startswith('/css/')
     )
+    web_dir = project_root / 'web'
     if is_html:
         response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
         response.headers['Pragma'] = 'no-cache'
         response.headers['Expires'] = '0'
+        if response.status_code == 200:
+            try:
+                response.direct_passthrough = False
+                html = response.get_data(as_text=True)
+                stamped = asset_versions.stamp_html(html, web_dir)
+                if stamped != html:
+                    response.set_data(stamped)
+                    response.headers.pop('ETag', None)
+                    response.headers.pop('Last-Modified', None)
+            except Exception:
+                pass
     elif is_asset:
-        # ?v= fingerprint → safe to cache. Retries append &_cssr= (new URL).
-        if request.args.get('v'):
+        v = request.args.get('v') or ''
+        if v and asset_versions.is_current(web_dir, request.path, v):
+            # Fingerprint matches the file on disk → safe to cache.
             response.headers['Cache-Control'] = 'public, max-age=604800, immutable'
             response.headers.pop('Pragma', None)
             response.headers.pop('Expires', None)
         else:
-            response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
-            response.headers['Pragma'] = 'no-cache'
-            response.headers['Expires'] = '0'
+            # Unstamped/stale URL: always revalidate (ETag → cheap 304).
+            response.headers['Cache-Control'] = 'no-cache, must-revalidate, max-age=0'
+            response.headers.pop('Pragma', None)
+            response.headers.pop('Expires', None)
     return response
 
 

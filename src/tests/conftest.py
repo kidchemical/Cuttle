@@ -359,6 +359,26 @@ def owner_session():
 
 
 @pytest.fixture(autouse=True)
+def _isolated_brain_state(tmp_path, monkeypatch):
+    """Harness turns in tests must not write live Brain state or query logs.
+
+    Briefing receipts, handoff cursors, context metrics, and query sidecars
+    all default to ``src/data`` / ``src/web/logs``; pytest runs used to leave
+    hundreds of ``muse-badge-session|…/pytest-of-…`` records there.
+    """
+    from api.cuttle_brain import context_delta, handoff
+
+    monkeypatch.setattr(context_delta, "_map_file", lambda: tmp_path / "brain_snapshots.json")
+    monkeypatch.setattr(handoff, "_map_file", lambda: tmp_path / "brain_last_agent.json")
+    monkeypatch.setenv("CUTTLE_CONTEXT_METRICS_DB", str(tmp_path / "context_metrics.db"))
+    # Not created up front: the tracker makes it on first use.
+    monkeypatch.setenv("CUTTLE_QUERY_LOG_DIR", str(tmp_path / "query_logs"))
+    import api.query_tracker as qt
+
+    monkeypatch.setattr(qt, "_fallback_tracker", None, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _isolated_router_outcomes(tmp_path, monkeypatch):
     """Chat/router turns in tests must not land in the live My Cuttle Performance store."""
     monkeypatch.setenv("CUTTLE_ROUTER_DB", str(tmp_path / "router_outcomes.db"))

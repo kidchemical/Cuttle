@@ -209,6 +209,57 @@ def _attach_usage_to_web_response(out: Dict[str, Any], usage: Optional[Dict[str,
         out["cost"] = payload["cost"]
 
 
+def _record_context_metrics(
+    agent_id: str,
+    *,
+    sid: Optional[str],
+    cwd: str,
+    model: Optional[str],
+    brain_meta: Dict[str, Any],
+    result: Any,
+    compacted: bool,
+    query_id: Optional[str],
+) -> None:
+    """One context-metrics row per CLI turn (Context dashboard). Never raises."""
+    try:
+        from api.agent_context import _usage_context_fill_tokens, resolve_context_limit
+        from api.cuttle_brain.metrics import record_turn
+
+        usage = result.usage if isinstance(getattr(result, "usage", None), dict) else {}
+        fill, _src = _usage_context_fill_tokens(usage, agent_id=agent_id)
+        limit = None
+        if fill:
+            try:
+                limit, _lsrc = resolve_context_limit(agent_id, model)
+            except Exception:
+                limit = None
+        record_turn(
+            chat_session_id=sid,
+            agent_id=agent_id,
+            model=model,
+            project_path=cwd,
+            mode=brain_meta.get("mode"),
+            full_reason=brain_meta.get("full_reason"),
+            prompt_chars=brain_meta.get("prompt_chars"),
+            envelope_chars=brain_meta.get("envelope_chars"),
+            delta_chars=brain_meta.get("delta_chars"),
+            handoff_chars=(
+                brain_meta.get("handoff_chars")
+                if brain_meta.get("handoff_chars") is not None
+                else (brain_meta.get("layer_chars") or {}).get("handoff")
+            ),
+            handoff_messages=brain_meta.get("handoff_messages"),
+            layer_chars=brain_meta.get("layer_chars"),
+            context_tokens=fill,
+            context_limit=limit,
+            compacted=compacted,
+            success=bool(getattr(result, "success", False)),
+            query_id=query_id,
+        )
+    except Exception as exc:
+        print(f"[kernel] context metrics error: {exc}", flush=True)
+
+
 def _compile_agent_prompt(
     manifest: AgentManifest,
     prompt: str,
@@ -233,7 +284,14 @@ def _compile_agent_prompt(
     try:
         from api.cuttle_brain.handoff import build_handoff
 
-        handoff = build_handoff(chat_session_id, to_agent=manifest.id)
+        # Agents without native resume remember nothing between turns, so
+        # they get the recent conversation every turn, not just on a switch.
+        handoff = build_handoff(
+            chat_session_id,
+            to_agent=manifest.id,
+            current_prompt=prompt,
+            full_history=not manifest.resume,
+        )
     except Exception:
         handoff = None
 
@@ -306,6 +364,8 @@ def _compile_agent_prompt(
             },
             "handoff_from": meta.get("handoff_from"),
             "handoff_to": meta.get("handoff_to"),
+            "handoff_messages": handoff.message_count if handoff else 0,
+            "layer_chars": dict(meta.get("layer_chars") or {}),
         }
         ranked_meta = meta.get("ranked_context")
         if isinstance(ranked_meta, dict):
@@ -373,6 +433,8 @@ def _compile_agent_prompt(
             "mode": "resume_delta" if delta_text else "resume_handoff",
             "prompt_chars": len(text),
             "delta_chars": len(delta_text),
+            "handoff_chars": len(handoff.text.strip()) if handoff else 0,
+            "handoff_messages": handoff.message_count if handoff else 0,
             "handoff_from": getattr(handoff, "from_agent", None) if handoff else None,
         }, (plan.snapshot if plan is not None else None)
     return prompt, {"mode": "resume", "prompt_chars": len(prompt or "")}, None
@@ -556,6 +618,7 @@ def run_agent_web_command(
         result: Optional[AgentResult] = None
         resume = None
         brain_receipt = None
+        brain_meta: Dict[str, Any] = {}
         if callable(meta_handler):
             try:
                 result = meta_handler(
@@ -709,13 +772,31 @@ def run_agent_web_command(
         # timeout/cancel — so the next turn can continue that transcript.
         if manifest.resume and result.session_id:
             adapter.save_resume(cwd, sid, result.session_id)
-        if result.success:
+        compacted = bool(
+            isinstance(result, AgentResult)
+            and isinstance(result.meta, dict)
+            and result.meta.get("context_compacted")
+        )
+        if result.success and not handled_by_meta:
+            # Settings/meta answers never reached the CLI: they must not move
+            # this agent's seen cursor or claim the chat's last agent.
             try:
                 from api.cuttle_brain.handoff import record_last_agent
 
                 record_last_agent(sid, manifest.id)
             except Exception:
                 pass
+        if compacted and not handled_by_meta:
+            # The CLI summarized its context this turn; the briefing may be
+            # gone. Drop the acknowledgement so the next turn re-sends it.
+            brain_receipt = None
+            try:
+                from api.cuttle_brain.context_delta import clear_injected_snapshot
+
+                clear_injected_snapshot(sid, manifest.id)
+            except Exception:
+                pass
+        if result.success:
             # Delivery evidence is intentionally conservative: generic
             # adapters expose no common delivery acknowledgement, so a
             # successful non-meta result is the delivery signal, while
@@ -737,6 +818,18 @@ def run_agent_web_command(
                     record_snapshot(sid, manifest.id, cwd, brain_receipt)
                 except Exception:
                     pass
+
+        if not handled_by_meta and brain_meta:
+            _record_context_metrics(
+                manifest.id,
+                sid=sid,
+                cwd=cwd,
+                model=model or getattr(result, "model", None),
+                brain_meta=brain_meta,
+                result=result,
+                compacted=compacted,
+                query_id=query_id,
+            )
 
         tracker = get_query_tracker(query_id)
         usage_payload = _usage_from_result(result.usage)

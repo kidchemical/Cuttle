@@ -265,11 +265,11 @@ def _profile_block(profile: str) -> str:
 def _runtime_block(
     *,
     inventory: Dict[str, List[str]],
-    handoff: Optional[AgentHandoff],
-    include_chat_store_hint: bool,
     chat_session_id: Any = None,
     project_path: Optional[str] = None,
 ) -> str:
+    """Inventory + active Tasks digest. Handoff and chat-store hint are
+    appended by ``compile_context`` after this block."""
     parts: List[str] = ["## Runtime context"]
     active_root = _project_root(project_path) if project_path else None
     if active_root is not None:
@@ -333,21 +333,6 @@ def _runtime_block(
             "(commands/rules/docs/actions)."
         )
 
-    if handoff and handoff.text.strip():
-        parts.append("")
-        parts.append(handoff.text.strip())
-
-    if include_chat_store_hint:
-        try:
-            from api.cuttle_ui_capabilities import cuttle_chat_store_addon
-
-            addon = cuttle_chat_store_addon(current_session_id=chat_session_id)
-            if addon.strip():
-                parts.append("")
-                parts.append(addon.strip())
-        except Exception:
-            pass
-
     # Active Tasks widgets for this chat / project (when available).
     try:
         from api.chat_widgets import format_tasks_digest
@@ -399,11 +384,13 @@ def compile_context(
     """
     layers: List[str] = []
     sections: List[str] = []
+    layer_chars: Dict[str, int] = {}
 
     core = _core_contract_block(inject_capabilities=inject_capabilities, project_path=project_path)
     if core:
         sections.append(core)
         layers.append("core_contract")
+        layer_chars["core_contract"] = len(core)
 
     rules = load_project_rules(project_path) if include_rules else []
     if include_rules:
@@ -418,6 +405,10 @@ def compile_context(
     else:
         global_rules = []
     rules_text = _rules_block(global_rules, rules)
+    if global_rules:
+        layer_chars["global_rules"] = len(_rules_block(global_rules, []))
+    if rules:
+        layer_chars["project_rules"] = len(_rules_block([], rules))
     if rules_text:
         sections.append(rules_text)
         if global_rules:
@@ -428,6 +419,7 @@ def compile_context(
     if include_profile:
         sections.append(_profile_block(profile))
         layers.append("profile")
+        layer_chars["profile"] = len(sections[-1])
 
     inv = (
         project_inventory(project_path)
@@ -440,13 +432,14 @@ def compile_context(
         runtime_sections.append(
             _runtime_block(
                 inventory=inv,
-                handoff=None,  # appended below once
-                include_chat_store_hint=False,
+                chat_session_id=chat_session_id,
                 project_path=project_path,
             )
         )
+        layer_chars["runtime"] = len(runtime_sections[-1])
     if handoff and handoff.text.strip():
         runtime_sections.append(handoff.text.strip())
+        layer_chars["handoff"] = len(runtime_sections[-1])
     if include_chat_store_hint:
         try:
             from api.cuttle_ui_capabilities import cuttle_chat_store_addon
@@ -454,6 +447,7 @@ def compile_context(
             addon = cuttle_chat_store_addon(current_session_id=chat_session_id)
             if addon.strip():
                 runtime_sections.append(addon.strip())
+                layer_chars["chat_store"] = len(addon.strip())
         except Exception:
             pass
 
@@ -482,6 +476,7 @@ def compile_context(
             if block:
                 sections.append(block)
                 layers.append("ranked_context")
+                layer_chars["ranked_context"] = len(block)
     except Exception:
         ranked_meta = {}
 
@@ -505,6 +500,7 @@ def compile_context(
             "handoff_from": handoff.from_agent if handoff else None,
             "handoff_to": handoff.to_agent if handoff else None,
             "ranked_context": ranked_meta,
+            "layer_chars": layer_chars,
         },
     )
 

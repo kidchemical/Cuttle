@@ -1153,6 +1153,14 @@ def compact_agent_context(
         result = _compact_opencode(work, resume_id)
     result["elapsed_ms"] = int((time.monotonic() - started) * 1000)
     result["resume_id"] = resume_id
+    if result.get("success"):
+        # The summary may drop the Cuttle briefing: the next turn re-sends it.
+        try:
+            from api.cuttle_brain.context_delta import clear_injected_snapshot
+
+            clear_injected_snapshot(chat_session_id, aid)
+        except Exception:
+            pass
     # Refresh status after compact (usage may drop on a later turn).
     try:
         status = get_agent_context_status(

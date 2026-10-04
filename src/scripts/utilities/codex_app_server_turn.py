@@ -296,6 +296,8 @@ async def run_codex_turn_app_server(
         "reasoning_buf": "",
         "writing_buf": "",
         "snapshot_at": 0.0,
+        # Auto-compaction mid-turn may summarize away the Cuttle briefing.
+        "compacted": False,
     }
     from api.agent_harness.questions import QuestionBridge
     from scripts.utilities.codex_cli_tool import _capture_codex_question
@@ -515,6 +517,8 @@ async def run_codex_turn_app_server(
                 _finish_connection()
                 return
             itype = str(item.get("type") or "")
+            if itype == "contextCompaction":
+                st["compacted"] = True
             if itype == "userMessage":
                 if method == "item/completed":
                     st["user_items"] += 1
@@ -554,6 +558,10 @@ async def run_codex_turn_app_server(
             preview = _delta_preview(st["writing_buf"])
             if preview:
                 activity.emit(f"writing: …{preview}")
+            return
+
+        if method == "thread/compacted":
+            st["compacted"] = True
             return
 
         if method == "thread/tokenUsage/updated":
@@ -661,6 +669,7 @@ async def run_codex_turn_app_server(
         "steered": st["steered"] - len(undelivered),
         "undelivered_steers": undelivered,
         "transport": "app-server",
+        "compacted": bool(st["compacted"]),
     }
 
     if run is not None and (run.cancelled or run.timed_out):

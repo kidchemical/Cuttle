@@ -5,6 +5,7 @@ from __future__ import annotations
 from flask import Blueprint, jsonify, request
 
 import api.dashboards.catalog as catalog
+import api.dashboards.context as context
 import api.dashboards.service as service
 import api.dashboards.usage as usage
 from api.http_authz import owner_required
@@ -56,6 +57,15 @@ def get_dashboard(dash_id: str):
             group_by=(request.args.get("group") or "model").strip().lower(),
             interval=(request.args.get("interval") or "auto").strip().lower(),
             source_id=(request.args.get("source") or "all").strip().lower(),
+            tz_offset_minutes=tz_offset,
+        ))
+    if dash_id == context.CONTEXT_ID:
+        try:
+            tz_offset = int(request.args["tz"]) if request.args.get("tz") else None
+        except ValueError:
+            tz_offset = None
+        return jsonify(context.cuttle_context(
+            range_id=(request.args.get("range") or "30d").strip().lower(),
             tz_offset_minutes=tz_offset,
         ))
     return jsonify({"success": True, **meta})

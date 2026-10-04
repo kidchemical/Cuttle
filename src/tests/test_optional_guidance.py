@@ -26,7 +26,7 @@ def test_global_runbook_list_read_and_capabilities_share_gate(tmp_path, monkeypa
         assert ('doc:gitea.md' in {item['id'] for item in rank._doc_summaries(str(project), {})}) is enabled
         assert bool(rank._read_doc_body('gitea.md', str(project))) is enabled
         assert ('gitea.md' in cuttle_ui_capabilities_block(project_path=str(project))) is enabled
-        runtime = cc._runtime_block(project_path=str(project), inventory={}, handoff=None, include_chat_store_hint=False)
+        runtime = cc._runtime_block(project_path=str(project), inventory={})
         assert ('gitea.md' in runtime) is enabled
     put(project, '.cuttle/GLOBAL.ini', '[global]\ndocs=off\n[integrations]\ngitea=on\n')
     assert 'gitea.md' not in cuttle_ui_capabilities_block(project_path=str(project))

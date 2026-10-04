@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import re
 import time
 from contextvars import ContextVar, Token
@@ -264,6 +265,10 @@ class QueryStatusTee:
 
 
 def logs_dir() -> Path:
+    """Query sidecar folder; ``CUTTLE_QUERY_LOG_DIR`` overrides (tests)."""
+    override = (os.environ.get("CUTTLE_QUERY_LOG_DIR") or "").strip()
+    if override:
+        return Path(override)
     return Path(__file__).resolve().parents[1] / "web" / "logs"
 
 

@@ -241,3 +241,72 @@ def save_claude_effort(
             return None
         _write_all(data)
     return e or None
+
+
+_COMPACT_BOUNDARY = b'"subtype":"compact_boundary"'
+
+
+def _claude_projects_dir() -> Path:
+    import os
+
+    base = (os.environ.get("CLAUDE_CONFIG_DIR") or "").strip()
+    return (Path(base).expanduser() if base else Path.home() / ".claude") / "projects"
+
+
+def _transcript_paths(claude_session_id: Optional[str]) -> list:
+    sid = _valid_session_id(claude_session_id)
+    if not sid:
+        return []
+    import glob as _glob
+
+    try:
+        return list(_claude_projects_dir().glob(f"*/{_glob.escape(sid)}.jsonl"))
+    except OSError:
+        return []
+
+
+def claude_transcript_stats(claude_session_id: Optional[str]) -> Dict[str, int]:
+    """Compactions + current window fill from Claude Code's own transcript.
+
+    * ``compactions``: ``compact_boundary`` system rows (manual ``/compact``
+      or auto). Message text containing the phrase is JSON-escaped, so the
+      unescaped needle only matches real markers.
+    * ``context_tokens``: last assistant call's input + cache read + cache
+      write — the real window occupancy. ``--output-format json`` only reports
+      turn-aggregate usage, whose ``input_tokens`` excludes cached tokens.
+
+    Zeros when the transcript cannot be found.
+    """
+    out = {"compactions": 0, "context_tokens": 0}
+    for path in _transcript_paths(claude_session_id):
+        last_usage: Optional[bytes] = None
+        try:
+            with open(path, "rb") as f:
+                for line in f:
+                    if _COMPACT_BOUNDARY in line:
+                        out["compactions"] += 1
+                    elif b'"type":"assistant"' in line and b'"usage"' in line:
+                        last_usage = line
+        except OSError:
+            continue
+        if last_usage is None:
+            continue
+        try:
+            usage = (json.loads(last_usage).get("message") or {}).get("usage") or {}
+            fill = sum(
+                int(usage.get(k) or 0)
+                for k in (
+                    "input_tokens",
+                    "cache_read_input_tokens",
+                    "cache_creation_input_tokens",
+                )
+            )
+        except (ValueError, TypeError, AttributeError):
+            fill = 0
+        if fill > 0:
+            out["context_tokens"] = fill
+    return out
+
+
+def count_compact_boundaries(claude_session_id: Optional[str]) -> int:
+    return claude_transcript_stats(claude_session_id)["compactions"]

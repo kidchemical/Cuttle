@@ -23,7 +23,7 @@ as action YAML replace by basename. This is not a universal replacement promise
 for every loader or literal script path. See the [overlay contract](personal/README.md).
 
 Scratch belongs under `{project}/temp/`; see the scratch invariant in
-`rules/00-core.md`, rule 13. New projects are scaffolded through
+`rules/00-core.md`. New projects are scaffolded through
 `managers.cuttle_scaffold.ensure_cuttle_scaffold`; see the project reference.
 
 Commands/actions/skills replace whole units by their normalized command/action

@@ -1,7 +1,8 @@
 # Sub-agents (child chats)
 
 Fan-out, voting, mixed harnesses, or a task split across agents → spawn **real
-child chats** with `python -m api.subagents`. How-to: `.cuttle_global/docs/subagents.md`.
+child chats** with `python -m api.subagents`, not background CLI subagents. Supervised
+children keep their owned `--wait` path. How-to: `.cuttle_global/docs/subagents.md`.
 
 ## When to spawn (do this without being asked)
 

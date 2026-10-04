@@ -74,6 +74,12 @@ def main(argv: Optional[list[str]] = None) -> int:
                 interval=args.interval, source_id=args.source or "all",
             ), indent=2))
             return 0
+        if args.id == "cuttle-context":
+            from api.dashboards.context import cuttle_context
+
+            rng = args.range_id if args.range_id in ("7d", "30d", "90d") else "30d"
+            print(json.dumps(cuttle_context(range_id=rng), indent=2))
+            return 0
         if catalog.get_dashboard(args.id):
             print(json.dumps({"success": True, **catalog.get_dashboard(args.id)}, indent=2))
             return 0

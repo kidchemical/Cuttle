@@ -74,7 +74,7 @@ These files under `.cuttle/rules/` are compiled into every harness agent turn by
 | Path | Role |
 |---|---|
 | (fill in) | Primary source / content root |
-| `temp/` | Agent scratch / redirected stdout (gitignored; global rule 13) |
+| `temp/` | Agent scratch / redirected stdout (gitignored; global `00-core.md` scratch rule) |
 | `.cuttle/personal/` | Install-local overlay (gitignored; supplements tracked `.cuttle/`) |
 | `.cuttle/commands/` | Cuttle slash commands (`/name`) |
 | `.cuttle/actions/` | Allowlisted side effects (forms / confirms) |
@@ -84,7 +84,7 @@ These files under `.cuttle/rules/` are compiled into every harness agent turn by
 
 1. Prefer this project's `.cuttle/commands`, `.cuttle/actions`, and `.cuttle/docs` over inventing parallel conventions.
 2. Long OS jobs should use project commands with `execute: shell` + `watch:` when available.
-3. Scratch / `_tmp_*` dumps go in `temp/` (or `scripts/temp/` if this project keeps agent scripts under `scripts/`) — never next to kept helpers or at the repo root. See global `.cuttle_global/rules/00-core.md` rule 13.
+3. Scratch / `_tmp_*` dumps go in `temp/` (or `scripts/temp/` if this project keeps agent scripts under `scripts/`) — never next to kept helpers or at the repo root. See the scratch rule in global `.cuttle_global/rules/00-core.md`.
 4. Machine-specific paths / LAN notes → `.cuttle/personal/` (never commit).
 """
 
@@ -227,7 +227,7 @@ def ensure_cuttle_scaffold(
     _write_if_missing(personal / "README.md", _PERSONAL_README)
     _ensure_personal_gitignore(root, created)
 
-    # Project-root scratch (global rule 13) — dir + gitignore, never overwrite ignore body
+    # Project-root scratch (global `00-core.md` scratch rule) — dir + gitignore, never overwrite ignore body
     _mkdir(root / PROJECT_TEMP_DIR)
     _ensure_temp_gitignore(root, created)
 

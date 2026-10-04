@@ -87,7 +87,30 @@ def test_versioned_css_js_may_be_cached():
     api = (REPO / "src" / "api" / "web_chat_api.py").read_text(encoding="utf-8")
     assert "max-age=604800, immutable" in api
     assert "request.args.get('v')" in api
+    assert "asset_versions.is_current" in api
     assert "_no_cache_ui_assets" in api
+
+
+def test_asset_fingerprint_stamp_and_cache_gate(tmp_path):
+    import os
+    from api import asset_versions as av
+    js = tmp_path / "js"
+    js.mkdir()
+    f = js / "a.js"
+    f.write_text("1")
+    html = '<script src="/js/a.js?v=hand1"></script><link href="/css/missing.css?v=x">'
+    out = av.stamp_html(html, tmp_path)
+    v = out.split("?v=")[1].split('"')[0]
+    assert v.startswith("hand1~")
+    assert '/css/missing.css?v=x"' in out
+    assert av.is_current(tmp_path, "/js/a.js", v)
+    assert not av.is_current(tmp_path, "/js/a.js", "hand1")
+    # Edit without a manual bump: the old URL stops being cacheable.
+    st = f.stat()
+    os.utime(f, ns=(st.st_atime_ns, st.st_mtime_ns + 5_000_000_000))
+    assert not av.is_current(tmp_path, "/js/a.js", v)
+    assert av.stamp_html(out, tmp_path) != out
+    assert av.fingerprint(tmp_path, "/js/../../etc/passwd") is None
 
 
 def test_notification_open_skips_duplicate_navigate():

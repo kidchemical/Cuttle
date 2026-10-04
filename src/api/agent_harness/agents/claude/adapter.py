@@ -20,6 +20,10 @@ from api.agent_harness.agents.claude.model_catalog import (
 )
 from api.agent_harness.cwd import resolve_harness_cwd
 from api.agent_harness.types import AgentResult
+from scripts.utilities.claude_cli_session_store import (
+    claude_transcript_stats,
+    count_compact_boundaries,
+)
 from scripts.utilities.claude_cli_tool import ClaudeCliTool, claude_executable
 
 _EFFORT_WORDS = ("low", "medium", "high", "xhigh", "max")
@@ -412,6 +416,9 @@ class Adapter:
                     },
                 )
 
+        # `--output-format json` does not report auto-compaction; the CLI's own
+        # transcript gains a compact_boundary row when it compacts.
+        compacts_before = count_compact_boundaries(resume) if resume else None
         put_status(status_queue, "Calling Claude Code…")
         # No mid-run NDJSON — coarse tick only (Cursor-style agents stream instead).
         stop = asyncio.Event()
@@ -466,11 +473,15 @@ class Adapter:
             except (TypeError, ValueError):
                 pass
 
+        sid = raw.get("claude_session_id")
+        transcript = claude_transcript_stats(str(sid).strip()) if sid else None
+        if transcript and transcript["context_tokens"] > 0:
+            # Real window fill (aggregate input_tokens excludes cached tokens).
+            usage["context_tokens"] = transcript["context_tokens"]
         meta = badge_meta("claude", mid or "", _model_source)
         if effort:
             meta["agent_effort"] = effort
             meta["effort_source"] = effort_source
-        sid = raw.get("claude_session_id")
         # Prefer last-call occupancy for the gauge (not multi-step billing).
         if not usage.get("context_tokens") and usage.get("prompt_tokens"):
             try:
@@ -497,6 +508,13 @@ class Adapter:
                 )
             except Exception:
                 pass
+        if (
+            compacts_before is not None
+            and transcript is not None
+            and str(sid).strip() == str(resume).strip()
+            and transcript["compactions"] > compacts_before
+        ):
+            meta["context_compacted"] = True
         err = None if ok else (raw.get("error") or "Claude Code failed")
         display = (raw.get("output") or "").strip()
         if ok and not display:

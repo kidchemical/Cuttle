@@ -68,6 +68,23 @@ def _sid_key(chat_session_id: Any) -> Optional[str]:
     return s or None
 
 
+def sid_variants(chat_session_id: Any) -> List[str]:
+    """Key spellings one chat may be stored under (``959`` / ``db_session_959``).
+
+    Callers hand the kernel either form; prefix-based cleanup must catch both.
+    """
+    sid = _sid_key(chat_session_id)
+    if not sid:
+        return []
+    out = [sid]
+    digits = sid[len("db_session_"):] if sid.startswith("db_session_") else sid
+    if digits.isdigit():
+        for form in (digits, f"db_session_{digits}"):
+            if form not in out:
+                out.append(form)
+    return out
+
+
 def _store_key(chat_session_id: Any, agent_id: str, project_path: str) -> Optional[str]:
     sid = _sid_key(chat_session_id)
     aid = (agent_id or "").strip()
@@ -240,6 +257,12 @@ def clear_injected_snapshot(
     agent_id: Optional[str] = None,
     project_path: Optional[str] = None,
 ) -> None:
+    """Forget acknowledged briefings so the next turn sends a full one.
+
+    ``agent_id`` + ``project_path`` drops one record; ``agent_id`` alone drops
+    that agent's records for every project (e.g. after it compacted);
+    neither drops the whole chat (session delete / reset).
+    """
     sid = _sid_key(chat_session_id)
     if not sid:
         return
@@ -251,8 +274,12 @@ def clear_injected_snapshot(
                 del data[key]
                 _write_all(data)
             return
-        prefix = f"{sid}|"
-        keys = [k for k in data if str(k).startswith(prefix)]
+        aid = (agent_id or "").strip()
+        prefixes = tuple(
+            f"{form}|{aid}|" if aid else f"{form}|"
+            for form in sid_variants(chat_session_id)
+        )
+        keys = [k for k in data if str(k).startswith(prefixes)]
         if not keys:
             return
         for k in keys:
