@@ -427,7 +427,7 @@
                 <div class="setting-item">
                     <div>
                         <div class="setting-label">OpenAI API Key</div>
-                        <div class="setting-description">Required for GPT models (GPT-4o, GPT-3.5, etc.)</div>
+                        <div class="setting-description">Optional. Used by Cuttle’s own direct API features (titles, commit messages, prompt enhance, router brain, voice, image fallback). Never passed to CLI agents.</div>
                     </div>
                     <div class="setting-control">
                         <div class="api-key-container">
@@ -444,7 +444,7 @@
                 <div class="setting-item">
                     <div>
                         <div class="setting-label">Anthropic API Key</div>
-                        <div class="setting-description">Required for Claude models (Claude 3.5 Sonnet, Haiku, etc.)</div>
+                        <div class="setting-description">Optional. Used by Cuttle’s own direct API features (titles, commit messages, prompt enhance, image description). Never passed to CLI agents.</div>
                     </div>
                     <div class="setting-control">
                         <div class="api-key-container">
@@ -2665,11 +2665,10 @@
             const statusElement = document.getElementById(inputId + 'Status');
             const testButton = event.target;
             
-            const apiKey = input.value.trim();
-            if (!apiKey) {
-                showNotification('Please enter an API key first', 'error');
-                return;
-            }
+            const typed = input.value.trim();
+            // Empty or masked hint ("sk-…••••") tests the saved key server-side.
+            const testingSaved = !typed || typed.includes('•');
+            const apiKey = testingSaved ? '' : typed;
             
             // Update UI to show testing state
             testButton.disabled = true;
@@ -2694,8 +2693,8 @@
                     updateApiKeyStatus(statusElement, 'valid', data.message || 'Valid');
                     showNotification(`✅ ${apiType} API key is valid!`, 'success');
                     
-                    // Auto-save if enabled
-                    if (document.getElementById('autoSaveApiKeysToggle').classList.contains('active')) {
+                    // Auto-save if enabled (a saved key is already stored)
+                    if (!testingSaved && document.getElementById('autoSaveApiKeysToggle').classList.contains('active')) {
                         await saveApiKey(apiType, apiKey);
                     }
                 } else {

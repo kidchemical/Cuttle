@@ -3555,10 +3555,23 @@ def test_api_key():
     try:
         data = request.get_json()
         api_type = data.get('api_type')
-        api_key = data.get('api_key')
-        
-        print(f"[API_TEST] Testing {api_type} key: {api_key[:10]}..." if api_key else "[API_TEST] No key provided")
-        
+        api_key = (data.get('api_key') or '').strip()
+        # Empty input tests the saved key (env, then src/.env).
+        saved_names = {
+            'openai': ('OPENAI_API_KEY', 'API_KEY'),
+            'anthropic': ('ANTHROPIC_API_KEY',),
+            'discord': ('DISCORD_BOT_TOKEN', 'DISCORD_TOKEN'),
+        }
+        if not api_key and api_type in saved_names:
+            api_key = _read_env_credential(saved_names[api_type])
+            if not api_key:
+                return jsonify({
+                    'success': False,
+                    'message': 'No key saved. Paste a key to test it.'
+                }), 400
+
+        print(f"[API_TEST] Testing {api_type} key")
+
         if not api_type or not api_key:
             return jsonify({
                 'success': False,
@@ -3587,7 +3600,7 @@ def test_api_key():
 def test_openai_key(api_key):
     """Test OpenAI API key"""
     try:
-        print(f"[OPENAI_TEST] Starting test for key: {api_key[:10]}...")
+        print("[OPENAI_TEST] Starting test")
         
         try:
             import openai
@@ -3601,7 +3614,7 @@ def test_openai_key(api_key):
         
         # Validate API key format first
         if not api_key.startswith('sk-'):
-            print(f"[OPENAI_TEST] Invalid format: {api_key[:10]}...")
+            print("[OPENAI_TEST] Invalid format")
             return jsonify({
                 'success': False,
                 'message': 'Invalid API key format. OpenAI keys should start with "sk-"'
@@ -3653,7 +3666,7 @@ def test_openai_key(api_key):
 def test_anthropic_key(api_key):
     """Test Anthropic API key"""
     try:
-        print(f"[ANTHROPIC_TEST] Starting test for key: {api_key[:10]}...")
+        print("[ANTHROPIC_TEST] Starting test")
         
         try:
             import anthropic
@@ -3667,7 +3680,7 @@ def test_anthropic_key(api_key):
         
         # Validate API key format first
         if not api_key.startswith('sk-ant-'):
-            print(f"[ANTHROPIC_TEST] Invalid format: {api_key[:10]}...")
+            print("[ANTHROPIC_TEST] Invalid format")
             return jsonify({
                 'success': False,
                 'message': 'Invalid API key format. Anthropic keys should start with "sk-ant-"'
@@ -3718,12 +3731,12 @@ def test_anthropic_key(api_key):
 def test_discord_key(token):
     """Test Discord bot token"""
     try:
-        print(f"[DISCORD_TEST] Starting test for token: {token[:10]}...")
+        print("[DISCORD_TEST] Starting test")
         import requests
         
         # Validate token format first
         if not token or len(token) < 50:
-            print(f"[DISCORD_TEST] Invalid format: {token[:10]}...")
+            print("[DISCORD_TEST] Invalid format")
             return jsonify({
                 'success': False,
                 'message': 'Invalid token format. Discord bot tokens should be longer'

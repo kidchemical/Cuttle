@@ -26,7 +26,7 @@ KNOWN_AGENTS: Dict[str, Dict[str, str]] = {
     "muse": {
         "label": "Muse Code",
         "slash": "/muse",
-        "notes": "Harness connector — Meta Muse Code CLI (WSL on Windows).",
+        "notes": "Harness connector — Meta Muse Code CLI (native).",
     },
     "hermes": {
         "label": "Hermes",

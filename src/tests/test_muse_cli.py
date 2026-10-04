@@ -160,25 +160,19 @@ def test_muse_activity_ignores_internal_reminders():
 
 
 
-def test_native_resolver_ignores_wsl_forwarding_shims(tmp_path: Path, monkeypatch):
-    """A `muse.cmd` that forwards to WSL must NOT be treated as a native binary.
-
-    Native mode hands muse a Windows workspace path; when the shim re-enters WSL
-    bash mangles the backslashes (`C:\\Projects\\Cuttle` -> `E:DevCuttle`) and the run
-    dies with "workspace root does not exist". Skipping the shim lets resolution
-    reject the obsolete shim and require a native binary
-    """
+def test_native_resolver_requires_binary_beside_launcher(tmp_path: Path, monkeypatch):
+    """A script launcher is only usable when a native Muse binary sits beside it."""
     import scripts.utilities.muse_cli_tool as muse_mod
 
     shim_only = tmp_path / "shim_only"
     shim_only.mkdir()
     shim = shim_only / "muse.cmd"
-    shim.write_text("@echo off\r\nwsl -e bash -lc \"muse %*\"\r\n", encoding="utf-8")
+    shim.write_text("@echo off\r\nmuse-legacy %*\r\n", encoding="utf-8")
 
     paired = tmp_path / "paired"
     paired.mkdir()
     paired_shim = paired / "muse.cmd"
-    paired_shim.write_text("@echo off\r\nwsl -e bash -lc \"muse %*\"\r\n", encoding="utf-8")
+    paired_shim.write_text("@echo off\r\nmuse-legacy %*\r\n", encoding="utf-8")
     real = paired / "muse.exe"
     real.write_bytes(b"MZ")
 
@@ -203,7 +197,7 @@ def test_native_resolver_ignores_wsl_forwarding_shims(tmp_path: Path, monkeypatc
 
 
 def test_native_resolver_prefers_meta_windows_muse_bin(tmp_path: Path, monkeypatch):
-    """Meta's Windows install is muse.cmd + muse-bin-*.exe — not a WSL shim."""
+    """Meta's Windows install is muse.cmd + muse-bin-*.exe."""
     if os.name != "nt":
         pytest.skip("Windows Muse installer layout")
     import scripts.utilities.muse_cli_tool as muse_mod
@@ -226,12 +220,12 @@ def test_native_resolver_prefers_meta_windows_muse_bin(tmp_path: Path, monkeypat
     monkeypatch.setattr(muse_mod.shutil, "which", lambda name: str(shim))
     assert muse_mod._which_muse_native() == str(bin_exe)
 
-    # Well-known install path wins even when PATH still has a WSL forwarder.
-    wsl_shim_dir = tmp_path / "cuttle_scripts"
-    wsl_shim_dir.mkdir()
-    wsl_shim = wsl_shim_dir / "muse.cmd"
-    wsl_shim.write_text("@echo off\r\nwsl -e bash -lc \"muse %*\"\r\n", encoding="utf-8")
-    monkeypatch.setattr(muse_mod.shutil, "which", lambda name: str(wsl_shim))
+    # Well-known install path wins over a stray PATH launcher.
+    stray_shim_dir = tmp_path / "cuttle_scripts"
+    stray_shim_dir.mkdir()
+    stray_shim = stray_shim_dir / "muse.cmd"
+    stray_shim.write_text("@echo off\r\nmuse-legacy %*\r\n", encoding="utf-8")
+    monkeypatch.setattr(muse_mod.shutil, "which", lambda name: str(stray_shim))
     monkeypatch.setattr(muse_mod, "_default_windows_muse_install", lambda: str(bin_exe))
     assert muse_mod._which_muse_native() == str(bin_exe)
 
@@ -424,7 +418,7 @@ def test_muse_session_store_rejects_garbage(tmp_path: Path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_execute_prompt_builds_wsl_argv(tmp_path: Path):
+async def test_execute_prompt_builds_native_argv(tmp_path: Path):
     cwd = tmp_path / "ws"
     cwd.mkdir()
     captured = {}
@@ -673,7 +667,7 @@ async def test_execute_prompt_cancel_preserves_partial(tmp_path: Path, monkeypat
 
 @pytest.mark.asyncio
 async def test_e2e_muse_echo_provider():
-    """Live WSL/native muse exec --provider echo (no Meta API credits)."""
+    """Live native muse exec --provider echo (no Meta API credits)."""
     from api.agent_router.supervised.test_isolation import allow_external_runners
     from scripts.utilities.muse_cli_tool import muse_available
 

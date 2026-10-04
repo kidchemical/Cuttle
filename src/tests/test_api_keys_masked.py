@@ -130,3 +130,31 @@ def test_load_requires_owner(tmp_path, monkeypatch):
     anon = wca.app.test_client()
     res = anon.get("/api/load-api-keys")
     assert res.status_code == 401
+
+
+def test_test_endpoint_uses_saved_key_when_input_empty(tmp_path, monkeypatch):
+    from flask import jsonify
+
+    from api import web_chat_api as wca
+
+    client = _owner_client(tmp_path, monkeypatch)
+    secret = "sk-saved-openai-secret-5678"
+    (tmp_path / "src" / ".env").write_text(f"OPENAI_API_KEY={secret}\n", encoding="utf-8")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("API_KEY", raising=False)
+    seen = {}
+
+    def fake_test(key):
+        seen["key"] = key
+        return jsonify({"success": True, "message": "ok"})
+
+    monkeypatch.setattr(wca, "test_openai_key", fake_test)
+    res = client.post("/api/test-api-key", json={"api_type": "openai", "api_key": ""})
+    assert res.status_code == 200
+    assert seen["key"] == secret
+
+    # Nothing saved and nothing typed → a clear message, no provider call.
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    res = client.post("/api/test-api-key", json={"api_type": "anthropic"})
+    assert res.status_code == 400
+    assert "No key saved" in res.get_json()["message"]

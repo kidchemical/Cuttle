@@ -44,5 +44,5 @@ auto_install: false
 notes: >-
   Bundled harness connector wrapping scripts.utilities.muse_cli_tool.
   Native-first on Windows (Meta install: `%LOCALAPPDATA%\Programs\muse\muse-bin-*.exe`
-  via PATH / MUSE_CLI_PATH). WSL-forwarding muse.cmd shims are rejected. Only native host execution is supported. Long prompts use --prompt-file (no silent argv
+  via PATH / MUSE_CLI_PATH). Only native host execution is supported. Long prompts use --prompt-file (no silent argv
   truncation).

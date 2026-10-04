@@ -128,7 +128,7 @@ def test_muse_prompt_carries_chat_context_when_the_user_asks_about_chats(monkeyp
 def test_muse_prompt_carries_chat_context_for_ch_session_handle(monkeypatch):
     """CH-000149 failure: 'summarize CH-000147' never matched the word-only regex."""
     if sys.platform != "win32":
-        pytest.skip("Muse chat-store enrichment is WSL/Windows-host specific")
+        pytest.skip("Muse chat-store enrichment is Windows-host specific")
     from api import web_chat_api as w
     import scripts.utilities.muse_cli_tool as muse_mod
 

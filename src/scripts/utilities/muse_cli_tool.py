@@ -3,8 +3,8 @@ Muse Code CLI integration — Meta's terminal coding agent (`muse exec --json`).
 
 Resolution order on Windows is native-first:
   ``MUSE_CLI_PATH`` → ``%LOCALAPPDATA%\\Programs\\muse\\muse-bin-*.exe``
-  (Meta's official Windows install) → PATH. WSL-forwarding ``muse.cmd`` shims
-  are rejected. Only the native host installation is supported.
+  (Meta's official Windows install) → PATH. Only the native host
+  installation is supported.
 
 Auth: native Muse login/configuration; host API credentials are isolated.
 """
@@ -349,36 +349,10 @@ def _muse_activity_for_event(
 
 
 
-# Batch/script shims look like a binary to `shutil.which`. Two kinds exist on
-# Windows:
-#   1. Meta's official install: ``%LOCALAPPDATA%\Programs\muse\muse.cmd`` →
-#      PowerShell launcher → ``muse-bin-<ver>.exe`` (native — keep).
-#   2. Cuttle's legacy ``.cuttle_global/scripts/muse.cmd`` which forwards into
-#      ``wsl … muse``. Treating (2) as native hands it a Windows
-#      ``--workspace`` path; bash then strips backslashes
-#      (``C:\\Projects\\Cuttle`` → ``C:ProjectsCuttle``) and muse dies with
-#      "workspace root does not exist". Reject WSL forwarders so resolution
-#      can use the real native binary .
+# Batch/script launchers look like a binary to `shutil.which`. Meta's official
+# Windows install is ``muse.cmd`` → PowerShell launcher → ``muse-bin-<ver>.exe``;
+# a launcher is only usable when that real binary sits beside it.
 _SHIM_EXTENSIONS = {".cmd", ".bat", ".ps1", ".com"}
-
-
-def _is_wsl_forwarding_shim(path: str) -> bool:
-    """True when ``path`` is a shell script that re-enters WSL for muse."""
-    if not path or os.path.splitext(path)[1].lower() not in _SHIM_EXTENSIONS:
-        return False
-    try:
-        # Only need the head — Meta's launcher shim is short; WSL forwarders
-        # mention ``wsl`` in the first few lines.
-        head = Path(path).read_text(encoding="utf-8", errors="ignore")[:2048]
-    except OSError:
-        return False
-    low = head.lower()
-    if "wsl" not in low:
-        return False
-    # Meta's official muse.cmd invokes powershell.exe — not wsl.
-    if "muse-launcher" in low or "powershell" in low:
-        return False
-    return True
 
 
 def _muse_bin_exe_beside(directory: Path) -> Optional[str]:
@@ -411,51 +385,23 @@ def _default_windows_muse_install() -> Optional[str]:
 
 
 def _is_native_muse_executable(path: str) -> bool:
-    """True for a real launchable native Muse binary (not a WSL forwarder)."""
+    """True for a real launchable native Muse binary (not a script launcher)."""
     if not path or not os.path.isfile(path):
         return False
-    if _is_wsl_forwarding_shim(path):
-        return False
-    ext = os.path.splitext(path)[1].lower()
-    if ext in {".exe", ""} or (os.name != "nt" and ext not in _SHIM_EXTENSIONS):
-        return True
-    # Meta's Windows muse.cmd is acceptable only when a muse-bin-*.exe sibling
-    # exists — callers should prefer that sibling via `_resolve_native_muse_path`.
-    if ext in _SHIM_EXTENSIONS and not _is_wsl_forwarding_shim(path):
-        sibling = _muse_bin_exe_beside(Path(path).parent)
-        return bool(sibling) or (Path(path).parent / "muse.exe").is_file()
-    return False
+    return os.path.splitext(path)[1].lower() not in _SHIM_EXTENSIONS
 
 
 def _resolve_native_muse_path(path: str) -> Optional[str]:
     """Normalize a candidate path to a launchable native binary, or None."""
     if not path:
         return None
-    if _is_wsl_forwarding_shim(path):
-        # Sibling muse-bin / muse.exe next to a WSL shim is still fine (tests).
+    if os.path.splitext(path)[1].lower() in _SHIM_EXTENSIONS:
+        # Launch the binary beside the launcher (Meta's muse-bin / muse.exe).
         sibling = _muse_bin_exe_beside(Path(path).parent)
         if sibling:
             return sibling
         exe = Path(path).with_suffix(".exe")
-        if exe.is_file():
-            return str(exe)
-        return None
-    if os.name == "nt":
-        try:
-            from api.agent_harness.win_cli import prefer_native_binary
-        except ImportError:
-            prefer_native_binary = None  # type: ignore[assignment]
-        if prefer_native_binary is not None:
-            extras = []
-            parent = Path(path).parent
-            bin_exe = _muse_bin_exe_beside(parent)
-            if bin_exe:
-                extras.append(Path(bin_exe))
-            path = prefer_native_binary(path, extra_candidates=extras)
-            # prefer_native_binary only swaps to muse.exe; force muse-bin if needed.
-            if os.path.splitext(path)[1].lower() in _SHIM_EXTENSIONS:
-                if bin_exe:
-                    path = bin_exe
+        return str(exe) if exe.is_file() else None
     return path if _is_native_muse_executable(path) else None
 
 
@@ -465,7 +411,7 @@ def _which_muse_native() -> Optional[str]:
     Resolution order on Windows:
       1. ``MUSE_CLI_PATH`` (resolved to sibling ``muse-bin-*.exe`` when needed)
       2. Well-known Meta install under ``%LOCALAPPDATA%\\Programs\\muse``
-      3. ``PATH`` via ``shutil.which`` (skips WSL-forwarding shims)
+      3. ``PATH`` via ``shutil.which`` (launchers resolve to their binary)
     """
     override = (os.getenv("MUSE_CLI_PATH") or "").strip()
     if override:

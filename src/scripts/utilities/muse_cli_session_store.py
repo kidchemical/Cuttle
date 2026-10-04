@@ -178,7 +178,7 @@ def muse_data_home() -> Path:
     """Muse Code on-disk home (session logs + MSP views).
 
     Prefers ``$XDG_DATA_HOME/muse`` when set (same as ``agent_usage``), else
-    ``~/.local/share/muse`` (Linux/WSL and current Windows Muse layout).
+    ``~/.local/share/muse`` (Linux and current Windows Muse layout).
     """
     import os
 

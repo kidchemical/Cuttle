@@ -1732,13 +1732,8 @@
         async function testApiKey(apiType) {
             const keyInput = document.getElementById(`${apiType}Key`);
             const apiKey = keyInput.value.trim();
-            
-            if (!apiKey) {
-                showNotification('⚠️ Please enter an API key first');
-                return;
-            }
-            
-            showNotification('🔄 Testing API key...');
+            // Empty input tests the saved key server-side.
+            showNotification(apiKey ? '🔄 Testing API key...' : '🔄 Testing saved key...');
             
             try {
                 const response = await fetch('/api/test-api-key', {
@@ -1812,13 +1807,13 @@
                     // Server returns display-only hints (never full secrets).
                     const hint = (v) => (v && v.includes('•')) ? v : maskApiKey(v);
                     if (result.api_keys.openai) {
-                        document.getElementById('openaiKey').placeholder = `${hint(result.api_keys.openai)} (configured)`;
+                        document.getElementById('openaiKey').placeholder = `${hint(result.api_keys.openai)} saved — Test checks it, paste to replace`;
                     }
                     if (result.api_keys.anthropic) {
-                        document.getElementById('anthropicKey').placeholder = `${hint(result.api_keys.anthropic)} (configured)`;
+                        document.getElementById('anthropicKey').placeholder = `${hint(result.api_keys.anthropic)} saved — Test checks it, paste to replace`;
                     }
                     if (result.api_keys.discord) {
-                        document.getElementById('discordKey').placeholder = `${hint(result.api_keys.discord)} (configured)`;
+                        document.getElementById('discordKey').placeholder = `${hint(result.api_keys.discord)} saved — Test checks it, paste to replace`;
                     }
                 }
             } catch (error) {
