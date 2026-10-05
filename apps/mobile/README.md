@@ -12,7 +12,7 @@ The phone does **not** run the Python daemon. It is a full-screen native window 
 - Cold start → opens Cuttle directly (when a server is saved)
 - In-app loading / error screens (not the system browser)
 - Native bridge (`window.cuttleMobile`) for **Server** settings + reload
-- Self-signed HTTPS accepted inside the app WebView
+- Android HTTPS uses platform certificate trust and validates the server address
 
 ## Prerequisites
 
@@ -53,8 +53,13 @@ APK: `android/app/build/outputs/apk/debug/app-debug.apk`
 
 Use HTTP port **8000** and your PC IP from Settings → Phone / LAN access.
 HTTP sends credentials and chat traffic in cleartext; this client is for a trusted
-LAN. Its WebView self-signed-certificate handling is app-specific and does not
-configure trust in browsers or the separate native notification companion.
+LAN. Android rejects untrusted, expired, or mismatched HTTPS certificates in both
+the WebView and native probes, notifications, and update downloads. The default
+Cuttle self-signed certificate is not automatically trusted. For HTTPS, use an
+endpoint with a certificate trusted by Android and a matching hostname (for
+example, a private HTTPS proxy). Accepting a browser warning does not establish
+app trust. Failed HTTPS connections never change the saved server to HTTP;
+select HTTP explicitly in Server settings if appropriate for your LAN.
 See [remote access](../../docs/guides/REMOTE_ACCESS.md) for private proxy/VPN options.
 
 ## First launch

@@ -3,12 +3,7 @@ package com.cuttle.mobile.notify;
 import android.content.Context;
 import java.io.IOException;
 import java.net.URLEncoder;
-import java.security.SecureRandom;
-import java.security.cert.X509Certificate;
 import java.util.concurrent.TimeUnit;
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.TrustManager;
-import javax.net.ssl.X509TrustManager;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -17,8 +12,8 @@ import okhttp3.Response;
 import org.json.JSONObject;
 
 /**
- * LAN Cuttle API for the notification listener. Trusts the same self-signed
- * HTTPS cert the WebView already accepts.
+ * LAN Cuttle API for probes, notifications, and APK downloads. Uses platform
+ * certificate trust and OkHttp hostname validation, like the WebView.
  */
 public final class CuttleApi {
     private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
@@ -184,40 +179,13 @@ public final class CuttleApi {
     }
 
     private static OkHttpClient buildClient() {
-        try {
-            TrustManager[] trustAll = new TrustManager[] {
-                new X509TrustManager() {
-                    @Override
-                    public void checkClientTrusted(X509Certificate[] chain, String authType) {}
-
-                    @Override
-                    public void checkServerTrusted(X509Certificate[] chain, String authType) {}
-
-                    @Override
-                    public X509Certificate[] getAcceptedIssuers() {
-                        return new X509Certificate[0];
-                    }
-                }
-            };
-            SSLContext ssl = SSLContext.getInstance("TLS");
-            ssl.init(null, trustAll, new SecureRandom());
-            X509TrustManager tm = (X509TrustManager) trustAll[0];
-            return new OkHttpClient.Builder()
-                .sslSocketFactory(ssl.getSocketFactory(), tm)
-                .hostnameVerifier((hostname, session) -> true)
-                .retryOnConnectionFailure(true)
-                .readTimeout(180, TimeUnit.SECONDS)
-                .writeTimeout(15, TimeUnit.SECONDS)
-                .connectTimeout(15, TimeUnit.SECONDS)
-                .callTimeout(180, TimeUnit.SECONDS)
-                .build();
-        } catch (Exception e) {
-            return new OkHttpClient.Builder()
-                .retryOnConnectionFailure(true)
-                .readTimeout(35, TimeUnit.SECONDS)
-                .connectTimeout(15, TimeUnit.SECONDS)
-                .build();
-        }
+        return new OkHttpClient.Builder()
+            .retryOnConnectionFailure(true)
+            .readTimeout(180, TimeUnit.SECONDS)
+            .writeTimeout(15, TimeUnit.SECONDS)
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .callTimeout(180, TimeUnit.SECONDS)
+            .build();
     }
 
     private static String encode(String s) {

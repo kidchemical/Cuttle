@@ -45,14 +45,38 @@ def test_notification_service_safe_when_offline():
 def test_native_recovers_main_frame_load_errors():
     src = MAIN.read_text(encoding="utf-8")
     assert "onReceivedError" in src
-    assert "httpFallbackBase" in src
     assert "handleDocumentLoadError" in src
 
 
-def test_http_fallback_maps_phone_https_to_port_8000():
+def test_https_errors_never_downgrade_or_rewrite_saved_origin():
     src = MAIN.read_text(encoding="utf-8")
-    assert 'port == 8888' in src
-    assert 'http://" + host + ":8000"' in src
+    assert "httpFallbackBase" not in src
+    assert "persistBaseUrl" not in src
+    assert "loadCuttle(base);" in src
+
+
+def test_webview_certificate_and_handshake_errors_fail_closed():
+    src = MAIN.read_text(encoding="utf-8")
+    callback = src.split("public void onReceivedSslError(", 1)[1].split("@Override", 1)[0]
+    assert "handler.cancel();" in callback
+    assert "handler.proceed(" not in src
+    assert "removeCallbacks(connectionWatchdog)" in callback
+    assert "showError(" in callback
+    assert "ERROR_FAILED_SSL_HANDSHAKE" in src
+
+
+def test_native_api_uses_default_certificate_and_hostname_validation():
+    api = (MAIN.parent / "notify" / "CuttleApi.java").read_text(encoding="utf-8")
+    assert "new OkHttpClient.Builder()" in api
+    assert "sslSocketFactory(" not in api
+    assert "hostnameVerifier(" not in api
+    assert "X509TrustManager" not in api
+
+
+def test_setup_does_not_promise_android_certificate_bypass():
+    js = (REPO / "apps" / "mobile" / "src" / "main.js").read_text(encoding="utf-8")
+    assert "self-signed cert is accepted" not in js
+    assert "trusted certificate matching the server address" in js
 
 
 def test_foreground_skips_notification_long_poll():

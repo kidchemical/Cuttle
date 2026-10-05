@@ -255,7 +255,7 @@ function syncSchemeUi() {
   if (hint) {
     hint.innerHTML =
       scheme === 'https'
-        ? 'Using <strong>https</strong> — self-signed cert is accepted in-app.'
+        ? 'Using <strong>https</strong> — Android requires a trusted certificate matching the server address.'
         : 'Using <strong>http</strong> (LAN or Tailscale tunnel).';
   }
 }

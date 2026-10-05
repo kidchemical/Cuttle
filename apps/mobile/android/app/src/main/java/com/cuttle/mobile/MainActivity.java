@@ -210,9 +210,13 @@ public class MainActivity extends BridgeActivity {
         webView.setWebViewClient(new SafeAreaWebViewClient(bridge) {
             @Override
             public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
-                // LAN self-signed cert (port 8888) — same trust decision as accepting
-                // the warning once in Chrome, but kept inside the app WebView.
-                handler.proceed();
+                // WebView must never bypass certificate or hostname validation.
+                handler.cancel();
+                mainHandler.removeCallbacks(connectionWatchdog);
+                cuttleDocumentReady = false;
+                showError("HTTPS certificate validation failed. Use a server with a valid, "
+                    + "trusted certificate matching its address. You can change the address "
+                    + "in Server settings.");
             }
 
             @Override
@@ -278,6 +282,12 @@ public class MainActivity extends BridgeActivity {
                     ? error.getDescription().toString()
                     : "load failed";
                 if (request != null && request.isForMainFrame()) {
+                    if (error != null && error.getErrorCode() == ERROR_FAILED_SSL_HANDSHAKE) {
+                        mainHandler.removeCallbacks(connectionWatchdog);
+                        cuttleDocumentReady = false;
+                        showError("HTTPS connection failed. Check the server certificate and address.");
+                        return;
+                    }
                     handleDocumentLoadError(url, desc);
                     return;
                 }
@@ -705,37 +715,6 @@ public class MainActivity extends BridgeActivity {
         }
     }
 
-    /** Native WebView can use cleartext :8000 — same escape hatch as Electron. */
-    static String httpFallbackBase(String baseUrl) {
-        if (baseUrl == null) {
-            return "";
-        }
-        String b = baseUrl.trim().replaceAll("/+$", "");
-        try {
-            android.net.Uri u = android.net.Uri.parse(b);
-            String host = u.getHost();
-            if (host == null || host.isEmpty()) {
-                return "";
-            }
-            String scheme = u.getScheme();
-            int port = u.getPort();
-            if ("https".equalsIgnoreCase(scheme) && (port == 8888 || port == 8080 || port == -1)) {
-                return "http://" + host + ":8000";
-            }
-        } catch (Exception ignored) {
-        }
-        return "";
-    }
-
-    private void persistBaseUrl(String baseUrl, String port, boolean https) {
-        SharedPreferences prefs = getSharedPreferences(PREFS_GROUP, MODE_PRIVATE);
-        prefs.edit()
-            .putString(KEY_BASE_URL, baseUrl)
-            .putString(KEY_PORT, port)
-            .putString(KEY_HTTPS, https ? "1" : "0")
-            .apply();
-    }
-
     private void handleDocumentLoadError(String url, String desc) {
         if (url == null) {
             url = "";
@@ -752,8 +731,8 @@ public class MainActivity extends BridgeActivity {
         final String err = desc == null ? "" : desc;
         final boolean tooMany = err.toUpperCase(java.util.Locale.US).contains("TOO_MANY")
             || err.toUpperCase(java.util.Locale.US).contains("TOO MANY");
-        // HTTPS retry storms: fall back to :8000 immediately instead of looping
-        // on a black chrome-error page until the user reinstalls.
+        // Retry the selected origin only. Cleartext requires an explicit choice
+        // in Server settings, never an automatic downgrade after HTTPS failure.
         long delayMs = tooMany ? 200 : (n <= 1 ? 500 : (n == 2 ? 1400 : 2400));
         mainHandler.postDelayed(() -> {
             recoverQueued = false;
@@ -761,15 +740,6 @@ public class MainActivity extends BridgeActivity {
             if (base == null || base.isEmpty()) {
                 showError(err.isEmpty() ? "Could not reach Cuttle" : err);
                 return;
-            }
-            if (tooMany || n >= 2) {
-                String http = httpFallbackBase(base);
-                if (!http.isEmpty() && !http.equals(base.replaceAll("/+$", ""))) {
-                    persistBaseUrl(http, "8000", false);
-                    showLoading("Retrying over HTTP…");
-                    loadCuttle(http);
-                    return;
-                }
             }
             if (n >= 4 || (tooMany && n >= 2)) {
                 documentLoadFailures = 0;
