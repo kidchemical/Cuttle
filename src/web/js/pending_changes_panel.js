@@ -9,18 +9,21 @@
             try { ctrl.abort(); } catch (_) {}
         }, timeoutMs == null ? 20000 : timeoutMs);
         const parent = opts.signal;
+        const onParentAbort = function () {
+            try { ctrl.abort(); } catch (_) {}
+        };
         if (parent) {
             if (parent.aborted) {
                 clearTimeout(timer);
                 ctrl.abort();
             } else {
-                parent.addEventListener('abort', function () {
-                    try { ctrl.abort(); } catch (_) {}
-                }, { once: true });
+                parent.addEventListener('abort', onParentAbort, { once: true });
             }
         }
+        // A long-lived parent signal must not collect one listener per request.
         return fetch(url, Object.assign({}, opts, { signal: ctrl.signal })).finally(function () {
             clearTimeout(timer);
+            if (parent) parent.removeEventListener('abort', onParentAbort);
         });
     }
 

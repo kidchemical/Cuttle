@@ -239,3 +239,35 @@ def test_attach_job_survives_end_run():
     assert "ep-release" in reg.session_job_ids(sid)
     reg.clear_session_jobs(sid)
     assert reg.session_job_ids(sid) == []
+
+
+def test_generic_grid_cli_gate_and_schema(tmp_path, monkeypatch):
+    """Any job can publish a grid; nothing in the schema assumes renders."""
+    import api.job_watch as jw
+
+    monkeypatch.setattr(jw, "output_dir", lambda: tmp_path)
+    grid = {"unit": "test", "title": "Suite", "marked_label": "flaky", "cells": [
+        {"key": "test_login", "state": "completed", "group": "shard-1"},
+        {"key": "test_logout", "state": "failed", "marked": True, "note": "x" * 400},
+    ]}
+    args = ["write", "--id", "suite", "--state", "running", "--grid-json", json.dumps(grid)]
+    monkeypatch.setattr(jw, "grid_enabled", lambda: False)
+    assert jw.main(args) == 0
+    assert "grid" not in read_status("suite")  # experimental gate covers every producer
+    monkeypatch.setattr(jw, "grid_enabled", lambda: True)
+    assert jw.main(args) == 0
+    out = read_status("suite")["grid"]
+    assert (out["unit"], out["title"], out["marked_label"]) == ("test", "Suite", "flaky")
+    assert [c["key"] for c in out["cells"]] == ["test_login", "test_logout"]
+    assert out["cells"][1]["marked"] and len(out["cells"][1]["note"]) == 160
+    assert "inventory" not in out  # no verification claim unless the producer makes one
+    assert jw.main(["write", "--id", "suite", "--state", "running", "--grid-json", "[]"]) == 2
+
+
+def test_reconcile_keeps_live_posix_pid_running():
+    import os
+    from api.job_watch import pid_alive, reconcile_status
+
+    assert pid_alive(os.getpid())
+    data = {"state": "running", "label": "Build", "pid": os.getpid()}
+    assert reconcile_status(data)["state"] == "running"

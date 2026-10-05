@@ -1337,17 +1337,18 @@ def test_frame_grid_inventory_retry_and_missing_output(tmp_path):
            'params': {'output_dir': str(out), 'frame_start': 2, 'frame_end': 2, 'gap_fill': True}}
     summary = {'jobs': [original, gap]}
     grid = build_batch_frame_grid(summary)
-    assert [(c['state'], c['worker']) for c in grid['cells']] == [
-        ('completed', 'tower'), ('rendering', 'laptop'), ('missing', '')]
-    assert grid['cells'][1]['gap_fill']
+    assert [(c['state'], c['group']) for c in grid['cells']] == [
+        ('completed', 'tower'), ('running', 'laptop'), ('missing', '')]
+    assert grid['cells'][1]['marked']
+    assert (grid['unit'], grid['marked_label']) == ('frame', 'gap-fill')
     assert grid['inventory'] == 'verified'
     incomplete = build_batch_watch_bars({'jobs': [original]})
     assert incomplete['state'] == 'failed'
     assert incomplete['percent'] == 33
     original['attempts'] = 2
-    assert build_batch_frame_grid({'jobs': [original]})['cells'][0]['worker'] == ''
+    assert build_batch_frame_grid({'jobs': [original]})['cells'][0]['group'] == ''
     original['result'] = {'frame_times': [{'frame': 1, 'seconds': 2}]}
-    assert build_batch_frame_grid({'jobs': [original]})['cells'][0]['worker'] == 'tower'
+    assert build_batch_frame_grid({'jobs': [original]})['cells'][0]['group'] == 'tower'
 
 
 def test_frame_grid_remote_and_bound(tmp_path):
@@ -1360,7 +1361,7 @@ def test_frame_grid_remote_and_bound(tmp_path):
     assert grid['total'] == 3000
     assert grid['inventory'] == 'reported'
     assert grid['cells'][0]['state'] == 'completed'
-    assert grid['cells'][0]['worker'] == ''  # overlapping claims are ambiguous
+    assert grid['cells'][0]['group'] == ''  # overlapping claims are ambiguous
     built = build_batch_watch_bars({'jobs': [job, dict(job)]})
     assert built['frames_done'] == 3000
     assert built['frames_total'] == 3000
@@ -1390,6 +1391,7 @@ def test_batch_watch_grid_flag_and_payload(tmp_path, monkeypatch):
     plat.write_batch_watch('grid')
     assert 'grid' not in json.loads((tmp_path / 'grid-status.json').read_text())
     monkeypatch.setattr(plat, '_frame_grid_enabled', lambda: True)
+    monkeypatch.setattr(job_watch, 'grid_enabled', lambda: True)
     plat.write_batch_watch('grid')
     payload = json.loads((tmp_path / 'grid-status.json').read_text())
     assert payload['bars'][0]['id'] == 'overall'
@@ -1400,12 +1402,14 @@ def test_batch_watch_grid_flag_and_payload(tmp_path, monkeypatch):
 def test_watch_grid_persisted_snapshot_sanitization():
     from api.action_forms import merge_watch_snapshot_into_spec
     raw = {'cells': [{'frame': 1, 'state': 'completed', 'worker': 'tower'},
-                     {'frame': 1, 'state': 'failed'}, {'frame': 'bad', 'state': 'missing'},
+                     {'frame': 1, 'state': 'failed'}, {'frame': True, 'state': 'missing'},
+                     {'frame': '', 'state': 'missing'},
                      {'frame': 2, 'state': []}], 'total': 2, 'workers': ['tower'], 'inventory': 'verified'}
     spec = merge_watch_snapshot_into_spec({'watch': {'id': 'b', 'url': '/output/b.json'}},
                                          snapshot={'state': 'done', 'grid': raw}, terminal=True)
     grid = spec['watch']['snapshot']['grid']
     assert len(grid['cells']) == 2
-    assert grid['cells'][0]['worker'] == 'tower'
+    assert grid['cells'][0]['group'] == 'tower'  # legacy worker key
     assert grid['cells'][1]['state'] == 'pending'
+    assert grid['groups'] == ['tower'] and grid['inventory'] == 'verified'
     assert spec['watch']['terminal']

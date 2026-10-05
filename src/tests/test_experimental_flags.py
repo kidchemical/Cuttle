@@ -212,16 +212,16 @@ def test_flag_updates_survive_restart_and_other_settings(_isolated_application_s
     manager = _isolated_application_settings
     manager.set_setting('experimental_flags', {'newer_unknown_flag': True})
     flags.set_enabled('achievements', True)
-    flags.set_enabled('mesh_frame_grid', True)
+    flags.set_enabled('progress_grid', True)
     manager.set_setting('starred_slash_commands', ['codex'])
     # New manager simulates Flask restarting, with no in-memory state carried over.
     restarted = SettingsManager(str(manager.settings_file))
     monkeypatch.setattr(managers, '_settings_manager', restarted)
     assert flags.is_enabled('achievements')
-    assert flags.is_enabled('mesh_frame_grid')
+    assert flags.is_enabled('progress_grid')
     flags.set_enabled('achievements', False)
     stored = restarted.get_setting('experimental_flags')
-    assert stored == {'mesh_frame_grid': True, 'newer_unknown_flag': True}
+    assert stored == {'progress_grid': True, 'newer_unknown_flag': True}
     assert not flags.is_enabled('newer_unknown_flag')
 
 
@@ -236,9 +236,9 @@ def test_concurrent_toggles_merge_under_storage_lock(_isolated_application_setti
         return original(key, transform)
     monkeypatch.setattr(manager, 'update_setting', synchronized_update)
     with ThreadPoolExecutor(max_workers=2) as pool:
-        results = list(pool.map(lambda name: flags.set_enabled(name, True), ['achievements', 'mesh_frame_grid']))
+        results = list(pool.map(lambda name: flags.set_enabled(name, True), ['achievements', 'progress_grid']))
     assert all(r['enabled'] for r in results)
-    assert manager.get_setting('experimental_flags') == {'achievements': True, 'mesh_frame_grid': True}
+    assert manager.get_setting('experimental_flags') == {'achievements': True, 'progress_grid': True}
 
 
 def test_live_settings_write_is_rejected():

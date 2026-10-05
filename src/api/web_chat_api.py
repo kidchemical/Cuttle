@@ -6760,10 +6760,13 @@ def api_network_info():
                     f'Phone IP must be in: {subnet.get("phone_ip_must_be_in", "same subnet as PC")}',
                     'PC browser: https://127.0.0.1:8080',
                     'After a phone attempt, refresh this URL — recent_phone_hits should list your phone.',
-                    'If phone cannot connect: run enable_lan_firewall.bat as Administrator, then restart Cuttle.',
+                    ('If phone cannot connect: run enable_lan_firewall.bat as Administrator, then restart Cuttle.'
+                     if sys.platform == 'win32' else
+                     f'If phone cannot connect: allow TCP 8080, {LAN_PHONE_HTTPS_PORT} and {LAN_HTTP_FALLBACK_PORT} '
+                     f'in your firewall (e.g. sudo ufw allow 8080,{LAN_PHONE_HTTPS_PORT},{LAN_HTTP_FALLBACK_PORT}/tcp).'),
                     'Router fix: disable AP isolation / client isolation / use main Wi‑Fi not guest.',
-                    f'Your Wi‑Fi is "{net_cat or "unknown"}" — set to Private in Windows Settings → Network → Wi‑Fi.',
-                ]
+                ] + ([f'Your Wi‑Fi is "{net_cat or "unknown"}" — set to Private in Windows Settings → Network → Wi‑Fi.']
+                     if sys.platform == 'win32' else [])
                 if lan_enabled else []
             ),
         })

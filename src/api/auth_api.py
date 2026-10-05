@@ -1105,6 +1105,12 @@ def get_session_messages(session_id):
             )
         except Exception:
             pass
+        try:
+            from api.subagents.service import hydrate_parent_fleet
+
+            hydrate_parent_fleet(db, messages)
+        except Exception:
+            pass
         
         # Session-level Muse/Hermes/OpenCode/Codex/Claude pins so the UI can seed badges before
         # first paint instead of flashing defaults while /api/*/model|effort

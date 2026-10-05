@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import time
 from collections import Counter, defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from statistics import median
 from typing import Any, Dict, List, Optional
@@ -45,9 +45,11 @@ _MAX_SESSIONS = 8
 
 
 def _day(ts: float, tz_offset_minutes: Optional[int]) -> str:
-    # JS getTimezoneOffset(): minutes *behind* UTC.
-    offset = timedelta(minutes=-(tz_offset_minutes or 0))
-    return datetime.fromtimestamp(ts, timezone(offset)).date().isoformat()
+    # One zone for the day axis and the buckets (usage dashboard's `_tz`):
+    # mixing server-local axis with UTC buckets dropped evening turns.
+    from api.dashboards.usage import _tz
+
+    return datetime.fromtimestamp(ts, _tz(tz_offset_minutes)).date().isoformat()
 
 
 def _handle(sid: Any) -> str:
@@ -113,8 +115,8 @@ def cuttle_context(
     turns = fetch_turns(since_ts=since)
 
     days: List[str] = []
-    start = datetime.fromtimestamp(since).date()
-    end = datetime.fromtimestamp(time.time()).date()
+    start = date.fromisoformat(_day(since, tz_offset_minutes))
+    end = date.fromisoformat(_day(time.time(), tz_offset_minutes))
     d = start
     while d <= end:
         days.append(d.isoformat())

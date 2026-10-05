@@ -933,9 +933,9 @@
             }
             if (grid) {
                 const html = CuttleChatActionForms.renderWatchGridHtml(data && data.grid, host.escapeHtml);
-                if (grid.__frameHtml !== html) {
+                if (grid.__gridHtml !== html) {
                     grid.innerHTML = html;
-                    grid.__frameHtml = html;
+                    grid.__gridHtml = html;
                 }
             }
             const lab = wrap.querySelector('.cuttle-action-form-progress-label');
@@ -1131,7 +1131,7 @@
             if (card.__watchLoop) return;
             const doneStates = Array.isArray(watch.done_states) && watch.done_states.length
                 ? watch.done_states.map(String)
-                : ['done', 'trellis_ok'];
+                : ['done'];
             const failStates = Array.isArray(watch.fail_states) && watch.fail_states.length
                 ? watch.fail_states.map(String)
                 : ['failed'];

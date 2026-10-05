@@ -190,7 +190,7 @@ If you kick a long job yourself: `python -m api.job_watch write --id <kebab> …
 ```
 
 Kick the job, emit the card, **stop** — do not poll in a wait loop.
-Stop kills the OS process tree in the status JSON (`pid` / `unity_pid`).
+Stop kills the OS process tree in the status JSON (`pid`, `worker_pid`, `pids`; legacy `unity_pid`).
 
 ### Multi-bar progress (required for mesh / multi-worker jobs)
 
@@ -217,6 +217,36 @@ Single-machine jobs may keep a lone top-level `percent`.
   (writes overall + per-worker `bars` from `batch-status`).
 - Manual: `python -m api.job_watch write … --bars-json "[…]"` or `write_status(..., bars=[...])`.
 
+### Progress grid (experimental, any job)
+
+Use it when a job has many discrete items and seeing *which* items are done
+matters: frames, files in a migration, tests in a suite, pages crawled, shards.
+Not useful for one long opaque step — keep a bar there. Gate:
+Settings → Experimental → **Progress grid** (`progress_grid`); off drops the
+grid from new status files and bars keep working.
+
+```json
+"grid": {
+  "unit": "test", "title": "Test suite", "marked_label": "retried",
+  "total": 3, "groups": ["shard-1", "shard-2"],
+  "cells": [
+    {"key": "test_login", "state": "completed", "group": "shard-1"},
+    {"key": "test_logout", "state": "running", "group": "shard-2", "marked": true},
+    {"key": "test_admin", "state": "failed", "note": "AssertionError"}
+  ]
+}
+```
+
+- `key`: int or short string, unique. `state`: `pending` / `running` /
+  `completed` / `failed` / `missing` / `cancelled` / `skipped`.
+- `group` (optional) gets a stable colour; matching `bars[].id` share it.
+- `marked` draws an outline; `marked_label` says what it means.
+- `inventory` (optional): `verified` (host checked output) or `reported`
+  (producer's claim). Omit when neither applies.
+- First 2,048 cells render; `total` drives the "N more" note.
+- Write: `python -m api.job_watch write … --grid-json '{…}'` or `write_status(..., grid={…})`.
+- Mesh frame batches emit one automatically → `cuttle-workers.md`.
+
 ## Flask restart (Cuttle chat)
 
 Authenticated HTTP restart-card submissions call `api.flask_restart.request_restart`
@@ -227,7 +257,7 @@ recipe remains for standalone callers. Native `/restart` and the owner-only
 restart endpoint are independent recovery paths.
 
 
-Never `taskkill` / `Stop-Process` Flask, the daemon, or the Discord bot from an agent
+Never kill Flask, the daemon, or the Discord bot (`kill`/`pkill`, `taskkill`/`Stop-Process`) from an agent
 Flask is hosting. After Python changes need a restart, emit:
 
 ```xml
@@ -263,19 +293,20 @@ also healed on render / click.
 Surfaces without action buttons (Discord, plain API, terminal/CLI session): never emit raw `<cuttle_action_form>` markup — cards only render in Cuttle chat, elsewhere it prints as dead text. Use `/restart graceful`,
 `/restart when-idle`, `/restart force --yes` (or `POST /api/flask/restart`).
 
-**The launcher/child trap:** the daemon tracks the `.venv\Scripts\python.exe`
-**launcher**; the **`Python311\python.exe` child** holds port 8080. Killing only
-the launcher orphans the child → restart loop. Never kill half the tree — use
-the coordinated daemon restart. Also leave alone: `llama-server.exe` and
-unrelated `*MCP*` / UnityMCP processes.
+**The launcher/child trap:** the daemon tracks the venv Python **launcher**;
+on some installs (e.g. Windows venvs) a separate base-interpreter **child** holds
+port 8080. Killing only the launcher orphans the child → restart loop. Never kill
+half the tree — use the coordinated daemon restart, and leave unrelated processes
+(local model servers, guest MCP servers) alone.
 
 **Verify (HTTPS + self-signed on 8080):**
 
-```powershell
-curl.exe -k -s -o NUL -w "%{http_code}" https://127.0.0.1:8080/api/health
-# expect 200
-curl.exe -k -s https://127.0.0.1:8080/api/flask/restart/status
+```bash
+curl -k -s -o /dev/null -w "%{http_code}" https://127.0.0.1:8080/api/health   # expect 200
+curl -k -s https://127.0.0.1:8080/api/flask/restart/status
 ```
+
+On Windows PowerShell use `curl.exe` (not the `curl` alias) and `-o NUL`.
 
 Do not report "restart complete" until `/api/health` (or restart status
 `healthy`) succeeds.

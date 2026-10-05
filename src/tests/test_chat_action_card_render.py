@@ -310,17 +310,23 @@ const grid = {total: 240, inventory:'verified', workers:['tower', '<img src=x>']
     {frame:1, state:'completed',worker:'tower'},
     {frame:2, state:'rendering',worker:'<img src=x>', gap_fill:true},
     {frame:3, state:'missing'}]};
+const tests = A.renderWatchGridHtml({unit:'test', title:'Suite', marked_label:'flaky', cells:[
+    {key:'test_login', state:'completed', group:'shard-1'}, {key:'test_logout', state:'failed', marked:true, note:'AssertionError'}]}, esc);
 const html = render({mode:'choice', watch:{id:'b',url:'/output/b.json',
     snapshot:{state:'done', grid}}, options:[]});
 const bounded = A.renderWatchGridHtml({cells:Array.from({length:3000}, (_,i)=>({frame:i,state:'pending'}))}, esc);
-console.log(JSON.stringify({html, count:(bounded.match(/class="watch-frame /g)||[]).length,
-    colour:A.watchWorkerColour('tower'), same:A.watchWorkerColour('tower')}));
+console.log(JSON.stringify({html, tests, count:(bounded.match(/class="watch-cell /g)||[]).length,
+    colour:A.watchGroupColour('tower'), same:A.watchGroupColour('tower')}));
 """
     result = subprocess.run(['node', '-e', code], env={**__import__('os').environ, 'MOD_JS': str(MOD_JS)},
                             capture_output=True, text=True, check=True)
     out = json.loads(result.stdout)
-    assert 'is-completed' in out['html'] and 'is-rendering is-gap-fill' in out['html']
-    assert 'Frame 3 · missing' in out['html']
+    # Legacy render-vocabulary snapshots still render through the generic grid.
+    assert 'is-completed' in out['html'] and 'is-running is-marked' in out['html']
+    assert 'Frame 3 · missing' in out['html'] and 'gap-fill' in out['html']
+    assert 'Test test_logout · failed · AssertionError · flaky' in out['tests']
+    assert 'Suite · 2 tests' in out['tests'] and 'frame' not in out['tests'].lower()
+    assert 'is-pending' not in out['tests']  # legend lists only present states
     assert '<img src=x>' not in out['html'] and '&lt;img src=x&gt;' in out['html']
     assert out['count'] == 2048
     assert out['colour'] == out['same']

@@ -102,6 +102,13 @@ open the children. In a **child** chat, inbound turns are from **Cuttle** (not
 the human), and a parent-chat chip sits under **that sender bubble**. Reusing
 the same child from another parent tags each inbound bubble with *that* parent.
 
+**Fleet cards (experimental, `subagent_fleet_cards`):** the launcher chips
+become one card per child — name/avatar, harness · model · effort, outcome
+(`queued` / `running` / `done` / `failed` / `cancelled` / `lost` = host process
+died) and a one-line plain-text result (full text in the tooltip). Outcome comes
+from the child row, never inferred; history reload refreshes cards from it.
+Click opens the child chat.
+
 History nests children under the parent (Subagent badge), **collapsed by
 default**. The parent row shows a pivoting chevron and a count badge; click
 either (or **Show sub-agents** in that row’s menu) to expand. Opening a child

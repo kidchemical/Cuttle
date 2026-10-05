@@ -103,7 +103,7 @@ scripts before relying on this contract. See the [release runbook](../../.cuttle
 
 Platform verb: `workers.self-update` (`target` = laptop `worker_id`). This is the mesh dogfood for “host commands Client lifecycle” without opening inbound SSH for updates.
 
-**Version signal:** `cuttle_version` comes from `electron/package.json`. Bump SemVer only at release time using `.cuttle/scripts/bump-cuttle-version.ps1`; see the [release runbook](../../.cuttle/docs/cuttle-release.md). Git revision mismatch and stale boot revision also flag workers after ordinary pushes, without a version bump. Host `workers.list` exposes `host_cuttle_version`, `outdated_workers`, and per-worker `needs_update` so Jobs UI / agents can offer self-update.
+**Version signal:** `cuttle_version` comes from `electron/package.json`. Bump SemVer only at release time using `.cuttle/scripts/bump-cuttle-version.py`; see the [release runbook](../../.cuttle/docs/cuttle-release.md). Git revision mismatch and stale boot revision also flag workers after ordinary pushes, without a version bump. Host `workers.list` exposes `host_cuttle_version`, `outdated_workers`, and per-worker `needs_update` so Jobs UI / agents can offer self-update.
 
 ### Shell transports (three tiers)
 

@@ -42,6 +42,8 @@ def _row_child(row: Any) -> ChildRecord:
         profile_id=str(d.get("profile_id") or ""),
         display_name=str(d.get("display_name") or d.get("label") or ""),
         avatar=str(d.get("avatar") or ""),
+        started_at=str(d.get("started_at") or ""),
+        finished_at=str(d.get("finished_at") or ""),
     )
 
 

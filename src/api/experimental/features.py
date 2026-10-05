@@ -38,10 +38,16 @@ register_flag(FlagSpec(
 ))
 
 register_flag(FlagSpec(
-    id="mesh_frame_grid",
-    label="Mesh frame grid",
-    description="Show per-frame progress and worker colours on render batch watch cards.",
-    default=False, category="workers", risk="low", since="0.0.0", needs_restart=False,
+    id="subagent_fleet_cards", label="Sub-agent fleet cards",
+    description="Show one card per sub-agent child chat under the parent reply: who ran it, live status, outcome (done, failed, cancelled, lost) and a one-line result.",
+    default=False, category="agents", risk="low", since="0.0.0", needs_restart=False,
+))
+
+register_flag(FlagSpec(
+    id="progress_grid",
+    label="Progress grid",
+    description="Show a cell-per-item progress grid (frames, files, tests, shards…) on watch cards whose status includes one, coloured by who did each item.",
+    default=False, category="ui", risk="low", since="0.0.0", needs_restart=False,
 ))
 
 # Achievements: default OFF. Experimental features are opt-in by design; a

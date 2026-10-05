@@ -211,32 +211,19 @@ PYTHONPATH=src .venv/bin/python -m api.device_workers.cli batch-watch --batch-id
 3. Card `watch.url` must point at that status file (`/output/<id>-status.json`).
 Details / schema → `action-forms.md` (Multi-bar progress).
 
-### Experimental frame grid
+### Frame grid (Progress grid producer)
 
-Settings → Experimental → **Mesh frame grid** (default off), or:
+`batch-watch` emits the generic watch `grid` (`action-forms.md` → Progress grid)
+with `unit: "frame"`, one group per worker, and `marked` = gap-fill. It needs
+the `progress_grid` experimental flag. Worker bars include advertised Blender GPU labels.
 
-```bash
-PYTHONPATH=src .venv/bin/python -m api.experimental set mesh_frame_grid on
-```
-
-`batch-watch` adds an optional `grid` beside its existing `bars`. The same
-watch card renders a cell per frame (first 2,048 for larger batches, with an
-omitted count). Worker colours are stable; tooltips name frame, state, worker
-when known, and gap-fill. Worker bars include advertised Blender GPU labels.
-The legend distinguishes pending/rendering/completed/failed/missing/cancelled;
-a gold outline marks frames covered by gap-fill work.
-
-Local output inventory takes precedence over shard success. With inaccessible
-output, the map explicitly says **reported**; successful shard spans provide
+Local output inventory takes precedence over shard success (`verified`). With
+inaccessible output the grid is `reported`; successful shard spans provide
 completion evidence. Reclaimed or overlapping chunks without clear producer
-evidence show completed frames with an unconfirmed worker. Rendering cells
-mean a worker is active on the containing chunk, not proof that Blender is
-currently processing that particular frame. Terminal snapshots retain the grid.
-
-The process kill switch `CUTTLE_EXPERIMENTAL=0` suppresses new grid payloads.
-Teardown: remove the `mesh_frame_grid` registry row, the guarded payload and
-`build_batch_frame_grid` in `device_workers.platform`, grid sanitizer/snapshot
-handling, and grid rendering/CSS. Existing bar-only watches remain supported.
+evidence show completed frames with no group. `running` cells mean a worker is
+active on the containing chunk, not proof that Blender is processing that frame.
+Terminal snapshots retain the grid. Teardown of this producer:
+`build_batch_frame_grid` and its guarded call in `device_workers.platform`.
 
 ### Benchmark: update a Client from host
 

@@ -76,30 +76,73 @@ def sanitize_bars(raw: Any) -> Optional[List[Dict[str, Any]]]:
     return out or None
 
 
+GRID_STATES = ("pending", "running", "completed", "failed", "missing", "cancelled", "skipped")
+GRID_MAX_CELLS = 2048
+# Older producers (and persisted snapshots) used render vocabulary.
+_GRID_STATE_ALIASES = {"rendering": "running", "active": "running", "done": "completed"}
+
+
+def grid_enabled() -> bool:
+    """Experimental gate shared by every grid producer (``progress_grid``)."""
+    from api.experimental import is_enabled
+    return is_enabled("progress_grid")
+
+
+def _grid_key(raw: Any) -> Any:
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()[:64]
+    return None
+
+
 def sanitize_grid(raw: Any) -> Optional[Dict[str, Any]]:
-    """Bound the optional frame map for status files and persisted watch cards."""
+    """Bound the optional progress grid for status files and persisted cards.
+
+    One cell per unit of work (frame, file, test, shard, …). ``unit`` names
+    the noun; ``group`` (who did it) drives a stable colour; ``marked`` draws
+    an outline whose meaning is ``marked_label``. ``inventory`` is a claim
+    about how completion was established and is omitted when unknown.
+    Legacy keys (``frame``/``worker``/``gap_fill``/``workers``) are accepted.
+    """
     if not isinstance(raw, dict) or not isinstance(raw.get("cells"), list):
         return None
     cells = []
     seen = set()
-    states = {"pending", "rendering", "completed", "failed", "missing", "cancelled"}
-    for cell in raw["cells"][:2048]:
+    for cell in raw["cells"][:GRID_MAX_CELLS]:
         if not isinstance(cell, dict):
             continue
-        frame = cell.get("frame")
-        if not isinstance(frame, int) or isinstance(frame, bool) or frame in seen:
+        key = _grid_key(cell.get("key", cell.get("frame")))
+        if key is None or key in seen:
             continue
-        seen.add(frame)
-        cells.append({"frame": frame, "state": str(cell.get("state")) if str(cell.get("state")) in states else "pending",
-                      "worker": str(cell.get("worker") or "")[:120], "gap_fill": bool(cell.get("gap_fill"))})
+        seen.add(key)
+        state = str(cell.get("state") or "")
+        state = _GRID_STATE_ALIASES.get(state, state)
+        out = {"key": key, "state": state if state in GRID_STATES else "pending",
+               "group": str(cell.get("group") or cell.get("worker") or "")[:120],
+               "marked": bool(cell.get("marked", cell.get("gap_fill")))}
+        note = str(cell.get("note") or "").strip()
+        if note:
+            out["note"] = note[:160]
+        cells.append(out)
     try:
         total = max(len(cells), min(1000000000, int(raw.get("total") or len(cells))))
     except (TypeError, ValueError, OverflowError):
         total = len(cells)
-    workers = raw.get("workers") if isinstance(raw.get("workers"), list) else []
-    return {"cells": cells, "total": total, "omitted": total - len(cells),
-            "inventory": "verified" if raw.get("inventory") == "verified" else "reported",
-            "workers": [str(w)[:120] for w in workers[:32]]}
+    groups = raw.get("groups", raw.get("workers"))
+    legacy = "unit" not in raw and any(isinstance(c, dict) and "frame" in c for c in raw["cells"][:1])
+    grid: Dict[str, Any] = {
+        "unit": (str(raw.get("unit") or "").strip() or ("frame" if legacy else "item"))[:24],
+        "title": str(raw.get("title") or "").strip()[:60],
+        "cells": cells, "total": total, "omitted": total - len(cells),
+        "groups": [str(g)[:120] for g in (groups if isinstance(groups, list) else [])[:32]],
+        "marked_label": (str(raw.get("marked_label") or "").strip() or ("gap-fill" if legacy else ""))[:40],
+    }
+    if raw.get("inventory") in ("verified", "reported"):
+        grid["inventory"] = raw["inventory"]
+    return grid
 
 
 def write_status(
@@ -110,6 +153,7 @@ def write_status(
     label: str = "",
     bars: Optional[List[Dict[str, Any]]] = None,
     extra: Optional[Dict[str, Any]] = None,
+    grid: Optional[Dict[str, Any]] = None,
 ) -> Path:
     sid = sanitize_job_id(job_id)
     st = (state or "running").strip().lower()
@@ -137,8 +181,10 @@ def write_status(
                 payload["bars"] = sanitized
             else:
                 payload.pop("bars", None)
+    if grid is not None:
+        payload["grid"] = grid
     if "grid" in payload:
-        grid = sanitize_grid(payload["grid"])
+        grid = sanitize_grid(payload["grid"]) if grid_enabled() else None
         if grid:
             payload["grid"] = grid
         else:
@@ -152,7 +198,7 @@ def write_status(
 
 
 def pids_from_status(data: Optional[Dict[str, Any]]) -> List[int]:
-    """PIDs recorded in a status JSON (worker, Unity, extras)."""
+    """PIDs recorded in a status JSON (``pid``, ``worker_pid``, ``pids``; ``unity_pid`` is legacy)."""
     if not isinstance(data, dict):
         return []
     out: List[int] = []
@@ -178,9 +224,21 @@ def pids_from_status(data: Optional[Dict[str, Any]]) -> List[int]:
 
 
 def pid_alive(pid: int) -> bool:
-    """Return True when a Windows PID is still running."""
+    """Return True while ``pid`` names a running process (Windows and POSIX)."""
     if pid <= 0:
         return False
+    if sys.platform != "win32":
+        import os
+
+        try:
+            os.kill(int(pid), 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True  # alive, owned by another user
+        except OSError:
+            return False
+        return True
     try:
         import ctypes
 
@@ -217,9 +275,9 @@ def reconcile_status(
     label = str(data.get("label") or "").strip()
     if "stopped unexpectedly" not in label.lower():
         label = (
-            f"{label} — build worker stopped unexpectedly"
+            f"{label} — process stopped unexpectedly"
             if label
-            else "Build worker stopped unexpectedly"
+            else "Process stopped unexpectedly"
         )
     out = dict(data)
     out["state"] = "failed"
@@ -410,6 +468,11 @@ def main(argv: Optional[list] = None) -> int:
     w.add_argument("--percent", type=int, default=0)
     w.add_argument("--label", default="")
     w.add_argument(
+        "--grid-json",
+        default="",
+        help='Optional progress grid, e.g. {"unit":"test","cells":[{"key":"test_a","state":"completed"}]}',
+    )
+    w.add_argument(
         "--bars-json",
         default="",
         help='Optional JSON array of bars, e.g. [{"id":"overall","label":"Overall","percent":50,"kind":"primary"}]',
@@ -439,12 +502,23 @@ def main(argv: Optional[list] = None) -> int:
                 print(f"invalid --bars-json: {e}", file=sys.stderr)
                 return 2
             bars = parsed if isinstance(parsed, list) else None
+        grid = None
+        if str(args.grid_json or "").strip():
+            try:
+                grid = json.loads(args.grid_json)
+            except json.JSONDecodeError as e:
+                print(f"invalid --grid-json: {e}", file=sys.stderr)
+                return 2
+            if not isinstance(grid, dict):
+                print("--grid-json must be a JSON object", file=sys.stderr)
+                return 2
         path = write_status(
             args.id,
             state=args.state,
             percent=args.percent,
             label=args.label,
             bars=bars,
+            grid=grid,
         )
         print(path)
         return 0

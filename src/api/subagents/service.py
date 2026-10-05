@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from typing import Any, Dict, List, Optional
@@ -570,9 +571,10 @@ def attach_batches_to_assistant_meta(
         # Don't persist attach without an id; still expose launchers this turn.
     launchers: List[Dict[str, Any]] = list(out.get("subagents") or [])
     seen = {str(x.get("handle") or x.get("session_id")) for x in launchers}
+    card = _launcher_fn()
     for batch in bound:
         for child in batch.children:
-            pub = public_launcher(child.public())
+            pub = card(child)
             key = str(pub.get("handle") or pub.get("session_id"))
             if key in seen:
                 continue
@@ -601,13 +603,65 @@ def public_parent_subagents(session_id: Any, *, db=None) -> List[Dict[str, Any]]
         return []
     try:
         db = _open_db(db)
+        card = _launcher_fn()
         launchers: List[Dict[str, Any]] = []
         for batch in store.list_live_for_parent(db, int(sid)):
             for child in batch.children:
-                launchers.append(public_launcher(child.public()))
+                launchers.append(card(child))
         return launchers
     except Exception:
         return []
+
+
+def _launcher_fn():
+    """Fleet cards when ``subagent_fleet_cards`` is on, else slim launchers."""
+    from api.subagents import fleet
+
+    if fleet.fleet_enabled():
+        return fleet.fleet_entry
+    return lambda child: public_launcher(child.public())
+
+
+def hydrate_parent_fleet(db, messages: List[Dict[str, Any]]) -> None:
+    """Refresh fleet cards on saved parent bubbles from the child rows.
+
+    Metadata holds the launcher snapshot taken when the reply was saved;
+    the child row is the source of truth, so reload shows the current
+    outcome (a conversational follow-up, a later cancel, a lost host).
+    """
+    from api.subagents import fleet
+
+    if not messages or not fleet.fleet_enabled():
+        return
+    targets = []
+    for msg in messages:
+        meta = msg.get("metadata")
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except (TypeError, ValueError):
+                continue
+        if msg.get("role") == "assistant" and isinstance(meta, dict) and isinstance(meta.get("subagents"), list):
+            targets.append((msg, meta))
+    if not targets:
+        return
+    children = {}
+    for _, meta in targets:
+        for entry in meta["subagents"]:
+            cid = str((entry or {}).get("id") or "") if isinstance(entry, dict) else ""
+            if cid and cid not in children:
+                children[cid] = store.get_child(db, cid)
+    if any(c and c.status not in TERMINAL_CHILD and c.owner_pid for c in children.values()):
+        _reconcile(db)
+        children = {cid: store.get_child(db, cid) for cid in children}
+    for msg, meta in targets:
+        meta = dict(meta)
+        meta["subagents"] = [
+            fleet.fleet_entry(children[str(e.get("id"))])
+            if isinstance(e, dict) and children.get(str(e.get("id") or "")) else e
+            for e in meta["subagents"]
+        ]
+        msg["metadata"] = meta
 
 
 def child_live_status(session_id: Any, *, db=None) -> Optional[Dict[str, Any]]:

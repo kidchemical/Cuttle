@@ -71,9 +71,9 @@
                 .find((u) => u);
             watch = {
                 id: 'job',
-                url: String(fromParams || '/output/trellis-download-status.json'),
+                url: String(fromParams || '/output/job-status.json'),
                 interval_ms: 4000,
-                done_states: ['done', 'trellis_ok'],
+                done_states: ['done'],
                 fail_states: ['failed'],
             };
         }
@@ -104,7 +104,7 @@
     function watchIsTerminalState(watch, data, doneStates, failStates) {
         const state = String((data && data.state) || '');
         if (watch && watch.terminal) return true;
-        const done = Array.isArray(doneStates) ? doneStates : ['done', 'trellis_ok'];
+        const done = Array.isArray(doneStates) ? doneStates : ['done'];
         const fail = Array.isArray(failStates) ? failStates : ['failed'];
         return done.indexOf(state) >= 0 || fail.indexOf(state) >= 0;
     }
@@ -170,35 +170,53 @@
     }
 
     // Hash identities rather than list positions so colours survive new claims.
-    function watchWorkerColour(id) {
+    function watchGroupColour(id) {
         let hash = 0;
         for (const c of String(id)) hash = (Math.imul(hash, 31) + c.charCodeAt(0)) | 0;
         return `hsl(${[160, 200, 260, 300, 80, 35][((hash % 6) + 6) % 6]} 62% 58%)`;
     }
 
+    const WATCH_GRID_STATES = ['pending', 'running', 'completed', 'failed', 'missing', 'cancelled', 'skipped'];
+    // Snapshots persisted before the generic grid used render vocabulary.
+    const WATCH_GRID_STATE_ALIASES = { rendering: 'running', active: 'running', done: 'completed' };
+
     function renderWatchGridHtml(grid, esc) {
         if (!grid || !Array.isArray(grid.cells) || !grid.cells.length) return '';
-        const states = ['pending', 'rendering', 'completed', 'failed', 'missing', 'cancelled'];
-        const cells = grid.cells.slice(0, 2048).filter(c => c && Number.isSafeInteger(c.frame)).map(c => {
-            const state = states.includes(c.state) ? c.state : 'pending';
-            const worker = String(c.worker || '').slice(0, 120);
-            const title = `Frame ${c.frame} · ${state}` + (worker ? ` · ${worker}` : '')
-                + (state === 'completed' && !worker ? ' · worker unconfirmed' : '')
-                + (c.gap_fill ? ' · gap-fill' : '');
-            const colour = worker && (state === 'completed' || state === 'rendering')
-                ? ` style="--frame-colour:${watchWorkerColour(worker)}"` : '';
-            return `<span class="watch-frame is-${state}${c.gap_fill ? ' is-gap-fill' : ''}"${colour} data-tooltip="${esc(title)}" aria-label="${esc(title)}"></span>`;
+        // Pre-generic snapshots carry `frame`/`gap_fill` and no unit.
+        const legacy = !grid.unit && grid.cells.some(c => c && c.frame != null);
+        const unit = String(grid.unit || (legacy ? 'frame' : 'item')).slice(0, 24);
+        const unitTitle = unit.charAt(0).toUpperCase() + unit.slice(1);
+        const markedLabel = String(grid.marked_label || (legacy ? 'gap-fill' : 'marked')).slice(0, 40);
+        const seen = new Set();
+        let anyMarked = false;
+        const cells = grid.cells.slice(0, 2048).map((c) => {
+            if (!c) return '';
+            const key = c.key != null ? c.key : c.frame;
+            if (!(Number.isSafeInteger(key) || (typeof key === 'string' && key))) return '';
+            const raw = WATCH_GRID_STATE_ALIASES[c.state] || c.state;
+            const state = WATCH_GRID_STATES.includes(raw) ? raw : 'pending';
+            seen.add(state);
+            const group = String(c.group || c.worker || '').slice(0, 120);
+            const marked = !!(c.marked || c.gap_fill);
+            anyMarked = anyMarked || marked;
+            const title = `${unitTitle} ${String(key).slice(0, 64)} · ${state}` + (group ? ` · ${group}` : '')
+                + (c.note ? ` · ${String(c.note).slice(0, 160)}` : '')
+                + (marked ? ` · ${markedLabel}` : '');
+            const colour = group && (state === 'completed' || state === 'running')
+                ? ` style="--grid-colour:${watchGroupColour(group)}"` : '';
+            return `<span class="watch-cell is-${state}${marked ? ' is-marked' : ''}"${colour} data-tooltip="${esc(title)}" aria-label="${esc(title)}"></span>`;
         }).join('');
-        const workers = Array.isArray(grid.workers) ? grid.workers.slice(0, 32) : [];
-        const legend = workers.map(w => `<span class="watch-frame-key"><i style="background:${watchWorkerColour(w)}"></i>${esc(String(w).slice(0, 120))}</span>`).join('');
+        const groupsRaw = Array.isArray(grid.groups) ? grid.groups : (Array.isArray(grid.workers) ? grid.workers : []);
+        const legend = groupsRaw.slice(0, 32).map(g => `<span class="watch-grid-key"><i style="background:${watchGroupColour(g)}"></i>${esc(String(g).slice(0, 120))}</span>`).join('');
         const omitted = Math.max(0, Number(grid.omitted) || 0);
-        return `<div class="watch-frame-summary">Frame map · ${esc(String(grid.total || grid.cells.length))} frames`
-            + (grid.inventory === 'reported' ? ' · reported (output unavailable locally)' : ' · output verified locally')
-            + `</div><div class="watch-frame-map" role="group" aria-label="Frame progress">${cells}</div>`
-            + `<div class="watch-frame-legend">${legend}`
-            + states.map(state => `<span class="watch-frame-key"><i class="is-${state}"></i>${state}</span>`).join('')
-            + `<span class="watch-frame-key"><i class="is-gap-fill"></i>gap-fill outline</span></div>`
-            + (omitted ? `<div class="watch-frame-summary">Showing first 2048 frames · ${esc(String(omitted))} more; bars cover the full batch.</div>` : '');
+        const inventory = grid.inventory === 'verified' ? ' · verified on host'
+            : grid.inventory === 'reported' ? ' · reported (not verified on host)' : '';
+        return `<div class="watch-grid-summary">${esc(String(grid.title || 'Progress').slice(0, 60))} · ${esc(String(grid.total || grid.cells.length))} ${esc(unit)}s${inventory}`
+            + `</div><div class="watch-grid" role="group" aria-label="${esc(unitTitle)} progress">${cells}</div>`
+            + `<div class="watch-grid-legend">${legend}`
+            + WATCH_GRID_STATES.filter(state => seen.has(state)).map(state => `<span class="watch-grid-key"><i class="is-${state}"></i>${state}</span>`).join('')
+            + (anyMarked ? `<span class="watch-grid-key"><i class="is-marked"></i>${esc(markedLabel)}</span>` : '') + '</div>'
+            + (omitted ? `<div class="watch-grid-summary">Showing first 2048 ${esc(unit)}s · ${esc(String(omitted))} more; bars cover the full job.</div>` : '');
     }
 
     const RESTART_PROGRESS_PCT = {
@@ -317,7 +335,7 @@
                 + `<span class="progress-value">${pct}%</span>`
                 + `</div>`
                 + `<div class="progress-row">`
-                + `<div class="progress-track"><div class="progress-bar" style="width:${pct}%;${workerColours && b.kind === 'worker' ? 'background:' + watchWorkerColour(b.id) : ''}"></div></div>`
+                + `<div class="progress-track"><div class="progress-bar" style="width:${pct}%;${workerColours && b.kind === 'worker' ? 'background:' + watchGroupColour(b.id) : ''}"></div></div>`
                 + `</div>`
                 + `</div>`
             );
@@ -369,7 +387,6 @@
         const watchDone = !!(watchSpec && watchSpec.terminal && watchSnap && (
             String(watchSnap.state || '') === 'done'
             || String(watchSnap.state || '') === 'failed'
-            || String(watchSnap.state || '') === 'trellis_ok'
         ));
         // Soft follow-up dismiss ("Ignored") must not permanently kill shared
         // Flask restart controllers — heal on render so a poisoned transcript
@@ -594,7 +611,7 @@
         renderActionFormCardHtml,
         renderWatchBarsHtml,
         renderWatchGridHtml,
-        watchWorkerColour,
+        watchGroupColour,
         isExplicitActionFormCancelOption,
         actionFormHasSideEffect,
         isWatchFormAction,

@@ -205,15 +205,15 @@ def test_frame_grid_live_watch_mobile_and_terminal(browser, static_server):
         'session_id': '42', 'actions': ['__watch_park__']}))
     try:
         card = _send_and_wait_card(frame, 'render frames')
-        assert card.locator('.watch-frame').count() == 240
-        assert card.locator('.watch-frame.is-gap-fill').count() == 2
-        assert 'gap-fill' in card.locator('.watch-frame').nth(97).get_attribute('data-tooltip')
+        assert card.locator('.watch-cell').count() == 240
+        assert card.locator('.watch-cell.is-marked').count() == 2
+        assert 'gap-fill' in card.locator('.watch-cell').nth(97).get_attribute('data-tooltip')
         from pathlib import Path
         previews = Path(__file__).resolve().parents[3] / 'temp' / 'frame-grid'
         previews.mkdir(parents=True, exist_ok=True)
         card.screenshot(path=str(previews / 'desktop.png'))
         page.set_viewport_size({'width': 390, 'height': 844})
-        assert card.locator('.watch-frame-map').evaluate('(el) => el.scrollWidth <= el.clientWidth')
+        assert card.locator('.watch-grid').evaluate('(el) => el.scrollWidth <= el.clientWidth')
         card.screenshot(path=str(previews / 'mobile.png'))
         card.locator('[data-action-form-option="park"]').click()
         status['state'] = 'done'
@@ -222,7 +222,7 @@ def test_frame_grid_live_watch_mobile_and_terminal(browser, static_server):
         for cell in grid['cells']:
             cell['state'] = 'completed'
         from playwright.sync_api import expect
-        expect(card.locator('.watch-frame.is-completed')).to_have_count(240, timeout=15000)
+        expect(card.locator('.watch-cell.is-completed')).to_have_count(240, timeout=15000)
         assert not errors
     finally:
         page.close()
@@ -330,5 +330,37 @@ def test_segmented_status_chip_truncation_tooltips_and_error(browser, static_ser
         previews = Path(__file__).resolve().parents[3] / 'temp' / 'frame-grid'
         previews.mkdir(parents=True, exist_ok=True)
         frame.locator('#status-preview').screenshot(path=str(previews / 'status-chips.png'))
+    finally:
+        page.close()
+
+
+def test_progress_grid_is_job_agnostic(browser, static_server):
+    names = ['auth', 'billing', 'search', 'sync', 'export', 'upload']
+    cells = [{'key': f'test_{n}_{i}', 'group': f'shard-{i % 3 + 1}',
+              'state': 'failed' if i == 7 else 'running' if i in (20, 21) else 'completed' if i < 20 else 'pending',
+              'marked': i == 5, **({'note': 'AssertionError: 402 != 200'} if i == 7 else {})}
+             for i, n in enumerate(names * 8)]
+    grid = {'unit': 'test', 'title': 'Test suite', 'marked_label': 'retried', 'total': len(cells),
+            'groups': ['shard-1', 'shard-2', 'shard-3'], 'cells': cells}
+    spec = {'mode': 'choice', 'title': 'Run tests', 'watch': {
+        'id': 'tests', 'url': '/output/tests-status.json', 'interval_ms': 1500, 'snapshot': {
+            'state': 'running', 'percent': 42, 'label': '20/48 tests', 'grid': grid}},
+        'options': [{'id': 'park', 'label': "I'll reply", 'action': '__watch_park__'}]}
+    world = CardWorld(['<cuttle_action_form>' + json.dumps(spec) + '</cuttle_action_form>'])
+    page, frame, errors = _open_card_chat(browser, static_server, world)
+    page.route(static_server + '/output/tests-status.json*', lambda r: r.fulfill(json=spec['watch']['snapshot']))
+    try:
+        card = _send_and_wait_card(frame, 'run tests')
+        assert card.locator('.watch-cell').count() == 48
+        tip = card.locator('.watch-cell').nth(7).get_attribute('data-tooltip')
+        assert tip == 'Test test_billing_7 · failed · shard-2 · AssertionError: 402 != 200'
+        text = card.inner_text().lower()
+        assert 'test suite · 48 tests' in text and 'retried' in text
+        assert 'frame' not in text and 'gap-fill' not in text and 'missing' not in text
+        from pathlib import Path
+        previews = Path(__file__).resolve().parents[3] / 'temp' / 'frame-grid'
+        previews.mkdir(parents=True, exist_ok=True)
+        card.screenshot(path=str(previews / 'tests-grid.png'))
+        assert not errors
     finally:
         page.close()

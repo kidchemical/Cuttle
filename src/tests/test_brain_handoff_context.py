@@ -289,3 +289,21 @@ def test_context_dashboard_payload():
     sess = p["sessions"][0]
     assert sess["handle"] == "CH-000005" and [pt["compacted"] for pt in sess["points"]] == [False, True]
     assert any(r["name"] == "00-safety.md" for r in p["rules"])
+
+
+def test_context_dashboard_counts_turns_across_utc_midnight(monkeypatch):
+    """Day axis and buckets share one zone: an evening turn in UTC-7 is still today."""
+    import time
+
+    from api.cuttle_brain.metrics import record_turn
+    from api.dashboards import usage
+    from api.dashboards.context import cuttle_context
+    from datetime import timedelta, timezone
+
+    monkeypatch.setattr(usage, "_tz", lambda off: timezone(timedelta(hours=-7)) if off is None
+                        else timezone(timedelta(minutes=-int(off))))
+    record_turn(ts=time.time(), chat_session_id="9", agent_id="codex", mode="full",
+                envelope_chars=100, query_id="tz1")
+    for off in (None, 420, -540, 0):
+        p = cuttle_context(range_id="7d", tz_offset_minutes=off)
+        assert p["stats"]["full"] == 1 and sum(p["modes"][0]["series"] + p["modes"][1]["series"]) >= 1, off

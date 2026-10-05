@@ -2,7 +2,7 @@
 
 Two version concepts — do not conflate them:
 
-- **Release version** (`electron/package.json`, e.g. `0.2.26`): user-facing SemVer. Bump **only at release time**, never per push. Patch = bugfix, Minor = feature, Major = breaking. Use `.cuttle/scripts/bump-cuttle-version.ps1` (`-Minor` / `-Major` / `-Set X.Y.Z`).
+- **Release version** (`electron/package.json`, e.g. `0.2.26`): user-facing SemVer. Bump **only at release time**, never per push. Patch = bugfix, Minor = feature, Major = breaking. Use `.cuttle/scripts/bump-cuttle-version.py` (`--minor` / `--major` / `--set X.Y.Z`; any OS).
 - **Git hash**: exact commit identity, advertised as `cuttle_git_rev`. This is what client "Update" badges and mesh `needs_update` compare first — it changes every push with no manual step. (`cuttle_version` SemVer mismatch is only one of three `needs_update` inputs in `device_workers/platform.py`, alongside git-rev mismatch and stale boot rev.) Never route staleness checks through the hand-bumped release version.
 
 Release flow: bump version → commit → `git tag vX.Y.Z` → push (emit the `git.push` form) → publish GitHub Release notes off the tag.
@@ -14,9 +14,9 @@ staleness does NOT wait for a bump: pushing Client/worker runtime changes is eno
 git-rev mismatch flags the Clients behind (`platform.py`, including updatable Clients
 with no rev yet). Bump SemVer at release time only:
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .cuttle\scripts\bump-cuttle-version.ps1
-# or -Minor / -Major / -Set 0.3.0
+```bash
+.venv/bin/python .cuttle/scripts/bump-cuttle-version.py
+# or --minor / --major / --set 0.3.0   (Windows: .venv\Scripts\python.exe)
 ```
 
 Jobs → Devices shows host version, flags mismatches (⚠), and **Update** queues `cuttle_self_update`. Clients update from the **git remote** (`git fetch --all --prune` + guarded `git merge --ff-only --no-overwrite-ignore` of the configured upstream), not the Host working tree — unpushed Host commits never appear in Update. The updater refuses dirty/untracked files, detached HEAD, missing upstream and local commits/divergence before stopping Client processes; it does not stash or hard-reset local work. Older updater revisions used reset-hard: refresh those scripts before relying on this guard.

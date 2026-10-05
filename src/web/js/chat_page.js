@@ -6,6 +6,14 @@
     const LOG_ERR = (...args) => console.error('[Cuttle Chat]', ...args);
     LOG('Script loaded');
 
+    // Listeners this frame adds to the app-shell window must go with the frame:
+    // the shell outlives every chat iframe, so a lingering closure keeps the
+    // whole unloaded chat document alive (renderer OOM after many chat switches).
+    const parentListenersAbort = new AbortController();
+    window.addEventListener('pagehide', event => {
+        if (!event.persisted) parentListenersAbort.abort();
+    });
+
     // Keep the chat iframe document pinned, and (for existing sessions only)
     // fit .chat-layout to the visual viewport while the keyboard is up.
     // Splash composer is mid-screen so iOS never needs this; the bottom-docked
@@ -122,8 +130,9 @@
         }
         try {
             if (window.parent && window.parent !== window && window.parent.visualViewport) {
-                window.parent.visualViewport.addEventListener('resize', pin);
-                window.parent.visualViewport.addEventListener('scroll', pin);
+                const parentOpts = { signal: parentListenersAbort.signal };
+                window.parent.visualViewport.addEventListener('resize', pin, parentOpts);
+                window.parent.visualViewport.addEventListener('scroll', pin, parentOpts);
             }
         } catch (_) {}
         window.addEventListener('resize', pin);
@@ -3579,7 +3588,7 @@
 
     function bindChatHandleLinkClicks() {
         document.addEventListener('click', function (e) {
-            const launcher = e.target && e.target.closest && e.target.closest('.subagent-launcher');
+            const launcher = e.target && e.target.closest && e.target.closest('.subagent-launcher, .subagent-fleet-card');
             if (launcher) {
                 if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
                 const handle = launcher.getAttribute('data-chat-handle') || '';
@@ -3661,6 +3670,15 @@
                 status: String(item.status || '').trim(),
                 generating: !!item.generating,
                 avatar: String(item.avatar || '').trim(),
+                // Fleet-card fields (server-owned outcome; see chat_subagent_fleet.js).
+                fleet: !!item.fleet,
+                outcome: String(item.outcome || '').trim(),
+                summary: String(item.summary || ''),
+                detail: String(item.detail || ''),
+                effort: String(item.effort || '').trim(),
+                displayName: String(item.display_name || '').trim(),
+                startedAt: String(item.started_at || ''),
+                finishedAt: String(item.finished_at || ''),
             });
         });
         return out;
@@ -3687,6 +3705,10 @@
         const list = normalizeSubagentList(subagents);
         if (!list.length) return '';
         const isParent = !!(opts && opts.kind === 'parent');
+        const fleet = globalThis.CuttleChatSubagentFleet;
+        if (!isParent && fleet && fleet.hasFleet(list)) {
+            return fleet.renderFleetHtml(list, { esc: escapeHtmlInline, avatarHtml: profileAvatarInnerHtml });
+        }
         const buttons = list.map((s) => {
             const handle = escapeHtmlInline(s.handle);
             const label = escapeHtmlInline(s.label);
@@ -4794,9 +4816,10 @@
         try {
             const hostDoc = lightboxHostDocument();
             if (hostDoc && hostDoc !== document) {
-                hostDoc.addEventListener('pointerdown', onMediaCtxDismiss, opts);
-                hostDoc.addEventListener('scroll', onMediaCtxDismiss, true);
-                hostDoc.addEventListener('keydown', onMediaCtxDismiss, opts);
+                const hostOpts = { capture: true, signal: parentListenersAbort.signal };
+                hostDoc.addEventListener('pointerdown', onMediaCtxDismiss, hostOpts);
+                hostDoc.addEventListener('scroll', onMediaCtxDismiss, hostOpts);
+                hostDoc.addEventListener('keydown', onMediaCtxDismiss, hostOpts);
             }
         } catch (_) {}
         void doc;
@@ -5031,14 +5054,16 @@
             try {
                 const hostDoc = lightboxHostDocument();
                 if (hostDoc && hostDoc !== document) {
-                    hostDoc.addEventListener('keydown', onLightboxKeydown);
+                    hostDoc.addEventListener('keydown', onLightboxKeydown, { signal: parentListenersAbort.signal });
                     _lightboxHostKeyBound = true;
                 }
             } catch (_) {}
         }
         if (!_lightboxHostResizeBound) {
             try {
-                lightboxHostWindow().addEventListener('resize', onLightboxHostResize);
+                lightboxHostWindow().addEventListener('resize', onLightboxHostResize, {
+                    signal: parentListenersAbort.signal,
+                });
                 _lightboxHostResizeBound = true;
             } catch (_) {
                 window.addEventListener('resize', onLightboxHostResize);
@@ -14405,17 +14430,22 @@
             try { ctrl.abort(); } catch (_) {}
         }, timeoutMs);
         const parent = opts.signal;
+        const onParentAbort = () => {
+            try { ctrl.abort(); } catch (_) {}
+        };
         if (parent) {
             if (parent.aborted) {
                 clearTimeout(timer);
                 ctrl.abort();
             } else {
-                parent.addEventListener('abort', () => {
-                    try { ctrl.abort(); } catch (_) {}
-                }, { once: true });
+                parent.addEventListener('abort', onParentAbort, { once: true });
             }
         }
-        return fetch(url, { ...opts, signal: ctrl.signal }).finally(() => clearTimeout(timer));
+        // A long-lived parent signal must not collect one listener per request.
+        return fetch(url, { ...opts, signal: ctrl.signal }).finally(() => {
+            clearTimeout(timer);
+            if (parent) parent.removeEventListener('abort', onParentAbort);
+        });
     }
 
     /** Coalesce parallel live-status GETs for the same session (split panes / polls). */
@@ -22631,7 +22661,9 @@
         window.addEventListener('focus', syncIfVisible);
         try {
             if (window.parent && window.parent !== window) {
-                window.parent.document.addEventListener('visibilitychange', syncIfVisible);
+                window.parent.document.addEventListener('visibilitychange', syncIfVisible, {
+                    signal: parentListenersAbort.signal,
+                });
             }
         } catch (_) {}
 

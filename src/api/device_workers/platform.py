@@ -889,8 +889,8 @@ def write_batch_watch(
             "batch_id": str(summary.get("batch_id") or batch_id),
             "gap_fill": gap,
             "render_result": render_result,
-            **({"grid": build_batch_frame_grid(summary)} if _frame_grid_enabled() else {}),
         },
+        grid=build_batch_frame_grid(summary) if _frame_grid_enabled() else None,
     )
     return {
         **built,
@@ -1022,12 +1022,14 @@ def probe_worker(worker_id: str, *, timeout_seconds: float = 20) -> Dict[str, An
 
 
 def _frame_grid_enabled() -> bool:
-    from api.experimental import is_enabled
-    return is_enabled("mesh_frame_grid")
+    from api.job_watch import grid_enabled
+    return grid_enabled()
 
 
 def build_batch_frame_grid(summary: Dict[str, Any]) -> Dict[str, Any]:
-    """Bounded presentation snapshot; durable inventory wins over shard status.
+    """Frame-range producer for the generic watch ``grid`` (see action-forms.md).
+
+    Bounded presentation snapshot; durable inventory wins over shard status.
 
     Missing remote files cannot be verified: succeeded spans are explicitly
     labelled reported rather than pretending the coordinator inspected them.
@@ -1035,19 +1037,20 @@ def build_batch_frame_grid(summary: Dict[str, Any]) -> Dict[str, Any]:
     evidence. Reclaimed chunks can contain output from an earlier worker.
     """
     from api.device_workers.executor import _list_frames_in_range
+    from api.job_watch import GRID_MAX_CELLS
 
     jobs = [j for j in summary.get("jobs", []) if isinstance(j, dict)]
     spans = [(j, *_job_frame_span(j)) for j in jobs]
     spans = [(j, a, b) for j, a, b in spans if b >= a]
     if not spans:
-        return {"cells": [], "total": 0, "workers": []}
+        return {"unit": "frame", "cells": [], "total": 0, "groups": []}
     lo, hi = min(a for _, a, _ in spans), max(b for _, _, b in spans)
     out = next((str((j.get("params") or {}).get("output_dir") or "") for j, _, _ in spans
                 if (j.get("params") or {}).get("output_dir")), "")
     disk_ok = bool(out and Path(out).is_dir())
     present = set(_list_frames_in_range(Path(out), lo, hi)) if disk_ok else set()
     cells = []
-    for frame in range(lo, min(hi + 1, lo + 2048)):
+    for frame in range(lo, min(hi + 1, lo + GRID_MAX_CELLS)):
         covering = [j for j, a, b in spans if a <= frame <= b]
         active = [j for j in covering if j.get("status") in ("claimed", "running")]
         queued = [j for j in covering if j.get("status") == "queued"]
@@ -1064,12 +1067,13 @@ def build_batch_frame_grid(summary: Dict[str, Any]) -> Dict[str, Any]:
             state = "completed"
             wid = next(iter(owners)) if len(owners) == 1 else ""
         else:
-            state = ("rendering" if active else "pending" if queued else
+            state = ("running" if active else "pending" if queued else
                      "failed" if any(j.get("status") == "failed" for j in covering) else
                      "cancelled" if any(j.get("status") == "cancelled" for j in covering) else "missing")
             wid = str(active[0].get("claimed_by") or "") if len(active) == 1 else ""
-        cells.append({"frame": frame, "state": state, "worker": wid,
-                      "gap_fill": any((j.get("params") or {}).get("gap_fill") for j in covering)})
+        cells.append({"key": frame, "state": state, "group": wid,
+                      "marked": any((j.get("params") or {}).get("gap_fill") for j in covering)})
     workers = sorted({str(j.get("claimed_by")) for j in jobs if j.get("claimed_by")})
-    return {"cells": cells, "total": hi - lo + 1, "omitted": max(0, hi - lo + 1 - len(cells)),
-            "inventory": "verified" if disk_ok else "reported", "workers": workers}
+    return {"unit": "frame", "title": "Frame map", "marked_label": "gap-fill",
+            "cells": cells, "total": hi - lo + 1, "omitted": max(0, hi - lo + 1 - len(cells)),
+            "inventory": "verified" if disk_ok else "reported", "groups": workers}

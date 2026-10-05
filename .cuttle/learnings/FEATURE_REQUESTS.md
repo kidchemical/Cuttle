@@ -17,7 +17,7 @@ User-requested capabilities. Format: `[FEAT-YYYYMMDD-XXX] capability_name`
 - **Acceptance:** Actual batch inventory drives cells; retries cannot double-count completion. Worker colours stay stable across updates; a legend and text/tooltips explain states without relying on colour alone. Large batches remain bounded and usable on mobile. A completed batch with missing output never appears fully successful.
 - **Complexity:** M (provisional; verify inventory/status contracts before implementation)
 - **Metadata:** Source CH-000889-40, CH-000889-41; endorsed CH-000962. Suggested first implementation. Related Features: FEAT-20260917-001, FEAT-20260818-002. Owners: `src/api/device_workers/`, `src/web/js/chat_action_forms.js` (render model), `src/web/js/chat_action_cards.js` (watch effects). Proposed optional `grid` status payload must preserve existing `bars` consumers. Start experimental per `.cuttle/docs/experimental-features.md`.
-- **Progress:** Watch-card grid, stable worker colours, frame-state legend/tooltips, gap-fill outlines, advertised GPU labels, bounded large-batch rendering, saved snapshots, complete batch inventory and corrected incomplete-output progress implemented. Reuses existing bars and gap-fill flow. Unknown producer stays unassigned; inaccessible output is marked reported. Registry flag `mesh_frame_grid` defaults off.
+- **Progress:** Watch-card grid, stable worker colours, frame-state legend/tooltips, gap-fill outlines, advertised GPU labels, bounded large-batch rendering, saved snapshots, complete batch inventory and corrected incomplete-output progress implemented. Reuses existing bars and gap-fill flow. Unknown producer stays unassigned; inaccessible output is marked reported. 2026-10-04: generalized to the job-agnostic watch `grid` (unit/group/marked; `job_watch write --grid-json`), mesh batches are one producer; flag renamed `progress_grid` (default off).
 - **Shared quality bar for this series:** Stable layouts, meaningful animation, no repeated workflow steps, visible terminal outcomes. Use real execution data; retain useful failure and cancellation states. Respect reduced motion.
 
 ## [FEAT-20261004-002] visible_router_selection
@@ -41,7 +41,8 @@ User-requested capabilities. Format: `[FEAT-YYYYMMDD-XXX] capability_name`
 
 ## [FEAT-20261004-004] subagent_fleet_cards
 
-- **Priority:** Medium · **Status:** Backlog · **Area:** sub-agents / chat
+- **Priority:** Medium · **Status:** Done (experimental `subagent_fleet_cards`, 2026-10-04) · **Area:** sub-agents / chat
+- **Progress:** `api.subagents.fleet` maps child rows → outcome (lost = orphaned host) + plain-text summary; live-status, saved reply and history hydration (`hydrate_parent_fleet`) share it. Client slice `chat_subagent_fleet.js`; cards cap at 24 with overflow note. Live "one-line status" is `Working…` — child CLI turns run out-of-process, so no per-step status reaches the parent yet.
 - **Requested capability:** Compact fleet view with one card per real child chat: agent identity, one-line live status, terminal outcome and result summary, plus a link to the child chat. Complement existing sibling orbs/launchers.
 - **Acceptance:** Actual child lifecycle drives status; success, failure, cancellation and lost/stale activity remain distinct. Preserve terminal summaries across reload; bounded layout works with many children and on mobile.
 - **Complexity:** M

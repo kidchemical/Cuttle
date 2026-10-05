@@ -82,7 +82,7 @@ def test_opencode_jsonl_activity_matches_cursor_style():
     assert _opencode_activity_for_event(
         {"type": "text", "part": {"text": "Here is the summary"}},
         state,
-    ) == "writing: …Here is the summary"
+    ) == "writing: Here is the summary"  # ellipsis only when shortened
     assert _opencode_activity_for_event(
         {
             "type": "error",
@@ -181,7 +181,7 @@ async def test_opencode_exec_emits_jsonl_activity(monkeypatch, tmp_path):
         "Calling OpenCode…",
         "OpenCode is thinking…",
         "tool 1: List files",
-        "writing: …Done.",
+        "writing: Done.",
     ]
 
 

@@ -121,6 +121,8 @@ class ChildRecord:
     profile_id: str = ""
     display_name: str = ""
     avatar: str = ""
+    started_at: str = ""
+    finished_at: str = ""
 
     def handle(self) -> str:
         return chat_handle(self.session_id)

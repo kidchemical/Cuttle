@@ -165,7 +165,7 @@ def test_watch_interpretation():
     res = _run()
     assert res["inferExplicit"] == {"url": "/output/j.json", "interval_ms": 1000}
     assert res["inferBtn"]["url"] == "/output/k.json"
-    assert res["inferBtn"]["done_states"] == ["done", "trellis_ok"]
+    assert res["inferBtn"]["done_states"] == ["done"]
     assert res["inferNone"] is None
     assert res["safeOk"] == ["/output/a.json", "/api/x"]
     assert res["safeBad"] == ["", "", ""]
