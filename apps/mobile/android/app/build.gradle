@@ -1,5 +1,26 @@
 apply plugin: 'com.android.application'
 
+def secretsRoot = file("${rootProject.projectDir}/../../../.cuttle/personal/secrets").canonicalFile
+def signingFile = { String value ->
+    def key = file(value).canonicalFile
+    if (!key.toPath().startsWith(secretsRoot.toPath()) || !key.isFile()) {
+        throw new GradleException("Android signing keystore must be an existing file under .cuttle/personal/secrets")
+    }
+    return key
+}
+def debugKey = System.getenv("CUTTLE_ANDROID_DEBUG_KEYSTORE")
+def releaseKey = System.getenv("CUTTLE_ANDROID_KEYSTORE")
+def releaseStorePassword = System.getenv("CUTTLE_ANDROID_STORE_PASSWORD")
+def releaseKeyAlias = System.getenv("CUTTLE_ANDROID_KEY_ALIAS")
+def releaseKeyPassword = System.getenv("CUTTLE_ANDROID_KEY_PASSWORD")
+def releaseVersion = System.getenv("CUTTLE_ANDROID_VERSION_CODE")
+if (releaseVersion && (!releaseVersion.isInteger() || releaseVersion.toLong() <= 0
+    || releaseVersion.toLong() > 2100000000)) {
+    throw new GradleException("CUTTLE_ANDROID_VERSION_CODE must be an integer between 1 and 2100000000")
+}
+def releaseReady = releaseKey && releaseStorePassword && releaseKeyAlias && releaseKeyPassword
+
+
 android {
     namespace "com.cuttle.mobile"
     compileSdk rootProject.ext.compileSdkVersion
@@ -7,8 +28,8 @@ android {
         applicationId "com.cuttle.mobile"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode ((int) (System.currentTimeMillis() / 1000L))
-        versionName "1.0"
+        versionCode (releaseVersion ? releaseVersion.toInteger() : ((int) (System.currentTimeMillis() / 1000L)))
+        versionName (System.getenv("CUTTLE_ANDROID_VERSION_NAME") ?: "1.0")
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -22,6 +43,27 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
+    // Signing is explicitly configured; keys and passwords are never committed.
+    if (debugKey) {
+        signingConfigs.debug {
+            storeFile signingFile(debugKey)
+            storePassword "android"
+            keyAlias "androiddebugkey"
+            keyPassword "android"
+        }
+    }
+    if (releaseReady) {
+        signingConfigs {
+            cuttleRelease {
+                storeFile signingFile(releaseKey)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+        buildTypes.release.signingConfig signingConfigs.cuttleRelease
+    }
+
 }
 
 repositories {
@@ -47,6 +89,19 @@ dependencies {
 }
 
 apply from: 'capacitor.build.gradle'
+
+tasks.configureEach { task ->
+    if (task.name == "preReleaseBuild") {
+        task.doFirst {
+            if (!releaseReady || !releaseVersion || !releaseVersion.isInteger()
+                || releaseVersion.toLong() <= 0 || releaseVersion.toLong() > 2100000000
+                || releaseKeyAlias == "androiddebugkey") {
+                throw new GradleException("Release builds require explicit CUTTLE_ANDROID_KEYSTORE, STORE_PASSWORD, " +
+                    "KEY_ALIAS, KEY_PASSWORD and VERSION_CODE (all prefixed CUTTLE_ANDROID_); use a private release key.")
+            }
+        }
+    }
+}
 
 def repoRoot = file("${rootProject.projectDir}/../../..")
 def srcDir = new File(repoRoot, "src")

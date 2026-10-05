@@ -35,7 +35,7 @@ From the repository root, Windows PowerShell:
 ```powershell
 cd apps/mobile
 npm ci
-npm run sync
+npm run sync:android
 .\build-android-debug.bat
 ```
 
@@ -44,12 +44,72 @@ POSIX (Android SDK and JDK 21 configured):
 ```bash
 cd apps/mobile
 npm ci
-npm run sync
+npm run sync:android
 cd android
 ./gradlew assembleDebug
 ```
 
 APK: `android/app/build/outputs/apk/debug/app-debug.apk`
+
+### Development signing
+
+Debug APKs are for development, not public releases. Gradle normally uses its
+local debug keystore. To retain an existing development installation's signing
+identity, explicitly set `CUTTLE_ANDROID_DEBUG_KEYSTORE` to its original keystore
+under the ignored `.cuttle/personal/secrets/` directory. Cuttle never searches
+other installations or disks for keys. Changing the signer requires an explicit
+uninstall/reinstall (which can remove local app data); the updater never does that.
+
+### Public releases and updates
+
+The publisher maintains a private release keystore, backs it up securely, and
+uses the same signing identity for updates. Never commit a keystore or its
+passwords. Users installing published APKs do not need build tools or the
+publisher's private key. This updater supports one stable signer; signing-key
+rotation needs a separate migration design.
+
+Place the keystore under `.cuttle/personal/secrets/` and supply these environment
+variables through your private build environment:
+
+- `CUTTLE_ANDROID_KEYSTORE`: absolute keystore path
+- `CUTTLE_ANDROID_STORE_PASSWORD`, `CUTTLE_ANDROID_KEY_ALIAS`,
+  `CUTTLE_ANDROID_KEY_PASSWORD`: release signing credentials
+- `CUTTLE_ANDROID_VERSION_CODE`: positive integer, higher than every prior release
+- `CUTTLE_ANDROID_VERSION_NAME`: display version (optional)
+
+From `apps/mobile`, run `npm ci`, `npm run sync:android`, then
+`cd android` and `./gradlew assembleRelease` (Windows: `gradlew.bat`). Release
+builds refuse missing signing configuration and the standard debug alias.
+Development APKs currently use timestamp version codes; a release replacing an
+existing development installation must exceed that installed version code and
+retain its signer. Public releases should use deliberately assigned increasing
+version codes with a dedicated release key.
+
+Publish a verified release from the repository root:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m api.mobile_android_update publish \
+  --apk apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+```
+
+Publication requires the SDK Build Tools (`apksigner`, `aapt`) and Java. It checks
+the APK signature, package, embedded build identity, signer continuity, and
+version progression before replacing the manifest. Distribute the resulting
+`apps/mobile/dist/update/manifest.json` and its named APK together; no private
+key is distributed. The hosting checkout must match the build's mobile sources.
+
+Downloads use immutable SHA-256 URLs, so an in-progress download cannot silently
+switch to a newer artifact. The phone verifies the checksum, embedded identity,
+package, signing certificate, and higher version code before opening Android's
+installer. Android still requires the user's installation confirmation. Opening
+the installer never counts as installation success; explicit checks can retry,
+and the background installer hint expires after two minutes.
+
+Automatic local debug builds are opt-in with `CUTTLE_MOBILE_AUTO_REBUILD=1` and
+require the development toolchain, npm dependencies, and the intended debug key.
+The default serves verified published artifacts without building on update
+checks. Source changes without a matching APK report that the artifact is not
+ready rather than offering a stale APK.
 
 Use HTTP port **8000** and your PC IP from Settings → Phone / LAN access.
 HTTP sends credentials and chat traffic in cleartext; this client is for a trusted

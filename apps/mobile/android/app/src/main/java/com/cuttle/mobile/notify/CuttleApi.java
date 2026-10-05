@@ -162,18 +162,29 @@ public final class CuttleApi {
             if (!res.isSuccessful() || res.body() == null) {
                 throw new IOException("Download failed (" + res.code() + ")");
             }
-            java.io.File parent = dest.getParentFile();
-            if (parent != null && !parent.exists()) {
-                //noinspection ResultOfMethodCallIgnored
-                parent.mkdirs();
+            if (res.body().contentLength() > ApkUpdatePolicy.MAX_APK_BYTES) {
+                throw new IOException("Update APK exceeds the supported size.");
             }
-            try (java.io.InputStream in = res.body().byteStream();
-                 java.io.FileOutputStream out = new java.io.FileOutputStream(dest)) {
-                byte[] buf = new byte[8192];
-                int n;
-                while ((n = in.read(buf)) != -1) {
-                    out.write(buf, 0, n);
+            java.io.File parent = dest.getParentFile();
+            if (parent == null || (!parent.isDirectory() && !parent.mkdirs())) {
+                throw new IOException("Could not create update download directory.");
+            }
+            java.io.File partial = java.io.File.createTempFile("cuttle-download-", ".part", parent);
+            try {
+                try (java.io.InputStream in = res.body().byteStream();
+                     java.io.FileOutputStream out = new java.io.FileOutputStream(partial)) {
+                    byte[] buf = new byte[8192];
+                    int n;
+                    long total = 0;
+                    while ((n = in.read(buf)) != -1) {
+                        total += n;
+                        if (total > ApkUpdatePolicy.MAX_APK_BYTES) throw new IOException("Update APK is too large.");
+                        out.write(buf, 0, n);
+                    }
                 }
+                if (!partial.renameTo(dest)) throw new IOException("Could not finish update download.");
+            } finally {
+                partial.delete();
             }
         }
     }

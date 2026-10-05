@@ -11,7 +11,8 @@
     "sync": "npm run build && cap sync",
     "build:android": "npm run sync && build-android-debug.bat",
     "open:android": "cap open android",
-    "open:ios": "cap open ios"
+    "open:ios": "cap open ios",
+    "sync:android": "npm run build && cap sync android"
   },
   "dependencies": {
     "@capacitor-community/safe-area": "^7.0.0",

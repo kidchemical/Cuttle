@@ -4,8 +4,8 @@ Android Capacitor shell updates over LAN (same idea as Electron app.asar).
 The host hashes native phone-app sources and, after assembleDebug, publishes
 apps/mobile/dist/update/app-debug.apk so a phone can install without USB.
 
-When the source hash drifts ahead of the published APK, a background
-``assembleDebug`` is kicked automatically (mirrors desktop ``ensure_update_asar``).
+Source builds are an explicit developer opt-in (CUTTLE_MOBILE_AUTO_REBUILD=1).
+Public installations serve a verified, immutable APK and need no build tools.
 """
 
 from __future__ import annotations
@@ -13,16 +13,20 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import threading
 import time
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from flask import Flask, jsonify, send_file
+from flask import Flask, jsonify, request, send_file
+
+from api.mobile_android_artifacts import baked_hash as apk_baked_hash, inspect_apk, sha256_file
 
 _API_DIR = Path(__file__).resolve().parent
 _SRC_DIR = _API_DIR.parent
@@ -39,6 +43,7 @@ GRADLEW_BAT = MOBILE_DIR / "android" / "gradlew.bat"
 GRADLEW_SH = MOBILE_DIR / "android" / "gradlew"
 BUILD_BAT = MOBILE_DIR / "build-android-debug.bat"
 
+_publication_lock = threading.RLock()
 _rebuild_lock = threading.Lock()
 _rebuild_thread: Optional[threading.Thread] = None
 _rebuild_state: Dict[str, Any] = {
@@ -58,6 +63,9 @@ def _rel_posix(root: Path, path: Path) -> str:
 def hash_input_files() -> List[Path]:
     """Native + setup-shell files that require a new APK."""
     files: List[Path] = []
+    native = MOBILE_DIR / "android" / "app" / "src" / "main"
+    if native.is_dir():
+        files.extend(p for p in sorted(native.rglob("*")) if p.is_file() and "assets" not in p.relative_to(native).parts)
     java_root = MOBILE_DIR / "android" / "app" / "src" / "main" / "java"
     if java_root.is_dir():
         files.extend(sorted(java_root.rglob("*.java")))
@@ -66,6 +74,17 @@ def hash_input_files() -> List[Path]:
         MOBILE_DIR / "android" / "app" / "src" / "main" / "res" / "xml" / "file_paths.xml",
         MOBILE_DIR / "index.html",
         MOBILE_DIR / "src" / "main.js",
+        MOBILE_DIR / "src" / "setup.css",
+        MOBILE_DIR / "package.json",
+        MOBILE_DIR / "package-lock.json",
+        MOBILE_DIR / "capacitor.config.ts",
+        MOBILE_DIR / "vite.config.js",
+        MOBILE_DIR / "android" / "variables.gradle",
+        MOBILE_DIR / "android" / "app" / "build.gradle",
+        MOBILE_DIR / "android" / "app" / "capacitor.build.gradle",
+        MOBILE_DIR / "android" / "build.gradle",
+        MOBILE_DIR / "android" / "gradle.properties",
+
     ]
     for path in extras:
         if path.is_file():
@@ -88,7 +107,10 @@ def mobile_source_hash() -> str:
         rel = _rel_posix(MOBILE_DIR, path)
         h.update(rel.encode("utf-8"))
         h.update(b"\0")
-        h.update(path.read_bytes())
+        payload = path.read_bytes()
+        if path.suffix in (".java", ".kt", ".js", ".ts", ".css", ".html", ".json", ".xml", ".gradle", ".properties"):
+            payload = payload.replace(b"\r\n", b"\n")
+        h.update(payload)
         h.update(b"\0")
     return h.hexdigest()[:20]
 
@@ -119,25 +141,92 @@ def _read_manifest() -> Optional[Dict[str, Any]]:
     return _read_json(UPDATE_MANIFEST)
 
 
-def publish_gradle_apk(source_hash: Optional[str] = None) -> Optional[Path]:
-    """Copy assembleDebug output into dist/update when it matches current sources."""
+def _published_path(manifest: Optional[dict] = None) -> Optional[Path]:
+    data = manifest if manifest is not None else (_read_manifest() or {})
+    filename = data.get("filename", "")
+    checksum = data.get("sha256", "")
+    if not isinstance(checksum, str) or not re.fullmatch(r"[a-f0-9]{64}", checksum):
+        return None
+    if filename != f"app-{checksum}.apk":
+        return None
+    path = UPDATE_DIR / filename
+    try:
+        if (path.is_file() and path.stat().st_size == data.get("size")
+                and apk_baked_hash(path) == data.get("hash")
+                and sha256_file(path) == checksum):
+            return path
+    except OSError:
+        pass
+    return None
+
+
+def _published_apk_matches(digest: str) -> bool:
+    with _publication_lock:
+        data = _read_manifest() or {}
+        return data.get("hash") == digest and _published_path(data) is not None
+
+
+def publish_gradle_apk(source_hash: Optional[str] = None, *, candidate: Optional[Path] = None) -> Optional[Path]:
+    """Stage, verify, then atomically publish an immutable APK and its manifest."""
     digest = source_hash or mobile_source_hash()
-    if not GRADLE_APK.is_file():
-        return UPDATE_APK if UPDATE_APK.is_file() else None
-    baked = (_read_json(ASSETS_JSON) or {}).get("hash")
-    if baked and baked != digest:
-        return UPDATE_APK if UPDATE_APK.is_file() else None
+    source = candidate if candidate is not None else GRADLE_APK
+    if apk_baked_hash(source) != digest:
+        return _published_path() if _published_apk_matches(digest) else None
     UPDATE_DIR.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(GRADLE_APK, UPDATE_APK)
-    manifest = {
-        "hash": digest,
-        "packedAt": datetime.now(timezone.utc).isoformat(),
-        "size": UPDATE_APK.stat().st_size,
-        "filename": "app-debug.apk",
-        "packageVersion": "1.0",
-    }
-    UPDATE_MANIFEST.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    return UPDATE_APK
+    with _publication_lock:
+        fd, name = tempfile.mkstemp(prefix=".apk-stage-", suffix=".apk", dir=UPDATE_DIR)
+        staging = Path(name)
+        manifest_tmp = None
+        try:
+            with os.fdopen(fd, "wb") as out, source.open("rb") as inp:
+                shutil.copyfileobj(inp, out)
+                out.flush()
+                os.fsync(out.fileno())
+            verified = inspect_apk(staging)
+            if verified["hash"] != digest:
+                raise ValueError("APK build identity changed during publication")
+            previous = _read_manifest() or {}
+            # Migrate legacy metadata using the actual previously served APK.
+            prior_path = _published_path(previous) or (UPDATE_APK if UPDATE_APK.is_file() else None)
+            if prior_path:
+                prior = inspect_apk(prior_path)
+                if prior["signingCertSha256"] != verified["signingCertSha256"]:
+                    raise ValueError("APK signing key differs from the published app; preserve its signing key")
+                if verified["versionCode"] < prior["versionCode"] or (
+                    verified["hash"] != prior["hash"] and verified["versionCode"] <= prior["versionCode"]
+                ):
+                    raise ValueError("A new app build requires a higher versionCode than the published app")
+            filename = f"app-{verified['sha256']}.apk"
+            destination = UPDATE_DIR / filename
+            if destination.exists():
+                if sha256_file(destination) != verified["sha256"]:
+                    raise ValueError("Immutable APK has been modified")
+            else:
+                os.replace(staging, destination)
+            manifest = {**verified, "filename": filename,
+                        "packedAt": datetime.now(timezone.utc).isoformat()}
+            fd, name = tempfile.mkstemp(prefix=".manifest-", dir=UPDATE_DIR)
+            manifest_tmp = Path(name)
+            with os.fdopen(fd, "w", encoding="utf-8") as out:
+                json.dump(manifest, out, indent=2)
+                out.write("\n")
+                out.flush()
+                os.fsync(out.fileno())
+            # Keep the legacy disk alias valid while an older Flask is running.
+            fd, name = tempfile.mkstemp(prefix=".legacy-apk-", dir=UPDATE_DIR)
+            os.close(fd)
+            alias = Path(name)
+            try:
+                shutil.copyfile(destination, alias)
+                os.replace(alias, UPDATE_APK)
+            finally:
+                alias.unlink(missing_ok=True)
+            os.replace(manifest_tmp, UPDATE_MANIFEST)
+            return destination
+        finally:
+            staging.unlink(missing_ok=True)
+            if manifest_tmp:
+                manifest_tmp.unlink(missing_ok=True)
 
 
 def can_rebuild() -> bool:
@@ -150,7 +239,7 @@ def can_rebuild() -> bool:
 
 
 def _auto_rebuild_allowed() -> bool:
-    flag = os.environ.get("CUTTLE_MOBILE_AUTO_REBUILD", "1").strip().lower()
+    flag = os.environ.get("CUTTLE_MOBILE_AUTO_REBUILD", "0").strip().lower()
     if flag in ("0", "false", "no", "off"):
         return False
     if os.environ.get("PYTEST_CURRENT_TEST"):
@@ -207,6 +296,14 @@ def _run_rebuild(target_hash: str) -> None:
         studio_jbr = Path(r"C:\Program Files\Android\Android Studio\jbr")
         if studio_jbr.is_dir() and (studio_jbr / "bin" / "java.exe").is_file():
             env.setdefault("JAVA_HOME", str(studio_jbr))
+        sync = subprocess.run(
+            ["npm.cmd" if os.name == "nt" else "npm", "run", "sync:android"],
+            cwd=str(MOBILE_DIR), env=env, check=False, capture_output=True,
+            text=True, timeout=300,
+        )
+        if sync.returncode != 0:
+            raise RuntimeError("Android asset sync failed; install mobile build dependencies with npm ci. "
+                               + (sync.stderr or sync.stdout)[-500:])
         proc = subprocess.run(
             cmd,
             cwd=cwd,
@@ -222,8 +319,8 @@ def _run_rebuild(target_hash: str) -> None:
             print(f"[MOBILE] APK rebuild failed ({exit_code}): {err_text}")
         else:
             # publish task should run from Gradle doLast; ensure copy anyway
-            write_baked_hash()
-            publish_gradle_apk(target_hash)
+            if publish_gradle_apk(target_hash) is None:
+                raise RuntimeError("Built APK does not contain the requested source hash")
             print(f"[MOBILE] APK rebuild finished for hash {target_hash}")
     except Exception as exc:
         err_text = str(exc)
@@ -247,11 +344,9 @@ def kick_apk_rebuild(target_hash: Optional[str] = None, *, force: bool = False) 
 
     with _rebuild_lock:
         global _rebuild_thread
-        packed = _read_manifest() or {}
         if (
             not force
-            and UPDATE_APK.is_file()
-            and packed.get("hash") == digest
+            and _published_apk_matches(digest)
         ):
             return {"started": False, "reason": "already_current", "building": False}
 
@@ -285,28 +380,37 @@ def kick_apk_rebuild(target_hash: Optional[str] = None, *, force: bool = False) 
 
 
 def ensure_update_apk(current_hash: str) -> Optional[Path]:
-    manifest = _read_manifest()
-    if UPDATE_APK.is_file() and manifest and manifest.get("hash") == current_hash:
-        return UPDATE_APK
-    published = publish_gradle_apk(current_hash)
-    manifest = _read_manifest()
-    if published and published.is_file() and manifest and manifest.get("hash") == current_hash:
+    if _published_apk_matches(current_hash):
+        return _published_path()
+    if not _auto_rebuild_allowed():
+        return None
+    try:
+        published = publish_gradle_apk(current_hash)
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        with _rebuild_lock:
+            _rebuild_state["error"] = "APK publication failed: " + str(exc)
+        return None
+    if published and _published_apk_matches(current_hash):
         return published
     # Stale / missing — kick Gradle so the next phone check can download.
     kick_apk_rebuild(current_hash)
-    return UPDATE_APK if (
-        UPDATE_APK.is_file() and (_read_manifest() or {}).get("hash") == current_hash
-    ) else None
+    return _published_path() if _published_apk_matches(current_hash) else None
 
 
 def android_manifest() -> Dict[str, Any]:
+    # Keep the artifact path and all manifest fields from one publication.
+    with _publication_lock:
+        return _android_manifest()
+
+
+def _android_manifest() -> Dict[str, Any]:
     source_hash = mobile_source_hash()
     apk_path = ensure_update_apk(source_hash)
     packed = _read_manifest() or {}
     artifact_ok = bool(
         apk_path
         and apk_path.is_file()
-        and packed.get("hash") == source_hash
+        and _published_apk_matches(source_hash)
     )
     status = rebuild_status()
     building = bool(status.get("building")) and not artifact_ok
@@ -318,7 +422,14 @@ def android_manifest() -> Dict[str, Any]:
         "packedAt": packed.get("packedAt"),
         "artifact": artifact_ok,
         "artifactSize": apk_path.stat().st_size if artifact_ok and apk_path else None,
-        "downloadPath": "/api/mobile/android/app-debug.apk" if artifact_ok else None,
+        "downloadPath": (f"/api/mobile/android/app-debug.apk?sha256={packed['sha256']}"
+                         if artifact_ok else None),
+        "sha256": packed.get("sha256") if artifact_ok else None,
+        "packageName": packed.get("packageName") if artifact_ok else None,
+        "versionCode": packed.get("versionCode") if artifact_ok else None,
+        "signingCertSha256": packed.get("signingCertSha256") if artifact_ok else None,
+        "channel": packed.get("channel") if artifact_ok else None,
+        "autoRebuild": _auto_rebuild_allowed(),
         "platform": "android",
         "building": building,
     }
@@ -340,10 +451,18 @@ def register_mobile_android_update_routes(app: Flask) -> None:
 
     @app.route("/api/mobile/android/app-debug.apk", methods=["GET"])
     def api_mobile_android_apk():
+        checksum = request.args.get("sha256")
+        if checksum is not None:
+            if not re.fullmatch(r"[a-f0-9]{64}", checksum):
+                return jsonify({"ok": False, "error": "Invalid APK checksum"}), 400
+            apk_path = UPDATE_DIR / f"app-{checksum}.apk"
+            if not apk_path.is_file() or sha256_file(apk_path) != checksum:
+                return jsonify({"ok": False, "error": "Requested APK unavailable; check for updates again"}), 409
+            return send_file(apk_path, mimetype="application/vnd.android.package-archive",
+                             as_attachment=True, download_name="cuttle-mobile.apk", max_age=0)
         source_hash = mobile_source_hash()
         apk_path = ensure_update_apk(source_hash)
-        packed = _read_manifest() or {}
-        if not apk_path or not apk_path.is_file() or packed.get("hash") != source_hash:
+        if not apk_path or not _published_apk_matches(source_hash):
             status = rebuild_status()
             msg = "Android update APK is not ready."
             if status.get("building"):
@@ -351,7 +470,7 @@ def register_mobile_android_update_routes(app: Flask) -> None:
             elif status.get("error"):
                 msg = f"Android update APK rebuild failed: {status.get('error')}"
             else:
-                msg = "Android update APK is not ready. Build the debug APK on the PC first."
+                msg = "Android update APK is not ready. Publish a matching signed APK on the PC."
             return jsonify({"ok": False, "error": msg, "building": bool(status.get("building"))}), 503
         return send_file(
             apk_path,
@@ -363,8 +482,7 @@ def register_mobile_android_update_routes(app: Flask) -> None:
     # On Flask import: if the phone-app sources moved ahead of dist/update, start Gradle.
     try:
         digest = mobile_source_hash()
-        packed = _read_manifest() or {}
-        if not (UPDATE_APK.is_file() and packed.get("hash") == digest):
+        if not _published_apk_matches(digest):
             kick_apk_rebuild(digest)
     except Exception as exc:
         print(f"[MOBILE] Startup APK rebuild check failed: {exc}")
@@ -376,8 +494,17 @@ def main(argv: List[str]) -> int:
         print(write_baked_hash())
         return 0
     if cmd == "publish":
-        write_baked_hash()
-        path = publish_gradle_apk()
+        candidate = None
+        if len(argv) > 2:
+            if len(argv) != 4 or argv[2] != "--apk":
+                print("usage: publish [--apk PATH]", file=sys.stderr)
+                return 2
+            candidate = Path(argv[3])
+        try:
+            path = publish_gradle_apk(candidate=candidate)
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            print(f"APK publication refused: {exc}", file=sys.stderr)
+            return 1
         print(str(path) if path else "")
         return 0 if path else 1
     if cmd == "rebuild":
@@ -394,8 +521,7 @@ def main(argv: List[str]) -> int:
             st = rebuild_status()
             if not st.get("building"):
                 print(json.dumps(st))
-                packed = _read_manifest() or {}
-                ok = UPDATE_APK.is_file() and packed.get("hash") == mobile_source_hash()
+                ok = _published_apk_matches(mobile_source_hash())
                 return 0 if ok else 1
             time.sleep(2)
         print(json.dumps({"error": "rebuild timed out", **rebuild_status()}))

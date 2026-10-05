@@ -871,14 +871,9 @@ public class MainActivity extends BridgeActivity {
 
         @JavascriptInterface
         public void installUpdate() {
-            mainHandler.post(() -> {
-                java.io.File apk = ShellUpdate.apkFile(MainActivity.this);
-                if (apk.isFile() && apk.length() > 1000) {
-                    ShellUpdate.installDownloaded(MainActivity.this);
-                    return;
-                }
-                ShellUpdate.checkNow(MainActivity.this);
-            });
+            // Recheck and download the current artifact instead of reopening an
+            // older cached APK after a failed or cancelled installation.
+            mainHandler.post(() -> ShellUpdate.checkNow(MainActivity.this));
         }
 
         @JavascriptInterface

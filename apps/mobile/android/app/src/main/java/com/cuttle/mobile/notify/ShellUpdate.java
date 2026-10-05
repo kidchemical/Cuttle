@@ -4,6 +4,9 @@ import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
+import android.content.pm.Signature;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
@@ -17,6 +20,12 @@ import androidx.core.content.FileProvider;
 import com.cuttle.mobile.MainActivity;
 import java.io.File;
 import java.io.InputStream;
+import java.io.IOException;
+import java.io.ByteArrayOutputStream;
+import java.security.MessageDigest;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.zip.ZipFile;
+import java.util.zip.ZipEntry;
 import java.nio.charset.StandardCharsets;
 import org.json.JSONObject;
 
@@ -30,13 +39,16 @@ public final class ShellUpdate {
     private static final String KEY_SKIPPED = "skipped_hash";
     private static final String KEY_NOTIFIED = "notified_hash";
     private static final String KEY_INSTALLING = "installing_hash";
+    private static final String KEY_INSTALL_STARTED = "install_started_at";
+    private static final String KEY_DOWNLOADED = "downloaded_hash";
+    private static final String KEY_DOWNLOAD_SHA256 = "downloaded_sha256";
+    private static final AtomicBoolean checkInFlight = new AtomicBoolean();
     private static final int NOTIF_ID = 42;
     public static final String EXTRA_INSTALL = "cuttle_install_update";
 
     private static boolean checkStarted;
     private static long lastCheckAt;
     private static volatile boolean updateAvailable;
-    private static volatile boolean installing;
     private static volatile String lastRemoteHash = "";
 
     private ShellUpdate() {}
@@ -63,6 +75,10 @@ public final class ShellUpdate {
         if (!force && checkStarted && now - lastCheckAt < 120_000) {
             return;
         }
+        if (!checkInFlight.compareAndSet(false, true)) {
+            if (force) notifyJs(activity, false, "checking", "Update check is already running…");
+            return;
+        }
         checkStarted = true;
         lastCheckAt = now;
         Context app = ctx.getApplicationContext();
@@ -76,6 +92,7 @@ public final class ShellUpdate {
         if (intent == null || !intent.getBooleanExtra(EXTRA_INSTALL, false)) {
             return;
         }
+        intent.removeExtra(EXTRA_INSTALL);
         installDownloaded(activity);
     }
 
@@ -122,7 +139,7 @@ public final class ShellUpdate {
                     false,
                     newer ? "error" : "up_to_date",
                     newer
-                        ? "PC has newer phone-app source — rebuild was started on the PC. Check again shortly."
+                        ? remote.optString("rebuildError", "A matching signed phone APK is not published on the PC yet.")
                         : "Phone app is up to date."
                 );
                 updateAvailable = false;
@@ -135,14 +152,16 @@ public final class ShellUpdate {
                 return;
             }
             SharedPreferences prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-            if (remoteHash.equals(prefs.getString(KEY_INSTALLING, ""))) {
+            if (ApkUpdatePolicy.pendingInstall(force, remoteHash, prefs.getString(KEY_INSTALLING, ""),
+                    prefs.getLong(KEY_INSTALL_STARTED, 0), System.currentTimeMillis())) {
                 // User already opened the system installer for this hash.
+                // Explicit checks must retry after cancellation or install failure.
                 updateAvailable = true;
                 notifyJs(
                     activityOrNull,
                     true,
                     "installing",
-                    "Finish the Android install prompt — no extra alerts until that hash is installed."
+                    "Android installer was opened. Finish it or tap Check again to retry."
                 );
                 return;
             }
@@ -153,13 +172,21 @@ public final class ShellUpdate {
                 return;
             }
             File apk = apkFile(app);
-            String path = remote.optString("downloadPath", "/api/mobile/android/app-debug.apk");
-            CuttleApi.download(app, path, apk);
-            if (!apk.isFile() || apk.length() < 1000) {
-                Log.w(TAG, "downloaded APK missing or tiny");
-                notifyJs(activityOrNull, true, "error", "Download failed. Try again on the same Wi‑Fi.");
-                return;
+            File candidate = new File(app.getCacheDir(), "cuttle-update-candidate.apk");
+            String path = remote.optString("downloadPath", "");
+            String checksum = remote.optString("sha256", "");
+            if (!path.startsWith("/api/mobile/android/app-debug.apk?sha256=")) {
+                throw new IOException("PC update metadata is incomplete. Update the PC first.");
             }
+            try {
+                CuttleApi.download(app, path, candidate);
+                verifyDownloaded(app, candidate, remoteHash, checksum);
+                if (!candidate.renameTo(apk)) throw new IOException("Could not cache the verified update APK.");
+            } finally {
+                candidate.delete();
+            }
+            prefs.edit().putString(KEY_DOWNLOADED, remoteHash)
+                .putString(KEY_DOWNLOAD_SHA256, checksum).apply();
             notifyJs(activityOrNull, true, "available", "Update downloaded — Android will ask you to install.", remoteHash);
             notifyReady(app, remoteHash);
             MainActivity live = activityOrNull;
@@ -175,6 +202,8 @@ public final class ShellUpdate {
             Log.w(TAG, "update check failed", e);
             String msg = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
             notifyJs(activityOrNull, false, "error", "Update check failed: " + msg);
+        } finally {
+            checkInFlight.set(false);
         }
     }
 
@@ -201,7 +230,6 @@ public final class ShellUpdate {
 
     private static void clearAvailable(Context app) {
         updateAvailable = false;
-        installing = false;
         try {
             NotificationManagerCompat.from(app).cancel(NOTIF_ID);
         } catch (Exception ignored) {
@@ -209,6 +237,7 @@ public final class ShellUpdate {
         app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
             .remove(KEY_INSTALLING)
+            .remove(KEY_INSTALL_STARTED)
             .apply();
     }
 
@@ -238,34 +267,86 @@ public final class ShellUpdate {
     }
 
     public static void installDownloaded(Context ctx, String remoteHash) {
-        installing = true;
-        try {
-            NotificationManagerCompat.from(ctx).cancel(NOTIF_ID);
-        } catch (Exception ignored) {
-        }
+        MainActivity activity = ctx instanceof MainActivity ? (MainActivity) ctx : null;
+        SharedPreferences prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        String hash = remoteHash != null && !remoteHash.isEmpty()
+            ? remoteHash : prefs.getString(KEY_DOWNLOADED, "");
         File apk = apkFile(ctx);
-        if (!apk.isFile()) {
-            return;
+        try {
+            verifyDownloaded(ctx, apk, hash, prefs.getString(KEY_DOWNLOAD_SHA256, ""));
+            if (Build.VERSION.SDK_INT >= 26 && !ctx.getPackageManager().canRequestPackageInstalls()) {
+                Intent perm = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES);
+                perm.setData(Uri.parse("package:" + ctx.getPackageName()));
+                perm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                ctx.startActivity(perm);
+                notifyJs(activity, true, "available", "Allow app installs, then tap Install again.", hash);
+                return;
+            }
+            Uri uri = FileProvider.getUriForFile(ctx, ctx.getPackageName() + ".fileprovider", apk);
+            Intent intent = new Intent(Intent.ACTION_VIEW);
+            intent.setDataAndType(uri, "application/vnd.android.package-archive");
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+            ctx.startActivity(intent);
+            // Opening the installer is a short-lived hint, never proof of installation.
+            prefs.edit().putString(KEY_INSTALLING, hash)
+                .putLong(KEY_INSTALL_STARTED, System.currentTimeMillis()).apply();
+            NotificationManagerCompat.from(ctx).cancel(NOTIF_ID);
+        } catch (Exception error) {
+            prefs.edit().remove(KEY_INSTALLING).remove(KEY_INSTALL_STARTED).apply();
+            notifyJs(activity, true, "error", "Could not start update: " + error.getMessage(), hash);
+            Log.w(TAG, "installer launch failed", error);
         }
-        String hash = remoteHash != null && !remoteHash.isEmpty() ? remoteHash : lastRemoteHash;
-        if (hash != null && !hash.isEmpty()) {
-            ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .edit()
-                .putString(KEY_INSTALLING, hash)
-                .apply();
+    }
+
+    @SuppressWarnings("deprecation")
+    private static String[] signers(PackageInfo info) throws Exception {
+        Signature[] certificates;
+        if (Build.VERSION.SDK_INT >= 28) {
+            if (info.signingInfo == null) throw new IOException("APK signing information is missing.");
+            certificates = info.signingInfo.getApkContentsSigners();
+        } else {
+            certificates = info.signatures;
         }
-        if (Build.VERSION.SDK_INT >= 26 && !ctx.getPackageManager().canRequestPackageInstalls()) {
-            Intent perm = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES);
-            perm.setData(Uri.parse("package:" + ctx.getPackageName()));
-            perm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            ctx.startActivity(perm);
-            return;
+        if (certificates == null) return new String[0];
+        String[] hashes = new String[certificates.length];
+        for (int i = 0; i < certificates.length; i++) {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(certificates[i].toByteArray());
+            StringBuilder hex = new StringBuilder();
+            for (byte value : digest) hex.append(String.format("%02x", value & 0xff));
+            hashes[i] = hex.toString();
         }
-        Uri uri = FileProvider.getUriForFile(ctx, ctx.getPackageName() + ".fileprovider", apk);
-        Intent i = new Intent(Intent.ACTION_VIEW);
-        i.setDataAndType(uri, "application/vnd.android.package-archive");
-        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
-        ctx.startActivity(i);
+        return hashes;
+    }
+
+    @SuppressWarnings("deprecation")
+    private static void verifyDownloaded(Context ctx, File file, String hash, String checksum) throws Exception {
+        ApkUpdatePolicy.verifyChecksum(file, checksum);
+        try (ZipFile archive = new ZipFile(file)) {
+            ZipEntry entry = archive.getEntry("assets/cuttle-mobile-build.json");
+            if (entry == null || entry.getSize() > 16384) throw new IOException("APK build identity missing.");
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            try (InputStream in = archive.getInputStream(entry)) {
+                byte[] buffer = new byte[1024];
+                int count;
+                while ((count = in.read(buffer)) != -1) {
+                    if (bytes.size() + count > 16384) throw new IOException("Invalid APK build identity.");
+                    bytes.write(buffer, 0, count);
+                }
+            }
+            String embedded = new JSONObject(bytes.toString("UTF-8")).optString("hash", "");
+            if (hash.isEmpty() || !hash.equals(embedded)) {
+                throw new IOException("Downloaded APK has a different build hash. Check for updates again.");
+            }
+        }
+        PackageManager pm = ctx.getPackageManager();
+        int flags = Build.VERSION.SDK_INT >= 28 ? PackageManager.GET_SIGNING_CERTIFICATES : PackageManager.GET_SIGNATURES;
+        PackageInfo installed = pm.getPackageInfo(ctx.getPackageName(), flags);
+        PackageInfo candidate = pm.getPackageArchiveInfo(file.getAbsolutePath(), flags);
+        if (candidate == null) throw new IOException("Downloaded file is not a valid Android APK.");
+        long installedVersion = Build.VERSION.SDK_INT >= 28 ? installed.getLongVersionCode() : installed.versionCode;
+        long candidateVersion = Build.VERSION.SDK_INT >= 28 ? candidate.getLongVersionCode() : candidate.versionCode;
+        ApkUpdatePolicy.verifyPackage(installed.packageName, installedVersion, signers(installed),
+            candidate.packageName, candidateVersion, signers(candidate));
     }
 
     private static void notifyReady(Context ctx, String remoteHash) {
