@@ -458,6 +458,30 @@ def blender_batch_status(batch_id: str):
     return jsonify(result), code
 
 
+@workers_bp.route('/jobs/batch/<batch_id>/attachment', methods=['POST'])
+def register_render_attachment(batch_id):
+    """Operator-authored host output binding, never accepted from a worker token."""
+    denied = _ui_operator_or_401()
+    if denied:
+        return denied
+    from api.http_authz import require_chat_session_access
+    from api.device_workers.render_results import register, reconcile
+    data = request.get_json(silent=True) or {}
+    _user, session_id, denied = require_chat_session_access(data.get('session_id'))
+    if denied:
+        return denied
+    try:
+        if data.get('reconcile'):
+            result = reconcile(batch_id, session_id=session_id)
+        else:
+            result = register(batch_id, session_id, data.get('output_dir'),
+                              video_path=data.get('video_path') or '',
+                              encode_job_id=data.get('encode_job_id') or '')
+        return jsonify(result), 200 if result.get('success') else 400
+    except (ValueError, TypeError, OSError) as exc:
+        return jsonify(success=False, error=str(exc)), 400
+
+
 @workers_bp.route("/jobs/<job_id>/fail", methods=["POST"])
 def fail_job(job_id: str):
     denied = _auth_or_401()

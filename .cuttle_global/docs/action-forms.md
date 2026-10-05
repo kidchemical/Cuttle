@@ -292,7 +292,7 @@ Standalone restart choosers are normalized by `api.flask_restart` to one title,
 button order, labels, and explicit modes. Agent-authored wording does not select
 behavior. Existing option ids are preserved for transcript compatibility; mixed
 forms containing other actions are not replaced. All restart controllers retain
-the shared generation identity.
+the shared generation identity. Emit the full standard template above, without shortening or relabeling its options; the live “waiting for tasks” indication begins after When idle is selected and uses the submitted restart’s actual state.
 
 Authenticated restart submissions carry the actual request's restart id/state
 back to the card directly. Progress must not depend on rereading a global status

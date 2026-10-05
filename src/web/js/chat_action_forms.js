@@ -169,6 +169,38 @@
         });
     }
 
+    // Hash identities rather than list positions so colours survive new claims.
+    function watchWorkerColour(id) {
+        let hash = 0;
+        for (const c of String(id)) hash = (Math.imul(hash, 31) + c.charCodeAt(0)) | 0;
+        return `hsl(${[160, 200, 260, 300, 80, 35][((hash % 6) + 6) % 6]} 62% 58%)`;
+    }
+
+    function renderWatchGridHtml(grid, esc) {
+        if (!grid || !Array.isArray(grid.cells) || !grid.cells.length) return '';
+        const states = ['pending', 'rendering', 'completed', 'failed', 'missing', 'cancelled'];
+        const cells = grid.cells.slice(0, 2048).filter(c => c && Number.isSafeInteger(c.frame)).map(c => {
+            const state = states.includes(c.state) ? c.state : 'pending';
+            const worker = String(c.worker || '').slice(0, 120);
+            const title = `Frame ${c.frame} · ${state}` + (worker ? ` · ${worker}` : '')
+                + (state === 'completed' && !worker ? ' · worker unconfirmed' : '')
+                + (c.gap_fill ? ' · gap-fill' : '');
+            const colour = worker && (state === 'completed' || state === 'rendering')
+                ? ` style="--frame-colour:${watchWorkerColour(worker)}"` : '';
+            return `<span class="watch-frame is-${state}${c.gap_fill ? ' is-gap-fill' : ''}"${colour} data-tooltip="${esc(title)}" aria-label="${esc(title)}"></span>`;
+        }).join('');
+        const workers = Array.isArray(grid.workers) ? grid.workers.slice(0, 32) : [];
+        const legend = workers.map(w => `<span class="watch-frame-key"><i style="background:${watchWorkerColour(w)}"></i>${esc(String(w).slice(0, 120))}</span>`).join('');
+        const omitted = Math.max(0, Number(grid.omitted) || 0);
+        return `<div class="watch-frame-summary">Frame map · ${esc(String(grid.total || grid.cells.length))} frames`
+            + (grid.inventory === 'reported' ? ' · reported (output unavailable locally)' : ' · output verified locally')
+            + `</div><div class="watch-frame-map" role="group" aria-label="Frame progress">${cells}</div>`
+            + `<div class="watch-frame-legend">${legend}`
+            + states.map(state => `<span class="watch-frame-key"><i class="is-${state}"></i>${state}</span>`).join('')
+            + `<span class="watch-frame-key"><i class="is-gap-fill"></i>gap-fill outline</span></div>`
+            + (omitted ? `<div class="watch-frame-summary">Showing first 2048 frames · ${esc(String(omitted))} more; bars cover the full batch.</div>` : '');
+    }
+
     const RESTART_PROGRESS_PCT = {
         waiting_for_idle: 12,
         acknowledged: 22,
@@ -190,6 +222,13 @@
 
     const RESTART_TERMINAL_STATES = ['healthy', 'failed', 'timed_out', 'rejected', 'cancelled'];
 
+    function renderRestartProgressHtml(pct, label, esc) {
+        const percent = Math.max(0, Math.min(100, Number(pct) || 0));
+        return `<div class="cuttle-action-form-progress" data-restart-progress="1">`
+            + `<div class="progress-row"><div class="progress-track"><div class="progress-bar" style="width:${percent}%"></div></div>`
+            + `<div class="progress-value">${percent}%</div></div>`
+            + `<div class="cuttle-action-form-progress-label">${esc(label || 'Restarting Flask…')}</div></div>`;
+    }
     function isRestartTerminalState(state) {
         return RESTART_TERMINAL_STATES.indexOf(String(state || '')) >= 0;
     }
@@ -264,7 +303,7 @@
     }
 
     /** Bar stack HTML from normalized bars (moved from the page, plan C1). */
-    function renderWatchBarsHtml(bars, esc) {
+    function renderWatchBarsHtml(bars, esc, workerColours) {
         return (bars || []).map((b) => {
             const kind = esc(b.kind || 'secondary');
             const pct = Math.max(0, Math.min(100, Number(b.percent || 0)));
@@ -278,7 +317,7 @@
                 + `<span class="progress-value">${pct}%</span>`
                 + `</div>`
                 + `<div class="progress-row">`
-                + `<div class="progress-track"><div class="progress-bar" style="width:${pct}%"></div></div>`
+                + `<div class="progress-track"><div class="progress-bar" style="width:${pct}%;${workerColours && b.kind === 'worker' ? 'background:' + watchWorkerColour(b.id) : ''}"></div></div>`
                 + `</div>`
                 + `</div>`
             );
@@ -361,18 +400,13 @@
         const restartIdFromSpec = String((spec && spec.restartId) || '').trim();
         const restartPending = !!(spec && spec.pending);
         const restartProgressHtml = restartIdFromSpec && alreadyLocked
-            ? (`<div class="cuttle-action-form-progress" data-restart-progress="1">`
-                + `<div class="progress-row">`
-                + `<div class="progress-track"><div class="progress-bar" style="width:${restartPending ? 18 : 100}%"></div></div>`
-                + `<div class="progress-value">${restartPending ? '18%' : '100%'}</div>`
-                + `</div>`
-                + `<div class="cuttle-action-form-progress-label">${esc((spec && spec.toast) || 'Restarting Flask…')}</div>`
-                + `</div>`)
+            ? renderRestartProgressHtml(restartPending ? 18 : 100, spec && spec.toast, esc)
             : '';
         const watchBars = normalizeWatchBars(watchSnap || { percent: watchPct, label: watchLabel });
         const watchHtml = watchSpec
             ? (`<div class="cuttle-action-form-progress" data-watch-progress="1">`
-                + `<div class="cuttle-action-form-progress-bars" data-watch-bars>${renderWatchBarsHtml(watchBars, esc)}</div>`
+                + `<div class="cuttle-action-form-progress-bars" data-watch-bars>${renderWatchBarsHtml(watchBars, esc, watchSnap && watchSnap.grid)}</div>`
+                + `<div data-watch-grid>${renderWatchGridHtml(watchSnap && watchSnap.grid, esc)}</div>`
                 + `<div class="cuttle-action-form-progress-meta" data-watch-meta hidden></div>`
                 + `<div class="cuttle-action-form-progress-label">${esc(watchLabel)}</div>`
                 + `</div>`)
@@ -556,8 +590,11 @@
     }
 
     const api = {
+        renderRestartProgressHtml,
         renderActionFormCardHtml,
         renderWatchBarsHtml,
+        renderWatchGridHtml,
+        watchWorkerColour,
         isExplicitActionFormCancelOption,
         actionFormHasSideEffect,
         isWatchFormAction,

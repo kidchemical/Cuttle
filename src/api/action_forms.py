@@ -276,6 +276,7 @@ _WATCH_SNAPSHOT_KEYS = (
     "action",
     "detail",
     "bars",
+    "grid",
 )
 
 
@@ -297,6 +298,11 @@ def sanitize_watch_snapshot(raw: Any) -> Optional[Dict[str, Any]]:
                 out[key] = max(0, int(val))
             except (TypeError, ValueError):
                 continue
+        elif key == "grid":
+            from api.job_watch import sanitize_grid
+            grid = sanitize_grid(val)
+            if grid:
+                out["grid"] = grid
         elif key == "bars":
             try:
                 from api.job_watch import sanitize_bars

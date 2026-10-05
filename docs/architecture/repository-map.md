@@ -41,6 +41,11 @@ exist. Do not follow old references to them.
 
 ## Process and HTTP composition root
 
+Render completion media: `api.device_workers.render_results` owns durable
+batch-to-chat bindings and staging/reconciliation. Worker store completion and
+batch-watch writes invoke it; `AuthDatabase.add_message_once` owns atomic chat
+delivery receipts. Runbook: [render-result-attachments.md](../../.cuttle/docs/render-result-attachments.md).
+
 `src/api/web_chat_api.py` owns the `Flask app`, HTML routes, chat-turn HTTP,
 process-control 410s, TLS helpers, and **registers**. Only the `try/except`
 rows below are nonfatal (failure logged, boot continues); `auth_bp` and
@@ -345,6 +350,14 @@ polling controller with injected session/transport/timer capabilities;
 `chat_page.js` composes its page lifetime. The achievement presenter delegates
 confetti to this renderer, while keeping durable unlock/ack delivery separate.
 VFX is independent of experimental flags. Runbook: `.cuttle_global/docs/chat-vfx.md`.
+
+**Completion notifications (experimental):** `completion_notifications.js` owns
+the browser-local completion broker, permission/privacy controls, and delivery
+deduplication. The shell shares one broker with its panes; `chat_page.js` reports
+turn lifecycle events and `chat_action_cards.js` reports newly observed watch
+terminal transitions through an injected callback. General settings owns the
+permission workflow; Experimental owns only the rollout flag. No background
+push service is added. Runbook: `.cuttle/docs/completion-notifications.md`.
 
 **Spaces:** `src/web/js/spaces/` (`CuttleSpaces.*`: state, groups, order,
 activity, drop); the shell owns the singleton, DOM, frames, and

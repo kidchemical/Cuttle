@@ -301,3 +301,26 @@ def test_card_module_parses():
         capture_output=True, text=True, timeout=60,
     )
     assert proc.returncode == 0, proc.stderr[-1000:]
+
+
+@node_only
+def test_watch_frame_grid_escape_bound_and_snapshot():
+    code = HARNESS.split("const out = {};")[0] + r"""
+const grid = {total: 240, inventory:'verified', workers:['tower', '<img src=x>'], cells:[
+    {frame:1, state:'completed',worker:'tower'},
+    {frame:2, state:'rendering',worker:'<img src=x>', gap_fill:true},
+    {frame:3, state:'missing'}]};
+const html = render({mode:'choice', watch:{id:'b',url:'/output/b.json',
+    snapshot:{state:'done', grid}}, options:[]});
+const bounded = A.renderWatchGridHtml({cells:Array.from({length:3000}, (_,i)=>({frame:i,state:'pending'}))}, esc);
+console.log(JSON.stringify({html, count:(bounded.match(/class="watch-frame /g)||[]).length,
+    colour:A.watchWorkerColour('tower'), same:A.watchWorkerColour('tower')}));
+"""
+    result = subprocess.run(['node', '-e', code], env={**__import__('os').environ, 'MOD_JS': str(MOD_JS)},
+                            capture_output=True, text=True, check=True)
+    out = json.loads(result.stdout)
+    assert 'is-completed' in out['html'] and 'is-rendering is-gap-fill' in out['html']
+    assert 'Frame 3 · missing' in out['html']
+    assert '<img src=x>' not in out['html'] and '&lt;img src=x&gt;' in out['html']
+    assert out['count'] == 2048
+    assert out['colour'] == out['same']

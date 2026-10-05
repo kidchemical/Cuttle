@@ -226,6 +226,7 @@
             type: asst.type || 'unknown',
             query_id: asst.query_id,
             report_url: asst.report_url,
+            routing_badge: (meta && meta.routing_badge) || asst.routing_badge || undefined,
             usage: normalizeUsage((meta && meta.usage) || asst.usage) || undefined,
         };
     }

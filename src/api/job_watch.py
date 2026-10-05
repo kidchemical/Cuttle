@@ -76,6 +76,32 @@ def sanitize_bars(raw: Any) -> Optional[List[Dict[str, Any]]]:
     return out or None
 
 
+def sanitize_grid(raw: Any) -> Optional[Dict[str, Any]]:
+    """Bound the optional frame map for status files and persisted watch cards."""
+    if not isinstance(raw, dict) or not isinstance(raw.get("cells"), list):
+        return None
+    cells = []
+    seen = set()
+    states = {"pending", "rendering", "completed", "failed", "missing", "cancelled"}
+    for cell in raw["cells"][:2048]:
+        if not isinstance(cell, dict):
+            continue
+        frame = cell.get("frame")
+        if not isinstance(frame, int) or isinstance(frame, bool) or frame in seen:
+            continue
+        seen.add(frame)
+        cells.append({"frame": frame, "state": str(cell.get("state")) if str(cell.get("state")) in states else "pending",
+                      "worker": str(cell.get("worker") or "")[:120], "gap_fill": bool(cell.get("gap_fill"))})
+    try:
+        total = max(len(cells), min(1000000000, int(raw.get("total") or len(cells))))
+    except (TypeError, ValueError, OverflowError):
+        total = len(cells)
+    workers = raw.get("workers") if isinstance(raw.get("workers"), list) else []
+    return {"cells": cells, "total": total, "omitted": total - len(cells),
+            "inventory": "verified" if raw.get("inventory") == "verified" else "reported",
+            "workers": [str(w)[:120] for w in workers[:32]]}
+
+
 def write_status(
     job_id: str,
     *,
@@ -111,6 +137,12 @@ def write_status(
                 payload["bars"] = sanitized
             else:
                 payload.pop("bars", None)
+    if "grid" in payload:
+        grid = sanitize_grid(payload["grid"])
+        if grid:
+            payload["grid"] = grid
+        else:
+            payload.pop("grid", None)
     path = status_path(sid)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".json.tmp")

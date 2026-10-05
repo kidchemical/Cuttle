@@ -183,3 +183,152 @@ def test_watch_card_multi_bar(browser, static_server):
         assert "Half" in card.locator(".cuttle-action-form-progress-label").inner_text()
     finally:
         page.close()
+
+
+def test_frame_grid_live_watch_mobile_and_terminal(browser, static_server):
+    grid = {'total': 240, 'inventory': 'verified', 'workers': ['tower', 'laptop'],
+            'cells': [{'frame': n, 'state': 'completed' if n < 100 else 'rendering' if n < 120 else 'pending',
+                       'worker': 'tower' if n < 60 else 'laptop' if n < 120 else '',
+                       'gap_fill': n in (98, 99)} for n in range(1, 241)]}
+    status = {'state': 'running', 'percent': 41, 'label': 'Trailer — 99/240 frames', 'grid': grid,
+              'bars': [{'id': 'overall', 'label': 'Overall', 'percent': 41, 'kind': 'primary'},
+                       {'id': 'tower', 'label': 'Tower · RTX 3080', 'percent': 60, 'kind': 'worker'},
+                       {'id': 'laptop', 'label': 'Laptop · RTX 4070', 'percent': 40, 'kind': 'worker'}]}
+    spec = {'mode': 'choice', 'title': 'Render trailer', 'watch': {
+        'id': 'frames', 'url': '/output/frames-status.json', 'interval_ms': 1500, 'snapshot': status},
+        'options': [{'id': 'park', 'label': "I'll reply", 'action': '__watch_park__'}]}
+    world = CardWorld(['<cuttle_action_form>' + json.dumps(spec) + '</cuttle_action_form>'])
+    page, frame, errors = _open_card_chat(browser, static_server, world)
+    page.route(static_server + '/output/frames-status.json*', lambda r: r.fulfill(json=status))
+    page.route(static_server + '/api/action-form/run', lambda r: r.fulfill(json={
+        'success': True, 'toast': 'Watching render', 'lock': 'form', 'selected': ['park'],
+        'session_id': '42', 'actions': ['__watch_park__']}))
+    try:
+        card = _send_and_wait_card(frame, 'render frames')
+        assert card.locator('.watch-frame').count() == 240
+        assert card.locator('.watch-frame.is-gap-fill').count() == 2
+        assert 'gap-fill' in card.locator('.watch-frame').nth(97).get_attribute('data-tooltip')
+        from pathlib import Path
+        previews = Path(__file__).resolve().parents[3] / 'temp' / 'frame-grid'
+        previews.mkdir(parents=True, exist_ok=True)
+        card.screenshot(path=str(previews / 'desktop.png'))
+        page.set_viewport_size({'width': 390, 'height': 844})
+        assert card.locator('.watch-frame-map').evaluate('(el) => el.scrollWidth <= el.clientWidth')
+        card.screenshot(path=str(previews / 'mobile.png'))
+        card.locator('[data-action-form-option="park"]').click()
+        status['state'] = 'done'
+        status['percent'] = 100
+        status['label'] = 'Trailer done — 240/240 frames'
+        for cell in grid['cells']:
+            cell['state'] = 'completed'
+        from playwright.sync_api import expect
+        expect(card.locator('.watch-frame.is-completed')).to_have_count(240, timeout=15000)
+        assert not errors
+    finally:
+        page.close()
+
+
+def test_markdown_image_and_routing_chip_survive_history_reload(browser, static_server):
+    badge = {'agent': 'codex', 'model': 'test-model', 'kind': 'fallback',
+             'reason': 'Previous agent unavailable; task continued.',
+             'initial_agent': 'cursor', 'initial_model': 'auto', 'effort': 'high'}
+    text = 'Done.\n\n![Frame grid preview](/output/shared/frame-grid.png "240 frames")'
+
+    class RoutedWorld(CardWorld):
+        def handle(self, route):
+            if route.request.method == 'POST' and urlparse(route.request.url).path == '/api/chat':
+                self._append('user', 'render frames')
+                self._append('assistant', text)
+                self.history[-1]['metadata'] = {'routing_badge': badge}
+                route.fulfill(status=200, content_type='text/event-stream', body=_sse(
+                    {'type': 'session', 'session_id': 42},
+                    {'type': 'response', 'success': True, 'response': text, 'session_id': 42,
+                     'routing_badge': badge}, {'type': 'done'}))
+                return
+            super().handle(route)
+
+    world = RoutedWorld([])
+    page, frame, errors = _open_card_chat(browser, static_server, world)
+    # Small valid image: no external requests or live media/API dependency.
+    import base64
+    png = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aXioAAAAASUVORK5CYII=')
+    page.route(static_server + '/output/shared/frame-grid.png', lambda r: r.fulfill(content_type='image/png', body=png))
+    try:
+        frame.locator('#chatInput').fill('show routed result')
+        frame.locator('#sendButton').click()
+        from playwright.sync_api import expect
+        chip = frame.locator('.routing-selection-chip').last
+        expect(chip).to_contain_text('Fallback')
+        assert 'Codex' not in chip.inner_text()
+        agent_chip = frame.locator('.message.assistant .slash-command-chip--palette-codex').last
+        expect(agent_chip).to_contain_text('Codex')
+        expect(agent_chip).to_contain_text('test-model')
+        expect(agent_chip).to_contain_text('high')
+        assert chip.locator('b').count() == 0
+        thumb = frame.locator('.cuttle-media-thumb').last
+        expect(thumb).to_be_visible()
+        expect(thumb.locator('img')).to_have_attribute('src', '/output/shared/frame-grid.png')
+        expect(thumb.locator('img')).to_have_js_property('naturalWidth', 1)
+        assert '!Frame grid preview' not in frame.locator('.message.assistant').last.inner_text()
+        from pathlib import Path
+        previews = Path(__file__).resolve().parents[3] / 'temp' / 'frame-grid'
+        previews.mkdir(parents=True, exist_ok=True)
+        frame.locator('.message.assistant .message-header-row').last.screenshot(path=str(previews / 'routing-chip.png'))
+        page.reload(wait_until='domcontentloaded')
+        expect(frame.locator('.routing-selection-chip')).to_have_count(1)
+        agent_chip = frame.locator('.message.assistant .slash-command-chip--palette-codex').last
+        expect(agent_chip).to_contain_text('test-model')
+        expect(agent_chip).to_contain_text('high')
+        expect(frame.locator('.cuttle-media-thumb')).to_have_count(1)
+        page.set_viewport_size({'width': 390, 'height': 844})
+        chip = frame.locator('.routing-selection-chip')
+        assert chip.evaluate('(el) => el.scrollWidth <= el.clientWidth + 1')
+        assert not errors
+    finally:
+        page.close()
+
+
+def test_segmented_status_chip_truncation_tooltips_and_error(browser, static_server):
+    long_error = 'Request failed: ' + 'The selected agent could not complete this request. ' * 8
+    world = CardWorld([long_error])
+    page, frame, errors = _open_card_chat(browser, static_server, world)
+    try:
+        frame.locator('#chatInput').fill('show failed turn')
+        frame.locator('#sendButton').click()
+        from playwright.sync_api import expect
+        chip = frame.locator('.cuttle-status-chip--error').last
+        expect(chip).to_be_visible()
+        expect(chip.locator('.slash-chip-seg')).to_have_count(3)
+        expect(chip.locator('.status-chip-name')).to_have_text('Error')
+        message = chip.locator('.status-chip-message')
+        assert message.evaluate('(el) => el.scrollWidth > el.clientWidth')
+        assert long_error.strip() in message.get_attribute('data-tooltip')
+        message.hover()
+        expect(frame.locator('#cuttle-shared-tooltip')).to_contain_text(long_error.strip())
+        page.set_viewport_size({'width': 390, 'height': 844})
+        assert chip.evaluate('(el) => el.scrollWidth <= el.clientWidth + 1')
+        expect(chip.locator('.status-chip-icon')).to_be_visible()
+        expect(chip.locator('.status-chip-name')).to_be_visible()
+        page.reload(wait_until='domcontentloaded')
+        expect(frame.locator('.cuttle-status-chip--error')).to_have_count(1)
+        assert not errors
+        # Preview all supported types with clean sample messages using production renderer/CSS.
+        page.set_viewport_size({'width': 900, 'height': 700})
+        frame.locator('#chatMessages').evaluate('''el => {
+            const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+            const examples = [
+                ['router', 'Small code change'],
+                ['reroute', 'Switched to a stronger model'],
+                ['fallback', 'Previous agent unavailable; task continued'],
+                ['warning', 'Default agent · Routing service unavailable'],
+                ['error', 'Agent turn failed · See the reply for details']
+            ];
+            el.innerHTML = '<div id="status-preview" style="display:flex;flex-direction:column;gap:12px;padding:20px;width:440px;max-width:100%;box-sizing:border-box">'
+                + examples.map(([kind,text]) => '<div>' + window.CuttleChatMessages.renderStatusChipHtml(kind,text,text,esc) + '</div>').join('') + '</div>';
+        }''')
+        from pathlib import Path
+        previews = Path(__file__).resolve().parents[3] / 'temp' / 'frame-grid'
+        previews.mkdir(parents=True, exist_ok=True)
+        frame.locator('#status-preview').screenshot(path=str(previews / 'status-chips.png'))
+    finally:
+        page.close()

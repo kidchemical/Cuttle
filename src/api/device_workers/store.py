@@ -16,6 +16,10 @@ DEFAULT_DB_PATH = Path(__file__).resolve().parents[2] / "data" / "db" / "device_
 _lock = threading.RLock()
 
 _SCHEMA = """
+CREATE TABLE IF NOT EXISTS render_deliveries (
+    batch_id TEXT PRIMARY KEY,
+    spec_json TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS workers (
     worker_id TEXT PRIMARY KEY,
     hostname TEXT NOT NULL DEFAULT '',
@@ -772,6 +776,12 @@ class DeviceWorkerStore:
                 maybe_record_job_result(self, worker_id, _row_job(row))
             except Exception:
                 pass
+            try:
+                from api.device_workers.render_results import reconcile_job
+                reconcile_job(self, _row_job(row))
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception('Render attachment deferred; reconciliation can retry')
         return True
 
     def fail_job(
@@ -951,6 +961,19 @@ class DeviceWorkerStore:
                         "SELECT * FROM jobs ORDER BY updated_at DESC LIMIT ?",
                         (lim,),
                     ).fetchall()
+                return [_row_job(r) for r in rows]
+            finally:
+                conn.close()
+
+    def list_batch_jobs(self, batch_id: str) -> List[Dict[str, Any]]:
+        """Complete batch inventory, independent of the recent-jobs UI limit."""
+        with _lock:
+            conn = _connect(self.db_path)
+            try:
+                rows = conn.execute(
+                    "SELECT * FROM jobs WHERE json_extract(params_json, '$.batch_id') = ? "
+                    "ORDER BY created_at, id", (batch_id,),
+                ).fetchall()
                 return [_row_job(r) for r in rows]
             finally:
                 conn.close()

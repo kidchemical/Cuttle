@@ -417,13 +417,14 @@
                     }
                     if (restartId) {
                         // Card owns the progress from here — no toast, no bubble.
-                        setActionFormCardProgress(card, toast, 'pending');
-                        watchFlaskRestartOnCard(card, restartId, { quietStart: true });
+                        paintFlaskRestartProgress(card, data.flask_restart);
+                        watchFlaskRestartOnCard(card, restartId, { quietStart: true, initialStatus: data.flask_restart });
                         broadcastLinkedFlaskRestart({
                             formId: (card.getAttribute('data-form-id') || '').trim(),
                             restartId,
                             selected,
                             toast: toast || 'Restarting Flask…',
+                            status: data.flask_restart,
                         });
                     } else if (ok && watchAct === '__watch_cancel__') {
                         setActionFormCardProgress(card, toast, 'ok');
@@ -750,6 +751,7 @@
             if (Array.isArray(data.bars) && data.bars.length) {
                 snapshot.bars = data.bars;
             }
+            if (data.grid) snapshot.grid = data.grid;
             try {
                 const spec = JSON.parse(card.getAttribute('data-spec') || '{}') || {};
                 spec.watch = spec.watch && typeof spec.watch === 'object' ? spec.watch : {};
@@ -914,7 +916,7 @@
             const bars = CuttleChatActionForms.normalizeWatchBars(data || {});
             const stack = wrap.querySelector('[data-watch-bars]');
             if (stack) {
-                stack.innerHTML = CuttleChatActionForms.renderWatchBarsHtml(bars, host.escapeHtml);
+                stack.innerHTML = CuttleChatActionForms.renderWatchBarsHtml(bars, host.escapeHtml, data && data.grid);
             } else {
                 // Legacy single-bar markup
                 const pct = bars[0] ? bars[0].percent : 0;
@@ -922,6 +924,19 @@
                 const val = wrap.querySelector('.progress-value');
                 if (bar) bar.style.width = pct + '%';
                 if (val) val.textContent = pct + '%';
+            }
+            let grid = wrap.querySelector('[data-watch-grid]');
+            if (!grid && data && data.grid) {
+                grid = card.ownerDocument.createElement('div');
+                grid.setAttribute('data-watch-grid', '');
+                wrap.appendChild(grid);
+            }
+            if (grid) {
+                const html = CuttleChatActionForms.renderWatchGridHtml(data && data.grid, host.escapeHtml);
+                if (grid.__frameHtml !== html) {
+                    grid.innerHTML = html;
+                    grid.__frameHtml = html;
+                }
             }
             const lab = wrap.querySelector('.cuttle-action-form-progress-label');
             const meta = wrap.querySelector('[data-watch-meta]');
@@ -958,9 +973,14 @@
             host.syncComposerStop();
         }
         function updateRestartCardProgressBar(card, pct, label) {
-            const wrap = card && card.querySelector('[data-restart-progress]');
-            if (!wrap) return;
             const clamped = Math.max(0, Math.min(100, Number(pct) || 0));
+            let wrap = card && card.querySelector('[data-restart-progress]');
+            if (!wrap && card) {
+                const body = card.querySelector('.cuttle-action-form-body');
+                if (body) body.insertAdjacentHTML('beforeend', CuttleChatActionForms.renderRestartProgressHtml(clamped, label, host.escapeHtml));
+                wrap = card.querySelector('[data-restart-progress]');
+            }
+            if (!wrap) return;
             const bar = wrap.querySelector('.progress-bar');
             const val = wrap.querySelector('.progress-value');
             const lab = wrap.querySelector('.cuttle-action-form-progress-label');
@@ -1175,8 +1195,27 @@
                 if (!isCurrent(card, life)) return;
                 const failed = failStates.indexOf(state) >= 0;
                 const summary = String((data && data.label) || (failed ? 'Failed' : 'Finished'));
+                if (typeof host.notifyWorkCompletion === 'function') {
+                    const identity = String(data.run_id || watch.run_id || data.batch_id || watch.started_at || '');
+                    const started = Date.parse(data.started_at || watch.started_at || '');
+                    // Stable run evidence is required; reloading old terminal cards never calls finishWatch.
+                    if (identity) host.notifyWorkCompletion({
+                        id: 'watch:' + url + ':' + identity,
+                        sessionId: card.getAttribute('data-session-id') || currentCtx().sessionId,
+                        kind: data.batch_id ? 'mesh' : 'job',
+                        outcome: data.cancelled || /cancel/i.test(state) ? 'cancelled' : failed ? 'failed' : 'done',
+                        startedAt: Number.isFinite(started) ? started : null,
+                        label: summary,
+                    });
+                }
                 persistActionFormWatchSnapshot(card, data || {}, true);
                 lockWatchFormCard(card, summary, failed);
+                if (data && data.render_result && Array.isArray(data.render_result.attachments)
+                        && data.render_result.attachments.length) {
+                    // Recover server-saved output; the browser never owns its insert.
+                    // Do not delay the watch's resume/park handling on history I/O.
+                    Promise.resolve().then(() => host.syncMessages()).catch(() => {});
+                }
                 if (failed) {
                     if (card.__cardsLife === life) card.__watchLoop = false;
                     return;
@@ -1314,8 +1353,9 @@
                     card.setAttribute('data-locked', '1');
                     collapseLockedActionForm(card, selected.length ? selected : ['graceful'], toast);
                 }
-                setActionFormCardProgress(card, toast, 'pending');
-                watchFlaskRestartOnCard(card, restartId, { quietStart: true });
+                if (payload.status) paintFlaskRestartProgress(card, payload.status);
+                else setActionFormCardProgress(card, toast, 'pending');
+                watchFlaskRestartOnCard(card, restartId, { quietStart: true, initialStatus: payload.status });
             });
         }
         async function syncLinkedFlaskRestartCardsFromStatus() {
@@ -1439,6 +1479,16 @@
             syncLinkedFlaskRestartCardsFromStatus().catch(() => {});
             try { host.syncHistoryAwaiting(); } catch (_) {}
         }
+        function paintFlaskRestartProgress(card, status, liveWork) {
+            if (status && status.restart_id) card.setAttribute('data-restart-id', String(status.restart_id));
+            const state = String((status && status.state) || '');
+            card.__restartState = state;
+            card.__restartPct = CuttleChatActionForms.RESTART_PROGRESS_PCT[state] != null
+                ? CuttleChatActionForms.RESTART_PROGRESS_PCT[state] : 25;
+            const terminal = CuttleChatActionForms.isRestartTerminalState(state);
+            setActionFormCardProgress(card, CuttleChatActionForms.restartProgressLabel(status, liveWork),
+                terminal ? (state === 'healthy' ? 'ok' : 'error') : 'pending');
+        }
         async function watchFlaskRestartOnCard(card, restartId, opts = {}) {
             if (!card || !restartId) return;
             const life = card.__cardsLife;
@@ -1453,9 +1503,9 @@
                 setActionFormCardProgress(card, 'Restarting Flask…', 'pending');
             }
             const clearId = () => {
-                if (card.__cardsLife === life) card.__restartWatchId = null;
+                if (card.__cardsLife === life && card.__restartWatchId === String(restartId)) card.__restartWatchId = null;
             };
-            while (isCurrent(card, life) && Date.now() < deadline) {
+            while (isCurrent(card, life) && card.__restartWatchId === String(restartId) && Date.now() < deadline) {
                 let status = null;
                 let liveWork = null;
                 try {
@@ -1469,7 +1519,7 @@
                 } catch (_) {
                     // Detached or disposed while awaiting: disposal owns
                     // teardown, so a stale continuation only exits.
-                    if (!isCurrent(card, life)) return;
+                    if (!isCurrent(card, life) || card.__restartWatchId !== String(restartId)) return;
                     // Expected while the daemon swaps the process.
                     setActionFormCardProgress(card, 'Restarting Flask — reconnecting…', 'pending');
                     if (!(await cardWait(card, life, pollMs))) return;
@@ -1478,13 +1528,16 @@
                 // Detached or disposed while awaiting: stop requests and
                 // late UI/history effects for a card this lifetime no
                 // longer owns.
-                if (!isCurrent(card, life)) return;
+                if (!isCurrent(card, life) || card.__restartWatchId !== String(restartId)) return;
                 if (String(status.restart_id || '') !== String(restartId)) {
-                    // Superseded by a newer restart, or this card is replaying an
-                    // old one after a reload — either way it is done.
-                    if (card.classList.contains('is-pending')) {
-                        setActionFormCardProgress(card, 'Restart finished', 'ok');
+                    // A different request's result does not prove this restart finished.
+                    // Keep the actual submission state until its matching status arrives.
+                    if (opts.initialStatus) {
+                        paintFlaskRestartProgress(card, opts.initialStatus);
+                        if (!(await cardWait(card, life, pollMs))) return;
+                        continue;
                     }
+                    setActionFormCardProgress(card, 'Restart status changed — check Status', 'error');
                     clearId();
                     return;
                 }
@@ -1505,7 +1558,7 @@
                 setActionFormCardProgress(card, label, 'pending');
                 if (!(await cardWait(card, life, pollMs))) return;
             }
-            if (isCurrent(card, life)) {
+            if (isCurrent(card, life) && card.__restartWatchId === String(restartId)) {
                 setActionFormCardProgress(card, 'Restart status unknown — check /restart status', 'error');
             }
             clearId();

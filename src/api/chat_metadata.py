@@ -15,6 +15,29 @@ from __future__ import annotations
 
 from typing import Optional
 
+
+def routing_badge_from_router(router: dict) -> Optional[dict]:
+    """Compact display evidence from the recorded routing result, never prose inference."""
+    if not isinstance(router, dict) or not router.get('note'):
+        return None
+    source = str(router.get('source') or '')
+    if source in ('manual_override', 'starred', 'session'):
+        return None
+    target = router.get('target') if isinstance(router.get('target'), dict) else {}
+    if not target.get('agent'):
+        return None
+    decision = router.get('decision') if isinstance(router.get('decision'), dict) else {}
+    kind = ('default' if str(router['note']).startswith('Default ') else
+            'fallback' if source == 'fallback' else
+            'escalation' if source == 'escalation' else 'routed')
+    reason = str(decision.get('reason') or '') if kind == 'routed' else str(router['note']).replace('`', '')
+    return {
+        'agent': str(target['agent'])[:64], 'model': str(target.get('model') or '')[:120],
+        'kind': kind, 'reason': reason[:240],
+        'initial_agent': str(decision.get('target_agent') or '')[:64],
+        'initial_model': str(decision.get('target_model') or '')[:120],
+    }
+
 def muse_model_label(model) -> str:
     """Human label used by Muse reply badges."""
     from scripts.utilities.muse_cli_tool import muse_model_label

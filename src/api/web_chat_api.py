@@ -4732,6 +4732,7 @@ def _frame_stream_lifecycle_event(kind, payload, session_id_for_status):
         if result.get('cursor_run'):
             resp['cursor_run'] = result['cursor_run']
         for _passthrough in (
+            'routing_badge',
             'agent_id',
             'agent_model',
             'agent_effort',

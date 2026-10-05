@@ -8210,3 +8210,31 @@ body.voice-mode .chat-chrome-menu {
     .codex-reset-info { flex-basis: calc(100% - 46px); }
     .codex-reset-button { width: 100%; min-height: 40px; }
 }
+
+/* Batch frame map: fixed cells, stable worker colours, no motion required. */
+.watch-frame-map { display:grid; grid-template-columns:repeat(auto-fill, minmax(12px, 1fr)); gap:3px; margin:8px 0; max-height:240px; overflow-y:auto; }
+.watch-frame, .watch-frame-key i { background:#53606d; border:1px solid transparent; border-radius:2px; }
+.watch-frame { display:block; aspect-ratio:1; min-width:0; }
+.watch-frame.is-completed, .watch-frame-key .is-completed { background:var(--frame-colour, #6abc91); }
+.watch-frame.is-rendering, .watch-frame-key .is-rendering { background:var(--frame-colour, #79b4e2); box-shadow:inset 0 0 0 2px #182734; }
+.watch-frame.is-failed, .watch-frame-key .is-failed { background:#e57575; }
+.watch-frame.is-missing, .watch-frame-key .is-missing { background:transparent; border-color:#e57575; }
+.watch-frame.is-cancelled, .watch-frame-key .is-cancelled { background:repeating-linear-gradient(135deg,#53606d 0 2px,#202932 2px 4px); }
+.watch-frame.is-gap-fill, .watch-frame-key .is-gap-fill { border-color:#f0c36b; }
+.watch-frame-legend { display:flex; flex-wrap:wrap; gap:4px 12px; font-size:11px; color:var(--text-muted, #aab4bf); }
+.watch-frame-key { display:inline-flex; align-items:center; gap:5px; overflow-wrap:anywhere; }
+.watch-frame-key i { display:inline-block; width:9px; height:9px; flex-shrink:0; }
+.watch-frame-summary { font-size:11px; color:var(--text-muted, #aab4bf); margin-top:6px; }
+
+/* Status chips share the agent badge's segmented geometry and dividers. */
+.cuttle-status-chip.slash-command-chip--header { max-width:min(100%, 24rem); color:var(--text-primary); border-color:var(--accent-color); }
+.cuttle-status-chip .status-chip-icon { flex:0 0 auto; justify-content:center; min-width:20px; padding:1px 4px; background:color-mix(in srgb, currentColor 24%, transparent); font-weight:700; }
+.cuttle-status-chip .status-chip-message { display:block; flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.cuttle-status-chip--error.slash-command-chip--header { color:#ef8383; border-color:#d65d5d; background:rgba(214,93,93,.12); }
+.cuttle-status-chip--warning.slash-command-chip--header { color:#d9aa45; border-color:#bd963e; background:rgba(189,150,62,.12); }
+.cuttle-status-chip--fallback.slash-command-chip--header { border-color:#a58bdc; }
+.cuttle-status-chip:focus-visible { outline:2px solid var(--accent-color); outline-offset:2px; }
+@media(max-width:480px) { .cuttle-status-chip.slash-command-chip--header { max-width:min(100%, 18rem); } }
+
+.light-mode .cuttle-status-chip--error.slash-command-chip--header { color:#8f2a2a; }
+.light-mode .cuttle-status-chip--warning.slash-command-chip--header { color:#745104; }

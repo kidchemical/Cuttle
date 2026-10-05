@@ -424,3 +424,31 @@ def test_brain_guard_context():
         with _BrainGuard():
             assert routing_brain_active() is True
     assert routing_brain_active() is False
+
+
+def test_selection_chip_uses_recorded_target_and_preserves_legacy(monkeypatch):
+    from api.agent_router.dispatch import _annotate_result
+    from api.chat_metadata import routing_badge_from_router
+    import api.experimental
+    decision = RoutingDecision(
+        decision_id='badge-test', target=ExecutionTarget('cursor', 'auto'),
+        task_type='coding', difficulty='medium', confidence=.9,
+        reason='Small code change', escalation_target=ExecutionTarget('cursor', 'grok-4.6'))
+    monkeypatch.setattr(api.experimental, 'is_enabled', lambda _: True)
+    result = _annotate_result({'success': True, 'response': 'Done', 'agent_model': 'actual-model', 'agent_effort': 'high'}, target=ExecutionTarget('codex', 'model'),
+        decision=decision, source='fallback', attempts=[], routed_note='Fallback `codex` / `model` after: transport')
+    assert result['response'] == 'Done'
+    assert result['routing_badge']['kind'] == 'fallback'
+    assert result['routing_badge']['initial_agent'] == 'cursor'
+    assert result['routing_badge']['agent'] == 'codex'
+    assert result['routing_badge']['model'] == 'actual-model'
+    assert result['routing_badge']['effort'] == 'high'
+    assert 'transport' in result['routing_badge']['reason']
+    assert routing_badge_from_router({'target': {'agent': 'codex'}, 'source': 'router'}) is None
+    manual = dict(result['router'], source='manual_override')
+    assert routing_badge_from_router(manual) is None
+    monkeypatch.setattr(api.experimental, 'is_enabled', lambda _: False)
+    legacy = _annotate_result({'success': True, 'response': 'Done'}, target=decision.target,
+        decision=decision, source='router', attempts=[], routed_note='Routed to `cursor`')
+    assert legacy['response'].startswith('🔀 Routed to')
+    assert 'routing_badge' not in legacy

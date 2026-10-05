@@ -155,6 +155,14 @@ def _annotate_result(
         "decision": decision.to_dict() if decision is not None else None,
     }
     if routed_note and isinstance(out.get("response"), str):
+        from api.experimental import is_enabled
+        from api.chat_metadata import routing_badge_from_router
+        badge = routing_badge_from_router(out["router"]) if is_enabled("router_selection_chip") else None
+        if badge:
+            badge["effort"] = str(out.get("agent_effort") or out.get(f"{target.agent}_effort") or "")
+            badge["model"] = str(out.get("agent_model") or out.get(f"{target.agent}_model") or badge["model"])
+            out["routing_badge"] = badge
+            return out
         # Prepend a short routing footer only once for visibility.
         if not out["response"].startswith("🔀"):
             out["response"] = f"🔀 {routed_note}\n\n{out['response']}"

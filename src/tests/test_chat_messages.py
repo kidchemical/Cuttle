@@ -599,8 +599,8 @@ def test_link_planning_chips_and_safety():
     assert "{{CUTTLE_LINK_" not in res["bareFtp"]["text"]
     assert len(res["linkInCode"]["blocks"]["code"]) == 1
     assert len(res["linkInCode"]["blocks"]["link"]) == 1
-    assert res["empty"] == {"text": "", "blocks": {"code": [], "link": []}}
-    assert res["nullText"] == {"text": "", "blocks": {"code": [], "link": []}}
+    assert res["empty"] == {"text": "", "blocks": {"code": [], "link": [], "image": []}}
+    assert res["nullText"] == {"text": "", "blocks": {"code": [], "link": [], "image": []}}
     assert "{{CUTTLE_" not in res["restored"]
     assert "message-code-block" in res["restored"]
 
@@ -790,6 +790,7 @@ eval(span('    function normalizeMdHref(url) {', '    function isSafeMdHref(url)
 eval(span('    function isSafeMdHref(url) {', '    function mdLinkChipLabel(label, url) {'));
 eval(span('    function mdLinkChipLabel(label, url) {', '    function renderMdLinkChip(label, url) {'));
 eval(span('    function renderMdLinkChip(label, url) {', '    function mediaKindFromUrl(url) {'));
+const buildMediaThumbHtml = (src, opts) => '<img src="' + src + '">';
 // --- real page extract call-site (module call + live linkChips bind) ---
 let text = 'Talk {{CUTTLE_FORM_0}} here\\n```\\nvalue {{CUTTLE_FORM_0}} and {{CUTTLE_LINK_7}}\\n```';
 const structuredBlocks = {};
@@ -834,3 +835,44 @@ def test_restore_pass_order_pinned_against_placeholder_interleaving():
     # The fenced block itself still restores exactly once per fence.
     assert res.count("message-code-block") == 2
     assert "{{CUTTLE_CODE_0}}" not in res
+
+
+@node_only
+def test_segmented_status_chip_types_tooltip_and_missing_reason():
+    code = r'''
+const A = require(process.env.MOD_JS);
+const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const out = {};
+for (const kind of ['routed', 'escalation', 'fallback', 'default']) {
+    out[kind] = A.renderRoutingBadgeHtml({kind, agent:'codex', reason:'Full <b>reason</b> & detail', initial_agent:'cursor', model:'model'},esc);
+}
+out.absent = A.renderRoutingBadgeHtml(null,esc);
+out.noReason = A.renderRoutingBadgeHtml({kind:'routed',agent:'codex'},esc);
+out.legacy = A.renderRoutingBadgeHtml({kind:'fallback',agent:'codex',reason:'Fallback codex / model after: transport unavailable'},esc);
+out.agent = A.routingAgentSlash({agent:'codex',model:'model',effort:'high'});
+out.unpinned = A.routingAgentSlash({agent:'cursor'});
+out.error = A.renderAssistantStatusHtml({}, true, '[FAIL] Full error message\nOther text', esc);
+out.healthy = A.renderAssistantStatusHtml({}, false, 'Mention an error in discussion', esc);
+console.log(JSON.stringify(out));
+'''
+    import os
+    result = subprocess.run(['node','-e',code],env={**os.environ, 'MOD_JS': str(MOD_JS)},capture_output=True,text=True,check=True)
+    out = json.loads(result.stdout)
+    for kind, name in [('routed','Router'), ('escalation','Reroute'), ('fallback','Fallback'), ('default','Warning')]:
+        html = out[kind]
+        assert f'status-chip-name">{name}</span>' in html
+        assert html.count('class="slash-chip-seg ') == 3
+        assert '&lt;b&gt;reason&lt;/b&gt; &amp; detail' in html
+        assert '<b>reason' not in html
+        assert 'Initially selected:' not in html
+        assert 'Codex ·' not in html
+        assert 'tabindex="0"' in html
+    assert out['absent'] == out['healthy'] == ''
+    assert 'status-chip-message' in out['noReason']
+    assert 'undefined' not in out['noReason']
+    assert 'status-chip-name">Error</span>' in out['error']
+    assert 'Other text' not in out['error']
+    assert 'Fallback codex' not in out['legacy']
+    assert 'transport unavailable' in out['legacy']
+    assert out['agent']['chips'][0]['label'] == 'Codex - model · high'
+    assert out['unpinned']['chips'][0]['label'] == 'Cursor'

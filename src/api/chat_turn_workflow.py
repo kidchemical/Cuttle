@@ -152,6 +152,8 @@ def build_pipeline_body(
         body['report_url'] = res['report_url']
     if res.get('cursor_run'):
         body['cursor_run'] = res['cursor_run']
+    if res.get('routing_badge'):
+        body['routing_badge'] = res['routing_badge']
     try:
         usage = usage_meta_fn(res)
         if usage:

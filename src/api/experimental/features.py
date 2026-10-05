@@ -19,6 +19,31 @@ from __future__ import annotations
 
 from api.experimental.flags import FlagSpec, register_flag
 
+register_flag(FlagSpec(
+    id="render_result_attachments", label="Render result attachments",
+    description="Automatically save verified render previews and encoded videos to the originating chat for registered batches.",
+    default=False, category="power", risk="low", since="0.0.0", needs_restart=False,
+))
+
+register_flag(FlagSpec(
+    id="completion_notifications", label="Completion notifications",
+    description="Opt-in browser OS notifications for long replies and mesh batches. Configure permission and privacy in General settings; requires an open page.",
+    default=False, category="chat", risk="low", since="0.0.0", needs_restart=False,
+))
+
+register_flag(FlagSpec(
+    id="router_selection_chip", label="Router selection chip",
+    description="Show the selected agent and routing reason as a compact reply chip, including fallback and escalation.",
+    default=False, category="chat", risk="low", since="0.0.0", needs_restart=False,
+))
+
+register_flag(FlagSpec(
+    id="mesh_frame_grid",
+    label="Mesh frame grid",
+    description="Show per-frame progress and worker colours on render batch watch cards.",
+    default=False, category="workers", risk="low", since="0.0.0", needs_restart=False,
+))
+
 # Achievements: default OFF. Experimental features are opt-in by design; a
 # user who does not know the system exists should never have it running.
 register_flag(

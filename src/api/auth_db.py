@@ -1556,6 +1556,49 @@ class AuthDatabase:
         
         return message_id
 
+    def get_completion_message(self, chat_session_id: int, delivery_key: str) -> Optional[Dict]:
+        """Recover the canonical persisted completion receipt."""
+        conn = self._get_connection()
+        try:
+            row = conn.execute(
+                "SELECT * FROM chat_messages WHERE chat_session_id = ? "
+                "AND json_valid(metadata) AND json_extract(metadata, '$.delivery_key') = ?",
+                (chat_session_id, delivery_key)).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
+    def add_message_once(self, chat_session_id: int, content: str, *,
+                         delivery_key: str, metadata: Optional[Dict] = None) -> Optional[int]:
+        """Atomically persist a server completion, including cross-process retries.
+
+        The message itself is the receipt: deletion of its chat cannot leave an
+        orphan delivery claim, and a crash cannot separate receipt from insert.
+        """
+        conn = self._get_connection()
+        try:
+            conn.execute('BEGIN IMMEDIATE')
+            if not conn.execute('SELECT 1 FROM chat_sessions WHERE id = ?',
+                                (chat_session_id,)).fetchone():
+                return None
+            row = conn.execute(
+                "SELECT id FROM chat_messages WHERE chat_session_id = ? "
+                "AND json_valid(metadata) AND json_extract(metadata, '$.delivery_key') = ?",
+                (chat_session_id, delivery_key)).fetchone()
+            if row:
+                return int(row[0])
+            payload = {**(metadata or {}), 'delivery_key': delivery_key}
+            cursor = conn.execute(
+                "INSERT INTO chat_messages (chat_session_id, role, content, metadata) "
+                "VALUES (?, 'assistant', ?, ?)",
+                (chat_session_id, content, json.dumps(payload)))
+            conn.execute('UPDATE chat_sessions SET last_activity = CURRENT_TIMESTAMP WHERE id = ?',
+                         (chat_session_id,))
+            conn.commit()
+            return int(cursor.lastrowid)
+        finally:
+            conn.close()
+
     def update_message_content(
         self,
         message_id: int,

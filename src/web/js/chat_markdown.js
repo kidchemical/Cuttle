@@ -15,7 +15,7 @@
     // Block-level placeholders (code, cards, forms, buttons) — never
     // wrapped in <p>, or browsers auto-close the paragraph and break
     // <pre>/cards. Minted by extract owners; recognized here for routing.
-    const BLOCK_PLACEHOLDER_RE = /^\{\{CUTTLE_(?:CODE|THINK|TOOL|TRACE|PROGRESS|TERM|MEDIA|VEGA|FORM|AF|BTN)_\d+\}\}$/;
+    const BLOCK_PLACEHOLDER_RE = /^\{\{CUTTLE_(?:CODE|THINK|TOOL|TRACE|PROGRESS|TERM|MEDIA|IMAGE|VEGA|FORM|AF|BTN)_\d+\}\}$/;
 
     function formatInlineMarkdown(text) {
         // Inline code (before bold/italic to protect it)

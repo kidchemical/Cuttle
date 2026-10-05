@@ -178,6 +178,8 @@ def make_assistant_saver(
         if str(nonlocal_res.get('ui') or '').strip().lower() == 'system':
             return
         asst_meta = assistant_meta_fn(nonlocal_res)
+        if isinstance(nonlocal_res.get('routing_badge'), dict):
+            asst_meta = dict(asst_meta or {}, routing_badge=nonlocal_res['routing_badge'])
         asst_meta = project_merge_fn(
             asst_meta,
             request_data,

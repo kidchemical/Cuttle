@@ -174,6 +174,6 @@ no restart, no real unlocks. The file also opens directly from disk
 | Trophy grid | `achievements_page.html` + `js/achievements_page.js` + `css/achievements_page.css` |
 | Settings storage | `experimental_flags` key in `src/settings.json` |
 
-Flag CLI commands emit JSON and return a nonzero exit code on errors. Toggles made by a separate local agent process become visible to Flask without a restart. The kill switch still overrides stored toggles.
+Flag CLI commands emit JSON and return a nonzero exit code on errors. Toggles made by a separate local agent process become visible to Flask without a restart. Overrides persist across Flask restart and app reopen. Single-flag writes merge under the settings store lock and preserve other overrides, including flags unknown to an older process. Test settings are private, and writes to the live install are rejected by the shared test fixture. The kill switch still overrides stored toggles.
 
 Generic confetti and toast triggers belong to `api.chat_vfx`; see [chat-vfx.md](../../.cuttle_global/docs/chat-vfx.md). They do not grant achievements or change experimental flags. Removing achievements leaves the generic VFX owner intact.

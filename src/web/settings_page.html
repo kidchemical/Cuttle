@@ -74,7 +74,7 @@
                 <div class="setting-item">
                     <div class="setting-label">
                         <strong>Desktop Notifications</strong>
-                        <div class="setting-description">Desktop notifications from the Cuttle app</div>
+                        <div class="setting-description">In-app notifications and completion notifications</div>
                     </div>
                     <div class="setting-control">
                         <label class="toggle-switch active" id="notificationsToggle" onclick="toggleNotifications(event)">
@@ -82,6 +82,15 @@
                             <span class="slider"></span>
                         </label>
                     </div>
+                </div>
+                <div class="setting-item">
+                    <div class="setting-label">
+                        <strong>Completion notifications <span class="settings-scope">Experimental</span></strong>
+                        <div class="setting-description" id="completionNotificationsStatus" role="status">Checking notification support…</div>
+                        <label class="setting-description"><input type="checkbox" id="completionNotificationsDetails"> Include chat titles and job labels in OS notifications</label>
+                        <div class="setting-description">Off by default to keep your work private. Reply text is never included. Mobile background push is not supported.</div>
+                    </div>
+                    <div class="setting-control"><button type="button" class="control-button btn-info" id="completionNotificationsButton" disabled>Enable completion notifications</button></div>
                 </div>
                 <div class="setting-item">
                     <div class="setting-label">
@@ -231,6 +240,26 @@
             </div>
 
             <div class="settings-group">
+                <h3 class="settings-title"><span class="emoji">🌿</span> Git <span class="settings-scope" data-scope="server" title="Saved in this server's settings; applies to every chat it runs.">This server</span></h3>
+                <div class="setting-item">
+                    <div class="setting-label">
+                        <strong>Auto-commit agent edits</strong>
+                        <div class="setting-description">
+                            After each successful agent turn, commit only the files that turn changed, with a suggested
+                            message and Cuttle's commit attribution. Your other uncommitted files are left alone (but a file the agent
+                            touched is committed whole, including any edits you had in it). Never pushes. Off by default.
+                        </div>
+                    </div>
+                    <div class="setting-control">
+                        <label class="toggle-switch" id="gitAutoCommitToggle" onclick="toggleGitAutoCommit(event)">
+                            <input type="checkbox" id="gitAutoCommitEnabled" style="display: none;">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-group">
                 <h3 class="settings-title"><span class="emoji">➕</span> Add your own agent <span class="settings-scope" data-scope="mixed" title="Instance and project roots are read straight from disk; a project root only runs after you opt in.">This instance + project</span></h3>
                 <div class="settings-intro">Drop a folder named after the agent with a <code>manifest.yaml</code> and an <code>adapter.py</code>. It joins the catalog next reload — no Cuttle fork, no core change.</div>
                 <div class="setting-item setting-item--stack">
@@ -259,26 +288,6 @@
                     </div>
                     <div class="setting-control">
                         <input type="text" id="agentName" class="setting-input" placeholder="Cuttle" value="Cuttle">
-            <div class="settings-group">
-                <h3 class="settings-title"><span class="emoji">🌿</span> Git <span class="settings-scope" data-scope="server" title="Saved in this server's settings; applies to every chat it runs.">This server</span></h3>
-                <div class="setting-item">
-                    <div class="setting-label">
-                        <strong>Auto-commit agent edits</strong>
-                        <div class="setting-description">
-                            After each successful agent turn, commit only the files that turn changed, with a suggested
-                            message and Cuttle's commit attribution. Your other uncommitted files are left alone (but a file the agent
-                            touched is committed whole, including any edits you had in it). Never pushes. Off by default.
-                        </div>
-                    </div>
-                    <div class="setting-control">
-                        <label class="toggle-switch" id="gitAutoCommitToggle" onclick="toggleGitAutoCommit(event)">
-                            <input type="checkbox" id="gitAutoCommitEnabled" style="display: none;">
-                            <span class="slider"></span>
-                        </label>
-                    </div>
-                </div>
-            </div>
-
                         <button class="control-button btn-start" onclick="saveAgentName()"><span class="emoji">💾</span> Save</button>
                     </div>
                 </div>
@@ -596,7 +605,6 @@
                 <div class="setting-item setting-item--stack">
                     <div class="setting-label">
                         <strong>One-time setup</strong>
-    <script src="/js/settings_releases.js?v=20261004releases"></script>
                         <div class="setting-description">Create the app once, then paste the three values above.</div>
                     </div>
                     <div class="setting-control setting-control--stack">
@@ -618,6 +626,8 @@
     <script src="/js/shared_navigation.js"></script>
     <script src="/js/background_effect_blend.js"></script>
     <script src="/js/toast.js"></script>
+    <script src="/js/completion_notifications.js?v=20261004completion"></script>
+    <script src="/js/settings_releases.js?v=20261004releases"></script>
     <script src="/js/settings_page_tabs.js?v=20261001tabs"></script>
     <script src="/js/video_background.js?v=20260927blendTarget"></script>
     <script>
@@ -1493,6 +1503,7 @@
                 if (!d.success) throw new Error(d.error || 'Failed to load');
                 list.innerHTML = (d.flags || []).map(renderExperimentalFlag).join('')
                     || '<div class="provider-status">No experimental features registered.</div>';
+                if (window.cuttleCompletionSettings) window.cuttleCompletionSettings.refresh();
                 if (d.kill_switch) {
                     list.innerHTML += '<div class="provider-status" style="margin-top:12px">'
                         + '⚠️ CUTTLE_EXPERIMENTAL=0 is set — every flag is forced off at the process level.</div>';
@@ -1604,38 +1615,6 @@
             } catch (_) {}
         }
 
-        async function toggleLanAccess(event) {
-            // Label + nested checkbox would otherwise fire this twice per click.
-            if (event) event.preventDefault();
-            const checkbox = document.getElementById('lanAccessEnabled');
-            const toggle = document.getElementById('lanAccessToggle');
-            if (!checkbox) return;
-            const next = !checkbox.checked;
-            checkbox.checked = next;
-            if (toggle) toggle.classList.toggle('active', next);
-            try {
-                const r = await fetch('/api/settings/lan-access', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ lan_access_enabled: next }),
-                });
-                const d = await r.json();
-                if (!d.success) throw new Error(d.error || 'Save failed');
-                await loadLanAccessSettings();
-                (window.showToast || alert)(
-                    next
-                        ? 'LAN access enabled — restart Flask for phones to connect'
-                        : 'LAN access disabled — restart Flask to apply',
-                    'info'
-                );
-            } catch (e) {
-                checkbox.checked = !next;
-                if (toggle) toggle.classList.toggle('active', !next);
-                (window.showToast || alert)('Failed to update LAN access: ' + (e.message || e), 'error');
-            }
-        }
-
-        function toggleNotifications(event) {
         async function loadGitAutoCommitSetting() {
             const checkbox = document.getElementById('gitAutoCommitEnabled');
             const toggle = document.getElementById('gitAutoCommitToggle');
@@ -1679,6 +1658,38 @@
             }
         }
 
+        async function toggleLanAccess(event) {
+            // Label + nested checkbox would otherwise fire this twice per click.
+            if (event) event.preventDefault();
+            const checkbox = document.getElementById('lanAccessEnabled');
+            const toggle = document.getElementById('lanAccessToggle');
+            if (!checkbox) return;
+            const next = !checkbox.checked;
+            checkbox.checked = next;
+            if (toggle) toggle.classList.toggle('active', next);
+            try {
+                const r = await fetch('/api/settings/lan-access', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ lan_access_enabled: next }),
+                });
+                const d = await r.json();
+                if (!d.success) throw new Error(d.error || 'Save failed');
+                await loadLanAccessSettings();
+                (window.showToast || alert)(
+                    next
+                        ? 'LAN access enabled — restart Flask for phones to connect'
+                        : 'LAN access disabled — restart Flask to apply',
+                    'info'
+                );
+            } catch (e) {
+                checkbox.checked = !next;
+                if (toggle) toggle.classList.toggle('active', !next);
+                (window.showToast || alert)('Failed to update LAN access: ' + (e.message || e), 'error');
+            }
+        }
+
+        function toggleNotifications(event) {
             // Label + nested checkbox would otherwise fire this twice per click.
             if (event) event.preventDefault();
             const checkbox = document.getElementById('notificationsEnabled');
@@ -1692,6 +1703,7 @@
             }
             
             localStorage.setItem('notificationsEnabled', checkbox.checked);
+            if (window.cuttleCompletionSettings) window.cuttleCompletionSettings.refresh();
             (window.showToast || alert)(checkbox.checked ? 'Notifications enabled' : 'Notifications disabled', 'info');
         }
 
@@ -2098,6 +2110,9 @@
             // Per-tab loaders: each runs the first time its panel is shown.
             const tabs = window.CuttleSettingsTabs;
             if (tabs && typeof tabs.register === 'function') {
+                tabs.register('general', function () {
+                    window.CuttleSettingsReleases.mount(document.getElementById('cuttleReleaseSettings'));
+                });
                 tabs.register('agents', function () {
                     loadAgentCatalog();
                     loadGitAutoCommitSetting();
@@ -2110,16 +2125,15 @@
                 tabs.register('experimental', function () { loadExperimentalFlags(); });
                 tabs.register('devices', function () {
                     loadLanAccessSettings();
-                tabs.register('general', function () {
-                    window.CuttleSettingsReleases.mount(document.getElementById('cuttleReleaseSettings'));
-                });
                     loadDesktopElectronSettings();
                 });
                 tabs.register('account', function () { loadGitHubAppSettings(); });
                 tabs.init();
             } else {
                 // No tab shell (e.g. markup edited by hand): load everything.
+                window.CuttleSettingsReleases.mount(document.getElementById('cuttleReleaseSettings'));
                 loadAgentCatalog();
+                loadGitAutoCommitSetting();
                 loadCompletionProviders();
                 loadChatTtsSettings();
                 loadApiKeys();
@@ -2131,7 +2145,6 @@
         });
 
         // Add animation styles
-                window.CuttleSettingsReleases.mount(document.getElementById('cuttleReleaseSettings'));
         const style = document.createElement('style');
         style.textContent = `
             @keyframes slideIn {
@@ -2157,6 +2170,10 @@
         `;
         document.head.appendChild(style);
     </script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            window.cuttleCompletionSettings = CuttleCompletionNotifications.settings();
+        });
+    </script>
 </body>
-                loadGitAutoCommitSetting();
 </html>

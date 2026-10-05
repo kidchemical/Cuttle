@@ -414,7 +414,7 @@ def batch_status(batch_id: str) -> Dict[str, Any]:
         return {"success": False, "error": "batch_id required"}
     store = get_store()
     store.reclaim_expired()
-    jobs = store.list_jobs(limit=200)
+    jobs = store.list_batch_jobs(bid)
     matched = [
         j
         for j in jobs
@@ -465,6 +465,7 @@ def batch_status(batch_id: str) -> Dict[str, Any]:
         "by_worker": by_worker,
         "frame_times_sample": frame_times[-40:],
         "jobs": matched,
+        "workers": store.list_workers(),
     }
 
 
@@ -699,14 +700,16 @@ def build_batch_watch_bars(
         else 0
     )
     if not disk_ok:
-        # Fall back to succeeded chunk spans when output is not local/readable.
-        for j in jobs:
-            if str(j.get("status") or "") != "succeeded":
+        # Union spans: a retry/gap-fill must never count the same frame twice.
+        spans = sorted(_job_frame_span(j) for j in jobs if j.get("status") == "succeeded")
+        done_overall = 0
+        end = None
+        for fs, fe in spans:
+            if fe < fs:
                 continue
-            fs, fe = _job_frame_span(j)
-            if fe >= fs:
-                done_overall += fe - fs + 1
-        done_overall = min(done_overall, total) if total else done_overall
+            start = fs if end is None else max(fs, end + 1)
+            done_overall += max(0, fe - start + 1)
+            end = fe if end is None else max(end, fe)
 
     pct = min(100, round(100 * done_overall / total)) if total else 0
     n_ok = sum(1 for j in jobs if j.get("status") == "succeeded")
@@ -763,6 +766,8 @@ def build_batch_watch_bars(
             continue
         by_wid.setdefault(wid, []).append(j)
 
+    worker_gpus = {str(w.get("worker_id")): str((w.get("capabilities") or {}).get("blender_gpu") or "")
+                   for w in summary.get("workers", [])}
     for wid in sorted(by_wid.keys()):
         wjobs = by_wid[wid]
         assigned = 0
@@ -787,7 +792,7 @@ def build_batch_watch_bars(
         bars.append(
             {
                 "id": wid[:64],
-                "label": wid[:120],
+                "label": (wid + (" · " + worker_gpus[wid] if worker_gpus.get(wid) else ""))[:120],
                 "percent": wpct,
                 "kind": "worker",
                 "detail": f"{written}/{assigned} · {ok_chunks}/{len(wjobs)} chunks",
@@ -809,11 +814,18 @@ def build_batch_watch_bars(
                 f"{'s' if reallocations != 1 else ''})"
             )
 
+    if state == "done" and total and done_overall < total:
+        state = "failed"
+        label = f"{label_prefix} incomplete — {done_overall}/{total} frames"
+    if all(j.get("status") in ("succeeded", "failed", "cancelled") for j in jobs) and state == "running":
+        state = "failed"
+        label += " — cancelled shards"
+
     return {
         "success": True,
         "batch_id": str(summary.get("batch_id") or ""),
         "state": state,
-        "percent": pct if state != "done" else 100,
+        "percent": pct,
         "label": label,
         "bars": bars,
         "frames_done": done_overall,
@@ -862,6 +874,11 @@ def write_batch_watch(
                 state = str(built.get("state") or "running")
 
     wid = (watch_id or batch_id or "mesh-batch").strip()
+    from api.device_workers.render_results import reconcile
+    try:
+        render_result = reconcile(batch_id)
+    except Exception as exc:
+        render_result = {"success": False, "state": "output_unavailable", "error": str(exc)}
     path = write_status(
         wid,
         state=state,
@@ -871,6 +888,8 @@ def write_batch_watch(
         extra={
             "batch_id": str(summary.get("batch_id") or batch_id),
             "gap_fill": gap,
+            "render_result": render_result,
+            **({"grid": build_batch_frame_grid(summary)} if _frame_grid_enabled() else {}),
         },
     )
     return {
@@ -881,6 +900,7 @@ def write_batch_watch(
         "pending": summary.get("pending"),
         "by_worker": summary.get("by_worker"),
         "gap_fill": gap,
+        "render_result": render_result,
     }
 
 
@@ -999,3 +1019,57 @@ def probe_worker(worker_id: str, *, timeout_seconds: float = 20) -> Dict[str, An
         "worker_id": wid,
         "job_id": jid,
     }
+
+
+def _frame_grid_enabled() -> bool:
+    from api.experimental import is_enabled
+    return is_enabled("mesh_frame_grid")
+
+
+def build_batch_frame_grid(summary: Dict[str, Any]) -> Dict[str, Any]:
+    """Bounded presentation snapshot; durable inventory wins over shard status.
+
+    Missing remote files cannot be verified: succeeded spans are explicitly
+    labelled reported rather than pretending the coordinator inspected them.
+    Completion ownership requires a single first-attempt claim or frame timing
+    evidence. Reclaimed chunks can contain output from an earlier worker.
+    """
+    from api.device_workers.executor import _list_frames_in_range
+
+    jobs = [j for j in summary.get("jobs", []) if isinstance(j, dict)]
+    spans = [(j, *_job_frame_span(j)) for j in jobs]
+    spans = [(j, a, b) for j, a, b in spans if b >= a]
+    if not spans:
+        return {"cells": [], "total": 0, "workers": []}
+    lo, hi = min(a for _, a, _ in spans), max(b for _, _, b in spans)
+    out = next((str((j.get("params") or {}).get("output_dir") or "") for j, _, _ in spans
+                if (j.get("params") or {}).get("output_dir")), "")
+    disk_ok = bool(out and Path(out).is_dir())
+    present = set(_list_frames_in_range(Path(out), lo, hi)) if disk_ok else set()
+    cells = []
+    for frame in range(lo, min(hi + 1, lo + 2048)):
+        covering = [j for j, a, b in spans if a <= frame <= b]
+        active = [j for j in covering if j.get("status") in ("claimed", "running")]
+        queued = [j for j in covering if j.get("status") == "queued"]
+        succeeded = [j for j in covering if j.get("status") == "succeeded"]
+        complete = frame in present if disk_ok else bool(succeeded)
+        owners = set()
+        if complete:
+            for j in covering:
+                wid = str(j.get("claimed_by") or "")
+                timings = (j.get("result") or {}).get("frame_times") or []
+                evidence = any(isinstance(t, dict) and t.get("frame") == frame for t in timings)
+                if wid and (evidence or (len(covering) == 1 and int(j.get("attempts") or 0) <= 1)):
+                    owners.add(wid)
+            state = "completed"
+            wid = next(iter(owners)) if len(owners) == 1 else ""
+        else:
+            state = ("rendering" if active else "pending" if queued else
+                     "failed" if any(j.get("status") == "failed" for j in covering) else
+                     "cancelled" if any(j.get("status") == "cancelled" for j in covering) else "missing")
+            wid = str(active[0].get("claimed_by") or "") if len(active) == 1 else ""
+        cells.append({"frame": frame, "state": state, "worker": wid,
+                      "gap_fill": any((j.get("params") or {}).get("gap_fill") for j in covering)})
+    workers = sorted({str(j.get("claimed_by")) for j in jobs if j.get("claimed_by")})
+    return {"cells": cells, "total": hi - lo + 1, "omitted": max(0, hi - lo + 1 - len(cells)),
+            "inventory": "verified" if disk_ok else "reported", "workers": workers}

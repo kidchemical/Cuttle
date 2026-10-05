@@ -211,6 +211,33 @@ PYTHONPATH=src .venv/bin/python -m api.device_workers.cli batch-watch --batch-id
 3. Card `watch.url` must point at that status file (`/output/<id>-status.json`).
 Details / schema → `action-forms.md` (Multi-bar progress).
 
+### Experimental frame grid
+
+Settings → Experimental → **Mesh frame grid** (default off), or:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m api.experimental set mesh_frame_grid on
+```
+
+`batch-watch` adds an optional `grid` beside its existing `bars`. The same
+watch card renders a cell per frame (first 2,048 for larger batches, with an
+omitted count). Worker colours are stable; tooltips name frame, state, worker
+when known, and gap-fill. Worker bars include advertised Blender GPU labels.
+The legend distinguishes pending/rendering/completed/failed/missing/cancelled;
+a gold outline marks frames covered by gap-fill work.
+
+Local output inventory takes precedence over shard success. With inaccessible
+output, the map explicitly says **reported**; successful shard spans provide
+completion evidence. Reclaimed or overlapping chunks without clear producer
+evidence show completed frames with an unconfirmed worker. Rendering cells
+mean a worker is active on the containing chunk, not proof that Blender is
+currently processing that particular frame. Terminal snapshots retain the grid.
+
+The process kill switch `CUTTLE_EXPERIMENTAL=0` suppresses new grid payloads.
+Teardown: remove the `mesh_frame_grid` registry row, the guarded payload and
+`build_batch_frame_grid` in `device_workers.platform`, grid sanitizer/snapshot
+handling, and grid rendering/CSS. Existing bar-only watches remain supported.
+
 ### Benchmark: update a Client from host
 
 1. Client: client daemon + Electron Client → online in `workers.list`.
@@ -258,3 +285,16 @@ Self-update refuses a dirty/untracked checkout, detached HEAD, missing upstream,
 and local/diverged commits before stopping processes. Ignored personal files stay
 in place; incoming tracked-file collisions are refused. Save/reconcile local work
 explicitly before retrying. It does not stash, hard-reset or clean your checkout.
+
+## Automatic render result attachments
+
+For batches that should publish their result to the originating chat, register
+the batch once with `python -m api.device_workers.render_results register
+--batch-id ID --session CH-... --output-dir /absolute/host-visible/frames` after
+submitting shards. The experimental `render_result_attachments` flag gates
+delivery. The server attaches verified completed frames without an agent reply;
+add `--video-path PATH --encode-job-id ID` once the encode job exists for a
+separate video attachment after successful encoding. After copying remote output
+to the host, run `python -m api.device_workers.render_results reconcile
+--batch-id ID`; watch writes also retry. Do not manually repost the same output.
+Details and authenticated HTTP API: [render-result-attachments.md](../../.cuttle/docs/render-result-attachments.md).

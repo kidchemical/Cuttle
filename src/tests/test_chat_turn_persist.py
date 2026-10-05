@@ -274,3 +274,35 @@ def test_stream_harness_lane_delivers_sse_and_persists_both_rows(sse_env):
     assert roles == [(777, "user"), (777, "assistant")]
     assert chat_delivery.is_busy(777) is False
 
+
+
+def test_routing_badge_survives_saver_metadata_merge(monkeypatch):
+    from api.chat_turn_persist import make_assistant_saver
+    import api.chat_delivery
+    monkeypatch.setattr(api.chat_delivery, 'is_turn_cancelled', lambda _: False)
+    db = FakeDB()
+    badge = {'agent': 'codex', 'kind': 'routed', 'reason': 'Small change'}
+    saver = make_assistant_saver(chat_session_id=777, **_saver_deps(db))
+    saver({'success': True, 'response': 'Done', 'routing_badge': badge})
+    assert db.rows[-1]['metadata']['routing_badge'] == badge
+    assert db.rows[-1]['metadata']['project_name'] == 'Cuttle'
+
+
+@pytest.mark.parametrize('stream', [False, True])
+def test_routing_badge_real_http_transport_and_persistence(sse_env, monkeypatch, stream):
+    import json
+    wca, db = sse_env
+    badge = {'agent': 'codex', 'kind': 'routed', 'reason': 'Small change'}
+    monkeypatch.setattr(wca, '_run_pinned_harness_turn', lambda *a, **k: {
+        'success': True, 'response': 'Done', 'type': 'codex', 'routing_badge': badge})
+    client = wca.app.test_client()
+    client.set_cookie('session_token', 'tok-seam')
+    response = client.post('/api/chat', json={'message': '/codex test', 'session_id': 'seam-badge', 'stream': stream})
+    assert response.status_code == 200
+    if stream:
+        events = [json.loads(line[6:]) for line in response.get_data(as_text=True).splitlines() if line.startswith('data: ')]
+        wire = next(e for e in events if e['type'] == 'response')
+    else:
+        wire = response.get_json()
+    assert wire['routing_badge'] == badge
+    assert db.rows[-1]['metadata']['routing_badge'] == badge

@@ -89,6 +89,7 @@
             slash_command_failed: !!(m.slash_command_failed || meta.slash_command_failed),
             cursor_run: meta.cursor_run || m.cursor_run || undefined,
             usage: normUsage(meta.usage || m.usage) || undefined,
+            routing_badge: meta.routing_badge || m.routing_badge || undefined,
             user_feedback: meta.user_feedback || undefined,
             attachments: attachments.length ? attachments : undefined,
             project_id: m.project_id != null ? m.project_id : (meta.project_id != null ? meta.project_id : (m._project && m._project.id)),
@@ -697,6 +698,16 @@
             // Markdown links → chips (file://, vscode://, http(s)://, local Windows paths)
             // Allow spaces in destinations (CommonMark <url> or bare paths with spaces).
             const linkChips = [];
+            const imageBlocks = [];
+            if (d.buildMediaThumbHtml) {
+                text = text.replace(/!\[([^\]]*)]\(([^)]+)\)/g, function(_, label, dest) {
+                    const match = String(dest).match(/^(.*?)\s+["']([^"']*)["']\s*$/);
+                    const url = (match ? match[1] : dest).trim().replace(/^<|>$/g, '');
+                    const placeholder = '{{CUTTLE_IMAGE_' + imageBlocks.length + '}}';
+                    imageBlocks.push(d.buildMediaThumbHtml(url, { title: label, description: match ? match[2] : '' }));
+                    return placeholder;
+                });
+            }
             text = text.replace(/\[([^\]]*)]\(([^)]+)\)/g, function(_, label, url) {
                 const placeholder = '{{CUTTLE_LINK_' + linkChips.length + '}}';
                 linkChips.push(d.renderMdLinkChip(label, String(url || '').trim()));
@@ -722,7 +733,7 @@
 
             // Bare chat handles: CH-000431 / CH-000431-23 → in-pane session links.
 
-        return { text, blocks: { code: codeBlocks, link: linkChips } };
+        return { text, blocks: { code: codeBlocks, link: linkChips, image: imageBlocks } };
     }
 
     /**
@@ -740,6 +751,7 @@
             ['CUTTLE_TERM_', b.terminal], ['CUTTLE_MEDIA_', b.media],
             ['CUTTLE_VEGA_', b.vega],
             ['CUTTLE_CODE_', b.code], ['CUTTLE_LINK_', b.link],
+            ['CUTTLE_IMAGE_', b.image],
         ];
         let out = String(html || '');
         for (const [prefix, arr] of table) {
@@ -905,7 +917,58 @@
         return '<div class="user-message-with-attachments">' + bodyHtml + attHtml + '</div>';
     }
 
+    const STATUS_CHIP_TYPES = {
+        error: { label: 'Error', icon: '×' },
+        warning: { label: 'Warning', icon: '!' },
+        router: { label: 'Router', icon: '🔀' },
+        reroute: { label: 'Reroute', icon: '↪' },
+        fallback: { label: 'Fallback', icon: '↩' },
+    };
+
+    function renderStatusChipHtml(status, message, detail, esc, extraClass) {
+        const type = Object.prototype.hasOwnProperty.call(STATUS_CHIP_TYPES, status) ? STATUS_CHIP_TYPES[status] : null;
+        if (!type) return '';
+        const text = String(message || '');
+        const tip = type.label + (detail || text ? ' · ' + String(detail || text) : '');
+        return `<span class="slash-command-chip slash-command-chip--segmented slash-command-chip--header cuttle-status-chip cuttle-status-chip--${status}${extraClass === 'routing-selection-chip' ? ' routing-selection-chip' : ''}" data-tooltip="${esc(tip)}" aria-label="${esc(tip)}" tabindex="0">`
+            + `<span class="slash-chip-seg status-chip-icon" aria-hidden="true">${type.icon}</span>`
+            + `<span class="slash-chip-seg slash-chip-seg--agent status-chip-name">${type.label}</span>`
+            + `<span class="slash-chip-seg slash-chip-seg--model status-chip-message" data-tooltip="${esc(tip)}">${esc(text)}</span></span>`;
+    }
+
+    function renderRoutingBadgeHtml(badge, esc) {
+        if (!badge || typeof badge !== 'object' || !badge.agent) return '';
+        const statuses = { routed: 'router', fallback: 'fallback', escalation: 'reroute', default: 'warning' };
+        if (!Object.prototype.hasOwnProperty.call(statuses, badge.kind)) return '';
+        const reason = String(badge.reason || '');
+        // Legacy snapshots included the destination in fallback/default notes.
+        // Keep the status message about the event; identity belongs to the agent chip.
+        const message = reason.replace(/^(?:Fallback|Escalated to|Default)\s+[^\s]+\s*\/\s*[^\s]+\s*/i, '')
+            .replace(/^after:\s*/i, '').trim();
+        return renderStatusChipHtml(statuses[badge.kind], message, message, esc, 'routing-selection-chip');
+    }
+
+    function routingAgentSlash(badge) {
+        if (!badge || !badge.agent) return null;
+        const agent = String(badge.agent);
+        const name = ({ codex: 'Codex', cursor: 'Cursor', claude: 'Claude Code', muse: 'Muse Code', deepseek: 'DeepSeek Harness', opencode: 'OpenCode', hermes: 'Hermes' })[agent] || agent;
+        const model = String(badge.model || '');
+        const effort = String(badge.effort || '');
+        return { chips: [{ category: agent, label: name + (model ? ' - ' + model : '') + (effort ? ' · ' + effort : ''),
+            meta: '/' + agent + (model ? ' · model ' + model : '') + (effort ? ' · effort ' + effort : '') }] };
+    }
+
+    function renderAssistantStatusHtml(opts, failed, content, esc) {
+        const route = renderRoutingBadgeHtml((opts || {}).routing_badge, esc);
+        const message = String(content || '').trim().split('\n').find(line => line.trim()) || 'Agent turn failed';
+        return route + (failed ? renderStatusChipHtml('error', message, message, esc) : '');
+    }
+
     const api = {
+        renderRoutingBadgeHtml,
+        routingAgentSlash,
+        renderStatusChipHtml,
+        renderAssistantStatusHtml,
         authMessageOptsFromServer,
         preferredModelFromMessages,
         projectFromMessageRecord,

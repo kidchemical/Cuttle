@@ -10,6 +10,67 @@ User-requested capabilities. Format: `[FEAT-YYYYMMDD-XXX] capability_name`
 ---
 <!-- Add entries below -->
 
+## [FEAT-20261004-001] mesh_frame_progress_grid
+
+- **Priority:** High · **Status:** Implemented (experimental; activation pending) · **Area:** workers / chat watch cards
+- **Requested capability:** Contribution-calendar-style frame grid on batch watch cards, alongside overall and per-worker progress bars. One cell per frame, coloured by the worker that produced it; distinguish pending, rendering, completed, failed, and missing frames, and show gap-fill recovery. Include GPU labels on worker rows.
+- **Acceptance:** Actual batch inventory drives cells; retries cannot double-count completion. Worker colours stay stable across updates; a legend and text/tooltips explain states without relying on colour alone. Large batches remain bounded and usable on mobile. A completed batch with missing output never appears fully successful.
+- **Complexity:** M (provisional; verify inventory/status contracts before implementation)
+- **Metadata:** Source CH-000889-40, CH-000889-41; endorsed CH-000962. Suggested first implementation. Related Features: FEAT-20260917-001, FEAT-20260818-002. Owners: `src/api/device_workers/`, `src/web/js/chat_action_forms.js` (render model), `src/web/js/chat_action_cards.js` (watch effects). Proposed optional `grid` status payload must preserve existing `bars` consumers. Start experimental per `.cuttle/docs/experimental-features.md`.
+- **Progress:** Watch-card grid, stable worker colours, frame-state legend/tooltips, gap-fill outlines, advertised GPU labels, bounded large-batch rendering, saved snapshots, complete batch inventory and corrected incomplete-output progress implemented. Reuses existing bars and gap-fill flow. Unknown producer stays unassigned; inaccessible output is marked reported. Registry flag `mesh_frame_grid` defaults off.
+- **Shared quality bar for this series:** Stable layouts, meaningful animation, no repeated workflow steps, visible terminal outcomes. Use real execution data; retain useful failure and cancellation states. Respect reduced motion.
+
+## [FEAT-20261004-002] visible_router_selection
+
+- **Priority:** Medium · **Status:** Implemented (experimental; activation pending) · **Area:** agent router / chat
+- **Requested capability:** Small reply chip showing the agent selected by the router and a short routing reason. Make fallback/escalation visible when the final agent differs from the initial selection.
+- **Acceptance:** Use recorded server selection and outcome metadata rather than inferred prose; distinguish automatic routing from manual/sticky selection. Reload preserves the chip, and absent reason metadata does not produce an invented explanation.
+- **Progress:** Reuses existing router decisions/attempts and replaces the prose routing headline with a recorded `routing_badge` snapshot. Final target, optional reason and initial selection survive SSE/sync, pending recovery and history reload. Status chips reuse segmented agent styling (icon | Router/Reroute/Fallback/Warning/Error | truncated message) with full-message tooltips; Error reuses existing failed-reply classification. Default, routed, escalation and fallback outcomes are distinguished; explicit/manual selection retains existing behaviour. Flag `router_selection_chip` defaults off.
+- **Complexity:** S–M (provisional)
+- **Metadata:** Source CH-000889-41; endorsed CH-000962. Suggested second implementation. Related Features: FEAT-20260926-002. Owners: `src/api/agent_router/`, chat persistence and message presentation owners. Apply the shared quality bar in FEAT-20261004-001; start experimental.
+
+## [FEAT-20261004-003] long_work_completion_notifications
+
+- **Priority:** High · **Status:** Implemented (experimental; activation pending) · **Area:** notifications / chat / workers
+- **Requested capability:** Opt-in OS notifications for long-turn and mesh-batch completion, with a tap opening the originating chat/result. Support permission-aware browser notifications; investigate mobile background push separately from notifications while the page is open.
+- **Acceptance:** Request permission from an explicit user gesture; deduplicate delivery; disclose background-delivery limits. Handle denied permission, failed jobs, cancelled work, and inaccessible chats. Notification text respects privacy preferences.
+- **Complexity:** M–L (browser foreground vs mobile background delivery)
+- **Metadata:** Source CH-000889-41; endorsed CH-000962. Suggested third implementation. Related Features: FEAT-20260917-001. Establish delivery ownership and supported-client scope before implementation; start experimental. Apply FEAT-20261004-001 quality bar.
+
+- **Progress:** Default-off `completion_notifications` flag plus per-device permission/privacy controls in General settings. Reuses reply-ready and watch terminal seams, with one shell broker, durable bounded delivery ids, stable OS tags, and Web Locks across tabs. Reply starts persist across reload; permission denial, failures and cancellation are handled. Browser-open scope only; mobile background push investigated and deferred to a separate delivery service. Details: `.cuttle/docs/completion-notifications.md`.
+
+## [FEAT-20261004-004] subagent_fleet_cards
+
+- **Priority:** Medium · **Status:** Backlog · **Area:** sub-agents / chat
+- **Requested capability:** Compact fleet view with one card per real child chat: agent identity, one-line live status, terminal outcome and result summary, plus a link to the child chat. Complement existing sibling orbs/launchers.
+- **Acceptance:** Actual child lifecycle drives status; success, failure, cancellation and lost/stale activity remain distinct. Preserve terminal summaries across reload; bounded layout works with many children and on mobile.
+- **Complexity:** M
+- **Metadata:** Source CH-000889-41; endorsed CH-000962. Suggested fourth implementation. Related Features: FEAT-20261004-005, FEAT-20261004-006. Owner: existing sub-agent service and chat presentation. Apply FEAT-20261004-001 quality bar; start experimental.
+
+## [FEAT-20261004-005] task_owner_and_child_state
+
+- **Priority:** Medium · **Status:** Backlog · **Area:** tasks widget / sub-agents
+- **Requested capability:** Optional owner tag (agent identity/dot) on each task, with an explicit link to a child chat or worker group. Linked tasks reflect real execution state.
+- **Acceptance:** Existing ownerless task widgets keep working. Execution completion does not imply task acceptance/tests passed unless that result is recorded. Preserve manual task updates and show failed/cancelled linked work accurately.
+- **Complexity:** M
+- **Metadata:** Source CH-000889-41; endorsed CH-000962. Related Features: FEAT-20261004-004. Owners: existing widgets and sub-agent services. Apply FEAT-20261004-001 quality bar; start experimental.
+
+## [FEAT-20261004-006] visible_review_fix_handoffs
+
+- **Priority:** Medium · **Status:** Backlog · **Area:** sub-agents / workflow observability
+- **Requested capability:** Show review-to-fix handoffs in the parent chat/fleet view: who reviewed, who received the fix request, whether it was applied, and the recorded validation outcome, with links to the relevant child chats.
+- **Acceptance:** Events reflect actual dispatch/results. Sending a fix request cannot display “applied” or “tests green”; those require explicit evidence. Failed or interrupted handoffs remain visible, and reload does not duplicate events.
+- **Complexity:** M–L
+- **Metadata:** Source CH-000889-41; endorsed CH-000962. Related Features: FEAT-20261004-004, FEAT-20261004-005. Owner: existing sub-agent orchestration/event persistence, composed into chat presentation. Apply FEAT-20261004-001 quality bar; start experimental.
+
+## [FEAT-20261004-007] render_result_attachment_and_preview
+
+- **Priority:** Medium · **Status:** Done (completion attachments); Backlog (live thumbnails) · **Area:** workers / chat media
+- **Requested capability:** Attach a render batch's encoded output or representative frame to its completion result automatically. Optionally show the latest completed-frame thumbnail during rendering.
+- **Acceptance:** Attach only verified, accessible output with correct media metadata. Rendering frames and encoding a video are separate completion stages; no playable-video claim before encoding succeeds. Deduplicate attachments on retries/reload and handle absent outputs. Bound thumbnail refresh traffic and follow existing media staging/retention conventions.
+- **Complexity:** M
+- **Metadata:** Source CH-000889-41; endorsed CH-000962. Suggested fifth implementation after fleet cards. Related Features: FEAT-20261004-001, FEAT-20260917-001. Owners: existing worker batch results and chat attachment/media persistence. Apply FEAT-20261004-001 quality bar; start experimental.
+
 ## [FEAT-20260927-001] web_chat_api_dependency_map
 
 - **Priority:** Low · **Status:** Done (map) / Backlog (extraction) · **Area:** architecture / flask

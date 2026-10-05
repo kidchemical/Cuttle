@@ -1199,6 +1199,12 @@
             }
             autoScrollChatToBottom();
         }
+        const statusHeader = el.querySelector('.message-header-row');
+        if (statusHeader) {
+            statusHeader.querySelectorAll('.cuttle-status-chip').forEach(chip => chip.remove());
+            statusHeader.insertAdjacentHTML('beforeend', CuttleChatMessages.renderAssistantStatusHtml(
+                { routing_badge: msg.routing_badge || meta.routing_badge }, el.dataset.failed === '1', raw, escapeHtmlInline));
+        }
         const usage = normalizeUsagePayload(msg.usage) || normalizeUsagePayload(meta.usage);
         if (usage) {
             const wrap = el.querySelector('.message-content-wrapper');
@@ -2620,6 +2626,7 @@
 
     /** Mark unread + toast when a reply arrives while the user isn't looking at that chat. */
     const _chirpedReadyAtBySession = Object.create(null);
+    const completionNotificationPendingId = 'pending:' + Date.now() + ':' + Math.random().toString(36).slice(2);
     const CHIRP_SESSION_COOLDOWN_MS = 8000;
     /** Background pending polls after leaving a chat mid-turn (sessionId → cancel fn). */
     const _detachedCompletionWatchers = Object.create(null);
@@ -2728,6 +2735,10 @@
         const sid = sessionId != null ? String(sessionId) : null;
         if (!sid) return;
         const isError = !!(opts && opts.isError);
+        if (window.CuttleCompletionNotifications) {
+            window.CuttleCompletionNotifications.broker().finishTurn(sid, isError ? 'failed' : 'done',
+                (opts && opts.title) || getChatSessionDisplayTitle(sid)).catch(() => {});
+        }
         // One chirp per session completion — blocks processMessage + sync double-fire
         // (and multi-pane sync) from stacking two full chirps back-to-back.
         const now = Date.now();
@@ -9543,6 +9554,8 @@
             ? scope.querySelectorAll('.slash-command-chip')
             : [];
         chips.forEach((chip) => {
+            // Status chips own their full-message tooltip; CSS truncates only the message.
+            if (chip.classList.contains('cuttle-status-chip')) return;
             const tip = chip.dataset.tip || chip.getAttribute('title') || '';
             if (!chip.dataset.tip && tip) {
                 chip.dataset.tip = tip;
@@ -10723,7 +10736,7 @@
     function enrichSlashCommandWithAgentBadge(replySlash, data, stickyCmd) {
         if (!data) return replySlash || null;
         const agentId = String((data && data.agent_id) || '').trim().toLowerCase();
-        const stickyPrefix = String((stickyCmd && stickyCmd.prefix) || '').trim().toLowerCase();
+        const stickyPrefix = agentId ? '' : String((stickyCmd && stickyCmd.prefix) || '').trim().toLowerCase();
         const isMuse = agentId === 'muse' || stickyPrefix.startsWith('/muse');
         const isHermes = agentId === 'hermes' || stickyPrefix.startsWith('/hermes');
         const isOpenCode = agentId === 'opencode' || stickyPrefix.startsWith('/opencode');
@@ -10735,7 +10748,7 @@
         ).trim();
         const effort = CuttleChatAgentModel.resolveAgentEffortForBadge({
             data,
-            pinnedEfforts: [
+            pinnedEfforts: data.routing_badge ? [] : [
                 slashPaletteSupplement.museEffort,
                 slashPaletteSupplement.hermesEffort,
                 slashPaletteSupplement.opencodeEffort,
@@ -12758,6 +12771,7 @@
                         slash_command: msg.slash_command,
                         slash_command_failed: msg.slash_command_failed,
                         attachments: msg.attachments,
+                        routing_badge: msg.routing_badge || undefined,
                         usage: normalizeUsagePayload(msg.usage) || undefined,
                         skipScroll: true,
                         skipNav: true,
@@ -12891,6 +12905,7 @@
                             report_url: recovered.report_url,
                             query_id: recovered.query_id,
                             timestamp: Date.now(),
+                            routing_badge: recovered.routing_badge || undefined,
                             usage: normalizeUsagePayload(recovered.usage) || undefined,
                         });
                         notifyAssistantResponseReady(currentSessionId, { fromSync: true });
@@ -12937,6 +12952,9 @@
             if (!isAuthMode()) migrateLocalChatSession(prev, sessionId);
         }
         const wasNew = currentSessionId == null || !sessionIdsEqual(currentSessionId, sessionId);
+        if (window.CuttleCompletionNotifications && generation.loading) {
+            window.CuttleCompletionNotifications.broker().adopt(prev || completionNotificationPendingId, sessionId);
+        }
         releaseManualUnreadHoldIfLeaving(sessionId);
         currentSessionId = sessionId;
         updateChatIdBadge(sessionId);
@@ -14168,6 +14186,11 @@
                     notify: (text, kind) => {
                         try { (window.showToast || function () {})(text, kind); } catch (_) {}
                     },
+                    notifyWorkCompletion: (event) => {
+                        if (window.CuttleCompletionNotifications) {
+                            window.CuttleCompletionNotifications.broker().complete(event).catch(() => {});
+                        }
+                    },
                     showPushFailure: data => window.CuttleGitPushReport ? window.CuttleGitPushReport.fromAction(data, {projectPath: currentProject && currentProject.path}) : '',
                     syncMessages: () => syncSessionMessagesFromServer(),
                     publishRestartEvent: (payload) => {
@@ -14762,6 +14785,7 @@
         if (opts.slash_command) msg.slash_command = opts.slash_command;
         if (opts.slash_command_failed) msg.slash_command_failed = true;
         if (opts.usage) msg.usage = opts.usage;
+        if (opts.routing_badge) msg.routing_badge = opts.routing_badge;
         const atts = normalizeAttachmentList(opts.attachments);
         if (atts.length) msg.attachments = atts;
         sessions[currentSessionId].messages.push(msg);
@@ -17716,6 +17740,9 @@
     async function stopGenerating(opts = {}) {
         const announce = opts.announce !== false;
         const inflight = inFlightUserMessage;
+        if (typeof window !== 'undefined' && window.CuttleCompletionNotifications) {
+            window.CuttleCompletionNotifications.broker().cancel(currentSessionId || completionNotificationPendingId).catch(() => {});
+        }
         const watchIds = runningWatchJobIds();
         const cancelJobs = (!inflight && watchIds.length > 0) || isProjectShellTurn(inflight);
         CuttleStopState.requestStop(stopState);
@@ -17776,6 +17803,7 @@
         const prevInFlight = inFlightUserMessage;
         const prevController = activeRequestController;
         if (!controlLane) {
+            if (window.CuttleCompletionNotifications) window.CuttleCompletionNotifications.broker().begin(currentSessionId || completionNotificationPendingId);
             CuttleStopState.beginSend(stopState);
             inFlightUserMessage = message;
             turnGenToken = beginLocalGeneration();
@@ -18176,14 +18204,16 @@
             removeTypingIndicator();
 
             const assistantFailed = stickyCmd && isStickySlashAssistantFailure(stickyCmd, data);
-            let assistantSlash = enrichSlashCommandWithCursorRun(
-                replySlash,
-                data && data.cursor_run,
-                stickyCmd
-            );
+            const routedBadge = data && data.routing_badge;
+            let assistantSlash = routedBadge
+                ? CuttleChatMessages.routingAgentSlash(routedBadge)
+                : enrichSlashCommandWithCursorRun(replySlash, data && data.cursor_run, stickyCmd);
+            if (routedBadge && routedBadge.agent === 'cursor' && data.cursor_run) {
+                assistantSlash = enrichSlashCommandWithCursorRun(assistantSlash, data.cursor_run, null);
+            }
             // Single badge path: canonical agent_model / agent_effort keys
             // (legacy per-agent keys as fallback) + drift warning chip.
-            assistantSlash = enrichSlashCommandWithAgentBadge(assistantSlash, data, stickyCmd);
+            assistantSlash = enrichSlashCommandWithAgentBadge(assistantSlash, data, routedBadge ? null : stickyCmd);
 
             if (data && data.session_id != null && boundSessionId == null) {
                 boundSessionId = canonicalizeChatSessionId(data.session_id);
@@ -18376,6 +18406,7 @@
                                 timestamp: assistantTs,
                                 slash_command: assistantSlash || undefined,
                                 slash_command_failed: assistantFailed,
+                                routing_badge: data.routing_badge || undefined,
                                 usage: normalizeUsagePayload(data.usage) || undefined,
                             });
                             if (el && el.dataset) el.dataset.controlRequestId = cid;
@@ -18396,6 +18427,7 @@
                                 timestamp: assistantTs,
                                 slash_command: assistantSlash || undefined,
                                 slash_command_failed: assistantFailed,
+                                routing_badge: data.routing_badge || undefined,
                                 usage: normalizeUsagePayload(data.usage) || undefined,
                             };
                             addMessageToUI(data.response, 'assistant', elOpts);
@@ -18421,6 +18453,7 @@
                         timestamp: assistantTs,
                         slash_command: assistantSlash || undefined,
                         slash_command_failed: assistantFailed,
+                        routing_badge: data.routing_badge || undefined,
                         usage: normalizeUsagePayload(data.usage) || undefined,
                     });
                 } else {
@@ -18429,6 +18462,7 @@
                         stampAssistantElFromServer(existing, {
                             content: data.response,
                             report_url: data.report_url,
+                            routing_badge: data.routing_badge || undefined,
                             usage: normalizeUsagePayload(data.usage) || undefined,
                         });
                     }
@@ -18440,6 +18474,7 @@
                     report_url: data.report_url,
                     slash_command: assistantSlash || undefined,
                     slash_command_failed: assistantFailed,
+                    routing_badge: data.routing_badge || undefined,
                     usage: normalizeUsagePayload(data.usage) || undefined,
                 });
 
@@ -18847,7 +18882,7 @@
         const ts = resolveMessageTimestamp(opts.timestamp);
         const timeAgo = formatTimeAgo(ts);
         const timeLabel = timeAgo === 'now' ? 'Just now' : 'Sent ' + timeAgo + ' ago';
-        const sc = normalizeSlashCommandStored(opts.slash_command);
+        const sc = normalizeSlashCommandStored(opts.slash_command || (role === 'assistant' ? CuttleChatMessages.routingAgentSlash(opts.routing_badge) : null));
         let project = projectFromMessageOpts(opts, projects, currentProject);
         if (!project && opts.message_id == null && currentProject) {
             project = currentProject;
@@ -18866,7 +18901,8 @@
             const chips = (enriched && enriched.chips)
                 ? normalizeAgentSlashChips(enriched.chips, null)
                 : [];
-            headerChip = messageHeaderBadgesHtml(chips, !!opts.slash_command_failed, project);
+            headerChip = messageHeaderBadgesHtml(chips, !!opts.slash_command_failed, project)
+                + CuttleChatMessages.renderAssistantStatusHtml(opts, messageDiv.dataset.failed === '1', content, escapeHtmlInline);
         } else if (role === 'user') {
             // Stored user chips are a send-time snapshot (model + effort).
             // Never re-enrich them with live pins — that rewrote every older
@@ -21307,6 +21343,7 @@
                                 report_url: recovered.report_url,
                                 query_id: recovered.query_id,
                                 timestamp: Date.now(),
+                                routing_badge: recovered.routing_badge || undefined,
                                 usage: normalizeUsagePayload(recovered.usage) || undefined,
                             });
                             notifyAssistantResponseReady(currentSessionId, { fromSync: true });
@@ -22162,6 +22199,7 @@
             escapeHtmlInline,
             renderMdLinkChip,
             isSafeMdHref,
+            buildMediaThumbHtml,
         });
         text = codeLinkStructured.text;
         // Live array: handle/git linking below pushes chips the restore

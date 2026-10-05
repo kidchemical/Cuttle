@@ -841,6 +841,28 @@ def _watch_choice(card):
     return card.locator('[data-action-form-option]').first
 
 
+def test_render_watch_recovers_server_saved_attachment(browser, static_server):
+    world = EffectsWorld([PENDING_WATCH])
+    world.job_manual = True
+    page, frame, errors = _open(browser, static_server, world)
+    try:
+        _send_and_wait_card(frame, 'render batch')
+        # The completion service has already persisted this row; watch only syncs.
+        world._append('assistant', 'Render frames complete — representative frame')
+        world.job_final = {'state': 'done', 'percent': 100, 'label': 'Done',
+                           'run_id': 'run-1', 'render_result': {
+                               'success': True, 'state': 'delivered',
+                               'attachments': [{'message_id': world.history[-1]['id'], 'stage': 'frames'}]}}
+        world.job_finish = True
+        frame.get_by_text('Render frames complete — representative frame', exact=True).wait_for(timeout=25000)
+        assert world.followup_posts == []
+        assert world.chat_posts == 1
+        assert frame.get_by_text('Render frames complete — representative frame', exact=True).count() == 1
+        assert errors == []
+    finally:
+        page.close()
+
+
 def test_watch_resume_choice_sends_once_in_own_session(
         browser, static_server):
     # Resume continuation: the persisted resume choice drives exactly one
@@ -1363,5 +1385,45 @@ def test_watch_resume_failed_locks_without_send(browser, static_server):
         page.wait_for_timeout(2000)
         assert world.chat_posts == 1  # initial send only, never resumed
         assert errors == []
+    finally:
+        page.close()
+
+
+def test_restart_submission_shows_waiting_count_before_status_poll(browser, static_server):
+    from api.flask_restart import canonicalize_restart_form
+    from playwright.sync_api import expect
+    spec = canonicalize_restart_form({'title': 'Restart', 'options': [
+        {'id': 'when-idle', 'label': 'Wait', 'action': 'flask.restart', 'params': {'mode': 'when-idle'}}]})
+    world = EffectsWorld([_pending('flask-restart-g3', spec)])
+    world.run_reply = {
+        'success': True, 'toast': 'Flask restart acknowledged', 'lock': 'form',
+        'selected': ['when-idle'], 'session_id': '42',
+        'flask_restart': {'restart_id': 'new-wait', 'state': 'waiting_for_idle',
+                          'mode': 'when-idle', 'active_work': {'active_count': 3}},
+    }
+    # This is an earlier restart's healthy result, not evidence for the new request.
+    world.restart_status = {'status': {'restart_id': 'previous', 'state': 'healthy'},
+                            'live_generation': 3, 'restart_form_id': ''}
+    page, frame, errors = _open(browser, static_server, world)
+    try:
+        card = _send_and_wait_card(frame, 'offer restart')
+        expect(card.locator('[data-action-form-option]')).to_have_count(5)
+        idle = card.locator('[data-action-form-option="when-idle"]')
+        expect(idle).to_be_enabled()
+        page.frames[1].evaluate(_GATE_JS_TMPL % json.dumps('/api/flask/restart/status'))
+        idle.click()
+        progress = card.locator('.cuttle-action-form-progress-label')
+        expect(progress).to_contain_text('Waiting for 3 active tasks to finish')
+        assert 'is-pending' in (card.get_attribute('class') or '')
+        _gate_release(frame)
+        expect(progress).to_contain_text('Waiting for 3 active tasks to finish')
+        assert 'Restart finished' not in card.inner_text()
+        world.restart_status = {'status': {'restart_id': 'new-wait', 'state': 'waiting_for_idle'},
+                                'active_work': {'active_count': 2}, 'live_generation': 3, 'restart_form_id': ''}
+        expect(progress).to_contain_text('Waiting for 2 active tasks to finish', timeout=10000)
+        world.restart_status['status']['state'] = 'healthy'
+        expect(progress).to_contain_text('Flask restarted', timeout=10000)
+        assert 'is-pending' not in (card.get_attribute('class') or '')
+        assert not errors
     finally:
         page.close()

@@ -236,3 +236,30 @@ See [SUPERVISED_COORDINATOR.md](./SUPERVISED_COORDINATOR.md). Strategy type
 ## Future hooks
 
 Routing decisions include a `decision_id` and `source` (`router` / `default` / `escalation` / `fallback` / …) so later telemetry can correlate outcomes without changing the schema.
+
+### Reply selection chip (experimental)
+
+Enable **Settings → Experimental → Router selection chip**, or use
+`PYTHONPATH=src .venv/bin/python -m api.experimental set router_selection_chip on`.
+New routed replies replace the existing `🔀` prose headline with a compact chip.
+It uses the agent badge’s segmented styling: icon | status | message. The
+message shows the routing reason with CSS ellipsis; the tooltip reveals the full
+message. A separate normal agent chip shows the final harness, model, and effort
+reported by the runner. Unspecified effort stays hidden. Status names are Router,
+Reroute (escalation), and Fallback.
+Default-agent execution when the routing brain never ran uses **Warning** with the recorded
+default-agent recovery message, rather than presenting a routing success. Explicit/manual and sticky choices do
+not get an automatic-routing chip. Missing reason metadata produces no invented
+explanation. The flag defaults off and respects `CUTTLE_EXPERIMENTAL=0`.
+
+The router dispatch annotates results with `routing_badge`, shaped by
+`api.chat_metadata.routing_badge_from_router`. The shared saver persists that
+snapshot; sync/SSE and pending/history recovery carry it to `chat_messages`' pure
+renderer. The same status renderer presents **Error** for existing failed-reply
+classification; regular agent chips retain their existing error/Stop styling.
+Previously saved prose headlines remain unchanged. Disabling the flag
+restores prose for new turns; recorded chips remain visible in history.
+
+Teardown: remove the registry row and dispatch gate, badge shaper/persistence and
+transport field, frontend metadata forwarding/renderer and chip CSS. No separate
+route or background polling service is introduced.
