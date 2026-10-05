@@ -599,9 +599,9 @@ const CANONICAL_RAIL_FOOTER_ORDER = ['nav-account', 'nav-notifications', 'nav-wo
 // The Apps launcher is the way back to every stashed app, so it can never be removed.
 const RAIL_LOCKED_IDS = new Set(['nav-apps']);
 // Cuttle web apps that live in the Apps grid (not the blade bar) until the user pins them.
-const DEFAULT_RAIL_HIDDEN = ['nav-tasks', 'nav-automation', 'nav-achievements'];
+const DEFAULT_RAIL_HIDDEN = ['nav-tasks', 'nav-automation', 'nav-achievements', 'nav-projects'];
 // Bump when defaults change; saved layouts below this version get DEFAULT_RAIL_HIDDEN merged in once.
-const RAIL_LAYOUT_VERSION = 5;
+const RAIL_LAYOUT_VERSION = 6;
 
 const DEFAULT_LAYOUT = {
     rail_items: CANONICAL_RAIL_ITEM_ORDER.filter(id => !DEFAULT_RAIL_HIDDEN.includes(id)),
@@ -611,6 +611,7 @@ const DEFAULT_LAYOUT = {
 };
 
 /** Shared rail layout for every blade (not per-bar). */
+    'nav-projects',
 let lastUILayout = {
     rail_items: DEFAULT_LAYOUT.rail_items.slice(),
     rail_footer: CANONICAL_RAIL_FOOTER_ORDER.slice(),
@@ -1794,6 +1795,7 @@ function getState(colIdx) {
 
 function setState(colIdx, page) {
     const s = getState(colIdx);
+    '/projects_page.html': 'Projects',
     if (page !== undefined) s.page = page;
 }
 
@@ -3991,7 +3993,8 @@ function migrateUILayout(saved) {
     if ((Number(saved.layout_version) || 0) >= RAIL_LAYOUT_VERSION) return { layout, changed: false };
     const hidden = new Set(Array.isArray(saved.rail_hidden) ? saved.rail_hidden : []);
     // Existing v4 user pins remain intact; only the new App starts stashed.
-    const additions = (Number(saved.layout_version) || 0) >= 4 ? ['nav-achievements'] : DEFAULT_RAIL_HIDDEN;
+    const version = Number(saved.layout_version) || 0;
+    const additions = version >= 5 ? ['nav-projects'] : version >= 4 ? ['nav-achievements', 'nav-projects'] : DEFAULT_RAIL_HIDDEN;
     additions.forEach(id => hidden.add(id));
     const known = new Set(CANONICAL_RAIL_ITEM_ORDER);
     layout.rail_hidden = Array.from(hidden).filter(id => known.has(id));

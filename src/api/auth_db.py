@@ -1089,6 +1089,35 @@ class AuthDatabase:
         conn.close()
         return dict(row) if row else None
     
+    def get_project_activity(self, user_id, project_id, project_name, paths, *, before_id=None, limit=40):
+        """User-scoped project feed + compact totals; IDs survive location changes."""
+        paths = list(paths or [])[:32]
+        marks = ','.join('?' for _ in paths) or 'NULL'
+        scope = f"""cs.user_id = ? AND cs.is_active = 1 AND
+            (cs.project_id = ? OR (cs.project_id IS NULL AND
+             (cs.project_name = ? OR cs.project_path IN ({marks}))))"""
+        args = [int(user_id), int(project_id), project_name, *paths]
+        from contextlib import closing
+        with closing(self._get_connection()) as conn:
+            stats = dict(conn.execute(f"""
+                SELECT COUNT(DISTINCT cs.id) AS chats, COUNT(cm.id) AS messages,
+                       MAX(cm.timestamp) AS last_activity
+                FROM chat_sessions cs LEFT JOIN chat_messages cm
+                  ON cm.chat_session_id = cs.id AND cm.role IN ('user','assistant')
+                WHERE {scope}
+            """, args).fetchone())
+            cursor_filter = ' AND cm.id < ?' if before_id is not None else ''
+            feed_args = [*args, *([int(before_id)] if before_id is not None else []), max(1, min(int(limit), 100))]
+            rows = conn.execute(f"""
+                SELECT cm.id, cs.id AS session_id, cs.session_name, cm.role,
+                       substr(cm.content, 1, 1200) AS content, cm.timestamp
+                FROM chat_sessions cs JOIN chat_messages cm ON cm.chat_session_id = cs.id
+                WHERE {scope} AND cm.role IN ('user','assistant'){cursor_filter}
+                ORDER BY cm.id DESC LIMIT ?
+            """, feed_args).fetchall()
+        feed = [dict(row) for row in rows]
+        return {'stats': stats, 'messages': feed, 'next_before_id': feed[-1]['id'] if feed else None}
+
     def get_user_chat_sessions(self, user_id: int) -> List[Dict[str, Any]]:
         """Get all chat sessions for a user (list hides empty never-messaged sessions).
 

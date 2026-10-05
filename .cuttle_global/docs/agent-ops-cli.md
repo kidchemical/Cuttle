@@ -74,3 +74,13 @@ $env:PYTHONPATH = "src"
 
 Use PowerShell backticks for multiline continuation and single-quoted JSON
 arguments; POSIX examples use backslashes for continuation.
+
+
+## Projects registry
+
+Use `PYTHONPATH=src .venv/bin/python -m api.projects_cli` from the Cuttle root:
+`list`, `get <id>`, `check <absolute-path> …`, `register --name … --path …`,
+`update <id> --json '{"paths":["/host/project","D:/project"]}'`, and
+`remove <id> --confirm-name …`. Locations resolve in order on the Host, never the
+viewing client. Removal preserves worktree files and chats. Details:
+[Projects App](../../.cuttle/docs/projects-app.md).

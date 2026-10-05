@@ -214,7 +214,8 @@
             return;
         }
 
-        const match = projects.find((p) => p.path === saved);
+        const requestedId = new URLSearchParams(window.location.search).get('project_id');
+        const match = projects.find(p => String(p.id) === requestedId) || projects.find((p) => p.path === saved);
         if (match) els.project.value = match.path;
         else els.project.value = projects[0].path;
     }

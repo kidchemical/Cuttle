@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 from contextlib import contextmanager
 
 from managers.cuttle_scaffold import ensure_cuttle_scaffold
+from managers.project_locations import check_paths, validate_paths, require_project_path
 
 
 def _live_project_path(path: Optional[str]) -> str:
@@ -32,6 +33,39 @@ def _live_project_path(path: Optional[str]) -> str:
     except Exception:
         pass
     return raw
+
+
+def _validated_project_changes(kwargs):
+    allowed = {'name', 'description', 'tags', 'paths', 'path', 'repo_url', 'archived'}
+    if set(kwargs) - allowed:
+        raise ValueError('Unsupported project setting.')
+    values = dict(kwargs)
+    if 'path' in values:
+        if 'paths' in values:
+            raise ValueError('Use paths or path, not both.')
+        values['paths'] = [values.pop('path')]
+    if 'paths' in values:
+        values['paths'] = validate_paths(values['paths'])
+    for field in ('name', 'description', 'repo_url'):
+        if field in values and not isinstance(values[field], str):
+            raise ValueError(f'{field} must be text.')
+    if len(values.get('description', '')) > 4000 or len(values.get('repo_url', '')) > 2048:
+        raise ValueError('Description or repository URL is too long.')
+    if 'name' in values:
+        values['name'] = values['name'].strip()
+        if not values['name'] or len(values['name']) > 120:
+            raise ValueError('Project name must contain 1–120 characters.')
+    if 'tags' in values and (not isinstance(values['tags'], list) or
+            not all(isinstance(t, str) and len(t) <= 80 for t in values['tags']) or len(values['tags']) > 32):
+        raise ValueError('Tags must be a list of up to 32 short strings.')
+    if 'archived' in values and not isinstance(values['archived'], bool):
+        raise ValueError('Archived must be true or false.')
+    if 'repo_url' in values:
+        url = values['repo_url'].strip()
+        if url and not (url.startswith(('https://', 'http://', 'ssh://', 'git@'))):
+            raise ValueError('Use an HTTP(S) or SSH repository URL.')
+        values['repo_url'] = url
+    return values
 
 
 class ProjectManager:
@@ -176,6 +210,28 @@ class ProjectManager:
         except Exception as e:
             print(f"Warning: Could not normalize default project name: {e}")
     
+    def register_project(self, name, path, description='', tags=None, repo_url=''):
+        values = _validated_project_changes({'name': name, 'paths': [path],
+                    'description': description, 'tags': tags or [], 'repo_url': repo_url})
+        health = check_paths(values['paths'])
+        if not health['available']:
+            raise ValueError('The folder must be accessible on the Cuttle host.')
+        with self.get_db_connection() as conn:
+            if conn.execute('SELECT 1 FROM projects WHERE name = ?', (values['name'],)).fetchone():
+                raise ValueError('A project with this name already exists.')
+        ensure_cuttle_scaffold(health['resolved_path'], project_name=values['name'])
+        with self.get_db_connection() as conn:
+            cursor = conn.execute("""
+                INSERT INTO projects(name, type, path, description, tags, is_active, config)
+                VALUES (?, 'local', ?, ?, ?, 0, ?)
+            """, (values['name'], values['paths'][0], values['description'],
+                   json.dumps(values['tags']), json.dumps({'paths': values['paths'], 'repo_url': values['repo_url']})))
+            project_id = cursor.lastrowid
+            conn.execute('INSERT INTO project_history(project_id, action, details) VALUES (?, ?, ?)',
+                         (project_id, 'created', json.dumps(values)))
+            conn.commit()
+        return project_id
+
     def add_local_project(self, name: str, path: str, description: str = "", tags: List[str] = None) -> bool:
         """Add a local project"""
         import time
@@ -319,68 +375,44 @@ class ProjectManager:
             print(f"Error adding GitLab project: {e}")
             return False
     
-    def get_projects(self) -> List[Dict[str, Any]]:
-        """Get all projects"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT id, name, type, path, description, tags, created_at, updated_at, 
-                   last_accessed, is_active, config
-            FROM projects
-            ORDER BY last_accessed DESC, name ASC
-        ''')
-        
-        projects = []
-        for row in cursor.fetchall():
-            projects.append({
-                'id': row[0],
-                'name': row[1],
-                'type': row[2],
-                'path': _live_project_path(row[3]),
-                'description': row[4],
-                'tags': json.loads(row[5]) if row[5] else [],
-                'created_at': row[6],
-                'updated_at': row[7],
-                'last_accessed': row[8],
-                'is_active': bool(row[9]),
-                'config': json.loads(row[10]) if row[10] else {}
-            })
-        
-        conn.close()
-        return projects
-    
+    def _project_record(self, row):
+        config = json.loads(row[10]) if row[10] else {}
+        stored_path = row[3] or ''
+        paths = config.get('paths') or [stored_path]
+        # Preserve legacy lab-path compatibility until the user saves an explicit list.
+        if 'paths' not in config:
+            mapped = _live_project_path(stored_path)
+            if mapped and mapped != stored_path:
+                paths = [mapped, stored_path]
+        health = check_paths(paths)
+        return {
+            'id': row[0], 'name': row[1], 'type': row[2],
+            'path': health['resolved_path'] or stored_path,
+            'stored_path': stored_path, 'paths': paths,
+            'description': row[4], 'tags': json.loads(row[5]) if row[5] else [],
+            'created_at': row[6], 'updated_at': row[7], 'last_accessed': row[8],
+            'is_active': bool(row[9]), 'config': config,
+            'archived': bool(config.get('archived', False)), **health,
+        }
+
+    def get_projects(self, include_archived=False) -> List[Dict[str, Any]]:
+        with self.get_db_connection() as conn:
+            rows = conn.execute("""
+                SELECT id, name, type, path, description, tags, created_at, updated_at,
+                       last_accessed, is_active, config FROM projects
+                ORDER BY last_accessed DESC, name ASC
+            """).fetchall()
+        projects = [self._project_record(row) for row in rows]
+        return projects if include_archived else [p for p in projects if not p['archived']]
+
     def get_project(self, project_id: int) -> Optional[Dict[str, Any]]:
-        """Get a specific project by ID"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT id, name, type, path, description, tags, created_at, updated_at, 
-                   last_accessed, is_active, config
-            FROM projects
-            WHERE id = ?
-        ''', (project_id,))
-        
-        row = cursor.fetchone()
-        conn.close()
-        
-        if row:
-            return {
-                'id': row[0],
-                'name': row[1],
-                'type': row[2],
-                'path': _live_project_path(row[3]),
-                'description': row[4],
-                'tags': json.loads(row[5]) if row[5] else [],
-                'created_at': row[6],
-                'updated_at': row[7],
-                'last_accessed': row[8],
-                'is_active': bool(row[9]),
-                'config': json.loads(row[10]) if row[10] else {}
-            }
-        return None
-    
+        with self.get_db_connection() as conn:
+            row = conn.execute("""
+                SELECT id, name, type, path, description, tags, created_at, updated_at,
+                       last_accessed, is_active, config FROM projects WHERE id = ?
+            """, (project_id,)).fetchone()
+        return self._project_record(row) if row else None
+
     def switch_to_project(self, project_id: int) -> bool:
         """Switch to a specific project"""
         import time
@@ -389,8 +421,9 @@ class ProjectManager:
         for attempt in range(max_retries):
             try:
                 project = self.get_project(project_id)
-                if not project:
+                if not project or project.get('archived'):
                     return False
+                require_project_path(project)
                 
                 with self.get_db_connection() as conn:
                     cursor = conn.cursor()
@@ -427,95 +460,60 @@ class ProjectManager:
         return False
     
     def update_project(self, project_id: int, **kwargs) -> bool:
-        """Update project information"""
-        try:
-            conn = sqlite3.connect(self.db_path, timeout=30.0)
-            cursor = conn.cursor()
-            
-            # Build update query dynamically
-            update_fields = []
-            values = []
-            
-            for key, value in kwargs.items():
-                if key in ['name', 'description', 'tags']:
-                    if key == 'tags':
-                        value = json.dumps(value)
-                    update_fields.append(f"{key} = ?")
-                    values.append(value)
-            
-            if update_fields:
-                update_fields.append("updated_at = CURRENT_TIMESTAMP")
-                values.append(project_id)
-                
-                query = f"UPDATE projects SET {', '.join(update_fields)} WHERE id = ?"
-                cursor.execute(query, values)
-                
-                self._log_project_action(project_id, 'updated', kwargs)
-            
-            conn.commit()
-            conn.close()
-            return True
-        except Exception as e:
-            print(f"Error updating project: {e}")
-            return False
-    
-    def delete_project(self, project_id: int) -> bool:
-        """Delete a project"""
-        try:
-            project = self.get_project(project_id)
-            if not project:
+        """Atomic registry update. Path changes preserve identity and historical chats."""
+        values = _validated_project_changes(kwargs)
+        with self.get_db_connection() as conn:
+            # Read + merge under the same lock so concurrent changes preserve unknown config.
+            conn.execute('BEGIN IMMEDIATE')
+            row = conn.execute('SELECT config FROM projects WHERE id = ?', (project_id,)).fetchone()
+            if row is None:
                 return False
-            
-            conn = sqlite3.connect(self.db_path, timeout=30.0)
-            cursor = conn.cursor()
-            
-            cursor.execute('DELETE FROM projects WHERE id = ?', (project_id,))
-            cursor.execute('DELETE FROM project_history WHERE project_id = ?', (project_id,))
-            
-            self._log_project_action(project_id, 'deleted', {'project_name': project['name']})
-            
+            config = json.loads(row[0]) if row[0] else {}
+            fields, args = [], []
+            for key, value in values.items():
+                if key in ('paths', 'repo_url', 'archived'):
+                    config[key] = value
+                    if key == 'paths':
+                        fields.append('path = ?')
+                        args.append(value[0])
+                else:
+                    fields.append(key + ' = ?')
+                    args.append(json.dumps(value) if key == 'tags' else value)
+            fields += ['config = ?', 'updated_at = CURRENT_TIMESTAMP']
+            args += [json.dumps(config), project_id]
+            conn.execute('UPDATE projects SET ' + ', '.join(fields) + ' WHERE id = ?', args)
+            conn.execute('INSERT INTO project_history(project_id, action, details) VALUES (?, ?, ?)',
+                         (project_id, 'updated', json.dumps(values)))
             conn.commit()
-            conn.close()
-            return True
-        except Exception as e:
-            print(f"Error deleting project: {e}")
-            return False
-    
+        if self.current_project and self.current_project['id'] == project_id:
+            self.current_project = self.get_project(project_id)
+        return True
+
+    def delete_project(self, project_id: int) -> bool:
+        """Unregister only; preserve worktree, chat history, and the registry audit log."""
+        with self.get_db_connection() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            row = conn.execute('SELECT name FROM projects WHERE id = ?', (project_id,)).fetchone()
+            if row is None:
+                return False
+            conn.execute('DELETE FROM projects WHERE id = ?', (project_id,))
+            conn.execute('INSERT INTO project_history(project_id, action, details) VALUES (?, ?, ?)',
+                         (project_id, 'deleted', json.dumps({'project_name': row[0]})))
+            conn.commit()
+        if self.current_project and self.current_project['id'] == project_id:
+            self.current_project = None
+        return True
+
     def get_current_project(self) -> Optional[Dict[str, Any]]:
-        """Get the currently active project"""
+        if self.current_project:
+            self.current_project = self.get_project(self.current_project['id'])
         return self.current_project
-    
+
     def load_current_project(self):
-        """Load the currently active project from database"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT id, name, type, path, description, tags, created_at, updated_at, 
-                   last_accessed, is_active, config
-            FROM projects
-            WHERE is_active = 1
-            LIMIT 1
-        ''')
-        
-        row = cursor.fetchone()
-        conn.close()
-        
-        if row:
-            self.current_project = {
-                'id': row[0],
-                'name': row[1],
-                'type': row[2],
-                'path': _live_project_path(row[3]),
-                'description': row[4],
-                'tags': json.loads(row[5]) if row[5] else [],
-                'created_at': row[6],
-                'updated_at': row[7],
-                'last_accessed': row[8],
-                'is_active': bool(row[9]),
-                'config': json.loads(row[10]) if row[10] else {}
-            }
-    
+        with self.get_db_connection() as conn:
+            row = conn.execute('SELECT id FROM projects WHERE is_active = 1 LIMIT 1').fetchone()
+        self.current_project = self.get_project(row[0]) if row else None
+
     def get_project_history(self, project_id: int = None, limit: int = 50) -> List[Dict[str, Any]]:
         """Get project history"""
         conn = sqlite3.connect(self.db_path)
@@ -525,7 +523,7 @@ class ProjectManager:
             cursor.execute('''
                 SELECT ph.id, ph.project_id, p.name, ph.action, ph.timestamp, ph.details
                 FROM project_history ph
-                JOIN projects p ON ph.project_id = p.id
+                LEFT JOIN projects p ON ph.project_id = p.id
                 WHERE ph.project_id = ?
                 ORDER BY ph.timestamp DESC
                 LIMIT ?
@@ -534,7 +532,7 @@ class ProjectManager:
             cursor.execute('''
                 SELECT ph.id, ph.project_id, p.name, ph.action, ph.timestamp, ph.details
                 FROM project_history ph
-                JOIN projects p ON ph.project_id = p.id
+                LEFT JOIN projects p ON ph.project_id = p.id
                 ORDER BY ph.timestamp DESC
                 LIMIT ?
             ''', (limit,))

@@ -19,7 +19,9 @@ from __future__ import annotations
 
 from functools import wraps
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, send_from_directory
+from pathlib import Path
+from api.http_authz import current_user, is_owner_user
 
 from api.http_authz import authenticated_required, owner_required
 
@@ -52,7 +54,8 @@ def requires_project_manager(f):
 def get_projects():
     """Get all projects"""
     try:
-        projects = project_manager.get_projects()
+        projects = (project_manager.get_projects(include_archived=True)
+                    if request.args.get('include_archived') == '1' else project_manager.get_projects())
         print(f"[API] GET /api/projects: success, count={len(projects)}")
         return jsonify({
             'success': True,
@@ -217,6 +220,8 @@ def update_project(project_id):
                 'error': 'Failed to update project'
             }), 500
 
+    except (ValueError, TypeError) as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
     except Exception as e:
         return jsonify({
             'success': False,
@@ -340,3 +345,114 @@ def get_project_stats():
             'success': False,
             'error': str(e)
         }), 500
+
+
+@projects_bp.route('/projects/app/access')
+@authenticated_required
+def projects_app_access():
+    return jsonify({'success': True, 'can_edit': is_owner_user(current_user())})
+
+
+@projects_bp.route('/projects/paths/check', methods=['POST'])
+@owner_required
+def check_project_paths():
+    from managers.project_locations import check_paths, validate_paths
+    try:
+        body = request.get_json(silent=True) or {}
+        return jsonify({'success': True, 'data': check_paths(validate_paths(body.get('paths')))})
+    except (ValueError, TypeError, AttributeError) as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+
+
+@projects_bp.route('/projects/<int:project_id>/overview')
+@requires_project_manager
+@authenticated_required
+def project_overview(project_id):
+    from managers.project_details import config_inventory, repository_summary
+    project = project_manager.get_project(project_id)
+    if not project:
+        return jsonify({'success': False, 'error': 'Project not found'}), 404
+    return jsonify({'success': True, 'data': {
+        'project': project, 'repository': repository_summary(project),
+        'configuration': config_inventory(project),
+        'changes': project_manager.get_project_history(project_id, 15),
+    }})
+
+
+@projects_bp.route('/projects/<int:project_id>/activity')
+@requires_project_manager
+@authenticated_required
+def project_activity(project_id):
+    from api.auth_db import get_auth_db
+    project = project_manager.get_project(project_id)
+    if not project:
+        return jsonify({'success': False, 'error': 'Project not found'}), 404
+    try:
+        before = request.args.get('before_id')
+        activity = get_auth_db().get_project_activity(
+            current_user()['id'], project_id, project['name'], project.get('paths', [project['path']]),
+            before_id=int(before) if before else None)
+    except ValueError:
+        return jsonify({'success': False, 'error': 'Invalid feed cursor'}), 400
+    return jsonify({'success': True, 'data': activity})
+
+
+@projects_bp.route('/projects/<int:project_id>/chat', methods=['POST'])
+@requires_project_manager
+@authenticated_required
+def new_project_chat(project_id):
+    from api.auth_db import get_auth_db
+    from managers.project_locations import require_project_path, ProjectUnavailable
+    project = project_manager.get_project(project_id)
+    if not project:
+        return jsonify({'success': False, 'error': 'Project not found'}), 404
+    try:
+        path = require_project_path(project)
+    except ProjectUnavailable as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 409
+    db = get_auth_db()
+    user = current_user()
+    sid = db.create_chat_session(user['id'])
+    db.set_session_project(sid, user['id'], project_id=project_id, project_name=project['name'], project_path=path)
+    return jsonify({'success': True, 'session_id': sid})
+
+
+@projects_bp.route('/projects/<int:project_id>/remove', methods=['POST'])
+@requires_project_manager
+@owner_required
+def remove_project_confirmed(project_id):
+    project = project_manager.get_project(project_id)
+    if not project:
+        return jsonify({'success': False, 'error': 'Project not found'}), 404
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict) or body.get('confirm_name') != project['name']:
+        return jsonify({'success': False, 'error': 'Type the exact project name to remove it.'}), 400
+    success = project_manager.delete_project(project_id)
+    return jsonify({'success': success})
+
+
+projects_pages_bp = Blueprint('projects_pages', __name__)
+
+
+@projects_pages_bp.route('/projects_page.html')
+@authenticated_required
+def projects_app_page():
+    return send_from_directory(Path(__file__).resolve().parents[1] / 'web', 'projects_page.html')
+
+
+@projects_bp.route('/projects/register', methods=['POST'])
+@requires_project_manager
+@owner_required
+def register_existing_project():
+    try:
+        body = request.get_json(silent=True) or {}
+        if not isinstance(body, dict):
+            raise ValueError('Expected a project object.')
+        project_id = project_manager.register_project(
+            body.get('name'), body.get('path'), body.get('description', ''),
+            body.get('tags', []), body.get('repo_url', ''))
+        return jsonify({'success': True, 'project_id': project_id})
+    except (ValueError, TypeError) as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+    except Exception:
+        return jsonify({'success': False, 'error': 'Could not register project. Check folder permissions and duplicate names.'}), 409
