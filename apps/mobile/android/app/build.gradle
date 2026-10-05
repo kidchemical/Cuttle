@@ -48,13 +48,24 @@ apply from: 'capacitor.build.gradle'
 
 def repoRoot = file("${rootProject.projectDir}/../../..")
 def srcDir = new File(repoRoot, "src")
-def venvPy = new File(repoRoot, ".venv/Scripts/python.exe")
-def pythonExec = venvPy.exists() ? venvPy.absolutePath : "python"
+// Resolve only when a build task runs, so IDE sync does not require Python.
+// Never use PATH Python: the hash/publish module needs the Cuttle venv deps.
+def pythonExec = {
+    def venvPath = File.separator == '\\' ? ".venv/Scripts/python.exe" : ".venv/bin/python"
+    def venvPy = new File(repoRoot, venvPath)
+    if (!venvPy.isFile()) {
+        throw new GradleException("Cuttle Python venv missing: ${venvPy}. " +
+            "Create .venv at the repository root and install src/requirements/requirements.txt.")
+    }
+    return venvPy.absolutePath
+}
 
 tasks.register("writeCuttleShellHash", Exec) {
     workingDir repoRoot
     environment "PYTHONPATH", srcDir.absolutePath
-    commandLine pythonExec, "-m", "api.mobile_android_update", "write-hash"
+    doFirst {
+        commandLine pythonExec(), "-m", "api.mobile_android_update", "write-hash"
+    }
 }
 
 tasks.named("preBuild").configure {
@@ -70,7 +81,7 @@ android.applicationVariants.configureEach { variant ->
             exec {
                 workingDir repoRoot
                 environment "PYTHONPATH", srcDir.absolutePath
-                commandLine pythonExec, "-m", "api.mobile_android_update", "publish"
+                commandLine pythonExec(), "-m", "api.mobile_android_update", "publish"
             }
         }
     }
