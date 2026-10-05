@@ -57,7 +57,10 @@ def _norm_target(raw: Any) -> Tuple[Optional[ExecutionTarget], Optional[str]]:
     if not isinstance(raw, dict):
         return None, f"target must be an object {{agent, model}}, got {raw!r}"
     t, err = validate_execution_target(
-        str(raw.get("agent") or ""), str(raw.get("model") or ""), allow_empty_model=True
+        str(raw.get("agent") or ""),
+        str(raw.get("model") or ""),
+        allow_empty_model=True,
+        effort=raw.get("effort"),
     )
     if err or not t:
         return None, err or "invalid target"
@@ -189,76 +192,59 @@ def normalize_use_case(raw: Any) -> Tuple[Optional[Dict[str, Any]], Optional[str
 
 # ── defaults (seeded on fresh install) ───────────────────────────────────────
 
-def default_use_cases() -> List[Dict[str, Any]]:
-    """Three tested starter blocks, ordered simple → complex.
+def _uc(uc_id, name, description, priority, task_types, targets, *, difficulties=None, code_changes=None):
+    return {
+        "id": uc_id,
+        "name": name,
+        "description": description,
+        "enabled": True,
+        "priority": priority,
+        "criteria": {
+            "task_types": list(task_types),
+            "difficulties": list(difficulties or []),
+            "code_changes": code_changes,
+            "keywords": [],
+        },
+        "routing": {
+            "targets": [{"agent": a, "model": m} for a, m in targets],
+            "never_use": [],
+        },
+    }
 
-    Priorities encode complexity: smaller number = simpler work = matched
-    first. Frontier must stay choosable for hard tasks, so its criteria
-    (difficulty=high) do not overlap the ordinary coding block.
+
+def default_use_cases() -> List[Dict[str, Any]]:
+    """Starter table: one block per *kind of work*, plus a catch-all.
+
+    The classifier/brain decides the kind of work; this table decides which
+    harness is best at it. Targets use agent defaults (empty model) except
+    Cursor, so a fresh install never names a model it may not have.
+    Priorities only order overlapping blocks (smaller = matched first);
+    ``general-chat`` / ``coding-model`` / ``frontier-coding`` keep their
+    original priorities so the seed migration below still recognizes them.
     """
+    auto = ("cursor", "auto")
+    grok = ("cursor", "grok-4.6")
+    codex = ("codex", "")
+    claude = ("claude", "")
     return [
-        {
-            "id": "general-chat",
-            "name": "General chat / simple requests",
-            "description": "Quick questions, summaries, small asks — no code changes.",
-            "enabled": True,
-            "priority": 10,
-            "criteria": {
-                "task_types": ["basic_ask"],
-                "difficulties": ["low"],
-                "code_changes": False,
-                "keywords": [],
-            },
-            "routing": {
-                "targets": [
-                    {"agent": "cursor", "model": "auto"},
-                    {"agent": "cursor", "model": "grok-4.6"},
-                    {"agent": "codex", "model": ""},
-                ],
-                "never_use": [],
-            },
-        },
-        {
-            "id": "coding-model",
-            "name": "Coding model",
-            "description": "Ordinary low/medium coding and debugging work.",
-            "enabled": True,
-            "priority": 20,
-            "criteria": {
-                "task_types": ["coding", "debugging"],
-                "difficulties": ["low", "medium"],
-                "code_changes": None,
-                "keywords": [],
-            },
-            "routing": {
-                "targets": [
-                    {"agent": "cursor", "model": "auto"},
-                    {"agent": "cursor", "model": "grok-4.6"},
-                    {"agent": "codex", "model": ""},
-                ],
-                "never_use": [],
-            },
-        },
-        {
-            "id": "frontier-coding",
-            "name": "Frontier coding model",
-            "description": "Hard coding / debugging / architecture work — spend the good model.",
-            "enabled": True,
-            "priority": 30,
-            "criteria": {
-                "task_types": ["coding", "debugging", "architecture"],
-                "difficulties": ["high"],
-                "code_changes": None,
-                "keywords": [],
-            },
-            "routing": {
-                "targets": [
-                    {"agent": "cursor", "model": "grok-4.6"},
-                    {"agent": "codex", "model": ""},
-                ],
-                "never_use": [],
-            },
-        },
+        _uc("general-chat", "Quick chat", "Conversation and quick general questions — fast and cheap.",
+            10, ["basic_ask"], [auto, codex, claude], code_changes=False),
+        _uc("ops", "Ops & chores", "Git, restarts, deploys, workers, installs, cleanup.",
+            12, ["ops"], [auto, codex]),
+        _uc("writing", "Writing & docs", "Release notes, docs, summaries, emails — prose quality matters.",
+            14, ["writing"], [claude, auto, codex]),
+        _uc("explain", "Explain the codebase", "Questions about this repo, chats, or logs — read, don't change.",
+            16, ["explain"], [auto, claude, codex], difficulties=["low", "medium"]),
+        _uc("research", "Research", "External lookups and comparisons.",
+            18, ["research"], [codex, claude, auto]),
+        _uc("coding-model", "Everyday coding", "Ordinary coding and debugging.",
+            20, ["coding", "debugging"], [auto, codex, claude], difficulties=["low", "medium"]),
+        _uc("architecture", "Architecture & design", "Design, plans, and cross-cutting restructures.",
+            25, ["architecture"], [grok, codex, claude]),
+        _uc("frontier-coding", "Deep work", "Broad or ambiguous coding, debugging, or investigation — spend the good model.",
+            30, ["coding", "debugging", "explain"], [grok, codex, claude], difficulties=["high"]),
+        _uc("anything-else", "Anything else", "Catch-all so every turn has a declared lane.",
+            90, [], [auto, codex]),
     ]
 
 
@@ -408,9 +394,9 @@ def apply_table(
     """Authority layer 3: the declared table overrides the brain's choice.
 
     The use case's ordered ``targets`` chain replaces the brain's target
-    selection: chain[0] runs the task, chain[1] is the escalation hop
-    (task failure), chain[2:] are the fallback layers (transport failure or
-    continued failure). Returns (decision, meta). Never raises; on no match
+    selection: chain[0] runs the task; when it cannot run (quota, auth,
+    missing CLI) chain[1] is tried, then chain[2:] in order. A task failure
+    is terminal (dispatch), so later entries never rerun a failed task. Returns (decision, meta). Never raises; on no match
     the decision is returned unchanged.
     """
     meta: Dict[str, Any] = {"use_case": None, "table_applied": False}
@@ -462,7 +448,7 @@ def apply_table(
         if decision.raw is None:
             decision.raw = {}
         decision.raw["use_case_id"] = uc.get("id")
-        decision.reason = f"use case {uc.get('name')!r}: {decision.reason}"[:240]
         meta["use_case"] = uc.get("id")
+        meta["use_case_name"] = uc.get("name") or uc.get("id")
         meta["table_applied"] = True
     return decision, meta

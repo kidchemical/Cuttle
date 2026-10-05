@@ -420,19 +420,19 @@ def _run_history_policy_case(live, lane, case):
         assert kinds[0] == "session"
         assert kinds[-1] == "done"
         if lane.startswith("pipeline"):
-            # Characterized gap, D1/D2 followup (preexists B1, no fix
-            # here): the pipeline compat entry re-submits unclaimed
-            # (process_message_with_bot -> coordinator status_queue=None
-            # arm), so the fake's custom status chunk cannot reach SSE.
-            # The stream must still carry real session/route-status/done
-            # framing; fake execution is proven by the started/completed
-            # counters and the exact persisted rows below.
-            assert "[route] Routing to top-level agent..." in (
-                drain.status_texts()), (
+            # The pipeline compat entry re-submits unclaimed
+            # (process_message_with_bot -> coordinator arm with
+            # status_queue=None); the entry threads its own queue into the
+            # router/harness runners so executor progress still reaches SSE
+            # after the route-phase frame (CH-000989: the bubble sat on
+            # "Routing to top-level agent..." for the whole routed turn).
+            texts = drain.status_texts()
+            assert "[route] Routing to top-level agent..." in texts, (
                 "pipeline route-phase status must frame the stream")
-            assert stream_status not in drain.status_texts(), (
-                "custom executor chunk must stay absent on pipeline "
-                "SSE until D1/D2 rewires the compat queue")
+            assert stream_status in texts, (
+                "executor status must reach pipeline SSE")
+            assert texts.index("[route] Routing to top-level agent...") < (
+                texts.index(stream_status))
         else:
             assert stream_status in drain.status_texts(), (
                 "exact custom executor chunk must precede terminal")

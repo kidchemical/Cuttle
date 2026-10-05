@@ -127,6 +127,10 @@ def test_router_api_failure_falls_back_to_cursor_auto(router_settings, monkeypat
             raise ProviderError("quota exceeded", retryable=False)
 
     monkeypatch.setattr(
+        "api.agent_router.classify.classifier_settings",
+        lambda: {"fast_path": False, "fast_path_confidence": 1.0},
+    )
+    monkeypatch.setattr(
         "api.agent_router.engine._provider_for",
         lambda cfg: Boom(),
     )
@@ -137,7 +141,8 @@ def test_router_api_failure_falls_back_to_cursor_auto(router_settings, monkeypat
     assert d.target.model == "auto"
 
 
-def test_auto_task_failure_escalates_to_grok(router_settings):
+def test_task_failure_is_terminal(router_settings):
+    """The agent ran and failed: show its output, never rerun on another model."""
     cfg = load_router_config()
     decision = RoutingDecision(
         decision_id="testdec1",
@@ -153,24 +158,95 @@ def test_auto_task_failure_escalates_to_grok(router_settings):
 
     def cursor_runner(prompt, chat_session_id, status_queue=None, project_path=None, model=None, **kw):
         calls.append(model or "auto")
-        if (model or "auto") == "auto":
-            return {
-                "success": True,
-                "response": "[FAIL] Cursor Agent exited with code 1\nbuild failed",
-                "type": "cursor_error",
-            }
-        return {"success": True, "response": "fixed it", "type": "cursor_command"}
+        return {
+            "success": True,
+            "response": "[FAIL] Cursor Agent exited with code 1\nbuild failed",
+            "type": "cursor_error",
+        }
+
+    def codex_runner(*a, **k):
+        calls.append("codex")
+        return {"success": True, "response": "codex ok", "type": "codex_command"}
 
     result = execute_decision(
         decision,
         "fix the build",
         chat_session_id=1,
-        runners={"cursor": cursor_runner, "codex": lambda *a, **k: {}},
+        runners={"cursor": cursor_runner, "codex": codex_runner},
         config=cfg,
     )
-    assert calls == ["auto", "grok-4.6"]
-    assert "fixed it" in result["response"]
-    assert result["router"]["source"] == TargetSource.ESCALATION.value
+    assert calls == ["auto"]
+    assert "build failed" in result["response"]
+    assert "/retry" in result["response"]
+    assert result["router"]["attempts"][0]["failure_kind"] == FailureKind.TASK.value
+
+
+# Verbatim from CH-000989: Cursor premium quota exhausted, Auto still works.
+_CURSOR_OUT_OF_USAGE = (
+    "[FAIL] **Cursor Agent** (`agent`):\n```\n"
+    "ActionRequiredError: Increase limits for faster responses You're out of usage. "
+    "Switch to Auto, or ask your admin to increase your limit to continue.\n```"
+)
+
+
+def test_cursor_out_of_usage_switches_to_auto(router_settings):
+    """Premium quota gone → skip the other premium Cursor models, run Auto."""
+    cfg = load_router_config()
+    decision = RoutingDecision(
+        decision_id="testquota",
+        task_type="basic_ask",
+        difficulty="high",
+        target=ExecutionTarget("cursor", "grok-4.6"),
+        confidence=0.66,
+        reason="hard",
+        escalation_target=ExecutionTarget("cursor", "grok-4.6"),
+        source=TargetSource.ROUTER.value,
+        fallbacks=[
+            ExecutionTarget("cursor", "gpt-5.6-terra-medium"),
+            ExecutionTarget("codex", ""),
+        ],
+    )
+    calls: List[str] = []
+    statuses: List[str] = []
+
+    class Q:
+        def put(self, item):
+            statuses.append(item[1])
+
+    def cursor_runner(prompt, chat_session_id, status_queue=None, project_path=None, model=None, **kw):
+        calls.append(f"cursor:{model or 'auto'}")
+        if (model or "auto") == "auto":
+            return {"success": True, "response": "auto ok", "type": "cursor_command"}
+        return {"success": True, "response": _CURSOR_OUT_OF_USAGE, "type": "cursor_error"}
+
+    def codex_runner(*a, **k):
+        calls.append("codex")
+        return {"success": True, "response": "codex ok", "type": "codex_command"}
+
+    result = execute_decision(
+        decision,
+        "why did this take 13s?",
+        chat_session_id=21,
+        status_queue=Q(),
+        runners={"cursor": cursor_runner, "codex": codex_runner},
+        config=cfg,
+    )
+    assert calls == ["cursor:grok-4.6", "cursor:auto"]
+    assert "auto ok" in result["response"]
+    first = result["router"]["attempts"][0]
+    assert first["failure_kind"] == FailureKind.TRANSPORT.value
+    assert first["reason"].startswith("ActionRequiredError")
+    assert any("trying cursor / auto" in s for s in statuses)
+
+
+def test_short_reason_skips_runner_header():
+    from api.agent_router.policy import classify_failure
+
+    kind, reason = classify_failure(
+        {"success": True, "type": "cursor_error", "response": _CURSOR_OUT_OF_USAGE}
+    )
+    assert kind == FailureKind.TRANSPORT.value
+    assert "out of usage" in reason
 
 
 def test_grok_budget_falls_back_to_codex(router_settings):
@@ -225,7 +301,7 @@ def test_fallback_exhaustion_clear_error(router_settings):
     def fail(prompt, chat_session_id, status_queue=None, project_path=None, model=None, **kw):
         return {
             "success": True,
-            "response": "[FAIL] exited with code 1",
+            "response": "[FAIL] Cursor Agent: connection refused",
             "type": "cursor_error",
         }
 
@@ -237,7 +313,7 @@ def test_fallback_exhaustion_clear_error(router_settings):
         config=cfg,
         allow_escalation=True,
     )
-    # Escalation also fails → exhaustion
+    # Auto never ran → escalation target tried → also unreachable → exhaustion
     assert "All execution targets failed" in result["response"]
     assert result["type"] == "router_error"
     assert len(result["router"]["attempts"]) >= 2

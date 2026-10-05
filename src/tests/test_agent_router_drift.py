@@ -282,9 +282,29 @@ def test_health_api_round_trip(router_settings):
         assert isinstance(h["metrics"], list)
         assert "report" in h
 
-        resp = client.put(
-            "/api/router/config",
-            json={"mode": "off", "use_cases": data["use_cases"]},
-        )
+        # Saving unrelated routing settings must not start vendor usage reads
+        # when budget awareness is disabled.
+        from unittest.mock import patch
+        with patch('api.agent_router.budget.accounts_payload') as accounts:
+            resp = client.put(
+                "/api/router/config",
+                json={"mode": "off", "use_cases": data["use_cases"]},
+            )
+            accounts.assert_not_called()
         assert resp.status_code == 200
         assert resp.get_json()["config"]["provider"]["mode"] == "off"
+
+        # Classifier + budget settings round-trip; effort options are published.
+        resp = client.put(
+            "/api/router/config",
+            json={"classifier": {"fast_path": False}, "budget": {"enabled": True, "low_headroom": 0.25}},
+        )
+        body = resp.get_json()
+        assert resp.status_code == 200, body
+        assert body["classifier"]["fast_path"] is False
+        assert body["budget"] == {"enabled": True, "low_headroom": 0.25, "refresh_s": 300}
+        assert isinstance(body["accounts"], list)
+        opts = client.get("/api/agent-router/options").get_json()
+        assert opts["agent_efforts"]["cursor"]["supported"] is False
+        assert "high" in opts["agent_efforts"]["codex"]["levels"]
+        assert "jev-latest" in opts["brains"]["jev"]

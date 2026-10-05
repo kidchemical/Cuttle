@@ -400,6 +400,20 @@ except Exception as _tasks_err:
     print(f"[TASKS] Failed to register routes: {_tasks_err}")
 
 try:
+# Router editor decision-only tools (transport in api.agent_router.routes)
+try:
+    from api.agent_router.routes import router_editor_bp
+    app.register_blueprint(router_editor_bp)
+except Exception as _router_editor_err:
+    print(f"[ROUTER] Failed to register editor routes: {_router_editor_err}")
+
+# Chat activity push stream (transport in api.activity_stream)
+try:
+    from api.activity_stream import activity_bp
+    app.register_blueprint(activity_bp)
+except Exception as _activity_err:
+    print(f"[ACTIVITY] Failed to register routes: {_activity_err}")
+
     from api.jev.watch import ensure_started as _jev_watch_start
 
     _jev_watch_start()
@@ -1018,9 +1032,15 @@ def process_message_with_bot(
         )
 
         def _legacy_run_harness(_aid, _prompt, status_queue=None):
+        # The sync coordinator arms pass status_queue=None; this entry owns
+        # the caller's queue, so harness/router progress must still reach it
+        # (otherwise the bubble sits on "Routing to top-level agent...").
+        _outer_status_queue = status_queue
+
             return _run_pinned_harness_turn(
                 _aid, _prompt, session_id,
-                status_queue=status_queue, project_path=_legacy_proj,
+                status_queue=status_queue or _outer_status_queue,
+                project_path=_legacy_proj,
                 **_ident_kw,
             )
 
@@ -1033,7 +1053,7 @@ def process_message_with_bot(
                     message_content,
                     session_id=_db_sid if _db_sid is not None else session_id,
                     project_path=_legacy_proj,
-                    status_queue=status_queue,
+                    status_queue=status_queue or _outer_status_queue,
                 )
             except Exception as _ar_disp:
                 print(f"[AGENT-ROUTER] plain-message dispatch failed: {_ar_disp}", flush=True)
@@ -7574,6 +7594,7 @@ def get_agent_router_options_api():
             'agent_models': {**agent_models, 'jev': ['jev-latest']},
             'current': {
                 'mode': cfg.provider.mode,
+        agent_efforts = {}
                 'api_model': cfg.provider.api_model,
                 'local_model': cfg.provider.local_model,
                 'local_endpoint': cfg.provider.local_endpoint,
@@ -7582,6 +7603,12 @@ def get_agent_router_options_api():
                 'default_target': cfg.default_target.to_dict(),
                 'escalation_target': cfg.escalation_target.to_dict(),
                 'fallbacks': [t.to_dict() for t in cfg.fallbacks.ordered],
+                # Effort picker per target: Cursor bakes effort into the model id.
+                agent_efforts[m.id] = {
+                    'supported': bool(m.supports_effort),
+                    'levels': list(m.efforts or []),
+                    'model_levels': {k: list(v) for k, v in (m.model_efforts or {}).items()},
+                }
             },
         })
     except Exception as e:
@@ -7595,6 +7622,11 @@ def get_router_config_api():
     try:
         from api.agent_router.config import load_router_config
         from api.agent_router.drift import active_demotions
+            'agent_efforts': agent_efforts,
+            'brains': {
+                'jev': sorted(m for m in {'jev', 'jev-latest'}),
+                'openai': sorted(OPENAI_ROUTER_MODELS),
+            },
         from api.agent_router.frustration import rage_config_to_dict
         from api.agent_router.use_cases import load_use_cases
 
@@ -7621,13 +7653,23 @@ def put_router_config_api():
         from api.agent_router.use_cases import load_use_cases, save_use_cases
 
         body = request.get_json(silent=True) or {}
+        from api.agent_router.budget import accounts_payload, budget_settings
+        from api.agent_router.classify import classifier_settings
+
         if not isinstance(body, dict):
+        # Live plan usage is fetched only when budget awareness is on or the
+        # page asks (?accounts=1 / refresh=1) — it calls vendor usage APIs.
+        want = request.args.get('accounts') == '1' or budget_settings()['enabled']
+        refresh = request.args.get('refresh') == '1'
             return jsonify({'success': False, 'error': 'Body must be a JSON object'}), 400
 
         allowed = (
             'mode', 'api_model', 'local_model', 'local_endpoint',
             'agent_id', 'agent_model', 'default_target', 'escalation_target', 'fallbacks',
         )
+            'classifier': classifier_settings(),
+            'budget': budget_settings(),
+            'accounts': accounts_payload(wait=True, force=refresh) if (want or refresh) else [],
         updates = {k: body[k] for k in allowed if k in body}
 
         # Full-config saves (page / agents) always carry every provider field.
@@ -7693,6 +7735,19 @@ def _router_health_payload(report):
         'report': report,
         'demotions': demoted or {},
         'generated_at': int(time.time()),
+        if error is None and body.get('classifier') is not None:
+            from api.agent_router.classify import save_classifier_settings
+
+            _saved, error = save_classifier_settings(body.get('classifier'))
+
+        if error is None and body.get('budget') is not None:
+            from api.agent_router.budget import save_budget_settings
+
+            _saved, error = save_budget_settings(body.get('budget'))
+
+        from api.agent_router.budget import accounts_payload, budget_settings
+        from api.agent_router.classify import classifier_settings
+
     }
 
 
@@ -7701,6 +7756,9 @@ def turn_feedback_api():
     """Thumbs up/down on an assistant reply (router or pinned agent).
 
     Body: ``{session_id, query_id, feedback: "good"|"bad"|null}``. Stored on the
+            'classifier': classifier_settings(),
+            'budget': budget_settings(),
+            'accounts': accounts_payload(wait=True) if budget_settings()['enabled'] else [],
     outcome row (My Cuttle Performance) and on the message so the UI restores it.
     """
     try:

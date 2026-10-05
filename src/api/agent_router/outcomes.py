@@ -142,8 +142,9 @@ def record_attempt(
                     recorded_at, decision_id, attempt_index, session_id, project_path,
                     task_type, difficulty, strategy, target_agent, target_model,
                     source, success, failure_kind, reason, latency_ms, query_id,
-                    prompt_tokens, completion_tokens, total_tokens, cached_tokens, cost, user_feedback
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                    prompt_tokens, completion_tokens, total_tokens, cached_tokens, cost, user_feedback,
+                    reasoning_effort
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
                 """,
                 (
                     time.time(),
@@ -167,6 +168,7 @@ def record_attempt(
                     usage["total_tokens"],
                     usage["cached_tokens"],
                     usage["cost"],
+                    (getattr(target, "effort", "") or str(payload.get("agent_effort") or "")).lower() or None,
                 ),
             )
         return True
@@ -316,6 +318,37 @@ def list_outcomes(
     params.append(max(1, min(int(limit), 5000)))
     with _connect(db_path) as conn:
         return [dict(row) for row in conn.execute(sql, params).fetchall()]
+
+
+def recent_decisions(*, limit: int = 6, db_path: Optional[Path] = None) -> List[Dict[str, Any]]:
+    """Latest attempt per routed decision, newest first; never migrate/write on read.
+
+    Pinned/manual agent telemetry shares this store but is not router activity.
+    """
+    path = Path(db_path or database_path()).resolve()
+    if not path.exists():
+        return []
+    with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=2) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT o.* FROM router_outcomes o
+            WHERE o.source IN ('router', 'default', 'escalation', 'fallback', 'retry')
+              AND NOT EXISTS (
+                SELECT 1 FROM router_outcomes newer
+                WHERE newer.decision_id = o.decision_id
+                  AND newer.attempt_index > o.attempt_index
+              )
+            ORDER BY o.recorded_at DESC, o.id DESC LIMIT ?
+            """,
+            (max(1, min(int(limit), 20)),),
+        ).fetchall()
+        fields = (
+            "decision_id", "recorded_at", "task_type", "difficulty", "target_agent",
+            "target_model", "source", "success", "failure_kind", "attempt_index", "reason",
+        )
+        return [dict({key: row[key] for key in fields}, reasoning_effort=dict(row).get("reasoning_effort"))
+                for row in rows]
 
 
 def outcomes_since(

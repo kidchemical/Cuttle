@@ -20,18 +20,22 @@ from api.jev.client import JevError, get_client
 from api.jev.types import choice, noul, score
 
 _TASK_CRITERIA = {
-    "basic_ask": "Short question, no code edits, can be answered in chat",
+    "basic_ask": "Conversation or a quick general question; no repo access needed",
+    "explain": "Question about this codebase, system, chat, or logs; read and answer, do not change",
     "coding": "Implement or change code",
-    "debugging": "Find and fix a bug",
-    "architecture": "Design, refactor plan, or cross-cutting structure",
-    "research": "Look something up, compare options, no immediate patch",
+    "debugging": "Something is broken or behaving wrong; find the cause and fix it",
+    "architecture": "Design, plan, or cross-cutting restructure",
+    "research": "Look something up externally, compare tools/libraries/options",
+    "writing": "Prose deliverable: docs, release notes, summaries, emails, posts",
+    "ops": "Operate things: git, restart, deploy, workers, installs, cleanup chores",
     "other": "Does not fit the other buckets",
 }
 
+# Difficulty is SCOPE (how much work), not how hard the question sounds.
 _DIFFICULTY_LEVELS = [
-    "Low — ordinary, cheap Auto is enough",
-    "Medium — standard coding, Auto or a mid model",
-    "High — ambiguous, architecture, or likely to fail on Auto",
+    "Low — one quick step or a short answer",
+    "Medium — a normal multi-step task",
+    "High — broad, ambiguous, or cross-cutting work across many files",
 ]
 
 

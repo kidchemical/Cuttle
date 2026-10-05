@@ -35,6 +35,24 @@ _TRANSPORT_PATTERNS = [
         r"usage.?limit",
         r"spend limit",
         r"hit your usage limit",
+        r"out of usage",
+        r"ActionRequiredError",
+    )
+]
+
+# Account-level exhaustion: every premium model on that vendor account will
+# fail the same way, so the rest of the turn must not spend attempts on them.
+_QUOTA_PATTERNS = [
+    re.compile(p, re.I)
+    for p in (
+        r"quota",
+        r"budget",
+        r"billing",
+        r"usage.?limit",
+        r"out of usage",
+        r"spend limit",
+        r"ActionRequiredError",
+        r"\b402\b",
     )
 ]
 
@@ -138,9 +156,24 @@ def is_cancellation(text: str) -> bool:
     return any(p.search(s) for p in _CANCELLED_PATTERNS)
 
 
+# Runner headers like "[FAIL] **Cursor Agent** (`agent`):" carry no reason;
+# the actual error is on a later line (often inside a ``` fence).
+_HEADER_LINE = re.compile(r"^\[(?:FAIL|CANCELLED)\]\s*(?:\*\*[^*]+\*\*)?\s*(?:\(`[^`]*`\))?\s*:?\s*$")
+
+
 def _short_reason(text: str) -> str:
-    line = (text or "").strip().splitlines()[0] if text else ""
-    return line[:200]
+    lines = [ln.strip() for ln in (text or "").strip().splitlines()]
+    for ln in lines:
+        if not ln or ln.startswith("```") or _HEADER_LINE.match(ln):
+            continue
+        return ln[:200]
+    return (lines[0] if lines else "")[:200]
+
+
+def is_quota_failure(text: str) -> bool:
+    """True when a failure means the vendor account is out of budget/usage."""
+    s = text or ""
+    return any(p.search(s) for p in _QUOTA_PATTERNS)
 
 
 _CODE_CHANGE_PHRASES = (

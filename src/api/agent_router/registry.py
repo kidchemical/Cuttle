@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from api.agent_router.types import ExecutionTarget
 
@@ -131,7 +131,61 @@ def list_cursor_models_for_validation(*, live: bool = False) -> List[str]:
     return sorted(known)
 
 
+def effort_options(agent: str, model: str = "") -> Tuple[bool, List[str]]:
+    """(supports_effort, allowed levels) from the harness manifest.
+
+    Unknown agents / manifest errors → (True, []) meaning "accept anything".
+    """
+    try:
+        from api.agent_harness.catalog import list_agent_manifests
+
+        for m in list_agent_manifests():
+            if m.id != agent:
+                continue
+            if not m.supports_effort:
+                return False, []
+            levels = (m.model_efforts or {}).get(model or "") or list(m.efforts or [])
+            return True, [str(x).lower() for x in levels]
+    except Exception:
+        pass
+    return True, []
+
+
+def validate_effort(agent: str, model: str, effort: Any) -> Tuple[str, Optional[str]]:
+    eff = str(effort or "").strip().lower()
+    if not eff or eff in ("default", "none"):
+        return "", None
+    supports, levels = effort_options(agent, model)
+    if not supports:
+        return "", (
+            f"`{agent}` has no separate effort setting — pick a model id that "
+            "includes it (e.g. `cursor-grok-4.6-high`)."
+        )
+    if levels and eff not in levels:
+        return "", f"Effort `{eff}` is not valid for `{agent}` {model or '(default)'}: {', '.join(levels)}."
+    return eff, None
+
+
 def validate_execution_target(
+    agent: str,
+    model: str,
+    *,
+    allow_empty_model: bool = True,
+    strict_cursor_models: bool = False,
+    effort: Any = None,
+) -> Tuple[Optional[ExecutionTarget], Optional[str]]:
+    t, err = _validate_agent_model(
+        agent, model, allow_empty_model=allow_empty_model, strict_cursor_models=strict_cursor_models
+    )
+    if err or t is None or not effort:
+        return t, err
+    eff, e_err = validate_effort(t.agent, t.model, effort)
+    if e_err:
+        return None, e_err
+    return ExecutionTarget(agent=t.agent, model=t.model, effort=eff), None
+
+
+def _validate_agent_model(
     agent: str,
     model: str,
     *,

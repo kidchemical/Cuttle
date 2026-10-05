@@ -37,7 +37,7 @@ def test_dispatch_persists_every_attempt(tmp_path: Path, monkeypatch):
     def cursor_runner(prompt, session_id, model=None, **_kwargs):
         calls.append(model)
         if model == "auto":
-            return {"success": True, "response": "[FAIL] tests failed", "type": "cursor_error"}
+            return {"success": True, "response": "[FAIL] connection refused", "type": "cursor_error"}
         return {
             "success": True,
             "response": "fixed",
@@ -66,7 +66,7 @@ def test_dispatch_persists_every_attempt(tmp_path: Path, monkeypatch):
     )
     assert calls == ["auto", "grok-4.6"]
     assert len(rows) == 2
-    assert rows[0]["failure_kind"] == "task"
+    assert rows[0]["failure_kind"] == "transport"
     assert rows[0]["success"] == 0
     assert rows[1]["failure_kind"] == "none"
     assert rows[1]["success"] == 1

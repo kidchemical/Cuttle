@@ -45,10 +45,17 @@ def build_routing_prompt(context: RoutingContext, config: RouterConfig) -> Dict[
         target_lines.append(f"- agent={t.agent} model={t.model or '(default)'}")
 
     system = (
-        "You are Cuttle's agent router. Select ONE execution target for the user request. "
-        "Minimize cost and latency while preserving a high chance of success. "
-        "Prefer Cursor Agent with model auto for ordinary low/medium coding work. "
-        "Reserve Cursor grok-4.6 for clearly hard/ambiguous/architecture/debugging work. "
+        "You are Cuttle's agent router. Classify the KIND of work and its SCOPE, then "
+        "select ONE execution target. task_type: basic_ask=conversation or quick general "
+        "question; explain=question about this codebase/system/logs (read, don't change); "
+        "coding=implement or change code; debugging=something is broken, find and fix it; "
+        "architecture=design/plan/cross-cutting restructure; research=external lookup or "
+        "comparison; writing=prose deliverable (docs, release notes, summaries, emails); "
+        "ops=git, restart, deploy, workers, installs, chores. difficulty is SCOPE, not how "
+        "the question sounds: low=one quick step, medium=normal multi-step task, "
+        "high=broad, ambiguous, or cross-cutting. A question about why something is slow "
+        "is explain/debugging, not high. Prefer the cheapest target that fits; reserve "
+        "frontier models for high scope. "
         "Do not invent agents or models. Reply with ONLY compact JSON matching the schema."
     )
     user = (
@@ -61,7 +68,7 @@ def build_routing_prompt(context: RoutingContext, config: RouterConfig) -> Dict[
         f"escalation_target: {config.escalation_target.agent} {config.escalation_target.model}\n"
         f"user_request:\n{(context.user_request or '')[:2000]}\n\n"
         "JSON schema:\n"
-        '{"task_type":"basic_ask|coding|debugging|architecture|research|other",'
+        '{"task_type":"basic_ask|explain|coding|debugging|architecture|research|writing|ops|other",'
         '"difficulty":"low|medium|high",'
         '"target_agent":"<id>","target_model":"<id>",'
         '"confidence":0.0,"reason":"short",'

@@ -43,6 +43,34 @@ TTL_SECONDS = 45 * 60
 # so Electron/history don't sit on that label until a full Cuttle restart.
 CONNECTING_TTL_SECONDS = 90
 
+# Change signal for push listeners (activity stream). Bumped after any
+# set/clear so subscribers can wake instead of polling every session.
+_CHANGED = threading.Condition()
+_VERSION = 0
+
+
+def _notify_changed() -> None:
+    global _VERSION
+    with _CHANGED:
+        _VERSION += 1
+        _CHANGED.notify_all()
+
+
+def change_version() -> int:
+    """Current change counter; pass to ``wait_for_change``."""
+    with _CHANGED:
+        return _VERSION
+
+
+def wait_for_change(since: int, timeout: float) -> int:
+    """Block until the store changes after ``since`` or ``timeout`` elapses.
+
+    Returns the current counter (equal to ``since`` on timeout).
+    """
+    with _CHANGED:
+        _CHANGED.wait_for(lambda: _VERSION != since, timeout)
+        return _VERSION
+
 
 def _ttl_seconds(entry: Dict[str, Any]) -> float:
     status = (entry or {}).get("status") or ""
@@ -98,6 +126,7 @@ def set_live_status(
         }
         for k in keys:
             _STORE[k] = entry
+    _notify_changed()
 
 
 def _clear_keys_locked(keys: List[str], *, turn: Optional[int] = None) -> None:
@@ -127,6 +156,7 @@ def clear_live_status(session_id: Any, *, turn: Optional[int] = None) -> None:
         return
     with _LOCK:
         _clear_keys_locked(keys, turn=turn)
+    _notify_changed()
 
 
 def get_live_status(session_id: Any) -> Dict[str, Any]:

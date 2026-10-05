@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="/css/ui_boot.css?v=20260927blendTarget">
     <script src="/js/ui_boot.js?v=20260926safeArea"></script>
     <link rel="stylesheet" href="/css/shared_navigation.css?v=20260926lightBg">
-    <link rel="stylesheet" href="/css/router_editor.css?v=20260830g">
+    <link rel="stylesheet" href="/css/router_editor.css?v=20261005lanes">
 </head>
 <body class="compact-shell-page">
     <header class="re-header">
@@ -24,8 +24,42 @@
     </header>
 
     <main class="re-page">
+        <section class="re-card" id="try-card">
+            <div class="re-card-title"><h2>Try a prompt</h2><span class="re-badge">preview only</span></div>
+            <div class="re-preview-input">
+                <label class="sr-only" for="try-prompt">Prompt to classify</label>
+                <textarea id="try-prompt" class="re-input" rows="2" maxlength="12000" placeholder="What would you like Cuttle to do?"></textarea>
+                <button class="re-btn" id="btn-try-brain" disabled title="Consult the configured routing brain; may use API tokens">Ask brain</button>
+            </div>
+            <div id="try-result" class="re-preview-result" role="status" aria-live="polite">Type to see the lane and target. No agent runs.</div>
+            <p class="re-footnote" id="try-config-hint">Uses saved settings. Typing uses the local classifier; Ask brain may use API tokens.</p>
+        </section>
+
+        <section class="re-card" id="flow-card">
+            <div class="re-card-title"><h2>Recent decisions</h2><span class="re-badge" id="flow-status">loading</span></div>
+            <div id="decision-flow" class="re-flow" aria-label="Recent router decisions"></div>
+        </section>
+
+        <!-- ── Use cases ────────────────────────────────────────── -->
+        <section class="re-card" id="usecase-card">
+            <div class="re-card-title">
+                <h2>Lanes</h2>
+                <p class="re-hint">
+                    First matching enabled lane wins, in priority order. Click a row to edit its rules, targets and effort.
+                </p>
+            </div>
+            <div class="re-table-wrap">
+                <table class="re-table re-lane-table" aria-label="Routing lanes">
+                    <thead><tr><th>Rank</th><th>Lane</th><th>Matches</th><th>First target</th><th>Chain</th></tr></thead>
+                    <tbody id="usecase-list"></tbody>
+                </table>
+            </div>
+            <button class="re-btn" id="btn-add-usecase">+ Add lane</button>
+        </section>
+
+
         <!-- ── Core routing ─────────────────────────────────────── -->
-        <section class="re-card" id="core-card">
+        <details class="re-card re-settings" id="core-card"><summary>Core routing</summary>
             <div class="re-card-title">
                 <h2>Core routing</h2>
                 <p class="re-hint">How the routing brain is invoked and where unmatched turns go.</p>
@@ -35,9 +69,9 @@
                 <label class="re-label" for="router-mode">Brain mode</label>
                 <select id="router-mode" class="re-input narrow">
                     <option value="off">off — router disabled</option>
-                    <option value="api">api — OpenAI brain</option>
-                    <option value="local">local — OpenAI-compatible endpoint</option>
-                    <option value="agent">agent — agent CLI as brain</option>
+                    <option value="api">hosted brain</option>
+                    <option value="local">local — classifier only (local brain not built yet)</option>
+                    <option value="agent">agent — classifier only (agent brain not built yet)</option>
                 </select>
                 <select id="router-api-model" class="re-input narrow" data-provider="api" hidden></select>
                 <input id="router-local-endpoint" class="re-input wide" data-provider="local"
@@ -48,6 +82,18 @@
                        placeholder="agent id (cursor)" hidden>
                 <input id="router-agent-model" class="re-input narrow" data-provider="agent"
                        placeholder="agent model (auto)" hidden>
+            </div>
+            <p class="re-hint re-brain-hint" id="brain-hint"></p>
+
+            <div class="re-row">
+                <label class="re-label" for="classifier-fast">Classifier</label>
+                <label class="re-toggle">
+                    <input type="checkbox" id="classifier-fast">
+                    <span>fast path — obvious turns skip the brain</span>
+                </label>
+                <label class="re-inline-label" for="classifier-threshold"
+                       title="Minimum classifier confidence to skip the brain">min confidence</label>
+                <input id="classifier-threshold" class="re-input tiny" type="number" min="0.5" max="1" step="0.05">
             </div>
 
             <div class="re-row">
@@ -71,24 +117,36 @@
                 Source of truth: <code>src/settings.json → agent_router</code>.
                 Agents can edit the same JSON directly — this page reloads it from disk.
             </p>
-        </section>
+        </details>
 
-        <!-- ── Use cases ────────────────────────────────────────── -->
-        <section class="re-card" id="usecase-card">
+        <!-- ── Budget ─────────────────────────────────────────────── -->
+        <details class="re-card re-settings" id="budget-card"><summary>Budget</summary>
             <div class="re-card-title">
-                <h2>Use cases</h2>
+                <h2>Budget</h2>
                 <p class="re-hint">
-                    Declared routing table — when a turn matches a use case, its targets override the
-                    brain. Sorted simple → complex by priority (lower = matched first); the first
-                    matching enabled block is applied.
+                    Route to what will actually run. With budget awareness on, the router reads the same
+                    live plan windows as <code>/usage</code> before picking: accounts at their limit move to
+                    the back of the chain, nearly-spent ones behind healthy ones; your declared order is
+                    kept otherwise. Accounts that ran out mid-session are always skipped until they reset.
                 </p>
+                <button class="re-btn" id="btn-budget-refresh" title="Fetch live plan usage now">↻ Usage</button>
             </div>
-            <div id="usecase-list" class="re-usecase-list"></div>
-            <button class="re-btn" id="btn-add-usecase">+ Add use case</button>
-        </section>
+            <div class="re-row">
+                <label class="re-label" for="budget-enabled">Budget awareness</label>
+                <label class="re-toggle">
+                    <input type="checkbox" id="budget-enabled">
+                    <span>use live plan usage when routing</span>
+                </label>
+                <label class="re-inline-label" for="budget-low"
+                       title="Below this much left, a target goes behind healthier ones">low below</label>
+                <input id="budget-low" class="re-input tiny" type="number" min="0" max="90" step="5">
+                <span class="re-inline-label">%</span>
+            </div>
+            <div id="budget-accounts" class="re-accounts"></div>
+        </details>
 
         <!-- ── Target health ────────────────────────────────────── -->
-        <section class="re-card" id="health-card">
+        <details class="re-card re-settings" id="health-card"><summary>Target health</summary>
             <div class="re-card-title">
                 <h2>Target health</h2>
                 <p class="re-hint">
@@ -143,12 +201,12 @@
                     parallel, so your escalated task never waits for it.
                 </p>
             </div>
-        </section>
+        </details>
     </main>
 
     <div class="re-toast" id="re-toast" hidden></div>
 
     <script src="/js/toast.js"></script>
-    <script src="/js/router_editor.js?v=20260926jev"></script>
+    <script src="/js/router_editor.js?v=20261005lanes"></script>
 </body>
 </html>

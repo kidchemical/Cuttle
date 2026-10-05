@@ -86,6 +86,22 @@ def format_status(
     else:
         lines.append("- Fallback chain: _(empty)_")
 
+    from api.agent_router.classify import classifier_settings
+
+    cls = classifier_settings()
+    lines.append(
+        f"- Classifier fast path: **{'on' if cls['fast_path'] else 'off'}** "
+        f"(skips the routing brain at confidence ≥ {cls['fast_path_confidence']:.2f})"
+    )
+    import api.agent_router.quota as quota
+
+    cooling = quota.snapshot()
+    if cooling:
+        lines.append("- Out-of-usage cooldowns (skipped when routing):")
+        for c in cooling:
+            tier = "all models" if c["scope"] == "all" else "premium models (Auto still used)"
+            lines.append(f"  - `{c['agent']}` {tier} — ~{c['minutes_left']} min left")
+
     will, reason = should_invoke_router(message_hint or "hello world", session_id=session_id, config=cfg)
     bypass, agent, detail = session_has_agent_selection(message_hint or "", session_id)
     lines.append("")

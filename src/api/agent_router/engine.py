@@ -52,6 +52,11 @@ def _provider_for(config: RouterConfig):
         if prov in ("jev", "typesafe") or is_jev_model_id(config.provider.api_model or ""):
             return JevRouterProvider()
         return OpenAIApiRouterProvider()
+    if mode == RouterMode.LOCAL.value:
+        return LocalRouterProvider()
+    if mode == RouterMode.AGENT.value:
+        return AgentCliRouterProvider()
+    return None
 
 
 # Reason fragments meaning "the routing brain never ran — the default target
@@ -86,11 +91,6 @@ def actionable_router_hint(error: str) -> str:
         return "no routing provider is available (check the router mode)"
     short = msg.strip().split("\n", 1)[0][:120]
     return f"router unavailable: {short}" if short else "router unavailable"
-    if mode == RouterMode.LOCAL.value:
-        return LocalRouterProvider()
-    if mode == RouterMode.AGENT.value:
-        return AgentCliRouterProvider()
-    return None
 
 
 def build_context(
@@ -116,6 +116,89 @@ def build_context(
         session_id=session_id,
         available_targets=targets,
     )
+
+
+_TASK_LABELS = {
+    "basic_ask": "chat",
+    "explain": "explain",
+    "coding": "coding",
+    "debugging": "debugging",
+    "architecture": "architecture",
+    "research": "research",
+    "writing": "writing",
+    "ops": "ops",
+    "other": "general",
+}
+_SCOPE_LABELS = {"low": "quick", "medium": "normal", "high": "deep"}
+
+
+def _human_reason(decision: RoutingDecision, *, use_case: str = "", why: str = "") -> str:
+    """One readable line for the routing chip: what kind of work, and why this target."""
+    kind = _TASK_LABELS.get(decision.task_type, decision.task_type or "general")
+    scope = _SCOPE_LABELS.get(decision.difficulty, decision.difficulty or "")
+    line = f"{kind} · {scope}" if scope else kind
+    if use_case:
+        line += f" → {use_case}"
+    if why:
+        line += f" ({why})"
+    return line[:240]
+
+
+def _fast_path_decision(config: RouterConfig, turn) -> RoutingDecision:
+    return RoutingDecision(
+        decision_id=RoutingDecision.new_id(),
+        task_type=turn.task_type,
+        difficulty=turn.difficulty,
+        target=config.default_target,
+        confidence=turn.confidence,
+        reason=f"classifier {turn.task_type}/{turn.difficulty} ({turn.confidence:.2f})",
+        escalation_target=config.escalation_target,
+        source=TargetSource.ROUTER.value,
+        raw={"provider": "classifier", "classifier": turn.to_dict()},
+    )
+
+
+def _order_by_availability(decision: RoutingDecision) -> Tuple[RoutingDecision, list]:
+    """Put targets that will actually run first; keep declared order otherwise.
+
+    Blocked = out of usage (seen this session, ``quota``) or, with budget
+    awareness on, a live plan window at its limit (``budget``). Low = budget
+    awareness on and the account is nearly spent. Returns notes for targets
+    that were stepped over (for the routing chip).
+    """
+    import api.agent_router.budget as budget
+    import api.agent_router.quota as quota
+
+    chain: list = []
+    for t in [decision.target, decision.escalation_target, *(decision.fallbacks or [])]:
+        if t is not None and t.key() not in {c.key() for c in chain}:
+            chain.append(t)
+    bset = budget.budget_settings()
+    accounts = budget.snapshot() if bset["enabled"] else {}
+    rank = {"ok": 0, "unknown": 0, "low": 1, "blocked": 2}
+    states = []
+    for t in chain:
+        if quota.is_exhausted(t):
+            states.append(("blocked", "out of usage"))
+        elif bset["enabled"]:
+            states.append(budget.target_state(t, accounts, low_headroom=bset["low_headroom"]))
+        else:
+            states.append(("ok", ""))
+    if all(st == "blocked" for st, _ in states):
+        return decision, []  # nothing can run on paper — let dispatch probe
+    order = sorted(range(len(chain)), key=lambda i: (rank[states[i][0]], i))
+    if order[0] == 0:
+        return decision, []
+    ordered = [chain[i] for i in order]
+    # Stepped over = declared ahead of the target that now runs first.
+    notes = [
+        f"{chain[i].agent}/{chain[i].model or 'default'} ({states[i][1] or states[i][0]})"
+        for i in range(order[0])
+    ]
+    decision.target = ordered[0]
+    decision.escalation_target = ordered[1] if len(ordered) > 1 else decision.escalation_target
+    decision.fallbacks = ordered[2:] or None
+    return decision, notes
 
 
 def default_decision(config: RouterConfig, reason: str) -> RoutingDecision:
@@ -164,11 +247,26 @@ def decide_with_outcome(
         meta["api_error"] = "router recursion blocked"
         return default_decision(cfg, "router recursion blocked — default target"), meta
 
-    provider = _provider_for(cfg)
+    from api.agent_router.classify import classifier_settings, classify_turn
+
+    turn = classify_turn(context.user_request or "")
+    meta["classifier"] = turn.to_dict()
+    cls_cfg = classifier_settings()
+    fast = cls_cfg["fast_path"] and turn.confidence >= cls_cfg["fast_path_confidence"]
+
+    provider = None if fast else _provider_for(cfg)
+    if fast:
+        meta["provider"] = "classifier"
+        meta["fast_path"] = True
+        log.log_invoked(mode="classifier", provider="classifier")
+        decision = _fast_path_decision(cfg, turn)
+        return _finish_decision(decision, context, cfg, meta, why=turn.why)
     if provider is None:
         meta["used_fallback"] = True
         meta["api_error"] = "no provider"
-        return default_decision(cfg, "no provider — default target"), meta
+        decision = default_decision(cfg, "no provider — default target")
+        decision.task_type, decision.difficulty = turn.task_type, turn.difficulty
+        return _finish_decision(decision, context, cfg, meta, why=turn.why)
 
     meta["provider"] = getattr(provider, "name", "?")
     log.log_invoked(mode=cfg.provider.mode, provider=meta["provider"])
@@ -209,6 +307,23 @@ def decide_with_outcome(
             meta["used_fallback"] = True
             meta["api_error"] = str(e)
             decision = default_decision(cfg, f"router error: {e}")
+    if meta["used_fallback"]:
+        # The brain never answered — the classifier's read beats a blind
+        # "coding/medium" so the use-case table can still pick the right lane.
+        decision.task_type, decision.difficulty = turn.task_type, turn.difficulty
+    return _finish_decision(decision, context, cfg, meta, why="" if not meta["used_fallback"] else turn.why)
+
+
+def _finish_decision(
+    decision: RoutingDecision,
+    context: RoutingContext,
+    cfg: RouterConfig,
+    meta: Dict[str, Any],
+    *,
+    why: str = "",
+) -> Tuple[RoutingDecision, Dict[str, Any]]:
+    """Authority layers over the classified decision, then a readable reason."""
+    brain_reason = decision.reason
     # Phase 0 — declared use-case table overrides the brain's target choice.
     try:
         from api.agent_router.use_cases import apply_table
@@ -226,6 +341,27 @@ def decide_with_outcome(
         meta.update(drift_meta)
     except Exception as exc:
         meta["drift_error"] = str(exc)[:160]
+
+    # Phase C — route to what will actually run: out-of-usage accounts (and,
+    # with budget awareness, live plan limits) go behind the ones that can.
+    try:
+        decision, skipped = _order_by_availability(decision)
+        if skipped:
+            meta["availability_skipped"] = skipped
+    except Exception as exc:
+        meta["availability_error"] = str(exc)[:160]
+
+    if not routing_never_ran(decision):
+        if decision.raw is None:
+            decision.raw = {}
+        decision.raw.setdefault("brain_reason", brain_reason)
+        if meta.get("classifier"):
+            decision.raw.setdefault("classifier", meta["classifier"])
+        if meta.get("availability_skipped"):
+            why = (why + "; " if why else "") + "skipped " + ", ".join(meta["availability_skipped"])
+        decision.reason = _human_reason(
+            decision, use_case=str(meta.get("use_case_name") or ""), why=why
+        )
 
     log.log_decision(
         decision.decision_id,
@@ -246,6 +382,29 @@ def decide(
     """Produce a routing decision. Never raises — falls back to default target."""
     decision, _meta = decide_with_outcome(context, config)
     return decision
+
+
+def preview_decision(context: RoutingContext, *, consult_brain: bool = False):
+    """Decision-only editor preview. Typing never spends brain tokens.
+
+    The local preview shares production table, health and availability layers;
+    uncertain classifications are marked provisional until the user asks the brain.
+    """
+    cfg = load_router_config()
+    if consult_brain or not cfg.enabled():
+        return decide_with_outcome(context, cfg)
+    from api.agent_router.classify import classifier_settings, classify_turn
+
+    turn = classify_turn(context.user_request)
+    settings = classifier_settings()
+    meta = {
+        "provider": "classifier",
+        "classifier": turn.to_dict(),
+        "provisional": not (
+            settings["fast_path"] and turn.confidence >= settings["fast_path_confidence"]
+        ),
+    }
+    return _finish_decision(_fast_path_decision(cfg, turn), context, cfg, meta, why=turn.why)
 
 
 def session_has_agent_selection(

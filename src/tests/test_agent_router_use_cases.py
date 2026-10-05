@@ -40,9 +40,14 @@ def router_settings(tmp_path: Path, monkeypatch):
 def test_fresh_install_seeds_default_table(router_settings):
     seeded = load_use_cases()
     ids = [uc["id"] for uc in seeded]
-    # complexity order: simple → ordinary → frontier
-    assert ids == ["general-chat", "coding-model", "frontier-coding"]
-    assert [uc["priority"] for uc in seeded] == [10, 20, 30]
+    # one block per kind of work, simple → frontier, then a catch-all
+    assert ids == [
+        "general-chat", "ops", "writing", "explain", "research",
+        "coding-model", "architecture", "frontier-coding", "anything-else",
+    ]
+    prio = [uc["priority"] for uc in seeded]
+    assert prio == sorted(prio)
+    assert {uc["id"]: uc["priority"] for uc in seeded}["coding-model"] == 20
     # Second load must be stable (no duplicate seeding)
     assert [uc["id"] for uc in load_use_cases()] == ids
 
@@ -203,9 +208,9 @@ def test_apply_table_overrides_brain_choice(router_settings):
     ctx = RoutingContext(user_request="design a large refactor", code_changes_requested=True)
     decision, meta = apply_table(decision, ctx, cfg)
     assert meta["table_applied"] is True
-    assert meta["use_case"] == "frontier-coding"
+    assert meta["use_case"] == "architecture"
     assert decision.target == ExecutionTarget("cursor", "grok-4.6")
-    assert decision.raw.get("use_case_id") == "frontier-coding"
+    assert decision.raw.get("use_case_id") == "architecture"
 
 
 def test_apply_table_never_use_filters_chain(router_settings):
@@ -258,8 +263,10 @@ def test_engine_table_wins_over_brain(router_settings, monkeypatch):
                 escalation_target=cfg.escalation_target,
             )
 
-    from api.agent_router import engine
+    from api.agent_router import classify, engine
 
+    # This test is about the brain + table; keep the classifier fast path out.
+    monkeypatch.setattr(classify, "classifier_settings", lambda: {"fast_path": False, "fast_path_confidence": 1.0})
     monkeypatch.setattr(engine, "_provider_for", lambda cfg: FakeProvider())
     ctx = engine.build_context("hard refactor of the scheduler", session_id=1)
     decision, meta = decide_with_outcome(ctx)

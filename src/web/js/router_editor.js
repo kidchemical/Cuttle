@@ -4,8 +4,9 @@
 'use strict';
 
 const TASK_TYPES = [
-    ['basic_ask', 'basic ask'], ['coding', 'coding'], ['debugging', 'debugging'],
-    ['architecture', 'architecture'], ['research', 'research'], ['other', 'other'],
+    ['basic_ask', 'chat'], ['explain', 'explain'], ['coding', 'coding'],
+    ['debugging', 'debugging'], ['architecture', 'architecture'], ['research', 'research'],
+    ['writing', 'writing'], ['ops', 'ops'], ['other', 'other'],
 ];
 const DIFFICULTIES = [['low', 'low'], ['medium', 'medium'], ['high', 'high']];
 
@@ -14,8 +15,12 @@ const state = {
     useCases: [],   // use-case blocks
     options: null,  // {modes, api_models, agents, agent_models}
     health: null,   // {metrics, report, demotions}
+    classifier: { fast_path: true, fast_path_confidence: 0.75 },
+    budget: { enabled: false, low_headroom: 0.15, refresh_s: 300 },
+    accounts: [],   // live plan usage per agent (budget awareness)
     rage: { enabled: true, investigator: { enabled: true, agent: 'jev', model: 'jev-latest', timeout_s: 30 } },
     dirty: false,
+    expandedUseCase: null,
 };
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -41,6 +46,8 @@ function toast(msg, isError) {
 function markDirty() {
     state.dirty = true;
     $('#dirty-chip').hidden = false;
+    refreshLaneSummaries();
+    $('#try-config-hint').textContent = 'Unsaved changes — preview uses the saved settings. Save to preview your edits.';
 }
 
 async function api(url, opts) {
@@ -84,7 +91,57 @@ function modelSelect(agent, current, emptyLabel) {
     return msel;
 }
 
-function targetPicker(target, { allowNone = false, noneLabel = '(none)', defaultLabel = '(default)' } = {}) {
+// Effort levels for agent+model from the harness manifest; null = no effort control.
+function effortLevels(agent, model) {
+    const e = state.options && state.options.agent_efforts && state.options.agent_efforts[agent];
+    if (!e) return [];
+    if (!e.supported) return null;
+    return (e.model_levels && e.model_levels[model]) || e.levels || [];
+}
+
+function effortSelect(agent, model, current) {
+    const sel = document.createElement('select');
+    sel.className = 're-input effort';
+    sel.dataset.current = current || '';
+    sel.rebuild = (a, m) => {
+        const levels = effortLevels(a, m);
+        const cur = sel.dataset.current || '';
+        if (levels === null || !a) {
+            // Cursor bakes effort into the model id (e.g. cursor-grok-4.6-high).
+            sel.hidden = true;
+            sel.innerHTML = '<option value=""></option>';
+            sel.value = '';
+            return;
+        }
+        sel.hidden = false;
+        sel.innerHTML = '<option value="">effort: default</option>' +
+            levels.map((l) => `<option value="${esc(l)}">effort: ${esc(l)}</option>`).join('') +
+            (cur && !levels.includes(cur) ? `<option value="${esc(cur)}">effort: ${esc(cur)}</option>` : '');
+        sel.value = cur;
+        sel.title = 'Reasoning effort for this target (harness default when unset)';
+    };
+    sel.rebuild(agent, model);
+    return sel;
+}
+
+// Live availability of a target from the budget snapshot (mirrors budget.target_state).
+function availability(t) {
+    if (!t || !t.agent) return null;
+    const acc = (state.accounts || []).find((a) => a.agent === t.agent);
+    if (!acc || acc.error) return null;
+    const auto = t.agent === 'cursor' && ['', 'auto', 'default'].includes((t.model || '').toLowerCase());
+    if (acc.blocked || (acc.premium_blocked && !auto)) {
+        return { cls: 'blocked', text: 'limit', tip: `${acc.label || 'limit reached'}${acc.reset_label ? ' — resets ' + acc.reset_label : ''}` };
+    }
+    if (t.agent === 'cursor' && auto) return { cls: 'ok', text: 'ok', tip: 'Cursor Auto is not metered by the included pool' };
+    const low = Number(state.budget.low_headroom || 0.15);
+    if (acc.headroom != null && acc.headroom < low) {
+        return { cls: 'low', text: `${Math.round(acc.headroom * 100)}% left`, tip: acc.label };
+    }
+    return acc.headroom != null ? { cls: 'ok', text: `${Math.round(acc.headroom * 100)}% left`, tip: acc.label } : null;
+}
+
+function targetPicker(target, { allowNone = false, noneLabel = '(none)', defaultLabel = '(default)', effort = true } = {}) {
     const wrap = document.createElement('div');
     wrap.className = 're-target';
 
@@ -99,23 +156,55 @@ function targetPicker(target, { allowNone = false, noneLabel = '(none)', default
     sel.value = (target && target.agent) || (allowNone ? '' : (agents[0] && agents[0].id) || '');
 
     const msel = modelSelect(sel.value, (target && target.model) || '', defaultLabel);
+    const esel = effort ? effortSelect(sel.value, msel.value, (target && target.effort) || '') : null;
+    const avail = document.createElement('span');
+    avail.className = 're-avail';
+    avail.hidden = true;
+    const paintAvail = () => {
+        const a = state.budget.enabled ? availability(wrap.getValue()) : null;
+        avail.hidden = !a;
+        if (a) {
+            avail.className = `re-avail ${a.cls}`;
+            avail.textContent = a.text;
+            avail.title = a.tip || '';
+        }
+    };
+    const changed = () => {
+        paintAvail();
+        wrap.dispatchEvent(new Event('target-change', { bubbles: true }));
+    };
     sel.addEventListener('change', () => {
         msel.setAgent(sel.value);
-        wrap.dispatchEvent(new Event('target-change', { bubbles: true }));
+        if (esel) { esel.dataset.current = ''; esel.rebuild(sel.value, msel.value); }
+        changed();
     });
     msel.addEventListener('change', () => {
         if (msel.value) msel.title = msel.value;
-        wrap.dispatchEvent(new Event('target-change', { bubbles: true }));
+        if (esel) esel.rebuild(sel.value, msel.value);
+        changed();
     });
+    if (esel) {
+        esel.addEventListener('change', () => { esel.dataset.current = esel.value; changed(); });
+    }
 
-    wrap.getValue = () => (sel.value ? { agent: sel.value, model: msel.value } : null);
+    wrap.getValue = () => {
+        if (!sel.value) return null;
+        const v = { agent: sel.value, model: msel.value };
+        if (esel && !esel.hidden && esel.value) v.effort = esel.value;
+        return v;
+    };
     wrap.setValue = (t) => {
         sel.value = (t && t.agent) || (allowNone ? '' : sel.value);
         msel.dataset.current = (t && t.model) || '';
         msel.setAgent(sel.value);
+        if (esel) { esel.dataset.current = (t && t.effort) || ''; esel.rebuild(sel.value, msel.value); }
+        paintAvail();
     };
     wrap.appendChild(sel);
     wrap.appendChild(msel);
+    if (esel) wrap.appendChild(esel);
+    wrap.appendChild(avail);
+    paintAvail();
     return wrap;
 }
 
@@ -125,8 +214,36 @@ function renderProviderFields() {
     $$('#core-card [data-provider]').forEach((el) => {
         el.hidden = el.dataset.provider !== mode;
     });
-    $('#mode-chip').textContent = mode === 'off' ? 'router off' : `brain: ${mode}`;
+    $('#mode-chip').textContent = mode === 'off' ? 'router off' : `brain: ${brainName()}`;
     $('#mode-chip').classList.toggle('off', mode === 'off');
+    renderBrainHint();
+}
+
+function isJevModel(m) { return /^jev/i.test(m || '') || /typesafe/i.test(m || ''); }
+
+function brainName() {
+    const c = state.config || {};
+    if (c.mode === 'api') return isJevModel(c.api_model) ? 'Jev' : `OpenAI ${c.api_model || ''}`.trim();
+    if (c.mode === 'local' || c.mode === 'agent') return 'classifier only';
+    return c.mode || 'off';
+}
+
+function renderBrainHint() {
+    const c = state.config || {};
+    const fast = state.classifier.fast_path;
+    const cls = fast
+        ? `The classifier answers obvious turns itself (confidence ≥ ${Number(state.classifier.fast_path_confidence).toFixed(2)}); `
+        : 'Every turn asks the brain; ';
+    let brain = '';
+    if (c.mode === 'off') brain = 'Routing is off — starred/sticky agents and the default target apply.';
+    else if (c.mode === 'api' && isJevModel(c.api_model)) {
+        brain = 'ambiguous turns go to Jev (TypeSafe System One, via your TypeSafe or OpenRouter key). OpenAI is not called.';
+    } else if (c.mode === 'api') {
+        brain = `ambiguous turns go to OpenAI ${c.api_model} (needs OPENAI_API_KEY). Jev is not called.`;
+    } else {
+        brain = `the ${c.mode} brain is not built yet, so every turn routes on the classifier alone.`;
+    }
+    $('#brain-hint').textContent = c.mode === 'off' ? brain : cls + brain;
 }
 
 function renderFallbacks() {
@@ -163,12 +280,22 @@ function renderCore() {
     const cfg = state.config;
     const apiSel = $('#router-api-model');
     if (apiSel && state.options && Array.isArray(state.options.api_models)) {
-        const models = state.options.api_models;
+        // One brain runs: Jev ids pick Jev, OpenAI ids pick OpenAI — never both.
+        const brains = state.options.brains || {
+            jev: state.options.api_models.filter(isJevModel),
+            openai: state.options.api_models.filter((m) => !isJevModel(m)),
+        };
         const cur = cfg.api_model || '';
-        apiSel.innerHTML = models.map((m) => `<option value="${esc(m)}">${esc(m)}</option>`).join('')
-            + (cur && !models.includes(cur) ? `<option value="${esc(cur)}">${esc(cur)}</option>` : '');
+        const all = [...(brains.jev || []), ...(brains.openai || [])];
+        const opt = (m) => `<option value="${esc(m)}">${esc(m)}</option>`;
+        apiSel.innerHTML =
+            `<optgroup label="Jev — TypeSafe System One">${(brains.jev || []).map(opt).join('')}</optgroup>` +
+            `<optgroup label="OpenAI">${(brains.openai || []).map(opt).join('')}</optgroup>` +
+            (cur && !all.includes(cur) ? opt(cur) : '');
         apiSel.value = cur;
     }
+    $('#classifier-fast').checked = !!state.classifier.fast_path;
+    $('#classifier-threshold').value = Number(state.classifier.fast_path_confidence || 0.75).toFixed(2);
     $('#router-mode').value = cfg.mode;
     $('#router-local-endpoint').value = cfg.local_endpoint || '';
     $('#router-local-model').value = cfg.local_model || '';
@@ -187,6 +314,52 @@ function renderCore() {
         slot.appendChild(picker);
     });
     renderFallbacks();
+}
+
+// ── budget ───────────────────────────────────────────────────────────────────
+const AGENT_LABELS = { codex: 'Codex', claude: 'Claude Code', cursor: 'Cursor' };
+
+function renderBudget() {
+    $('#budget-enabled').checked = !!state.budget.enabled;
+    $('#budget-low').value = Math.round(Number(state.budget.low_headroom || 0.15) * 100);
+    const box = $('#budget-accounts');
+    box.innerHTML = '';
+    const accounts = state.accounts || [];
+    if (!accounts.length) {
+        box.innerHTML = '<span class="re-hint">No live usage loaded — press ↻ Usage. ' +
+            'Muse, OpenCode and Hermes have no usage API and keep their declared position.</span>';
+        return;
+    }
+    const low = Number(state.budget.low_headroom || 0.15);
+    accounts.forEach((acc) => {
+        const card = document.createElement('div');
+        card.className = 're-account';
+        let cls = 'ok';
+        let status = acc.headroom == null ? 'unknown' : `${Math.round(acc.headroom * 100)}% left`;
+        if (acc.error) { cls = 'unknown'; status = 'unavailable'; }
+        else if (acc.blocked) { cls = 'blocked'; status = 'at limit'; }
+        else if (acc.premium_blocked) { cls = 'blocked'; status = 'premium at limit · Auto ok'; }
+        else if (acc.headroom != null && acc.headroom < low) cls = 'low';
+        const used = acc.headroom == null ? 0 : Math.round((1 - acc.headroom) * 100);
+        card.innerHTML = `
+            <div class="re-account-head">${esc(AGENT_LABELS[acc.agent] || acc.agent)}
+                <span class="re-avail ${cls}">${esc(status)}</span></div>
+            <div class="re-meter ${cls}"><span style="width:${used}%"></span></div>
+            <div class="re-account-detail">${esc(acc.error || acc.label || '')}${acc.reset_label ? ' · resets ' + esc(acc.reset_label) : ''}</div>`;
+        box.appendChild(card);
+    });
+}
+
+async function loadAccounts(force) {
+    try {
+        const data = await api(`/api/router/config?accounts=1${force ? '&refresh=1' : ''}`);
+        state.accounts = data.accounts || [];
+        renderBudget();
+        renderCore();
+        renderUseCases();
+    } catch (err) {
+        toast(`Usage: ${err.message}`, true);
+    }
 }
 
 // ── use cases ────────────────────────────────────────────────────────────────
@@ -287,7 +460,7 @@ function useCaseCard(uc, index) {
         if (onChange) onChange();
     };
 
-    const mkPickerRows = (getList, { defaultLabel = '(default)', emptyHint, addDefault, numbered = false }) => {
+    const mkPickerRows = (getList, { defaultLabel = '(default)', emptyHint, addDefault, numbered = false, withEffort = true }) => {
         const wrap = document.createElement('div');
         wrap.className = 're-target-list';
         const render = () => {
@@ -307,10 +480,12 @@ function useCaseCard(uc, index) {
                     const num = document.createElement('span');
                     num.className = 're-index';
                     num.textContent = `${idx + 1}.`;
-                    num.title = idx === 0 ? 'Runs the task first' : `Tried ${idx === 1 ? 'on task failure' : 'next'} if earlier targets fail`;
+                    num.title = idx === 0
+                        ? 'Runs the task first'
+                        : 'Tried next only if earlier targets cannot run (limit, auth, missing CLI) — a failed task is never rerun';
                     row.appendChild(num);
                 }
-                const picker = targetPicker(t, { defaultLabel });
+                const picker = targetPicker(t, { defaultLabel, effort: withEffort });
                 picker.addEventListener('target-change', () => {
                     list[idx] = picker.getValue() || { agent: '', model: '' };
                     markDirty();
@@ -362,8 +537,9 @@ function useCaseCard(uc, index) {
     const chainHint = document.createElement('p');
     chainHint.className = 're-hint';
     chainHint.textContent =
-        'First target runs the task; the rest are tried in order when earlier ones fail. ' +
-        'An empty chain leaves the choice to the routing brain.';
+        'First target runs the task. The rest are tried in order only when an earlier one ' +
+        'cannot run (usage limit, auth, missing CLI); with budget awareness on, targets at ' +
+        'their limit are skipped up front. An empty chain leaves the choice to the routing brain.';
     body.appendChild(chainHint);
 
     mkRow(
@@ -373,6 +549,7 @@ function useCaseCard(uc, index) {
             {
                 defaultLabel: '(whole agent)',
                 emptyHint: 'No exclusions.',
+                withEffort: false,
                 addDefault: { agent: 'hermes', model: '' },
             },
         ),
@@ -399,11 +576,7 @@ function useCaseCard(uc, index) {
 
     card.appendChild(body);
 
-    // header events
-    header.addEventListener('click', (e) => {
-        if (e.target.closest('input, button')) return;
-        card.classList.toggle('collapsed');
-    });
+    // The table row owns expansion; this header contains editing controls.
     header.querySelector('.re-uc-name').addEventListener('input', (e) => {
         uc.name = e.target.value;
         markDirty();
@@ -412,6 +585,7 @@ function useCaseCard(uc, index) {
         uc.priority = parseInt(e.target.value, 10) || 0;
         markDirty();
     });
+    header.querySelector('.re-priority').addEventListener('change', renderUseCases);
     header.querySelector('.re-uc-del').addEventListener('click', () => {
         if (!confirm(`Delete use case "${uc.name}"?`)) return;
         state.useCases.splice(index, 1);
@@ -429,7 +603,173 @@ function renderUseCases() {
     const sorted = state.useCases
         .map((uc, i) => [uc, i])
         .sort((a, b) => (Number(a[0].priority) || 0) - (Number(b[0].priority) || 0) || a[1] - b[1]);
-    sorted.forEach(([uc, i]) => list.appendChild(useCaseCard(uc, i)));
+    sorted.forEach(([uc, i]) => {
+        const row = document.createElement('tr');
+        row.className = 're-lane-row';
+        row.dataset.index = String(i);
+        row.innerHTML = `<td class="re-lane-priority"></td><td><button class="re-lane-open" aria-expanded="false" aria-controls="lane-detail-${i}"></button></td><td class="re-lane-match"></td><td class="re-lane-target"></td><td class="re-lane-chain"></td>`;
+        const detail = document.createElement('tr');
+        detail.id = `lane-detail-${i}`;
+        detail.className = 're-lane-detail';
+        detail.hidden = state.expandedUseCase !== uc;
+        const cell = document.createElement('td');
+        cell.colSpan = 5;
+        cell.appendChild(useCaseCard(uc, i));
+        detail.appendChild(cell);
+        const button = $('.re-lane-open', row);
+        button.setAttribute('aria-expanded', String(!detail.hidden));
+        const toggle = () => {
+            const open = detail.hidden;
+            $$('.re-lane-detail', list).forEach((el) => { el.hidden = true; });
+            $$('.re-lane-open', list).forEach((el) => el.setAttribute('aria-expanded', 'false'));
+            detail.hidden = !open;
+            button.setAttribute('aria-expanded', String(open));
+            state.expandedUseCase = open ? uc : null;
+        };
+        button.addEventListener('click', toggle);
+        row.addEventListener('click', (e) => { if (!e.target.closest('button')) toggle(); });
+        list.append(row, detail);
+    });
+    refreshLaneSummaries();
+}
+
+function targetLabel(t) {
+    return t ? `${t.agent} / ${t.model || 'default'}${t.effort ? ' · ' + t.effort : ''}` : 'brain chooses';
+}
+
+function refreshLaneSummaries() {
+    $$('.re-lane-row').forEach((row) => {
+        const uc = state.useCases[Number(row.dataset.index)];
+        if (!uc) return;
+        const c = uc.criteria || {};
+        const targets = (uc.routing || {}).targets || [];
+        const matches = [
+            (c.task_types || []).map((t) => t === 'basic_ask' ? 'chat' : t).join(', ') || 'any work',
+            (c.difficulties || []).join(', ') || 'any scope',
+        ];
+        if (c.code_changes != null) matches.push(c.code_changes ? 'code changes' : 'no code changes');
+        if ((c.keywords || []).length) matches.push('keywords: ' + c.keywords.join(', '));
+        row.classList.toggle('disabled', !uc.enabled);
+        $('.re-lane-priority', row).textContent = Number(uc.priority) || 0;
+        const button = $('.re-lane-open', row);
+        button.textContent = uc.name || 'Untitled lane';
+        button.setAttribute('aria-label', uc.name || 'Untitled lane');
+        button.title = uc.description || 'Expand to edit lane';
+        $('.re-lane-match', row).textContent = matches.slice(0, 2).join(' · ');
+        $('.re-lane-match', row).title = matches.join(' · ');
+        const target = $('.re-lane-target', row);
+        target.textContent = targetLabel(targets[0]);
+        target.title = target.textContent;
+        const a = state.budget.enabled && availability(targets[0]);
+        if (a) target.innerHTML += ` <span class="re-avail ${a.cls}" title="${esc(a.tip)}">${esc(a.text)}</span>`;
+        const chain = $('.re-lane-chain', row);
+        chain.textContent = uc.enabled ? (targets.length > 1 ? `+${targets.length - 1} backup${targets.length > 2 ? 's' : ''}` : '—') : 'disabled';
+        chain.title = targets.map(targetLabel).join(' → ');
+    });
+}
+
+// ── decision-only preview + read-only recent activity ─────────────────────────
+let previewTimer = null;
+let previewRequest = null;
+let previewSeq = 0;
+let flowTimer = null;
+let flowRequest = null;
+let disposed = false;
+
+function schedulePreview() {
+    clearTimeout(previewTimer);
+    if (previewRequest) previewRequest.abort();
+    previewSeq++;
+    const prompt = $('#try-prompt').value.trim();
+    $$('.re-lane-row.preview-match').forEach((row) => row.classList.remove('preview-match'));
+    $('#btn-try-brain').disabled = !prompt || !state.config;
+    $('#try-result').textContent = prompt ? 'Classifying…' : 'Type to see the lane and target. No agent runs.';
+    if (prompt && state.config) previewTimer = setTimeout(() => runPreview(false), 350);
+}
+
+async function runPreview(consultBrain) {
+    clearTimeout(previewTimer);
+    if (previewRequest) previewRequest.abort();
+    const prompt = $('#try-prompt').value.trim();
+    if (!prompt || !state.config || disposed) return;
+    const seq = ++previewSeq;
+    previewRequest = new AbortController();
+    $('#btn-try-brain').disabled = true;
+    $('#try-result').textContent = consultBrain ? 'Asking routing brain…' : 'Classifying…';
+    try {
+        const data = await api('/api/router/preview', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt, consult_brain: consultBrain }), signal: previewRequest.signal,
+        });
+        if (seq !== previewSeq || disposed) return;
+        const d = data.decision;
+        const meta = data.meta || {};
+        const scope = { low: 'quick', medium: 'normal', high: 'deep' }[d.difficulty] || d.difficulty;
+        const task = d.task_type === 'basic_ask' ? 'chat' : d.task_type;
+        const stages = [task + ' · ' + scope, meta.use_case_name || (meta.mode_off ? 'router off' : 'no lane match'), targetLabel(data.target)];
+        $('#try-result').innerHTML = `<div class="re-route-stages">${stages.map((s) => `<span>${esc(s)}</span>`).join('<b aria-hidden="true">→</b>')}</div>` +
+            `<div class="re-preview-note">${meta.provisional ? 'Provisional · Ask brain for the full decision. ' : ''}${esc(d.reason)}${meta.api_error ? ' · Brain unavailable: ' + esc(meta.api_error) : ''}</div>`;
+        $$('.re-lane-row').forEach((row) => row.classList.toggle('preview-match', state.useCases[Number(row.dataset.index)].id === meta.use_case));
+    } catch (err) {
+        if (seq === previewSeq && !disposed && err.name !== 'AbortError') $('#try-result').textContent = `Preview unavailable: ${err.message}`;
+    } finally {
+        if (seq === previewSeq && !disposed) $('#btn-try-brain').disabled = !$('#try-prompt').value.trim();
+    }
+}
+
+async function loadFlow() {
+    clearTimeout(flowTimer);
+    if (disposed || document.hidden || flowRequest) return;
+    flowRequest = new AbortController();
+    try {
+        const data = await api('/api/router/decisions', { signal: flowRequest.signal });
+        if (disposed) return;
+        const entries = data.decisions || [];
+        const box = $('#decision-flow');
+        // Keep scroll position and DOM stable when the outcome snapshot did not change.
+        const snapshot = JSON.stringify(entries);
+        if (box.dataset.snapshot !== snapshot) {
+            box.dataset.snapshot = snapshot;
+            box.innerHTML = entries.length ? entries.map((d) => {
+                const status = d.failure_kind === 'cancelled' ? 'stopped' : d.success ? 'completed' : 'failed';
+                const target = { agent: d.target_agent, model: d.target_model, effort: d.reasoning_effort };
+                const kind = d.task_type === 'basic_ask' ? 'chat' : d.task_type;
+                const scope = { low: 'quick', medium: 'normal', high: 'deep' }[d.difficulty] || d.difficulty;
+                return `<article class="re-flow-item ${status}" title="${esc(d.reason)}">
+                    <div class="re-flow-meta"><time>${esc(fmtTime(d.recorded_at))}</time><span>${esc(d.source)} · ${status}</span></div>
+                    <div class="re-flow-path"><span>${esc(kind)} · ${esc(scope)}</span><b aria-hidden="true">→</b><strong>${esc(targetLabel(target))}</strong></div>
+                    <div class="re-flow-meta"><code>${esc(d.decision_id)}</code><span>${Number(d.attempt_index) + 1} attempt${Number(d.attempt_index) ? 's' : ''}</span></div>
+                </article>`;
+            }).join('') : '<p class="re-hint">No routed outcomes yet. Completed attempts will appear here.</p>';
+        }
+        $('#flow-status').textContent = 'live · 10s';
+    } catch (err) {
+        if (!disposed && err.name !== 'AbortError') $('#flow-status').textContent = 'unavailable · retrying';
+    } finally {
+        flowRequest = null;
+        if (!disposed && !document.hidden) flowTimer = setTimeout(loadFlow, 10000);
+    }
+}
+
+function wirePreview() {
+    $('#try-prompt').addEventListener('input', schedulePreview);
+    $('#btn-try-brain').addEventListener('click', () => runPreview(true));
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) clearTimeout(flowTimer);
+        else loadFlow();
+    });
+    window.addEventListener('pagehide', () => {
+        disposed = true;
+        clearTimeout(previewTimer);
+        clearTimeout(flowTimer);
+        previewSeq++;
+        if (previewRequest) previewRequest.abort();
+        if (flowRequest) flowRequest.abort();
+    });
+    window.addEventListener('pageshow', (e) => {
+        if (e.persisted) { disposed = false; loadFlow(); schedulePreview(); }
+    });
+    loadFlow();
 }
 
 // ── health ───────────────────────────────────────────────────────────────────
@@ -624,11 +964,17 @@ function applyLoaded(data) {
             },
         };
     }
+    if (data.classifier) state.classifier = { ...state.classifier, ...data.classifier };
+    if (data.budget) state.budget = { ...state.budget, ...data.budget };
+    if (Array.isArray(data.accounts) && data.accounts.length) state.accounts = data.accounts;
     state.dirty = false;
     $('#dirty-chip').hidden = true;
+    $('#try-config-hint').textContent = 'Uses saved settings. Typing uses the local classifier; Ask brain may use API tokens.';
     renderCore();
+    renderBudget();
     renderUseCases();
     renderRage();
+    schedulePreview();
 }
 
 async function loadAll() {
@@ -653,6 +999,8 @@ async function saveAll() {
         escalation_target: c.escalation_target,
         fallbacks: (c.fallbacks || []).filter((t) => t && t.agent),
         use_cases: state.useCases,
+        classifier: { ...state.classifier },
+        budget: { ...state.budget },
         rage: {
             enabled: !!state.rage.enabled,
             investigator: {
@@ -695,7 +1043,38 @@ function wireEvents() {
         renderProviderFields();
         markDirty();
     });
-    $('#router-api-model').addEventListener('change', (e) => { state.config.api_model = e.target.value; markDirty(); });
+    $('#router-api-model').addEventListener('change', (e) => {
+        state.config.api_model = e.target.value;
+        renderProviderFields();
+        markDirty();
+    });
+    $('#classifier-fast').addEventListener('change', (e) => {
+        state.classifier.fast_path = e.target.checked;
+        renderBrainHint();
+        markDirty();
+    });
+    $('#classifier-threshold').addEventListener('change', (e) => {
+        const n = parseFloat(e.target.value);
+        state.classifier.fast_path_confidence = Math.max(0.5, Math.min(isNaN(n) ? 0.75 : n, 1));
+        e.target.value = state.classifier.fast_path_confidence.toFixed(2);
+        renderBrainHint();
+        markDirty();
+    });
+    $('#budget-enabled').addEventListener('change', (e) => {
+        state.budget.enabled = e.target.checked;
+        markDirty();
+        if (state.budget.enabled && !(state.accounts || []).length) loadAccounts(false);
+        else { renderCore(); renderUseCases(); }
+    });
+    $('#budget-low').addEventListener('change', (e) => {
+        const n = parseInt(e.target.value, 10);
+        const pct = Math.max(0, Math.min(isNaN(n) ? 15 : n, 90));
+        e.target.value = pct;
+        state.budget.low_headroom = pct / 100;
+        renderBudget();
+        markDirty();
+    });
+    $('#btn-budget-refresh').addEventListener('click', () => loadAccounts(true));
     $('#router-local-endpoint').addEventListener('input', (e) => { state.config.local_endpoint = e.target.value; markDirty(); });
     $('#router-local-model').addEventListener('input', (e) => { state.config.local_model = e.target.value; markDirty(); });
     $('#router-agent-id').addEventListener('input', (e) => { state.config.agent_id = e.target.value; markDirty(); });
@@ -721,6 +1100,7 @@ function wireEvents() {
                 never_use: [],
             },
         });
+        state.expandedUseCase = state.useCases[state.useCases.length - 1];
         markDirty();
         renderUseCases();
     });
@@ -737,6 +1117,7 @@ function wireEvents() {
 document.addEventListener('DOMContentLoaded', () => {
     wireEvents();
     wireRage();
+    wirePreview();
     loadAll();
 });
 })();

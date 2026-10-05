@@ -16,11 +16,20 @@ class RouterMode(str, Enum):
 
 
 class TaskType(str, Enum):
-    BASIC_ASK = "basic_ask"
-    CODING = "coding"
-    DEBUGGING = "debugging"
-    ARCHITECTURE = "architecture"
-    RESEARCH = "research"
+    """The *kind of work* — what decides which harness is best at a turn.
+
+    Difficulty is scope (one quick step / normal / broad or ambiguous), not
+    "how impressive the question sounds".
+    """
+
+    BASIC_ASK = "basic_ask"  # conversation, quick general question, no repo access
+    EXPLAIN = "explain"  # question about this codebase/system/logs; read, don't change
+    CODING = "coding"  # implement or change code
+    DEBUGGING = "debugging"  # something is broken: find the cause and fix it
+    ARCHITECTURE = "architecture"  # design / plan / cross-cutting restructure
+    RESEARCH = "research"  # external lookup, compare libraries/tools/options
+    WRITING = "writing"  # prose deliverable: docs, release notes, summaries, emails
+    OPS = "ops"  # operate things: git, restart, deploy, workers, installs, chores
     OTHER = "other"
 
 
@@ -58,12 +67,19 @@ VALID_MODES = frozenset(m.value for m in RouterMode)
 class ExecutionTarget:
     agent: str
     model: str
+    # Reasoning effort for harnesses that take one (`--effort` / `--reasoning-effort`);
+    # empty = the agent's own default. Not part of ``key()``: demotions, quota and
+    # dedupe are per model, whatever effort it runs at.
+    effort: str = ""
 
     def key(self) -> str:
         return f"{self.agent}:{self.model}"
 
     def to_dict(self) -> Dict[str, str]:
-        return {"agent": self.agent, "model": self.model}
+        d = {"agent": self.agent, "model": self.model}
+        if self.effort:
+            d["effort"] = self.effort
+        return d
 
     @staticmethod
     def from_dict(raw: Any) -> Optional["ExecutionTarget"]:
@@ -71,9 +87,10 @@ class ExecutionTarget:
             return None
         agent = str(raw.get("agent") or "").strip().lower()
         model = str(raw.get("model") or "").strip()
+        effort = str(raw.get("effort") or "").strip().lower()
         if not agent:
             return None
-        return ExecutionTarget(agent=agent, model=model)
+        return ExecutionTarget(agent=agent, model=model, effort=effort)
 
 
 @dataclass

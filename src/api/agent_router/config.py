@@ -40,7 +40,9 @@ def _parse_target(raw: Any, fallback: ExecutionTarget) -> ExecutionTarget:
     t = ExecutionTarget.from_dict(raw)
     if t is None:
         return fallback
-    validated, err = validate_execution_target(t.agent, t.model, allow_empty_model=True)
+    validated, err = validate_execution_target(
+        t.agent, t.model, allow_empty_model=True, effort=t.effort
+    )
     return validated if validated and not err else fallback
 
 
@@ -100,7 +102,9 @@ def load_router_config() -> RouterConfig:
         t = ExecutionTarget.from_dict(item)
         if not t:
             continue
-        validated, err = validate_execution_target(t.agent, t.model, allow_empty_model=True)
+        validated, err = validate_execution_target(
+            t.agent, t.model, allow_empty_model=True, effort=t.effort
+        )
         if validated and not err and validated.key() not in {x.key() for x in ordered}:
             ordered.append(validated)
     if not ordered:
@@ -191,7 +195,7 @@ def update_router_config(**updates: Any) -> Tuple[RouterConfig, Optional[str]]:
         raw = updates["default_target"]
         if isinstance(raw, ExecutionTarget):
             t, err = validate_execution_target(
-                raw.agent, raw.model, strict_cursor_models=True
+                raw.agent, raw.model, strict_cursor_models=True, effort=raw.effort
             )
         elif isinstance(raw, (list, tuple)) and len(raw) >= 2:
             t, err = validate_execution_target(
@@ -202,6 +206,7 @@ def update_router_config(**updates: Any) -> Tuple[RouterConfig, Optional[str]]:
                 str(raw.get("agent") or ""),
                 str(raw.get("model") or ""),
                 strict_cursor_models=True,
+                effort=raw.get("effort"),
             )
         else:
             return cfg, "default_target must be {agent, model}."
@@ -213,7 +218,7 @@ def update_router_config(**updates: Any) -> Tuple[RouterConfig, Optional[str]]:
         raw = updates["escalation_target"]
         if isinstance(raw, ExecutionTarget):
             t, err = validate_execution_target(
-                raw.agent, raw.model, strict_cursor_models=True
+                raw.agent, raw.model, strict_cursor_models=True, effort=raw.effort
             )
         elif isinstance(raw, (list, tuple)) and len(raw) >= 2:
             t, err = validate_execution_target(
@@ -224,6 +229,7 @@ def update_router_config(**updates: Any) -> Tuple[RouterConfig, Optional[str]]:
                 str(raw.get("agent") or ""),
                 str(raw.get("model") or ""),
                 strict_cursor_models=True,
+                effort=raw.get("effort"),
             )
         else:
             return cfg, "escalation_target must be {agent, model}."
@@ -238,12 +244,15 @@ def update_router_config(**updates: Any) -> Tuple[RouterConfig, Optional[str]]:
         ordered: List[ExecutionTarget] = []
         for item in items:
             if isinstance(item, ExecutionTarget):
-                t, err = validate_execution_target(item.agent, item.model, allow_empty_model=True)
+                t, err = validate_execution_target(
+                    item.agent, item.model, allow_empty_model=True, effort=item.effort
+                )
             elif isinstance(item, dict):
                 t, err = validate_execution_target(
                     str(item.get("agent") or ""),
                     str(item.get("model") or ""),
                     allow_empty_model=True,
+                    effort=item.get("effort"),
                 )
             else:
                 return cfg, f"Invalid fallback entry: {item!r}"

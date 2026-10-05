@@ -7,7 +7,7 @@
       "id": "basic_what_router_does",
       "category": "basic_ask",
       "prompt": "What does the router currently do?",
-      "allowed_task_types": ["basic_ask", "research", "other"],
+      "allowed_task_types": ["basic_ask", "research", "other", "explain"],
       "allowed_difficulties": ["low", "medium"],
       "allowed_targets": [{"agent": "cursor", "model": "auto"}],
       "preferred_target": {"agent": "cursor", "model": "auto"},
@@ -17,7 +17,7 @@
       "id": "basic_fallback_vs_escalation",
       "category": "basic_ask",
       "prompt": "Explain the difference between a fallback and an escalation.",
-      "allowed_task_types": ["basic_ask", "research", "other"],
+      "allowed_task_types": ["basic_ask", "research", "other", "explain"],
       "allowed_difficulties": ["low", "medium"],
       "allowed_targets": [{"agent": "cursor", "model": "auto"}],
       "preferred_target": {"agent": "cursor", "model": "auto"}
@@ -26,7 +26,7 @@
       "id": "basic_active_agent_command",
       "category": "basic_ask",
       "prompt": "Which command shows the active Cuttle agent?",
-      "allowed_task_types": ["basic_ask", "research", "other"],
+      "allowed_task_types": ["basic_ask", "research", "other", "explain"],
       "allowed_difficulties": ["low"],
       "allowed_targets": [{"agent": "cursor", "model": "auto"}],
       "preferred_target": {"agent": "cursor", "model": "auto"}
@@ -35,7 +35,7 @@
       "id": "basic_summarize_project",
       "category": "basic_ask",
       "prompt": "Summarize the purpose of this project.",
-      "allowed_task_types": ["basic_ask", "research", "other"],
+      "allowed_task_types": ["basic_ask", "research", "other", "explain"],
       "allowed_difficulties": ["low", "medium"],
       "allowed_targets": [{"agent": "cursor", "model": "auto"}],
       "preferred_target": {"agent": "cursor", "model": "auto"}

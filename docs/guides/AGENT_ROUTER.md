@@ -14,14 +14,83 @@ The agent router chooses **execution harnesses** such as Cursor Agent CLI, Codex
 | **Execution target** | The agent CLI + model that *does* the work (e.g. Cursor Auto, Cursor Grok 4.6, Codex) |
 | **Session selection** | A sticky agent already chosen for the chat — manually or via a starred command. **Bypasses routing.** |
 | **Fallback chain** | Ordered alternatives when a target cannot run (quota, auth, missing CLI, …) |
-| **Escalation** | Retry once with a stronger model after an observable *task* failure |
+| **Escalation** | A stronger model, used only when you ask (`/retry frontier`) or re-send the same prompt (silent-failure escalation). The router never automatically reruns a failed task. |
+
+## How a turn is routed
+
+The router answers two questions, in this order, and keeps them separate:
+
+1. **What kind of work is this, and how much of it?** (classification)
+2. **Which harness is best at that kind of work right now?** (your use-case table)
+
+**Kind of work** (`task_type`) is what decides which harness is good at a turn:
+
+| Lane | Meaning | Example |
+|---|---|---|
+| `basic_ask` (chat) | conversation, quick general question | "hello", "what's 2+2?" |
+| `explain` | question about this codebase / chats / logs; read, don't change | "how does the router pick fallbacks?", "look at CH-000989" |
+| `coding` | implement or change code | "add a clear-cache button to settings" |
+| `debugging` | something is broken; find the cause and fix it | "why did this hang for 13s?", "the host keeps crashing" |
+| `architecture` | design, plans, cross-cutting restructure | "re-imagine the router classification" |
+| `research` | external lookup, comparisons | "compare opencode vs claude code" |
+| `writing` | prose deliverable | "write the release notes", "summarize yesterday's commits" |
+| `ops` | git, restarts, deploys, workers, installs, chores | "push it", "restart flask" |
+
+**Scope** (`difficulty`) is how much work, not how hard the question sounds:
+`low` = one quick step, `medium` = normal multi-step task, `high` = broad,
+ambiguous, or cross-cutting. Architecture is `high` unless explicitly small.
+
+**Classifier fast path** (`src/api/agent_router/classify.py`): most turns are
+obvious from their wording and classify locally in microseconds. At confidence
+≥ `agent_router.classifier.fast_path_confidence` (default 0.75) the routing
+brain is skipped entirely. Ambiguous turns ("make it pop more") go to the
+brain. If the brain is down, the classifier's lane is still used, so the
+table can pick a harness. Settings:
+
+```json
+"classifier": {"fast_path": true, "fast_path_confidence": 0.75}
+```
+
+**Out-of-usage memory** (`src/api/agent_router/quota.py`): when an account
+reports quota/usage exhaustion, routing remembers it for the reset time named
+in the error (or 3 hours) and puts those targets at the back of the chain. A
+Cursor *premium* cooldown leaves Cursor Auto in use. A later success on that
+tier clears the cooldown, and so does a Flask restart. `/router status`
+lists active cooldowns.
+
+**Budget awareness** (`src/api/agent_router/budget.py`, Router page → Budget
+tickbox, `agent_router.budget`). The router reads the same live plan windows
+as `/usage` *before* picking: Codex 5-hour/weekly, Claude 5-hour/weekly, and
+Cursor included API usage (Auto is not metered by that pool). Accounts at their
+limit go to the back of the chain, accounts below `low_headroom` (default 15%)
+go behind healthy ones, and the declared order holds otherwise. Fetches run on
+a background thread every `refresh_s` (default 300s), so routing never waits
+on a vendor API. Muse, OpenCode and Hermes have no usage API and keep their
+position. Off by default, because it calls vendor usage endpoints with your
+CLI credentials.
+
+**Per-target effort.** Any chain entry, default, escalation or fallback can
+carry `"effort"` (e.g. `{"agent": "codex", "model": "gpt-6.1-sol", "effort":
+"xhigh"}`). It is validated against the harness manifest's levels and passed to
+the CLI as its reasoning effort. Cursor has no separate effort setting; pick
+an effort-specific model id such as `cursor-grok-4.6-high`.
+
+**Which brain runs.** Mode `api` ("hosted brain") runs exactly one brain,
+picked by the model id. `jev`/`jev-latest` runs Jev (TypeSafe System One via
+your TypeSafe or OpenRouter key) and OpenAI is not called. An OpenAI id
+(`gpt-4o-mini`, …) runs OpenAI and needs `OPENAI_API_KEY`. With the classifier
+fast path on, most turns call neither.
+
+**The routing chip** shows one readable line, e.g.
+`writing · normal → Writing & docs (matched “Write the release notes”)`. The
+brain's raw scores stay in the decision's `raw` details.
 
 ## Modes
 
 - `off` — routing disabled; starred sticky agents and explicit composer badges still apply
 - `api` — cheap routing brain (default: OpenAI `gpt-4o-mini`). Set `/router api model jev` to use TypeSafe Jev instead.
-- `local` — schema-ready; configure endpoint/model (not fully implemented yet)
-- `agent` — schema-ready; agent CLI as brain (not fully implemented; recursion-guarded)
+- `local` — schema-ready; the local-model brain is not implemented yet, so turns route on the classifier alone
+- `agent` — schema-ready; the agent-CLI brain is not implemented yet (recursion-guarded), so turns route on the classifier alone
 
 Default mode is **`api`**. If the routing API fails, Cuttle does **not** fail the user task — it uses the deterministic default: **Cursor Agent / Auto**.
 
@@ -61,11 +130,10 @@ The router never overwrites an already-selected session agent/model unless you e
 ## Default policy (initial)
 
 1. Prefer **Cursor Agent CLI — Auto** for ordinary low/medium coding work (currently the preferred low-cost path).
-2. Escalate once to **Cursor Agent — Grok 4.6** on observable Auto *task* failures (or when Auto cannot start and Grok is next).
-3. On Grok **transport** failures (budget/quota/auth/unavailable), walk the configured **Codex** fallback (and further fallbacks).
-4. If every target fails, stop and report each attempt — no unbounded loops.
-
-Escalation is only triggered by observable failures (CLI exit/`[FAIL]`, timeouts, explicit errors) or `/retry` — not by guessing that an answer was “wrong.”
+2. A **task** failure (the agent ran and reported failure: nonzero exit, `[FAIL]`, tests failed) is **terminal**. You get the agent's own output plus `/retry frontier`, `/retry fallback`, `/route …` hints. Rerunning the same prompt on another model would repeat side effects and hide what happened.
+3. A **transport** failure (the target never ran: quota/usage, auth, missing CLI, connection) walks the fallback chain. When Auto cannot start, that chain begins with Grok.
+4. **Quota is account-wide.** After an out-of-usage/quota error, the rest of the turn skips that agent's other premium models. For Cursor it tries `cursor`/`auto` first, because Auto keeps working when premium usage is exhausted.
+5. If every target fails, stop and report each attempt with its real error line, with no unbounded loops. Each step ("Router → cursor / grok-4.6…", "… unavailable (…) — trying cursor / auto…") appears in the chat activity bubble.
 
 ## Configuration
 
@@ -104,13 +172,17 @@ pin → table → brain/learning → defaults).
 ```
 
 The first target in the chain runs the task; later entries are tried in order
-when earlier ones fail (task failure escalates to the next hop, transport
-failure walks the remaining chain). The legacy
+when an earlier one cannot run (transport failure walks the remaining chain;
+a task failure stops the turn). The legacy
 `preferred` / `escalation` / `fallbacks` fields are still read and flatten
 into the chain on load.
 
-A fresh install is seeded with three tested blocks: *General chat / simple
-requests*, *Frontier coding model*, and *Coding model*. You (or any agent) can
+A fresh install is seeded with one block per kind of work: *Quick chat*,
+*Ops & chores*, *Writing & docs* (Claude first), *Explain the codebase*,
+*Research*, *Everyday coding*, *Architecture & design*, *Deep work*
+(high-scope coding/debugging/explain), and an *Anything else* catch-all, so
+every turn lands in a declared lane. Seeds use agent defaults (empty model),
+except Cursor. You (or any agent) can
 edit `agent_router.use_cases` directly in `settings.json` — the router and the
 Router page always re-read the file from disk.
 
@@ -118,8 +190,24 @@ Router page always re-read the file from disk.
 
 - **Agents in chat** — edit the JSON above (preferred path; it is the same
   source of truth), or call `PUT /api/router/config` with `{"use_cases": [...]}`
-- **Router page** — `/router_editor.html`: core routing, use-case cards, and
-  target health.
+- **Router page** — `/router_editor.html`: compact lane table, prompt preview,
+  recent decisions, and expandable core routing / budget / target health settings.
+  Click a lane to edit its criteria, ordered targets, exclusions and effort.
+  Typing in **Try a prompt** uses the local classifier and the production table,
+  demotion and availability layers, against saved settings. Ambiguous results are
+  marked provisional; **Ask brain** invokes the full decision-only path and may
+  spend routing API tokens. Neither path executes a task or records an outcome.
+  Unsaved edits are labelled; save them to preview their effect.
+  **Recent decisions** polls the latest recorded attempt per routed decision every
+  10 seconds while visible (six cards). It excludes sticky/manual telemetry and
+  preview decisions; active runs appear once an attempt records its outcome.
+  This is an enhancement to the established router editor and ships directly,
+  without a separate experimental flag.
+
+Editor-only HTTP endpoints are owner-authorized: `POST /api/router/preview`
+(`{"prompt": "…", "consult_brain": false}`; explicit `true` asks the brain)
+and read-only `GET /api/router/decisions`. Decision evaluation in chat remains
+`/router evaluate <prompt>`.
 
 ## Quality-regression signals ("is it sucking?") — basic
 
@@ -144,7 +232,7 @@ Manual control: `POST /api/router/health/refresh` re-evaluates;
 | Signal | Example | Router reaction |
 |---|---|---|
 | Transport failure | quota, auth, missing CLI, 429 | walks the target chain |
-| Observable task failure | nonzero exit, `[FAIL]`, explicit errors | escalates one hop |
+| Observable task failure | nonzero exit, `[FAIL]`, explicit errors | terminal: shows the agent output; `/retry` to escalate |
 | User cancellation | you pressed Stop | terminal — never rerouted, never counted |
 | Tool call failing *inside* the agent's run | agent retries a test | **no** router involvement — that's the agent's own loop |
 | **Silent failure** (claims success, work is wrong) | "fix this bug" → "done" → it isn't | see below |

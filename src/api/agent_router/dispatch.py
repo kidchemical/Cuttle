@@ -7,10 +7,13 @@ from typing import Any, Callable, Dict, List, Optional
 
 import api.agent_router.logging_events as log
 from api.agent_router.config import load_router_config
+import api.agent_router.budget as budget
+import api.agent_router.quota as quota
 from api.agent_router.outcomes import record_attempt
 from api.agent_router.policy import (
     classify_failure,
     is_auto_target,
+    is_quota_failure,
 )
 from api.agent_router.types import (
     ExecutionOutcome,
@@ -48,7 +51,7 @@ def _default_runners() -> Dict[str, RunnerFn]:
     from api.agent_harness.runners import run_harness_web_command as _run_owned
 
     def harness_runner_factory(agent_id: str) -> RunnerFn:
-        def _runner(prompt, chat_session_id, status_queue=None, project_path=None, model=None, **_kw):
+        def _runner(prompt, chat_session_id, status_queue=None, project_path=None, model=None, effort=None, **_kw):
             return _run_owned(
                 agent_id,
                 prompt,
@@ -56,6 +59,7 @@ def _default_runners() -> Dict[str, RunnerFn]:
                 status_queue=status_queue,
                 project_path=project_path,
                 model_override=model,
+                execute_kwargs={"reasoning_effort": effort} if effort else None,
             )
 
         return _runner
@@ -104,6 +108,8 @@ def _run_one(
             status_queue=status_queue,
             project_path=project_path,
             model=target.model or None,
+            # Only when set: custom/test runners need not accept it.
+            **({"effort": target.effort} if target.effort else {}),
         )
     except Exception as e:
         return {
@@ -112,6 +118,20 @@ def _run_one(
             "type": "router_error",
             "error": str(e),
         }
+
+
+def _label(target: ExecutionTarget) -> str:
+    return f"{target.agent} / {target.model or 'default'}"
+
+
+def _emit_status(status_queue, message: str) -> None:
+    """Router steps belong in the activity bubble, not only the Flask log."""
+    if status_queue is None:
+        return
+    try:
+        status_queue.put(("status", message))
+    except Exception:
+        pass
 
 
 def _current_turn(chat_session_id: Any) -> Optional[int]:
@@ -159,7 +179,9 @@ def _annotate_result(
         from api.chat_metadata import routing_badge_from_router
         badge = routing_badge_from_router(out["router"]) if is_enabled("router_selection_chip") else None
         if badge:
-            badge["effort"] = str(out.get("agent_effort") or out.get(f"{target.agent}_effort") or "")
+            badge["effort"] = str(
+                out.get("agent_effort") or out.get(f"{target.agent}_effort") or target.effort or ""
+            )
             badge["model"] = str(out.get("agent_model") or out.get(f"{target.agent}_model") or badge["model"])
             out["routing_badge"] = badge
             return out
@@ -181,8 +203,11 @@ def execute_decision(
     allow_escalation: bool = True,
 ) -> Dict[str, Any]:
     """
-    Run the selected target. On Auto task failure → escalate once.
-    On transport failure → walk fallbacks. Never unbounded loop.
+    Run the selected target. A task failure (the agent ran and failed) is
+    terminal, like cancellation. Only "never ran" failures (quota, auth,
+    missing CLI, connection) walk fallbacks; a quota failure skips the rest
+    of that vendor account's premium models and tries its Auto first.
+    Never unbounded loop.
 
     When ``decision.strategy == supervised``, delegates to the supervised
     orchestrator (does not invent a fake agent name).
@@ -204,6 +229,9 @@ def execute_decision(
     cfg = config or load_router_config()
     attempts: List[Dict[str, Any]] = []
     tried_keys = set()
+    # Agents whose account reported quota/usage exhaustion this turn.
+    premium_exhausted: set = set()
+    all_exhausted: set = set()
     turn = _current_turn(chat_session_id)
 
     # Phase B — never start (or fall forward into) a demoted target.
@@ -225,6 +253,8 @@ def execute_decision(
             }
             return dup, FailureKind.TRANSPORT.value, "duplicate", target, source
         tried_keys.add(key)
+        if source == decision.source:
+            _emit_status(status_queue, f"Router → {_label(target)}…")
         started = time.perf_counter()
         result = _run_one(
             target,
@@ -238,6 +268,12 @@ def execute_decision(
         )
         latency_ms = (time.perf_counter() - started) * 1000.0
         kind, reason = classify_failure(result, response_text=str(result.get("response") or ""))
+        _blob = f"{result.get('response') or ''}\n{result.get('error') or ''}"
+        if kind == FailureKind.TRANSPORT.value and is_quota_failure(_blob):
+            (all_exhausted if is_auto_target(target) else premium_exhausted).add(target.agent)
+            quota.mark_exhausted(target, _blob)
+        elif kind == FailureKind.NONE.value:
+            quota.note_success(target)
         attempt = {
             "agent": target.agent,
             "model": target.model,
@@ -260,6 +296,45 @@ def execute_decision(
             project_path=project_path,
         )
         return result, kind, reason, target, source
+
+    def account_exhausted(target: ExecutionTarget) -> bool:
+        """This turn already saw the target's vendor account out of usage."""
+        if target.agent in all_exhausted:
+            return True
+        if target.agent in premium_exhausted and not is_auto_target(target):
+            return True
+        if quota.is_exhausted(target):
+            return True
+        bset = budget.budget_settings()
+        if not bset["enabled"]:
+            return False
+        state, _why = budget.target_state(
+            target, budget.snapshot(), low_headroom=bset["low_headroom"]
+        )
+        return state == "blocked"
+
+    def task_failed_out(result, used, source, reason):
+        """The agent ran and failed — show its output, never silently rerun."""
+        remember_failure(
+            chat_session_id,
+            {
+                "prompt": prompt,
+                "decision": decision.to_dict(),
+                "attempts": attempts,
+                "project_path": project_path,
+            },
+        )
+        out = _annotate_result(
+            result, target=used, decision=decision, source=source, attempts=attempts, routed_note=""
+        )
+        if isinstance(out.get("response"), str):
+            out["response"] = (
+                f"{out['response'].rstrip()}\n\n"
+                f"_`{used.agent}` / `{used.model or 'default'}` ran and reported a failure; "
+                "the router does not rerun it on another model. "
+                "Try `/retry frontier`, `/retry fallback`, or `/route <agent> <model> …`._"
+            )
+        return out
 
     def cancelled_out(result, used, source, reason):
         """A cancelled turn ends here — no escalation, no fallback, no spend."""
@@ -319,48 +394,37 @@ def execute_decision(
     if _turn_superseded(chat_session_id, turn):
         return stale_out(result, used, source)
 
-    # Compact handoff for escalation
-    if kind == FailureKind.TASK.value and allow_escalation and is_auto_target(used):
-        esc = decision.escalation_target or cfg.escalation_target
-        if esc.key() not in demoted_keys:
-            log.log_escalation(esc.agent, esc.model, reason, decision_id=decision.decision_id)
-            summary = (str(result.get("response") or ""))[:2500]
-            prompt = (
-                f"{prompt}\n\n---\n"
-                f"[Cuttle router escalation handoff]\n"
-                f"Prior target: {used.agent} / {used.model} failed ({reason}).\n"
-                f"Compact prior output:\n{summary}\n"
-                f"Continue from this state; do not rediscover the whole attempt.\n"
-            )
-            result, kind, reason, used, source = try_target(
-                esc, TargetSource.ESCALATION.value, prompt
-            )
-            if kind == FailureKind.CANCELLED.value:
-                return cancelled_out(result, used, source, reason)
-            if kind == FailureKind.NONE.value:
-                clear_last_failure(chat_session_id)
-                note = f"Escalated to `{used.agent}` / `{used.model}` after Auto task failure"
-                return _annotate_result(
-                    result, target=used, decision=decision, source=source, attempts=attempts, routed_note=note
-                )
+    # The agent ran and reported failure: that is its answer. Rerunning the
+    # same prompt on another model would repeat side effects and hide what
+    # actually happened, so the user decides via /retry or /route.
+    if kind == FailureKind.TASK.value:
+        return task_failed_out(result, used, source, reason)
 
-    # Transport failures (and remaining failures after escalation) → fallbacks
+    # Only "the target never ran" (quota, auth, missing CLI, connection)
+    # walks the fallback chain.
     chain: List[ExecutionTarget] = []
-    if kind == FailureKind.TRANSPORT.value and is_auto_target(primary):
-        esc = decision.escalation_target or cfg.escalation_target
-        if esc.key() not in tried_keys and esc.key() not in demoted_keys:
-            chain.append(esc)
+    if "cursor" in premium_exhausted:
+        # Cursor's own advice on premium exhaustion is "Switch to Auto".
+        chain.append(ExecutionTarget("cursor", "auto"))
+    # The escalation target is the next hop of the declared chain (use-case
+    # chain[1]); it is tried first whenever the primary could not run.
+    if allow_escalation:
+        chain.append(decision.escalation_target or cfg.escalation_target)
     ordered_fallbacks = (
         decision.fallbacks if decision.fallbacks is not None else cfg.fallbacks.ordered
     )
-    for fb in ordered_fallbacks:
-        if fb.key() not in tried_keys and fb.key() not in demoted_keys:
-            chain.append(fb)
+    chain.extend(ordered_fallbacks)
 
     for fb in chain:
+        if fb.key() in tried_keys or fb.key() in demoted_keys or account_exhausted(fb):
+            continue
         if _turn_superseded(chat_session_id, turn):
             return stale_out(result, used, source)
         log.log_fallback(fb.agent, fb.model or "(default)", reason, decision_id=decision.decision_id)
+        _emit_status(
+            status_queue,
+            f"{_label(used)} unavailable ({reason or 'failed'}) — trying {_label(fb)}…",
+        )
         result, kind, reason, used, source = try_target(fb, TargetSource.FALLBACK.value, prompt)
         if kind == FailureKind.CANCELLED.value:
             return cancelled_out(result, used, source, reason)
@@ -368,11 +432,13 @@ def execute_decision(
             clear_last_failure(chat_session_id)
             note = (
                 f"Fallback `{used.agent}` / `{used.model or 'default'}` "
-                f"after: {reason or 'prior failure'}"
+                f"after: {attempts[-2].get('reason') or 'prior failure'}"
             )
             return _annotate_result(
                 result, target=used, decision=decision, source=source, attempts=attempts, routed_note=note
             )
+        if kind == FailureKind.TASK.value:
+            return task_failed_out(result, used, source, reason)
 
     log.log_exhausted(len(attempts), decision_id=decision.decision_id)
 

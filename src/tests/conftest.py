@@ -315,6 +315,21 @@ def _no_live_steer_servers(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _fresh_router_quota(monkeypatch):
+    """Out-of-usage cooldowns and budget snapshots are process-global; one
+    test's quota failure must not reroute every later routed turn."""
+    from api.agent_router import budget, quota
+
+    # Budget refreshes call vendor usage APIs with the developer's tokens.
+    monkeypatch.setattr(budget, "_fetchers", lambda: {})
+    quota.clear()
+    budget.clear()
+    yield
+    quota.clear()
+    budget.clear()
+
+
+@pytest.fixture(autouse=True)
 def _isolated_restart_files(tmp_path, monkeypatch):
     """Delivery end/cancel hooks must never consume a live pending restart.
 

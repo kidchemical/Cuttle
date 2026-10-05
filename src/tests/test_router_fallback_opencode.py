@@ -5,6 +5,9 @@ from __future__ import annotations
 
 def test_missing_openai_key_falls_back_before_inference(monkeypatch):
     from api.agent_router import engine
+    # Exercise the provider failure path rather than the greeting fast path.
+    monkeypatch.setattr('api.agent_router.classify.classifier_settings',
+                        lambda: {'fast_path': False, 'fast_path_confidence': 1.0})
     from api.agent_router.config import load_router_config
     from api.agent_router.types import RouterMode
 
