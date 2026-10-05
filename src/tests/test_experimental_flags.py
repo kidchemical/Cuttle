@@ -19,16 +19,14 @@ from api.experimental import FlagSpec, enabled_flags, is_enabled, set_enabled
 
 
 @pytest.fixture(autouse=True)
-def _clean_registry(monkeypatch):
-    """Isolate the stored-override read + the global kill switch per test.
+def _clean_registry(monkeypatch, _isolated_application_settings):
+    """Use real private settings and isolate the global kill switch per test.
 
     ``set_enabled`` is deliberately NOT stubbed — tests that need to assert on
     the persistence contract install their own fake settings manager.
     """
     monkeypatch.delenv("CUTTLE_EXPERIMENTAL", raising=False)
-    monkeypatch.setattr(flags, "_stored_flags", lambda: {})
     yield
-    monkeypatch.undo()
 
 
 @pytest.fixture()
@@ -98,8 +96,9 @@ def test_set_enabled_drops_redundant_default(monkeypatch):
         def get_setting(self, key, default=None):
             return {}
 
-        def set_setting(self, key, value):
-            written[key] = value
+        def update_setting(self, key, transform):
+            written[key] = transform(written.get(key))
+            return True
 
     import managers.settings_manager as sm_mod
 
@@ -171,9 +170,9 @@ def test_flag_write_requires_owner(tmp_path, monkeypatch):
     payload = res.get_json()
     assert payload["success"] is True
     assert payload["flag"]["id"] == "achievements"
-    # leave the install as we found it
-    ctx["client"].post("/api/experimental/flags/achievements", json={"enabled": False},
-                       environ_base=LAN)
+    # The real route persisted to the private fixture, never the running install.
+    from managers.settings_manager import get_settings_manager
+    assert get_settings_manager().get_setting('experimental_flags')['achievements'] is True
 
 
 def test_flag_write_validation(tmp_path, monkeypatch):
@@ -205,3 +204,44 @@ def test_cli_list_emits_json(capsys):
     payload = json.loads(out)
     assert payload["success"] is True
     assert any(f["id"] == "achievements" for f in payload["flags"])
+
+
+def test_flag_updates_survive_restart_and_other_settings(_isolated_application_settings, monkeypatch):
+    from managers.settings_manager import SettingsManager
+    import managers.settings_manager as managers
+    manager = _isolated_application_settings
+    manager.set_setting('experimental_flags', {'newer_unknown_flag': True})
+    flags.set_enabled('achievements', True)
+    flags.set_enabled('mesh_frame_grid', True)
+    manager.set_setting('starred_slash_commands', ['codex'])
+    # New manager simulates Flask restarting, with no in-memory state carried over.
+    restarted = SettingsManager(str(manager.settings_file))
+    monkeypatch.setattr(managers, '_settings_manager', restarted)
+    assert flags.is_enabled('achievements')
+    assert flags.is_enabled('mesh_frame_grid')
+    flags.set_enabled('achievements', False)
+    stored = restarted.get_setting('experimental_flags')
+    assert stored == {'mesh_frame_grid': True, 'newer_unknown_flag': True}
+    assert not flags.is_enabled('newer_unknown_flag')
+
+
+def test_concurrent_toggles_merge_under_storage_lock(_isolated_application_settings, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    manager = _isolated_application_settings
+    original = manager.update_setting
+    import threading
+    barrier = threading.Barrier(2)
+    def synchronized_update(key, transform):
+        barrier.wait(timeout=5)
+        return original(key, transform)
+    monkeypatch.setattr(manager, 'update_setting', synchronized_update)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda name: flags.set_enabled(name, True), ['achievements', 'mesh_frame_grid']))
+    assert all(r['enabled'] for r in results)
+    assert manager.get_setting('experimental_flags') == {'achievements': True, 'mesh_frame_grid': True}
+
+
+def test_live_settings_write_is_rejected():
+    from managers.settings_manager import SettingsManager
+    with pytest.raises(RuntimeError, match='live application settings'):
+        SettingsManager().set_setting('experimental_flags', {})

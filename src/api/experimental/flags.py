@@ -198,13 +198,17 @@ def set_enabled(flag_id: Any, value: Any) -> Dict[str, Any]:
     from managers.settings_manager import get_settings_manager
 
     sm = get_settings_manager()
-    current = _stored_flags()
-    updated = {k: v for k, v in current.items() if k in FLAG_SPECS}
-    if enabled == spec.default:
-        updated.pop(spec.id, None)  # keep settings.json free of redundant defaults
-    else:
-        updated[spec.id] = enabled
-    if sm.set_setting(SETTINGS_KEY, updated) is False:
+    def apply(current):
+        # Read and change ONE override under the settings store's lock.
+        # Preserve unknown ids too: an older process must not erase newer flags.
+        updated = dict(current) if isinstance(current, dict) else {}
+        if enabled == spec.default:
+            updated.pop(spec.id, None)
+        else:
+            updated[spec.id] = enabled
+        return updated
+
+    if sm.update_setting(SETTINGS_KEY, apply) is False:
         raise OSError("Could not persist experimental flags")
     return spec.to_dict(is_enabled(spec.id))
 

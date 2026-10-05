@@ -170,6 +170,26 @@ def _install_test_kill_guard() -> None:
 # Bypass is only via allow_external_runners() context manager.
 
 
+@pytest.fixture(autouse=True)
+def _isolated_application_settings(tmp_path, monkeypatch):
+    """Tests get private settings; even cached production writers fail closed."""
+    import managers.settings_manager as managers
+    from managers.settings_storage import SettingsStorage
+
+    manager = managers.SettingsManager(str(tmp_path / 'application-settings.json'))
+    monkeypatch.setattr(managers, '_settings_manager', manager)
+    production = (src_root / 'settings.json').resolve()
+    update = SettingsStorage.update
+
+    def private_update(self, key, transform):
+        if self.server.resolve() == production:
+            raise RuntimeError('Test attempted to write live application settings; use an isolated SettingsManager')
+        return update(self, key, transform)
+
+    monkeypatch.setattr(SettingsStorage, 'update', private_update)
+    return manager
+
+
 # --------------------------------------------------------------------------- #
 # Resume-store discovery (shared by the resume contract + harness smoke tests)
 # --------------------------------------------------------------------------- #
@@ -367,6 +387,9 @@ def _isolated_brain_state(tmp_path, monkeypatch):
     hundreds of ``muse-badge-session|…/pytest-of-…`` records there.
     """
     from api.cuttle_brain import context_delta, handoff
+    from api.edit_attribution import journal
+
+    monkeypatch.setattr(journal, "_db_path", lambda: tmp_path / "edit_journal.sqlite3")
 
     monkeypatch.setattr(context_delta, "_map_file", lambda: tmp_path / "brain_snapshots.json")
     monkeypatch.setattr(handoff, "_map_file", lambda: tmp_path / "brain_last_agent.json")

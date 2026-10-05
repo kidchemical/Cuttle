@@ -105,7 +105,7 @@ def test_flag_cli_external_write_visible_and_failures(tmp_path, monkeypatch, cap
     assert json.loads(capsys.readouterr().out)['success'] is False
     with pytest.raises(ValueError):
         flags.set_enabled('achievements', 'false')
-    monkeypatch.setattr(manager, 'set_setting', lambda *args: False)
+    monkeypatch.setattr(manager, 'update_setting', lambda *args: False)
     assert main(['set', 'achievements', 'on']) == 2
     assert json.loads(capsys.readouterr().out)['success'] is False
 

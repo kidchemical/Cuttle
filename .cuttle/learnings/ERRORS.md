@@ -11,6 +11,15 @@ Command failures, exceptions, and integration issues. Format: `[ERR-YYYYMMDD-XXX
 ---
 <!-- Add entries below -->
 
+## [ERR-20261004-001] experimental_tests_erased_live_flags
+
+- **Priority:** High · **Status:** Fixed · **Area:** tests / settings / experimental flags
+- **Summary:** Running `test_experimental_flags.py` cleared the install's saved experimental switches. The owner-authorized HTTP test used the real settings manager while `_stored_flags` was stubbed to `{}`. Its enable request replaced every override; its cleanup disabled Achievements, leaving an empty flag map. Repeated suite runs in CH-000962 reproduced the user's repeated resets.
+- **Fix:** A shared autouse fixture supplies private application settings and rejects writes through cached production SettingsStorage instances. Experimental tests use real private persistence; no cleanup request touches the install. Individual flag writes now perform an atomic per-id update under the existing settings lock and preserve unknown ids, preventing concurrent updates or older registries from erasing other overrides.
+- **Validation:** Private HTTP persistence, restart/reload plus unrelated settings writes, synchronized concurrent toggles, unknown-id preservation, and a fail-closed live-write test. Restored the user's explicitly named Achievements and Mesh frame grid preferences.
+- **Metadata:** User report CH-000962. Existing AGENTS.md already requires tests not to mutate real user data; implementation isolation was missing, not an instruction gap.
+
+
 ## Agent Harness — "add agent" (Gemini pilot) rollout
 
 Tally of everything hit while wiring Gemini into the folder-per-agent harness. Source chat: **CH-000148**.
