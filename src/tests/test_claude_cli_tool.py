@@ -49,6 +49,16 @@ def test_parse_claude_json_error_subtype():
     assert "rate limited" in parsed["errors"][0]
 
 
+def test_parse_claude_terminal_errors_and_empty_output():
+    empty = _parse_claude_json(json.dumps({"type": "result", "result": ""}))
+    assert empty["output"] == ""
+    failed = _parse_claude_json(json.dumps({
+        "type": "result", "subtype": "error_max_turns", "errors": ["Turn limit reached"],
+    }))
+    assert failed["errors"] == ["Turn limit reached"]
+    assert failed["output"] == ""
+
+
 def test_session_store_roundtrip(tmp_path, monkeypatch):
     map_file = tmp_path / "claude_cli_session_map.json"
     monkeypatch.setattr(store, "_map_file", lambda: map_file)

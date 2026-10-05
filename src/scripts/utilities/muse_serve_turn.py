@@ -66,12 +66,16 @@ def _tool_label(item: Dict[str, Any]) -> str:
 
 
 def _reasoning_preview(item: Dict[str, Any]) -> str:
+    return _reasoning_text(item).replace("\n", " ").strip()[:140]
+
+
+def _reasoning_text(item: Dict[str, Any]) -> str:
     summary = item.get("summary")
     if isinstance(summary, list):
         text = " ".join(str(s) for s in summary if isinstance(s, str))
     else:
         text = str(item.get("text") or "")
-    return text.replace("\n", " ").strip()[:140]
+    return text
 
 
 def _usage_from_turn(usage: Any, prompt_tokens: int) -> Dict[str, Any]:
@@ -151,7 +155,7 @@ async def run_muse_turn_serve(
     meta_provider = not prov or prov.lower() == "meta"
 
     from api.agent_harness import steer as steer_registry
-    from api.agent_harness.activity import ActivityEmitter
+    from api.agent_harness.activity import ActivityEmitter, TextActivityLog, text_preview
 
     argv = [muse_bin, "serve", "--trust-workspace"]
     if yolo:
@@ -172,7 +176,9 @@ async def run_muse_turn_serve(
     attach_to_chat_run(chat_session_id, proc)
 
     rpc = StdioRpc(proc, loop=loop, jsonrpc_tag=True)
-    activity = ActivityEmitter(status_queue, agent_label="Muse Code")
+    activity = ActivityEmitter(status_queue, agent_label="Muse Code", record_text_previews=False)
+    text_log = TextActivityLog("muse")
+    text_kinds: Dict[Any, str] = {}
     activity.emit("Resuming Muse Code…" if rid else "Starting Muse Code…", force=True)
     st: Dict[str, Any] = {
         "session_id": None,
@@ -360,6 +366,8 @@ async def run_muse_turn_serve(
         kind = str(item.get("kind") or "")
         if st["turn_id"] and item.get("turnId") and item.get("turnId") != st["turn_id"]:
             return
+        if kind in ("agentMessage", "reasoning"):
+            text_kinds[item.get("itemId")] = "writing" if kind == "agentMessage" else "thinking"
         if kind == "userMessage":
             if method == "item/completed" and item.get("steered"):
                 activity.emit(
@@ -367,14 +375,20 @@ async def run_muse_turn_serve(
                 )
             return
         if kind == "agentMessage":
+            if method == "item/started":
+                text_log.start("writing", item.get("itemId"))
             if method == "item/completed":
                 text = str(item.get("text") or "").strip()
+                text_log.save("writing", text, item.get("itemId"))
                 if text:
                     messages.append(text)
-                    activity.emit(f"writing: …{text.replace(chr(10), ' ')[-120:]}")
+                    activity.emit(f"writing: {text_preview(text)}", force=True)
                 st["writing"].pop(item.get("itemId"), None)
             return
         if kind == "reasoning":
+            if method == "item/started":
+                text_log.start("thinking", item.get("itemId"))
+            text_log.save("thinking", _reasoning_text(item), item.get("itemId"))
             preview = _reasoning_preview(item)
             if preview:
                 activity.emit(f"thinking: {preview}")
@@ -412,11 +426,18 @@ async def run_muse_turn_serve(
             return
         if method == "item/delta" and params.get("field") in (None, "text"):
             item_id = params.get("itemId")
+            kind = text_kinds.get(item_id, "writing")
+            full_text = text_log.delta(kind, str(params.get("delta") or ""), item_id)
+            if kind == "thinking":
+                if activity.emit(f"thinking: {text_preview(full_text)}"):
+                    text_log.save(kind, full_text, item_id)
+                return
             buf = str(st["writing"].get(item_id) or "") + str(params.get("delta") or "")
             st["writing"][item_id] = buf[-4000:]
             preview = buf.replace("\n", " ").strip()[-120:]
             if preview:
-                activity.emit(f"writing: …{preview}")
+                if activity.emit(f"writing: {text_preview(buf)}"):
+                    text_log.save("writing", full_text, item_id)
             return
         if method == "session/tokenUsage":
             try:
@@ -461,6 +482,7 @@ async def run_muse_turn_serve(
         if st["setup_error"] is None:
             st["setup_error"] = f"muse serve failed: {exc}"
     finally:
+        text_log.flush()
         stop_hb.set()
         if hb_task is not None:
             try:

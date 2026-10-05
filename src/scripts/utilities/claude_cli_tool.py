@@ -1,5 +1,5 @@
 """
-Claude Code CLI integration — non-interactive ``claude -p`` with JSON output.
+Claude Code CLI integration — non-interactive ``claude -p`` with streaming JSON.
 
 Runs against the real project cwd (no sandbox mirror). Resume uses
 ``--resume <session_id>`` from ``claude_cli_session_store``.
@@ -208,13 +208,16 @@ def _parse_claude_json(raw: str) -> Dict[str, Any]:
 
     errors: List[str] = []
     subtype = str(obj.get("subtype") or "").lower()
-    is_error = subtype in ("error", "failure", "failed") or bool(obj.get("is_error"))
+    is_error = subtype.startswith("error") or subtype in ("failure", "failed") or bool(obj.get("is_error"))
     if is_error:
         err = obj.get("error") or obj.get("result") or obj.get("message")
         if isinstance(err, str) and err.strip():
             errors.append(err.strip())
         elif isinstance(err, dict) and err.get("message"):
             errors.append(str(err.get("message")))
+        errors.extend(str(e) for e in obj.get("errors") or [] if isinstance(e, str))
+        if not errors:
+            errors.append(f"Claude Code {subtype or 'error'}")
 
     from api.agent_harness.questions import QuestionBridge
 
@@ -223,7 +226,7 @@ def _parse_claude_json(raw: str) -> Dict[str, Any]:
         if isinstance(denied, dict) and denied.get("tool_name") == "AskUserQuestion":
             questions.capture(denied.get("tool_input"))
     return {
-        "output": questions.render(output or (text if not is_error else "")),
+        "output": questions.render(output or (text if not is_error and obj.get("type") != "result" else "")),
         "session_id": session_id,
         "usage": usage,
         "errors": errors,
@@ -310,7 +313,9 @@ class ClaudeCliTool:
             exe,
             "-p",
             "--output-format",
-            "json",
+            "stream-json",
+            "--verbose",
+            "--include-partial-messages",
             "--disallowedTools",
             "AskUserQuestion",
             "--permission-mode",
@@ -333,6 +338,20 @@ class ClaudeCliTool:
 
         _status_put(status_queue, "Calling Claude Code…")
         env = agent_cli_env()
+        from scripts.utilities.claude_stream import ClaudeStream
+
+        def _persist(sid: Optional[str]) -> None:
+            if not (chat_session_id and sid):
+                return
+            try:
+                from scripts.utilities.claude_cli_session_store import save_claude_resume_id
+                save_claude_resume_id(workdir, chat_session_id, sid)
+            except Exception:
+                pass
+
+        stream = ClaudeStream(status_queue, _persist)
+        stop_hb = asyncio.Event()
+        hb = asyncio.create_task(stream.activity.heartbeat_loop(stop_hb))
         proc = None
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -353,7 +372,8 @@ class ClaudeCliTool:
                 proc,
                 timeout=resolved_timeout,
                 cancel_event=cancel_event,
-                line_mode=False,
+                line_mode=True,
+                on_stdout_line=stream.feed,
             )
         except OSError as exc:
             return {
@@ -362,29 +382,19 @@ class ClaudeCliTool:
                 "output": "",
                 "usage": {},
             }
+        finally:
+            stream.text.flush()
+            stop_hb.set()
+            await hb
 
-        out = run.stdout.decode("utf-8", errors="replace")
         err = run.stderr.decode("utf-8", errors="replace").strip()
-        parsed = _parse_claude_json(out)
-        session_id = parsed.get("session_id") or rid or None
+        parsed = _parse_claude_json(json.dumps(stream.result)) if stream.result is not None else {
+            "output": stream.partial_output(), "session_id": stream.session_id, "usage": {}, "errors": [],
+        }
+        session_id = parsed.get("session_id") or stream.session_id or rid or None
         usage = parsed.get("usage") or {}
         errors = list(parsed.get("errors") or [])
         display = (parsed.get("output") or "").strip()
-        if not display and out.strip() and not parsed.get("session_id"):
-            # Incomplete JSON mid-interrupt — still surface raw text.
-            display = out.strip()
-
-        def _persist(sid: Optional[str]) -> None:
-            if not (chat_session_id and sid):
-                return
-            try:
-                from scripts.utilities.claude_cli_session_store import (
-                    save_claude_resume_id,
-                )
-
-                save_claude_resume_id(workdir, chat_session_id, sid)
-            except Exception:
-                pass
 
         if run.timed_out or run.cancelled:
             reason = run.reason or (
@@ -411,7 +421,9 @@ class ClaudeCliTool:
                 "cancelled": run.cancelled,
             }
 
-        ok = run.returncode == 0 and not errors
+        ok = run.returncode == 0 and stream.result is not None and not errors
+        if not ok and not errors and stream.result is None and not (run.timed_out or run.cancelled):
+            errors.append("Claude Code ended without a terminal result")
         if not ok and not errors and err:
             errors.append(err[:2000])
         if not ok and not display and err:

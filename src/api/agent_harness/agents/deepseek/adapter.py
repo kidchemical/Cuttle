@@ -19,7 +19,8 @@ import tempfile
 from pathlib import Path
 from typing import Any, List, Optional
 
-from api.agent_harness.activity import heartbeat_status, put_status
+from api.agent_harness.activity import put_status
+from .stream import DeepSeekStream
 from api.agent_harness.cwd import resolve_harness_cwd
 from api.agent_harness.types import AgentResult
 from api.agent_harness.win_cli import which_preferring_native
@@ -182,21 +183,14 @@ class Adapter:
                 "in it. Do not skip the last line."
             )
 
-        cmd = list(argv0) + ["--profile", "headless"]
+        cmd = list(argv0) + ["--profile", "headless", "--json"]
         if patch_path:
             cmd.extend(["--patch", patch_path])
         cmd.append(task)
         env = agent_cli_env()
+        stream = DeepSeekStream(status_queue)
         stop = asyncio.Event()
-        hb = asyncio.create_task(
-            heartbeat_status(
-                status_queue,
-                label="DeepSeek working",
-                interval=15.0,
-                stop_event=stop,
-                last_activity="running",
-            )
-        )
+        hb = asyncio.create_task(stream.activity.heartbeat_loop(stop))
         run = None
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -206,12 +200,14 @@ class Adapter:
                 stdin=asyncio.subprocess.DEVNULL,
                 cwd=cwd,
                 env=env,
+                limit=16 * 1024 * 1024,
             )
             attach_to_chat_run(chat_session_id, proc)
             run = await run_interruptible(
-                proc, timeout=timeout, cancel_event=cancel_event, line_mode=False
+                proc, timeout=timeout, cancel_event=cancel_event, line_mode=True, on_stdout_line=stream.feed
             )
         finally:
+            stream.text.flush()
             stop.set()
             try:
                 await asyncio.wait_for(hb, timeout=1.0)
@@ -233,7 +229,7 @@ class Adapter:
                 meta=badge_meta("deepseek", mid, _model_source),
             )
 
-        out = run.stdout.decode("utf-8", errors="replace").strip()
+        out = stream.final if stream.final is not None else stream.partial_output()
         err = run.stderr.decode("utf-8", errors="replace").strip()
         meta = badge_meta("deepseek", mid, _model_source)
 
@@ -262,12 +258,14 @@ class Adapter:
                 meta={**meta, "timed_out": run.timed_out, "cancelled": run.cancelled},
             )
 
-        ok = run.returncode == 0 and bool(out)
+        ok = run.returncode == 0 and stream.final is not None and bool(out) and not stream.errors
         if ok:
             return AgentResult(
-                success=True, output=out, model=mid, meta=meta,
+                success=True, output=out, model=mid, meta=meta, usage=stream.usage,
             )
-        shaped = summarize_deepseek_error(err or out, run.returncode)
+        shaped = summarize_deepseek_error("\n".join(stream.errors) or err or (
+            "DeepSeek Harness ended without a terminal result" if stream.final is None else out
+        ), run.returncode)
         return AgentResult(
             success=False,
             output=out,

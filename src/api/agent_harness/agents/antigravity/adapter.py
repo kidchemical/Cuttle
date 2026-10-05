@@ -13,7 +13,8 @@ import shutil
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from api.agent_harness.activity import heartbeat_status, put_status
+from api.agent_harness.activity import put_status
+from .stream import AntigravityStream
 from api.agent_harness.agents.antigravity.session_store import (
     clear_antigravity_resume_id,
     load_antigravity_resume_id,
@@ -215,7 +216,7 @@ class Adapter:
             "-p",
             prompt,
             "--output-format",
-            "json",
+            "stream-json",
             "--print-timeout",
             f"{max(1, math.ceil(timeout))}s",
         ]
@@ -225,16 +226,16 @@ class Adapter:
             cmd.extend(["--model", str(model).strip()])
 
         put_status(status_queue, "Calling Antigravity CLI…")
+        def _persist(sid):
+            if chat_session_id and sid:
+                try:
+                    save_antigravity_resume_id(cwd, chat_session_id, sid)
+                except Exception:
+                    pass
+
+        stream = AntigravityStream(status_queue, _persist)
         stop = asyncio.Event()
-        heartbeat = asyncio.create_task(
-            heartbeat_status(
-                status_queue,
-                label="Antigravity working",
-                interval=15.0,
-                stop_event=stop,
-                last_activity="running",
-            )
-        )
+        heartbeat = asyncio.create_task(stream.activity.heartbeat_loop(stop))
         proc = None
         run = None
         try:
@@ -245,10 +246,11 @@ class Adapter:
                 stdin=asyncio.subprocess.DEVNULL,
                 cwd=cwd,
                 env=agent_cli_env(),
+                limit=16 * 1024 * 1024,
             )
             attach_to_chat_run(chat_session_id, proc)
             run = await run_interruptible(
-                proc, timeout=timeout, cancel_event=cancel_event, line_mode=False
+                proc, timeout=timeout, cancel_event=cancel_event, line_mode=True, on_stdout_line=stream.feed
             )
         except OSError as exc:
             return AgentResult(
@@ -257,6 +259,7 @@ class Adapter:
                 model=model or "",
             )
         finally:
+            stream.text.flush()
             stop.set()
             try:
                 await asyncio.wait_for(heartbeat, timeout=1.0)
@@ -270,19 +273,11 @@ class Adapter:
                 model=model or "",
             )
 
-        out = run.stdout.decode("utf-8", errors="replace").strip()
         err = run.stderr.decode("utf-8", errors="replace").strip()
-        payload: Dict[str, Any] = {}
-        try:
-            parsed = json.loads(out) if out else {}
-            if isinstance(parsed, dict):
-                payload = parsed
-        except json.JSONDecodeError:
-            payload = {}
-
+        payload: Dict[str, Any] = stream.payload or {}
         status = str(payload.get("status") or "").upper()
-        response = str(payload.get("response") or (out if not payload else "")).strip()
-        conversation_id = payload.get("conversation_id")
+        response = str(payload.get("response") or stream.partial_output()).strip()
+        conversation_id = payload.get("conversation_id") or stream.session_id
         sid = str(conversation_id).strip() if conversation_id else (str(resume).strip() if resume else None)
         usage = normalize_antigravity_usage(payload.get("usage"))
 
@@ -313,10 +308,10 @@ class Adapter:
                 meta={"status": status or "INTERRUPTED", "timed_out": run.timed_out, "cancelled": run.cancelled},
             )
 
-        ok = (run.returncode == 0) and (not status or status == "SUCCESS")
+        ok = stream.payload is not None and (run.returncode == 0) and (not status or status == "SUCCESS")
         if not ok:
             raw_error = str(
-                payload.get("error") or err or response or f"exit {run.returncode}"
+                payload.get("error") or err or ("Antigravity ended without a terminal result" if stream.payload is None else response) or f"exit {run.returncode}"
             )
             return AgentResult(
                 success=False,

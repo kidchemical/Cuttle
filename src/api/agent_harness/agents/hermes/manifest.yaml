@@ -13,7 +13,7 @@ pricing_providers: [openrouter]
 resume: true
 capabilities_inject: once_per_resume
 env_profile: native
-activity: heartbeat
+activity: line_hints
 hint: Run NousResearch Hermes (local llama.cpp or cloud via Hermes config)
 missing_cli_hint: >-
   Install hermes-agent or set `HERMES_CLI_PATH`. Expected at

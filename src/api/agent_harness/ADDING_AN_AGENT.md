@@ -176,14 +176,34 @@ for every harness that can stream:
 |---|---|
 | `thinking: {preview}…` | Reasoning / thought deltas (throttled) |
 | `tool {N}: {summary}` | Each tool / command / MCP / file edit start |
-| `writing: …{preview}` | Assistant text deltas (throttled) |
+| `writing: {preview}` | Assistant text deltas (throttled; leading `…` only when shortened) |
 | `{Agent} working… {Ns} ({last_activity})` | **Only** after ~15s of silence |
 
 Shared helper: `api.agent_harness.activity.ActivityEmitter`. Map vendor NDJSON in the
 CLI drain; **do not** also run `heartbeat_status("X working", interval=4)` in the
 adapter — that stomps live tool lines (Codex dogfood: UI stuck on
 `Codex working… 360s` while JSONL was emitting commands). Agents with no mid-run
-stream (Claude JSON blob, DeepSeek, Antigravity) may keep a coarse 15s heartbeat only.
+stream may keep a coarse 15s heartbeat only, after checking the vendor's
+documented headless output modes. Claude, DeepSeek Harness, and Antigravity
+provide structured event streams and must use them. Hermes quiet mode uses
+invocation-scoped transcript polling, with a heartbeat until it exposes a
+session id; never attach progress to an arbitrary newest active session.
+
+The inspector's text is separate from these compact status lines. Streaming
+adapters use `TextActivityLog(agent_id)` from the same shared module: `start`
+opens an item, `delta` appends actual chunks, and `save` records cumulative
+snapshots. Keep vendor item ids when available. Save completed text regardless
+of the status throttle and `flush` in cleanup to preserve interrupted blocks.
+Use `ActivityEmitter(..., record_text_previews=False)` (or `put_status` with
+`preview_only=True`) so `QueryStatusTee` forwards previews without replacing
+full inspector text. `text_preview` supplies the compact writing label.
+Text retains the query-log `MAX_TEXT` cap, with an explicit truncation marker.
+`ToolActivityLog` records bounded arguments/results and completion/failure by
+vendor tool id; use `record_tool_previews=False` when it owns the structured
+tool events. Progress must not replace the authoritative terminal result,
+session id, usage, or question forms. Child result events must not replace
+their parent's answer. Tests must cover fast blocks, interruptions, and tool
+failures with fake CLIs before marking a streaming adapter ready.
 
 ### 6. Context Compiler is shared — adapters only transport
 

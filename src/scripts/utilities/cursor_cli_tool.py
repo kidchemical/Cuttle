@@ -785,6 +785,10 @@ def _run_cursor_agent_stream_segment(
     turns: List[str] = []
     delta_buf = ""
     thinking_buf = ""
+    from api.agent_harness.activity import TextActivityLog, text_preview
+    text_log = TextActivityLog("cursor")
+    text_log.start("writing")
+    text_log.start("thinking")
     thinking_since = 0.0
     last_thought = ""
     tool_count = tool_count_start
@@ -903,19 +907,19 @@ def _run_cursor_agent_stream_segment(
                     preview = thinking_buf.replace("\n", " ").strip()[:140]
                     if preview and emit(f"thinking: {preview}…", throttle=1.5):
                         last_thought = preview
+                        text_log.save("thinking", thinking_buf)
             elif sub == "completed":
                 preview = thinking_buf.replace("\n", " ").strip()[:160]
                 if preview and preview != last_thought:
                     emit(f"thinking: {preview}")
                     last_thought = preview
                 try:
-                    from api.query_events import record_thinking
-
                     if thinking_buf.strip():
-                        record_thinking(thinking_buf)
+                        text_log.save("thinking", thinking_buf)
                 except Exception:
                     pass
                 thinking_buf = ""
+                text_log.start("thinking")
 
         elif et == "assistant":
             msg = evt.get("message") or {}
@@ -933,7 +937,8 @@ def _run_cursor_agent_stream_segment(
             preview = delta_buf.replace("\n", " ").strip()[-120:]
             if preview:
                 last_activity = "writing"
-                emit(f"writing: …{preview}", throttle=1.2)
+                if emit(f"writing: {text_preview(delta_buf)}", throttle=1.2):
+                    text_log.save("writing", delta_buf)
 
         elif et == "tool_call":
             tc = evt.get("tool_call") or {}
@@ -956,6 +961,8 @@ def _run_cursor_agent_stream_segment(
                 pass
             if sub == "started":
                 if delta_buf.strip():
+                    text_log.save("writing", delta_buf)
+                    text_log.start("writing")
                     turns.append(delta_buf)
                     delta_buf = ""
                 tool_count += 1
@@ -985,6 +992,7 @@ def _run_cursor_agent_stream_segment(
 
         elif et == "result":
             final_text = (evt.get("result") or "").strip()
+            text_log.save("writing", final_text or delta_buf)
             errored = bool(evt.get("is_error"))
             rid = evt.get("request_id")
             if isinstance(rid, str) and rid.strip():
@@ -996,6 +1004,9 @@ def _run_cursor_agent_stream_segment(
             if sid and isinstance(sid, str) and sid.strip():
                 _persist_session(sid.strip())
 
+    text_log.save("writing", final_text or delta_buf)
+    text_log.save("thinking", thinking_buf)
+    text_log.flush()
     try:
         proc.wait(timeout=30)
     except subprocess.TimeoutExpired:
@@ -1097,7 +1108,11 @@ def _cursor_agent_oneline_prompt(
             return False
         last_emit_at[0] = now
         try:
-            status_queue.put_nowait(("status", msg))
+            put_preview = getattr(status_queue, "put_preview", None)
+            if msg.startswith(("thinking:", "writing:")) and callable(put_preview):
+                put_preview(("status", msg))
+            else:
+                status_queue.put_nowait(("status", msg))
             return True
         except Exception:
             return False

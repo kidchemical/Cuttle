@@ -35,7 +35,7 @@ pricing_providers: [anthropic]
 resume: true
 capabilities_inject: once_per_resume
 env_profile: either
-activity: heartbeat
+activity: jsonl
 hint: Run Anthropic Claude Code CLI (`claude -p`) with per-chat resume (Auto/Cloud)
 missing_cli_hint: >-
   Install Claude Code (`npm i -g @anthropic-ai/claude-code` or the native
@@ -47,7 +47,7 @@ install_hint: >-
 executable_names:
   - claude
 notes: >-
-  Native `claude -p --output-format json` against the project cwd.
+  Native `claude -p --output-format stream-json --verbose --include-partial-messages` against the project cwd.
   Resume via `--resume` + claude_cli_session_store. Compact via `/compact`.
   Per-chat `/claude model …` / `/claude effort …` pins map to `--model` /
   `--effort`; refresh via `/claude model refresh`.

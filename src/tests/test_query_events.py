@@ -60,6 +60,62 @@ def test_thinking_coalesces():
         finish_query_tracking(success=True)
 
 
+def test_codex_text_log_flushes_throttled_text_without_merging_items():
+    from api.agent_harness.activity import ActivityEmitter
+    from api.query_events import MAX_TEXT
+    from api.agent_harness.activity import TextActivityLog
+
+    qid = start_query_tracking("text snapshots", {"web_ui": True})
+    token = bind_query_id(qid)
+    try:
+        log = TextActivityLog("codex")
+        emitter = ActivityEmitter(QueryStatusTee(_Sink()), record_text_previews=False)
+        log.start("writing", "a")
+        log.delta("writing", "I", "a")
+        log.save("writing", item_id="a")
+        assert emitter.emit("writing: I")
+        log.delta("writing", " finished before another status update.", "a")
+        assert not emitter.emit("writing: I finished before another status update.")
+        ingest_status_message("tool 1: read file")
+        log.start("writing", "b")
+        log.save("writing", "Second block", "b")
+        log.delta("thinking", "x" * (MAX_TEXT + 50), "r")
+        log.flush()
+        events = get_query_tracker(qid).execution_data["events"]
+        assert [e["text"] for e in events if e["kind"] == "writing"] == [
+            "I finished before another status update.", "Second block",
+        ]
+        reasoning = next(e for e in events if e["kind"] == "thinking")
+        assert reasoning["text"] == "x" * MAX_TEXT + "\n… *(truncated)*"
+        assert any(e["kind"] == "tool" for e in events)
+    finally:
+        reset_query_id(token)
+        finish_query_tracking(success=True)
+
+
+def test_tool_log_keeps_identical_calls_distinct_and_bounds_arguments():
+    from api.agent_harness.activity import ActivityEmitter, ToolActivityLog
+    from api.query_events import MAX_TOOL_ARGS
+    qid = start_query_tracking("tool identity", {"web_ui": True})
+    token = bind_query_id(qid)
+    try:
+        emitter = ActivityEmitter(QueryStatusTee(_Sink()), record_tool_previews=False)
+        tools = ToolActivityLog("test", emitter)
+        for ident in ("a", "b"):
+            tools.record(ident, "Bash", {"command": "echo ok"})
+        tools.record("a", phase="completed", result="ok")
+        tools.record("b", phase="failed", result="error", failed=True)
+        tools.record("c", "Read", {"path": "x" * (MAX_TOOL_ARGS + 100)})
+        events = [e for e in get_query_tracker(qid).execution_data["events"] if e["kind"] == "tool"]
+        assert len(events) == 3
+        assert events[0]["phase"] == "completed" and not events[0]["failed"]
+        assert events[1]["phase"] == "failed" and events[1]["failed"]
+        assert "*(truncated)*" in events[2]["args"]["preview"]
+    finally:
+        reset_query_id(token)
+        finish_query_tracking(success=True)
+
+
 def test_set_sent_and_api_payload(tmp_path, monkeypatch):
     qid = start_query_tracking("/cursor hi", {"web_ui": True, "slash_command": "/cursor"})
     tr = get_query_tracker(qid)

@@ -7,6 +7,8 @@ Auth: same as the user's Codex install (`codex login` / ChatGPT account).
 
 from __future__ import annotations
 
+from api.agent_harness.activity import text_preview
+
 from core.agent_cli_env import agent_cli_env
 
 import asyncio
@@ -101,11 +103,11 @@ def _extract_agent_text(item: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def _codex_reasoning_preview(item: Dict[str, Any]) -> str:
+def _codex_reasoning_text(item: Dict[str, Any]) -> str:
     for key in ("text", "summary", "content", "reasoning"):
         val = item.get(key)
         if isinstance(val, str) and val.strip():
-            return _preview_text(val)
+            return val.strip()
         if isinstance(val, list):
             parts: List[str] = []
             for block in val:
@@ -116,8 +118,13 @@ def _codex_reasoning_preview(item: Dict[str, Any]) -> str:
                     if isinstance(t, str) and t.strip():
                         parts.append(t.strip())
             if parts:
-                return _preview_text(" ".join(parts))
+                return "\n".join(parts)
     return ""
+
+
+def _codex_reasoning_preview(item: Dict[str, Any]) -> str:
+    return _preview_text(_codex_reasoning_text(item))
+
 
 
 def _codex_file_change_label(item: Dict[str, Any]) -> str:
@@ -237,7 +244,7 @@ def _codex_activity_for_event(
                 buf = str(state.get(_WRITING_BUF_KEY) or "") + text
                 state[_WRITING_BUF_KEY] = buf[-4000:]
                 preview = buf.replace("\n", " ").strip()[-120:]
-                return f"writing: …{preview}" if preview else None
+                return f"writing: {text_preview(buf)}" if preview else None
             return None
         # Tool-like items: count once on started (not every updated).
         if et == "item.started" and itype:
@@ -257,7 +264,7 @@ def _codex_activity_for_event(
             if text:
                 state[_WRITING_BUF_KEY] = text[-4000:]
                 preview = text.replace("\n", " ").strip()[-120:]
-                return f"writing: …{preview}" if preview else None
+                return f"writing: {text_preview(text)}" if preview else None
             return None
         if itype in ("reasoning", "thought", "thinking"):
             preview = _codex_reasoning_preview(item)
@@ -557,9 +564,10 @@ class CodexCliTool:
             env = agent_cli_env()
             # Cursor-style strip: event lines + silent contextual heartbeat.
             # Do not also heartbeat from the adapter — that stomps tool lines.
-            from api.agent_harness.activity import ActivityEmitter
+            from api.agent_harness.activity import ActivityEmitter, TextActivityLog
 
-            activity = ActivityEmitter(status_queue, agent_label="Codex")
+            activity = ActivityEmitter(status_queue, agent_label="Codex", record_text_previews=False)
+            text_log = TextActivityLog("codex")
             activity.emit(
                 "Resuming Codex…" if rid else "Starting Codex…",
                 force=True,
@@ -679,9 +687,17 @@ class CodexCliTool:
                             activity.emit("Preparing Cuttle question form…", force=True)
                             asyncio.create_task(kill_process_tree(proc))
                             return
+                    item = ev.get("item") or {}
+                    kind = {"agent_message": "writing", "reasoning": "thinking",
+                            "thought": "thinking", "thinking": "thinking"}.get(item.get("type")) if isinstance(item, dict) else None
+                    if kind and ev.get("type") in ("item.started", "item.updated", "item.completed"):
+                        if ev.get("type") == "item.started":
+                            text_log.start(kind, item.get("id"))
+                        text_log.save(kind, (_extract_agent_text(item) or "") if kind == "writing"
+                                      else _codex_reasoning_text(item), item.get("id"))
                     line_status = _codex_activity_for_event(ev, activity_state)
                     if line_status:
-                        activity.emit(line_status)
+                        activity.emit(line_status, force=ev.get("type") == "item.completed" and bool(kind))
 
                 run = await run_interruptible(
                     proc,

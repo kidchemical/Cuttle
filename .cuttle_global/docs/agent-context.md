@@ -81,7 +81,8 @@ unreliable in exec mode (often treated as ordinary prompt text).
 headless sessions that never wrote MSP snapshots may show 0% until the next
 turn that materializes a view.
 
-**Claude Code:** native `claude -p --output-format json` against the project
+**Claude Code:** native `claude -p --output-format stream-json --verbose
+--include-partial-messages` against the project
 cwd (no sandbox mirror). Resume IDs live in `claude_cli_session_map.json`.
 
 Slash: `/cursor /compact` (also `/summarize`, `/compress`).

@@ -942,7 +942,7 @@ def test_deepseek_long_prompt_uses_tempfile_not_argv(monkeypatch, tmp_path):
         returncode = 0
 
         def __init__(self):
-            self.stdout = _ByteReader(b"pong\n")
+            self.stdout = _ByteReader(b'{"type":"final","text":"pong"}\n')
             self.stderr = _ByteReader(b"")
 
         async def wait(self):
@@ -1091,5 +1091,4 @@ def test_kernel_rejects_adapter_cwd_from_another_project(tmp_path, monkeypatch):
     assert out.get("response") == "pong"
     assert Path(seen["cwd"]).resolve() == demo.resolve()
     assert Path(seen["cwd"]).resolve() != Path(os.getcwd()).resolve()
-
 

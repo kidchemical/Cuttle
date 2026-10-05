@@ -7,11 +7,9 @@ model catalog (SDK ``initialize``; no turn runs).
 
 from __future__ import annotations
 
-import asyncio
 import re
 from typing import Any, Optional
 
-from api.agent_harness.activity import heartbeat_status, put_status
 from api.agent_harness.agents.claude.model_catalog import (
     claude_efforts_for_model,
     claude_model_label,
@@ -416,38 +414,13 @@ class Adapter:
                     },
                 )
 
-        # `--output-format json` does not report auto-compaction; the CLI's own
-        # transcript gains a compact_boundary row when it compacts.
+        # Transcript boundaries remain authoritative for auto-compaction.
         compacts_before = count_compact_boundaries(resume) if resume else None
-        put_status(status_queue, "Calling Claude Code…")
-        # No mid-run NDJSON — coarse tick only (Cursor-style agents stream instead).
-        stop = asyncio.Event()
-        hb = asyncio.create_task(
-            heartbeat_status(
-                status_queue,
-                label="Claude Code working",
-                interval=15.0,
-                stop_event=stop,
-                last_activity="running",
-            )
+        tool = ClaudeCliTool(model=mid, reasoning_effort=effort)
+        raw = await tool.execute_prompt(
+            prompt, cwd=cwd, resume=resume, status_queue=status_queue,
+            chat_session_id=chat_session_id, timeout=timeout, cancel_event=cancel_event,
         )
-        try:
-            tool = ClaudeCliTool(model=mid, reasoning_effort=effort)
-            raw = await tool.execute_prompt(
-                prompt,
-                cwd=cwd,
-                resume=resume,
-                status_queue=status_queue,
-                chat_session_id=chat_session_id,
-                timeout=timeout,
-                cancel_event=cancel_event,
-            )
-        finally:
-            stop.set()
-            try:
-                await asyncio.wait_for(hb, timeout=1.0)
-            except Exception:
-                hb.cancel()
 
         ok = bool(raw.get("success"))
         usage_raw = raw.get("usage") or {}

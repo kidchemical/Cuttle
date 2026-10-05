@@ -235,7 +235,7 @@ def test_codex_activity_maps_cursor_style_lines():
             },
             state,
         )
-        == "writing: …Here is the plan for the slime-mold logo."
+        == "writing: Here is the plan for the slime-mold logo."
     )
     assert state["tool_count"] == 3
 

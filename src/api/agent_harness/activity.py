@@ -4,7 +4,7 @@ Methodology (match Cursor Agent in chat):
 
 1. Map stream events to short status lines:
    - ``thinking: {preview}…``
-   - ``writing: …{preview}``
+   - ``writing: {preview}`` (leading ellipsis only when shortened)
    - ``tool {N}: {summary}``
    - ``tool failed: {summary}``
 2. Throttle high-churn kinds (thinking/writing) so the strip does not flicker.
@@ -17,7 +17,7 @@ must use :class:`ActivityEmitter` (or equivalent) inside the CLI drain — do **
 also run a coarse ``heartbeat_status("X working")`` in the adapter. That stomps
 the useful lines (see Codex ``Codex working… Ns`` dogfood).
 
-Adapters with no mid-run stream (Claude JSON blob, DeepSeek, Antigravity) may use
+Adapters without a documented mid-run event stream may use
 :func:`heartbeat_status` with a longer interval as a coarse progress tick only.
 """
 
@@ -48,11 +48,12 @@ def throttle_kind(activity: str) -> str:
     return ""
 
 
-def put_status(status_queue: Any, message: str) -> None:
+def put_status(status_queue: Any, message: str, *, preview_only: bool = False) -> None:
     if status_queue is None or not message:
         return
     try:
-        status_queue.put(("status", message))
+        put = getattr(status_queue, "put_preview", None) if preview_only else None
+        (put if callable(put) else status_queue.put)(("status", message))
     except Exception:
         pass
 
@@ -103,11 +104,15 @@ class ActivityEmitter:
         agent_label: str = "Agent",
         throttle_sec: float = DEFAULT_THROTTLE_SEC,
         heartbeat_sec: float = DEFAULT_HEARTBEAT_SEC,
+        record_text_previews: bool = True,
+        record_tool_previews: bool = True,
     ) -> None:
         self.status_queue = status_queue
         self.agent_label = (agent_label or "Agent").strip() or "Agent"
         self.throttle_sec = float(throttle_sec)
         self.heartbeat_sec = float(heartbeat_sec)
+        self.record_text_previews = record_text_previews
+        self.record_tool_previews = record_tool_previews
         self._started = time.monotonic()
         self._last_emit = self._started
         self.last_activity = "starting"
@@ -133,7 +138,10 @@ class ActivityEmitter:
             return False
         self._last_emit = now
         self.last_activity = text
-        put_status(self.status_queue, text)
+        preview_only = (bool(kind) and not self.record_text_previews) or (
+            text.startswith(("tool ", "tool failed:")) and not self.record_tool_previews
+        )
+        put_status(self.status_queue, text, preview_only=preview_only)
         return True
 
     def note(self, activity: str) -> None:
@@ -161,3 +169,81 @@ class ActivityEmitter:
                     self.status_queue,
                     f"{self.agent_label} working… {elapsed}s ({self.last_activity})",
                 )
+
+
+def text_preview(text: str) -> str:
+    flat = " ".join(text.split())
+    return ("…" if len(flat) > 120 else "") + flat[-120:]
+
+
+class TextActivityLog:
+    """Keep item text for the inspector, separate from throttled live previews."""
+
+    def __init__(self, agent_id: str) -> None:
+        from uuid import uuid4
+
+        self.source_id = f"{agent_id}:{uuid4().hex}"
+        self.buffers: Dict[tuple, str] = {}
+        self.current: Dict[str, str] = {}
+        self.sequence = 0
+
+    def key(self, kind: str, item_id: Any = None) -> tuple:
+        return kind, str(item_id or self.current.get(kind) or "pending")
+
+    def start(self, kind: str, item_id: Any = None) -> None:
+        self.sequence += 1
+        self.current[kind] = str(item_id or f"item-{self.sequence}")
+
+    def delta(self, kind: str, text: str, item_id: Any = None) -> str:
+        """Append a vendor chunk; save on a live tick or flush at completion."""
+        from api.query_events import MAX_TEXT
+
+        key = self.key(kind, item_id)
+        self.buffers[key] = (self.buffers.get(key, "") + text)[:MAX_TEXT + 1]
+        return self.buffers[key]
+
+    def save(self, kind: str, text: str = "", item_id: Any = None) -> None:
+        """Replace with a cumulative snapshot, or publish the accumulated chunks."""
+        from api.query_events import MAX_TEXT, record_agent_text
+
+        key = self.key(kind, item_id)
+        if text:
+            self.buffers[key] = text[:MAX_TEXT + 1]
+        record_agent_text(kind, self.buffers.get(key, ""), f"{self.source_id}:{key[1]}")
+
+    def flush(self) -> None:
+        for kind, item_id in list(self.buffers):
+            self.save(kind, item_id=item_id)
+
+
+class ToolActivityLog:
+    """Number and record tools by vendor id, independent of display throttling."""
+
+    def __init__(self, agent_id: str, emitter: ActivityEmitter) -> None:
+        from uuid import uuid4
+        self.source_id = f"{agent_id}:{uuid4().hex}"
+        self.emitter = emitter
+        self.tools: dict = {}
+
+    def record(self, tool_id: Any, name: str = "", args: Any = None, *,
+               phase: str = "started", result: Any = None, failed: bool = False) -> None:
+        from api.query_events import record_agent_tool
+        key = str(tool_id)
+        previous = self.tools.get(key)
+        index, old_name, old_args = previous or (len(self.tools) + 1, "tool", None)
+        name = name or old_name
+        args = args if args is not None else old_args
+        self.tools[key] = (index, name, args)
+        detail = ""
+        if isinstance(args, dict):
+            for field in ("command", "CommandLine", "file_path", "path", "pattern", "query", "description"):
+                if isinstance(args.get(field), str) and args[field].strip():
+                    detail = " " + text_preview(args[field])
+                    break
+        summary = name + detail
+        record_agent_tool(f"{self.source_id}:{key}", summary, phase=phase,
+                          args=args, result=result, failed=failed)
+        if failed:
+            self.emitter.emit(f"tool failed: {summary}", force=True)
+        elif previous is None or (phase == "started" and (name != old_name or args != old_args)):
+            self.emitter.emit(f"tool {index}: {summary}", force=True)

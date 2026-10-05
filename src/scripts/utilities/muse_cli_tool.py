@@ -295,7 +295,8 @@ def _muse_activity_for_event(
         buf = str(tool_labels.get(_WRITING_BUF_KEY) or "") + text
         tool_labels[_WRITING_BUF_KEY] = buf[-4000:]
         preview = buf.replace("\n", " ").strip()[-120:]
-        return f"writing: …{preview}" if preview else None
+        from api.agent_harness.activity import text_preview
+        return f"writing: {text_preview(buf)}" if preview else None
 
     if pt == "task.lifecycle.proposed":
         kind = str(inner.get("task_kind") or "")
@@ -1010,23 +1011,28 @@ class MuseCliTool:
         started_at = time.monotonic()
         last_emit = [started_at]
         last_activity = ["starting"]
+        from api.agent_harness.activity import TextActivityLog, put_status
+        text_log = TextActivityLog("muse")
+        text_log.start("writing")
+        text_log.start("thinking")
         seen_session_id: List[Optional[str]] = [(resume or "").strip() or None]
         persisted_session_id: List[Optional[str]] = [None]
 
-        def _emit(activity: str) -> None:
+        def _emit(activity: str) -> bool:
             now = time.monotonic()
             if activity == last_activity[0]:
-                return
+                return False
             kind = _throttle_kind(activity)
             if (
                 kind
                 and kind == _throttle_kind(last_activity[0])
                 and (now - last_emit[0]) < _THROTTLE_SEC
             ):
-                return
+                return False
             last_emit[0] = now
             last_activity[0] = activity
-            _status_put(status_queue, activity)
+            put_status(status_queue, activity, preview_only=bool(kind))
+            return True
 
         def _persist_resume_early(sid: Optional[str]) -> None:
             """Pin Muse session as soon as the CLI emits it (survive kill/timeout)."""
@@ -1147,8 +1153,29 @@ class MuseCliTool:
                         activity = _muse_activity_for_event(
                             ev, task_labels, tool_counter
                         )
-                        if activity:
-                            _emit(activity)
+                        payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
+                        inner = payload.get("event") if isinstance(payload.get("event"), dict) else {}
+                        pt = str(ev.get("payload_type") or "")
+                        kind = "writing" if pt == "run.output.delta" else "thinking" if "reasoning" in pt else None
+                        if kind:
+                            raw = payload.get("text") or inner.get("text") or inner.get("chunk") or ""
+                            raw = raw if isinstance(raw, str) else ""
+                            if kind == "thinking" and "delta" not in pt:
+                                text_log.save(kind, raw)
+                                full_text = raw
+                            else:
+                                full_text = text_log.delta(kind, raw)
+                            if activity and _emit(activity):
+                                text_log.save(kind, full_text)
+                        else:
+                            if pt == "run.terminal.completed" and isinstance(payload.get("text"), str):
+                                text_log.save("writing", payload["text"])
+                            if activity:
+                                _emit(activity)
+                                if activity.startswith("tool "):
+                                    text_log.flush()
+                                    text_log.start("writing")
+                                    text_log.start("thinking")
 
                     # Only wait for a clean EOF exit — after kill/cancel the
                     # process may already be gone and wait() can hang forever
@@ -1199,6 +1226,7 @@ class MuseCliTool:
         except Exception as e:
             return {"success": False, "error": str(e), "output": ""}
         finally:
+            text_log.flush()
             if cleanup:
                 try:
                     os.unlink(cleanup)

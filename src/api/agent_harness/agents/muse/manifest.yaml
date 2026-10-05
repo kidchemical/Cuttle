@@ -29,7 +29,7 @@ pricing_providers: [meta]
 resume: true
 capabilities_inject: once_per_resume
 env_profile: native
-activity: heartbeat
+activity: jsonl
 hint: Run Meta Muse Code CLI (`muse exec`) with per-chat resume (Auto/Cloud)
 auth_command: muse login
 missing_cli_hint: >-

@@ -45,7 +45,7 @@ pricing_providers: [openai]
 resume: true
 capabilities_inject: once_per_resume
 env_profile: native
-activity: heartbeat
+activity: jsonl
 hint: Run OpenAI Codex CLI (`codex exec`) with per-chat resume (Auto/Cloud)
 missing_cli_hint: >-
   Install OpenAI Codex and ensure `codex` is on PATH (or set `CODEX_CLI_PATH`).

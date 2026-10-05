@@ -36,6 +36,7 @@ from scripts.utilities.codex_cli_tool import (
     _default_timeout,
     _first_line,
     codex_executable,
+    _codex_reasoning_text,
 )
 from scripts.utilities.stdio_rpc import StdioRpc, rpc_error_text
 
@@ -216,7 +217,7 @@ async def run_codex_turn_app_server(
     rid = (resume or "").strip()
 
     from api.agent_harness import steer as steer_registry
-    from api.agent_harness.activity import ActivityEmitter
+    from api.agent_harness.activity import ActivityEmitter, TextActivityLog, text_preview
 
     from api.agent_harness import codex_thread_ownership as _ownership
 
@@ -273,7 +274,8 @@ async def run_codex_turn_app_server(
     attach_to_chat_run(chat_session_id, proc)
 
     rpc = StdioRpc(proc, loop=loop)
-    activity = ActivityEmitter(status_queue, agent_label="Codex")
+    activity = ActivityEmitter(status_queue, agent_label="Codex", record_text_previews=False)
+    text_log = TextActivityLog("codex")
     activity.emit("Resuming Codex…" if rid else "Starting Codex…", force=True)
     activity_state: Dict[str, Any] = {"tool_count": 0}
     st: Dict[str, Any] = {
@@ -538,26 +540,36 @@ async def run_codex_turn_app_server(
             if method == "item/started":
                 st["reasoning_buf"] = ""
                 st["writing_buf"] = ""
+            text_kind = {"agentMessage": "writing", "reasoning": "thinking"}.get(itype)
+            if text_kind:
+                if method == "item/started":
+                    text_log.start(text_kind, item.get("id"))
+                text_log.save(text_kind, str(item.get("text") or "") if text_kind == "writing"
+                              else _codex_reasoning_text(item), item.get("id"))
             if itype in _SKIP_ACTIVITY_ITEMS:
                 return
             event_type = "item.started" if method == "item/started" else "item.completed"
             line = _codex_activity_for_event(_exec_style_event(event_type, item), activity_state)
             if line:
-                activity.emit(line)
+                activity.emit(line, force=method == "item/completed" and bool(text_kind))
             return
 
         if method in _REASONING_DELTAS:
             st["reasoning_buf"] = (st["reasoning_buf"] + str(params.get("delta") or ""))[-2000:]
             preview = _delta_preview(st["reasoning_buf"])
+            full_text = text_log.delta("thinking", str(params.get("delta") or ""), params.get("itemId"))
             if preview:
-                activity.emit(f"thinking: {preview}…")
+                if activity.emit(f"thinking: {preview}…"):
+                    text_log.save("thinking", full_text, params.get("itemId"))
             return
 
         if method == "item/agentMessage/delta":
             st["writing_buf"] = (st["writing_buf"] + str(params.get("delta") or ""))[-4000:]
             preview = _delta_preview(st["writing_buf"])
+            full_text = text_log.delta("writing", str(params.get("delta") or ""), params.get("itemId"))
             if preview:
-                activity.emit(f"writing: …{preview}")
+                if activity.emit(f"writing: {text_preview(st['writing_buf'])}"):
+                    text_log.save("writing", full_text, params.get("itemId"))
             return
 
         if method == "thread/compacted":
@@ -617,6 +629,7 @@ async def run_codex_turn_app_server(
         if st["setup_error"] is None:
             st["setup_error"] = f"Codex app-server failed: {exc}"
     finally:
+        text_log.flush()
         stop_hb.set()
         if hb_task is not None:
             try:

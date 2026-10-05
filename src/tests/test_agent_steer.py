@@ -297,7 +297,68 @@ def test_codex_turn_reports_steer_it_never_read(tmp_path, monkeypatch):
         lines.append(statuses.get()[1])
     assert any(s.startswith("thinking: Planning the adapters") for s in lines)
     assert any(s.startswith("steer queued: you stopped, continue") for s in lines)
-    assert any(s.startswith("writing: …partial") for s in lines)
+    assert any(s.startswith("writing: partial") for s in lines)
+
+
+@pytestmark_posix
+def test_codex_inspector_keeps_complete_fast_blocks(tmp_path, monkeypatch):
+    import queue
+    from api.query_events import QueryStatusTee, bind_query_id, reset_query_id
+    from api.query_tracker import start_query_tracking, get_query_tracker, finish_query_tracking
+    import scripts.utilities.codex_app_server_turn as mod
+
+    script = r'''
+import json, sys
+def out(msg):
+    print(json.dumps(msg), flush=True)
+def event(method, **params):
+    out({"method": method, "params": {"threadId": "th-fast", "turnId": "turn-fast", **params}})
+for line in sys.stdin:
+    m = json.loads(line)
+    method, mid = m.get("method"), m.get("id")
+    if method == "initialize":
+        out({"id": mid, "result": {}})
+    elif method == "thread/start":
+        out({"id": mid, "result": {"thread": {"id": "th-fast"}}})
+    elif method == "turn/start":
+        out({"id": mid, "result": {"turn": {"id": "turn-fast"}}})
+        event("item/started", item={"id": "r", "type": "reasoning"})
+        event("item/reasoning/summaryTextDelta", itemId="r", delta="Plan first. ")
+        event("item/reasoning/summaryTextDelta", itemId="r", delta="Keep the entire summary. " * 20)
+        event("item/completed", item={"id": "r", "type": "reasoning", "summary": []})
+        for ident, body in [("a", "I will inspect everything. " * 30), ("b", "Done.")]:
+            event("item/started", item={"id": ident, "type": "agentMessage", "text": ""})
+            event("item/agentMessage/delta", itemId=ident, delta=body[0])
+            event("item/agentMessage/delta", itemId=ident, delta=body[1:])
+            event("item/completed", item={"id": ident, "type": "agentMessage", "text": body})
+        event("turn/completed", turn={"id": "turn-fast", "status": "completed"})
+'''
+    monkeypatch.setattr(mod, "codex_executable", lambda: _fake_bin(tmp_path, "codex", script))
+    monkeypatch.setattr("scripts.utilities.codex_cli_session_store.save_codex_resume_id", lambda *a, **k: None)
+    qid = start_query_tracking("fast blocks", {"web_ui": True})
+    token = bind_query_id(qid)
+    statuses = queue.Queue()
+    try:
+        result = asyncio.run(mod.run_codex_turn_app_server(
+            "go", cwd=str(tmp_path), resume=None, model=None, reasoning_effort=None,
+            status_queue=QueryStatusTee(statuses), timeout=10,
+        ))
+        assert result["success"]
+        events = get_query_tracker(qid).execution_data["events"]
+        assert [e["text"] for e in events if e["kind"] == "writing"] == [
+            "I will inspect everything. " * 30, "Done.",
+        ]
+        assert [e["text"] for e in events if e["kind"] == "thinking"] == [
+            "Plan first. " + "Keep the entire summary. " * 20,
+        ]
+        lines = []
+        while not statuses.empty():
+            lines.append(statuses.get()[1])
+        assert "writing: Done." in lines
+        assert "writing: I" in lines
+    finally:
+        reset_query_id(token)
+        finish_query_tracking(success=True)
 
 
 def test_agent_context_skips_live_fetch_while_codex_turn_runs(monkeypatch):
@@ -369,6 +430,77 @@ def test_muse_command_id_is_uuid7():
 
     cid = command_id()
     assert cid[14] == "7"
+
+
+@pytestmark_posix
+@pytest.mark.parametrize("transport", ["serve", "exec"])
+def test_muse_inspector_keeps_fast_text_blocks(tmp_path, monkeypatch, transport):
+    import queue
+    from api.query_events import QueryStatusTee, bind_query_id, reset_query_id
+    from api.query_tracker import start_query_tracking, get_query_tracker, finish_query_tracking
+    import scripts.utilities.muse_cli_tool as cli
+    import scripts.utilities.muse_serve_turn as serve
+
+    script = r'''
+import json, sys
+body = "I will inspect the entire result. " * 30
+summary = "Check every adapter. " * 20
+def out(msg):
+    print(json.dumps(msg), flush=True)
+if sys.argv[1] == "exec":
+    for text in ("I", body[1:]):
+        out({"payload_type": "run.output.delta", "payload": {"text": text}})
+    out({"payload_type": "run.reasoning.delta", "payload": {"text": summary}})
+    out({"payload_type": "run.terminal.completed", "payload": {"terminal": "completed", "text": body}})
+else:
+    def event(method, **params):
+        out({"jsonrpc": "2.0", "method": method, "params": {"sessionId": "s-fast", "turnId": "t-fast", **params}})
+    for line in sys.stdin:
+        m = json.loads(line)
+        method, mid = m.get("method"), m.get("id")
+        if method == "initialize":
+            out({"id": mid, "result": {}})
+        elif method in ("session/start", "session/resume"):
+            out({"id": mid, "result": {"session": {"sessionId": "s-fast", "modelId": "fake"}, "viewCursor": "v"}})
+        elif method in ("session/setApprovalMode", "session/setModel"):
+            out({"id": mid, "result": {"status": "accepted"}})
+        elif method == "turn/start":
+            out({"id": mid, "result": {"turnId": "t-fast", "disposition": "started", "status": "accepted"}})
+            for ident, kind, text in [("r", "reasoning", summary), ("a", "agentMessage", body)]:
+                event("item/started", item={"itemId": ident, "kind": kind, "text": ""})
+                event("item/delta", itemId=ident, field="text", delta=text[0])
+                event("item/delta", itemId=ident, field="text", delta=text[1:])
+                event("item/completed", item={"itemId": ident, "kind": kind, "text": text})
+            event("turn/completed", terminal="completed")
+'''
+    exe = _fake_bin(tmp_path, "muse-fast", script)
+    monkeypatch.setattr(cli, "_which_muse_native", lambda: exe)
+    monkeypatch.setattr(serve, "_which_muse_native", lambda: exe)
+    monkeypatch.setattr("scripts.utilities.muse_cli_session_store.save_muse_resume_id", lambda *a, **k: None)
+    qid = start_query_tracking("muse fast text", {"web_ui": True})
+    token = bind_query_id(qid)
+    try:
+        statuses = QueryStatusTee(queue.Queue())
+        if transport == "serve":
+            result = asyncio.run(serve.run_muse_turn_serve(
+                "go", cwd=str(tmp_path), resume=None, model=None, reasoning_effort=None,
+                status_queue=statuses, timeout=10,
+            ))
+        else:
+            result = asyncio.run(cli.MuseCliTool().execute_prompt(
+                "go", cwd=str(tmp_path), provider="echo", status_queue=statuses, timeout=10,
+            ))
+        assert result["success"], result
+        events = get_query_tracker(qid).execution_data["events"]
+        assert [e["text"].strip() for e in events if e["kind"] == "writing"] == [
+            ("I will inspect the entire result. " * 30).strip(),
+        ]
+        assert [e["text"].strip() for e in events if e["kind"] == "thinking"] == [
+            ("Check every adapter. " * 20).strip(),
+        ]
+    finally:
+        reset_query_id(token)
+        finish_query_tracking(success=True)
 
 
 def test_chat_steer_endpoint_persists_steered_user_message(tmp_path, monkeypatch):

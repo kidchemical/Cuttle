@@ -108,6 +108,50 @@ def record_thinking(text: str, *, query_id: Optional[str] = None) -> None:
     add_event("thinking", query_id=query_id, text=blob)
 
 
+def record_agent_text(kind: str, text: str, block_id: str) -> None:
+    """Store a harness text snapshot independently of its status-strip preview."""
+    if kind not in ("thinking", "writing") or not text.strip():
+        return
+    tracker = _tracker()
+    if tracker is None:
+        return
+    blob = _cap(text, MAX_TEXT)
+    events = (getattr(tracker, "execution_data", None) or {}).get("events", [])
+    for event in reversed(events):
+        if event.get("kind") == kind and event.get("block_id") == block_id:
+            event["text"] = blob
+            try:
+                tracker._publish_live_snapshot()
+            except Exception:
+                pass
+            return
+    add_event(kind, text=blob, block_id=block_id)
+
+
+def record_agent_tool(block_id: str, summary: str, *, phase: str, args: Any = None,
+                      result: Any = None, failed: bool = False) -> None:
+    """Update a vendor tool by identity, including bounded arguments and output."""
+    payload = {"block_id": block_id, "summary": _cap(summary, MAX_STATUS),
+               "phase": phase, "failed": failed}
+    if args is not None:
+        raw_args = json.dumps(args, ensure_ascii=False)
+        payload["args"] = args if len(raw_args) <= MAX_TOOL_ARGS else {"preview": _cap(raw_args, MAX_TOOL_ARGS)}
+    if result is not None:
+        payload["text"] = _cap(result, MAX_TEXT)
+    tracker = _tracker()
+    if tracker is None:
+        return
+    for event in reversed((getattr(tracker, "execution_data", None) or {}).get("events", [])):
+        if event.get("kind") == "tool" and event.get("block_id") == block_id:
+            event.update(payload)
+            try:
+                tracker._publish_live_snapshot()
+            except Exception:
+                pass
+            return
+    add_event("tool", **payload)
+
+
 def enrich_or_record_tool(
     summary: str,
     *,
@@ -252,6 +296,11 @@ class QueryStatusTee:
         if callable(put_nowait):
             return put_nowait(item)
         return self._inner.put(item)
+
+    def put_preview(self, item: Any) -> Any:
+        """Forward display-only previews; the harness records full text separately."""
+        if self._inner is not None:
+            return self._inner.put(item)
 
     def _ingest(self, item: Any) -> None:
         try:

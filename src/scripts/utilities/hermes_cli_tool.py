@@ -434,141 +434,6 @@ def _format_elapsed(seconds: float) -> str:
     return f"{s // 60}m {s % 60}s"
 
 
-def _poll_hermes_live_status(since_ts: float) -> Optional[str]:
-    """Best-effort Cursor-style live status from ~/.hermes/state.db.
-
-    Hermes quiet/oneshot modes suppress stream callbacks, so Cuttle polls the
-    same session DB Hermes writes while tools/thinking run — mirroring how
-    Cursor surfaces ``thinking:`` / ``tool:`` / ``writing:`` on the status line
-    (not token-by-token into the bubble).
-    """
-    db_path = _hermes_home() / "state.db"
-    if not db_path.is_file():
-        return None
-    try:
-        import sqlite3
-
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=1.0)
-        conn.row_factory = sqlite3.Row
-        row = conn.execute(
-            """
-            SELECT id, tool_call_count, message_count
-            FROM sessions
-            WHERE started_at >= ? AND ended_at IS NULL
-            ORDER BY started_at DESC
-            LIMIT 1
-            """,
-            (since_ts - 5.0,),
-        ).fetchone()
-        if not row:
-            conn.close()
-            return None
-        sid = row["id"]
-        msgs = conn.execute(
-            """
-            SELECT role, tool_name, content, reasoning_content, tool_calls
-            FROM messages
-            WHERE session_id = ? AND active = 1
-            ORDER BY id DESC
-            LIMIT 12
-            """,
-            (sid,),
-        ).fetchall()
-        conn.close()
-
-        tool_n = int(row["tool_call_count"] or 0)
-        hints: List[str] = []
-        for m in msgs:
-            tool_name = (m["tool_name"] or "").strip()
-            if tool_name:
-                label = f"tool {tool_n}: {tool_name}" if tool_n else f"tool: {tool_name}"
-                hints.append(label)
-                continue
-            raw_calls = m["tool_calls"]
-            if raw_calls:
-                try:
-                    parsed = json.loads(raw_calls) if isinstance(raw_calls, str) else raw_calls
-                    if isinstance(parsed, list) and parsed:
-                        fn = parsed[0].get("function") if isinstance(parsed[0], dict) else None
-                        name = (
-                            (fn or {}).get("name")
-                            if isinstance(fn, dict)
-                            else parsed[0].get("name")
-                        )
-                        if name:
-                            label = f"tool {tool_n}: {name}" if tool_n else f"tool: {name}"
-                            hints.append(label)
-                            continue
-                except Exception:
-                    pass
-            reasoning = (m["reasoning_content"] or "").strip()
-            if reasoning and len(reasoning) > 16:
-                preview = reasoning.replace("\n", " ").strip()
-                hints.append(f"thinking: {preview[:120]}…")
-                break
-            content = (m["content"] or "").strip()
-            if m["role"] != "assistant" or not content:
-                continue
-            if "think" in content.lower() or "redacted_thinking" in content.lower():
-                inner = re.sub(r"</?think>", "", content, flags=re.IGNORECASE).strip()
-                inner = re.sub(
-                    r"</?redacted_thinking>", "", inner, flags=re.IGNORECASE
-                ).strip()
-                if len(inner) > 16:
-                    preview = inner.replace("\n", " ").strip()
-                    hints.append(f"thinking: {preview[:120]}…")
-                    break
-            # Plain assistant draft — same "writing:" cue Cursor uses.
-            preview = content.replace("\n", " ").strip()
-            if len(preview) > 8:
-                tail = preview[-120:] if len(preview) > 120 else preview
-                hints.append(f"writing: …{tail}" if len(preview) > 120 else f"writing: {tail}")
-                break
-
-        if not hints and tool_n:
-            hints.append(f"{tool_n} tool calls so far")
-        elif not hints and row["message_count"]:
-            hints.append(f"{row['message_count']} messages so far")
-        return " · ".join(hints[:2]) if hints else None
-    except Exception:
-        return None
-
-
-def _emit_status(status_queue: Optional["queue_module.Queue"], message: str) -> None:
-    if not status_queue or not message:
-        return
-    try:
-        status_queue.put_nowait(("status", message))
-    except Exception:
-        pass
-
-
-async def _status_heartbeat(
-    status_queue: Optional["queue_module.Queue"],
-    start_ts: float,
-    stop_event: asyncio.Event,
-    working_label: str = "Hermes",
-) -> None:
-    last_msg = ""
-    label = (working_label or "Hermes").strip() or "Hermes"
-    _emit_status(status_queue, f"Hermes Agent ready ({label})")
-    while not stop_event.is_set():
-        elapsed = _format_elapsed(time.time() - start_ts)
-        detail = _poll_hermes_live_status(start_ts)
-        if detail:
-            msg = f"Hermes Agent · {elapsed} · {detail}"
-        else:
-            msg = f"Hermes Agent working… {elapsed} ({label})"
-        if msg != last_msg:
-            _emit_status(status_queue, msg)
-            last_msg = msg
-        try:
-            # Match Cursor's ~1.2s status cadence more closely than the old 3s poll.
-            await asyncio.wait_for(stop_event.wait(), timeout=1.5)
-        except asyncio.TimeoutError:
-            pass
-
-
 _SESSION_ID_RE = re.compile(r"(?im)^\s*session_id:\s*(\S+)\s*$")
 
 
@@ -1003,15 +868,21 @@ class HermesCliTool:
             except (ValueError, IndexError):
                 run_cmd = list(cmd)
                 run_cmd[run_cmd.index("-q") + 1] = run_prompt
-            start_ts = time.time()
             stop_event = asyncio.Event()
-            heartbeat_task = None
-            if status_queue is not None:
-                heartbeat_task = asyncio.create_task(
-                    _status_heartbeat(
-                        status_queue, start_ts, stop_event, working_label=working_label
-                    )
-                )
+            from scripts.utilities.hermes_activity import HermesActivity
+            progress = HermesActivity(_hermes_home() / "state.db", status_queue, resume_id or None)
+
+            async def _progress_loop():
+                progress.activity.emit(f"Hermes Agent ready ({working_label})", force=True)
+                while not stop_event.is_set():
+                    progress.poll()
+                    try:
+                        await asyncio.wait_for(stop_event.wait(), timeout=1.5)
+                    except asyncio.TimeoutError:
+                        pass
+
+            heartbeat_task = asyncio.create_task(_progress_loop())
+            silent_heartbeat = asyncio.create_task(progress.activity.heartbeat_loop(stop_event))
             try:
                 proc = await asyncio.create_subprocess_exec(
                     *run_cmd,
@@ -1027,6 +898,7 @@ class HermesCliTool:
                     timeout=timeout,
                     cancel_event=cancel_event,
                     line_mode=False,
+                    on_stderr_chunk=progress.stderr_chunk,
                 )
             except Exception as e:
                 return {
@@ -1043,10 +915,16 @@ class HermesCliTool:
                         await heartbeat_task
                     except Exception:
                         pass
+                await silent_heartbeat
+                progress.poll()
+                progress.text.flush()
 
             out = run.stdout.decode("utf-8", errors="replace").strip()
             err = run.stderr.decode("utf-8", errors="replace").strip()
-            hermes_sid = _parse_hermes_session_id(err) or resume_id or None
+            hermes_sid = _parse_hermes_session_id(err) or progress.session_id or resume_id or None
+            progress.session_id = hermes_sid
+            progress.poll()
+            progress.text.flush()
             if hermes_sid and chat_session_id:
                 try:
                     from scripts.utilities.hermes_cli_session_store import (

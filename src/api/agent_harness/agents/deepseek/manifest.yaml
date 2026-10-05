@@ -14,7 +14,7 @@ pricing_providers: [deepseek]
 resume: false
 capabilities_inject: once_per_resume
 env_profile: native
-activity: heartbeat
+activity: jsonl
 hint: Run DeepSeek Harness CLI (`dsh --profile headless`) — Flash by default
 missing_cli_hint: >-
   Install `@deepseek-ai/dsh` (`npm i -g @deepseek-ai/dsh`) and configure
@@ -27,6 +27,6 @@ executable_names:
   - dsh
 notes: >-
   Bundled connector for DeepSeek Harness developer preview (`dsh`).
-  Headless one-shot has no native per-chat resume (official docs). Invokes
+  This adapter uses headless JSON events and remains one-shot (resume is not enabled). Invokes
   node+bin.js on Windows to avoid .cmd %* truncation. Long prompts go through
   a temp file. Context gauge is last-turn only; Compact is unavailable.

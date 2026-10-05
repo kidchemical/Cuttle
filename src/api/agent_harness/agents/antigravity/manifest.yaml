@@ -18,7 +18,7 @@ pricing_providers: [google, anthropic]
 resume: true
 capabilities_inject: once_per_resume
 env_profile: native
-activity: heartbeat
+activity: jsonl
 hint: Run Google Antigravity CLI (`agy`) headlessly with per-chat resume
 install_hint: >-
   Cuttle can install the official Antigravity CLI automatically. Authentication

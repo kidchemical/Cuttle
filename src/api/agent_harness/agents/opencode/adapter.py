@@ -110,7 +110,8 @@ def _opencode_activity_for_event(
         buf = str(state.get(_WRITING_BUF_KEY) or "") + text
         state[_WRITING_BUF_KEY] = buf[-4000:]
         preview = buf.replace("\n", " ").strip()[-120:]
-        return f"writing: …{preview}" if preview else None
+        from api.agent_harness.activity import text_preview
+        return f"writing: {text_preview(buf)}" if preview else None
 
     if et == "error":
         err = event.get("error")
@@ -796,6 +797,8 @@ class Adapter:
         started_at = time.monotonic()
         last_emit = [started_at]
         last_activity = ["starting"]
+        from api.agent_harness.activity import TextActivityLog
+        text_log = TextActivityLog("opencode")
 
         def _emit(activity: str) -> None:
             now = time.monotonic()
@@ -810,7 +813,7 @@ class Adapter:
                 return
             last_emit[0] = now
             last_activity[0] = activity
-            put_status(status_queue, activity)
+            put_status(status_queue, activity, preview_only=activity.startswith(("writing:", "thinking:")))
 
         stop = asyncio.Event()
 
@@ -918,6 +921,13 @@ class Adapter:
                         _emit("Preparing Cuttle question form…")
                         await kill_process_tree(proc)
                         break
+                    part = ev.get("part") if isinstance(ev.get("part"), dict) else {}
+                    if ev.get("type") in ("text", "reasoning"):
+                        kind = "writing" if ev["type"] == "text" else "thinking"
+                        text = str(part.get("text") or "")
+                        if not part.get("id"):
+                            text = text_log.delta(kind, text)
+                        text_log.save(kind, text, part.get("id"))
                     if status_queue is not None:
                         activity = _opencode_activity_for_event(ev, activity_state)
                         if activity:
@@ -952,6 +962,7 @@ class Adapter:
                     model=mid,
                 )
         finally:
+            text_log.flush()
             stop.set()
             try:
                 await asyncio.wait_for(hb, timeout=1.0)

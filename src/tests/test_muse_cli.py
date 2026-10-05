@@ -66,7 +66,7 @@ def test_muse_jsonl_activity_matches_cursor_style():
         {"payload_type": "run.output.delta", "payload": {"text": "I found the handler"}},
         labels,
         count,
-    ) == "writing: …I found the handler"
+    ) == "writing: I found the handler"
     assert _muse_activity_for_event(
         {"payload_type": "task.lifecycle.failed", "payload": {"event": {"task_id": "t1"}}},
         labels,
