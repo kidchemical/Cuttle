@@ -689,7 +689,8 @@ def child_live_status(session_id: Any, *, db=None) -> Optional[Dict[str, Any]]:
     )
     return {
         "generating": generating,
-        "status": f"{child.label or 'Subagent'} — {child.status}",
+        "status": (child.live_status if child.status == STATUS_RUNNING and child.live_status
+                   else f"{child.label or 'Subagent'} — {child.status}"),
         "subagent": child.public(),
         # Carried so the child pane's query-log button gets a real id while the
         # sub-agent is still working, not only after its reply is persisted.

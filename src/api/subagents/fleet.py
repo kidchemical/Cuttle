@@ -81,7 +81,7 @@ def fleet_entry(child: ChildRecord) -> Dict[str, Any]:
     elif state == "queued":
         body = "Waiting to start"
     else:
-        body = "Working…"
+        body = plain_text(child.live_status) or "Working…"
     return {
         **public_launcher(child.public()),
         "fleet": True,
@@ -90,4 +90,5 @@ def fleet_entry(child: ChildRecord) -> Dict[str, Any]:
         "detail": _clip(body, DETAIL_CHARS),
         "started_at": child.started_at,
         "finished_at": child.finished_at,
+        "live_status_at": child.live_status_at if state == "running" else "",
     }

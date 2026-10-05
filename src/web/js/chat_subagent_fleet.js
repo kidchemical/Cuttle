@@ -60,7 +60,8 @@
             const segments = [s.agent, s.model, s.effort].map((x) => String(x || '').trim()).filter(Boolean);
             const duration = (state === 'running' || state === 'queued') ? '' : formatDuration(s.startedAt, s.finishedAt);
             const summary = String(s.summary || '');
-            const tip = name + ' · ' + s.handle + ' · ' + meta.label + (s.detail ? '\n\n' + String(s.detail) : '');
+            const tip = name + ' · ' + s.handle + ' · ' + meta.label + (s.detail ? '\n\n' + String(s.detail) : '')
+                + (state === 'running' && s.liveStatusAt ? '\nUpdated: ' + String(s.liveStatusAt) + ' UTC' : '');
             const avatar = s.avatar && s.avatar.toLowerCase() !== 'cuttle' && avatarHtml
                 ? '<span class="subagent-fleet-avatar" aria-hidden="true">' + avatarHtml(s.avatar) + '</span>'
                 : '<span class="subagent-launcher-orb" aria-hidden="true"></span>';

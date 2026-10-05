@@ -732,6 +732,7 @@ def test_child_status_sink_persists_query_started(tmp_path: Path):
         db, batch_id=batch.id, session_id=1, sort_index=0,
         spec=ChildSpec(title="Sink", message="go"), prompt="go",
     )
+    store.update_child(db, child.id, status="running", started=True)
     sink = ChildStatusSink(db, child.id)
 
     sink.put(("query_started", {"query_id": "feed1234", "report_url": "/x"}))
@@ -740,12 +741,14 @@ def test_child_status_sink_persists_query_started(tmp_path: Path):
 
     sink.put_nowait(("status", "Muse: reading files"))
     assert sink.last_status == "Muse: reading files"
+    assert store.get_child(db, child.id).live_status == "Muse: reading files"
 
     # Noise and malformed items must never break the turn.
     sink.put(("query_started", {}))
     sink.put("not-a-tuple")
     sink.put(("query_started", None))
     assert store.get_child(db, child.id).query_id == "feed1234"
+    sink.close()
 
 
 def test_orphan_running_child_is_reconciled(tmp_path: Path, monkeypatch):
@@ -865,4 +868,3 @@ def test_run_child_turn_stamps_the_owning_process(tmp_path: Path):
     )
     assert seen["owner"] == os.getpid()
     assert seen["query_id"] == ""
-

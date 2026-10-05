@@ -48,3 +48,32 @@ def test_fleet_cards_render_outcomes_from_history(browser, static_server):
         assert not errors
     finally:
         page.close()
+
+
+def test_live_status_refreshes_existing_card_without_duplicate_bubble(browser, static_server):
+    world = CardWorld([])
+    world._append('assistant', 'Review in progress.')
+    world.history[-1]['metadata'] = {'subagents': [
+        _card(1, 'running', 'Reading files', live_status_at='2026-10-05 03:00:00')]}
+    page, frame, errors = _open_card_chat(browser, static_server, world)
+    try:
+        card = frame.locator('.subagent-fleet-card').last
+        card.get_by_text('Reading files', exact=True).wait_for()
+        card.focus()
+        assert 'Updated:' in card.get_attribute('data-tooltip')
+        world.history[-1]['metadata'] = {'subagents': [
+            _card(1, 'running', 'Running tests <script>alert(1)</script>',
+                  live_status_at='2026-10-05 03:00:01')]}
+        frame.locator('html').evaluate("() => window.dispatchEvent(new Event('focus'))")
+        card.get_by_text('Running tests <script>alert(1)</script>', exact=True).wait_for(timeout=20000)
+        assert card.evaluate('(el) => document.activeElement === el')
+        assert frame.locator('.subagent-fleet-card').count() == 1
+        assert frame.locator('.subagent-fleet-card script').count() == 0
+        world.history[-1]['metadata'] = {'subagents': [_card(1, 'done', 'Tests passed')]}
+        frame.locator('html').evaluate("() => window.dispatchEvent(new Event('focus'))")
+        frame.locator('.subagent-fleet-card.is-done').get_by_text('Tests passed', exact=True).wait_for(timeout=20000)
+        assert frame.locator('.subagent-fleet-card').count() == 1
+        assert 'Updated:' not in card.get_attribute('data-tooltip')
+        assert not errors
+    finally:
+        page.close()

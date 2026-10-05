@@ -3679,6 +3679,7 @@
                 displayName: String(item.display_name || '').trim(),
                 startedAt: String(item.started_at || ''),
                 finishedAt: String(item.finished_at || ''),
+                liveStatusAt: String(item.live_status_at || ''),
             });
         });
         return out;
@@ -3854,7 +3855,14 @@
             return;
         }
         if (existing) {
+            if (existing.outerHTML === html) return;
+            const focused = document.activeElement && existing.contains(document.activeElement)
+                ? document.activeElement.getAttribute('data-chat-handle') : '';
             existing.outerHTML = html;
+            if (focused) {
+                const replacement = wrap.querySelector('.subagent-launchers [data-chat-handle="' + CSS.escape(focused) + '"]');
+                if (replacement) replacement.focus({ preventScroll: true });
+            }
             return;
         }
         const footer = wrap.querySelector('.message-footer');

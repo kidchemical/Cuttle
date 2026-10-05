@@ -109,6 +109,16 @@ died) and a one-line plain-text result (full text in the tooltip). Outcome comes
 from the child row, never inferred; history reload refreshes cards from it.
 Click opens the child chat.
 
+Running fleet cards show the harness's latest status (reading files, running
+commands/tests, writing, etc.) rather than a fixed "Working…". The child CLI
+persists a bounded snapshot in SQLite, coalescing updates to at most four writes
+per second; existing parent live-status/history polls refresh cards, including
+cards on in-progress bubbles. Child panes use the same status. Tooltips carry
+the snapshot's UTC update time. There is no fabricated percentage or partial
+answer presented as a result. Terminal outcomes clear running status; turn ids
+prevent late callbacks from overwriting a subsequent child turn. Harnesses
+without status events retain "Working…" until a real outcome arrives.
+
 History nests children under the parent (Subagent badge), **collapsed by
 default**. The parent row shows a pivoting chevron and a count badge; click
 either (or **Show sub-agents** in that row’s menu) to expand. Opening a child

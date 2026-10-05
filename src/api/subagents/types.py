@@ -123,6 +123,9 @@ class ChildRecord:
     avatar: str = ""
     started_at: str = ""
     finished_at: str = ""
+    live_status: str = ""
+    live_status_at: str = ""
+    live_turn_id: str = ""
 
     def handle(self) -> str:
         return chat_handle(self.session_id)
@@ -142,6 +145,8 @@ class ChildRecord:
             "result": self.result,
             "error": self.error,
             "query_id": self.query_id or None,
+            "live_status": self.live_status if self.status == STATUS_RUNNING else "",
+            "live_status_at": self.live_status_at if self.status == STATUS_RUNNING else "",
             "profile_id": self.profile_id,
             "display_name": self.display_name or self.label,
             "avatar": self.avatar,

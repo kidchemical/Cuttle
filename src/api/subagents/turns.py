@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import threading
+import time
 from dataclasses import replace
 from typing import Any, Callable, Dict, Optional
 
@@ -26,9 +27,9 @@ class ChildStatusSink:
 
     ``api.subagents`` executes child turns in the CLI process, so the
     process-local live-status store in Flask never sees them — the only channel
-    that crosses the process boundary is SQLite. This sink captures the
-    harness's ``query_started`` event and pins the query id onto the child row,
-    which is what lets a child pane open the live query log mid-turn. Without a
+    that crosses the process boundary is SQLite. This sink captures coalesced
+    live statuses and pins the harness's ``query_started`` id onto the child row,
+    which lets parent cards show progress and child panes open the live log. Without a
     status_queue the kernel skips that emit entirely (kernel.py gates it on
     ``if status_queue``), which is why sub-agent panes had no log to open.
     """
@@ -40,6 +41,11 @@ class ChildStatusSink:
         self._lock = threading.Lock()
         self.query_id = ""
         self.last_status = ""
+        child = store.get_child(db, child_id)
+        self._turn_id = child.live_turn_id if child else ""
+        self._last_write = 0.0
+        self._timer = None
+        self._closed = False
 
     def put(self, item: Any, *args: Any, **kwargs: Any) -> Any:
         self._ingest(item)
@@ -66,13 +72,47 @@ class ChildStatusSink:
                 if not qid:
                     return
                 with self._lock:
+                    if self._closed:
+                        return
                     self.query_id = qid
-                store.update_child(self._db, self._child_id, query_id=qid)
+                    store.update_child(self._db, self._child_id, query_id=qid,
+                                       live_turn_id=self._turn_id)
             elif kind == "status":
                 with self._lock:
-                    self.last_status = str(payload or "")
+                    if self._closed:
+                        return
+                    self.last_status = " ".join(str(payload or "").split())[:600]
+                    # Leading write + trailing coalesced snapshot: noisy harness
+                    # events cause at most four SQLite writes per second.
+                    delay = 0.25 - (time.monotonic() - self._last_write)
+                    if delay <= 0:
+                        self._write_status()
+                    elif self._timer is None:
+                        self._timer = threading.Timer(delay, self._flush_status)
+                        self._timer.daemon = True
+                        self._timer.start()
         except Exception:
             pass
+
+    def _write_status(self) -> None:
+        store.update_child_live_status(self._db, self._child_id, self._turn_id, self.last_status)
+        self._last_write = time.monotonic()
+
+    def _flush_status(self) -> None:
+        with self._lock:
+            self._timer = None
+            if not self._closed:
+                try:
+                    self._write_status()
+                except Exception:
+                    pass  # Observability must never fail a child turn.
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+            if self._timer is not None:
+                self._timer.cancel()
+                self._timer = None
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._inner, name)
@@ -312,6 +352,7 @@ def run_child_turn(
             "response": f"Subagent failed: {exc}",
         }
     finally:
+        sink.close()
         try:
             from api import chat_delivery
 

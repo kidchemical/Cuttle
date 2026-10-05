@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -75,6 +76,108 @@ def test_history_hydration_reflects_current_child_row(tmp_path: Path, monkeypatc
     cards = {c["label"]: c for c in messages[0]["metadata"]["subagents"]}
     assert cards["A"]["outcome"] == "done" and "reply from A" in cards["A"]["summary"]
     assert cards["B"]["outcome"] == "lost" and cards["B"]["finished_at"]
+
+
+def _running_child(tmp_path):
+    import os
+    from api.subagents.types import ChildSpec
+    db, path, owner, parent = _seed(tmp_path)
+    batch = store.insert_batch(db, parent_session_id=parent, user_id=owner, collect='all', lifetime='conversational')
+    child = store.insert_child(db, batch_id=batch.id, session_id=parent, sort_index=0,
+                               spec=ChildSpec(title='Scout', message='inspect'), prompt='inspect')
+    store.update_child(db, child.id, status='running', started=True, owner_pid=os.getpid())
+    return db, path, child
+
+
+def test_live_status_crosses_processes_and_hydrates_parent_and_child(tmp_path, monkeypatch):
+    import os
+    from api.subagents.turns import ChildStatusSink
+    db, path, child = _running_child(tmp_path)
+    sink = ChildStatusSink(db, child.id)
+    try:
+        sink.put(('status', 'Reading architecture files'))
+        monkeypatch.setattr(fleet, 'fleet_enabled', lambda: True)
+        messages = [{'role': 'assistant', 'content': 'Review in progress',
+                     'metadata': {'subagents': [fleet.fleet_entry(child)]}}]
+        service.hydrate_parent_fleet(db, messages)
+        card = messages[0]['metadata']['subagents'][0]
+        assert card['summary'] == 'Reading architecture files' and card['live_status_at']
+        assert service.child_live_status(child.session_id, db=db)['status'] == 'Reading architecture files'
+        # A different process reads the durable status, not the sink's memory.
+        code = ('import sys; from pathlib import Path; from api.auth_db import AuthDatabase; '
+                'from api.subagents.store import get_child; '
+                'print(get_child(AuthDatabase(Path(sys.argv[1])), sys.argv[2]).live_status)')
+        result = subprocess.run([sys.executable, '-c', code, str(path), child.id],
+                                env={**os.environ, 'PYTHONPATH': str(FLEET_JS.parents[2])},
+                                capture_output=True, text=True, check=True)
+        assert result.stdout.strip() == 'Reading architecture files'
+    finally:
+        sink.close()
+
+
+def test_sink_coalesces_statuses_and_trailing_write_keeps_latest(tmp_path, monkeypatch):
+    from api.subagents import turns
+    db, _, child = _running_child(tmp_path)
+    timers = []
+    class Timer:
+        def __init__(self, delay, fn):
+            self.fn = fn
+            timers.append(self)
+        def start(self): pass
+        def cancel(self): pass
+    clock = [10.0]
+    monkeypatch.setattr(turns.threading, 'Timer', Timer)
+    monkeypatch.setattr(turns.time, 'monotonic', lambda: clock[0])
+    sink = turns.ChildStatusSink(db, child.id)
+    sink.put(('status', 'Reading'))
+    clock[0] += .1
+    sink.put(('status', 'Searching'))
+    sink.put(('status', 'Testing latest'))
+    assert len(timers) == 1 and store.get_child(db, child.id).live_status == 'Reading'
+    clock[0] += .2
+    timers[0].fn()
+    assert store.get_child(db, child.id).live_status == 'Testing latest'
+    sink.close()
+    sink.put(('status', 'Late status'))
+    sink.put(('query_started', {'query_id': 'late'}))
+    assert store.get_child(db, child.id).live_status == 'Testing latest'
+    assert not store.get_child(db, child.id).query_id
+
+
+@pytest.mark.parametrize('terminal', ['done', 'failed', 'cancelled'])
+def test_late_status_never_revives_terminal_child(tmp_path, terminal):
+    from api.subagents.turns import ChildStatusSink
+    db, _, child = _running_child(tmp_path)
+    sink = ChildStatusSink(db, child.id)
+    sink.put(('status', 'Before completion'))
+    store.update_child(db, child.id, status=terminal, result='Final reply', error='Final error', finished=True)
+    sink._flush_status()
+    row = store.get_child(db, child.id)
+    assert row.status == terminal and not row.live_status and not row.live_status_at
+    assert fleet.fleet_entry(row)['summary'] != 'Before completion'
+    sink.close()
+
+
+def test_old_turn_status_and_query_cannot_overwrite_new_turn(tmp_path):
+    from api.subagents.turns import ChildStatusSink
+    db, _, child = _running_child(tmp_path)
+    old = ChildStatusSink(db, child.id)
+    old.put(('status', 'Old turn'))
+    store.update_child(db, child.id, status='done', finished=True)
+    store.update_child(db, child.id, status='pending')
+    store.update_child(db, child.id, status='running', started=True)
+    new = ChildStatusSink(db, child.id)
+    try:
+        new.put(('status', 'New turn'))
+        new.put(('query_started', {'query_id': 'new-query'}))
+        old._flush_status()
+        old.put(('query_started', {'query_id': 'old-query'}))
+        row = store.get_child(db, child.id)
+        assert row.live_status == 'New turn' and row.query_id == 'new-query'
+        assert not row.finished_at
+    finally:
+        old.close()
+        new.close()
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")

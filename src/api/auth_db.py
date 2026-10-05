@@ -277,6 +277,9 @@ class AuthDatabase:
             # query_id: the harness query log for this turn, captured at
             # query_started so a child pane can inspect a live sub-agent run.
             'ALTER TABLE subagent_children ADD COLUMN query_id TEXT',
+            'ALTER TABLE subagent_children ADD COLUMN live_status TEXT',
+            'ALTER TABLE subagent_children ADD COLUMN live_status_at TEXT',
+            'ALTER TABLE subagent_children ADD COLUMN live_turn_id TEXT',
         ):
             try:
                 cursor.execute(col_sql)

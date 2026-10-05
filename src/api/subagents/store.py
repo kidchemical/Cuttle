@@ -44,6 +44,9 @@ def _row_child(row: Any) -> ChildRecord:
         avatar=str(d.get("avatar") or ""),
         started_at=str(d.get("started_at") or ""),
         finished_at=str(d.get("finished_at") or ""),
+        live_status=str(d.get("live_status") or ""),
+        live_status_at=str(d.get("live_status_at") or ""),
+        live_turn_id=str(d.get("live_turn_id") or ""),
     )
 
 
@@ -270,6 +273,7 @@ def update_child(
     pid: Optional[int] = None,
     owner_pid: Optional[int] = None,
     query_id: Optional[str] = None,
+    live_turn_id: Optional[str] = None,
     started: bool = False,
     finished: bool = False,
 ) -> None:
@@ -278,6 +282,8 @@ def update_child(
     if status is not None:
         sets.append("status = ?")
         args.append(status)
+        if status == STATUS_PENDING:
+            sets.extend(["live_status = NULL", "live_status_at = NULL", "live_turn_id = NULL"])
     if result is not None:
         sets.append("result = ?")
         args.append(result)
@@ -295,8 +301,12 @@ def update_child(
         args.append(str(query_id) or None)
     if started:
         sets.append("started_at = CURRENT_TIMESTAMP")
+        sets.extend(["live_status = NULL", "live_status_at = NULL", "query_id = NULL",
+                     "finished_at = NULL", "live_turn_id = ?"])
+        args.append(new_id())
     if finished:
         sets.append("finished_at = CURRENT_TIMESTAMP")
+        sets.extend(["live_status = NULL", "live_status_at = NULL"])
     if not sets:
         return
     args.append(child_id)
@@ -315,12 +325,36 @@ def update_child(
         if status == STATUS_RUNNING and current in TERMINAL_CHILD:
             conn.close()
             return
+    guard = ""
+    if live_turn_id is not None:
+        guard = " AND live_turn_id = ? AND status = ?"
+        args.extend([live_turn_id, STATUS_RUNNING])
     cur.execute(
-        f"UPDATE subagent_children SET {', '.join(sets)} WHERE id = ?",
+        f"UPDATE subagent_children SET {', '.join(sets)} WHERE id = ?{guard}",
         tuple(args),
     )
     conn.commit()
     conn.close()
+
+
+def update_child_live_status(db, child_id: str, turn_id: str, text: str) -> bool:
+    """Persist only this running turn's latest bounded status, never a late callback."""
+    if not turn_id:
+        return False
+    text = " ".join(str(text or "").split())[:600]
+    if not text:
+        return False
+    conn = db._get_connection()
+    try:
+        cursor = conn.execute(
+            "UPDATE subagent_children SET live_status = ?, live_status_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND live_turn_id = ? AND status = ? "
+            "AND COALESCE(live_status, '') != ?",
+            (text, child_id, turn_id, STATUS_RUNNING, text))
+        conn.commit()
+        return cursor.rowcount == 1
+    finally:
+        conn.close()
 
 
 def update_batch(
