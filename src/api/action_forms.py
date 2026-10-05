@@ -636,6 +636,41 @@ _PENDING_OPEN_RE = re.compile(
     re.IGNORECASE,
 )
 
+_PENDING_BLOCK_RE = re.compile(
+    r"<cuttle_action_form_pending\b([^>]*)>([\s\S]*?)</cuttle_action_form_pending>",
+    re.IGNORECASE,
+)
+
+
+def _pending_block_id(attrs: Optional[str]) -> str:
+    """Card id from a pending open-tag attribute string ("" when absent)."""
+    m = re.search(r'\bid=(["\'])([^"\']+)\1', attrs or "", re.I)
+    return m.group(2) if m else ""
+
+
+def _namespaced_form_result_meta(
+    meta: Dict[str, Any],
+    form_id: str,
+    entry: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Store one card's lock result without clobbering sibling cards.
+
+    One assistant message can hold several cards (e.g. a Q&A card plus a
+    restart controller). ``action_form_result`` used to be a single slot,
+    so consuming one card rewrote — and lock-reads leaked into — the other.
+    Per-card entries live under ``forms``; top-level keys stay as the
+    last-writer compat copy.
+    """
+    prev = meta.get("action_form_result")
+    prev = dict(prev) if isinstance(prev, dict) else {}
+    forms = prev.get("forms")
+    forms = dict(forms) if isinstance(forms, dict) else {}
+    forms[str(form_id)] = dict(entry)
+    prev.update(entry)
+    prev["forms"] = forms
+    meta["action_form_result"] = prev
+    return meta
+
 
 def load_action_form_spec_from_history(
     session_id: Optional[str],
@@ -1031,50 +1066,57 @@ def mark_action_form_consumed_in_history(
         )
         if not msgs:
             return False
-        msg = msgs[0]
-        content = msg.get("content") or ""
+        # One bubble can hold several cards: patch the block whose tag id
+        # matches this form, never blindly the first block (CH-000989: a
+        # restart ack locked and painted the Q&A card sharing the bubble).
+        target = None
+        for msg in msgs:
+            content = str(msg.get("content") or "")
+            for m in _PENDING_BLOCK_RE.finditer(content):
+                if _pending_block_id(m.group(1)) == str(form_id):
+                    target = (msg, content, m)
+                    break
+            if target:
+                break
+        if not target:
+            return False
+        msg, content, match = target
         selected_csv = _esc_attr(",".join(str(x) for x in (selected or [])))
 
-        def _patch_pending(m: re.Match) -> str:
-            attrs = m.group(1) or ""
-            body = m.group(2) or ""
-            attrs = _strip_pending_fallback_attr(attrs)
-            attrs = re.sub(r'\s+locked="[^"]*"', "", attrs, flags=re.I)
-            attrs = re.sub(r'\s+selected="[^"]*"', "", attrs, flags=re.I)
-            attrs = attrs.rstrip() + f' locked="1" selected="{selected_csv}"'
-            raw = body.strip()
-            parsed = _safe_json_loads(raw)
-            if isinstance(parsed, dict):
-                parsed["locked"] = True
-                parsed["selected"] = list(selected or [])
-                parsed["reusable"] = False
-                # Collapsed summary text after reload ("Posted to #feature-updates").
-                if toast:
-                    parsed["toast"] = str(toast)
-                # e.g. restartId — lets a reloaded card resume live status.
-                for key, value in (spec_patch or {}).items():
-                    parsed[str(key)] = value
-                body = "\n" + json.dumps(parsed, ensure_ascii=False) + "\n"
-            return f"<cuttle_action_form_pending{attrs}>{body}</cuttle_action_form_pending>"
-
-        new_content, n = re.subn(
-            r"<cuttle_action_form_pending\b([^>]*)>([\s\S]*?)</cuttle_action_form_pending>",
-            _patch_pending,
-            content,
-            count=1,
-            flags=re.I,
-        )
-        if n < 1:
-            return False
+        attrs = match.group(1) or ""
+        body = match.group(2) or ""
+        attrs = _strip_pending_fallback_attr(attrs)
+        attrs = re.sub(r'\s+locked="[^"]*"', "", attrs, flags=re.I)
+        attrs = re.sub(r'\s+selected="[^"]*"', "", attrs, flags=re.I)
+        attrs = attrs.rstrip() + f' locked="1" selected="{selected_csv}"'
+        raw = body.strip()
+        parsed = _safe_json_loads(raw)
+        if isinstance(parsed, dict):
+            parsed["locked"] = True
+            parsed["selected"] = list(selected or [])
+            parsed["reusable"] = False
+            # Collapsed summary text after reload ("Posted to #feature-updates").
+            if toast:
+                parsed["toast"] = str(toast)
+            # e.g. restartId — lets a reloaded card resume live status.
+            for key, value in (spec_patch or {}).items():
+                parsed[str(key)] = value
+            body = "\n" + json.dumps(parsed, ensure_ascii=False) + "\n"
+        patched = f"<cuttle_action_form_pending{attrs}>{body}</cuttle_action_form_pending>"
+        new_content = content[: match.start()] + patched + content[match.end() :]
         meta = msg.get("metadata") if isinstance(msg.get("metadata"), dict) else {}
         meta = dict(meta or {})
-        meta["action_form_result"] = {
-            "form_id": form_id,
-            "selected": list(selected or []),
-            "toast": toast,
-            "locked": True,
-            **{str(k): v for k, v in (spec_patch or {}).items()},
-        }
+        meta = _namespaced_form_result_meta(
+            meta,
+            str(form_id),
+            {
+                "form_id": form_id,
+                "selected": list(selected or []),
+                "toast": toast,
+                "locked": True,
+                **{str(k): v for k, v in (spec_patch or {}).items()},
+            },
+        )
         return db.update_message_content(int(msg["id"]), new_content, metadata=meta)
     except Exception as e:
         print(f"[CHAT] mark action form consumed failed: {e}", flush=True)
@@ -1110,44 +1152,45 @@ def patch_action_form_watch_in_history(
         )
         if not msgs:
             return False
-        msg = msgs[0]
-        content = msg.get("content") or ""
-
-        def _patch_pending(m: re.Match) -> str:
-            attrs = m.group(1) or ""
-            body = m.group(2) or ""
-            attrs = _strip_pending_fallback_attr(attrs)
-            parsed = _safe_json_loads(body.strip())
-            if isinstance(parsed, dict):
-                parsed = merge_watch_snapshot_into_spec(
-                    parsed, snapshot=snap, terminal=terminal, toast=toast, lock=lock
-                )
-                if parsed.get("locked"):
-                    attrs = re.sub(r'\s+locked="[^"]*"', "", attrs, flags=re.I)
-                    attrs = attrs.rstrip() + ' locked="1"'
-                body = "\n" + json.dumps(parsed, ensure_ascii=False) + "\n"
-            return f"<cuttle_action_form_pending{attrs}>{body}</cuttle_action_form_pending>"
-
-        new_content, n = re.subn(
-            r"<cuttle_action_form_pending\b([^>]*)>([\s\S]*?)</cuttle_action_form_pending>",
-            _patch_pending,
-            content,
-            count=1,
-            flags=re.I,
-        )
-        if n < 1:
+        # Same shared-bubble rule as the consume lock: freeze only the
+        # block whose tag id matches this form.
+        target = None
+        for msg in msgs:
+            content = str(msg.get("content") or "")
+            for m in _PENDING_BLOCK_RE.finditer(content):
+                if _pending_block_id(m.group(1)) == str(form_id):
+                    target = (msg, content, m)
+                    break
+            if target:
+                break
+        if not target:
             return False
+        msg, content, match = target
+
+        attrs = match.group(1) or ""
+        body = match.group(2) or ""
+        attrs = _strip_pending_fallback_attr(attrs)
+        parsed = _safe_json_loads(body.strip())
+        if isinstance(parsed, dict):
+            parsed = merge_watch_snapshot_into_spec(
+                parsed, snapshot=snap, terminal=terminal, toast=toast, lock=lock
+            )
+            if parsed.get("locked"):
+                attrs = re.sub(r'\s+locked="[^"]*"', "", attrs, flags=re.I)
+                attrs = attrs.rstrip() + ' locked="1"'
+            body = "\n" + json.dumps(parsed, ensure_ascii=False) + "\n"
+        patched = f"<cuttle_action_form_pending{attrs}>{body}</cuttle_action_form_pending>"
+        new_content = content[: match.start()] + patched + content[match.end() :]
         meta = msg.get("metadata") if isinstance(msg.get("metadata"), dict) else {}
         meta = dict(meta or {})
-        prev = dict(meta.get("action_form_result") or {}) if isinstance(meta.get("action_form_result"), dict) else {}
-        prev["watch_terminal"] = bool(terminal)
+        entry: Dict[str, Any] = {"form_id": str(form_id), "watch_terminal": bool(terminal)}
         if snap:
-            prev["watch_snapshot"] = snap
+            entry["watch_snapshot"] = snap
         if toast:
-            prev["toast"] = str(toast)
+            entry["toast"] = str(toast)
         if lock:
-            prev["locked"] = True
-        meta["action_form_result"] = prev
+            entry["locked"] = True
+        meta = _namespaced_form_result_meta(meta, str(form_id), entry)
         return db.update_message_content(int(msg["id"]), new_content, metadata=meta)
     except Exception as e:
         print(f"[CHAT] action form watch snapshot persist failed: {e}", flush=True)
@@ -1201,33 +1244,50 @@ def read_action_form_lock_from_history(
         meta = msg.get("metadata") if isinstance(msg.get("metadata"), dict) else {}
         res = meta.get("action_form_result") if isinstance(meta, dict) else None
         if isinstance(res, dict) and res.get("locked"):
-            toast = str(res.get("toast") or "Already used — this form is locked.")
-            # Soft follow-up dismiss must not permanently kill shared restart cards.
-            if is_restart_ctrl and _is_soft_dismiss_toast(toast):
-                continue
-            return {
-                "selected": list(res.get("selected") or []),
-                "toast": toast,
-            }
+            forms = res.get("forms")
+            if isinstance(forms, dict):
+                # Namespaced writer: only this card's own entry counts.
+                # A sibling card's lock in the same bubble must not leak
+                # across (CH-000989: restart ack bricked the Q&A card).
+                entry = forms.get(fid)
+                if isinstance(entry, dict) and entry.get("locked"):
+                    toast = str(entry.get("toast") or "Already used — this form is locked.")
+                    # Soft follow-up dismiss must not permanently kill shared restart cards.
+                    if is_restart_ctrl and _is_soft_dismiss_toast(toast):
+                        continue
+                    return {
+                        "selected": list(entry.get("selected") or []),
+                        "toast": toast,
+                    }
+            elif res.get("form_id") in (None, fid):
+                toast = str(res.get("toast") or "Already used — this form is locked.")
+                # Soft follow-up dismiss must not permanently kill shared restart cards.
+                if is_restart_ctrl and _is_soft_dismiss_toast(toast):
+                    continue
+                return {
+                    "selected": list(res.get("selected") or []),
+                    "toast": toast,
+                }
+        # Content fallback: the locked tag must be THIS card's tag, not a
+        # sibling card sharing the bubble.
         content = str(msg.get("content") or "")
-        if f'id="{fid}"' in content and 'locked="1"' in content:
+        for m in _PENDING_BLOCK_RE.finditer(content):
+            if _pending_block_id(m.group(1)) != fid:
+                continue
+            if not re.search(r'\blocked\s*=\s*["\']1["\']', m.group(1) or "", re.I):
+                break
             toast = "Already used — this form is locked."
             try:
-                m = re.search(
-                    r"<cuttle_action_form_pending\b[^>]*>\s*(\{[\s\S]*?\})\s*</cuttle_action_form_pending>",
-                    content,
-                    re.I,
-                )
-                if m:
-                    parsed = _safe_json_loads(m.group(1))
-                    if isinstance(parsed, dict) and parsed.get("toast"):
-                        toast = str(parsed.get("toast"))
+                parsed = _safe_json_loads((m.group(2) or "").strip())
+                if isinstance(parsed, dict) and parsed.get("toast"):
+                    toast = str(parsed.get("toast"))
+                selected = list(parsed.get("selected") or []) if isinstance(parsed, dict) else []
             except Exception:
-                pass
+                selected = []
             if is_restart_ctrl and _is_soft_dismiss_toast(toast):
-                continue
+                break
             return {
-                "selected": [],
+                "selected": selected,
                 "toast": toast,
             }
     return None

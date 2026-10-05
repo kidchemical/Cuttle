@@ -1194,3 +1194,111 @@ def test_qa_cancel_does_not_resume(tmp_path: Path):
     assert res["success"] is True
     assert res["selected"] == ["cancel"]
     assert res["resume"] is False
+
+
+def test_consume_lock_targets_only_matching_card_in_shared_bubble(monkeypatch):
+    """CH-000989: a restart click in a two-card bubble must not lock/paint the Q&A card.
+
+    The Q&A multi card and the restart controller live in one assistant
+    message. Consuming the restart card must patch only the restart block —
+    never the first block — and the Q&A card must still read as unlocked.
+    """
+    from api.action_forms import (
+        mark_action_form_consumed_in_history,
+        read_action_form_lock_from_history,
+    )
+
+    qa_id = "f40a76266e754e7b8d4593aa7500231e"
+    restart_id = "flask-restart-g4"
+    qa_spec = {
+        "id": qa_id,
+        "mode": "multi",
+        "title": "Router page layout",
+        "lock": "form",
+        "locked": False,
+        "selected": [],
+        "options": [{"id": "table", "label": "Lane table"}],
+    }
+    restart_spec = {
+        "id": restart_id,
+        "mode": "choice",
+        "title": "Restart Flask (daemon-owned)",
+        "lock": "form",
+        "locked": False,
+        "selected": [],
+        "options": [
+            {"id": "when-idle", "label": "When idle", "action": "flask.restart",
+             "params": {"mode": "when-idle"}}
+        ],
+    }
+    state = {
+        "content": (
+            f'<cuttle_action_form_pending id="{qa_id}">\n'
+            f"{json.dumps(qa_spec)}\n"
+            "</cuttle_action_form_pending>\n\n"
+            f'<cuttle_action_form_pending id="{restart_id}">\n'
+            f"{json.dumps(restart_spec)}\n"
+            "</cuttle_action_form_pending>"
+        ),
+        "metadata": {},
+    }
+
+    class _Msg:
+        def _d(self):
+            return {"id": 7, "content": state["content"],
+                    "metadata": state["metadata"]}
+
+        def get(self, k, default=None):
+            return self._d().get(k, default)
+
+        def __getitem__(self, k):
+            return self._d()[k]
+
+    class _DB:
+        def find_messages_containing(self, *_a, **_k):
+            return [_Msg()]
+
+        def update_message_content(self, _mid, content, metadata=None):
+            state["content"] = content
+            if metadata is not None:
+                state["metadata"] = metadata
+            return True
+
+    monkeypatch.setattr("api.auth_db.get_auth_db", lambda: _DB())
+
+    ok = mark_action_form_consumed_in_history(
+        session_id="db_session_989",
+        form_id=restart_id,
+        selected=["when-idle"],
+        toast="**Flask restart acknowledged**",
+        spec_patch={"restartId": "28a99a35c70047f1bf2b006491208ce8"},
+    )
+    assert ok is True
+
+    blocks = re.findall(
+        r'<cuttle_action_form_pending\b([^>]*)>([\s\S]*?)</cuttle_action_form_pending>',
+        state["content"],
+        re.I,
+    )
+    assert len(blocks) == 2
+    by_id = {}
+    for attrs, body in blocks:
+        id_m = re.search(r'\bid=(["\'])([^"\']+)\1', attrs, re.I)
+        by_id[id_m.group(2)] = (attrs, json.loads(body.strip()))
+    # Restart block carries the ack.
+    assert 'locked="1"' in by_id[restart_id][0]
+    assert by_id[restart_id][1]["selected"] == ["when-idle"]
+    assert by_id[restart_id][1]["restartId"] == "28a99a35c70047f1bf2b006491208ce8"
+    # Q&A block is untouched: unlocked, no restart toast/id.
+    assert 'locked="1"' not in by_id[qa_id][0]
+    assert by_id[qa_id][1].get("locked") is not True
+    assert by_id[qa_id][1].get("selected", []) == []
+    assert "restartId" not in by_id[qa_id][1]
+    assert "Flask restart" not in str(by_id[qa_id][1].get("toast") or "")
+
+    # Lock reads are per-card: Q&A stays submittable, restart reads locked.
+    assert read_action_form_lock_from_history("db_session_989", qa_id) is None
+    got = read_action_form_lock_from_history("db_session_989", restart_id)
+    assert got is not None
+    assert "Flask restart" in got["toast"]
+    assert got["selected"] == ["when-idle"]
