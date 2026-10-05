@@ -69,7 +69,7 @@ def test_reorder_keeps_hidden_slots():
 @node_only
 def test_activity_priority_and_seen_suppression():
     res = _run()
-    assert res["rank"] == {"running": 5, "error": 4, "unread": 3, "queued": 2, "paused": 1}
+    assert res["rank"] == {"input": 6, "running": 5, "error": 4, "unread": 3, "queued": 2, "paused": 1}
     assert res["look"] == {"activity": "unread", "running": False}
     assert res["kinds"] == {"q": "paused", "a": "queued", "e": ""}
     assert res["best"] == "running"  # running outranks unread + queued
@@ -136,6 +136,25 @@ A.notePushSnapshot(frame, [{ id: '2', activity: '', running: true }], ['2'], 100
 A.pruneSources(() => false);
 out.pruned = look('2', 1100);
 out.bare = [A.bareSid('db_session_12'), A.bareSid('CH-000012-4'), A.bareSid('012'), A.bareSid('web_x')];
+// An owned local turn survives idle polls; passive stale spinners still expire.
+A.resetActivity();
+A.notePushSnapshot(frame, [{id:'989', running:true, localRunning:true}], ['989'], 1000);
+A.noteServerSnapshot([{id:'989', running:false}], 6000);
+out.localTurn = look('989', 9000);
+A.notePushSnapshot(frame, [], ['989'], 10000);
+out.localFinished = look('989', 11000);
+// Input on any pane wins over running; visible input is not read/unread.
+A.setUnreadPrefs({989:{awaitingInput:true}, 4:{hasUnread:true,unreadIsError:true}});
+A.noteServerSnapshot([{id:'5',running:true}], 12000);
+out.multiPaneInput = A.selectSpaceActivity(['989','5','4'], id => look(id, 13000), true, new Set(['989']));
+A.setUnreadPrefs({989:{awaitingInput:false}, 4:{hasUnread:true,unreadIsError:true}});
+out.afterAnswer = A.selectSpaceActivity(['989','5','4'], id => look(id, 13000), false, new Set());
+A.resetActivity();
+A.setUnreadPrefs({42:{hasUnread:false}});
+A.notePushSnapshot(frame, [{id:'42',activity:'error',visibleAttention:true}], ['42'], 1000);
+out.visibleAttention = A.selectSpaceActivity(['42'], id => look(id, 1100), true, new Set(['42']));
+A.notePushSnapshot(frame, [], ['42'], 2000);
+out.attentionAcked = look('42', 2100);
 process.stdout.write(JSON.stringify(out));
 """
 
@@ -166,6 +185,12 @@ def test_activity_lifecycle_server_truth_beats_stale_frames():
     assert res["queueKept"] == {"activity": "paused", "running": False}
     assert res["localQueue"] == {"activity": "queued", "running": False}
     assert res["pruned"] is None
+    assert res["visibleAttention"] == "error"
+    assert res["attentionAcked"] is None
+    assert res["localTurn"] == running
+    assert res["localFinished"] is None
+    assert res["multiPaneInput"] == "input"
+    assert res["afterAnswer"] == "running"
     assert res["bare"] == ["12", "12", "12", "web_x"]
 
 

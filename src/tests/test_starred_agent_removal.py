@@ -133,7 +133,16 @@ def _run_sticky_js(script: str, *, starred, chips, session_id=None, prefs=None):
         "    function persistProjectForCurrentSession(opts)",
     )
 
+    draft_restore = _extract(
+        src, "    function restoreComposerDraftControls(sid) {",
+        "    function saveComposerDraft(sid, composerKey) {",
+    )
     harness = f"""
+const CuttleChatComposer = require("{CHAT_JS.parent / 'chat_composer.js'}");
+const CuttleChatAgentModel = require("{CHAT_JS.parent / 'chat_agent_model.js'}");
+const slashPaletteSupplement = {{}};
+const newComposerPrefsId = 'draft:new';
+function beginSupplementFetch(field) {{ slashPaletteSupplement[field] = 1; }}
 const CuttleChatSlash = require("{slash_mod}");
 {commands}
 const prefsMap = {json.dumps(prefs or {})};
@@ -154,6 +163,7 @@ function readStarredSlashPrefixes() {{ return {json.dumps(starred)}; }}
 function renderSlashChips() {{}}
 function refreshTypingIndicatorHeaderBadges() {{}}
 const document = {{ getElementById: () => null }};
+{draft_restore}
 {helpers}
 {script}
 """

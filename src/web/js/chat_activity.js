@@ -178,12 +178,13 @@
 
     /**
      * Attention kind for history dots (priority high → low):
-     * error (red) > unread (green) > queued/active (amber) > paused (yellow).
+     * input (blue) > error (red) > unread (green) > queued/active (amber) > paused (yellow).
      * `queue` is the already-resolved follow-up item array for the session.
      */
     function sessionHistoryAttentionKind(parts) {
         const p = parts || {};
         const queue = Array.isArray(p.queue) ? p.queue : [];
+        if (p.prefs && p.prefs.awaitingInput) return 'input';
         if (sessionHasUnreadError(p)) return 'error';
         if (sessionHasUnread(p)) return 'unread';
         if (queueHasActive(queue)) return 'queued';
@@ -496,6 +497,7 @@
      */
     function activityClassToKind(className) {
         const c = String(className || '');
+        if (/\bhas-input\b/.test(c)) return 'input';
         if (/\bhas-unread-error\b/.test(c)) return 'error';
         if (/\bhas-unread\b/.test(c)) return 'unread';
         if (/\bhas-queued\b/.test(c)) return 'queued';

@@ -285,6 +285,9 @@ def test_messages_payload_carries_muse_pins(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(store, "_repo_root", lambda: tmp_path)
     store.save_muse_model(sid, "muse-spark-1.3-contributor")
     store.save_muse_effort(sid, "high")
+    # No starred defaults — an install-local star must not leak in.
+    from api.agent_harness import agent_defaults
+    monkeypatch.setattr(agent_defaults, "_read_map", lambda _key: {})
 
     monkeypatch.setattr("api.auth_api.get_auth_db", lambda: db)
     monkeypatch.setattr("api.auth_db.get_auth_db", lambda: db)

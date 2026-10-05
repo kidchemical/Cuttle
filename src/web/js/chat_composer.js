@@ -161,7 +161,16 @@
         return { action: 'normal', outbound, controlLane: message ? control : false };
     }
 
+    /** A draft keeps every staged chip, including one-shot commands and
+     * Cursor's model companion; sticky-only prefs describe sent chats. */
+    function draftChips(chips) {
+        return (Array.isArray(chips) ? chips : [])
+            .filter((chip) => chip && typeof chip.prefix === 'string')
+            .map((chip) => ({ ...chip }));
+    }
+
     const api = {
+        draftChips,
         enterSubmits,
         isSendableComposerMessage,
         isImmediateControlLaneText,

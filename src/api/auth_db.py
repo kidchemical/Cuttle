@@ -1631,6 +1631,18 @@ class AuthDatabase:
         finally:
             conn.close()
 
+    def get_message_by_id(self, message_id: int) -> Optional[Dict[str, Any]]:
+        """Fetch one chat message row by id (ownership checks stay call-side)."""
+        conn = self._get_connection()
+        try:
+            row = conn.execute(
+                "SELECT * FROM chat_messages WHERE id = ?",
+                (int(message_id),),
+            ).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
     def update_message_content(
         self,
         message_id: int,

@@ -143,8 +143,15 @@
                             Array.prototype.forEach.call(inner, maybeDisposeRemoved);
                         });
                     });
+                    const affectsCards = records.some(rec =>
+                        (rec.target.closest && rec.target.closest('.cuttle-action-form'))
+                        || [...(rec.addedNodes || []), ...(rec.removedNodes || [])].some(node =>
+                            node.nodeType === 1 && ((node.matches && node.matches('.cuttle-action-form'))
+                                || (node.querySelector && node.querySelector('.cuttle-action-form')))));
+                    if (affectsCards) { try { host.syncHistoryAwaiting(); } catch (_) {} }
                 });
-                obs.observe(chatRoot, { childList: true, subtree: true });
+                obs.observe(chatRoot, { childList: true, subtree: true, attributes: true,
+                    attributeFilter: ['data-locked', 'disabled', 'data-restart-pending-sync', 'class'] });
                 return obs;
             } catch (_) { return null; }
         }
@@ -1056,6 +1063,18 @@
             } catch (_) {}
             return currentCtx().sessionId || null;
         }
+        function awaitingInputSessionIds() {
+            const ids = new Set();
+            chatRoot.querySelectorAll('.cuttle-action-form').forEach(card => {
+                if (card.getAttribute('data-locked') === '1'
+                    || card.classList.contains('is-pending')
+                    || card.getAttribute('data-restart-pending-sync') === '1') return;
+                if (!card.querySelector('[data-action-form-submit]:not(:disabled), [data-action-form-option]:not(:disabled)')) return;
+                const sid = formAwaitingSessionIdFromCard(card);
+                if (sid) ids.add(sid);
+            });
+            return [...ids];
+        }
         function runningWatchJobIds() {
             const ids = [];
             chatRoot.querySelectorAll('.cuttle-action-form').forEach((card) => {
@@ -1599,6 +1618,7 @@
             handleExternalRestart: applyLinkedFlaskRestartEvent,
             runningWatchJobIds,
             awaitingSessionId: formAwaitingSessionIdFromCard,
+            awaitingInputSessionIds,
             disposeCard,
             destroy,
         };

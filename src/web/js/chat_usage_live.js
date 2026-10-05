@@ -85,6 +85,44 @@
         return data.error || ((data.notice ? data.notice + ' ' : '') + 'Live · refreshes every minute while visible'
             + (data.updated_at ? ' · updated ' + new Date(data.updated_at * 1000).toLocaleTimeString() : ''));
     }
+    // Space/pane activation callbacks (one per started frame). The shell
+    // wakes these when a hidden tab becomes visible again, because nothing
+    // inside the frame reliably fires on that transition.
+    const wakeScanners = new Set();
+    function wake() {
+        wakeScanners.forEach(fn => { try { fn(); } catch (_) { /* keep others */ } });
+    }
+    // One write-back per stored message per changed snapshot. Keyed by
+    // message (not DOM node) so history repaints never cause repeat writes.
+    const persistedSnapshots = new Map(), deadSnapshots = new Set();
+    async function persistSnapshot(host, key, targets, data) {
+        if (!data || typeof data.updated_at !== 'number' || data.error) return;
+        const agent = String(key).split(':')[0];
+        if (!AGENTS.has(agent)) return;
+        const writes = new Map();
+        (targets || []).forEach(target => {
+            const node = target && target.node;
+            if (!node || !node.isConnected) return;
+            const bubble = node.closest ? node.closest('.message[data-message-id]') : null;
+            const messageId = bubble ? Number(bubble.dataset.messageId) : 0;
+            if (!Number.isFinite(messageId) || messageId <= 0) return;
+            const seenKey = messageId + ':' + agent;
+            if (deadSnapshots.has(seenKey) || persistedSnapshots.get(seenKey) === data.updated_at) return;
+            writes.set(seenKey, messageId);
+        });
+        if (!writes.size) return;
+        writes.forEach((messageId, seenKey) => persistedSnapshots.set(seenKey, data.updated_at));
+        await Promise.all(Array.from(writes).map(([seenKey, messageId]) =>
+            host.fetch('/api/usage-live/snapshot', {
+                method: 'POST', credentials: 'same-origin',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({message_id: messageId, agent}),
+            }).then(response => {
+                if (response.status === 404) deadSnapshots.add(seenKey);
+                else if (!response.ok) persistedSnapshots.delete(seenKey);
+            }).catch(() => { persistedSnapshots.delete(seenKey); })
+        ));
+    }
     function createBroker(host) {
         const sources = new Set(), cache = new Map(), pending = new Map(), attempted = new Map(), revisions = new Map();
         let timer = null;
@@ -108,6 +146,9 @@
                     .then(data => {
                         if ((revisions.get(key) || 0) !== revision) return;
                         cache.set(key, data); apply(data);
+                        // Write-back never blocks the paint; failures retry next minute.
+                        try { persistSnapshot(host, key, targets, data); }
+                        catch (_) { /* next refresh retries */ }
                     })
                     .catch(() => {
                         if ((revisions.get(key) || 0) === revision) targets.forEach(target => target.failed());
@@ -219,6 +260,7 @@
                     && rect.right > 0 && rect.left < root.innerWidth;
             }).map(node => ({
                 key: node.dataset.usageAgent + ':' + node.dataset.usageDays,
+                node,
                 apply(data) {
                     if (node.querySelector('[data-redeeming="true"]')) return;
                     if (!node.isConnected || applied.get(node) === JSON.stringify(data)) return;
@@ -240,7 +282,16 @@
         root.document.addEventListener('scroll', scan, true);
         root.document.addEventListener('visibilitychange', scan);
         root.addEventListener('resize', scan);
-        root.addEventListener('pagehide', () => { observer.disconnect(); broker.remove(source); });
+        const onShellWake = event => {
+            if (event && event.data && event.data.type === 'cuttle-usage-live-wake') scan();
+        };
+        root.addEventListener('message', onShellWake);
+        wakeScanners.add(scan);
+        root.addEventListener('pagehide', () => {
+            observer.disconnect(); broker.remove(source);
+            wakeScanners.delete(scan);
+            try { root.removeEventListener('message', onShellWake); } catch (_) { /* gone */ }
+        });
         root.addEventListener('pageshow', event => {
             if (event.persisted) {
                 observer.observe(root.document.body, {childList: true, subtree: true});
@@ -250,6 +301,6 @@
         broker.add(source);
         ensureCountdownTicker(host);
     }
-    root.CuttleUsageLive = {render, start, createBroker, tickCountdowns};
+    root.CuttleUsageLive = {render, start, createBroker, tickCountdowns, wake, persistSnapshot};
     if (typeof module !== 'undefined' && module.exports) module.exports = root.CuttleUsageLive;
 })(globalThis);

@@ -141,6 +141,7 @@ docs/media/promo/
 # Marketing scratch (launch copy, storyboards; not product docs)
 docs/marketing/
 
+
 # Opt-in third-party harness (clone locally; not redistributed)
 /vendor/claw-code/
 

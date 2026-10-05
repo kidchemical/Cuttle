@@ -252,6 +252,7 @@ function refreshTypingIndicatorHeaderBadges() {{}}
 const document = {{ getElementById: () => null }};
 {chip_preds}
 {has_active}
+function restoreComposerDraftControls() {{}}
 {sticky_helpers}
 
 const messages = [

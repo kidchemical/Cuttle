@@ -152,7 +152,40 @@
         return raw.trim();
     }
 
+    // Only explicit picks belong to a draft. Restored picks stay dirty until
+    // the real session accepts them, so async defaults cannot replace them.
+    const DRAFT_PIN_AGENTS = ['muse', 'hermes', 'opencode', 'codex', 'claude'];
+    function draftOverrides(supplement) {
+        const S = supplement || {};
+        const pins = {};
+        DRAFT_PIN_AGENTS.forEach((agent) => {
+            const entry = {};
+            ['Model', 'Effort'].forEach((kind) => {
+                if (S[agent + kind + 'Dirty']) {
+                    entry[kind.toLowerCase()] = String(S[agent + kind] || '');
+                }
+            });
+            if (Object.keys(entry).length) pins[agent] = entry;
+        });
+        return pins;
+    }
+
+    function draftSupplementPatch(pins) {
+        const patch = {};
+        DRAFT_PIN_AGENTS.forEach((agent) => {
+            ['Model', 'Effort'].forEach((kind) => {
+                const value = pins && pins[agent] && pins[agent][kind.toLowerCase()];
+                if (typeof value !== 'string') return;
+                patch[agent + kind] = value;
+                patch[agent + kind + 'Dirty'] = true;
+            });
+        });
+        return patch;
+    }
+
     const api = {
+        draftOverrides,
+        draftSupplementPatch,
         sessionPin,
         starredAgentModel,
         starredAgentEffort,

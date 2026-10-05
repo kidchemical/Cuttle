@@ -832,10 +832,21 @@
     }
 
     // Unsent composer text survives hard-refresh / Electron restart (per chat id).
+    // The shell supplies space/pane identity; standalone chat keeps the legacy
+    // `new` draft key. Capture once, never consult the active space on unload.
+    const newComposerDraftId = (() => {
+        try {
+            const scope = window.frameElement?.dataset.cuttleDraftScope;
+            if (scope) return 'new:' + scope;
+        } catch (_) {}
+        return 'new';
+    })();
+    const newComposerPrefsId = 'draft:' + newComposerDraftId;
     const COMPOSER_DRAFT_MAX = 50000;
-    let _composerDraftTimer = null;
+    let composerDraftControlsReady = false;
     function _draftKey(sid) {
-        return `cuttle.composerDraft.${sid != null && sid !== '' ? sid : 'new'}`;
+        const key = sid != null && sid !== '' && sid !== 'new' ? sid : newComposerDraftId;
+        return `cuttle.composerDraft.${key}`;
     }
     function _activeComposerTextarea() {
         const welcome = document.getElementById('welcomeScreen');
@@ -847,8 +858,37 @@
         const el = _activeComposerTextarea();
         return el ? String(el.value || '') : '';
     }
-    function saveComposerDraft(sid) {
+    function saveComposerDraftControls(sid, composerKey) {
+        if (!composerDraftControlsReady) return;
+        const el = _activeComposerTextarea();
+        const key = composerKey || (el && el.id === 'welcomeChatInput' ? 'welcome' : 'chat');
+        updateSessionPrefs(sid === 'new' ? newComposerPrefsId : sid, {
+            composerDraft: {
+                chips: CuttleChatComposer.draftChips(slashCtx[key].chips),
+                pins: CuttleChatAgentModel.draftOverrides(slashPaletteSupplement),
+            },
+        });
+    }
+
+    function restoreComposerDraftControls(sid) {
+        const prefs = getSessionPrefs(sid === 'new' ? newComposerPrefsId : sid);
+        const draft = prefs && prefs.composerDraft;
+        if (!draft) return;
+        const chips = CuttleChatComposer.draftChips(draft.chips);
+        Object.assign(slashPaletteSupplement, CuttleChatAgentModel.draftSupplementPatch(draft.pins));
+        const cursorModel = chips.find((c) => c.category === 'cursor-model');
+        if (cursorModel) {
+            slashPaletteSupplement.preferredModel = cursorModel.modelId
+                || cursorModel.prefix.replace(/^\/model\s+/i, '').trim();
+            beginSupplementFetch('cursorModelsGen');
+        }
+        slashCtx.welcome.chips = chips.slice();
+        slashCtx.chat.chips = chips.slice();
+    }
+
+    function saveComposerDraft(sid, composerKey) {
         const keySid = sid != null && sid !== '' ? sid : (currentSessionId || 'new');
+        saveComposerDraftControls(keySid, composerKey);
         try {
             const text = _readComposerDraftText();
             if (!text.trim()) {
@@ -861,22 +901,32 @@
             localStorage.setItem(_draftKey(keySid), clipped);
         } catch (_) {}
     }
-    function scheduleSaveComposerDraft() {
-        if (_composerDraftTimer) clearTimeout(_composerDraftTimer);
-        _composerDraftTimer = setTimeout(() => {
-            _composerDraftTimer = null;
-            saveComposerDraft(currentSessionId || 'new');
-        }, 200);
-    }
     function clearComposerDraft(sid) {
         const keySid = sid != null && sid !== '' ? sid : (currentSessionId || 'new');
         try { localStorage.removeItem(_draftKey(keySid)); } catch (_) {}
+        updateSessionPrefs(keySid === 'new' ? newComposerPrefsId : keySid, { composerDraft: null });
     }
     function restoreComposerDraft(sid, opts = {}) {
         const force = !!(opts && opts.force);
         const keySid = sid != null && sid !== '' ? sid : (currentSessionId || 'new');
+        restoreComposerDraftControls(keySid);
+        composerDraftControlsReady = true;
+        renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
+        renderSlashChips('chat', document.getElementById('chatInput'));
         let text = '';
-        try { text = localStorage.getItem(_draftKey(keySid)) || ''; } catch (_) { text = ''; }
+        try {
+            const key = _draftKey(keySid);
+            let stored = localStorage.getItem(key);
+            // Claim the legacy shared welcome draft once on its first restore.
+            if (stored == null && keySid === 'new' && newComposerDraftId !== 'new') {
+                stored = localStorage.getItem('cuttle.composerDraft.new');
+                if (stored != null) {
+                    localStorage.setItem(key, stored);
+                    localStorage.removeItem('cuttle.composerDraft.new');
+                }
+            }
+            text = stored || '';
+        } catch (_) { text = ''; }
         const welcome = document.getElementById('welcomeScreen');
         const welcomeOn = welcome && welcome.style.display !== 'none';
         const welcomeEl = document.getElementById('welcomeChatInput');
@@ -1886,18 +1936,23 @@
         const wrap = document.getElementById('chatSessionTitle');
         if (!unreadIcon && !queuedIcon && !pausedIcon) return;
         const titleVisible = !!(wrap && !wrap.hidden);
-        const showUnread = !!(titleVisible && chatAttentionActive());
+        const showInput = !!(titleVisible && currentSessionId != null && (getSessionPrefs(currentSessionId) || {}).awaitingInput);
+        const inputIcon = document.getElementById('chatSessionInputIcon');
+        if (inputIcon) inputIcon.hidden = !showInput;
+        const showUnread = !!(titleVisible && !showInput && chatAttentionActive());
         const showUnreadError = !!(showUnread && chatAttentionIsError);
         // Queue dots only when unread is not already showing (green/red wins).
         // Amber = active (unpaused) queue; yellow = paused (see CH-000439-14 legend).
         const showQueued = !!(
             titleVisible
+            && !showInput
             && !showUnread
             && currentSessionId != null
             && sessionHasActiveFollowup(currentSessionId, null)
         );
         const showPaused = !!(
             titleVisible
+            && !showInput
             && !showUnread
             && !showQueued
             && currentSessionId != null
@@ -2441,12 +2496,14 @@
     function syncHistorySubagentAttention() {
         document.querySelectorAll('.history-subagent-group').forEach((group) => {
             const items = group.querySelectorAll('.history-subagent-children .chat-history-item');
+            let input = false;
             let error = false;
             let unread = false;
             let queued = false;
             let paused = false;
             let running = false;
             items.forEach((item) => {
+                if (item.classList.contains('has-input')) input = true;
                 if (item.classList.contains('has-unread-error')) error = true;
                 if (item.classList.contains('has-unread')) unread = true;
                 if (item.classList.contains('has-queued')) queued = true;
@@ -2455,6 +2512,7 @@
             });
             const badge = group.querySelector(':scope > .chat-history-item .history-subagent-count-badge');
             if (!badge) return;
+            badge.classList.toggle('has-input', input);
             badge.classList.toggle('has-unread-error', error);
             badge.classList.toggle('has-unread', !error && unread);
             badge.classList.toggle('has-queued', !error && !unread && queued);
@@ -2830,6 +2888,7 @@
     }
 
     function historyAttentionIconHTML(kind) {
+        if (kind === 'input') return '<span class="history-input-icon" title="Awaiting your input" aria-label="Awaiting your input"></span>';
         if (kind === 'error') return historyUnreadIconHTML(true);
         if (kind === 'unread') return historyUnreadIconHTML(false);
         if (kind === 'queued') return historyQueuedIconHTML();
@@ -2941,6 +3000,9 @@
             item.classList.toggle('has-unread-error', kind === 'error');
             item.classList.toggle('has-queued', kind === 'queued');
             item.classList.toggle('has-paused-queue', kind === 'paused');
+            let inputIcon = item.querySelector('.history-input-icon');
+            if (kind !== 'input' && inputIcon) { inputIcon.remove(); inputIcon = null; }
+            item.classList.toggle('has-input', kind === 'input');
             let unreadIcon = item.querySelector('.history-unread-icon');
             let queuedIcon = item.querySelector('.history-queued-icon');
             let pausedIcon = item.querySelector('.history-paused-icon');
@@ -2949,7 +3011,10 @@
                 if (queuedIcon) { queuedIcon.remove(); queuedIcon = null; }
                 if (pausedIcon) { pausedIcon.remove(); pausedIcon = null; }
             };
-            if (kind === 'error' || kind === 'unread') {
+            if (kind === 'input') {
+                clearAll();
+                if (!inputIcon) item.insertAdjacentHTML('afterbegin', historyAttentionIconHTML('input'));
+            } else if (kind === 'error' || kind === 'unread') {
                 if (queuedIcon) queuedIcon.remove();
                 if (pausedIcon) pausedIcon.remove();
                 if (!unreadIcon) {
@@ -2993,11 +3058,13 @@
     function syncHistoryProjectAttentionIndicators() {
         document.querySelectorAll('.history-section[data-project-key]').forEach((section) => {
             const items = section.querySelectorAll('.chat-history-item');
+            let hasInput = false;
             let hasError = false;
             let hasUnread = false;
             let hasQueued = false;
             let hasPaused = false;
             items.forEach((item) => {
+                if (item.classList.contains('has-input')) hasInput = true;
                 if (item.classList.contains('has-unread-error')) hasError = true;
                 if (item.classList.contains('has-unread')) hasUnread = true;
                 if (item.classList.contains('has-queued')) hasQueued = true;
@@ -3009,16 +3076,19 @@
                 hasQueued = section.getAttribute('data-has-queued') === '1';
                 hasPaused = section.getAttribute('data-has-paused') === '1';
             }
-            const showError = hasError;
-            const showUnread = !showError && hasUnread;
-            const showQueued = !showError && !showUnread && hasQueued;
-            const showPaused = !showError && !showUnread && !showQueued && hasPaused;
+            const showInput = hasInput;
+            const showError = !showInput && hasError;
+            const showUnread = !showInput && !showError && hasUnread;
+            const showQueued = !showInput && !showError && !showUnread && hasQueued;
+            const showPaused = !showInput && !showError && !showUnread && !showQueued && hasPaused;
+            section.classList.toggle('has-input', showInput);
             section.classList.toggle('has-unread-error', showError);
             section.classList.toggle('has-unread', showError || showUnread);
             section.classList.toggle('has-queued', showQueued);
             section.classList.toggle('has-paused-queue', showPaused);
             const count = section.querySelector('.history-section-count');
             if (count) {
+                count.classList.toggle('has-input', showInput);
                 count.classList.toggle('has-unread-error', showError);
                 count.classList.toggle('has-unread', showError || showUnread);
                 count.classList.toggle('has-queued', showQueued);
@@ -3033,7 +3103,7 @@
                 if (queuedDot) { queuedDot.remove(); queuedDot = null; }
                 if (pausedDot) { pausedDot.remove(); pausedDot = null; }
             };
-            if (showError || showUnread) {
+            if (showInput || showError || showUnread) {
                 if (queuedDot) queuedDot.remove();
                 if (pausedDot) pausedDot.remove();
                 if (!unreadDot && titleEl) {
@@ -3042,9 +3112,10 @@
                     titleEl.insertBefore(unreadDot, titleEl.firstChild);
                 }
                 if (unreadDot) {
+                    unreadDot.classList.toggle('is-input', showInput);
                     unreadDot.classList.toggle('is-error', showError);
-                    unreadDot.title = showError ? 'Unread error' : 'Unread';
-                    unreadDot.setAttribute('aria-label', showError ? 'Unread error' : 'Unread');
+                    unreadDot.title = showInput ? 'Awaiting your input' : showError ? 'Unread error' : 'Unread';
+                    unreadDot.setAttribute('aria-label', showInput ? 'Awaiting your input' : showError ? 'Unread error' : 'Unread');
                 }
             } else if (showQueued) {
                 if (unreadDot) unreadDot.remove();
@@ -5297,7 +5368,7 @@
                 const local = readStarredSlashPrefixes();
                 if (server.length) {
                     writeStarredSlashPrefixes(server, { localOnly: true });
-                    if (!currentSessionId) applyStarredSlashChips();
+                    if (!currentSessionId && !getSessionPrefs(newComposerPrefsId)) applyStarredSlashChips();
                     else {
                         renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
                         renderSlashChips('chat', document.getElementById('chatInput'));
@@ -5840,7 +5911,7 @@
                 slashPaletteSupplement.cursorModels =
                     j && j.success && Array.isArray(j.models) ? j.models : [];
                 slashPaletteSupplement.preferredModel =
-                    (isCurrentSupplementFetch('cursorModelsGen', _cursorModelsGen) && j && j.success ? j.preferredModel : null) || slashPaletteSupplement.preferredModel || 'auto';
+                    (!slashCtx.chat.chips.concat(slashCtx.welcome.chips).some((c) => c.category === 'cursor-model') && isCurrentSupplementFetch('cursorModelsGen', _cursorModelsGen) && j && j.success ? j.preferredModel : null) || slashPaletteSupplement.preferredModel || 'auto';
                 slashPaletteSupplement.lastReportedModel =
                     (j && j.lastReportedModel) || null;
                 slashPaletteSupplement.cursorModelsKey = key;
@@ -5888,7 +5959,6 @@
             !forceRefresh
             && (
                 slashPaletteSupplement.museModelsLoading
-                || slashPaletteSupplement.museModelDirty
                 || (slashPaletteSupplement.museModels.length
                     && slashPaletteSupplement.museModelsKey === key)
             )
@@ -5908,7 +5978,7 @@
                 slashPaletteSupplement.museModels =
                     j && j.success && Array.isArray(j.models) ? j.models : [];
                 slashPaletteSupplement.museModel =
-                    (isCurrentSupplementFetch('museModelsGen', _museModelsGen) && j && j.success ? (j.preferredModel || j.defaultModel) : null) || slashPaletteSupplement.museModel || '';
+                    (!slashPaletteSupplement.museModelDirty && isCurrentSupplementFetch('museModelsGen', _museModelsGen) && j && j.success ? (j.preferredModel || j.defaultModel) : null) || slashPaletteSupplement.museModel || '';
                 slashPaletteSupplement.museModelsKey = key;
                 slashPaletteSupplement.museModelsCount =
                     (j && (j.count != null ? j.count : slashPaletteSupplement.museModels.length)) || 0;
@@ -6003,7 +6073,6 @@
         const key = currentSessionId != null ? String(currentSessionId) : '';
         if (
             slashPaletteSupplement.hermesModelsLoading
-            || slashPaletteSupplement.hermesModelDirty
             || (slashPaletteSupplement.hermesModels.length
                 && slashPaletteSupplement.hermesModelsKey === key)
         ) {
@@ -6018,8 +6087,9 @@
             .then((j) => {
                 slashPaletteSupplement.hermesModels =
                     j && j.success && Array.isArray(j.models) ? j.models : [];
-                slashPaletteSupplement.hermesModel =
-                    (j && j.preferredModel) || '';
+                if (!slashPaletteSupplement.hermesModelDirty) {
+                    slashPaletteSupplement.hermesModel = (j && j.preferredModel) || '';
+                }
                 slashPaletteSupplement.hermesModelsKey = key;
                 renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
                 renderSlashChips('chat', document.getElementById('chatInput'));
@@ -6743,7 +6813,6 @@
             !forceRefresh
             && (
                 slashPaletteSupplement.opencodeModelsLoading
-                || slashPaletteSupplement.opencodeModelDirty
                 || (slashPaletteSupplement.opencodeModels.length
                     && slashPaletteSupplement.opencodeModelsKey === key)
             )
@@ -6761,8 +6830,9 @@
             .then((j) => {
                 slashPaletteSupplement.opencodeModels =
                     j && j.success && Array.isArray(j.models) ? j.models : [];
-                slashPaletteSupplement.opencodeModel =
-                    (j && j.preferredModel) || '';
+                if (!slashPaletteSupplement.opencodeModelDirty) {
+                    slashPaletteSupplement.opencodeModel = (j && j.preferredModel) || '';
+                }
                 slashPaletteSupplement.opencodeModelsKey = key;
                 slashPaletteSupplement.opencodeModelsSource =
                     (j && j.source) || '';
@@ -7043,7 +7113,6 @@
             !forceRefresh
             && (
                 slashPaletteSupplement.codexModelsLoading
-                || slashPaletteSupplement.codexModelDirty
                 || (slashPaletteSupplement.codexModels.length
                     && slashPaletteSupplement.codexModelsKey === key)
             )
@@ -7061,8 +7130,9 @@
             .then((j) => {
                 slashPaletteSupplement.codexModels =
                     j && j.success && Array.isArray(j.models) ? j.models : [];
-                slashPaletteSupplement.codexModel =
-                    (j && j.preferredModel) || '';
+                if (!slashPaletteSupplement.codexModelDirty) {
+                    slashPaletteSupplement.codexModel = (j && j.preferredModel) || '';
+                }
                 slashPaletteSupplement.codexModelsKey = key;
                 slashPaletteSupplement.codexModelsSource =
                     (j && j.source) || '';
@@ -7467,7 +7537,6 @@
             !forceRefresh
             && (
                 slashPaletteSupplement.claudeModelsLoading
-                || slashPaletteSupplement.claudeModelDirty
                 || (slashPaletteSupplement.claudeModels.length
                     && slashPaletteSupplement.claudeModelsKey === key)
             )
@@ -7485,8 +7554,9 @@
             .then((j) => {
                 slashPaletteSupplement.claudeModels =
                     j && j.success && Array.isArray(j.models) ? j.models : [];
-                slashPaletteSupplement.claudeModel =
-                    (j && j.preferredModel) || '';
+                if (!slashPaletteSupplement.claudeModelDirty) {
+                    slashPaletteSupplement.claudeModel = (j && j.preferredModel) || '';
+                }
                 slashPaletteSupplement.claudeModelsKey = key;
                 slashPaletteSupplement.claudeModelsSource =
                     (j && j.source) || '';
@@ -8433,6 +8503,7 @@
                 renderSlashChips(key, textarea);
                 renderSlashChips(other, document.getElementById(other === 'chat' ? 'chatInput' : 'welcomeChatInput'));
                 persistStickySlashForCurrentSession();
+                saveComposerDraftControls(currentSessionId || 'new', key);
                 if (textarea) {
                     try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
                 }
@@ -9031,7 +9102,9 @@
     // as raw slash text. Persist synchronously: a debounce would lose a fast New Chat click.
     function applySlashSelection(textarea, key, idx) {
         applySlashSelectionInner(textarea, key, idx);
-        try { saveComposerDraft(currentSessionId || 'new'); } catch (_) {}
+        try {
+            saveComposerDraft(currentSessionId || 'new', key);
+        } catch (_) {}
     }
     // Palette star actions consume the filter text that found the row (the chip
     // or default is now applied), so it must not linger as raw slash text: it
@@ -9236,7 +9309,7 @@
     }
 
     function persistStickySlashForCurrentSession() {
-        if (!currentSessionId) return;
+        const prefsId = currentSessionId || newComposerPrefsId;
         const chips = (slashCtx.chat.chips && slashCtx.chat.chips.length)
             ? slashCtx.chat.chips
             : (slashCtx.welcome.chips || []);
@@ -9245,7 +9318,7 @@
             return match && match.stickySession;
         });
         if (sticky.length) stickyAgentClearedPending = false;
-        updateSessionPrefs(currentSessionId, {
+        updateSessionPrefs(prefsId, {
             stickyChips: sticky.map((c) => {
                 const live = liveAgentBadgeLabelForChip(c);
                 const paletteCat = resolveSlashChipPaletteCategory(c);
@@ -9301,6 +9374,12 @@
         return CuttleChatSlash.stickyChipsFromAssistantSlash(sc);
     }
 
+    function restoreWelcomeStickySlash() {
+        if (getSessionPrefs(newComposerPrefsId)) {
+            restoreSessionStickySlash(newComposerPrefsId, []);
+        }
+    }
+
     function restoreSessionStickySlash(sessionId, messages) {
         const prefs = getSessionPrefs(sessionId);
         const cleared = !!(prefs && prefs.stickyCleared);
@@ -9317,6 +9396,7 @@
         }
         slashCtx.welcome.chips = sticky.slice();
         slashCtx.chat.chips = sticky.slice();
+        restoreComposerDraftControls(sessionId);
         renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
         renderSlashChips('chat', document.getElementById('chatInput'));
         // Hub (phone) may have painted the working bubble before this restore —
@@ -12101,6 +12181,7 @@
         CuttleStopState.clearWaitingSuppression(stopState);
         syncChatUrl(null);
         reportSessionToShell(null);
+        restoreWelcomeStickySlash();
         restoreComposerDraft('new', { force: true });
         if (typeof window.__cuttlePinChatLayout === 'function') window.__cuttlePinChatLayout();
         resetChatAttentionState();
@@ -12249,6 +12330,7 @@
         }
         syncChatUrl(null);
         applyStarredSlashChips();
+        restoreWelcomeStickySlash();
         restoreComposerDraft('new', { force: true });
         focusWelcomeComposer();
     }
@@ -12923,6 +13005,7 @@
         }
         syncChatUrl(sessionId);
         reportSessionToShell(sessionId);
+        if (prev == null) clearSessionPrefs(newComposerPrefsId);
         // Persist project / sticky agent chosen before the server assigned an id.
         persistProjectForCurrentSession();
         persistStickySlashForCurrentSession();
@@ -14723,6 +14806,7 @@
 
         if (!currentSessionId) {
             // Create new session (CH-XXXXXX for anonymous local chats)
+            clearSessionPrefs(newComposerPrefsId);
             currentSessionId = generateLocalChatId();
             localStorage.setItem('lastChatSessionId', currentSessionId);
             updateChatIdBadge(currentSessionId);
@@ -15849,6 +15933,14 @@
             }
         });
         next.forEach((id) => formAwaitingSessionIds.add(id));
+        if (currentSessionId != null) {
+            const awaitingInput = actionCardsController().awaitingInputSessionIds()
+                .some(sid => sessionIdsEqual(sid, currentSessionId));
+            if (!!(getSessionPrefs(currentSessionId) || {}).awaitingInput !== awaitingInput) {
+                updateSessionPrefs(currentSessionId, { awaitingInput });
+            }
+        }
+        syncHistoryUnreadIndicators();
         syncHistoryRunningIndicators();
     }
 
@@ -15943,7 +16035,12 @@
                     activity = kind;
                 }
             } catch (_) {}
-            if (running || activity) sessions.push({ id: key, activity, running });
+            const visibleAttention = !!(sessionIdsEqual(sid, currentSessionId) && chatAttentionActive());
+            if (visibleAttention) activity = chatAttentionIsError ? 'error' : 'unread';
+            if ((getSessionPrefs(sid) || {}).awaitingInput) activity = 'input';
+            const localRunning = !!((generation.loading && sessionIdsEqual(generation.localSessionId, sid))
+                || [...formAwaitingSessionIds].some(id => sessionIdsEqual(id, sid)));
+            if (running || activity) sessions.push({ id: key, activity, running, localRunning, visibleAttention });
         });
         return { sessions, owned: [...owned.keys()] };
     }
@@ -16238,7 +16335,7 @@
         const running = sessionShowsHistorySpinner(sid);
         const runningClass = running ? ' is-running' : '';
         const attention = sessionHistoryAttentionKind(sid, s);
-        const unreadClass = (attention === 'unread' || attention === 'error') ? ' has-unread' : '';
+        const unreadClass = attention === 'input' ? ' has-input' : (attention === 'unread' || attention === 'error') ? ' has-unread' : '';
         const errorClass = attention === 'error' ? ' has-unread-error' : '';
         const queuedClass = attention === 'queued' ? ' has-queued' : '';
         const pausedClass = attention === 'paused' ? ' has-paused-queue' : '';
@@ -16338,7 +16435,7 @@
             starred ? historyStarredIconHTML() : '',
             running ? historyRunningIconHTML() : '',
         ]);
-        const unreadClass = (attention === 'unread' || attention === 'error') ? ' has-unread' : '';
+        const unreadClass = attention === 'input' ? ' has-input' : (attention === 'unread' || attention === 'error') ? ' has-unread' : '';
         const errorClass = attention === 'error' ? ' has-unread-error' : '';
         const queuedClass = attention === 'queued' ? ' has-queued' : '';
         const pausedClass = attention === 'paused' ? ' has-paused-queue' : '';
@@ -22449,7 +22546,8 @@
                 applyComposerEmoticons(welcomeInput, e);
                 CuttlePromptHistory.resetBrowse(promptHistoryState);
                 syncSlashMenuFromInput(welcomeInput);
-                scheduleSaveComposerDraft();
+                // Frame removal need not fire unload; save before a fast space switch.
+                saveComposerDraft(currentSessionId || 'new');
             });
             wireComposerEmoticons(welcomeInput);
             LOG('DOMContentLoaded: welcome input keydown listener attached');
@@ -22462,7 +22560,8 @@
                 applyComposerEmoticons(chatInput, e);
                 CuttlePromptHistory.resetBrowse(promptHistoryState);
                 syncSlashMenuFromInput(chatInput);
-                scheduleSaveComposerDraft();
+                // Frame removal need not fire unload; save before a fast space switch.
+                saveComposerDraft(currentSessionId || 'new');
             });
             wireComposerEmoticons(chatInput);
             chatInput.style.height = 'auto';
@@ -22616,6 +22715,13 @@
                     if (messageSyncTimer) scheduleNextMessageSync();
                     if (changed && shellPaneFocused && currentSessionId != null) {
                         syncSessionMessagesFromServer();
+                    }
+                    // Hidden panes stop usage-live polling while away; rescan
+                    // on focus so budgets refresh without an app reload.
+                    if (shellPaneFocused) {
+                        try {
+                            if (window.CuttleUsageLive) window.CuttleUsageLive.wake();
+                        } catch (_) {}
                     }
                     return;
                 }

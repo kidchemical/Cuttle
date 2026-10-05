@@ -517,7 +517,12 @@ let cuttleTitlebarCancelHide = null;
     // Fullscreen: titlebar overlays and auto-hides; a top-edge hotzone reveals it.
     // Iframes swallow mousemove, so a dedicated strip is required.
     let hideTimer = null;
+    let revealTimer = null;
     const HOTZONE_PX = 10;
+    // Hover intent: a cursor skimming the top edge (e.g. reaching for the
+    // blade toolbar) should not pop the bar over it.
+    const REVEAL_DELAY_MS = 180;
+    const HIDE_DELAY_MS = 150;
     let hotzone = document.getElementById('shellTitlebarHotzone');
     if (!hotzone) {
         hotzone = document.createElement('div');
@@ -527,7 +532,14 @@ let cuttleTitlebarCancelHide = null;
         titlebar.insertAdjacentElement('afterend', hotzone);
     }
 
+    const cancelPendingReveal = () => {
+        if (revealTimer) {
+            clearTimeout(revealTimer);
+            revealTimer = null;
+        }
+    };
     const revealTitlebar = () => {
+        cancelPendingReveal();
         if (hideTimer) {
             clearTimeout(hideTimer);
             hideTimer = null;
@@ -541,7 +553,7 @@ let cuttleTitlebarCancelHide = null;
         hideTimer = setTimeout(() => {
             hideTimer = null;
             titlebar.classList.remove('is-revealed');
-        }, 420);
+        }, HIDE_DELAY_MS);
     };
     cuttleTitlebarRescheduleHide = () => {
         if (!document.body.classList.contains('fullscreen')) return;
@@ -558,6 +570,7 @@ let cuttleTitlebarCancelHide = null;
     const onFullscreenChange = (fullscreen) => {
         setFullscreenUi(fullscreen);
         if (!fullscreen) {
+            cancelPendingReveal();
             if (hideTimer) {
                 clearTimeout(hideTimer);
                 hideTimer = null;
@@ -569,7 +582,15 @@ let cuttleTitlebarCancelHide = null;
     api.windowControls.onFullscreenChange?.(onFullscreenChange);
     if (typeof wireElectronChatFind === 'function') wireElectronChatFind(api);
 
-    hotzone.addEventListener('pointerenter', revealTitlebar);
+    hotzone.addEventListener('pointerenter', () => {
+        if (titlebar.classList.contains('is-revealed')) {
+            revealTitlebar();
+            return;
+        }
+        cancelPendingReveal();
+        revealTimer = setTimeout(revealTitlebar, REVEAL_DELAY_MS);
+    });
+    hotzone.addEventListener('pointerleave', cancelPendingReveal);
     titlebar.addEventListener('pointerenter', revealTitlebar);
     titlebar.addEventListener('pointerleave', (e) => {
         if (!document.body.classList.contains('fullscreen')) return;
@@ -590,6 +611,7 @@ const CANONICAL_RAIL_ITEM_ORDER = [
     'nav-dashboards',
     'nav-automation',
     'nav-achievements',
+    'nav-projects',
     'nav-apps',
 ];
 // 'nav-tools' and its static reference page are retired. Saved layouts
@@ -611,7 +633,6 @@ const DEFAULT_LAYOUT = {
 };
 
 /** Shared rail layout for every blade (not per-bar). */
-    'nav-projects',
 let lastUILayout = {
     rail_items: DEFAULT_LAYOUT.rail_items.slice(),
     rail_footer: CANONICAL_RAIL_FOOTER_ORDER.slice(),
@@ -1093,6 +1114,25 @@ function setFocusedColumn(idx) {
     if (focusedColumnIdx === idx) return;
     focusedColumnIdx = idx;
     broadcastPaneFocus();
+}
+
+/** Nudge visible usage-live reports to rescan after a tab/space change.
+ * Hidden frames stopped polling while away and nothing inside them fires
+ * on the return transition; the chat frame's own rescan is idempotent. */
+function broadcastUsageLiveWake() {
+    document.querySelectorAll('.split-column .shell-main iframe').forEach((frame) => {
+        if (!isChatPageFrame(frame) || !frame.contentWindow) return;
+        try {
+            const live = frame.contentWindow.CuttleUsageLive;
+            if (live && typeof live.wake === 'function') {
+                live.wake();
+                return;
+            }
+        } catch (_) {}
+        try {
+            frame.contentWindow.postMessage({ type: 'cuttle-usage-live-wake' }, '*');
+        } catch (_) {}
+    });
 }
 
 function broadcastPaneFocus() {
@@ -1755,6 +1795,7 @@ const PAGE_TITLES = {
     '/dashboards_page.html': 'Dashboards',
     '/apps_page.html': 'Apps',
     '/achievements_page.html': 'Achievements',
+    '/projects_page.html': 'Projects',
     '/settings_page.html': 'Settings',
     '/home_automation.html': 'Home Automation',
     '/media_player.html': 'Media',
@@ -1795,7 +1836,6 @@ function getState(colIdx) {
 
 function setState(colIdx, page) {
     const s = getState(colIdx);
-    '/projects_page.html': 'Projects',
     if (page !== undefined) s.page = page;
 }
 
@@ -2361,6 +2401,17 @@ function isCuttleMobileShell() {
     return /\bCuttleMobile\//.test(navigator.userAgent || '');
 }
 
+// Establish the space identity before mounting the first chat frame.
+const spacesState = readSpacesState();
+persistSpacesState();
+
+function stampComposerDraftScope(frame, colIdx) {
+    if (!frame) return;
+    const col = getColumnEl(colIdx);
+    ensureLeafId(col);
+    frame.dataset.cuttleDraftScope = spacesState.active + ':' + (col?.dataset.leafId || 'main');
+}
+
 /** Append `_cb=` so Chromium cannot reuse a stale HTML document for the iframe. */
 function withCacheBust(page) {
     if (!page || String(page).startsWith('data:')) return page;
@@ -2459,6 +2510,7 @@ function replaceFrameInPlace(colIdx, page) {
     });
 
     armFrameReveal(colIdx, frame, mainEl, []);
+    stampComposerDraftScope(frame, colIdx);
     const target = withCacheBust(page);
     // Let pause-streams close EventSources before the navigation request.
     setTimeout(() => {
@@ -2499,6 +2551,7 @@ function replaceFrame(colIdx, page) {
 
     armFrameReveal(colIdx, newFrame, mainEl, oldFrames);
     mainEl.appendChild(newFrame);
+    stampComposerDraftScope(newFrame, colIdx);
     newFrame.src = withCacheBust(page);
     return newFrame;
 }
@@ -2525,6 +2578,7 @@ if (col0) {
         console.log('[App Shell] Initial iframe loading:', currentPage);
         const mainEl = col0.querySelector('.shell-main');
         if (mainEl) armFrameReveal(0, initFrame, mainEl, []);
+        stampComposerDraftScope(initFrame, 0);
         initFrame.src = withCacheBust(currentPage);
         attachFrameLoadListener(0, initFrame);
     }
@@ -2936,6 +2990,7 @@ function mountNewLeafFrame(newIdx, frame, mainEl, page) {
     updateColumnUI(newIdx, safePage);
     frame.classList.remove('shell-frame-pending', 'frame-entering');
     armFrameReveal(newIdx, frame, mainEl, []);
+    stampComposerDraftScope(frame, newIdx);
     frame.src = withCacheBust(safePage);
     attachFrameLoadListener(newIdx, frame);
 }
@@ -3471,7 +3526,8 @@ function mountLayoutTree(node, parentEl, opts) {
             remumberSplitColumns();
             const idx = parseInt(col.dataset.column, 10);
             rememberHandlesFromWorkspaceEntry(idx, node);
-            navigate(idx, pageFromLayoutLeaf(node));
+            stampComposerDraftScope(getLiveFrame(idx), idx);
+            navigate(idx, pageFromLayoutLeaf(node), { force: !!options.forceNavigate });
         } else {
             const built = createSplitLeafColumn(pageFromLayoutLeaf(node), node.id);
             if (!built) return;
@@ -3522,6 +3578,7 @@ function mountLayoutTree(node, parentEl, opts) {
         const childOpts = {
             allowReuseColumn0: options.allowReuseColumn0,
             absorbIntoRoot: false,
+            forceNavigate: options.forceNavigate,
         };
         node.children.forEach((ch) => {
             mountLayoutTree(ch, groupEl, childOpts);
@@ -3673,7 +3730,7 @@ function removeExtraSplitColumnsNow() {
     }
 }
 
-function applyWorkspaceColumns(columns, orientation, root) {
+function applyWorkspaceColumns(columns, orientation, root, opts = {}) {
     const tree = root && typeof root === 'object'
         ? root
         : flatLayoutToTree(columns, orientation);
@@ -3693,6 +3750,7 @@ function applyWorkspaceColumns(columns, orientation, root) {
         mountLayoutTree(tree, splitContainer, {
             allowReuseColumn0: true,
             absorbIntoRoot: true,
+            forceNavigate: !!opts.forceNavigate,
         });
         getSplitColumns().forEach((c) => { delete c.dataset.layoutMounted; });
         remumberSplitColumns();
@@ -4381,7 +4439,7 @@ function navigate(colIdx, page, opts) {
     } catch (_) {}
     rememberChatHandleFromPage(colIdx, page);
     const state = getState(colIdx);
-    if (state.page === page) return;
+    if (state.page === page && !(opts && opts.force)) return;
     if (colIdx === 0 && shellMediaModeActive && !String(page).startsWith('/media_player.html')) {
         shellMediaModeActive = false;
         if (window.CuttleVideoBackground && window.CuttleVideoBackground.exitMediaMode) {
@@ -4414,7 +4472,9 @@ function navigate(colIdx, page, opts) {
     updateColumnUI(colIdx, page);
     persistSplitLayout();
 
-    const newFrame = replaceFrame(colIdx, page);
+    const newFrame = opts && opts.force
+        ? replaceFrameInPlace(colIdx, page)
+        : replaceFrame(colIdx, page);
     if (newFrame) {
         attachFrameLoadListener(colIdx, newFrame);
     }
@@ -5227,8 +5287,6 @@ function readSpacesState() {
     }
 }
 
-const spacesState = readSpacesState();
-
 function persistSpacesState() {
     CuttleSpaces.saveSpacesState(
         typeof localStorage !== 'undefined' ? localStorage : null,
@@ -5254,8 +5312,13 @@ function switchSpace(id) {
     // pane in the target space would reopen the previous space's chat.
     lastChatByColumn.delete(0);
     persistLastChatHandles();
-    applyWorkspaceColumns(null, null, target.root || getBuiltinDefaultWorkspace().root);
+    // Even identical URLs belong to different spaces and must restore that
+    // space's composer. Reuse the frame element through the navigation path.
+    applyWorkspaceColumns(null, null, target.root || getBuiltinDefaultWorkspace().root, { forceNavigate: true });
     hideOutgoingSpaceFrames();
+    // Already-loaded frames that just became visible need a rescan now;
+    // navigating frames get theirs on cuttle-page-ready.
+    broadcastUsageLiveWake();
     syncActiveSpaceTab();
     syncSpaceActivityTabs();
     scheduleSpaceActivityPoll(true);
@@ -5394,10 +5457,10 @@ function syncActiveSpaceTab() {
 }
 
 // ── Spaces activity (one indicator per tab) ─────────────────────
-// Same five states as chat history/title dots: running (spinner),
+// Same states as chat history/title dots: input (blue), running (spinner),
 // error (red), unread (green), queued/active (orange), paused (yellow).
 // A space shows the highest-priority state across its chats:
-// running > error > unread > queued > paused > none.
+// input > running > error > unread > queued > paused > none.
 // Aggregation + snapshot map live in spaces_activity.js; the poll transport
 // and DOM patching below stay in the shell.
 let spaceActivityPollInFlight = false;
@@ -5487,7 +5550,7 @@ function syncSpaceActivityTabs() {
             tab.insertBefore(dot, tab.firstChild);
         }
         const prev = dot.dataset.kind || '';
-        if (prev !== kind) {
+        if (prev !== kind || dot.hidden === !!kind) {
             dot.dataset.kind = kind;
             dot.className = 'shell-space-activity' + (kind ? ' is-' + kind : '');
             if (kind) {
@@ -7160,6 +7223,9 @@ initializeShellTheme();
 window.addEventListener('message', (e) => {
     if (e.data?.type === 'cuttle-page-ready') {
         finishFrameTransitionFor(e.source);
+        // Freshly revealed frames (space switches included) rescan live
+        // usage immediately instead of waiting out a dead refresh timer.
+        broadcastUsageLiveWake();
         return;
     }
     if (e.data?.type === 'cuttle-navigate' && e.data?.page) {

@@ -12,7 +12,7 @@ CHAT_JS = Path(__file__).resolve().parents[2] / "src" / "web" / "js" / "chat_pag
 def test_space_activity_priority_order():
     # Aggregation owner is spaces_activity.js (Phase 1); the shell delegates.
     mod = (Path(__file__).resolve().parents[2] / "src" / "web" / "js" / "spaces" / "spaces_activity.js").read_text(encoding="utf-8")
-    assert "const RANK = { running: 5, error: 4, unread: 3, queued: 2, paused: 1 }" in mod
+    assert "const RANK = { input: 6, running: 5, error: 4, unread: 3, queued: 2, paused: 1 }" in mod
     # Running is evaluated before (and outranks) every dot state.
     agg = mod.split("function selectSpaceActivity(", 1)[1].split(
         "const api = {", 1
@@ -64,6 +64,7 @@ def test_background_finish_marks_unread_and_queue_strings_parse():
 
 def test_space_activity_css_matches_chat_palette():
     css = SHELL_CSS.read_text(encoding="utf-8")
+    assert ".shell-space-activity.is-input" in css
     assert ".shell-space-activity.is-unread" in css
     assert ".shell-space-activity.is-error" in css
     assert ".shell-space-activity.is-queued" in css

@@ -8247,3 +8247,16 @@ body.voice-mode .chat-chrome-menu {
 .subagent-fleet-card.is-running .subagent-launcher-orb { animation:typing-orbit-spin 1.4s linear infinite; }
 .subagent-fleet-card.is-running .subagent-fleet-outcome i::before { content:''; display:inline-block; width:8px; height:8px; border-radius:50%; border:2px solid currentColor; border-right-color:transparent; animation:typing-orbit-spin 1s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .subagent-fleet-card.is-running .subagent-launcher-orb, .subagent-fleet-card.is-running .subagent-fleet-outcome i::before { animation:none; } }
+
+/* An actionable card waits for a person; submitted watches use the spinner. */
+.history-input-icon, .chat-session-input-icon {
+    flex-shrink: 0; width: 8px; height: 8px; border-radius: 50%;
+    background: #3b82f6; box-shadow: 0 0 8px #3b82f688;
+}
+.history-input-icon { position: absolute; left: 5px; top: 50%; transform: translateY(-50%); }
+.chat-session-input-icon[hidden] { display: none !important; }
+
+.history-section-unread-dot.is-input { background: #3b82f6; box-shadow: 0 0 8px #3b82f688; }
+.history-section-count.has-input, .history-subagent-count-badge.has-input {
+    background: color-mix(in srgb, #3b82f6 28%, transparent); color: #60a5fa;
+}

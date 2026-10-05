@@ -1,5 +1,6 @@
 """Shared, demand-driven usage snapshots. No background account polling."""
 import json
+import re
 import threading
 import time
 import uuid
@@ -12,6 +13,25 @@ TTL = 60
 _cache = {}
 _locks = {}
 _guard = threading.Lock()
+
+WRAPPER_RE = re.compile(
+    r"<cuttle_usage_live>([\s\S]*?)</cuttle_usage_live>", re.IGNORECASE)
+
+
+def _wrapper_body(snapshot):
+    return json.dumps(snapshot, ensure_ascii=False).replace("<", "\\u003c")
+
+
+def replace_usage_wrapper(content, snapshot):
+    """Swap the first live-usage wrapper for a fresh snapshot.
+
+    Returns ``(new_content, replaced)``; surrounding text is untouched.
+    """
+    replacement = ("<cuttle_usage_live>" + _wrapper_body(snapshot)
+                   + "</cuttle_usage_live>")
+    new_content, count = WRAPPER_RE.subn(
+        lambda _match: replacement, content, count=1)
+    return new_content, count > 0
 
 
 def usage_snapshot(agent, days=30):
@@ -50,8 +70,7 @@ def live_usage_reply(agent, args=""):
     from api.agent_usage import _days_from_args
     snapshot = usage_snapshot(agent, _days_from_args(args))
     # JSON escapes '<' so embedded meter tags cannot terminate the live wrapper.
-    body = json.dumps(snapshot, ensure_ascii=False).replace("<", "\\u003c")
-    return "<cuttle_usage_live>" + body + "</cuttle_usage_live>"
+    return "<cuttle_usage_live>" + _wrapper_body(snapshot) + "</cuttle_usage_live>"
 
 
 usage_live_bp = Blueprint("usage_live", __name__)
@@ -65,6 +84,78 @@ def get_usage_live():
     except (ValueError, TypeError):
         return jsonify({"error": "Invalid usage agent or day range"}), 400
     response = jsonify(result)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@usage_live_bp.post("/api/usage-live/snapshot")
+def persist_usage_snapshot():
+    """Refresh the stored wrapper of one live-usage message.
+
+    The client sends only the row identity; the server recomputes the
+    snapshot itself, so callers can never rewrite arbitrary history.
+    Only the wrapper JSON is replaced — surrounding text is untouched.
+    """
+    from api.auth_db import get_auth_db
+    from api.http_authz import require_chat_session_access
+    if not request.is_json:
+        return jsonify({"error": "JSON body required"}), 415
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"error": "Invalid request"}), 400
+    try:
+        message_id = int(body.get("message_id"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Invalid message"}), 400
+    if isinstance(body.get("message_id"), bool) or message_id <= 0:
+        return jsonify({"error": "Invalid message"}), 400
+    agent = body.get("agent")
+    if agent not in AGENTS:
+        return jsonify({"error": "Invalid usage agent"}), 400
+    db = get_auth_db()
+    try:
+        row = db.get_message_by_id(message_id)
+    except (TypeError, ValueError):
+        return jsonify({"error": "Message not found"}), 404
+    if not row or row.get("role") != "assistant":
+        return jsonify({"error": "Message not found"}), 404
+    _user, _nid, err = require_chat_session_access(
+        "db_session_%s" % row.get("chat_session_id"))
+    if err:
+        return err
+    match = WRAPPER_RE.search(str(row.get("content") or ""))
+    if not match:
+        return jsonify({"error": "Message is not a live usage report"}), 422
+    try:
+        stored = json.loads(match.group(1))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Message is not a live usage report"}), 422
+    if not isinstance(stored, dict) or stored.get("agent") != agent:
+        return jsonify({"error": "Message is not a live usage report"}), 422
+    try:
+        snapshot = usage_snapshot(agent, stored.get("days", 30))
+    except (ValueError, TypeError):
+        return jsonify({"error": "Invalid usage agent or day range"}), 400
+    if snapshot.get("error"):
+        # Transient failure keeps serving the last good report; never stamp
+        # the failure note into history.
+        response = jsonify({"ok": True, "persisted": False,
+                            "message_id": int(row["id"]), "agent": agent})
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    if snapshot.get("markdown") == stored.get("markdown"):
+        # Same report text (only the fetch timestamp moved): no rewrite.
+        persisted = False
+    else:
+        new_content, _replaced = replace_usage_wrapper(
+            str(row.get("content")), snapshot)
+        persisted = new_content != str(row.get("content"))
+        if persisted:
+            db.update_message_content(int(row["id"]), new_content)
+    response = jsonify({"ok": True, "persisted": persisted,
+                        "message_id": int(row["id"]), "agent": agent,
+                        "days": snapshot.get("days"),
+                        "updated_at": snapshot.get("updated_at")})
     response.headers["Cache-Control"] = "no-store"
     return response
 

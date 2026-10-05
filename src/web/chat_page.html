@@ -15,7 +15,7 @@
     <noscript><link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet"></noscript>
     <link rel="stylesheet" href="css/shared_navigation.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/auth_modal.css?v=20260926authLogin">
-    <link rel="stylesheet" href="css/chat_page.css?v=20261004fleet">
+    <link rel="stylesheet" href="css/chat_page.css?v=20261005activity">
     <link rel="stylesheet" href="/css/query_log_inspector.css?v=20260927qlJson">
     <link rel="stylesheet" href="/css/chat_lightbox.css?v=20260922imgCtxMenu">
     <link rel="stylesheet" href="/css/pending_changes.css?v=20260920multiRepo">
@@ -96,6 +96,7 @@
             </button>
             <div class="chat-session-title" id="chatSessionTitle" hidden>
                 <span class="chat-session-running-icon history-running-icon" id="chatSessionRunningIcon" hidden title="Generating…" aria-label="Generating"></span>
+                <span class="chat-session-input-icon" id="chatSessionInputIcon" hidden title="Awaiting your input" aria-label="Awaiting your input"></span>
                 <span class="chat-session-unread-icon" id="chatSessionUnreadIcon" hidden title="Unread" aria-label="Unread"></span>
                 <span class="chat-session-queued-icon" id="chatSessionQueuedIcon" hidden title="Queued prompt" aria-label="Queued prompt"></span>
                 <span class="chat-session-paused-icon" id="chatSessionPausedIcon" hidden title="Paused queue" aria-label="Paused queued prompt"></span>
@@ -433,11 +434,11 @@
     <script src="/js/chat_project.js?v=20261001slice1"></script>
     <script src="/js/chat_slash.js?v=20261004chipx"></script>
     <script src="/js/chat_action_forms.js?v=20261004progressGrid"></script>
-    <script src="/js/chat_activity.js?v=20261001terminalstatus"></script>
-    <script src="/js/chat_action_cards.js?v=20261004progressGrid"></script>
+    <script src="/js/chat_activity.js?v=20261005activity"></script>
+    <script src="/js/chat_action_cards.js?v=20261005activity"></script>
     <script src="/js/chat_attachments.js?v=20261001slice5"></script>
-    <script src="/js/chat_composer.js?v=20261001usageLive"></script>
-    <script src="/js/chat_agent_model.js?v=20261001slice7"></script>
+    <script src="/js/chat_composer.js?v=20261005drafts"></script>
+    <script src="/js/chat_agent_model.js?v=20261005drafts"></script>
     <script src="/js/chat_messages.js?v=20261004completion"></script>
     <script src="/js/chat_activate.js?v=20261001slice8e"></script>
     <script src="/js/chat_markdown.js?v=20261004completion"></script>
@@ -447,11 +448,11 @@
     <script src="/js/chat_followup_queue.js?v=20261001slice9c"></script>
     <script src="/js/chat_pending_result.js?v=20261004completion"></script>
     <script src="/js/chat_generation.js?v=20261001slice9e"></script>
-    <script src="/js/chat_usage_live.js?v=20261004claude"></script>
+    <script src="/js/chat_usage_live.js?v=20261005snapshot"></script>
     <script src="/js/chat_stream.js?v=20261001sliced1"></script>
     <script src="/js/chat_vfx.js?v=20261003vfx1"></script>
     <script src="/js/chat_subagent_fleet.js?v=20261004fleetLive"></script>
-    <script src="/js/chat_page.js?v=20261004fleetLive"></script>
+    <script src="/js/chat_page.js?v=20261005activity"></script>
     <!-- highlight.js / Vega: load after boot so offline WAN never blocks the chat UI -->
     <script src="/js/optional_cdn.js?v=20260815vegaReady"></script>
 </body>

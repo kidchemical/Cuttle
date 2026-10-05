@@ -1,7 +1,7 @@
 /* ================================================================
    Cuttle Spaces — activity aggregation (spaces_activity.js)
    Owner: Spaces subsystem. Pure aggregation: which dot a space tab shows.
-   Priority: running > error > unread > queued > paused > none.
+   Priority: input > running > error > unread > queued > paused > none.
    Transport (server poll, localStorage reads, postMessage) and DOM
    patching stay in the shell; the observation maps live here as
    explicitly owned module state (resettable for tests).
@@ -11,8 +11,8 @@
      follow-up queue for every chat it lists.
    - Chat iframe pushes (`notePushSnapshot`): each push *replaces* that
      frame's previous snapshot and only describes chats the frame owns
-     (open chat, its local turn, pending action forms). A pushed spinner
-     counts until a server poll that started after it says idle; a frame
+     (open chat, its local turn, pending action forms). A locally owned turn/work spinner survives idle polls until its owner ends it.
+     A passive pushed spinner counts until a server poll that started after it says idle; a frame
      that re-pushes an old spinner cannot revive it.
    - Chat prefs (`setUnreadPrefs`): the shared unread/error flags — the
      same localStorage row the history panel reads.
@@ -21,8 +21,9 @@
 (function (root) {
     'use strict';
 
-    const RANK = { running: 5, error: 4, unread: 3, queued: 2, paused: 1 };
+    const RANK = { input: 6, running: 5, error: 4, unread: 3, queued: 2, paused: 1 };
     const LABEL = {
+        input: 'Awaiting your input',
         running: 'Active',
         error: 'Unread error',
         unread: 'Unread',
@@ -36,7 +37,7 @@
     const _sources = new Map();
     /** bare -> { running, queue, at } — `at` is the poll start time. */
     const _server = new Map();
-    /** bare -> '' | 'unread' | 'error' (a row exists ⇒ prefs decide). */
+    /** bare -> '' | 'input' | 'unread' | 'error' (a row exists ⇒ prefs decide). */
     let _prefs = new Map();
     /** bare -> 'queued' | 'paused' (local mode). */
     let _local = new Map();
@@ -70,7 +71,7 @@
     }
 
     function cleanKind(activity) {
-        return activity === 'error' || activity === 'unread'
+        return activity === 'input' || activity === 'error' || activity === 'unread'
             || activity === 'queued' || activity === 'paused' ? activity : '';
     }
 
@@ -89,7 +90,7 @@
             if (!s) return;
             const bare = bareSid(s.id);
             if (!bare) return;
-            entries.set(bare, { activity: cleanKind(s.activity), running: !!s.running });
+            entries.set(bare, { activity: cleanKind(s.activity), running: !!s.running, localRunning: !!s.localRunning, visibleAttention: !!s.visibleAttention });
         });
         const ownedSet = new Set();
         (Array.isArray(owned) ? owned : [...entries.keys()]).forEach((id) => {
@@ -146,7 +147,7 @@
             if (!p || typeof p !== 'object') return;
             const bare = bareSid(sid);
             if (!bare) return;
-            const kind = p.hasUnread ? (p.unreadIsError ? 'error' : 'unread') : '';
+            const kind = p.awaitingInput ? 'input' : p.hasUnread ? (p.unreadIsError ? 'error' : 'unread') : '';
             // Duplicate rows (temp id + db id) — any unread row wins.
             if (!next.has(bare) || (kind && RANK[kind] > (RANK[next.get(bare)] || 0))) {
                 next.set(bare, kind);
@@ -175,9 +176,12 @@
 
         let ownedAt = 0;
         let ownedRunning = false;
+        let localRunning = false;
         let ownedRunningSince = 0;
         let ownedQueue = '';
         let ownedUnread = '';
+        let visibleAttention = '';
+        let visibleAttentionAt = 0;
         _sources.forEach((src) => {
             if (!src.owned.has(bare)) return;
             const e = src.entries.get(bare) || { activity: '', running: false };
@@ -185,11 +189,16 @@
                 ownedAt = src.at;
                 ownedQueue = e.activity === 'queued' || e.activity === 'paused' ? e.activity : '';
             }
+            if (src.at >= visibleAttentionAt) {
+                visibleAttentionAt = src.at;
+                visibleAttention = e.visibleAttention ? e.activity : '';
+            }
+            if (e.localRunning) localRunning = true;
             if (e.running) {
                 ownedRunning = true;
                 ownedRunningSince = Math.max(ownedRunningSince, src.runningSince.get(bare) || src.at);
             }
-            if ((e.activity === 'unread' || e.activity === 'error')
+            if ((e.activity === 'input' || e.activity === 'unread' || e.activity === 'error')
                 && RANK[e.activity] > (RANK[ownedUnread] || 0)) {
                 ownedUnread = e.activity;
             }
@@ -200,7 +209,7 @@
             // A poll sent after the frame raised its spinner found the chat idle.
             const staleByServer = !!(srv && !srv.running && srv.at > ownedRunningSince
                 && (t - ownedRunningSince) > PUSH_RUNNING_GRACE_MS);
-            running = !staleByServer;
+            running = localRunning || !staleByServer;
         }
         if (!running && srv && srv.running) {
             // The owning frame reported idle after this poll — it saw the end.
@@ -208,13 +217,16 @@
         }
 
         let activity = _prefs.has(bare) ? _prefs.get(bare) : ownedUnread;
+        if (visibleAttention && activity !== 'input') activity = visibleAttention;
         if (!activity) {
             if (ownedAt && (!srv || ownedAt >= srv.at)) activity = ownedQueue;
             else if (srv) activity = srv.queue || '';
             if (!activity && _local.has(bare)) activity = _local.get(bare);
         }
         if (!running && !activity) return null;
-        return { activity: activity || '', running };
+        return visibleAttention
+            ? { activity: activity || '', running, visibleAttention: true }
+            : { activity: activity || '', running };
     }
 
     /** Classify a follow-up queue into a dot kind ('' when empty). */
@@ -237,7 +249,7 @@
      * @param getEntry: (sid) -> { activity, running } | null
      * @param isActive: whether this is the visible space
      * @param visibleSet: Set of currently visible chat ids (active space)
-     * Unread/error on a chat you are looking at is already seen → skipped.
+     * Unread/error on a visible chat is skipped unless its viewport still needs acknowledgement.
      */
     function selectSpaceActivity(chatIds, getEntry, isActive, visibleSet) {
         const ids = Array.isArray(chatIds) ? chatIds : [];
@@ -251,6 +263,11 @@
         ids.forEach((sid) => {
             const hit = getEntry(sid);
             if (!hit) return;
+            if (hit.activity === 'input') {
+                best = 'input';
+                bestRank = RANK.input;
+                return;
+            }
             if (hit.running) {
                 if (RANK.running > bestRank) {
                     best = 'running';
@@ -260,7 +277,7 @@
             }
             const kind = hit.activity || '';
             if (!kind) return;
-            if (isActive && (kind === 'unread' || kind === 'error') && visible.has(bareSid(sid))) {
+            if (isActive && !hit.visibleAttention && (kind === 'unread' || kind === 'error') && visible.has(bareSid(sid))) {
                 return;
             }
             const rank = RANK[kind] || 0;

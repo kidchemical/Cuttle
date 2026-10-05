@@ -326,3 +326,26 @@ def test_send_message_followup_takes_attachments_and_cards():
     assert follow["stagedLeft"] == []
     assert follow["cardsLeft"] == []
     assert follow["inputValue"] == ""
+
+
+@node_only
+def test_draft_chips_keep_commands_and_model_companions_without_aliasing():
+    import os
+    proc = subprocess.run(["node", "-e", """
+const A = require(process.env.MOD_JS);
+const chips = [
+  {prefix: '/cursor ', category: 'command'},
+  {prefix: '/model custom', category: 'cursor-model', modelId: 'custom'},
+  {prefix: '/usage live', category: 'command', label: 'Live usage'},
+];
+const saved = A.draftChips(chips);
+chips[2].label = 'changed';
+process.stdout.write(JSON.stringify({saved, empty: A.draftChips(null)}));
+"""], capture_output=True, text=True,
+        env={**os.environ, "MOD_JS": str(MOD_JS)}, timeout=10)
+    assert proc.returncode == 0, proc.stderr
+    result = json.loads(proc.stdout)
+    assert [row['prefix'] for row in result['saved']] == ['/cursor ', '/model custom', '/usage live']
+    assert result['saved'][1]['modelId'] == 'custom'
+    assert result['saved'][2]['label'] == 'Live usage'
+    assert result['empty'] == []

@@ -59,6 +59,16 @@ const document = {
 };
 
 let currentSessionId = null;
+const newComposerDraftId = 'new';
+const newComposerPrefsId = 'draft:new';
+const prefs = {};
+function getSessionPrefs(id) { return prefs[id] || null; }
+function updateSessionPrefs(id, patch) { prefs[id] = {...prefs[id], ...patch}; }
+const slashCtx = {chat: {chips: []}, welcome: {chips: []}};
+const slashPaletteSupplement = {};
+function renderSlashChips() {}
+const CuttleChatComposer = {draftChips: chips => chips.slice()};
+const CuttleChatAgentModel = {draftOverrides: () => ({}), draftSupplementPatch: () => ({})};
 function autoResizeTextarea() {}
 function autoResizeWelcomeTextarea() {}
 function syncSlashMenuFromInput() {}
@@ -249,8 +259,8 @@ def test_load_and_new_chat_force_restore_destination_draft():
         "showWelcomeSplash must restoreComposerDraft('new', { force: true })"
     )
 
-    restore_start = src.index("function restoreComposerDraft")
-    restore_body = src[restore_start : restore_start + 1500]
+    restore_start = src.index("function restoreComposerDraft(sid,")
+    restore_body = src[restore_start : restore_start + 3000]
     assert "force" in restore_body
     # Empty destination must clear the active field when forced.
     assert "el.value = text" in restore_body or 'el.value = text' in restore_body

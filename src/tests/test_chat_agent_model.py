@@ -188,3 +188,31 @@ def test_page_delegates_agent_model_decisions_to_owned_module():
         assert adapter in src, f"page adapter {adapter} must stay (same signature)"
         assert owned in src, f"page must delegate to {owned}"
     assert "CuttleChatAgentModel.resolveAgentEffortForBadge" in src
+
+
+@node_only
+def test_draft_pins_keep_explicit_overrides_without_freezing_defaults():
+    script = """
+const A = require(process.env.MOD_JS);
+const state = {
+  codexModel: 'custom', codexModelDirty: true,
+  codexEffort: 'high', codexEffortDirty: true,
+  museModel: 'starred', museModelDirty: false,
+  hermesEffort: 'none', hermesEffortDirty: true,
+};
+const pins = A.draftOverrides(state);
+const restored = A.draftSupplementPatch(pins);
+process.stdout.write(JSON.stringify({ pins, restored }));
+"""
+    import os
+    proc = subprocess.run(["node", "-e", script], capture_output=True, text=True,
+                          env={**os.environ, "MOD_JS": str(MOD_JS)}, timeout=10)
+    assert proc.returncode == 0, proc.stderr
+    result = json.loads(proc.stdout)
+    assert result['pins'] == {'codex': {'model': 'custom', 'effort': 'high'},
+                              'hermes': {'effort': 'none'}}
+    assert result['restored'] == {
+        'codexModel': 'custom', 'codexModelDirty': True,
+        'codexEffort': 'high', 'codexEffortDirty': True,
+        'hermesEffort': 'none', 'hermesEffortDirty': True,
+    }

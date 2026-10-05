@@ -1115,6 +1115,17 @@ def get_session_messages(session_id):
         # Session-level Muse/Hermes/OpenCode/Codex/Claude pins so the UI can seed badges before
         # first paint instead of flashing defaults while /api/*/model|effort
         # round-trips.
+        # Effort mirrors the runtime order (chat pin → starred default). The
+        # client treats a present-but-blank pin as "resolved, don't fetch", so
+        # a blank here hid the starred effort on chats that never pinned this
+        # agent (e.g. re-pinning Muse → Claude in an existing chat).
+        def _effective_effort(agent_id, session_effort):
+            try:
+                from api.agent_harness.agent_defaults import resolve_effective_effort
+                return resolve_effective_effort(agent_id, session_effort=session_effort)[0] or ''
+            except Exception:
+                return str(session_effort or '')
+
         muse_model = None
         muse_effort = ''
         hermes_model = None
@@ -1132,7 +1143,7 @@ def get_session_messages(session_id):
             )
             from scripts.utilities.muse_cli_tool import resolve_muse_default_model
             muse_model = load_muse_model(session_id) or resolve_muse_default_model()
-            muse_effort = load_muse_effort(session_id) or ''
+            muse_effort = _effective_effort('muse', load_muse_effort(session_id))
         except Exception:
             pass
         try:
@@ -1142,7 +1153,7 @@ def get_session_messages(session_id):
             )
             from scripts.utilities.hermes_cli_tool import resolve_hermes_default_model
             hermes_model = load_hermes_model(session_id) or resolve_hermes_default_model()
-            hermes_effort = load_hermes_effort(session_id) or ''
+            hermes_effort = _effective_effort('hermes', load_hermes_effort(session_id))
         except Exception:
             pass
         try:
@@ -1154,7 +1165,7 @@ def get_session_messages(session_id):
             # Unpinned means the CLI default wins — never force the old
             # hardcoded GLM id onto history badges (same bug as CH-000419).
             opencode_model = load_opencode_model(session_id) or get_starred_model('opencode') or ''
-            opencode_effort = load_opencode_effort(session_id) or ''
+            opencode_effort = _effective_effort('opencode', load_opencode_effort(session_id))
         except Exception:
             pass
         try:
@@ -1164,7 +1175,7 @@ def get_session_messages(session_id):
                 load_codex_model,
             )
             codex_model = load_codex_model(session_id) or _star_codex('codex') or ''
-            codex_effort = load_codex_effort(session_id) or ''
+            codex_effort = _effective_effort('codex', load_codex_effort(session_id))
         except Exception:
             pass
         try:
@@ -1174,7 +1185,7 @@ def get_session_messages(session_id):
                 load_claude_model,
             )
             claude_model = load_claude_model(session_id) or _star_claude('claude') or ''
-            claude_effort = load_claude_effort(session_id) or ''
+            claude_effort = _effective_effort('claude', load_claude_effort(session_id))
         except Exception:
             pass
 
