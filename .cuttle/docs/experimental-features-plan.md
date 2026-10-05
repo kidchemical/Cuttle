@@ -35,7 +35,7 @@ Architecture rules held: owned slices under `src/api/`, no reverse import of
 | Where do settings routes live? | `settings_routes.py`, `SETTING_FAMILIES` at `:48-85`; module docstring `:1-19` forbids touching `web_chat_api.py`. | Self-registering blueprint instead (the `chat_tts` precedent), registered in the same block as the rest. |
 | Settings tab shell? | `settings_page_tabs.js` — ids read **from markup**, order-sensitive, contract-tested by `test_settings_page_tabs.py`. | A new tab is a markup-only addition + one `tabs.register()`. |
 | Toast system? | `src/web/js/toast.js` — `showToast(msg, variant, options)`; iframe→parent handoff; CSS lives in JS only. | Extended `options` with `achievement` + `duration`; all ~125 existing call sites untouched. |
-| Confetti? | **None.** Only ambient particles on `landing_page.html:1968-2022`. | New self-contained particle layer in `celebrate.js` — no CDN dependency. |
+| Confetti? | **None at the design baseline.** Only ambient particles on the former welcome page. | New self-contained particle layer in `celebrate.js` — no CDN dependency. |
 | SFX? | One asset (`completion-chirp.wav`), served free at `/sounds/<path>`, escalation ladder at `toast.js:66-110`. | New wav = zero backend cost; Electron IPC added for the obscured-window case. |
 | Electron renderer? | **Same web UI** over HTTP (`electron/main.js:485-492`). | Toast + confetti are free; only sound-while-obscured needed IPC. |
 | Token/duration telemetry? | `router_outcomes` already carries `total_tokens`, `latency_ms`, `recorded_at`, `target_agent/model`, `attempt_index` (`agent_router/outcomes.py:29-58`). | Achievements read it; no new instrumentation. |

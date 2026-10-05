@@ -458,8 +458,10 @@ def test_badge_starring_and_muse_contributor_flow(page, chat_base_url):
     assert fps["fps"] >= 30, f"FPS too low: {fps}"
 
     # Screenshot for manual review
-    page.screenshot(path="C:/Users/MainUser/Desktop/e2e_badge_final.png")
-    print("screenshot saved to Desktop/e2e_badge_final.png")
+    preview = src_root.parent / "temp" / "e2e_badge_final.png"
+    preview.parent.mkdir(parents=True, exist_ok=True)
+    page.screenshot(path=str(preview))
+    print(f"screenshot saved to {preview}")
 
     # Cleanup e2e sessions
     page.evaluate("""() => {

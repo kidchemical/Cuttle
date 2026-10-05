@@ -1,7 +1,6 @@
 """P5-F pre-move oracles: the leftover pipeline (fallback) path.
 
-The pipeline is not a graph engine anymore (``/pipelines`` answers
-``pipelines_removed``; graphs retired with Self_Improvement). What remains:
+The pipeline is the no-LLM fallback lane, not a graph engine. It covers:
 
 - sync route pipeline lane (claimed ``run_pipeline_sync_turn``) whose
   executor is ``process_message_with_bot``;

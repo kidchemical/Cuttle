@@ -1,11 +1,11 @@
 @echo off
 title Cuttle LAN Diagnostics
-cd /d "E:\Dev\Cuttle"
+cd /d "%~dp0..\.."
 echo.
 echo === Cuttle LAN Diagnostics ===
 echo.
 
-for /f "tokens=*" %%i in ('E:\Dev\Cuttle\.venv\Scripts\python.exe -c "import socket;s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);s.connect(('10.255.255.255',1));print(s.getsockname()[0])" 2^>nul') do set LANIP=%%i
+for /f "tokens=*" %%i in ('call "%~dp0..\..\.venv\Scripts\python.exe" -c "import socket;s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);s.connect(('10.255.255.255',1));print(s.getsockname()[0])" 2^>nul') do set LANIP=%%i
 if "%LANIP%"=="" set LANIP=unknown
 
 echo LAN IP: %LANIP%
@@ -21,11 +21,11 @@ echo Wi-Fi profile:
 powershell -NoProfile -Command "Get-NetConnectionProfile | Format-Table InterfaceAlias,NetworkCategory -AutoSize"
 echo.
 echo PC self-test (HTTPS phone port via LAN IP):
-E:\Dev\Cuttle\.venv\Scripts\python.exe -c "import urllib.request,ssl; ctx=ssl.create_default_context(); ctx.check_hostname=False; ctx.verify_mode=ssl.CERT_NONE; r=urllib.request.urlopen('https://%LANIP%:8888/api/lan-ping', context=ctx, timeout=5); print(r.read().decode())" 2>nul
+"%~dp0..\..\.venv\Scripts\python.exe" -c "import urllib.request,ssl; ctx=ssl.create_default_context(); ctx.check_hostname=False; ctx.verify_mode=ssl.CERT_NONE; r=urllib.request.urlopen('https://%LANIP%:8888/api/lan-ping', context=ctx, timeout=5); print(r.read().decode())" 2>nul
 if errorlevel 1 echo   FAILED - restart Cuttle after code update
 echo.
 echo PC self-test (HTTP fallback port 8000):
-E:\Dev\Cuttle\.venv\Scripts\python.exe -c "import urllib.request; r=urllib.request.urlopen('http://%LANIP%:8000/api/lan-ping', timeout=5); print(r.read().decode())" 2>nul
+"%~dp0..\..\.venv\Scripts\python.exe" -c "import urllib.request; r=urllib.request.urlopen('http://%LANIP%:8000/api/lan-ping', timeout=5); print(r.read().decode())" 2>nul
 if errorlevel 1 echo   FAILED - port 8000 not listening yet
 echo.
 echo === On your phone (same Wi-Fi, NOT mobile data) ===

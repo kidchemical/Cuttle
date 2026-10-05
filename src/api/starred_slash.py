@@ -54,8 +54,6 @@ def normalize_sticky_prefix(raw: Any) -> Optional[str]:
     if not s.endswith(" "):
         s += " "
     low = s.lower()
-    if low in ("/cursor-cli ", "/cursor-cli"):
-        return "/cursor "
     for allowed in ALLOWED_STICKY_PREFIXES:
         if low == allowed.lower():
             return allowed
@@ -67,8 +65,6 @@ def sticky_prefix_from_text(text: str) -> Optional[str]:
     low = (text or "").strip().lower()
     if not low:
         return None
-    if low.startswith("/cursor-cli"):
-        return "/cursor "
     for allowed in ALLOWED_STICKY_PREFIXES:
         token = allowed.strip().lower()
         if low == token or low.startswith(token + " ") or low.startswith(allowed.lower()):

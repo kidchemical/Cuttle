@@ -4340,11 +4340,6 @@ pre.has-code-copy:hover .code-copy-btn,
     display: none;
 }
 
-.slash-command-chip--palette-pipeline {
-    background: linear-gradient(135deg, rgba(16, 185, 129, 0.32), rgba(5, 150, 105, 0.22));
-    border-color: rgba(52, 211, 153, 0.55);
-}
-
 .slash-command-chip--palette-skill {
     background: linear-gradient(135deg, rgba(245, 158, 11, 0.32), rgba(217, 119, 6, 0.2));
     border-color: rgba(251, 191, 36, 0.5);
@@ -4783,12 +4778,6 @@ pre.has-code-copy:hover .code-copy-btn,
     border-color: rgba(102, 126, 234, 0.35);
 }
 
-.slash-command-item--pipeline .slash-palette-kind {
-    color: rgba(110, 231, 183, 0.95);
-    background: rgba(16, 185, 129, 0.2);
-    border-color: rgba(16, 185, 129, 0.35);
-}
-
 .slash-command-item--project .slash-palette-kind {
     color: rgba(125, 211, 252, 0.98);
     background: rgba(56, 189, 248, 0.18);
@@ -4854,12 +4843,6 @@ pre.has-code-copy:hover .code-copy-btn,
     color: #4338ca;
     background: rgba(99, 102, 241, 0.12);
     border-color: rgba(99, 102, 241, 0.28);
-}
-
-.light-mode .slash-command-item--pipeline .slash-palette-kind {
-    color: #047857;
-    background: rgba(16, 185, 129, 0.12);
-    border-color: rgba(5, 150, 105, 0.28);
 }
 
 .light-mode .slash-command-item--project .slash-palette-kind {

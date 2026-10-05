@@ -684,41 +684,12 @@ def test_cancel_mid_worker_discards_result_but_releases():
     chat_delivery.end("p5e-dcancel")
 
 
-def test_http_cursor_cli_alias_streams_through_shared_entry(
-    authed_client, fake_harness
-):
-    """Legacy /cursor-cli streams as /cursor through the same shared entry."""
-    client, db, uid = authed_client
-    sid = db.create_chat_session(uid)
-    res = client.post(
-        "/api/chat",
-        json={"message": "/cursor-cli hello alias",
-              "session_id": sid},
-    )
-    assert res.status_code == 200
-    text = res.get_data(as_text=True)
-    kinds = _event_types(text)
-    assert kinds[0] == "session"
-    assert kinds[-1] == "done"
-    assert _responses(text)[-1]["response"] == "oracle-reply:cursor:hello alias"
-    assert fake_harness and fake_harness[0]["agent_id"] == "cursor"
-    assert fake_harness[0]["prompt"] == "hello alias"
-    rows = db.get_messages(sid)
-    assert [(m["role"], m["content"]) for m in rows] == [
-        ("user", "/cursor-cli hello alias"),
-        ("assistant", "oracle-reply:cursor:hello alias"),
-    ]
-    assert chat_delivery.try_begin(sid) is True
-    chat_delivery.end(sid)
-
-
 def test_router_family_predicate_agrees_with_lanes():
     """Predicate True exactly for messages the lanes handle as router-family."""
     for msg in ("/retry hello", "/router hello", "/route cursor do it"):
         assert wca._is_router_family_message(msg) is True, msg
     for msg in (
         "/cursor hi",
-        "/cursor-cli hi",
         "/status",
         "plain hello",
         "",

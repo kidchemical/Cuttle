@@ -20,7 +20,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-LAN = {"REMOTE_ADDR": "192.168.1.77"}
+LAN = {"REMOTE_ADDR": "192.0.2.77"}
 
 # Modules that may hold the `project_manager` reference across the slice.
 _PM_HOLDERS = ("api.web_chat_api", "api.project_routes")

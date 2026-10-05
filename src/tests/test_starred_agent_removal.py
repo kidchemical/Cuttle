@@ -152,6 +152,7 @@ function updateSessionPrefs(id, patch) {{
 }}
 function readStarredSlashPrefixes() {{ return {json.dumps(starred)}; }}
 function renderSlashChips() {{}}
+function refreshTypingIndicatorHeaderBadges() {{}}
 const document = {{ getElementById: () => null }};
 {helpers}
 {script}

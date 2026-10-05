@@ -109,7 +109,7 @@ def test_agent_router_options_endpoint_requires_owner():
     with w.app.test_client() as client:
         anon = client.get(
             "/api/agent-router/options",
-            environ_base={"REMOTE_ADDR": "192.168.1.77"},
+            environ_base={"REMOTE_ADDR": "192.0.2.77"},
         )
         assert anon.status_code == 401
         loop = client.get(

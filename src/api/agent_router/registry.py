@@ -86,7 +86,6 @@ def normalize_agent_id(raw: str) -> Optional[str]:
     s = (raw or "").strip().lower().replace("_", "-")
     aliases = {
         "cursor-agent": "cursor",
-        "cursor-cli": "cursor",
         "cursoragent": "cursor",
         "openai-codex": "codex",
         "claude-code": "claude",

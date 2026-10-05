@@ -1752,12 +1752,9 @@ const PAGE_TITLES = {
     '/git_graph_page.html': 'Git',
     '/jobs_page.html': 'Jobs',
     '/dashboards_page.html': 'Dashboards',
-    '/job_insight.html': 'Job Insight',
-    '/control_panel.html': 'Control Panel',
     '/apps_page.html': 'Apps',
     '/achievements_page.html': 'Achievements',
     '/settings_page.html': 'Settings',
-    '/landing_page.html': 'Welcome',
     '/home_automation.html': 'Home Automation',
     '/media_player.html': 'Media',
     '/about_page.html': 'About',
@@ -2813,14 +2810,6 @@ function promoteGroupChildrenToParent(groupEl, parentEl, replaceEl) {
     rebuildGroupResizeHandles(parentEl);
 }
 
-/**
- * @deprecated Flattened all leaves into one row — kept only as unused legacy.
- * Prefer promoteGroupChildrenToParent.
- */
-function flattenGroupIntoParent(groupEl, parentEl, replaceEl) {
-    promoteGroupChildrenToParent(groupEl, parentEl, replaceEl);
-}
-
 function clearPaneBoxStyles(el) {
     if (!el) return;
     el.style.width = '';
@@ -3280,11 +3269,6 @@ function getSplitGroupBudget(groupEl, childCount) {
         : (groupEl?.clientWidth || 0);
     const raw = main - handles * SPLIT_HANDLE_PX;
     return Math.max(n, raw);
-}
-
-/** @deprecated use getSplitGroupBudget — kept for call sites mid-migration */
-function getSplitColumnBudget(colCount) {
-    return getSplitGroupBudget(splitContainer, colCount);
 }
 
 /**
@@ -7125,18 +7109,6 @@ function setupGroupSplitResize(handleEl, groupEl, leftPos, rightPos) {
         handleEl.addEventListener('pointercancel', onUp);
     });
     // Intentionally no document/window listeners — rebuilds used to leak them and freeze Chrome.
-}
-
-/** @deprecated — use setupGroupSplitResize */
-function setupSplitResize(handleEl, leftIdx, rightIdx) {
-    // Legacy signature from older call sites; resolve group from handle parent.
-    const groupEl = handleEl.parentElement;
-    if (!isSplitGroupEl(groupEl)) return;
-    const cols = getGroupChildNodes(groupEl);
-    const leftPos = cols.findIndex((c) => parseInt(c.dataset.column, 10) === leftIdx);
-    const rightPos = cols.findIndex((c) => parseInt(c.dataset.column, 10) === rightIdx);
-    if (leftPos < 0 || rightPos < 0) return;
-    setupGroupSplitResize(handleEl, groupEl, leftPos, rightPos);
 }
 
 // Legacy sessions may still have fixed-px flex in memory — convert on resize so

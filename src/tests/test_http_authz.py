@@ -78,7 +78,7 @@ def test_anonymous_channel_post_rejected():
     res = client.post(
         "/api/settings/channels",
         json={"channel": "webchat"},
-        environ_base={"REMOTE_ADDR": "192.168.1.50"},
+        environ_base={"REMOTE_ADDR": "192.0.2.50"},
     )
     assert res.status_code == 401
 
@@ -105,18 +105,9 @@ def test_anonymous_action_form_run_rejected():
     res = client.post(
         "/api/action-form/run",
         json={"token": token, "selection": {"id": "a"}, "session_id": 1},
-        environ_base={"REMOTE_ADDR": "192.168.1.50"},
+        environ_base={"REMOTE_ADDR": "192.0.2.50"},
     )
     assert res.status_code == 401
-
-
-def test_stop_webapi_is_gone():
-    from api import web_chat_api as wca
-
-    client = wca.app.test_client()
-    res = client.post("/api/stop-webapi")
-    assert res.status_code == 410
-    assert res.get_json()["error"] == "legacy_process_control_removed"
 
 
 def test_lan_enroll_denied_when_lan_disabled(worker_db, monkeypatch):
@@ -132,8 +123,8 @@ def test_lan_enroll_denied_when_lan_disabled(worker_db, monkeypatch):
     client = app.test_client()
     r = client.post(
         "/api/workers/enroll",
-        json={"worker_id": "yoga", "hostname": "YOGA"},
-        environ_base={"REMOTE_ADDR": "192.168.1.40"},
+        json={"worker_id": "worker-a", "hostname": "WORKER-A"},
+        environ_base={"REMOTE_ADDR": "192.0.2.40"},
     )
     assert r.status_code == 403
 
@@ -151,7 +142,7 @@ def test_lan_job_submit_without_owner_is_401(worker_db, monkeypatch):
     r = client.post(
         "/api/workers/jobs",
         json={"type": "ping", "params": {"echo": 1}},
-        environ_base={"REMOTE_ADDR": "192.168.1.99"},
+        environ_base={"REMOTE_ADDR": "192.0.2.99"},
     )
     assert r.status_code == 401
 
@@ -171,7 +162,7 @@ def test_worker_token_cannot_submit_jobs(worker_db, monkeypatch):
         "/api/workers/jobs",
         json={"type": "ping", "params": {"echo": 1}},
         headers={"Authorization": "Bearer shared"},
-        environ_base={"REMOTE_ADDR": "192.168.1.99"},
+        environ_base={"REMOTE_ADDR": "192.0.2.99"},
     )
     assert r.status_code == 401
 
@@ -648,7 +639,7 @@ def test_action_form_dismiss_requires_chat_ownership(tmp_path, monkeypatch):
     assert ok.get_json()["success"] is True
 
 
-LAN = {"REMOTE_ADDR": "192.168.1.77"}
+LAN = {"REMOTE_ADDR": "192.0.2.77"}
 LOOP = {"REMOTE_ADDR": "127.0.0.1"}
 
 

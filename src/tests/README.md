@@ -7,18 +7,13 @@ Pytest suite. Default entry (per AGENTS.md):
 .venv\Scripts\python.exe -m pytest src/tests/
 # Single file
 .venv\Scripts\python.exe -m pytest src/tests/test_foo.py
-# Never pytest the whole tree against a live server unless you mean it:
-# integration/test_discord_api_e2e.py hits http://127.0.0.1:8080 when up, skips when down.
 ```
 
 ## Test tooling and artifacts
 
-Test runners/helpers belong under this tree. Optional historical reporting tools
-live in `reporting/`; generated reports, traces, and test-history databases live
-in the gitignored `results/` directory. Do not generate developer reports under
-`src/scripts/output/`, `src/web/logs/`, or `src/test-results/`. `HTMLTestReporter`
-uses `results/` by default independently of cwd. Old static test-report pages and
-the fabricated sample-report generator are retired.
+Run tests with `pytest` (see above). Generated artifacts belong in the gitignored
+`results/` directory; do not write developer reports under `src/scripts/output/`,
+`src/web/logs/`, or `src/test-results/`.
 
 Operator network diagnostics are the narrow exception: `src/scripts/diagnose_*`
 are manually invoked troubleshooting tools, not pytest tests. The phone connectivity
@@ -186,24 +181,18 @@ standalone native intervals).
 
 Three fresh contexts/databases per workload; output defaults to ignored
 `temp/f1-measurements.json` (`CUTTLE_COST_PROFILE_OUT` overrides it). This is
-a measurement aid, not a timing-threshold CI gate. See the closeout review
-for environment, measured scope and omitted production costs. Browser skips
-remain unmet validation gates.
+a measurement aid, not a timing-threshold CI gate.
+Browser skips remain unmet validation gates.
 
 ## Layout
 
 ```
 src/tests/
-├── test_*.py        # ~130 pytest files (chat, agents, jobs, restart, discord, …)
-├── unit/            # legacy tool tests (security, API keys, …)
-├── integration/     # live-server / content tests (pytest, skip when deps missing)
-│   ├── test_discord_api_e2e.py          # /api/health; asserts pipeline-trigger-discord is 404 if server up
-│   └── test_discord_remote_execution.py # gateway files absent; Electron does not start Discord
-├── e2e/             # Playwright-style browser tests (app shell, badges, history)
-├── deprecated/      # archaeology only (Self Improvement); do not add cases
-├── fixtures/        # shared fixtures + leftover self-improvement samples
-├── conftest.py
-└── run_*.py         # legacy direct-run harnesses (largely superseded by pytest)
+├── test_*.py        # pytest files (chat, agents, jobs, restart, workers, …)
+├── unit/            # small focused tests + paid provider diagnostics (spend-gated)
+├── e2e/             # Playwright browser tests (app shell, cards, badges, history)
+├── fixtures/        # shared fixture files
+└── conftest.py
 ```
 
 ## Token-spending tests (read before running)
@@ -220,20 +209,8 @@ first** (both spend real money):
 Rule for agents: if a run needs either flag, stop and ask. Do not set them
 proactively, do not bury them in a larger command.
 
-## Removed (2026-09)
-
-- `integration/test_bot_startup.py`, `test_wsl_integration.py` — hardcoded
-  `/home/<user>/...` paths, shelled out to `wsl`, tested machine setup.
-- `integration/test_discord_bot_integration.py` — asserted against local fake
-  parsers (`/cursor-ui`) that test no shipped code.
-
-Runner references were cleaned in `run_all_tests.py`, `run_safe_tests.py`,
-`run_tests_wsl_compatible.py`.
-
 ## Contributing
 
 1. New tests go flat in `src/tests/` as `test_*.py` (pytest discovers them).
 2. Mock subprocesses — never launch a GUI app, a server, or a harness for real.
-3. Live-server tests must `pytest.skip` when the server is down (see
-   `integration/test_discord_api_e2e.py`).
-4. `deprecated/` is archaeology — do not add new cases there.
+3. Live-server tests must `pytest.skip` when the server is down.

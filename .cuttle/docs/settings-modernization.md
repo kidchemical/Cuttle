@@ -138,9 +138,8 @@ placeholder glyph. Row CSS is page-owned in `css/settings_page.css`
   Integrations (API keys read-only presence, Discord, Gitea) · Security
   (OAuth status, sessions, secrets) · Devices & Mesh (mesh workers, identity
   path) — the tabs above collapse/extend toward this.
-- **Do not merge landing_page.html's copy.** The landing page carries its own
-  API-key test/save widget; any redesign should converge the two on one
-  component that consumes masked hints (never full secrets).
+- **API-key widgets** should consume masked hints (never full secrets).
+  Keep test/save behavior in the Settings component.
 
 ## Still out of scope
 

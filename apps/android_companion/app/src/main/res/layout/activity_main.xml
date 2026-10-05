@@ -10,7 +10,7 @@
         android:id="@+id/baseUrlLayout"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:hint="Cuttle base URL (e.g. http://192.168.1.50:8080)"
+        android:hint="Cuttle base URL (e.g. https://cuttle.local:8080)"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
@@ -20,7 +20,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:inputType="textUri"
-            android:text="http://192.168.1.50:8080"/>
+            android:text=""/>
     </com.google.android.material.textfield.TextInputLayout>
 
     <com.google.android.material.textfield.TextInputLayout

@@ -73,12 +73,6 @@ class AgentManifest:
     install_package: str = ""
     install_url_windows: str = ""
     install_url_posix: str = ""
-    # Optional sha256 pins for script_url installers (hex, per OS). Inert
-    # schema ballast since P6-A retired the executable installer machinery:
-    # parsed, surfaced in guidance, never executed. No bundled manifest
-    # pins one.
-    install_sha256_windows: str = ""
-    install_sha256_posix: str = ""
     executable_names: List[str] = field(default_factory=list)
     auto_install: bool = False
     # Credential env vars this CLI needs, most-preferred first. Declarative so

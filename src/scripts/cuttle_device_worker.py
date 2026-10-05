@@ -7,7 +7,7 @@ for Client mode. This entry still uses the api.device_workers package
 when a full Cuttle tree + venv are available.
 
 Env:
-  CUTTLE_DEVICE_WORKERS_COORDINATOR_URL  e.g. https://192.168.1.20:8080
+  CUTTLE_DEVICE_WORKERS_COORDINATOR_URL  e.g. https://cuttle.local:8080
   CUTTLE_DEVICE_WORKERS_TOKEN            optional shared bearer
   CUTTLE_DEVICE_WORKER_ID                optional stable id (default: hostname)
   CUTTLE_DEVICE_WORKER_LOG               optional log path

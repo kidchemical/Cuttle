@@ -69,14 +69,13 @@ def test_missing_pairing_module_fails_closed(channel, monkeypatch):
 def test_approval_reaches_normal_dispatch(channel, monkeypatch):
     from api import web_chat_api as wca
     client, manager, _, owner = channel
-    first = client.post('/api/chat', json={'message': '/pipelines'})
+    first = client.post('/api/chat', json={'message': '/help'})
     ok, identity = manager.approve(first.get_json()['pairing_code'])
     assert ok and identity == f'webchat:web_user_{owner.user_id}'
-    # The retired-pipeline informational lane gives a terminal, provider-free
-    # response after admission. Avoid host session/project settings entirely.
+    # /help gives a terminal, provider-free response after admission. Avoid host session/project settings entirely.
     monkeypatch.setattr('api.flask_restart.parse_restart_slash', lambda _: None)
     monkeypatch.setattr(wca, '_resolve_auth_chat_session', lambda _: ({'id': owner.user_id}, None, False))
     monkeypatch.setattr('api.starred_slash.apply_default_sticky_prefix', lambda message, *a, **kw: message)
-    response = client.post('/api/chat', json={'message': '/pipelines'})
+    response = client.post('/api/chat', json={'message': '/help'})
     assert response.status_code == 200
-    assert response.get_json()['type'] == 'pipelines_removed'
+    assert response.get_json()['type'] == 'help'

@@ -75,7 +75,7 @@ A future chat surface should consume one authenticated Cuttle ingress contract t
 - Progress and result delivery
 - Interactive approvals
 
-Cuttle Core stays **transport-agnostic**. Implementation of that framework is **not** in this cleanup; see deferred work in [`../reviews/discord-cleanup-2026-09.md`](../reviews/discord-cleanup-2026-09.md).
+Cuttle Core stays **transport-agnostic**. New surfaces submit through the shared coordinator and keep transport-specific code at their ingress boundary.
 
 ## C. Agent operations / service integrations
 

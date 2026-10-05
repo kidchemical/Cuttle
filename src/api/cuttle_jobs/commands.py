@@ -1,4 +1,4 @@
-"""Parse ``@cuttle`` commands (kept in sync with JamBit cuttle-jobs/commands.py)."""
+"""Parse ``@cuttle`` job commands."""
 
 from __future__ import annotations
 

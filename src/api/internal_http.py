@@ -33,11 +33,6 @@ def _internal_requests_extra() -> Dict[str, Any]:
     return extra
 
 
-# NOTE (P4-3): the old in-process test_client() POST was dead code (zero
-# callers) and its entry-module import is gone with it. Loopback HTTP(S)
-# against the live server is the only dispatch path.
-
-
 def _internal_response_ok(resp: Any) -> bool:
     code = getattr(resp, "status_code", None)
     if code is not None:

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start the Cuttle daemon (Flask + tray + optional Discord) using the project venv.
+# Start the Cuttle daemon (Flask + cron + optional tray) using the project venv.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PY="$ROOT/.venv/bin/python3"

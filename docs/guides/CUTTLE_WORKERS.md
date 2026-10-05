@@ -171,8 +171,8 @@ User (chat on the host)
 Workers periodically register / heartbeat with a blob like:
 
 ```yaml
-worker_id: yoga
-hostname: YOGA
+worker_id: worker-a
+hostname: WORKER-A
 os: windows
 interactive_priority: low   # high on the machine the human is using
 ac_power: true
@@ -273,7 +273,7 @@ Success criteria for the benchmark: correct frames, sensible scheduling (idle GP
 ## Intent examples (north star)
 
 - “Copy `Desktop\foo` from the laptop to this PC’s Desktop.”
-- “Render JamBit intro frames 1–120 on whatever is free; don’t touch the host GPU.”
+- “Render sample intro frames 1–120 on whatever is free; don’t touch the host GPU.”
 - “Use workers to render this Blender file.”
 - “I’m working — move noninteractive jobs elsewhere.”
 - “Run this local-model subagent on the laptop.”
@@ -293,7 +293,7 @@ Success criteria for the benchmark: correct frames, sensible scheduling (idle GP
 | **W1** | Worker sidecar + register | Capability ads + heartbeats; Devices observability — **done** |
 | **W2** | Generic jobs | `file_copy` + `ping` on host queue — **done** for those types; shell/python still later |
 | **W2.5** | Platform verbs | Actions/CLI including self-update + shell recipes — **done** |
-| **W2b** | Blender CLI benchmark | `blender_render` + shard — **done**; dogfood on JamBit v11 mesh |
+| **W2b** | Blender CLI benchmark | `blender_render` + shard — **done**; verified with a sample-scene mesh render |
 | **W2b+** | Work-steal + analytics | Default chunk queue; per-frame timings; EWMA profiles — **code done** |
 | **W2c** | Client daemon + self-update | Host→laptop pull/restart without SSH — **code done**; dogfood with client daemon on laptop |
 | **W3** | Host intent routing | `workers.plan` heuristics — **partial**; auto-enqueue off |

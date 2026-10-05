@@ -166,7 +166,7 @@ def invoke_bundled_tool(
     if name == "cuttle_claude_code":
         if not bundled_cli or not bundled_cli.get("claude"):
             return "Error: Claude Code is not enabled on the CLI toolset for this pipeline."
-        from scripts.utilities.claude_code_tool import ClaudeCodeTool
+        from scripts.utilities.claude_cli_tool import ClaudeCodeTool
 
         model = bundled_cli.get("claudeModel") or "haiku"
         sid = (session_id or "bundled")[:12]

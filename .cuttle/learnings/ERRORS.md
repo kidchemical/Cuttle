@@ -166,7 +166,7 @@ message instead of a wall of stack traces. See `src/api/agent_harness/ADDING_AN_
 - **Summary:** Database writes ran inside reversed tag iteration intended for text offsets. A base followed by a same-id patch in one assistant reply lost the patch; separate messages worked.
 - **Done:** Apply store operations and return touched rows in document order; collect replacements and splice text backward. Keep later replacement semantics and existing type/status/scope/description owners.
 - **Validation:** Seven new regression cases within 24 passing widget tests; 42 workflow/persistence/coordinator neighbors; five cases fail against old code. Manager independently passed the combined candidate real-shadow SSE/history/widget-HTTP/reload journey without guard widening or client fallback writes.
-- **Metadata:** Parent CH-000856; contributor CH-000860; review `docs/reviews/card-controller-widget-order.md`.
+- **Metadata:** Parent CH-000856; contributor CH-000860; review historical review in Git history.
 
 ### [ERR-20261002-005] Raw widget history fallback suppresses context and patch operations
 - **Priority:** Low · **Status:** Open; separate from C3 structural work · **Area:** chat_page widget fallback / api.chat_widgets identity and replay
@@ -179,11 +179,11 @@ message instead of a wall of stack traces. See `src/api/agent_harness/ADDING_AN_
 - **Priority:** Low · **Status:** Open; characterized in G1, not changed · **Area:** Jobs UI / graph-era Job insight
 - **Summary:** Active non-cuttle_jobs executions still link to `/job_insight.html?pipeline=…`, whose API resolves graph JSON through `SettingsManager.get_pipeline_path`. The execution tracker and query-log link remain current; this insight chain does not use their live model.
 - **Next:** Pin a real Jobs harness-card journey and choose its supported insight destination before removing or rewriting the surviving consumer chain. Keep required compatibility responses and active tracking intact.
-- **Metadata:** Parent CH-000856; contributor CH-000860; `docs/reviews/architecture-clutter-review.md`.
+- **Metadata:** Parent CH-000856; contributor CH-000860; historical review in Git history.
 
 ### [ERR-20261003-002] SSE read timeout abandons a pending read and loses late bytes
 - **Priority:** Medium · **Status:** Fixed; reviewed frontend source integrated, applied on normal reload · **Area:** browser chat byte transport
 - **Summary:** Promise.race timeout started another native read while the prior read still owned arriving bytes. A late final reply could disappear from streaming; later parked/history recovery could conceal it.
 - **Done:** Keep one read promise across timeout observations until its result is consumed or a non-timeout error propagates, including settlement between timeout and catch. Preserve hold/tick/parse/session/Stop policies.
 - **Validation:** Native stream/actual page late-read proof, old-code desired failures, final contributor 13 browser cases; manager 7 final targeted read/Stop/shadow cases, earlier 27 combined browser and 86 owner neighbors; zero selected skips. Exact-helper controlled edge returns byte 65 with one native read.
-- **Metadata:** Parent CH-000856; contributor CH-000862; `docs/reviews/chat-stream-reader.md`.
+- **Metadata:** Parent CH-000856; contributor CH-000862; historical review in Git history.

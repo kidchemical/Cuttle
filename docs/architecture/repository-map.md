@@ -1,13 +1,8 @@
 # Cuttle architecture map (repository-wide)
 
-**Date:** 2026-10-01 · **Baseline HEAD:** `4845233c` (original A1 audit snapshot) · Selected ownership rows maintained through later slices — not a claim that current source matches the baseline tree. Slice history lives in the [organization plan](ARCHITECTURE_ORGANIZATION_PLAN.md).
-Prior snapshot: 2026-09-27 at `4f2880c`. Inventory review status: [`../reviews/repository-inventory.md`](../reviews/repository-inventory.md).
-
-Companion: [`docs/guides/WEB_CHAT_API.md`](../guides/WEB_CHAT_API.md) (Flask composition root only), [`docs/guides/MODULARITY.md`](../guides/MODULARITY.md), this audit’s [`../reviews/repository-audit.md`](../reviews/repository-audit.md).
+Companion: [`docs/guides/WEB_CHAT_API.md`](../guides/WEB_CHAT_API.md) (Flask composition root only), [`docs/guides/MODULARITY.md`](../guides/MODULARITY.md).
 
 This map describes **what exists and how it boots**, not a mandate to extract `web_chat_api.py`.
-Historical review documents under `docs/reviews/` are snapshots — they may
-describe older trees and are preserved as-is, not corrected here.
 
 ---
 
@@ -27,15 +22,11 @@ start_cuttle.sh | src/scripts/cuttle_daemon.py
 
 **Android:** `apps/mobile` Capacitor shell; `apps/android_companion` / `apps/android_bt_voice` are additional native surfaces.
 
-**Flask-alone:** `python src/api/web_chat_api.py` from the repo root (same as the daemon child). Optional legacy test analytics on **:5000** now lives under `src/tests/reporting/` (`history_api.py`) — not the chat app.
+**Flask-alone:** `python src/api/web_chat_api.py` from the repo root (same as the daemon child).
 
-**Startup listener audit** (one Flask `app`, three binds; full table in [`development-instance-safety.md`](development-instance-safety.md) §1): primary HTTPS **:8080** (`127.0.0.1` LAN-off, `0.0.0.0` LAN-on) owned by `web_chat_api.__main__`; companion HTTP **:8000** (same `app`, not a tombstone — CURRENT preferred Electron HTTP origin via `resolveUiBaseUrl` in `electron/main.js`, plus Android cleartext fallback) owned by `lan_access` constants + `__main__` socket setup; optional same-`app` phone TLS **:8888** only with a LAN IP. `lan_access` owns port constants and LAN bind/CORS/firewall; the daemon owns the Flask process and its :8080 health check, not socket setup — one app, multiple listener/server objects, no separate daemon-control listener. No per-listener routes/executors; `:5000` is a separate historical time-series listener.
+**Startup listener audit** (one Flask `app`, three binds; full table in [`development-instance-safety.md`](development-instance-safety.md) §1): primary HTTPS **:8080** (`127.0.0.1` LAN-off, `0.0.0.0` LAN-on) owned by `web_chat_api.__main__`; companion HTTP **:8000** (same `app`, not a tombstone — CURRENT preferred Electron HTTP origin via `resolveUiBaseUrl` in `electron/main.js`, plus Android cleartext fallback) owned by `lan_access` constants + `__main__` socket setup; optional same-`app` phone TLS **:8888** only with a LAN IP. `lan_access` owns port constants and LAN bind/CORS/firewall; the daemon owns the Flask process and its :8080 health check, not socket setup — one app, multiple listener/server objects, no separate daemon-control listener. No per-listener routes/executors.
 
 **Dev-instance owner:** S1 shadow orchestration is `api.dev_instance` (parent side only — snapshots, allowlist env, owned child handle; never imports the Flask monolith) with the spawned child bootstrap in `src/scripts/cuttle_shadow_app.py` (dev-only composition, not an owned layer). Composition exception, narrow: alongside the `api.doctor` probe, the shadow bootstrap is the only other module permitted to import `web_chat_api`, and only inside the spawned child after deny guards — enforced by `REVERSE_IMPORT_ALLOWLIST` in `test_architecture_boundaries.py`. Runbook: [`development-instance-safety.md`](development-instance-safety.md). No generic `cuttle dev` command.
-
-Removed since the prior snapshot: `src/scripts/launchers/` (four broken
-launcher shims) and `src/launcher.py` (parallel bot+API launcher) no longer
-exist. Do not follow old references to them.
 
 ---
 
@@ -77,9 +68,7 @@ as a subprocess; it imports the real app only after installing deny
 guards). Both entries are enforced by
 `src/tests/test_architecture_boundaries.py` (`REVERSE_IMPORT_ALLOWLIST`,
 AST scanner covering static and dynamic import forms; an allowlist entry
-that stops resolving fails the test). The older “bottleneck” list of lazy importers (`chat_delivery`,
-`auth_api`, `agent_router.dispatch`, `subagents`, kernel cwd) is obsolete —
-the AST import scan finds no import of the entry module in any of them.
+that stops resolving fails the test).
 Plain comment/string mentions remain (e.g. `limiter.py`,
 `chat_turn_persist.py`, `git_service.py` headers; process-guard regexes) —
 those are not imports.
@@ -111,9 +100,7 @@ a nonempty unmatched message selects `plain_router`, whose abstain
 (`None`) also falls back to the owned no-LLM outcome.
 `pipeline_fallback_result()` (never `None`) is that fallback;
 the sync pipeline lane runs `run_pipeline_sync_turn` itself while the stream
-pipeline lane submits through the coordinator. Graph-era HTTP and the node
-editor are retired; `retired_pipeline_registry` is an always-empty shape
-stub. Do not delete pipeline code by keyword.
+pipeline lane submits through the coordinator. Do not delete pipeline code by keyword.
 
 **Unified saver policy (B1, integrated):** both pipeline savers route
 through the shared `make_assistant_saver`, so cancellation/system rows
@@ -124,7 +111,7 @@ independently. Pinned by the updated
 `test_chat_persistence_policy.py`; logged as `[ERR-20261001-001]`
 (Fixed). Do not reintroduce a lane-local persist-anything saver.
 
-**Discord inbound chat gateway:** retired (2026-09). See [`extension-boundaries.md`](extension-boundaries.md) and [`../reviews/discord-cleanup-2026-09.md`](../reviews/discord-cleanup-2026-09.md).
+**Discord:** no inbound chat gateway; see [`extension-boundaries.md`](extension-boundaries.md).
 
 **Discord channel read/post (keep; no gateway required):** `python -m api.discord_cli` (REST GET) and `discord.post` (REST POST via `api.discord_ops` / `project_actions`). Token from `src/.env` does not start a gateway. Per-project aliases: `{project}/.cuttle/actions/discord-post.yaml`. Arbitrary snowflakes cannot bypass the post allowlist.
 
@@ -200,7 +187,7 @@ service; Flask serialize/SSE transport stays in the route.
 | Project commands/actions | `{project}/.cuttle/` + global `.cuttle_global/` |
 | Brain / context compile | `src/api/cuttle_brain/` |
 
-Graph-era **HTTP** `POST /api/execute-tool` and `_execute_remote_agent_tool` are fully removed. Execution is `api.agent_harness.runners` → `kernel.run_agent_web_command`; turn orchestration is `api.chat_turn_workflow`, persistence `api.chat_turn_persist`.
+Execution is `api.agent_harness.runners` → `kernel.run_agent_web_command`; turn orchestration is `api.chat_turn_workflow`, persistence `api.chat_turn_persist`.
 
 **Turn persistence:** `api.chat_turn_persist` owns `make_assistant_saver` (skip guards: supervised-owned rows, empty failures, `[CANCELLED]`, `ui == 'system'`, cancelled turns), `persist_user_turn` (badge/history/project merge), and `persist_auth_user_message`. All take explicit `db` + `request_data` (captured once at ingress) — no Flask reads inside. The entry wrappers only inject project/metadata/titler shapers. Stream-thread saves merge the captured body instead of an empty re-read.
 
@@ -260,8 +247,7 @@ locked atomic persistence. `src/settings.json` owns server preferences,
 `src/data/config/ui_state.json` owns `ui_layout`/`shell_workspaces` (all gitignored).
 Existing unversioned settings stay monolithic until the guarded cold-start migration;
 `schema_version: 1` records the split, independently of the release SemVer.
-Retired graph settings, node-editor preferences, graph sandbox, and inbound Discord
-channel config are removed. Zero `/api/settings` routes remain on the Flask root.
+No `/api/settings` routes live on the Flask root.
 
 **Model/runtime preference store:** `core.config.RuntimeConfig` owns
 `src/data/config/runtime_config.json`, resolved by `core.runtime_paths.runtime_config_path`
@@ -277,7 +263,7 @@ consume the shared identity through `git_service.stage_and_commit` and
 `scripts.utilities.git_pending_changes`. See `.cuttle/docs/github-app.md`.
 Runtime/model preferences remain separate from SettingsManager's scoped stores;
 these stores are not merged. Browser `localStorage` is still device-specific;
-saved server UI state is still install-wide, not newly account-scoped. `src/bot.py` and its obsolete gateway-owner tests are removed.
+saved server UI state is still install-wide, not newly account-scoped.
 
 ---
 
@@ -391,7 +377,7 @@ remain where they were. Nothing here is a proposed interface.
 |---|---|---|---|
 | Action-card render | page `formatMessage` + `actionFormBlocks` placeholder array + narrow `renderActionFormCard` adapter (pre-rendered preview, explicit session/esc in; all in `chat_page.js`); card HTML/render planning `CuttleChatActionForms.renderActionFormCardHtml` (`chat_action_forms.js`, pure no-DOM); page `activateEnhancements` (non-card helpers only) + narrow adapters (`dismissOpenInteractiveCards`, `runningWatchJobIds`, `formAwaitingSessionIdFromCard`, cross-pane listener) delegating to the card-effects controller; card mount/submission/dismissal, lock/progress DOM, watch/restart loops, choice storage, adoption and linked-restart recovery in `CuttleChatActionCards.mountCards` (`chat_action_cards.js`, one instance per chat root, explicit host capabilities); backend `rewrite_action_forms`, `merge_qa_resume_specs` (`action_forms.py`), `prepare_assistant_text_for_actions` (`project_actions.py`) | card lock/selection attrs, watch timers, HMAC-signed persisted specs, one-writer answer bubble (`sendMessage` only) | `test_chat_action_forms.py`, `test_action_forms.py`, `test_action_form_routes.py`, `test_chat_action_card_render.py` (Node render battery, 16), `test_chat_action_cards.py` (Node controller contract, 3), `e2e/test_chat_action_card_render.py` (isolated browser, 3), `e2e/test_chat_action_cards_controller.py` (isolated browser, 7), `e2e/test_chat_action_card_effects.py` (23 lifecycle/submission/delivery cases) |
 | History sync / recovery | page timers `messageSyncTimer`, `startMessageSync`, `stopMessageSync`, `scheduleNextMessageSync`, `syncSessionMessagesFromServer` (all in `chat_page.js`); `recoverChatResult`, `recoverChatResultWithRetries`, per-message sync classification (`chat_pending_result.js`); generation tokens `createGenerationState`/`beginGeneration`/`endGeneration` and sync claim transitions `createSyncState`/`claimSync`/`isSyncCurrent`/`finishSync` (`chat_generation.js`); byte reads `CuttleChatStream.readEvents` (`chat_stream.js`); backend `finalize_stream_result` (`chat_turn_workflow.py`), `make_assistant_saver` skip guards (`chat_turn_persist.py`), `current_turn`/`is_stale_turn`/`is_turn_cancelled` (`chat_delivery.py`) | busy lock, one sync-claim state (replacement invalidates old finishers), existing page navigation sequence (A→B→A fence), sync cursor/timers, turn tokens, pending-result store, assistant-row skip guards; saver takes explicit `db` + captured `request_data` | `test_chat_turn_persist.py`, `test_chat_turn_workflow.py`, `test_chat_coordinator_acceptance.py`, P5-E/P5-F oracles, `test_stop_refresh_live_status.py`, `test_chat_stream.py`, `test_chat_generation.py`, `e2e/test_chat_stream_reader.py`, `e2e/test_chat_sync_lifetime.py`, `e2e/test_shadow_chat_stop_resend.py` |
-| Pane layout | `snapshotLayoutTree`, `flattenLayoutLeaves`, `pageWithPaneSession`; shell maps `columnState`, `lastChatByColumn`; `CuttleSpaces.*` (`src/web/js/spaces/`); backend `_shell_panes_snapshot`, `GET/POST /api/shell/panes`, `.../panes/<n>/messages` (all in `web_chat_api.py`); agent read `python -m api.panes_cli` | `columnState`, `lastChatByColumn`, saved-layout shape (restore-compatible); leaf/group normalization mixed with DOM reads | `test_shell_panes.py`, `test_shell_workspaces.py`, `test_pane_space_drag.py`, `test_panes_cli.py`; isolated `e2e/test_app_shell_layout.py` (6: nested restore/flex, real close, pointer focus, Spaces/reload and v1 compatibility; shell kept as-is, see `docs/reviews/pane-layout-fences.md`) |
+| Pane layout | `snapshotLayoutTree`, `flattenLayoutLeaves`, `pageWithPaneSession`; shell maps `columnState`, `lastChatByColumn`; `CuttleSpaces.*` (`src/web/js/spaces/`); backend `_shell_panes_snapshot`, `GET/POST /api/shell/panes`, `.../panes/<n>/messages` (all in `web_chat_api.py`); agent read `python -m api.panes_cli` | `columnState`, `lastChatByColumn`, saved-layout shape (restore-compatible); leaf/group normalization mixed with DOM reads | `test_shell_panes.py`, `test_shell_workspaces.py`, `test_pane_space_drag.py`, `test_panes_cli.py`; isolated `e2e/test_app_shell_layout.py` (6: nested restore/flex, real close, pointer focus, Spaces/reload and v1 compatibility; shell layout restoration remains covered by that suite) |
 | Pending-change polling | `reconcileChatProject` → `reportProjectToShell` (`chat_page.js`); `CuttlePendingChangesPanel.create` (`pending_changes_panel.js`); existing `pollPendingChangesHub` / `refreshPendingChangesPath` (`app_shell.js`) | shell column→project map, per-path in-flight coalescing; standalone-only panel interval; explicit refresh messages retained | `e2e/test_pending_changes_polling.py`, `e2e/test_shared_diff_modal.py`; opt-in `e2e/test_chat_cost_profile.py` |
 | Config | HTTP `settings_routes.py` (`settings_bp`; bot/model branch via `get_config()`); defaults `get_settings_manager()` (`settings_manager.py`); `RuntimeConfig.load_config`/`save_config` (`core/config.py`) — file defaults to `src/data/config/runtime_config.json` via `runtime_paths.runtime_config_path()` (legacy `src/bot_config.json` retained until migration) (never cwd); path conventions `core/runtime_paths.py` | shell settings vs runtime/model preferences (two stores kept; legacy `src/` copy remains authoritative until migration, repo-root copy untouched, no auto-merge); unknown-key preservation on save | `test_settings_routes.py`, `test_runtime_paths.py`, `test_runtime_config_paths.py` |
 
@@ -409,19 +395,11 @@ Canonical: `python -m api.*` (`.cuttle_global/docs/agent-ops-cli.md`). Global ac
 
 ---
 
-## Legacy / superseded (see audit)
+## Naming notes
 
-Graph JSON pipelines and the node editor are **retired**. Jobs live path: `/api/cuttle-jobs` + workers. Graph `fetch` leftovers remain in `jobs_page.html` / `job_insight.html` until stream 1. Telegram/Slack HTTP is **unwanted**. Discord REST read/post does **not** use a gateway process. Extension map: [`extension-boundaries.md`](extension-boundaries.md). Historical consumer tables: [`../reviews/graph-discord-consumers.md`](../reviews/graph-discord-consumers.md).
-
-Still present (verified): port-5000 time-series stack
-(`src/tests/reporting/start_history_server.py`), control panel HTML. Removed (G1, proved
-unrouted — explicit per-file routes only, no HTML wildcard, no startup/test
-consumer): `landing_page_backup.html` (historical mentions in reviews stay as
-history). Gone (prior map references corrected above):
-`src/scripts/launchers/`, `src/launcher.py`. “Pipeline” still names the
-active no-LLM fallback: do not delete it by keyword. Keep Discord REST
-operations, active execution tracking, query tracking, and live BotConfig
-consumers.
+“Pipeline” still names the active no-LLM fallback: do not delete it by keyword.
+Discord REST read/post does **not** use a gateway process. Extension map:
+[`extension-boundaries.md`](extension-boundaries.md).
 
 ---
 

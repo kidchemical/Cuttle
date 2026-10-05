@@ -131,7 +131,7 @@ function findProjectById(id) {{ return CuttleChatProject.findProjectById(project
 function findDefaultProject() {{ return CuttleChatProject.findDefaultProject(projects, readStarredProject()); }}
 function projectFieldsFromServerSession(s) {{ return CuttleChatProject.projectFieldsFromServerSession(s); }}
 function renderProjectChips() {{}}
-function refreshTypingIndicatorProjectChip() {{}}
+function refreshTypingIndicatorHeaderBadges() {{}}
 function schedulePendingChangesRefresh() {{}}
 function reportProjectToShell() {{}}
 function refreshChatWidgets() {{}}

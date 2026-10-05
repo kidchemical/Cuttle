@@ -113,9 +113,9 @@ User-requested capabilities. Format: `[FEAT-YYYYMMDD-XXX] capability_name`
 
 - **Priority:** High · **Status:** In Progress · **Area:** workers / multi-device / orchestrator
 - **Requested capability:** LAN device workers (orthogonal to Electron Host/Client UI): register capabilities + heartbeats; host-first job queue (hybrid — durable queue may move to an always-on host later); **agent-agnostic** intent-aware scheduling (Context Compiler + platform verbs / host classifier — not per-harness `/cursor` tips); generic jobs (file copy, shell); Blender CLI frame sharding as mesh benchmark **without** requiring Flamenco; optional Flamenco/build backends later; agent-to-agent / local-LLM-on-worker later. Jobs Devices = observability only.
-- **User context:** CH-000391 — run Cuttle on laptop + tower; Client mode should also run (or default) worker mode so tower can e.g. copy files from Yoga Desktop or farm Blender frames across GPUs. ChatGPT framing: one workspace / several computers; orchestrator + backends. Clarified: teach **Cuttle**, not sticky agents; smart batching when workers available.
+- **User context:** CH-000391 — run Cuttle on laptop + tower; Client mode should also run (or default) worker mode so tower can e.g. copy files from a client desktop or farm Blender frames across GPUs. ChatGPT framing: one workspace / several computers; orchestrator + backends. Clarified: teach **Cuttle**, not sticky agents; smart batching when workers available.
 - **Complexity:** XL
-- **Progress:** W0–W2.5 done; W2b blender job/shard code done + JamBit v11 dogfood; **W2b+ work-steal chunks (default), per-frame result analytics, EWMA `render_profile`** code done. W2c Client daemon + `cuttle_self_update` / allowlisted `shell` recipes code done. Remaining: content-addressed staging, optional auto_mesh, weighted static plans using profiles, W4.
+- **Progress:** W0–W2.5 done; W2b blender job/shard code done + sample-scene dogfood; **W2b+ work-steal chunks (default), per-frame result analytics, EWMA `render_profile`** code done. W2c Client daemon + `cuttle_self_update` / allowlisted `shell` recipes code done. Remaining: content-addressed staging, optional auto_mesh, weighted static plans using profiles, W4.
 - **Related:** `docs/guides/CUTTLE_WORKERS.md`, `.cuttle_global/docs/cuttle-workers.md`, `docs/ROADMAP.md`, `src/api/cuttle_jobs/`, `src/api/device_workers/`, `src/api/discovery_mdns.py`, `.cuttle_global/docs/cuttle-jobs.md`
 
 ## [FEAT-20260917-002] mobile_worker_sensor_edge
@@ -170,7 +170,7 @@ User-requested capabilities. Format: `[FEAT-YYYYMMDD-XXX] capability_name`
 
 - **Priority:** Medium · **Status:** In progress · **Area:** tools / MCP
 - **Requested capability:** Local ComfyUI + Microsoft TRELLIS.2 for textured 3D assets from prompts and reference images, callable from Cuttle and other agents via MCP.
-- **User context:** Game/Unity asset pipeline (CH-000184). RTX 3080 10GB — low-VRAM workflows. Engine installed at `F:\AI\ComfyUI-Trellis` (Python 3.11), not in the Cuttle git tree.
+- **User context:** Game/Unity asset pipeline (CH-000184). Low-VRAM workflows with a separately installed engine (Python 3.11).
 - **Notes:** TRELLIS.2-4B weights complete 2026-08-19 (~16.2 GB, 9 safetensors). DINOv3 still gated; generation blocked until HF license + login.
 - **Complexity:** L
 - **Related:** `.cuttle_global/personal/docs/comfyui-trellis2.md` (optional local workflow), `src/tools/comfyui/`
@@ -224,7 +224,7 @@ User-requested capabilities. Format: `[FEAT-YYYYMMDD-XXX] capability_name`
 
 - **Priority:** Low · **Status:** Proposed · **Area:** workers / cuttle-jobs / mesh
 - **Requested capability:** Share one render/compute farm across many per-teammate Hosts. Decided direction: shared `cuttle-jobs` queue (Gitea-backed) as the commons — hosts submit, farm polls — not mesh multihoming. Worker loops stay single-homed (one coordinator URL + token per process); mesh membership remains per-host for personal devices.
-- **User context:** CH-000764 — JamBit HQ model: every employee runs a Host, one farm serves all. Explicitly rejected: N worker registrations per machine (static split, uncoordinated contention) and manual coordinator re-pointing.
+- **User context:** CH-000764 — Shared organization model: every employee runs a Host, one farm serves all. Explicitly rejected: N worker registrations per machine (static split, uncoordinated contention) and manual coordinator re-pointing.
 - **Notes:** Claim protocol already has capability ads, leases, heartbeats; multihoming would still need cross-coordinator capacity accounting to avoid double-booking a GPU. Queue beats mesh gossip on fairness, persistence, debuggability. Do not build until a second Host needs the farm.
 - **Complexity:** M (shared queue posture) / XL (true multihoming — not recommended)
 - **Related:** `.cuttle_global/docs/cuttle-workers.md`, `src/api/cuttle_jobs/`, `src/api/device_workers/worker_loop.py`, `[FEAT-20260928-002]`

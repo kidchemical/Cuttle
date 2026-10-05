@@ -658,16 +658,3 @@ def test_bundled_manifest_schema_and_no_install_flags():
         assert problem is None, f"{manifest.id}: {problem}"
         assert manifest.auto_install is False, manifest.id
         assert manifest.install_kind in ("", "npm_global", "script_url"), manifest.id
-
-
-def test_cursor_cli_legacy_alias_normalizes_to_cursor():
-    """P5-E: the legacy alias resolves identically on every surface."""
-    from api.agent_harness import catalog
-
-    direct = catalog.match_slash_command("/cursor hello")
-    assert direct is not None and direct[0] == "cursor"
-    assert catalog.match_slash_command("/cursor-cli hello") == direct
-    assert catalog.match_slash_command("/cursor-cli hello x") == (
-        "cursor",
-        "hello x",
-    )

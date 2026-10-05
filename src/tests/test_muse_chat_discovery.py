@@ -110,7 +110,7 @@ def test_chat_store_addon_names_the_db_and_warns_off_empty_searches():
 def test_muse_prompt_carries_chat_context_when_the_user_asks_about_chats(monkeypatch):
     """Regression: `/muse` built its prompt with no pane map and no DB pointer.
 
-    `_run_muse_web_command` only called `with_cuttle_ui_capabilities`, unlike the
+    `_run_harness_web_command("muse", …)` only called `with_cuttle_ui_capabilities`, unlike the
     remote-agent path which prepends `_build_shell_pane_prompt_addon`.
     """
     from api import web_chat_api as w
@@ -156,7 +156,7 @@ def test_muse_prompt_stays_lean_for_unrelated_work(monkeypatch):
 
 
 def test_muse_execution_sends_the_enriched_prompt_to_the_cli(tmp_path, monkeypatch):
-    """End-to-end through `_run_muse_web_command`: the CLI must receive it."""
+    """End-to-end through `_run_harness_web_command("muse", …)`: the CLI must receive it."""
     from api import web_chat_api as w
     import scripts.utilities.muse_cli_tool as muse_mod
     from scripts.utilities import muse_cli_session_store as store
@@ -173,7 +173,8 @@ def test_muse_execution_sends_the_enriched_prompt_to_the_cli(tmp_path, monkeypat
     monkeypatch.setattr(MuseCliTool, "execute_prompt", fake_execute_prompt)
     monkeypatch.setattr(store, "_repo_root", lambda: tmp_path)
 
-    res = w._run_muse_web_command(
+    res = w._run_harness_web_command(
+        "muse",
         "what chats do I have open?",
         "muse-chat-discovery",
         project_path=str(tmp_path),

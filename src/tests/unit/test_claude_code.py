@@ -44,7 +44,7 @@ def test_claude_pattern_matching():
 
 def test_claude_tool_import_and_cwd():
     from scripts.utilities.claude_cli_tool import ClaudeCliTool, ClaudeCodeTool
-    from scripts.utilities.claude_code_tool import get_claude_code_tool
+    from scripts.utilities.claude_cli_tool import get_claude_code_tool
 
     tool = get_claude_code_tool("unit")
     assert isinstance(tool, ClaudeCodeTool)

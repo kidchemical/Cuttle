@@ -14,7 +14,7 @@ When you add a backend feature:
 2. Do **not** add a new import from `web_chat_api` into a leaf module if a helper can live next to its owner.
 3. Do **not** start a structural extraction unless product work is blocked (regressions, duplicated routes, or the file is slowing the change). Extraction is a separate initiative, not a prerequisite for building Workers/GUI/dashboards. Completed extractions (settings, projects, Git, action-forms, tasks, live-status/status-queues, harness runners) are done — do not re-extract them.
 
-Related: [`MODULARITY.md`](MODULARITY.md), [`docs/ROADMAP.md`](../ROADMAP.md), security residuals in [`docs/reviews/security-hardening-2026-09.md`](../reviews/security-hardening-2026-09.md).
+Related: [`MODULARITY.md`](MODULARITY.md), [`docs/ROADMAP.md`](../ROADMAP.md), and [extension boundaries](../architecture/extension-boundaries.md).
 
 Tracked (historical references, not verified current status — do not
 implement in the same breath as product features; #3 predates the
@@ -135,7 +135,6 @@ routes each).
 | `/api/pairing` | user/DM pairing (not worker pairing) |
 | `/api/cursor-agent`, `/api/project-commands` | harness catalog / `api.project_commands` |
 | `/api/mobile`, `/api/supervised`, `/api/agent-context`, `/api/agent-defaults` | respective owners |
-| `/api/start-ungit` | **active** (owner-gated Ungit launch) — not a retired stub |
 | `/api/start-launcher`, `/api/stop-launcher`, `/api/start-webapi`, `/api/stop-webapi`, `/api/start-discord`, `/api/stop-discord` | **410 stubs** via `_legacy_process_control_gone_response` — do not revive |
 | HTML shells (`/`, `/chat_page.html`, Jobs, Dashboards, …) | static; fine to keep in the composition root |
 | Static `/css` `/js` `/output` `/logs` `/sounds` | |

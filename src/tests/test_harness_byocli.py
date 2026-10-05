@@ -34,5 +34,3 @@ def test_bundled_manifests_carry_no_install_recipes():
         assert not manifest.install_package, agent_id
         assert not manifest.install_url_windows, agent_id
         assert not manifest.install_url_posix, agent_id
-        assert not manifest.install_sha256_windows, agent_id
-        assert not manifest.install_sha256_posix, agent_id

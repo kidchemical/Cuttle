@@ -786,7 +786,8 @@ def test_muse_web_success_returns_agent_model(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(MuseCliTool, "execute_prompt", fake_execute_prompt)
     monkeypatch.setattr(store, "_repo_root", lambda: tmp_path)
 
-    res = w._run_muse_web_command(
+    res = w._run_harness_web_command(
+        "muse",
         "say hi",
         "muse-badge-session",
         project_path=str(tmp_path),
@@ -888,20 +889,23 @@ def test_muse_model_command_sets_and_lists(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(muse_mod, "muse_available", lambda: True)
     monkeypatch.setattr(store, "_repo_root", lambda: tmp_path)
 
-    listing = w._run_muse_web_command(
+    listing = w._run_harness_web_command(
+        "muse",
         "model", "muse-model-session", project_path=str(tmp_path)
     )
     assert "muse-spark-1.1" in listing["response"]
     assert "✅ current" in listing["response"]
 
-    setter = w._run_muse_web_command(
+    setter = w._run_harness_web_command(
+        "muse",
         "model muse-spark-1.1", "muse-model-session", project_path=str(tmp_path)
     )
     assert setter["agent_model"] == "muse-spark-1.1"
     assert "muse_model" not in setter
     assert store.load_muse_model("muse-model-session") == "muse-spark-1.1"
 
-    reset = w._run_muse_web_command(
+    reset = w._run_harness_web_command(
+        "muse",
         "/model default", "muse-model-session", project_path=str(tmp_path)
     )
     assert reset["agent_model"] == DEFAULT_MUSE_MODEL
@@ -934,7 +938,7 @@ def test_muse_session_model_is_used_for_the_run(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(store, "_repo_root", lambda: tmp_path)
     store.save_muse_model("muse-pinned", "muse-spark-1.2-contributor")
 
-    res = w._run_muse_web_command("say hi", "muse-pinned", project_path=str(tmp_path))
+    res = w._run_harness_web_command("muse", "say hi", "muse-pinned", project_path=str(tmp_path))
 
     assert seen["model"] == "muse-spark-1.2-contributor"
     assert res["agent_model"] == "muse-spark-1.2-contributor"
@@ -953,7 +957,7 @@ def test_muse_clear_session_reply(tmp_path: Path, monkeypatch):
         str(tmp_path), "muse-clear", "3d64e574-a415-4c86-961b-d330058b5491"
     )
 
-    res = w._run_muse_web_command("new", "muse-clear", project_path=str(tmp_path))
+    res = w._run_harness_web_command("muse", "new", "muse-clear", project_path=str(tmp_path))
 
     assert res["type"] == "muse_command"
     assert "Session cleared" in res["response"]

@@ -436,7 +436,7 @@ def test_options_include_jev():
     with w.app.test_client() as client:
         res = client.get(
             "/api/agent-router/options",
-            environ_base={"REMOTE_ADDR": "192.168.1.77"},
+            environ_base={"REMOTE_ADDR": "192.0.2.77"},
         )
         assert res.status_code == 401
 

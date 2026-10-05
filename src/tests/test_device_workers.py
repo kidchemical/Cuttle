@@ -25,8 +25,8 @@ def worker_db(tmp_path, monkeypatch):
 
 def test_register_and_list_workers(worker_db):
     w = worker_db.upsert_worker(
-        worker_id="yoga",
-        hostname="YOGA",
+        worker_id="worker-a",
+        hostname="WORKER-A",
         os_name="Windows",
         capabilities={"filesystem": True, "blender": True},
         load={"cpu_pct": 10},
@@ -34,7 +34,7 @@ def test_register_and_list_workers(worker_db):
         ac_power=True,
         meta={"cuttle_version": "0.2.5"},
     )
-    assert w["worker_id"] == "yoga"
+    assert w["worker_id"] == "worker-a"
     assert w["cuttle_version"] == "0.2.5"
     listed = worker_db.list_workers(stale_after=60)
     assert len(listed) == 1
@@ -43,10 +43,10 @@ def test_register_and_list_workers(worker_db):
     assert listed[0]["cuttle_version"] == "0.2.5"
 
     # Heartbeat with empty meta must preserve version + RTT
-    worker_db.patch_worker_meta("yoga", {"last_rtt_ms": 42.5, "last_rtt_at": time.time()})
+    worker_db.patch_worker_meta("worker-a", {"last_rtt_ms": 42.5, "last_rtt_at": time.time()})
     worker_db.upsert_worker(
-        worker_id="yoga",
-        hostname="YOGA",
+        worker_id="worker-a",
+        hostname="WORKER-A",
         os_name="Windows",
         capabilities={"filesystem": True},
         meta={"cuttle_version": "0.2.5"},
@@ -310,10 +310,10 @@ def test_target_worker_id_filters_claim(worker_db):
     worker_db.submit_job(
         job_type="ping",
         params={},
-        target_worker_id="yoga",
+        target_worker_id="worker-a",
     )
     assert worker_db.claim_jobs(worker_id="tower", capabilities={}) == []
-    claimed = worker_db.claim_jobs(worker_id="yoga", capabilities={})
+    claimed = worker_db.claim_jobs(worker_id="worker-a", capabilities={})
     assert len(claimed) == 1
 
 
@@ -408,7 +408,7 @@ def test_auth_loopback_without_token(monkeypatch):
 
     class Remote:
         headers = {}
-        remote_addr = "192.168.1.50"
+        remote_addr = "192.0.2.50"
 
     ok2, err2 = auth_mod.authorize_worker_request(Remote())
     assert not ok2
@@ -418,12 +418,12 @@ def test_auth_enrolled_token(worker_db, monkeypatch):
     from api.device_workers import auth as auth_mod
 
     monkeypatch.setattr(auth_mod, "worker_token", lambda: "")
-    enrolled = worker_db.enroll_device(worker_id="yoga", hostname="YOGA", remote_addr="192.168.1.40")
+    enrolled = worker_db.enroll_device(worker_id="worker-a", hostname="WORKER-A", remote_addr="192.0.2.40")
     monkeypatch.setattr("api.device_workers.store.get_store", lambda: worker_db)
 
     class Good:
         headers = {"Authorization": f"Bearer {enrolled['token']}"}
-        remote_addr = "192.168.1.40"
+        remote_addr = "192.0.2.40"
 
     assert auth_mod.authorize_worker_request(Good())[0] is True
 
@@ -443,8 +443,8 @@ def test_enroll_from_lan(worker_db, monkeypatch):
 
     r = client.post(
         "/api/workers/enroll",
-        json={"worker_id": "yoga", "hostname": "YOGA"},
-        environ_base={"REMOTE_ADDR": "192.168.1.40"},
+        json={"worker_id": "worker-a", "hostname": "WORKER-A"},
+        environ_base={"REMOTE_ADDR": "192.0.2.40"},
     )
     assert r.status_code == 200
     data = r.get_json()
@@ -453,9 +453,9 @@ def test_enroll_from_lan(worker_db, monkeypatch):
     # Remote register with enrolled token
     r2 = client.post(
         "/api/workers/register",
-        json={"worker_id": "yoga", "hostname": "YOGA", "capabilities": {"filesystem": True}},
+        json={"worker_id": "worker-a", "hostname": "WORKER-A", "capabilities": {"filesystem": True}},
         headers={"Authorization": f"Bearer {data['token']}"},
-        environ_base={"REMOTE_ADDR": "192.168.1.40"},
+        environ_base={"REMOTE_ADDR": "192.0.2.40"},
     )
     assert r2.status_code == 200
 
@@ -467,13 +467,13 @@ def test_auth_bearer_token(monkeypatch):
 
     class Bad:
         headers = {"Authorization": "Bearer nope"}
-        remote_addr = "192.168.1.50"
+        remote_addr = "192.0.2.50"
 
     assert auth_mod.authorize_worker_request(Bad())[0] is False
 
     class Good:
         headers = {"Authorization": "Bearer secret"}
-        remote_addr = "192.168.1.50"
+        remote_addr = "192.0.2.50"
 
     assert auth_mod.authorize_worker_request(Good())[0] is True
 
@@ -502,8 +502,8 @@ def test_flask_workers_routes(worker_db, monkeypatch):
     r = client.post(
         "/api/workers/register",
         json={
-            "worker_id": "yoga",
-            "hostname": "YOGA",
+            "worker_id": "worker-a",
+            "hostname": "WORKER-A",
             "capabilities": {"filesystem": True},
         },
         environ_base={"REMOTE_ADDR": "127.0.0.1"},
@@ -515,7 +515,7 @@ def test_flask_workers_routes(worker_db, monkeypatch):
     assert r2.status_code == 200
     body = r2.get_json()
     assert body["enabled"] is True
-    assert any(w["worker_id"] == "yoga" for w in body["workers"])
+    assert any(w["worker_id"] == "worker-a" for w in body["workers"])
     assert "online_remote" in body
     assert "self_worker_id" in body
 
@@ -530,7 +530,7 @@ def test_flask_workers_routes(worker_db, monkeypatch):
 
     r4 = client.post(
         "/api/workers/jobs/claim",
-        json={"worker_id": "yoga", "capabilities": {"filesystem": True}},
+        json={"worker_id": "worker-a", "capabilities": {"filesystem": True}},
         environ_base={"REMOTE_ADDR": "127.0.0.1"},
     )
     assert r4.status_code == 200
@@ -540,7 +540,7 @@ def test_flask_workers_routes(worker_db, monkeypatch):
 
     r5 = client.post(
         f"/api/workers/jobs/{job_id}/complete",
-        json={"worker_id": "yoga", "result": {"pong": True}},
+        json={"worker_id": "worker-a", "result": {"pong": True}},
         environ_base={"REMOTE_ADDR": "127.0.0.1"},
     )
     assert r5.status_code == 200
@@ -579,8 +579,8 @@ def test_cancel_and_plan_and_blender_validate(worker_db, monkeypatch):
     assert r.get_json()["job"]["status"] == "cancelled"
 
     worker_db.upsert_worker(
-        worker_id="yoga",
-        hostname="YOGA",
+        worker_id="worker-a",
+        hostname="WORKER-A",
         capabilities={"blender": True, "filesystem": True},
     )
     # Force online via fresh last_seen (upsert already now)
@@ -758,7 +758,7 @@ def test_render_profile_ewma(tmp_path):
     from api.device_workers.store import DeviceWorkerStore
 
     db = DeviceWorkerStore(tmp_path / "dw.db")
-    db.upsert_worker(worker_id="yoga", hostname="yoga", capabilities={"blender": True})
+    db.upsert_worker(worker_id="worker-a", hostname="worker-a", capabilities={"blender": True})
     job = {
         "type": "blender_render",
         "status": "succeeded",
@@ -771,12 +771,12 @@ def test_render_profile_ewma(tmp_path):
             "elapsed_seconds": 20,
         },
     }
-    maybe_record_job_result(db, "yoga", job)
-    w = db.get_worker("yoga")
+    maybe_record_job_result(db, "worker-a", job)
+    w = db.get_worker("worker-a")
     assert w["meta"]["render_profile"]["eevee"]["ewma_spf"] == 2.0
     job["result"]["sec_per_frame"] = 1.0
-    maybe_record_job_result(db, "yoga", job)
-    w = db.get_worker("yoga")
+    maybe_record_job_result(db, "worker-a", job)
+    w = db.get_worker("worker-a")
     ewma = w["meta"]["render_profile"]["eevee"]["ewma_spf"]
     assert 1.0 < ewma < 2.0
     assert w["meta"]["render_profile"]["eevee"]["samples"] == 2

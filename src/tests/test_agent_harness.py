@@ -67,11 +67,12 @@ def test_match_slash_command():
     assert match_slash_command("/deepseek ping") == ("deepseek", "ping")
 
 
-def test_match_harness_slash_rewrites_cursor_cli_alias():
+def test_match_harness_slash_uses_catalog_commands():
     from api.web_chat_api import _match_harness_slash
 
-    assert _match_harness_slash("/cursor-cli list files") == ("cursor", "list files")
-    assert _match_harness_slash("/cursor-cli") == ("cursor", "")
+    assert _match_harness_slash("/cursor list files") == ("cursor", "list files")
+    assert _match_harness_slash("/codex") == ("codex", "")
+    assert _match_harness_slash("plain prompt") is None
 
 
 def test_public_catalog_shape():

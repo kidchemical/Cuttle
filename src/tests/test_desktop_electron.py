@@ -52,12 +52,12 @@ const remote = {{ ok: true, hash: 'bbbbbbbbbbbbbbbbbbbb', artifact: true }};
 const local = 'aaaaaaaaaaaaaaaaaaaa';
 if (p.desktopUpdateAvailable(remote, local, {{ packaged: true, clientMode: false, host: '127.0.0.1' }})) process.exit(2);
 if (p.desktopUpdateAvailable(remote, local, {{ packaged: true, clientMode: true, host: '127.0.0.1' }})) process.exit(3);
-if (!p.desktopUpdateAvailable(remote, local, {{ packaged: true, clientMode: true, host: '192.168.1.20' }})) process.exit(4);
-if (p.desktopUpdateAvailable(remote, remote.hash, {{ packaged: true, clientMode: true, host: '192.168.1.20' }})) process.exit(5);
-if (p.desktopUpdateAvailable(remote, local, {{ packaged: false, clientMode: true, host: '192.168.1.20' }})) process.exit(6);
+if (!p.desktopUpdateAvailable(remote, local, {{ packaged: true, clientMode: true, host: '192.0.2.20' }})) process.exit(4);
+if (p.desktopUpdateAvailable(remote, remote.hash, {{ packaged: true, clientMode: true, host: '192.0.2.20' }})) process.exit(5);
+if (p.desktopUpdateAvailable(remote, local, {{ packaged: false, clientMode: true, host: '192.0.2.20' }})) process.exit(6);
 if (p.desktopRole({{ clientMode: false, host: '127.0.0.1' }}) !== 'host') process.exit(7);
 if (p.desktopRole({{ clientMode: true, host: '127.0.0.1' }}) !== 'host') process.exit(8);
-if (p.desktopRole({{ clientMode: true, host: '192.168.1.20' }}) !== 'client') process.exit(9);
+if (p.desktopRole({{ clientMode: true, host: '192.0.2.20' }}) !== 'client') process.exit(9);
 console.log('ok');
 """
     proc = subprocess.run(

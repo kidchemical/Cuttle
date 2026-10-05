@@ -33,9 +33,6 @@ DEFAULT_MANAGED_FRAGMENTS = (
     "cuttle_daemon",
 )
 
-# Deprecated spoofable marker — kept only so tests prove it is ignored.
-LEGACY_SPOOFABLE_ENV = "CUTTLE_INTERNAL_RESTART"
-
 _PID_FLAGS = re.compile(
     r"(?i)(?:/PID|[-/]Id|ProcessId\s*=)\s*:?\s*(\d+)"
 )

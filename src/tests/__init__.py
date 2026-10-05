@@ -1,4 +1,4 @@
-"""Test suite for JamBit OS tools
+"""Cuttle test suite
 
 This package contains unit tests for all tool modules.
 """

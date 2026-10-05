@@ -101,7 +101,7 @@ def test_authenticated_route(monkeypatch):
     app.register_blueprint(settings_bp)
     monkeypatch.setattr(releases, 'check_releases', lambda **kwargs: {'state': 'latest', **kwargs})
     client = app.test_client()
-    assert client.get('/api/settings/releases', environ_base={'REMOTE_ADDR': '192.168.1.20'}).status_code == 401
+    assert client.get('/api/settings/releases', environ_base={'REMOTE_ADDR': '192.0.2.20'}).status_code == 401
     from api import http_authz
     monkeypatch.setattr(http_authz, 'current_user', lambda: {'id': 1, 'auth_provider': 'local'})
     res = client.get('/api/settings/releases?force=1')

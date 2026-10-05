@@ -201,8 +201,6 @@ def _manifest_from_dict(
         install_package=str(data.get("install_package") or "").strip(),
         install_url_windows=str(data.get("install_url_windows") or "").strip(),
         install_url_posix=str(data.get("install_url_posix") or "").strip(),
-        install_sha256_windows=str(data.get("install_sha256_windows") or "").strip().lower(),
-        install_sha256_posix=str(data.get("install_sha256_posix") or "").strip().lower(),
         executable_names=executable_names,
         auto_install=bool(data.get("auto_install", False)),
         credential_env=credential_env,
@@ -589,11 +587,6 @@ def match_slash_command(
     raw = (message or "").strip()
     if not raw.startswith("/"):
         return None
-    # Legacy alias kept for Discord / old clients; the catalog only
-    # declares /cursor. Normalized here so every surface (route lanes,
-    # compat entry, coordinator selection) resolves it identically.
-    if re.match(r"^/cursor-cli(\s|$)", raw, flags=re.I):
-        raw = "/cursor" + raw[len("/cursor-cli"):]
     for manifest in list_agent_manifests(project_path):
         token = manifest.slash_prefix().rstrip()
         esc = re.escape(token)

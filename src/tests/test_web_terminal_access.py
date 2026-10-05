@@ -50,15 +50,15 @@ def test_is_local_request_loopback():
 
 def test_is_local_request_same_pc_lan_ip():
     app = Flask(__name__)
-    with patch('api.lan_access.get_lan_ipv4', return_value='192.168.1.42'):
-        with app.test_request_context('/', environ_overrides={'REMOTE_ADDR': '192.168.1.42'}):
+    with patch('api.lan_access.get_lan_ipv4', return_value='192.0.2.42'):
+        with app.test_request_context('/', environ_overrides={'REMOTE_ADDR': '192.0.2.42'}):
             assert _is_local_request() is True
 
 
 def test_is_local_request_remote_lan_client():
     app = Flask(__name__)
-    with patch('api.lan_access.get_lan_ipv4', return_value='192.168.1.42'):
-        with app.test_request_context('/', environ_overrides={'REMOTE_ADDR': '192.168.1.99'}):
+    with patch('api.lan_access.get_lan_ipv4', return_value='192.0.2.42'):
+        with app.test_request_context('/', environ_overrides={'REMOTE_ADDR': '192.0.2.99'}):
             assert _is_local_request() is False
 
 
@@ -73,7 +73,7 @@ def test_terminal_status_local(terminal_app):
 
 def test_terminal_status_remote(terminal_app):
     with terminal_app.test_client() as client:
-        resp = client.get('/api/terminal/status', environ_overrides={'REMOTE_ADDR': '192.168.1.99'})
+        resp = client.get('/api/terminal/status', environ_overrides={'REMOTE_ADDR': '192.0.2.99'})
         assert resp.status_code == 403
         data = resp.get_json()
         assert data['success'] is False

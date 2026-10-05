@@ -1512,11 +1512,10 @@ def _cursor_agent_oneline_prompt(
 
 def handle_cursor_cli_command(command: str) -> str:
     """
-    Handle /cursor (and legacy /cursor-cli): one-shot `agent` prompts,
-    `--version` / `--help`, or `session …` for the legacy Discord session starter.
+    Handle /cursor: one-shot `agent` prompts or `--version` / `--help`.
 
     Args:
-        command: e.g. ``session My Unity Project``, ``fix the login bug``
+        command: e.g. ``fix the login bug``
     """
     print(f"🖥️ Cursor CLI Command: '{command}'")
 
@@ -1558,17 +1557,8 @@ def handle_cursor_cli_command(command: str) -> str:
         return (
             "**Cursor Agent** (`/cursor`)\n\n"
             f"• **Plain text** — one-shot prompt via Cursor Agent CLI ({agent_note}, `agent -p`)\n"
-            "• **`session <name-or-path>`** — legacy Discord-style agent session starter\n"
             "• **`--version`** / **`--help`**\n\n"
-            "Requires chat mode **Auto** or **Cloud** (blocked in Local).\n"
-            "(`/cursor-cli` still works as an alias.)"
-        )
-
-    # Legacy Discord GUI session starter — not part of the harness adapter.
-    if low.startswith("session ") or low.startswith("agent "):
-        return (
-            "[FAIL] Legacy `session` / GUI Cursor automation is deprecated. "
-            "Use `/cursor` with a prompt (Cursor Agent CLI)."
+            "Requires chat mode **Auto** or **Cloud** (blocked in Local)."
         )
 
     # One-shot headless Cursor Agent (`agent -p`)

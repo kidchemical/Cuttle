@@ -39,12 +39,12 @@ _DEFAULT_ANTHROPIC_TITLE_MODEL = "claude-haiku-4-5-20251001"
 
 # Leading slash tokens kept in the stored title so the history UI can render
 # them as chips (`/cursor ✨ Fix titles`). Includes project cmds (`/build`)
-# and `/cmd name` / `/pipeline id`.
+# and `/cmd name`.
 _LEADING_SLASH_RE = re.compile(
-    r"^/(?:cmd\s+[A-Za-z][\w-]*|pipeline\s+\S+|[A-Za-z][\w-]*)\b\s*",
+    r"^/(?:cmd\s+[A-Za-z][\w-]*|[A-Za-z][\w-]*)\b\s*",
     re.IGNORECASE,
 )
-_SKIP_SLASH_NAMES = {"help", "pipelines", "project", "cd"}
+_SKIP_SLASH_NAMES = {"help", "project", "cd"}
 _MAX_TITLE_SLASH = 3
 
 _inflight_lock = threading.Lock()

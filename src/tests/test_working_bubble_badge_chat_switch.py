@@ -50,7 +50,7 @@ def _load_chat_session_body(src: str) -> str:
 def test_load_chat_session_restores_sticky_before_remote_waiting_bubble():
     """Sticky chips must be restored before the mid-run working bubble is painted.
 
-    Otherwise ``currentCursorTypingSlashMeta()`` sees no agent chip and the
+    Otherwise ``currentTypingSlashMeta()`` sees no agent chip and the
     reopen path bakes a badge-less typing indicator.
     """
     src = CHAT_JS.read_text(encoding="utf-8")
@@ -83,7 +83,7 @@ def test_load_chat_session_refreshes_agent_badge_after_sticky_if_bubble_already_
     refresh_fn = _extract(
         src,
         "    function refreshTypingIndicatorHeaderBadges() {",
-        "    /** @deprecated Prefer refreshTypingIndicatorHeaderBadges",
+        "    /**\n     * Keep the in-memory auth session + last /messages hydrate in sync with the",
     )
     assert "currentTypingSlashMeta" in refresh_fn
     assert "messageHeaderBadgesHtml" in refresh_fn
@@ -121,7 +121,7 @@ def test_hub_early_paint_then_sticky_restore_adds_agent_badge():
     meta_fn = _extract(
         src,
         "    /**\n     * Sticky agent chip + preferred model/effort — used when typing UI is",
-        "    /** @deprecated Use currentTypingSlashMeta",
+        "    function syncPreferredModelFromResponse(data) {",
     )
     pending = _extract(
         src,
@@ -144,6 +144,7 @@ const slashPaletteSupplement = {{ preferredModel: 'auto', cursorModels: [] }};
 function getSessionPrefs(id) {{ return prefsMap[String(id)] || null; }}
 function updateSessionPrefs() {{}}
 function renderSlashChips() {{}}
+function refreshTypingIndicatorHeaderBadges() {{}}
 const document = {{ getElementById: () => null }};
 function enrichSlashCommandWithMuseModel(s) {{ return s; }}
 function enrichSlashCommandWithHermesModel(s) {{ return s; }}
@@ -217,7 +218,7 @@ def test_reopen_working_bubble_meta_requires_restored_sticky_chips():
     meta_src = _extract(
         src,
         "    /**\n     * Sticky agent chip + preferred model/effort — used when typing UI is",
-        "    /** @deprecated Use currentTypingSlashMeta",
+        "    function syncPreferredModelFromResponse(data) {",
     )
     assert "activeStickyAgentChip()" in meta_src
     assert "return null" in meta_src
@@ -247,6 +248,7 @@ function updateSessionPrefs(id, patch) {{
     prefsMap[String(id)] = Object.assign({{}}, prefsMap[String(id)] || {{}}, patch || {{}});
 }}
 function renderSlashChips() {{}}
+function refreshTypingIndicatorHeaderBadges() {{}}
 const document = {{ getElementById: () => null }};
 {chip_preds}
 {has_active}
@@ -310,7 +312,7 @@ def test_reopen_working_bubble_meta_covers_non_cursor_sticky_agents():
     meta_fn = _extract(
         src,
         "    /**\n     * Sticky agent chip + preferred model/effort — used when typing UI is",
-        "    /** @deprecated Use currentTypingSlashMeta",
+        "    function syncPreferredModelFromResponse(data) {",
     )
 
     for body, label in (

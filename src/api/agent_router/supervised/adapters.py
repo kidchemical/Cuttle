@@ -100,17 +100,19 @@ def _default_codex_runner() -> RunnerFn:
     from api.agent_router.supervised.test_isolation import guard_external_runner
 
     guard_external_runner("Codex CLI")
-    from api.agent_harness.runners import run_codex_web_command as _run_owned
+    from api.agent_harness.runners import run_harness_web_command
 
     def run(prompt, chat_session_id, status_queue=None, project_path=None, model=None, **kw):
         guard_external_runner("Codex CLI")
-        return _run_owned(
+        effort = kw.get("reasoning_effort")
+        return run_harness_web_command(
+            "codex",
             prompt,
             chat_session_id,
             status_queue=status_queue,
             project_path=project_path,
             model_override=model,
-            reasoning_effort=kw.get("reasoning_effort"),
+            execute_kwargs={"reasoning_effort": effort} if effort else None,
         )
 
     return run
@@ -120,11 +122,12 @@ def _default_cursor_runner() -> RunnerFn:
     from api.agent_router.supervised.test_isolation import guard_external_runner
 
     guard_external_runner("Cursor Agent CLI")
-    from api.agent_harness.runners import run_cursor_web_command as _run_owned
+    from api.agent_harness.runners import run_harness_web_command
 
     def run(prompt, chat_session_id, status_queue=None, project_path=None, model=None, **_kw):
         guard_external_runner("Cursor Agent CLI")
-        return _run_owned(
+        return run_harness_web_command(
+            "cursor",
             prompt,
             chat_session_id,
             status_queue=status_queue,

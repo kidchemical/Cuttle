@@ -230,7 +230,7 @@ def discover_git_workdirs(path: str) -> List[str]:
     - If ``path`` is itself inside a work tree, return that single toplevel
       (do not also pick nested child repos — avoids vendor noise).
     - Otherwise scan one level of children for ``.git`` (sibling-repo layout,
-      e.g. ``G:\\Dev\\Blender\\JamBit …``).
+      e.g. ``C:\\Projects\\ExampleProject …``).
     """
     if not path:
         return []

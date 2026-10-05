@@ -85,7 +85,7 @@ Chat ingress is transport-agnostic. Do not add platform-specific execution route
 ### Frontend
 
 The web UI is vanilla JS served by Flask at port 8080. Key files:
-- `src/web/landing_page.html` / chat shell — main web chat UI
+- `src/web/app_shell.html` (shell) + `src/web/chat_page.html` — main web chat UI
 - `src/web/router_editor.html` — agent router editor
 
 ### Settings & Routing

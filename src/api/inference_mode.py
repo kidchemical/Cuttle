@@ -40,9 +40,6 @@ def is_cloud_cli_slash_command(message: str) -> bool:
     low = message.lstrip('\ufeff\u200b\u200c\u200d\u2060').strip().lower()
     if not low.startswith('/'):
         return False
-    # Legacy alias /cursor-cli and canonical /cursor
-    if low == '/cursor-cli' or low.startswith('/cursor-cli '):
-        return True
     if low == '/cursor' or low.startswith('/cursor '):
         return True
     if low == '/claude' or low.startswith('/claude '):

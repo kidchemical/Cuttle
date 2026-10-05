@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-LAN = {"REMOTE_ADDR": "192.168.1.77"}
+LAN = {"REMOTE_ADDR": "192.0.2.77"}
 
 
 def _ctx(tmp_path, monkeypatch):

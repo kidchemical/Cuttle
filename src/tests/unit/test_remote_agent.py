@@ -52,7 +52,7 @@ def test_remote_agent_tool_route_is_gone():
 
 def test_claude_code_direct_path():
     """ClaudeCodeTool resolves absolute project paths as cwd."""
-    from scripts.utilities.claude_code_tool import ClaudeCodeTool
+    from scripts.utilities.claude_cli_tool import ClaudeCodeTool
 
     tool = ClaudeCodeTool(session_id="test_session", model="haiku")
     test_path = str(Path(__file__).resolve().parent)  # tests/unit/

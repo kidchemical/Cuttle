@@ -225,15 +225,11 @@ def run():
         print(f"FPS {fps}")
         assert fps["fps"] >= 30, f"low fps {fps}"
         # Screenshot
-        page.screenshot(path="C:/Users/MainUser/Desktop/verify_nav_history.png")
+        preview = src_root.parent / "temp" / "verify_nav_history.png"
+        preview.parent.mkdir(parents=True, exist_ok=True)
+        page.screenshot(path=str(preview))
         print("screenshot saved")
         browser.close()
-        # copy to src for reading
-        import shutil, pathlib
-        try:
-            shutil.copy("C:/Users/MainUser/Desktop/verify_nav_history.png", "C:/Projects/Cuttle/src/verify_nav_history.png")
-        except Exception as e:
-            print(f"copy failed {e}")
         return 0
 
 if __name__ == "__main__":

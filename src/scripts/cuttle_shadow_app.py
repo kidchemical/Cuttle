@@ -59,7 +59,6 @@ ALLOW_EXACT = frozenset({
     ("GET", "/api/status"),
     ("GET", "/"),
     ("GET", "/chat_page.html"),
-    ("GET", "/landing_page.html"),
 })
 # NOTE: no /favicon.ico route exists in the app (verified); browsers simply
 # 404 it, so it stays default-denied.

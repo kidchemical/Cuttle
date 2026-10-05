@@ -24,19 +24,9 @@ if str(src_root) not in sys.path:
 # network/API keys, or import retired modules.
 collect_ignore = [
     "e2e",
-    "unit/test_input_tools.py",
-    "unit/test_process_tools.py",
-    "unit/test_window_tools.py",
-    "unit/test_screenshot_tools.py",
-    "unit/test_ocr_tools.py",
-    "unit/test_windows_tools.py",
+    # Paid provider diagnostics: run by hand with CUTTLE_ALLOW_SPEND=1.
     "unit/test_api_key.py",
     "unit/test_openai_connection.py",
-    "unit/test_security_standalone.py",
-    "test_claude_usage.py",
-    "test_mcp_conversion.py",
-    "test_mcp_install.py",
-    "test_hello_world_parallelization.py",
 ]
 
 

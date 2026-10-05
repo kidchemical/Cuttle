@@ -10,7 +10,6 @@ and `--help`; do not assume every helper resolves paths the same way.
 
 - `claude_cli_tool.py`: Claude Code `claude -p`, resume and JSON usage.
 - `claude_cli_session_store.py`: per-chat resume/model state.
-- `claude_code_tool.py`: legacy re-export of the adapter.
 - Query inspector: `/query_log.html?id=<query_id>`; logs under
   `src/web/logs/query_data_<id>.json` are indexed by chat `query_id`.
 
@@ -35,5 +34,4 @@ $env:PYTHONPATH = "src"
 ```
 
 See [agent ops](../../../.cuttle_global/docs/agent-ops-cli.md),
-[architecture map](../../../docs/architecture/repository-map.md),
-[review snapshots](../../../docs/reviews/), and the [test suite](../../tests/).
+[architecture map](../../../docs/architecture/repository-map.md), and the [test suite](../../tests/).

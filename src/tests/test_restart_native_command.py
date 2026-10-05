@@ -137,7 +137,7 @@ def test_restart_is_dispatched_before_router_and_agent_branches():
     # (`/cursor` → `agent -p`). The old combined `/cursor(-cli)?` regex is gone.
     native_at = src.index("# Native Cuttle control command — must win over sticky agent prefixes.")
     cursor_cli_at = src.index(
-        "# Bundled agents (incl. legacy /cursor-cli → /cursor) go through the harness only."
+        "# Bundled agents go through the harness only."
     )
     assert native_at < cursor_cli_at
     assert chat_route  # sanity: file parsed as expected

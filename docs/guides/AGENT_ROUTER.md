@@ -119,7 +119,7 @@ Router page always re-read the file from disk.
 - **Agents in chat** — edit the JSON above (preferred path; it is the same
   source of truth), or call `PUT /api/router/config` with `{"use_cases": [...]}`
 - **Router page** — `/router_editor.html`: core routing, use-case cards, and
-  target health. `/node_editor.html` redirects there.
+  target health.
 
 ## Quality-regression signals ("is it sucking?") — basic
 

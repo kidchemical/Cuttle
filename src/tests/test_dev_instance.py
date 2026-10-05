@@ -416,7 +416,6 @@ def test_route_allowlist_contract():
     assert boot.DENY_CHAT_PREFIXES == ("/restart", "/cmd", "[button", "[action-form")
     assert not any("restart" in path for _, path in boot.ALLOW_EXACT)
     assert not any("action-form" in path for _, path in boot.ALLOW_EXACT)
-    assert not any("ungit" in path for _, path in boot.ALLOW_EXACT)
     assert not any("output" in path for _, path in boot.ALLOW_EXACT)
     assert boot.ALLOW_GET_PREFIXES == (
         "/static/", "/js/", "/css/", "/img/", "/sounds/",
@@ -740,7 +739,6 @@ def test_s1_two_shadows_dynamic():
                     ("GET", "/api/health"),
                     ("POST", "/api/flask/restart/status"),
                     ("POST", "/api/action-form/run"),
-                    ("GET", "/api/ungit/status"),
             ):
                 method, path = method_path
                 payload = {} if method == "POST" else None
@@ -753,11 +751,11 @@ def test_s1_two_shadows_dynamic():
             assert all("blocked route:" in entry
                        for entry in state["blocked_attempts"]), \
                 "route-level blocks only, no vendor/process/network probe"
-            assert len(state["blocked_attempts"]) == 4, \
+            assert len(state["blocked_attempts"]) == 3, \
                 state["blocked_attempts"]
             assert state["blocked_counts"] == {
                 "subprocess": 0, "socket": 0, "executor": 0,
-                "file": 0, "route": 4}, state["blocked_counts"]
+                "file": 0, "route": 3}, state["blocked_counts"]
 
             # Occupied port refused; existing owned listener unaffected.
             seed3 = di.prepare_snapshot(CANDIDATE, f"s1c-{tag}")

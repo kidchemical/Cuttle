@@ -23,8 +23,8 @@ except ImportError:  # pragma: no cover
 
 # Built-in web-chat slash heads that project commands must not shadow.
 RESERVED_SLASH_NAMES = frozenset({
-    "help", "pipelines", "pipeline", "project", "cd",
-    "cursor", "cursor-cli", "claude", "hermes", "codex", "muse",
+    "help", "project", "cd",
+    "cursor", "claude", "hermes", "codex", "muse",
     "opencode", "antigravity", "deepseek",
     "cmd", "commands", "skill", "skills",
     "model", "plan", "ask", "agent", "clear", "sandbox", "about",

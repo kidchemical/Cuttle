@@ -5484,8 +5484,6 @@
     }
 
     const slashPaletteSupplement = {
-        pipelines: [],
-        skills: [],
         cursorModels: [],
         preferredModel: 'auto',
         lastReportedModel: null,
@@ -6083,8 +6081,6 @@
     function loadSlashPaletteSupplement() {
         if (slashPaletteSupplement.loading || slashPaletteSupplement.loaded) return;
         slashPaletteSupplement.loading = true;
-        slashPaletteSupplement.pipelines = [];
-        slashPaletteSupplement.skills = [];
         slashPaletteSupplement.loaded = true;
         slashPaletteSupplement.loading = false;
         loadProjectCommandsForPalette();
@@ -6157,7 +6153,6 @@
         'command',
         'project-cmd',
         'project',
-        'pipeline',
         'skill',
         'cursor',
         'muse',
@@ -6192,38 +6187,6 @@
     function buildProjectCommandPaletteItems() {
         return CuttleChatSlash.buildProjectCommandPaletteItems(
             slashPaletteSupplement.projectCommands || []);
-    }
-
-    function buildPipelinePaletteItems() {
-        return slashPaletteSupplement.pipelines.map((p) => {
-            const id = String(p.id || p.name || '').trim() || 'unnamed';
-            const name = String(p.name || id).trim();
-            const desc = String(p.description || '').trim();
-            return {
-                category: 'pipeline',
-                prefix: '/pipeline ' + id + ' ',
-                label: name,
-                hint: desc || 'Run this pipeline via /pipeline',
-                meta: id,
-                pipelineId: id,
-            };
-        });
-    }
-
-    function buildSkillPaletteItems() {
-        return slashPaletteSupplement.skills.map((s) => {
-            const ref = String(s.ref || '').trim();
-            const name = String(s.name || s.id || ref).trim();
-            const desc = String(s.description || '').trim();
-            return {
-                category: 'skill',
-                prefix: '[Skill ' + ref + '] ',
-                label: name,
-                hint: desc || 'Ask the assistant to follow this SKILL.md',
-                meta: ref,
-                skillRef: ref,
-            };
-        });
     }
 
     function buildCursorModelPaletteItems(filterLower) {
@@ -7866,25 +7829,6 @@
         }));
     }
 
-    function prettyPipelineIdFromSlug(id) {
-        return String(id)
-            .split(/[_\s]+/)
-            .filter(Boolean)
-            .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-            .join(' ') || id;
-    }
-
-    function resolvePipelineChipFromId(id) {
-        const items = buildPipelinePaletteItems();
-        const found = items.find((i) => i.pipelineId === id);
-        const label = found ? found.label : prettyPipelineIdFromSlug(id);
-        return {
-            label,
-            meta: '/pipeline ' + id,
-            category: 'pipeline',
-        };
-    }
-
     /** Split a slash filter into tokens; all tokens must match (AND). */
     function slashPaletteFilterTokens(filterLower) {
         return CuttleChatSlash.slashPaletteFilterTokens(filterLower);
@@ -8521,9 +8465,7 @@
                     const active = i === sel ? ' is-active' : '';
                     const cat = cmd.category || 'command';
                     const catClass =
-                        cat === 'pipeline'
-                            ? ' slash-command-item--pipeline'
-                            : cat === 'skill'
+                        cat === 'skill'
                               ? ' slash-command-item--skill'
                               : cat === 'project-cmd'
                                 ? ' slash-command-item--project-cmd'
@@ -9149,7 +9091,7 @@
                 if (menuWait) {
                     menuWait.hidden = false;
                     menuWait.innerHTML =
-                        '<div class="slash-command-menu-status" role="status">Loading pipelines & skills…</div>';
+                        '<div class="slash-command-menu-status" role="status">Loading commands…</div>';
                 }
             } else {
                 hideSlashMenu(key);
@@ -9379,11 +9321,7 @@
         renderSlashChips('chat', document.getElementById('chatInput'));
         // Hub (phone) may have painted the working bubble before this restore —
         // re-apply agent + project chips onto any existing typing indicator.
-        if (typeof refreshTypingIndicatorHeaderBadges === 'function') {
-            refreshTypingIndicatorHeaderBadges();
-        } else if (typeof refreshTypingIndicatorProjectChip === 'function') {
-            refreshTypingIndicatorProjectChip();
-        }
+        refreshTypingIndicatorHeaderBadges();
     }
 
     function persistProjectForCurrentSession(opts) {
@@ -9467,7 +9405,6 @@
     /** Page-owned resolvers for the slash decision layer (chat_slash.js). */
     function slashParseDeps() {
         return {
-            resolvePipelineChip: (id) => resolvePipelineChipFromId(id),
             modelLabel: (mid) => preferredModelLabel(mid),
         };
     }
@@ -9488,7 +9425,6 @@
      */
     function slashCommandChipCategoryClass(category) {
         const cat = category || 'command';
-        if (cat === 'pipeline') return ' slash-command-chip--palette-pipeline';
         if (cat === 'skill') return ' slash-command-chip--palette-skill';
         if (cat === 'project-cmd') return ' slash-command-chip--palette-project-cmd';
         if (cat === 'cursor' || cat === 'cursor-model' || cat === 'cursor-cmd') {
@@ -9530,7 +9466,7 @@
             || cat === 'hermes-model' || cat === 'hermes-effort' || cat === 'hermes-cmd'
             || cat === 'opencode-model' || cat === 'opencode-effort' || cat === 'opencode-cmd'
             || cat === 'codex-model' || cat === 'codex-effort' || cat === 'codex-cmd'
-            || cat === 'pipeline' || cat === 'skill' || cat === 'project-cmd'
+            || cat === 'skill' || cat === 'project-cmd'
             || cat === 'project' || cat === 'warning'
         ) {
             return cat;
@@ -9976,7 +9912,7 @@
         });
     }
 
-    const TITLE_SLASH_SKIP = { help: 1, pipelines: 1, project: 1, cd: 1 };
+    const TITLE_SLASH_SKIP = { help: 1, project: 1, cd: 1 };
 
     function titleChipKey(c) {
         return CuttleChatSlash.titleChipKey(c);
@@ -10212,11 +10148,6 @@
             },
             sticky
         );
-    }
-
-    /** @deprecated Use currentTypingSlashMeta — kept for any stray callers. */
-    function currentCursorTypingSlashMeta() {
-        return currentTypingSlashMeta();
     }
 
     function syncPreferredModelFromResponse(data) {
@@ -11389,11 +11320,6 @@
         });
     }
 
-    /** @deprecated Prefer refreshTypingIndicatorHeaderBadges (agent + project). */
-    function refreshTypingIndicatorProjectChip() {
-        refreshTypingIndicatorHeaderBadges();
-    }
-
     /**
      * Keep the in-memory auth session + last /messages hydrate in sync with the
      * chip the user just picked. reconcileChatProject() prefers
@@ -11594,7 +11520,7 @@
             if (prefsStale) persistProjectForCurrentSession({ localOnly: true });
         }
         renderProjectChips();
-        refreshTypingIndicatorProjectChip();
+        refreshTypingIndicatorHeaderBadges();
         schedulePendingChangesRefresh(200);
         loadProjectCommandsForPalette();
         loadHarnessAgentsForPalette();
@@ -12598,7 +12524,7 @@
                     }
                     // Apply this session's project BEFORE the generating bubble is
                     // painted — otherwise the chip shows the previous chat's project
-                    // (common on phone when hopping from wwwJamBit → EP mid-run).
+                    // (common on phone when switching projects mid-run).
                     reconcileChatProject();
                     // Early refreshChatWidgets() above often still had the prior
                     // chip path; re-fetch now that project matches this session.
@@ -12663,7 +12589,7 @@
                     ) {
                         scheduleFollowupDrain(120);
                     }
-                    refreshTypingIndicatorProjectChip();
+                    refreshTypingIndicatorHeaderBadges();
                 }
             } catch (e) {
                 if (loadSeq !== _loadSessionSeq) return;
@@ -13498,7 +13424,7 @@
             if (initialStatus) updateRemoteWaitingStatus(initialStatus);
             // Status-only updates used to leave a stale project chip from the
             // chat we switched away from.
-            refreshTypingIndicatorProjectChip();
+            refreshTypingIndicatorHeaderBadges();
             return;
         }
         const messagesContainer = document.getElementById('chatMessages');
@@ -17745,8 +17671,8 @@
         if (!rest.startsWith('/')) return false;
         const name = rest.slice(1).split(/\s+/)[0].toLowerCase();
         const reserved = {
-            help: 1, pipelines: 1, pipeline: 1, project: 1, cd: 1,
-            cursor: 1, 'cursor-cli': 1, claude: 1, hermes: 1,
+            help: 1, project: 1, cd: 1,
+            cursor: 1, claude: 1, hermes: 1,
             codex: 1, muse: 1, opencode: 1, antigravity: 1, deepseek: 1,
             model: 1, plan: 1, ask: 1, agent: 1, clear: 1, sandbox: 1, about: 1,
         };

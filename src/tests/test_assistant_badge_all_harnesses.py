@@ -176,7 +176,7 @@ def test_history_panel_prefers_sticky_model_effort_over_bare_title():
     stubs = r"""
 const currentSessionId = null;
 const slashPaletteSupplement = {};
-const TITLE_SLASH_SKIP = { help: 1, pipelines: 1, project: 1, cd: 1 };
+const TITLE_SLASH_SKIP = { help: 1, project: 1, cd: 1 };
 function toAuthDbSessionId(s) { return s; }
 function canonicalizeChatSessionId(s) { return s; }
 function getSessionPrefs(sid) {
@@ -232,7 +232,7 @@ function prettyOpenCodeModelLabel(m) { return m; }
     normalize = _extract(
         src,
         "    function normalizeAgentSlashChips(chips, sessionId) {",
-        "    const TITLE_SLASH_SKIP = { help: 1, pipelines: 1, project: 1, cd: 1 };",
+        "    const TITLE_SLASH_SKIP = { help: 1, project: 1, cd: 1 };",
     )
     assert "    function titleChipKey(c) {" in src  # now a thin wrapper
     title_key = "const titleChipKey = CuttleChatSlash.titleChipKey;"

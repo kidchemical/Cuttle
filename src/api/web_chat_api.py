@@ -449,20 +449,6 @@ _OWNER_EMAIL = os.getenv('OWNER_USER_EMAIL', '').strip().lower()
 chat_sessions = {}
 session_counter = 0
 
-# Track running persistent pipelines (always empty — graph runtime removed)
-retired_pipeline_registry = {}  # Graph era ended: always empty. Kept so health/sessions payloads keep their shape.
-
-
-def _legacy_process_control_gone_response():
-    """HTTP 410 for unauthenticated start/stop/pkill process-control routes."""
-    return jsonify({
-        'success': False,
-        'error': 'legacy_process_control_removed',
-        'response': (
-            'Starting or stopping Flask/Discord via these endpoints was removed. '
-            'Use the daemon-owned Flask restart card or /restart.'
-        ),
-    }), 410
 
 
 class ChatSession:
@@ -663,68 +649,6 @@ def _require_mobile_token(token: Optional[str]) -> bool:
         return verify_mobile_token(token)
     except Exception:
         return False
-
-
-def _parse_webchat_slash_pipeline_command(message: str):
-    """If message is `/pipeline PipelineName ...`, return (pipeline_name, task_text). Else None."""
-    if not isinstance(message, str):
-        return None
-    m = re.match(r"^\s*/pipeline\s+([A-Za-z0-9_.-]+)\s*(.*)$", message, re.DOTALL)
-    if not m:
-        return None
-    pname = m.group(1).strip()
-    body = (m.group(2) or "").strip()
-    task = body if body else message
-    return pname, task
-
-
-def _parse_webchat_shorthand_pipeline_command(message: str, load_pipeline_file_fn):
-    """If message is `/PipelineStem ...` and pipelines/{Stem}.json exists, return (stem, task).
-
-    Lets users run `/Self_Improvement tell me ...` the same as `/pipeline Self_Improvement tell me ...`.
-    Skips reserved first segments that are normal slash commands.
-    """
-    if not isinstance(message, str) or not load_pipeline_file_fn:
-        return None
-    m = re.match(r"^\s*/([A-Za-z0-9_.-]+)\s*(.*)$", message, re.DOTALL)
-    if not m:
-        return None
-    pname = m.group(1).strip()
-    low = pname.lower()
-    reserved = frozenset(
-        {
-            'pipeline',
-            'pipelines',
-            'help',
-            'claude',
-            'hermes',
-            'codex',
-            'cursor',
-            'cursor-cli',
-            'api',
-            'model',
-            'plan',
-            'ask',
-            'agent',
-            'clear',
-            'new',
-            'new-chat',
-            'newchat',
-            'about',
-            'sandbox',
-            'project',
-            'cd',
-        }
-    )
-    if low in reserved or low.startswith('cursor-cli'):
-        return None
-    if low.startswith('pipeline'):
-        return None
-    if not load_pipeline_file_fn(pname):
-        return None
-    body = (m.group(2) or '').strip()
-    task = body if body else message
-    return pname, task
 
 
 def _register_first_pipeline_with_trigger(trigger_type: str) -> bool:
@@ -1076,7 +1000,7 @@ def process_message_with_bot(
             print(f"[PIPELINE] /restart handler failed: {_rs_err}", flush=True)
 
         # Explicit agent CLIs must not fall through to a missing graph.
-        # Bundled agents (incl. legacy /cursor-cli → /cursor) go through the harness only.
+        # Bundled agents go through the harness only.
         # Selection + execution owned by the shared application entry
         # (api.chat_coordinator); this surface stays unclaimed with plain
         # shortcut bodies and a naked pipeline fallback, exactly as before.
@@ -1423,37 +1347,10 @@ def _stamp_auth_session_project(user, session_id, data) -> None:
     )
 
 
-def _run_hermes_web_command(
-    prompt: str,
-    chat_session_id,
-    status_queue=None,
-    project_path=None,
-    model_override=None,
-) -> dict:
-    """Deprecated shim — owned by api.agent_harness.runners."""
-    from api.agent_harness.runners import run_hermes_web_command as _owned
-
-    return _owned(
-        prompt,
-        chat_session_id,
-        status_queue=status_queue,
-        project_path=project_path,
-        model_override=model_override,
-    )
-
-
 def _match_harness_slash(message: str, project_path=None):
-    """Return ``(agent_id, prompt)`` for harness agents, else None.
-
-    Also maps the legacy ``/cursor-cli`` alias onto ``/cursor``.
-    """
+    """Return ``(agent_id, prompt)`` for harness agents, else None."""
     try:
-        import re as _re
-
         raw = (message or "").strip()
-        # Legacy alias kept for Discord / old clients; catalog only declares /cursor.
-        if _re.match(r"^/cursor-cli(\s|$)", raw, flags=_re.I):
-            raw = "/cursor" + raw[len("/cursor-cli") :]
         from api.agent_harness.catalog import match_slash_command
 
         return match_slash_command(raw, project_path=project_path)
@@ -1494,84 +1391,6 @@ def _run_pinned_harness_turn(agent_id: str, prompt: str, chat_session_id, **kwar
     from api.agent_harness.runners import run_pinned_harness_turn as _owned
 
     return _owned(agent_id, prompt, chat_session_id, **kwargs)
-
-
-def _run_cursor_web_command(
-    prompt: str,
-    chat_session_id,
-    status_queue=None,
-    project_path=None,
-    model_override=None,
-) -> dict:
-    """Deprecated shim — owned by api.agent_harness.runners."""
-    from api.agent_harness.runners import run_cursor_web_command as _owned
-
-    return _owned(
-        prompt,
-        chat_session_id,
-        status_queue=status_queue,
-        project_path=project_path,
-        model_override=model_override,
-    )
-
-
-def _run_codex_web_command(
-    prompt: str,
-    chat_session_id,
-    status_queue=None,
-    project_path=None,
-    model_override=None,
-    reasoning_effort=None,
-) -> dict:
-    """Deprecated shim — owned by api.agent_harness.runners."""
-    from api.agent_harness.runners import run_codex_web_command as _owned
-
-    return _owned(
-        prompt,
-        chat_session_id,
-        status_queue=status_queue,
-        project_path=project_path,
-        model_override=model_override,
-        reasoning_effort=reasoning_effort,
-    )
-
-
-def _run_muse_web_command(
-    prompt: str,
-    chat_session_id,
-    status_queue=None,
-    project_path=None,
-    model_override=None,
-) -> dict:
-    """Deprecated shim — owned by api.agent_harness.runners."""
-    from api.agent_harness.runners import run_muse_web_command as _owned
-
-    return _owned(
-        prompt,
-        chat_session_id,
-        status_queue=status_queue,
-        project_path=project_path,
-        model_override=model_override,
-    )
-
-
-def _run_claude_web_command(
-    prompt: str,
-    chat_session_id,
-    status_queue=None,
-    project_path=None,
-    model_override=None,
-) -> dict:
-    """Deprecated shim — owned by api.agent_harness.runners."""
-    from api.agent_harness.runners import run_claude_web_command as _owned
-
-    return _owned(
-        prompt,
-        chat_session_id,
-        status_queue=status_queue,
-        project_path=project_path,
-        model_override=model_override,
-    )
 
 
 def _handle_muse_model_command(prompt, chat_session_id, active_model) -> Optional[dict]:
@@ -1891,10 +1710,6 @@ def serve_app_shell():
     """Serve the app shell (main Electron entry point)"""
     return send_from_directory(project_root / 'web', 'app_shell.html')
 
-@app.route('/landing_page.html')
-def serve_landing_page():
-    """Serve the landing/welcome page (loaded inside app shell iframe)"""
-    return send_from_directory(project_root / 'web', 'landing_page.html')
 
 @app.route('/media_player.html')
 def serve_media_player():
@@ -1917,17 +1732,6 @@ def serve_router_editor():
     """Serve the Router editor page (replaces the retired pipeline node editor)"""
     return send_from_directory(project_root / 'web', 'router_editor.html')
 
-@app.route('/node_editor.html')
-def serve_node_editor():
-    """Legacy pipeline node editor URL — the editor was rebuilt as the Router page."""
-    from flask import redirect as _flask_redirect
-
-    return _flask_redirect('/router_editor.html')
-
-@app.route('/control_panel.html')
-def serve_control_panel():
-    """Serve the control panel page"""
-    return send_from_directory(project_root / 'web', 'control_panel.html')
 
 @app.route('/task_management.html')
 def serve_task_management():
@@ -1951,20 +1755,6 @@ def serve_dashboards_page():
 def serve_apps_page():
     """Serve the Apps launcher (Cuttle web apps grid; pin/unpin to the blade bar)."""
     return send_from_directory(project_root / 'web', 'apps_page.html')
-
-
-@app.route('/job_insight.html')
-def serve_job_insight():
-    """Serve the Job Insight page (pipeline detail with live status and execution feed)"""
-    return send_from_directory(project_root / 'web', 'job_insight.html')
-
-
-@app.route('/pipeline_chat.html')
-def serve_pipeline_chat():
-    """Legacy graph chat URL — graphs were removed."""
-    from flask import redirect as _flask_redirect
-
-    return _flask_redirect('/jobs_page.html')
 
 
 @app.route('/settings_page.html')
@@ -2004,8 +1794,6 @@ def api_status():
     return jsonify({
         'status': 'ok',
         'flask': True,
-        'discord_connected': False,
-        'running_pipeline_count': len(retired_pipeline_registry),
     })
 
 @app.route('/api/executing-jobs', methods=['GET'])
@@ -2183,47 +1971,6 @@ def api_cuttle_jobs():
     return jsonify(payload)
 
 
-def _pipeline_name_from_query_log(data: dict) -> Optional[str]:
-    """Resolve pipeline name from a query_data JSON record."""
-    ctx = data.get('user_context') or {}
-    pname = (ctx.get('pipeline_name') or '').strip()
-    if pname:
-        return pname
-    inp = data.get('input_source') or {}
-    details = inp.get('details', '') or ''
-    m = re.search(r'Pipeline:\s*([^\s(]+)', details)
-    if m:
-        return m.group(1).strip()
-    return None
-
-
-def _effective_query_success_for_job_insight(data: dict) -> bool:
-    """True only if the query actually succeeded end-to-end.
-
-    Top-level ``success`` can stay True when the pipeline walk finishes even though
-    an output node or a tracked LLM/tool call failed; the job insight UI should match
-    the query report and graph node status.
-    """
-    if not data.get('success', True):
-        return False
-    em = data.get('error_message')
-    if em is not None and str(em).strip():
-        return False
-    for stage in data.get('execution_stages') or []:
-        if stage.get('success') is False:
-            return False
-    for c in data.get('llm_calls') or []:
-        if c.get('success') is False:
-            return False
-    for t in data.get('tool_calls') or []:
-        if t.get('success') is False:
-            return False
-    for node in (data.get('graph_structure') or {}).get('nodes') or []:
-        if node.get('executed') and node.get('success') is False:
-            return False
-    return True
-
-
 @app.route('/api/chat-cancel', methods=['POST'])
 def chat_cancel():
     """Cancel in-flight generation for a chat session (Stop button / delete chat)."""
@@ -2341,52 +2088,6 @@ def chat_steer():
             {'steered': True, 'steered_agent': info.get('agent')},
         )
     return jsonify({'success': True, **info})
-
-
-@app.route('/api/job-watch/cancel', methods=['POST'])
-def job_watch_cancel():
-    """Kill a running watch job (Stop on the progress card)."""
-    data = request.get_json(silent=True) or {}
-    job_id = str(data.get('id') or data.get('job_id') or '').strip()
-    sid = data.get('session_id')
-    if not job_id:
-        return jsonify({'success': False, 'error': 'id required'}), 400
-
-    from api.cuttle_ui_capabilities import numeric_chat_session_id
-
-    db_sid = numeric_chat_session_id(sid) if sid is not None else None
-    if db_sid is not None:
-        _user, nid, err = require_chat_session_access(db_sid)
-        if err:
-            return err
-    else:
-        _user, err = require_authenticated()
-        if err:
-            return err
-
-    try:
-        from api.job_watch import cancel_job
-        info = cancel_job(job_id) or {}
-    except ValueError as e:
-        return jsonify({'success': False, 'error': str(e)}), 400
-    except Exception as e:
-        print(f"[CHAT] job-watch cancel failed: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-    if sid is not None:
-        try:
-            from api.chat_run_registry import clear_session_jobs
-            clear_session_jobs(sid, job_id)
-        except Exception:
-            pass
-
-    return jsonify({
-        'success': bool(info.get('ok')),
-        'cancelled': True,
-        'killed': int(info.get('killed') or 0),
-        'id': info.get('id') or job_id,
-        'state': info.get('state') or info.get('already') or '',
-    })
 
 
 @app.route('/api/chat-live-status', methods=['GET'])
@@ -2698,110 +2399,6 @@ def api_query_log(query_id):
     if err:
         return jsonify({'error': err}), code
     return jsonify(payload)
-
-
-@app.route('/api/job-insight', methods=['GET'])
-@owner_required
-def api_job_insight():
-    """Return job insight for a specific pipeline: metadata, live status, and recent execution feed."""
-    pipeline_name = request.args.get('pipeline', '').strip()
-    if not pipeline_name:
-        return jsonify({'error': 'pipeline query param required'}), 400
-    limit = min(int(request.args.get('limit', 30)), 100)
-    try:
-        from managers.settings_manager import get_settings_manager
-        settings_mgr = get_settings_manager()
-        pipeline_path = settings_mgr.get_pipeline_path(pipeline_name)
-        if not pipeline_path or not pipeline_path.exists():
-            return jsonify({'error': f'Pipeline not found: {pipeline_name}'}), 404
-        with open(pipeline_path, 'r', encoding='utf-8') as f:
-            pipeline_data = json.load(f)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-    description = pipeline_data.get('description', '')
-    nodes = pipeline_data.get('nodes', [])
-    triggers = [n for n in nodes if n.get('type', '').startswith('trigger-') and n.get('type') != 'trigger-manual']
-    schedules = []
-    for n in nodes:
-        if n.get('type') == 'trigger-schedule':
-            cfg = n.get('config', {})
-            schedules.append({
-                'cron': cfg.get('schedule', ''),
-                'name': n.get('name', ''),
-                'enabled': cfg.get('enabled', True),
-                'node_id': n.get('id'),
-            })
-    info = retired_pipeline_registry.get(pipeline_name, {})
-    is_running = pipeline_name in retired_pipeline_registry
-    executions = []
-    logs_dir = project_root / 'web' / 'logs'
-    if logs_dir.exists():
-        import glob
-        import os
-        for path in glob.glob(str(logs_dir / 'query_data_*.json')):
-            try:
-                with open(path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                ctx = data.get('user_context') or {}
-                pname = _pipeline_name_from_query_log(data)
-                if pname != pipeline_name:
-                    continue
-                executions.append({
-                    'query_id': data.get('query_id'),
-                    'report_filename': data.get('report_filename'),
-                    'timestamp': data.get('timestamp'),
-                    'user_input': (data.get('user_input') or '')[:200],
-                    'success': _effective_query_success_for_job_insight(data),
-                    'error_message': data.get('error_message'),
-                    'execution_time': data.get('total_execution_time', 0),
-                    'total_tokens': data.get('total_tokens', 0),
-                    'total_cost': data.get('total_cost', 0),
-                    'execution_stages': data.get('execution_stages', []),
-                    'llm_calls': data.get('llm_calls', []),
-                    'tool_calls': data.get('tool_calls', []),
-                    'graph_structure': data.get('graph_structure', {}),
-                })
-            except Exception:
-                continue
-    seen_qids = {e['query_id'] for e in executions if e.get('query_id')}
-    try:
-        from api.active_executions import get_executing_jobs
-        for ej in get_executing_jobs():
-            if ej.get('pipeline_name') != pipeline_name:
-                continue
-            qid = ej.get('query_id')
-            if not qid or qid in seen_qids:
-                continue
-            seen_qids.add(qid)
-            executions.append({
-                'query_id': qid,
-                'report_filename': f'query_report_{qid}.html',
-                'timestamp': ej.get('start_time'),
-                'user_input': '',
-                'success': None,
-                'pending': True,
-                'execution_time': None,
-                'total_tokens': 0,
-                'total_cost': 0,
-                'execution_stages': [],
-                'llm_calls': [],
-                'tool_calls': [],
-                'graph_structure': {},
-            })
-    except Exception:
-        pass
-    executions.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
-    executions = executions[:limit]
-    return jsonify({
-        'pipeline': pipeline_name,
-        'description': description,
-        'is_running': is_running,
-        'status': info.get('status', 'stopped'),
-        'start_time': info.get('start_time'),
-        'triggers': [{'name': t.get('name'), 'type': t.get('type')} for t in triggers],
-        'schedules': schedules,
-        'executions': executions,
-    })
 
 
 # Notify queue path for tray notifications (daemon watches this file)
@@ -3153,10 +2750,6 @@ def api_ui_toasts():
     except Exception:
         return jsonify({'toasts': []})
 
-@app.route('/wizard_page.html')
-def serve_wizard_page():
-    """Serve the setup wizard and doctor page"""
-    return send_from_directory(project_root / 'web', 'wizard_page.html')
 
 @app.route('/git_graph_page.html')
 def serve_git_graph_page():
@@ -3173,250 +2766,12 @@ def serve_chat_page():
     """Serve the chat page"""
     return send_from_directory(project_root / 'web', 'chat_page.html')
 
-@app.route('/api/ungit/status')
-def check_ungit_status():
-    """Check if Ungit is running on port 8448"""
-    import requests
-    try:
-        response = requests.get('http://localhost:8448', timeout=2)
-        if response.status_code == 200:
-            return jsonify({
-                'success': True,
-                'running': True,
-                'url': 'http://localhost:8448'
-            })
-        else:
-            return jsonify({
-                'success': True,
-                'running': False,
-                'error': f'Ungit responded with status {response.status_code}'
-            })
-    except requests.exceptions.RequestException as e:
-        return jsonify({
-            'success': True,
-            'running': False,
-            'error': str(e)
-        })
-
-@app.route('/git-webui/')
-def serve_git_webui():
-    """Serve the standard Ungit interface with project integration"""
-    try:
-        # Get current project from project manager
-        current_project = project_manager.get_current_project()
-        project_path = current_project['path'] if current_project else None
-        
-        return f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Git Web UI - Ungit</title>
-            <script>
-                // Get current project path from server
-                const currentProjectPath = {json.dumps(project_path)};
-                
-                // Try to open Ungit on common ports
-                const ports = [8448, 8081, 8000];
-                let currentPort = 0;
-                
-                function tryUngit() {{
-                    if (currentPort >= ports.length) {{
-                        // Try using backend API as fallback
-                        fetch('/api/ungit/status')
-                            .then(response => response.json())
-                            .then(data => {{
-                                if (data.success && data.running) {{
-                                    let url = data.url;
-                                    if (currentProjectPath) {{
-                                        url += `?path=${{encodeURIComponent(currentProjectPath)}}`;
-                                    }}
-                                    window.location.href = url;
-                                }} else {{
-                                    showUngitNotRunning();
-                                }}
-                            }})
-                            .catch(error => {{
-                                console.error('Backend API check failed:', error);
-                                showUngitNotRunning();
-                            }});
-                        return;
-                    }}
-                    
-                    const port = ports[currentPort];
-                    // Include project path in URL if available
-                    let url = `http://localhost:${{port}}`;
-                    if (currentProjectPath) {{
-                        url += `?path=${{encodeURIComponent(currentProjectPath)}}`;
-                    }}
-                    
-                    // Try to detect Ungit by creating an image element (works around CORS)
-                    const img = new Image();
-                    img.onload = function() {{
-                        // Ungit is running on this port
-                        window.location.href = url;
-                    }};
-                    img.onerror = function() {{
-                        // Try next port
-                        currentPort++;
-                        document.getElementById('status').innerHTML = 
-                            `<p>Trying port ${{port}}... not available, trying next port...</p>`;
-                        setTimeout(tryUngit, 1000);
-                    }};
-                    // Try to load a small image from Ungit (this bypasses CORS)
-                    img.src = `http://localhost:${{port}}/images/icon.png?t=${{Date.now()}}`;
-                }}
-                
-                function showUngitNotRunning() {{
-                    document.getElementById('status').innerHTML = 
-                        '<div style="color: red; margin: 20px;">' +
-                        '<h3>Ungit not running</h3>' +
-                        '<p>Please start the Cuttle launcher (Option 1) to automatically install and start Ungit.</p>' +
-                        '<p>Or start Ungit manually:</p>' +
-                        '<pre style="background: #f5f5f5; padding: 10px; border-radius: 5px; text-align: left; display: inline-block;">ungit</pre>' +
-                        '<p style="margin-top: 15px;"><strong>Note:</strong> Current project: <code>{project_path or 'None'}</code></p>' +
-                        '</div>';
-                }}
-                
-                window.onload = function() {{
-                    let statusText = 'Connecting to Ungit...';
-                    if (currentProjectPath) {{
-                        statusText += `<br><small>Current project: ${{currentProjectPath}}</small>`;
-                    }}
-                    document.getElementById('status').innerHTML = `<p>${{statusText}}</p>`;
-                    tryUngit();
-                }};
-            </script>
-            <style>
-                body {{ font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #f8f9fa; }}
-                .container {{ max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
-                h1 {{ color: #333; margin-bottom: 20px; }}
-                pre {{ background: #f5f5f5; padding: 10px; border-radius: 5px; text-align: left; display: inline-block; margin: 10px 0; }}
-                .fallback-link {{ margin-top: 20px; }}
-                .fallback-link a {{ color: #007bff; text-decoration: none; }}
-                .fallback-link a:hover {{ text-decoration: underline; }}
-                .project-info {{ background: #e8f4f8; padding: 15px; border-radius: 8px; margin: 15px 0; border-left: 4px solid #007bff; }}
-                .project-info h4 {{ margin: 0 0 10px 0; color: #0056b3; }}
-                .project-info code {{ background: #f8f9fa; padding: 2px 6px; border-radius: 3px; font-family: monospace; }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h1>🌐 Git Web UI - Ungit</h1>
-                {f'''
-                <div class="project-info">
-                    <h4>📁 Current Project</h4>
-                    <p><strong>{current_project['name']}</strong> ({current_project['type']})</p>
-                    <p><code>{project_path}</code></p>
-                    {f'<p><em>{current_project["description"]}</em></p>' if current_project.get('description') else ''}
-                </div>
-                ''' if current_project else '<p style="color: #666;">No project currently selected</p>'}
-                <div id="status">Loading...</div>
-                <div class="fallback-link">
-                    <p><a href="/git_ui.html">Use Custom Git UI instead</a></p>
-                </div>
-            </div>
-        </body>
-        </html>
-        """
-    except Exception as e:
-        return f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Git Web UI - Error</title>
-            <style>
-                body {{ font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #f8f9fa; }}
-                .container {{ max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
-                .error {{ color: #dc3545; background: #f8d7da; padding: 15px; border-radius: 5px; margin: 20px 0; }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h1>🌐 Git Web UI - Error</h1>
-                <div class="error">
-                    <p>Error loading project information: {str(e)}</p>
-                </div>
-                <p><a href="/git_ui.html">Use Custom Git UI instead</a></p>
-            </div>
-        </body>
-        </html>
-        """, 500
-
-@app.route('/api/start-ungit', methods=['POST'])
-@owner_required
-def start_ungit():
-    """Start Ungit with the current project"""
-    try:
-        import subprocess
-        import threading
-        
-        # Get current project
-        current_project = project_manager.get_current_project()
-        if not current_project:
-            return jsonify({
-                'success': False,
-                'error': 'No current project selected'
-            }), 400
-        
-        project_path = Path(current_project['path'])
-        if not project_path.exists():
-            return jsonify({
-                'success': False,
-                'error': f'Project path does not exist: {project_path}'
-            }), 400
-        
-        # Check if Ungit is already running
-        try:
-            import requests
-            response = requests.get('http://localhost:8448', timeout=2)
-            if response.status_code == 200:
-                return jsonify({
-                    'success': True,
-                    'message': 'Ungit is already running',
-                    'url': 'http://localhost:8448'
-                })
-        except:
-            pass  # Ungit not running, continue
-        
-        # Start Ungit in background
-        def start_ungit_process():
-            try:
-                subprocess.Popen([
-                    'ungit', 
-                    '--port', '8448',
-                    '--launchBrowser', 'false',
-                    '--rootPath', str(project_path)
-                ], cwd=project_root)
-            except Exception as e:
-                print(f"Error starting Ungit: {e}")
-        
-        # Start Ungit in a separate thread
-        ungit_thread = threading.Thread(target=start_ungit_process, daemon=True)
-        ungit_thread.start()
-        
-        return jsonify({
-            'success': True,
-            'message': f'Ungit started for project: {current_project["name"]}',
-            'project': current_project['name'],
-            'path': str(project_path),
-            'url': 'http://localhost:8448'
-        })
-        
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': f'Failed to start Ungit: {str(e)}'
-        }), 500
 
 @app.route('/img/<path:filename>')
 def serve_image(filename):
     """Serve images from the img directory"""
     return send_from_directory(project_root / 'img', filename)
 
-@app.route('/./img/<path:filename>')
-def serve_image_alt(filename):
-    """Serve images from the img directory (alternative path)"""
-    return send_from_directory(project_root / 'img', filename)
 
 @app.route('/css/<path:filename>')
 def serve_css(filename):
@@ -5443,7 +4798,6 @@ def chat_endpoint():
 
 **Local mode:** only `/hermes` (and help). Switch to Auto or Cloud for the others.
 
-**Graphs:** visual pipelines were removed. Use a slash agent or the router.
 
 **Project commands** (from the chat project's ``.cuttle/commands/*.md``):
 • `/build`, `/deploy`, … — names come from each project
@@ -6066,21 +5420,6 @@ def chat_endpoint():
                 _lane_body.setdefault('session_id', chat_session_id)
             return jsonify(_lane_body)
 
-        # Per-agent /cursor|/muse|/codex|/claude|/hermes elifs removed —
-        # those slash commands are handled only via `_match_harness_slash` above.
-        # Legacy `/cursor-cli` is rewritten to `/cursor` inside `_match_harness_slash`.
-
-        elif message_content.startswith('/pipelines') or message_content.startswith('/pipeline'):
-            return jsonify({
-                'success': True,
-                'response': (
-                    'Visual pipeline graphs were removed. Use `/cursor`, `/codex`, '
-                    'or another agent chip — or send a plain message for the router.'
-                ),
-                'session_id': chat_session_id,
-                'type': 'pipelines_removed',
-            })
-        
         # Attachments were already analyzed above (before slash dispatch); history
         # keeps the short note + metadata instead of the full digest.
         history_message = _attachment_history_text(message_content, _att_note)
@@ -6652,29 +5991,6 @@ def api_flask_restart_notify():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@app.route('/api/restart', methods=['POST'])
-@owner_required
-def api_restart_legacy():
-    """Legacy UI endpoint → graceful Flask restart (daemon-owned)."""
-    try:
-        from api.flask_restart import request_restart
-
-        data = request.get_json(silent=True) or {}
-        result = request_restart(
-            mode='graceful',
-            session_id=data.get('session_id'),
-            user_source='legacy_ui',
-            force_confirm=False,
-        )
-        return jsonify({
-            'success': bool(result.get('success')),
-            'message': result.get('response') or result.get('error'),
-            **{k: v for k, v in result.items() if k not in ('success',)},
-        })
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
 @app.route('/api/lan-ping', methods=['GET'])
 def api_lan_ping():
     """Minimal endpoint for phone connectivity test (no auth)."""
@@ -6946,18 +6262,6 @@ def api_home_automation_schedule():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@app.route('/api/home-automation/auto-tick', methods=['POST'])
-@owner_required
-def api_home_automation_auto_tick():
-    """Optional: run scheduled lighting check (daemon calls in-process instead)."""
-    try:
-        from managers.home_automation import maybe_apply_scheduled_theme
-
-        return jsonify(maybe_apply_scheduled_theme())
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
 @app.route('/api/home-automation/status', methods=['GET'])
 @owner_required
 def api_home_automation_status():
@@ -7214,6 +6518,11 @@ def doctor_endpoint():
             'suggestions': [str(e)],
             'error': str(e)
         }), 500
+
+@app.route('/wizard_page.html')
+def serve_wizard_page():
+    """Serve the setup wizard / doctor page"""
+    return send_from_directory(project_root / 'web', 'wizard_page.html')
 
 @app.route('/api/wizard/status', methods=['GET'])
 @owner_required
@@ -8481,23 +7790,17 @@ def clear_router_demotion_api():
 
 
 # ============================================================================
-# Sessions API (agent-to-agent: list pipelines/sessions, send to pipeline/session)
+# Sessions API (agent-to-agent: list sessions, send to a session)
 # ============================================================================
 
 @app.route('/api/sessions/list', methods=['GET'])
 @owner_required
 def sessions_list():
-    """List active pipelines (running) and session IDs (chat_sessions). For agent-to-agent orchestration."""
+    """List in-memory chat session IDs. For agent-to-agent orchestration."""
     try:
-        pipelines = []
-        for name, info in retired_pipeline_registry.items():
-            triggers = info.get('pipeline_data', {}).get('triggers', [])
-            pipelines.append({'name': name, 'triggers': [t.get('type') for t in triggers]})
-        sessions = list(chat_sessions.keys())
         return jsonify({
             'success': True,
-            'pipelines': pipelines,
-            'sessions': sessions,
+            'sessions': list(chat_sessions.keys()),
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -8834,31 +8137,8 @@ def clear_session(session_id):
             'error': 'Session not found'
         }), 404
 
-@app.route('/api/start-launcher', methods=['POST'])
-def start_launcher():
-    return _legacy_process_control_gone_response()
 
-@app.route('/api/start-webapi', methods=['POST'])
-def start_webapi():
-    return _legacy_process_control_gone_response()
-
-@app.route('/api/start-discord', methods=['POST'])
-def start_discord():
-    return _legacy_process_control_gone_response()
-
-@app.route('/api/stop-launcher', methods=['POST'])
-def stop_launcher():
-    return _legacy_process_control_gone_response()
-
-@app.route('/api/stop-webapi', methods=['POST'])
-def stop_webapi():
-    return _legacy_process_control_gone_response()
-
-@app.route('/api/stop-discord', methods=['POST'])
-def stop_discord():
-    return _legacy_process_control_gone_response()
-
-# ==================== NODE EDITOR API ENDPOINTS ====================
+# ==================== LLM REQUEST (cloud / local tool rounds) ====================
 
 def _normalize_tools_config(tools_config) -> Optional[dict]:
     """Split unified tools payload: MCP section vs bundled CLI/API toolsets."""
@@ -8875,33 +8155,14 @@ def _normalize_tools_config(tools_config) -> Optional[dict]:
     return {'mcp': dict(tools_config), 'bundledCli': None, 'bundledApi': None}
 
 
-def _mcp_cuttle_server_enabled() -> bool:
-    """Cuttle does not host an MCP tool server. Guest CLIs keep their own MCP."""
-    return False
-
-
-def _fetch_mcp_tools_openai_format(mcp_config: Optional[dict]) -> list:
-    """No in-process Cuttle MCP tools. Guest harnesses own MCP."""
-    return []
-
-
-def _get_mcp_tools_openai_format(tools_config=None):
-    """OpenAI-format tool list. Cuttle does not expose an MCP tool catalog."""
-    return _fetch_mcp_tools_openai_format({} if tools_config is None else tools_config)
-
-
 def _get_combined_openai_tools(tools_config) -> list:
-    """MCP tools plus bundled CLI/API tools."""
+    """Bundled CLI/API tools (Cuttle hosts no MCP tools; guest harnesses own MCP)."""
     norm = _normalize_tools_config(tools_config)
     from api.bundled_llm_tools import bundled_tool_specs_openai
 
-    out = []
-    if norm:
-        mcp = norm.get('mcp')
-        if mcp is not None:
-            out.extend(_fetch_mcp_tools_openai_format(mcp))
-        out.extend(bundled_tool_specs_openai(norm.get('bundledCli'), norm.get('bundledApi')))
-    return out
+    if not norm:
+        return []
+    return bundled_tool_specs_openai(norm.get('bundledCli'), norm.get('bundledApi'))
 
 
 def _invoke_llm_tool(name: str, arguments: dict, tools_config, session_id: Optional[str]) -> str:
@@ -8918,22 +8179,6 @@ def _invoke_llm_tool(name: str, arguments: dict, tools_config, session_id: Optio
             session_id=session_id,
         )
     return f"Error: Cuttle does not host MCP tools (tool {name}). Use a guest harness MCP or python -m api.*."
-
-
-def _try_direct_file_tool_fulfillment(prompt: str) -> Optional[str]:
-    """Was MCP write_file/read_file fallback. Cuttle does not host those tools."""
-    return None
-
-
-def _try_direct_file_tool_fulfillment_from_texts(*chunks: Optional[str]) -> Optional[str]:
-    """First matching chunk; file-tool fallback is disabled."""
-    for c in chunks:
-        if not c or not isinstance(c, str):
-            continue
-        out = _try_direct_file_tool_fulfillment(c.strip())
-        if out:
-            return out
-    return None
 
 
 def _build_cuttle_trace_block(query_id: str) -> str:
@@ -9137,11 +8382,6 @@ def llm_request():
                 response_message = response.choices[0].message
                 response_text = response_message.content or ''
 
-            if openai_tools and requires_tool and not getattr(response_message, 'tool_calls', None):
-                direct_file_response = _try_direct_file_tool_fulfillment(prompt)
-                if direct_file_response:
-                    response_text = direct_file_response
-            
             if session_id and openai_tools:
                 emit_chat_status(session_id, "Finalizing...")
             end_time = time.time()
@@ -9315,22 +8555,6 @@ def llm_request():
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt}
                 ]
-                # Deterministic fallback: for explicit file create/read prompts,
-                # do it directly via MCP instead of relying on Ollama tool emission.
-                if openai_tools:
-                    direct_file_response = _try_direct_file_tool_fulfillment_from_texts(prompt)
-                    if direct_file_response:
-                        if session_id:
-                            emit_chat_status(session_id, "Finalizing...")
-                        return jsonify({
-                            'success': True,
-                            'response': direct_file_response,
-                            'usage': {
-                                'prompt_tokens': 0,
-                                'completion_tokens': 0,
-                                'total_tokens': 0,
-                            }
-                        })
                 create_kw = dict(model=ollama_model, messages=messages, temperature=temperature, max_tokens=max_tokens)
                 if openai_tools:
                     create_kw["tools"] = openai_tools
@@ -9376,16 +8600,6 @@ def llm_request():
                 response = _chat_completion_with_fallback(create_kw, ollama_model)
                 response_message = response.choices[0].message
                 response_text = response_message.content or ''
-                # If the model narrates file create/read instead of emitting tool calls, apply a deterministic fallback.
-                # Run even when openai_tools is empty (MCP schema fetch failed): magic-phrase fulfillment still works.
-                if not getattr(response_message, 'tool_calls', None):
-                    direct_file_response = _try_direct_file_tool_fulfillment_from_texts(
-                        response_text,
-                        prompt,
-                        f"{prompt}\n\n{response_text}",
-                    )
-                    if direct_file_response:
-                        response_text = direct_file_response
                 max_tool_rounds = 10
                 while openai_tools and getattr(response_message, 'tool_calls', None) and max_tool_rounds > 0:
                     max_tool_rounds -= 1
@@ -9506,7 +8720,7 @@ def _strip_invisible_leading(s: str) -> str:
 
 
 def _message_is_slash_remote_agent(msg: str) -> bool:
-    """Explicit slash (and legacy) forms that must use tool-remote-agent, not default OpenAI."""
+    """Explicit slash forms that must use tool-remote-agent, not default OpenAI."""
     if not isinstance(msg, str) or not msg.strip():
         return False
     t = _strip_invisible_leading(msg)
@@ -9518,8 +8732,6 @@ def _message_is_slash_remote_agent(msg: str) -> bool:
     if re.match(r'^/codex(\s|$)', low):
         return True
     if re.match(r'^/muse(\s|$)', low):
-        return True
-    if re.match(r'^/cursor-cli(\s|$)', low):
         return True
     if low.startswith('/cursor '):
         return True
@@ -9639,8 +8851,7 @@ if __name__ == '__main__':
     print(f"Project root: {project_root}")
     print(f"Bot available: {PIPELINE_AVAILABLE}")
     print("\nAPI endpoints:")
-    print("  GET  /                    - Landing page")
-    print("  GET  /control_panel.html  - Control panel")
+    print("  GET  /                    - App shell")
     print("  GET  /git_ui.html         - Git Web UI")
     print("  GET  /settings_page.html  - Settings page")
     print("  GET  /about_page.html     - About page")

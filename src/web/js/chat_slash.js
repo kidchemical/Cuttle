@@ -10,7 +10,7 @@
 
    Conventions:
    - `commands` params default to the module registries when omitted.
-   - Resolvers the page owns (pipeline chips, model labels, category
+   - Resolvers the page owns (model labels, category
      labels) are injected as callbacks, never read from chat globals.
    ================================================================ */
 (function (root) {
@@ -315,12 +315,11 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
         return mergeHarnessAgentsIntoSlashCommands(base, harnessAgents);
     }
 
-    const TITLE_SLASH_SKIP = { help: 1, pipelines: 1, project: 1, cd: 1 };
+    const TITLE_SLASH_SKIP = { help: 1, project: 1, cd: 1 };
 
     /**
      * Parse one stored slash head (`/cursor …`, `/model <id> …`,
-     * `/pipeline <id> …`, `[Skill ref] …`, registry prefixes).
-     * Pipeline/model resolvers are page-owned; inject them.
+     * `[Skill ref] …`, registry prefixes). The model resolver is page-owned; inject it.
      */
     function parseStoredSlashCommandHead(s, deps) {
         const d = deps || {};
@@ -328,16 +327,6 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
         const cursorCommands = d.cursorCommands || CURSOR_AGENT_SLASH_COMMANDS;
         const str = String(s ?? '').trim();
         if (!str) return null;
-
-        const pipeM = str.match(/^\/pipeline\s+(\S+)\s*(.*)$/s);
-        if (pipeM) {
-            const id = pipeM[1];
-            const body = pipeM[2].trim();
-            const chip = d.resolvePipelineChip
-                ? d.resolvePipelineChip(id)
-                : { label: id, meta: '/pipeline ' + id, category: 'pipeline' };
-            return { chips: [chip], body };
-        }
 
         // `/model <id> …` — consume the model id so it does not leak into the body
         // (and so we can collapse to a single Cursor badge).
@@ -521,8 +510,6 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
 
     function titleChipKey(c) {
         const src = String((c && (c.meta || c.prefix || c.label)) || '').toLowerCase().trim();
-        const pipe = src.match(/^\/pipeline\s+(\S+)/);
-        if (pipe) return '/pipeline ' + pipe[1];
         const cmd = src.match(/^\/cmd\s+([a-z][\w-]*)/);
         if (cmd) return '/' + cmd[1];
         const tok = src.match(/^\/([a-z][\w-]*)/);
@@ -543,7 +530,6 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
     }
 
     function slashPaletteCategoryLabel(cat) {
-        if (cat === 'pipeline') return 'Pipeline';
         if (cat === 'skill') return 'Skill';
         if (cat === 'project') return 'Project';
         if (cat === 'project-cmd') return 'Project cmd';
@@ -575,7 +561,6 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
         if (bucket === 'command') return 'Commands';
         if (bucket === 'project-cmd') return 'Project cmds';
         if (bucket === 'project') return 'Projects';
-        if (bucket === 'pipeline') return 'Pipelines';
         if (bucket === 'skill') return 'Skills';
         if (bucket === 'cursor') return 'Cursor';
         if (bucket === 'muse') return 'Muse';
@@ -593,7 +578,6 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
             item.hint,
             item.meta,
             item.prefix ? String(item.prefix).replace(/^\//, '').trim() : '',
-            item.pipelineId,
             item.skillRef,
             item.keywords,
             item.modelId,
@@ -608,7 +592,7 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
     function slashPaletteIdentityFields(item) {
         const aliases = Array.isArray(item.aliases) ? item.aliases : [item.aliases];
         return [item.prefix, item.label, item.name, ...aliases, item.projectCommandName,
-            item.projectName, item.pipelineId, item.skillRef, item.modelId]
+            item.projectName, item.skillRef, item.modelId]
             .filter(Boolean)
             .map((value) => String(value).toLowerCase().replace(/^\//, '')
                 .replace(/^★\s*/, '').replace(/\s+\(current\)$/, '').trim());
@@ -1037,8 +1021,8 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
         const pre = String((chip && (chip.prefix || chip.meta)) || '')
             .trim()
             .toLowerCase();
-        const m = pre.match(/^\/(cursor-cli|cursor|muse|hermes|codex|opencode|claude|deepseek|antigravity)\b/);
-        if (m) return m[1] === 'cursor-cli' ? 'cursor' : m[1];
+        const m = pre.match(/^\/(cursor|muse|hermes|codex|opencode|claude|deepseek|antigravity)\b/);
+        if (m) return m[1];
         // Cursor-only nested cmds (plan/ask/…) typed after the agent chip.
         if (/^\/(model|plan|ask|about|clear|sandbox|agent)\b/.test(pre)) return 'cursor';
         // Label-only fallback (title-parsed "codex" / "Codex" with empty meta).
