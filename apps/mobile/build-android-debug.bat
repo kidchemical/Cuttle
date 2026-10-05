@@ -1,10 +1,10 @@
 @echo off
 REM Build Cuttle Mobile debug APK (uses Android Studio JDK + local SDK).
 setlocal
-set "JAVA_HOME=C:\Program Files\Android\Android Studio\jbr"
+if not defined JAVA_HOME set "JAVA_HOME=C:\Program Files\Android\Android Studio\jbr"
 if not exist "%JAVA_HOME%\bin\java.exe" (
   echo Android Studio JBR not found at %JAVA_HOME%
-  echo Install Android Studio or set JAVA_HOME to JDK 17+.
+  echo Install Android Studio or set JAVA_HOME to JDK 21.
   exit /b 1
 )
 if not exist "android\local.properties" (

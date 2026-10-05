@@ -22,6 +22,14 @@ The phone does **not** run the Python daemon. It is a full-screen native window 
 
 ## Build / install (Android)
 
+Build prerequisites (both platforms): **Node.js 20 or newer**, **JDK 21**
+(`JAVA_HOME` pointing to that JDK), and Android SDK **Platform 35** with SDK
+licenses accepted. Create the repository-root `.venv` and install
+`src/requirements/requirements.txt` as described in the [root README](../../README.md)
+first; Gradle uses that venv for shell hashing and APK publication, never PATH
+Python. Configure the SDK with `ANDROID_HOME` or `android/local.properties`
+(see `android/local.properties.example`).
+
 From the repository root, Windows PowerShell:
 
 ```powershell
@@ -31,7 +39,7 @@ npm run sync
 .\build-android-debug.bat
 ```
 
-POSIX (Android SDK and JDK 17 configured):
+POSIX (Android SDK and JDK 21 configured):
 
 ```bash
 cd apps/mobile
