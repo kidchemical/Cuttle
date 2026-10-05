@@ -12,6 +12,8 @@ With LAN disabled, listeners bind to loopback; enabling it binds for remote
 access. Apply binding changes through the daemon-owned restart path, and permit
 only the intended network/devices in the firewall. In Cuttle chat use the
 restart card; see [action forms](../../.cuttle_global/docs/action-forms.md).
+On a headless server, set `CUTTLE_LAN_ACCESS=1` in `src/.env` instead; see
+[Headless Linux server Host](HEADLESS_SERVER.md).
 
 For a browser, use `https://<host>:8080`. Verify the Host certificate before
 accepting a self-signed warning. Native apps need their own certificate trust;

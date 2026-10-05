@@ -405,7 +405,7 @@ Git push diagnostics: `.cuttle/scripts/git-hooks/pre-push` owns project policy;
 report popup and delegates explicit commit-file views to `CuttleDiffModal`.
 
 
-Canonical: `python -m api.*` (`.cuttle_global/docs/agent-ops-cli.md`). Global actions: `.cuttle_global/actions/*.yaml`. POSIX launchers: `.cuttle/scripts/*.sh` + `.cuttle_global/scripts/*.sh`. Windows `.bat`/`.ps1` still present for mixed hosts.
+Canonical: `python -m api.*` (`.cuttle_global/docs/agent-ops-cli.md`). Global actions: `.cuttle_global/actions/*.yaml`. POSIX launchers: `.cuttle/scripts/*.sh` + `.cuttle_global/scripts/*.sh` (headless systemd Host: `.cuttle/scripts/cuttle-service.sh`, guide `docs/guides/HEADLESS_SERVER.md`). Windows `.bat`/`.ps1` still present for mixed hosts.
 
 ---
 

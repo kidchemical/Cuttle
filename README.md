@@ -110,6 +110,8 @@ copy src\.env.example src\.env
 
 Open [https://127.0.0.1:8080](https://127.0.0.1:8080) (self-signed HTTPS). Setup status and health checks live at `/wizard_page.html`.
 
+Always-on Linux box with no desktop (spare laptop, mini PC)? Run it as a systemd service: [`docs/guides/HEADLESS_SERVER.md`](docs/guides/HEADLESS_SERVER.md).
+
 The daemon owns Flask (port **8080**), cron, the tray icon, and the local worker loop. It does **not** start a Discord gateway. To run Flask alone (no tray or cron), prefer `python src/api/web_chat_api.py` from the repo (see [`docs/architecture/repository-map.md`](docs/architecture/repository-map.md)).
 
 ### Try it

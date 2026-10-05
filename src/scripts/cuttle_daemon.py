@@ -232,14 +232,25 @@ def _env_flag_off(name: str) -> bool:
 def _should_open_ui() -> bool:
     if "--no-ui" in sys.argv:
         return False
-    return not _env_flag_off("CUTTLE_NO_UI")
+    if _env_flag_off("CUTTLE_NO_UI"):
+        return False
+    return _has_graphical_session()
+
+
+def _has_graphical_session() -> bool:
+    """Windows/macOS always have a desktop; Linux needs X11 or Wayland."""
+    if not sys.platform.startswith("linux"):
+        return True
+    return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
 
 
 def _should_show_tray() -> bool:
-    """Skip pystray when Electron already owns the tray (Host/Client launcher)."""
+    """Skip pystray when Electron owns the tray or there is no desktop (headless server)."""
     if "--no-tray" in sys.argv:
         return False
-    return not _env_flag_off("CUTTLE_NO_TRAY")
+    if _env_flag_off("CUTTLE_NO_TRAY"):
+        return False
+    return _has_graphical_session()
 
 
 def _flask_port_open() -> bool:
@@ -1129,12 +1140,18 @@ def _setup_tray():
     """Create and run system tray icon in a separate thread."""
     global tray_icon, daemon_running
     if not _should_show_tray():
-        print("[DAEMON] Tray skipped (CUTTLE_NO_TRAY) — Electron owns the tray.")
+        if _has_graphical_session():
+            print("[DAEMON] Tray skipped (CUTTLE_NO_TRAY) — Electron owns the tray.")
+        else:
+            print("[DAEMON] Tray skipped — no graphical session (headless).")
         return
     try:
         import pystray
     except ImportError:
         print("[DAEMON] No tray icon (pip install pystray for tray). Daemon running.")
+        return
+    except Exception as e:  # pystray's Xlib backend raises DisplayNameError at import
+        print(f"[DAEMON] No tray icon ({type(e).__name__}: {e}). Daemon running.")
         return
 
     def _theme_handler(tid: str):
@@ -1414,7 +1431,10 @@ def run_daemon():
     elif _should_open_ui() and not flask_ready:
         print("[DAEMON] Skipping Electron auto-open until Flask is up — use the tray icon")
 
-    print("[DAEMON] Services started. Tray icon manages Cuttle. Exit from tray to stop.")
+    if tray_icon is not None:
+        print("[DAEMON] Services started. Tray icon manages Cuttle. Exit from tray to stop.")
+    else:
+        print("[DAEMON] Services started (no tray). Stop with SIGTERM, e.g. systemctl --user stop cuttle.")
     while daemon_running:
         if not daemon_running or _shutdown_done:
             break

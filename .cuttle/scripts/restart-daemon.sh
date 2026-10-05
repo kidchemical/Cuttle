@@ -26,6 +26,21 @@ if [[ ! -f "$DAEMON_ABS" ]]; then
   exit 1
 fi
 
+# Headless Host (cuttle-service.sh install): let systemd own the restart so the
+# new daemon stays in the unit instead of an orphan nohup copy.
+if command -v systemctl >/dev/null 2>&1 \
+   && systemctl --user is-active --quiet cuttle.service 2>/dev/null; then
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    echo "=== DRY RUN ==="
+    echo "Would run: systemctl --user restart cuttle.service"
+    exit 0
+  fi
+  echo "Restarting systemd user unit cuttle.service..."
+  systemctl --user restart cuttle.service
+  systemctl --user --no-pager status cuttle.service | head -n 5 || true
+  exit 0
+fi
+
 mapfile -t PIDS < <(pgrep -f 'cuttle_daemon\.py' || true)
 
 echo "=== BEFORE ==="

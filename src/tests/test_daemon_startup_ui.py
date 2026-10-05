@@ -46,8 +46,18 @@ def test_stamp_daemon_line_prefixes_time():
     assert "[12:04:09]" in colored
 
 
+def _fake_desktop(monkeypatch, d, *, display: bool):
+    monkeypatch.setattr(d.sys, "platform", "linux")
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    if display:
+        monkeypatch.setenv("DISPLAY", ":0")
+    else:
+        monkeypatch.delenv("DISPLAY", raising=False)
+
+
 def test_should_open_ui_respects_env(monkeypatch):
     d = _load_daemon()
+    _fake_desktop(monkeypatch, d, display=True)
     monkeypatch.delenv("CUTTLE_NO_UI", raising=False)
     assert d._should_open_ui() is True
     monkeypatch.setenv("CUTTLE_NO_UI", "1")
@@ -56,10 +66,32 @@ def test_should_open_ui_respects_env(monkeypatch):
 
 def test_should_show_tray_respects_env(monkeypatch):
     d = _load_daemon()
+    _fake_desktop(monkeypatch, d, display=True)
     monkeypatch.delenv("CUTTLE_NO_TRAY", raising=False)
     assert d._should_show_tray() is True
     monkeypatch.setenv("CUTTLE_NO_TRAY", "1")
     assert d._should_show_tray() is False
+
+
+def test_headless_linux_skips_tray_and_ui(monkeypatch):
+    """No DISPLAY/WAYLAND_DISPLAY: pystray's Xlib import would raise, Electron cannot open."""
+    d = _load_daemon()
+    _fake_desktop(monkeypatch, d, display=False)
+    monkeypatch.delenv("CUTTLE_NO_TRAY", raising=False)
+    monkeypatch.delenv("CUTTLE_NO_UI", raising=False)
+    assert d._has_graphical_session() is False
+    assert d._should_show_tray() is False
+    assert d._should_open_ui() is False
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
+    assert d._should_show_tray() is True
+
+
+def test_non_linux_always_has_desktop(monkeypatch):
+    d = _load_daemon()
+    monkeypatch.setattr(d.sys, "platform", "win32")
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    assert d._has_graphical_session() is True
 
 
 def test_electron_skips_second_daemon_when_hosted_by_daemon():
