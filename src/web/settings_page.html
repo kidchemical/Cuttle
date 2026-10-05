@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="css/shared_navigation.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/landing_page.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/compact_page.css?v=20260814playBtn">
-    <link rel="stylesheet" href="css/settings_page.css?v=20261003achApp">
+    <link rel="stylesheet" href="css/settings_page.css?v=20261004releases">
 </head>
 <body class="compact-shell-page" data-page="settings">
     <div class="page-content">
@@ -36,6 +36,26 @@
             <!-- General is the pre-activation panel: if the tab script fails to
                  load, the page still renders its settings instead of nothing. -->
             <section class="settings-panel active" id="panel-general" role="tabpanel" aria-labelledby="tab-general" tabindex="0">
+            <div class="settings-group" id="cuttleReleaseSettings">
+                <h3 class="settings-title">📦 Cuttle updates <span class="settings-scope" data-scope="server">This server checkout</span></h3>
+                <div class="setting-item setting-item--stack">
+                    <div class="setting-control setting-control--stack">
+                        <button type="button" class="control-button" data-release-version title="Copy version and Git revision">Cuttle version</button>
+                        <div class="provider-status" data-release-status role="status" aria-live="polite">Loading release information…</div>
+                        <div class="setting-description" data-release-checked></div>
+                        <button type="button" class="control-button btn-info" data-release-check>Check for updates</button>
+                        <a href="https://github.com/kidchemical/Cuttle/releases" target="_blank" rel="noopener noreferrer">All releases</a>
+                    </div>
+                    <details hidden>
+                        <summary>Release notes</summary>
+                        <h4 data-release-title></h4>
+                        <div data-release-notes></div>
+                        <a data-release-link target="_blank" rel="noopener noreferrer">View release on GitHub</a>
+                    </details>
+                    <div class="setting-description">Published releases describe what changed. For device updates, open Jobs → Devices; Git revision checks also detect changes between releases.</div>
+                </div>
+            </div>
+
             <div class="settings-group">
                 <h3 class="settings-title"><span class="emoji">📋</span> General <span class="settings-scope" data-scope="device" title="Stored in this browser only — other devices and the server are unaffected.">This device</span></h3>
                 <div class="setting-item">
@@ -576,6 +596,7 @@
                 <div class="setting-item setting-item--stack">
                     <div class="setting-label">
                         <strong>One-time setup</strong>
+    <script src="/js/settings_releases.js?v=20261004releases"></script>
                         <div class="setting-description">Create the app once, then paste the three values above.</div>
                     </div>
                     <div class="setting-control setting-control--stack">
@@ -2089,6 +2110,9 @@
                 tabs.register('experimental', function () { loadExperimentalFlags(); });
                 tabs.register('devices', function () {
                     loadLanAccessSettings();
+                tabs.register('general', function () {
+                    window.CuttleSettingsReleases.mount(document.getElementById('cuttleReleaseSettings'));
+                });
                     loadDesktopElectronSettings();
                 });
                 tabs.register('account', function () { loadGitHubAppSettings(); });
@@ -2107,6 +2131,7 @@
         });
 
         // Add animation styles
+                window.CuttleSettingsReleases.mount(document.getElementById('cuttleReleaseSettings'));
         const style = document.createElement('style');
         style.textContent = `
             @keyframes slideIn {

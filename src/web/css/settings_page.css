@@ -427,3 +427,31 @@ body.compact-shell-page .settings-scope {
 .experimental-flag-list .setting-item--risk {
     border-left-color: #f85149;
 }
+
+/* Published releases (presentation owner: settings_releases.js). */
+#cuttleReleaseSettings [data-release-version] {
+    color: var(--text-primary);
+    background: var(--section-bg);
+    border: 1px solid var(--border-color);
+    font: inherit;
+    cursor: pointer;
+    padding: 6px 10px;
+}
+#cuttleReleaseSettings a {
+    color: var(--text-primary);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+}
+#cuttleReleaseSettings summary {
+    cursor: pointer;
+    margin: 8px 0;
+}
+#cuttleReleaseSettings [data-release-notes] {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    max-height: 360px;
+    overflow: auto;
+    margin: 8px 0 12px;
+    font-size: 13px;
+    line-height: 1.5;
+}

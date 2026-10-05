@@ -37,3 +37,30 @@ staged changes, untracked files, detached HEAD, missing upstream, and local or
 diverged commits before stopping clients. Ignored personal files are retained;
 collisions with incoming tracked files are refused. Resolve/save local work
 explicitly and retry; there is no automatic stash, hard reset, or clean.
+
+## Release discovery and notes
+
+Settings → General → **Cuttle updates** shows the server checkout's existing
+SemVer and Git revision (click to copy for a bug report), a **Check for updates**
+button, last successful check time, and expandable latest published release
+notes with a GitHub link. This is a general-use enhancement to the established
+update surface, so it ships without an experimental toggle.
+
+`api.releases` owns read-only GitHub release discovery; Settings exposes
+`GET /api/settings/releases` (authenticated; `?force=1` refreshes). It uses the
+public latest-release endpoint without credentials, a shared six-hour process
+cache, bounded network timeouts, and a five-minute retry interval after errors.
+Manual checks bypass the TTL. Notes from a previous successful check survive
+network failures within the process and are clearly marked as saved results.
+Restarting Flask clears the cache. Remote notes render as literal text; follow
+**View release on GitHub** for formatted Markdown and any release downloads.
+
+Published-release comparison is separate from mesh Git revision checks. Equal
+release versions do not prove every device is current; Jobs → Devices remains
+the installation/update surface. No updater or automatic restart is triggered
+by checking or reading release notes.
+
+When publishing a release, write the GitHub Release body before considering the
+release complete. Include user-visible additions, fixes, and any migration or
+restart instructions; avoid a raw commit-log dump. Tags alone have no release
+notes and do not appear in this feed. Keep the version bump at release time.

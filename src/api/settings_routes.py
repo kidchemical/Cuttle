@@ -78,6 +78,9 @@ SETTING_FAMILIES = (
     {"name": "github-app", "routes": ["GET/POST/DELETE /settings/github-app", "POST /settings/github-app/test"],
      "backend": "api.github_app + settings-manager key 'github_app' (+ server-local key file)",
      "validator": "validate_github_app_update", "read": "authenticated", "write": "owner"},
+    {"name": "releases", "routes": ["GET /settings/releases"],
+     "backend": "api.releases (read-only, process cache)",
+     "validator": "normalize_release", "read": "authenticated", "write": "n/a"},
     {"name": "app-settings", "routes": ["GET /app-settings"],
      "backend": "settings_manager.get_all_settings() (read-only aggregate)",
      "validator": "none (read-only)", "read": "open", "write": "n/a"},
@@ -541,9 +544,6 @@ def update_video_background_setting():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-# --- completion providers (backend: api.completion_providers) --------------
-
-@settings_bp.route('/settings/completion-providers', methods=['GET'])
 # --- git auto-commit (backend: api.git_autocommit) -------------------------
 
 @settings_bp.route('/settings/git-auto-commit', methods=['GET'])
@@ -571,6 +571,9 @@ def update_git_auto_commit_setting():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+# --- completion providers (backend: api.completion_providers) --------------
+
+@settings_bp.route('/settings/completion-providers', methods=['GET'])
 @authenticated_required
 def get_completion_providers_setting():
     """Which provider/model serves cheap completions (titles, commits, enhance).
@@ -738,3 +741,10 @@ def get_all_app_settings():
             'success': False,
             'error': str(e)
         }), 500
+
+
+@settings_bp.route("/settings/releases", methods=["GET"])
+@authenticated_required
+def get_published_releases():
+    from api.releases import check_releases
+    return jsonify(check_releases(force=request.args.get('force') == '1'))
