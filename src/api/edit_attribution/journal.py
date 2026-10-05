@@ -150,6 +150,28 @@ def open_events_for_paths(
             conn.close()
 
 
+def open_paths_for_query(repo_root: str, query_id: str) -> List[str]:
+    """Unsettled paths one harness run (``query_id``) changed in this repo."""
+    root = normalize_repo_root(repo_root)
+    qid = (query_id or "").strip()
+    if not root or not qid:
+        return []
+    with _lock:
+        conn = _connect()
+        try:
+            cur = conn.execute(
+                """
+                SELECT DISTINCT rel_path FROM edit_events
+                WHERE repo_root = ? AND query_id = ? AND commit_sha IS NULL
+                ORDER BY rel_path
+                """,
+                (root, qid),
+            )
+            return [str(r["rel_path"]) for r in cur.fetchall()]
+        finally:
+            conn.close()
+
+
 def build_commit_attribution(
     repo_root: str,
     rel_paths: Sequence[str],

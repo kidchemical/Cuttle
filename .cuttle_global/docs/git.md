@@ -8,6 +8,18 @@
 
 **Do instead:** reverse only the target hunks (edit/StrReplace/`git apply -R` on a scoped patch). Use checkout/restore only when you are certain the file’s full dirty diff should die.
 
+## Commits Cuttle makes
+
+- **Pending-changes panel:** **Commit** with an empty message (or the quick
+  **Commit** button) suggests a message and commits in one click — there is no
+  review step. Type or edit the message first if you want to see it.
+- **Auto-commit (opt-in, default off):** Settings → Agents → Git →
+  *Auto-commit agent edits* (`git_auto_commit`; owner `api.git_autocommit`).
+  After each successful agent turn, Cuttle commits only the files that turn
+  changed (edit-attribution journal for that run), with a suggested message and
+  `Cuttle-Attributed` trailers. Other dirty files stay pending; a file the agent
+  touched is committed whole. Never pushes; a toast in the chat reports it.
+
 ## `git push` — Cuttle chat is form-gated (never the agent shell)
 
 **Never** run `git push` (or `git push --force`) from an agent shell in Cuttle chat. The Git pending-changes **UI** is the user’s path. In chat, emit the `git.push` action form and stop. Click runs `.cuttle_global/actions/git-push.yaml` (no LLM).

@@ -819,6 +819,22 @@ def run_agent_web_command(
                 except Exception:
                     pass
 
+        if (
+            result.success
+            and not handled_by_meta
+            and not _run_was_cancelled(chat_session_id)
+            and not _run_was_cancelled(sid)
+        ):
+            # Opt-in (Settings → Agents → Git): commit only this turn's files.
+            try:
+                from api.git_autocommit import schedule_after_turn
+
+                schedule_after_turn(
+                    cwd=cwd, query_id=query_id, chat_session_id=sid, prompt=prompt
+                )
+            except Exception as exc:
+                print(f"[kernel] auto-commit hook error: {exc}", flush=True)
+
         if not handled_by_meta and brain_meta:
             _record_context_metrics(
                 manifest.id,

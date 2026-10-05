@@ -239,6 +239,26 @@
                     </div>
                     <div class="setting-control">
                         <input type="text" id="agentName" class="setting-input" placeholder="Cuttle" value="Cuttle">
+            <div class="settings-group">
+                <h3 class="settings-title"><span class="emoji">🌿</span> Git <span class="settings-scope" data-scope="server" title="Saved in this server's settings; applies to every chat it runs.">This server</span></h3>
+                <div class="setting-item">
+                    <div class="setting-label">
+                        <strong>Auto-commit agent edits</strong>
+                        <div class="setting-description">
+                            After each successful agent turn, commit only the files that turn changed, with a suggested
+                            message and Cuttle's commit attribution. Your other uncommitted files are left alone (but a file the agent
+                            touched is committed whole, including any edits you had in it). Never pushes. Off by default.
+                        </div>
+                    </div>
+                    <div class="setting-control">
+                        <label class="toggle-switch" id="gitAutoCommitToggle" onclick="toggleGitAutoCommit(event)">
+                            <input type="checkbox" id="gitAutoCommitEnabled" style="display: none;">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
                         <button class="control-button btn-start" onclick="saveAgentName()"><span class="emoji">💾</span> Save</button>
                     </div>
                 </div>
@@ -1595,6 +1615,49 @@
         }
 
         function toggleNotifications(event) {
+        async function loadGitAutoCommitSetting() {
+            const checkbox = document.getElementById('gitAutoCommitEnabled');
+            const toggle = document.getElementById('gitAutoCommitToggle');
+            try {
+                const r = await fetch('/api/settings/git-auto-commit');
+                const d = await r.json();
+                if (!d.success) throw new Error(d.error || 'Failed to load');
+                if (checkbox) checkbox.checked = !!d.git_auto_commit;
+                if (toggle) toggle.classList.toggle('active', !!d.git_auto_commit);
+            } catch (e) {
+                (window.showToast || alert)('Could not load auto-commit setting: ' + (e.message || e), 'error');
+            }
+        }
+
+        async function toggleGitAutoCommit(event) {
+            // Label + nested checkbox would otherwise fire this twice per click.
+            if (event) event.preventDefault();
+            const checkbox = document.getElementById('gitAutoCommitEnabled');
+            const toggle = document.getElementById('gitAutoCommitToggle');
+            if (!checkbox) return;
+            const next = !checkbox.checked;
+            checkbox.checked = next;
+            if (toggle) toggle.classList.toggle('active', next);
+            try {
+                const r = await fetch('/api/settings/git-auto-commit', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ git_auto_commit: next }),
+                });
+                const d = await r.json();
+                if (!d.success) throw new Error(d.error || 'Save failed');
+                (window.showToast || alert)(
+                    next ? 'Auto-commit on — agent edits are committed after each turn (never pushed)'
+                         : 'Auto-commit off',
+                    'info'
+                );
+            } catch (e) {
+                checkbox.checked = !next;
+                if (toggle) toggle.classList.toggle('active', !next);
+                (window.showToast || alert)('Failed to update auto-commit: ' + (e.message || e), 'error');
+            }
+        }
+
             // Label + nested checkbox would otherwise fire this twice per click.
             if (event) event.preventDefault();
             const checkbox = document.getElementById('notificationsEnabled');
@@ -2014,7 +2077,10 @@
             // Per-tab loaders: each runs the first time its panel is shown.
             const tabs = window.CuttleSettingsTabs;
             if (tabs && typeof tabs.register === 'function') {
-                tabs.register('agents', function () { loadAgentCatalog(); });
+                tabs.register('agents', function () {
+                    loadAgentCatalog();
+                    loadGitAutoCommitSetting();
+                });
                 tabs.register('providers', function () {
                     loadCompletionProviders();
                     loadApiKeys();
@@ -2067,4 +2133,5 @@
         document.head.appendChild(style);
     </script>
 </body>
+                loadGitAutoCommitSetting();
 </html>

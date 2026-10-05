@@ -544,6 +544,33 @@ def update_video_background_setting():
 # --- completion providers (backend: api.completion_providers) --------------
 
 @settings_bp.route('/settings/completion-providers', methods=['GET'])
+# --- git auto-commit (backend: api.git_autocommit) -------------------------
+
+@settings_bp.route('/settings/git-auto-commit', methods=['GET'])
+@authenticated_required
+def get_git_auto_commit_setting():
+    """Whether successful agent turns commit the files they changed (default off)."""
+    from api.git_autocommit import is_enabled
+    return jsonify({'success': True, 'git_auto_commit': is_enabled()})
+
+
+@settings_bp.route('/settings/git-auto-commit', methods=['POST'])
+@owner_required
+def update_git_auto_commit_setting():
+    """Body: { git_auto_commit: bool }."""
+    try:
+        from api.git_autocommit import is_enabled, set_enabled
+        data = request.get_json() or {}
+        value = data.get('git_auto_commit')
+        if not isinstance(value, bool):
+            return jsonify({'success': False, 'error': 'git_auto_commit must be true or false'}), 400
+        if not set_enabled(value):
+            return jsonify({'success': False, 'error': 'Failed to save settings'}), 500
+        return jsonify({'success': True, 'git_auto_commit': is_enabled()})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @authenticated_required
 def get_completion_providers_setting():
     """Which provider/model serves cheap completions (titles, commits, enhance).
