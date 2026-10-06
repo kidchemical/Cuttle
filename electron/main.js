@@ -1836,6 +1836,110 @@ function isCuttleSelfSignedHttpsUrl(url) {
         return false;
     }
 }
+// ── Gizmo pop-outs: always-on-top desktop windows (experimental `gizmos`) ──
+// The shell sends the full wanted set; main opens/closes to match. Only ids
+// cross IPC — the URL is built here so a page cannot open arbitrary windows.
+const GIZMO_ID_RE = /^[a-z0-9][a-z0-9_-]{0,47}$/;
+const gizmoPopouts = new Map();
+const _gizmoBoundsTimers = new Map();
+
+function saveGizmoPopoutBounds(id, win) {
+    clearTimeout(_gizmoBoundsTimers.get(id));
+    _gizmoBoundsTimers.set(id, setTimeout(() => {
+        _gizmoBoundsTimers.delete(id);
+        if (!win || win.isDestroyed()) return;
+        try {
+            const all = { ...(loadDesktopConfig().gizmoPopouts || {}) };
+            all[id] = win.getBounds();
+            saveDesktopConfig({ gizmoPopouts: all });
+        } catch (_) {}
+    }, 400));
+}
+
+function savedGizmoPopoutBounds(id) {
+    const saved = (loadDesktopConfig().gizmoPopouts || {})[id];
+    if (!saved || !Number.isFinite(saved.width) || !Number.isFinite(saved.height)) return null;
+    const out = { width: Math.max(160, Math.min(800, saved.width)), height: Math.max(56, Math.min(400, saved.height)) };
+    if (Number.isFinite(saved.x) && Number.isFinite(saved.y)) {
+        const visible = (screen.getAllDisplays() || []).some((d) => {
+            const a = d.workArea || d.bounds;
+            return a && saved.x >= a.x - 40 && saved.x <= a.x + a.width - 40
+                && saved.y >= a.y - 20 && saved.y <= a.y + a.height - 20;
+        });
+        if (visible) { out.x = saved.x; out.y = saved.y; }
+    }
+    return out;
+}
+
+function openGizmoPopout(id, title) {
+    if (gizmoPopouts.has(id)) return;
+    const base = (mainWindow && !mainWindow.isDestroyed() && mainWindow._cuttleUiUrl) || preferredAppUrl('/app_shell.html');
+    const url = new URL('/gizmo_popout.html', base);
+    url.searchParams.set('id', id);
+    const bounds = savedGizmoPopoutBounds(id) || { width: 260, height: 86 };
+    const win = new BrowserWindow({
+        ...bounds,
+        minWidth: 160,
+        minHeight: 56,
+        frame: false,
+        alwaysOnTop: true,
+        skipTaskbar: true,
+        resizable: true,
+        minimizable: false,
+        maximizable: false,
+        fullscreenable: false,
+        show: false,
+        backgroundColor: '#0d1117',
+        title: String(title || 'Gizmo').slice(0, 60),
+        webPreferences: {
+            preload: path.join(__dirname, 'preload.js'),
+            contextIsolation: true,
+            nodeIntegration: false,
+            webSecurity: true,
+            backgroundThrottling: false,
+        },
+    });
+    win.removeMenu();
+    try { win.setAlwaysOnTop(true, 'floating'); } catch (_) {}
+    try { win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); } catch (_) {}
+    win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    win.webContents.on('will-navigate', (event, target) => {
+        try {
+            if (new URL(target).pathname !== '/gizmo_popout.html') event.preventDefault();
+        } catch (_) { event.preventDefault(); }
+    });
+    win.once('ready-to-show', () => { if (!win.isDestroyed()) win.showInactive(); });
+    win.on('move', () => saveGizmoPopoutBounds(id, win));
+    win.on('resize', () => saveGizmoPopoutBounds(id, win));
+    win.on('closed', () => {
+        gizmoPopouts.delete(id);
+        if (win._cuttleSyncClose || app.isQuitting) return;
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('gizmo-popout-closed', id);
+        }
+    });
+    gizmoPopouts.set(id, win);
+    win.loadURL(url.toString());
+}
+
+ipcMain.handle('gizmo-popouts-sync', (event, list) => {
+    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
+        return { ok: false, error: 'Only the Cuttle window manages gizmo pop-outs.' };
+    }
+    const wanted = new Map();
+    (Array.isArray(list) ? list : []).slice(0, 24).forEach((item) => {
+        const id = String((item && item.id) || '');
+        if (GIZMO_ID_RE.test(id)) wanted.set(id, String((item && item.title) || ''));
+    });
+    gizmoPopouts.forEach((win, id) => {
+        if (wanted.has(id)) return;
+        win._cuttleSyncClose = true;
+        if (!win.isDestroyed()) win.close();
+    });
+    wanted.forEach((title, id) => openGizmoPopout(id, title));
+    return { ok: true, open: Array.from(wanted.keys()) };
+});
+
 
 // NOTE: Do NOT use session.setCertificateVerifyProc for loopback trust.
 // It can deadlock the renderer when a framed page opens wss://127.0.0.1

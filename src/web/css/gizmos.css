@@ -1,0 +1,202 @@
+/* Gizmos (experimental flag `gizmos`): meter component + shell docks/popover.
+   Shared by app_shell.html, gizmos_page.html and gizmo_popout.html. */
+
+.gizmo {
+    --gz-color: #8b949e;
+    --gz-track: rgba(255, 255, 255, 0.10);
+    --gz-text: var(--rail-icon-hover, #c9d1d9);
+    --gz-dim: var(--rail-icon, #8b949e);
+    color: var(--gz-text);
+    font: 500 11px/1.25 system-ui, -apple-system, "Segoe UI", sans-serif;
+    box-sizing: border-box;
+}
+.gizmo.tone-ok { --gz-color: #3fb950; }
+.gizmo.tone-low { --gz-color: #d29922; }
+.gizmo.tone-critical, .gizmo.tone-blocked { --gz-color: #f85149; }
+.gizmo.is-stale { opacity: 0.75; }
+
+.gizmo-bar {
+    position: relative;
+    display: inline-block;
+    flex: 0 0 auto;
+    width: 54px;
+    height: 5px;
+    border-radius: 999px;
+    background: var(--gz-track);
+    overflow: hidden;
+    vertical-align: middle;
+}
+.gizmo-bar-fill {
+    position: absolute;
+    inset: 0 auto 0 0;
+    border-radius: inherit;
+    background: var(--gz-color);
+    transition: width 0.4s ease;
+}
+.gizmo.state-loading .gizmo-bar-fill { width: 30% !important; opacity: 0.35; animation: gizmo-pulse 1.2s ease-in-out infinite; }
+@keyframes gizmo-pulse { 50% { opacity: 0.12; } }
+
+.gizmo-value { font-variant-numeric: tabular-nums; font-weight: 650; color: var(--gz-color); }
+.gizmo-value small { font-weight: 500; color: var(--gz-dim); }
+.gizmo-agent { color: var(--gz-dim); font-weight: 600; letter-spacing: 0.02em; }
+.gizmo-reset { color: var(--gz-dim); font-variant-numeric: tabular-nums; }
+
+/* Title bar: compact pill */
+.gizmo--titlebar {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 22px;
+    padding: 0 9px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.04);
+    white-space: nowrap;
+}
+.gizmo--titlebar:hover { background: rgba(255, 255, 255, 0.09); }
+
+/* Blade bar: ring */
+.gizmo--rail {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    width: 48px;
+    padding: 3px 0;
+    border-radius: 8px;
+}
+.gizmo--rail:hover { background: var(--rail-active-bg, rgba(102, 126, 234, 0.15)); }
+.gizmo-ring-wrap { position: relative; width: 36px; height: 36px; }
+.gizmo-ring { display: block; }
+.gizmo-ring-track { fill: none; stroke: var(--gz-track); stroke-width: 4; }
+.gizmo-ring-fill { fill: none; stroke: var(--gz-color); stroke-width: 4; stroke-linecap: round; transition: stroke-dasharray 0.4s ease; }
+.gizmo-ring-value {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--gz-color);
+    font-variant-numeric: tabular-nums;
+}
+.gizmo--rail .gizmo-agent { font-size: 9px; max-width: 48px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Floating / desktop / App card */
+.gizmo--float, .gizmo--popout, .gizmo--card {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 9px 11px;
+    border: 1px solid var(--rail-border, #1c2333);
+    border-radius: 10px;
+    background: rgba(13, 17, 23, 0.92);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+.gizmo--float { width: 220px; backdrop-filter: blur(8px); }
+.gizmo--popout { height: 100%; border-radius: 0; border: none; box-shadow: none; background: transparent; padding: 8px 10px; }
+.gizmo--card { box-shadow: none; }
+.gizmo-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.gizmo-title { font-weight: 650; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gizmo-head .gizmo-value { font-size: 14px; }
+.gizmo-bar--main { width: 100%; height: 6px; }
+.gizmo-foot { display: flex; justify-content: space-between; gap: 8px; font-size: 10.5px; }
+.gizmo-stale { color: #d29922; text-transform: uppercase; font-size: 9px; letter-spacing: 0.06em; }
+
+.gizmo-rows { display: grid; gap: 5px; margin-top: 2px; }
+.gizmo-row {
+    display: grid;
+    grid-template-columns: minmax(56px, auto) 1fr 38px minmax(72px, auto);
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+}
+.gizmo-row .gizmo-bar { --gz-color: inherit; width: 100%; }
+.gizmo-row.tone-ok { --gz-color: #3fb950; }
+.gizmo-row.tone-low { --gz-color: #d29922; }
+.gizmo-row.tone-critical, .gizmo-row.tone-blocked { --gz-color: #f85149; }
+.gizmo-row.tone-unknown { --gz-color: #8b949e; }
+.gizmo-row .gizmo-bar-fill { background: var(--gz-color); }
+.gizmo-row.is-active .gizmo-row-label { font-weight: 700; }
+.gizmo-row-label { color: var(--gz-text, #c9d1d9); white-space: nowrap; }
+.gizmo-row-value { text-align: right; font-variant-numeric: tabular-nums; color: var(--gz-color); font-weight: 650; }
+.gizmo-row-reset { color: var(--gz-dim, #8b949e); font-size: 10.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+/* ── Shell docks ─────────────────────────────────────────────────────── */
+.shell-gizmo { cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+.shell-gizmo.is-drag-source { opacity: 0.35; }
+.shell-gizmo-dock.is-empty { display: none; }
+
+.shell-gizmo-dock--titlebar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+    padding-left: 10px;
+    flex-shrink: 0;
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+}
+
+.rail-gizmos {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    width: 100%;
+    padding: 6px 0;
+    border-top: 1px solid var(--rail-border, #1c2333);
+    flex-shrink: 0;
+}
+
+.shell-gizmo-float-layer { position: fixed; inset: 0; pointer-events: none; z-index: 99990; }
+.shell-gizmo-float-layer > .shell-gizmo { position: absolute; pointer-events: auto; }
+
+.shell-gizmo-ghost { position: fixed; z-index: 1000000; pointer-events: none; opacity: 0.9; }
+body.gizmo-dragging, body.gizmo-dragging * { cursor: grabbing !important; }
+body.gizmo-dragging iframe { pointer-events: none !important; }
+body.gizmo-dragging .shell-titlebar-drag,
+body.gizmo-dragging .shell-titlebar { -webkit-app-region: no-drag; app-region: no-drag; }
+body.gizmo-dragging .shell-titlebar,
+body.gizmo-dragging .split-column .icon-rail { transition: box-shadow 0.12s ease; }
+body.gizmo-dragging .shell-titlebar { box-shadow: inset 0 0 0 1px rgba(102, 126, 234, 0.25); }
+.shell-titlebar.gizmo-drop-hover,
+.icon-rail.gizmo-drop-hover { box-shadow: inset 0 0 0 2px var(--rail-active-border, #667eea) !important; }
+
+.shell-gizmo-popover {
+    position: fixed;
+    z-index: 999996;
+    width: 300px;
+    max-width: calc(100vw - 16px);
+    padding: 12px;
+    border: 1px solid var(--panel-border, #2a2a3e);
+    border-radius: 10px;
+    background: var(--panel-bg, #16213e);
+    color: var(--rail-icon-hover, #c9d1d9);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+    font: 12px/1.35 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+.shell-gizmo-popover[hidden] { display: none; }
+.gizmo-detail { display: grid; gap: 8px; }
+.gizmo-detail-title { font-weight: 700; font-size: 13px; }
+.gizmo-detail-status { color: #f85149; font-weight: 600; }
+.gizmo-detail-notes, .gizmo-detail-meta, .gizmo-detail-empty { color: var(--rail-icon, #8b949e); font-size: 11px; }
+.shell-gizmo-popover-field { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; }
+.shell-gizmo-popover-field span { color: var(--rail-icon, #8b949e); }
+.shell-gizmo-popover-field select,
+.shell-gizmo-popover button {
+    font: inherit;
+    color: inherit;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 6px;
+    padding: 4px 8px;
+    cursor: pointer;
+}
+.shell-gizmo-popover-section { margin-top: 12px; margin-bottom: 6px; color: var(--rail-icon, #8b949e); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+.shell-gizmo-popover-docks { display: flex; flex-wrap: wrap; gap: 6px; }
+.shell-gizmo-popover button:hover { background: rgba(255, 255, 255, 0.12); }
+.shell-gizmo-popover button.is-current { border-color: var(--rail-active-border, #667eea); background: var(--rail-active-bg, rgba(102, 126, 234, 0.15)); }
+.shell-gizmo-popover-actions { display: flex; gap: 6px; margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(255, 255, 255, 0.08); }
+.shell-gizmo-popover-actions .is-danger { margin-left: auto; color: #f85149; border-color: rgba(248, 81, 73, 0.4); }

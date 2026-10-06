@@ -355,6 +355,13 @@ except Exception as _achievements_err:
     print(f"[ACHIEVEMENTS] Failed to register routes: {_achievements_err}")
 
 try:
+    from api.gizmos.routes import gizmos_bp, gizmos_pages_bp
+    app.register_blueprint(gizmos_bp)
+    app.register_blueprint(gizmos_pages_bp)
+except Exception as _gizmos_err:
+    print(f"[GIZMOS] Failed to register routes: {_gizmos_err}")
+
+try:
     from api.chat_vfx.routes import chat_vfx_bp
     app.register_blueprint(chat_vfx_bp)
 except Exception as _vfx_err:

@@ -50,6 +50,12 @@ register_flag(FlagSpec(
     default=False, category="ui", risk="low", since="0.0.0", needs_restart=False,
 ))
 
+register_flag(FlagSpec(
+    id="gizmos", label="Gizmos",
+    description="Live UI objects outside chat bubbles: pin usage meters (Codex, Claude, Cursor) to the title bar or blade bar, float them over every Space, or pop them out as always-on-top desktop windows. Manage them in Apps → Gizmos.",
+    default=False, category="ui", risk="low", since="0.0.0", needs_restart=False,
+))
+
 # Achievements: default OFF. Experimental features are opt-in by design; a
 # user who does not know the system exists should never have it running.
 register_flag(

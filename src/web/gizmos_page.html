@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gizmos - Cuttle</title>
+    <link rel="stylesheet" href="/css/ui_boot.css?v=20260927blendTarget">
+    <script src="/js/shared/ui_boot.js?v=20260926safeArea"></script>
+    <link rel="stylesheet" href="/css/shared_navigation.css?v=20260926lightBg">
+    <link rel="stylesheet" href="/css/landing_page.css?v=20260926lightBg">
+    <link rel="stylesheet" href="/css/compact_page.css?v=20260917bgFix2">
+    <link rel="stylesheet" href="/css/gizmos.css?v=20261006gizmos1">
+    <link rel="stylesheet" href="/css/gizmos_page.css?v=20261006gizmos1">
+</head>
+<body class="compact-shell-page" data-page="gizmos">
+    <main class="gizmos-page">
+        <header class="gizmos-header">
+            <div>
+                <h1>Gizmos</h1>
+                <p>Live meters that sit outside chat: pin them to the title bar or blade bar, float them over every Space, or pop them out onto your desktop. Drag a gizmo to move it; click it for details.</p>
+            </div>
+            <div class="gizmos-controls">
+                <button id="refreshGizmos" type="button">Refresh</button>
+                <a href="/settings_page.html?tab=experimental">Experimental settings</a>
+            </div>
+        </header>
+        <p id="gizmosStatus" class="gizmos-status" role="status" aria-live="polite">Loading gizmos…</p>
+
+        <section id="gizmosCreate" class="gizmos-create" hidden>
+            <h2>Add a gizmo</h2>
+            <form id="gizmosCreateForm" class="gizmos-form">
+                <label><span>Type</span><select id="gizmoCreateType" name="type"></select></label>
+                <label><span>Agent</span><select id="gizmoCreateAgent" name="agent"></select></label>
+                <label><span>Place on</span><select id="gizmoCreateDock" name="dock"></select></label>
+                <label><span>Title</span><input id="gizmoCreateTitle" name="title" maxlength="60" placeholder="Default: “Codex usage”"></label>
+                <button type="submit" class="gizmos-primary">Add gizmo</button>
+            </form>
+        </section>
+
+        <section id="gizmosList" class="gizmos-list" aria-label="Your gizmos"></section>
+    </main>
+    <script src="/js/shared/shared_navigation.js"></script>
+    <script src="/js/shared/toast.js"></script>
+    <script src="/js/gizmos/gizmos_model.js?v=20261006gizmos1"></script>
+    <script src="/js/gizmos/gizmos_page.js?v=20261006gizmos1"></script>
+</body>
+</html>
