@@ -10,6 +10,7 @@ Two halves:
 
 from __future__ import annotations
 
+import os
 import json
 import shutil
 import subprocess
@@ -79,7 +80,7 @@ def test_pure_slice_helpers():
         ["node", "-e", HARNESS],
         capture_output=True,
         text=True,
-        env={"JS_DIR": str(JS_DIR), "PATH": "/usr/bin:/bin"},
+        env={"JS_DIR": str(JS_DIR), "PATH": os.environ["PATH"]},
         timeout=60,
     )
     assert proc.returncode == 0, proc.stderr

@@ -254,7 +254,7 @@ def pytest_generate_tests(metafunc):
 _VENDOR_AGENT_CLIS = {"agent", "cursor-agent", "codex", "muse", "hermes", "claude", "opencode"}
 
 
-def _vendor_cli_in_argv(args) -> str:
+def _vendor_cli_in_argv(args, fake_roots=()) -> str:
     """Vendor CLI named by the program or its script, by file or folder name.
 
     Checks every path component of the first two argv entries: the Cursor CLI
@@ -266,7 +266,9 @@ def _vendor_cli_in_argv(args) -> str:
     if argv and Path(argv[0]).name.lower() in ("wsl", "wsl.exe"):
         argv = argv[1:]
     # Fake servers written to tmp_path (e.g. a `codex` shebang script) are fine.
-    if argv and Path(argv[0]).resolve().is_relative_to(Path(tempfile.gettempdir()).resolve()):
+    # tmp_path lives under --basetemp, which need not be the system temp dir (CI).
+    roots = [Path(tempfile.gettempdir()), *fake_roots]
+    if argv and any(Path(argv[0]).resolve().is_relative_to(Path(r).resolve()) for r in roots):
         return ""
     for entry in argv[:2]:
         for part in Path(entry).parts:
@@ -281,7 +283,7 @@ def _vendor_cli_in_argv(args) -> str:
 
 
 @pytest.fixture(autouse=True)
-def _no_real_vendor_cli(monkeypatch):
+def _no_real_vendor_cli(monkeypatch, tmp_path_factory):
     """Fail closed if a test would launch a real agent CLI (spends quota).
 
     Guards ``subprocess.Popen`` (asyncio subprocesses spawn through it too), so
@@ -294,10 +296,11 @@ def _no_real_vendor_cli(monkeypatch):
     from api.agent_router.supervised.test_isolation import external_runners_allowed
 
     real_popen = subprocess.Popen
+    fake_roots = (tmp_path_factory.getbasetemp(),)
 
     class _GuardedPopen(real_popen):  # type: ignore[misc, valid-type]
         def __init__(self, args, *a, **k):
-            cli = _vendor_cli_in_argv(args)
+            cli = _vendor_cli_in_argv(args, fake_roots)
             if cli and not external_runners_allowed():
                 raise RuntimeError(
                     f"test guard: real `{cli}` CLI launch blocked "

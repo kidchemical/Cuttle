@@ -39,7 +39,10 @@ def test_verified_signature_does_not_allow_wrong_package_or_version(candidate, m
 
 
 def test_missing_build_tools_is_actionable(candidate, monkeypatch, tmp_path):
+    # CI runners export a real SDK via ANDROID_SDK_ROOT; hide every source.
     monkeypatch.setenv('ANDROID_HOME', str(tmp_path / 'empty-sdk'))
+    monkeypatch.delenv('ANDROID_SDK_ROOT', raising=False)
+    monkeypatch.setattr(artifacts, 'LOCAL_PROPERTIES', tmp_path / 'missing.properties')
     with pytest.raises(ValueError, match='Build Tools'):
         artifacts.inspect_apk(candidate)
 

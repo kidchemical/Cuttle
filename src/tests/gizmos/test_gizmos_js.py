@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import os
 import json
 import shutil
 import subprocess
@@ -18,6 +19,8 @@ import time
 from pathlib import Path
 
 import pytest
+
+from tests.browser_guard import launch_chromium
 
 REPO = Path(__file__).resolve().parents[3]
 WEB = REPO / "src" / "web"
@@ -70,7 +73,7 @@ console.log(JSON.stringify(out));
 def harness():
     if not shutil.which("node"):
         pytest.skip("node not available")
-    proc = subprocess.run(["node", "-e", HARNESS], env={"MODEL": str(MODEL), "PATH": "/usr/bin:/bin:/usr/local/bin"},
+    proc = subprocess.run(["node", "-e", HARNESS], env={"MODEL": str(MODEL), "PATH": os.environ["PATH"]},
                           capture_output=True, text=True, check=True)
     return json.loads(proc.stdout)
 
@@ -197,7 +200,7 @@ def test_shell_controller_docks_drags_and_removes(tmp_path):
         "agents": [{"agent": "codex", "label": "Codex"}, {"agent": "claude", "label": "Claude Code"}]}}]
 
     with playwright.sync_playwright() as driver:
-        browser = driver.chromium.launch(headless=True)
+        browser = launch_chromium(driver)
         page = browser.new_page(viewport={"width": 1200, "height": 700})
         errors = []
         page.on("pageerror", lambda error: errors.append(str(error)))
@@ -293,7 +296,7 @@ def test_gizmos_app_creates_without_an_agent(tmp_path):
     types = [{"id": "usage_meter", "label": "Usage meter", "options": {
         "agents": [{"agent": "codex", "label": "Codex"}, {"agent": "claude", "label": "Claude Code"}]}}]
     with playwright.sync_playwright() as driver:
-        browser = driver.chromium.launch(headless=True)
+        browser = launch_chromium(driver)
         page = browser.new_page(viewport={"width": 1000, "height": 760})
         errors = []
         page.on("pageerror", lambda error: errors.append(str(error)))
