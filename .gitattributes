@@ -4,5 +4,7 @@
 # Python files always LF
 *.py text eol=lf
 
-# Windows batch files always CRLF
+# Windows batch scripts always CRLF. cmd.exe runs .bat and .cmd alike, and with
+# LF endings it can miss `goto`/`call :label` targets.
 *.bat text eol=crlf
+*.cmd text eol=crlf
