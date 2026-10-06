@@ -453,10 +453,6 @@ try:
 except Exception as _mobile_apk_err:
     print(f"[MOBILE] Failed to register Android update routes: {_mobile_apk_err}")
 
-# Owner identity: set OWNER_USER_EMAIL in src/.env to grant owner privileges
-# to a specific authenticated account. Falls back to False for all sessions if unset.
-_OWNER_EMAIL = os.getenv('OWNER_USER_EMAIL', '').strip().lower()
-
 # Global state (for backwards compatibility, new users use database)
 chat_sessions = {}
 session_counter = 0
@@ -5311,10 +5307,8 @@ def chat_endpoint():
             print("[API] POST /api/chat: authenticated user, processing message")
 
             # Process message with bot (session kind for per-channel pipeline routing)
-            # Local accounts are owners unless OWNER_USER_EMAIL is set and doesn't match
-            _uname = (user.get('username') or '').lower()
-            _email = (user.get('email') or '').lower()
-            _user_is_owner = (not _OWNER_EMAIL) or (_email == _OWNER_EMAIL) or (_uname and _uname == _OWNER_EMAIL)
+            from api.http_authz import is_owner_user as _is_owner_user
+            _user_is_owner = _is_owner_user(user)
             _session_id = f"db_session_{chat_session_id}"
             if not wants_stream:
                 from api.chat_turn_workflow import run_pipeline_sync_turn as _run_lane

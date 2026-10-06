@@ -1039,6 +1039,19 @@ class DeviceWorkerStore:
             finally:
                 conn.close()
 
+    def is_enrolled(self, worker_id: str) -> bool:
+        wid = (worker_id or "").strip()
+        if not wid:
+            return False
+        with _lock:
+            conn = _connect(self.db_path)
+            try:
+                return conn.execute(
+                    "SELECT 1 FROM enrolled_devices WHERE worker_id = ?", (wid,)
+                ).fetchone() is not None
+            finally:
+                conn.close()
+
     def lookup_enrolled_token(self, token: str) -> Optional[str]:
         tok = (token or "").strip()
         if not tok:

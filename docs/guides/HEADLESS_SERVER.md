@@ -26,6 +26,12 @@ because Settings can't be reached from another machine until the LAN is on.
 Alternatively, tunnel once (`ssh -L 8080:127.0.0.1:8080 server`) and toggle
 **Settings → Phone/LAN access**.
 
+The first (owner) account can only be registered from the host itself, so a
+LAN peer cannot claim a fresh install. On a headless server, register it
+through the same tunnel (`https://127.0.0.1:8080`). Registration then closes;
+`settings.json` → `auth.allow_registration: true` reopens it for extra
+(non-owner) accounts.
+
 ## 3. Authenticate the vendor CLIs on the server
 
 Cuttle hosts CLIs but never installs or logs them in. Over SSH, install each

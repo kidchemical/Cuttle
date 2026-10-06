@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from flask import Blueprint, jsonify, request
 
-from api.device_workers.auth import authorize_enroll_request, authorize_worker_request
+from api.device_workers.auth import (
+    authorize_enroll_request,
+    authorize_worker_request,
+    extract_bearer,
+    resolve_worker_identity,
+)
 from api.device_workers.config import (
     device_workers_enabled,
     heartbeat_stale_seconds,
@@ -22,6 +27,22 @@ def _auth_or_401():
     if not ok:
         return jsonify({"success": False, "error": err or "unauthorized"}), 401
     return None
+
+
+def _worker_id_or_error(data):
+    """Worker id for a runtime call: a device token speaks only for its own worker.
+
+    Returns (worker_id, None) or (None, error_response).
+    """
+    ok, bound, err = resolve_worker_identity(request)
+    if not ok:
+        return None, (jsonify({"success": False, "error": err or "unauthorized"}), 401)
+    wid = str(data.get("worker_id") or "").strip() or (bound or "")
+    if not wid:
+        return None, (jsonify({"success": False, "error": "worker_id required"}), 400)
+    if bound and wid != bound:
+        return None, (jsonify({"success": False, "error": "worker token is bound to another worker"}), 403)
+    return wid, None
 
 
 def _ui_operator_or_401():
@@ -47,7 +68,7 @@ def enroll_worker():
     """
     if not device_workers_enabled():
         return jsonify({"success": False, "error": "device workers disabled"}), 503
-    ok, err = authorize_enroll_request(request)
+    ok, err, may_reissue = authorize_enroll_request(request)
     if not ok:
         return jsonify({"success": False, "error": err or "enroll denied"}), 403
 
@@ -57,8 +78,24 @@ def enroll_worker():
     if not wid:
         return jsonify({"success": False, "error": "worker_id required"}), 400
     rotate = bool(data.get("rotate"))
+    store = get_store()
+    if not may_reissue:
+        bound = None
+        if extract_bearer(request):
+            _ok, bound, _err = resolve_worker_identity(request)
+        if bound and bound != wid:
+            return jsonify({"success": False, "error": "worker token is bound to another worker"}), 403
+        if not bound and store.is_enrolled(wid):
+            # Never hand out or rotate another device's token for a bare id.
+            return jsonify({
+                "success": False,
+                "error": (
+                    f"worker id {wid!r} is already enrolled. Reconnect with its saved "
+                    "token, or remove it in Jobs → Devices on the host and enroll again."
+                ),
+            }), 409
     try:
-        enrolled = get_store().enroll_device(
+        enrolled = store.enroll_device(
             worker_id=wid,
             hostname=hostname,
             remote_addr=(request.remote_addr or ""),
@@ -137,13 +174,10 @@ def remove_worker_route(worker_id: str):
 
 @workers_bp.route("/register", methods=["POST"])
 def register_worker():
-    denied = _auth_or_401()
+    data = request.get_json(silent=True) or {}
+    wid, denied = _worker_id_or_error(data)
     if denied:
         return denied
-    data = request.get_json(silent=True) or {}
-    wid = str(data.get("worker_id") or "").strip()
-    if not wid:
-        return jsonify({"success": False, "error": "worker_id required"}), 400
     try:
         worker = get_store().upsert_worker(
             worker_id=wid,
@@ -233,13 +267,10 @@ def submit_job():
 
 @workers_bp.route("/jobs/claim", methods=["POST"])
 def claim_jobs():
-    denied = _auth_or_401()
+    data = request.get_json(silent=True) or {}
+    wid, denied = _worker_id_or_error(data)
     if denied:
         return denied
-    data = request.get_json(silent=True) or {}
-    wid = str(data.get("worker_id") or "").strip()
-    if not wid:
-        return jsonify({"success": False, "error": "worker_id required"}), 400
     try:
         limit = max(1, min(int(data.get("limit") or 1), 5))
     except (TypeError, ValueError):
@@ -267,13 +298,10 @@ def get_job(job_id: str):
 
 @workers_bp.route("/jobs/<job_id>/heartbeat", methods=["POST"])
 def job_heartbeat(job_id: str):
-    denied = _auth_or_401()
+    data = request.get_json(silent=True) or {}
+    wid, denied = _worker_id_or_error(data)
     if denied:
         return denied
-    data = request.get_json(silent=True) or {}
-    wid = str(data.get("worker_id") or "").strip()
-    if not wid:
-        return jsonify({"success": False, "error": "worker_id required"}), 400
     progress = data.get("progress") if isinstance(data.get("progress"), dict) else None
     ok = get_store().heartbeat_job(
         job_id, wid, lease_seconds=lease_seconds(), progress=progress
@@ -285,13 +313,10 @@ def job_heartbeat(job_id: str):
 
 @workers_bp.route("/jobs/<job_id>/complete", methods=["POST"])
 def complete_job(job_id: str):
-    denied = _auth_or_401()
+    data = request.get_json(silent=True) or {}
+    wid, denied = _worker_id_or_error(data)
     if denied:
         return denied
-    data = request.get_json(silent=True) or {}
-    wid = str(data.get("worker_id") or "").strip()
-    if not wid:
-        return jsonify({"success": False, "error": "worker_id required"}), 400
     result = data.get("result") if isinstance(data.get("result"), dict) else {}
     ok = get_store().complete_job(job_id, wid, result=result)
     if not ok:
@@ -366,14 +391,14 @@ def ssh_approval_pending():
 @workers_bp.route("/ssh-approval/request", methods=["POST"])
 def ssh_approval_request():
     """Worker asks the UI to approve first SSH in this worker process."""
-    denied = _auth_or_401()
+    data = request.get_json(silent=True) or {}
+    wid, denied = _worker_id_or_error(data)
     if denied:
         return denied
     from api.device_workers import ssh_approval as sa
 
-    data = request.get_json(silent=True) or {}
     row = sa.create_request(
-        worker_id=str(data.get("worker_id") or "").strip(),
+        worker_id=wid,
         target=str(data.get("target") or "").strip(),
         command_preview=str(data.get("command_preview") or data.get("command") or "").strip(),
         job_id=str(data.get("job_id") or "").strip(),
@@ -484,13 +509,10 @@ def register_render_attachment(batch_id):
 
 @workers_bp.route("/jobs/<job_id>/fail", methods=["POST"])
 def fail_job(job_id: str):
-    denied = _auth_or_401()
+    data = request.get_json(silent=True) or {}
+    wid, denied = _worker_id_or_error(data)
     if denied:
         return denied
-    data = request.get_json(silent=True) or {}
-    wid = str(data.get("worker_id") or "").strip()
-    if not wid:
-        return jsonify({"success": False, "error": "worker_id required"}), 400
     params_update = (
         data.get("params_update")
         if isinstance(data.get("params_update"), dict)

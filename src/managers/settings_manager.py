@@ -45,6 +45,10 @@ class SettingsManager:
                 "mdns_enabled": False,
                 "lan_access_enabled": False
             },
+            # Self-registration closes once the owner account exists.
+            "auth": {
+                "allow_registration": False
+            },
             "device_workers": {
                 "enabled": True,
                 "coordinator_url": "",

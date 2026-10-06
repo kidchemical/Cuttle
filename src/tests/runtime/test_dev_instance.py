@@ -702,13 +702,14 @@ def test_s1_two_shadows_dynamic():
             assert st == 200, created2
             sid2 = created2["session_id"]
             # Separate private DBs reuse the same id sequence: isolation is
-            # proved by rows, not id inequality. The duplicate registration
-            # uses its own jar so jar2's cookie stays the s2 owner.
+            # proved by rows, not id inequality. Shadow 1's account must not
+            # exist in shadow 2 (registration there is closed once its owner
+            # exists, so prove it by login). Own jar keeps jar2 the s2 owner.
             op_dup = _opener(http.cookiejar.CookieJar())
-            st, dup = _api(op_dup, o2, "/api/auth/register",
+            st, dup = _api(op_dup, o2, "/api/auth/login",
                            {"username": f"sh1_{tag}", "password": "shadowpass1"})
-            assert st == 200 and dup["success"] is True, \
-                "same username registers independently per DB"
+            assert st == 401 and not dup.get("success"), \
+                "shadow 1's account is absent from shadow 2's DB"
             tok1 = next(c.value for c in jar1 if c.name == "session_token")
             tok2 = next(c.value for c in jar2 if c.name == "session_token")
             assert tok1 and tok2 and tok1 != tok2, "separate private cookies"

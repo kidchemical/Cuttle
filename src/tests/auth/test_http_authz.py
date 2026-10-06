@@ -29,9 +29,14 @@ def worker_db(tmp_path, monkeypatch):
 
 
 def test_guest_is_never_owner(monkeypatch):
+    from api.auth_db import get_auth_db
+
     monkeypatch.delenv("OWNER_USER_EMAIL", raising=False)
-    guest = {"id": 1, "email": "g@x", "username": "g_1", "auth_provider": "guest"}
-    local = {"id": 2, "email": "me@x", "username": "me", "auth_provider": "local"}
+    db = get_auth_db()
+    guest_id = db.create_user("g@x", "Guest", "guest", username="g_1")
+    local_id = db.create_user("me@x", "Me", "local", password="password1", username="me")
+    guest = db.get_user_by_id(guest_id)
+    local = db.get_user_by_id(local_id)
     assert is_guest_user(guest) is True
     assert is_owner_user(guest) is False
     assert is_owner_user(local) is True
@@ -216,12 +221,15 @@ def test_hmac_secret_unavailable_raises(monkeypatch, tmp_path):
     pa._hmac_secret_cache = None
 
 
-def test_single_user_mode_all_non_guests_are_owners(monkeypatch):
+def test_single_user_mode_only_the_oldest_account_is_owner(monkeypatch):
+    from api.auth_db import get_auth_db
+
     monkeypatch.delenv("OWNER_USER_EMAIL", raising=False)
-    a = {"id": 1, "email": "a@x", "username": "a", "auth_provider": "local"}
-    b = {"id": 2, "email": "b@x", "username": "b", "auth_provider": "google"}
+    db = get_auth_db()
+    a = db.get_user_by_id(db.create_user("a@x", "A", "local", password="password1", username="a"))
+    b = db.get_user_by_id(db.create_user("b@x", "B", "google", provider_user_id="sub-b"))
     assert is_owner_user(a) is True
-    assert is_owner_user(b) is True
+    assert is_owner_user(b) is False
 
 
 def _auth_client(tmp_path, monkeypatch):
@@ -859,8 +867,8 @@ def test_agent_router_options_requires_owner(tmp_path, monkeypatch):
     ctx = _auth_client(tmp_path, monkeypatch)
     ctx["client"].set_cookie("session_token", ctx["other_token"])
     other = ctx["client"].get("/api/agent-router/options", environ_base=LAN)
-    # Single-user mode (no OWNER_USER_EMAIL): any non-guest is an owner.
-    assert other.status_code == 200
+    # Single-user mode (no OWNER_USER_EMAIL): only the oldest account is owner.
+    assert other.status_code == 403
 
     monkeypatch.setenv("OWNER_USER_EMAIL", "owner@local")
     denied = ctx["client"].get("/api/agent-router/options", environ_base=LAN)
