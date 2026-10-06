@@ -1,7 +1,7 @@
 # Cuttle Workers — multi-device compute mesh
 
 **Status:** W1–W2 live; **W2.5 platform verbs** shipped (actions + CLI); **W2b** `blender_render` + `workers.blender-shard` shipped; **W2b+** work-steal chunks + per-frame analytics + render EWMA profiles (default `distribution=work_steal`); **W3** heuristics via `workers.plan` / `POST /api/workers/plan` (auto-enqueue off by default).  
-**Related:** [`.cuttle/learnings/FEATURE_REQUESTS.md`](../../.cuttle/learnings/FEATURE_REQUESTS.md) `[FEAT-20260917-001]`, [`docs/ROADMAP.md`](../ROADMAP.md), [`.cuttle_global/docs/cuttle-workers.md`](../../.cuttle_global/docs/cuttle-workers.md) (Brain how-to), [`SUPERVISED_COORDINATOR.md`](SUPERVISED_COORDINATOR.md), [`MODULARITY.md`](MODULARITY.md).
+**Related:** [`docs/ROADMAP.md`](../ROADMAP.md), [`.cuttle_global/docs/cuttle-workers.md`](../../.cuttle_global/docs/cuttle-workers.md) (Brain how-to), [`SUPERVISED_COORDINATOR.md`](SUPERVISED_COORDINATOR.md), [`MODULARITY.md`](MODULARITY.md).
 
 ## Product intent (read this first)
 
@@ -47,7 +47,7 @@ The user talks to **Cuttle**. Cuttle (orchestrator + Brain) decides when work sh
 POST /api/workers/jobs
 {
   "type": "file_copy",
-  "target_worker_id": "yoga",
+  "target_worker_id": "laptop",
   "submitted_by": "ui-or-agent-id",
   "params": {
     "source": "C:\\Users\\You\\Desktop\\foo.txt",
@@ -61,7 +61,7 @@ POST /api/workers/jobs
 | Key | Meaning |
 |---|---|
 | `device_workers.enabled` / `CUTTLE_DEVICE_WORKERS_ENABLED` | Master gate |
-| *(no manual token)* | Electron **Client** auto-calls `POST /api/workers/enroll` on connect; host stores a per-device bearer and Electron saves it in `desktop-config.json`. Same trust boundary as LAN Client UI (`discovery.lan_access_enabled`). |
+| *(no manual token)* | Electron **Client** auto-calls `POST /api/workers/enroll` on connect; host stores a per-device bearer and Electron saves it in `desktop-config.json`. Same trust boundary as LAN Client UI (`discovery.lan_access_enabled`). The token is bound to that worker id: runtime calls can only act as that worker, and an already-enrolled id is re-issued only to its own token (otherwise 409 — remove the device in **Jobs → Devices**, then reconnect). |
 | `CUTTLE_DEVICE_WORKERS_TOKEN` | Optional **override only** (legacy); not required for Client workers |
 | `CUTTLE_DEVICE_WORKERS_COORDINATOR_URL` | Sidecar → host Flask (Electron sets this from the Client host you already chose) |
 | `device_workers.allowed_path_prefixes` | Extra UNC/local roots for `file_copy` |
@@ -189,7 +189,7 @@ capabilities:
   ollama: false
   agent_cursor: false
 storage:
-  shared_jambit: true    # can see the LAN share
+  shared_nas: true    # can see the LAN share
 ```
 
 Scheduler inputs: required capabilities, estimated cost, “avoid interactive hosts,” AC-only for heavy GPU, user constraints (“except the host”).
@@ -209,8 +209,8 @@ Job envelope (illustrative):
 {
   "id": "...",
   "type": "file_copy | shell | blender_render | agent_turn | …",
-  "submitted_by": "kcslaptop|kcstower|agent:…",
-  "requirements": { "blender_gpu": "optix", "storage": ["shared_jambit"] },
+  "submitted_by": "laptop|desktop|agent:…",
+  "requirements": { "blender_gpu": "optix", "storage": ["shared_nas"] },
   "inputs": { "paths": [], "content_hashes": [] },
   "params": {},
   "outputs": { "expected": [] },

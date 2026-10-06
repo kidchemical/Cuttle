@@ -4,7 +4,6 @@ Database models and management for user authentication and chat sessions
 """
 
 import sqlite3
-import hashlib
 import secrets
 import json
 import re
@@ -511,6 +510,17 @@ class AuthDatabase:
         conn.close()
         return dict(row) if row else None
 
+    def first_account_id(self) -> Optional[int]:
+        """Oldest active non-guest account: the durable single-user owner."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT MIN(id) FROM users WHERE is_active = 1 AND auth_provider != 'guest'"
+        )
+        row = cursor.fetchone()
+        conn.close()
+        return int(row[0]) if row and row[0] is not None else None
+
     def get_user_by_login(self, login: str) -> Optional[Dict[str, Any]]:
         """Resolve user by username or email."""
         ident = (login or '').strip()
@@ -617,30 +627,15 @@ class AuthDatabase:
         return int(row['id']) if row else None
     
     def verify_password(self, login: str, password: str) -> Optional[int]:
-        """Verify user password (username or email) and return user ID if valid.
-
-        Supports transparent migration from legacy SHA-256 hashes to bcrypt:
-        on successful login with an old hash, the hash is re-stored as bcrypt.
-        """
+        """Verify user password (username or email) and return user ID if valid (bcrypt only)."""
         user = self.get_user_by_login(login)
         if not user or not user.get('is_active', 1) or not user.get('password_hash'):
             return None
 
         stored_hash = user['password_hash']
 
-        # Detect legacy SHA-256 hash (64-char hex, not a bcrypt hash)
         if not stored_hash.startswith('$2'):
-            legacy_hash = hashlib.sha256(password.encode()).hexdigest()
-            if legacy_hash != stored_hash:
-                return None
-            # Migration: re-hash with bcrypt and update DB
-            new_hash = self._hash_password(password)
-            conn = self._get_connection()
-            conn.execute('UPDATE users SET password_hash = ? WHERE id = ?', (new_hash, user['id']))
-            conn.commit()
-            conn.close()
-            self._update_last_login(user['id'])
-            return user['id']
+            return None
 
         # bcrypt verification
         bcrypt = _bcrypt_mod()

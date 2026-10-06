@@ -85,7 +85,10 @@ def test_http_owner_gate_validation_and_cache(monkeypatch):
     monkeypatch.setattr(http_authz, "current_user", lambda: {"auth_provider": "guest"})
     assert client.get("/api/usage-live?agent=codex").status_code == 403
     monkeypatch.delenv("OWNER_USER_EMAIL", raising=False)
-    monkeypatch.setattr(http_authz, "current_user", lambda: {"auth_provider": "local"})
+    from api.auth_db import get_auth_db
+    db = get_auth_db()
+    owner = db.get_user_by_id(db.create_user("owner@local", "Owner", "local", password="x"))
+    monkeypatch.setattr(http_authz, "current_user", lambda: owner)
     calls = []
     monkeypatch.setattr(agent_usage, "run_codex_usage", lambda: calls.append(1) or "meters")
     for _ in range(3):

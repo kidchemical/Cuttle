@@ -190,6 +190,11 @@ def register():
                 'error': 'Password must be at least 8 characters long'
             }), 400
 
+        from api.http_authz import registration_allowed
+        allowed, reason = registration_allowed()
+        if not allowed:
+            return jsonify({'success': False, 'error': reason, 'registration_closed': True}), 403
+
         db = get_auth_db()
         uname = username.lower()
 
@@ -569,6 +574,9 @@ def oauth_callback(provider):
                 if profile_image:
                     db.update_profile_image(user_id, profile_image)
             else:
+                from api.http_authz import registration_allowed
+                if not registration_allowed()[0]:
+                    return redirect('/?auth_error=registration_closed')
                 user_id = db.create_user(
                     email=email,
                     display_name=display_name,

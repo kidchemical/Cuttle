@@ -42,8 +42,9 @@ guest accounts. Client-provided chat/session ids do not identify the sender.
 All pairing endpoints require an owner session cookie or owner session bearer
 token, including `GET /api/pairing/status?channel=webchat&identity=web_user_2`.
 Channel settings GET/POST also require an owner. In multi-user deployments,
-configure `OWNER_USER_EMAIL`; without it, every authenticated non-guest account
-is treated as an owner. Pairing alone does not change that role policy.
+configure `OWNER_USER_EMAIL`; without it, the oldest active non-guest account
+is the owner and later accounts are not. Pairing alone does not change that
+role policy.
 
 Open-policy allowlist rejection returns `error: "allowlist_denied"` without a
 pairing code. Approved/pending identities live in `src/data/pairing_store.json`;

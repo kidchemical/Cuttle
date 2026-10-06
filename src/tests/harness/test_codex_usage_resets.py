@@ -87,10 +87,19 @@ def client(monkeypatch):
     usage_live._cache.clear()
     usage_live._locks.clear()
     monkeypatch.delenv("OWNER_USER_EMAIL", raising=False)
-    monkeypatch.setattr(http_authz, "current_user", lambda: {"auth_provider": "local"})
+    monkeypatch.setattr(http_authz, "current_user", lambda: _owner())
     app = Flask(__name__)
     app.register_blueprint(usage_live.usage_live_bp)
     return app.test_client()
+
+
+def _owner():
+    """The install's first account — the single-user owner."""
+    from api.auth_db import get_auth_db
+
+    db = get_auth_db()
+    uid = db.first_account_id() or db.create_user("owner@local", "Owner", "local", password="x")
+    return db.get_user_by_id(uid)
 
 
 def body():
@@ -105,7 +114,7 @@ def test_redemption_owner_and_confirmation_gate(client, monkeypatch):
     for user, code in [(None, 401), ({"auth_provider": "guest"}, 403)]:
         monkeypatch.setattr(http_authz, "current_user", lambda: user)
         assert client.post("/api/usage/codex/reset", json=body()).status_code == code
-    monkeypatch.setattr(http_authz, "current_user", lambda: {"auth_provider": "local"})
+    monkeypatch.setattr(http_authz, "current_user", lambda: _owner())
     for change in [{"confirmed": False}, {"credit_id": ""}, {"idempotency_key": "bad"}]:
         assert client.post("/api/usage/codex/reset", json={**body(), **change}).status_code == 400
     assert client.get("/api/usage/codex/reset").status_code == 405

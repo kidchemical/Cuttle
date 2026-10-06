@@ -274,6 +274,8 @@ Captures use the Lavender Dream light theme at 2x and are framed by [`readme_pro
 ## Security notes
 
 - Cuttle is designed for a trusted LAN. Before exposing the UI beyond it, set `OWNER_USER_EMAIL` and review the CORS allowlist and [pairing limitations](docs/guides/PAIRING_AND_ALLOWLIST.md). Pairing does not replace network restrictions or authorization for other API routes.
+- The first account must be created on the host itself and becomes the owner; self-registration then closes (`settings.json` → `auth.allow_registration` reopens it for non-owner accounts).
+- Worker tokens are bound to the device they were issued to. A LAN peer cannot re-enroll an existing worker id; remove the device in **Jobs → Devices** to re-pair it.
 - Auth uses bcrypt passwords, a CORS origin allowlist, and rate limits on login and pairing.
 - Keep secrets in `src/.env` (gitignored). Never commit it, certs, `*.db`, or Playwright profiles.
 - Found a vulnerability? Report it privately; see [`SECURITY.md`](SECURITY.md).

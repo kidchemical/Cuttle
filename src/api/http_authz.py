@@ -8,11 +8,17 @@ Authorization model
 -------------------
 ``OWNER_USER_EMAIL`` (env) selects the mode:
 
-- **Unset (single-user / home-lab):** every authenticated **non-guest** account
-  is an owner. Guests (``auth_provider=guest``) are never owners. This matches
-  a machine with one operator plus optional guest previews.
+- **Unset (single-user / home-lab):** the oldest active **non-guest** account
+  is the owner. Later accounts are authenticated non-owners, so an account
+  registered from the LAN can never inherit owner rights. Guests
+  (``auth_provider=guest``) are never owners.
 - **Set (multi-user):** only the account whose email or username equals that
   value is an owner. Other signed-in users are authenticated non-owners.
+
+Registration (``registration_allowed``) is closed once any non-guest account
+exists. The first account may only be created from loopback, so a LAN peer
+cannot claim a fresh install. ``settings.json`` → ``auth.allow_registration``
+reopens self-registration for additional (non-owner) accounts.
 
 Worker mesh **administration** (submit/cancel/self-update, …) requires an
 **owner session** (cookie or ``Authorization: Bearer`` session token). Loopback
@@ -63,7 +69,12 @@ def is_owner_user(user: Optional[Dict[str, Any]]) -> bool:
         return False
     expected = owner_email()
     if not expected:
-        return True
+        try:
+            from api.auth_db import get_auth_db
+
+            return user.get("id") is not None and int(user["id"]) == get_auth_db().first_account_id()
+        except Exception:
+            return False
     email = (user.get("email") or "").strip().lower()
     uname = (user.get("username") or "").strip().lower()
     return email == expected or uname == expected
@@ -81,6 +92,32 @@ def is_loopback_addr(remote: str) -> bool:
 def request_is_loopback(req: Optional[Request] = None) -> bool:
     req = req or request
     return is_loopback_addr((req.remote_addr or "").strip())
+
+
+def registration_allowed(req: Optional[Request] = None) -> Tuple[bool, str]:
+    """Self-registration policy for local and new OAuth accounts (see module docstring)."""
+    try:
+        from managers.settings_manager import get_settings_manager
+
+        auth_cfg = get_settings_manager().get_setting("auth") or {}
+        if isinstance(auth_cfg, dict) and auth_cfg.get("allow_registration") is True:
+            return True, ""
+    except Exception:
+        pass
+    try:
+        from api.auth_db import get_auth_db
+
+        has_account = get_auth_db().first_account_id() is not None
+    except Exception:
+        return False, "Registration is unavailable."
+    if has_account:
+        return False, (
+            "Registration is closed. The owner can allow new accounts with "
+            "settings.json → auth.allow_registration."
+        )
+    if not request_is_loopback(req):
+        return False, "Create the first (owner) account on the Cuttle host itself."
+    return True, ""
 
 
 def current_user() -> Optional[Dict[str, Any]]:
