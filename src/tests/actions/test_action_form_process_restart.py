@@ -117,7 +117,8 @@ def _wait_http(port: int, timeout: float = 45.0, proc=None, log: Path = None) ->
         if proc is not None and proc.poll() is not None:
             break  # the child died; report its stderr instead of waiting out
         try:
-            urllib.request.urlopen(url, timeout=0.4)
+            # Windows runners answer health in ~1s; the deadline above bounds it.
+            urllib.request.urlopen(url, timeout=5)
             return
         except Exception as exc:
             last = exc
