@@ -546,12 +546,20 @@ let cuttleTitlebarCancelHide = null;
         }
         titlebar.classList.add('is-revealed');
     };
+    // An open space menu/bubble, or a space tab mid-rename, pins the titlebar.
+    const isTitlebarPinned = () => {
+        if (typeof isSpaceCtxOpen === 'function' && isSpaceCtxOpen()) return true;
+        const active = document.activeElement;
+        return !!(active && active.classList.contains('shell-space-rename') && titlebar.contains(active));
+    };
     const scheduleHideTitlebar = () => {
         if (hideTimer) clearTimeout(hideTimer);
-        // An open space menu/bubble pins the titlebar until it closes.
-        if (typeof isSpaceCtxOpen === 'function' && isSpaceCtxOpen()) return;
+        hideTimer = null;
+        if (isTitlebarPinned()) return;
         hideTimer = setTimeout(() => {
             hideTimer = null;
+            // Re-check: a rename can start inside the delay (menu → Rename).
+            if (isTitlebarPinned()) return;
             titlebar.classList.remove('is-revealed');
         }, HIDE_DELAY_MS);
     };
@@ -5383,6 +5391,10 @@ function startSpaceRename(id) {
         done = true;
         if (commit) renameSpace(id, input.value);
         renderSpaceTabs();
+        // The rename pinned the fullscreen titlebar; re-arm its auto-hide.
+        if (typeof cuttleTitlebarRescheduleHide === 'function') {
+            try { cuttleTitlebarRescheduleHide(); } catch (_) {}
+        }
     };
     input.addEventListener('keydown', (e) => {
         e.stopPropagation();
@@ -7475,7 +7487,10 @@ updateColumnUI(0, currentPage);
         btn.type = 'button';
         btn.id = 'mobileChangePcBtn';
         btn.className = 'mobile-change-pc-btn';
-        btn.textContent = 'Server';
+        btn.innerHTML =
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+            + '<rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/>'
+            + '<path d="M6 6h.01"/><path d="M6 18h.01"/></svg><span>Server</span>';
         btn.title = 'Cuttle server settings';
         btn.addEventListener('click', () => {
             if (window.cuttleMobile?.openSettings) {

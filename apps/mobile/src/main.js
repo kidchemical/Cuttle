@@ -3,6 +3,7 @@ import { App } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { Preferences } from '@capacitor/preferences';
 import { SafeArea, SystemBarsStyle } from '@capacitor-community/safe-area';
+import mascotUrl from '../assets/icon/mascot.png';
 
 /**
  * Connection settings UI for the native Cuttle mobile shell.
@@ -205,7 +206,7 @@ function renderRecentHosts(list) {
         token: ($('#mobile-token')?.value || '').trim(),
       });
       clearStatus();
-      showStatus(`Filled ${entry.host} — tap Open Cuttle or Test.`, 'ok');
+      showStatus(`Filled ${entry.host} — tap Connect or Test.`, 'ok');
     });
 
     const remove = document.createElement('button');
@@ -512,8 +513,62 @@ async function initNativeChrome() {
   });
 }
 
+const SERVER_ICON =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/>' +
+  '<path d="M6 6h.01"/><path d="M6 18h.01"/></svg>';
+
+function initHero() {
+  const logo = $('#hero-logo');
+  if (logo) logo.src = mascotUrl;
+}
+
+async function initFooter() {
+  const footer = $('#app-footer');
+  if (!footer || !Capacitor.isNativePlatform()) return;
+  try {
+    const info = await App.getInfo();
+    footer.textContent = `Cuttle Mobile ${info.version} (${info.build}) · ${Capacitor.getPlatform()}`;
+  } catch {
+    // Footer is cosmetic.
+  }
+}
+
+/**
+ * Settings opened from the in-app Server button: show the saved server
+ * with a live reachability check and a one-tap way back, so changing
+ * nothing never means retyping the address.
+ */
+function initCurrentServer(config) {
+  const card = $('#current-server');
+  if (!card || !config.host || !isValidPort(config.port)) return;
+  const baseUrl = config.baseUrl || buildBaseUrl(config.host, config.port, config.useHttps);
+  card.hidden = false;
+  $('#current-server-url').textContent = baseUrl.replace(/^https?:\/\//, '');
+  const heading = $('#setup-heading');
+  if (heading) heading.textContent = 'Change server';
+
+  const pill = $('#current-server-state');
+  const pillText = $('#current-server-state-text');
+  const setState = (state, text) => {
+    pill.className = `state-pill ${state}`;
+    pillText.textContent = text;
+  };
+  testConnection(baseUrl)
+    .then(() => setState('online', 'Online'))
+    .catch(() => setState('offline', 'Unreachable'));
+
+  $('#btn-back')?.addEventListener('click', () => {
+    openInNativeShell(
+      config.host, config.port, config.useHttps, baseUrl, config.notifyEnabled, config.token,
+    );
+  });
+}
+
 async function init() {
   await initNativeChrome();
+  initHero();
+  initFooter();
 
   const config = await loadConfig();
   populateForm(config);
@@ -529,11 +584,13 @@ async function init() {
   const isSettingsMode = params.get('setup') === '1';
   const isOfflineMode = params.get('offline') === '1';
 
+  if (isSettingsMode) initCurrentServer(config);
+
   if (isOfflineMode || !isSettingsMode) {
     const fab = document.createElement('button');
     fab.type = 'button';
     fab.className = 'server-fab';
-    fab.textContent = 'Server';
+    fab.innerHTML = `${SERVER_ICON}<span>Server</span>`;
     fab.title = 'Cuttle server settings';
     fab.addEventListener('click', () => {
       window.location.href = 'https://localhost/index.html?setup=1';
