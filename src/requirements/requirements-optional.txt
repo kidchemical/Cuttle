@@ -7,11 +7,11 @@
 # Screen ambient-light sync (tools/govee/govee_screen_sync.py).
 # Falls back to PIL.ImageGrab when mss is unavailable, and nothing in the
 # active codebase currently calls the screen-sync path.
-mss>=9.0.0
+mss>=10.2.0
 
 # Web search tool (tools/web_search.py). Currently has no live callers;
 # kept here so the module keeps working if re-enabled.
-duckduckgo-search>=6.0.0
+duckduckgo-search>=8.1.1
 
 # LAN discovery (api/discovery_mdns.py); LAN access and mdns_enabled must also be enabled.
-zeroconf>=0.131.0
+zeroconf>=0.151.5
