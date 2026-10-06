@@ -56,6 +56,12 @@ def _tag_ref(cwd: Path, tag: str) -> str:
 
 
 def main() -> int:
+    # Piped stdout is cp1252 on Windows; the report uses non-ASCII (→, —).
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
     mode = (_env("CUTTLE_PARAM_MODE") or "push").strip().lower()
     if mode not in ("status", "push"):
         print("Unknown mode '" + mode + "'. Use: status, push")

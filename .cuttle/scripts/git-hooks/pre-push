@@ -134,6 +134,12 @@ FALLBACK_PATTERNS: tuple[tuple[str, str], ...] = (
 
 
 def main() -> int:
+    # Piped stdout is cp1252 on Windows; the report uses non-ASCII (→, —).
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
     stdin_data = ""
     try:
         stdin_data = sys.stdin.read()
