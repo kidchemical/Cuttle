@@ -168,8 +168,11 @@ def test_groups_collapse_and_expand():
 def test_open_menu_pins_fullscreen_titlebar():
     src = SHELL_JS.read_text(encoding="utf-8")
     assert "function isSpaceCtxOpen(" in src
-    # The 420ms auto-hide bails while any menu/submenu/bubble is on screen.
-    assert "isSpaceCtxOpen()) return;" in src
+    # The 420ms auto-hide bails while any menu/submenu/bubble is on screen
+    # or a space tab is being renamed, and re-checks when the timer fires.
+    assert "isSpaceCtxOpen()) return true;" in src
+    assert "shell-space-rename" in src
+    assert src.count("if (isTitlebarPinned()) return;") >= 2
     # Opening layers drops a hide timer a previous close just armed...
     assert "cuttleTitlebarCancelHide();" in src
     # ...and closing re-arms it when the pointer is away.
