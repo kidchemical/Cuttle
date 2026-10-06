@@ -38,6 +38,11 @@ Do not ask “OK to push?” in prose. Example card (only emit the tagged JSON b
 
 Adjust `remote` / `branch` / `path` to the repo in the chat project chip. Never force-push from this action.
 
+**Release tags:** push one tag with `"params":{"mode":"push","remote":"origin","tag":"vX.Y.Z"}`.
+It pushes only `refs/tags/vX.Y.Z` and refuses a tag that does not exist locally.
+Never suggest `git push --tags` or `--all`: old local tags and branches can hold
+history that must stay private.
+
 
 
 ## Push-blocker reports and database inspection

@@ -5,7 +5,7 @@ Two version concepts — do not conflate them:
 - **Release version** (`electron/package.json`, e.g. `0.2.26`): user-facing SemVer. Bump **only at release time**, never per push. Patch = bugfix, Minor = feature, Major = breaking. Use `.cuttle/scripts/bump-cuttle-version.py` (`--minor` / `--major` / `--set X.Y.Z`; any OS).
 - **Git hash**: exact commit identity, advertised as `cuttle_git_rev`. This is what client "Update" badges and mesh `needs_update` compare first — it changes every push with no manual step. (`cuttle_version` SemVer mismatch is only one of three `needs_update` inputs in `device_workers/platform.py`, alongside git-rev mismatch and stale boot rev.) Never route staleness checks through the hand-bumped release version.
 
-Release flow: bump version → commit → `git tag vX.Y.Z` → push (emit the `git.push` form) → publish GitHub Release notes off the tag.
+Release flow: bump version → commit → `git tag vX.Y.Z` → push the branch (`git.push` form) → push the tag (`git.push` form with `"tag":"vX.Y.Z"`; a branch push does not carry tags) → publish GitHub Release notes off the tag. Never push with `--tags` or `--all`: this checkout's older local tags/branches predate the public history and must stay local.
 
 ## Mesh-visible changes (no per-push bump)
 

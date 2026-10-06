@@ -3,7 +3,8 @@ title: Push to git remote
 description: >-
   Push the current branch after the user clicks this card. Agents must never
   run git push from the shell in Cuttle chat. Params: mode = status | push
-  (default push); remote; branch; path (project cwd, optional).
+  (default push); remote; branch; tag (push only that existing local tag,
+  e.g. a release tag; never --tags); path (project cwd, optional).
   Never force-pushes.
 type: shell
 run: powershell -NoProfile -ExecutionPolicy Bypass -File .cuttle_global\scripts\git-push.ps1

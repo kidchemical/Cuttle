@@ -2,7 +2,9 @@
 """git.push action — status (no push) or push after the user clicked the form.
 
 Params: CUTTLE_PARAM_MODE (status|push), CUTTLE_PARAM_REMOTE, CUTTLE_PARAM_BRANCH,
-CUTTLE_PARAM_PATH (optional project cwd). Never --force.
+CUTTLE_PARAM_TAG (push exactly this one existing local tag instead of the branch),
+CUTTLE_PARAM_PATH (optional project cwd). Never --force, never --tags/--all: other
+local tags may point at history that must stay private.
 """
 from __future__ import annotations
 
@@ -41,6 +43,18 @@ def _resolve_cwd() -> Path:
     return REPO_ROOT.resolve()
 
 
+def _tag_ref(cwd: Path, tag: str) -> str:
+    """``refs/tags/<tag>`` when exactly that local tag exists, else ''."""
+    if tag.startswith("-") or any(c.isspace() for c in tag):
+        return ""
+    ref = f"refs/tags/{tag}"
+    probe = subprocess.run(
+        ["git", "rev-parse", "-q", "--verify", ref],
+        cwd=str(cwd), capture_output=True, text=True,
+    )
+    return ref if probe.returncode == 0 else ""
+
+
 def main() -> int:
     mode = (_env("CUTTLE_PARAM_MODE") or "push").strip().lower()
     if mode not in ("status", "push"):
@@ -68,19 +82,28 @@ def main() -> int:
     target = git_push_target(str(cwd))
     remote = _env("CUTTLE_PARAM_REMOTE") or (target.get("remote") or "origin")
     branch = _env("CUTTLE_PARAM_BRANCH") or (target.get("branch") or "")
+    tag = _env("CUTTLE_PARAM_TAG")
     url = target.get("url") or ""
-    print(f"{remote}/{branch or '?'} → {url or '(no remote URL)'}")
+    if tag:
+        ref = _tag_ref(cwd, tag)
+        if not ref:
+            print(f"No local tag named '{tag}'. Create it first: git tag {tag}")
+            return 1
+        print(f"{remote} tag {tag} → {url or '(no remote URL)'}")
+    else:
+        ref = branch
+        print(f"{remote}/{branch or '?'} → {url or '(no remote URL)'}")
     if mode == "status":
         return 0
 
-    cmd, env = git_push_command(remote, branch)
+    cmd, env = git_push_command(remote, ref)
     joined = " ".join(cmd)
     if "--force" in cmd or " -f" in joined or joined.endswith(" -f"):
         print("Refusing force-push.")
         return 1
     result = subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, env=env)
     out = sanitize_git_output((result.stdout or "") + (result.stderr or ""))
-    print(out.strip() or ("Pushed " + remote + " " + (branch or "HEAD")))
+    print(out.strip() or ("Pushed " + remote + " " + (ref or "HEAD")))
     return 0 if result.returncode == 0 else 1
 
 
