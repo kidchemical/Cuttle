@@ -155,6 +155,23 @@ After `--wait`, synthesize **one** answer in the parent chat. Cite children with
 bare `CH-000540` tokens (never markdown-wrapped). Do not dump every child
 transcript unless the user asks.
 
+## Git worktrees for children
+
+Cuttle does not create worktrees. If you give children isolated checkouts, the
+parent that creates a worktree owns removing it. Nothing else cleans them up, so
+forgotten ones pile up by the gigabyte.
+
+- Create under `{project}/temp/worktrees/<parent CH-handle>-<slug>`, never
+  elsewhere, so they are findable and gitignored.
+- Before your final reply, remove each worktree you created whose work is
+  committed (or that the user discarded): check `git -C <path> status
+  --porcelain` is empty, then `git worktree remove <path>`, then
+  `git worktree prune`. Delete a branch you created for it once it is merged.
+- Never `--force`-remove a worktree with uncommitted changes. Keep it, and list
+  its path and why in the parent reply so the user can decide.
+- `git worktree list` is the audit; anything under `temp/worktrees/` whose
+  parent chat is finished is a leftover.
+
 ## Shell environment
 
 Examples run from the Cuttle repository root with the project venv. POSIX
