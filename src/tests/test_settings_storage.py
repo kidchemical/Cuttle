@@ -101,7 +101,8 @@ def test_conflict_preserves_all_legacy_paths(tmp_path):
     machine = store(tmp_path).machine
     machine.parent.mkdir(parents=True)
     machine.write_text('{"custom":1}')
-    old = tmp_path / "src/data/home_automation_schedule.json"
+    old = tmp_path / "src/data/workspace/harness_last_agent_map.json"
+    old.parent.mkdir(parents=True, exist_ok=True)
     old.write_text("{}")
     with pytest.raises(FileExistsError):
         migrate(tmp_path)

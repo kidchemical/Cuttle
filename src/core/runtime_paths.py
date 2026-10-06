@@ -88,17 +88,6 @@ def runtime_cache_path(name: str, project_root: Optional[Path] = None) -> Path:
                               legacy=f"workspace/{name}")
 
 
-def home_automation_path(name: str, project_root: Optional[Path] = None) -> Path:
-    """Keep daemon/Flask settings and their lock in one storage generation."""
-    base = runtime_data_dir(project_root)
-    legacy_names = ("devices", "schedule", "auto_state", "daemon_heartbeat")
-    if any((base / f"home_automation_{key}.json").exists() for key in legacy_names):
-        base.mkdir(parents=True, exist_ok=True)
-        filename = name if name == "govee_api_batch.lock" else f"home_automation_{name}"
-        return base / filename
-    return runtime_state_path("home_automation", name, project_root=project_root)
-
-
 def secrets_dir(project_root: Optional[Path] = None) -> Path:
     """Install-local secret files: ``.cuttle/personal/secrets/`` (gitignored).
 

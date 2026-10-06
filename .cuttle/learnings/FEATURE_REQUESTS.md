@@ -168,12 +168,12 @@ User-requested capabilities. Format: `[FEAT-YYYYMMDD-XXX] capability_name`
 
 ## [FEAT-20260818-001] comfyui_trellis2_local_3d
 
-- **Priority:** Medium · **Status:** In progress · **Area:** tools / MCP
+- **Priority:** Medium · **Status:** Moved out of Cuttle (2026-10-05) · **Area:** tools / MCP
 - **Requested capability:** Local ComfyUI + Microsoft TRELLIS.2 for textured 3D assets from prompts and reference images, callable from Cuttle and other agents via MCP.
 - **User context:** Game/Unity asset pipeline (CH-000184). Low-VRAM workflows with a separately installed engine (Python 3.11).
 - **Notes:** TRELLIS.2-4B weights complete 2026-08-19 (~16.2 GB, 9 safetensors). DINOv3 still gated; generation blocked until HF license + login.
 - **Complexity:** L
-- **Related:** `.cuttle_global/personal/docs/comfyui-trellis2.md` (optional local workflow), `src/tools/comfyui/`
+- **Related:** now project-scoped in the ComfyUI project's own `.cuttle/` (client, MCP server, scripts, skill); no longer part of Cuttle core.
 
 ## [FEAT-20260817-002] cuttle_cli (deferred — product shell)
 

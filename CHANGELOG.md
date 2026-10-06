@@ -51,8 +51,13 @@ User-visible changes to Cuttle. The format follows
   and its `GET/POST /api/settings` route. Only the local Ollama model setting
   was still used; it now comes from `OLLAMA_MODEL` or Settings (completion
   models → Local). Leftover files from old installs are ignored.
-- The unused repository-root `bot_config.json` and the orphaned
-  `vendor/claw-code` gitlink.
+- Bundled tool integrations from core: Govee/home automation (daemon schedule,
+  tray Lights menu, Home Automation page and API, `vendor/mcp-govee`), the
+  ComfyUI/TRELLIS client and MCP server, the unused web search tool, and the OCR
+  fallback for image attachments (images now go through Claude or OpenAI vision
+  only). `pytesseract` and `opencv-python` are no longer required.
+- The Claw Code harness and its `vendor/claw-code` hooks.
+- The unused repository-root `bot_config.json`.
 
 Earlier changes predate this changelog; see the git history.
 

@@ -22,14 +22,14 @@ def test_ui_layout_persists_rail_hidden_and_version(client):
     payload = {
         "rail_items": ["nav-chat", "nav-git", "nav-apps"],
         "rail_footer": ["nav-account", "nav-settings", "panelToggle"],
-        "rail_hidden": ["nav-tasks", "nav-automation"],
+        "rail_hidden": ["nav-tasks", "nav-projects"],
         "layout_version": 3,
     }
     res = client.post("/api/settings/ui-layout", json=payload)
     assert res.status_code == 200
 
     layout = client.get("/api/settings/ui-layout").get_json()["ui_layout"]
-    assert layout["rail_hidden"] == ["nav-tasks", "nav-automation"]
+    assert layout["rail_hidden"] == ["nav-tasks", "nav-projects"]
     assert layout["rail_items"] == ["nav-chat", "nav-git", "nav-apps"]
     assert layout["layout_version"] == 3
 
@@ -42,16 +42,16 @@ def test_ui_layout_pinning_an_app_clears_it_from_hidden(client):
     assert reg.status_code == 200, reg.get_json()
     client.post("/api/settings/ui-layout", json={
         "rail_items": ["nav-chat", "nav-apps"],
-        "rail_hidden": ["nav-tasks", "nav-automation"],
+        "rail_hidden": ["nav-tasks", "nav-projects"],
         "layout_version": 3,
     })
     client.post("/api/settings/ui-layout", json={
         "rail_items": ["nav-chat", "nav-apps", "nav-tasks"],
-        "rail_hidden": ["nav-automation"],
+        "rail_hidden": ["nav-projects"],
         "layout_version": 3,
     })
     layout = client.get("/api/settings/ui-layout").get_json()["ui_layout"]
-    assert layout["rail_hidden"] == ["nav-automation"]
+    assert layout["rail_hidden"] == ["nav-projects"]
     assert "nav-tasks" in layout["rail_items"]
 
 

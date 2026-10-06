@@ -1034,33 +1034,6 @@ def watch_flask_restart_requests():
         time.sleep(1.0)
 
 
-def run_home_automation_loop():
-    """Apply Govee schedule when the active period changes (cadence from home_automation constants)."""
-    from managers.home_automation import (
-        DAEMON_SCHEDULE_CHECK_INTERVAL_SEC,
-        DAEMON_SCHEDULE_STARTUP_DELAY_SEC,
-        maybe_apply_scheduled_theme,
-        record_daemon_schedule_tick,
-    )
-
-    time.sleep(DAEMON_SCHEDULE_STARTUP_DELAY_SEC)
-    while daemon_running:
-        try:
-            r = maybe_apply_scheduled_theme()
-            if not r.get("skipped") and r.get("auto"):
-                if r.get("success"):
-                    print(f"[DAEMON] Home auto lighting: period={r.get('period')} theme={r.get('theme')}")
-                else:
-                    print(f"[DAEMON] Home auto lighting failed: {r.get('errors', r)}")
-        except Exception as e:
-            print(f"[DAEMON] Home automation loop: {e}")
-        record_daemon_schedule_tick()
-        for _ in range(DAEMON_SCHEDULE_CHECK_INTERVAL_SEC):
-            if not daemon_running:
-                return
-            time.sleep(1)
-
-
 def run_cuttle_jobs_loop():
     """Claim Gitea @cuttle jobs from the Cuttle Jobs API."""
     try:
@@ -1183,35 +1156,6 @@ def _load_tray_icon_image():
     return Image.new("RGBA", (32, 32), (26, 26, 26, 255))
 
 
-def _tray_apply_lighting_theme(theme_id: str) -> None:
-    """POST to Flask — same path as the Home Automation page."""
-    import urllib.request
-
-    try:
-        payload = json.dumps({"theme": theme_id}).encode("utf-8")
-        req = urllib.request.Request(
-            _flask_url("/api/home-automation/apply-theme"),
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with _urlopen_flask(req, timeout=120) as resp:
-            body = json.loads(resp.read().decode())
-        ok = body.get("success")
-        msg = f"Lights: {theme_id}" + (" ✓" if ok else " — error")
-        if tray_icon and hasattr(tray_icon, "notify"):
-            tray_icon.notify(title="Cuttle", message=msg[:256])
-        if not ok:
-            print(f"[DAEMON] Tray lighting {theme_id}: {body.get('errors', body)}")
-    except Exception as e:
-        print(f"[DAEMON] Tray lighting {theme_id} failed: {e}")
-        if tray_icon and hasattr(tray_icon, "notify"):
-            try:
-                tray_icon.notify(title="Cuttle", message=f"Lights failed: {e}"[:256])
-            except Exception:
-                pass
-
-
 def _setup_tray():
     """Create and run system tray icon in a separate thread."""
     global tray_icon, daemon_running
@@ -1230,17 +1174,11 @@ def _setup_tray():
         print(f"[DAEMON] No tray icon ({type(e).__name__}: {e}). Daemon running.")
         return
 
-    def _theme_handler(tid: str):
-        return lambda icon, item: _tray_apply_lighting_theme(tid)
-
     def on_open(icon, item):
         open_cuttle_ui()
 
     def on_node_editor(icon, item):
         open_cuttle_ui(["--router"], browser_path="/router_editor.html")
-
-    def on_home_automation(icon, item):
-        webbrowser.open(_flask_url("/home_automation.html"))
 
     def on_restart_flask(icon, item):
         print("[DAEMON] Tray: restarting Flask server...")
@@ -1254,18 +1192,9 @@ def _setup_tray():
         request_shutdown("tray-exit")
 
     image = _load_tray_icon_image()
-    lights_menu = pystray.Menu(
-        pystray.MenuItem("All off", _theme_handler("off")),
-        pystray.MenuItem("Firelit", _theme_handler("firelit")),
-        pystray.MenuItem("Cinematic", _theme_handler("cinematic")),
-        pystray.MenuItem("Warm", _theme_handler("warm")),
-        pystray.MenuItem("Aurora", _theme_handler("aurora")),
-    )
     menu_items = [
         pystray.MenuItem("Open Cuttle", on_open, default=True),
         pystray.MenuItem("Open Router", on_node_editor),
-        pystray.MenuItem("Home Automation…", on_home_automation),
-        pystray.MenuItem("Lights", lights_menu),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Restart Flask", on_restart_flask),
     ]
@@ -1496,10 +1425,6 @@ def run_daemon():
     # Graceful restart requests from Flask (/restart, flask.restart action)
     restart_req_watcher = threading.Thread(target=watch_flask_restart_requests, daemon=True)
     restart_req_watcher.start()
-
-    # Home automation — time-of-day Govee themes (see /home_automation.html)
-    ha_watcher = threading.Thread(target=run_home_automation_loop, daemon=True)
-    ha_watcher.start()
 
     # Gitea @cuttle remote jobs — claim from the jobs-host queue (LAN)
     cuttle_jobs_watcher = threading.Thread(target=run_cuttle_jobs_loop, daemon=True)

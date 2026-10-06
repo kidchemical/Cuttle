@@ -5,7 +5,7 @@ Three files:
 | File | Contents |
 |---|---|
 | [`requirements.txt`](requirements.txt) | Runtime: daemon, Flask API, harnesses, attachments, workers, auth |
-| [`requirements-optional.txt`](requirements-optional.txt) | Lazy-import extras that degrade gracefully when absent (`mss`, `duckduckgo-search`) |
+| [`requirements-optional.txt`](requirements-optional.txt) | Lazy-import extras that degrade gracefully when absent (`zeroconf` for LAN discovery) |
 | [`requirements-dev.txt`](requirements-dev.txt) | Test/dev tooling (`pytest`, `pytest-asyncio`, `playwright`) |
 
 ```bash

@@ -128,7 +128,7 @@ compose; they do not own domain decisions. Details:
 
 ### Tools for agents
 
-Cuttle does **not** host an MCP tool server. Guest CLIs keep their own MCP. Cuttle-owned verbs for agents are `python -m api.<module>` (see `.cuttle_global/docs/agent-ops-cli.md`). **`/cursor`** runs `scripts.utilities.cursor_cli_tool` via the Cursor harness adapter. Discord feature posts use `discord.post` + `python -m api.discord_cli`. Live `src/tools/` is ComfyUI, Govee, OCR (chat vision fallback), and web search.
+Cuttle does **not** host an MCP tool server. Guest CLIs keep their own MCP. Cuttle-owned verbs for agents are `python -m api.<module>` (see `.cuttle_global/docs/agent-ops-cli.md`). **`/cursor`** runs `scripts.utilities.cursor_cli_tool` via the Cursor harness adapter. Discord feature posts use `discord.post` + `python -m api.discord_cli`. Cuttle ships no bundled tool integrations: personal or device integrations (lighting, 3D generation, …) belong in their own CLI or in the owning project's `.cuttle/`, not in core.
 
 ### Agent Router (execution harness selection)
 

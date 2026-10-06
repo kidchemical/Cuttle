@@ -8,9 +8,6 @@ src/.env
 _personal/
 .vapi_cuttle_assistant_id
 
-# Local home-automation device inventory (MAC / device ids)
-src/data/home_automation_devices.json
-!src/data/home_automation_devices.example.json
 
 # Local/generated JSON — keep source-of-truth configs tracked via negations below.
 # NOTE: bare `*.json` matches at every depth, so every new source-of-truth
@@ -97,8 +94,6 @@ src/data/db/action_hmac_secret
 # Local agent memory / chroma indexes
 src/data/agent_memory/
 
-# Transient Govee API serialization lock (Cuttle home automation)
-src/data/govee_api_batch.lock
 
 # Playwright browser profiles (contain cookies/session data — never commit)
 .playwright-*/
@@ -167,9 +162,6 @@ src/data/supervised_tasks/
 src/data/edit_attribution/
 src/data/archive/
 src/data/harness_agents/
-src/data/home_automation/*
-!src/data/home_automation/devices.example.json
-!src/data/home_automation/README.md
 
 # Developer test artifacts live with tests, never with production scripts.
 src/tests/results/

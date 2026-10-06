@@ -268,8 +268,8 @@ saved server UI state is still install-wide, not newly account-scoped.
 ## Persistence
 
 Runtime storage layout is owned by `core.runtime_paths`: `src/data/db/`,
-`sessions/`, `brain/`, `supervised_tasks/`, `edit_attribution/`, `cache/`, and
-`home_automation/`. Existing `workspace/` and root-level home automation JSON stay
+`sessions/`, `brain/`, `supervised_tasks/`, `edit_attribution/`, and `cache/`.
+Existing `workspace/` files stay
 authoritative until `core.runtime_data` migrates them offline. The daemon invokes
 the guarded migration before starting services on its next cold launch; a live
 host or destination conflict skips migration. Details: `src/data/README.md`.

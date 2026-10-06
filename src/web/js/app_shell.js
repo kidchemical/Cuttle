@@ -617,19 +617,18 @@ const CANONICAL_RAIL_ITEM_ORDER = [
     'nav-git',
     'nav-jobs',
     'nav-dashboards',
-    'nav-automation',
     'nav-achievements',
     'nav-projects',
     'nav-apps',
 ];
-// 'nav-tools' and its static reference page are retired. Saved layouts
-// referencing the retired rail entry are filtered out during restore.
+// 'nav-tools' and 'nav-automation' (Home Automation) are retired. Saved layouts
+// referencing retired rail entries are filtered out during restore.
 // Footer may only contain these (do not put page nav buttons here — breaks reorder on load).
 const CANONICAL_RAIL_FOOTER_ORDER = ['nav-account', 'nav-notifications', 'nav-workspace', 'nav-settings', 'panelToggle'];
 // The Apps launcher is the way back to every stashed app, so it can never be removed.
 const RAIL_LOCKED_IDS = new Set(['nav-apps']);
 // Cuttle web apps that live in the Apps grid (not the blade bar) until the user pins them.
-const DEFAULT_RAIL_HIDDEN = ['nav-tasks', 'nav-automation', 'nav-achievements', 'nav-projects'];
+const DEFAULT_RAIL_HIDDEN = ['nav-tasks', 'nav-achievements', 'nav-projects'];
 // Bump when defaults change; saved layouts below this version get DEFAULT_RAIL_HIDDEN merged in once.
 const RAIL_LAYOUT_VERSION = 6;
 
@@ -1805,7 +1804,6 @@ const PAGE_TITLES = {
     '/achievements_page.html': 'Achievements',
     '/projects_page.html': 'Projects',
     '/settings_page.html': 'Settings',
-    '/home_automation.html': 'Home Automation',
     '/media_player.html': 'Media',
     '/about_page.html': 'About',
     '/git_ui.html': 'Git Ops',
@@ -3925,8 +3923,8 @@ function insertAtCanonicalSlot(result, id, canonical) {
 }
 
 /**
- * Merge saved rail order with DOM: older settings omitted `nav-automation`, which made reorder()
- * leave that button at the top. Stray ids in the wrong zone are ignored here.
+ * Merge saved rail order with DOM: ids missing from older settings are inserted at their
+ * canonical slot. Stray or retired ids are ignored here.
  */
 function normalizeRailItemOrder(savedIds, colEl) {
     const known = new Set(CANONICAL_RAIL_ITEM_ORDER);

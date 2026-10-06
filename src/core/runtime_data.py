@@ -24,12 +24,8 @@ def migration_pairs(root: Path) -> list[tuple[Path, Path]]:
     pairs += [(base / "workspace" / name, base / "cache" / name) for name in CACHE_FILES]
     pairs += [(base / "workspace" / name, base / name)
               for name in ("supervised_tasks", "edit_attribution")]
-    pairs += [(base / f"home_automation_{name}.json",
-               base / "home_automation" / f"{name}.json")
-              for name in ("devices", "schedule", "auto_state", "daemon_heartbeat")]
     pairs += [(base / "db" / "action_hmac_secret", secrets_dir(root) / "action_hmac_secret")]
-    pairs += [(base / "govee_api_batch.lock", base / "home_automation" / "govee_api_batch.lock"),
-              (base / "agent_memory", base / "archive" / "agent_memory"),
+    pairs += [(base / "agent_memory", base / "archive" / "agent_memory"),
               (base / "workspace" / "gemini_cli_session_map.json",
                base / "archive" / "gemini_cli_session_map.json")]
     legacy = base / "harness_agents"

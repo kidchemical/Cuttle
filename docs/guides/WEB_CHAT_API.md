@@ -38,7 +38,7 @@ BYO-CLI installer retirement):
 | Flask `app` factory-in-place | TLS cert helpers, CORS-ish headers, rate limiter, static/HTML routes |
 | Chat-turn HTTP ingress | `POST /api/chat`, `process_message_with_bot` (compat), SSE stream, steer/cancel; decisions in `chat_turn` / `chat_coordinator` / `chat_turn_workflow` |
 | Process / LAN / restart HTTP | `/api/flask/restart*`, `/api/status`, LAN settings, process-control 410 stubs |
-| Grab bag of product HTTP | home-automation, router/agent palettes, per-harness pins, shell panes, sessions, TTS/widget/terminal/mobile registers, usage-live |
+| Grab bag of product HTTP | router/agent palettes, per-harness pins, shell panes, sessions, TTS/widget/terminal/mobile registers, usage-live |
 
 **Daemon contract:** `cuttle_daemon` spawns this module as the Flask child on port **8080**. Coordinated restart is `flask_restart` / `/restart` — never `taskkill` the API from an agent it hosts.
 
@@ -123,7 +123,6 @@ routes each).
 
 | Prefix / cluster | Prefer existing owner |
 |---|---|
-| `/api/home-automation` | `managers.home_automation` |
 | `/api/router`, `/api/agent-router`, `/api/agents` | `api.agent_router` |
 | `/api/sessions`, `/api/clear-session` | overlap with `auth_api` sessions |
 | `/api/muse` `/api/hermes` `/api/codex` `/api/opencode` | harness catalog — avoid new per-agent forks |

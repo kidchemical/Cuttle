@@ -27,13 +27,13 @@ def test_legacy_remains_authoritative_until_migration(tmp_path):
 def test_preflight_conflict_moves_nothing(tmp_path):
     base = tmp_path / "src/data"
     for relative in ("workspace/codex_cli_session_map.json", "sessions/codex_cli_session_map.json",
-                     "home_automation_schedule.json"):
+                     "workspace/harness_last_agent_map.json"):
         p = base / relative
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(relative)
     with pytest.raises(FileExistsError):
         migrate(tmp_path)
-    assert (base / "home_automation_schedule.json").exists()
+    assert (base / "workspace/harness_last_agent_map.json").exists()
     assert (base / "workspace/codex_cli_session_map.json").exists()
 
 
@@ -55,20 +55,9 @@ def test_directory_migration_preserves_sidecars_and_unknown_files(tmp_path):
     assert (tmp_path / ".cuttle_global/personal/agents/custom/adapter.py").is_file()
 
 
-def test_home_automation_legacy_generation_uses_one_lock_directory(tmp_path):
-    from core.runtime_paths import home_automation_path
-    base = tmp_path / "src/data"
-    base.mkdir(parents=True)
-    (base / "home_automation_schedule.json").write_text("{}")
-    assert home_automation_path("govee_api_batch.lock", tmp_path) == base / "govee_api_batch.lock"
-    assert home_automation_path("auto_state.json", tmp_path) == base / "home_automation_auto_state.json"
-    migrate(tmp_path)
-    assert home_automation_path("govee_api_batch.lock", tmp_path) == base / "home_automation/govee_api_batch.lock"
-
-
 def test_startup_skips_migration_when_another_host_is_active(tmp_path, monkeypatch):
     from core import runtime_data
-    old = tmp_path / "src/data/home_automation_schedule.json"
+    old = tmp_path / "src/data/workspace/harness_last_agent_map.json"
     old.parent.mkdir(parents=True)
     old.write_text("{}")
     monkeypatch.setattr(runtime_data, "active_processes", lambda root: [123])
@@ -104,7 +93,7 @@ def test_migration_refuses_unreadable_process_attributes(tmp_path, monkeypatch, 
     import psutil
     from core.runtime_data import migrate_when_stopped
 
-    old = tmp_path / "src/data/home_automation_schedule.json"
+    old = tmp_path / "src/data/workspace/harness_last_agent_map.json"
     old.parent.mkdir(parents=True)
     old.write_text("{}")
 
@@ -126,7 +115,7 @@ def test_migration_refuses_unreadable_process_attributes(tmp_path, monkeypatch, 
     with pytest.raises(RuntimeError, match="migration refused"):
         migrate_when_stopped(tmp_path)
     assert old.read_text() == "{}"
-    assert not (tmp_path / "src/data/home_automation/schedule.json").exists()
+    assert not (tmp_path / "src/data/sessions/harness_last_agent_map.json").exists()
 
 
 def test_absolute_host_path_blocks_without_requiring_cwd(tmp_path, monkeypatch):
