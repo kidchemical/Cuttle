@@ -202,37 +202,10 @@ class QueryTracker:
         input_source = "Unknown"
         source_details = ""
         
-        if user_context.get("session_kind") == "adhoc" or user_context.get("routing_key") == "adhoc":
-            input_source = "Run Now"
-            pipeline_name = user_context.get("pipeline_name", "Pipeline")
-            source_details = f"Manual run: {pipeline_name}"
-        elif user_context.get("command_type") == "claude":
-            input_source = "Discord Command"
-            source_details = "/claude command"
-        elif user_context.get("channel_id"):
-            if user_context.get("channel_type") == "dm":
-                input_source = "Discord DM"
-                source_details = f"DM with {user_context.get('display_name', 'User')}"
-            else:
-                input_source = "Discord Channel"
-                source_details = f"Channel: {user_context.get('channel_name', 'Unknown')}"
-        elif user_context.get("node_editor"):
-            input_source = "Node Editor"
-            pipeline_name = user_context.get("pipeline_name", "Untitled Pipeline")
-            node_count = user_context.get("node_count", 0)
-            source_details = f"Pipeline: {pipeline_name} ({node_count} nodes)"
-        elif user_context.get("web_ui"):
+        if user_context.get("web_ui"):
             input_source = "Web UI"
             source_details = "Web interface"
-        elif user_context.get("console"):
-            input_source = "Bot Console"
-            source_details = "Direct console input"
-        else:
-            # Try to infer from other context
-            if user_context.get("display_name"):
-                input_source = "Discord"
-                source_details = f"User: {user_context.get('display_name')}"
-        
+
         # Store input source info
         self.execution_data["input_source"] = {
             "source": input_source,
@@ -282,18 +255,9 @@ class QueryTracker:
                 input_source = {}
             input_type = input_source.get("source", "Unknown") if input_source else "Unknown"
             
-            if "Discord" in input_type:
-                destination = "Discord Response"
-                details = f"Reply to {input_type}"
-            elif input_type == "Node Editor":
-                destination = "Node Editor Pipeline"
-                details = "Pipeline execution completed"
-            elif input_type == "Web UI":
+            if input_type == "Web UI":
                 destination = "Web UI Response"
                 details = "Response in web interface"
-            elif input_type == "Bot Console":
-                destination = "Console Output"
-                details = "Console response"
             else:
                 destination = "Response Generated"
                 details = "Query processed"

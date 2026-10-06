@@ -95,8 +95,7 @@ def resolve_local_model(requested, with_tools: bool = False) -> str:
     """Resolve which model id to request.
 
     Order: explicit (non-sentinel) request -> backend-specific default.
-    The node editor's "Default Local Model" option sends the literal
-    "local-default"; treat that (and "default"/"auto") as "use the backend
+    Treat "local-default" (and "default"/"auto") as "use the backend
     default" rather than a real model id. llama.cpp uses ``LLAMACPP_MODEL`` or
     its single loaded model. Ollama uses ``OLLAMA_MODEL``, then Settings ->
     completion models -> Local (the setting cheap completions use), then a

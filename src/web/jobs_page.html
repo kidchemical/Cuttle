@@ -14,23 +14,6 @@
         .jobs-header { margin-bottom: 12px; }
         .jobs-header h1 { font-size: 1.25rem; margin-bottom: 4px; }
         .jobs-header p { color: var(--text-secondary); font-size: 0.8rem; line-height: 1.35; margin: 0; }
-        .job-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
-        .job-stat-card {
-            padding: 12px 14px; border-radius: 8px;
-            background: var(--section-bg); border: 1px solid var(--border-color);
-        }
-        .job-stat-value { font-size: 1.35rem; font-weight: 650; letter-spacing: -0.02em; }
-        .job-stat-label { font-size: 0.72rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.04em; margin-top: 2px; }
-        .jobs-tabs {
-            display: inline-flex; gap: 2px; padding: 3px; margin-bottom: 14px;
-            border-radius: 8px; background: var(--section-bg); border: 1px solid var(--border-color);
-        }
-        .jobs-tab {
-            padding: 6px 14px; border: none; border-radius: 6px; cursor: pointer;
-            background: transparent; color: var(--text-secondary); font-size: 13px; font-weight: 500;
-        }
-        .jobs-tab:hover { color: var(--text-primary); }
-        .jobs-tab.active { background: var(--accent-color); color: var(--text-inverse, #fff); }
         .jobs-panel { display: none; }
         .jobs-panel.active { display: block; }
         .jobs-section-title { font-size: 0.95rem; font-weight: 600; margin: 0 0 10px 0; color: var(--text-primary); }
@@ -45,30 +28,10 @@
             background: var(--accent-color); border-color: var(--accent-color); color: var(--text-inverse, #fff);
         }
         .hist-source { font-size: 11px; color: var(--text-tertiary); margin-left: auto; }
-        .active-grid {
-            display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px;
-        }
-        .active-card {
-            padding: 12px 14px; border-radius: 10px;
-            background: var(--section-bg); border: 1px solid var(--border-color);
-            display: flex; flex-direction: column; gap: 8px; min-height: 110px;
-        }
-        .active-card-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
-        .active-title { font-weight: 600; font-size: 13px; line-height: 1.3; word-break: break-word; }
-        .active-meta { font-size: 11px; color: var(--text-secondary); line-height: 1.4; }
-        .active-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; }
-        .active-actions a {
-            font-size: 12px; color: var(--accent-color); text-decoration: none; font-weight: 500;
-        }
-        .active-actions a:hover { text-decoration: underline; }
-        .cmd-badge, .job-type-badge, .status-pill {
+        .job-type-badge, .status-pill {
             font-size: 10px; padding: 2px 6px; border-radius: 4px; text-transform: uppercase;
             flex-shrink: 0; font-weight: 600; letter-spacing: 0.02em;
         }
-        .cmd-badge.investigate { background: rgba(56, 189, 248, 0.2); color: #38bdf8; }
-        .cmd-badge.solve { background: rgba(74, 222, 128, 0.2); color: #4ade80; }
-        .cmd-badge.converse { background: rgba(250, 204, 21, 0.2); color: #facc15; }
-        .cmd-badge.decline { background: rgba(148, 163, 184, 0.25); color: #94a3b8; }
         .status-pill.queued { background: rgba(250, 204, 21, 0.18); color: #facc15; }
         .status-pill.claimed { background: rgba(56, 189, 248, 0.18); color: #38bdf8; }
         .status-pill.running { background: rgba(56, 189, 248, 0.18); color: #38bdf8; }
@@ -79,17 +42,6 @@
         .status-pill.cancelled { background: rgba(148, 163, 184, 0.25); color: #94a3b8; }
         .status-pill.failed { background: rgba(248, 113, 113, 0.18); color: #f87171; }
         .status-pill.expired { background: rgba(148, 163, 184, 0.25); color: #94a3b8; }
-        .live-dot {
-            display: inline-block; width: 7px; height: 7px; border-radius: 50%;
-            background: #38bdf8; margin-right: 5px; vertical-align: middle;
-            box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.5);
-            animation: livePulse 1.4s ease-out infinite;
-        }
-        @keyframes livePulse {
-            0% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.45); }
-            70% { box-shadow: 0 0 0 6px rgba(56, 189, 248, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); }
-        }
         .running-now-empty, .jobs-empty, .jobs-loading {
             font-size: 12px; color: var(--text-secondary); padding: 18px 14px;
             border-radius: 8px; background: var(--section-bg); border: 1px dashed var(--border-color);
@@ -377,17 +329,11 @@
         .schedule-countdown { color: var(--text-tertiary); font-size: 10px; margin-left: 4px; }
         .status-indicator { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
         .status-running { background-color: #4ade80; }
-        .pipe-stats { display: flex; gap: 12px; margin-bottom: 12px; }
-        .pipe-stats .job-stat-card { flex: 1; }
         @media (max-width: 768px) {
             .jobs-page { padding: 10px 8px; max-width: 100%; }
-            .job-stats { grid-template-columns: repeat(2, 1fr); gap: 8px; }
             .job-card { flex-direction: column; }
             .job-actions { align-self: flex-end; }
-            .jobs-tabs { width: 100%; display: flex; overflow-x: auto; }
-            .jobs-tab { flex: 1 0 auto; text-align: center; padding: 6px 10px; }
             .hist-source { margin-left: 0; width: 100%; }
-            .pipe-stats { flex-wrap: wrap; }
             .jobs-table-scroll {
                 margin-left: -2px;
                 margin-right: -2px;
@@ -760,22 +706,6 @@
             return j.created_at || j.updated_at || j.started_at;
         }
 
-        function formatDuration(sec) {
-            if (sec == null || sec === '') return '';
-            const n = Number(sec);
-            if (!Number.isFinite(n) || n < 0) return '';
-            if (n < 60) return Math.round(n) + 's';
-            if (n < 3600) return Math.floor(n / 60) + 'm ' + Math.round(n % 60) + 's';
-            return Math.floor(n / 3600) + 'h ' + Math.floor((n % 3600) / 60) + 'm';
-        }
-
-        function elapsedFrom(iso) {
-            if (!iso) return '';
-            const d = new Date(iso);
-            if (isNaN(d.getTime())) return '';
-            return formatDuration(Math.floor((Date.now() - d.getTime()) / 1000));
-        }
-
         function notifyShellJobsTab(tab) {
             try {
                 if (window.parent && window.parent !== window) {
@@ -802,9 +732,6 @@
             currentTab = tab;
             try { localStorage.setItem('jobsPageTab', tab); } catch (_) {}
             syncJobsTabUrl(tab);
-            document.querySelectorAll('.jobs-tab').forEach(b => {
-                b.classList.toggle('active', b.dataset.tab === tab);
-            });
             document.querySelectorAll('.jobs-panel').forEach(p => {
                 p.classList.toggle('active', p.id === 'panel-' + tab);
             });
@@ -1216,9 +1143,6 @@
             initialLoad = false;
         }
 
-        document.querySelectorAll('.jobs-tab').forEach(btn => {
-            btn.addEventListener('click', () => setTab(btn.dataset.tab));
-        });
 
         const btnPing = document.getElementById('btnPingWorker');
         if (btnPing) btnPing.addEventListener('click', pingLocalWorker);

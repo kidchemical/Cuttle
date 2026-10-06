@@ -17,7 +17,7 @@ def _finished_tool_calls():
 def test_tool_call_with_tokens():
     start_query_tracking(
         user_input='/claude "Create a hello world file"',
-        user_context={"display_name": "TestUser", "id": 12345, "command_type": "claude"},
+        user_context={"web_ui": True, "slash_command": "/claude"},
     )
     tokens = {"total_tokens": 1234, "prompt_tokens": 400, "completion_tokens": 834}
     _track_tool_call(
@@ -40,7 +40,7 @@ def test_tool_call_with_tokens():
 def test_tool_call_without_tokens():
     start_query_tracking(
         user_input="/screenshot main",
-        user_context={"display_name": "TestUser", "id": 12345},
+        user_context={"web_ui": True},
     )
     _track_tool_call(
         tool_name="screenshot",

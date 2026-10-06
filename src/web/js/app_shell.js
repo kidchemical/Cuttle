@@ -1805,7 +1805,6 @@ const PAGE_TITLES = {
     '/projects_page.html': 'Projects',
     '/settings_page.html': 'Settings',
     '/media_player.html': 'Media',
-    '/about_page.html': 'About',
     '/git_ui.html': 'Git Ops',
     '/query_log.html': 'Query log',
     '/terminal_page.html': 'Terminal',
@@ -4413,7 +4412,7 @@ function updateColumnUI(colIdx, page) {
 
 // ── Navigate: replace iframe element for reliability ──────────
 // Using frame.src = url silently fails in some renderer states
-// (e.g. after node_editor.html loads its heavy JS context).
+// Replace the frame to avoid carrying stale renderer state across pages.
 // Replacing the DOM element is unconditionally reliable.
 /** Navigate the split column that contains `source` (child iframe window). */
 function navigateFromSource(source, page) {

@@ -143,3 +143,23 @@ class _Sink:
 
     def put_nowait(self, item):
         return item
+
+
+def test_web_turn_metadata_cannot_be_misclassified_as_retired_ingress():
+    qid = start_query_tracking('hello', {
+        'web_ui': True,
+        'command_type': 'claude',
+        'channel_id': 'old-channel',
+        'node_editor': True,
+    })
+    try:
+        tracker = get_query_tracker(qid)
+        assert tracker.execution_data['input_source']['source'] == 'Web UI'
+        tracker._add_output_stage()
+        stages = tracker.execution_data['execution_stages']
+        output = next(stage for stage in stages if stage['type'] == 'output')
+        assert output['details']['destination'] == 'Web UI Response'
+        tracker.set_output_destination('Explicit destination', 'Preserved')
+        assert tracker.execution_data['output_destination']['destination'] == 'Explicit destination'
+    finally:
+        finish_query_tracking(success=True)
