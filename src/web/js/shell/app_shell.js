@@ -4559,6 +4559,7 @@ function openLogoutConfirmModal() {
     if (!shellAuthUser) return;
     const modal = getLogoutConfirmModal();
     if (!modal) return;
+    cuttleSyncMobileServerRows();
 
     const name = accountDisplayName(shellAuthUser);
     const title = document.getElementById('logoutConfirmTitle');
@@ -4678,6 +4679,55 @@ async function handleAccountClick(_colIdx) {
     }
     openLogoutConfirmModal();
 }
+
+/* Phone (Capacitor) client: no floating Server button — switching servers
+   lives in the login modal and the account popup, next to log out. */
+function cuttleIsMobileClient() {
+    try {
+        if (window.isCuttleMobile || window.cuttleMobile?.isNative) return true;
+    } catch (_) {}
+    return /\bCuttleMobile\/[\d.]+\b/.test(navigator.userAgent || '');
+}
+
+function cuttleOpenMobileServerSettings() {
+    try {
+        if (window.cuttleMobile?.openSettings) {
+            window.cuttleMobile.openSettings();
+            return;
+        }
+    } catch (_) {}
+    try {
+        if (window.CuttleShellNative?.openSettings) {
+            window.CuttleShellNative.openSettings();
+            return;
+        }
+    } catch (_) {}
+    window.location.href = 'https://localhost/index.html?setup=1';
+}
+
+function cuttleSyncMobileServerRows() {
+    const show = cuttleIsMobileClient();
+    let origin = '';
+    try {
+        origin = window.location.origin || '';
+    } catch (_) {}
+    const row = document.getElementById('authServerRow');
+    if (row) {
+        row.hidden = !show;
+        const label = document.getElementById('authServerOrigin');
+        if (label && origin) label.textContent = origin;
+    }
+    const sw = document.getElementById('logoutConfirmSwitchServer');
+    if (sw) sw.hidden = !show;
+}
+
+document.addEventListener('click', (e) => {
+    const t = e.target?.closest?.('#logoutConfirmSwitchServer, #authServerChange');
+    if (!t) return;
+    e.preventDefault();
+    closeLogoutConfirmModal();
+    cuttleOpenMobileServerSettings();
+});
 
 setupLogoutConfirmModal();
 renderAccountButtons();
@@ -7449,32 +7499,6 @@ updateColumnUI(0, currentPage);
         }
     }
 
-    function ensureButton() {
-        if (!isMobileClient()) return;
-        if (document.getElementById('mobileChangePcBtn')) return;
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.id = 'mobileChangePcBtn';
-        btn.className = 'mobile-change-pc-btn';
-        btn.innerHTML =
-            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
-            + '<rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/>'
-            + '<path d="M6 6h.01"/><path d="M6 18h.01"/></svg><span>Server</span>';
-        btn.title = 'Cuttle server settings';
-        btn.addEventListener('click', () => {
-            if (window.cuttleMobile?.openSettings) {
-                window.cuttleMobile.openSettings();
-                return;
-            }
-            if (window.CuttleShellNative?.openSettings) {
-                window.CuttleShellNative.openSettings();
-                return;
-            }
-            window.location.href = 'https://localhost/index.html?setup=1';
-        });
-        document.body.appendChild(btn);
-    }
-
     function ensureModal() {
         if (document.getElementById('mobileApkUpdateModal')) return;
         const wrap = document.createElement('div');
@@ -7589,7 +7613,6 @@ updateColumnUI(0, currentPage);
 
     function boot() {
         if (!isMobileClient()) return;
-        ensureButton();
         ensureUpdateRail();
         // Delay APK check — competing with the first chat iframe on Werkzeug HTTPS
         // causes net::ERR_TOO_MANY_RETRIES / black screens on notification opens.
@@ -7613,7 +7636,6 @@ updateColumnUI(0, currentPage);
         });
     }
 
-    ensureButton();
     document.addEventListener('cuttle-mobile-ready', boot);
     document.addEventListener('cuttle-apk-update', (e) => {
         if (!isMobileClient()) return;

@@ -240,6 +240,29 @@ def test_watchdog_requires_document_ready_not_merely_target_url():
     assert 'showServerOffline(readBaseUrl())' in watchdog
 
 
+def test_mobile_floating_server_button_removed():
+    shell = (REPO / "src" / "web" / "js" / "shell" / "app_shell.js").read_text(encoding="utf-8")
+    assert "mobileChangePcBtn" not in shell
+    assert "mobile-change-pc-btn" not in shell
+    assert "ensureButton" not in shell
+    css = (REPO / "src" / "web" / "css" / "app_shell.css").read_text(encoding="utf-8")
+    assert "mobile-change-pc-btn" not in css
+    safe = (REPO / "src" / "web" / "css" / "safe_area.css").read_text(encoding="utf-8")
+    assert "mobile-change-pc-btn" not in safe
+
+
+def test_mobile_server_switch_lives_in_login_and_account():
+    html = (REPO / "src" / "web" / "app_shell.html").read_text(encoding="utf-8")
+    assert 'id="authServerRow"' in html
+    assert 'id="logoutConfirmSwitchServer"' in html
+    shell = (REPO / "src" / "web" / "js" / "shell" / "app_shell.js").read_text(encoding="utf-8")
+    assert "cuttleOpenMobileServerSettings" in shell
+    assert "cuttleSyncMobileServerRows" in shell
+    assert "openSettings" in shell
+    auth = (REPO / "src" / "web" / "js" / "shared" / "auth.js").read_text(encoding="utf-8")
+    assert "cuttleSyncMobileServerRows" in auth
+
+
 def test_composer_caption_text_removed_everywhere():
     html = (REPO / "src" / "web" / "chat_page.html").read_text(encoding="utf-8")
     assert "input-hint" not in html
