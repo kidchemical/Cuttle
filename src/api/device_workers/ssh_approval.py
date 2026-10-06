@@ -23,7 +23,7 @@ _history: List[Dict[str, Any]] = []
 _session_granted = False
 _session_granted_at: float = 0.0
 
-UNSAFE_SHELL_KINDS = frozenset({"execute_shell_unsafe", "execute_shell_ssh", "execute_shell"})
+UNSAFE_SHELL_KINDS = frozenset({"execute_shell_unsafe", "execute_shell_ssh"})
 
 
 def unsafe_shell_approval_required() -> bool:
@@ -71,8 +71,6 @@ def create_request(
     rid = uuid.uuid4().hex
     now = time.time()
     kind = (job_kind or "execute_shell_ssh").strip()
-    if kind == "execute_shell":
-        kind = "execute_shell_unsafe"
     wid = (worker_id or "worker").strip() or "worker"
     tgt = (target or "").strip()
     if kind == "execute_shell_unsafe":

@@ -1417,7 +1417,6 @@ if (bootChatId) {
 
 currentPage = canonicalizeShellPage(currentPage);
 sessionStorage.setItem(STORAGE_PAGE, currentPage);
-sessionStorage.removeItem('cuttleMediaMeta');
 rememberChatHandleFromPage(0, currentPage);
 
 /** Keep the address-bar ?chat= in sync with the active chat session.
@@ -1781,8 +1780,8 @@ const PAGE_TITLES = {
     '/jobs_page.html': 'Jobs',
     '/dashboards_page.html': 'Dashboards',
     '/apps_page.html': 'Apps',
-    '/gizmos_page.html': 'Gizmos',
     '/achievements_page.html': 'Achievements',
+    '/gizmos_page.html': 'Gizmos',
     '/projects_page.html': 'Projects',
     '/settings_page.html': 'Settings',
     '/query_log.html': 'Query log',
@@ -2323,8 +2322,6 @@ function attachFrameLoadListener(colIdx, frameEl) {
             } catch (_) {}
             try {
                 frameEl.contentWindow?.postMessage({ type: 'cuttle-video-state', active: document.body.classList.contains('has-video-background') }, '*');
-            } catch (_) {}
-            try {
             } catch (_) {}
             try {
                 var bh = localStorage.getItem('cuttleBackgroundEffectBlend');

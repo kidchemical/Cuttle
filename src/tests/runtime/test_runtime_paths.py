@@ -9,7 +9,6 @@ from pathlib import Path
 from core.runtime_paths import (
     desktop_state_dir,
     electron_launch_argv,
-    game_dev_roots,
     is_windows,
     personal_sibling_project_paths,
     rewrite_windows_cuttle_path,
@@ -46,18 +45,22 @@ def test_rewrite_windows_cuttle_path_on_posix():
     assert rewrite_windows_cuttle_path("C:/Projects/Cuttle", REPO) == str(REPO.resolve())
 
 
-def test_rewrite_windows_lab_path_game_dev_if_mounted():
+def test_rewrite_windows_lab_path_uses_personal_mappings(tmp_path):
     if is_windows():
         return
-    roots = game_dev_roots()
-    if not roots:
-        return
-    kids = [p for p in roots[0].iterdir() if p.is_dir()]
-    if not kids:
-        return
-    child = kids[0]
-    mapped = rewrite_windows_lab_path(rf"E:\Game Dev\{child.name}")
-    assert Path(mapped).resolve() == child.resolve()
+    root = tmp_path / "drive" / "Projects"
+    (root / "DemoGame").mkdir(parents=True)
+    d = tmp_path / ".cuttle" / "personal"
+    d.mkdir(parents=True)
+    (d / "path-aliases.json").write_text(
+        json.dumps({"path_mappings": {"E:/Projects": [str(tmp_path / "missing"), str(root)]}}),
+        encoding="utf-8",
+    )
+    mapped = rewrite_windows_lab_path(r"E:\Projects\DemoGame", tmp_path)
+    assert Path(mapped) == (root / "DemoGame").resolve()
+    # No mapping on a fresh clone: foreign paths are left alone.
+    raw = r"E:\Projects\DemoGame"
+    assert rewrite_windows_lab_path(raw, tmp_path / "fresh") == raw
 
 
 def test_rewrite_windows_cuttle_path_ignores_cuttleworkspaces():

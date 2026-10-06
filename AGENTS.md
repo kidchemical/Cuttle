@@ -175,7 +175,7 @@ When the user has multiple chat columns open (viewport split), panes are **left 
 
 ## Self Improvement
 
-Scheduled `Self_Improvement.json` was removed with the graphs. Process backlog lives in `.cuttle/learnings/` (`LEARNINGS.md`, `ERRORS.md`, `FEATURE_REQUESTS.md`); use structured entries (`[LRN-YYYYMMDD-XXX]`, `[ERR-...]`, `[FEAT-...]`) with Priority, Status, Area, Metadata. Promote broadly applicable learnings to `AGENTS.md`. Not Context Compiler `docs/` — open on demand only.
+Portable lessons belong in `AGENTS.md`, architecture docs, or tests; public bugs and feature requests are GitHub issues. The maintainer's process backlog is install-local in `.cuttle/personal/learnings/` (`LEARNINGS.md`, `ERRORS.md`, `FEATURE_REQUESTS.md`; gitignored, absent on a fresh clone); use structured entries (`[LRN-YYYYMMDD-XXX]`, `[ERR-...]`, `[FEAT-...]`) with Priority, Status, Area, Metadata. Not Context Compiler `docs/` — open on demand only.
 
 ## Important Conventions
 

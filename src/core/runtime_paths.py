@@ -255,48 +255,31 @@ def rewrite_windows_cuttle_path(path: str, project_root: Optional[Path] = None) 
     return raw
 
 
-def game_dev_roots() -> List[Path]:
-    """Likely POSIX mounts for the Windows ``E:\\Game Dev`` tree."""
-    env = (os.environ.get("CUTTLE_GAME_DEV_ROOT") or "").strip()
-    user = Path.home().name
-    candidates = []
-    if env:
-        candidates.append(Path(env))
-    candidates.extend(
-        [
-            Path.home() / "Game Dev",
-            Path.home() / "Dev",
-        ]
-    )
-    media = Path(f"/media/{user}")
-    if media.is_dir():
-        candidates.extend(sorted(media.glob("*/Game Dev")))
-        candidates.extend(sorted(media.glob("*/Dev")))
-    return [p for p in candidates if p.is_dir()]
+def path_mappings(project_root: Optional[Path] = None) -> List[tuple]:
+    """Install-local foreign-path prefixes → candidate local roots.
 
-
-def _game_dev_windows_markers(project_root: Path) -> List[str]:
-    """Windows folder prefixes for a sibling 'Game Dev' tree (generic + personal)."""
-    markers = ["e:/game dev", "e:/projects"]
-    aliases = load_personal_path_aliases(project_root)
-    extra = (aliases.get("game_dev_windows_prefix") or "").strip()
-    if extra:
-        markers.insert(0, extra.replace("\\", "/").rstrip("/").lower())
-    env = (os.environ.get("CUTTLE_GAME_DEV_WINDOWS_PREFIX") or "").strip()
-    if env:
-        markers.insert(0, env.replace("\\", "/").rstrip("/").lower())
-    # unique, keep order
-    seen = set()
-    out: List[str] = []
-    for m in markers:
-        if m and m not in seen:
-            seen.add(m)
-            out.append(m)
+    ``path-aliases.json`` → ``path_mappings``, e.g.
+    ``{"E:/Projects": ["~/Projects", "/mnt/data/Projects"]}``. Longest prefix
+    first; prefixes are compared case-insensitively with ``/`` separators.
+    Empty on a fresh clone — core knows no machine's folder layout.
+    """
+    raw = load_personal_path_aliases(project_root).get("path_mappings") or {}
+    if not isinstance(raw, dict):
+        return []
+    out = []
+    for prefix, roots in raw.items():
+        key = str(prefix).replace("\\", "/").rstrip("/").lower()
+        if isinstance(roots, str):
+            roots = [roots]
+        if not key or not isinstance(roots, list):
+            continue
+        out.append((key, [Path(str(r)).expanduser() for r in roots if str(r).strip()]))
+    out.sort(key=lambda item: len(item[0]), reverse=True)
     return out
 
 
 def rewrite_windows_lab_path(path: str, project_root: Optional[Path] = None) -> str:
-    """Rewrite Windows Cuttle + Game Dev paths onto this Linux checkout/mounts."""
+    """Rewrite a Windows path onto this machine: Cuttle checkout, then ``path_mappings``."""
     raw = (path or "").strip()
     if not raw or is_windows():
         return raw
@@ -306,17 +289,14 @@ def rewrite_windows_lab_path(path: str, project_root: Optional[Path] = None) -> 
         return mapped
     text = raw.replace("\\", "/")
     lower = text.lower()
-    for marker in _game_dev_windows_markers(repo):
-        if lower == marker:
-            roots = game_dev_roots()
-            return str(roots[0].resolve()) if roots else raw
-        prefix = marker + "/"
-        if lower.startswith(prefix):
-            rest = text[len(prefix) :].lstrip("/")
-            for groot in game_dev_roots():
-                candidate = (groot / rest) if rest else groot
-                if candidate.exists():
-                    return str(candidate.resolve())
+    for prefix, roots in path_mappings(repo):
+        if lower != prefix and not lower.startswith(prefix + "/"):
+            continue
+        rest = text[len(prefix):].lstrip("/")
+        for root in roots:
+            candidate = (root / rest) if rest else root
+            if candidate.exists():
+                return str(candidate.resolve())
     return mapped
 
 

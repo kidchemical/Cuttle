@@ -61,7 +61,6 @@ class SettingsManager:
                 "allowed_path_prefixes": [],
                 "auto_mesh": False,
                 "execute_shell_unsafe_enabled": False,
-                "execute_shell_enabled": False,
                 "execute_shell_ssh_enabled": False,
                 "ssh_host": "",
                 "ssh_user": "",

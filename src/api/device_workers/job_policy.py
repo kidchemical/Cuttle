@@ -8,7 +8,6 @@ from typing import Any, Dict, Optional, Tuple
 DEFAULT_QUEUE_TTL_SECONDS: Dict[str, int] = {
     "ping": 5 * 60,
     "shell": 30 * 60,
-    "execute_shell": 10 * 60,  # legacy alias
     "execute_shell_unsafe": 10 * 60,
     "execute_shell_ssh": 10 * 60,
     "file_copy": 2 * 3600,
@@ -20,7 +19,6 @@ DEFAULT_QUEUE_TTL_SECONDS: Dict[str, int] = {
 DEFAULT_MAX_ATTEMPTS: Dict[str, int] = {
     "ping": 3,
     "shell": 2,
-    "execute_shell": 1,
     "execute_shell_unsafe": 1,
     "execute_shell_ssh": 1,
     "file_copy": 2,
@@ -30,7 +28,7 @@ DEFAULT_MAX_ATTEMPTS: Dict[str, int] = {
 }
 
 UNSAFE_SHELL_TYPES = frozenset(
-    {"execute_shell", "execute_shell_unsafe", "execute_shell_ssh"}
+    {"execute_shell_unsafe", "execute_shell_ssh"}
 )
 
 _FALLBACK_TTL = 6 * 3600
@@ -48,10 +46,7 @@ def _settings_block() -> Dict[str, Any]:
 
 
 def normalize_job_type(job_type: str) -> str:
-    t = (job_type or "").strip()
-    if t == "execute_shell":
-        return "execute_shell_unsafe"
-    return t
+    return (job_type or "").strip()
 
 
 def is_unsafe_shell_type(job_type: str) -> bool:

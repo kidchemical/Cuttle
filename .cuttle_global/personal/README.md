@@ -23,14 +23,14 @@ Guest projects have their own twin at `{project}/.cuttle/personal/`.
 ```json
 {
   "windows_cuttle_prefixes": ["C:/OldCheckout/Cuttle"],
-  "game_dev_windows_prefix": "E:/Projects",
+  "path_mappings": {"E:/Projects": ["~/Projects", "/mnt/data/Projects"]},
   "sibling_project_paths": ["E:/Projects/DemoGame"],
   "action_prefer_substrings_no_channel": ["demogame"],
   "action_skip_substrings_unmatched_channel": ["demogame"]
 }
 ```
 
-  The public rewriter already maps any path **segment** named like this repo (`Cuttle`) onto the checkout. Prefixes are only needed when the Windows path does *not* contain that folder name. `sibling_project_paths` is the install-local list used when looking up Discord project actions outside the registered project list. `action_prefer_substrings_no_channel` / `action_skip_substrings_unmatched_channel` are optional path-substring hints for the same lookup; omit them on a fresh clone.
+  The public rewriter already maps any path **segment** named like this repo (`Cuttle`) onto the checkout. Prefixes are only needed when the Windows path does *not* contain that folder name. `path_mappings` maps other Windows folder prefixes onto candidate local roots (first root where the path exists wins). `sibling_project_paths` is the install-local list used when looking up Discord project actions outside the registered project list. `action_prefer_substrings_no_channel` / `action_skip_substrings_unmatched_channel` are optional path-substring hints for the same lookup; omit them on a fresh clone.
 - Your Discord guild / workspace examples
 - Mesh SSH / worker host notes for *this* LAN
 - Dated strategy dumps (`docs/roadmap-2026.md`) that must not ship on GitHub
@@ -39,7 +39,7 @@ Guest projects have their own twin at `{project}/.cuttle/personal/`.
 ## What does **not** belong here
 
 - Code Cuttle needs to boot (keep that tracked)
-- Secrets (use `src/.env` / `.secret_DONOTSHIP/`)
+- Secrets (env keys in `src/.env`; file-shaped secrets in `.cuttle/personal/secrets/`)
 - Optional workflows used across projects belong in this global personal tree;
   workflows for one project belong in that project's `.cuttle/personal/`.
 

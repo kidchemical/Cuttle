@@ -100,7 +100,6 @@ def test_chat_store_addon_names_the_db_and_warns_off_empty_searches():
     body = runbook.read_text(encoding="utf-8")
     assert "cuttle_auth.db" in body
     assert "chat_messages" in body
-    assert "tasks.db" in body
     assert "no traces of Cuttle chats" in body
     assert "leading zeros" in body.lower()
 
@@ -141,7 +140,6 @@ def test_muse_prompt_carries_chat_context_for_ch_session_handle(monkeypatch):
     assert "Cuttle chat history" in enriched
     assert "cuttle_auth.db" in enriched
     assert "CH-000147" in enriched  # the user's own handle survives the prefix
-    assert "tasks.db" in enriched
     assert enriched.endswith(prompt)
 
 

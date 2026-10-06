@@ -892,9 +892,9 @@ def test_shell_recipe_allowlist_and_self_update_schedules(tmp_path, monkeypatch)
     assert result.get("scheduled") is True
     assert calls, "expected detached updater spawn"
 
-    # execute_shell_unsafe defaults off (legacy type execute_shell still accepted)
+    # execute_shell_unsafe defaults off
     try:
-        ex.execute_job({"type": "execute_shell", "params": {"command": "echo hi"}})
+        ex.execute_job({"type": "execute_shell_unsafe", "params": {"command": "echo hi"}})
         assert False, "expected JobExecError"
     except ex.JobExecError as e:
         assert "disabled" in str(e).lower() or "unsafe" in str(e).lower()

@@ -55,7 +55,7 @@ rows below are nonfatal (failure logged, boot continues); `auth_bp` and
 | widgets, TTS, terminal, Electron, Android APK | `register_*_routes(app)` | `api.chat_widgets`, `api.chat_tts`, `api.web_terminal`, `api.desktop_electron`, `api.mobile_android_update` |
 
 Zero `@app.route` entries for `/api/settings`, `/api/projects`,
-`/api/git`, `/api/action-form`, or `/api/tasks` remain on the root file —
+`/api/git`, or `/api/action-form` remain on the root file —
 their absence is completed extraction work to retain, not a gap.
 
 **Reverse imports:** exactly one production module imports the entry module —
@@ -273,7 +273,7 @@ authoritative until `core.runtime_data` migrates them offline. The daemon invoke
 the guarded migration before starting services on its next cold launch; a live
 host or destination conflict skips migration. Details: `src/data/README.md`.
 Install-local harness packs belong in `.cuttle_global/personal/agents/`; legacy
-`src/data/harness_agents/` discovery remains compatible until offline migration.
+Legacy `src/data/harness_agents/` packs are no longer discovered; the offline migration moves them to `.cuttle_global/personal/agents/`.
 
 
 | Store | Tracked? |
@@ -326,6 +326,18 @@ surfaces: Achievements uses `/achievements_page.html` (page blueprint in
 `api.achievements.routes`, `achievements_page.js` presentation), registered as a
 stashed App in the shell. New features generally start experimental; surface
 selection and exceptions are documented in `.cuttle/docs/experimental-features.md`.
+
+**Gizmos (experimental):** live UI objects outside chat bubbles (widgets stay
+inside bubbles). `api.gizmos` owns types (`catalog`), normalized vendor plan
+usage (`usage`, reused from `api.agent_usage` fetchers), validation/placement
+(`service`), and an install-wide SQLite store with a revision counter
+(`store`); `gizmos.routes` is owner-only transport and `python -m api.gizmos`
+the agent verbs. `gizmos_model.js` (`CuttleGizmos`) is pure model/markup shared
+by the shell, the Gizmos App, and the pop-out page; `gizmos_shell.js` owns dock
+containers (title bar, leftmost blade bar, float layer), drag-to-redock, the
+detail popover, and polling. Electron main owns pop-out windows; the shell
+sends the wanted id set through `gizmo-popouts-sync`. Runbook:
+`.cuttle_global/docs/gizmos.md`.
 
 **Chat VFX:** `api.chat_vfx` owns validated transient confetti/toast events and
 session-scoped SQLite delivery (`python -m api.chat_vfx`); `chat_vfx.routes`

@@ -16,7 +16,7 @@ These files under `.cuttle/rules/` are compiled into the fresh/full Cuttle-chat 
 | `electron/` | Host/Client shell (`electron/package.json` owns mesh `cuttle_version`) |
 | `.cuttle_global/` | Shared global config (rules/docs/actions/scripts for every project) |
 | `.cuttle/` | This repo's own commands/rules/actions/docs (this file's tree) |
-| `.cuttle/learnings/` | Manual FEAT/ERR/LRN backlog (not Brain-injected) |
+| `.cuttle/personal/learnings/` | Install-local FEAT/ERR/LRN backlog (gitignored; not Brain-injected) |
 
 ## Hard rules
 
