@@ -102,6 +102,50 @@
     margin: 0;
 }
 
+/* Phone client: current server + Change, shown only while signing in. */
+.auth-server-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 18px;
+    padding: 9px 12px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.04);
+    font-size: 13px;
+}
+
+.auth-server-row[hidden] {
+    display: none;
+}
+
+.auth-server-label {
+    color: #a0aec0;
+    font-weight: 600;
+}
+
+.auth-server-origin {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #e2e8f0;
+}
+
+.auth-server-change {
+    flex-shrink: 0;
+    appearance: none;
+    border: 1px solid rgba(139, 92, 246, 0.5);
+    background: rgba(139, 92, 246, 0.16);
+    color: #e9d5ff;
+    border-radius: 8px;
+    padding: 5px 12px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
 .auth-tabs {
     display: flex;
     gap: 10px;

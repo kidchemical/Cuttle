@@ -278,6 +278,12 @@
             <p class="auth-modal-subtitle">Sign in to sync your account across devices</p>
         </div>
 
+        <div class="auth-server-row" id="authServerRow" hidden>
+            <span class="auth-server-label">Server</span>
+            <span class="auth-server-origin" id="authServerOrigin"></span>
+            <button type="button" class="auth-server-change" id="authServerChange">Change</button>
+        </div>
+
         <div class="auth-error" id="authError"></div>
         <div class="auth-success" id="authSuccess"></div>
 
@@ -307,6 +313,7 @@
             <a class="logout-confirm-btn logout-confirm-google" id="logoutConfirmLinkGoogle" href="/api/auth/oauth/google?link=1" hidden>Continue with Google</a>
             <button type="button" class="logout-confirm-btn logout-confirm-google" id="logoutConfirmRefreshGoogle" hidden>Refresh Google photo</button>
             <p class="logout-confirm-linked" id="logoutConfirmGoogleStatus" hidden>Google linked</p>
+            <button type="button" class="logout-confirm-btn logout-confirm-cancel" id="logoutConfirmSwitchServer" hidden>Switch server</button>
             <button type="button" class="logout-confirm-btn logout-confirm-cancel" id="logoutConfirmCancel">Cancel</button>
             <button type="button" class="logout-confirm-btn logout-confirm-submit" id="logoutConfirmSubmit">Log out</button>
         </div>

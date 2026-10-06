@@ -734,6 +734,9 @@ function openAuthModal(tab = 'login') {
     if (modal) {
         _setAuthCredentialFieldsArmed(true);
         modal.classList.add('active');
+        if (typeof window.cuttleSyncMobileServerRows === 'function') {
+            try { window.cuttleSyncMobileServerRows(); } catch (_) {}
+        }
         switchAuthTab(tab);
         // Prevent body scrolling when modal is open
         document.body.style.overflow = 'hidden';

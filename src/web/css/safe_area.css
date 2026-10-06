@@ -23,8 +23,7 @@ html.is-cuttle-mobile .icon-rail {
 }
 
 html.is-cuttle-mobile .rail-footer {
-    /* Bottom button box lands on the same line as .mobile-change-pc-btn
-       (flush to the safe-area edge) — never lower. */
+    /* Footer icons sit flush to the safe-area edge — never lower. */
     padding-bottom: var(--cuttle-safe-bottom);
 }
 
@@ -49,12 +48,6 @@ html.is-cuttle-mobile .rail-expand-tab {
 html.is-cuttle-mobile .shell-main iframe.shell-safe-inset {
     top: var(--cuttle-safe-top);
     height: calc(100% - var(--cuttle-safe-top) - var(--cuttle-safe-bottom));
-}
-
-html.is-cuttle-mobile .mobile-change-pc-btn {
-    right: calc(12px + var(--cuttle-safe-right));
-    /* Flush to the safe-area edge (no extra lift into the composer). */
-    bottom: var(--cuttle-safe-bottom);
 }
 
 html.is-cuttle-mobile .mobile-apk-update-modal {
