@@ -1,0 +1,65 @@
+name: Bug report
+description: Something in Cuttle does not work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security problems: please do **not** file them here. See SECURITY.md.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Start Cuttle with ...
+        2. Send `/codex ...`
+        3. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where does it happen?
+      multiple: true
+      options:
+        - Web chat (browser)
+        - Electron desktop (Host)
+        - Electron desktop (Client / Cuttle Workers)
+        - Android app
+        - Daemon / install / startup
+        - Agent router
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: Ubuntu 24.04 / Windows 11 / Android 15
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Cuttle commit or version
+      description: Output of `git rev-parse --short HEAD`, or the release version.
+    validations:
+      required: true
+  - type: input
+    id: agent
+    attributes:
+      label: Agent CLI and version (if relevant)
+      placeholder: codex 0.x, cursor-agent 2025.x, claude 2.x ...
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant lines from `~/cuttle_logs` or the browser console. Remove tokens and personal paths first.
+      render: text

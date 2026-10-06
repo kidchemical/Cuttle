@@ -230,6 +230,8 @@ flowchart LR
 
 ## Development
 
+Contributions are welcome; start with [`CONTRIBUTING.md`](CONTRIBUTING.md). Notable changes are listed in [`CHANGELOG.md`](CHANGELOG.md).
+
 Install runtime and development dependencies before testing. POSIX, from the repo root:
 
 ```bash
@@ -276,6 +278,7 @@ Captures use the Lavender Dream light theme at 2x and are framed by [`readme_pro
 - Cuttle is designed for a trusted LAN. Before exposing the UI beyond it, set `OWNER_USER_EMAIL` and review the CORS allowlist and [pairing limitations](docs/guides/PAIRING_AND_ALLOWLIST.md). Pairing does not replace network restrictions or authorization for other API routes.
 - Auth uses bcrypt passwords, a CORS origin allowlist, and rate limits on login and pairing.
 - Keep secrets in `src/.env` (gitignored). Never commit it, certs, `*.db`, or Playwright profiles.
+- Found a vulnerability? Report it privately; see [`SECURITY.md`](SECURITY.md).
 
 ## License
 
