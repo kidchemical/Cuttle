@@ -336,23 +336,20 @@
        cuttle-video-state after load for any race. */
     function detectWallpaper() {
         if (!wallpaperEnabled()) {
-            return { video: false, media: false };
+            return { video: false };
         }
         return {
-            video: read(VIDEO_ACTIVE_KEY) === '1' || playlistConfigured(),
-            media: false
+            video: read(VIDEO_ACTIVE_KEY) === '1' || playlistConfigured()
         };
     }
 
     var state = {
         theme: normalizeTheme(read(THEME_KEY)),
-        video: false,
-        media: false
+        video: false
     };
 
     var wallpaper = detectWallpaper();
     state.video = wallpaper.video;
-    state.media = wallpaper.media;
 
     function applyTo(el) {
         if (!el) return;
@@ -363,7 +360,6 @@
         }
         for (var j = 0; j < want.length; j++) list.add(want[j]);
         list.toggle('has-video-background', state.video);
-        list.toggle('cuttle-media-mode', state.media);
         list.toggle('is-cuttle-mobile', isCuttleMobileClient());
     }
 
@@ -424,9 +420,6 @@
         } else if (data.type === 'cuttle-video-state' && typeof data.active === 'boolean') {
             state.video = wallpaperEnabled() && (data.active || playlistConfigured());
             write(VIDEO_ACTIVE_KEY, state.video ? '1' : '0');
-            apply();
-        } else if (data.type === 'cuttle-media-state' && typeof data.active === 'boolean') {
-            state.media = data.active;
             apply();
         } else if (data.type === 'cuttle-bg-effect-blend' && typeof data.value === 'number') {
             applyBlend(data.value, true);

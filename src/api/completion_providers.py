@@ -129,7 +129,7 @@ def get_provider(provider_id: Optional[str]) -> Optional[CompletionProvider]:
 
 
 def list_providers() -> List[Dict[str, Any]]:
-    """Public shape for the Settings UI and the OOBE wizard."""
+    """Public shape for the Settings UI."""
     return [p.to_public_dict() for p in _REGISTRY]
 
 
@@ -259,7 +259,7 @@ def resolve_order(explicit: Optional[str] = None) -> List[str]:
 
 
 def describe() -> Dict[str, Any]:
-    """Everything a settings page or wizard needs, in one payload."""
+    """Everything a settings page needs, in one payload."""
     pinned = preferred_provider_id()
     models = _model_map()
     providers = []

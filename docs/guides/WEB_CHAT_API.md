@@ -12,7 +12,7 @@ When you add a backend feature:
 
 1. Read this map and prefer an existing package (`api.agent_harness`, `api.device_workers`, `api.auth_api`, `api.dashboards`, …).
 2. Do **not** add a new import from `web_chat_api` into a leaf module if a helper can live next to its owner.
-3. Do **not** start a structural extraction unless product work is blocked (regressions, duplicated routes, or the file is slowing the change). Extraction is a separate initiative, not a prerequisite for building Workers/GUI/dashboards. Completed extractions (settings, projects, Git, action-forms, tasks, live-status/status-queues, harness runners) are done — do not re-extract them.
+3. Do **not** start a structural extraction unless product work is blocked (regressions, duplicated routes, or the file is slowing the change). Extraction is a separate initiative, not a prerequisite for building Workers/GUI/dashboards. Completed extractions (settings, projects, Git, action-forms, live-status/status-queues, harness runners) are done — do not re-extract them.
 
 Related: [`MODULARITY.md`](MODULARITY.md), [`docs/ROADMAP.md`](../ROADMAP.md), and [extension boundaries](../architecture/extension-boundaries.md).
 
@@ -60,7 +60,6 @@ is a logged, nonfatal `try/except`:
 | Projects | `api.project_routes` (`projects_bp`, url prefix `/api`) | blueprint — transport; logic in `managers.project_manager` |
 | Action forms | `api.action_form_routes` (`action_forms_bp`, url prefix `/api`) | blueprint — transport; logic in `api.action_forms` / `api.project_actions` |
 | Git | `api.git_routes` (`git_bp`, url prefix `/api`) | blueprint — transport; behavior in `api.git_service` |
-| Tasks | `api.task_routes` (`tasks_bp`, url prefix `/api`) | blueprint — transport; logic in `managers.task_manager` |
 | Claude Code palette pins (`/api/claude/models\|model\|effort`) | `api.agent_harness.agents.claude.routes` (`claude_bp`) | blueprint — owned by the Claude agent slice; catalog in `agents/claude/model_catalog.py` |
 | Chat widgets | `api.chat_widgets.register_chat_widget_routes` | `register_*(app)` |
 | Chat TTS | `api.chat_tts` | `register_*(app)` |
@@ -117,7 +116,7 @@ Inbound Discord DM chat (`POST /api/pipeline-trigger-discord`) is **retired** (n
 
 Verified snapshot at HEAD: 139 `@app.route` decorators over 132 unique
 paths (AST count). The clusters below are a grouping aid, not a second
-exact inventory — recount from source before relying on completeness. Settings, projects, Git, action-form, and tasks HTTP
+exact inventory — recount from source before relying on completeness. Settings, projects, Git, and action-form HTTP
 are **not** in this table — they live in their blueprints (zero root
 routes each).
 
@@ -169,7 +168,7 @@ Tests import `app` as a Flask `test_client` everywhere. That is expected.
 These seams are finished. Their absence from the Flask root is progress:
 
 1. **Settings HTTP** — `api.settings_routes` (`settings_bp`); backed by `settings_manager`.
-2. **Projects / Git / tasks** — `api.project_routes` / `api.git_routes` / `api.task_routes` with their managers/services.
+2. **Projects / Git** — `api.project_routes` / `api.git_routes` with their managers/services.
 3. **Action-form HTTP** — `api.action_form_routes` over `action_forms` / `project_actions`.
 4. **Live-status + status queues** — `api.chat_live_status` owns the store (root keeps a thin cancel-injecting wrapper); `api.chat_status` owns the legacy registry + `emit_status`, while turn-scoped `TurnStatusQueue` creation/drain/done-enqueue lives in `chat_turn_workflow.run_agent_stream_turn` (route only frames SSE).
 5. **Harness web command entries** — `api.agent_harness.runners` owns all `run_*_web_command`; the root keeps a thin `_run_harness_web_command` shim.

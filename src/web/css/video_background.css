@@ -62,18 +62,3 @@ body.has-video-background {
 body.has-video-background .shell-main iframe {
     background: transparent;
 }
-
-/* Media mode: full-bleed playback behind the shell; main iframe stays transparent */
-body.cuttle-media-mode .app-shell {
-    position: relative;
-    z-index: 1;
-}
-body.cuttle-media-mode #cuttle-video-background-root {
-    z-index: 0;
-}
-.cuttle-video-background--media .cuttle-video-background-overlay {
-    pointer-events: none;
-}
-.cuttle-video-background.cuttle-video-background--media {
-    z-index: 1;
-}

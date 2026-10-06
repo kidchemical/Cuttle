@@ -240,7 +240,7 @@ def test_rapid_navigation_panel_stable(page):
     page.goto(f"{API_BASE}/app_shell.html")
     page.wait_for_selector("#contentFrame", timeout=10000)
     # The rail is user-customizable, so any of these may be stashed out of view.
-    pages = ["/task_management.html", "/apps_page.html", "/settings_page.html", "/chat_page.html"]
+    pages = ["/projects_page.html", "/apps_page.html", "/settings_page.html", "/chat_page.html"]
     for p in pages:
         btn = page.locator(f'.rail-items .rail-item[data-page="{p}"]').first
         if btn.count() == 0 or not btn.is_visible():

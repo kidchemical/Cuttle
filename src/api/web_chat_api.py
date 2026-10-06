@@ -390,13 +390,6 @@ try:
 except Exception as _claude_err:
     print(f"[CLAUDE] Failed to register routes: {_claude_err}")
 
-# Tasks (transport owned by api.task_routes; logic in managers.task_manager)
-try:
-    from api.task_routes import tasks_bp
-    app.register_blueprint(tasks_bp)
-except Exception as _tasks_err:
-    print(f"[TASKS] Failed to register routes: {_tasks_err}")
-
 # Router editor decision-only tools (transport in api.agent_router.routes)
 try:
     from api.agent_router.routes import router_editor_bp
@@ -1746,10 +1739,6 @@ def serve_app_shell():
     return send_from_directory(project_root / 'web', 'app_shell.html')
 
 
-@app.route('/media_player.html')
-def serve_media_player():
-    """Thin overlay for media playback (uses shell video background)."""
-    return send_from_directory(project_root / 'web', 'media_player.html')
 
 @app.route('/app_shell.html')
 def serve_app_shell_direct():
@@ -1767,11 +1756,6 @@ def serve_router_editor():
     """Serve the Router editor page (replaces the retired pipeline node editor)"""
     return send_from_directory(project_root / 'web', 'router_editor.html')
 
-
-@app.route('/task_management.html')
-def serve_task_management():
-    """Serve the task management page"""
-    return send_from_directory(project_root / 'web', 'task_management.html')
 
 
 @app.route('/jobs_page.html')
@@ -2619,10 +2603,6 @@ def serve_git_graph_page():
     """Serve the vertical git topology visualizer."""
     return send_from_directory(project_root / 'web', 'git_graph_page.html')
 
-@app.route('/git_ui.html')
-def serve_git_ui():
-    """Serve the custom Git UI page"""
-    return send_from_directory(project_root / 'web', 'git_ui.html')
 
 @app.route('/chat_page.html')
 def serve_chat_page():
@@ -6183,94 +6163,6 @@ def doctor_endpoint():
             'error': str(e)
         }), 500
 
-@app.route('/wizard_page.html')
-def serve_wizard_page():
-    """Serve the setup wizard / doctor page"""
-    return send_from_directory(project_root / 'web', 'wizard_page.html')
-
-@app.route('/api/wizard/status', methods=['GET'])
-@owner_required
-def wizard_status():
-    """Return setup wizard status: which steps are done.
-
-    "Do I have an agent that can actually run a turn" is the step that matters
-    on a fresh install, so it is derived from the harness catalog rather than
-    assumed. The retired "default pipeline" step is gone with the graphs: chat
-    dispatches to slash agents, not a configured graph.
-
-    Completion providers are read from ``api.completion_providers`` (the same
-    registry Settings writes) so the wizard never re-derives "do I have a key".
-    """
-    try:
-        from managers.settings_manager import get_settings_manager
-        from api.completion_providers import list_providers, preferred_provider_id
-        from api.agent_harness.catalog import public_catalog
-
-        settings = get_settings_manager()
-
-        try:
-            agents = public_catalog()
-        except Exception:
-            agents = []
-        ready_agents = [a for a in agents if a.get('ready')]
-        agent_summary = [
-            {
-                'id': a.get('id'),
-                'label': a.get('label') or a.get('id'),
-                'slash': a.get('slash'),
-                'ready': bool(a.get('ready')),
-                'available': bool(a.get('available')),
-                'install_hint': a.get('install_hint') or '',
-                'credential_env': a.get('credential_env') or [],
-                'credential_present': bool(a.get('credential_present')),
-                'auth_command': a.get('auth_command') or '',
-            }
-            for a in agents
-        ]
-
-        providers = list_providers()
-        configured_providers = [p for p in providers if p['configured']]
-        pinned = preferred_provider_id()
-
-        channels_cfg = (settings.get_setting('channels') or {})
-        webchat_cfg = channels_cfg.get('webchat') or {}
-        channels_configured = bool(webchat_cfg.get('allowFrom'))
-
-        next_step = None
-        next_action = ''
-        if not ready_agents:
-            next_step = 'agent_cli'
-            next_action = 'Install an agent CLI and set its key, or drop in your own adapter.'
-        elif not configured_providers:
-            next_step = 'completion_provider'
-            next_action = (
-                'No cheap-completion provider is configured. Chat titles and commit '
-                'names fall back to nothing until one is.'
-            )
-        elif not channels_configured:
-            next_step = 'channels'
-            next_action = 'Restrict who may talk to this Cuttle instance.'
-        else:
-            next_step = 'done'
-            next_action = 'Setup looks complete.'
-        return jsonify({
-            'success': True,
-            'steps': {
-                'agent_cli': bool(ready_agents),
-                'completion_provider': bool(configured_providers),
-                'channels': channels_configured,
-            },
-            'next_step': next_step,
-            'next_action': next_action,
-            'agents': agent_summary,
-            'agent_count': len(agents),
-            'ready_agent_count': len(ready_agents),
-            'completion_providers': providers,
-            'pinned_provider': pinned or '',
-        })
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
 # ============================================================================
 # Pairing API (channel-level security: approve codes, list pending)
 # ============================================================================
@@ -8641,7 +8533,6 @@ if __name__ == '__main__':
     print(f"Bot available: {PIPELINE_AVAILABLE}")
     print("\nAPI endpoints:")
     print("  GET  /                    - App shell")
-    print("  GET  /git_ui.html         - Git Web UI")
     print("  GET  /settings_page.html  - Settings page")
     print("  POST /api/chat            - Send chat message")
     print("  GET  /api/health          - Health check")

@@ -615,7 +615,7 @@ def match_slash_command(
 
 
 def public_catalog(project_path: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Catalog rows for the palette, Settings, and the OOBE wizard.
+    """Catalog rows for the palette, Settings.
 
     Guest authentication belongs to each CLI. Legacy credential fields remain
     in the wire shape but never consult Cuttle's provider environment.
