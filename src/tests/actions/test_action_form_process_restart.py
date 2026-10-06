@@ -103,11 +103,13 @@ def _start_child_flask(env: dict, port: int) -> subprocess.Popen:
         cwd=str(REPO),
         env=child_env,
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
+        # A file, not a pipe: nobody drains it while we poll, and the child
+        # blocks once Windows' small pipe buffer fills with import logging.
+        stderr=open(env["tmp"] / "child-flask.err", "wb"),
     )
 
 
-def _wait_http(port: int, timeout: float = 45.0, proc=None) -> None:
+def _wait_http(port: int, timeout: float = 45.0, proc=None, log: Path = None) -> None:
     url = f"http://127.0.0.1:{port}/api/health"
     deadline = time.time() + timeout
     last = None
@@ -121,8 +123,8 @@ def _wait_http(port: int, timeout: float = 45.0, proc=None) -> None:
             last = exc
             time.sleep(0.1)
     detail = ""
-    if proc is not None and proc.poll() is not None and proc.stderr is not None:
-        detail = "\n" + proc.stderr.read().decode("utf-8", "replace")[-3000:]
+    if log is not None and log.is_file():
+        detail = "\n" + log.read_bytes().decode("utf-8", "replace")[-3000:]
     raise AssertionError(f"isolated Flask did not listen on {port}: {last}{detail}")
 
 
@@ -172,7 +174,7 @@ def test_action_form_survives_fresh_flask_process(restart_env):
     port = _free_port()
     proc = _start_child_flask(env, port)
     try:
-        _wait_http(port, proc=proc)
+        _wait_http(port, proc=proc, log=env["tmp"] / "child-flask.err")
         status, data = _post_json(
             port,
             "/api/action-form/run",

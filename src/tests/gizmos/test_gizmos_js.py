@@ -73,7 +73,7 @@ console.log(JSON.stringify(out));
 def harness():
     if not shutil.which("node"):
         pytest.skip("node not available")
-    proc = subprocess.run(["node", "-e", HARNESS], env={"MODEL": str(MODEL), "PATH": os.environ["PATH"]},
+    proc = subprocess.run(["node", "-e", HARNESS], env={**os.environ, "MODEL": str(MODEL)},
                           capture_output=True, text=True, encoding="utf-8", check=True)
     return json.loads(proc.stdout)
 

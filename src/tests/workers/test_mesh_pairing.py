@@ -58,7 +58,8 @@ def test_posix_pairing_script_present_and_explicit():
 
 
 bash_only = pytest.mark.skipif(
-    shutil.which("bash") is None, reason="bash not available"
+    shutil.which("bash") is None or __import__("os").name == "nt",
+    reason="POSIX pairing script (Windows uses the .ps1)",
 )
 
 
