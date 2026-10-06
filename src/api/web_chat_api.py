@@ -538,7 +538,6 @@ def _live_status_ttl_seconds(entry: dict) -> float:
 
 # Serialize local LLM (Ollama) requests: Ollama processes one request at a time per model.
 # When multiple pipelines call Ollama, later requests wait; we emit "Waiting for local LLM..." for the UI.
-_ollama_request_lock = threading.Lock()
 
 
 def _live_status_keys(session_id) -> list:
@@ -683,11 +682,6 @@ def _require_mobile_token(token: Optional[str]) -> bool:
         return verify_mobile_token(token)
     except Exception:
         return False
-
-
-def _register_first_pipeline_with_trigger(trigger_type: str) -> bool:
-    """Graphs are gone; nothing to register."""
-    return False
 
 
 def _emit_chat_complete_mobile(session_id: str, result: dict) -> None:
@@ -8646,20 +8640,31 @@ def llm_request():
             from openai import OpenAI as _OAI
             from core.local_llm import (
                 get_local_base_url, get_local_api_key, get_local_label,
-                resolve_local_model, list_local_models,
+                resolve_local_model, local_request_slot, chat_completion_with_fallback,
+                check_local_cancelled, LocalRequestCancelled, LocalQueueTimeout,
             )
             import asyncio
             ollama_base = get_local_base_url()
             local_label = get_local_label()
-            ollama_model = resolve_local_model(model, with_tools=bool(tools_config))
-            client = _OAI(base_url=ollama_base, api_key=get_local_api_key())
-            waited_for_ollama = False
+            ollama_model = model
+            from api import chat_delivery
+
+            local_turn = chat_delivery.current_turn(session_id) if session_id else None
+            cancelled = lambda: bool(session_id) and (
+                chat_delivery.is_turn_cancelled(session_id)
+                or chat_delivery.is_stale_turn(session_id, local_turn)
+            )
+            slot = local_request_slot(
+                cancelled=cancelled,
+                on_wait=lambda: emit_chat_status(session_id, f"Waiting for local LLM ({local_label})...") if session_id else None,
+            )
+            slot_entered = False
             try:
-                if not _ollama_request_lock.acquire(blocking=False):
-                    if session_id:
-                        emit_chat_status(session_id, f"Waiting for local LLM ({local_label})...")
-                    _ollama_request_lock.acquire(blocking=True)
-                    waited_for_ollama = True
+                waited_for_ollama = slot.__enter__()
+                slot_entered = True
+                ollama_model = resolve_local_model(model, with_tools=bool(tools_config))
+                check_local_cancelled(cancelled)
+                client = _OAI(base_url=ollama_base, api_key=get_local_api_key())
                 if session_id:
                     emit_chat_status(session_id, f"Calling local LLM ({local_label})...")
                 openai_tools = _get_combined_openai_tools(tools_config)
@@ -8679,37 +8684,7 @@ def llm_request():
                 )
                 create_kw["timeout"] = request_timeout_sec
 
-                def _list_ollama_models() -> list:
-                    return list_local_models()
-
-                def _chat_completion_with_fallback(base_kwargs: dict, preferred_model: str):
-                    model_ids = _list_ollama_models()
-                    candidates = [preferred_model] + [m for m in model_ids if m and m != preferred_model]
-                    last_err = None
-                    # Try up to 2 candidates: preferred, then first alternate.
-                    max_attempts = int(os.getenv('OLLAMA_FALLBACK_MAX_ATTEMPTS', '5'))
-                    for cand in candidates[:max_attempts]:
-                        try:
-                            kwargs = dict(base_kwargs)
-                            kwargs["model"] = cand
-                            resp = client.chat.completions.create(**kwargs)
-                            msg = resp.choices[0].message
-                            content = getattr(msg, "content", None)
-                            tool_calls = getattr(msg, "tool_calls", None)
-                            # Some Ollama models may "succeed" but return empty content.
-                            # If we didn't get tool calls (or tools aren't requested), treat as failure and try fallback.
-                            if (not openai_tools and (content is None or not str(content).strip())) or (
-                                openai_tools and (not tool_calls) and (content is None or not str(content).strip())
-                            ):
-                                last_err = RuntimeError("Empty content from Ollama")
-                                continue
-                            return resp
-                        except Exception as e:
-                            last_err = e
-                            continue
-                    raise last_err if last_err else RuntimeError("Ollama call failed")
-
-                response = _chat_completion_with_fallback(create_kw, ollama_model)
+                response = chat_completion_with_fallback(client, create_kw, ollama_model, cancelled=cancelled)
                 response_message = response.choices[0].message
                 response_text = response_message.content or ''
                 max_tool_rounds = 10
@@ -8723,6 +8698,7 @@ def llm_request():
                         "tool_calls": [{"id": tc.id, "type": "function", "function": {"name": tc.function.name, "arguments": tc.function.arguments}} for tc in response_message.tool_calls]
                     })
                     for tc in response_message.tool_calls:
+                        check_local_cancelled(cancelled)
                         import json as _json
                         args = _json.loads(tc.function.arguments) if getattr(tc.function, 'arguments', None) else {}
                         if session_id:
@@ -8740,7 +8716,7 @@ def llm_request():
                         max_tokens=max_tokens,
                         timeout=request_timeout_sec,
                     )
-                    response = _chat_completion_with_fallback(follow_up_kw, ollama_model)
+                    response = chat_completion_with_fallback(client, follow_up_kw, ollama_model, cancelled=cancelled)
                     response_message = response.choices[0].message
                     response_text = response_message.content or ''
                 end_time = time.time()
@@ -8785,6 +8761,10 @@ def llm_request():
                         'total_tokens': usage.total_tokens if usage else 0,
                     }
                 })
+            except LocalRequestCancelled as exc:
+                return jsonify({'success': False, 'error': str(exc), 'cancelled': True}), 409
+            except LocalQueueTimeout as exc:
+                return jsonify({'success': False, 'error': str(exc)}), 503
             except Exception as ollama_err:
                 err_txt = f'Local LLM ({local_label}) error (is {local_label} running at {ollama_base}?): {ollama_err}'
                 _record_failed_llm_for_query(
@@ -8796,7 +8776,8 @@ def llm_request():
                     'error': err_txt
                 }), 502
             finally:
-                _ollama_request_lock.release()
+                if slot_entered:
+                    slot.__exit__(None, None, None)
         else:
             _record_failed_llm_for_query(
                 query_id, node_id, model, start_time,

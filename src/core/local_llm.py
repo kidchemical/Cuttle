@@ -24,6 +24,10 @@ Relevant env vars:
 """
 
 import os
+import math
+import threading
+import time
+from contextlib import contextmanager
 
 _LLAMACPP_ALIASES = {
     'llamacpp', 'llama.cpp', 'llama_cpp', 'llama-cpp', 'llama', 'llama-server', 'llamaserver',
@@ -243,3 +247,75 @@ def stop_llamacpp() -> bool:
         return True
     except Exception:
         return False
+
+
+# One local inference lane, with bounded/cancellable waiting (F10).
+
+_request_lock = threading.Lock()
+
+
+class LocalRequestCancelled(RuntimeError):
+    """A stopped or superseded chat must not start/retry local inference."""
+
+
+class LocalQueueTimeout(TimeoutError):
+    """The local inference queue did not become available in time."""
+
+
+def check_local_cancelled(cancelled):
+    if cancelled():
+        raise LocalRequestCancelled("Local inference cancelled.")
+
+
+@contextmanager
+def local_request_slot(*, cancelled=lambda: False, on_wait=lambda: None, timeout=None):
+    """Serialize inference; poll Stop while queued and release only owned locks."""
+    wait_limit = float(timeout if timeout is not None else os.getenv('LOCAL_LLM_QUEUE_TIMEOUT_SEC', '120'))
+    if not math.isfinite(wait_limit) or wait_limit <= 0:
+        raise ValueError("LOCAL_LLM_QUEUE_TIMEOUT_SEC must be finite and positive")
+    check_local_cancelled(cancelled)
+    acquired = _request_lock.acquire(blocking=False)
+    waited = not acquired
+    try:
+        if waited:
+            on_wait()
+            deadline = time.monotonic() + wait_limit
+            while not acquired:
+                check_local_cancelled(cancelled)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise LocalQueueTimeout("Local inference queue timed out; retry when the active request finishes.")
+                acquired = _request_lock.acquire(timeout=min(0.1, remaining))
+        check_local_cancelled(cancelled)
+        yield waited
+    finally:
+        if acquired:
+            _request_lock.release()
+
+
+def chat_completion_with_fallback(client, base_kwargs, preferred_model, *, cancelled=lambda: False):
+    """Own local model selection/retries, including empty-response fallback.
+
+    Cancellation never falls through to another model. The caller holds the
+    request slot across tool rounds, and supplies only the completion transport.
+    """
+    check_local_cancelled(cancelled)
+    models = list_local_models()
+    candidates = list(dict.fromkeys([preferred_model] + [m for m in models if m]))
+    max_attempts = max(1, int(os.getenv('OLLAMA_FALLBACK_MAX_ATTEMPTS', '5')))
+    last_err = None
+    for model in candidates[:max_attempts]:
+        check_local_cancelled(cancelled)
+        try:
+            response = client.chat.completions.create(**{**base_kwargs, 'model': model})
+            check_local_cancelled(cancelled)
+            message = response.choices[0].message
+            if not getattr(message, 'tool_calls', None) and not str(getattr(message, 'content', None) or '').strip():
+                last_err = RuntimeError("Empty content from local model")
+                continue
+            return response
+        except LocalRequestCancelled:
+            raise
+        except Exception as exc:
+            last_err = exc
+    raise last_err or RuntimeError("Local model call failed")
