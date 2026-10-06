@@ -1,9 +1,9 @@
-"""Settings → Agents / Providers, and the OOBE wizard (frontend contract).
+"""Settings → Agents / Providers (frontend contract).
 
-Both surfaces render from server payloads (``/api/agents``,
-``/api/settings/completion-providers``, ``/api/wizard/status``) rather than
+The settings surface renders from server payloads (``/api/agents``,
+``/api/settings/completion-providers``) rather than
 hardcoding anything. That is the whole point — adding an agent must be a folder
-drop — so the tests below pin the two ways it can silently rot: a hardcoded
+drop — so the tests below pin the ways it can silently rot: a hardcoded
 agent/provider id sneaking back into the page, and a status word that does not
 match what the server actually sends.
 """
@@ -15,16 +15,11 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PAGE = REPO_ROOT / "src" / "web" / "settings_page.html"
-WIZARD = REPO_ROOT / "src" / "web" / "wizard_page.html"
 CSS = REPO_ROOT / "src" / "web" / "css" / "settings_page.css"
 
 
 def _page() -> str:
     return PAGE.read_text(encoding="utf-8")
-
-
-def _wizard() -> str:
-    return WIZARD.read_text(encoding="utf-8")
 
 
 # ── no hardcoded inventory ────────────────────────────────────────────────
@@ -195,41 +190,3 @@ def test_orphaned_localstorage_keys_are_gone_too():
     html = _page()
     for key in ("selectedToolModel", "'selectedModel'"):
         assert key not in html, key
-
-
-# ── wizard ────────────────────────────────────────────────────────────────
-
-
-def test_wizard_renders_agents_and_no_retired_steps():
-    html = _wizard()
-    assert "/api/wizard/status" in html
-    assert "function renderWizardAgents" in html
-    assert "steps.agent_cli" in html
-    assert "steps.completion_provider" in html
-    # Retired with the graphs / replaced by the registry.
-    assert "steps.default_pipeline" not in html
-    assert "steps.api_keys" not in html
-
-
-def test_wizard_escapes_agent_strings():
-    """install_hint comes from a drop-in manifest and lands in innerHTML."""
-    html = _wizard()
-    assert "function esc(" in html
-    block = re.search(r"function renderWizardAgents\(box, data\) \{.*?\n        \}", html, re.S)
-    assert block
-    body = block.group(0)
-    # Every interpolated agent field goes through esc().
-    for field in ("a.label", "a.slash || ('/' + a.id)", "badge", "hint"):
-        assert f"esc({field})" in body, field
-
-
-def test_wizard_links_deep_into_the_settings_tabs():
-    html = _wizard()
-    assert "/settings_page.html?tab=agents" in html
-    assert "/settings_page.html?tab=providers" in html
-
-
-def test_wizard_agents_cover_the_three_real_states():
-    html = _wizard()
-    for token in ("a.ready", "!a.available", "a.credential_env", "a.auth_command", "a.install_hint"):
-        assert token in html, token

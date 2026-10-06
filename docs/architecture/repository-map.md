@@ -52,7 +52,6 @@ rows below are nonfatal (failure logged, boot continues); `auth_bp` and
 | `projects_bp` | `api.project_routes` | transport; logic in `managers.project_manager` |
 | `action_forms_bp` | `api.action_form_routes` | transport; logic in `api.action_forms` / `api.project_actions` |
 | `git_bp` | `api.git_routes` | transport; behavior in `api.git_service` + git helpers |
-| `tasks_bp` | `api.task_routes` | transport; logic in `managers.task_manager` |
 | widgets, TTS, terminal, Electron, Android APK | `register_*_routes(app)` | `api.chat_widgets`, `api.chat_tts`, `api.web_terminal`, `api.desktop_electron`, `api.mobile_android_update` |
 
 Zero `@app.route` entries for `/api/settings`, `/api/projects`,

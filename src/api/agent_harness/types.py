@@ -76,7 +76,7 @@ class AgentManifest:
     executable_names: List[str] = field(default_factory=list)
     auto_install: bool = False
     # Credential env vars this CLI needs, most-preferred first. Declarative so
-    # Settings / the OOBE wizard can say "add GEMINI_API_KEY" without parsing
+    # Settings can say "add GEMINI_API_KEY" without parsing
     # install_hint prose, and so drop-in adapters get it for free. Empty means
     # the CLI owns its own auth (e.g. `claude auth login`) or needs none.
     credential_env: List[str] = field(default_factory=list)

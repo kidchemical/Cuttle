@@ -22,13 +22,13 @@ def test_layout_upgrade_preserves_existing_pins():
     start = source.index('function migrateUILayout(saved)')
     end = source.index('// ── Cuttle web apps', start)
     script = '''const assert = require('assert');
-const DEFAULT_LAYOUT={}; const DEFAULT_RAIL_HIDDEN=['nav-tasks','nav-git','nav-achievements'];
+const DEFAULT_LAYOUT={}; const DEFAULT_RAIL_HIDDEN=['nav-editor','nav-git','nav-achievements'];
 const RAIL_LAYOUT_VERSION=5;
-const CANONICAL_RAIL_ITEM_ORDER=['nav-chat','nav-tasks','nav-git','nav-achievements','nav-apps'];
+const CANONICAL_RAIL_ITEM_ORDER=['nav-chat','nav-editor','nav-git','nav-achievements','nav-apps'];
 ''' + source[start:end] + '''
-let result=migrateUILayout({layout_version:4,rail_items:['nav-chat','nav-tasks','nav-git','nav-apps'],rail_hidden:[]});
+let result=migrateUILayout({layout_version:4,rail_items:['nav-chat','nav-editor','nav-git','nav-apps'],rail_hidden:[]});
 assert.deepEqual(result.layout.rail_hidden,['nav-achievements']);
-assert(result.layout.rail_items.includes('nav-tasks'));
+assert(result.layout.rail_items.includes('nav-editor'));
 assert(result.layout.rail_items.includes('nav-git'));
 result=migrateUILayout({layout_version:5,rail_items:['nav-chat','nav-achievements'],rail_hidden:[]});
 assert.equal(result.changed,false);assert(result.layout.rail_items.includes('nav-achievements'));

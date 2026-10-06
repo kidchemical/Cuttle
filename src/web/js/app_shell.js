@@ -613,7 +613,6 @@ let cuttleTitlebarCancelHide = null;
 const CANONICAL_RAIL_ITEM_ORDER = [
     'nav-chat',
     'nav-editor',
-    'nav-tasks',
     'nav-git',
     'nav-jobs',
     'nav-dashboards',
@@ -628,7 +627,7 @@ const CANONICAL_RAIL_FOOTER_ORDER = ['nav-account', 'nav-notifications', 'nav-wo
 // The Apps launcher is the way back to every stashed app, so it can never be removed.
 const RAIL_LOCKED_IDS = new Set(['nav-apps']);
 // Cuttle web apps that live in the Apps grid (not the blade bar) until the user pins them.
-const DEFAULT_RAIL_HIDDEN = ['nav-tasks', 'nav-achievements', 'nav-projects'];
+const DEFAULT_RAIL_HIDDEN = ['nav-achievements', 'nav-projects'];
 // Bump when defaults change; saved layouts below this version get DEFAULT_RAIL_HIDDEN merged in once.
 const RAIL_LAYOUT_VERSION = 6;
 
@@ -887,6 +886,7 @@ function canonicalizeShellPage(page) {
     const fallback = '/chat_page.html';
     try {
         const u = new URL(page || fallback, window.location.origin);
+        if (['/task_management.html', '/media_player.html', '/git_ui.html', '/wizard_page.html'].includes(u.pathname)) return fallback;
         u.searchParams.delete('_cb');
         let path = u.pathname || fallback;
         // Guard against blank / non-page navigations that surface as Werkzeug "Not Found".
@@ -1414,6 +1414,9 @@ if (bootChatId) {
     }
 }
 
+currentPage = canonicalizeShellPage(currentPage);
+sessionStorage.setItem(STORAGE_PAGE, currentPage);
+sessionStorage.removeItem('cuttleMediaMeta');
 rememberChatHandleFromPage(0, currentPage);
 
 /** Keep the address-bar ?chat= in sync with the active chat session.
@@ -1595,9 +1598,6 @@ if (!bootChatId && currentPage) {
     } catch (_) {}
 }
 
-/** True while the content iframe is in feed media playback (background video + media_player overlay). */
-let shellMediaModeActive = false;
-
 // ── Video background (from Settings/child pages) ───────────────
 window.addEventListener('message', function(e) {
     if (!e.data || typeof e.data !== 'object') return;
@@ -1610,24 +1610,6 @@ window.addEventListener('message', function(e) {
     } else if (e.data.type === 'cuttle-video-update-opacity' && typeof e.data.value === 'number') {
         if (window.CuttleVideoBackground && window.CuttleVideoBackground.updateOverlayOpacity) {
             window.CuttleVideoBackground.updateOverlayOpacity(e.data.value);
-        }
-    } else if (e.data.type === 'cuttle-enter-media-mode' && e.data.url) {
-        if (window.CuttleVideoBackground && window.CuttleVideoBackground.enterMediaMode) {
-            window.CuttleVideoBackground.enterMediaMode(String(e.data.url).trim());
-        }
-        shellMediaModeActive = true;
-        if (!e.data.resyncOnly) {
-            navigate(0, '/media_player.html?v=' + Date.now());
-        }
-    } else if (e.data.type === 'cuttle-exit-media-mode') {
-        shellMediaModeActive = false;
-        if (window.CuttleVideoBackground && window.CuttleVideoBackground.exitMediaMode) {
-            window.CuttleVideoBackground.exitMediaMode();
-        }
-        navigate(0, '/chat_page.html');
-    } else if (e.data.type === 'cuttle-media-set-muted' && typeof e.data.muted === 'boolean') {
-        if (window.CuttleVideoBackground && window.CuttleVideoBackground.setMediaMuted) {
-            window.CuttleVideoBackground.setMediaMuted(e.data.muted);
         }
     } else if (e.data.type === 'cuttle-bg-effect-blend' && typeof e.data.value === 'number') {
         document.querySelectorAll('.split-column .shell-main iframe').forEach(function (fr) {
@@ -1646,9 +1628,7 @@ window.addEventListener('message', function(e) {
     } else if (e.data.type === 'cuttle-video-request-state') {
         try {
             const active = document.body.classList.contains('has-video-background');
-            const media = document.body.classList.contains('cuttle-media-mode');
             e.source?.postMessage({ type: 'cuttle-video-state', active: active }, '*');
-            e.source?.postMessage({ type: 'cuttle-media-state', active: media }, '*');
             var bh = localStorage.getItem('cuttleBackgroundEffectBlend');
             var bv = bh != null ? parseInt(bh, 10) : 100;
             if (isNaN(bv)) bv = 100;
@@ -1796,7 +1776,6 @@ window.addEventListener('message', function(e) {
 const PAGE_TITLES = {
     '/chat_page.html': 'Chat',
     '/router_editor.html': 'Router',
-    '/task_management.html': 'Tasks',
     '/git_graph_page.html': 'Git',
     '/jobs_page.html': 'Jobs',
     '/dashboards_page.html': 'Dashboards',
@@ -1804,8 +1783,6 @@ const PAGE_TITLES = {
     '/achievements_page.html': 'Achievements',
     '/projects_page.html': 'Projects',
     '/settings_page.html': 'Settings',
-    '/media_player.html': 'Media',
-    '/git_ui.html': 'Git Ops',
     '/query_log.html': 'Query log',
     '/terminal_page.html': 'Terminal',
 };
@@ -2346,7 +2323,6 @@ function attachFrameLoadListener(colIdx, frameEl) {
                 frameEl.contentWindow?.postMessage({ type: 'cuttle-video-state', active: document.body.classList.contains('has-video-background') }, '*');
             } catch (_) {}
             try {
-                frameEl.contentWindow?.postMessage({ type: 'cuttle-media-state', active: document.body.classList.contains('cuttle-media-mode') }, '*');
             } catch (_) {}
             try {
                 var bh = localStorage.getItem('cuttleBackgroundEffectBlend');
@@ -4445,12 +4421,6 @@ function navigate(colIdx, page, opts) {
     rememberChatHandleFromPage(colIdx, page);
     const state = getState(colIdx);
     if (state.page === page && !(opts && opts.force)) return;
-    if (colIdx === 0 && shellMediaModeActive && !String(page).startsWith('/media_player.html')) {
-        shellMediaModeActive = false;
-        if (window.CuttleVideoBackground && window.CuttleVideoBackground.exitMediaMode) {
-            window.CuttleVideoBackground.exitMediaMode();
-        }
-    }
     console.log('[App Shell] Navigating to:', page);
     if (colIdx === 0 && !shellApplyingHistory && !(opts && opts.history === 'none')) {
         pushShellBackEntry(state.page);

@@ -79,7 +79,7 @@ def main():
     print("\n🎉 Project setup complete!")
     print("\nNext steps:")
     print("1. Start the web server: python web_chat_api.py")
-    print("2. Open http://localhost:8080/git_ui.html")
+    print("2. Open http://localhost:8080/git_graph_page.html")
     print("3. Use the project selector to switch between projects")
     print("4. Add your own projects using the 'Add Project' button")
 

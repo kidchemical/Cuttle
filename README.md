@@ -108,7 +108,7 @@ copy src\.env.example src\.env
 .\.venv\Scripts\python.exe src\scripts\cuttle_daemon.py
 ```
 
-Open [https://127.0.0.1:8080](https://127.0.0.1:8080) (self-signed HTTPS). Setup status and health checks live at `/wizard_page.html`.
+Open [https://127.0.0.1:8080](https://127.0.0.1:8080) (self-signed HTTPS). Configure agents and providers in Settings; health checks are available through `/api/doctor`.
 
 Always-on Linux box with no desktop (spare laptop, mini PC)? Run it as a systemd service: [`docs/guides/HEADLESS_SERVER.md`](docs/guides/HEADLESS_SERVER.md).
 
@@ -206,7 +206,6 @@ flowchart LR
 | `.cuttle_global/personal/` | Install-local global overlay (gitignored). |
 | `.cuttle/personal/` | Install-local project overlay (gitignored). Rule/doc Markdown appends a delta; supported YAML overlays replace by basename. See the [overlay contract](.cuttle_global/personal/README.md). |
 | `_personal/` | Your dogfood skills and docs (gitignored); not part of the product |
-| `/wizard_page.html` | Setup status and Doctor health checks |
 | `/settings_page.html` | API keys and preferences in the UI |
 
 **Your existing `.env` and settings are never overwritten by docs or templates.**

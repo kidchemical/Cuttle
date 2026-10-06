@@ -210,9 +210,6 @@
             if (e.data && e.data.type === 'cuttle-video-state' && typeof e.data.active === 'boolean') {
                 applyShellVideoState(e.data.active);
             }
-            if (e.data && e.data.type === 'cuttle-media-state' && typeof e.data.active === 'boolean') {
-                if (document.body) document.body.classList.toggle('cuttle-media-mode', e.data.active);
-            }
         });
         // Ask parent to re-broadcast in case the load-time postMessage was missed.
         try { window.parent.postMessage({ type: 'cuttle-video-request-state' }, '*'); } catch (_) {}
@@ -225,11 +222,6 @@
                 window.top.postMessage({ type: 'cuttle-video-reinit' }, '*');
             },
             isEnabled: isWallpaperEnabled,
-            enterMediaMode: function(url, opts) {
-                window.top.postMessage(Object.assign({ type: 'cuttle-enter-media-mode', url: url }, opts || {}), '*');
-            },
-            exitMediaMode: function() { window.top.postMessage({ type: 'cuttle-exit-media-mode' }, '*'); },
-            setMediaMuted: function(muted) { window.top.postMessage({ type: 'cuttle-media-set-muted', muted: !!muted }, '*'); },
             playlists: playlistApi,
             getListKey: () => LIST_KEY,
             getDurationKey: () => DURATION_KEY,
@@ -243,7 +235,6 @@
     const ACTIVE_KEY = 'cuttleVideoBackgroundActive';
 
     let rotationTimer = null;
-    let mediaModeActive = false;
 
     /* Mirrored so ui_boot.js can make a page transparent before its first paint,
        instead of waiting for the shell's postMessage on iframe load. */
@@ -310,20 +301,17 @@
         }
     }
 
-    /* Media mode is for watching, so it always dims toward black and caps at 35%. */
     function styleOverlay(container, alpha) {
-        const media = container.classList.contains('cuttle-video-background--media');
-        container.setAttribute('data-blend', media ? 'black' : getBlendTarget());
+        container.setAttribute('data-blend', getBlendTarget());
         const overlay = container.querySelector('.cuttle-video-background-overlay');
-        if (overlay) overlay.style.opacity = String(media ? Math.min(alpha, 0.35) : alpha);
+        if (overlay) overlay.style.opacity = String(alpha);
     }
 
-    function buildMediaForUrl(url, mode) {
-        const wallpaper = mode !== 'media';
+    function buildMediaForUrl(url) {
         const ytId = parseYouTubeId(url);
         if (ytId) {
             const iframe = document.createElement('iframe');
-            const loopPart = wallpaper ? `&loop=1&playlist=${ytId}` : '';
+            const loopPart = `&loop=1&playlist=${ytId}`;
             iframe.src = 'https://www.youtube.com/embed/' + encodeURIComponent(ytId) +
                 '?autoplay=1&mute=1' + loopPart +
                 '&controls=0&rel=0&modestbranding=1&playsinline=1&iv_load_policy=3' +
@@ -331,7 +319,7 @@
                 '&origin=' + encodeURIComponent(window.location.origin);
             iframe.setAttribute('allow', 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen');
             iframe.allowFullscreen = true;
-            iframe.title = wallpaper ? 'Background video' : 'Media playback';
+            iframe.title = 'Background video';
             iframe.className = 'cuttle-video-background-media';
             return iframe;
         }
@@ -339,7 +327,7 @@
             const video = document.createElement('video');
             video.autoplay = true;
             video.muted = true;
-            video.loop = wallpaper;
+            video.loop = true;
             video.playsInline = true;
             video.className = 'cuttle-video-background-media';
             const source = document.createElement('source');
@@ -430,20 +418,7 @@
     function createContainer(url) {
         const container = document.createElement('div');
         container.className = 'cuttle-video-background';
-        const media = buildMediaForUrl(url, 'wallpaper');
-        if (!media) return null;
-        container.appendChild(media);
-        const overlay = document.createElement('div');
-        overlay.className = 'cuttle-video-background-overlay';
-        container.appendChild(overlay);
-        styleOverlay(container, getOverlayOpacity());
-        return container;
-    }
-
-    function createMediaModeContainer(url) {
-        const container = document.createElement('div');
-        container.className = 'cuttle-video-background cuttle-video-background--media';
-        const media = buildMediaForUrl(url, 'media');
+        const media = buildMediaForUrl(url);
         if (!media) return null;
         container.appendChild(media);
         const overlay = document.createElement('div');
@@ -473,32 +448,19 @@
         } catch (_) {}
     }
 
-    function notifyFrameMediaState(active) {
-        try {
-            const frames = document.querySelectorAll('.shell-main iframe');
-            for (const frame of frames) {
-                if (frame.contentWindow) {
-                    frame.contentWindow.postMessage({ type: 'cuttle-media-state', active }, '*');
-                }
-            }
-        } catch (_) {}
-    }
-
     function clearState() {
         if (rotationTimer) {
             clearTimeout(rotationTimer);
             rotationTimer = null;
         }
-        mediaModeActive = false;
         const root = document.getElementById('cuttle-video-background-root');
         const old = document.getElementById('cuttle-video-background');
         if (root) root.innerHTML = '';
         if (old) old.remove();
-        document.body.classList.remove('has-video-background', 'cuttle-media-mode');
-        document.documentElement.classList.remove('has-video-background', 'cuttle-media-mode');
+        document.body.classList.remove('has-video-background');
+        document.documentElement.classList.remove('has-video-background');
         rememberActive(false);
         notifyFrameVideoState(false);
-        notifyFrameMediaState(false);
     }
 
     function scheduleNext(playOrder, nextIndex, durationMs, originalUrls) {
@@ -564,47 +526,6 @@
             document.body.insertBefore(root, document.body.firstChild);
         }
         return root;
-    }
-
-    function enterMediaMode(url) {
-        if (!url || typeof url !== 'string') return;
-        if (rotationTimer) {
-            clearTimeout(rotationTimer);
-            rotationTimer = null;
-        }
-        mediaModeActive = true;
-        const root = ensureVideoRoot();
-        root.innerHTML = '';
-        const container = createMediaModeContainer(url.trim());
-        if (!container) {
-            mediaModeActive = false;
-            console.warn('[Cuttle] Could not play URL as embedded video (need YouTube or direct .mp4/.webm/.ogg):', url);
-            return;
-        }
-        container.id = 'cuttle-video-background';
-        root.appendChild(container);
-        document.body.classList.add('has-video-background', 'cuttle-media-mode');
-        document.documentElement.classList.add('has-video-background', 'cuttle-media-mode');
-        rememberActive(true);
-        notifyFrameVideoState(true);
-        notifyFrameMediaState(true);
-        showWhenReady(container);
-    }
-
-    function exitMediaMode() {
-        if (!mediaModeActive) return;
-        clearState();
-        init();
-    }
-
-    function setMediaMuted(muted) {
-        const v = document.querySelector('#cuttle-video-background video.cuttle-video-background-media');
-        if (v) {
-            v.muted = !!muted;
-            if (!muted) {
-                v.play().catch(function() {});
-            }
-        }
     }
 
     function playNow(url) {
@@ -715,9 +636,6 @@
         updateOverlayOpacity,
         setEnabled,
         isEnabled: isWallpaperEnabled,
-        enterMediaMode,
-        exitMediaMode,
-        setMediaMuted,
         playlists: playlistApi,
         getListKey: () => LIST_KEY,
         getDurationKey: () => DURATION_KEY,

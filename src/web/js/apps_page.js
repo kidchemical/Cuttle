@@ -11,7 +11,6 @@
     const APP_HUES = {
         'nav-chat': 212,
         'nav-editor': 268,
-        'nav-tasks': 145,
         'nav-git': 22,
         'nav-jobs': 186,
         'nav-dashboards': 236,
