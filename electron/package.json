@@ -5,6 +5,14 @@
     "main":  "main.js",
     "author":  "Ian McCambridge",
     "license":  "MIT",
+    "homepage":  "https://github.com/kidchemical/Cuttle",
+    "repository":  {
+                       "type":  "git",
+                       "url":  "https://github.com/kidchemical/Cuttle.git"
+                   },
+    "bugs":  {
+                 "url":  "https://github.com/kidchemical/Cuttle/issues"
+             },
     "scripts":  {
                     "start":  "electron .",
                     "build":  "electron-builder build --win --publish never",

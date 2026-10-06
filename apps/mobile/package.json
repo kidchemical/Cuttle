@@ -3,6 +3,13 @@
   "version": "0.1.0",
   "description": "Cuttle LAN mobile client (Capacitor)",
   "private": true,
+  "license": "MIT",
+  "author": "Ian McCambridge",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kidchemical/Cuttle.git",
+    "directory": "apps/mobile"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",
