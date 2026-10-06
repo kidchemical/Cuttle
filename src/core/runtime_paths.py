@@ -6,6 +6,7 @@ Stdlib only — imported by the daemon before optional packages are guaranteed.
 from __future__ import annotations
 
 import os
+import re
 import sys
 from pathlib import Path
 from typing import List, Optional
@@ -232,6 +233,11 @@ def rewrite_windows_cuttle_path(path: str, project_root: Optional[Path] = None) 
     root = Path(project_root) if project_root is not None else _repo_root()
     text = raw.replace("\\", "/")
     normalized = text.lower()
+    # Only Windows-shaped paths are foreign here. A local POSIX path is left
+    # alone: /home/runner/work/Cuttle/Cuttle would otherwise match the first
+    # "Cuttle" segment and be rewritten to …/Cuttle/Cuttle/Cuttle.
+    if not (re.match(r"^[A-Za-z]:", text) or "\\" in raw or text.startswith("//")):
+        return raw
 
     prefixes = []
     for prefix in _windows_cuttle_prefixes(root):
