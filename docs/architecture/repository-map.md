@@ -418,5 +418,4 @@ For harnesses, integrations, surfaces, or agent operations, also read:
 
 - Never kill Flask from an agent it hosts; use daemon `/restart`.
 - Action-form recovery: HMAC on persisted specs (`action_forms` / `project_actions`).
-- `project_key = "pc_bot"` still documented as Claude Code project root in `AGENTS.md`.
 - Electron sandbox: no automatic `--no-sandbox`.

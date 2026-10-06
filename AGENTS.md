@@ -178,7 +178,6 @@ Scheduled `Self_Improvement.json` was removed with the graphs. Process backlog l
 
 ## Important Conventions
 
-- `project_key = "pc_bot"` is hardcoded as the Claude Code project root in `web_chat_api.py`
 - Turn dispatch lives in owned services, not the entry module: `api.agent_harness.runners` (all harness CLI entries), `api.chat_turn` (request/selection seam), `api.chat_coordinator` (shared transport-neutral submit: `PreparedAgentTurn`/`select_agent_turn`/`submit_agent_turn`; route lanes submit claimed, legacy surfaces unclaimed), `api.chat_turn_workflow` (lane orchestration), `api.chat_turn_persist` (saver/user persist). `process_message_with_bot` in `web_chat_api.py` is only the compat entry for local-mode prompts and `/api/sessions/send`.
 - Flask runs on port **8080** (not 5000)
 - Discord token is read from `src/.env` — the daemon loads this before child processes; Discord is REST-only, with no inbound bot subprocess

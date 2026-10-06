@@ -139,7 +139,7 @@ def _resolve_project_dir(bundled_cli: Dict[str, Any], project_root: str) -> str:
     custom = (bundled_cli.get("customPath") or "").strip()
     if project == "custom" and custom:
         return os.path.abspath(os.path.expanduser(custom))
-    if project == "pc_bot":
+    if project in ("cuttle", "pc_bot"):  # "pc_bot" was Cuttle's original name
         return project_root
     if project == "current":
         return os.getcwd()

@@ -36,22 +36,6 @@ project_root = script_dir.parent  # This is 'src' directory (needed for web file
 actual_project_root = project_root.parent  # repo root (parent of src/)
 
 
-def _remote_agent_project_map() -> dict:
-    """Legacy pipeline project keys → paths. Extra keys: .cuttle_global/personal/path-aliases.json."""
-    mapping = {
-        "pc_bot": str(actual_project_root),
-        "current": ".",
-    }
-    try:
-        from core.runtime_paths import load_personal_path_aliases
-
-        extra = load_personal_path_aliases(actual_project_root).get("remote_agent_projects") or {}
-        if isinstance(extra, dict):
-            mapping.update({str(k): str(v) for k, v in extra.items() if str(k) and str(v)})
-    except Exception:
-        pass
-    return mapping
-
 def generate_self_signed_cert(lan_ip: Optional[str] = None, force_regenerate: bool = False):
     """Generate or reuse a self-signed SSL certificate for localhost (+ optional LAN IP)."""
     CERT_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)

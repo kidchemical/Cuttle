@@ -18,7 +18,7 @@ Guest projects have their own twin at `{project}/.cuttle/personal/`.
 ## What belongs here
 
 - Absolute install paths (`C:\Users\…`, LAN IPs, hostnames)
-- **`path-aliases.json`** — Windows→this-checkout prefixes and leftover pipeline `project:` keys:
+- **`path-aliases.json`** — Windows→this-checkout prefixes and sibling-project lookup hints:
 
 ```json
 {
@@ -26,10 +26,7 @@ Guest projects have their own twin at `{project}/.cuttle/personal/`.
   "game_dev_windows_prefix": "E:/Projects",
   "sibling_project_paths": ["E:/Projects/DemoGame"],
   "action_prefer_substrings_no_channel": ["demogame"],
-  "action_skip_substrings_unmatched_channel": ["demogame"],
-  "remote_agent_projects": {
-    "demo_game": "E:/Projects/DemoGame"
-  }
+  "action_skip_substrings_unmatched_channel": ["demogame"]
 }
 ```
 
