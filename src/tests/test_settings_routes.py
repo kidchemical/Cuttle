@@ -19,6 +19,7 @@ READS = [
     "/api/settings/video-background",
     "/api/settings/git-auto-commit",
     "/api/settings/github-app",
+    "/api/settings/agent-adapters",
     "/api/app-settings",
 ]
 
@@ -32,6 +33,7 @@ WRITES = [
     ("POST", "/api/settings/ui-layout", {"rail_items": []}),
     ("POST", "/api/settings/video-background", {"enabled": False}),
     ("POST", "/api/settings/git-auto-commit", {"git_auto_commit": False}),
+    ("POST", "/api/settings/agent-adapters", {"steer": {"claude": True}}),
     ("POST", "/api/settings/github-app", {"app_id": "1", "installation_id": "2"}),
     ("POST", "/api/settings/github-app/test", {}),
     ("DELETE", "/api/settings/github-app", {}),
@@ -122,6 +124,47 @@ def test_settings_owner_write_round_trip(tmp_path, monkeypatch):
         "/api/settings/channels", json={"channel": "telegram"}, environ_base=LAN
     )
     assert res.status_code == 400
+
+
+def test_agent_adapters_round_trip(tmp_path, monkeypatch):
+    """Steer switches and the drop-in opt-in persist; env overrides are reported."""
+    isolated = _isolated_settings(monkeypatch, tmp_path)
+    monkeypatch.delenv("CUTTLE_AGENT_STEER", raising=False)
+    monkeypatch.delenv("CUTTLE_ALLOW_PROJECT_ADAPTERS", raising=False)
+    ctx = _auth_client(tmp_path, monkeypatch)
+    ctx["client"].set_cookie("session_token", ctx["token"])
+
+    body = ctx["client"].get("/api/settings/agent-adapters", environ_base=LAN).get_json()
+    assert body["steer"] == {"codex": True, "muse": True, "claude": True}
+    assert body["allow_project_adapters"] is False
+    assert body["steer_env_disabled"] is False
+    assert {"claude", "codex"} <= set(body["defaults"])
+
+    res = ctx["client"].post(
+        "/api/settings/agent-adapters",
+        json={"steer": {"claude": False}, "allow_project_adapters": True},
+        environ_base=LAN,
+    )
+    assert res.status_code == 200, res.get_json()
+    body = res.get_json()
+    assert body["steer"]["claude"] is False and body["steer"]["codex"] is True
+    assert body["allow_project_adapters"] is True
+    assert isolated.get_setting("agent_steer") == {"claude": False}
+    assert isolated.get_setting("agent_harness") == {"allow_project_adapters": True}
+
+    from api.agent_harness.steer import steer_enabled
+
+    assert steer_enabled("claude") is False
+    monkeypatch.setenv("CUTTLE_AGENT_STEER", "0")
+    monkeypatch.setenv("CUTTLE_ALLOW_PROJECT_ADAPTERS", "1")
+    body = ctx["client"].get("/api/settings/agent-adapters", environ_base=LAN).get_json()
+    assert body["steer_env_disabled"] is True
+    assert body["allow_project_adapters_env"] is True
+
+    for bad in ({"steer": {"cursor": True}}, {"steer": {"claude": "yes"}},
+                {"allow_project_adapters": 1}, {}):
+        res = ctx["client"].post("/api/settings/agent-adapters", json=bad, environ_base=LAN)
+        assert res.status_code == 400, bad
 
 
 def test_settings_validators_owned():

@@ -38,7 +38,8 @@ may override user drop-ins of the same id. Palette + `/api/agents` surface `avai
 
 Project drop-ins execute third-party `adapter.py` code **only** on explicit
 opt-in: `CUTTLE_ALLOW_PROJECT_ADAPTERS=1` (env) or
-`settings → agent_harness.allow_project_adapters`. Without opt-in the folder is
+`settings → agent_harness.allow_project_adapters` (Settings → Agents →
+"Run project adapters"). Without opt-in the folder is
 never imported and never listed — opening an untrusted project cannot run its
 adapters. Opting in means: **that project's `.cuttle/agents/` content is
 trusted code**, same as any installed CLI plugin. There is no Python-level

@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="css/shared_navigation.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/landing_page.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/compact_page.css?v=20260814playBtn">
-    <link rel="stylesheet" href="css/settings_page.css?v=20261004releases">
+    <link rel="stylesheet" href="css/settings_page.css?v=20261005agentcfg">
 </head>
 <body class="compact-shell-page" data-page="settings">
     <div class="page-content">
@@ -266,6 +266,21 @@
                     <div class="setting-label"><strong>Discovery roots</strong></div>
                     <div class="setting-control setting-control--stack">
                         <div id="agentDropInRoots" class="provider-status"></div>
+                    </div>
+                </div>
+                <div class="setting-item">
+                    <div class="setting-label">
+                        <strong>Run project adapters</strong>
+                        <div class="setting-description" id="projectAdaptersNote">
+                            Load <code>adapter.py</code> from a project's <code>.cuttle/agents/</code>. That is
+                            third-party code running on this server, so it stays off until you opt in.
+                        </div>
+                    </div>
+                    <div class="setting-control">
+                        <label class="toggle-switch" id="projectAdaptersToggle" onclick="toggleProjectAdapters(event)">
+                            <input type="checkbox" id="projectAdaptersEnabled" style="display: none;">
+                            <span class="slider"></span>
+                        </label>
                     </div>
                 </div>
             </div>
@@ -970,8 +985,206 @@
                     card.appendChild(hint);
                 }
 
+                const config = agentConfigSection(agent, adapterConfig);
+                if (config) card.appendChild(config);
+
                 box.appendChild(card);
             });
+        }
+
+        // ── Per-agent adapter config (GET/POST /api/settings/agent-adapters) ──
+        // Model/effort stars write through /api/agent-defaults/<id>, which owns
+        // validation; the steer switch exists only for ids the server lists.
+        function agentEffortChoices(agent, model) {
+            const perModel = agent.model_efforts || {};
+            if (model && Object.prototype.hasOwnProperty.call(perModel, model)) return perModel[model] || [];
+            return agent.efforts || [];
+        }
+
+        function fillAgentSelect(select, values, current, defaultLabel) {
+            select.innerHTML = '';
+            const opts = [''].concat(values);
+            if (current && !values.includes(current)) opts.push(current);
+            opts.forEach(value => {
+                const opt = document.createElement('option');
+                opt.value = value;
+                opt.textContent = value || defaultLabel;
+                select.appendChild(opt);
+            });
+            select.value = current || '';
+        }
+
+        function agentConfigRow(labelText, control, title) {
+            const row = document.createElement('label');
+            row.className = 'agent-config-row';
+            if (title) row.title = title;
+            const label = document.createElement('span');
+            label.textContent = labelText;
+            row.appendChild(label);
+            row.appendChild(control);
+            return row;
+        }
+
+        function agentConfigSection(agent, cfg) {
+            if (!cfg) return null;
+            const saved = (cfg.defaults || {})[agent.id] || { model: '', effort: '' };
+            const steerable = Object.prototype.hasOwnProperty.call(cfg.steer || {}, agent.id);
+            const canModel = agent.supports_model_pin && (agent.models || []).length;
+            if (!canModel && !agent.supports_effort && !steerable) return null;
+
+            const wrap = document.createElement('div');
+            wrap.className = 'agent-config';
+            const state = { model: saved.model || '', effort: saved.effort || '' };
+            let modelSel = null;
+            let effortSel = null;
+            let effortRow = null;
+
+            const renderEffort = () => {
+                if (!effortSel) return;
+                const levels = agentEffortChoices(agent, state.model);
+                fillAgentSelect(effortSel, levels, state.effort, 'CLI default');
+                effortRow.hidden = !levels.length && !state.effort;
+            };
+
+            const save = async (next) => {
+                const body = {};
+                if (canModel) body.starred_model = next.model;
+                if (agent.supports_effort) body.starred_effort = next.effort;
+                try {
+                    const r = await fetch('/api/agent-defaults/' + encodeURIComponent(agent.id), {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(body),
+                    });
+                    const d = await r.json();
+                    if (!r.ok || !d.success) throw new Error(d.error || 'Save failed');
+                    state.model = next.model;
+                    state.effort = next.effort;
+                    saved.model = next.model;
+                    saved.effort = next.effort;
+                    (window.showToast || alert)(
+                        (agent.label || agent.id) + ' defaults: '
+                            + (state.model || 'CLI default model')
+                            + (agent.supports_effort ? ', ' + (state.effort || 'CLI default effort') : ''),
+                        'success'
+                    );
+                } catch (e) {
+                    (window.showToast || alert)('Error: ' + (e.message || e), 'error');
+                }
+                if (modelSel) modelSel.value = state.model;
+                renderEffort();
+            };
+
+            if (canModel) {
+                modelSel = document.createElement('select');
+                modelSel.className = 'setting-input';
+                fillAgentSelect(modelSel, agent.models || [], state.model, 'CLI default');
+                modelSel.addEventListener('change', () => {
+                    const model = modelSel.value;
+                    // An effort the new model cannot run would be rejected; drop it.
+                    const levels = agentEffortChoices(agent, model);
+                    const effort = levels.includes(state.effort) ? state.effort : '';
+                    save({ model, effort });
+                });
+                wrap.appendChild(agentConfigRow(
+                    'Default model', modelSel,
+                    'Used by new turns unless a chat pins its own model (/' + agent.id + ' model …)'
+                ));
+            }
+
+            if (agent.supports_effort) {
+                effortSel = document.createElement('select');
+                effortSel.className = 'setting-input';
+                effortSel.addEventListener('change', () => save({ model: state.model, effort: effortSel.value }));
+                effortRow = agentConfigRow(
+                    'Default effort', effortSel,
+                    'Reasoning effort unless a chat pins its own (/' + agent.id + ' effort …)'
+                );
+                wrap.appendChild(effortRow);
+                renderEffort();
+            }
+
+            if (steerable) {
+                const envOff = !!cfg.steer_env_disabled;
+                const toggle = document.createElement('label');
+                toggle.className = 'toggle-switch' + (cfg.steer[agent.id] && !envOff ? ' active' : '');
+                toggle.appendChild(document.createElement('span')).className = 'slider';
+                if (envOff) toggle.classList.add('is-disabled');
+                toggle.addEventListener('click', async (event) => {
+                    event.preventDefault();
+                    if (envOff) return;
+                    const next = !cfg.steer[agent.id];
+                    toggle.classList.toggle('active', next);
+                    try {
+                        const r = await fetch('/api/settings/agent-adapters', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ steer: { [agent.id]: next } }),
+                        });
+                        const d = await r.json();
+                        if (!r.ok || !d.success) throw new Error(d.error || 'Save failed');
+                        cfg.steer = d.steer;
+                        (window.showToast || alert)(
+                            (agent.label || agent.id) + (next
+                                ? ': follow-ups go into the running turn'
+                                : ': follow-ups wait for the turn to finish'),
+                            'info'
+                        );
+                    } catch (e) {
+                        toggle.classList.toggle('active', !next);
+                        (window.showToast || alert)('Error: ' + (e.message || e), 'error');
+                    }
+                });
+                wrap.appendChild(agentConfigRow(
+                    'Mid-turn steering', toggle,
+                    envOff
+                        ? 'Turned off for every agent by CUTTLE_AGENT_STEER=0 in the server environment'
+                        : 'A message sent while this agent works joins the live turn instead of queuing'
+                ));
+            }
+            // Hermes-style rows: effort supported but no levels and no models to pick.
+            return Array.from(wrap.children).some(row => !row.hidden) ? wrap : null;
+        }
+
+        let adapterConfig = null;
+
+        function renderProjectAdaptersToggle(cfg) {
+            const checkbox = document.getElementById('projectAdaptersEnabled');
+            const toggle = document.getElementById('projectAdaptersToggle');
+            const note = document.getElementById('projectAdaptersNote');
+            if (!checkbox || !toggle || !cfg) return;
+            const forced = !!cfg.allow_project_adapters_env;
+            const on = forced || !!cfg.allow_project_adapters;
+            checkbox.checked = on;
+            toggle.classList.toggle('active', on);
+            toggle.classList.toggle('is-disabled', forced);
+            toggle.title = forced ? 'Forced on by CUTTLE_ALLOW_PROJECT_ADAPTERS in the server environment' : '';
+            if (note) note.classList.toggle('is-forced', forced);
+        }
+
+        async function toggleProjectAdapters(event) {
+            // Label + nested checkbox would otherwise fire this twice per click.
+            if (event) event.preventDefault();
+            if (!adapterConfig || adapterConfig.allow_project_adapters_env) return;
+            const next = !adapterConfig.allow_project_adapters;
+            renderProjectAdaptersToggle({ ...adapterConfig, allow_project_adapters: next });
+            try {
+                const r = await fetch('/api/settings/agent-adapters', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ allow_project_adapters: next }),
+                });
+                const d = await r.json();
+                if (!r.ok || !d.success) throw new Error(d.error || 'Save failed');
+                (window.showToast || alert)(
+                    next ? 'Project adapters will load from .cuttle/agents/' : 'Project adapters off',
+                    'info'
+                );
+                loadAgentCatalog();
+            } catch (e) {
+                renderProjectAdaptersToggle(adapterConfig);
+                (window.showToast || alert)('Error: ' + (e.message || e), 'error');
+            }
         }
 
         function renderAgentDropInRoots(payload) {
@@ -989,14 +1202,15 @@
         }
 
         function loadAgentCatalog() {
-            return fetch('/api/agents')
-                .then(r => (r.ok ? r.json() : null))
-                .then(data => {
+            const getJson = url => fetch(url).then(r => (r.ok ? r.json() : null)).catch(() => null);
+            return Promise.all([getJson('/api/agents'), getJson('/api/settings/agent-adapters')])
+                .then(([data, cfg]) => {
+                    adapterConfig = cfg && cfg.success ? cfg : null;
+                    renderProjectAdaptersToggle(adapterConfig);
                     if (!data || !data.success) return;
                     renderAgentCliList(data);
                     renderAgentDropInRoots(data);
-                })
-                .catch(() => {});
+                });
         }
 
         function getVideoBackgroundListFromUI() {

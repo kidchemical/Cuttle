@@ -302,6 +302,40 @@
     opacity: 0.75;
 }
 
+.agent-config {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    margin-top: 3px;
+    padding-top: 7px;
+    border-top: 1px solid var(--border-color);
+}
+
+.agent-config-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 0.74rem;
+    color: var(--text-secondary);
+}
+
+.agent-config-row[hidden] {
+    display: none;
+}
+
+.agent-config-row select.setting-input {
+    flex: 0 1 60%;
+    min-width: 0;
+    padding: 3px 6px;
+    font-size: 0.74rem;
+}
+
+.toggle-switch.is-disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
 .provider-status {
     display: flex;
     flex-wrap: wrap;

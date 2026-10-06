@@ -358,19 +358,36 @@ def _load_external_entry(
         return entry
 
 
-def _project_adapters_allowed() -> bool:
+def project_adapters_env_allowed() -> bool:
+    """``CUTTLE_ALLOW_PROJECT_ADAPTERS=1`` opts in regardless of settings."""
     env = (os.environ.get("CUTTLE_ALLOW_PROJECT_ADAPTERS") or "").strip().lower()
-    if env in ("1", "true", "yes", "on"):
-        return True
+    return env in ("1", "true", "yes", "on")
+
+
+def project_adapters_setting() -> bool:
+    """The saved ``agent_harness.allow_project_adapters`` opt-in (env ignored)."""
     try:
         from managers.settings_manager import get_settings_manager
 
         cfg = get_settings_manager().get_setting("agent_harness") or {}
-        if isinstance(cfg, dict) and cfg.get("allow_project_adapters"):
-            return True
+        return bool(isinstance(cfg, dict) and cfg.get("allow_project_adapters"))
     except Exception:
-        pass
-    return False
+        return False
+
+
+def set_project_adapters_allowed(allowed: bool) -> bool:
+    from managers.settings_manager import get_settings_manager
+
+    def _apply(current: Any) -> Dict[str, Any]:
+        out = dict(current) if isinstance(current, dict) else {}
+        out["allow_project_adapters"] = bool(allowed)
+        return out
+
+    return get_settings_manager().update_setting("agent_harness", _apply)
+
+
+def _project_adapters_allowed() -> bool:
+    return project_adapters_env_allowed() or project_adapters_setting()
 
 
 def _load_agent_dir(

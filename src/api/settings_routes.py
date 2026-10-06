@@ -81,6 +81,10 @@ SETTING_FAMILIES = (
     {"name": "releases", "routes": ["GET /settings/releases"],
      "backend": "api.releases (read-only, process cache)",
      "validator": "normalize_release", "read": "authenticated", "write": "n/a"},
+    {"name": "agent-adapters", "routes": ["GET/POST /settings/agent-adapters"],
+     "backend": "api.agent_harness.steer (key 'agent_steer') + catalog (key 'agent_harness'); "
+                "model/effort defaults read here, written via POST /agent-defaults/<id>",
+     "validator": "validate_agent_adapters_update", "read": "authenticated", "write": "owner"},
     {"name": "app-settings", "routes": ["GET /app-settings"],
      "backend": "settings_manager.get_all_settings() (read-only aggregate)",
      "validator": "none (read-only)", "read": "open", "write": "n/a"},
@@ -152,6 +156,32 @@ def validate_completion_providers_update(data: dict) -> tuple[bool, str, dict]:
 
 
 # --- bot/model settings (backend: core.config) ----------------------------
+
+def validate_agent_adapters_update(data: dict) -> tuple[bool, str, dict]:
+    """Body: ``{steer?: {agent: bool}, allow_project_adapters?: bool}``."""
+    from api.agent_harness.steer import STEERABLE_AGENTS
+
+    if not isinstance(data, dict):
+        return False, 'Body must be a JSON object', {}
+    clean: dict = {}
+    steer = data.get('steer')
+    if steer is not None:
+        if not isinstance(steer, dict) or not steer:
+            return False, 'steer must be an object of agent: true/false', {}
+        for agent, value in steer.items():
+            if agent not in STEERABLE_AGENTS:
+                return False, f'{agent} does not support mid-turn steering', {}
+            if not isinstance(value, bool):
+                return False, f'steer.{agent} must be true or false', {}
+        clean['steer'] = dict(steer)
+    if 'allow_project_adapters' in data:
+        if not isinstance(data['allow_project_adapters'], bool):
+            return False, 'allow_project_adapters must be true or false', {}
+        clean['allow_project_adapters'] = data['allow_project_adapters']
+    if not clean:
+        return False, 'Nothing to update', {}
+    return True, '', clean
+
 
 @settings_bp.route('/settings', methods=['GET'])
 @owner_required
@@ -567,6 +597,62 @@ def update_git_auto_commit_setting():
         if not set_enabled(value):
             return jsonify({'success': False, 'error': 'Failed to save settings'}), 500
         return jsonify({'success': True, 'git_auto_commit': is_enabled()})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# --- agent adapters (backends: agent_harness.steer / catalog / agent_defaults)
+
+def _agent_adapters_payload() -> dict:
+    from api.agent_harness.agent_defaults import get_starred_effort, get_starred_model
+    from api.agent_harness.catalog import (
+        list_agents,
+        project_adapters_env_allowed,
+        project_adapters_setting,
+    )
+    from api.agent_harness.steer import steer_env_disabled, steer_settings
+
+    return {
+        'success': True,
+        'defaults': {
+            aid: {'model': get_starred_model(aid) or '', 'effort': get_starred_effort(aid) or ''}
+            for aid in list_agents()
+        },
+        'steer': steer_settings(),
+        'steer_env_disabled': steer_env_disabled(),
+        'allow_project_adapters': project_adapters_setting(),
+        'allow_project_adapters_env': project_adapters_env_allowed(),
+    }
+
+
+@settings_bp.route('/settings/agent-adapters', methods=['GET'])
+@authenticated_required
+def get_agent_adapters_setting():
+    """Per-agent adapter config: starred model/effort, steering, drop-in opt-in."""
+    try:
+        return jsonify(_agent_adapters_payload())
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@settings_bp.route('/settings/agent-adapters', methods=['POST'])
+@owner_required
+def update_agent_adapters_setting():
+    """Body: ``{steer?: {agent: bool}, allow_project_adapters?: bool}``."""
+    try:
+        ok, message, clean = validate_agent_adapters_update(request.get_json(silent=True))
+        if not ok:
+            return jsonify({'success': False, 'error': message}), 400
+        from api.agent_harness.catalog import set_project_adapters_allowed
+        from api.agent_harness.steer import set_steer_enabled
+
+        for agent, value in (clean.get('steer') or {}).items():
+            if not set_steer_enabled(agent, value):
+                return jsonify({'success': False, 'error': 'Failed to save settings'}), 500
+        if 'allow_project_adapters' in clean:
+            if not set_project_adapters_allowed(clean['allow_project_adapters']):
+                return jsonify({'success': False, 'error': 'Failed to save settings'}), 500
+        return jsonify(_agent_adapters_payload())
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 

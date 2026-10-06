@@ -56,9 +56,22 @@ def test_settings_page_hardcodes_no_completion_provider_id():
 
 def test_agent_list_is_rendered_from_the_catalog_endpoint():
     html = _page()
-    assert "fetch('/api/agents')" in html
+    assert "getJson('/api/agents')" in html
     assert "function renderAgentCliList" in html
     assert "function renderAgentDropInRoots" in html
+
+
+def test_agent_config_writes_through_owned_routes_without_agent_ids():
+    """Model/effort stars reuse /api/agent-defaults; steer ids come from the server."""
+    html = _page()
+    assert "getJson('/api/settings/agent-adapters')" in html
+    block = re.search(r"function agentConfigSection\(agent, cfg\) \{.*?\n        \}\n", html, re.S)
+    assert block, "agentConfigSection not found"
+    body = block.group(0)
+    assert "'/api/agent-defaults/' + encodeURIComponent(agent.id)" in body
+    assert "hasOwnProperty.call(cfg.steer || {}, agent.id)" in body
+    for agent_id in ("'claude'", "'codex'", "'muse'", "'cursor'"):
+        assert agent_id not in body, agent_id
 
 
 def test_completion_providers_come_from_the_registry_endpoint():
