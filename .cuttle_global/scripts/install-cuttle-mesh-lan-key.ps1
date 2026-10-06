@@ -1,4 +1,4 @@
-# Cuttle mesh SSH pairing (Windows) — per-install identities, explicit authorization.
+﻿# Cuttle mesh SSH pairing (Windows) — per-install identities, explicit authorization.
 #
 # Cuttle never distributes a shared trusted key: every installation owns its
 # keypair (see -Generate) and a target machine authorizes exactly the peer

@@ -17,7 +17,8 @@ def validate_paths(paths):
         if not isinstance(path, str) or not path.strip() or len(path) > 4096 or '\x00' in path:
             raise ValueError('Each project path must be a nonempty string.')
         path = path.strip()
-        if not (path.startswith('~/') or Path(path).is_absolute() or re.match(r'^[A-Za-z]:[\\/]', path) or path.startswith('\\\\')):
+        # POSIX roots count on Windows too: one project lists each host's path.
+        if not (path.startswith(('~/', '/')) or Path(path).is_absolute() or re.match(r'^[A-Za-z]:[\\/]', path) or path.startswith('\\\\')):
             raise ValueError('Project paths must be absolute (a leading ~ is also supported).')
         if path in result:
             raise ValueError('Duplicate project paths are not allowed.')
@@ -33,6 +34,8 @@ def check_paths(paths):
         path = os.path.expanduser(raw)
         item = {'path': raw, 'status': 'missing', 'selected': False}
         if os.name != 'nt' and (re.match(r'^[A-Za-z]:', path) or path.startswith('\\\\')):
+            item['status'] = 'different_os'
+        elif os.name == 'nt' and path.startswith('/') and not path.startswith('//'):
             item['status'] = 'different_os'
         elif not Path(path).is_absolute():
             item['status'] = 'invalid'

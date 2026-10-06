@@ -1,4 +1,4 @@
-# Restart Cuttle daemon once (loads restart watcher + coordinated Flask restart).
+﻿# Restart Cuttle daemon once (loads restart watcher + coordinated Flask restart).
 # Run from a standalone terminal — NOT from a Cursor agent hosted by Cuttle chat.
 #
 # Canonical paths (verified against cuttle_daemon.py + launcher.py):

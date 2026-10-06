@@ -1,4 +1,4 @@
-# git.push action — same script as run_posix. Do not git push from the agent shell.
+﻿# git.push action — same script as run_posix. Do not git push from the agent shell.
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $py = Join-Path $repo '.venv\Scripts\python.exe'

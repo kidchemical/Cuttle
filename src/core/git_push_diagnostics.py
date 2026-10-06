@@ -109,7 +109,7 @@ def scan_gitleaks(binary, base, head):
             proc = subprocess.run([binary, 'detect', '--no-banner', '--redact', '--report-format', 'json', '--report-path', str(report), '--log-opts', f'{base}..{head}' if base else head], capture_output=True, text=True, timeout=300)
             if proc.returncode not in (0, 1):
                 return [], ['gitleaks could not complete; built-in checks still ran']
-            records = json.loads(report.read_text()) if report.exists() else []
+            records = json.loads(report.read_text(encoding="utf-8")) if report.exists() else []
             if proc.returncode == 1 and not records:
                 return [finding('gitleaks', 'Scanner reported findings without a detailed report')], []
             return [finding('gitleaks', r.get('RuleID', 'secret'), r.get('Commit', ''), r.get('File', ''), r.get('StartLine'), end_line=r.get('EndLine'), preview='[Secret redacted]') for r in records], []
@@ -125,7 +125,7 @@ def apply_scanner_exceptions(findings, policy_path):
     The committed source is verified rather than trusting scanner previews.
     """
     import hashlib
-    policy = json.loads(Path(policy_path).read_text())
+    policy = json.loads(Path(policy_path).read_text(encoding="utf-8"))
     if not isinstance(policy, dict) or policy.get('version') != 1 or not isinstance(policy.get('exceptions'), list):
         raise ValueError('Invalid scanner exception policy')
     exceptions = policy['exceptions']

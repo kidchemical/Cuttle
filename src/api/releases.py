@@ -67,7 +67,9 @@ def check_releases(*, force: bool = False) -> dict:
     with _lock:
         attempted = _cache.get('attempted_at', 0)
         ttl = RETRY_SECONDS if _cache.get('error') else CACHE_SECONDS
-        if (not _cache or (force and attempted < requested_at)
+        # <=: Windows time() can repeat within a clock tick; a forced check
+        # only coalesces into an attempt that began after it was requested.
+        if (not _cache or (force and attempted <= requested_at)
                 or requested_at - attempted >= ttl):
             try:
                 response = requests.get(

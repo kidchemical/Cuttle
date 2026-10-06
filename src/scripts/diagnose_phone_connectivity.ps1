@@ -1,4 +1,4 @@
-# Standalone listener — tests whether ANY phone traffic reaches this PC (not Cuttle).
+﻿# Standalone listener — tests whether ANY phone traffic reaches this PC (not Cuttle).
 # Run as Administrator. On phone open: http://PC_IP:9999/
 $port = 9999
 $ErrorActionPreference = 'Stop'
