@@ -13,10 +13,8 @@ python-dotenv>=1.0.0
 openai>=1.0.0
 anthropic>=0.68.0
 
-# Image processing and OCR (chat attachment pipeline via vision_prepass)
+# Image and PDF handling (chat attachment pipeline via vision_prepass)
 pillow>=10.0.0
-pytesseract>=0.3.10
-opencv-python>=4.8.0
 pypdfium2>=4.30.0
 
 # System monitoring and process management (daemon, process_kill_safety, workers)

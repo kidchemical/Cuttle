@@ -2,7 +2,7 @@
 Vision / document pre-pass for chat attachments.
 
 Runs before the agent (pipeline or CLI harness): describes images (Claude
-vision → OpenAI vision → OCR) and extracts PDF text (rasterize + vision when
+vision → OpenAI vision) and extracts PDF text (rasterize + vision when
 pages are image-heavy). Produces a plain-text digest the rest of the stack can
 use, since none of the CLI harnesses (Cursor, Codex, Muse, Hermes) accept image
 input.
@@ -14,7 +14,6 @@ import base64
 import io
 import mimetypes
 import os
-import tempfile
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
@@ -214,11 +213,11 @@ def _describe_image_via_providers(
     filename: str = "image",
 ) -> str:
     """
-    Try each vision provider, then OCR.
+    Try each vision provider in turn.
 
     A provider that is out of credit / missing a key must not degrade into a
-    silent "(no text found)" — the agent then confidently tells the user no
-    image arrived. Failures are reported inline instead.
+    silent empty result — the agent then confidently tells the user no image
+    arrived. Failures are reported inline instead.
     """
     errors: List[str] = []
     for label, fn in VISION_PROVIDERS:
@@ -231,35 +230,7 @@ def _describe_image_via_providers(
             errors.append(f"{label}: {_short_error(e)}")
 
     detail = "; ".join(errors) or "no vision provider configured"
-    if data is None:
-        return f"(image not analyzed — {detail})"
-
-    ocr = _ocr_image_fallback(data, filename)
-    if ocr.startswith("[OCR] ") and "(no text found)" not in ocr:
-        return f"[vision unavailable, OCR text only — {detail}]\n{ocr[len('[OCR] '):]}"
-    return f"(image not analyzed — {detail}; OCR found no text)"
-
-
-def _ocr_image_fallback(data: bytes, filename: str) -> str:
-    try:
-        from tools.ocr.ocr_manager import OCRManager
-
-        ocr = OCRManager()
-        with tempfile.NamedTemporaryFile(suffix=Path(filename).suffix or ".png", delete=False) as tmp:
-            tmp.write(data)
-            tmp_path = tmp.name
-        try:
-            result = ocr.extract_text_from_image(tmp_path)
-            text = (result or {}).get("text") if isinstance(result, dict) else str(result or "")
-            text = (text or "").strip()
-            return f"[OCR] {text}" if text else "[OCR] (no text found)"
-        finally:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-    except Exception as e:
-        return f"(vision/OCR unavailable: {e})"
+    return f"(image not analyzed — {detail})"
 
 
 def describe_image(att: Dict[str, Any]) -> str:

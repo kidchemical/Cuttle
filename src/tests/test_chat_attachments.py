@@ -10,7 +10,7 @@ Two defects, one root cause. The vision pre-pass used to run at the bottom of
    metadata, so the thumbnail vanished on refresh.
 
 Also covers the vision provider chain: a provider that is out of credit must
-report that, not degrade into a silent empty-OCR result.
+report that, not degrade into a silent empty result.
 """
 
 from __future__ import annotations
@@ -90,21 +90,9 @@ def test_every_provider_down_reports_why(monkeypatch):
         raise RuntimeError("credit balance is too low")
 
     monkeypatch.setattr(vp, "VISION_PROVIDERS", (("Claude", broke), ("OpenAI", broke)))
-    monkeypatch.setattr(vp, "_ocr_image_fallback", lambda *_a: "[OCR] (no text found)")
     out = vp._describe_image_via_providers(data=PNG_1PX, mime="image/png", filename="x.png")
     assert "credit balance is too low" in out
     assert "not analyzed" in out
-
-
-def test_ocr_text_is_kept_but_labelled_as_a_fallback(monkeypatch):
-    def broke(**_kw):
-        raise RuntimeError("no key")
-
-    monkeypatch.setattr(vp, "VISION_PROVIDERS", (("Claude", broke),))
-    monkeypatch.setattr(vp, "_ocr_image_fallback", lambda *_a: "[OCR] Build failed")
-    out = vp._describe_image_via_providers(data=PNG_1PX, mime="image/png", filename="x.png")
-    assert "Build failed" in out
-    assert "vision unavailable" in out
 
 
 # --------------------------------------------------------------------------
