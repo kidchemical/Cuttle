@@ -138,7 +138,6 @@ def parent(tmp_path: Path):
             "CODEX_API_KEY",
             "OPENROUTER_API_KEY",
             "DISCORD_TOKEN",
-            "GITEA_TOKEN",
         ):
             env.pop(name, None)
         env["PYTHONPATH"] = os.pathsep.join([str(site), str(SRC)])

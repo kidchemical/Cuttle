@@ -185,7 +185,7 @@ Scheduled `Self_Improvement.json` was removed with the graphs. Process backlog l
 
 ### Chat attachments (images / PDFs)
 
-- No CLI harness (Cursor, Codex, Muse, Hermes) accepts image input. `src/api/vision_prepass.py` turns uploads into a text digest: **Claude vision → OpenAI vision → OCR**, and reports the provider error inline rather than degrading into a silent "(no text found)" — otherwise the agent confidently says no image arrived.
+- No CLI harness (Cursor, Codex, Muse, Hermes) accepts image input. `src/api/vision_prepass.py` turns uploads into a text digest: **Claude vision → OpenAI vision**, and reports the provider error inline rather than degrading into a silent "(no text found)" — otherwise the agent confidently says no image arrived.
 - The pre-pass runs in `/api/chat` **above every slash-agent handler** (`_run_attachment_prepass`, just after the starred sticky prefix). It used to run at the bottom, so `/cursor`-badged turns reached the CLI with no description and persisted no attachment metadata.
 - The digest is **appended**, never prefixed — each handler matches `^/cursor`/`^/muse`/… against `message_content` and slices the prompt off the front.
 - History stores the short `[Attached: …]` note plus `metadata.attachments` (`filename`/`mime`/`url`), not the digest (`_attachment_history_text`). That metadata is what re-renders thumbnails after a refresh; without it the image disappears.

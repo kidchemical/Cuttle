@@ -1709,13 +1709,13 @@ window.addEventListener('message', function(e) {
             if (colIdx === 0) syncShellChatUrl(e.data.chatId || null);
         }
     } else if (e.data.type === 'cuttle-jobs-tab') {
-        // Per-pane Jobs tab (Active / History / Devices / Pipelines) — must not
+        // Per-pane Jobs tab (Devices) — must not
         // share one localStorage key across split viewports or refresh collapses them.
         const colIdx = findColumnIndexForSource(e.source);
         const live = getLiveFrame(colIdx);
         if (!live || live.contentWindow !== e.source) return;
         const tab = String(e.data.tab || '').trim().toLowerCase();
-        const valid = { active: 1, history: 1, devices: 1, pipelines: 1 };
+        const valid = { devices: 1 };
         if (!valid[tab]) return;
         try {
             const state = getState(colIdx);
@@ -7293,7 +7293,7 @@ async function pollJobsBadge() {
     clearTimeout(timeout);
 }
 
-/** Drain Gitea-job / system toasts into Electron toast + chirp. */
+/** Drain system toasts into Electron toast + chirp. */
 async function pollUiToasts() {
     try {
         const r = await fetch('/api/ui-toasts', { cache: 'no-store' });

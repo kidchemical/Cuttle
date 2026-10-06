@@ -79,7 +79,7 @@ Cuttle Core stays **transport-agnostic**. New surfaces submit through the shared
 
 ## C. Agent operations / service integrations
 
-Capabilities **agents** invoke through existing CLI and action mechanisms: Discord read/post, Git/Gitea, workers, Flask restart, other APIs.
+Capabilities **agents** invoke through existing CLI and action mechanisms: Discord read/post, Git, workers, Flask restart, other APIs.
 
 These are **not** user-interface surfaces. An agent reading a Discord channel is different from a user messaging Cuttle through Discord.
 

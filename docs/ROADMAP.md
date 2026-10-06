@@ -12,7 +12,7 @@ Day-to-day backlog: [`.cuttle/learnings/FEATURE_REQUESTS.md`](../.cuttle/learnin
 - **Agent catalog** — `/cursor`, `/codex`, `/claude`, `/muse`, `/hermes`, `/deepseek`, `/opencode`, …
 - **Router** — picks a tentacle on clean sessions; starred/sticky agents bypass it
 - **Workers** — LAN mesh (file copy, shell recipes, Blender shards, self-update). Intent scheduling (`workers.plan`) is partial
-- **Jobs** — mesh/worker cockpit (Gitea `@cuttle` jobs, devices). Chat is slash agents + router
+- **Jobs** — mesh/worker cockpit (devices and mesh jobs). Chat is slash agents + router
 - **Auth** — bcrypt passwords, CORS origin allowlist, Flask-Limiter on login/register/pairing/OAuth, `Secure` cookies on HTTPS
 - **Owner** — `/api/chat` uses `OWNER_USER_EMAIL` (or any local account if unset). Remaining `is_owner: True` values are daemon/operator internals (sessions-send), not anonymous guests
 

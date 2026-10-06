@@ -229,7 +229,7 @@ def test_process_stale_and_refresh_boot(monkeypatch):
 
 
 def test_list_workers_marks_git_mismatch_without_version_bump(worker_db, monkeypatch):
-    """Gitea push without bumping electron/package.json still flags Clients."""
+    """Git push without bumping electron/package.json still flags Clients."""
     from api.device_workers import platform as plat
     from api.device_workers import capabilities as caps
 

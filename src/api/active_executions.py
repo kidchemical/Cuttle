@@ -84,24 +84,4 @@ def get_executing_jobs() -> List[dict]:
             }
             for qid, info in _active.items()
         ]
-    # Remote Gitea @cuttle jobs run in the daemon process — merge file registry.
-    try:
-        from api.cuttle_jobs.status_store import list_running
-
-        for j in list_running():
-            out.append({
-                'pipeline_name': j.get('pipeline_name') or f"Gitea job {j.get('job_id')}",
-                'query_id': j.get('query_id') or '',
-                'start_time': j.get('start_time'),
-                'source': 'cuttle_jobs',
-                'command': j.get('command'),
-                'repository': j.get('repository'),
-                'issue_number': j.get('issue_number'),
-                'issue_title': j.get('issue_title') or '',
-                'gitea_url': j.get('gitea_url') or '',
-                'job_id': j.get('job_id'),
-                'triggering_user': j.get('triggering_user') or '',
-            })
-    except Exception:
-        pass
     return out

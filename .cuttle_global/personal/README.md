@@ -30,8 +30,8 @@ Guest projects have their own twin at `{project}/.cuttle/personal/`.
 }
 ```
 
-  The public rewriter already maps any path **segment** named like this repo (`Cuttle`) onto the checkout. Prefixes are only needed when the Windows path does *not* contain that folder name. `sibling_project_paths` is the install-local list used when looking up Discord/Gitea project actions outside the registered project list. `action_prefer_substrings_no_channel` / `action_skip_substrings_unmatched_channel` are optional path-substring hints for the same lookup; omit them on a fresh clone.
-- Your Discord guild / Gitea workspace examples
+  The public rewriter already maps any path **segment** named like this repo (`Cuttle`) onto the checkout. Prefixes are only needed when the Windows path does *not* contain that folder name. `sibling_project_paths` is the install-local list used when looking up Discord project actions outside the registered project list. `action_prefer_substrings_no_channel` / `action_skip_substrings_unmatched_channel` are optional path-substring hints for the same lookup; omit them on a fresh clone.
+- Your Discord guild / workspace examples
 - Mesh SSH / worker host notes for *this* LAN
 - Dated strategy dumps (`docs/roadmap-2026.md`) that must not ship on GitHub
 - Anything that would break a fresh clone for someone else

@@ -298,7 +298,7 @@ def sanitize_git_output(text: str) -> str:
     """Strip credentials from git stderr/stdout before it hits logs or toasts."""
     raw = text or ""
     raw = re.sub(r"(://)([^/@\s]+@)", r"\1", raw)
-    for key in ("GIT_ASKPASS_PASSWORD", "GITEA_TOKEN", "GITEA_PASSWORD"):
+    for key in ("GIT_ASKPASS_PASSWORD",):
         secret = (os.environ.get(key) or "").strip()
         if secret:
             raw = raw.replace(secret, "***")
@@ -306,24 +306,14 @@ def sanitize_git_output(text: str) -> str:
 
 
 def git_auth_env() -> Dict[str, str]:
-    """Env for non-interactive ``git push`` using Gitea token from ``src/.env``."""
+    """Env for non-interactive ``git push``.
+
+    Credentials come from the user's own git setup (credential manager, ``gh``,
+    SSH agent). ``GIT_ASKPASS_USER`` / ``GIT_ASKPASS_PASSWORD`` in the environment
+    still feed the bundled credential helper when set explicitly.
+    """
     env = os.environ.copy()
     env["GIT_TERMINAL_PROMPT"] = "0"
-    cfg: Dict[str, str] = {}
-    try:
-        from api.gitea_client import load_gitea_config
-
-        cfg = load_gitea_config() or {}
-    except Exception:
-        pass
-    token = (cfg.get("token") or env.get("GITEA_TOKEN") or "").strip()
-    user = (cfg.get("username") or "").strip() or "git"
-    password = token or (cfg.get("password") or env.get("GITEA_PASSWORD") or "").strip()
-    if password:
-        env["GIT_ASKPASS_USER"] = user
-        env["GIT_ASKPASS_PASSWORD"] = password
-        if token:
-            env["GITEA_TOKEN"] = token
     return env
 
 
@@ -385,7 +375,7 @@ def git_push_target(root: str) -> Dict[str, Any]:
 
 
 def git_push_command(remote: str = "", branch: str = "") -> Tuple[List[str], Dict[str, str]]:
-    """``git push`` argv + env (Gitea token via credential helper when set)."""
+    """``git push`` argv + env (askpass credential helper when GIT_ASKPASS_PASSWORD is set)."""
     env = git_auth_env()
     helper = git_credential_helper_arg(env)
     prefix: List[str] = ["git"]
@@ -1451,8 +1441,8 @@ def _git_commit_env(cwd: str) -> Dict[str, str]:
     """Identity for ``git commit`` without writing user.name to gitconfig.
 
     Linux clones often have no local/global git identity; Windows setups
-    usually already have one. Env vars from ``src/.env`` (GITEA_COMMIT_AUTHOR_*)
-    fill the gap.
+    usually already have one. ``GIT_AUTHOR_NAME`` / ``GIT_AUTHOR_EMAIL`` from
+    ``src/.env`` fill the gap.
     """
     env = os.environ.copy()
     from api.github_app import commit_env
@@ -1463,24 +1453,8 @@ def _git_commit_env(cwd: str) -> Dict[str, str]:
     ident = git_run(["var", "GIT_AUTHOR_IDENT"], cwd, timeout=5.0)
     if ident.returncode == 0 and "@" in (ident.stdout or ""):
         return env
-    try:
-        from api.cuttle_jobs.workspace import cuttle_commit_env
-
-        env.update(cuttle_commit_env())
-        return env
-    except Exception:
-        pass
-    name = (
-        env.get("GITEA_COMMIT_AUTHOR_NAME")
-        or env.get("GITEA_AGENT_USERNAME")
-        or env.get("GIT_AUTHOR_NAME")
-        or "Cuttle"
-    )
-    email = (
-        env.get("GITEA_COMMIT_AUTHOR_EMAIL")
-        or env.get("GIT_AUTHOR_EMAIL")
-        or "cuttle@localhost"
-    )
+    name = env.get("GIT_AUTHOR_NAME") or "Cuttle"
+    email = env.get("GIT_AUTHOR_EMAIL") or "cuttle@localhost"
     env["GIT_AUTHOR_NAME"] = name
     env["GIT_AUTHOR_EMAIL"] = email
     env["GIT_COMMITTER_NAME"] = name

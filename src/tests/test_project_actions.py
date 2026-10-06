@@ -330,47 +330,6 @@ def test_action_form_click_passes_mode_to_shell(tmp_path: Path):
     assert env["CUTTLE_SESSION_ID"] == "sess"
 
 
-def test_gitea_issue_comment_mock(tmp_path: Path):
-    clear_pending_for_tests()
-    _write_action(
-        tmp_path,
-        "gitea-issue",
-        (
-            "name: gitea.issue\n"
-            "type: gitea.issue\n"
-            "repos:\n"
-            "  ep: acme/demo-game\n"
-        ),
-    )
-    text = (
-        '<cuttle_confirm action="gitea.issue" repo="ep" issue="12" labels_add="in-progress">'
-        "Starting work on spawn loop."
-        "</cuttle_confirm>"
-    )
-    out, _ = rewrite_cuttle_confirms(
-        text, session_id="sess", project_path=str(tmp_path)
-    )
-    import re
-
-    action_id = re.search(r'id="([a-f0-9]+)"', out).group(1)
-
-    with patch("api.gitea_client.add_issue_comment") as comment:
-        with patch("api.gitea_client.add_issue_labels") as labels:
-            with patch(
-                "api.gitea_client.issue_web_url",
-                return_value="http://gitea/acme/demo-game/issues/12",
-            ):
-                result = execute_pending_action(action_id, session_id="sess")
-    assert result["success"] is True
-    assert "Gitea issue updated" in result["response"]
-    comment.assert_called_once_with(
-        "acme", "demo-game", 12, "Starting work on spawn loop."
-    )
-    labels.assert_called_once_with(
-        "acme", "demo-game", 12, ["in-progress"]
-    )
-
-
 def test_rewrite_includes_signed_inline_fallback(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("CUTTLE_ACTION_HMAC_SECRET", "confirm-hmac-test")
     import api.project_actions as pa

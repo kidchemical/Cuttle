@@ -114,7 +114,7 @@ skills = on
 commands = on
 # Optional integration guidance (default off; no service startup):
 # [integrations]
-# gitea = on
+# <integration-id> = on
 """
 
 

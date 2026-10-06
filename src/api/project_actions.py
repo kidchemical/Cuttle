@@ -246,8 +246,8 @@ def find_project_action_resolved(
     posting to one project's ``general`` does not hit another project's
     ``feature-updates`` allowlist.
 
-    When ``repo`` is set (Gitea alias), prefer the project whose ``gitea.issue``
-    allowlist contains that alias.
+    When ``repo`` is set, prefer the project whose action lists that alias
+    under ``repos``.
     """
     want = str(name or "").strip()
     if not want:
@@ -854,8 +854,6 @@ def execute_inline_action(
     action_type = str(action.get("type") or "").strip().lower()
     if action_type in ("discord.post", "discord_post", "discord"):
         result = _execute_discord_post(action, params)
-    elif action_type in ("gitea.issue", "gitea_issue", "gitea"):
-        result = _execute_gitea_issue(action, params)
     elif action_type in ("shell", "run", "script") or action.get("run") or action.get("run_posix"):
         result = _execute_shell(action, params, session_id=session_id)
     else:
@@ -884,132 +882,6 @@ def _execute_discord_post(action: Dict[str, Any], params: Dict[str, Any]) -> Dic
     from api.discord_ops.post import execute_discord_post
 
     return execute_discord_post(action, params)
-
-
-def _parse_label_list(value: Any) -> List[str]:
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return [str(x).strip() for x in value if str(x).strip()]
-    text = str(value).strip()
-    if not text:
-        return []
-    if text.startswith("[") and text.endswith("]"):
-        try:
-            loaded = json.loads(text)
-            if isinstance(loaded, list):
-                return [str(x).strip() for x in loaded if str(x).strip()]
-        except Exception:
-            pass
-    return [p.strip() for p in text.split(",") if p.strip()]
-
-
-def _resolve_gitea_owner_repo(action: Dict[str, Any], params: Dict[str, Any]) -> Tuple[str, str]:
-    from api.gitea_client import parse_owner_repo
-
-    repo_key = str(params.get("repo") or params.get("repository") or "").strip()
-    repos = action.get("repos") or {}
-    spec = repos.get(repo_key) or repo_key
-    if not spec:
-        allowed = ", ".join(sorted(repos.keys())) or "(none configured)"
-        raise ValueError(
-            f"Unknown Gitea repo `{repo_key or '(missing)'}`. "
-            f"Allowlisted aliases: {allowed} — or pass owner/repo."
-        )
-    return parse_owner_repo(spec)
-
-
-def _execute_gitea_issue(action: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
-    from api.gitea_client import (
-        add_issue_comment,
-        add_issue_labels,
-        get_issue,
-        issue_web_url,
-        replace_issue_labels,
-    )
-
-    try:
-        owner, repo = _resolve_gitea_owner_repo(action, params)
-    except ValueError as e:
-        return {"success": False, "error": str(e)}
-
-    issue_raw = params.get("issue") or params.get("number") or params.get("index")
-    try:
-        issue_index = int(issue_raw)
-    except (TypeError, ValueError):
-        return {
-            "success": False,
-            "error": f"Invalid issue number `{issue_raw or '(missing)'}`.",
-        }
-    if issue_index <= 0:
-        return {"success": False, "error": "Issue number must be positive."}
-
-    comment = str(params.get("content") or params.get("comment") or params.get("body") or "").strip()
-    labels_replace = _parse_label_list(params.get("labels"))
-    labels_add = _parse_label_list(params.get("labels_add") or params.get("add_labels"))
-    labels_remove = _parse_label_list(params.get("labels_remove") or params.get("remove_labels"))
-    assign_self = str(params.get("assign_self") or params.get("assign-self") or "").lower() in (
-        "1",
-        "true",
-        "yes",
-    )
-    assign_to = str(params.get("assign") or params.get("assignee") or "").strip()
-    if assign_self and not assign_to:
-        from api.gitea_client import default_agent_username
-
-        assign_to = default_agent_username()
-
-    if not comment and not labels_replace and not labels_add and not labels_remove and not assign_to:
-        return {
-            "success": False,
-            "error": "Nothing to do — provide a comment body, assignee, and/or label params.",
-        }
-
-    steps: List[str] = []
-    try:
-        if comment:
-            add_issue_comment(owner, repo, issue_index, comment)
-            steps.append("comment posted")
-
-        if labels_replace:
-            replace_issue_labels(owner, repo, issue_index, labels_replace)
-            steps.append(f"labels set to {', '.join(labels_replace)}")
-
-        if labels_add:
-            add_issue_labels(owner, repo, issue_index, labels_add)
-            steps.append(f"labels added: {', '.join(labels_add)}")
-
-        if labels_remove:
-            issue = get_issue(owner, repo, issue_index)
-            name_to_id = {
-                str(lb.get("name") or ""): int(lb.get("id") or 0)
-                for lb in (issue.get("labels") or [])
-            }
-            from api.gitea_client import delete_issue_label
-
-            for name in labels_remove:
-                lid = name_to_id.get(name)
-                if lid:
-                    delete_issue_label(owner, repo, issue_index, lid)
-            steps.append(f"labels removed: {', '.join(labels_remove)}")
-
-        if assign_to:
-            from api.gitea_client import patch_issue
-
-            patch_issue(owner, repo, issue_index, assignees=[assign_to])
-            steps.append(f"assigned to {assign_to}")
-
-        url = issue_web_url(owner, repo, issue_index)
-        return {
-            "success": True,
-            "response": (
-                f"**Gitea issue updated** (`{owner}/{repo}#{issue_index}`)\n\n"
-                f"{', '.join(steps)}\n\n{url}"
-            ),
-            "url": url,
-        }
-    except Exception as e:
-        return {"success": False, "error": str(e)}
 
 
 _ENV_KEY_RE = re.compile(r"[^A-Z0-9_]")
@@ -1244,8 +1116,6 @@ def execute_pending_action(
     action_type = str(action.get("type") or "").strip().lower()
     if action_type in ("discord.post", "discord_post", "discord"):
         result = _execute_discord_post(action, params)
-    elif action_type in ("gitea.issue", "gitea_issue", "gitea"):
-        result = _execute_gitea_issue(action, params)
     elif action_type in ("shell", "run", "script"):
         result = _execute_shell(action, params, session_id=effective_session)
     else:

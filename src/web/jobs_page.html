@@ -53,7 +53,6 @@
             background: var(--section-bg); border: 1px solid var(--border-color);
             display: flex; flex-direction: column; gap: 8px; min-height: 110px;
         }
-        .active-card.gitea { border-left: 3px solid #38bdf8; }
         .active-card-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
         .active-title { font-weight: 600; font-size: 13px; line-height: 1.3; word-break: break-word; }
         .active-meta { font-size: 11px; color: var(--text-secondary); line-height: 1.4; }
@@ -179,11 +178,6 @@
         }
         #devicesList,
         #meshJobsList,
-        #historyList {
-            min-width: 0;
-            max-width: 100%;
-            overflow: hidden;
-        }
         .jobs-panel {
             min-width: 0;
             max-width: 100%;
@@ -414,51 +408,10 @@
     <div class="jobs-page">
         <div class="compact-page-title jobs-header">
             <h1>Jobs</h1>
-            <p>Cockpit for Gitea <strong>@cuttle</strong> worker jobs — active runs, history, and mesh workers.</p>
+            <p>Cuttle Workers on your network and the mesh jobs they run.</p>
         </div>
 
-        <div class="job-stats">
-            <div class="job-stat-card">
-                <div class="job-stat-value" id="statRunning">0</div>
-                <div class="job-stat-label">Running</div>
-            </div>
-            <div class="job-stat-card">
-                <div class="job-stat-value" id="statPending">0</div>
-                <div class="job-stat-label">Pending</div>
-            </div>
-            <div class="job-stat-card">
-                <div class="job-stat-value" id="statCompleted">0</div>
-                <div class="job-stat-label">Done today</div>
-            </div>
-            <div class="job-stat-card">
-                <div class="job-stat-value" id="statFailed">0</div>
-                <div class="job-stat-label">Failed</div>
-            </div>
-        </div>
-
-        <div class="jobs-tabs" role="tablist">
-            <button type="button" class="jobs-tab active" data-tab="active" role="tab">Active</button>
-            <button type="button" class="jobs-tab" data-tab="history" role="tab">History</button>
-            <button type="button" class="jobs-tab" data-tab="devices" role="tab">Devices</button>
-        </div>
-
-        <section class="jobs-panel active" id="panel-active" aria-label="Active jobs">
-            <h2 class="jobs-section-title">In flight</h2>
-            <div id="activeList" class="active-grid"></div>
-        </section>
-
-        <section class="jobs-panel" id="panel-history" aria-label="Job history">
-            <div class="jobs-filter hist-filter">
-                <button type="button" class="hist-btn active" data-hist="all">All</button>
-                <button type="button" class="hist-btn" data-hist="completed">Completed</button>
-                <button type="button" class="hist-btn" data-hist="failed">Failed</button>
-                <button type="button" class="hist-btn" data-hist="pending">Pending</button>
-                <span class="hist-source" id="histSource"></span>
-            </div>
-            <div id="historyList"></div>
-        </section>
-
-        <section class="jobs-panel" id="panel-devices" aria-label="Device workers">
+        <section class="jobs-panel active" id="panel-devices" aria-label="Device workers">
             <div class="jobs-filter hist-filter" style="margin-bottom:12px;">
                 <button type="button" class="hist-btn" id="btnPingWorker">Ping local worker</button>
                 <span class="hist-source" id="devicesStatus"></span>
@@ -476,8 +429,6 @@
     <script src="/js/toast.js"></script>
     <script src="/js/cron_countdown.js"></script>
     <script>
-        let cuttleActive = [];
-        let cuttleHistory = [];
         let deviceWorkers = [];
         let meshJobs = [];
         let meshJobsPage = 0;
@@ -588,8 +539,7 @@
             if (viewingWorkerId && id === viewingWorkerId) tags.push('you');
             return tags;
         }
-        let histFilter = 'all';
-        const VALID_JOBS_TABS = { active: 1, history: 1, devices: 1 };
+        const VALID_JOBS_TABS = { devices: 1 };
         function readInitialJobsTab() {
             try {
                 const fromUrl = String(
@@ -601,7 +551,7 @@
                 const fromLs = String(localStorage.getItem('jobsPageTab') || '').trim().toLowerCase();
                 if (VALID_JOBS_TABS[fromLs]) return fromLs;
             } catch (_) {}
-            return 'active';
+            return 'devices';
         }
         let currentTab = readInitialJobsTab();
         let initialLoad = true;
@@ -848,7 +798,7 @@
 
         function setTab(tab) {
             tab = String(tab || '').trim().toLowerCase();
-            if (!VALID_JOBS_TABS[tab]) tab = 'active';
+            if (!VALID_JOBS_TABS[tab]) tab = 'devices';
             currentTab = tab;
             try { localStorage.setItem('jobsPageTab', tab); } catch (_) {}
             syncJobsTabUrl(tab);
@@ -863,100 +813,7 @@
 
         function schedulePoll() {
             if (pollTimer) clearInterval(pollTimer);
-            const ms = currentTab === 'history' ? 15000 : 4000;
-            pollTimer = setInterval(loadAll, ms);
-        }
-
-        function renderActive() {
-            const el = document.getElementById('activeList');
-            if (!el) return;
-            const cards = [];
-
-            (cuttleActive || []).forEach(function (job) {
-                const cmd = String(job.command || 'job');
-                const repo = job.repository || '';
-                const issue = job.issue_number != null ? '#' + job.issue_number : '';
-                const title = job.issue_title || (repo + issue) || ('Job ' + (job.job_id || ''));
-                const elapsed = elapsedFrom(job.start_time);
-                cards.push(
-                    '<div class="active-card gitea">' +
-                    '<div class="active-card-top">' +
-                    '<div class="active-title"><span class="live-dot"></span>' + escapeHtml(title) + '</div>' +
-                    '<span class="cmd-badge ' + escapeHtml(cmd) + '">' + escapeHtml(cmd) + '</span>' +
-                    '</div>' +
-                    '<div class="active-meta">' +
-                    escapeHtml(repo) + (issue ? ' ' + escapeHtml(issue) : '') +
-                    (job.triggering_user ? ' · @' + escapeHtml(job.triggering_user) : '') +
-                    (elapsed ? ' · ' + escapeHtml(elapsed) : '') +
-                    (job.job_id != null ? ' · job ' + escapeHtml(String(job.job_id)) : '') +
-                    '</div>' +
-                    '<div class="active-actions">' +
-                    (job.gitea_url ? '<a href="' + escapeHtml(job.gitea_url) + '" target="_blank" rel="noopener">Open issue</a>' : '') +
-                    '</div></div>'
-                );
-            });
-
-            if (!cards.length) {
-                setHtmlIfChanged(el,
-                    '<div class="running-now-empty" style="grid-column:1/-1">' +
-                    'Nothing running. Comment <strong>@cuttle investigate</strong> or <strong>@cuttle solve</strong> on a Gitea issue.' +
-                    '</div>');
-                return;
-            }
-            setHtmlIfChanged(el, cards.join(''));
-        }
-
-        function renderHistory() {
-            const el = document.getElementById('historyList');
-            if (!el) return;
-            let rows = cuttleHistory || [];
-            if (histFilter !== 'all') {
-                rows = rows.filter(function (j) {
-                    return String(j.status || '').toLowerCase() === histFilter;
-                });
-            }
-            if (!rows.length) {
-                setHtmlIfChanged(el, '<div class="jobs-empty">No jobs in history yet' +
-                    (histFilter !== 'all' ? ' for this filter' : '') +
-                    '. Finished @cuttle jobs will appear here.</div>');
-                return;
-            }
-            const body = rows.map(function (j) {
-                const st = String(j.status || 'unknown').toLowerCase();
-                const when = j.completed_at || j.end_time || j.claimed_at || j.created_at || j.start_time;
-                const repoIssue = (j.repository || '') + (j.issue_number != null ? '#' + j.issue_number : '');
-                const err = j.error || j.last_error || '';
-                const pr = j.pr_url || (j.result && j.result.pr_url) || '';
-                const dur = formatDuration(j.duration_sec);
-                const href = j.gitea_url || '';
-                return (
-                    '<tr class="' + (href ? 'clickable' : '') + '" data-href="' + escapeHtml(href) + '">' +
-                    '<td>' + escapeHtml(formatTime(when)) + (dur ? '<div style="color:var(--text-tertiary);font-size:10px">' + escapeHtml(dur) + '</div>' : '') + '</td>' +
-                    '<td><span class="cmd-badge ' + escapeHtml(j.command || '') + '">' + escapeHtml(j.command || '—') + '</span></td>' +
-                    '<td>' + escapeHtml(repoIssue) +
-                    (j.issue_title ? '<div style="color:var(--text-secondary);font-size:11px;margin-top:2px">' + escapeHtml(String(j.issue_title).slice(0, 80)) + '</div>' : '') +
-                    '</td>' +
-                    '<td><span class="status-pill ' + escapeHtml(st) + '">' + escapeHtml(st) + '</span>' +
-                    (err ? '<div class="hist-error" title="' + escapeHtml(err) + '">' + escapeHtml(String(err).slice(0, 120)) + '</div>' : '') +
-                    (pr ? '<div><a class="hist-pr" href="' + escapeHtml(pr) + '" target="_blank" rel="noopener" onclick="event.stopPropagation()">PR</a></div>' : '') +
-                    '</td>' +
-                    '<td style="color:var(--text-tertiary)">' + (j.job_id != null ? escapeHtml(String(j.job_id)) : '') + '</td>' +
-                    '</tr>'
-                );
-            }).join('');
-            setJobsTableHtml(el, wrapJobsTable(
-                '<table class="hist-table"><thead><tr>' +
-                '<th>When</th><th>Command</th><th>Issue</th><th>Status</th><th>Id</th>' +
-                '</tr></thead><tbody>' + body + '</tbody></table>'
-            ));
-        }
-
-        function updateCuttleStats(stats) {
-            const s = stats || {};
-            document.getElementById('statRunning').textContent = s.running != null ? s.running : (cuttleActive || []).length;
-            document.getElementById('statPending').textContent = s.pending != null ? s.pending : 0;
-            document.getElementById('statCompleted').textContent = s.completed_today != null ? s.completed_today : 0;
-            document.getElementById('statFailed').textContent = s.failed_recent != null ? s.failed_recent : 0;
+            pollTimer = setInterval(loadAll, 4000);
         }
 
         async function loadDevices() {
@@ -1354,32 +1211,8 @@
             }
         }
 
-        async function loadCuttleJobs() {
-            try {
-                const r = await fetch('/api/cuttle-jobs?view=all&limit=50', { cache: 'no-store' });
-                if (!r.ok) throw new Error('cuttle-jobs ' + r.status);
-                const data = await r.json();
-                cuttleActive = data.active || [];
-                cuttleHistory = data.history || [];
-                updateCuttleStats(data.stats);
-                const src = document.getElementById('histSource');
-                if (src) {
-                    src.textContent = data.remote_ok
-                        ? 'Source: queue server'
-                        : 'Source: local log' + (data.history_source ? '' : '');
-                }
-                renderActive();
-                renderHistory();
-            } catch (e) {
-                if (initialLoad) {
-                    const el = document.getElementById('activeList');
-                    if (el) setHtmlIfChanged(el, '<div class="jobs-empty" style="grid-column:1/-1">Could not load Gitea jobs. ' + escapeHtml(e.message || e) + '</div>');
-                }
-            }
-        }
-
         async function loadAll() {
-            await Promise.all([loadCuttleJobs(), loadDevices()]);
+            await loadDevices();
             initialLoad = false;
         }
 
@@ -1463,28 +1296,11 @@
             else closeDeviceMenu();
         });
 
-        document.querySelectorAll('.hist-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                document.querySelectorAll('.hist-btn').forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
-                histFilter = btn.dataset.hist;
-                renderHistory();
-            });
-        });
-
-        document.getElementById('historyList').addEventListener('click', (e) => {
-            const tr = e.target.closest('tr.clickable');
-            if (!tr) return;
-            const href = tr.getAttribute('data-href');
-            if (href) window.open(href, '_blank', 'noopener');
-        });
-
         setTab(currentTab);
         loadAll();
         schedulePoll();
         setInterval(function () {
             if (window.CronCountdown) window.CronCountdown.updateAllCountdowns();
-            if (currentTab === 'active') renderActive();
         }, 1000);
     </script>
 </body>

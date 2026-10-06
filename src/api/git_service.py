@@ -406,7 +406,7 @@ def current_branch_name(cwd: str) -> str:
 
 
 def push_repo(cwd: str, remote: str, branch: str) -> subprocess.CompletedProcess:
-    """Push; returns the raw result for the handler to shape (Gitea hints,
+    """Push; returns the raw result for the handler to shape (auth hints,
     sanitize, rich payload stay transport-side). Uses the shared
     ``git_push_command`` argv (upstream/HEAD fallbacks, credential-helper
     flags) exactly like the legacy handler did."""

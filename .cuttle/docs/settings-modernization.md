@@ -135,7 +135,7 @@ placeholder glyph. Row CSS is page-owned in `css/settings_page.css`
   JSON file. Proposed: one Devices & Mesh group (phone/LAN, desktop, mesh
   workers, identity path with portable default).
 - **Proposed end-state grouping** (beyond what shipped):
-  Integrations (API keys read-only presence, Discord, Gitea) · Security
+  Integrations (API keys read-only presence, Discord) · Security
   (OAuth status, sessions, secrets) · Devices & Mesh (mesh workers, identity
   path) — the tabs above collapse/extend toward this.
 - **API-key widgets** should consume masked hints (never full secrets).

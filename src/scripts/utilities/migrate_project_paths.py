@@ -17,7 +17,7 @@ Examples:
   # Explicit mappings (repeat --map):
   python migrate_project_paths.py \\
     --map "D:\\Server\\www\\ExampleProject=E:\\Server\\www\\ExampleProject" \\
-    --map "\\\\host\\share\\gitea=/path/to/gitea" \\
+    --map "\\\\host\\share\\repos=/path/to/repos" \\
     --apply
 """
 

@@ -11,7 +11,6 @@ from the tray menu — and then stays running until stopped. Supports:
 - Start/stop/restart services
 - Pipeline hot-reload (reload running pipelines from disk)
 - Cron scheduler (fires trigger-schedule nodes in running pipelines)
-- Gitea @cuttle remote jobs (claim loop against the Cuttle Jobs API)
 - System tray icon (right-click → Open, Node Editor, Restart, Reload, Exit)
 """
 import os
@@ -1034,16 +1033,6 @@ def watch_flask_restart_requests():
         time.sleep(1.0)
 
 
-def run_cuttle_jobs_loop():
-    """Claim Gitea @cuttle jobs from the Cuttle Jobs API."""
-    try:
-        from api.cuttle_jobs.worker import run_cuttle_jobs_loop as _loop
-
-        _loop(should_continue=lambda: daemon_running)
-    except Exception as e:
-        print(f"[DAEMON] Cuttle Jobs worker exited: {e}")
-
-
 def run_device_workers_loop():
     """Local device worker: register + claim host mesh jobs (CUTTLE_WORKERS.md)."""
     try:
@@ -1425,10 +1414,6 @@ def run_daemon():
     # Graceful restart requests from Flask (/restart, flask.restart action)
     restart_req_watcher = threading.Thread(target=watch_flask_restart_requests, daemon=True)
     restart_req_watcher.start()
-
-    # Gitea @cuttle remote jobs — claim from the jobs-host queue (LAN)
-    cuttle_jobs_watcher = threading.Thread(target=run_cuttle_jobs_loop, daemon=True)
-    cuttle_jobs_watcher.start()
 
     # LAN device-worker mesh — host registers as a worker + claims local queue jobs
     device_workers_watcher = threading.Thread(target=run_device_workers_loop, daemon=True)

@@ -1233,8 +1233,8 @@ def git_push():
             print(f"Error git_push: {detail}", flush=True)
             if 'could not read Username' in detail or 'Authentication failed' in detail:
                 detail = (
-                    'Git push needs Gitea credentials. Set GITEA_TOKEN in src/.env '
-                    '(or GITEA_USERNAME + GITEA_PASSWORD).'
+                    'Git push needs credentials for this remote. Set up a git credential '
+                    'helper (for GitHub: gh auth setup-git) or an SSH remote.'
                 )
             return jsonify({
                 'success': False,

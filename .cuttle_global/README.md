@@ -38,11 +38,10 @@ units. Optional integration guidance defaults off; enable it for a project in
 
 ```ini
 [integrations]
-gitea = on
+<integration-id> = on
 ```
 
-This admits the global Gitea runbook to inventory/ranking and the capability
-summary. Runtime localhost/username defaults do not enable guidance. A skill
-can declare `integration: gitea` in its frontmatter to use the same gate.
-The flag does not start a service or grant authorization. See the
-[Gitea setup runbook](docs/gitea.md) for credentials and action allowlists.
+Optional skills can declare `integration: <integration-id>` in frontmatter to
+use the same gate. The flag does not start a service or grant authorization.
+Core currently ships no optional forge integration or forge runbook; install
+integration guidance in the owning project's `.cuttle/`.

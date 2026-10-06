@@ -14,7 +14,7 @@ unparsable file → defaults (core layers on/additive, integration guidance off)
 - ``skills`` / ``commands``: ``on`` (default) | ``off`` (skip global discovery,
   including global personal units; project units remain available).
 
-``[integrations]`` enables optional guidance by id (for example ``gitea=on``).
+``[integrations]`` enables optional guidance by id (for example ``forge=on``).
 Absent entries default off; localhost/runtime fallback defaults never opt in.
 
 Non-severable: ``00-safety.md`` (shared-infra + cross-project rules) always
@@ -126,7 +126,12 @@ def integration_guidance_enabled(integration: str, project_path: Optional[str] =
     return integration.strip().lower() in load_global_layers(project_path).integrations
 
 
+# Shipped global runbooks that only apply when a project opts in, by filename →
+# integration id. Empty: no optional integration runbooks are shipped here.
+INTEGRATION_DOCS: dict[str, str] = {}
+
+
 def global_doc_enabled(name: str, project_path: Optional[str] = None) -> bool:
     """Gate optional shipped runbooks; project-owned runbooks are independent."""
-    integration = {"gitea.md": "gitea"}.get(name.lower())
+    integration = INTEGRATION_DOCS.get(name.lower())
     return integration is None or integration_guidance_enabled(integration, project_path)

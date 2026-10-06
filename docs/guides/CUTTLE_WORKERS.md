@@ -1,7 +1,7 @@
 # Cuttle Workers — multi-device compute mesh
 
 **Status:** W1–W2 live; **W2.5 platform verbs** shipped (actions + CLI); **W2b** `blender_render` + `workers.blender-shard` shipped; **W2b+** work-steal chunks + per-frame analytics + render EWMA profiles (default `distribution=work_steal`); **W3** heuristics via `workers.plan` / `POST /api/workers/plan` (auto-enqueue off by default).  
-**Related:** [`.cuttle/learnings/FEATURE_REQUESTS.md`](../../.cuttle/learnings/FEATURE_REQUESTS.md) `[FEAT-20260917-001]`, [`docs/ROADMAP.md`](../ROADMAP.md), [`.cuttle_global/docs/cuttle-workers.md`](../../.cuttle_global/docs/cuttle-workers.md) (Brain how-to), [`.cuttle_global/docs/cuttle-jobs.md`](../../.cuttle_global/docs/cuttle-jobs.md), [`SUPERVISED_COORDINATOR.md`](SUPERVISED_COORDINATOR.md), [`MODULARITY.md`](MODULARITY.md).
+**Related:** [`.cuttle/learnings/FEATURE_REQUESTS.md`](../../.cuttle/learnings/FEATURE_REQUESTS.md) `[FEAT-20260917-001]`, [`docs/ROADMAP.md`](../ROADMAP.md), [`.cuttle_global/docs/cuttle-workers.md`](../../.cuttle_global/docs/cuttle-workers.md) (Brain how-to), [`SUPERVISED_COORDINATOR.md`](SUPERVISED_COORDINATOR.md), [`MODULARITY.md`](MODULARITY.md).
 
 ## Product intent (read this first)
 
@@ -81,7 +81,6 @@ Commercial analogies (Incredibuild, Flamenco) solve pieces of this. Cuttle’s d
 |---|---|---|
 | Electron **Host / Client** | Host runs local daemon + UI; Client is a thin UI pointed at remote Flask | UI mode only |
 | **Device worker** (this doc) | Process on a machine that registers, heartbeats, claims jobs | Yes — Client defaults **workerMode** on (orthogonal to UI) |
-| `cuttle_jobs` **worker** | Daemon poll loop claiming Gitea `@cuttle` jobs from the jobs host | Same *pattern* (claim/lease/heartbeat); different job types |
 | Supervised **worker** | Cursor Auto (or similar) under a coordinator on **one** machine | No — see [`SUPERVISED_COORDINATOR.md`](SUPERVISED_COORDINATOR.md) |
 | Sessions API “agent-to-agent” | Same-host session messaging | Not multi-PC yet |
 
@@ -130,7 +129,6 @@ SSH is **not** the control plane (workers dial out / claim). Optional later tran
 
 | Piece | Location | Reuse |
 |---|---|---|
-| Gitea job claim/lease/heartbeat | `src/api/cuttle_jobs/` | Protocol shape for device workers |
 | mDNS advertise | `src/api/discovery_mdns.py` | Optional discovery of coordinator / workers on LAN |
 | Host vs Client Electron | `electron/main.js` | Client UI; skips sidecar when **client daemon** owns worker |
 | Client daemon | `src/scripts/cuttle_client_daemon.py` | Worker loop + self-update ownership |
@@ -161,8 +159,8 @@ User (chat on the host)
 **Hybrid rules**
 
 1. **Host Flask/daemon is coordinator** for chat-driven work (“copy X from the laptop”, “render this”).
-2. **Job store starts on the host** (SQLite or equivalent). Same claim/lease/heartbeat ideas as `cuttle_jobs`.
-3. **Later:** durable queue may move to an always-on LAN host so the interactive desktop can also be a pure claim worker and Gitea jobs share infrastructure — without rewriting backends.
+2. **Job store starts on the host** (SQLite or equivalent). Use a claim/lease/heartbeat protocol.
+3. **Later:** durable queue may move to an always-on LAN host so the interactive desktop can also be a pure claim worker — without rewriting backends.
 4. Electron **Client** stays a UI mode; **worker mode** is orthogonal (default-on). A laptop can be Client UI + device worker at once.
 5. **Host does not auto-discover or enroll to another Host.** Two Host-mode machines are two separate coordinators. Extra workers appear only when a device **Client-connects** (or otherwise enrolls) to *this* host. The green titlebar badge counts **other** online workers only — not this PC’s own local worker loop.
 
@@ -314,7 +312,6 @@ Success criteria for the benchmark: correct frames, sensible scheduling (idle GP
 - Rebuilding Flamenco’s full manager product inside Cuttle (optional *plug* only).
 - Collapsing Electron Host/Client into “worker” (UI mode ≠ compute role).
 - Public internet mesh without Tailscale/VPN + auth.
-- Replacing `cuttle_jobs` Gitea flow in W1 — keep it; converge protocols over time.
 - **Per-harness workers tutorials** (Cursor-only, Codex-only, …) — platform contract only.
 - **Manual Jobs submit as the product path** — observability/debug only.
 - **SSH as required control plane** — enroll/claim/self-update stay pull-based; SSH is optional for `execute_shell_ssh` only.
@@ -324,7 +321,6 @@ Success criteria for the benchmark: correct frames, sensible scheduling (idle GP
 
 - Future extensions to the existing workers actions and agent ops CLI contract.
 - How much W3 classification is rule/heuristic vs cheap router LLM.
-- How Jobs UI merges Gitea jobs vs device-worker jobs in one cockpit (still observability).
 
 ## Verification
 

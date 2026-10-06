@@ -1840,167 +1840,6 @@ def api_executing_jobs():
         return jsonify({'executing_jobs': []})
 
 
-def _enrich_cuttle_job_row(job: dict) -> dict:
-    """Normalize remote or local Gitea job rows for the Jobs cockpit."""
-    from datetime import datetime, timezone
-
-    from api.cuttle_jobs.status_store import issue_url_for
-
-    if not isinstance(job, dict):
-        return {}
-    job_id = job.get('job_id') or job.get('id')
-    repo = str(job.get('repository') or '')
-    issue = job.get('issue_number')
-    gitea_url = job.get('gitea_url') or ''
-    if not gitea_url and repo and issue:
-        gitea_url = issue_url_for(repo, issue)
-    result = job.get('result') if isinstance(job.get('result'), dict) else None
-    status = str(job.get('status') or '')
-    start_time = job.get('start_time') or job.get('claimed_at') or job.get('created_at') or ''
-    end_time = job.get('end_time') or job.get('completed_at') or ''
-    duration_sec = job.get('duration_sec')
-
-    def _parse_ts(ts):
-        ts = str(ts or '').strip()
-        if not ts:
-            return None
-        try:
-            if ts.endswith('Z'):
-                return datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-            return datetime.fromisoformat(ts.replace('Z', '+00:00'))
-        except Exception:
-            return None
-
-    if duration_sec is None and start_time and end_time:
-        sdt = _parse_ts(start_time)
-        edt = _parse_ts(end_time)
-        if sdt and edt:
-            duration_sec = max(0, int((edt - sdt).total_seconds()))
-
-    return {
-        'id': job_id,
-        'job_id': job_id,
-        'command': str(job.get('command') or ''),
-        'repository': repo,
-        'issue_number': issue,
-        'issue_title': str(job.get('issue_title') or ''),
-        'gitea_url': gitea_url,
-        'triggering_user': str(job.get('triggering_user') or ''),
-        'status': status,
-        'start_time': start_time,
-        'end_time': end_time,
-        'created_at': job.get('created_at') or '',
-        'claimed_at': job.get('claimed_at') or '',
-        'completed_at': job.get('completed_at') or end_time or '',
-        'duration_sec': duration_sec,
-        'attempt_count': job.get('attempt_count'),
-        'last_error': job.get('last_error') or job.get('error'),
-        'error': job.get('error') or job.get('last_error'),
-        'result': result,
-        'pr_url': (result or {}).get('pr_url') if result else None,
-        'branch': (result or {}).get('branch') if result else None,
-        'source': job.get('source') or 'cuttle_jobs',
-        'claimed_by': job.get('claimed_by') or '',
-    }
-
-
-@app.route('/api/cuttle-jobs', methods=['GET'])
-@owner_required
-def api_cuttle_jobs():
-    """Gitea @cuttle worker jobs: active snapshot + remote/local history for Jobs cockpit."""
-    view = (request.args.get('view') or 'all').strip().lower()
-    status = (request.args.get('status') or '').strip() or None
-    try:
-        limit = max(1, min(int(request.args.get('limit') or 50), 200))
-    except ValueError:
-        limit = 50
-
-    from api.cuttle_jobs.status_store import list_history, list_running
-
-    active = []
-    for j in list_running():
-        row = dict(j)
-        row['status'] = 'processing'
-        row['id'] = j.get('job_id')
-        active.append(_enrich_cuttle_job_row(row))
-
-    history = []
-    history_source = 'local'
-    remote_ok = False
-    try:
-        from api.cuttle_jobs.client import CuttleJobsClient, jobs_enabled
-        if jobs_enabled():
-            client = CuttleJobsClient()
-            list_status = status
-            if view == 'history' and not list_status:
-                list_status = 'completed,failed,pending'
-            elif view == 'active' and not list_status:
-                list_status = 'processing,pending'
-            remote_jobs = client.list_jobs(status=list_status, limit=limit)
-            remote_ok = True
-            history_source = 'remote'
-            history = [_enrich_cuttle_job_row(j) for j in remote_jobs]
-    except Exception as e:
-        print(f'[cuttle-jobs] remote list failed: {e}')
-
-    if not remote_ok or view in ('history', 'all'):
-        local = [_enrich_cuttle_job_row(j) for j in list_history(limit=limit)]
-        if not remote_ok:
-            history = local
-            history_source = 'local'
-        else:
-            seen = {h.get('job_id') for h in history}
-            for row in local:
-                jid = row.get('job_id')
-                if jid not in seen:
-                    history.append(row)
-                    seen.add(jid)
-            local_by_id = {r.get('job_id'): r for r in local}
-            for h in history:
-                loc = local_by_id.get(h.get('job_id'))
-                if loc and h.get('duration_sec') is None and loc.get('duration_sec') is not None:
-                    h['duration_sec'] = loc['duration_sec']
-                if loc and not h.get('gitea_url') and loc.get('gitea_url'):
-                    h['gitea_url'] = loc['gitea_url']
-
-    if status and history:
-        wanted = {s.strip().lower() for s in status.split(',') if s.strip()}
-        history = [h for h in history if str(h.get('status') or '').lower() in wanted]
-
-    completed_today = 0
-    failed_recent = 0
-    pending_count = 0
-    from datetime import datetime, timezone
-    today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-    for h in history:
-        st = str(h.get('status') or '')
-        if st == 'pending':
-            pending_count += 1
-        end = str(h.get('completed_at') or h.get('end_time') or '')
-        if st == 'completed' and end.startswith(today):
-            completed_today += 1
-        if st == 'failed':
-            failed_recent += 1
-
-    payload = {
-        'success': True,
-        'active': active,
-        'history': history if view != 'active' else [],
-        'history_source': history_source,
-        'remote_ok': remote_ok,
-        'stats': {
-            'running': len(active),
-            'pending': pending_count,
-            'completed_today': completed_today,
-            'failed_recent': failed_recent,
-        },
-    }
-    if view == 'history':
-        # Keep active for badge consistency while focusing the history list.
-        payload['active'] = active
-    return jsonify(payload)
-
-
 @app.route('/api/chat-cancel', methods=['POST'])
 def chat_cancel():
     """Cancel in-flight generation for a chat session (Stop button / delete chat)."""
@@ -2761,7 +2600,7 @@ def api_toast():
         variant = data.get('variant', 'info')
         if not message:
             return jsonify({'success': False, 'error': 'message required'}), 400
-        from api.cuttle_jobs.status_store import notify_tray
+        from api.ui_notify import notify_tray
         notify_tray(message, variant=str(variant or 'info'))
         return jsonify({'success': True})
     except Exception as e:
@@ -2770,12 +2609,12 @@ def api_toast():
 
 @app.route('/api/ui-toasts', methods=['GET'])
 def api_ui_toasts():
-    """Pull+clear pending UI toasts for Electron/app_shell (Gitea jobs, etc.)."""
+    """Pull+clear pending UI toasts for Electron/app_shell."""
     _user, err = loopback_or_authenticated()
     if err:
         return err
     try:
-        from api.cuttle_jobs.status_store import pull_ui_toasts
+        from api.ui_notify import pull_ui_toasts
         return jsonify({'toasts': pull_ui_toasts()})
     except Exception:
         return jsonify({'toasts': []})

@@ -230,7 +230,7 @@ def run_pytest(paths: List[str], *, timeout_s: int = T.PYTEST_TIMEOUT_S) -> Dict
 
 def notify_broke(summary: str) -> None:
     try:
-        from api.cuttle_jobs.status_store import notify_tray
+        from api.ui_notify import notify_tray
 
         notify_tray(summary, variant="error")
     except Exception:

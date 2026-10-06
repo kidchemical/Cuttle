@@ -383,6 +383,10 @@ remain where they were. Nothing here is a proposed interface.
 
 ## CLI / automation
 
+Shared tray and in-app toast delivery lives in `api.ui_notify`; `web_chat_api`
+composes the toast routes and the daemon consumes the tray queue. It has no
+forge-worker dependency.
+
 Git push diagnostics: `.cuttle/scripts/git-hooks/pre-push` owns project policy;
 `core.git_push_diagnostics` owns per-commit/SQLite inspection and redacted reports;
 `api.git_routes` composes HTTP responses; `CuttleGitPushReport` owns the shared

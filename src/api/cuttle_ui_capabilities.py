@@ -59,11 +59,18 @@ You can share images/video in replies via markdown `![alt](/output/shared/…)`
 
 
 def cuttle_ui_capabilities_block(*, project_path: Optional[str] = None) -> str:
-    from api.cuttle_brain.global_layers import integration_guidance_enabled, load_global_layers
+    from api.cuttle_brain.global_layers import (
+        INTEGRATION_DOCS,
+        integration_guidance_enabled,
+        load_global_layers,
+    )
 
     text = CUTTLE_UI_CAPABILITIES_TEXT
-    if load_global_layers(project_path).docs and integration_guidance_enabled("gitea", project_path):
-        text += "\nEnabled integration runbook: gitea.md — python -m api.gitea; confirmed writes use gitea.issue."
+    if load_global_layers(project_path).docs:
+        enabled = sorted(doc for doc, integration in INTEGRATION_DOCS.items()
+                         if integration_guidance_enabled(integration, project_path))
+        if enabled:
+            text += "\nEnabled integration runbooks: " + ", ".join(enabled) + "."
     return f"{_CAP_OPEN}\n{text}\n{_CAP_CLOSE}"
 
 

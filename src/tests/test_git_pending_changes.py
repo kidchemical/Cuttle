@@ -387,10 +387,8 @@ def test_commit_pending_changes(tmp_path: Path):
 def test_commit_pending_changes_without_git_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     from scripts.utilities.git_pending_changes import commit_pending_changes
 
-    monkeypatch.setenv("GITEA_COMMIT_AUTHOR_NAME", "Cuttle")
-    monkeypatch.setenv("GITEA_COMMIT_AUTHOR_EMAIL", "cuttle@example.com")
-    monkeypatch.delenv("GIT_AUTHOR_NAME", raising=False)
-    monkeypatch.delenv("GIT_AUTHOR_EMAIL", raising=False)
+    monkeypatch.setenv("GIT_AUTHOR_NAME", "Cuttle")
+    monkeypatch.setenv("GIT_AUTHOR_EMAIL", "cuttle@example.com")
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
     monkeypatch.setenv("GIT_CONFIG_SYSTEM", os.devnull)
@@ -845,7 +843,7 @@ def test_collect_file_pending_diff_sides_truncate_independently(tmp_path: Path):
 def test_sanitize_git_output_strips_userinfo(monkeypatch: pytest.MonkeyPatch):
     from scripts.utilities.git_pending_changes import sanitize_git_output
 
-    monkeypatch.setenv("GITEA_TOKEN", "secret-token-value")
+    monkeypatch.setenv("GIT_ASKPASS_PASSWORD", "secret-token-value")
     text = "fatal: could not read Username for 'http://user:secret-token-value@127.0.0.1:3000'"
     out = sanitize_git_output(text)
     assert "secret-token-value" not in out
@@ -887,8 +885,8 @@ def test_git_push_target_and_auth_helper(tmp_path: Path, monkeypatch: pytest.Mon
     assert target["repo"] == "example/Cuttle"
     assert "http://" in (target["url"] or "")
 
-    monkeypatch.setenv("GITEA_TOKEN", "unit-test-token")
-    monkeypatch.delenv("GITEA_USERNAME", raising=False)
+    monkeypatch.setenv("GIT_ASKPASS_PASSWORD", "unit-test-token")
+    monkeypatch.delenv("GIT_ASKPASS_USER", raising=False)
     cmd, env = git_push_command("origin", "linux")
     assert cmd[:1] == ["git"]
     assert "push" in cmd

@@ -23,7 +23,6 @@ agent toolkit.
 | Tasks widgets | `python -m api.widgets_cli` | `widgets.md` |
 | Cuttle QA / promo accounts | `python -m api.fixture_accounts` | Cuttle project `.cuttle/docs/fixture-accounts.md` |
 | Discord reads | `python -m api.discord_cli` | `discord.md` (posts stay on `discord.post`) |
-| Gitea issues | `python -m api.gitea` | `gitea.md` |
 | Live split panes | `python -m api.panes_cli` | `chat-history.md` |
 | Device mesh / workers | `python -m api.device_workers.cli` | `cuttle-workers.md` |
 | Context Compiler | `python -m api.cuttle_brain` | Brain / ADDING_AN_AGENT |

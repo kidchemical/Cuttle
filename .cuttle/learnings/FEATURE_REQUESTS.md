@@ -83,13 +83,14 @@ User-requested capabilities. Format: `[FEAT-YYYYMMDD-XXX] capability_name`
 
 ## [FEAT-20260926-003] github_app_forge_parity
 
-- **Priority:** Medium · **Status:** Pending · **Area:** forge / cuttle-jobs / git
+- **Priority:** Medium · **Status:** Deferred · **Area:** forge / cuttle-jobs / git
 - **Requested capability:** GitHub parity with the Gitea `cuttle` user. Cuttle acts on GitHub through a per-install **GitHub App** (owner's is `Cuttle Harness` → `cuttle-harness[bot]`): create/label/assign/close issues, comment, push `cuttle/issue-N` branches, open PRs, and author commits as the bot so its avatar shows in Contributors. `@cuttle` triggers via App webhook → cuttle-jobs (public endpoint needed; Gitea host is LAN-only) or polling. Also add the bot as a `Co-authored-by` trailer option for commits Cuttle makes in GitHub repos (replaces Cursor's own trailer, which is now disabled in `~/.cursor/cli-config.json`).
 - **User context:** CH-000722 — moving Cuttle to github.com/kidchemical as a portfolio; wants "Cuttle" credited like on Gitea, and the same auto-create / auto-resolve issue flow.
 - **Notes:** Each self-hosted Cuttle creates its own App ("Only on this account"): a shared public App would mean distributing its private key. Auth = App ID + private key (.pem, outside the repo) → short-lived installation token. Bot commit email: `<bot-user-id>+cuttle-harness[bot]@users.noreply.github.com`.
 - **Progress:** App created and installed (issues / PRs / contents write); `GITHUB_APP_*` keys in `src/.env` (not read by code yet). Profile README commit co-authored by the bot.
 - **Complexity:** L
-- **Related:** `.cuttle_global/docs/gitea.md`, `.cuttle_global/docs/cuttle-jobs.md`, `src/api/gitea/`, `src/api/cuttle_jobs/`, `src/scripts/utilities/git_pending_changes.py`, `src/api/edit_attribution/`
+- **Related:** `src/scripts/utilities/git_pending_changes.py`, `src/api/edit_attribution/`
+- **Update (2026-10-05):** CH-001014 — bundled Gitea/Cuttle Jobs integration removed and archived. Future forge-neutral integration is deferred and belongs outside core; the earlier queue proposal is historical.
 
 ## [FEAT-20260926-002] query_log_inspector
 
@@ -116,7 +117,7 @@ User-requested capabilities. Format: `[FEAT-YYYYMMDD-XXX] capability_name`
 - **User context:** CH-000391 — run Cuttle on laptop + tower; Client mode should also run (or default) worker mode so tower can e.g. copy files from a client desktop or farm Blender frames across GPUs. ChatGPT framing: one workspace / several computers; orchestrator + backends. Clarified: teach **Cuttle**, not sticky agents; smart batching when workers available.
 - **Complexity:** XL
 - **Progress:** W0–W2.5 done; W2b blender job/shard code done + sample-scene dogfood; **W2b+ work-steal chunks (default), per-frame result analytics, EWMA `render_profile`** code done. W2c Client daemon + `cuttle_self_update` / allowlisted `shell` recipes code done. Remaining: content-addressed staging, optional auto_mesh, weighted static plans using profiles, W4.
-- **Related:** `docs/guides/CUTTLE_WORKERS.md`, `.cuttle_global/docs/cuttle-workers.md`, `docs/ROADMAP.md`, `src/api/cuttle_jobs/`, `src/api/device_workers/`, `src/api/discovery_mdns.py`, `.cuttle_global/docs/cuttle-jobs.md`
+- **Related:** `docs/guides/CUTTLE_WORKERS.md`, `.cuttle_global/docs/cuttle-workers.md`, `docs/ROADMAP.md`, `src/api/device_workers/`, `src/api/discovery_mdns.py`
 
 ## [FEAT-20260917-002] mobile_worker_sensor_edge
 
@@ -222,12 +223,13 @@ User-requested capabilities. Format: `[FEAT-YYYYMMDD-XXX] capability_name`
 
 ## [FEAT-20260928-005] shared_farm_queue_multihost
 
-- **Priority:** Low · **Status:** Proposed · **Area:** workers / cuttle-jobs / mesh
+- **Priority:** Low · **Status:** Deferred · **Area:** workers / cuttle-jobs / mesh
 - **Requested capability:** Share one render/compute farm across many per-teammate Hosts. Decided direction: shared `cuttle-jobs` queue (Gitea-backed) as the commons — hosts submit, farm polls — not mesh multihoming. Worker loops stay single-homed (one coordinator URL + token per process); mesh membership remains per-host for personal devices.
 - **User context:** CH-000764 — Shared organization model: every employee runs a Host, one farm serves all. Explicitly rejected: N worker registrations per machine (static split, uncoordinated contention) and manual coordinator re-pointing.
 - **Notes:** Claim protocol already has capability ads, leases, heartbeats; multihoming would still need cross-coordinator capacity accounting to avoid double-booking a GPU. Queue beats mesh gossip on fairness, persistence, debuggability. Do not build until a second Host needs the farm.
 - **Complexity:** M (shared queue posture) / XL (true multihoming — not recommended)
-- **Related:** `.cuttle_global/docs/cuttle-workers.md`, `src/api/cuttle_jobs/`, `src/api/device_workers/worker_loop.py`, `[FEAT-20260928-002]`
+- **Related:** `.cuttle_global/docs/cuttle-workers.md`, `src/api/device_workers/worker_loop.py`, `[FEAT-20260928-002]`
+- **Update (2026-10-05):** CH-001014 — bundled Gitea/Cuttle Jobs integration removed and archived. Future forge-neutral integration is deferred and belongs outside core; the earlier queue proposal is historical.
 
 ## [FEAT-20261001-001] development_shadow_instance_and_daemon_rollback
 

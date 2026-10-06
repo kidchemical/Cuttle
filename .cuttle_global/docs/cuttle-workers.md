@@ -16,7 +16,7 @@ Match this doc when the user (or a good batch candidate) involves:
 - Shell on a worker (recipes, local execute_shell_unsafe, or execute_shell_ssh)
 - Mesh compute, capability ads, claim/lease jobs
 
-**Not** this doc: Gitea `@cuttle` jobs → `cuttle-jobs.md`; same-machine supervised Cursor → `SUPERVISED_COORDINATOR.md`.
+**Not** this doc: same-machine supervised Cursor → `SUPERVISED_COORDINATOR.md`.
 
 ## Product rule
 
