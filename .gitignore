@@ -17,7 +17,6 @@ src/data/home_automation_devices.json
 # *.json must get a `!` negation here or it will be silently ignored.
 *.json
 !.cuttle/scripts/git-hooks/scanner-exceptions.json
-!bot_config.json
 !electron/package.json
 !electron/package-lock.json
 !apps/mobile/**/*.json
