@@ -303,8 +303,18 @@ def test_segmented_status_chip_truncation_tooltips_and_error(browser, static_ser
         message = chip.locator('.status-chip-message')
         assert message.evaluate('(el) => el.scrollWidth > el.clientWidth')
         assert long_error.strip() in message.get_attribute('data-tooltip')
-        message.hover()
-        expect(frame.locator('#cuttle-shared-tooltip')).to_contain_text(long_error.strip())
+        tooltip = frame.locator('#cuttle-shared-tooltip')
+        # The reply may still be auto-scrolling when it first renders; a
+        # single hover can land where the chip was. Re-hover until shown.
+        for _attempt in range(5):
+            page.mouse.move(0, 0)
+            message.hover()
+            try:
+                expect(tooltip).to_contain_text(long_error.strip(), timeout=1500)
+                break
+            except AssertionError:
+                continue
+        expect(tooltip).to_contain_text(long_error.strip())
         page.set_viewport_size({'width': 390, 'height': 844})
         assert chip.evaluate('(el) => el.scrollWidth <= el.clientWidth + 1')
         expect(chip.locator('.status-chip-icon')).to_be_visible()
