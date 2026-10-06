@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 
 import pytest
@@ -32,6 +33,7 @@ from api.dev_instance import (
     resolve_port,
     validate_port,
 )
+from api import dev_instance as di
 
 CANDIDATE = Path(__file__).resolve().parents[2]
 
@@ -824,3 +826,64 @@ def test_scenario_shapes_and_seams():
         boot._result_shape("nonexistent", "p")
     for mod_name, attr in boot.SEAMS:
         assert hasattr(importlib.import_module(mod_name), attr), mod_name
+
+
+def test_discard_snapshot_removes_only_shadow_roots(tiny_repo, tmp_path):
+    seed = prepare_snapshot(tiny_repo, f"disc-{uuid.uuid4().hex[:8]}")
+    assert Path(seed["root"]).is_dir()
+    assert di.discard_snapshot(seed) is True
+    assert not Path(seed["root"]).exists()
+    # Anything that is not temp/shadows/<id> is refused untouched.
+    outsider = tmp_path / "keep-me"
+    outsider.mkdir()
+    assert di.discard_snapshot({"root": str(outsider)}) is False
+    assert di.discard_snapshot({"root": str(tiny_repo / "temp")}) is False
+    assert outsider.is_dir() and (tiny_repo / "temp").is_dir()
+
+
+def test_prune_keeps_fresh_and_live_snapshots(tiny_repo):
+    import json
+    import os
+
+    old = prepare_snapshot(tiny_repo, "old-dead")
+    live = prepare_snapshot(tiny_repo, "old-live")
+    fresh = prepare_snapshot(tiny_repo, "fresh")
+    Path(live["manifest"]).write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
+    Path(old["manifest"]).write_text(json.dumps({"pid": 0}), encoding="utf-8")
+    day_ago = __import__("time").time() - 86400
+    for seed in (old, live):
+        os.utime(seed["root"], (day_ago, day_ago))
+
+    assert di.prune_snapshots(tiny_repo, 3600) == ["old-dead"]
+    assert not Path(old["root"]).exists()
+    assert Path(live["root"]).is_dir(), "a running child's snapshot is kept"
+    assert Path(fresh["root"]).is_dir(), "recent snapshots are kept"
+
+
+def test_up_cli_discards_snapshot_after_stop(tiny_repo, monkeypatch):
+    seeds = []
+
+    class FakeProc:
+        pid = 4242
+
+        def wait(self):
+            return 0
+
+    class FakeChild:
+        proc = FakeProc()
+        pid = 4242
+
+        def stop(self):
+            pass
+
+    def fake_launch(seed, scenario, port, timeout):
+        seeds.append(seed)
+        return FakeChild(), {"port": 1}
+
+    monkeypatch.setattr(di, "launch", fake_launch)
+    monkeypatch.setattr(di, "resolve_port", lambda port: 0)
+    assert di.main(["up", "--candidate", str(tiny_repo)]) == 0
+    assert seeds and not Path(seeds[0]["root"]).exists()
+
+    assert di.main(["up", "--candidate", str(tiny_repo), "--keep"]) == 0
+    assert Path(seeds[1]["root"]).is_dir()

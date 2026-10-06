@@ -60,6 +60,13 @@ CLI validation, child boot, and post-bind check. `up` runs in the
 foreground; Ctrl+C stops only its owned child (that `Popen`). No second
 daemon; no S3/S4 gates.
 
+Each snapshot is a full copy of the checkout under `temp/shadows/<id>/`.
+`up` deletes it when the shadow stops (`--keep` retains it; a failed boot keeps
+it so `child.log` survives). Library callers and test fixtures must call
+`dev_instance.discard_snapshot(seed)` after `child.stop()`. `prepare`/`up` also
+delete day-old snapshots whose child is gone; `prune --older-than-hours N` does
+it on demand.
+
 Snapshot: `git ls-files` working bytes + ONLY 2 extras
 (`src/scripts/cuttle_shadow_app.py`, `src/api/dev_instance.py`); all other
 untracked code omitted. Required application modules must be tracked before

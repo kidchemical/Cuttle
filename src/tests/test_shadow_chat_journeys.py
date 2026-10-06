@@ -201,6 +201,7 @@ def shadow():
         _register_owner(http, _owner_name())
     except BaseException:
         child.stop()
+        dev_instance.discard_snapshot(seed)
         raise
     try:
         yield child, manifest, http
@@ -218,6 +219,7 @@ def shadow():
         except Exception as exc:
             print(f"S2 shadow totals unavailable: {exc!r}", flush=True)
         child.stop()
+        dev_instance.discard_snapshot(seed)
 
 
 @pytest.fixture()

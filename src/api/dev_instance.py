@@ -9,7 +9,13 @@ owned ``Popen`` handle. No daemon, no 8080/8000 bind, no live stores.
 Usage (development-only command)::
 
     python -m api.dev_instance prepare [--candidate DIR]
-    python -m api.dev_instance up [--candidate DIR] [--port 0] [--scenario success]
+    python -m api.dev_instance up [--candidate DIR] [--port 0] [--scenario success] [--keep]
+    python -m api.dev_instance prune [--candidate DIR] [--older-than-hours 6]
+
+Snapshots live in ``temp/shadows/<id>``. ``up`` deletes its snapshot when the
+shadow stops (unless ``--keep`` or the boot failed); library callers use
+``discard_snapshot(seed)``. ``prepare``/``up`` also prune day-old snapshots
+whose child is gone.
 """
 
 from __future__ import annotations
@@ -295,6 +301,81 @@ def refresh_seed_hashes(seed: dict) -> dict:
     return seed
 
 
+def _shadows_dir(candidate: Path) -> Path:
+    return candidate.resolve() / "temp" / "shadows"
+
+
+def _is_shadow_root(root: Path) -> bool:
+    """Only a direct ``temp/shadows/<valid id>`` child, never a symlink."""
+    try:
+        _valid_shadow_id(root.name)
+    except ShadowError:
+        return False
+    parent = root.parent
+    return (parent.name == "shadows" and parent.parent.name == "temp"
+            and not root.is_symlink() and root.is_dir())
+
+
+def discard_snapshot(seed: dict) -> bool:
+    """Delete one shadow root once its child has stopped.
+
+    Snapshots are a full copy of the checkout, so every caller that is done
+    with a shadow must discard it (they used to pile up by the gigabyte).
+    Refuses anything that is not a ``temp/shadows/<id>`` directory.
+    """
+    root = Path(seed.get("root") or "").absolute()
+    if not _is_shadow_root(root):
+        return False
+    shutil.rmtree(root, ignore_errors=True)
+    return not root.exists()
+
+
+def _owner_alive(root: Path) -> bool:
+    """True when the manifest names a child process that still exists."""
+    try:
+        pid = int(json.loads((root / "manifest.json").read_text("utf-8")).get("pid") or 0)
+    except (OSError, ValueError, TypeError, AttributeError):
+        return False
+    if pid <= 0:
+        return False
+    try:
+        import psutil
+        return psutil.pid_exists(pid)
+    except ImportError:
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return False
+        return True
+
+
+def prune_snapshots(candidate: Path, older_than_seconds: float = 6 * 3600) -> list[str]:
+    """Remove stale shadow roots: older than the cutoff and with no live child.
+
+    Covers crashed or forgotten shadows (a still-running child, or a snapshot
+    prepared recently for a later ``launch``, is kept).
+    """
+    shadows = _shadows_dir(candidate)
+    if not shadows.is_dir() or shadows.is_symlink():
+        return []
+    cutoff = time.time() - max(0.0, older_than_seconds)
+    removed = []
+    for root in sorted(shadows.iterdir()):
+        if not _is_shadow_root(root):
+            continue
+        try:
+            if root.stat().st_mtime > cutoff:
+                continue
+        except OSError:
+            continue
+        if _owner_alive(root):
+            continue
+        shutil.rmtree(root, ignore_errors=True)
+        if not root.exists():
+            removed.append(root.name)
+    return removed
+
+
 def build_child_env(seed: dict, scenario: str, port: int) -> dict[str, str]:
     """Allowlist child environment. Never ``os.environ.copy()``."""
     if sys.platform == "win32":
@@ -492,6 +573,11 @@ def build_parser() -> argparse.ArgumentParser:
     up.add_argument("--scenario", default="blocked",
                     help="child executor scenario (default: blocked guard)")
     up.add_argument("--timeout", type=float, default=60.0)
+    up.add_argument("--keep", action="store_true",
+                    help="keep the snapshot after the shadow stops (default: delete it)")
+    prune = sub.add_parser("prune", parents=[common],
+                           help="delete stale snapshots with no running child")
+    prune.add_argument("--older-than-hours", type=float, default=6.0)
     return parser
 
 
@@ -508,6 +594,12 @@ def resolve_port(cli_port: int | None) -> int:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     candidate = Path(args.candidate).resolve()
+    if args.command == "prune":
+        removed = prune_snapshots(candidate, args.older_than_hours * 3600)
+        print(json.dumps({"removed": removed}, indent=2))
+        return 0
+    # Housekeeping: drop day-old snapshots whose child is gone.
+    prune_snapshots(candidate, 24 * 3600)
     if args.command == "prepare":
         seed = prepare_snapshot(candidate, args.shadow_id)
         print(json.dumps({k: seed[k] for k in
@@ -515,7 +607,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     port = resolve_port(args.port)
     seed = prepare_snapshot(candidate, args.shadow_id)
-    child, manifest = launch(seed, args.scenario, port, args.timeout)
+    try:
+        child, manifest = launch(seed, args.scenario, port, args.timeout)
+    except Exception:
+        # Keep a failed boot's snapshot: child.log is the evidence.
+        print(f"shadow failed; snapshot kept for debugging: {seed['root']}", flush=True)
+        raise
     print(json.dumps(manifest, indent=2))
     print(f"shadow live pid={child.pid}; stop via handle teardown", flush=True)
     try:
@@ -524,6 +621,8 @@ def main(argv: list[str] | None = None) -> int:
         pass
     finally:
         child.stop()
+        if not args.keep:
+            discard_snapshot(seed)
     return 0
 
 

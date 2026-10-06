@@ -99,6 +99,7 @@ def shadow():
             print(f"S2 browser shadow totals unavailable: {exc!r}",
                   flush=True)
         child.stop()
+        dev_instance.discard_snapshot(seed)
 
 
 def _opener(jar=None):
