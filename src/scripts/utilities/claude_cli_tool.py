@@ -6,7 +6,10 @@ Runs against the real project cwd (no sandbox mirror). Resume uses
 Steerable turns (``steerable=True``) take the prompt as ``--input-format
 stream-json`` on an open stdin, so ``api.agent_harness.steer`` can write
 follow-ups into the live run; the CLI folds them in at the next tool boundary,
-or answers them as an extra turn after the first ``result``.
+or answers them as an extra turn after the first ``result``. The same open
+stdin keeps the run alive while its own background tasks (``Bash`` with
+``run_in_background``, ``Monitor``, …) are pending: the CLI starts a follow-up
+turn when one finishes, and that answer merges into this reply.
 Auth: the user's native Claude login/config; host API credentials are isolated.
 """
 
@@ -60,6 +63,25 @@ def _default_timeout() -> float:
         return max(30.0, float(raw)) if raw else 3600.0
     except (TypeError, ValueError):
         return 3600.0
+
+
+def _background_wait_seconds() -> float:
+    """How long a finished turn may stay open for its background tasks (0 = never).
+
+    Kept under the 3600s idle budget: the wait is silent on stdout, so the
+    idle deadline would otherwise end it first with a timeout instead of a note.
+    """
+    raw = (os.getenv("CLAUDE_BACKGROUND_WAIT_SEC") or "").strip()
+    try:
+        return max(0.0, float(raw)) if raw else 3000.0
+    except (TypeError, ValueError):
+        return 3000.0
+
+
+def _task_label(tasks: List[Dict[str, Any]]) -> str:
+    names = [" ".join(str(t.get("description") or t.get("task_id") or "task").split())[:80] for t in tasks]
+    more = f" (+{len(names) - 1} more)" if len(names) > 1 else ""
+    return (names[0] if names else "task") + more
 
 
 def _status_put(status_queue: Optional["queue_module.Queue"], message: str) -> None:
@@ -296,6 +318,14 @@ def _undelivered_notice(texts: List[str]) -> str:
     )
 
 
+def _abandoned_notice(labels: List[str], waited: float) -> str:
+    lines = "\n".join(f"- {label}" for label in labels)
+    return (
+        f"Stopped waiting for background work after {int(waited // 60)} min; it ended with this turn:\n"
+        f"{lines}"
+    )
+
+
 def usage_for_query_report(usage: Dict[str, Any], model: str) -> Dict[str, Any]:
     pt = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
     ct = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
@@ -422,10 +452,20 @@ class ClaudeCliTool:
         loop = asyncio.get_running_loop()
         # sent: steers written to stdin; echoed: those the CLI replayed back
         # (it read them); results: every root ``result`` (a late steer adds one).
-        st: Dict[str, Any] = {"token": None, "open": False, "sent": [], "echoed": [], "results": []}
+        # bg: the CLI's latest background task list; a root ``result`` while it
+        # is non-empty keeps stdin open so the task's notification can start
+        # the follow-up turn (closing stdin makes the CLI exit and kill them).
+        st: Dict[str, Any] = {
+            "token": None, "open": False, "sent": [], "echoed": [], "results": [],
+            "bg": [], "waiting": False, "wait_timer": None, "abandoned": [],
+        }
         proc = None
+        bg_wait = min(_background_wait_seconds(), max(0.0, resolved_timeout - 60.0))
 
         def _close_input() -> None:
+            if st["wait_timer"] is not None:
+                st["wait_timer"].cancel()
+                st["wait_timer"] = None
             if st["token"] is not None:
                 steer_registry.unregister(chat_session_id, st["token"])
                 st["token"] = None
@@ -454,6 +494,13 @@ class ClaudeCliTool:
             loop.call_soon_threadsafe(_write)
             return out
 
+        def _give_up_waiting() -> None:
+            st["wait_timer"] = None
+            if st["open"] and st["bg"]:
+                st["abandoned"] = [_task_label([t]) for t in st["bg"]]
+                stream.activity.emit("background wait limit reached — stopping Claude Code", force=True)
+                _close_input()
+
         def _on_line(raw: bytes) -> None:
             stream.feed(raw)
             if not steerable:
@@ -470,10 +517,26 @@ class ClaudeCliTool:
                 if echoed.strip() in (t.strip() for t in pending):
                     st["echoed"].append(next(t for t in pending if t.strip() == echoed.strip()))
                     stream.activity.emit(f"steer received: {' '.join(echoed.split())[:100]}", force=True)
+            elif obj.get("type") == "system" and obj.get("subtype") == "background_tasks_changed":
+                tasks = obj.get("tasks")
+                st["bg"] = [t for t in tasks if isinstance(t, dict)] if isinstance(tasks, list) else []
+                if st["waiting"]:
+                    stream.activity.emit(
+                        f"waiting on background task: {_task_label(st['bg'])}" if st["bg"]
+                        else "background task finished — Claude Code is following up",
+                        force=True,
+                    )
             elif obj.get("type") == "result" and not obj.get("parent_tool_use_id"):
                 st["results"].append(obj)
-                # EOF lets the CLI exit once queued steers are answered.
-                _close_input()
+                if st["bg"] and st["open"] and bg_wait > 0:
+                    # Stay steerable; the task's notification continues this reply.
+                    if not st["waiting"]:
+                        st["waiting"] = True
+                        st["wait_timer"] = loop.call_later(bg_wait, _give_up_waiting)
+                    stream.activity.emit(f"waiting on background task: {_task_label(st['bg'])}", force=True)
+                else:
+                    # EOF lets the CLI exit once queued steers are answered.
+                    _close_input()
 
         stop_hb = asyncio.Event()
         hb = asyncio.create_task(stream.activity.heartbeat_loop(stop_hb))
@@ -540,6 +603,8 @@ class ClaudeCliTool:
                 undelivered.append(text)
         if undelivered:
             display = f"{display}\n\n{_undelivered_notice(undelivered)}".strip()
+        if st["abandoned"]:
+            display = f"{display}\n\n{_abandoned_notice(st['abandoned'], bg_wait)}".strip()
         steer_info: Dict[str, Any] = (
             {"steered": len(st["sent"]) - len(undelivered), "undelivered_steers": undelivered}
             if steerable else {}
