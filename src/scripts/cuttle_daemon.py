@@ -97,7 +97,7 @@ if _env_file.exists():
         load_dotenv(_env_file)
     except ImportError:
         # Fallback: parse .env manually
-        with open(_env_file) as _f:
+        with open(_env_file, encoding="utf-8") as _f:
             for _line in _f:
                 _line = _line.strip()
                 if _line and not _line.startswith('#') and '=' in _line:

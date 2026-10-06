@@ -117,7 +117,7 @@ for _env_path in _env_candidates:
             load_dotenv(_env_path, override=False)
         except ImportError:
             # Manual parse fallback if python-dotenv not installed
-            with open(_env_path) as _f:
+            with open(_env_path, encoding="utf-8") as _f:
                 for _line in _f:
                     _line = _line.strip()
                     if _line and not _line.startswith('#') and '=' in _line:

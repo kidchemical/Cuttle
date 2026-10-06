@@ -1,4 +1,4 @@
-# Detached Host Electron restart (UI only — Flask/daemon keep running).
+﻿# Detached Host Electron restart (UI only — Flask/daemon keep running).
 # Use after electron/package.json bumps so the Host banner + CUTTLE_PACKAGE_VERSION
 # match the mesh. Client machines use workers.self-update instead.
 param(

@@ -1,4 +1,4 @@
-# Run as Administrator. Allows Cuttle from phones on home LAN only (LocalSubnet).
+﻿# Run as Administrator. Allows Cuttle from phones on home LAN only (LocalSubnet).
 $ErrorActionPreference = 'Stop'
 Write-Host ''
 Write-Host '=== Cuttle LAN Firewall Setup ===' -ForegroundColor Cyan

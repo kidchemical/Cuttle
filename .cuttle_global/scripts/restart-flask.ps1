@@ -1,4 +1,4 @@
-# Schedule a Flask-only restart via the durable API (daemon-owned).
+﻿# Schedule a Flask-only restart via the durable API (daemon-owned).
 # Do NOT taskkill web_chat_api from this process — that destroys the chat
 # that requested the restart. Flask persists an ack, then the daemon replaces it.
 $ErrorActionPreference = 'Stop'

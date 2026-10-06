@@ -1,4 +1,4 @@
-# Soft-delete idle Cuttle chat sessions (cuttle_auth.db).
+﻿# Soft-delete idle Cuttle chat sessions (cuttle_auth.db).
 # Params (optional): hours, dry_run, include_starred  → CUTTLE_PARAM_*
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
