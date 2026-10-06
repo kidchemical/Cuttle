@@ -38,7 +38,10 @@ Windows PowerShell, from the repository root:
 live in `src/.env`; the daemon loads this before spawning child processes.
 File-shaped secrets (TLS cert/key, GitHub App `.pem`, token files) live only in
 `.cuttle/personal/secrets/` via `core.runtime_paths.secrets_dir()` — never
-`src/data/`, `_personal/`, or a new ad-hoc folder.
+`src/data/`, `_personal/`, or a new ad-hoc folder. Exception: an existing
+`src/data/db/action_hmac_secret` remains authoritative until the guarded offline
+migration, so previously signed action cards stay valid; new installations use
+`secrets_dir()` for it.
 Vendor CLI authentication is separate (see the agent catalog manifests).
 
 ## Development dependencies and tests

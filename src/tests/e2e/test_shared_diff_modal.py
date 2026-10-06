@@ -52,6 +52,8 @@ def browser():
         try:
             instance = runtime.chromium.launch(headless=True, executable_path=executable)
         except pw.Error as exc:
+            if os.environ.get("CUTTLE_REQUIRE_BROWSER") == "1":
+                pytest.fail(f"Required Chromium unavailable: {exc}")
             pytest.skip(f"Chromium unavailable: {exc}")
         yield instance
         instance.close()

@@ -1,0 +1,77 @@
+name: Quality
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  python:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: .venv/bin/python
+          - os: windows-latest
+            python: .venv/Scripts/python.exe
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python -m venv .venv
+      - run: ${{ matrix.python }} -m pip install -r src/requirements/requirements.txt -r src/requirements/requirements-dev.txt
+      - run: git submodule status
+      - name: Unit and ownership suites (Node available)
+        run: ${{ matrix.python }} -m pytest src/tests/ --basetemp=temp/ci/pytest
+  browser:
+    runs-on: ubuntu-latest
+    env:
+      CUTTLE_REQUIRE_BROWSER: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python -m venv .venv
+      - run: .venv/bin/python -m pip install -r src/requirements/requirements.txt -r src/requirements/requirements-dev.txt
+      - run: .venv/bin/python -m playwright install --with-deps chromium
+      - name: Isolated Chromium chat rendering
+        run: .venv/bin/python -m pytest src/tests/e2e/test_chat_action_card_render.py src/tests/e2e/test_chat_action_cards_controller.py --basetemp=temp/ci/browser
+  android:
+    runs-on: ubuntu-latest
+    env:
+      CUTTLE_MOBILE_AUTO_REBUILD: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+      - run: python -m venv .venv
+      - run: .venv/bin/python -m pip install -r src/requirements/requirements.txt
+      - run: npm ci
+        working-directory: apps/mobile
+      - run: npm run sync:android
+        working-directory: apps/mobile
+      - run: ./gradlew assembleDebug --no-daemon
+        working-directory: apps/mobile/android

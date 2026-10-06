@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import re
 import uuid
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 _WIDGET_OPEN_RE = re.compile(
@@ -22,10 +21,6 @@ _ATTR_RE = re.compile(
 )
 
 SUPPORTED_TYPES = frozenset({"tasks"})
-
-
-def _utcnow() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _parse_attrs(attr_blob: str) -> Dict[str, str]:

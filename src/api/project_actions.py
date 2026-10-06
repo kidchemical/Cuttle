@@ -880,13 +880,6 @@ def execute_inline_action(
     }
 
 
-def _load_discord_bot_token() -> Optional[str]:
-    """Re-export for tests that patch this name."""
-    from api.discord_ops.token import load_discord_bot_token
-
-    return load_discord_bot_token()
-
-
 def _execute_discord_post(action: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
     from api.discord_ops.post import execute_discord_post
 

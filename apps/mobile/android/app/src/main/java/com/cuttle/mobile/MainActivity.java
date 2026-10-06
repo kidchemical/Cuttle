@@ -79,9 +79,8 @@ public class MainActivity extends BridgeActivity {
             return;
         }
         String url = wv.getUrl() != null ? wv.getUrl() : "";
-        if (url.contains("app_shell.html") && !isWebViewErrorUrl(url)) {
-            return;
-        }
+        // The target URL is known before the document finishes loading.
+        // Only onPageFinished marks the shell ready; a stalled shell times out.
         if (url.startsWith("https://localhost") || url.startsWith("http://localhost") || url.startsWith("data:")) {
             return;
         }

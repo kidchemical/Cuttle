@@ -23,7 +23,7 @@ Pick an agent per chat or let the router choose, and fan jobs out across every m
 
 Cuttle is a control plane for the coding agents you already use. It runs as a daemon on your PC (tray icon or headless), hosts vendor agent CLIs such as Cursor, Codex, Claude Code, Muse Code, and Hermes, and gives them one chat UI with shared history, projects, and tools. The same chats open in the browser, in the Electron desktop app, and on an Android phone. Discord is optional **agent operations** (read a channel, confirmed posts) — not a default chat gateway.
 
-Each chat can stick to one agent, or leave the choice to the **agent router**, which picks a harness for cost and quality and escalates when a run fails. Agents report progress, keep a pinned task list, and ask questions as clickable cards instead of walls of text. When a job is too big for one machine, **Cuttle Workers** splits it across the other PCs on your network.
+Each chat can stick to one agent, or leave the choice to the **agent router**, which picks a harness for cost and quality and tries another target when an agent cannot start (for example, missing CLI, authentication, or quota). A task that ran and failed is terminal; retry it explicitly. Agents report progress, keep a pinned task list, and ask questions as clickable cards instead of walls of text. When a job is too big for one machine, **Cuttle Workers** splits it across the other PCs on your network.
 
 ## Make it yours
 
@@ -248,6 +248,16 @@ The frontend behavior tests shell out to Node to exercise the shipped JS
 directly. Any recent Node on `PATH` is enough — without it those tests skip
 (still green) instead of failing, so install Node when you want full coverage
 of the chat UI helpers.
+
+The [Quality workflow](.github/workflows/quality.yml) runs fresh-checkout Python
+suites on Windows and Linux with Node installed, isolated Chromium chat tests,
+and an Android debug build with Node 22/JDK 21. Browser and Android checks are
+separate jobs; the default pytest command still excludes browser e2e tests.
+
+Local inference is serialized. Queued requests observe Stop and superseded
+turns, and wait at most `LOCAL_LLM_QUEUE_TIMEOUT_SEC` (default 120 seconds).
+An in-flight completion finishes or reaches its provider timeout; cancellation
+prevents subsequent model retries and tool calls.
 
 ### Regenerating README media
 

@@ -230,3 +230,11 @@ def test_shell_ignores_outgoing_iframe_url_sync():
     assert "live.contentWindow !== e.source" in src
     assert "openChatFromNotification" in src
     assert "CH-\\d+" in src or r"CH-\d+" in src
+
+
+def test_watchdog_requires_document_ready_not_merely_target_url():
+    src = MAIN.read_text(encoding='utf-8')
+    watchdog = src.split('private final Runnable connectionWatchdog = () -> {', 1)[1].split('@Override', 1)[0]
+    assert 'if (cuttleDocumentReady)' in watchdog
+    assert 'url.contains("app_shell.html")' not in watchdog
+    assert 'showServerOffline(readBaseUrl())' in watchdog

@@ -21,8 +21,8 @@ env_profile: native
 activity: jsonl
 hint: Run Google Antigravity CLI (`agy`) headlessly with per-chat resume
 install_hint: >-
-  Cuttle can install the official Antigravity CLI automatically. Authentication
-  still requires a Google sign-in via `agy` or a configured GEMINI_API_KEY provider.
+  Install the official Antigravity CLI yourself and put `agy` on PATH. Cuttle
+  discovers installed CLIs; it does not install them. Authentication requires a Google sign-in via `agy` or a configured GEMINI_API_KEY provider.
 missing_cli_hint: >-
   Install from https://antigravity.google/docs/cli/install/ and ensure `agy` is available.
 executable_names:
