@@ -9,6 +9,8 @@ must hold through the new owners and the compatibility aliases.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 import api.web_chat_api as wca
@@ -88,4 +90,4 @@ def test_default_cwd_owner_explicit_inputs():
     from managers.project_manager import project_manager as pm
 
     assert default_chat_cwd(pm, REPO_ROOT) == wca._default_chat_cwd()
-    assert default_chat_cwd(None, "/tmp") == "/tmp"
+    assert Path(default_chat_cwd(None, "/tmp")) == Path("/tmp")

@@ -42,7 +42,7 @@ def test_attention_kind_priority_order():
         "process.stdout.write(JSON.stringify(out));\n" % json.dumps(str(ACTIVITY_JS))
     )
     proc = subprocess.run(
-        ["node", "-e", driver], capture_output=True, text=True, timeout=30,
+        ["node", "-e", driver], capture_output=True, text=True, encoding="utf-8", timeout=30,
     )
     assert proc.returncode == 0, proc.stderr
     res = json.loads(proc.stdout)

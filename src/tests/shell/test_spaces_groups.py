@@ -61,7 +61,7 @@ def _run():
     import os
     proc = subprocess.run(
         ["node", "-e", HARNESS],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, encoding="utf-8", timeout=30,
         env={"PATH": os.environ["PATH"], "GROUPS_JS": str(GROUPS_JS)},
     )
     assert proc.returncode == 0, proc.stderr
@@ -105,5 +105,5 @@ def test_collapse_never_hides_active():
 @node_only
 def test_groups_module_parses():
     import subprocess as sp
-    proc = sp.run(["node", "--check", str(GROUPS_JS)], capture_output=True, text=True)
+    proc = sp.run(["node", "--check", str(GROUPS_JS)], capture_output=True, text=True, encoding="utf-8")
     assert proc.returncode == 0, proc.stderr

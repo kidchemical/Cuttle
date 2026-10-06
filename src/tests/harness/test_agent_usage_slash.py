@@ -358,7 +358,7 @@ def test_claude_plan_limits_show_resets_and_credits(tmp_path, monkeypatch):
 
     creds = tmp_path / ".credentials.json"
     creds.write_text(json.dumps({"claudeAiOauth": {
-        "accessToken": "tok", "expiresAt": 9_999_999_999_999, "subscriptionType": "pro"}}))
+        "accessToken": "tok", "expiresAt": 9_999_999_999_999, "subscriptionType": "pro"}}), encoding="utf-8")
     monkeypatch.setattr(au, "_claude_credentials_path", lambda: creds)
 
     class _Resp:
@@ -395,7 +395,7 @@ def test_claude_plan_limits_expired_token_is_reported(tmp_path, monkeypatch):
     from api import agent_usage as au
 
     creds = tmp_path / ".credentials.json"
-    creds.write_text(json.dumps({"claudeAiOauth": {"accessToken": "tok", "expiresAt": 1}}))
+    creds.write_text(json.dumps({"claudeAiOauth": {"accessToken": "tok", "expiresAt": 1}}), encoding="utf-8")
     monkeypatch.setattr(au, "_claude_credentials_path", lambda: creds)
     monkeypatch.setattr(au.urllib.request, "urlopen", lambda *a, **k: pytest.fail("no network"))
     plan = au.fetch_claude_plan_limits()

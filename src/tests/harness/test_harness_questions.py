@@ -143,7 +143,7 @@ def fake_bin(tmp_path, vendor, payload=PAYLOAD, item=False):
     source = FAKE_SERVER.replace("vendor = VENDOR", f"vendor = {vendor!r}")
     source = source.replace("question = PAYLOAD", f"question = {payload!r}").replace("if ITEM:", f"if {item!r}:")
     source = source.replace("REPLY_FILE", repr(str(tmp_path / (vendor + "-reply.json"))))
-    path.write_text(f"#!{sys.executable}\n" + source)
+    path.write_text(f"#!{sys.executable}\n" + source, encoding="utf-8")
     path.chmod(path.stat().st_mode | stat.S_IEXEC)
     return str(path)
 
@@ -165,7 +165,7 @@ def test_server_question_returns_card_and_next_turn_resumes(tmp_path, monkeypatc
     assert not result.get("fallback") and not result.get("cancelled")
     assert spec_from(result["output"])["title"] == "Which scope?"
     if not item:
-        reply = json.loads((tmp_path / (vendor + "-reply.json")).read_text())
+        reply = json.loads((tmp_path / (vendor + "-reply.json")).read_text(encoding="utf-8"))
         assert "result" not in reply and "error" in reply
     saved = result[f"{vendor}_session_id"]
     assert saved == "saved-session"
@@ -219,7 +219,7 @@ def test_exec_question_stops_owned_process_without_timeout(tmp_path, monkeypatch
         monkeypatch.setattr("api.agent_harness.agent_defaults.get_starred_effort", lambda _a: None)
         execute = mod.Adapter().execute
     path = tmp_path / vendor
-    path.write_text(f"#!{sys.executable}\nimport json, time\nfor event in {events!r}:\n print(json.dumps(event), flush=True)\ntime.sleep(60)\n")
+    path.write_text(f"#!{sys.executable}\nimport json, time\nfor event in {events!r}:\n print(json.dumps(event), flush=True)\ntime.sleep(60)\n", encoding="utf-8")
     path.chmod(path.stat().st_mode | stat.S_IEXEC)
     kwargs = dict(cwd=str(tmp_path), timeout=5)
     if vendor == "opencode":
@@ -285,7 +285,7 @@ def test_claude_disables_native_picker_and_recovers_denied_question(tmp_path, mo
                     "assert sys.argv[sys.argv.index('--disallowedTools')+1] == 'AskUserQuestion'\n"
                     "assert sys.argv[sys.argv.index('--disallowedTools')+2] == '--permission-mode'\n"
                     "assert sys.argv[-1] == 'go'\n"
-                    f"print(json.dumps({result!r}), flush=True)\n")
+                    f"print(json.dumps({result!r}), flush=True)\n", encoding="utf-8")
     path.chmod(path.stat().st_mode | stat.S_IEXEC)
     monkeypatch.setattr(mod, "claude_executable", lambda: str(path))
     output = asyncio.run(mod.ClaudeCliTool().execute_prompt("go", cwd=str(tmp_path), timeout=5))

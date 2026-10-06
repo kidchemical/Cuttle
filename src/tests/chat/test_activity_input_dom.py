@@ -8,7 +8,7 @@ WEB = Path(__file__).resolve().parents[2] / 'web'
 
 
 def _function(name):
-    source = (WEB / 'js/chat/chat_page.js').read_text()
+    source = (WEB / 'js/chat/chat_page.js').read_text(encoding="utf-8")
     start = source.index('    function ' + name + '(')
     end = source.index('\n    function ', start + 1)
     return source[start:end]

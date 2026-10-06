@@ -8,11 +8,11 @@ from api.cuttle_brain.key_store import KeyStore
 def test_legacy_import_once_and_one_key_updates(tmp_path, monkeypatch):
     legacy = tmp_path / 'state.json'
     original = json.dumps({str(i): {'value': i} for i in range(1000)})
-    legacy.write_text(original)
+    legacy.write_text(original, encoding="utf-8")
     store = KeyStore(legacy)
     assert store.get('99') == {'value': 99}
     store.put('99', {'value': 'updated'})
-    assert legacy.read_text() == original
+    assert legacy.read_text(encoding="utf-8") == original
     # Neither restart nor a normal turn reads the installation-wide JSON again.
     from pathlib import Path
     monkeypatch.setattr(Path, 'read_text', lambda *a, **k: (_ for _ in ()).throw(AssertionError('legacy reread')))
@@ -44,11 +44,11 @@ def test_concurrent_updates_preserve_other_agent_cursors(tmp_path):
 def test_malformed_legacy_import_is_retryable_and_preserves_file(tmp_path):
     import pytest
     legacy = tmp_path / 'state.json'
-    legacy.write_text('{broken')
+    legacy.write_text('{broken', encoding="utf-8")
     with pytest.raises(json.JSONDecodeError):
         KeyStore(legacy).get('chat')
-    assert legacy.read_text() == '{broken'
-    legacy.write_text(json.dumps({'chat': {'seen': {'agent': 12}}}))
+    assert legacy.read_text(encoding="utf-8") == '{broken'
+    legacy.write_text(json.dumps({'chat': {'seen': {'agent': 12}}}), encoding="utf-8")
     assert KeyStore(legacy).get('chat') == {'seen': {'agent': 12}}
 
 

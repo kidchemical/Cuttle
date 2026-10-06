@@ -132,7 +132,7 @@ process.stdout.write(JSON.stringify(cases.map((c) => global.window.parseYouTubeV
     proc = subprocess.run(
         ["node", "-e", harness],
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
         timeout=30,
         env={
             "PATH": os.environ["PATH"],

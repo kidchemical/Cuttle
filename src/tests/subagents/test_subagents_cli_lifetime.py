@@ -151,7 +151,7 @@ def parent(tmp_path: Path):
             cwd=SRC,
             env=env,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8",
             timeout=120,
         )
 
@@ -293,7 +293,7 @@ def test_spawn_wait_serial_runs_in_child_order(parent, tmp_path: Path):
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert json.loads(proc.stdout)["status"] == "done"
-    order = [json.loads(line)["title"] for line in log.read_text().splitlines()]
+    order = [json.loads(line)["title"] for line in log.read_text(encoding="utf-8").splitlines()]
     assert order == ["1", "2", "3"], "serial children must run in --child order"
 
 
@@ -427,7 +427,7 @@ def test_cancel_running_batch_from_second_process(parent):
         [sys.executable, "-m", "api.subagents", "spawn",
          "--parent", f"CH-{pid:06d}", "--wait", "--timeout", "60",
          "--json", "--db", str(db_path), "--child", child_spec],
-        cwd=SRC, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        cwd=SRC, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
     )
     try:
         assert _poll(

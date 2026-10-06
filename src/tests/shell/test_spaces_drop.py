@@ -60,7 +60,7 @@ process.stdout.write(JSON.stringify(cases));
 def _run():
     proc = subprocess.run(
         ["node", "-e", HARNESS],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, encoding="utf-8", timeout=30,
         env={"PATH": __import__("os").environ["PATH"], "DROP_JS": str(DROP_JS)},
     )
     assert proc.returncode == 0, proc.stderr
@@ -154,7 +154,7 @@ process.stdout.write(JSON.stringify({ out, spaces: state.spaces }));
 """
     proc = subprocess.run(
         ["node", "-e", harness],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, encoding="utf-8", timeout=30,
         env={"PATH": __import__("os").environ["PATH"], "DROP_JS": str(DROP_JS)},
     )
     assert proc.returncode == 0, proc.stderr

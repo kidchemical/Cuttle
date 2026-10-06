@@ -90,7 +90,7 @@ console.log('ok');
     r = subprocess.run(
         ["node", "-e", script],
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
         check=False,
     )
     assert r.returncode == 0, r.stderr or r.stdout

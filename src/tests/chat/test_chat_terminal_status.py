@@ -84,6 +84,6 @@ assert.strictEqual(remote, true);
 """
     result = subprocess.run(
         ["node", "-e", script, str(WEB / "chat/chat_page.js"),
-         str(WEB / "chat/chat_activity.js")], capture_output=True, text=True, timeout=10,
+         str(WEB / "chat/chat_activity.js")], capture_output=True, text=True, encoding="utf-8", timeout=10,
     )
     assert result.returncode == 0, result.stderr

@@ -79,7 +79,7 @@ def test_pure_slice_helpers():
     proc = subprocess.run(
         ["node", "-e", HARNESS],
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
         env={"JS_DIR": str(JS_DIR), "PATH": os.environ["PATH"]},
         timeout=60,
     )
@@ -130,11 +130,11 @@ def test_settings_page_only_manages_flags():
 
 
 def test_trophy_case_is_a_discoverable_app():
-    html = (REPO / "src/web/achievements_page.html").read_text()
+    html = (REPO / "src/web/achievements_page.html").read_text(encoding="utf-8")
     assert 'id="achievementsGrid"' in html
     assert '__CUTTLE_ACHIEVEMENTS_MANUAL = true' in html
     assert 'achievements_page.js' in html
-    shell = SHELL_HTML.read_text()
+    shell = SHELL_HTML.read_text(encoding="utf-8")
     assert 'data-page="/achievements_page.html"' in shell
     assert 'data-id="nav-achievements"' in shell
 

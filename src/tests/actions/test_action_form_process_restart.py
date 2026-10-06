@@ -107,18 +107,23 @@ def _start_child_flask(env: dict, port: int) -> subprocess.Popen:
     )
 
 
-def _wait_http(port: int, timeout: float = 8.0) -> None:
+def _wait_http(port: int, timeout: float = 45.0, proc=None) -> None:
     url = f"http://127.0.0.1:{port}/api/health"
     deadline = time.time() + timeout
     last = None
     while time.time() < deadline:
+        if proc is not None and proc.poll() is not None:
+            break  # the child died; report its stderr instead of waiting out
         try:
             urllib.request.urlopen(url, timeout=0.4)
             return
         except Exception as exc:
             last = exc
             time.sleep(0.1)
-    raise AssertionError(f"isolated Flask did not listen on {port}: {last}")
+    detail = ""
+    if proc is not None and proc.poll() is not None and proc.stderr is not None:
+        detail = "\n" + proc.stderr.read().decode("utf-8", "replace")[-3000:]
+    raise AssertionError(f"isolated Flask did not listen on {port}: {last}{detail}")
 
 
 def _post_json(port: int, path: str, cookie: str, payload: dict):
@@ -167,7 +172,7 @@ def test_action_form_survives_fresh_flask_process(restart_env):
     port = _free_port()
     proc = _start_child_flask(env, port)
     try:
-        _wait_http(port)
+        _wait_http(port, proc=proc)
         status, data = _post_json(
             port,
             "/api/action-form/run",
@@ -248,7 +253,7 @@ print(json.dumps({"cancel": cancel}))
         cwd=str(REPO),
         env=child_env,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
         timeout=20,
     )
     assert proc.returncode == 0, proc.stderr

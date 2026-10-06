@@ -22,7 +22,7 @@ def store(root):
 def seed(root, value):
     path = root / "src/settings.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value))
+    path.write_text(json.dumps(value), encoding="utf-8")
     return path
 
 
@@ -100,14 +100,14 @@ def test_conflict_preserves_all_legacy_paths(tmp_path):
     before = server.read_bytes()
     machine = store(tmp_path).machine
     machine.parent.mkdir(parents=True)
-    machine.write_text('{"custom":1}')
+    machine.write_text('{"custom":1}', encoding="utf-8")
     old = tmp_path / "src/data/workspace/harness_last_agent_map.json"
     old.parent.mkdir(parents=True, exist_ok=True)
-    old.write_text("{}")
+    old.write_text("{}", encoding="utf-8")
     with pytest.raises(FileExistsError):
         migrate(tmp_path)
     assert server.read_bytes() == before and old.exists()
-    assert machine.read_text() == '{"custom":1}'
+    assert machine.read_text(encoding="utf-8") == '{"custom":1}'
 
 
 def test_interrupted_split_rolls_back_new_files(tmp_path, monkeypatch):
@@ -132,14 +132,14 @@ def test_interrupted_split_rolls_back_new_files(tmp_path, monkeypatch):
 def test_corrupt_file_cannot_be_overwritten(tmp_path):
     path = tmp_path / "settings.json"
     manager = SettingsManager(str(path))
-    path.write_text("{broken")
+    path.write_text("{broken", encoding="utf-8")
     assert manager.set_setting("starred_project", None) is False
-    assert path.read_text() == "{broken"
+    assert path.read_text(encoding="utf-8") == "{broken"
 
 
 def test_stale_managers_preserve_other_updates_and_unknown_keys(tmp_path):
     path = tmp_path / "settings.json"
-    path.write_text('{"extension":42}')
+    path.write_text('{"extension":42}', encoding="utf-8")
     first, second = SettingsManager(str(path)), SettingsManager(str(path))
     assert first.set_setting("starred_slash_commands", ["/cursor "])
     assert second.set_setting("starred_project", {"id": 2})
@@ -185,7 +185,7 @@ def test_action_secret_moves_without_rotation(tmp_path):
 def test_unsupported_schema_cannot_be_overwritten(tmp_path, version):
     path = tmp_path / "settings.json"
     manager = SettingsManager(str(path))
-    path.write_text(json.dumps({"schema_version": version}))
+    path.write_text(json.dumps({"schema_version": version}), encoding="utf-8")
     before = path.read_bytes()
     assert not manager.set_setting("new", 1)
     assert path.read_bytes() == before
@@ -195,7 +195,7 @@ def test_scoped_files_preserve_unknown_keys_without_overriding_server(tmp_path):
     seed(tmp_path, {"schema_version": 1, "agent_router": {"owner": "server"}})
     storage = store(tmp_path)
     storage.machine.parent.mkdir(parents=True)
-    storage.machine.write_text('{"extension":7,"agent_router":{"owner":"machine"}}')
+    storage.machine.write_text('{"extension":7,"agent_router":{"owner":"machine"}}', encoding="utf-8")
     storage.update("device_workers", lambda _: {"enabled": False})
     assert read_json(storage.machine)["extension"] == 7
     assert storage.read()["agent_router"] == {"owner": "server"}

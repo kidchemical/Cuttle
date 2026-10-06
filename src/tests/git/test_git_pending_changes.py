@@ -180,7 +180,7 @@ def test_collect_pending_changes_temp_repo(tmp_path: Path):
             ["git", *args],
             cwd=str(repo),
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8",
             check=False,
         )
         assert r.returncode == 0, r.stderr
@@ -223,7 +223,7 @@ def test_suggest_context_keeps_selected_file_past_truncation(tmp_path: Path):
             ["git", *args],
             cwd=str(repo),
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8",
             check=False,
         )
         assert r.returncode == 0, r.stderr
@@ -257,7 +257,7 @@ def test_resolve_git_workdir_nested_source(tmp_path: Path):
             ["git", *args],
             cwd=str(source),
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8",
             check=False,
         )
         assert r.returncode == 0, r.stderr
@@ -283,7 +283,7 @@ def _init_repo(path: Path) -> None:
             ["git", *args],
             cwd=str(path),
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8",
             check=False,
         )
         assert r.returncode == 0, r.stderr
@@ -360,7 +360,7 @@ def test_commit_pending_changes(tmp_path: Path):
             ["git", *args],
             cwd=str(repo),
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8",
             check=False,
         )
         assert r.returncode == 0, r.stderr
@@ -402,7 +402,7 @@ def test_commit_pending_changes_without_git_config(tmp_path: Path, monkeypatch: 
             ["git", *args],
             cwd=str(repo),
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8",
             check=False,
         )
         assert r.returncode == 0, r.stderr
@@ -420,7 +420,7 @@ def test_commit_pending_changes_without_git_config(tmp_path: Path, monkeypatch: 
         ["git", "log", "-1", "--format=%an <%ae>"],
         cwd=str(repo),
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
         check=True,
     )
     assert "Cuttle" in who.stdout
@@ -447,7 +447,7 @@ def test_commit_clears_stale_index_lock(tmp_path: Path):
             ["git", *args],
             cwd=str(repo),
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8",
             check=False,
         )
         assert r.returncode == 0, r.stderr
@@ -488,7 +488,7 @@ def test_fresh_index_lock_is_left_alone(tmp_path: Path):
         ["git", "init"],
         cwd=str(repo),
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
         check=False,
     )
     assert r.returncode == 0, r.stderr
@@ -510,7 +510,7 @@ def test_commit_pending_blocks_secrets(tmp_path: Path):
             ["git", *args],
             cwd=str(repo),
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8",
             check=False,
         )
         assert r.returncode == 0, r.stderr
@@ -551,7 +551,7 @@ def test_commit_pending_allows_env_example_template(tmp_path: Path):
             ["git", *args],
             cwd=str(repo),
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8",
             check=False,
         )
         assert r.returncode == 0, r.stderr
@@ -581,7 +581,7 @@ def test_commit_pending_selected_paths_only(tmp_path: Path):
             ["git", *args],
             cwd=str(repo),
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8",
             check=False,
         )
         assert r.returncode == 0, r.stderr
@@ -621,7 +621,7 @@ def test_commit_ignored_tracked_deletions(tmp_path: Path):
             ["git", *args],
             cwd=str(repo),
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8",
             check=False,
         )
         assert r.returncode == 0, r.stderr
@@ -660,7 +660,7 @@ def test_commit_include_unlisted_rest(tmp_path: Path):
             ["git", *args],
             cwd=str(repo),
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8",
             check=False,
         )
         assert r.returncode == 0, r.stderr
@@ -706,7 +706,7 @@ def test_ignore_pending_path(tmp_path: Path):
             ["git", *args],
             cwd=str(repo),
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8",
             check=False,
         )
         assert r.returncode == 0, r.stderr
@@ -763,7 +763,7 @@ def test_collect_file_pending_diff_modified_and_untracked(tmp_path: Path):
             ["git", *args],
             cwd=str(repo),
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8",
             check=False,
         )
         assert r.returncode == 0, r.stderr
@@ -809,7 +809,7 @@ def test_collect_file_pending_diff_sides_truncate_independently(tmp_path: Path):
             ["git", *args],
             cwd=str(repo),
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8",
             check=False,
         )
         assert r.returncode == 0, r.stderr
@@ -865,7 +865,7 @@ def test_git_push_target_and_auth_helper(tmp_path: Path, monkeypatch: pytest.Mon
             ["git", *args],
             cwd=str(repo),
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8",
             check=False,
         )
         assert r.returncode == 0, r.stderr
@@ -901,21 +901,21 @@ def test_selected_commit_recovers_partially_staged_deletion(tmp_path):
     repo.mkdir()
     def git(*args):
         return subprocess.run(['git', *args], cwd=repo, capture_output=True,
-                              text=True, check=True)
+                              text=True, encoding="utf-8", check=True)
     git('init')
     git('config', 'user.name', 'Test')
     git('config', 'user.email', 'test@example.com')
     (repo / '.cuttle/actions').mkdir(parents=True)
     (repo / '.cuttle/personal').mkdir()
     deleted = repo / '.cuttle/actions/workflow.yaml'
-    deleted.write_text('old')
+    deleted.write_text('old', encoding="utf-8")
     readme = repo / '.cuttle/personal/README.md'
-    readme.write_text('old')
+    readme.write_text('old', encoding="utf-8")
     git('add', '.')
     git('commit', '-m', 'initial')
     deleted.unlink()
-    readme.write_text('new')
-    (repo / '.gitignore').write_text('.cuttle/personal/\n')
+    readme.write_text('new', encoding="utf-8")
+    (repo / '.gitignore').write_text('.cuttle/personal/\n', encoding="utf-8")
     result = commit_pending_changes(str(repo), 'Remove workflow', paths=[
         '.cuttle/actions/workflow.yaml', '.cuttle/personal/README.md'])
     assert result['files_count'] == 2
@@ -929,12 +929,12 @@ def test_commit_preserves_explicit_staged_executable_mode(tmp_path):
     repo = tmp_path / 'repo'
     repo.mkdir()
     def git(*args):
-        return subprocess.run(['git', *args], cwd=repo, capture_output=True, text=True, check=True)
+        return subprocess.run(['git', *args], cwd=repo, capture_output=True, text=True, encoding="utf-8", check=True)
     git('init')
     git('config', 'user.name', 'Test')
     git('config', 'user.email', 'test@example.com')
     git('config', 'core.filemode', 'false')
-    (repo / 'launch.sh').write_text('#!/bin/sh\n')
+    (repo / 'launch.sh').write_text('#!/bin/sh\n', encoding="utf-8")
     git('add', '.')
     git('commit', '-m', 'initial')
     git('update-index', '--chmod=+x', 'launch.sh')

@@ -25,7 +25,7 @@ def _git(*args, cwd, **kw):
     base = ["git", "-c", "user.name=T", "-c", "user.email=t@t",
             "-c", "init.defaultBranch=main", "-c", "commit.gpgsign=false"]
     return subprocess.run(base + list(args), cwd=cwd, capture_output=True,
-                          text=True, timeout=60, **kw)
+                          text=True, encoding="utf-8", timeout=60, **kw)
 
 
 def _init_repo(path: Path, files=("a.txt",), dirty=False):

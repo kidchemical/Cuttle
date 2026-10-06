@@ -9,6 +9,7 @@ thing under test.
 from __future__ import annotations
 
 import os
+import sys
 import subprocess
 from pathlib import Path
 
@@ -26,7 +27,7 @@ def _git(*args, cwd, **kw):
     env["CUTTLE_PREPUSH_NO_GITLEAKS"] = "1"
     env.update(kw.pop("env", {}))
     return subprocess.run(base + list(args), cwd=cwd, capture_output=True,
-                          text=True, timeout=60, env=env, **kw)
+                          text=True, encoding="utf-8", timeout=60, env=env, **kw)
 
 
 def _init_repo(path: Path) -> Path:
@@ -42,8 +43,9 @@ def _run_hook(repo: Path, local_sha: str, remote_sha: str = ZERO_SHA) -> subproc
     stdin = f"refs/heads/main {local_sha} refs/heads/main {remote_sha}\n"
     env = dict(os.environ)
     env["CUTTLE_PREPUSH_NO_GITLEAKS"] = "1"
-    return subprocess.run([str(HOOK)], input=stdin, cwd=repo, capture_output=True,
-                          text=True, timeout=120, env=env)
+    # Via the interpreter: Windows cannot exec a shebang script directly.
+    return subprocess.run([sys.executable, str(HOOK)], input=stdin, cwd=repo, capture_output=True,
+                          text=True, encoding="utf-8", timeout=120, env=env)
 
 
 def _head(repo: Path) -> str:
@@ -110,7 +112,7 @@ def test_report_names_commit_file_line_and_redacts_value(tmp_path):
     repo = _init_repo(tmp_path / 'report')
     base = _head(repo)
     secret = _synthetic_aws_key()
-    (repo / 'config.py').write_text('KEY = "' + secret + '"\n')
+    (repo / 'config.py').write_text('KEY = "' + secret + '"\n', encoding="utf-8")
     _git('add', '.', cwd=repo)
     _git('commit', '-m', 'introduce credential', cwd=repo)
     sha = _head(repo)
@@ -120,7 +122,7 @@ def test_report_names_commit_file_line_and_redacts_value(tmp_path):
     assert (hit['hook'], hit['file'], hit['commit'], hit['line']) == ('secret-patterns', 'config.py', sha, 1)
     assert secret not in result.stdout + result.stderr
     # A later cleanup does not make the introduced secret safe to publish.
-    (repo / 'config.py').write_text('KEY = None\n')
+    (repo / 'config.py').write_text('KEY = None\n', encoding="utf-8")
     _git('add', '.', cwd=repo)
     _git('commit', '-m', 'remove credential', cwd=repo)
     assert _run_hook(repo, _head(repo), base).returncode == 1
@@ -132,9 +134,13 @@ def test_sqlite_committed_cells_checked_without_exposing_values(tmp_path, secret
     repo = _init_repo(tmp_path / 'sqlite')
     base = _head(repo)
     path = repo / 'fixture.db'
-    with sqlite3.connect(path) as db:
-        db.execute('CREATE TABLE config (value TEXT)')
-        db.execute('INSERT INTO config VALUES (?)', (_synthetic_aws_key() if secret else 'ordinary data',))
+    db = sqlite3.connect(path)
+    try:
+        with db:
+            db.execute('CREATE TABLE config (value TEXT)')
+            db.execute('INSERT INTO config VALUES (?)', (_synthetic_aws_key() if secret else 'ordinary data',))
+    finally:
+        db.close()  # Windows cannot unlink an open database
     _git('add', '.', cwd=repo)
     _git('commit', '-m', 'database', cwd=repo)
     # The committed blob is authoritative, regardless of subsequent local edits.

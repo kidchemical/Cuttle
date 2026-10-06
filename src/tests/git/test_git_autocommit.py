@@ -8,7 +8,7 @@ import pytest
 
 
 def _git(root, *args):
-    return subprocess.run(["git", *args], cwd=root, check=True, capture_output=True, text=True).stdout
+    return subprocess.run(["git", *args], cwd=root, check=True, capture_output=True, text=True, encoding="utf-8").stdout
 
 
 @pytest.fixture
@@ -27,8 +27,8 @@ def repo(tmp_path, monkeypatch):
     _git(root, "init", "-q", "-b", "main")
     _git(root, "config", "user.email", "t@example.com")
     _git(root, "config", "user.name", "T")
-    (root / "agent.py").write_text("a = 1\n")
-    (root / "mine.py").write_text("m = 1\n")
+    (root / "agent.py").write_text("a = 1\n", encoding="utf-8")
+    (root / "mine.py").write_text("m = 1\n", encoding="utf-8")
     _git(root, "add", "-A")
     _git(root, "commit", "-qm", "init")
     monkeypatch.setattr(
@@ -55,8 +55,8 @@ def test_default_off(settings):
 def test_commits_only_files_the_turn_changed(settings, repo):
     from api.git_autocommit import commit_turn
 
-    (repo / "agent.py").write_text("a = 2\n")
-    (repo / "mine.py").write_text("m = 2  # user's own uncommitted edit\n")
+    (repo / "agent.py").write_text("a = 2\n", encoding="utf-8")
+    (repo / "mine.py").write_text("m = 2  # user's own uncommitted edit\n", encoding="utf-8")
     _journal(repo, "agent.py", "q1")
     out = commit_turn(cwd=str(repo), query_id="q1", chat_session_id="5", prompt="bump a")
     assert out["committed"] and out["paths"] == ["agent.py"]
@@ -69,7 +69,7 @@ def test_commits_only_files_the_turn_changed(settings, repo):
 def test_turn_without_edits_commits_nothing(settings, repo):
     from api.git_autocommit import commit_turn
 
-    (repo / "mine.py").write_text("m = 3\n")
+    (repo / "mine.py").write_text("m = 3\n", encoding="utf-8")
     out = commit_turn(cwd=str(repo), query_id="q-none")
     assert out["committed"] is False
     assert _git(repo, "rev-list", "--count", "HEAD").strip() == "1"
@@ -80,7 +80,7 @@ def test_already_committed_is_quiet(settings, repo, monkeypatch):
 
     toasts = []
     monkeypatch.setattr("api.chat_vfx.toast", lambda *a, **k: toasts.append(a))
-    (repo / "agent.py").write_text("a = 4\n")
+    (repo / "agent.py").write_text("a = 4\n", encoding="utf-8")
     _journal(repo, "agent.py", "q2")
     _git(repo, "commit", "-qam", "user beat us to it")
     out = commit_turn(cwd=str(repo), query_id="q2", chat_session_id="5")

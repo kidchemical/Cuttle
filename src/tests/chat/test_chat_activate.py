@@ -163,7 +163,7 @@ def _run():
     import os
     proc = subprocess.run(
         ["node", "-e", HARNESS],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, encoding="utf-8", timeout=30,
         env={"PATH": os.environ["PATH"], "MOD_JS": str(MOD_JS),
              "MOD_MESSAGES_JS": str(CHAT_MESSAGES_JS)},
     )
@@ -251,7 +251,7 @@ def test_terminal_activation_wiring_and_idempotence():
 @node_only
 def test_chat_activate_module_parses():
     import subprocess as sp
-    proc = sp.run(["node", "--check", str(MOD_JS)], capture_output=True, text=True)
+    proc = sp.run(["node", "--check", str(MOD_JS)], capture_output=True, text=True, encoding="utf-8")
     assert proc.returncode == 0, proc.stderr
 
 

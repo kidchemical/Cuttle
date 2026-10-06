@@ -172,7 +172,7 @@ def _run_harness():
     env = {"MOD_JS": str(MOD_JS), "PATH": os.environ["PATH"]}
     proc = subprocess.run(
         ["node", "-e", HARNESS],
-        capture_output=True, text=True, timeout=120, env=env,
+        capture_output=True, text=True, encoding="utf-8", timeout=120, env=env,
     )
     assert proc.returncode == 0, proc.stderr[-2000:]
     return json.loads(proc.stdout)
@@ -299,7 +299,7 @@ def test_owner_boundary_no_page_globals():
 def test_card_module_parses():
     proc = subprocess.run(
         ["node", "--check", str(MOD_JS)],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, encoding="utf-8", timeout=60,
     )
     assert proc.returncode == 0, proc.stderr[-1000:]
 
@@ -320,7 +320,7 @@ console.log(JSON.stringify({html, tests, count:(bounded.match(/class="watch-cell
     colour:A.watchGroupColour('tower'), same:A.watchGroupColour('tower')}));
 """
     result = subprocess.run(['node', '-e', code], env={**__import__('os').environ, 'MOD_JS': str(MOD_JS)},
-                            capture_output=True, text=True, check=True)
+                            capture_output=True, text=True, encoding="utf-8", check=True)
     out = json.loads(result.stdout)
     # Legacy render-vocabulary snapshots still render through the generic grid.
     assert 'is-completed' in out['html'] and 'is-running is-marked' in out['html']

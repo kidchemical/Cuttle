@@ -97,7 +97,7 @@ def _run():
     import os
     proc = subprocess.run(
         ["node", "-e", HARNESS],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, encoding="utf-8", timeout=30,
         env={"PATH": os.environ["PATH"], "MOD_FQ": str(MOD_FQ),
              "MOD_ACT": str(MOD_ACT)},
     )
@@ -151,7 +151,7 @@ def test_chat_followup_queue_module_parses():
     import os
     proc = subprocess.run(
         ["node", "--check", str(MOD_FQ)],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, encoding="utf-8", timeout=30,
         env={"PATH": os.environ["PATH"]},
     )
     assert proc.returncode == 0, proc.stderr
@@ -339,7 +339,7 @@ def _run_adapter():
     import os
     proc = subprocess.run(
         ["node", "-e", ADAPTER_HARNESS],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, encoding="utf-8", timeout=60,
         env={"PATH": os.environ["PATH"], "CHAT_PAGE_JS": str(CHAT_PAGE_JS),
              "MOD_ACT_JS": str(MOD_ACT_JS),
              "MOD_FQ": str(MOD_FQ)},

@@ -103,7 +103,7 @@ def _node_eval(driver: str) -> str:
     proc = subprocess.run(
         [node, "--input-type=module", "--eval", script],
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
         timeout=60,
     )
     assert proc.returncode == 0, f"node driver failed:\n{proc.stderr}\n{proc.stdout}"
@@ -395,13 +395,13 @@ fun main() {
     compile_proc = subprocess.run(
         [kotlinc, str(COMPANION_BASE_URL), str(harness), "-include-runtime", "-d", str(jar)],
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
         timeout=240,
         env=env,
     )
     assert compile_proc.returncode == 0, f"kotlinc failed:\n{compile_proc.stderr}"
     run_proc = subprocess.run(
-        [java, "-jar", str(jar)], capture_output=True, text=True, timeout=120, env=env
+        [java, "-jar", str(jar)], capture_output=True, text=True, encoding="utf-8", timeout=120, env=env
     )
     assert run_proc.returncode == 0, f"JVM vectors failed:\n{run_proc.stdout}\n{run_proc.stderr}"
     assert "JVM VECTORS DONE" in run_proc.stdout

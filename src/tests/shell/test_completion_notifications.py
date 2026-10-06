@@ -55,5 +55,5 @@ const {plan,createBroker} = require(process.argv[1]);
  console.log(JSON.stringify({shown:shown.length}));
 })().catch(e=>{console.error(e);process.exit(1)});
 '''
-    result = subprocess.run(['node', '-e', script, str(MODULE)], capture_output=True, text=True, check=True)
+    result = subprocess.run(['node', '-e', script, str(MODULE)], capture_output=True, text=True, encoding="utf-8", check=True)
     assert json.loads(result.stdout)['shown'] == 5

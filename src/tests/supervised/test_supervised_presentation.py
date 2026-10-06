@@ -328,7 +328,7 @@ console.log('ok');
 """,
         ],
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
         cwd=str(REPO),
     )
     assert node.returncode == 0, node.stdout + node.stderr

@@ -217,7 +217,7 @@ def test_no_reverse_imports_into_web_chat_api():
             continue  # the monolith itself
         refs = list(_web_chat_api_refs(_parse_production(path)))
         if refs:
-            offenders[str(path.relative_to(REPO_ROOT))] = refs
+            offenders[path.relative_to(REPO_ROOT).as_posix()] = refs
     unexpected = {
         f: refs
         for f, refs in offenders.items()

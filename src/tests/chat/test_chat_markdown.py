@@ -88,7 +88,7 @@ def _run():
     import os
     proc = subprocess.run(
         ["node", "-e", HARNESS],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, encoding="utf-8", timeout=30,
         env={"PATH": os.environ["PATH"], "MOD_MD": str(MOD_MD)},
     )
     assert proc.returncode == 0, proc.stderr or proc.stdout
@@ -180,7 +180,7 @@ def test_chat_markdown_module_parses():
     import os
     proc = subprocess.run(
         ["node", "--check", str(MOD_MD)],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, encoding="utf-8", timeout=30,
         env={"PATH": os.environ["PATH"]},
     )
     assert proc.returncode == 0, proc.stderr

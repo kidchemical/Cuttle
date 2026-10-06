@@ -39,7 +39,7 @@ def write_test_apk(path, digest, version=1, signer="c" * 64):
 def test_publish_rejects_stale_apk_despite_fresh_loose_assets():
     write_test_apk(apk.GRADLE_APK, "aaaaaaaaaaaaaaaaaaaa")
     apk.ASSETS_JSON.parent.mkdir(parents=True)
-    apk.ASSETS_JSON.write_text(json.dumps({"hash": "bbbbbbbbbbbbbbbbbbbb"}))
+    apk.ASSETS_JSON.write_text(json.dumps({"hash": "bbbbbbbbbbbbbbbbbbbb"}), encoding="utf-8")
     assert apk.publish_gradle_apk("bbbbbbbbbbbbbbbbbbbb") is None
     assert not apk.UPDATE_APK.exists()
     assert not apk.UPDATE_MANIFEST.exists()
@@ -49,12 +49,12 @@ def test_publish_uses_hash_inside_matching_apk():
     write_test_apk(apk.GRADLE_APK, "bbbbbbbbbbbbbbbbbbbb")
     assert apk.publish_gradle_apk("bbbbbbbbbbbbbbbbbbbb").is_file()
     assert apk.apk_baked_hash(apk.UPDATE_APK) == "bbbbbbbbbbbbbbbbbbbb"
-    assert json.loads(apk.UPDATE_MANIFEST.read_text())["hash"] == "bbbbbbbbbbbbbbbbbbbb"
+    assert json.loads(apk.UPDATE_MANIFEST.read_text(encoding="utf-8"))["hash"] == "bbbbbbbbbbbbbbbbbbbb"
 
 
 def test_false_current_manifest_does_not_hide_stale_apk(monkeypatch):
     write_test_apk(apk.UPDATE_APK, "aaaaaaaaaaaaaaaaaaaa")
-    apk.UPDATE_MANIFEST.write_text(json.dumps({"hash": "bbbbbbbbbbbbbbbbbbbb"}))
+    apk.UPDATE_MANIFEST.write_text(json.dumps({"hash": "bbbbbbbbbbbbbbbbbbbb"}), encoding="utf-8")
     monkeypatch.setattr(apk, "_auto_rebuild_allowed", lambda: True)
     calls = []
     monkeypatch.setattr(apk, "kick_apk_rebuild", lambda digest: calls.append(digest))
@@ -65,10 +65,10 @@ def test_false_current_manifest_does_not_hide_stale_apk(monkeypatch):
 def test_publish_cli_does_not_rewrite_build_identity(monkeypatch):
     write_test_apk(apk.GRADLE_APK, "aaaaaaaaaaaaaaaaaaaa")
     apk.ASSETS_JSON.parent.mkdir(parents=True)
-    apk.ASSETS_JSON.write_text(json.dumps({"hash": "aaaaaaaaaaaaaaaaaaaa"}))
+    apk.ASSETS_JSON.write_text(json.dumps({"hash": "aaaaaaaaaaaaaaaaaaaa"}), encoding="utf-8")
     monkeypatch.setattr(apk, "mobile_source_hash", lambda: "bbbbbbbbbbbbbbbbbbbb")
     assert apk.main(["mobile_android_update", "publish"]) == 1
-    assert json.loads(apk.ASSETS_JSON.read_text())["hash"] == "aaaaaaaaaaaaaaaaaaaa"
+    assert json.loads(apk.ASSETS_JSON.read_text(encoding="utf-8"))["hash"] == "aaaaaaaaaaaaaaaaaaaa"
 
 
 def test_unreadable_apk_identity_fails_closed():
@@ -142,7 +142,7 @@ def test_native_update_check_reports_errors():
 
 def test_explicit_install_rechecks_instead_of_using_stale_cached_apk():
     src = (REPO / "apps" / "mobile" / "android" / "app" / "src" / "main"
-           / "java" / "com" / "cuttle" / "mobile" / "MainActivity.java").read_text()
+           / "java" / "com" / "cuttle" / "mobile" / "MainActivity.java").read_text(encoding="utf-8")
     callback = src.split("public void installUpdate()", 1)[1].split("@JavascriptInterface", 1)[0]
     assert "ShellUpdate.checkNow" in callback
     assert "ShellUpdate.installDownloaded" not in callback

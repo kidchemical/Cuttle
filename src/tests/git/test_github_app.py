@@ -468,12 +468,12 @@ def test_real_commits_use_verified_bot_identity(monkeypatch, tmp_path, commit_pa
     repo = tmp_path / "repo"
     repo.mkdir()
     def git(*args):
-        return subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True).stdout.strip()
+        return subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8").stdout.strip()
     git("init")
     git("config", "user.name", "Personal")
     git("config", "user.email", "personal@example.com")
     git("remote", "add", "origin", remote)
-    (repo / "file.txt").write_text("hello")
+    (repo / "file.txt").write_text("hello", encoding="utf-8")
     for name in ("GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"):
         monkeypatch.setenv(name, "Environment Personal")
     for name in ("GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"):
@@ -498,10 +498,10 @@ def test_unverified_app_rejects_before_staging(monkeypatch, tmp_path, commit_pat
     repo = tmp_path / "repo"
     repo.mkdir()
     def git(*args):
-        return subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True).stdout.strip()
+        return subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True, encoding="utf-8").stdout.strip()
     git("init")
     git("remote", "add", "origin", "https://github.com/kidchemical/project.git")
-    (repo / "file.txt").write_text("hello")
+    (repo / "file.txt").write_text("hello", encoding="utf-8")
     from api.git_service import GitError, stage_and_commit
     from scripts.utilities.git_pending_changes import commit_pending_changes
     with pytest.raises((ValueError, GitError), match="Re-check"):

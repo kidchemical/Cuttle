@@ -459,7 +459,7 @@ def _run() -> dict:
     proc = subprocess.run(
         ["node", "-e", HARNESS],
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
         timeout=30,
         env={"PATH": os.environ["PATH"], "MOD_JS": str(MOD_JS)},
     )

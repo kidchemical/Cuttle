@@ -31,7 +31,7 @@ node_only = pytest.mark.skipif(
 @node_only
 def test_chat_action_cards_module_parses():
     proc = subprocess.run(["node", "--check", str(MOD_JS)],
-                          capture_output=True, text=True)
+                          capture_output=True, text=True, encoding="utf-8")
     assert proc.returncode == 0, proc.stderr
 
 
@@ -87,6 +87,6 @@ def test_chat_action_cards_factory_validates_and_composes():
             __import__("json").dumps(str(MOD_JS)))
     )
     proc = subprocess.run(["node", "-e", probe],
-                          capture_output=True, text=True)
+                          capture_output=True, text=True, encoding="utf-8")
     assert proc.returncode == 0, proc.stderr
     assert "factory interface ok" in proc.stdout

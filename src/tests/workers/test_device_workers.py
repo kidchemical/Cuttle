@@ -674,7 +674,7 @@ def test_count_frames_in_range(tmp_path):
     (out / "frame_0001.png").write_bytes(b"a")
     (out / "frame_0104.png").write_bytes(b"b")
     (out / "frame_0206.png").write_bytes(b"c")
-    (out / "readme.txt").write_text("x")
+    (out / "readme.txt").write_text("x", encoding="utf-8")
     assert _count_frames_in_range(out, 1, 103) == 1
     assert _count_frames_in_range(out, 104, 206) == 2
 
@@ -1389,11 +1389,11 @@ def test_batch_watch_grid_flag_and_payload(tmp_path, monkeypatch):
     monkeypatch.setattr(job_watch, 'output_dir', lambda: tmp_path)
     monkeypatch.setattr(plat, '_frame_grid_enabled', lambda: False)
     plat.write_batch_watch('grid')
-    assert 'grid' not in json.loads((tmp_path / 'grid-status.json').read_text())
+    assert 'grid' not in json.loads((tmp_path / 'grid-status.json').read_text(encoding="utf-8"))
     monkeypatch.setattr(plat, '_frame_grid_enabled', lambda: True)
     monkeypatch.setattr(job_watch, 'grid_enabled', lambda: True)
     plat.write_batch_watch('grid')
-    payload = json.loads((tmp_path / 'grid-status.json').read_text())
+    payload = json.loads((tmp_path / 'grid-status.json').read_text(encoding="utf-8"))
     assert payload['bars'][0]['id'] == 'overall'
     assert len(payload['grid']['cells']) == 2
 

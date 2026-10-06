@@ -61,7 +61,7 @@ def _run():
     import os
     proc = subprocess.run(
         ["node", "-e", HARNESS],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, encoding="utf-8", timeout=30,
         env={"PATH": os.environ["PATH"], "STATE_JS": str(STATE_JS)},
     )
     assert proc.returncode == 0, proc.stderr
@@ -113,7 +113,7 @@ def test_palette_matches_legacy_shell_palette():
     import subprocess as sp, os
     proc = sp.run(
         ["node", "-e", "const S=require(process.env.STATE_JS);process.stdout.write(JSON.stringify(S.COLORS))"],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, encoding="utf-8", timeout=30,
         env={"PATH": os.environ["PATH"], "STATE_JS": str(STATE_JS)},
     )
     assert proc.returncode == 0, proc.stderr
@@ -134,5 +134,5 @@ def test_palette_matches_legacy_shell_palette():
 @node_only
 def test_state_module_parses():
     import subprocess as sp
-    proc = sp.run(["node", "--check", str(STATE_JS)], capture_output=True, text=True)
+    proc = sp.run(["node", "--check", str(STATE_JS)], capture_output=True, text=True, encoding="utf-8")
     assert proc.returncode == 0, proc.stderr

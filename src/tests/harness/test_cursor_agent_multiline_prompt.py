@@ -34,7 +34,7 @@ def test_cmd_star_truncates_at_newline(tmp_path: Path):
     r = subprocess.run(
         [str(wrapper), "-p", "--force", prompt],
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
         timeout=15,
     )
     assert r.returncode == 0
@@ -54,7 +54,7 @@ def test_direct_createprocess_keeps_newlines(tmp_path: Path):
     r = subprocess.run(
         [sys.executable, str(probe), "-p", "--force", prompt],
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
         timeout=15,
     )
     assert r.returncode == 0

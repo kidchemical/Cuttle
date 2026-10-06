@@ -101,7 +101,7 @@ def test_merged_agent_badge_removes_as_a_whole(tmp_path):
     script = f"const CuttleChatSlash = require({json.dumps(str(SLASH_JS))});\n" + script
     driver.write_text(script, encoding="utf-8")
     proc = subprocess.run(
-        ["node", str(driver)], capture_output=True, text=True, timeout=60
+        ["node", str(driver)], capture_output=True, text=True, encoding="utf-8", timeout=60
     )
     assert proc.returncode == 0, proc.stderr
     assert "chip-removal-ok" in proc.stdout

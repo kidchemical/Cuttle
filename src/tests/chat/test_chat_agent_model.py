@@ -100,7 +100,7 @@ def _run():
     import os
     proc = subprocess.run(
         ["node", "-e", HARNESS],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, encoding="utf-8", timeout=30,
         env={"PATH": os.environ["PATH"], "MOD_JS": str(MOD_JS)},
     )
     assert proc.returncode == 0, proc.stderr
@@ -167,7 +167,7 @@ def test_badge_effort_resolution():
 @node_only
 def test_chat_agent_model_module_parses():
     import subprocess as sp
-    proc = sp.run(["node", "--check", str(MOD_JS)], capture_output=True, text=True)
+    proc = sp.run(["node", "--check", str(MOD_JS)], capture_output=True, text=True, encoding="utf-8")
     assert proc.returncode == 0, proc.stderr
 
 
@@ -205,7 +205,7 @@ const restored = A.draftSupplementPatch(pins);
 process.stdout.write(JSON.stringify({ pins, restored }));
 """
     import os
-    proc = subprocess.run(["node", "-e", script], capture_output=True, text=True,
+    proc = subprocess.run(["node", "-e", script], capture_output=True, text=True, encoding="utf-8",
                           env={**os.environ, "MOD_JS": str(MOD_JS)}, timeout=10)
     assert proc.returncode == 0, proc.stderr
     result = json.loads(proc.stdout)

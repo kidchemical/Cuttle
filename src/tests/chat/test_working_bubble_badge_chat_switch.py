@@ -130,7 +130,7 @@ def test_hub_early_paint_then_sticky_restore_adds_agent_badge():
     )
     slash_mod = str(SLASH_JS)
     lean = f"""
-const CuttleChatSlash = require("{slash_mod}");
+const CuttleChatSlash = require({json.dumps(str(slash_mod))});
 {commands}
 const prefsMap = {{
   'CH-000503': {{
@@ -174,7 +174,7 @@ process.stdout.write(JSON.stringify({{
 }}));
 """
     proc = subprocess.run(
-        ["node", "-e", lean], capture_output=True, text=True, timeout=30
+        ["node", "-e", lean], capture_output=True, text=True, encoding="utf-8", timeout=30
     )
     assert proc.returncode == 0, proc.stderr + proc.stdout
     res = json.loads(proc.stdout)
@@ -231,7 +231,7 @@ def test_reopen_working_bubble_meta_requires_restored_sticky_chips():
 
     slash_mod = str(SLASH_JS)
     harness = f"""
-const CuttleChatSlash = require("{slash_mod}");
+const CuttleChatSlash = require({json.dumps(str(slash_mod))});
 {commands}
 const prefsMap = {{}};
 let currentSessionId = 'CH-000503';
@@ -277,7 +277,7 @@ process.stdout.write(JSON.stringify({{
 }}));
 """
     proc = subprocess.run(
-        ["node", "-e", harness], capture_output=True, text=True, timeout=30
+        ["node", "-e", harness], capture_output=True, text=True, encoding="utf-8", timeout=30
     )
     assert proc.returncode == 0, proc.stderr + proc.stdout
     res = json.loads(proc.stdout)

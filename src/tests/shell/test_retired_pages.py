@@ -18,7 +18,7 @@ def test_retired_routes_are_absent(tmp_path, monkeypatch):
 
 
 def test_saved_retired_page_urls_recover_to_chat():
-    source = (REPO / 'src/web/js/shell/app_shell.js').read_text()
+    source = (REPO / 'src/web/js/shell/app_shell.js').read_text(encoding="utf-8")
     start = source.index('function canonicalizeShellPage(page)')
     end = source.index('function pageWithPaneSession', start)
     script = "const assert = require('assert'); const window = {location: {origin: 'http://localhost'}};\n"

@@ -41,5 +41,5 @@ def test_local_page_scripts_are_served_at_their_declared_urls():
 
 def test_relative_commonjs_dependencies_exist():
     for script in (WEB / 'js').rglob('*.js'):
-        for relative in re.findall(r"require\(['\"](\.[^'\"]+\.js)['\"]\)", script.read_text()):
+        for relative in re.findall(r"require\(['\"](\.[^'\"]+\.js)['\"]\)", script.read_text(encoding="utf-8")):
             assert (script.parent / relative).is_file(), (script, relative)

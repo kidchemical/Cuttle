@@ -375,7 +375,7 @@ def environment():
     try:
         head = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"], cwd=str(ROOT),
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, encoding="utf-8", timeout=10,
         ).stdout.strip()
     except Exception:
         head = "unknown"

@@ -661,7 +661,7 @@ def _extract_js_const(src: str, name: str) -> str:
 def _run_node(tmp_path, script: str) -> str:
     driver = tmp_path / "driver.js"
     driver.write_text(script, encoding="utf-8")
-    proc = subprocess.run(["node", str(driver)], capture_output=True, text=True, timeout=60)
+    proc = subprocess.run(["node", str(driver)], capture_output=True, text=True, encoding="utf-8", timeout=60)
     assert proc.returncode == 0, proc.stderr
     return proc.stdout
 

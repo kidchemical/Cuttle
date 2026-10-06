@@ -12,7 +12,7 @@ pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node not a
 
 
 def run_js(body):
-    page = (ROOT / "src/web/js/chat/chat_page.js").read_text()
+    page = (ROOT / "src/web/js/chat/chat_page.js").read_text(encoding="utf-8")
     names = ["filterSlashPaletteItems", "buildCodexEffortPaletteItems",
              "buildCodexModelPaletteItems", "buildOpenCodeModelPaletteItems",
              "buildRestartPaletteItems"]
@@ -57,7 +57,7 @@ const readStarredProject = () => null;
 const normalizeStarredProjectPath = () => '';
 """
     result = subprocess.run(["node", "-e", setup + "\n".join(blocks) + body],
-                            cwd=ROOT, capture_output=True, text=True, timeout=30)
+                            cwd=ROOT, capture_output=True, text=True, encoding="utf-8", timeout=30)
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
 

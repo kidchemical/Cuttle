@@ -186,7 +186,7 @@ while True:
 
 def _fake_bin(tmp_path, name, body):
     path = tmp_path / name
-    path.write_text(f"#!{sys.executable}\n" + textwrap.dedent(body))
+    path.write_text(f"#!{sys.executable}\n" + textwrap.dedent(body), encoding="utf-8")
     path.chmod(path.stat().st_mode | stat.S_IEXEC)
     return str(path)
 

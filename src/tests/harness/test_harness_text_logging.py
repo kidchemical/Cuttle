@@ -72,7 +72,7 @@ def test_opencode_preserves_text_snapshots_per_item(monkeypatch, tmp_path):
         {"type": "text", "part": {"id": "b", "text": "Done."}},
     ]
     exe = tmp_path / "opencode"
-    exe.write_text(f"#!{sys.executable}\nimport sys\nsys.stdin.read()\nprint({json.dumps(chr(10).join(json.dumps(e) for e in events))})\n")
+    exe.write_text(f"#!{sys.executable}\nimport sys\nsys.stdin.read()\nprint({json.dumps(chr(10).join(json.dumps(e) for e in events))})\n", encoding="utf-8")
     exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
     monkeypatch.setattr(mod, "opencode_executable", lambda: str(exe))
     monkeypatch.setattr(mod, "load_opencode_model", lambda *a: None)

@@ -119,7 +119,7 @@ def test_live_status_crosses_processes_and_hydrates_parent_and_child(tmp_path, m
                 'print(get_child(AuthDatabase(Path(sys.argv[1])), sys.argv[2]).live_status)')
         result = subprocess.run([sys.executable, '-c', code, str(path), child.id],
                                 env={**os.environ, 'PYTHONPATH': str(Path(__file__).resolve().parents[2])},
-                                capture_output=True, text=True, check=True)
+                                capture_output=True, text=True, encoding="utf-8", check=True)
         assert result.stdout.strip() == 'Reading architecture files'
     finally:
         sink.close()
@@ -203,7 +203,7 @@ console.log(JSON.stringify({html, cards:(many.match(/subagent-fleet-card /g)||[]
     dur:F.formatDuration('2026-10-04 10:00:00','2026-10-04 10:01:05'), has:F.hasFleet([{fleet:true}]), none:F.hasFleet([{}])}));
 """
     out = json.loads(subprocess.run(["node", "-e", code], env={**__import__("os").environ, "FLEET_JS": str(FLEET_JS)},
-                                    capture_output=True, text=True, check=True).stdout)
+                                    capture_output=True, text=True, encoding="utf-8", check=True).stdout)
     html = out["html"]
     for state in ("done", "failed", "cancelled", "lost", "running", "queued"):
         assert f"is-{state}" in html

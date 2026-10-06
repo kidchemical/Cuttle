@@ -30,7 +30,7 @@ def test_preflight_conflict_moves_nothing(tmp_path):
                      "workspace/harness_last_agent_map.json"):
         p = base / relative
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(relative)
+        p.write_text(relative, encoding="utf-8")
     with pytest.raises(FileExistsError):
         migrate(tmp_path)
     assert (base / "workspace/harness_last_agent_map.json").exists()
@@ -44,14 +44,14 @@ def test_directory_migration_preserves_sidecars_and_unknown_files(tmp_path):
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_bytes(name.encode())
     unknown = base / "workspace/custom.json"
-    unknown.write_text("keep")
+    unknown.write_text("keep", encoding="utf-8")
     pack = base / "harness_agents/custom"
     pack.mkdir(parents=True)
-    (pack / "adapter.py").write_text("# custom adapter")
+    (pack / "adapter.py").write_text("# custom adapter", encoding="utf-8")
     migrate(tmp_path)
     for name in ("edit_journal.sqlite3", "edit_journal.sqlite3-wal", "edit_journal.sqlite3-shm"):
         assert (base / "edit_attribution" / name).read_bytes() == name.encode()
-    assert unknown.read_text() == "keep"
+    assert unknown.read_text(encoding="utf-8") == "keep"
     assert (tmp_path / ".cuttle_global/personal/agents/custom/adapter.py").is_file()
 
 
@@ -59,7 +59,7 @@ def test_startup_skips_migration_when_another_host_is_active(tmp_path, monkeypat
     from core import runtime_data
     old = tmp_path / "src/data/workspace/harness_last_agent_map.json"
     old.parent.mkdir(parents=True)
-    old.write_text("{}")
+    old.write_text("{}", encoding="utf-8")
     monkeypatch.setattr(runtime_data, "active_processes", lambda root: [123])
     with pytest.raises(RuntimeError, match="123"):
         runtime_data.migrate_when_stopped(tmp_path)
@@ -71,8 +71,8 @@ def test_failed_move_rolls_back_prior_moves(tmp_path, monkeypatch):
     base.mkdir(parents=True)
     first = base / "antigravity_cli_session_map.json"
     second = base / "codex_cli_session_map.json"
-    first.write_text("first")
-    second.write_text("second")
+    first.write_text("first", encoding="utf-8")
+    second.write_text("second", encoding="utf-8")
     original = Path.rename
 
     def fail_second(source, target):
@@ -83,8 +83,8 @@ def test_failed_move_rolls_back_prior_moves(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "rename", fail_second)
     with pytest.raises(PermissionError):
         migrate(tmp_path)
-    assert first.read_text() == "first"
-    assert second.read_text() == "second"
+    assert first.read_text(encoding="utf-8") == "first"
+    assert second.read_text(encoding="utf-8") == "second"
     assert not (tmp_path / "src/data/sessions/antigravity_cli_session_map.json").exists()
 
 
@@ -95,7 +95,7 @@ def test_migration_refuses_unreadable_process_attributes(tmp_path, monkeypatch, 
 
     old = tmp_path / "src/data/workspace/harness_last_agent_map.json"
     old.parent.mkdir(parents=True)
-    old.write_text("{}")
+    old.write_text("{}", encoding="utf-8")
 
     class Process:
         pid = 123456789
@@ -114,7 +114,7 @@ def test_migration_refuses_unreadable_process_attributes(tmp_path, monkeypatch, 
     monkeypatch.setattr(psutil, "process_iter", lambda *args, **kwargs: iter([Process()]))
     with pytest.raises(RuntimeError, match="migration refused"):
         migrate_when_stopped(tmp_path)
-    assert old.read_text() == "{}"
+    assert old.read_text(encoding="utf-8") == "{}"
     assert not (tmp_path / "src/data/sessions/harness_last_agent_map.json").exists()
 
 

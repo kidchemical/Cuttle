@@ -209,7 +209,7 @@ def test_commit_pending_changes_adds_trailers(journal_db, tmp_path):
         ["git", "log", "-1", "--format=%B"],
         cwd=str(repo),
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
         check=True,
     )
     body = show.stdout or ""

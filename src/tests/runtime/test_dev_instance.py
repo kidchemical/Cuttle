@@ -397,7 +397,7 @@ def test_audit_hook_probe(tmp_path):
     ])
     proc = subprocess.run(
         [sys.executable, "-c", probe, src_dir, json.dumps(cfg)],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, encoding="utf-8", timeout=60,
     )
     assert "PROBE-OK" in proc.stdout, proc.stderr[-2000:]
 

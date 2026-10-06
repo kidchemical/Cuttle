@@ -75,7 +75,7 @@ def _run():
     import os
     proc = subprocess.run(
         ["node", "-e", HARNESS],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, encoding="utf-8", timeout=30,
         env={"PATH": os.environ["PATH"], "MOD_SS": str(MOD_SS)},
     )
     assert proc.returncode == 0, proc.stderr or proc.stdout
@@ -129,7 +129,7 @@ def test_chat_stop_state_module_parses():
     import os
     proc = subprocess.run(
         ["node", "--check", str(MOD_SS)],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, encoding="utf-8", timeout=30,
         env={"PATH": os.environ["PATH"]},
     )
     assert proc.returncode == 0, proc.stderr
@@ -269,7 +269,7 @@ def _run_adapter():
     import os
     proc = subprocess.run(
         ["node", "-e", ADAPTER_HARNESS],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, encoding="utf-8", timeout=60,
         env={"PATH": os.environ["PATH"], "CHAT_PAGE_JS": str(CHAT_PAGE_JS),
              "MOD_TG": str(REPO_ROOT / "src" / "web" / "js" / "chat/chat_turn_guard.js"),
              "MOD_SS": str(MOD_SS),
@@ -360,7 +360,7 @@ process.stdout.write(JSON.stringify([ready, pending].map(x => ({
 }))));
 })().catch(e => {console.error(e); process.exit(2);});
 """
-    proc = subprocess.run(['node', '-e', harness], capture_output=True, text=True,
+    proc = subprocess.run(['node', '-e', harness], capture_output=True, text=True, encoding="utf-8",
                           env={**os.environ, 'CHAT_PAGE_JS': str(CHAT_PAGE_JS)}, timeout=30)
     assert proc.returncode == 0, proc.stderr
     ready, pending = json.loads(proc.stdout)

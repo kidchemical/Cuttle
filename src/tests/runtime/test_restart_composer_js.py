@@ -45,7 +45,7 @@ def _run_composer(chips, body):
 
     slash_mod = str(SLASH_JS)
     harness = f"""
-const CuttleChatSlash = require("{slash_mod}");
+const CuttleChatSlash = require({json.dumps(str(slash_mod))});
 {commands}
 {control}
 const slashCtx = {{
@@ -58,7 +58,7 @@ const out = composeMessageWithSlashChip({{ value: {json.dumps(body)} }});
 process.stdout.write(JSON.stringify({{ out: out }}));
 """
     proc = subprocess.run(
-        ["node", "-e", harness], capture_output=True, text=True, timeout=30
+        ["node", "-e", harness], capture_output=True, text=True, encoding="utf-8", timeout=30
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)["out"]

@@ -22,7 +22,7 @@ def _index_modes() -> dict[str, str]:
         pytest.skip("needs a git checkout")
     out = subprocess.run(
         ["git", "ls-files", "-s", "--", "*.sh", "*gradlew"],
-        cwd=REPO_ROOT, capture_output=True, text=True, check=True,
+        cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8", check=True,
     ).stdout
     modes = {}
     for line in out.splitlines():

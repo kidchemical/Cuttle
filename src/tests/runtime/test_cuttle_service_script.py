@@ -22,7 +22,7 @@ def _render(path_env: str) -> str:
     proc = subprocess.run(
         ["bash", str(SCRIPT), "print"],
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
         timeout=30,
         env={"PATH": path_env, "HOME": str(REPO_ROOT / "temp")},
     )
@@ -47,7 +47,7 @@ def test_unit_escapes_systemd_specifiers_in_path():
 
 
 def test_unknown_command_prints_usage_without_side_effects():
-    proc = subprocess.run(["bash", str(SCRIPT)], capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(["bash", str(SCRIPT)], capture_output=True, text=True, encoding="utf-8", timeout=30)
     assert proc.returncode == 2
     assert "install" in proc.stdout and "uninstall" in proc.stdout
 
@@ -66,7 +66,7 @@ def test_unit_quotes_checkout_and_path_with_spaces(tmp_path):
     script.parent.mkdir(parents=True)
     shutil.copyfile(SCRIPT, script)
     proc = subprocess.run(
-        ['bash', str(script), 'print'], capture_output=True, text=True,
+        ['bash', str(script), 'print'], capture_output=True, text=True, encoding="utf-8",
         env={'PATH': '/usr/bin:/bin:/opt/CLI tools', 'HOME': str(tmp_path)}, timeout=30,
     )
     assert proc.returncode == 0, proc.stderr

@@ -20,12 +20,12 @@ def _tracked_eol(*patterns: str) -> dict[str, str]:
         pytest.skip("needs a git checkout")
     files = subprocess.run(
         ["git", "ls-files", "--", *patterns],
-        cwd=REPO_ROOT, capture_output=True, text=True, check=True,
+        cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8", check=True,
     ).stdout.split()
     assert files, f"expected tracked files for {patterns}"
     out = subprocess.run(
         ["git", "check-attr", "eol", "--", *files],
-        cwd=REPO_ROOT, capture_output=True, text=True, check=True,
+        cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8", check=True,
     ).stdout
     return {line.split(": ")[0]: line.rsplit(": ", 1)[1] for line in out.splitlines()}
 

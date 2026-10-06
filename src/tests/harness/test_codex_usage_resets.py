@@ -1,5 +1,6 @@
 """Saved resets never consume on read; explicit redemption is owner-only."""
 import json
+import os
 import sys
 import uuid
 import shutil
@@ -12,6 +13,7 @@ from api import agent_usage, http_authz, usage_live
 from scripts.utilities import codex_account
 
 
+@pytest.mark.skipif(os.name == "nt", reason="the fake codex is a shebang script")
 def test_account_rpc_handshake_and_specific_credit(tmp_path, monkeypatch):
     fake = tmp_path / "codex"
     fake.write_text(f"#!{sys.executable}\n" + '''
@@ -36,7 +38,7 @@ for line in sys.stdin:
     else:
         raise AssertionError(method)
     print(json.dumps({'id':msg['id'], 'result':result}), flush=True)
-''')
+''', encoding="utf-8")
     fake.chmod(0o755)
     monkeypatch.setattr(codex_account, "codex_executable", lambda: str(fake))
     assert codex_account.read_codex_account_limits()["rateLimitResetCredits"]["availableCount"] == 2
@@ -218,4 +220,4 @@ const event = {target:{closest:()=>button}};
  assert(!painted.includes('old'));
 })().catch(e=>{console.error(e); process.exitCode=1;});
 '''
-    subprocess.run(["node", "-e", code, str(script)], check=True, capture_output=True, text=True)
+    subprocess.run(["node", "-e", code, str(script)], check=True, capture_output=True, text=True, encoding="utf-8")

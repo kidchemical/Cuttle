@@ -79,7 +79,7 @@ def test_rich_cli_streams_and_interruptions(tmp_path, monkeypatch, agent, ending
     script += f"print({json.dumps(chr(10).join(json.dumps(e) for e in events))}, flush=True)\n"
     if interrupted:
         script += "time.sleep(30)\n"
-    exe.write_text(script)
+    exe.write_text(script, encoding="utf-8")
     exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
     saved = []
     qid = start_query_tracking("rich CLI", {"web_ui": True})

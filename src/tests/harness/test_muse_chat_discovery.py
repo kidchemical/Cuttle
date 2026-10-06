@@ -67,7 +67,7 @@ def test_searching_tracked_files_finds_no_chat_content():
         ["git", "grep", "-l", "chat_messages"],
         cwd=REPO_ROOT,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
         check=False,
     )
     hits = [line for line in found.stdout.splitlines() if line.strip()]

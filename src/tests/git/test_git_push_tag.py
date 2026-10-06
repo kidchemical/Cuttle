@@ -18,7 +18,7 @@ pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
 
 def _git(cwd: Path, *args: str) -> str:
     return subprocess.run(
-        ["git", *args], cwd=cwd, capture_output=True, text=True, check=True,
+        ["git", *args], cwd=cwd, capture_output=True, text=True, encoding="utf-8", check=True,
     ).stdout.strip()
 
 
@@ -45,7 +45,7 @@ def _run(work: Path, **params: str) -> subprocess.CompletedProcess:
     env["CUTTLE_PARAM_PATH"] = str(work)
     return subprocess.run(
         [sys.executable, str(SCRIPT)], cwd=REPO_ROOT, env=env,
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, encoding="utf-8", timeout=60,
     )
 
 

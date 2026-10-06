@@ -90,16 +90,16 @@ def test_flag_cli_external_write_visible_and_failures(tmp_path, monkeypatch, cap
     from api.experimental import flags
     from api.experimental.__main__ import main
     path = tmp_path / 'settings.json'
-    path.write_text('{"experimental_flags": {}, "unrelated": 42}')
+    path.write_text('{"experimental_flags": {}, "unrelated": 42}', encoding="utf-8")
     manager = managers.SettingsManager(path)
     monkeypatch.setattr(managers, 'get_settings_manager', lambda: manager)
     monkeypatch.delenv('CUTTLE_EXPERIMENTAL', raising=False)
     assert not flags.is_enabled('achievements')
     # Simulate another process writing its toggle after Flask cached settings.
-    path.write_text('{"experimental_flags": {"achievements": true}, "unrelated": 99}')
+    path.write_text('{"experimental_flags": {"achievements": true}, "unrelated": 99}', encoding="utf-8")
     assert flags.is_enabled('achievements')
     assert main(['set', 'achievements', 'off']) == 0
-    assert json.loads(path.read_text())['unrelated'] == 99
+    assert json.loads(path.read_text(encoding="utf-8"))['unrelated'] == 99
     capsys.readouterr()
     assert main(['get', 'missing']) == 2
     assert json.loads(capsys.readouterr().out)['success'] is False

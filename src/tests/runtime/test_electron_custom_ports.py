@@ -131,7 +131,7 @@ def _run_node(script: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["node", "-e", script],
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
         timeout=60,
         cwd=str(REPO),
     )
@@ -452,7 +452,7 @@ def _run_ports_cli(args: list[str], env: dict) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, "-m", "api.server_ports", *args],
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
         timeout=60,
         cwd=str(REPO),
         env=env,
@@ -789,6 +789,7 @@ def _run_client_daemon_main(monkeypatch, tmp_path, cfg):
     monkeypatch.delenv("LOCALAPPDATA", raising=False)
     monkeypatch.delenv("APPDATA", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))  # Path.home() on Windows
     # main() exports worker settings into os.environ; restore them afterwards.
     for name in ("CUTTLE_DEVICE_WORKERS_ENABLED", "CUTTLE_DEVICE_WORKERS_COORDINATOR_URL",
                  "CUTTLE_DEVICE_WORKERS_COORDINATOR_URL_HTTP", "CUTTLE_DEVICE_WORKERS_TOKEN",
