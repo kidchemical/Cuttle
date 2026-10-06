@@ -7609,10 +7609,10 @@ button.cuttle-button.is-unselected {
     box-shadow: 0 1px 6px rgba(59, 130, 246, 0.35);
 }
 
-.input-hint {
-    font-size: 0.72em;
-    color: var(--text-tertiary);
-    opacity: 0.7;
+/* No caption text under the composer (removed): when the inference-mode
+   toggle is disabled the footer is empty — collapse it so it leaves no gap. */
+.input-footer:has(.inference-mode-bar[hidden]) {
+    display: none;
 }
 
 /* Responsive Design */
@@ -7687,7 +7687,7 @@ button.cuttle-button.is-unselected {
     }
     
     .chat-input-container {
-        padding: 15px;
+        padding: 8px 10px 10px;
     }
 }
 

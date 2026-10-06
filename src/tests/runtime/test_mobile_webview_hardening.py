@@ -238,3 +238,31 @@ def test_watchdog_requires_document_ready_not_merely_target_url():
     assert 'if (cuttleDocumentReady)' in watchdog
     assert 'url.contains("app_shell.html")' not in watchdog
     assert 'showServerOffline(readBaseUrl())' in watchdog
+
+
+def test_composer_caption_text_removed_everywhere():
+    html = (REPO / "src" / "web" / "chat_page.html").read_text(encoding="utf-8")
+    assert "input-hint" not in html
+    assert "Send queues follow-ups" not in html
+    css = (REPO / "src" / "web" / "css" / "chat_page.css").read_text(encoding="utf-8")
+    assert ".input-hint" not in css
+    # Empty footer (inference toggle disabled) collapses instead of gap.
+    assert ".input-footer:has(.inference-mode-bar[hidden])" in css
+
+
+def test_keyboard_open_drops_nav_inset_under_composer():
+    boot = (REPO / "src" / "web" / "js" / "shared" / "ui_boot.js").read_text(encoding="utf-8")
+    assert "syncKeyboardOpen" in boot
+    assert "keyboard-open" in boot
+    assert "visualViewport" in boot
+    # adjustResize shrinks layout + visual together, so detection tracks
+    # innerHeight shrink against a per-width baseline, with composer focus
+    # as a second signal.
+    assert "noteHeightBaseline" in boot
+    assert "BASELINE_H - window.innerHeight" in boot
+    assert "focusin" in boot
+    css = (REPO / "src" / "web" / "css" / "safe_area.css").read_text(encoding="utf-8")
+    assert "html.is-cuttle-mobile.keyboard-open .chat-input-container" in css
+    # While the IME covers the nav bar, no safe-bottom term under the composer.
+    block = css.split("html.is-cuttle-mobile.keyboard-open .chat-input-container", 1)[1].split("}", 1)[0]
+    assert "safe-bottom" not in block

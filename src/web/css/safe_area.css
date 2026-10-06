@@ -116,13 +116,25 @@ html.is-cuttle-mobile .message-nav {
 }
 
 html.is-cuttle-mobile .chat-input-container {
-    /* Shorthand beats the max-width:768 `padding:15px` reset and keeps the
+    /* Shorthand beats the max-width:768 narrow reset and keeps the
        composer above the Android gesture / 3-button nav bar. */
     padding:
-        15px
-        calc(15px + var(--cuttle-safe-right))
-        calc(15px + var(--cuttle-safe-bottom))
-        calc(15px + var(--cuttle-safe-left));
+        8px
+        calc(10px + var(--cuttle-safe-right))
+        calc(10px + var(--cuttle-safe-bottom))
+        calc(10px + var(--cuttle-safe-left));
+}
+
+/* Keyboard open (ui_boot.js toggles .keyboard-open from viewport shrink /
+   composer focus): the IME covers the nav bar, so the safe-bottom term is
+   a dead gap between the composer and the keyboard — drop it and run a
+   tight base padding. */
+html.is-cuttle-mobile.keyboard-open .chat-input-container {
+    padding: 6px 10px 8px;
+}
+
+html.is-cuttle-mobile.keyboard-open .chat-messages {
+    padding-bottom: 12px;
 }
 
 html.is-cuttle-mobile .chat-messages {
