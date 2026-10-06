@@ -7,7 +7,7 @@
     <meta http-equiv="Pragma" content="no-cache">
     <title>Chat - Cuttle AI Assistant</title>
     <link rel="stylesheet" href="/css/ui_boot.css?v=20260927blendTarget">
-    <script src="/js/ui_boot.js?v=20260926safeArea"></script>
+    <script src="/js/shared/ui_boot.js?v=20260926safeArea"></script>
     <!-- Fonts are optional: never block first paint / DOMContentLoaded offline. -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -416,44 +416,44 @@
     <!-- Auth modal lives on the app shell only. A duplicate here (even hidden)
          makes iPad Chrome show the key/card/pin autofill bar on the composer. -->
     
-    <script src="/js/emoticons.js?v=20260807b"></script>
-    <script src="/js/toast.js?v=20260921voiceMic"></script>
-    <script src="/js/completion_notifications.js?v=20261004completion"></script>
-    <script src="/js/net_debug.js?v=20260810c"></script>
-    <script src="/js/video_background.js?v=20260927blendTarget"></script>
-    <script src="/js/background_effect_blend.js"></script>
-    <script src="/js/auth.js?v=20260926authLogin"></script>
-    <script src="/js/supervised_control.js?v=20260816bubble1"></script>
-    <script src="/js/chat_find.js?v=20260819find"></script>
-    <script src="/js/chat_widgets.js?v=20260922widgetstrip"></script>
-    <script src="/js/pending_changes_panel.js?v=20260920multiRepo"></script>
-    <script src="/js/git_push_report.js"></script>
-    <script src="/js/diff_modal.js?v=20261001sharedDiff"></script>
-    <script src="/js/git_commit_viewer.js?v=20261001sharedDiff"></script>
-    <script src="/js/query_log_inspector.js?v=20260927qlJson"></script>
-    <script src="/js/chat_project.js?v=20261001slice1"></script>
-    <script src="/js/chat_slash.js?v=20261004chipx"></script>
-    <script src="/js/chat_action_forms.js?v=20261004progressGrid"></script>
-    <script src="/js/chat_activity.js?v=20261005activity"></script>
-    <script src="/js/chat_action_cards.js?v=20261005activity"></script>
-    <script src="/js/chat_attachments.js?v=20261001slice5"></script>
-    <script src="/js/chat_composer.js?v=20261005drafts"></script>
-    <script src="/js/chat_agent_model.js?v=20261005drafts"></script>
-    <script src="/js/chat_messages.js?v=20261004completion"></script>
-    <script src="/js/chat_activate.js?v=20261001slice8e"></script>
-    <script src="/js/chat_markdown.js?v=20261004completion"></script>
-    <script src="/js/chat_prompt_history.js?v=20261001slice8f"></script>
-    <script src="/js/chat_turn_guard.js?v=20261001slice9a"></script>
-    <script src="/js/chat_stop_state.js?v=20261001slice9b"></script>
-    <script src="/js/chat_followup_queue.js?v=20261001slice9c"></script>
-    <script src="/js/chat_pending_result.js?v=20261004completion"></script>
-    <script src="/js/chat_generation.js?v=20261001slice9e"></script>
-    <script src="/js/chat_usage_live.js?v=20261005snapshot"></script>
-    <script src="/js/chat_stream.js?v=20261001sliced1"></script>
-    <script src="/js/chat_vfx.js?v=20261003vfx1"></script>
-    <script src="/js/chat_subagent_fleet.js?v=20261004fleetLive"></script>
-    <script src="/js/chat_page.js?v=20261005activity"></script>
+    <script src="/js/media/emoticons.js?v=20260807b"></script>
+    <script src="/js/shared/toast.js?v=20260921voiceMic"></script>
+    <script src="/js/shared/completion_notifications.js?v=20261004completion"></script>
+    <script src="/js/shared/net_debug.js?v=20260810c"></script>
+    <script src="/js/media/video_background.js?v=20260927blendTarget"></script>
+    <script src="/js/media/background_effect_blend.js"></script>
+    <script src="/js/shared/auth.js?v=20260926authLogin"></script>
+    <script src="/js/chat/supervised_control.js?v=20260816bubble1"></script>
+    <script src="/js/chat/chat_find.js?v=20260819find"></script>
+    <script src="/js/chat/chat_widgets.js?v=20260922widgetstrip"></script>
+    <script src="/js/git/pending_changes_panel.js?v=20260920multiRepo"></script>
+    <script src="/js/git/git_push_report.js"></script>
+    <script src="/js/git/diff_modal.js?v=20261001sharedDiff"></script>
+    <script src="/js/git/git_commit_viewer.js?v=20261001sharedDiff"></script>
+    <script src="/js/queries/query_log_inspector.js?v=20260927qlJson"></script>
+    <script src="/js/chat/chat_project.js?v=20261001slice1"></script>
+    <script src="/js/chat/chat_slash.js?v=20261004chipx"></script>
+    <script src="/js/chat/chat_action_forms.js?v=20261004progressGrid"></script>
+    <script src="/js/chat/chat_activity.js?v=20261005activity"></script>
+    <script src="/js/chat/chat_action_cards.js?v=20261005activity"></script>
+    <script src="/js/chat/chat_attachments.js?v=20261001slice5"></script>
+    <script src="/js/chat/chat_composer.js?v=20261005drafts"></script>
+    <script src="/js/chat/chat_agent_model.js?v=20261005drafts"></script>
+    <script src="/js/chat/chat_messages.js?v=20261004completion"></script>
+    <script src="/js/chat/chat_activate.js?v=20261001slice8e"></script>
+    <script src="/js/chat/chat_markdown.js?v=20261004completion"></script>
+    <script src="/js/chat/chat_prompt_history.js?v=20261001slice8f"></script>
+    <script src="/js/chat/chat_turn_guard.js?v=20261001slice9a"></script>
+    <script src="/js/chat/chat_stop_state.js?v=20261001slice9b"></script>
+    <script src="/js/chat/chat_followup_queue.js?v=20261001slice9c"></script>
+    <script src="/js/chat/chat_pending_result.js?v=20261004completion"></script>
+    <script src="/js/chat/chat_generation.js?v=20261001slice9e"></script>
+    <script src="/js/chat/chat_usage_live.js?v=20261005snapshot"></script>
+    <script src="/js/chat/chat_stream.js?v=20261001sliced1"></script>
+    <script src="/js/chat/chat_vfx.js?v=20261003vfx1"></script>
+    <script src="/js/chat/chat_subagent_fleet.js?v=20261004fleetLive"></script>
+    <script src="/js/chat/chat_page.js?v=20261005activity"></script>
     <!-- highlight.js / Vega: load after boot so offline WAN never blocks the chat UI -->
-    <script src="/js/optional_cdn.js?v=20260815vegaReady"></script>
+    <script src="/js/shared/optional_cdn.js?v=20260815vegaReady"></script>
 </body>
 </html>

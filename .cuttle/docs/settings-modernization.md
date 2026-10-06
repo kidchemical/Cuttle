@@ -7,7 +7,7 @@ settings-API consolidation) is still unbuilt.
 
 ## Shipped: category tabs
 
-Owner is `src/web/js/settings_page_tabs.js` (`CuttleSettingsTabs`) — tab
+Owner is `src/web/js/settings/settings_page_tabs.js` (`CuttleSettingsTabs`) — tab
 visibility, `?tab=` deep link, localStorage memory, per-tab lazy loading. It
 owns no setting's storage; each panel's loader stays in
 `src/web/settings_page.html` and registers itself. Same pattern as
@@ -34,7 +34,7 @@ Two things fell out of the split:
   paints the page itself, not just the Appearance panel.
 
 Deep link: `/settings_page.html?tab=agents`. Tests:
-`src/tests/test_settings_page_tabs.py` (markup contract + node behavior).
+`src/tests/settings/test_settings_page_tabs.py` (markup contract + node behavior).
 
 ## Shipped: Agents and Providers tabs (catalog-driven)
 
@@ -51,7 +51,7 @@ Replaced by `src/api/completion_providers.py` — a declarative registry
 suggested models) plus two settings keys (`completion_provider`,
 `completion_models`). `api.llm_complete` now takes its provider order and
 models from it. Resolution order, asserted in
-`src/tests/test_completion_providers.py`: explicit argument → env override →
+`src/tests/providers/test_completion_providers.py`: explicit argument → env override →
 Settings → provider default. Models are free-form, so a provider's newest
 model works the day it ships.
 
@@ -71,8 +71,8 @@ was buried in `install_hint` prose:
 `public_catalog()` derives `credential_present` and `ready = available and
 (credential_present or no credential_env)` so Settings and the wizard cannot
 disagree about "installed". Tests:
-`src/tests/test_agent_catalog_auth.py`,
-`src/tests/test_settings_agent_providers_ui.py`.
+`src/tests/harness/test_agent_catalog_auth.py`,
+`src/tests/settings/test_settings_agent_providers_ui.py`.
 
 ## Shipped: wizard reads the same catalog
 
@@ -91,12 +91,12 @@ The page cannot ask YouTube directly — oEmbed sends no CORS headers — so
 `GET /api/settings/video-metadata?url=…` (`api.settings_routes` →
 `api.video_metadata`) proxies it server-side, caches per video id for 24h, and
 derives the thumbnail URL from the id so the common case costs one fetch. The
-id parser mirrors `src/web/js/youtube_id.js`; a test asserts the two agree, or
+id parser mirrors `src/web/js/media/youtube_id.js`; a test asserts the two agree, or
 a row would show one video's title above another video's URL. Non-YouTube URLs
 report `supported: false` and the row falls back to the filename plus a
 placeholder glyph. Row CSS is page-owned in `css/settings_page.css`
 (`.video-row-*`, `.setting-item--stack`). Tests:
-`src/tests/test_video_metadata.py`, `src/tests/test_settings_video_rows.py`.
+`src/tests/media/test_video_metadata.py`, `src/tests/settings/test_settings_video_rows.py`.
 
 ## Original sections (before tabs)
 

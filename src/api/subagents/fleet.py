@@ -28,6 +28,10 @@ DETAIL_CHARS = 600
 
 _FENCE = re.compile(r"```.*?(```|$)", re.S)
 _MARKUP = re.compile(r"<cuttle_[a-z_]+[^>]*>.*?</cuttle_[a-z_]+>", re.S)
+# Reasoning blocks render as a collapsed disclosure in full chat; the one-line
+# card keeps only the visible answer, never raw <think> tags.
+_THINK_BLOCK = re.compile(r"<(?:redacted_)?think(?:ing)?>.*?</(?:redacted_)?think(?:ing)?>", re.S)
+_THINK_STRAY = re.compile(r"</?(?:redacted_)?think(?:ing)?>")
 _LEAD = re.compile(r"^\s*(?:#+|[-*+>]|\d+[.)])\s*")
 _EMPH = re.compile(r"[*_`]+")
 _LINK = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
@@ -55,14 +59,15 @@ def outcome(child: ChildRecord) -> str:
 
 
 def plain_text(text: str) -> str:
-    """Strip code fences, Cuttle tags and inline markdown to readable prose."""
-    text = _MARKUP.sub(" ", _FENCE.sub(" ", str(text or "")))
+    """Strip code fences, Cuttle tags, think blocks and inline markdown to readable prose."""
+    text = _THINK_STRAY.sub(" ", _THINK_BLOCK.sub(" ", str(text or "")))
+    text = _MARKUP.sub(" ", _FENCE.sub(" ", text))
     lines = []
     for raw in text.splitlines():
         line = _EMPH.sub("", _LINK.sub(r"\1", _LEAD.sub("", raw))).strip()
         if line and not set(line) <= set("-=|:"):
             lines.append(line)
-    return " ".join(lines)
+    return re.sub(r"\s+", " ", " ".join(lines)).strip()
 
 
 def _clip(text: str, limit: int) -> str:

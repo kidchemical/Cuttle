@@ -38,4 +38,4 @@ persisted it again via `/api/chat`.
   persists; client resumes via `sendMessage({text})` (draft untouched); `[form-answers]`
   lists unanswered fields too.
 
-**Metadata:** CH-000581 · `src/api/action_forms.py`, `src/api/web_chat_api.py`, `src/web/js/chat_page.js`
+**Metadata:** CH-000581 · `src/api/action_forms.py`, `src/api/web_chat_api.py`, `src/web/js/chat/chat_page.js`

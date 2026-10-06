@@ -3647,34 +3647,16 @@ pre.has-code-copy:hover .code-copy-btn,
     flex-wrap: wrap;
 }
 
-.typing-subagent-orbs {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    flex-wrap: wrap;
-    padding-left: 10px;
-    margin-left: 2px;
-    border-left: 1px solid color-mix(in srgb, var(--accent-color) 28%, transparent);
+.typing-orbit--fleet {
+    width: 20px;
+    height: 20px;
 }
 
-.typing-subagent-orbs[hidden] {
-    display: none !important;
-}
-
-.typing-subagent-orb {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    background: none;
-    border: 0;
-    padding: 0;
-    color: inherit;
-    cursor: pointer;
-}
-
-.typing-orbit--subagent {
-    width: 28px;
-    height: 28px;
+.typing-orbit--fleet .typing-orbit-core--glyph {
+    width: 12px;
+    height: 12px;
+    margin: -6px 0 0 -6px;
+    font-size: 9px;
 }
 
 .typing-orbit-core--glyph {
@@ -3755,19 +3737,10 @@ pre.has-code-copy:hover .code-copy-btn,
     font-size: 11px;
 }
 
-/* Thinking orbs: bare orbit + title, no pill backdrop. The orb buttons
-   share the .subagent-launcher class for click handling, and that rule
-   sorts later in this file — so this needs the higher specificity to win. */
-.typing-subagent-orb.subagent-launcher {
-    background: none;
-    border: 0;
-    border-radius: 0;
-    box-shadow: none;
-    padding: 0;
-}
-
-.typing-subagent-orb.subagent-launcher:hover {
-    background: none;
+/* Fleet-card orbit: same typing-orbit treatment as the parent bubble, sized
+   down for the card. The card head is a flex row; keep the orbit compact. */
+.subagent-fleet-head .typing-orbit--fleet {
+    flex-shrink: 0;
 }
 
 .chat-history-item.is-subagent {
@@ -8241,9 +8214,7 @@ body.voice-mode .chat-chrome-menu {
 .subagent-fleet-name { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600; }
 .subagent-fleet-outcome { display:inline-flex; align-items:center; gap:3px; flex-shrink:0; color:var(--fleet-accent, var(--text-secondary)); font-size:11px; }
 .subagent-fleet-outcome i { font-style:normal; font-weight:700; }
-.subagent-fleet-agent { display:inline-flex; align-self:flex-start; max-width:100%; overflow:hidden; border:1px solid var(--border-color, #444); border-radius:999px; color:var(--text-secondary); font-size:10.5px; }
-.subagent-fleet-agent span { padding:0 6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.subagent-fleet-agent span + span { border-left:1px solid var(--border-color, #444); }
+.subagent-fleet-card .slash-command-chip { align-self:flex-start; max-width:100%; }
 .subagent-fleet-summary { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; overflow-wrap:anywhere; color:var(--text-primary); opacity:.88; min-height:1.3em; }
 .subagent-fleet-foot { display:flex; justify-content:space-between; gap:8px; color:var(--text-secondary); font-size:10.5px; }
 .subagent-fleet-more { align-self:center; color:var(--text-secondary); font-size:11px; }
@@ -8251,9 +8222,7 @@ body.voice-mode .chat-chrome-menu {
 .subagent-fleet-card.is-failed { --fleet-accent:#e57575; }
 .subagent-fleet-card.is-lost { --fleet-accent:#d9aa45; }
 .subagent-fleet-card.is-cancelled, .subagent-fleet-card.is-queued, .subagent-fleet-card.is-unknown { --fleet-accent:#8a96a3; }
-.subagent-fleet-card.is-running .subagent-launcher-orb { animation:typing-orbit-spin 1.4s linear infinite; }
-.subagent-fleet-card.is-running .subagent-fleet-outcome i::before { content:''; display:inline-block; width:8px; height:8px; border-radius:50%; border:2px solid currentColor; border-right-color:transparent; animation:typing-orbit-spin 1s linear infinite; }
-@media (prefers-reduced-motion: reduce) { .subagent-fleet-card.is-running .subagent-launcher-orb, .subagent-fleet-card.is-running .subagent-fleet-outcome i::before { animation:none; } }
+@media (prefers-reduced-motion: reduce) { .subagent-fleet-card .typing-orbit--fleet, .subagent-fleet-card .typing-orbit--fleet * { animation:none; } }
 
 /* An actionable card waits for a person; submitted watches use the spinner. */
 .history-input-icon, .chat-session-input-icon {

@@ -16,7 +16,7 @@ User-requested capabilities. Format: `[FEAT-YYYYMMDD-XXX] capability_name`
 - **Requested capability:** Contribution-calendar-style frame grid on batch watch cards, alongside overall and per-worker progress bars. One cell per frame, coloured by the worker that produced it; distinguish pending, rendering, completed, failed, and missing frames, and show gap-fill recovery. Include GPU labels on worker rows.
 - **Acceptance:** Actual batch inventory drives cells; retries cannot double-count completion. Worker colours stay stable across updates; a legend and text/tooltips explain states without relying on colour alone. Large batches remain bounded and usable on mobile. A completed batch with missing output never appears fully successful.
 - **Complexity:** M (provisional; verify inventory/status contracts before implementation)
-- **Metadata:** Source CH-000889-40, CH-000889-41; endorsed CH-000962. Suggested first implementation. Related Features: FEAT-20260917-001, FEAT-20260818-002. Owners: `src/api/device_workers/`, `src/web/js/chat_action_forms.js` (render model), `src/web/js/chat_action_cards.js` (watch effects). Proposed optional `grid` status payload must preserve existing `bars` consumers. Start experimental per `.cuttle/docs/experimental-features.md`.
+- **Metadata:** Source CH-000889-40, CH-000889-41; endorsed CH-000962. Suggested first implementation. Related Features: FEAT-20260917-001, FEAT-20260818-002. Owners: `src/api/device_workers/`, `src/web/js/chat/chat_action_forms.js` (render model), `src/web/js/chat/chat_action_cards.js` (watch effects). Proposed optional `grid` status payload must preserve existing `bars` consumers. Start experimental per `.cuttle/docs/experimental-features.md`.
 - **Progress:** Watch-card grid, stable worker colours, frame-state legend/tooltips, gap-fill outlines, advertised GPU labels, bounded large-batch rendering, saved snapshots, complete batch inventory and corrected incomplete-output progress implemented. Reuses existing bars and gap-fill flow. Unknown producer stays unassigned; inaccessible output is marked reported. 2026-10-04: generalized to the job-agnostic watch `grid` (unit/group/marked; `job_watch write --grid-json`), mesh batches are one producer; flag renamed `progress_grid` (default off).
 - **Shared quality bar for this series:** Stable layouts, meaningful animation, no repeated workflow steps, visible terminal outcomes. Use real execution data; retain useful failure and cancellation states. Respect reduced motion.
 
@@ -133,7 +133,7 @@ User-requested capabilities. Format: `[FEAT-YYYYMMDD-XXX] capability_name`
 - **Requested capability:** Render GitHub-flavored markdown pipe tables as real HTML `<table>` in assistant bubbles (not raw `|` text). Agents should prefer markdown tables for tabular data; Vega remains for charts.
 - **User context:** CH-000219 enemy damage/health tables showed as raw pipes; Vega text grids looked poor.
 - **Complexity:** S
-- **Related:** `src/web/js/chat_page.js` `formatMessage`, `src/web/css/chat_page.css` `.message-table`, `src/api/cuttle_ui_capabilities.py`
+- **Related:** `src/web/js/chat/chat_page.js` `formatMessage`, `src/web/css/chat_page.css` `.message-table`, `src/api/cuttle_ui_capabilities.py`
 
 ## [FEAT-20260817-001] deepseek_as_routed_tentacle
 
@@ -157,7 +157,7 @@ User-requested capabilities. Format: `[FEAT-YYYYMMDD-XXX] capability_name`
 - **Requested capability:** Treat the action-form progress bar as native Cuttle UI (any project / any agent CLI), with WHEN/WHEN NOT in `cuttle_ui_capabilities`, plus `python -m api.job_watch` for a standard `/output/<id>-status.json` file. Agents should emit the card without per-project copy-paste.
 - **User context:** Escape Purgatory `/build`+`/deploy` (CH-000190) after TRELLIS download watch (FEAT-20260818-002).
 - **Complexity:** S
-- **Related:** `src/api/cuttle_ui_capabilities.py`, `src/api/job_watch.py`, `src/web/js/chat_page.js` `watch`
+- **Related:** `src/api/cuttle_ui_capabilities.py`, `src/api/job_watch.py`, `src/web/js/chat/chat_page.js` `watch`
 
 ## [FEAT-20260818-002] action_form_job_watch
 
@@ -165,7 +165,7 @@ User-requested capabilities. Format: `[FEAT-YYYYMMDD-XXX] capability_name`
 - **Requested capability:** Action-form progress bar that polls a job status file, plus Continue-when-finished (auto-resume this chat) vs I'll-reply (lock only).
 - **User context:** Long Hugging Face TRELLIS.2 download should not block the agent turn.
 - **Complexity:** M
-- **Related:** `src/web/js/chat_page.js` `watch` + `__watch_resume__` / `__watch_park__`
+- **Related:** `src/web/js/chat/chat_page.js` `watch` + `__watch_resume__` / `__watch_park__`
 
 ## [FEAT-20260818-001] comfyui_trellis2_local_3d
 
@@ -238,4 +238,4 @@ User-requested capabilities. Format: `[FEAT-YYYYMMDD-XXX] capability_name`
 - **User context:** CH-000856 — safe self-test path while the manager is hosted by Flask; no safe activation without independent recovery.
 - **Notes:** Design proposed, not implemented: `docs/architecture/development-instance-safety.md` (baseline `4845233c`). Reuses existing owners (`runtime_paths`, settings/auth/project/persist, execution seams); no new product shell/MCP; no `src/api` module importing `web_chat_api`. Multi-daemon blocked on process-ownership fixes first. S1 assigned CH859 B1 worktree, S2 assigned CH860 (neither done yet); S3/S4 deferred followup, not B1 prerequisites — existing external independent recovery stays valid for final activation.
 - **Complexity:** L
-- **Related:** `docs/architecture/development-instance-safety.md`, `src/tests/test_action_form_process_restart.py`, `src/scripts/cuttle_daemon.py`, `src/api/agent_router/supervised/test_isolation.py`
+- **Related:** `docs/architecture/development-instance-safety.md`, `src/tests/actions/test_action_form_process_restart.py`, `src/scripts/cuttle_daemon.py`, `src/api/agent_router/supervised/test_isolation.py`

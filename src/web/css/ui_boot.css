@@ -1,7 +1,7 @@
 /* ================================================================
    Cuttle UI boot styles
 
-   Paired with js/ui_boot.js. Loaded first on every framed page so the
+   Paired with js/shared/ui_boot.js. Loaded first on every framed page so the
    wallpaper/theme state that ui_boot.js resolves before the first paint has
    styling to hang off. Deliberately tiny — page stylesheets own everything
    else.

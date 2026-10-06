@@ -28,30 +28,30 @@ SUITES: Dict[str, Dict[str, Any]] = {
     "router": {
         "label": "Agent router / rage / outcomes",
         "paths": [
-            "src/tests/test_agent_router.py",
-            "src/tests/test_agent_router_repeats.py",
-            "src/tests/test_agent_router_frustration.py",
-            "src/tests/test_agent_router_use_cases.py",
+            "src/tests/router/test_agent_router.py",
+            "src/tests/router/test_agent_router_repeats.py",
+            "src/tests/router/test_agent_router_frustration.py",
+            "src/tests/router/test_agent_router_use_cases.py",
         ],
     },
     "compiler": {
         "label": "Context Compiler / Brain",
         "paths": [
-            "src/tests/test_context_compiler.py",
-            "src/tests/test_context_delta.py",
+            "src/tests/brain/test_context_compiler.py",
+            "src/tests/brain/test_context_delta.py",
         ],
     },
     "dashboards": {
         "label": "Dashboards / Model Benchmarks",
-        "paths": ["src/tests/test_dashboards.py"],
+        "paths": ["src/tests/dashboards/test_dashboards.py"],
     },
     "jev": {
         "label": "Jev judgment layer",
-        "paths": ["src/tests/test_jev.py"],
+        "paths": ["src/tests/integrations/test_jev.py"],
     },
     "harness": {
         "label": "Agent harness kernel",
-        "paths": ["src/tests/test_agent_harness_smoke.py"],
+        "paths": ["src/tests/harness/test_agent_harness_smoke.py"],
     },
 }
 

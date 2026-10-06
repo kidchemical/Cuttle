@@ -170,8 +170,8 @@ no restart, no real unlocks. The file also opens directly from disk
 | Metric math (incl. sub-agent exclusion) | `src/api/achievements/evaluator.py` |
 | Progress/unlock state | `src/data/db/achievements.db` via `api/achievements/store.py` |
 | Turn seam | `on_turn_saved()` in `src/api/chat_turn_persist.py` |
-| Client slices | `src/web/js/achievements.js`, `src/web/js/celebrate.js` |
-| Trophy grid | `achievements_page.html` + `js/achievements_page.js` + `css/achievements_page.css` |
+| Client slices | `src/web/js/achievements/achievements.js`, `src/web/js/achievements/celebrate.js` |
+| Trophy grid | `achievements_page.html` + `js/achievements/achievements_page.js` + `css/achievements_page.css` |
 | Settings storage | `experimental_flags` key in `src/settings.json` |
 
 Flag CLI commands emit JSON and return a nonzero exit code on errors. Toggles made by a separate local agent process become visible to Flask without a restart. Overrides persist across Flask restart and app reopen. Single-flag writes merge under the settings store lock and preserve other overrides, including flags unknown to an older process. Test settings are private, and writes to the live install are rejected by the shared test fixture. The kill switch still overrides stored toggles.

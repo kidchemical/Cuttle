@@ -34,7 +34,7 @@ Architecture rules held: owned slices under `src/api/`, no reverse import of
 | Does `SettingsManager` validate keys? | No — permissive both directions (`settings_manager.py:264-287`). Typed getters do their own default merge (`:297-325`). | The flag registry is the allowlist; `set_enabled` drops ids that are not registered. |
 | Where do settings routes live? | `settings_routes.py`, `SETTING_FAMILIES` at `:48-85`; module docstring `:1-19` forbids touching `web_chat_api.py`. | Self-registering blueprint instead (the `chat_tts` precedent), registered in the same block as the rest. |
 | Settings tab shell? | `settings_page_tabs.js` — ids read **from markup**, order-sensitive, contract-tested by `test_settings_page_tabs.py`. | A new tab is a markup-only addition + one `tabs.register()`. |
-| Toast system? | `src/web/js/toast.js` — `showToast(msg, variant, options)`; iframe→parent handoff; CSS lives in JS only. | Extended `options` with `achievement` + `duration`; all ~125 existing call sites untouched. |
+| Toast system? | `src/web/js/shared/toast.js` — `showToast(msg, variant, options)`; iframe→parent handoff; CSS lives in JS only. | Extended `options` with `achievement` + `duration`; all ~125 existing call sites untouched. |
 | Confetti? | **None at the design baseline.** Only ambient particles on the former welcome page. | New self-contained particle layer in `celebrate.js` — no CDN dependency. |
 | SFX? | One asset (`completion-chirp.wav`), served free at `/sounds/<path>`, escalation ladder at `toast.js:66-110`. | New wav = zero backend cost; Electron IPC added for the obscured-window case. |
 | Electron renderer? | **Same web UI** over HTTP (`electron/main.js:485-492`). | Toast + confetti are free; only sound-while-obscured needed IPC. |
@@ -181,8 +181,8 @@ a sequence rather than a wall of toasts.
 
 | File | Namespace | Responsibility |
 |---|---|---|
-| `src/web/js/celebrate.js` | `CuttleCelebrate` | rarity tiers, toast card, confetti layer, sfx escalation |
-| `src/web/js/achievements.js` | `CuttleAchievements` | polling, batching, ack bookkeeping, grid grouping, formatters |
+| `src/web/js/achievements/celebrate.js` | `CuttleCelebrate` | rarity tiers, toast card, confetti layer, sfx escalation |
+| `src/web/js/achievements/achievements.js` | `CuttleAchievements` | polling, batching, ack bookkeeping, grid grouping, formatters |
 
 Both follow the `spaces_*.js` IIFE tail (`window` + `module.exports`) and are
 loaded in `app_shell.html` **before** `app_shell.js` with the `?v=` bust.
@@ -224,13 +224,13 @@ Removing achievements completely, leaving the experimental system intact:
 
 1. delete the `register_flag(FlagSpec(id="achievements", …))` block in
    `src/api/experimental/features.py`;
-2. `rm -rf src/api/achievements/ src/tests/test_achievements.py
-   src/tests/test_achievements_js.py`;
+2. `rm -rf src/api/achievements/ src/tests/achievements/test_achievements.py
+   src/tests/achievements/test_achievements_js.py`;
 3. delete the achievements blueprint block in `src/api/web_chat_api.py`;
 4. delete the `on_turn_saved()` tail in `src/api/chat_turn_persist.py`;
-5. delete `src/web/js/achievements.js` + `src/web/js/celebrate.js` and their two
+5. delete `src/web/js/achievements/achievements.js` + `src/web/js/achievements/celebrate.js` and their two
    `<script>` lines in `src/web/app_shell.html`;
-6. delete `achievements_page.html`, `js/achievements_page.js`, and
+6. delete `achievements_page.html`, `js/achievements/achievements_page.js`, and
    `css/achievements_page.css`; unregister `achievements_pages_bp`;
 7. remove `nav-achievements` from the shell rail markup/catalog/default-hidden
    list and page title map; remove achievement card CSS from `toast.js`;

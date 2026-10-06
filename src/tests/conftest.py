@@ -25,8 +25,8 @@ if str(src_root) not in sys.path:
 collect_ignore = [
     "e2e",
     # Paid provider diagnostics: run by hand with CUTTLE_ALLOW_SPEND=1.
-    "unit/test_api_key.py",
-    "unit/test_openai_connection.py",
+    "diagnostics/test_api_key.py",
+    "diagnostics/test_openai_connection.py",
 ]
 
 
@@ -404,6 +404,15 @@ def _isolated_brain_state(tmp_path, monkeypatch):
     import api.query_tracker as qt
 
     monkeypatch.setattr(qt, "_fallback_tracker", None, raising=False)
+    # Each test owns its trackers. Reordering subsystem suites must not leave a
+    # previous test's unfinished query in the registry or thread-local lookup.
+    import threading
+    monkeypatch.setattr(qt, "_tls", threading.local())
+    with qt._registry_lock:
+        qt._active_trackers.clear()
+    yield
+    with qt._registry_lock:
+        qt._active_trackers.clear()
 
 
 @pytest.fixture(autouse=True)

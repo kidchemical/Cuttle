@@ -330,7 +330,7 @@ def _assert_child_guard_profile(state, label):
                 f"{label}: journey route blocked: {entry}")
 
 
-# Pinned optional-CDN assets (existing src/web/js/optional_cdn.js):
+# Pinned optional-CDN assets (existing src/web/js/shared/optional_cdn.js):
 # the page needs none of them, so they STAY network-blocked — but these
 # five exact URLs are the expected aborts. Anything else stays a failure.
 # No route allow, no download, no vendoring, no other CDN/host accepted.

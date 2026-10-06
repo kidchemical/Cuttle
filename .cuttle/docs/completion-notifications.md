@@ -31,7 +31,7 @@ never interrupts chat delivery.
 
 ## Owners and state
 
-- `src/web/js/completion_notifications.js` owns permission/settings presentation,
+- `src/web/js/shared/completion_notifications.js` owns permission/settings presentation,
   the pure completion plan, and one broker per shell with injected delivery/clock/
   storage capabilities. Panes share it; standalone chat pages create their own.
 - `chat_page.js` reports turn starts, server-id adoption, Stop, and the existing
@@ -51,7 +51,7 @@ server-owned authenticated event store, subscription revocation, push transport,
 and a service worker/mobile client that handles safe deep links. This is deferred
 until that client scope is requested.
 
-Tests: `src/tests/test_completion_notifications.py` (fake storage/OS delivery) and
+Tests: `src/tests/shell/test_completion_notifications.py` (fake storage/OS delivery) and
 `src/tests/e2e/test_completion_notifications.py` (production settings, click-only
 permission, real reply/watch hooks, click destination, and reload suppression).
 

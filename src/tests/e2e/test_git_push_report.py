@@ -6,7 +6,7 @@ REPORT = {
     'version': 1,
     'summary': 'Pre-push secret hook blocked the push: secret-patterns, sqlite-secrets',
     'findings': [
-        {'hook': 'secret-patterns', 'rule': 'private key', 'file': 'src/tests/test_github_app.py', 'commit': 'dc85768c', 'line': 372, 'preview': '[Flagged line redacted]'},
+        {'hook': 'secret-patterns', 'rule': 'private key', 'file': 'src/tests/git/test_github_app.py', 'commit': 'dc85768c', 'line': 372, 'preview': '[Flagged line redacted]'},
         {'hook': 'sqlite-secrets', 'rule': 'AWS access key', 'file': 'fixture.db', 'commit': 'abcdef', 'table': 'config', 'column': 'value', 'row': 2},
     ],
     'warnings': [],

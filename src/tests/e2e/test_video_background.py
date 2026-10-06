@@ -17,7 +17,7 @@ def test_wallpaper_init_play_now_and_disable(browser):
     try:
         page.goto('http://wallpaper.test/')
         page.evaluate("localStorage.setItem('cuttleVideoBackgroundList', JSON.stringify(['/first.mp4']))")
-        page.add_script_tag(path=str(REPO / 'src/web/js/video_background.js'))
+        page.add_script_tag(path=str(REPO / 'src/web/js/media/video_background.js'))
         page.evaluate('CuttleVideoBackground.init()')
         video = page.locator('#cuttle-video-background video')
         assert video.count() == 1
