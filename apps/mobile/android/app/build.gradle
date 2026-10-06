@@ -135,10 +135,19 @@ android.applicationVariants.configureEach { variant ->
     }
     variant.assembleProvider.configure {
         doLast {
-            exec {
+            // Publication verifies with the SDK and JDK this build already used.
+            // A refused publication leaves the built APK in place; it only stays unserved.
+            def result = exec {
                 workingDir repoRoot
                 environment "PYTHONPATH", srcDir.absolutePath
+                environment "ANDROID_HOME", android.sdkDirectory.absolutePath
+                environment "JAVA_HOME", System.getProperty("java.home")
                 commandLine pythonExec(), "-m", "api.mobile_android_update", "publish"
+                ignoreExitValue true
+            }
+            if (result.exitValue != 0) {
+                logger.warn("Cuttle LAN update was not published (see message above). " +
+                    "The APK built successfully but phones will not be offered it.")
             }
         }
     }

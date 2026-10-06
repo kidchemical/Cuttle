@@ -49,3 +49,17 @@ def test_oversized_embedded_metadata_is_rejected(tmp_path):
     with zipfile.ZipFile(path, 'w') as archive:
         archive.writestr('assets/cuttle-mobile-build.json', ' ' * 17000)
     assert artifacts.baked_hash(path) is None
+
+
+def test_sdk_falls_back_to_android_studio_local_properties(monkeypatch, tmp_path):
+    sdk = tmp_path / 'Android Sdk'
+    sdk.mkdir()
+    props = tmp_path / 'local.properties'
+    escaped = str(sdk).replace('\\', '\\\\').replace(':', '\\:')
+    props.write_text(f'## generated\nsdk.dir={escaped}\n', encoding='utf-8')
+    monkeypatch.delenv('ANDROID_HOME', raising=False)
+    monkeypatch.delenv('ANDROID_SDK_ROOT', raising=False)
+    monkeypatch.setattr(artifacts, 'LOCAL_PROPERTIES', props)
+    assert artifacts.sdk_dir() == str(sdk)
+    monkeypatch.setenv('ANDROID_HOME', str(tmp_path / 'missing'))
+    assert artifacts.sdk_dir() == str(sdk)

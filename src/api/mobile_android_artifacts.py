@@ -11,6 +11,7 @@ import zipfile
 
 PACKAGE_NAME = "com.cuttle.mobile"
 MAX_APK_BYTES = 256 * 1024 * 1024
+LOCAL_PROPERTIES = Path(__file__).resolve().parents[2] / "apps" / "mobile" / "android" / "local.properties"
 
 
 def sha256_file(path: Path) -> str:
@@ -34,6 +35,24 @@ def baked_hash(path: Path) -> str | None:
         return None
 
 
+def sdk_dir() -> str | None:
+    """Same SDK lookup Gradle uses: environment, then Android Studio's local.properties."""
+    for name in ("ANDROID_HOME", "ANDROID_SDK_ROOT"):
+        value = os.environ.get(name)
+        if value and Path(value).is_dir():
+            return value
+    try:
+        text = LOCAL_PROPERTIES.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    match = re.search(r"^\s*sdk\.dir\s*[=:]\s*(.+?)\s*$", text, re.M)
+    if not match:
+        return None
+    # Java properties escaping: "C\:\\Users\\me" -> "C:\Users\me"
+    value = re.sub(r"\\(.)", r"\1", match[1])
+    return value if Path(value).is_dir() else None
+
+
 def inspect_apk(path: Path) -> dict:
     """Verify with Android SDK tools; never infer signing from loose build files."""
     if not 0 < path.stat().st_size <= MAX_APK_BYTES:
@@ -41,9 +60,10 @@ def inspect_apk(path: Path) -> dict:
     identity = baked_hash(path)
     if not identity:
         raise ValueError("APK is missing a valid Cuttle build identity")
-    sdk = os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT")
+    sdk = sdk_dir()
     if not sdk:
-        raise ValueError("Publishing requires Android SDK Build Tools: set ANDROID_HOME")
+        raise ValueError("Publishing requires Android SDK Build Tools: set ANDROID_HOME "
+                         "or sdk.dir in apps/mobile/android/local.properties")
     tools = Path(sdk) / "build-tools"
     suffix = ".exe" if os.name == "nt" else ""
     candidates = sorted(

@@ -265,3 +265,25 @@ def test_public_mode_does_not_start_builds(monkeypatch):
     monkeypatch.setattr(apk, "publish_gradle_apk", lambda *args: pytest.fail("implicit publication"))
     monkeypatch.setattr(apk, "kick_apk_rebuild", lambda *args: pytest.fail("implicit build"))
     assert apk.ensure_update_apk("b" * 20) is None
+
+
+def test_publication_keeps_only_current_and_previous_apk():
+    published = []
+    for version, digest in enumerate("abc", start=1):
+        write_test_apk(apk.GRADLE_APK, digest * 20, version)
+        published.append(apk.publish_gradle_apk(digest * 20))
+    remaining = {p.name for p in apk.UPDATE_DIR.glob("app-*.apk")}
+    assert remaining == {published[1].name, published[2].name, apk.UPDATE_APK.name}
+
+
+def test_capacitor_generated_config_is_not_a_hash_input():
+    rels = {apk._rel_posix(apk.MOBILE_DIR, p) for p in apk.hash_input_files()}
+    assert "android/app/src/main/res/xml/config.xml" not in rels
+    assert "android/app/src/main/AndroidManifest.xml" in rels
+
+
+def test_debug_build_publish_uses_gradle_sdk_and_is_non_fatal():
+    gradle = (REPO / "apps" / "mobile" / "android" / "app" / "build.gradle").read_text(encoding="utf-8")
+    hook = gradle.split("variant.assembleProvider.configure", 1)[1]
+    assert 'environment "ANDROID_HOME", android.sdkDirectory' in hook
+    assert "ignoreExitValue true" in hook

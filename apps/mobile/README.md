@@ -62,6 +62,11 @@ uninstall/reinstall (which can remove local app data); the updater never does th
 
 ### Public releases and updates
 
+No APK is committed to this repository; `dist/` is gitignored. Today each host
+builds its own APK (as with the Electron app) and serves it to its phones over
+the LAN. Signed release APKs attached to GitHub Releases are planned, not yet
+published; the steps below are for whoever produces them.
+
 The publisher maintains a private release keystore, backs it up securely, and
 uses the same signing identity for updates. Never commit a keystore or its
 passwords. Users installing published APKs do not need build tools or the

@@ -4,8 +4,9 @@ Android Capacitor shell updates over LAN (same idea as Electron app.asar).
 The host hashes native phone-app sources and, after assembleDebug, publishes
 apps/mobile/dist/update/app-debug.apk so a phone can install without USB.
 
-Source builds are an explicit developer opt-in (CUTTLE_MOBILE_AUTO_REBUILD=1).
-Public installations serve a verified, immutable APK and need no build tools.
+Automatic source builds are an explicit opt-in (CUTTLE_MOBILE_AUTO_REBUILD=1);
+otherwise only an APK published by a build (or ``publish --apk``) is served.
+No APK is committed to git; each host builds or is given one.
 """
 
 from __future__ import annotations
@@ -60,12 +61,22 @@ def _rel_posix(root: Path, path: Path) -> str:
     return path.resolve().relative_to(root.resolve()).as_posix()
 
 
+# Gitignored outputs of `cap sync` (derived from package.json/lock, which are hashed).
+# Hashing them would make checkouts that never ran sync disagree with the publisher.
+_GENERATED_NATIVE_FILES = frozenset({"res/xml/config.xml"})
+
+
 def hash_input_files() -> List[Path]:
     """Native + setup-shell files that require a new APK."""
     files: List[Path] = []
     native = MOBILE_DIR / "android" / "app" / "src" / "main"
     if native.is_dir():
-        files.extend(p for p in sorted(native.rglob("*")) if p.is_file() and "assets" not in p.relative_to(native).parts)
+        files.extend(
+            p for p in sorted(native.rglob("*"))
+            if p.is_file()
+            and "assets" not in p.relative_to(native).parts
+            and p.relative_to(native).as_posix() not in _GENERATED_NATIVE_FILES
+        )
     java_root = MOBILE_DIR / "android" / "app" / "src" / "main" / "java"
     if java_root.is_dir():
         files.extend(sorted(java_root.rglob("*.java")))
@@ -222,11 +233,23 @@ def publish_gradle_apk(source_hash: Optional[str] = None, *, candidate: Optional
             finally:
                 alias.unlink(missing_ok=True)
             os.replace(manifest_tmp, UPDATE_MANIFEST)
+            _prune_published(keep={filename, previous.get("filename")})
             return destination
         finally:
             staging.unlink(missing_ok=True)
             if manifest_tmp:
                 manifest_tmp.unlink(missing_ok=True)
+
+
+def _prune_published(keep: set) -> None:
+    """Keep the current and previous APK (a phone may be mid-download); drop older ones."""
+    for path in UPDATE_DIR.glob("app-*.apk"):
+        if path.name in keep or not re.fullmatch(r"app-[a-f0-9]{64}\.apk", path.name):
+            continue
+        try:
+            path.unlink()
+        except OSError as exc:
+            print(f"[MOBILE] Could not remove old APK {path.name}: {exc}")
 
 
 def can_rebuild() -> bool:
