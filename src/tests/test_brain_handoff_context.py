@@ -133,6 +133,92 @@ def test_handoff_budget_reports_omitted_rows(monkeypatch):
     assert "question 9" in h.text  # newest kept
 
 
+def test_handoff_truncation_only_reports_full_session_pointer():
+    """Critical tail: a long newest row is cut but kept, with recovery pointer."""
+    from api.cuttle_brain import handoff as ho
+
+    db, sid = _chat()
+    ho.record_last_agent(sid, "cursor", through_message_id=0)
+    db.add_message(sid, "user", "short q")
+    db.add_message(sid, "assistant", "short a")
+    db.add_message(sid, "user", "TAIL-" + "x" * 5000)
+    h = ho.build_handoff(sid, to_agent="codex")
+    assert h is not None
+    assert h.message_count == 3
+    assert h.truncated_count == 1
+    assert "truncated to 1500 chars" in h.text
+    assert "TAIL-" in h.text  # newest (critical tail) kept, truncated in place
+    assert "earlier messages not shown" not in h.text
+    handle = f"CH-{sid:06d}"
+    assert f"python -m api.chat_cli session {handle} --all --json --full" in h.text
+    # The emitted recovery command must parse (session accepts --all/--json/--full).
+    from api.chat_cli.cli import build_parser
+
+    args = build_parser().parse_args(
+        ["session", handle, "--all", "--json", "--full"]
+    )
+    assert (args.command, args.all, args.json, args.full) == ("session", True, True, True)
+
+
+def test_handoff_truncation_boundary_1500_1501():
+    from api.cuttle_brain import handoff as ho
+
+    kept, omitted, truncated = ho._fit_budget(
+        [{"id": 1, "role": "user", "content": "y" * 1500}]
+    )
+    assert (omitted, truncated) == (0, 0)
+    assert kept[0]["content"] == "y" * 1500
+    kept, omitted, truncated = ho._fit_budget(
+        [{"id": 1, "role": "user", "content": "y" * 1501}]
+    )
+    assert truncated == 1
+    assert len(kept[0]["content"]) <= ho._MAX_MESSAGE_CHARS
+
+
+def test_handoff_truncation_counts_kept_only_with_omitted(monkeypatch):
+    """Budget-dropped long rows count as omitted, with a single combined pointer."""
+    from api.cuttle_brain import handoff as ho
+
+    monkeypatch.setattr(ho, "_MAX_HANDOFF_CHARS", 300)
+    msgs = [{"id": i, "role": "user", "content": "L" + "z" * 2000} for i in range(5)]
+    kept, omitted, truncated = ho._fit_budget(msgs)
+    assert omitted > 0
+    assert truncated == len(kept) < 5
+    text = ho.format_handoff_delta(
+        from_agent="a",
+        to_agent="b",
+        messages=kept,
+        omitted=omitted,
+        truncated=truncated,
+        chat_handle="CH-000009",
+    )
+    assert "earlier messages not shown" in text
+    assert "truncated to 1500 chars" in text
+    assert text.count("python -m api.chat_cli session") == 1
+    assert "session CH-000009 --all --json --full" in text
+    assert "python -m api.chat_cli get CH-000009 --json`" not in text
+
+
+def test_handoff_no_loss_has_no_pointer():
+    from api.cuttle_brain import handoff as ho
+
+    kept, omitted, truncated = ho._fit_budget(
+        [{"id": 1, "role": "user", "content": "hi"}]
+    )
+    assert (omitted, truncated) == (0, 0)
+    text = ho.format_handoff_delta(
+        from_agent="a",
+        to_agent="b",
+        messages=kept,
+        omitted=omitted,
+        truncated=truncated,
+        chat_handle="CH-000001",
+    )
+    assert "truncated" not in text
+    assert "not shown" not in text
+    assert "chat_cli" not in text
+
+
 def test_no_resume_agent_gets_history_every_turn(tmp_path, monkeypatch):
     db, sid = _chat()
     db.add_message(sid, "user", "/deepseek name a color")

@@ -170,6 +170,7 @@ class AgentHandoff:
     to_agent: str
     text: str
     message_count: int = 0
+    truncated_count: int = 0
 
 
 def _numeric_session_id(chat_session_id: Any) -> Optional[int]:
@@ -287,20 +288,29 @@ def _skip_own_reply(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 def _fit_budget(
     messages: List[Dict[str, Any]],
-) -> tuple[List[Dict[str, Any]], int]:
-    """Keep the newest messages within the char budget; return (kept, omitted)."""
+) -> tuple[List[Dict[str, Any]], int, int]:
+    """Keep the newest messages within the char budget; return (kept, omitted, truncated).
+
+    ``truncated`` counts only kept rows whose content was cut to
+    ``_MAX_MESSAGE_CHARS`` — rows discarded by the total budget count as
+    omitted, never as truncated.
+    """
     kept: List[Dict[str, Any]] = []
     used = 0
+    truncated = 0
     for msg in reversed(messages):
         content = str(msg.get("content") or "")
-        if len(content) > _MAX_MESSAGE_CHARS:
+        was_truncated = len(content) > _MAX_MESSAGE_CHARS
+        if was_truncated:
             content = content[: _MAX_MESSAGE_CHARS - 3].rstrip() + "..."
         if kept and used + len(content) > _MAX_HANDOFF_CHARS:
             break
+        if was_truncated:
+            truncated += 1
         kept.append({**msg, "content": content})
         used += len(content)
     kept.reverse()
-    return kept, len(messages) - len(kept)
+    return kept, len(messages) - len(kept), truncated
 
 
 def _chat_handle(chat_session_id: Any) -> Optional[str]:
@@ -314,6 +324,7 @@ def format_handoff_delta(
     to_agent: str,
     messages: List[Dict[str, Any]],
     omitted: int = 0,
+    truncated: int = 0,
     chat_handle: Optional[str] = None,
     mode: str = "switch",
 ) -> str:
@@ -337,13 +348,29 @@ def format_handoff_delta(
     if not messages:
         lines.append("(No recent Cuttle transcript rows available.)")
         return "\n".join(lines)
-    if omitted > 0:
-        where = (
-            f" — read them with `python -m api.chat_cli get {chat_handle} --json`"
-            if chat_handle
-            else ""
+    # `get` alone returns a session summary; whole omitted rows need the
+    # full transcript. `--full` defeats the CLI's default content cap
+    # (get: 2000 chars, session: 500 chars) for long-tail recovery. One
+    # pointer total: combined when both losses occur.
+    cmd = (
+        f"python -m api.chat_cli session {chat_handle} --all --json --full"
+        if chat_handle
+        else ""
+    )
+    if omitted > 0 and truncated > 0:
+        where = f" — full transcript: `{cmd}`" if cmd else ""
+        lines.append(
+            f"({omitted} earlier messages not shown; "
+            f"{truncated} message(s) truncated to {_MAX_MESSAGE_CHARS} chars{where}.)"
         )
+    elif omitted > 0:
+        where = f" — full transcript: `{cmd}`" if cmd else ""
         lines.append(f"({omitted} earlier messages not shown{where}.)")
+    elif truncated > 0:
+        where = f" — full text: `{cmd}`" if cmd else ""
+        lines.append(
+            f"({truncated} message(s) truncated to {_MAX_MESSAGE_CHARS} chars{where}.)"
+        )
     lines.append("")
     for msg in messages:
         role = msg.get("role") or "unknown"
@@ -399,12 +426,13 @@ def build_handoff(
     messages = _drop_current_turn(messages, current_prompt)
     if not messages:
         return None
-    kept, omitted = _fit_budget(messages)
+    kept, omitted, truncated = _fit_budget(messages)
     text = format_handoff_delta(
         from_agent=previous,
         to_agent=target,
         messages=kept,
         omitted=omitted,
+        truncated=truncated,
         chat_handle=_chat_handle(chat_session_id),
         mode=mode,
     )
@@ -413,4 +441,5 @@ def build_handoff(
         to_agent=target,
         text=text,
         message_count=len(kept),
+        truncated_count=truncated,
     )
