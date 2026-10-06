@@ -266,6 +266,52 @@
         fanOutSafeAreaInsets(normalized);
     }
 
+    /* Keyboard-open: with adjustResize the WebView shrinks above the IME,
+       so layout height and visual height fall together (their difference
+       stays ~0) — instead track shrink of window.innerHeight against the
+       tallest seen height at this width, plus composer focus as a second
+       signal. The IME covers the nav bar, so while the keyboard is open
+       safe_area.css drops the safe-bottom term under the composer.
+       Threshold 150px so rotation/resize noise never trips it. */
+    var KEYBOARD_OPEN_PX = 150;
+    var BASELINE_W = 0;
+    var BASELINE_H = 0;
+    var composerFocused = false;
+
+    function noteHeightBaseline() {
+        try {
+            var w = window.innerWidth;
+            var h = window.innerHeight;
+            if (!w || !h) return;
+            if (w !== BASELINE_W) {
+                BASELINE_W = w;
+                BASELINE_H = h;
+            } else if (h > BASELINE_H) {
+                BASELINE_H = h;
+            }
+        } catch (_) {}
+    }
+
+    function isKeyboardOpen() {
+        try {
+            var vv = window.visualViewport;
+            if (vv && typeof vv.height === 'number' && vv.height > 0) {
+                if ((window.innerHeight - vv.height) > KEYBOARD_OPEN_PX) return true;
+            }
+        } catch (_) {}
+        try {
+            if (BASELINE_H > 0 && (BASELINE_H - window.innerHeight) > KEYBOARD_OPEN_PX) return true;
+        } catch (_) {}
+        return composerFocused;
+    }
+
+    function syncKeyboardOpen() {
+        if (!isCuttleMobileClient()) return;
+        var open = isKeyboardOpen();
+        root.classList.toggle('keyboard-open', open);
+        if (document.body) document.body.classList.toggle('keyboard-open', open);
+    }
+
     function read(key) {
         try { return localStorage.getItem(key); } catch (_) { return null; }
     }
@@ -372,12 +418,15 @@
         root.style.setProperty('--cuttle-transition-ms', transitionMs() + 'ms');
         if (state.video) write(VIDEO_ACTIVE_KEY, '1');
         applySafeAreaInsets();
+        noteHeightBaseline();
+        syncKeyboardOpen();
     }
 
     document.addEventListener('cuttle-mobile-ready', function () {
         applyTo(root);
         applyTo(document.body);
         applySafeAreaInsets();
+        syncKeyboardOpen();
     });
 
     function applyBlend(percent, persist) {
@@ -434,13 +483,28 @@
     });
 
     if (isCuttleMobileClient()) {
-        window.addEventListener('resize', function () { applySafeAreaInsets(); }, { passive: true });
+        noteHeightBaseline();
+        window.addEventListener('resize', function () { noteHeightBaseline(); applySafeAreaInsets(); syncKeyboardOpen(); }, { passive: true });
         window.addEventListener('orientationchange', function () {
-            setTimeout(function () { applySafeAreaInsets(); }, 50);
+            setTimeout(function () { noteHeightBaseline(); applySafeAreaInsets(); syncKeyboardOpen(); }, 50);
         });
         if (window.visualViewport) {
-            window.visualViewport.addEventListener('resize', function () { applySafeAreaInsets(); }, { passive: true });
+            window.visualViewport.addEventListener('resize', function () { noteHeightBaseline(); applySafeAreaInsets(); syncKeyboardOpen(); }, { passive: true });
         }
+        /* Second signal: the gap only matters while typing, and on phones
+           focusing a text field opens the IME. Cleared on blur (delayed so
+           the keyboard has time to close first). */
+        document.addEventListener('focusin', function (e) {
+            var t = e && e.target;
+            if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT' || t.isContentEditable)) {
+                composerFocused = true;
+                syncKeyboardOpen();
+            }
+        });
+        document.addEventListener('focusout', function () {
+            composerFocused = false;
+            setTimeout(syncKeyboardOpen, 300);
+        });
         if (!framed) {
             document.addEventListener('load', function (e) {
                 var t = e && e.target;
