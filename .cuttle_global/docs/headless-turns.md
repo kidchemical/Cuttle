@@ -6,6 +6,12 @@ Cuttle harness agents (Cursor `agent -p`, etc.) are **one-shot** CLI runs per tu
 
 - Finish thinking and tool use **this turn**. Ending the turn exits the process.
 - Nothing wakes you except a new user message or a watch-card **Continue**.
+  Exception — **Claude Code**: while your own background tasks (`Bash` with
+  `run_in_background`, `Monitor`) are still running, Cuttle keeps the turn open
+  (the chat shows "waiting on background task: …") and their completion
+  notification continues the **same reply**. The wait is capped (default 50 min,
+  `CLAUDE_BACKGROUND_WAIT_SEC`; `0` disables); unfinished tasks end with the turn.
+  Do not start background work you do not intend to wait for (dev servers).
 - Do **not** launch Cursor/Codex **CLI background** subagents or defer with “I'll dig into…”.
 - Independent parallel work belongs in **Cuttle child chats**:
   `python -m api.subagents` (see [subagents.md](subagents.md)). Those sessions

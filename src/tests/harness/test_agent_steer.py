@@ -640,6 +640,86 @@ def test_claude_turn_reports_steer_it_never_read(tmp_path, monkeypatch):
     assert "- too late" in res["output"]
 
 
+_FAKE_CLAUDE_BACKGROUND = r'''
+import json, os, sys, threading, time, queue
+mode = os.environ.get("FAKE_CLAUDE_MODE", "finishes")
+q = queue.Queue()
+def rd():
+    for line in sys.stdin:
+        q.put(json.loads(line))
+    q.put(None)
+threading.Thread(target=rd, daemon=True).start()
+def out(msg):
+    msg.setdefault("session_id", "cs-bg")
+    sys.stdout.write(json.dumps(msg) + "\n"); sys.stdout.flush()
+def result(text):
+    out({"type": "result", "subtype": "success", "result": text, "total_cost_usd": 0.01,
+         "usage": {"input_tokens": 10, "output_tokens": 2}})
+q.get()
+out({"type": "system", "subtype": "init", "model": "fake"})
+task = {"task_id": "b1", "task_type": "local_bash", "description": "watch CI"}
+out({"type": "system", "subtype": "background_tasks_changed", "tasks": [task]})
+result("started the watcher")
+if mode == "finishes":
+    time.sleep(0.5)
+    try:
+        if q.get_nowait() is None:
+            sys.exit(0)  # stdin closed: the CLI exits and the task dies
+    except queue.Empty:
+        pass
+    out({"type": "system", "subtype": "background_tasks_changed", "tasks": []})
+    out({"type": "system", "subtype": "task_notification", "task_id": "b1", "status": "completed"})
+    out({"type": "system", "subtype": "init", "model": "fake"})
+    result("CI is green")
+# Like the real CLI: exit on stdin EOF (that kills any still-running task).
+while q.get(timeout=20) is not None:
+    pass
+'''
+
+
+def _run_fake_claude_background(tmp_path, monkeypatch, mode, chat_id):
+    import scripts.utilities.claude_cli_tool as mod
+
+    monkeypatch.setenv("FAKE_CLAUDE_MODE", mode)
+    monkeypatch.setattr(mod, "claude_executable", lambda: _fake_bin(tmp_path, "claude", _FAKE_CLAUDE_BACKGROUND))
+    monkeypatch.setattr(
+        "scripts.utilities.claude_cli_session_store.save_claude_resume_id", lambda *a, **k: None
+    )
+    return asyncio.run(
+        mod.ClaudeCliTool().execute_prompt(
+            "go", cwd=str(tmp_path), chat_session_id=str(chat_id), timeout=120, steerable=True,
+        )
+    )
+
+
+@pytestmark_posix
+def test_claude_background_task_follow_up_merges_into_reply(tmp_path, monkeypatch):
+    """A root result with a background task pending keeps stdin open; the
+    task's notification turn answers in the same reply instead of dying."""
+    res = _run_fake_claude_background(tmp_path, monkeypatch, "finishes", 5454)
+    assert res["success"] is True
+    assert res["output"] == "started the watcher\n\nCI is green"
+    assert res["usage"]["cost"] == pytest.approx(0.02)
+    assert steer.active_agent(5454) is None
+
+
+@pytestmark_posix
+def test_claude_background_wait_is_capped(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLAUDE_BACKGROUND_WAIT_SEC", "1")
+    res = _run_fake_claude_background(tmp_path, monkeypatch, "never", 5555)
+    assert res["success"] is True
+    assert res["output"].startswith("started the watcher")
+    assert "Stopped waiting for background work" in res["output"]
+    assert "- watch CI" in res["output"]
+
+
+@pytestmark_posix
+def test_claude_background_wait_can_be_disabled(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLAUDE_BACKGROUND_WAIT_SEC", "0")
+    res = _run_fake_claude_background(tmp_path, monkeypatch, "finishes", 5656)
+    assert res["output"] == "started the watcher"
+
+
 def test_claude_is_steerable_by_default(monkeypatch):
     import managers.settings_manager as sm
 
