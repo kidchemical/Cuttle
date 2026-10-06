@@ -48,12 +48,13 @@ def test_dry_run_survives_missing_pids_without_starting_daemon():
             "-DryRun",
         ],
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
         timeout=60,
         cwd=str(REPO_ROOT),
     )
     out = (proc.stdout or "") + (proc.stderr or "")
     assert proc.returncode == 0, out
+    assert out.strip(), f"no output (rc={proc.returncode}, stderr={proc.stderr!r})"
     assert "kill_loop_survived_missing_pids=True" in out
     assert "DryRun complete" in out
     assert "Starting daemon" not in out
@@ -73,7 +74,7 @@ def test_dry_run_reports_unique_daemon_pids_when_present():
             "-DryRun",
         ],
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
         timeout=60,
         cwd=str(REPO_ROOT),
     )

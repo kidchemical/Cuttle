@@ -259,7 +259,7 @@ setImmediate(() => {
   assert.equal(U.render('ordinary snapshot', s=>s), null);
 });
 '''
-    subprocess.run(["node", "-e", code, str(script)], check=True, capture_output=True, text=True)
+    subprocess.run(["node", "-e", code, str(script)], check=True, capture_output=True, text=True, encoding="utf-8")
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
@@ -305,7 +305,7 @@ assert(untrusted.includes('&lt;img'));
 assert(!untrusted.includes('<img'));
 '''
     subprocess.run(["node", "-e", code, str(script), json.dumps(reports)],
-                   check=True, capture_output=True, text=True)
+                   check=True, capture_output=True, text=True, encoding="utf-8")
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
@@ -361,7 +361,7 @@ U.start((text) => text);
 })().catch((error) => { console.error(error); process.exit(1); });
 '''
     subprocess.run(["node", "-e", code, str(script)],
-                   check=True, capture_output=True, text=True)
+                   check=True, capture_output=True, text=True, encoding="utf-8")
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
@@ -406,4 +406,4 @@ const data = (updatedAt) => ({agent: 'codex', days: 30, markdown: 'm', updated_a
 })().catch((error) => { console.error(error); process.exit(1); });
 '''
     subprocess.run(["node", "-e", code, str(script)],
-                   check=True, capture_output=True, text=True)
+                   check=True, capture_output=True, text=True, encoding="utf-8")

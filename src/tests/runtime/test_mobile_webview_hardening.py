@@ -121,7 +121,7 @@ def test_asset_fingerprint_stamp_and_cache_gate(tmp_path):
     js = tmp_path / "js"
     js.mkdir()
     f = js / "a.js"
-    f.write_text("1")
+    f.write_text("1", encoding="utf-8")
     html = '<script src="/js/a.js?v=hand1"></script><link href="/css/missing.css?v=x">'
     out = av.stamp_html(html, tmp_path)
     v = out.split("?v=")[1].split('"')[0]

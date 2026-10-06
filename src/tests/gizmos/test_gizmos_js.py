@@ -74,7 +74,7 @@ def harness():
     if not shutil.which("node"):
         pytest.skip("node not available")
     proc = subprocess.run(["node", "-e", HARNESS], env={"MODEL": str(MODEL), "PATH": os.environ["PATH"]},
-                          capture_output=True, text=True, check=True)
+                          capture_output=True, text=True, encoding="utf-8", check=True)
     return json.loads(proc.stdout)
 
 
@@ -117,7 +117,7 @@ def test_markup(harness):
 # static wiring
 # ---------------------------------------------------------------------------
 def test_shell_loads_gizmos_after_app_shell():
-    html = (WEB / "app_shell.html").read_text()
+    html = (WEB / "app_shell.html").read_text(encoding="utf-8")
     shell = html.index("/js/shell/app_shell.js")
     model = html.index("/js/gizmos/gizmos_model.js")
     controller = html.index("/js/gizmos/gizmos_shell.js")
@@ -127,7 +127,7 @@ def test_shell_loads_gizmos_after_app_shell():
 
 
 def test_gizmos_app_starts_stashed_and_migrates_once():
-    source = (WEB / "js" / "shell" / "app_shell.js").read_text()
+    source = (WEB / "js" / "shell" / "app_shell.js").read_text(encoding="utf-8")
     assert "'nav-gizmos'" in source.split("const CANONICAL_RAIL_ITEM_ORDER")[1].split("];")[0]
     assert "const DEFAULT_RAIL_HIDDEN = ['nav-achievements', 'nav-gizmos', 'nav-projects'];" in source
     start = source.index("function migrateUILayout(saved)")
@@ -149,8 +149,8 @@ assert.equal(r.changed, false); assert(r.layout.rail_items.includes('nav-gizmos'
 
 
 def test_electron_popout_bridge_is_id_only():
-    main = (REPO / "electron" / "main.js").read_text()
-    preload = (REPO / "electron" / "preload.js").read_text()
+    main = (REPO / "electron" / "main.js").read_text(encoding="utf-8")
+    preload = (REPO / "electron" / "preload.js").read_text(encoding="utf-8")
     assert "ipcMain.handle('gizmo-popouts-sync'" in main
     assert "GIZMO_ID_RE.test(id)" in main
     assert "event.sender !== mainWindow.webContents" in main
@@ -159,8 +159,8 @@ def test_electron_popout_bridge_is_id_only():
 
 
 def test_settings_toggle_notifies_shell():
-    assert "cuttle-experimental-flags-changed" in (WEB / "settings_page.html").read_text()
-    assert "cuttle-experimental-flags-changed" in (WEB / "js" / "gizmos" / "gizmos_shell.js").read_text()
+    assert "cuttle-experimental-flags-changed" in (WEB / "settings_page.html").read_text(encoding="utf-8")
+    assert "cuttle-experimental-flags-changed" in (WEB / "js" / "gizmos" / "gizmos_shell.js").read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------

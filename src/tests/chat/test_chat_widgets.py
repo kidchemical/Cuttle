@@ -543,7 +543,7 @@ ctrl.refresh().then(() => {
         encoding="utf-8",
     )
     proc = subprocess.run(
-        ["node", str(driver)], capture_output=True, text=True, timeout=30
+        ["node", str(driver)], capture_output=True, text=True, encoding="utf-8", timeout=30
     )
     assert proc.returncode == 0, proc.stderr + "\n---\n" + proc.stdout
     assert "widget-strip-clear-ok" in proc.stdout
@@ -664,7 +664,7 @@ waitFor(
         encoding="utf-8",
     )
     proc = subprocess.run(
-        ["node", str(driver)], capture_output=True, text=True, timeout=30
+        ["node", str(driver)], capture_output=True, text=True, encoding="utf-8", timeout=30
     )
     assert proc.returncode == 0, proc.stderr + "\n---\n" + proc.stdout
     assert "widget-strip-stale-ok" in proc.stdout
@@ -947,7 +947,7 @@ ctrl.refresh().then(() => {
         encoding="utf-8",
     )
     proc = subprocess.run(
-        ["node", str(driver)], capture_output=True, text=True, timeout=30
+        ["node", str(driver)], capture_output=True, text=True, encoding="utf-8", timeout=30
     )
     assert proc.returncode == 0, proc.stderr + "\n---\n" + proc.stdout
     assert "widget-strip-labels-ok" in proc.stdout

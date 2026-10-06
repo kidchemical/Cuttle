@@ -25,7 +25,7 @@ def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
         ["git", *args],
         cwd=str(repo),
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
         check=False,
     )
     assert r.returncode == 0, r.stderr or r.stdout

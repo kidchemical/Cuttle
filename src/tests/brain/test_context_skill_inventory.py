@@ -6,7 +6,7 @@ from api.cuttle_brain import context_compiler as cc, context_delta as cd
 def put(root, name, desc, extra=''):
     path = root / 'skills' / name / 'SKILL.md'
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f'---\ndescription: {desc}\n{extra}---\nPrivate skill body')
+    path.write_text(f'---\ndescription: {desc}\n{extra}---\nPrivate skill body', encoding="utf-8")
     return path
 
 
@@ -32,7 +32,7 @@ def test_inventory_uses_owner_precedence_and_policy(tmp_path, monkeypatch):
     put(cuttle, 'new', 'New capability')
     delta = cd.build_resume_delta('chat', 'agent', str(project))
     assert 'New capability' in delta
-    (cuttle / 'GLOBAL.ini').write_text('[global]\nskills=off\n')
+    (cuttle / 'GLOBAL.ini').write_text('[global]\nskills=off\n', encoding="utf-8")
     inventory = cc.skill_inventory(str(project))
     assert any('Personal description' in item for item in inventory)
     assert not any('Shared description' in item for item in inventory)

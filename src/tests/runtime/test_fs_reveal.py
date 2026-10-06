@@ -121,7 +121,7 @@ def test_markdown_opener_uses_association_and_observes_result(tmp_path, monkeypa
     from api import fs_reveal
 
     file = tmp_path / 'notes with spaces.md'
-    file.write_text('# Notes')
+    file.write_text('# Notes', encoding="utf-8")
     monkeypatch.setattr(fs_reveal.sys, 'platform', platform)
     with mock.patch.object(fs_reveal, 'desktop_launch_environment', return_value={'DISPLAY': ':0', 'XAUTHORITY': '/live-auth'}), \
          mock.patch.object(fs_reveal.subprocess, 'Popen') as popen:
@@ -140,7 +140,7 @@ def test_failed_opener_surfaces_error(tmp_path, monkeypatch):
     from api import fs_reveal
 
     file = tmp_path / 'notes.md'
-    file.write_text('# Notes')
+    file.write_text('# Notes', encoding="utf-8")
     monkeypatch.setattr(fs_reveal.sys, 'platform', 'linux')
     with mock.patch.object(fs_reveal.subprocess, 'Popen') as popen:
         popen.return_value.communicate.return_value = ('', 'Authorization required; cannot open display')
@@ -153,7 +153,7 @@ def test_long_running_default_app_is_not_stopped(tmp_path, monkeypatch):
     from api import fs_reveal
 
     file = tmp_path / 'notes.md'
-    file.write_text('# Notes')
+    file.write_text('# Notes', encoding="utf-8")
     monkeypatch.setattr(fs_reveal.sys, 'platform', 'linux')
     with mock.patch.object(fs_reveal.subprocess, 'Popen') as popen, \
          mock.patch.object(fs_reveal.threading, 'Thread') as thread:

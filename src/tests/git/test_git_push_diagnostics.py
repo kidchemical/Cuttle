@@ -27,7 +27,7 @@ def test_gitleaks_json_is_reduced_to_redacted_locations(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     def run(args, **kwargs):
         report = Path(args[args.index('--report-path') + 1])
-        report.write_text(json.dumps([{'RuleID': 'private-key', 'File': 'fixture.py', 'Commit': 'abc', 'StartLine': 4, 'Secret': 'must not appear', 'Match': 'must not appear'}]))
+        report.write_text(json.dumps([{'RuleID': 'private-key', 'File': 'fixture.py', 'Commit': 'abc', 'StartLine': 4, 'Secret': 'must not appear', 'Match': 'must not appear'}]), encoding="utf-8")
         return subprocess.CompletedProcess(args, 1, '', '')
     monkeypatch.setattr(subprocess, 'run', run)
     hits, warnings = scan_gitleaks('gitleaks', 'base', 'head')
@@ -51,7 +51,7 @@ def test_reviewed_exceptions_match_only_exact_historical_finding():
     from core.git_push_diagnostics import apply_scanner_exceptions
     repo = Path(__file__).resolve().parents[3]
     policy = repo / '.cuttle/scripts/git-hooks/scanner-exceptions.json'
-    entry = json.loads(policy.read_text())['exceptions'][0]
+    entry = json.loads(policy.read_text(encoding="utf-8"))['exceptions'][0]
     hit = {'hook': 'gitleaks', 'rule': 'private-key', 'commit': entry['commit'], 'file': entry['file'], 'line': entry['line'], 'end_line': 423}
     retained, approved = apply_scanner_exceptions([hit], policy)
     assert retained == [] and approved == [hit]
@@ -63,10 +63,10 @@ def test_reviewed_exceptions_match_only_exact_historical_finding():
 def test_exception_rejects_wrong_content_digest(tmp_path):
     from core.git_push_diagnostics import apply_scanner_exceptions
     repo = Path(__file__).resolve().parents[3]
-    data = json.loads((repo / '.cuttle/scripts/git-hooks/scanner-exceptions.json').read_text())
+    data = json.loads((repo / '.cuttle/scripts/git-hooks/scanner-exceptions.json').read_text(encoding="utf-8"))
     entry = data['exceptions'][0]
     entry['line_sha256'] = '0' * 64
     policy = tmp_path / 'policy.json'
-    policy.write_text(json.dumps(data))
+    policy.write_text(json.dumps(data), encoding="utf-8")
     hit = {'hook': 'secret-patterns', 'rule': 'private key', 'commit': entry['commit'], 'file': entry['file'], 'line': entry['line']}
     assert apply_scanner_exceptions([hit], policy) == ([hit], [])

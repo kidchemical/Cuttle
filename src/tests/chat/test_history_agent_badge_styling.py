@@ -59,7 +59,7 @@ def test_resolve_slash_chip_palette_category_maps_legacy_muse_command():
         "    /**\n     * Resolve the palette category used for chip chrome.",
     )
     harness = f"""
-const CuttleChatSlash = require("{SLASH_MOD}");
+const CuttleChatSlash = require({json.dumps(str(SLASH_MOD))});
 {composer}
 {category_class}
 {resolve}
@@ -87,7 +87,7 @@ const cases = {{
 process.stdout.write(JSON.stringify(cases));
 """
     proc = subprocess.run(
-        ["node", "-e", harness], capture_output=True, text=True, timeout=30
+        ["node", "-e", harness], capture_output=True, text=True, encoding="utf-8", timeout=30
     )
     assert proc.returncode == 0, proc.stderr
     res = json.loads(proc.stdout)
@@ -137,7 +137,7 @@ def test_history_chip_html_uses_muse_palette_for_legacy_command_category():
         "    const SLASH_CHIP_ERR_ICON =",
     )
     harness = f"""
-const CuttleChatSlash = require("{SLASH_MOD}");
+const CuttleChatSlash = require({json.dumps(str(SLASH_MOD))});
 {escape}
 {composer}
 {category_class}
@@ -160,7 +160,7 @@ process.stdout.write(JSON.stringify({{
 }}));
 """
     proc = subprocess.run(
-        ["node", "-e", harness], capture_output=True, text=True, timeout=30
+        ["node", "-e", harness], capture_output=True, text=True, encoding="utf-8", timeout=30
     )
     assert proc.returncode == 0, proc.stderr
     res = json.loads(proc.stdout)

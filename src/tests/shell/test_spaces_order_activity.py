@@ -49,7 +49,7 @@ def _run():
     import os
     proc = subprocess.run(
         ["node", "-e", HARNESS],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, encoding="utf-8", timeout=30,
         env={"PATH": os.environ["PATH"], "SPACES_DIR": str(SPACES_DIR)},
     )
     assert proc.returncode == 0, proc.stderr
@@ -164,7 +164,7 @@ def test_activity_lifecycle_server_truth_beats_stale_frames():
     import os
     proc = subprocess.run(
         ["node", "-e", LIFECYCLE],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, encoding="utf-8", timeout=30,
         env={"PATH": os.environ["PATH"], "SPACES_DIR": str(SPACES_DIR)},
     )
     assert proc.returncode == 0, proc.stderr
@@ -198,5 +198,5 @@ def test_activity_lifecycle_server_truth_beats_stale_frames():
 def test_order_and_activity_modules_parse():
     import subprocess as sp
     for name in ("spaces_order.js", "spaces_activity.js"):
-        proc = sp.run(["node", "--check", str(SPACES_DIR / name)], capture_output=True, text=True)
+        proc = sp.run(["node", "--check", str(SPACES_DIR / name)], capture_output=True, text=True, encoding="utf-8")
         assert proc.returncode == 0, name + ": " + proc.stderr

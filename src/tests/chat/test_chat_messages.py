@@ -129,7 +129,7 @@ def _run():
     import os
     proc = subprocess.run(
         ["node", "-e", HARNESS],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, encoding="utf-8", timeout=30,
         env={"PATH": os.environ["PATH"], "MOD_JS": str(MOD_JS)},
     )
     assert proc.returncode == 0, proc.stderr
@@ -222,7 +222,7 @@ def test_transcript_end_predicate():
 @node_only
 def test_chat_messages_module_parses():
     import subprocess as sp
-    proc = sp.run(["node", "--check", str(MOD_JS)], capture_output=True, text=True)
+    proc = sp.run(["node", "--check", str(MOD_JS)], capture_output=True, text=True, encoding="utf-8")
     assert proc.returncode == 0, proc.stderr
 
 
@@ -306,7 +306,7 @@ def _run_format():
     import os
     proc = subprocess.run(
         ["node", "-e", FORMAT_HARNESS],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, encoding="utf-8", timeout=30,
         env={"PATH": os.environ["PATH"], "MOD_JS": str(MOD_JS),
              "CHAT_PAGE_JS": str(CHAT_PAGE_JS),
              "CHAT_ATTACHMENTS_JS": str(CHAT_ATTACHMENTS_JS),
@@ -429,7 +429,7 @@ def _run_structured():
     import os
     proc = subprocess.run(
         ["node", "-e", STRUCTURED_HARNESS],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, encoding="utf-8", timeout=30,
         env={"PATH": os.environ["PATH"], "MOD_JS": str(MOD_JS),
              "CHAT_PAGE_JS": str(CHAT_PAGE_JS)},
     )
@@ -563,7 +563,7 @@ def _run_codelink():
     import os
     proc = subprocess.run(
         ["node", "-e", CODELINK_HARNESS],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, encoding="utf-8", timeout=30,
         env={"PATH": os.environ["PATH"], "MOD_JS": str(MOD_JS),
              "CHAT_PAGE_JS": str(CHAT_PAGE_JS)},
     )
@@ -674,7 +674,7 @@ def _run_full_pipeline():
     import os
     proc = subprocess.run(
         ["node", "-e", FULL_PIPELINE_HARNESS],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, encoding="utf-8", timeout=30,
         env={"PATH": os.environ["PATH"], "MOD_JS": str(MOD_JS),
              "CHAT_PAGE_JS": str(CHAT_PAGE_JS),
              "CHAT_ATTACHMENTS_JS": str(CHAT_ATTACHMENTS_JS),
@@ -814,7 +814,7 @@ def _run_order():
     import os
     proc = subprocess.run(
         ["node", "-e", ORDER_HARNESS],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True, text=True, encoding="utf-8", timeout=30,
         env={"PATH": os.environ["PATH"], "MOD_JS": str(MOD_JS),
              "CHAT_PAGE_JS": str(CHAT_PAGE_JS)},
     )
@@ -856,7 +856,7 @@ out.healthy = A.renderAssistantStatusHtml({}, false, 'Mention an error in discus
 console.log(JSON.stringify(out));
 '''
     import os
-    result = subprocess.run(['node','-e',code],env={**os.environ, 'MOD_JS': str(MOD_JS)},capture_output=True,text=True,check=True)
+    result = subprocess.run(['node','-e',code],env={**os.environ, 'MOD_JS': str(MOD_JS)},capture_output=True,text=True, encoding="utf-8",check=True)
     out = json.loads(result.stdout)
     for kind, name in [('routed','Router'), ('escalation','Reroute'), ('fallback','Fallback'), ('default','Warning')]:
         html = out[kind]

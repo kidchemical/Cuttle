@@ -92,8 +92,8 @@ def _run_js(script: str, *, chips=None) -> dict:
     slash_mod = str(SLASH_JS)
     composer_mod = str(COMPOSER_JS)
     harness = f"""
-const CuttleChatSlash = require("{slash_mod}");
-const CuttleChatComposer = require("{composer_mod}");
+const CuttleChatSlash = require({json.dumps(str(slash_mod))});
+const CuttleChatComposer = require({json.dumps(str(composer_mod))});
 {commands}
 {control}
 const isControlCommandPrefix = isNativeControlCommand;
@@ -124,7 +124,7 @@ const document = {{ getElementById: () => null }};
 {script}
 """
     proc = subprocess.run(
-        ["node", "-e", harness], capture_output=True, text=True, timeout=30
+        ["node", "-e", harness], capture_output=True, text=True, encoding="utf-8", timeout=30
     )
     assert proc.returncode == 0, proc.stderr or proc.stdout
     return json.loads(proc.stdout)

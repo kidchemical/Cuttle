@@ -20,7 +20,7 @@ def test_app_page_authentication(tmp_path, monkeypatch):
 
 
 def test_layout_upgrade_preserves_existing_pins():
-    source = (REPO / 'src/web/js/shell/app_shell.js').read_text()
+    source = (REPO / 'src/web/js/shell/app_shell.js').read_text(encoding="utf-8")
     start = source.index('function migrateUILayout(saved)')
     end = source.index('// ── Cuttle web apps', start)
     script = '''const assert = require('assert');

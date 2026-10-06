@@ -1,4 +1,5 @@
 """Projects App: host path ordering, registry identity, and authenticated workflows."""
+import os
 import json
 from pathlib import Path
 
@@ -22,7 +23,8 @@ def test_ordered_paths_are_host_resolved_and_survive_restart(registry, tmp_path,
     pm, pid, folder = registry
     alternate = tmp_path / 'alternate'
     alternate.mkdir()
-    paths = ['Z:\\Windows\\Demo', str(tmp_path / 'missing'), str(alternate), str(folder)]
+    foreign = '/home/demo/Demo' if os.name == 'nt' else 'Z:\\Windows\\Demo'
+    paths = [foreign, str(tmp_path / 'missing'), str(alternate), str(folder)]
     pm.update_project(pid, paths=paths)
     project = pm.get_project(pid)
     assert project['path'] == str(alternate)

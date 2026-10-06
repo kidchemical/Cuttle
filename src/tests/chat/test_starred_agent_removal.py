@@ -138,12 +138,12 @@ def _run_sticky_js(script: str, *, starred, chips, session_id=None, prefs=None):
         "    function saveComposerDraft(sid, composerKey) {",
     )
     harness = f"""
-const CuttleChatComposer = require("{CHAT_JS.parent / 'chat_composer.js'}");
-const CuttleChatAgentModel = require("{CHAT_JS.parent / 'chat_agent_model.js'}");
+const CuttleChatComposer = require({json.dumps(str(CHAT_JS.parent / 'chat_composer.js'))});
+const CuttleChatAgentModel = require({json.dumps(str(CHAT_JS.parent / 'chat_agent_model.js'))});
 const slashPaletteSupplement = {{}};
 const newComposerPrefsId = 'draft:new';
 function beginSupplementFetch(field) {{ slashPaletteSupplement[field] = 1; }}
-const CuttleChatSlash = require("{slash_mod}");
+const CuttleChatSlash = require({json.dumps(str(slash_mod))});
 {commands}
 const prefsMap = {json.dumps(prefs or {})};
 let currentSessionId = {json.dumps(session_id)};
@@ -168,7 +168,7 @@ const document = {{ getElementById: () => null }};
 {script}
 """
     proc = subprocess.run(
-        ["node", "-e", harness], capture_output=True, text=True, timeout=30
+        ["node", "-e", harness], capture_output=True, text=True, encoding="utf-8", timeout=30
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)

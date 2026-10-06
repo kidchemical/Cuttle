@@ -149,7 +149,7 @@ const fetch = () => Promise.resolve({{ ok: true, json: async () => ({{ success: 
 {script}
 """
     proc = subprocess.run(
-        ["node", "-e", harness], capture_output=True, text=True, timeout=30
+        ["node", "-e", harness], capture_output=True, text=True, encoding="utf-8", timeout=30
     )
     assert proc.returncode == 0, proc.stderr + "\n---\n" + proc.stdout
     return json.loads(proc.stdout)

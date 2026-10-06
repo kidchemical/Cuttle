@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+
+import pytest
 from unittest.mock import MagicMock, patch
 
 from api.project_actions import (
@@ -440,6 +443,7 @@ def test_rewrite_posix_shell_recipe_maps_powershell_flask_restart():
     assert str(py) in out or py.name in out
 
 
+@pytest.mark.skipif(os.name == "nt", reason="run_posix is the POSIX recipe; Windows runs `run`")
 def test_resolve_action_run_prefers_run_posix(tmp_path: Path):
     _write_action(
         tmp_path,

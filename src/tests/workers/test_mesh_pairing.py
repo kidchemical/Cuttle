@@ -16,7 +16,7 @@ SH = REPO / ".cuttle_global" / "scripts" / "install-cuttle-mesh-lan-key.sh"
 
 def _git(*args: str) -> str:
     return subprocess.run(
-        ["git", *args], cwd=REPO, capture_output=True, text=True, check=True
+        ["git", *args], cwd=REPO, capture_output=True, text=True, encoding="utf-8", check=True
     ).stdout
 
 
@@ -83,7 +83,7 @@ def test_posix_pairing_generate_authorize_idempotent(tmp_path):
     home_b.mkdir()
     ak = home_b / ".ssh" / "authorized_keys"
     ak.parent.mkdir(parents=True, exist_ok=True)
-    ak.write_text("legacy-entry ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIlegacy\n")
+    ak.write_text("legacy-entry ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIlegacy\n", encoding="utf-8")
     env_b = {"HOME": str(home_b), "PATH": "/usr/bin:/bin"}
     subprocess.run(
         ["bash", str(SH), "--pubkey", str(pub), "--alias", "tower"],
@@ -91,7 +91,7 @@ def test_posix_pairing_generate_authorize_idempotent(tmp_path):
         capture_output=True,
         env=env_b,
     )
-    body = ak.read_text()
+    body = ak.read_text(encoding="utf-8")
     assert "cuttle-mesh-peer" in body
     assert 'from="192.168.0.0/16,127.0.0.1,::1"' in body
     assert "legacy-entry" in body  # preserved, never purged
@@ -101,4 +101,4 @@ def test_posix_pairing_generate_authorize_idempotent(tmp_path):
         capture_output=True,
         env=env_b,
     )
-    assert ak.read_text().count("cuttle-mesh-peer") == 1
+    assert ak.read_text(encoding="utf-8").count("cuttle-mesh-peer") == 1

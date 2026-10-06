@@ -436,7 +436,7 @@ def test_compact_codex_uses_app_server(monkeypatch):
         _fake_compact,
     )
     result = ac.compact_agent_context(
-        chat_session_id=42, agent_id="codex", cwd="C:/Projects/Cuttle"
+        chat_session_id=42, agent_id="codex", cwd=str(_REPO)
     )
     assert result["success"] is True
     assert result["method"] == "app-server-compact"
@@ -505,7 +505,7 @@ def test_compact_supported_agents_mocked(agent_id, monkeypatch):
     monkeypatch.setattr(ac, "_compact_claude", _ok)
 
     result = ac.compact_agent_context(
-        chat_session_id=42, agent_id=agent_id, cwd="C:/Projects/Cuttle"
+        chat_session_id=42, agent_id=agent_id, cwd=str(_REPO)
     )
     assert result.get("success") is True
     assert calls["n"] == 1
@@ -515,7 +515,7 @@ def test_compact_supported_agents_mocked(agent_id, monkeypatch):
 @pytest.mark.parametrize("agent_id", ["deepseek", "antigravity"])
 def test_compact_unavailable_agents_rejected(agent_id):
     result = ac.compact_agent_context(
-        chat_session_id=42, agent_id=agent_id, cwd="C:/Projects/Cuttle"
+        chat_session_id=42, agent_id=agent_id, cwd=str(_REPO)
     )
     assert result.get("success") is False
     err = (result.get("error") or "").lower()
@@ -544,7 +544,7 @@ def test_antigravity_gauge_without_compact(monkeypatch):
     assert st["used_tokens"] == 40_000
     assert st["compact_available"] is False
     result = ac.compact_agent_context(
-        chat_session_id=1, agent_id="antigravity", cwd="C:/Projects/Cuttle"
+        chat_session_id=1, agent_id="antigravity", cwd=str(_REPO)
     )
     assert result["success"] is False
     assert "compact" in (result.get("error") or "").lower()
@@ -582,7 +582,7 @@ def test_compact_no_resume_does_not_call_cli(monkeypatch):
     )
     for aid in ("cursor", "muse", "opencode", "codex", "hermes"):
         r = ac.compact_agent_context(
-            chat_session_id=7, agent_id=aid, cwd="C:/Projects/Cuttle"
+            chat_session_id=7, agent_id=aid, cwd=str(_REPO)
         )
         assert r.get("success") is False
         assert "No" in (r.get("error") or "") and "compact" in (r.get("error") or "")

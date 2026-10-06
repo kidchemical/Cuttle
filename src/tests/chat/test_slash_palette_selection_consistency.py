@@ -205,8 +205,8 @@ function isHarnessNestedCommandChip(chip) {
     )
 
     harness = f"""
-const CuttleChatSlash = require("{slash_mod}");
-const CuttleChatComposer = require("{composer_mod}");
+const CuttleChatSlash = require({json.dumps(str(slash_mod))});
+const CuttleChatComposer = require({json.dumps(str(composer_mod))});
 {commands}
 {cursor_cmds}
 {helpers}
@@ -260,7 +260,7 @@ function displayLabelForComposerChip(chip, preferred) {{
 {script}
 """
     proc = subprocess.run(
-        ["node", "-e", harness], capture_output=True, text=True, timeout=30
+        ["node", "-e", harness], capture_output=True, text=True, encoding="utf-8", timeout=30
     )
     assert proc.returncode == 0, proc.stderr or proc.stdout
     return json.loads(proc.stdout)

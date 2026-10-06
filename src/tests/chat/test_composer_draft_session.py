@@ -216,7 +216,7 @@ def test_switch_to_chat_without_draft_clears_composer(tmp_path):
     driver = tmp_path / "composer-draft-session.js"
     driver.write_text(harness, encoding="utf-8")
     proc = subprocess.run(
-        ["node", str(driver)], capture_output=True, text=True, timeout=60
+        ["node", str(driver)], capture_output=True, text=True, encoding="utf-8", timeout=60
     )
     assert proc.returncode == 0, proc.stderr + "\n" + proc.stdout
     assert "composer-draft-session-ok" in proc.stdout

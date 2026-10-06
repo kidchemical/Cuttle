@@ -43,7 +43,7 @@ def _poll(fn, timeout=10.0):
 
 def _fake_bin(tmp_path, name, body):
     path = tmp_path / name
-    path.write_text(f"#!{sys.executable}\n" + textwrap.dedent(body))
+    path.write_text(f"#!{sys.executable}\n" + textwrap.dedent(body), encoding="utf-8")
     path.chmod(path.stat().st_mode | stat.S_IEXEC)
     return str(path)
 
@@ -274,7 +274,7 @@ def test_probe_first_turn_fails_closed_without_touching_thread(tmp_path, monkeyp
         assert "fallback" not in res  # honest error, not an exec retry
         assert own.owner_of(tid) == "probe"  # never stolen
         if log_path.exists():
-            assert "initialize" not in log_path.read_text()  # never touched
+            assert "initialize" not in log_path.read_text(encoding="utf-8")  # never touched
     finally:
         assert own.release(tid, token) is True
     assert own.owner_of(tid) is None
@@ -380,7 +380,7 @@ def test_probe_first_waiting_turn_acquires_after_release(tmp_path, monkeypatch):
             # not exist yet: poll for the actual initialize handshake.
             assert _poll(
                 lambda: turn_log.exists()
-                and "initialize" in turn_log.read_text(),
+                and "initialize" in turn_log.read_text(encoding="utf-8"),
                 timeout=15.0,
             ), "turn proceeded to initialize its own server"
         finally:

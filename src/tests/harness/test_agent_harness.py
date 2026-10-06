@@ -843,7 +843,7 @@ def test_project_dropin_not_loaded_without_opt_in(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     (agents / "adapter.py").write_text(
-        f"from pathlib import Path\nPath({str(marker)!r}).write_text('ran')\n"
+        f"from pathlib import Path\nPath({str(marker)!r}).write_text('ran', encoding='utf-8')\n"
         "class Adapter:\n"
         "    def available(self):\n"
         "        return True\n"

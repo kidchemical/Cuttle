@@ -534,7 +534,7 @@ def test_cursor_usage_reads_cli_auth_not_ide(tmp_path, monkeypatch):
     assert "agent login" in missing["error"]
     assert "IDE" not in missing["error"]
 
-    auth.write_text(json.dumps({"accessToken": " tok ", "refreshToken": "r"}))
+    auth.write_text(json.dumps({"accessToken": " tok ", "refreshToken": "r"}), encoding="utf-8")
     assert cac._read_cursor_cli_access_token() == "tok"
 
 

@@ -18,7 +18,7 @@ def test_restart_daemon_sh_dry_run():
     proc = subprocess.run(
         ["bash", str(SCRIPT), "--dry-run"],
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
         timeout=30,
         cwd=str(REPO_ROOT),
     )

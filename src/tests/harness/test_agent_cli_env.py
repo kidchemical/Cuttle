@@ -17,7 +17,7 @@ def test_real_child_isolated_while_parent_keeps_credentials(monkeypatch):
     monkeypatch.setenv('ANTHROPIC_BASE_URL', 'https://host-provider.invalid')
     child = subprocess.run(
         [sys.executable, '-c', 'import os,json; print(json.dumps(dict(os.environ)))'],
-        env=agent_cli_env(), capture_output=True, text=True, check=True,
+        env=agent_cli_env(), capture_output=True, text=True, encoding="utf-8", check=True,
     )
     env = json.loads(child.stdout)
     for key in keys:
@@ -42,5 +42,5 @@ def test_bundled_catalog_does_not_request_host_api_credentials():
     import yaml
     root = Path(__file__).resolve().parents[2] / 'api/agent_harness/agents'
     for path in root.glob('*/manifest.yaml'):
-        manifest = yaml.safe_load(path.read_text())
+        manifest = yaml.safe_load(path.read_text(encoding="utf-8"))
         assert not manifest.get('credential_env'), path

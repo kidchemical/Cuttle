@@ -282,6 +282,19 @@ def _vendor_cli_in_argv(args, fake_roots=()) -> str:
     return ""
 
 
+# Windows processes cannot start without these (node aborts in CSPRNG init
+# without SYSTEMROOT). Tests pass deliberately minimal envs; keep them minimal
+# but bootable.
+_WINDOWS_ESSENTIAL_ENV = ("SYSTEMROOT", "WINDIR", "SYSTEMDRIVE", "COMSPEC", "PATHEXT", "TEMP", "TMP")
+
+
+def _with_windows_essentials(env):
+    present = {key.upper() for key in env}
+    extra = {key: os.environ[key] for key in _WINDOWS_ESSENTIAL_ENV
+             if key not in present and key in os.environ}
+    return {**env, **extra} if extra else env
+
+
 @pytest.fixture(autouse=True)
 def _no_real_vendor_cli(monkeypatch, tmp_path_factory):
     """Fail closed if a test would launch a real agent CLI (spends quota).
@@ -306,6 +319,8 @@ def _no_real_vendor_cli(monkeypatch, tmp_path_factory):
                     f"test guard: real `{cli}` CLI launch blocked "
                     f"({os.environ.get('PYTEST_CURRENT_TEST', '?')}); fake the runner seam"
                 )
+            if os.name == "nt" and isinstance(k.get("env"), dict):
+                k["env"] = _with_windows_essentials(k["env"])
             super().__init__(args, *a, **k)
 
     monkeypatch.setattr(subprocess, "Popen", _GuardedPopen)

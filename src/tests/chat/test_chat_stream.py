@@ -124,12 +124,12 @@ function frame(obj) {
 
 def run_probe(body):
     with tempfile.NamedTemporaryFile("w", suffix=".js",
-                                     delete=False) as handle:
+                                     delete=False, encoding="utf-8") as handle:
         handle.write(PRELUDE + body)
         probe_path = handle.name
     try:
         proc = subprocess.run(["node", probe_path],
-                              capture_output=True, text=True, timeout=60)
+                              capture_output=True, text=True, encoding="utf-8", timeout=60)
     finally:
         Path(probe_path).unlink(missing_ok=True)
     assert proc.returncode == 0, proc.stderr + proc.stdout
@@ -139,7 +139,7 @@ def run_probe(body):
 @node_only
 def test_chat_stream_module_parses():
     proc = subprocess.run(["node", "--check", str(MOD_JS)],
-                          capture_output=True, text=True)
+                          capture_output=True, text=True, encoding="utf-8")
     assert proc.returncode == 0, proc.stderr
 
 
