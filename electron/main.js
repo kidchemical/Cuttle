@@ -1079,6 +1079,8 @@ function createTray() {
         tray.setToolTip(LAUNCH_MODE === 'host' ? 'Cuttle Host' : 'Cuttle Desktop');
         const contextMenu = Menu.buildFromTemplate([
             { label: 'Open Cuttle', click: () => { if (mainWindow) mainWindow.show(); else createWindow(); } },
+            { label: 'Refresh window', click: () => { if (mainWindow) reloadWindowFresh(mainWindow); else createWindow(); } },
+            { label: 'Unfreeze window (restart renderer)', click: () => { unfreezeWindow(mainWindow); } },
             { label: 'Change Cuttle host…', click: () => { showConnectPage(); } },
             { type: 'separator' },
             { label: 'Exit', click: () => { requestHostExit(); } }
@@ -1592,7 +1594,10 @@ ipcMain.on('window-close', (event) => {
     if (win) win.close(); // existing close handler hides to tray
 });
 ipcMain.on('window-reload', (event) => {
-    const win = BrowserWindow.fromWebContents(event.sender);
+    reloadWindowFresh(BrowserWindow.fromWebContents(event.sender));
+});
+
+function reloadWindowFresh(win) {
     if (!win || win.isDestroyed()) return;
     // Chat lives in an iframe; reloadIgnoringCache alone often leaves stale
     // chat_page.html / js in Chromium's HTTP cache. Clear session cache first,
@@ -1624,7 +1629,24 @@ ipcMain.on('window-reload', (event) => {
             clearTimeout(timer);
             done();
         });
-});
+}
+
+// A renderer stuck in a JS loop never commits a reload (same-site navigation
+// reuses the busy process). Killing it fires render-process-gone, which reloads.
+function unfreezeWindow(win) {
+    if (!win || win.isDestroyed()) {
+        createWindow();
+        return;
+    }
+    win.show();
+    try {
+        win.webContents.forcefullyCrashRenderer();
+    } catch (err) {
+        console.error('forcefullyCrashRenderer failed:', err);
+        win.loadURL(win._cuttleUiUrl || preferredAppUrl('/app_shell.html'));
+    }
+}
+
 ipcMain.on('window-toggle-fullscreen', (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win || win.isDestroyed()) return;
