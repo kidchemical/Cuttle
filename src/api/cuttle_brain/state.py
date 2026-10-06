@@ -1,6 +1,6 @@
 """Lifecycle for Brain per-chat state (briefing receipts + handoff cursors).
 
-Both stores are JSON maps keyed by chat id. Without cleanup they only grow:
+Both stores are indexed SQLite entries keyed by chat id (legacy JSON is imported once). Without cleanup they only grow:
 ``forget_chat`` runs on chat delete, ``prune`` sweeps orphans left by chats
 deleted earlier and by test runs that wrote into the live data dir.
 """
@@ -66,19 +66,15 @@ def prune(*, dry_run: bool = False, live_ids: Optional[Iterable[int]] = None) ->
             if _orphan(sid, project, live):
                 drop.append(key)
         if drop and not dry_run:
-            for key in drop:
-                del snaps[key]
-            cd._write_all(snaps)
+            cd._store().delete(drop)
         out["snapshots_removed"] = len(drop)
-        out["snapshots_kept"] = len(snaps) - (len(drop) if dry_run else 0)
+        out["snapshots_kept"] = len(snaps) - len(drop)
 
     with ho._lock:
         agents = ho._load_all()
         drop = [k for k in agents if _orphan(str(k), "", live)]
         if drop and not dry_run:
-            for key in drop:
-                del agents[key]
-            ho._write_all(agents)
+            ho._store().delete(drop)
         out["handoff_removed"] = len(drop)
-        out["handoff_kept"] = len(agents) - (len(drop) if dry_run else 0)
+        out["handoff_kept"] = len(agents) - len(drop)
     return out

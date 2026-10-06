@@ -27,8 +27,8 @@ inspect the envelope. Day-to-day, Flask injects it — no extra round-trip.
 2. **Cuttle global rules** — `{Cuttle}/.cuttle_global/rules/*.md` (global guidelines for every registered project).
 3. **Project rules** — `{project}/.cuttle/rules/*.md` (always-on guidelines for that project; for the Cuttle repo itself this is Cuttle-only rules, never guest etiquette).
 4. **Profile** — `standard` today; room for coordination / supervision later.
-5. **Runtime** — inventory of commands/docs/actions (global + project); optional handoff delta; chat-store hint.
-6. **Ranked context (optional)** — Jev may inject 1–3 extra skill/doc snippets for this prompt (`python -m api.jev rank`). Always-on rules still win on conflict.
+5. **Runtime** — inventory of commands/docs/actions/skills (global + project); optional handoff delta; chat-store hint.
+6. **Ranked context (optional)** — Jev may inject one selected skill/doc snippet for this prompt (`python -m api.jev rank`). Always-on rules still win on conflict.
 7. **User request** — the actual turn prompt (never truncated by the compiler).
 
 ## How this relates to `.cuttle/`
@@ -42,6 +42,7 @@ inspect the envelope. Day-to-day, Flask injects it — no extra round-trip.
 | `commands/*.md` | **On-demand** via `/name` expand (`project_commands`). Listed in inventory; not dumped every turn. |
 | `docs/` | Runbooks — inventory only; agents open when relevant (global `discord.md` is canonical for Discord). |
 | `actions/` | Allowlisted side effects — inventory of action ids. |
+| `skills/*/SKILL.md` | Deterministic effective summaries/paths in inventory and resume deltas; bodies stay on demand. Personal/project precedence and GLOBAL.ini apply even with Jev disabled. |
 | `agents/` | Drop-in harness connectors — discovery, not context text. |
 | `memory/` (future) | Retrieved snippets via Brain; not a full dump. |
 
@@ -97,3 +98,15 @@ When the CLI has no separate system channel, the compiler still demarcates:
 
 Live smoke `test_live_no_envelope_narration` (CH-000150-8) fails replies that
 meta-talk the briefing instead of answering the short user ask.
+
+
+## Bookkeeping storage
+
+Briefing receipts and handoff cursors use indexed SQLite files beside the former
+`context_inject_snapshots.json` and `harness_last_agent_map.json` paths. On first
+use, a transaction imports the legacy JSON once and leaves the original file
+untouched. Normal turns read/write one key; reset/delete use indexed key ranges.
+Updates are atomic across processes. Only explicit `prune` maintenance enumerates
+all records. A malformed legacy map fails visibly rather than acknowledging a
+partial import. Deploy this Python change with the normal coordinated restart;
+do not run old JSON writers and new SQLite writers concurrently.

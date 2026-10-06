@@ -8,13 +8,13 @@ the entire briefing every turn.
 from __future__ import annotations
 
 import hashlib
-import json
 import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.runtime_paths import runtime_state_path
+from api.cuttle_brain.key_store import KeyStore
 
 from api.cuttle_brain.context_compiler import (
     CONTEXT_SCHEMA_VERSION,
@@ -24,6 +24,7 @@ from api.cuttle_brain.context_compiler import (
     load_global_rules,
     load_project_rules,
     project_inventory,
+    skill_inventory,
 )
 from api.cuttle_brain.personal_overlay import list_merged_names
 
@@ -115,6 +116,7 @@ class ContextSnapshot:
     project_docs: Tuple[str, ...]
     project_actions: Tuple[str, ...]
     project_commands: Tuple[str, ...]
+    skills: Tuple[str, ...] = ()
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -125,6 +127,7 @@ class ContextSnapshot:
             "project_docs": list(self.project_docs),
             "project_actions": list(self.project_actions),
             "project_commands": list(self.project_commands),
+            "skills": list(self.skills),
         }
 
     @classmethod
@@ -137,6 +140,7 @@ class ContextSnapshot:
             project_docs=tuple(raw.get("project_docs") or ()),
             project_actions=tuple(raw.get("project_actions") or ()),
             project_commands=tuple(raw.get("project_commands") or ()),
+            skills=tuple(raw.get("skills") or ()),
         )
 
 
@@ -171,27 +175,21 @@ def compute_snapshot(project_path: Optional[str]) -> ContextSnapshot:
         project_docs=tuple(sorted(inv.get("docs") or [])),
         project_actions=tuple(sorted(inv.get("actions") or [])),
         project_commands=tuple(sorted(Path(n).stem for n in (inv.get("commands") or []))),
+        skills=tuple(skill_inventory(project_path)),
     )
 
 
+def _store() -> KeyStore:
+    return KeyStore(_map_file())
+
+
 def _load_all() -> Dict[str, Any]:
-    path = _map_file()
-    if not path.is_file():
-        return {}
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except (OSError, json.JSONDecodeError):
-        return {}
+    """Maintenance-only enumeration; normal turns use indexed keys."""
+    return _store().all()
 
 
 def _write_all(data: Dict[str, Any]) -> None:
-    path = _map_file()
-    tmp = path.with_suffix(".tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, sort_keys=True)
-    tmp.replace(path)
+    _store().replace_all(data)
 
 
 def load_injected_snapshot(
@@ -203,7 +201,7 @@ def load_injected_snapshot(
     if not key:
         return None
     with _lock:
-        raw = _load_all().get(key)
+        raw = _store().get(key)
     if not isinstance(raw, dict):
         return None
     snap = raw.get("snapshot")
@@ -231,9 +229,7 @@ def record_snapshot(
     if not key:
         return
     with _lock:
-        data = _load_all()
-        data[key] = {"snapshot": snapshot.to_dict()}
-        _write_all(data)
+        _store().put(key, {"snapshot": snapshot.to_dict()})
 
 
 def record_injected_snapshot(
@@ -267,24 +263,14 @@ def clear_injected_snapshot(
     if not sid:
         return
     with _lock:
-        data = _load_all()
         if agent_id and project_path:
             key = _store_key(chat_session_id, agent_id, project_path)
-            if key and key in data:
-                del data[key]
-                _write_all(data)
+            if key:
+                _store().delete([key])
             return
         aid = (agent_id or "").strip()
-        prefixes = tuple(
-            f"{form}|{aid}|" if aid else f"{form}|"
-            for form in sid_variants(chat_session_id)
-        )
-        keys = [k for k in data if str(k).startswith(prefixes)]
-        if not keys:
-            return
-        for k in keys:
-            del data[k]
-        _write_all(data)
+        prefixes = [f"{form}|{aid}|" if aid else f"{form}|" for form in sid_variants(chat_session_id)]
+        _store().delete_prefixes(prefixes)
 
 
 def _rule_text_by_name(
@@ -423,6 +409,11 @@ def build_delta_text(
             path_hint="project `.cuttle/commands`",
         )
     )
+
+    parts.extend(_format_inventory_delta(
+        "Available Cuttle skills", previous.skills, current.skills,
+        path_hint="effective scoped SKILL.md paths (personal/project precedence applies)",
+    ))
 
     if len(parts) <= 1:
         return None

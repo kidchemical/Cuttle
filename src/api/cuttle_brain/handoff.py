@@ -11,13 +11,13 @@ get the recent conversation every turn.
 
 from __future__ import annotations
 
-import json
 import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from core.runtime_paths import runtime_state_path
+from api.cuttle_brain.key_store import KeyStore
 
 
 _lock = threading.Lock()
@@ -40,24 +40,17 @@ def _sid_key(chat_session_id: Any) -> Optional[str]:
     return s or None
 
 
+def _store() -> KeyStore:
+    return KeyStore(_map_file())
+
+
 def _load_all() -> Dict[str, Any]:
-    path = _map_file()
-    if not path.is_file():
-        return {}
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except (OSError, json.JSONDecodeError):
-        return {}
+    """Maintenance-only enumeration; normal turns use indexed keys."""
+    return _store().all()
 
 
 def _write_all(data: Dict[str, Any]) -> None:
-    path = _map_file()
-    tmp = path.with_suffix(".tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, sort_keys=True)
-    tmp.replace(path)
+    _store().replace_all(data)
 
 
 def _entry(chat_session_id: Any) -> Dict[str, Any]:
@@ -70,7 +63,7 @@ def _entry(chat_session_id: Any) -> Dict[str, Any]:
     if not key:
         return {"last_agent": None, "seen": {}, "legacy": False}
     with _lock:
-        raw = _load_all().get(key)
+        raw = _store().get(key)
     if isinstance(raw, str):
         return {"last_agent": raw.strip() or None, "seen": {}, "legacy": True}
     if not isinstance(raw, dict):
@@ -137,15 +130,13 @@ def record_last_agent(
         if through_message_id is not None
         else _latest_message_id(chat_session_id)
     )
-    with _lock:
-        data = _load_all()
-        raw = data.get(key)
-        seen: Dict[str, int] = {}
-        if isinstance(raw, dict) and isinstance(raw.get("seen"), dict):
-            seen = dict(raw["seen"])
+    def change(raw):
+        seen = dict(raw["seen"]) if isinstance(raw, dict) and isinstance(raw.get("seen"), dict) else {}
         seen[aid] = cursor
-        data[key] = {"last_agent": aid, "seen": seen}
-        _write_all(data)
+        return {"last_agent": aid, "seen": seen}
+
+    with _lock:
+        _store().update(key, change)
 
 
 def clear_last_agent(chat_session_id: Any) -> None:
@@ -156,12 +147,7 @@ def clear_last_agent(chat_session_id: Any) -> None:
     if not keys:
         return
     with _lock:
-        data = _load_all()
-        hit = [k for k in keys if k in data]
-        if hit:
-            for k in hit:
-                del data[k]
-            _write_all(data)
+        _store().delete(keys)
 
 
 @dataclass(frozen=True)

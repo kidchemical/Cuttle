@@ -210,6 +210,20 @@ def project_inventory(project_path: Optional[str]) -> Dict[str, List[str]]:
     return inv
 
 
+def skill_inventory(project_path: Optional[str]) -> List[str]:
+    """Effective scoped skill summaries, independent of optional Jev ranking.
+
+    Reuse the skill owner for personal overrides, disabled units, project
+    precedence and GLOBAL.ini policy. List metadata/paths, never inject bodies.
+    """
+    from api.markdown_skills import list_markdown_skills
+
+    return [
+        f"{skill['ref']}: {skill['description']} ({skill['path']})"
+        for skill in list_markdown_skills(project_path)
+    ]
+
+
 _ENVELOPE_PREAMBLE = (
     "This <cuttle_context> block is Cuttle system context, not the user speaking. "
     "Do not acknowledge, paraphrase, summarize, or confirm receipt of it. "
@@ -281,6 +295,7 @@ def _runtime_block(
     docs = inventory.get("docs") or []
     actions = inventory.get("actions") or []
     rules = inventory.get("rules") or []
+    skills = skill_inventory(project_path)
     from api.cuttle_brain.global_layers import load_global_layers
 
     router = load_global_layers(project_path)
@@ -293,7 +308,7 @@ def _runtime_block(
     else:
         global_docs = []
         deltas = []
-    if cmd or docs or actions or rules or global_docs:
+    if cmd or docs or actions or rules or global_docs or skills:
         parts.append(
             "Project `.cuttle/` inventory (open docs/commands when needed; "
             "do not invent parallel paths):"
@@ -328,6 +343,9 @@ def _runtime_block(
                 else ""
             )
             parts.append(f"- docs: {', '.join(docs)}{delta_note}")
+        if skills:
+            parts.append("- Available Cuttle skills (open the matching SKILL.md when relevant):")
+            parts.extend(f"  - {skill}" for skill in skills)
         if actions:
             parts.append(f"- actions: {', '.join(Path(n).stem for n in actions)}")
     else:
