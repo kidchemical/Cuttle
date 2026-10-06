@@ -18,9 +18,10 @@ class ClaudeStream:
         self.blocks = {}
         self.last_root_message = None
 
-    def _block(self, scope, message_id, index, block, *, complete=False):
-        key = f"{scope}:{message_id}:{index}"
-        self.blocks[(scope, index)] = (key, block)
+    def _block(self, scope, message_id, index, block, *, complete=False, key=None):
+        key = key or f"{scope}:{message_id}:{index}"
+        if not complete:
+            self.blocks[(scope, index)] = (key, block)
         kind = block.get("type")
         if kind in ("text", "thinking"):
             channel = "writing" if kind == "text" else "thinking"
@@ -87,13 +88,31 @@ class ClaudeStream:
                         args = block.get("partial_json")
                     self.tools.record(f"{scope}:{block.get('id')}", str(block.get("name") or "tool"), args)
         elif typ == "assistant":
+            from api.query_events import MAX_TEXT
+
             message = obj.get("message") or {}
             message_id = str(message.get("id") or self.messages.get(scope) or "pending")
             if scope == "root":
                 self.last_root_message = message_id
+            prefix = f"{scope}:{message_id}:"
+            matched = set()
             for index, block in enumerate(message.get("content") or []):
                 if isinstance(block, dict):
-                    self._block(scope, message_id, index, block, complete=True)
+                    key = f"{prefix}snapshot:{index}"
+                    kind = block.get("type")
+                    if kind in ("text", "thinking"):
+                        channel = "writing" if kind == "text" else "thinking"
+                        text = str(block.get("text" if kind == "text" else "thinking") or "")[:MAX_TEXT + 1]
+                        # Snapshot positions can shift when thinking is omitted.
+                        # Match within this message, once per snapshot block, so
+                        # identical text in distinct blocks remains distinct.
+                        for (saved_channel, saved_key), saved_text in self.text.buffers.items():
+                            if (saved_channel == channel and saved_key.startswith(prefix)
+                                    and saved_key not in matched and saved_text == text):
+                                key = saved_key
+                                break
+                        matched.add(key)
+                    self._block(scope, message_id, index, block, complete=True, key=key)
         elif typ == "user":
             message = obj.get("message") or {}
             for block in message.get("content") or []:
