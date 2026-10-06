@@ -65,7 +65,7 @@ use, reports `chat_backend` ok/fail). The only other permitted importer is
 not an owned layer and never imported by one (`api.dev_instance` spawns it
 as a subprocess; it imports the real app only after installing deny
 guards). Both entries are enforced by
-`src/tests/test_architecture_boundaries.py` (`REVERSE_IMPORT_ALLOWLIST`,
+`src/tests/quality/test_architecture_boundaries.py` (`REVERSE_IMPORT_ALLOWLIST`,
 AST scanner covering static and dynamic import forms; an allowlist entry
 that stops resolving fails the test).
 Plain comment/string mentions remain (e.g. `limiter.py`,
@@ -288,7 +288,7 @@ Install-local harness packs belong in `.cuttle_global/personal/agents/`; legacy
 
 ## Frontend
 
-Vanilla JS: `src/web/js/app_shell.js` (shell), `chat_page.js` (chat). No bundler. Electron loads the same app, preferred HTTP `:8000` with HTTPS `:8080` fallback (`resolveUiBaseUrl` in `electron/main.js`).
+Vanilla JS: `src/web/js/shell/app_shell.js` (shell), `src/web/js/chat/chat_page.js` (chat). No bundler. Electron loads the same app, preferred HTTP `:8000` with HTTPS `:8080` fallback (`resolveUiBaseUrl` in `electron/main.js`).
 
 **Chat frontend ownership:** `chat_page.js` is the page orchestrator — it
 owns DOM, transport URLs, timer handles, and persistence effects.

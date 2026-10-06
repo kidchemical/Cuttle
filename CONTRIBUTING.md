@@ -53,7 +53,7 @@ in order:
 Some rules that trip up first contributions:
 
 - Owned modules (`agent_harness`, `agent_router`, `chat_coordinator`, …) never
-  import `web_chat_api.py`. `src/tests/test_architecture_boundaries.py` fails if
+  import `web_chat_api.py`. `src/tests/quality/test_architecture_boundaries.py` fails if
   they do.
 - New settings routes go in `src/api/settings_routes.py`, not `web_chat_api.py`.
 - New experimental features are one `FlagSpec` row in

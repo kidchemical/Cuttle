@@ -6,7 +6,7 @@ Pytest suite. Default entry (per AGENTS.md):
 .venv/bin/python -m pytest src/tests/  # Linux / macOS
 .venv\Scripts\python.exe -m pytest src/tests/
 # Single file
-.venv\Scripts\python.exe -m pytest src/tests/test_foo.py
+.venv\Scripts\python.exe -m pytest src/tests/chat/test_chat_stream.py
 ```
 
 ## Test tooling and artifacts
@@ -27,7 +27,7 @@ These tests execute the shipped modules/page adapters without a live provider:
 
 ```bash
 node --version
-.venv/bin/python -m pytest -q src/tests/test_stream_detach_status.py src/tests/test_chat_terminal_status.py src/tests/test_p5e_stream_oracles.py src/tests/test_p5f_pipeline_oracles.py src/tests/test_chat_generation.py src/tests/test_chat_activity.py src/tests/test_chat_pending_result.py src/tests/test_architecture_boundaries.py
+.venv/bin/python -m pytest -q src/tests/chat/test_stream_detach_status.py src/tests/chat/test_chat_terminal_status.py src/tests/chat/test_p5e_stream_oracles.py src/tests/chat/test_p5f_pipeline_oracles.py src/tests/chat/test_chat_generation.py src/tests/chat/test_chat_activity.py src/tests/chat/test_chat_pending_result.py src/tests/quality/test_architecture_boundaries.py
 ```
 
 Lifecycle coverage must include a **detached and slow subscriber**, as well as
@@ -98,7 +98,7 @@ settings, or resume copies — root imports can reload keys from `src/.env`
 main-checkout-only: any isolated worktree runs the same recipe.)
 
 Offline broad gate (same env, historical exclusions): `.venv/bin/python -m
-pytest -q -p no:warnings src/tests/ --ignore=src/tests/unit -rf -rs
+pytest -q -p no:warnings src/tests/ --ignore=src/tests/diagnostics -rf -rs
 --basetemp=temp/pytest-a2-broad` (never bare `pytest`). Skip reasons are
 reported by `-rs`, not asserted and not passing coverage — 2026-10-01
 baseline snapshot: 41 spend/scope-gated live tests, 21 platform/fixture
@@ -142,7 +142,7 @@ can exceed the Unix socket path limit. A browser skip is an unmet gate,
 not passing coverage.
 
 ```bash
-.venv/bin/python -m pytest -q src/tests/test_dev_instance.py src/tests/test_architecture_boundaries.py src/tests/test_shadow_chat_journeys.py
+.venv/bin/python -m pytest -q src/tests/runtime/test_dev_instance.py src/tests/quality/test_architecture_boundaries.py src/tests/runtime/test_shadow_chat_journeys.py
 .venv/bin/python -m pytest -q src/tests/e2e/test_shadow_chat_stop_resend.py
 ```
 
@@ -159,7 +159,7 @@ remain blocked without changing the pending status or writing a daemon request.
 Run in the scrubbed isolated environment above (no `src/.env` or user data):
 
 ```bash
-.venv/bin/python -m pytest -q src/tests/test_chat_stream.py src/tests/test_chat_generation.py src/tests/test_architecture_boundaries.py
+.venv/bin/python -m pytest -q src/tests/chat/test_chat_stream.py src/tests/chat/test_chat_generation.py src/tests/quality/test_architecture_boundaries.py
 .venv/bin/python -m pytest -q src/tests/e2e/test_chat_stream_reader.py src/tests/e2e/test_chat_sync_lifetime.py src/tests/e2e/test_chat_stop_resend.py src/tests/e2e/test_shadow_chat_stop_resend.py
 ```
 
@@ -188,11 +188,18 @@ Browser skips remain unmet validation gates.
 
 ```
 src/tests/
-├── test_*.py        # pytest files (chat, agents, jobs, restart, workers, …)
-├── unit/            # small focused tests + paid provider diagnostics (spend-gated)
-├── e2e/             # Playwright browser tests (app shell, cards, badges, history)
-├── fixtures/        # shared fixture files
-└── conftest.py
+├── chat/, harness/, router/, brain/     # chat flow, vendor runners, routing, context
+├── actions/, auth/, settings/, projects/, git/
+├── shell/, runtime/, workers/, media/   # UI layout, processes, mesh, media
+├── dashboards/, achievements/, experimental/
+├── subagents/, supervised/, integrations/, providers/, queries/
+├── quality/                            # architecture, isolation, source hygiene
+├── diagnostics/                        # manually invoked paid-provider diagnostics
+├── e2e/                                # explicitly invoked Playwright browser suites
+├── fixtures/                           # shared fixture files
+├── results/                            # generated artifacts (gitignored)
+├── conftest.py                         # global fail-closed isolation and fixtures
+└── spend_guard.py
 ```
 
 ## Token-spending tests (read before running)
@@ -203,7 +210,7 @@ first** (both spend real money):
 
 | Flag | What it unlocks |
 |---|---|
-| `CUTTLE_ALLOW_SPEND=1` | Script diagnostics: `unit/test_api_key.py`, `unit/test_openai_connection.py` (real `gpt-3.5-turbo` completions). Without it they print `[SKIP]` and pass without calling anything. See `spend_guard.py`. |
+| `CUTTLE_ALLOW_SPEND=1` | Script diagnostics: `diagnostics/test_api_key.py`, `diagnostics/test_openai_connection.py` (real `gpt-3.5-turbo` completions). Without it they print `[SKIP]` and pass without calling anything. See `spend_guard.py`. |
 | `CUTTLE_AGENT_SMOKE=1` (+ `CUTTLE_AGENT_SMOKE_SCOPE`) | Pytest live tests: `test_agent_harness_smoke.py` (`test_live_*`), `test_agent_resume_contract.py::test_live_cursor_resume_two_turn`, `test_agent_stop_then_followup.py::test_live_stop_then_followup` (`stop_followup` scope; ≤2 prompts/agent). Skip reasons say so explicitly. |
 
 Rule for agents: if a run needs either flag, stop and ask. Do not set them
@@ -211,6 +218,6 @@ proactively, do not bury them in a larger command.
 
 ## Contributing
 
-1. New tests go flat in `src/tests/` as `test_*.py` (pytest discovers them).
+1. New tests go in the owning subsystem directory as `test_*.py`; browser suites go in `e2e/`. Keep shared fixtures and test isolation in the root `conftest.py`.
 2. Mock subprocesses — never launch a GUI app, a server, or a harness for real.
 3. Live-server tests must `pytest.skip` when the server is down.

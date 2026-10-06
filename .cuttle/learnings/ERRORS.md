@@ -32,7 +32,7 @@ message instead of a wall of stack traces. See `src/api/agent_harness/ADDING_AN_
 - **Summary:** `/gemini …` returned `'int' object has no attribute 'strip'`.
 - **Error:** `AttributeError: 'int' object has no attribute 'strip'`
 - **Context:** Kernel passes the raw DB `chat_session_id` (an int) into `load/save/clear_gemini_resume_id`; the store called `.strip()` directly on it. First real `/gemini` turn (CH-000148 msg 2445).
-- **Suggested Fix / Done:** Coerce with `str(...)` before `.strip()` in `src/scripts/utilities/gemini_cli_session_store.py`. Regression test `test_gemini_resume_store_accepts_int_session_id` in `src/tests/test_agent_harness.py`.
+- **Suggested Fix / Done:** Coerce with `str(...)` before `.strip()` in `src/scripts/utilities/gemini_cli_session_store.py`. Regression test `test_gemini_resume_store_accepts_int_session_id` in `src/tests/harness/test_agent_harness.py`.
 
 ### [ERR-20260816-002] agent_harness/gemini — Gemini CLI free tier no longer supported (auth)
 - **Priority:** High · **Status:** Open (external / account) · **Area:** gemini_cli_tool auth
@@ -47,7 +47,7 @@ message instead of a wall of stack traces. See `src/api/agent_harness/ADDING_AN_
 - **Summary:** On failure the chat showed raw CLI noise (WARN pytest_cache scandir, "YOLO mode is enabled", "Loaded cached credentials", MCP `unityMCP` ECONNREFUSED, full node.js stack traces) instead of a clean error.
 - **Error:** N/A (presentation bug) — see CH-000148 msg 2449.
 - **Context:** `execute_prompt` merged raw stderr into `error`/`output`; the kernel surfaces `result.error` verbatim.
-- **Suggested Fix / Done:** Added `summarize_gemini_stderr()` in `gemini_cli_tool.py`: classifies known auth/quota failures into a one-line actionable message and strips known noise banners + MCP-discovery/stack-trace blocks. Regression test in `src/tests/test_agent_harness_smoke.py`.
+- **Suggested Fix / Done:** Added `summarize_gemini_stderr()` in `gemini_cli_tool.py`: classifies known auth/quota failures into a one-line actionable message and strips known noise banners + MCP-discovery/stack-trace blocks. Regression test in `src/tests/harness/test_agent_harness_smoke.py`.
 
 ### [ERR-20260816-004] agent_harness/gemini — noisy MCP discovery + pytest_cache scandir warnings
 - **Priority:** Low · **Status:** Mitigated (filtered from output) · **Area:** gemini_cli_tool / env
@@ -57,7 +57,7 @@ message instead of a wall of stack traces. See `src/api/agent_harness/ADDING_AN_
 ### [ERR-20260816-005] process — new harness agent shipped to user without a test
 - **Priority:** High · **Status:** Fixed (process) · **Area:** agent_harness onboarding
 - **Summary:** "Add agent" had no embedded test-first gate, so the user became the first tester and hit ERR-1 then ERR-2 live.
-- **Suggested Fix / Done:** `src/api/agent_harness/ADDING_AN_AGENT.md` runbook now mandates a contract test + gated live smoke (`CUTTLE_AGENT_SMOKE=1`) before handing an agent to the user. Smoke harness: `src/tests/test_agent_harness_smoke.py`.
+- **Suggested Fix / Done:** `src/api/agent_harness/ADDING_AN_AGENT.md` runbook now mandates a contract test + gated live smoke (`CUTTLE_AGENT_SMOKE=1`) before handing an agent to the user. Smoke harness: `src/tests/harness/test_agent_harness_smoke.py`.
 
 ### [ERR-20260816-006] agent_harness/opencode — configured provider has insufficient credits
 - **Priority:** Medium · **Status:** Mitigated (prefer OpenAI) · **Area:** agent_harness / opencode auth
@@ -76,7 +76,7 @@ message instead of a wall of stack traces. See `src/api/agent_harness/ADDING_AN_
 - **Summary:** In **CH-000155** the agent answered about **CH-000147** — it read and summarized a different user conversation as if it were the current chat.
 - **Cause:** The same day's edit to `cuttle_chat_store_addon()` added a *literal* example id to the prompt block: the mapping line named `CH-000147` and the read recipe shipped `sid=147;` as runnable code. The block never told the agent which chat the turn belonged to, so an agent asked about "this chat" ran the only recipe it had, verbatim.
 - **Context:** The block reaches `/muse` (`_with_muse_chat_context`) and every harness agent through the Context Compiler (`include_chat_store_hint`). Any of them could quote a stranger's messages back into chat — a cross-session data leak, not just a wrong answer.
-- **Suggested Fix / Done:** `cuttle_chat_store_addon(current_session_id=…)` now scopes the recipe to the turn's chat (`This chat is CH-000155 → 155`, `sid=155`). With no id it emits a non-runnable placeholder plus "never reuse an id from an example". The handle→row mapping is taught generically (`CH-<zero-padded number>`). `_with_muse_chat_context` and `compile_context` thread `chat_session_id` through; `numeric_chat_session_id()` accepts only real handle shapes (`155`, `CH-000155`, `db_session_155`) so an unknown id degrades to "none" rather than a guess. Regression test: `src/tests/test_chat_store_session_scope.py` (fails on the old block with `[147]`).
+- **Suggested Fix / Done:** `cuttle_chat_store_addon(current_session_id=…)` now scopes the recipe to the turn's chat (`This chat is CH-000155 → 155`, `sid=155`). With no id it emits a non-runnable placeholder plus "never reuse an id from an example". The handle→row mapping is taught generically (`CH-<zero-padded number>`). `_with_muse_chat_context` and `compile_context` thread `chat_session_id` through; `numeric_chat_session_id()` accepts only real handle shapes (`155`, `CH-000155`, `db_session_155`) so an unknown id degrades to "none" rather than a guess. Regression test: `src/tests/chat/test_chat_store_session_scope.py` (fails on the old block with `[147]`).
 - **Learning:** A prompt block that hands an agent runnable code must not contain sample identifiers. Agents execute examples.
 
 ### [ERR-20260816-009] cursor_cli_session_store — `/cursor` never resumed, so every turn was memory-less
@@ -85,7 +85,7 @@ message instead of a wall of stack traces. See `src/api/agent_harness/ADDING_AN_
 - **Error:** `AttributeError: 'int' object has no attribute 'strip'`, swallowed by `_persist_session`'s bare `except`.
 - **Cause:** `save_cursor_resume_id()` guarded with `not (cuttle_session_id or "").strip()` — no `str()`. Auth chats pass the numeric DB id (`155`), so the save raised on every turn. `append_cursor_run_meta()` in the same store already coerced, which is why `recent_runs`/model badges kept working and the map entry looked healthy while `resume_id` was silently absent. Sessions ≤125 had ids because those turns reached the store through a path that passed the string form.
 - **Context:** Verified by running the real CLI through `_cursor_agent_oneline_prompt`: string chat id → resume saved; int chat id → run succeeds, `resume_id` stays `None`. Identical to **ERR-20260816-001** in `gemini_cli_session_store` — that fix was not swept across the sibling stores.
-- **Suggested Fix / Done:** Coerce with `str()` in `save_cursor_resume_id` (and in `codex_cli_session_store._session_key`, same latent hazard). `_persist_session` now logs the failure instead of swallowing it. Regression test `test_session_store_accepts_numeric_chat_id` in `src/tests/test_cursor_agent_slash_commands.py` covers int/str/`db_session_` id shapes plus the run-meta writer. End-to-end check: two real turns with an int chat id now recall a word set in the first.
+- **Suggested Fix / Done:** Coerce with `str()` in `save_cursor_resume_id` (and in `codex_cli_session_store._session_key`, same latent hazard). `_persist_session` now logs the failure instead of swallowing it. Regression test `test_session_store_accepts_numeric_chat_id` in `src/tests/harness/test_cursor_agent_slash_commands.py` covers int/str/`db_session_` id shapes plus the run-meta writer. End-to-end check: two real turns with an int chat id now recall a word set in the first.
 - **Learning:** Fix a bug in one session store, grep the siblings the same hour — they are copy-paste relatives. And a resume store that silently degrades to "no memory" is worse than one that errors: the agent invents plausible context instead of reporting a gap.
 - **See Also:** ERR-20260816-001, ERR-20260816-008, ERR-20260816-010
 
@@ -96,7 +96,7 @@ message instead of a wall of stack traces. See `src/api/agent_harness/ADDING_AN_
   1. **Wrong population.** `test_agent_harness_smoke.py` parametrizes over `list_agents()` — the harness catalog (gemini, opencode, antigravity). Cursor, Codex, Muse and Claude are the pre-harness dispatch path in `core/tool_manager.py` + `scripts/utilities/*_cli_session_store.py`, so no smoke test covered the agent doing ~every turn of real work.
   2. **Wrong direction.** `test_adapter_contract` exercised `load_resume` / `clear_resume` with an int id but never `save_resume`, and save was the broken half. Load worked fine the whole time — there was simply nothing to load.
   3. **Fake at the seam.** `test_kernel_resume_round_trip…` proves the kernel threads a resume id between turns, but through a `_FakeAdapter`, so no real store and no real argv were involved. Nothing asserted that `--resume` reached the command line.
-- **Suggested Fix / Done:** `src/tests/test_agent_resume_contract.py` plus discovery helpers in `src/tests/conftest.py`:
+- **Suggested Fix / Done:** `src/tests/harness/test_agent_resume_contract.py` plus discovery helpers in `src/tests/conftest.py`:
   - `discover_resume_store_modules()` finds every `*session_store*.py` under `src/` (cursor, codex, gemini, muse, opencode, antigravity today) and `pytest_generate_tests` fans the contract over it, so a new agent's store is covered the moment the file exists — no opt-in step to forget.
   - Round trip asserts **save → load → clear** for every chat-id shape production passes (int DB id, digit string, `db_session_…`, opaque token), asserts the map file was actually written, and rejects a store that binds a blank session id.
   - Cursor argv end-to-end with a fake CLI: turn 1 has no `--resume` and persists the CLI session; turn 2 must launch with `--resume <uuid>`; a second chat must not inherit it.

@@ -122,10 +122,10 @@
 <!-- Must be set before achievements.js loads, otherwise its auto-start poller
      fires a real GET /api/achievements/pending against Flask. -->
 <script>window.__CUTTLE_ACHIEVEMENTS_MANUAL = true;</script>
-<script src="js/toast.js"></script>
-<script src="js/chat_vfx.js?v=20261003vfx1"></script>
-<script src="js/celebrate.js"></script>
-<script src="js/achievements.js"></script>
+<script src="js/shared/toast.js"></script>
+<script src="js/chat/chat_vfx.js?v=20261003vfx1"></script>
+<script src="js/achievements/celebrate.js"></script>
+<script src="js/achievements/achievements.js"></script>
 <script>
     const SAMPLES = {
         common:    { icon: '🐙', title: 'First Dive',      description: 'Send Cuttle its very first agent turn.',       progress: 'Progress 1 / 1' },

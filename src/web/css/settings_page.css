@@ -1,5 +1,5 @@
 /* Settings page — category tabs.
-   Owner: src/web/js/settings_page_tabs.js (CuttleSettingsTabs)
+   Owner: src/web/js/settings/settings_page_tabs.js (CuttleSettingsTabs)
    Base .settings-* rules live in css/landing_page.css; compact overrides here so
    the tab shell is page-owned instead of leaking into the landing page. */
 

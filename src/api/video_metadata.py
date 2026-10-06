@@ -15,7 +15,7 @@ downloader:
 * results are cached in-process with a TTL because playlists are static; a user
   editing one row should not re-hit YouTube on every keystroke.
 
-The id parser mirrors ``src/web/js/youtube_id.js`` (the same URL shapes must
+The id parser mirrors ``src/web/js/media/youtube_id.js`` (the same URL shapes must
 resolve on both sides), and ``preferred_ollama_model``-style settings are not
 involved: nothing here writes preferences.
 """

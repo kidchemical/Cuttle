@@ -69,7 +69,7 @@ sandbox; containment is the opt-in gate plus the rules below.
   previously returned instance keeps its already-bound top-level references,
   but a NEW lazy relative import afterwards raises `ImportError` until
   fresh discovery returns a new adapter (pinned in
-  `tests/test_harness_project_adapters.py`).
+  `tests/harness/test_harness_project_adapters.py`).
 - **Bare absolute imports are not sibling imports.** `import helper` inside
   a drop-in resolves against the ambient environment (stdlib /
   site-packages / live modules) and fails loudly otherwise — the adapter is
@@ -79,7 +79,7 @@ sandbox; containment is the opt-in gate plus the rules below.
   (one exec per adapter even under threaded discovery); this makes no claim
   about unrelated Python imports on other threads.
 - Same-named siblings in two drop-ins never leak into each other
-  (see `tests/test_harness_project_adapters.py`).
+  (see `tests/harness/test_harness_project_adapters.py`).
 
 ## Hard-won gotchas (bake these in — do not rediscover)
 
@@ -104,7 +104,7 @@ Call `api.agent_harness.cwd.resolve_harness_cwd`. Same-repo aliases (`src/` /
 `source/`) may share a resume; a different registered project must start a
 **new** CLI session. Switching chips is supposed to change the repo.
 
-`src/tests/test_agent_harness.py` (`test_every_bundled_adapter_honors_project_chip`,
+`src/tests/harness/test_agent_harness.py` (`test_every_bundled_adapter_honors_project_chip`,
 `test_kernel_rejects_adapter_cwd_from_another_project`) covers current **and**
 future bundled agents.
 
@@ -143,7 +143,7 @@ and ran for a full day of `/cursor` turns, each one a brand-new memory-less CLI 
 while badges and run history still looked healthy. Two rules came out of it:
 
 - **Save is a direction too.** Testing `load`/`clear` only is how it survived.
-- **Never fix one store alone.** `src/tests/test_agent_resume_contract.py` *discovers*
+- **Never fix one store alone.** `src/tests/harness/test_agent_resume_contract.py` *discovers*
   every `*session_store*.py` under `src/` and fans the contract over it, so a new store
   is covered the moment it exists — including pre-harness paths (cursor, codex, muse).
   If your store hides its map file behind something other than `_map_file()`, the
@@ -347,7 +347,7 @@ Put the cheap id in `smoke_model` so a forgotten env still does not spend Pro.
    which Cuttle env vars map to which CLI providers; ensure fresh-install / unauthorized replies
    emit a `<cuttle_action_form>` (see **Auth sync** above). Skip only if the CLI is fully covered
    by shared process env with no separate store (still document the env vars).
-4. **Contract test (offline, always runs in CI).** Extend `src/tests/test_agent_harness.py`:
+4. **Contract test (offline, always runs in CI).** Extend `src/tests/harness/test_agent_harness.py`:
    - discovery (`list_agents()` includes your id),
    - slash + sticky prefix shape,
    - `match_slash_command('/<id> hi')`,
@@ -367,9 +367,9 @@ Put the cheap id in `smoke_model` so a forgotten env still does not spend Pro.
 5. **Error-shaping + prompt-integrity test.** Feed a realistic failure (auth wall, quota, missing
    binary) through the adapter/tool and assert the surfaced error is **one actionable line**.
    Auth failures must mention the sync action or `cli auth login`. See
-   adapter stderr summarizers + `src/tests/test_agent_harness_smoke.py`.
+   adapter stderr summarizers + `src/tests/harness/test_agent_harness_smoke.py`.
    If you added a sync script, cover it with a small unit test that asserts keys never appear in
-   stdout (pattern: `src/tests/test_agent_cli_env.py`).
+   stdout (pattern: `src/tests/harness/test_agent_cli_env.py`).
    Also assert **prompt integrity** with a payload longer than any argv threshold and a
    sentinel at the end. Silent truncation is never an acceptable workaround.
 6. **Resume + handoff tests (required).**
@@ -384,7 +384,7 @@ Put the cheap id in `smoke_model` so a forgotten env still does not spend Pro.
      `chat_session_id` asks for it and must get it back (proves native resume works).
 7. **Run the offline suite:**
    ```
-   .venv\Scripts\python.exe -m pytest src/tests/test_agent_harness.py src/tests/test_agent_harness_smoke.py src/tests/test_agent_resume_contract.py src/tests/test_context_compiler.py src/tests/test_agent_cli_env.py -q
+   .venv\Scripts\python.exe -m pytest src/tests/harness/test_agent_harness.py src/tests/harness/test_agent_harness_smoke.py src/tests/harness/test_agent_resume_contract.py src/tests/brain/test_context_compiler.py src/tests/harness/test_agent_cli_env.py -q
    ```
 8. **Live smoke (gated) — ask first, then spend.** Never run the unscoped default when adding
    an agent (that fans one_shot + envelope + resume across *every* installed CLI). After the
@@ -395,7 +395,7 @@ Put the cheap id in `smoke_model` so a forgotten env still does not spend Pro.
    set CUTTLE_AGENT_SMOKE_AGENTS=<new-id>
    set CUTTLE_AGENT_SMOKE_SCOPE=min
    set CUTTLE_AGENT_SMOKE_MODEL=<cheap-id>
-   .venv\Scripts\python.exe -m pytest src/tests/test_agent_harness_smoke.py -q -k live
+   .venv\Scripts\python.exe -m pytest src/tests/harness/test_agent_harness_smoke.py -q -k live
    ```
 
    What each scope does (one prompt per selected agent, not thousands):

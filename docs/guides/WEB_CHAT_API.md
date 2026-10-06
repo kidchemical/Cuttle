@@ -144,7 +144,7 @@ Worker **HTTP** is not in this table; it is `workers_bp`.
 ## Reverse dependencies (production `src/api`)
 
 Exactly one production import, per the AST import scan
-(`src/tests/test_architecture_boundaries.py::test_no_reverse_imports_into_web_chat_api`,
+(`src/tests/quality/test_architecture_boundaries.py::test_no_reverse_imports_into_web_chat_api`,
 `REVERSE_IMPORT_ALLOWLIST`; the scanner covers static and dynamic import
 forms, and a stale allowlist entry fails the test): `api.doctor` imports
 `api.web_chat_api` as an importability health probe (`try/except`, no
@@ -187,13 +187,13 @@ Before large moves, run at least:
 
 ```bash
 .venv/bin/python -m pytest \
-  src/tests/test_http_authz.py \
-  src/tests/test_action_forms.py \
-  src/tests/test_action_form_process_restart.py \
-  src/tests/test_agent_stop_then_followup.py \
-  src/tests/test_starred_agent_removal.py \
-  src/tests/test_flask_restart.py \
-  src/tests/test_device_workers.py \
+  src/tests/auth/test_http_authz.py \
+  src/tests/actions/test_action_forms.py \
+  src/tests/actions/test_action_form_process_restart.py \
+  src/tests/chat/test_agent_stop_then_followup.py \
+  src/tests/chat/test_starred_agent_removal.py \
+  src/tests/runtime/test_flask_restart.py \
+  src/tests/workers/test_device_workers.py \
   -q
 ```
 
