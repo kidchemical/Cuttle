@@ -101,6 +101,25 @@ def ensure_update_asar(current_hash: str) -> Optional[Path]:
     return UPDATE_ASAR if UPDATE_ASAR.is_file() else None
 
 
+_artifact_digest_cache: Dict[tuple, str] = {}
+
+
+def artifact_sha256(path: Path) -> str:
+    """Full SHA-256 of the packed app.asar; clients verify it before swapping."""
+    st = path.stat()
+    key = (str(path), st.st_mtime_ns, st.st_size)
+    cached = _artifact_digest_cache.get(key)
+    if cached:
+        return cached
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            h.update(chunk)
+    _artifact_digest_cache.clear()
+    _artifact_digest_cache[key] = h.hexdigest()
+    return _artifact_digest_cache[key]
+
+
 def _package_version() -> str:
     """Semver from electron/package.json (repo source of truth for desktop)."""
     pkg = ELECTRON_DIR / "package.json"
@@ -131,6 +150,7 @@ def desktop_manifest() -> Dict[str, Any]:
         "packedAt": packed.get("packedAt"),
         "artifact": artifact_ok,
         "artifactSize": asar_path.stat().st_size if artifact_ok and asar_path else None,
+        "artifactSha256": artifact_sha256(asar_path) if artifact_ok and asar_path else None,
         "downloadPath": "/api/desktop/electron/app.asar" if artifact_ok else None,
     }
 

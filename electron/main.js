@@ -38,7 +38,7 @@ const DEFAULT_HTTPS_PORT = 8080;
 
 let desktopUpdateAvailable;
 try {
-    desktopUpdateAvailable = require(path.join(__dirname, '..', 'src', 'web', 'js', 'desktop_update_policy.js')).desktopUpdateAvailable;
+    desktopUpdateAvailable = require(path.join(__dirname, '..', 'src', 'web', 'js', 'shell', 'desktop_update_policy.js')).desktopUpdateAvailable;
 } catch (_) {
     desktopUpdateAvailable = function (remote, localHash, opts) {
         const o = opts || {};
@@ -1229,18 +1229,45 @@ async function checkDesktopUpdate() {
     }
 }
 
+function fileSha256(file) {
+    return new Promise((resolve, reject) => {
+        const h = crypto.createHash('sha256');
+        fs.createReadStream(file)
+            .on('data', (chunk) => h.update(chunk))
+            .on('end', () => resolve(h.digest('hex')))
+            .on('error', reject);
+    });
+}
+
 async function applyDesktopUpdate() {
     if (!app.isPackaged) {
         return { ok: false, error: 'Unpackaged dev builds already run the source shell.' };
+    }
+    // The swap below is a cmd.exe script; AppImage resources are read-only anyway.
+    if (process.platform !== 'win32') {
+        return { ok: false, error: 'In-place desktop updates are Windows-only. Download the new Cuttle release for this platform.' };
     }
     const asarPath = path.join(process.resourcesPath, 'app.asar');
     if (!fs.existsSync(asarPath)) {
         return { ok: false, error: 'This build has no app.asar to replace.' };
     }
+    let expected = '';
+    try {
+        const manifest = (await desktopApiGet('/api/desktop/electron', 6000)).json || {};
+        expected = String(manifest.artifactSha256 || '').toLowerCase();
+    } catch (_) {}
+    if (!/^[0-9a-f]{64}$/.test(expected)) {
+        return { ok: false, error: 'Host did not publish an update checksum; update the host first.' };
+    }
     const tmp = path.join(process.resourcesPath, 'app.asar.new');
     try {
         await desktopDownload('/api/desktop/electron/app.asar', tmp);
+        const actual = await fileSha256(tmp);
+        if (actual !== expected) {
+            throw new Error('Downloaded desktop update failed checksum verification.');
+        }
     } catch (err) {
+        try { fs.unlinkSync(tmp); } catch (_) {}
         return { ok: false, error: (err && err.message) || 'Failed to download desktop update.' };
     }
     const exe = app.getPath('exe');
@@ -1386,7 +1413,7 @@ async function createWindow(opts = {}) {
     // every split chat iframe at once; the shell routes it to one pane.
     let chatFindActions = null;
     try {
-        chatFindActions = require(path.join(__dirname, '..', 'src', 'web', 'js', 'chat_find.js'));
+        chatFindActions = require(path.join(__dirname, '..', 'src', 'web', 'js', 'chat', 'chat_find.js'));
     } catch (_) {}
     mainWindow.webContents.on('before-input-event', (event, input) => {
         if (input.type !== 'keyDown') return;
@@ -1809,33 +1836,6 @@ ipcMain.handle('desktop-use-local', async () => {
 ipcMain.handle('desktop-update-status', () => checkDesktopUpdate());
 ipcMain.handle('desktop-apply-update', () => applyDesktopUpdate());
 
-function isCuttleTrustedHost(hostname) {
-    const h = (hostname || '').toLowerCase();
-    const target = (FLASK_HOST || '').toLowerCase();
-    return (
-        h === '127.0.0.1'
-        || h === 'localhost'
-        || h === '[::1]'
-        || h === '::1'
-        || (target && h === target)
-    );
-}
-
-function isCuttleSelfSignedHttpsUrl(url) {
-    try {
-        const u = new URL(url);
-        // HTTPS page loads and WSS (web terminal PTY) both need the same
-        // self-signed cert exception. Loopback plus the selected endpoint
-        // host, on the effective HTTPS port only — no literal allowlist.
-        // An omitted port is the protocol default (443), compared always.
-        if (u.protocol !== 'https:' && u.protocol !== 'wss:') return false;
-        const port = u.port ? Number(u.port) : 443;
-        if (!Number.isSafeInteger(port) || port !== FLASK_HTTPS_PORT) return false;
-        return isCuttleTrustedHost(u.hostname);
-    } catch (_) {
-        return false;
-    }
-}
 // ── Gizmo pop-outs: always-on-top desktop windows (experimental `gizmos`) ──
 // The shell sends the full wanted set; main opens/closes to match. Only ids
 // cross IPC — the URL is built here so a page cannot open arbitrary windows.
@@ -1940,6 +1940,33 @@ ipcMain.handle('gizmo-popouts-sync', (event, list) => {
     return { ok: true, open: Array.from(wanted.keys()) };
 });
 
+function isCuttleTrustedHost(hostname) {
+    const h = (hostname || '').toLowerCase();
+    const target = (FLASK_HOST || '').toLowerCase();
+    return (
+        h === '127.0.0.1'
+        || h === 'localhost'
+        || h === '[::1]'
+        || h === '::1'
+        || (target && h === target)
+    );
+}
+
+function isCuttleSelfSignedHttpsUrl(url) {
+    try {
+        const u = new URL(url);
+        // HTTPS page loads and WSS (web terminal PTY) both need the same
+        // self-signed cert exception. Loopback plus the selected endpoint
+        // host, on the effective HTTPS port only — no literal allowlist.
+        // An omitted port is the protocol default (443), compared always.
+        if (u.protocol !== 'https:' && u.protocol !== 'wss:') return false;
+        const port = u.port ? Number(u.port) : 443;
+        if (!Number.isSafeInteger(port) || port !== FLASK_HTTPS_PORT) return false;
+        return isCuttleTrustedHost(u.hostname);
+    } catch (_) {
+        return false;
+    }
+}
 
 // NOTE: Do NOT use session.setCertificateVerifyProc for loopback trust.
 // It can deadlock the renderer when a framed page opens wss://127.0.0.1

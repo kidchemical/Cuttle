@@ -29,6 +29,25 @@ def test_desktop_manifest_shape():
     if data["artifact"]:
         assert data["downloadPath"] == "/api/desktop/electron/app.asar"
         assert data["artifactSize"] > 0
+        assert data["artifactSha256"] == desk.artifact_sha256(desk.UPDATE_ASAR)
+
+
+def test_artifact_sha256_is_full_file_digest(tmp_path):
+    import hashlib
+
+    blob = tmp_path / "app.asar"
+    blob.write_bytes(b"cuttle" * 1000)
+    assert desk.artifact_sha256(blob) == hashlib.sha256(blob.read_bytes()).hexdigest()
+    blob.write_bytes(b"changed")
+    assert desk.artifact_sha256(blob) == hashlib.sha256(b"changed").hexdigest()
+
+
+def test_desktop_client_verifies_checksum_and_is_windows_only_for_swap():
+    main_js = (desk.ELECTRON_DIR / "main.js").read_text(encoding="utf-8")
+    body = main_js[main_js.index("async function applyDesktopUpdate"):]
+    body = body[:body.index("\n}\n")]
+    assert "process.platform !== 'win32'" in body
+    assert body.index("fileSha256(tmp)") < body.index("move /Y")
 
 
 def test_desktop_electron_routes_registered():
