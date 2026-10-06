@@ -121,6 +121,16 @@ rescan. It starts unpinned; Apps can pin it to the blade bar. When disabled, the
 App shows an explanation and a link to Settings → Experimental. Existing progress
 is retained. Turning Achievements off does not erase unlocks.
 
+## Gizmos App
+
+Flag `gizmos`. Open **Apps → Gizmos** to add a usage meter (Codex, Claude Code,
+Cursor), pick its dock, and edit or remove it. In the shell, drag a gizmo
+between the title bar, the blade bar, and anywhere else (floating); click or
+right-click it for details and actions. In the desktop app, "Desktop window"
+pops it out as an always-on-top window that stays up while Cuttle sits in the
+tray. Agent verbs and REST: [gizmos.md](../../.cuttle_global/docs/gizmos.md).
+Turning the flag off hides every gizmo and closes pop-outs; rows are kept.
+
 ## Adding an achievement
 
 1. Add the row to `_ACHIEVEMENTS` in `src/api/achievements/catalog.py`.

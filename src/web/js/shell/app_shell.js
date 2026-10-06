@@ -617,6 +617,7 @@ const CANONICAL_RAIL_ITEM_ORDER = [
     'nav-jobs',
     'nav-dashboards',
     'nav-achievements',
+    'nav-gizmos',
     'nav-projects',
     'nav-apps',
 ];
@@ -627,9 +628,9 @@ const CANONICAL_RAIL_FOOTER_ORDER = ['nav-account', 'nav-notifications', 'nav-wo
 // The Apps launcher is the way back to every stashed app, so it can never be removed.
 const RAIL_LOCKED_IDS = new Set(['nav-apps']);
 // Cuttle web apps that live in the Apps grid (not the blade bar) until the user pins them.
-const DEFAULT_RAIL_HIDDEN = ['nav-achievements', 'nav-projects'];
+const DEFAULT_RAIL_HIDDEN = ['nav-achievements', 'nav-gizmos', 'nav-projects'];
 // Bump when defaults change; saved layouts below this version get DEFAULT_RAIL_HIDDEN merged in once.
-const RAIL_LAYOUT_VERSION = 6;
+const RAIL_LAYOUT_VERSION = 7;
 
 const DEFAULT_LAYOUT = {
     rail_items: CANONICAL_RAIL_ITEM_ORDER.filter(id => !DEFAULT_RAIL_HIDDEN.includes(id)),
@@ -1780,6 +1781,7 @@ const PAGE_TITLES = {
     '/jobs_page.html': 'Jobs',
     '/dashboards_page.html': 'Dashboards',
     '/apps_page.html': 'Apps',
+    '/gizmos_page.html': 'Gizmos',
     '/achievements_page.html': 'Achievements',
     '/projects_page.html': 'Projects',
     '/settings_page.html': 'Settings',
@@ -4033,7 +4035,10 @@ function migrateUILayout(saved) {
     const hidden = new Set(Array.isArray(saved.rail_hidden) ? saved.rail_hidden : []);
     // Existing v4 user pins remain intact; only the new App starts stashed.
     const version = Number(saved.layout_version) || 0;
-    const additions = version >= 5 ? ['nav-projects'] : version >= 4 ? ['nav-achievements', 'nav-projects'] : DEFAULT_RAIL_HIDDEN;
+    const additions = version >= 6 ? ['nav-gizmos']
+        : version >= 5 ? ['nav-projects', 'nav-gizmos']
+        : version >= 4 ? ['nav-achievements', 'nav-projects', 'nav-gizmos']
+        : DEFAULT_RAIL_HIDDEN;
     additions.forEach(id => hidden.add(id));
     const known = new Set(CANONICAL_RAIL_ITEM_ORDER);
     layout.rail_hidden = Array.from(hidden).filter(id => known.has(id));

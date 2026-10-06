@@ -87,6 +87,15 @@ contextBridge.exposeInMainWorld('electron', {
             return () => ipcRenderer.removeListener('chat-find-shortcut', handler);
         },
     },
+    /** Gizmo pop-outs: always-on-top desktop windows, one per gizmo id. */
+    gizmos: {
+        syncPopouts: (list) => ipcRenderer.invoke('gizmo-popouts-sync', Array.isArray(list) ? list : []),
+        onPopoutClosed: (callback) => {
+            const handler = (_event, id) => callback(String(id || ''));
+            ipcRenderer.on('gizmo-popout-closed', handler);
+            return () => ipcRenderer.removeListener('gizmo-popout-closed', handler);
+        },
+    },
     desktop: {
         getConfig: () => ipcRenderer.invoke('desktop-get-config'),
         connectHost: (host) => ipcRenderer.invoke('desktop-connect', host),

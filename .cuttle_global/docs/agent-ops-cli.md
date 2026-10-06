@@ -21,6 +21,7 @@ agent toolkit.
 | Chat visual effects | `python -m api.chat_vfx` | `chat-vfx.md` |
 | Experimental flags | `python -m api.experimental` (list, get, set, reset) | Cuttle `.cuttle/docs/experimental-features.md` |
 | Tasks widgets | `python -m api.widgets_cli` | `widgets.md` |
+| Gizmos (usage meters; experimental) | `python -m api.gizmos` | `gizmos.md` |
 | Cuttle QA / promo accounts | `python -m api.fixture_accounts` | Cuttle project `.cuttle/docs/fixture-accounts.md` |
 | Discord reads | `python -m api.discord_cli` | `discord.md` (posts stay on `discord.post`) |
 | Live split panes | `python -m api.panes_cli` | `chat-history.md` |

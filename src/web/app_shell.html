@@ -12,6 +12,7 @@
     <link rel="stylesheet" href="/css/chat_lightbox.css?v=20260922imgCtxMenu">
     <link rel="stylesheet" href="/css/video_background.css?v=20260927blendTarget">
     <link rel="stylesheet" href="/css/auth_modal.css?v=20260926authLogin">
+    <link rel="stylesheet" href="/css/gizmos.css?v=20261006gizmos1">
 </head>
 <body>
 <!-- Electron-only custom titlebar (frameless window) -->
@@ -147,6 +148,12 @@
             <button class="rail-item" data-page="/achievements_page.html" data-tooltip="Achievements" id="nav-achievements" data-id="nav-achievements" draggable="true">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <path d="M8 3h8v6a4 4 0 0 1-8 0V3zM8 5H4v3a4 4 0 0 0 4 4M16 5h4v3a4 4 0 0 1-4 4M12 13v6M8 21h8M9 19h6"/>
+                </svg>
+            </button>
+
+            <button class="rail-item" data-page="/gizmos_page.html" data-tooltip="Gizmos" id="nav-gizmos" data-id="nav-gizmos" draggable="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M4 15a8 8 0 0 1 16 0"/><path d="M12 15l4-5"/><circle cx="12" cy="15" r="1.4"/><path d="M4 19h16"/>
                 </svg>
             </button>
 
@@ -345,6 +352,8 @@
 <script src="/js/chat/chat_vfx.js?v=20261003vfx1"></script>
 <script src="/js/achievements/celebrate.js?v=20261003vfx1"></script>
 <script src="/js/achievements/achievements.js?v=20261003ach1"></script>
-<script src="/js/shell/app_shell.js?v=20261005activity"></script>
+<script src="/js/shell/app_shell.js?v=20261006gizmos1"></script>
+<script src="/js/gizmos/gizmos_model.js?v=20261006gizmos1"></script>
+<script src="/js/gizmos/gizmos_shell.js?v=20261006gizmos1"></script>
 </body>
 </html>

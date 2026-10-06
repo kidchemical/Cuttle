@@ -1774,6 +1774,9 @@
                 if (!d.success) throw new Error(d.error || 'Save failed');
                 // Re-read = canonical state (a kill switch may still force it off).
                 await loadExperimentalFlags();
+                try {
+                    window.top.postMessage({ type: 'cuttle-experimental-flags-changed', flag: flagId }, window.location.origin);
+                } catch (_) {}
                 (window.showToast || alert)((d.flag && d.flag.enabled ? 'Enabled ' : 'Disabled ') + flagId, 'info');
             } catch (e) {
                 checkbox.checked = !next;
