@@ -6,8 +6,7 @@ secrets belong in `.cuttle/personal/secrets/`. Runtime files are gitignored; onl
 READMEs and the home automation example ship.
 
 - `db/`: SQLite application stores.
-- `config/`: model/runtime preferences (`runtime_config.json`), owned by `core.config.RuntimeConfig`.
-  The former `BotConfig` name is a compatibility alias. `machine_settings.json`
+- `config/`: `machine_settings.json`
   stores worker/SSH/filesystem policy and LAN discovery. `ui_state.json` stores
   rail layout and workspace snapshots. SettingsManager remains the shared interface;
   its storage owner locks updates and atomically replaces JSON. Server preferences
@@ -27,7 +26,7 @@ session maps loses native resume bindings; deleting caches only causes a refresh
 
 ## Existing installations
 
-Old `workspace/`, `src/bot_config.json`, and root-level `home_automation_*.json` files remain authoritative
+Old `workspace/` and root-level `home_automation_*.json` files remain authoritative
 while present. Path resolution does **not** move live files, copy them, or maintain
 competing stores. New installations immediately use the owner directories above.
 

@@ -57,7 +57,6 @@ class QueryTracker:
                 "connections": [],
                 "execution_order": []
             },
-            "execution_mode": None,  # single, multi, multi-lite
             "events": [],
             "harness": {},
             "brain": {},
@@ -154,8 +153,6 @@ class QueryTracker:
         self.start_time = time.time()
         print(f"[QUERY] Starting query {self.query_id} at time {self.start_time:.3f}")
 
-        agent_config = self._get_agent_config()
-
         uc = user_context or {}
         self.execution_data = {
             "query_id": self.query_id,
@@ -173,14 +170,12 @@ class QueryTracker:
             "error_message": None,
             "input_source": None,
             "output_destination": None,
-            "agent_config": agent_config,
             "claude_usage": {},
             "graph_structure": {
                 "nodes": [],
                 "connections": [],
                 "execution_order": []
             },
-            "execution_mode": agent_config.get("agent_stage_mode", "multi-lite"),
             "events": [],
             "harness": {},
             "brain": {},
@@ -749,33 +744,8 @@ class QueryTracker:
             pass
         
         return str(filepath)
-    
-    def _get_agent_config(self) -> Dict[str, Any]:
-        """Get current agent configuration"""
-        try:
-            from core.config import get_config
-            config = get_config()
-            return {
-                "agent_stage_mode": config.get_agent_stage_mode(),
-                "preferred_llm_model": config.get_preferred_llm_model(),
-                "llm_fallback_enabled": config.is_llm_fallback_enabled(),
-                "mode": config.get_mode(),
-                "thinking_response": config.should_show_thinking(),
-                "debug_mode": config.is_debug_mode(),
-                "cursor_agent_method": config.get_cursor_agent_method()
-            }
-        except Exception as e:
-            print(f"[QUERY] Error getting agent config: {e}")
-            return {
-                "agent_stage_mode": "unknown",
-                "preferred_llm_model": "unknown",
-                "llm_fallback_enabled": False,
-                "mode": "unknown",
-                "thinking_response": True,
-                "debug_mode": False,
-                "cursor_agent_method": "unknown"
-            }
-    
+
+
 def _live_snap_from_execution(execution_data: Dict[str, Any]) -> Dict[str, Any]:
     events = execution_data.get("events") or []
     if isinstance(events, list) and len(events) > 120:

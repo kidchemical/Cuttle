@@ -109,30 +109,11 @@ def secrets_dir(project_root: Optional[Path] = None) -> Path:
     return root / ".cuttle" / "personal" / "secrets"
 
 
-def runtime_config_path(project_root: Optional[Path] = None) -> Path:
-    """Model/runtime preferences, independent of cwd and guest project.
-
-    Existing ``src/bot_config.json`` remains authoritative until the guarded
-    offline migration. The repo-root copy is never read or merged. Missing
-    reads create nothing; RuntimeConfig creates the parent only when saving.
-    """
-    root = Path(project_root) if project_root is not None else _repo_root()
-    legacy = root / "src" / "bot_config.json"
-    if legacy.exists():
-        return legacy
-    return runtime_data_dir(root) / "config" / "runtime_config.json"
-
-
 def action_hmac_secret_path(project_root: Optional[Path] = None) -> Path:
     """Keep existing action signatures valid until the offline secret move."""
     root = Path(project_root) if project_root is not None else _repo_root()
     legacy = runtime_data_dir(root) / "db" / "action_hmac_secret"
     return legacy if legacy.exists() else secrets_dir(root) / "action_hmac_secret"
-
-
-def bot_config_path(project_root: Optional[Path] = None) -> Path:
-    """Compatibility alias for integrations using the former helper name."""
-    return runtime_config_path(project_root)
 
 
 def electron_packaged_exe(project_root: Path) -> Optional[Path]:

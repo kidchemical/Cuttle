@@ -249,13 +249,11 @@ Existing unversioned settings stay monolithic until the guarded cold-start migra
 `schema_version: 1` records the split, independently of the release SemVer.
 No `/api/settings` routes live on the Flask root.
 
-**Model/runtime preference store:** `core.config.RuntimeConfig` owns
-`src/data/config/runtime_config.json`, resolved by `core.runtime_paths.runtime_config_path`
-independently of cwd. `BotConfig` and `bot_config_path` remain compatibility aliases.
-Existing `src/bot_config.json` remains authoritative until the guarded offline
-migration; the repo-root legacy copy is never read or merged. Missing reads keep
-defaults in memory; explicit saves create the parent and preserve unknown keys.
-Live consumers are `api.settings_routes`, `api.query_tracker`, and `core.local_llm`.
+**Local model preference:** retired with the old `RuntimeConfig`
+(`bot_config.json` / `runtime_config.json`). `core.local_llm.resolve_local_model`
+reads `OLLAMA_MODEL`, then Settings `completion_models.local` (owned by
+`api.completion_providers`), then a default. Leftover `runtime_config.json` /
+`src/bot_config.json` files on old installs are ignored.
 
 GitHub App credentials and verified commit identity belong to `api.github_app`.
 `settings_routes` owns the Account settings HTTP surface; Cuttle Git commits
@@ -379,7 +377,7 @@ remain where they were. Nothing here is a proposed interface.
 | History sync / recovery | page timers `messageSyncTimer`, `startMessageSync`, `stopMessageSync`, `scheduleNextMessageSync`, `syncSessionMessagesFromServer` (all in `chat_page.js`); `recoverChatResult`, `recoverChatResultWithRetries`, per-message sync classification (`chat_pending_result.js`); generation tokens `createGenerationState`/`beginGeneration`/`endGeneration` and sync claim transitions `createSyncState`/`claimSync`/`isSyncCurrent`/`finishSync` (`chat_generation.js`); byte reads `CuttleChatStream.readEvents` (`chat_stream.js`); backend `finalize_stream_result` (`chat_turn_workflow.py`), `make_assistant_saver` skip guards (`chat_turn_persist.py`), `current_turn`/`is_stale_turn`/`is_turn_cancelled` (`chat_delivery.py`) | busy lock, one sync-claim state (replacement invalidates old finishers), existing page navigation sequence (A→B→A fence), sync cursor/timers, turn tokens, pending-result store, assistant-row skip guards; saver takes explicit `db` + captured `request_data` | `test_chat_turn_persist.py`, `test_chat_turn_workflow.py`, `test_chat_coordinator_acceptance.py`, P5-E/P5-F oracles, `test_stop_refresh_live_status.py`, `test_chat_stream.py`, `test_chat_generation.py`, `e2e/test_chat_stream_reader.py`, `e2e/test_chat_sync_lifetime.py`, `e2e/test_shadow_chat_stop_resend.py` |
 | Pane layout | `snapshotLayoutTree`, `flattenLayoutLeaves`, `pageWithPaneSession`; shell maps `columnState`, `lastChatByColumn`; `CuttleSpaces.*` (`src/web/js/spaces/`); backend `_shell_panes_snapshot`, `GET/POST /api/shell/panes`, `.../panes/<n>/messages` (all in `web_chat_api.py`); agent read `python -m api.panes_cli` | `columnState`, `lastChatByColumn`, saved-layout shape (restore-compatible); leaf/group normalization mixed with DOM reads | `test_shell_panes.py`, `test_shell_workspaces.py`, `test_pane_space_drag.py`, `test_panes_cli.py`; isolated `e2e/test_app_shell_layout.py` (6: nested restore/flex, real close, pointer focus, Spaces/reload and v1 compatibility; shell layout restoration remains covered by that suite) |
 | Pending-change polling | `reconcileChatProject` → `reportProjectToShell` (`chat_page.js`); `CuttlePendingChangesPanel.create` (`pending_changes_panel.js`); existing `pollPendingChangesHub` / `refreshPendingChangesPath` (`app_shell.js`) | shell column→project map, per-path in-flight coalescing; standalone-only panel interval; explicit refresh messages retained | `e2e/test_pending_changes_polling.py`, `e2e/test_shared_diff_modal.py`; opt-in `e2e/test_chat_cost_profile.py` |
-| Config | HTTP `settings_routes.py` (`settings_bp`; bot/model branch via `get_config()`); defaults `get_settings_manager()` (`settings_manager.py`); `RuntimeConfig.load_config`/`save_config` (`core/config.py`) — file defaults to `src/data/config/runtime_config.json` via `runtime_paths.runtime_config_path()` (legacy `src/bot_config.json` retained until migration) (never cwd); path conventions `core/runtime_paths.py` | shell settings vs runtime/model preferences (two stores kept; legacy `src/` copy remains authoritative until migration, repo-root copy untouched, no auto-merge); unknown-key preservation on save | `test_settings_routes.py`, `test_runtime_paths.py`, `test_runtime_config_paths.py` |
+| Config | HTTP `settings_routes.py` (`settings_bp`); defaults and persistence `get_settings_manager()` (`settings_manager.py`); path conventions `core/runtime_paths.py` | one settings store (the old `RuntimeConfig` model-preference file is retired) | `test_settings_routes.py`, `test_runtime_paths.py` |
 
 ---
 

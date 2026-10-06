@@ -96,3 +96,37 @@ def test_queue_cannot_be_configured_to_wait_indefinitely(timeout):
     with pytest.raises(ValueError):
         with llm.local_request_slot(timeout=timeout):
             pytest.fail('invalid timeout accepted')
+
+
+class _Settings:
+    def __init__(self, models):
+        self.models = models
+
+    def get_setting(self, key, default=None):
+        return self.models if key == 'completion_models' else default
+
+
+def _ollama(monkeypatch, models, env_model=None):
+    import managers.settings_manager as sm
+
+    monkeypatch.setattr(llm, 'is_llamacpp', lambda: False)
+    monkeypatch.setattr(sm, 'get_settings_manager', lambda: _Settings(models))
+    if env_model is None:
+        monkeypatch.delenv('OLLAMA_MODEL', raising=False)
+    else:
+        monkeypatch.setenv('OLLAMA_MODEL', env_model)
+
+
+def test_ollama_model_comes_from_settings_then_env_override(monkeypatch):
+    _ollama(monkeypatch, {'local': 'qwen3.5:latest'})
+    assert llm.resolve_local_model(None) == 'qwen3.5:latest'
+    assert llm.resolve_local_model('local-default', with_tools=True) == 'qwen3.5:latest'
+    assert llm.resolve_local_model('mistral') == 'mistral'
+    _ollama(monkeypatch, {'local': 'qwen3.5:latest'}, env_model='llama3.2')
+    assert llm.resolve_local_model(None) == 'llama3.2'
+
+
+def test_ollama_defaults_suit_the_call_when_unconfigured(monkeypatch):
+    _ollama(monkeypatch, {})
+    assert llm.resolve_local_model(None) == 'llama3'
+    assert llm.resolve_local_model(None, with_tools=True) == 'qwen2.5:latest'

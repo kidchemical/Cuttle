@@ -2,17 +2,16 @@
 
 Ownership contract (do not split across the monolith again):
 - Validation: per-family ``validate_*`` functions in THIS module, or the
-  dedicated backend module named in SETTING_FAMILIES (config setters,
-  ``starred_*``, ``video_playlists``). Never inline new rules in handlers.
-- Persistence: ``managers.settings_manager`` for app settings,
-  ``core.config`` for bot/model settings. No other stores.
-- Defaults: ``settings_manager`` (app) and ``core.config`` (bot).
-- Authorization: reads are ``authenticated_required`` (bot config and
-  channel security stay owner-only); every write is ``owner_required``,
+  dedicated backend module named in SETTING_FAMILIES (``starred_*``,
+  ``video_playlists``). Never inline new rules in handlers.
+- Persistence: ``managers.settings_manager``. No other stores.
+- Defaults: ``settings_manager``.
+- Authorization: reads are ``authenticated_required`` (channel security
+  stays owner-only); every write is ``owner_required``,
   enforced SOLELY by the route decorator — never repeat an inline
   ``require_owner()`` check inside a handler.
-- To add a setting: add the key + validator below, persist via one of the
-  two stores, gate write owner-only. No changes to ``web_chat_api.py``.
+- To add a setting: add the key + validator below, persist via
+  ``settings_manager``, gate write owner-only. No changes to ``web_chat_api.py``.
 
 Route contract is frozen: same paths, methods, status codes and payload
 shapes as when these handlers lived on the monolith app object.
@@ -26,8 +25,8 @@ from api.http_authz import authenticated_required, owner_required
 
 settings_bp = Blueprint("settings", __name__, url_prefix="/api")
 
-# Pairing (channel-level security) and bot config are optional imports,
-# mirroring the monolith: routes answer 503 when the backend is missing.
+# Pairing (channel-level security) is an optional import, mirroring the
+# monolith: routes answer 503 when the backend is missing.
 PAIRING_AVAILABLE = False
 try:
     from api.pairing_manager import get_pairing_manager  # noqa: F401
@@ -36,19 +35,11 @@ try:
 except ImportError:
     get_settings_manager = None  # type: ignore[assignment]
 
-try:
-    from core.config import get_config
-except ImportError:
-    get_config = None
-
 
 # Family registry: the one place that names every settings group, its
 # backend, its validator, and its auth. Add rows here, not new modules.
-# backend: "bot-config" | "settings-manager" | named helper module.
+# backend: "settings-manager" | named helper module.
 SETTING_FAMILIES = (
-    {"name": "bot", "routes": ["GET/POST /settings"],
-     "backend": "bot-config (core.config setters validate)",
-     "validator": "config.set_*", "read": "owner", "write": "owner"},
     {"name": "lan-access", "routes": ["GET/POST /settings/lan-access"],
      "backend": "settings-manager key 'discovery' + api.lan_access (live)",
      "validator": "validate_lan_access_update", "read": "owner", "write": "owner"},
@@ -155,8 +146,6 @@ def validate_completion_providers_update(data: dict) -> tuple[bool, str, dict]:
     return True, '', patch
 
 
-# --- bot/model settings (backend: core.config) ----------------------------
-
 def validate_agent_adapters_update(data: dict) -> tuple[bool, str, dict]:
     """Body: ``{steer?: {agent: bool}, allow_project_adapters?: bool}``."""
     from api.agent_harness.steer import STEERABLE_AGENTS
@@ -181,165 +170,6 @@ def validate_agent_adapters_update(data: dict) -> tuple[bool, str, dict]:
     if not clean:
         return False, 'Nothing to update', {}
     return True, '', clean
-
-
-@settings_bp.route('/settings', methods=['GET'])
-@owner_required
-def get_settings():
-    """Get current bot settings"""
-    try:
-        if get_config is None:
-            return jsonify({'success': False, 'error': 'Bot config not available'}), 503
-        config = get_config()
-        return jsonify({
-            'success': True,
-            'settings': {
-                'agent_stage_mode': config.get_agent_stage_mode(),
-                'preferred_llm_model': config.get_preferred_llm_model(),
-                'preferred_ollama_model': config.get_preferred_ollama_model(),
-                'preferred_tools_llm_model': config.get_preferred_tools_llm_model(),
-                'preferred_tools_ollama_model': config.get_preferred_tools_ollama_model(),
-                'agent_name': config.get_agent_name(),
-                'llm_fallback_enabled': config.is_llm_fallback_enabled(),
-                'mode': config.get_mode(),
-                'thinking_response': config.should_show_thinking(),
-                'debug_mode': config.is_debug_mode(),
-                'cursor_agent_method': config.get_cursor_agent_method(),
-                'system_prompt_mode': config.get_system_prompt_mode(),
-                'custom_system_prompt': config.get_custom_system_prompt()
-            }
-        })
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-@settings_bp.route('/settings', methods=['POST'])
-@owner_required
-def update_settings():
-    """Update bot settings"""
-    try:
-        if get_config is None:
-            return jsonify({'success': False, 'error': 'Bot config not available'}), 503
-        data = request.get_json()
-        if not data:
-            return jsonify({
-                'success': False,
-                'error': 'No data provided'
-            }), 400
-
-        config = get_config()
-        updated_settings = []
-
-        # Update agent stage mode
-        if 'agent_stage_mode' in data:
-            if config.set_agent_stage_mode(data['agent_stage_mode']):
-                updated_settings.append('agent_stage_mode')
-            else:
-                return jsonify({
-                    'success': False,
-                    'error': f"Invalid agent stage mode: {data['agent_stage_mode']}"
-                }), 400
-
-        # Update preferred LLM model
-        if 'preferred_llm_model' in data:
-            if config.set_preferred_llm_model(data['preferred_llm_model']):
-                updated_settings.append('preferred_llm_model')
-            else:
-                return jsonify({
-                    'success': False,
-                    'error': f"Invalid LLM model: {data['preferred_llm_model']}"
-                }), 400
-
-        # Update preferred Ollama (local) model
-        if 'preferred_ollama_model' in data:
-            if config.set_preferred_ollama_model(data['preferred_ollama_model']):
-                updated_settings.append('preferred_ollama_model')
-            else:
-                return jsonify({
-                    'success': False,
-                    'error': "Preferred Ollama model must be a non-empty string"
-                }), 400
-
-        # Update preferred tool-calling LLM model (cloud)
-        if 'preferred_tools_llm_model' in data:
-            if config.set_preferred_tools_llm_model(data['preferred_tools_llm_model']):
-                updated_settings.append('preferred_tools_llm_model')
-            else:
-                return jsonify({
-                    'success': False,
-                    'error': f"Invalid tool-calling LLM model: {data['preferred_tools_llm_model']}"
-                }), 400
-
-        # Update preferred tool-calling Ollama (local) model
-        if 'preferred_tools_ollama_model' in data:
-            if config.set_preferred_tools_ollama_model(data['preferred_tools_ollama_model']):
-                updated_settings.append('preferred_tools_ollama_model')
-            else:
-                return jsonify({
-                    'success': False,
-                    'error': "Preferred tool-calling Ollama model must be a non-empty string"
-                }), 400
-
-        # Update agent name
-        if 'agent_name' in data:
-            if config.set_agent_name(data['agent_name']):
-                updated_settings.append('agent_name')
-            else:
-                return jsonify({
-                    'success': False,
-                    'error': f"Invalid agent name: {data['agent_name']}"
-                }), 400
-
-        # Update LLM fallback setting
-        if 'llm_fallback_enabled' in data:
-            config.set_llm_fallback_enabled(data['llm_fallback_enabled'])
-            updated_settings.append('llm_fallback_enabled')
-
-        # Update other settings if provided
-        if 'mode' in data:
-            if config.set_mode(data['mode']):
-                updated_settings.append('mode')
-
-        if 'thinking_response' in data:
-            config.set('thinking_response', data['thinking_response'])
-            updated_settings.append('thinking_response')
-
-        if 'debug_mode' in data:
-            config.set('debug_mode', data['debug_mode'])
-            updated_settings.append('debug_mode')
-
-        if 'cursor_agent_method' in data:
-            if config.set_cursor_agent_method(data['cursor_agent_method']):
-                updated_settings.append('cursor_agent_method')
-
-        # Update system prompt mode
-        if 'system_prompt_mode' in data:
-            if config.set_system_prompt_mode(data['system_prompt_mode']):
-                updated_settings.append('system_prompt_mode')
-            else:
-                return jsonify({
-                    'success': False,
-                    'error': f"Invalid system prompt mode: {data['system_prompt_mode']}"
-                }), 400
-
-        # Update custom system prompt
-        if 'custom_system_prompt' in data:
-            config.set_custom_system_prompt(data['custom_system_prompt'])
-            updated_settings.append('custom_system_prompt')
-
-        return jsonify({
-            'success': True,
-            'message': f'Updated settings: {", ".join(updated_settings)}',
-            'updated_settings': updated_settings
-        })
-
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
 
 
 # --- LAN access (backend: settings-manager 'discovery' + api.lan_access) ---

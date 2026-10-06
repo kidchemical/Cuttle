@@ -97,9 +97,10 @@ def resolve_local_model(requested, with_tools: bool = False) -> str:
     Order: explicit (non-sentinel) request -> backend-specific default.
     The node editor's "Default Local Model" option sends the literal
     "local-default"; treat that (and "default"/"auto") as "use the backend
-    default" rather than a real model id. For llama.cpp we never fall back to the
-    Ollama model tags in bot_config.json, since llama-server has its own single
-    loaded model.
+    default" rather than a real model id. llama.cpp uses ``LLAMACPP_MODEL`` or
+    its single loaded model. Ollama uses ``OLLAMA_MODEL``, then Settings ->
+    completion models -> Local (the setting cheap completions use), then a
+    default that suits the call.
     """
     req_norm = str(requested).strip().lower() if requested is not None else ''
     if req_norm and req_norm not in _DEFAULT_MODEL_SENTINELS:
@@ -115,19 +116,27 @@ def resolve_local_model(requested, with_tools: bool = False) -> str:
         # llama-server with a single loaded model ignores the model field.
         return 'default'
 
-    # Ollama: honour Cuttle's preferred-model settings, then env.
+    env_model = (os.getenv('OLLAMA_MODEL') or '').strip()
+    if env_model:
+        return env_model
+    configured = _settings_local_model()
+    if configured:
+        return configured
+    # Tool rounds need a model that emits OpenAI-style tool_calls reliably.
+    return 'qwen2.5:latest' if with_tools else 'llama3'
+
+
+def _settings_local_model() -> str:
+    """Settings ``completion_models.local`` (owned by api.completion_providers)."""
     try:
-        from core.config import get_config
-        cfg = get_config()
-        preferred = (
-            cfg.get_preferred_tools_ollama_model() if with_tools
-            else cfg.get_preferred_ollama_model()
-        )
-        if preferred:
-            return preferred
+        from managers.settings_manager import get_settings_manager
+
+        models = get_settings_manager().get_setting('completion_models') or {}
     except Exception:
-        pass
-    return os.getenv('OLLAMA_MODEL', 'llama3')
+        return ''
+    if not isinstance(models, dict):
+        return ''
+    return str(models.get('local') or '').strip()
 
 
 def local_reachable(timeout: float = 0.6) -> bool:

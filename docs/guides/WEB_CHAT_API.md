@@ -169,7 +169,7 @@ Tests import `app` as a Flask `test_client` everywhere. That is expected.
 
 These seams are finished. Their absence from the Flask root is progress:
 
-1. **Settings HTTP** — `api.settings_routes` (`settings_bp`); backed by `settings_manager` + `core.config` for bot/model keys.
+1. **Settings HTTP** — `api.settings_routes` (`settings_bp`); backed by `settings_manager`.
 2. **Projects / Git / tasks** — `api.project_routes` / `api.git_routes` / `api.task_routes` with their managers/services.
 3. **Action-form HTTP** — `api.action_form_routes` over `action_forms` / `project_actions`.
 4. **Live-status + status queues** — `api.chat_live_status` owns the store (root keeps a thin cancel-injecting wrapper); `api.chat_status` owns the legacy registry + `emit_status`, while turn-scoped `TurnStatusQueue` creation/drain/done-enqueue lives in `chat_turn_workflow.run_agent_stream_turn` (route only frames SSE).

@@ -27,7 +27,6 @@ def migration_pairs(root: Path) -> list[tuple[Path, Path]]:
     pairs += [(base / f"home_automation_{name}.json",
                base / "home_automation" / f"{name}.json")
               for name in ("devices", "schedule", "auto_state", "daemon_heartbeat")]
-    pairs += [(root / "src" / "bot_config.json", base / "config" / "runtime_config.json")]
     pairs += [(base / "db" / "action_hmac_secret", secrets_dir(root) / "action_hmac_secret")]
     pairs += [(base / "govee_api_batch.lock", base / "home_automation" / "govee_api_batch.lock"),
               (base / "agent_memory", base / "archive" / "agent_memory"),

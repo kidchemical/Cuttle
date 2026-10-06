@@ -186,12 +186,6 @@ try:
 except ImportError as e:
     print(f"Warning: Pairing modules not available: {e}")
 
-# Import bot config (for /api/settings)
-try:
-    from core.config import get_config
-except ImportError:
-    get_config = None
-
 app = Flask(__name__)
 # Restrict CORS to known-safe origins (+ LAN IP when lan_access_enabled).
 try:

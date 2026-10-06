@@ -10,7 +10,6 @@ from __future__ import annotations
 from tests.test_http_authz import _auth_client, LAN
 
 READS = [
-    "/api/settings",
     "/api/settings/lan-access",
     "/api/settings/channels",
     "/api/settings/starred-slash",
@@ -25,7 +24,6 @@ READS = [
 
 # (method, path, payload): writes must stay owner-only.
 WRITES = [
-    ("POST", "/api/settings", {"mode": "open"}),
     ("POST", "/api/settings/lan-access", {"lan_access_enabled": False}),
     ("POST", "/api/settings/channels", {"channel": "webchat"}),
     ("POST", "/api/settings/starred-slash", {"prefixes": []}),
@@ -54,7 +52,7 @@ def test_settings_read_auth_matrix(tmp_path, monkeypatch):
     from api import web_chat_api as wca
 
     anon = wca.app.test_client()
-    for path in ("/api/settings", "/api/settings/lan-access", "/api/settings/channels"):
+    for path in ("/api/settings/lan-access", "/api/settings/channels"):
         assert anon.get(path, environ_base=LAN).status_code == 401, path
 
     ctx = _auth_client(tmp_path, monkeypatch)
@@ -190,3 +188,13 @@ def test_settings_validators_owned():
 def test_retired_graph_settings_routes_are_absent():
     from api import web_chat_api as wca
     assert '/api/settings/sandbox' not in {r.rule for r in wca.app.url_map.iter_rules()}
+
+
+def test_retired_bot_settings_route_is_gone():
+    """The old RuntimeConfig GET/POST /api/settings family was retired."""
+    from api import web_chat_api as wca
+    from api.settings_routes import SETTING_FAMILIES
+
+    rules = {str(r.rule) for r in wca.app.url_map.iter_rules()}
+    assert "/api/settings" not in rules
+    assert all(f["name"] != "bot" for f in SETTING_FAMILIES)

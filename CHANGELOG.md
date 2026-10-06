@@ -43,8 +43,14 @@ User-visible changes to Cuttle. The format follows
   by concurrent writes.
 - Android LAN updates: published APKs are verified, old ones are pruned, and a
   refused publication no longer fails a debug build.
+- Shadow dev instances delete their checkout snapshot when they stop, and
+  `python -m api.dev_instance prune` clears stale ones.
 
 ### Removed
+- The legacy runtime config (`bot_config.json`, later `runtime_config.json`)
+  and its `GET/POST /api/settings` route. Only the local Ollama model setting
+  was still used; it now comes from `OLLAMA_MODEL` or Settings (completion
+  models → Local). Leftover files from old installs are ignored.
 - The unused repository-root `bot_config.json` and the orphaned
   `vendor/claw-code` gitlink.
 
