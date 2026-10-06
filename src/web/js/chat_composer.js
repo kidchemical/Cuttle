@@ -93,7 +93,7 @@
         if (!raw.startsWith('/')) return false;
         // Drop sticky agent chip if present: /cursor /coordinate status
         const t = raw.replace(
-            /^\/(?:cursor|codex|claude|hermes|muse|deepseek|claw)(?:\s+[^\s/]+)?\s+(?=\/(?:coordinate|coordinator|restart)\b)/i,
+            /^\/(?:cursor|codex|claude|hermes|muse|deepseek)(?:\s+[^\s/]+)?\s+(?=\/(?:coordinate|coordinator|restart)\b)/i,
             ''
         ).trim().toLowerCase();
         if (t === '/restart' || t.startsWith('/restart ')) return true;

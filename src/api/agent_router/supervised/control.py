@@ -49,7 +49,7 @@ def strip_sticky_agent_prefix(message: str) -> str:
         return text
     # /cursor /coordinate status  → /coordinate status
     m = re.match(
-        r"^/(?:cursor|codex|claude|hermes|muse|deepseek|claw|opencode|antigravity)(?:\s+[^\s/]+)?\s+(/coordinate\b.*|/coordinator\b.*)$",
+        r"^/(?:cursor|codex|claude|hermes|muse|deepseek|opencode|antigravity)(?:\s+[^\s/]+)?\s+(/coordinate\b.*|/coordinator\b.*)$",
         text,
         re.I | re.DOTALL,
     )

@@ -50,7 +50,7 @@
         const raw = String(text || '').trim();
         if (!raw.startsWith('/')) return false;
         const t = raw.replace(
-            /^\/(?:cursor|codex|claude|hermes|muse|deepseek|claw|opencode|antigravity)(?:\s+[^\s/]+)?\s+(?=\/(?:coordinate|coordinator|restart)\b)/i,
+            /^\/(?:cursor|codex|claude|hermes|muse|deepseek|opencode|antigravity)(?:\s+[^\s/]+)?\s+(?=\/(?:coordinate|coordinator|restart)\b)/i,
             ''
         ).trim().toLowerCase();
         if (t === '/restart' || t.startsWith('/restart ')) return true;
