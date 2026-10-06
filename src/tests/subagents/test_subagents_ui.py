@@ -207,6 +207,7 @@ assert.strictEqual(inserted.length, 1);
 assert.strictEqual(inserted[0][0], 'beforebegin');
 assert.ok(inserted[0][1].includes('subagent-launchers'), inserted[0][1]);
 assert.ok(inserted[0][1].includes('typing-orbit--fleet'), inserted[0][1]);
+assert.ok(inserted[0][1].includes('subagent-fleet-summary--live'), inserted[0][1]);
 assert.ok(inserted[0][1].includes('data-chat-handle="CH-000540"'), inserted[0][1]);
 assert.ok(inserted[0][1].includes('Chef A'), inserted[0][1]);
 
@@ -316,6 +317,8 @@ def test_subagent_markup_present():
     assert ".history-subagent-group.is-collapsed" in css
     assert ".history-subagent-toggle" in css
     assert ".typing-orbit--fleet" in css
+    assert "typing-sat-orbit-fleet" in css
+    assert ".subagent-fleet-summary--live" in css
     assert ".typing-subagent-orb" not in css
     assert ".typing-orbit--subagent" not in css
     assert "typing-subagent-label" not in css

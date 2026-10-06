@@ -3652,11 +3652,18 @@ pre.has-code-copy:hover .code-copy-btn,
     height: 20px;
 }
 
-.typing-orbit--fleet .typing-orbit-core--glyph {
-    width: 12px;
-    height: 12px;
-    margin: -6px 0 0 -6px;
-    font-size: 9px;
+/* Satellite radius is fixed in the shared keyframes (11px for the 28px
+   orbit); without this the fleet sats circle outside the smaller rings. */
+@keyframes typing-sat-orbit-fleet {
+    from {
+        transform: rotate(0deg) translateX(7px) rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg) translateX(7px) rotate(-360deg);
+    }
+}
+.typing-orbit--fleet .typing-orbit-sat {
+    animation-name: typing-sat-orbit-fleet;
 }
 
 .typing-orbit-core--glyph {
@@ -8216,13 +8223,38 @@ body.voice-mode .chat-chrome-menu {
 .subagent-fleet-outcome i { font-style:normal; font-weight:700; }
 .subagent-fleet-card .slash-command-chip { align-self:flex-start; max-width:100%; }
 .subagent-fleet-summary { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; overflow-wrap:anywhere; color:var(--text-primary); opacity:.88; min-height:1.3em; }
+/* Live cards borrow the parent bubble's activity treatment: the same
+   gradient sweep as .typing-status (same keyframes), at card scale. */
+.subagent-fleet-summary--live {
+    font-style: italic;
+    background: linear-gradient(
+        90deg,
+        var(--text-secondary) 0%,
+        var(--text-primary) 35%,
+        var(--accent-color) 50%,
+        var(--text-primary) 65%,
+        var(--text-secondary) 100%
+    );
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    opacity: 1;
+    animation: typing-status-sweep 2s ease-in-out infinite;
+}
 .subagent-fleet-foot { display:flex; justify-content:space-between; gap:8px; color:var(--text-secondary); font-size:10.5px; }
 .subagent-fleet-more { align-self:center; color:var(--text-secondary); font-size:11px; }
 .subagent-fleet-card.is-done { --fleet-accent:#6abc91; }
 .subagent-fleet-card.is-failed { --fleet-accent:#e57575; }
 .subagent-fleet-card.is-lost { --fleet-accent:#d9aa45; }
 .subagent-fleet-card.is-cancelled, .subagent-fleet-card.is-queued, .subagent-fleet-card.is-unknown { --fleet-accent:#8a96a3; }
-@media (prefers-reduced-motion: reduce) { .subagent-fleet-card .typing-orbit--fleet, .subagent-fleet-card .typing-orbit--fleet * { animation:none; } }
+@media (prefers-reduced-motion: reduce) {
+    .subagent-fleet-card .typing-orbit--fleet, .subagent-fleet-card .typing-orbit--fleet * { animation:none; }
+    .subagent-fleet-card .subagent-fleet-summary--live { animation:none; background:none; color:var(--text-primary); }
+    .subagent-fleet-card .typing-orbit-sat--1 { transform:rotate(40deg) translateX(7px); }
+    .subagent-fleet-card .typing-orbit-sat--2 { transform:rotate(160deg) translateX(7px); }
+    .subagent-fleet-card .typing-orbit-sat--3 { transform:rotate(280deg) translateX(7px); }
+}
 
 /* An actionable card waits for a person; submitted watches use the spinner. */
 .history-input-icon, .chat-session-input-icon {

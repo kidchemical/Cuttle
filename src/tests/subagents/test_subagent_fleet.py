@@ -211,6 +211,8 @@ console.log(JSON.stringify({html, cards:(many.match(/subagent-fleet-card /g)||[]
     # Shared slash chip, not the old bespoke pill: agent label only, identity in the tip.
     # Live cards render the mini orbit; terminal cards keep the plain dot.
     assert "typing-orbit--fleet" in html
+    assert "typing-orbit-core--glyph" not in html  # plain glow core, like the parent
+    assert "subagent-fleet-summary--live" in html
     assert "subagent-fleet-agent" not in html
     assert '<span class="slash-chip-label">codex</span>' in html
     assert "codex | gpt-5.6 | low" in html

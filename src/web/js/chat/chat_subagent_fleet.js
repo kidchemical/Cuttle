@@ -62,14 +62,13 @@
 
     /**
      * Live-state orbit: the same typing-orbit treatment as the parent bubble,
-     * sized down for the card (`typing-orbit--fleet`). The core carries the
-     * avatar glyph when there is one; terminal states keep the plain avatar/dot.
+     * sized down for the card (`typing-orbit--fleet`). The core stays the
+     * plain gradient glow like the parent's — identity already rides the
+     * card name + agent chip, and the glyph's solid backdrop is what made
+     * the center read as a different color. Terminal states keep avatar/dot.
      */
-    function orbitHtml(s, avatarHtml) {
-        const a = String((s && s.avatar) || '').trim();
-        const core = (a && a.toLowerCase() !== 'cuttle' && typeof avatarHtml === 'function')
-            ? '<span class="typing-orbit-core typing-orbit-core--glyph">' + avatarHtml(a) + '</span>'
-            : '<span class="typing-orbit-core"></span>';
+    function orbitHtml() {
+        const core = '<span class="typing-orbit-core"></span>';
         return '<span class="typing-orbit typing-orbit--fleet" aria-hidden="true">'
             + '<span class="typing-orbit-ring"></span>'
             + '<span class="typing-orbit-ring typing-orbit-ring--inner"></span>'
@@ -103,7 +102,7 @@
                 + (state === 'running' && s.liveStatusAt ? '\nUpdated: ' + String(s.liveStatusAt) + ' UTC' : '');
             const live = state === 'running' || state === 'queued';
             const avatar = live
-                ? orbitHtml(s, avatarHtml)
+                ? orbitHtml()
                 : (s.avatar && s.avatar.toLowerCase() !== 'cuttle' && avatarHtml
                     ? '<span class="subagent-fleet-avatar" aria-hidden="true">' + avatarHtml(s.avatar) + '</span>'
                     : '<span class="subagent-launcher-orb" aria-hidden="true"></span>');
@@ -115,7 +114,7 @@
                 + '<span class="subagent-fleet-outcome"><i aria-hidden="true">' + esc(meta.icon) + '</i>' + esc(meta.label) + '</span>'
                 + '</span>'
                 + (chipHtml(s) || '')
-                + '<span class="subagent-fleet-summary">' + esc(summary) + '</span>'
+                + '<span class="subagent-fleet-summary' + (live ? ' subagent-fleet-summary--live' : '') + '">' + esc(summary) + '</span>'
                 + '<span class="subagent-fleet-foot"><span>' + esc(s.handle) + '</span>'
                 + (duration ? '<span>' + esc(duration) + '</span>' : '') + '</span>'
                 + '</button>'
