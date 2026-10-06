@@ -23,7 +23,6 @@ ALLOWED_TYPES = frozenset(
         "blender_render",
         "shell",  # named recipes only (safe default)
         "execute_shell_unsafe",  # free-form local cmdline — opt-in, dangerous
-        "execute_shell",  # legacy alias → execute_shell_unsafe
         "execute_shell_ssh",  # same intent over SSH — opt-in transport
         "cuttle_self_update",
     }
@@ -31,10 +30,7 @@ ALLOWED_TYPES = frozenset(
 
 
 def _normalize_job_type(jtype: str) -> str:
-    t = (jtype or "").strip()
-    if t == "execute_shell":
-        return "execute_shell_unsafe"
-    return t
+    return (jtype or "").strip()
 
 # Named shell recipes only — never arbitrary argv from the coordinator.
 _BUILTIN_SHELL_RECIPES = {
@@ -213,19 +209,12 @@ def _dw_settings() -> Dict[str, Any]:
 
 
 def _execute_shell_unsafe_enabled() -> bool:
-    for key in (
-        "CUTTLE_DEVICE_WORKERS_EXECUTE_SHELL_UNSAFE",
-        "CUTTLE_DEVICE_WORKERS_EXECUTE_SHELL",  # legacy env
-    ):
-        env = (os.environ.get(key) or "").strip().lower()
-        if env in ("0", "false", "no", "off"):
-            return False
-        if env in ("1", "true", "yes", "on"):
-            return True
-    block = _dw_settings()
-    if "execute_shell_unsafe_enabled" in block:
-        return bool(block.get("execute_shell_unsafe_enabled"))
-    return bool(block.get("execute_shell_enabled"))  # legacy settings key
+    env = (os.environ.get("CUTTLE_DEVICE_WORKERS_EXECUTE_SHELL_UNSAFE") or "").strip().lower()
+    if env in ("0", "false", "no", "off"):
+        return False
+    if env in ("1", "true", "yes", "on"):
+        return True
+    return bool(_dw_settings().get("execute_shell_unsafe_enabled"))
 
 
 def _execute_shell_ssh_enabled() -> bool:

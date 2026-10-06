@@ -51,8 +51,8 @@ never merges files, and leaves unknown legacy files untouched.
 
 Adapter code no longer belongs under data. Install-local packs go in
 `.cuttle_global/personal/agents/<id>/`; shared packs in `.cuttle_global/agents/<id>/`;
-project packs in `{project}/.cuttle/agents/<id>/`. Legacy `harness_agents/` packs remain
-discoverable and migrate to the personal instance root without overriding packs.
+project packs in `{project}/.cuttle/agents/<id>/`. The offline migration moves any legacy
+`harness_agents/` packs to the personal instance root without overriding packs.
 
 ## Settings schema and credentials
 

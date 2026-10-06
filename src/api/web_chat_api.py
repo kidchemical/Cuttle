@@ -5134,8 +5134,7 @@ def chat_endpoint():
         # caused Auto/Cloud commands to skip their native handlers entirely
         # whenever ``blocked`` was false and fall through to the pipeline.
         # Harness agents live under api/agent_harness/agents/<id>/ (folder per agent)
-        # plus optional drop-ins under .cuttle_global/agents, {project}/.cuttle/agents,
-        # and src/data/harness_agents.
+        # plus optional drop-ins under .cuttle_global/agents and {project}/.cuttle/agents.
         project_path = _resolve_request_project_path({
             **(data or {}),
             'session_id': chat_session_id if chat_session_id is not None else data.get('session_id'),

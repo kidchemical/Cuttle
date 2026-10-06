@@ -15,8 +15,8 @@ _BLENDER_RE = re.compile(
     re.I,
 )
 _COPY_RE = re.compile(
-    r"\b(copy|file_copy|transfer|sync)\b.*\b(yoga|laptop|desktop|worker|tower|pc)\b"
-    r"|\b(from|to)\s+(yoga|laptop|kcslaptop|kcstower)\b",
+    r"\b(copy|file_copy|transfer|sync)\b.*\b(laptop|desktop|worker|tower|pc|machine|device)\b"
+    r"|\b(from|to)\s+(the\s+)?(laptop|desktop|tower|another\s+(machine|device|pc))\b",
     re.I,
 )
 _EXPLICIT_MESH_RE = re.compile(

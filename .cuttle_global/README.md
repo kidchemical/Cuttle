@@ -7,7 +7,7 @@ See [GLOBAL.ini](../.cuttle/GLOBAL.ini) for the selection keys.
 
 ```text
 .cuttle_global/
-  rules/    docs/    actions/    scripts/    skills/    agents/    keys/
+  rules/    docs/    actions/    scripts/    skills/    agents/
   personal/   # install-local global overlay (gitignored)
 ```
 

@@ -5,7 +5,7 @@ Shared global config for **every** project lives in `.cuttle_global/`:
 
 ```text
 .cuttle_global/
-  rules|docs|actions|scripts|skills|agents|keys/   # shared config (every project)
+  rules|docs|actions|scripts|skills|agents/   # shared config (every project)
   personal/                                 # install-local global overlay (gitignored)
 
 .cuttle/
@@ -16,10 +16,9 @@ Shared global config for **every** project lives in `.cuttle_global/`:
   skills/         # Cuttle development guidance, scoped to this project
   scripts/        # Cuttle-only shell helpers
   agents/         # Cuttle project drop-in harness agents (instance drop-ins: .cuttle_global/agents/)
-  learnings/      # manual FEAT/ERR/LRN backlog (not Brain-injected; not scaffolded)
   memory/         # reserved
-  certs/          # install TLS identity (gitignored)
   personal/       # install-local project overlay (gitignored; supplements this tree)
+    secrets/      # file-shaped secrets: TLS cert/key, GitHub App .pem, tokens (core.runtime_paths.secrets_dir)
 ```
 
 Pattern reference for guest projects: `.cuttle_global/README.md` + `.cuttle_global/docs/commands-and-actions.md`.

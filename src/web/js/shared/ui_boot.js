@@ -637,10 +637,6 @@
             write(VIDEO_ACTIVE_KEY, active ? '1' : '0');
             apply();
         },
-        setMediaMode: function (active) {
-            state.media = !!active;
-            apply();
-        },
         applyBlend: function (percent) { applyBlend(percent, true); },
         animationsEnabled: animationsEnabled,
         transitionMs: transitionMs,

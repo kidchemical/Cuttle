@@ -892,17 +892,6 @@
             z-index: 1;
         }
         
-        .jambit-text {
-            font-family: 'Times New Roman', serif;
-            font-size: 4em;
-            font-weight: bold;
-            color: white;
-            margin: 0;
-            letter-spacing: 0.1em;
-            position: relative;
-            z-index: 2;
-        }
-        
         .games-text {
             font-family: 'Arial', sans-serif;
             font-size: 1.2em;

@@ -26,9 +26,6 @@ Shared project context (rules, inventory, handoff) comes from **Cuttle Brain** �
 | `{Cuttle}/.cuttle_global/agents/<id>/` | Shared instance drop-ins (same contract) |
 | `{project}/.cuttle/agents/<id>/` | **Project** drop-ins (chat project path) |
 
-Legacy `src/data/harness_agents/` packs remain discoverable until the offline
-runtime migration moves them into the personal instance root.
-
 Bundled ids always win — a drop-in cannot shadow `cursor` / `codex` / `muse` /
 `claude` / `opencode` / `antigravity` / `hermes` / `deepseek`. Project drop-ins
 may override user drop-ins of the same id. Palette + `/api/agents` surface `available`,
@@ -292,7 +289,7 @@ Optional `schema_version` in the manifest (default `1`) is reserved for rare pro
 > An "add agent" task is **not done** until it has passed a contract test *and* a live smoke run
 > **on the model and scope the person adding the agent chose**. Do not hand a new agent to the
 > user as the first tester. Every issue the user hits that a 30-second smoke test would have
-> caught is a process failure — log it in `.cuttle/learnings/ERRORS.md`.
+> caught is a process failure — open an issue for it.
 
 This exists because the Gemini pilot shipped without a test: the user hit
 `'int' object has no attribute 'strip'` (ERR-20260816-001) on turn one, then a raw wall of CLI
@@ -412,7 +409,7 @@ Put the cheap id in `smoke_model` so a forgotten env still does not spend Pro.
    instead of the user finding out. If smoke fails on missing auth and Cuttle already has the
    key, run the sync action first, then re-smoke.
 9. **Only then** enable it for the user. If a live issue is external (account/quota), say so plainly
-   and log it in `.cuttle/learnings/ERRORS.md`; don't present a broken agent as ready.
+   and open an issue for it; don't present a broken agent as ready.
 
 ## Bundled connectors (shipped)
 

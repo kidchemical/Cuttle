@@ -28,7 +28,7 @@ This file is the home for *what Cuttle is*, *how plugins/sockets should feel*, a
 
 ## What Cuttle is (and is not)
 
-Cuttle is a **Windows-native, cozy control plane** for a personal AI station: pick which harness runs the turn, brief it with Cuttle-owned context, remember what happened, and get cheaper over time without getting dumber.
+Cuttle is a **cozy control plane for Windows and Linux** for a personal AI station: pick which harness runs the turn, brief it with Cuttle-owned context, remember what happened, and get cheaper over time without getting dumber.
 
 | Cuttle is | Cuttle is not |
 |---|---|
@@ -93,7 +93,7 @@ The agent harness rewrite is the correct **hub** slice:
 - Folder + manifest + thin CLI adapter; kernel owns status, resume, Context Compiler, hot-swap handoff, error shaping.
 - Neutral SQLite chat transcript + **per-tentacle** native resume. Same-agent resume sends only the user prompt; a sticky switch injects a short handoff delta.
 - Context Compiler is Cuttle-owned briefing — not a copy of each vendor’s skill registry.
-- Drop-in roots (`src/data/harness_agents/`, `{project}/.cuttle/agents/`, `CUTTLE_AGENTS_DIR`). Bundled ids cannot be shadowed.
+- Drop-in roots (`.cuttle_global/personal/agents/`, `{project}/.cuttle/agents/`, `CUTTLE_AGENTS_DIR`). Bundled ids cannot be shadowed.
 - Windows `.cmd` traps, lossless prompt transport, auth sync without the LLM seeing keys, contract tests + gated live smoke.
 
 `/deepseek` is already a bundled tentacle (`dsh --profile headless`, Flash by default, `DEEPSEEK_API_KEY`). Headless preview has **no native per-chat resume**. Treat that as a connector limitation, not a reason to wait on the socket work.
@@ -123,9 +123,9 @@ A newcomer should be able to:
 3. Pass the contract test **and** a gated live smoke on the cheap model they chose.
 4. Never edit `web_chat_api.py`.
 
-If step 4 is required, log it in `.cuttle/learnings/ERRORS.md` — that is a process failure, same as shipping an agent without a test.
+If step 4 is required, open an issue — that is a process failure, same as shipping an agent without a test.
 
-Drop-ins under `{project}/.cuttle/agents/` and `src/data/harness_agents/` are the on-ramp for experiments. Bundled connectors are for tentacles we are willing to smoke and support.
+Drop-ins under `{project}/.cuttle/agents/` and `.cuttle_global/personal/agents/` are the on-ramp for experiments. Bundled connectors are for tentacles we are willing to smoke and support.
 
 ---
 
@@ -178,4 +178,4 @@ When dsh grows native resume or a stable non-preview CLI, upgrade the adapter in
 | How routing works in chat | `docs/guides/AGENT_ROUTER.md` |
 | How to add a tentacle | `src/api/agent_harness/ADDING_AN_AGENT.md` |
 | Context Compiler / Brain | `src/api/cuttle_brain/CONTEXT_COMPILER.md` |
-| Discrete user feature ideas | `.cuttle/learnings/FEATURE_REQUESTS.md` |
+| Discrete user feature ideas | GitHub issues |
