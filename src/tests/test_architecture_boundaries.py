@@ -114,10 +114,43 @@ def _web_chat_api_refs(tree: ast.AST):
 
     AST-based: comments and unrelated string literals (process regexes,
     log lines) never match. Covers static forms plus dynamic imports
-    through any alias: ``importlib.import_module``,
-    ``il.import_module``, ``from importlib import import_module``,
-    ``__import__``.
+    through module aliases (``il.import_module``) and function aliases
+    bound in the same file (``from importlib import import_module as
+    load``, ``from builtins import __import__ as _bi``, ``_imp =
+    __import__``).
+
+    Static limitations (documented, not analyzed): only per-file,
+    scope-insensitive bindings are resolved — no flow analysis, no
+    cross-module tracking, no conditional/shadowed-scope reasoning.
+    ``getattr(importlib, "import_module")(...)`` and non-literal module
+    names (variables, f-strings, concatenation) are not flagged: they are
+    statically undecidable without false-positiving legitimate dynamic
+    loaders (e.g. the agent catalog adapter loader).
     """
+    # Pass 1 (per-file, scope-insensitive): collect local aliases for the
+    # dynamic import entry points. Rebinding after use still counts — this
+    # is a tripwire, and a false alarm is cheaper than a silent bypass.
+    dynamic_names = {"import_module", "__import__"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            mod = node.module or ""
+            if mod in ("importlib", "builtins"):
+                for alias in node.names:
+                    if alias.name in ("import_module", "__import__"):
+                        dynamic_names.add(alias.asname or alias.name)
+        elif isinstance(node, ast.Assign):
+            # Only the simple form ``alias = import_module`` /
+            # ``alias = __import__`` (single Name target, Name value).
+            if len(node.targets) != 1:
+                continue
+            target = node.targets[0]
+            value = node.value
+            if (
+                isinstance(target, ast.Name)
+                and isinstance(value, ast.Name)
+                and value.id in ("import_module", "__import__")
+            ):
+                dynamic_names.add(target.id)
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -138,9 +171,8 @@ def _web_chat_api_refs(tree: ast.AST):
                 "__import__",
             ):
                 dynamic = True
-            elif isinstance(func, ast.Name) and func.id in (
-                "import_module",
-                "__import__",
+            elif (
+                isinstance(func, ast.Name) and func.id in dynamic_names
             ):
                 dynamic = True
             else:
@@ -168,7 +200,7 @@ def _parse_production(path: Path) -> ast.AST:
 
 
 def _production_files():
-    for root in ("src/api", "src/managers", "src/scripts"):
+    for root in ("src/api", "src/core", "src/managers", "src/scripts"):
         base = REPO_ROOT / root
         if not base.is_dir():
             continue
@@ -214,10 +246,19 @@ def test_reverse_import_scanner_discrimination(tmp_path):
         "from importlib import import_module\n"
         "y = import_module('api.web_chat_api')\n"
         "z = __import__('api.web_chat_api')\n"
+        "from importlib import import_module as load\n"
+        "w = load('api.web_chat_api')\n"
+        "from builtins import __import__ as _bi\n"
+        "v = _bi('api.web_chat_api')\n"
+        "_imp = __import__\n"
+        "u = _imp('api.web_chat_api')\n"
     )
     tree = ast.parse(guilty)
     kinds = sorted(kind for _, kind in _web_chat_api_refs(tree))
     assert kinds == [
+        "dynamic-import",
+        "dynamic-import",
+        "dynamic-import",
         "dynamic-import",
         "dynamic-import",
         "dynamic-import",
@@ -232,6 +273,26 @@ def test_reverse_import_scanner_discrimination(tmp_path):
         "import api.chat_coordinator\n"
     )
     assert list(_web_chat_api_refs(ast.parse(innocent))) == []
+    # Aliased entry points called with anything but the monolith stay
+    # silent — including non-literal names, which the scanner documents
+    # as a static limitation rather than flagging.
+    aliased_innocent = (
+        "from importlib import import_module as load\n"
+        "a = load('api.chat_coordinator')\n"
+        "b = load(mod_name)\n"
+        "c = load(f'api.{mod}')\n"
+    )
+    assert list(_web_chat_api_refs(ast.parse(aliased_innocent))) == []
+
+
+def test_production_scan_covers_src_core():
+    """src/core is production code inside the boundary, not exempt."""
+    core_files = [
+        str(p.relative_to(REPO_ROOT))
+        for p in _production_files()
+        if p.relative_to(REPO_ROOT).parts[:2] == ("src", "core")
+    ]
+    assert core_files, "reverse-import scan must cover src/core"
 
 
 # --------------------------------------------------------------------------
