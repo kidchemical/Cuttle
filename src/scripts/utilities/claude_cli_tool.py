@@ -3,12 +3,17 @@ Claude Code CLI integration — non-interactive ``claude -p`` with streaming JSO
 
 Runs against the real project cwd (no sandbox mirror). Resume uses
 ``--resume <session_id>`` from ``claude_cli_session_store``.
+Steerable turns (``steerable=True``) take the prompt as ``--input-format
+stream-json`` on an open stdin, so ``api.agent_harness.steer`` can write
+follow-ups into the live run; the CLI folds them in at the next tool boundary,
+or answers them as an extra turn after the first ``result``.
 Auth: the user's native Claude login/config; host API credentials are isolated.
 """
 
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 import os
 import shutil
@@ -234,6 +239,63 @@ def _parse_claude_json(raw: str) -> Dict[str, Any]:
     }
 
 
+def _user_line(text: str) -> bytes:
+    """One stream-json user message for ``--input-format stream-json``."""
+    msg = {
+        "type": "user",
+        "message": {"role": "user", "content": text},
+        "parent_tool_use_id": None,
+        "session_id": "",
+    }
+    return (json.dumps(msg) + "\n").encode("utf-8")
+
+
+def _replay_text(obj: Dict[str, Any]) -> Optional[str]:
+    """Text of a root user message the CLI echoed back (``--replay-user-messages``)."""
+    if obj.get("type") != "user" or not obj.get("isReplay") or obj.get("parent_tool_use_id"):
+        return None
+    content = (obj.get("message") or {}).get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = [str(b.get("text") or "") for b in content if isinstance(b, dict) and b.get("type") == "text"]
+        return "\n".join(parts) if parts else None
+    return None
+
+
+_SUMMED_USAGE = (
+    "prompt_tokens", "completion_tokens", "total_tokens",
+    "cache_read_tokens", "cache_write_tokens", "cost",
+)
+
+
+def _merge_results(parsed: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Fold the extra turns a late steer started into one reply.
+
+    Output joins every turn's text; usage sums billing fields while context
+    occupancy, session id and errors come from the last turn.
+    """
+    last = dict(parsed[-1])
+    usage = dict(last.get("usage") or {})
+    for key in _SUMMED_USAGE:
+        vals = [p["usage"][key] for p in parsed if (p.get("usage") or {}).get(key) is not None]
+        if vals:
+            usage[key] = sum(vals)
+    last["usage"] = usage
+    last["output"] = "\n\n".join(
+        str(p.get("output") or "").strip() for p in parsed if str(p.get("output") or "").strip()
+    )
+    return last
+
+
+def _undelivered_notice(texts: List[str]) -> str:
+    lines = "\n".join(f"- {' '.join(t.split())[:200]}" for t in texts)
+    return (
+        "Claude Code ended this turn before reading your follow-up"
+        f"{'s' if len(texts) > 1 else ''}:\n{lines}\nSend it again to continue."
+    )
+
+
 def usage_for_query_report(usage: Dict[str, Any], model: str) -> Dict[str, Any]:
     pt = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
     ct = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
@@ -283,6 +345,7 @@ class ClaudeCliTool:
         timeout: Optional[float] = None,
         permission_mode: str = "bypassPermissions",
         cancel_event: Any = None,
+        steerable: bool = False,
     ) -> Dict[str, Any]:
         if not (prompt or "").strip():
             return {"success": False, "error": "No prompt provided", "output": ""}
@@ -329,12 +392,16 @@ class ClaudeCliTool:
         if rid:
             cmd.extend(["--resume", rid])
 
-        # Long prompts on stdin to avoid Windows argv limits.
-        use_stdin = len(prompt) > _MAX_PROMPT_FOR_ARGV
-        if use_stdin:
-            cmd.append("-")
+        if steerable:
+            cmd.extend(["--input-format", "stream-json", "--replay-user-messages"])
+            use_stdin = True
         else:
-            cmd.append(prompt)
+            # Long prompts on stdin to avoid Windows argv limits.
+            use_stdin = len(prompt) > _MAX_PROMPT_FOR_ARGV
+            if use_stdin:
+                cmd.append("-")
+            else:
+                cmd.append(prompt)
 
         _status_put(status_queue, "Calling Claude Code…")
         env = agent_cli_env()
@@ -350,9 +417,66 @@ class ClaudeCliTool:
                 pass
 
         stream = ClaudeStream(status_queue, _persist)
+        from api.agent_harness import steer as steer_registry
+
+        loop = asyncio.get_running_loop()
+        # sent: steers written to stdin; echoed: those the CLI replayed back
+        # (it read them); results: every root ``result`` (a late steer adds one).
+        st: Dict[str, Any] = {"token": None, "open": False, "sent": [], "echoed": [], "results": []}
+        proc = None
+
+        def _close_input() -> None:
+            if st["token"] is not None:
+                steer_registry.unregister(chat_session_id, st["token"])
+                st["token"] = None
+            if st["open"]:
+                st["open"] = False
+                try:
+                    proc.stdin.close()
+                except Exception:
+                    pass
+
+        def _steer_send(text: str) -> "concurrent.futures.Future":
+            out: "concurrent.futures.Future" = concurrent.futures.Future()
+
+            def _write() -> None:
+                if not st["open"]:
+                    out.set_result((False, "Claude Code turn already finished"))
+                    return
+                try:
+                    proc.stdin.write(_user_line(text))
+                except Exception as exc:
+                    out.set_result((False, str(exc)))
+                    return
+                st["sent"].append(text)
+                out.set_result((True, None))
+
+            loop.call_soon_threadsafe(_write)
+            return out
+
+        def _on_line(raw: bytes) -> None:
+            stream.feed(raw)
+            if not steerable:
+                return
+            try:
+                obj = json.loads(raw)
+            except (ValueError, UnicodeError):
+                return
+            if not isinstance(obj, dict):
+                return
+            echoed = _replay_text(obj)
+            if echoed is not None:
+                pending = [t for t in st["sent"] if t not in st["echoed"]]
+                if echoed.strip() in (t.strip() for t in pending):
+                    st["echoed"].append(next(t for t in pending if t.strip() == echoed.strip()))
+                    stream.activity.emit(f"steer received: {' '.join(echoed.split())[:100]}", force=True)
+            elif obj.get("type") == "result" and not obj.get("parent_tool_use_id"):
+                st["results"].append(obj)
+                # EOF lets the CLI exit once queued steers are answered.
+                _close_input()
+
         stop_hb = asyncio.Event()
         hb = asyncio.create_task(stream.activity.heartbeat_loop(stop_hb))
-        proc = None
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -364,7 +488,13 @@ class ClaudeCliTool:
                 limit=_STDOUT_LIMIT,
             )
             attach_to_chat_run(chat_session_id, proc)
-            if use_stdin and proc.stdin is not None:
+            if steerable and proc.stdin is not None:
+                proc.stdin.write(_user_line(prompt))
+                await proc.stdin.drain()
+                st["open"] = True
+                if chat_session_id:
+                    st["token"] = steer_registry.register(chat_session_id, "claude", _steer_send)
+            elif use_stdin and proc.stdin is not None:
                 proc.stdin.write(prompt.encode("utf-8"))
                 await proc.stdin.drain()
                 proc.stdin.close()
@@ -373,7 +503,7 @@ class ClaudeCliTool:
                 timeout=resolved_timeout,
                 cancel_event=cancel_event,
                 line_mode=True,
-                on_stdout_line=stream.feed,
+                on_stdout_line=_on_line,
             )
         except OSError as exc:
             return {
@@ -383,18 +513,37 @@ class ClaudeCliTool:
                 "usage": {},
             }
         finally:
+            _close_input()
             stream.text.flush()
             stop_hb.set()
             await hb
 
         err = run.stderr.decode("utf-8", errors="replace").strip()
-        parsed = _parse_claude_json(json.dumps(stream.result)) if stream.result is not None else {
-            "output": stream.partial_output(), "session_id": stream.session_id, "usage": {}, "errors": [],
-        }
+        if len(st["results"]) > 1:
+            parsed = _merge_results([_parse_claude_json(json.dumps(r)) for r in st["results"]])
+        elif stream.result is not None:
+            parsed = _parse_claude_json(json.dumps(stream.result))
+        else:
+            parsed = {
+                "output": stream.partial_output(), "session_id": stream.session_id, "usage": {}, "errors": [],
+            }
         session_id = parsed.get("session_id") or stream.session_id or rid or None
         usage = parsed.get("usage") or {}
         errors = list(parsed.get("errors") or [])
         display = (parsed.get("output") or "").strip()
+        unread = list(st["echoed"])
+        undelivered: List[str] = []
+        for text in st["sent"]:
+            if text in unread:
+                unread.remove(text)
+            else:
+                undelivered.append(text)
+        if undelivered:
+            display = f"{display}\n\n{_undelivered_notice(undelivered)}".strip()
+        steer_info: Dict[str, Any] = (
+            {"steered": len(st["sent"]) - len(undelivered), "undelivered_steers": undelivered}
+            if steerable else {}
+        )
 
         if run.timed_out or run.cancelled:
             reason = run.reason or (
@@ -419,6 +568,7 @@ class ClaudeCliTool:
                 "claude_session_id": session_id,
                 "timed_out": run.timed_out,
                 "cancelled": run.cancelled,
+                **steer_info,
             }
 
         ok = run.returncode == 0 and stream.result is not None and not errors
@@ -443,6 +593,7 @@ class ClaudeCliTool:
             "claude_session_id": session_id,
             "returncode": run.returncode,
             "stderr": err[:2000] if err else "",
+            **steer_info,
         }
 
 

@@ -2109,7 +2109,7 @@ def chat_cancel():
 
 @app.route('/api/chat-steer', methods=['POST'])
 def chat_steer():
-    """Inject a follow-up into the chat's running agent turn (Codex / Muse Code).
+    """Inject a follow-up into the chat's running agent turn (Codex / Muse Code / Claude Code).
 
     ``steered: false`` means nothing steerable is live (or the harness rejected
     it) — the client keeps the message on its follow-up queue instead.

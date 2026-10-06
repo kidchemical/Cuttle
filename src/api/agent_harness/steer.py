@@ -1,16 +1,18 @@
 """Mid-turn steering: push a user follow-up into the agent turn that is already running.
 
-Codex (``codex app-server`` → ``turn/steer``) and Muse Code (``muse serve`` →
-``turn/steer``) accept extra input while a turn is live. Their turn runners
-register a send callback here once the harness has acknowledged a turn id;
+Codex (``codex app-server`` → ``turn/steer``), Muse Code (``muse serve`` →
+``turn/steer``) and Claude Code (``claude -p --input-format stream-json`` with
+stdin left open) accept extra input while a turn is live. Their turn runners
+register a send callback here once the harness has the turn;
 ``POST /api/chat-steer`` looks the chat up and forwards the text.
 
 Anything that cannot be steered (no live registration, a different slash
 command, the harness rejecting a turn that just finished) returns
 ``steered=False`` so the client falls back to its follow-up queue.
 
-Settings: ``agent_steer`` → ``{"codex": true, "muse": true}`` (both default on).
-Turning an agent off also makes its adapter use the one-shot ``exec`` path.
+Settings: ``agent_steer`` → ``{"codex": true, "muse": true, "claude": true}``
+(all default on). Turning an agent off also makes its adapter use the one-shot
+path (``exec`` / plain ``claude -p``).
 ``CUTTLE_AGENT_STEER=0`` turns steering off for every agent.
 """
 
@@ -24,7 +26,7 @@ import threading
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional
 
-STEERABLE_AGENTS = ("codex", "muse")
+STEERABLE_AGENTS = ("codex", "muse", "claude")
 
 # The send callback receives the steer text and returns a Future resolving to
 # ``(ok, error_message_or_None)``. It is called from a Flask worker thread.
@@ -55,12 +57,16 @@ def _key(chat_session_id: Any) -> Optional[str]:
     return str(num) if num is not None else str(chat_session_id).strip()
 
 
+def steer_env_disabled() -> bool:
+    """``CUTTLE_AGENT_STEER=0`` overrides every per-agent setting."""
+    return (os.getenv("CUTTLE_AGENT_STEER") or "").strip().lower() in ("0", "false", "off", "no")
+
+
 def steer_enabled(agent_id: str) -> bool:
     agent = (agent_id or "").strip().lower()
     if agent not in STEERABLE_AGENTS:
         return False
-    env = (os.getenv("CUTTLE_AGENT_STEER") or "").strip().lower()
-    if env in ("0", "false", "off", "no"):
+    if steer_env_disabled():
         return False
     try:
         from managers.settings_manager import get_settings_manager
@@ -71,6 +77,33 @@ def steer_enabled(agent_id: str) -> bool:
     if isinstance(cfg, dict) and agent in cfg:
         return bool(cfg.get(agent))
     return True
+
+
+def steer_settings() -> Dict[str, bool]:
+    """Saved per-agent switches (env kill switch not applied), defaults on."""
+    try:
+        from managers.settings_manager import get_settings_manager
+
+        cfg = get_settings_manager().get_setting("agent_steer", None)
+    except Exception:
+        cfg = None
+    cfg = cfg if isinstance(cfg, dict) else {}
+    return {agent: bool(cfg.get(agent, True)) for agent in STEERABLE_AGENTS}
+
+
+def set_steer_enabled(agent_id: str, enabled: bool) -> bool:
+    """Persist one agent's switch; False for agents that cannot steer."""
+    agent = (agent_id or "").strip().lower()
+    if agent not in STEERABLE_AGENTS:
+        return False
+    from managers.settings_manager import get_settings_manager
+
+    def _apply(current: Any) -> Dict[str, Any]:
+        out = dict(current) if isinstance(current, dict) else {}
+        out[agent] = bool(enabled)
+        return out
+
+    return get_settings_manager().update_setting("agent_steer", _apply)
 
 
 def register(chat_session_id: Any, agent_id: str, send: SteerSend) -> Optional[int]:
@@ -108,6 +141,7 @@ _SLASH_RE = re.compile(r"^/([A-Za-z][\w-]*)\b\s*", re.S)
 _AGENT_SLASH_ALIASES = {
     "codex": ("codex",),
     "muse": ("muse",),
+    "claude": ("claude",),
 }
 
 

@@ -8288,7 +8288,7 @@
      */
     function steerBadgeHtml(agent) {
         const id = String(agent || '').trim().toLowerCase();
-        const label = id === 'codex' ? 'Codex' : (id === 'muse' ? 'Muse Code' : 'agent');
+        const label = { codex: 'Codex', muse: 'Muse Code', claude: 'Claude Code' }[id] || 'agent';
         const category = (id === 'codex' || id === 'muse') ? id : 'command';
         return slashCommandChipHeaderHtml(
             'steer',

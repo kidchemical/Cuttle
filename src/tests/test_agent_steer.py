@@ -546,3 +546,108 @@ def test_chat_steer_endpoint_persists_steered_user_message(tmp_path, monkeypatch
         assert meta.get("steered_agent") == "codex"
     finally:
         steer.unregister(sid, reg)
+
+
+# Mirrors claude 2.1 stream-json input: replays each stdin user line, folds a
+# steer that arrives before the tool finishes into the same result, answers a
+# later one as an extra turn, and exits on EOF. MODE=late finishes the first
+# turn with the steer already in the pipe; MODE=deaf never reads the steer.
+_FAKE_CLAUDE = r'''
+import json, os, sys, threading, queue
+mode = os.environ.get("FAKE_CLAUDE_MODE", "mid")
+q = queue.Queue()
+def rd():
+    for line in sys.stdin:
+        q.put(json.loads(line))
+    q.put(None)
+threading.Thread(target=rd, daemon=True).start()
+def out(msg):
+    msg.setdefault("session_id", "cs-1")
+    sys.stdout.write(json.dumps(msg) + "\n"); sys.stdout.flush()
+def replay(m):
+    out({"type": "user", "isReplay": True, "parent_tool_use_id": None, "message": m["message"]})
+def result(text, cost):
+    out({"type": "result", "subtype": "success", "result": text, "total_cost_usd": cost,
+         "usage": {"input_tokens": 10, "output_tokens": 2}})
+first = q.get()
+out({"type": "system", "subtype": "init", "model": "fake"})
+replay(first)
+out({"type": "assistant", "message": {"id": "m1", "content": [
+     {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "sleep 5"}}]}})
+steer = q.get(timeout=6)
+if mode == "deaf":
+    result("done", 0.01)
+    sys.exit(0)
+if mode == "late":
+    result("first answer", 0.01)
+if steer is not None:
+    replay(steer)
+    result("saw: %s" % steer["message"]["content"], 0.02)
+while q.get(timeout=6) is not None:
+    pass
+'''
+
+
+def _run_fake_claude(tmp_path, monkeypatch, mode, chat_id, message):
+    import scripts.utilities.claude_cli_tool as mod
+
+    monkeypatch.setenv("FAKE_CLAUDE_MODE", mode)
+    monkeypatch.setattr(mod, "claude_executable", lambda: _fake_bin(tmp_path, "claude", _FAKE_CLAUDE))
+    monkeypatch.setattr(
+        "scripts.utilities.claude_cli_session_store.save_claude_resume_id", lambda *a, **k: None
+    )
+    results = []
+    t = _steer_when_live(chat_id, message, results)
+    res = asyncio.run(
+        mod.ClaudeCliTool().execute_prompt(
+            "go", cwd=str(tmp_path), chat_session_id=str(chat_id), timeout=30, steerable=True,
+        )
+    )
+    t.join(5)
+    return res, results
+
+
+@pytestmark_posix
+def test_claude_turn_accepts_mid_turn_steer(tmp_path, monkeypatch):
+    res, results = _run_fake_claude(tmp_path, monkeypatch, "mid", 5151, "/claude add BANANA")
+    assert results and results[0] == {"steered": True, "agent": "claude", "text": "add BANANA"}
+    assert res["success"] is True
+    assert res["output"] == "saw: add BANANA"
+    assert res["steered"] == 1
+    assert res["undelivered_steers"] == []
+    assert res["claude_session_id"] == "cs-1"
+    assert steer.active_agent(5151) is None
+
+
+@pytestmark_posix
+def test_claude_late_steer_extra_turn_merges_into_reply(tmp_path, monkeypatch):
+    res, results = _run_fake_claude(tmp_path, monkeypatch, "late", 5252, "and PINEAPPLE")
+    assert results and results[0]["steered"] is True
+    assert res["success"] is True
+    assert res["output"] == "first answer\n\nsaw: and PINEAPPLE"
+    assert res["usage"]["prompt_tokens"] == 20
+    assert res["usage"]["cost"] == pytest.approx(0.03)
+    assert res["steered"] == 1
+
+
+@pytestmark_posix
+def test_claude_turn_reports_steer_it_never_read(tmp_path, monkeypatch):
+    res, results = _run_fake_claude(tmp_path, monkeypatch, "deaf", 5353, "too late")
+    assert results and results[0]["steered"] is True
+    assert res["steered"] == 0
+    assert res["undelivered_steers"] == ["too late"]
+    assert "before reading your follow-up" in res["output"]
+    assert "- too late" in res["output"]
+
+
+def test_claude_is_steerable_by_default(monkeypatch):
+    import managers.settings_manager as sm
+
+    class _SM:
+        def get_setting(self, key, default=None):
+            return default
+
+    monkeypatch.delenv("CUTTLE_AGENT_STEER", raising=False)
+    monkeypatch.setattr(sm, "get_settings_manager", lambda: _SM())
+    assert steer.steer_enabled("claude") is True
+    assert steer.steer_text_for("/claude effort high", "claude") is None

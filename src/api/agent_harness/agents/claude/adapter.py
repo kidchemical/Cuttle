@@ -416,10 +416,13 @@ class Adapter:
 
         # Transcript boundaries remain authoritative for auto-compaction.
         compacts_before = count_compact_boundaries(resume) if resume else None
+        from api.agent_harness.steer import steer_enabled
+
         tool = ClaudeCliTool(model=mid, reasoning_effort=effort)
         raw = await tool.execute_prompt(
             prompt, cwd=cwd, resume=resume, status_queue=status_queue,
             chat_session_id=chat_session_id, timeout=timeout, cancel_event=cancel_event,
+            steerable=steer_enabled("claude"),
         )
 
         ok = bool(raw.get("success"))
@@ -455,6 +458,8 @@ class Adapter:
         if effort:
             meta["agent_effort"] = effort
             meta["effort_source"] = effort_source
+        if raw.get("steered"):
+            meta["steered"] = int(raw["steered"])
         # Prefer last-call occupancy for the gauge (not multi-step billing).
         if not usage.get("context_tokens") and usage.get("prompt_tokens"):
             try:
