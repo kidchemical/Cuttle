@@ -212,11 +212,16 @@ def request_via_coordinator(
         )
         return wait_for_decision(row["id"], timeout_seconds=timeout_seconds)
 
-    base = (
-        os.environ.get("CUTTLE_DEVICE_WORKERS_COORDINATOR_URL")
-        or os.environ.get("CUTTLE_FLASK_URL")
-        or "https://127.0.0.1:8080"
-    ).rstrip("/")
+    if os.environ.get("CUTTLE_DEVICE_WORKERS_COORDINATOR_URL") or os.environ.get("CUTTLE_FLASK_URL"):
+        base = (
+            os.environ.get("CUTTLE_DEVICE_WORKERS_COORDINATOR_URL")
+            or os.environ.get("CUTTLE_FLASK_URL")
+            or ""
+        ).rstrip("/")
+    else:
+        from api.server_ports import resolve_with_env_file
+
+        base = f"https://127.0.0.1:{resolve_with_env_file().https}"
 
     # Prefer in-process when coordinator URL points at us and store is importable
     # (daemon worker → Flask is cross-process, so HTTP).

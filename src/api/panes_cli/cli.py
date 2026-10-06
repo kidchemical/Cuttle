@@ -19,7 +19,17 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Sequence
 
 
-DEFAULT_BASE = "https://127.0.0.1:8080"
+def _default_base() -> str:
+    """Configured primary-HTTPS base. Fails closed on malformed port config."""
+    try:
+        from api.server_ports import resolve_with_env_file
+
+        return f"https://127.0.0.1:{resolve_with_env_file().https}"
+    except Exception as exc:
+        raise SystemExit(f"error: invalid listener-port configuration: {exc}")
+
+
+DEFAULT_BASE = "https://127.0.0.1:8080"  # default snapshot; live value is _default_base()
 
 
 def _ensure_src_on_path() -> None:
@@ -58,7 +68,7 @@ def _get_json(url: str, *, timeout: float = 15.0) -> tuple[int, Any, str]:
 
 
 def cmd_list(args: argparse.Namespace) -> int:
-    base = (args.base_url or DEFAULT_BASE).rstrip("/")
+    base = (args.base_url or _default_base()).rstrip("/")
     code, data, err = _get_json(f"{base}/api/shell/panes")
     if err or not isinstance(data, dict) or not data.get("success", True):
         # GET returns success key sometimes; tolerate panes without it.
@@ -88,7 +98,7 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 
 def cmd_messages(args: argparse.Namespace) -> int:
-    base = (args.base_url or DEFAULT_BASE).rstrip("/")
+    base = (args.base_url or _default_base()).rstrip("/")
     n = int(args.pane)
     limit = max(1, min(200, int(args.limit)))
     code, data, err = _get_json(f"{base}/api/shell/panes/{n}/messages?limit={limit}")
@@ -136,8 +146,8 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument("--json", action="store_true")
     common.add_argument(
         "--base-url",
-        default=DEFAULT_BASE,
-        help=f"Flask base URL (default {DEFAULT_BASE})",
+        default=None,
+        help=f"Flask base URL (default {DEFAULT_BASE}, or CUTTLE_HTTPS_PORT)",
     )
 
     p = argparse.ArgumentParser(

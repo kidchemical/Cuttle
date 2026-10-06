@@ -325,8 +325,8 @@ def api_settings_lan_access():
             get_lan_ipv4,
             lan_phone_portal_url,
             lan_phone_http_fallback_url,
-            LAN_PHONE_HTTPS_PORT,
-            LAN_HTTP_FALLBACK_PORT,
+            get_phone_https_port,
+            get_http_fallback_port,
         )
 
         sm = get_settings_manager()
@@ -354,10 +354,10 @@ def api_settings_lan_access():
             'live_enabled': live,
             'mdns_enabled': bool(discovery.get('mdns_enabled')),
             'lan_ip': lan_ip,
-            'portal_url_phone': lan_phone_portal_url(LAN_PHONE_HTTPS_PORT, lan_ip) if live else None,
+            'portal_url_phone': lan_phone_portal_url(get_phone_https_port(), lan_ip) if live else None,
             'portal_url_http_fallback': lan_phone_http_fallback_url(lan_ip) if live else None,
-            'http_port': LAN_HTTP_FALLBACK_PORT,
-            'https_port': LAN_PHONE_HTTPS_PORT,
+            'http_port': get_http_fallback_port(),
+            'https_port': get_phone_https_port(),
             'restart_required': enabled != live or (
                 enabled and live and request.method == 'POST'
             ),

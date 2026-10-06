@@ -30,6 +30,29 @@ from pathlib import Path
 
 RESERVED_PORTS = frozenset({8080, 8000, 8888})
 
+
+def _reserved_ports() -> frozenset | None:
+    """Parent-resolved denylist (defaults + configured live ports).
+
+    Returns None when CUTTLE_SHADOW_RESERVED_PORTS is malformed so the
+    caller refuses boot instead of checking a partial denylist.
+    """
+    raw = (os.environ.get("CUTTLE_SHADOW_RESERVED_PORTS") or "").strip()
+    if not raw:
+        return RESERVED_PORTS
+    extra = set()
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if not part.isdigit():
+            return None
+        port = int(part, 10)
+        if not 1 <= port <= 65535:
+            return None
+        extra.add(port)
+    return RESERVED_PORTS | frozenset(extra)
+
 # Reviewed B1-journey route allowlist. Default-deny:
 # anything not listed gets a stable side-effect-free 403. Method-aware: path
 # prefixes are GET-only, never broad method-agnostic POST pages. No blanket
@@ -801,7 +824,11 @@ def main() -> int:
     if os.path.exists(os.path.join(snapshot_src, ".env")):
         print("shadow: live .env inside snapshot; refusing boot", flush=True)
         return 2
-    if fixed_port in RESERVED_PORTS:
+    denied_ports = _reserved_ports()
+    if denied_ports is None:
+        print("shadow: malformed CUTTLE_SHADOW_RESERVED_PORTS; refusing boot", flush=True)
+        return 2
+    if fixed_port in denied_ports:
         print(f"shadow: reserved port {fixed_port} refused", flush=True)
         return 2
 
@@ -841,7 +868,7 @@ def main() -> int:
     from werkzeug.serving import make_server
     server = make_server("127.0.0.1", fixed_port, app, threaded=True)
     host, bound_port = server.socket.getsockname()[:2]
-    if bound_port in RESERVED_PORTS:
+    if bound_port in denied_ports:
         print(f"shadow: bound reserved port {bound_port}; refusing", flush=True)
         return 2
     sock_state.allowed_inet = (host, bound_port)

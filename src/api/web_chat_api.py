@@ -213,14 +213,33 @@ app = Flask(__name__)
 try:
     from api.lan_access import build_cors_origins
     _CORS_ORIGINS = build_cors_origins()
-except Exception:
-    _CORS_ORIGINS = [
-        'http://localhost:8080',
-        'http://127.0.0.1:8080',
-        'https://localhost:8080',
-        'https://127.0.0.1:8080',
-        'app://cuttle',
-    ]
+except ImportError:
+    # Early-import fallback only (lan_access not importable yet). Loopback
+    # origins still derive from the port owner when it imports; only a fully
+    # unimportable api package keeps the static defaults. A PortConfigError
+    # from api.server_ports must propagate: malformed config fails boot
+    # instead of serving stale origins.
+    try:
+        from api.server_ports import resolve_with_env_file as _resolve_ports_fallback
+        _fb_ports = _resolve_ports_fallback()
+        _fb_loopback = [
+            f"http://localhost:{_fb_ports.https}",
+            f"http://127.0.0.1:{_fb_ports.https}",
+            f"https://localhost:{_fb_ports.https}",
+            f"https://127.0.0.1:{_fb_ports.https}",
+            f"http://localhost:{_fb_ports.http}",
+            f"http://127.0.0.1:{_fb_ports.http}",
+        ]
+    except ImportError:
+        _fb_loopback = [
+            'http://localhost:8080',
+            'http://127.0.0.1:8080',
+            'https://localhost:8080',
+            'https://127.0.0.1:8080',
+            'http://localhost:8000',
+            'http://127.0.0.1:8000',
+        ]
+    _CORS_ORIGINS = _fb_loopback + ['app://cuttle']
 CORS(app, origins=_CORS_ORIGINS, supports_credentials=True)
 
 
@@ -1694,12 +1713,23 @@ def _generate_chat_stream(process_fn, session_id_for_status, on_result=None, on_
 def serve_phone_landing():
     """Short LAN setup page — open from phone browser."""
     try:
-        from api.lan_access import lan_phone_portal_url, lan_phone_http_fallback_url, get_lan_ipv4, LAN_PHONE_HTTPS_PORT
+        from api.lan_access import (
+            lan_phone_portal_url, lan_phone_http_fallback_url, get_lan_ipv4,
+            get_phone_https_port, get_http_fallback_port, get_primary_https_port,
+        )
         ip = get_lan_ipv4() or request.host.split(':')[0]
-        base = lan_phone_portal_url(LAN_PHONE_HTTPS_PORT, ip) or f'https://{ip}:{LAN_PHONE_HTTPS_PORT}'
-        http_fb = lan_phone_http_fallback_url(ip) or f'http://{ip}:8000'
+        base = lan_phone_portal_url(get_phone_https_port(), ip) or f'https://{ip}:{get_phone_https_port()}'
+        http_fb = lan_phone_http_fallback_url(ip) or f'http://{ip}:{get_http_fallback_port()}'
+        pc_url = f'https://127.0.0.1:{get_primary_https_port()}'
+        phone_port_label = str(get_phone_https_port())
+        http_port_label = str(get_http_fallback_port())
     except Exception:
         base = request.url_root.rstrip('/')
+        http_fb = base
+        pc_url = base
+        ip = request.host.split(':')[0]
+        _req_port = request.host.split(':')[1] if ':' in request.host else 'configured port'
+        phone_port_label = http_port_label = _req_port
     chat = f'{base}/chat_page.html'
     shell = f'{base}/app_shell.html'
     ping = f'{base}/api/lan-ping'
@@ -1717,7 +1747,7 @@ def serve_phone_landing():
 a{{display:block;margin:1rem 0;padding:1rem;background:#2563eb;color:#fff;text-decoration:none;border-radius:8px;text-align:center;font-size:1.1rem}}
 p,li{{line-height:1.5;color:#aaa}} .ok{{color:#4ade80}} .warn{{color:#fbbf24}}</style></head><body>
 <h1>Cuttle — phone access</h1>
-<p class="warn">Android Chrome uses <strong>HTTPS</strong> on port <strong>8888</strong>. Accept the certificate warning once.</p>
+<p class="warn">Android Chrome uses <strong>HTTPS</strong> on port <strong>{phone_port_label}</strong>. Accept the certificate warning once.</p>
 {qr_block}
 <a href="{ping}">Test connection (lan-ping)</a>
 <a href="{shell}">Open Cuttle</a>
@@ -1731,10 +1761,10 @@ p,li{{line-height:1.5;color:#aaa}} .ok{{color:#4ade80}} .warn{{color:#fbbf24}}</
 <h2>If it still does not load</h2>
 <ul>
 <li>Phone on <strong>same Wi‑Fi</strong> as this PC (mobile data off)</li>
-<li>Try <strong>{http_fb}/api/lan-ping</strong> (port 8000, plain HTTP)</li>
+<li>Try <strong>{http_fb}/api/lan-ping</strong> (port {http_port_label}, plain HTTP)</li>
 <li>Run <strong>Enable Cuttle LAN Firewall</strong> as Administrator on PC</li>
 </ul>
-<p>PC only: <a href="https://127.0.0.1:8080" style="display:inline;background:none;padding:0;color:#60a5fa">https://127.0.0.1:8080</a></p>
+<p>PC only: <a href="{pc_url}" style="display:inline;background:none;padding:0;color:#60a5fa">{pc_url}</a></p>
 </body></html>'''
 
 
@@ -6063,9 +6093,9 @@ def api_network_info():
             windows_firewall_rule_active,
             lan_portal_url,
             lan_phone_portal_url,
-            LAN_HTTP_PORT,
-            LAN_PHONE_HTTPS_PORT,
-            LAN_HTTP_FALLBACK_PORT,
+            get_primary_https_port,
+            get_phone_https_port,
+            get_http_fallback_port,
             lan_phone_http_fallback_url,
             wifi_network_category,
             get_recent_lan_probes,
@@ -6073,8 +6103,8 @@ def api_network_info():
         )
         lan_enabled = is_lan_access_enabled()
         lan_ip = get_lan_ipv4() if lan_enabled else None
-        portal_https = lan_portal_url(8080, lan_ip) if lan_enabled else None
-        portal_phone = lan_phone_portal_url(LAN_PHONE_HTTPS_PORT, lan_ip) if lan_enabled else None
+        portal_https = lan_portal_url(get_primary_https_port(), lan_ip) if lan_enabled else None
+        portal_phone = lan_phone_portal_url(get_phone_https_port(), lan_ip) if lan_enabled else None
         portal_http_fb = lan_phone_http_fallback_url(lan_ip) if lan_enabled else None
         discovery = {}
         try:
@@ -6092,7 +6122,7 @@ def api_network_info():
             'portal_url_phone': portal_phone,
             'portal_url_http_fallback': portal_http_fb,
             'portal_url_https': portal_https,
-            'localhost_url': 'https://127.0.0.1:8080',
+            'localhost_url': f'https://127.0.0.1:{get_primary_https_port()}',
             'firewall_rule_active': windows_firewall_rule_active() if lan_enabled else False,
             'wifi_network_category': net_cat,
             'mdns_enabled': bool(discovery.get('mdns_enabled')),
@@ -6106,8 +6136,8 @@ def api_network_info():
                 ('Phone reached this PC — LAN path works.' if probes else None)
             ),
             'notes': (
-                'On your phone open portal_url_phone (HTTPS on 8888). Accept the self-signed cert once. '
-                f'Or use portal_url_http_fallback (plain HTTP on port {LAN_HTTP_FALLBACK_PORT}). '
+                f'On your phone open portal_url_phone (HTTPS on {get_phone_https_port()}). Accept the self-signed cert once. '
+                f'Or use portal_url_http_fallback (plain HTTP on port {get_http_fallback_port()}). '
                 'Same Wi‑Fi required.'
                 if lan_enabled and portal_phone else
                 'LAN access is off. Enable LAN access in Settings, then restart Cuttle.'
@@ -6117,12 +6147,13 @@ def api_network_info():
                     f'Phone (HTTPS): {portal_phone or "(no LAN IP)"}',
                     f'Phone (HTTP fallback): {portal_http_fb or "(no LAN IP)"}',
                     f'Phone IP must be in: {subnet.get("phone_ip_must_be_in", "same subnet as PC")}',
-                    'PC browser: https://127.0.0.1:8080',
+                    f'PC browser: https://127.0.0.1:{get_primary_https_port()}',
                     'After a phone attempt, refresh this URL — recent_phone_hits should list your phone.',
                     ('If phone cannot connect: run enable_lan_firewall.bat as Administrator, then restart Cuttle.'
                      if sys.platform == 'win32' else
-                     f'If phone cannot connect: allow TCP 8080, {LAN_PHONE_HTTPS_PORT} and {LAN_HTTP_FALLBACK_PORT} '
-                     f'in your firewall (e.g. sudo ufw allow 8080,{LAN_PHONE_HTTPS_PORT},{LAN_HTTP_FALLBACK_PORT}/tcp).'),
+                     f'If phone cannot connect: allow TCP {get_primary_https_port()}, {get_phone_https_port()} and '
+                     f'{get_http_fallback_port()} in your firewall (e.g. sudo ufw allow '
+                     f'{get_primary_https_port()},{get_phone_https_port()},{get_http_fallback_port()}/tcp).'),
                     'Router fix: disable AP isolation / client isolation / use main Wi‑Fi not guest.',
                 ] + ([f'Your Wi‑Fi is "{net_cat or "unknown"}" — set to Private in Windows Settings → Network → Wi‑Fi.']
                      if sys.platform == 'win32' else [])
@@ -8926,6 +8957,106 @@ def _cuttle_req_timer_end(response):
     return response
 
 
+def start_listener_servers(app, ports, *, lan_enabled, lan_ip, bind_host, mdns_enabled,
+                           cert_files, use_reloader=True,
+                           make_server_factory=None, mdns_starter=None,
+                           primary_runner=None, log=print):
+    """Bring up companion listeners, advertise mDNS, then serve primary HTTPS.
+
+    ``ports`` is an ``api.server_ports.ServerPorts`` triple resolved once by
+    the caller. Every socket comes from ``make_server_factory`` / the
+    ``mdns_starter`` / ``primary_runner`` seams (real ones by default), so
+    tests can record the exact ``app.run`` / ``make_server`` / mDNS args
+    without binding a port, touching the network, or spawning a server.
+    Returns the resolved plan ``{"primary_port", "phone_https_port",
+    "http_port", "mdns_port" | None}``. Companion failures are logged and
+    never abort boot; the blocking primary serve propagates (KeyboardInterrupt
+    included) to the caller.
+    """
+    from api.lan_access import lan_phone_portal_url, lan_phone_http_fallback_url
+
+    if mdns_starter is None:
+        def mdns_starter(port, name="Cuttle"):
+            from api.discovery_mdns import start_mdns
+            return start_mdns(port=port, name=name)
+    if make_server_factory is None:
+        def make_server_factory(host, port, wsgi_app, **kwargs):
+            from werkzeug.serving import make_server
+            return make_server(host, port, wsgi_app, **kwargs)
+
+    plan = {
+        "primary_port": ports.https,
+        "phone_https_port": ports.phone_https,
+        "http_port": ports.http,
+        "mdns_port": ports.https if (lan_enabled and mdns_enabled) else None,
+    }
+
+    if lan_enabled and mdns_enabled:
+        try:
+            mdns_starter(ports.https, name="Cuttle")
+        except Exception as e:
+            log(f"[DISCOVERY] mDNS start skipped: {e}")
+
+    if lan_enabled and lan_ip:
+        phone_url = lan_phone_portal_url(ports.phone_https, lan_ip)
+        fb_url = lan_phone_http_fallback_url(lan_ip)
+        log(f"[LAN] Phone portal (HTTPS): {phone_url}")
+        log(f"[LAN] Phone fallback (HTTP): {fb_url}")
+        log(f"[LAN] Accept cert warning on phone once, or use HTTP port {ports.http}")
+        try:
+            phone_https_srv = make_server_factory(
+                '0.0.0.0',
+                ports.phone_https,
+                app,
+                threaded=True,
+                ssl_context=(str(cert_files[0]), str(cert_files[1])),
+            )
+            threading.Thread(
+                target=phone_https_srv.serve_forever,
+                name='cuttle-lan-phone-https',
+                daemon=True,
+            ).start()
+            log(f"[LAN] Phone HTTPS listening on https://0.0.0.0:{ports.phone_https}")
+            http_fb_srv = make_server_factory('0.0.0.0', ports.http, app, threaded=True)
+            threading.Thread(
+                target=http_fb_srv.serve_forever,
+                name='cuttle-lan-http-fallback',
+                daemon=True,
+            ).start()
+            log(f"[LAN] HTTP fallback listening on http://0.0.0.0:{ports.http}")
+        except Exception as e:
+            log(f"[LAN] Phone LAN servers failed: {e}")
+    else:
+        # Electron (and local HTTP tooling) need plain HTTP even when LAN is off.
+        # Binding loopback-only keeps the portal off the network.
+        try:
+            http_local_srv = make_server_factory('127.0.0.1', ports.http, app, threaded=True)
+            threading.Thread(
+                target=http_local_srv.serve_forever,
+                name='cuttle-loopback-http',
+                daemon=True,
+            ).start()
+            log(f"[HTTP] Loopback portal listening on http://127.0.0.1:{ports.http}")
+        except Exception as e:
+            log(f"[HTTP] Loopback portal failed: {e}")
+
+    runner = primary_runner
+    if runner is None:
+        def runner(*, host, port):
+            # threaded=True allows pipeline triggers to make internal API calls (e.g. llm-request) without deadlock
+            app.run(
+                debug=False,
+                host=host,
+                port=port,
+                use_reloader=use_reloader,
+                threaded=True,
+                ssl_context=(cert_files[0], cert_files[1]),
+            )
+    log(f"[HTTPS] Serving on https://{bind_host}:{ports.https}")
+    runner(host=bind_host, port=ports.https)
+    return plan
+
+
 if __name__ == '__main__':
     print("Starting Cuttle Web Chat API Server...")
     print("=" * 50)
@@ -8961,10 +9092,20 @@ if __name__ == '__main__':
     print("  POST /api/projects/<id>/sync - Sync remote project")
     print("  GET  /api/projects/history - Get project history")
     print("  GET  /api/projects/stats  - Get project statistics")
-    print("\nOpen http://localhost:8080 in your browser")
+    try:
+        from api.server_ports import resolve_with_env_file
+        _ports = resolve_with_env_file()
+    except Exception as exc:
+        print(f"[PORTS] Invalid listener-port configuration: {exc}")
+        print("[PORTS] Fix CUTTLE_HTTPS_PORT/CUTTLE_HTTP_PORT/CUTTLE_PHONE_HTTPS_PORT in src/.env, "
+              "then cold-restart the daemon (port changes need a daemon restart, not a Flask-only restart).")
+        raise SystemExit(2)
+
+    print(f"\nOpen https://127.0.0.1:{_ports.https} in your browser")
     print("Press Ctrl+C to stop the server")
     print("=" * 50)
 
+    discovery = {}
     try:
         from managers.settings_manager import get_settings_manager
         from api.lan_access import (
@@ -8974,11 +9115,6 @@ if __name__ == '__main__':
             ensure_all_lan_firewall_rules,
             windows_firewall_rule_active,
             lan_portal_url,
-            lan_phone_portal_url,
-            LAN_HTTP_PORT,
-            LAN_PHONE_HTTPS_PORT,
-            LAN_HTTP_FALLBACK_PORT,
-            lan_phone_http_fallback_url,
             wifi_network_category,
         )
         settings = get_settings_manager()
@@ -8992,12 +9128,6 @@ if __name__ == '__main__':
             net_cat = wifi_network_category()
             if net_cat == 'Public':
                 print('[LAN] Wi‑Fi is "Public" — phone access may be blocked. Set Wi‑Fi to Private in Windows Settings.')
-            if discovery.get('mdns_enabled'):
-                try:
-                    from api.discovery_mdns import start_mdns
-                    start_mdns(port=8080, name="Cuttle")
-                except Exception as e:
-                    print(f"[DISCOVERY] mDNS start skipped: {e}")
         else:
             print("[LAN] Web portal is localhost-only (enable discovery.lan_access_enabled for phone access)")
     except Exception as e:
@@ -9026,62 +9156,17 @@ if __name__ == '__main__':
 
         cert_file, key_file = generate_self_signed_cert(lan_ip=lan_ip)
 
-        if lan_enabled and lan_ip:
-            phone_url = lan_phone_portal_url(LAN_PHONE_HTTPS_PORT, lan_ip)
-            from api.lan_access import lan_phone_http_fallback_url, LAN_PHONE_HTTPS_PORT, LAN_HTTP_FALLBACK_PORT
-            fb_url = lan_phone_http_fallback_url(lan_ip)
-            print(f"[LAN] Phone portal (HTTPS): {phone_url}")
-            print(f"[LAN] Phone fallback (HTTP): {fb_url}")
-            print(f"[LAN] Accept cert warning on phone once, or use HTTP port {LAN_HTTP_FALLBACK_PORT}")
-            try:
-                from werkzeug.serving import make_server
-                phone_https_srv = make_server(
-                    '0.0.0.0',
-                    LAN_PHONE_HTTPS_PORT,
-                    app,
-                    threaded=True,
-                    ssl_context=(str(cert_file), str(key_file)),
-                )
-                threading.Thread(
-                    target=phone_https_srv.serve_forever,
-                    name='cuttle-lan-phone-https',
-                    daemon=True,
-                ).start()
-                print(f"[LAN] Phone HTTPS listening on https://0.0.0.0:{LAN_PHONE_HTTPS_PORT}")
-                http_fb_srv = make_server('0.0.0.0', LAN_HTTP_FALLBACK_PORT, app, threaded=True)
-                threading.Thread(
-                    target=http_fb_srv.serve_forever,
-                    name='cuttle-lan-http-fallback',
-                    daemon=True,
-                ).start()
-                print(f"[LAN] HTTP fallback listening on http://0.0.0.0:{LAN_HTTP_FALLBACK_PORT}")
-            except Exception as e:
-                print(f"[LAN] Phone LAN servers failed: {e}")
-        else:
-            # Electron (and local HTTP tooling) need plain HTTP even when LAN is off.
-            # Binding loopback-only keeps the portal off the network.
-            try:
-                from werkzeug.serving import make_server
-                from api.lan_access import LAN_HTTP_FALLBACK_PORT
-                http_local_srv = make_server('127.0.0.1', LAN_HTTP_FALLBACK_PORT, app, threaded=True)
-                threading.Thread(
-                    target=http_local_srv.serve_forever,
-                    name='cuttle-loopback-http',
-                    daemon=True,
-                ).start()
-                print(f"[HTTP] Loopback portal listening on http://127.0.0.1:{LAN_HTTP_FALLBACK_PORT}")
-            except Exception as e:
-                print(f"[HTTP] Loopback portal failed: {e}")
-
-        # threaded=True allows pipeline triggers to make internal API calls (e.g. llm-request) without deadlock
-        print(f"[HTTPS] Serving on https://{bind_host}:8080")
-        app.run(
-            debug=False,
-            host=bind_host,
-            port=8080,
+        # Flask started directly resolves the triple once here; the daemon
+        # path instead pins the child env to its own boot snapshot.
+        start_listener_servers(
+            app,
+            _ports,
+            lan_enabled=lan_enabled,
+            lan_ip=lan_ip,
+            bind_host=bind_host,
+            mdns_enabled=bool(discovery.get('mdns_enabled')),
+            cert_files=(cert_file, key_file),
             use_reloader=use_reloader,
-            threaded=True,
-            ssl_context=(cert_file, key_file),
         )
     except KeyboardInterrupt:
         print("\n\nWeb Chat API server stopped by user")

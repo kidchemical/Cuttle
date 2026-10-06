@@ -76,12 +76,18 @@ def _is_local_request() -> bool:
     return False
 
 
+def _terminal_local_url() -> str:
+    from api.server_ports import resolve_with_env_file
+
+    return f'https://127.0.0.1:{resolve_with_env_file().https}/terminal_page.html'
+
+
 def _terminal_unavailable_payload() -> Dict[str, Any]:
     return {
         'success': False,
         'error': 'Terminal is only available on this PC (localhost).',
         'hint': 'Open Cuttle on the machine running the daemon, not from a phone or another computer.',
-        'localhost_url': 'https://127.0.0.1:8080/terminal_page.html',
+        'localhost_url': _terminal_local_url(),
     }
 
 
@@ -626,7 +632,7 @@ def register_terminal_routes(app: Flask) -> None:
         return jsonify({
             'success': True,
             'available': True,
-            'localhost_url': 'https://127.0.0.1:8080/terminal_page.html',
+            'localhost_url': _terminal_local_url(),
         })
 
     @app.route('/api/terminal/shells', methods=['GET'])

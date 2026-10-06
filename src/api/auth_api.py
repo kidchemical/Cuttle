@@ -65,13 +65,16 @@ def _user_public(user: dict) -> dict:
 def _oauth_public_base() -> str:
     """Origin Google/Microsoft/Facebook redirect to after login.
 
-    Must match Flask (HTTPS on :8080) and an Authorized redirect URI in the
-    provider console. Prefer OAUTH_REDIRECT_BASE, else CUTTLE_API_URL.
+    Must match the configured primary HTTPS listener and an Authorized
+    redirect URI in the provider console. Prefer OAUTH_REDIRECT_BASE,
+    else CUTTLE_API_URL, else the configured primary port.
     """
+    from api.server_ports import resolve_with_env_file
+
     raw = (
         os.getenv('OAUTH_REDIRECT_BASE')
         or os.getenv('CUTTLE_API_URL')
-        or 'https://localhost:8080'
+        or f'https://localhost:{resolve_with_env_file().https}'
     ).strip().rstrip('/')
     return raw
 

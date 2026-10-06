@@ -25,21 +25,53 @@ from typing import Any, Deque, Dict, List, Optional
 # Recent inbound LAN probes (for phone connectivity diagnosis).
 _lan_probes: Deque[Dict[str, Any]] = deque(maxlen=30)
 
+from api.server_ports import (
+    DEFAULT_HTTP_PORT,
+    DEFAULT_HTTPS_PORT,
+    DEFAULT_PHONE_HTTPS_PORT,
+    resolve_with_env_file,
+)
+
 _FIREWALL_RULE_HTTPS = "Cuttle LAN HTTPS (LocalSubnet)"
 _FIREWALL_RULE_HTTP = "Cuttle LAN HTTP (LocalSubnet)"
 _FIREWALL_RULE_HTTP_OPEN = "Cuttle LAN HTTP (Open LAN)"
 _FIREWALL_RULE_HTTP_ALT = "Cuttle LAN HTTP alt (8000)"
-LAN_PHONE_HTTPS_PORT = 8888  # HTTPS for phones (Chrome upgrades http→https on this port)
-LAN_HTTP_FALLBACK_PORT = 8000  # plain HTTP fallback
+# Legacy default snapshots (import compat only). Listener ports are owned by
+# api.server_ports (env-only); use the get_*_port() helpers for live values.
+LAN_PHONE_HTTPS_PORT = DEFAULT_PHONE_HTTPS_PORT  # HTTPS for phones
+LAN_HTTP_FALLBACK_PORT = DEFAULT_HTTP_PORT  # plain HTTP fallback
 LAN_HTTP_PORT = LAN_PHONE_HTTPS_PORT  # backwards compat
-_BASE_CORS_ORIGINS = (
-    "http://localhost:8080",
-    "http://127.0.0.1:8080",
-    "https://localhost:8080",
-    "https://127.0.0.1:8080",
-    # Electron desktop prefers plain HTTP :8000 (avoids Chromium HTTPS pool wedge).
-    "http://localhost:8000",
-    "http://127.0.0.1:8000",
+PRIMARY_HTTPS_PORT = DEFAULT_HTTPS_PORT
+
+
+def get_primary_https_port() -> int:
+    """Live primary HTTPS port (raises on malformed config, never defaults)."""
+    return resolve_with_env_file().https
+
+
+def get_http_fallback_port() -> int:
+    """Live companion HTTP port (raises on malformed config, never defaults)."""
+    return resolve_with_env_file().http
+
+
+def get_phone_https_port() -> int:
+    """Live phone HTTPS port (raises on malformed config, never defaults)."""
+    return resolve_with_env_file().phone_https
+
+
+def _loopback_cors_origins(ports) -> List[str]:
+    # Electron desktop prefers the plain-HTTP companion (avoids Chromium HTTPS pool wedge).
+    return [
+        f"http://localhost:{ports.https}",
+        f"http://127.0.0.1:{ports.https}",
+        f"https://localhost:{ports.https}",
+        f"https://127.0.0.1:{ports.https}",
+        f"http://localhost:{ports.http}",
+        f"http://127.0.0.1:{ports.http}",
+    ]
+
+
+_NON_PORT_CORS_ORIGINS = (
     "app://cuttle",
     # Capacitor mobile app (LAN client) — scheme://localhost with no port
     "https://localhost",
@@ -151,17 +183,18 @@ def resolve_bind_host(lan_enabled: Optional[bool] = None) -> str:
 
 
 def build_cors_origins(lan_ip: Optional[str] = None) -> List[str]:
-    origins = list(_BASE_CORS_ORIGINS)
+    ports = resolve_with_env_file()
+    origins = _loopback_cors_origins(ports) + list(_NON_PORT_CORS_ORIGINS)
     if not is_lan_access_enabled():
         return origins
     ip = lan_ip or get_lan_ipv4()
     if ip:
         origins.extend(
             [
-                f"https://{ip}:8080",
-                f"http://{ip}:8080",
-                f"https://{ip}:{LAN_PHONE_HTTPS_PORT}",
-                f"http://{ip}:{LAN_HTTP_FALLBACK_PORT}",
+                f"https://{ip}:{ports.https}",
+                f"http://{ip}:{ports.https}",
+                f"https://{ip}:{ports.phone_https}",
+                f"http://{ip}:{ports.http}",
             ]
         )
     return origins
@@ -196,18 +229,21 @@ def cert_needs_regeneration(cert_file: Path, lan_ip: Optional[str]) -> bool:
         return True
 
 
-def ensure_windows_lan_firewall_rule(port: int = 8080) -> bool:
+def ensure_windows_lan_firewall_rule(port: Optional[int] = None) -> bool:
     """Allow inbound TCP from LocalSubnet (same Wi‑Fi/LAN only).
 
     Uses Private+Public profiles so home Wi‑Fi still works when Windows marks it Public.
     RemoteAddress LocalSubnet prevents wide-open internet exposure without router port-forward.
+    ``None`` means the configured primary HTTPS port.
     """
+    if port is None:
+        port = get_primary_https_port()
     if sys.platform != "win32":
         return False
     rule_name = {
-        8080: _FIREWALL_RULE_HTTPS,
-        LAN_PHONE_HTTPS_PORT: _FIREWALL_RULE_HTTP,
-        LAN_HTTP_FALLBACK_PORT: _FIREWALL_RULE_HTTP_ALT,
+        get_primary_https_port(): _FIREWALL_RULE_HTTPS,
+        get_phone_https_port(): _FIREWALL_RULE_HTTP,
+        get_http_fallback_port(): _FIREWALL_RULE_HTTP_ALT,
     }.get(port, f"Cuttle LAN port {port}")
     try:
         check = subprocess.run(
@@ -298,10 +334,10 @@ def ensure_all_lan_firewall_rules() -> bool:
     if sys.platform != "win32":
         # Desktop Linux typically has no Windows-style LAN firewall block.
         return True
-    ok_https = ensure_windows_lan_firewall_rule(8080)
-    ok_phone = ensure_windows_lan_firewall_rule(LAN_PHONE_HTTPS_PORT)
-    ok_alt = ensure_windows_lan_firewall_rule(LAN_HTTP_FALLBACK_PORT)
-    ensure_windows_lan_firewall_rule_open(LAN_PHONE_HTTPS_PORT)
+    ok_https = ensure_windows_lan_firewall_rule(get_primary_https_port())
+    ok_phone = ensure_windows_lan_firewall_rule(get_phone_https_port())
+    ok_alt = ensure_windows_lan_firewall_rule(get_http_fallback_port())
+    ensure_windows_lan_firewall_rule_open(get_phone_https_port())
     return ok_https and ok_phone and ok_alt
 
 
@@ -352,10 +388,12 @@ def wifi_network_category() -> Optional[str]:
         return None
 
 
-def lan_phone_portal_url(port: int = LAN_PHONE_HTTPS_PORT, lan_ip: Optional[str] = None) -> Optional[str]:
-    """HTTPS URL for phones — Android Chrome upgrades http to https on high ports."""
+def lan_phone_portal_url(port: Optional[int] = None, lan_ip: Optional[str] = None) -> Optional[str]:
+    """HTTPS URL for phones. ``None`` port means the configured phone port."""
     if not is_lan_access_enabled():
         return None
+    if port is None:
+        port = get_phone_https_port()
     ip = lan_ip or get_lan_ipv4()
     if not ip:
         return None
@@ -363,18 +401,21 @@ def lan_phone_portal_url(port: int = LAN_PHONE_HTTPS_PORT, lan_ip: Optional[str]
 
 
 def lan_phone_http_fallback_url(lan_ip: Optional[str] = None) -> Optional[str]:
-    """Plain HTTP fallback when Chrome secure connections is off."""
+    """Plain HTTP fallback URL for phones (configured companion HTTP port)."""
     if not is_lan_access_enabled():
         return None
     ip = lan_ip or get_lan_ipv4()
     if not ip:
         return None
-    return f"http://{ip}:{LAN_HTTP_FALLBACK_PORT}"
+    return f"http://{ip}:{get_http_fallback_port()}"
 
 
-def lan_portal_url(port: int = 8080, lan_ip: Optional[str] = None) -> Optional[str]:
+def lan_portal_url(port: Optional[int] = None, lan_ip: Optional[str] = None) -> Optional[str]:
+    """Primary-portal URL. ``None`` port means the configured primary HTTPS port."""
     if not is_lan_access_enabled():
         return None
+    if port is None:
+        port = get_primary_https_port()
     ip = lan_ip or get_lan_ipv4()
     if not ip:
         return None

@@ -27,9 +27,27 @@ import time
 import uuid
 from pathlib import Path
 
-# Ports the shadow must never bind even when explicitly requested: the live
-# Flask listener, the loopback main path, and the LAN portal.
-RESERVED_PORTS = frozenset({8080, 8000, 8888})
+# Ports the shadow must never bind even when explicitly requested: the
+# default live listeners plus whatever api.server_ports resolves (custom
+# CUTTLE_*_PORT values). Defaults are always kept — they may still be live
+# on the production instance even when custom ports are configured.
+from api.server_ports import DEFAULT_PORTS as _DEFAULT_LIVE_PORTS
+from api.server_ports import PortConfigError as _PortConfigError
+from api.server_ports import resolve_with_env_file as _resolve_with_env_file
+
+RESERVED_PORTS = frozenset(_DEFAULT_LIVE_PORTS)
+
+
+def reserved_ports() -> frozenset:
+    """Shadow denylist: defaults plus configured ports (env over src/.env).
+
+    Fail closed: malformed config in either source refuses the shadow.
+    """
+    try:
+        ports = _resolve_with_env_file()
+    except _PortConfigError as exc:
+        raise ShadowError(f"refusing shadow start: {exc}") from exc
+    return frozenset(RESERVED_PORTS | {ports.https, ports.http, ports.phone_https})
 
 # Snapshot deny rules: credentials, private/local state, and heavy ignored
 # trees never enter the candidate snapshot.
@@ -70,9 +88,12 @@ def validate_port(value: int) -> int:
         port = int(value)
     except (TypeError, ValueError):
         raise ShadowError(f"invalid port: {value!r}")
+    # Resolve first: malformed listener config refuses the shadow even for
+    # ephemeral 0, so a bad env can never boot beside unknown listeners.
+    denied = reserved_ports()
     if port == 0:
         return 0
-    if port in RESERVED_PORTS:
+    if port in denied:
         raise ShadowError(f"port {port} is a live-instance port; refused")
     if not 1024 <= port <= 65535:
         raise ShadowError(f"port {port} out of range 1024-65535 (or 0)")
@@ -310,6 +331,8 @@ def build_child_env(seed: dict, scenario: str, port: int) -> dict[str, str]:
         "CUTTLE_SHADOW_MANIFEST": seed["manifest"],
         "CUTTLE_SHADOW_CODEHASH": seed["codehash"],
         "CUTTLE_SHADOW_PORT": str(port),
+        # Child-side denylist: parent-resolved union (defaults + configured).
+        "CUTTLE_SHADOW_RESERVED_PORTS": ",".join(str(p) for p in sorted(reserved_ports())),
         "CUTTLE_SHADOW_FIXTURE_PROJECT": seed["fixture_project"],
         "TMPDIR": data,
         "TEMP": data,

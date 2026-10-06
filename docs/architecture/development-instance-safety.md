@@ -28,13 +28,17 @@ listener/server objects, plus no separate daemon-control listener.
 | (Optional) Phone TLS `:8888`, same `app` | `0.0.0.0`, only when LAN enabled with a LAN IP (phone-server branch in `web_chat_api.__main__`) | Same as above | Phone portal HTTPS (`lan_phone_portal_url`) | Only with LAN |
 
 No distinct domain, routes, or executor per listener. The daemon's raw TCP
-connect to 127.0.0.1:8080 (`cuttle_daemon._flask_port_open` readiness check) succeeds
+connect to 127.0.0.1:<primary> (`cuttle_daemon._flask_port_open` readiness check) succeeds
 against any live listener there, so a second instance can mistake the
 production listener for its own readiness signal. `CUTTLE_INTERNAL_API_BASE`
-overrides internal clients only; there is no listener-port knob — listener
-ports are not configurable today. Future policy, unimplemented: CLI > env >
-config > defaults, loopback default with explicit LAN, ephemeral shadow ports
-with bound-port reporting, explicit instance identity.
+overrides internal clients only. The listener-port knob is env-only
+(`CUTTLE_HTTPS_PORT` / `CUTTLE_HTTP_PORT` / `CUTTLE_PHONE_HTTPS_PORT` in
+`src/.env`, defaults 8080/8000/8888, owned by `api.server_ports`, daemon
+cold restart required); there is no settings/UI knob and no CLI override.
+The shadow denylist is the defaults plus the configured triple. Remaining
+future policy, unimplemented: CLI > env > config > defaults, loopback default
+with explicit LAN, ephemeral shadow ports with bound-port reporting,
+explicit instance identity.
 
 ## 2. Shadow runbook
 

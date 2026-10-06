@@ -12,8 +12,17 @@ _service: Optional[object] = None
 _zeroconf: Optional[object] = None
 
 
-def start_mdns(port: int = 8080, name: str = "Cuttle") -> bool:
+def default_mdns_port() -> int:
+    """Configured primary HTTPS port for mDNS advertisement."""
+    from api.server_ports import resolve_with_env_file
+
+    return resolve_with_env_file().https
+
+
+def start_mdns(port: Optional[int] = None, name: str = "Cuttle") -> bool:
     """Start mDNS advertisement. Returns True if started, False if zeroconf not available."""
+    if port is None:
+        port = default_mdns_port()
     try:
         from zeroconf import ServiceInfo, Zeroconf
     except ImportError:

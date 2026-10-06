@@ -21,6 +21,46 @@ accepting a warning in Chrome does not configure OkHttp or Android app trust.
 `http://<host>:8000` is an alternative only on a trusted network where cleartext
 credentials and traffic are acceptable.
 
+## Custom ports (env-only)
+
+The three listener ports default to 8080 (primary HTTPS), 8000 (companion
+HTTP), and 8888 (phone HTTPS). Override in `src/.env`:
+
+```ini
+CUTTLE_HTTPS_PORT=8443
+CUTTLE_HTTP_PORT=8001
+CUTTLE_PHONE_HTTPS_PORT=8890
+```
+
+Empty means unset (file, then default, applies). Malformed, zero,
+out-of-range (1–65535), or duplicate effective values refuse startup — the
+daemon and Flask exit instead of serving the defaults, because the defaults
+may still be live on another instance. A file value overridden by a valid
+env value for the same key is ignored, not rejected. There is no
+settings/UI knob for ports.
+
+Port changes require a **daemon cold restart** (tray Exit, then start again):
+the daemon resolves the primary port for its health/conflict checks and
+spawns Flask as a child, so a Flask-only restart cannot move the daemon's
+side of the same triple.
+
+Covered by the owner: daemon health/conflict checks, Flask listeners,
+mDNS advertisement, CORS, generated portal/QR URLs, OAuth redirect fallback,
+terminal URLs, and the Python CLIs (`panes_cli`, device-worker approval
+paths) — standalone CLIs read the same `src/.env` with process-env
+precedence, so no exports are needed. The dev shadow refuses both the
+defaults and the configured ports.
+
+Residual limitations with custom ports: the Electron desktop app, the
+Capacitor mobile shell, and native Android companions still target the
+default ports. Standalone scripts keep literal defaults: `diagnose_lan.bat`,
+`enable_lan_firewall.ps1` (add Windows firewall rules for custom ports
+manually), and the `src/scripts/utilities/* --base` helpers (pass `--base`
+explicitly). Web-UI hint strings that name a port render the configured one
+from the server; other hardcoded examples in docs/samples may still show
+8080. OAuth provider redirect URIs are port-sensitive and must be updated in
+the provider console.
+
 ## mDNS discovery (optional)
 
 Install the optional dependency from the repository root:

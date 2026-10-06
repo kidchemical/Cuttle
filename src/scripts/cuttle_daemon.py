@@ -43,10 +43,41 @@ def _local_ssl_ctx() -> ssl.SSLContext:
 _SSL_CTX = _local_ssl_ctx()
 
 
+def startup_ports():
+    """Daemon boot triple, snapshotted at import and held for daemon life.
+
+    Set from env over src/.env right after the initial dotenv load, before
+    any reload can run — so a .env edit followed by a Flask-only restart can
+    never redirect the daemon's probes or the spawned child. Only a daemon
+    cold restart takes a new triple.
+    """
+    return _STARTUP_PORTS
+
+
+def flask_port() -> int:
+    """Snapshotted primary HTTPS port. Raises on malformed boot config."""
+    return startup_ports().https
+
+
+def _flask_child_env(base_env) -> dict:
+    """Spawn environment pinned to the daemon boot triple.
+
+    Called after _reload_env_file(), so even if src/.env changed mid-life
+    the Flask child keeps the startup ports until a daemon cold restart.
+    """
+    boot = startup_ports()
+    env = dict(base_env)
+    env["CUTTLE_HTTPS_PORT"] = str(boot.https)
+    env["CUTTLE_HTTP_PORT"] = str(boot.http)
+    env["CUTTLE_PHONE_HTTPS_PORT"] = str(boot.phone_https)
+    return env
+
+
 def _flask_url(path: str) -> str:
     """Build https URL for daemon → Flask internal API calls."""
     if not path.startswith('/'):
         path = '/' + path
+    FLASK_PORT = flask_port()
     return f"https://127.0.0.1:{FLASK_PORT}{path}"
 
 
@@ -75,6 +106,14 @@ if _env_file.exists():
                 if _line and not _line.startswith('#') and '=' in _line:
                     _k, _, _v = _line.partition('=')
                     os.environ.setdefault(_k.strip(), _v.strip().strip('"').strip("'"))
+
+# Snapshot the listener triple immediately after the initial dotenv load,
+# before any reload can run — even a direct start_flask() call sees the boot
+# triple. Malformed boot config fails the daemon here (fail closed, named
+# error); every reload path below re-pins these vars (see _reload_env_file).
+from api.server_ports import resolve_with_env_file as _resolve_boot_ports
+
+_STARTUP_PORTS = _resolve_boot_ports()
 
 # Electron executable (for tray "Open Cuttle" action + auto-open on boot)
 try:
@@ -258,7 +297,7 @@ def _flask_port_open() -> bool:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(0.4)
     try:
-        sock.connect(("127.0.0.1", FLASK_PORT))
+        sock.connect(("127.0.0.1", flask_port()))
         return True
     except OSError:
         return False
@@ -270,7 +309,7 @@ def _flask_port_open() -> bool:
 
 
 def wait_for_flask_ready(timeout_s: float = 45.0) -> bool:
-    """Wait until Flask is accepting TCP on :8080 (HTTPS listener)."""
+    """Wait until Flask is accepting TCP on the primary HTTPS listener."""
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         if _flask_port_open():
@@ -339,12 +378,14 @@ def open_cuttle_ui(extra_args: Optional[List[str]] = None, browser_path: str = "
     return False
 
 
-def _warn_port_8080_conflicts() -> None:
-    """Warn when something other than web_chat_api owns :8080 (common: Unity MCP default).
+def _warn_primary_port_conflicts() -> None:
+    """Warn when something other than web_chat_api owns the primary HTTPS port.
 
-    On Windows, a process bound to 127.0.0.1:8080 steals localhost traffic from Flask's
-    0.0.0.0:8080 HTTPS listener → ERR_SSL_PROTOCOL_ERROR / WRONG_VERSION_NUMBER loops.
+    Common squatter on the default: Unity MCP. On Windows, a process bound to
+    127.0.0.1:<port> steals localhost traffic from Flask's 0.0.0.0:<port>
+    HTTPS listener → ERR_SSL_PROTOCOL_ERROR / WRONG_VERSION_NUMBER loops.
     """
+    port = flask_port()
     if sys.platform != "win32":
         return
     try:
@@ -353,7 +394,7 @@ def _warn_port_8080_conflicts() -> None:
                 "powershell",
                 "-NoProfile",
                 "-Command",
-                "Get-NetTCPConnection -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue | "
+                f"Get-NetTCPConnection -LocalPort {port} -State Listen -ErrorAction SilentlyContinue | "
                 "ForEach-Object { $p = Get-CimInstance Win32_Process -Filter \"ProcessId=$($_.OwningProcess)\"; "
                 "[PSCustomObject]@{Addr=$_.LocalAddress; PID=$_.OwningProcess; Cmd=$p.CommandLine} } | "
                 "ConvertTo-Json -Compress",
@@ -377,8 +418,8 @@ def _warn_port_8080_conflicts() -> None:
             pid = row.get("PID", "?")
             hint = "mcp-for-unity" if "mcp-for-unity" in cmd else "unknown"
             print(
-                f"[DAEMON] WARNING: port 8080 conflict — {hint} PID {pid} listening on {addr}:8080. "
-                "This steals https://127.0.0.1:8080 from Flask (blank Electron window / SSL errors). "
+                f"[DAEMON] WARNING: port {port} conflict — {hint} PID {pid} listening on {addr}:{port}. "
+                f"This steals https://127.0.0.1:{port} from Flask (blank Electron window / SSL errors). "
                 "Move Unity MCP to http://127.0.0.1:8090/mcp (and update Cursor mcp.json)."
             )
     except Exception:
@@ -390,9 +431,20 @@ def start_flask() -> bool:
     global _flask_generation
     if "flask" in processes and processes["flask"].poll() is None:
         return True
-    _warn_port_8080_conflicts()
     _reload_env_file()
-    env = os.environ.copy()
+    try:
+        # Snapshot is established by the boot validation in run_daemon before
+        # the first start; here it only re-checks boot validity (fail closed).
+        flask_port()
+    except Exception as exc:
+        print(f"[DAEMON] Refusing Flask start: {exc}")
+        print("[DAEMON] Fix CUTTLE_HTTPS_PORT/CUTTLE_HTTP_PORT/CUTTLE_PHONE_HTTPS_PORT in src/.env, "
+              "then cold-restart the daemon (port changes need a daemon restart, not a Flask-only restart).")
+        return False
+    _warn_primary_port_conflicts()
+    # Pin the boot triple: a .env edit picked up by _reload_env_file above
+    # must not move the child until a daemon cold restart.
+    env = _flask_child_env(os.environ)
     env["PYTHONPATH"] = str(SRC_ROOT)
     env["FLASK_ENV"] = "production"
     _flask_generation += 1
@@ -481,9 +533,27 @@ def start_llamacpp() -> bool:
     return True
 
 
+def _restore_startup_port_env() -> None:
+    """Re-pin the listener triple after any env reload.
+
+    Other env keys keep their reloaded values, but the three port vars are
+    forced back to the boot snapshot: every in-process consumer
+    (internal_http, lan_access, worker spawning) and os.environ itself must
+    agree with the probes and the Flask child until a daemon cold restart.
+    """
+    os.environ["CUTTLE_HTTPS_PORT"] = str(_STARTUP_PORTS.https)
+    os.environ["CUTTLE_HTTP_PORT"] = str(_STARTUP_PORTS.http)
+    os.environ["CUTTLE_PHONE_HTTPS_PORT"] = str(_STARTUP_PORTS.phone_https)
+
+
 def _reload_env_file() -> None:
-    """Re-read src/.env so per-service restarts pick up env changes without daemon restart."""
+    """Re-read src/.env so per-service restarts pick up env changes without daemon restart.
+
+    Non-port keys reload normally; the listener triple is re-pinned to the
+    boot snapshot afterwards (see _restore_startup_port_env).
+    """
     if not _env_file.exists():
+        _restore_startup_port_env()
         return
     try:
         from dotenv import load_dotenv
@@ -495,6 +565,7 @@ def _reload_env_file() -> None:
                 if _line and not _line.startswith("#") and "=" in _line:
                     _k, _, _v = _line.partition("=")
                     os.environ[_k.strip()] = _v.strip().strip('"').strip("'")
+    _restore_startup_port_env()
 
 
 def _kill_process_tree(pid: int) -> None:
@@ -662,8 +733,9 @@ def restart_process(name: str) -> bool:
     return False
 
 
-def _port_8080_listeners() -> List[int]:
-    """PIDs listening on TCP 8080. Empty on failure."""
+def _primary_port_listeners() -> List[int]:
+    """PIDs listening on the configured primary HTTPS port. Empty on failure."""
+    port = flask_port()
     pids: List[int] = []
     if sys.platform == "win32":
         try:
@@ -672,7 +744,7 @@ def _port_8080_listeners() -> List[int]:
                     "powershell",
                     "-NoProfile",
                     "-Command",
-                    "Get-NetTCPConnection -LocalPort 8080 -State Listen -ErrorAction SilentlyContinue | "
+                    f"Get-NetTCPConnection -LocalPort {port} -State Listen -ErrorAction SilentlyContinue | "
                     "Select-Object -ExpandProperty OwningProcess",
                 ],
                 capture_output=True,
@@ -692,7 +764,7 @@ def _port_8080_listeners() -> List[int]:
         listen = getattr(psutil, "CONN_LISTEN", "LISTEN")
         for conn in psutil.net_connections(kind="inet"):
             laddr = conn.laddr
-            if not laddr or getattr(laddr, "port", None) != 8080:
+            if not laddr or getattr(laddr, "port", None) != port:
                 continue
             status = getattr(conn, "status", None)
             if status not in (listen, "LISTEN"):
@@ -705,7 +777,7 @@ def _port_8080_listeners() -> List[int]:
         pass
     try:
         result = subprocess.run(
-            ["ss", "-lptn", "sport = :8080"],
+            ["ss", "-lptn", f"sport = :{port}"],
             capture_output=True,
             text=True,
             timeout=8,
@@ -726,10 +798,10 @@ def _port_8080_listeners() -> List[int]:
 def _wait_port_free(timeout_sec: float = 20.0) -> bool:
     deadline = time.time() + timeout_sec
     while time.time() < deadline:
-        if not _port_8080_listeners():
+        if not _primary_port_listeners():
             return True
         time.sleep(0.4)
-    return not _port_8080_listeners()
+    return not _primary_port_listeners()
 
 
 def _flask_health_poll(timeout_sec: float = 45.0, interval: float = 1.0) -> Tuple[bool, Optional[float]]:
@@ -814,7 +886,11 @@ def perform_flask_restart(
         # Extra sweep in case launcher/child split left orphans
         _kill_processes_by_cmdline("web_chat_api")
         if not _wait_port_free(20.0):
-            print("[DAEMON] WARNING: port 8080 still in use after stop")
+            try:
+                _held_port = flask_port()
+            except Exception:
+                _held_port = FLASK_PORT
+            print(f"[DAEMON] WARNING: port {_held_port} still in use after stop")
         shutdown_ms = (time.time() - t0) * 1000.0
 
         _update_restart_status(
@@ -1016,7 +1092,7 @@ def run_device_workers_loop():
 
 
 def _flask_health_check() -> bool:
-    """Liveness: Flask must answer /api/status within 5 seconds over HTTPS :8080.
+    """Liveness: Flask must answer /api/status within 5 seconds over primary HTTPS.
 
     /api/status is a cheap JSON ping. /api/health is a diagnostic (claude CLI,
     WSL, local LLM) and can take longer than this timeout even when Flask is up.
@@ -1383,17 +1459,24 @@ def run_daemon():
             print("[DAEMON] llama-server already running (external)")
         else:
             print("[DAEMON] llama-server not started at boot (on-demand) — chat Yes/No prompt or tray menu launches it")
+    try:
+        live_primary_port = flask_port()
+    except Exception as exc:
+        print(f"[DAEMON] Refusing to start: {exc}")
+        print("[DAEMON] Fix CUTTLE_HTTPS_PORT/CUTTLE_HTTP_PORT/CUTTLE_PHONE_HTTPS_PORT in src/.env, "
+              "then cold-restart the daemon (port changes need a daemon restart, not a Flask-only restart).")
+        raise SystemExit(2)
     start_flask()
     flask_ready = wait_for_flask_ready(timeout_s=45.0)
     if flask_ready:
-        print("[DAEMON] Flask is ready on https://127.0.0.1:8080")
+        print(f"[DAEMON] Flask is ready on https://127.0.0.1:{live_primary_port}")
     else:
         print("[DAEMON] WARNING: Flask did not accept connections within 45s")
     try:
-        from api.lan_access import is_lan_access_enabled, lan_phone_portal_url, get_lan_ipv4, LAN_HTTP_PORT
+        from api.lan_access import is_lan_access_enabled, lan_phone_portal_url, get_lan_ipv4, get_phone_https_port
         if is_lan_access_enabled():
             ip = get_lan_ipv4()
-            url = lan_phone_portal_url(LAN_HTTP_PORT, ip)
+            url = lan_phone_portal_url(get_phone_https_port(), ip)
             if url:
                 print(f"[DAEMON] Phone portal: {url}/phone")
                 print(f"[DAEMON] Phone test:  {url}/api/lan-ping")
