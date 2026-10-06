@@ -63,11 +63,13 @@ def merge_named_files(
     tracked_dir: Path,
     *,
     patterns: Sequence[str] = ("*.md",),
-    limit: int = 40,
+    limit: Optional[int] = 40,
 ) -> List[Tuple[str, Path]]:
     """List files in a tracked subdir with personal overrides winning by basename.
 
     Returns ``(basename, path)`` sorted by name. Personal-only files are included.
+    ``limit=None`` disables truncation (governing rule bodies); integer limits
+    still apply to inventory callers.
     """
     by_name: dict[str, Path] = {}
     if tracked_dir.is_dir():
@@ -87,7 +89,9 @@ def merge_named_files(
             for path in sorted(personal_dir.glob(pattern), key=lambda p: p.name.lower()):
                 if path.is_file():
                     by_name[path.name.lower()] = path  # override / add
-    items = sorted(by_name.values(), key=lambda p: p.name.lower())[:limit]
+    items = sorted(by_name.values(), key=lambda p: p.name.lower())
+    if limit is not None:
+        items = items[:limit]
     return [(p.name, p) for p in items]
 
 
@@ -114,9 +118,13 @@ def _append_delta(tracked_text: str, rel: str, personal_path: Path) -> str:
 def read_merged_md(
     tracked_dir: Path,
     *,
-    limit: int = 24,
+    limit: Optional[int] = 24,
 ) -> List[Tuple[str, str]]:
-    """Read markdown files with personal twins appended as deltas (never replacing)."""
+    """Read markdown files with personal twins appended as deltas (never replacing).
+
+    ``limit=None`` reads all sorted files (governing rule bodies); the default
+    bound remains for non-rule callers.
+    """
     out: List[Tuple[str, str]] = []
     tracked_dir = Path(tracked_dir)
     personal_dir = personal_root(tracked_dir.parent) / tracked_dir.name

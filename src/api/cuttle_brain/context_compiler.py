@@ -106,8 +106,11 @@ def _cuttle_dirs(project_path: Optional[str]) -> List[Path]:
     return dirs
 
 
-def _read_md_files(directory: Path, *, limit: int = 24) -> List[tuple[str, str]]:
-    """Read ``*.md`` in a directory, appending ``personal/`` deltas."""
+def _read_md_files(directory: Path, *, limit: Optional[int] = 24) -> List[tuple[str, str]]:
+    """Read ``*.md`` in a directory, appending ``personal/`` deltas.
+
+    ``limit=None`` reads all sorted files (governing rule bodies).
+    """
     from api.cuttle_brain.personal_overlay import read_merged_md
 
     return read_merged_md(directory, limit=limit)
@@ -174,7 +177,7 @@ def load_global_rules() -> List[tuple[str, str]]:
     config = _cuttle_global_config()
     if not config:
         return []
-    return _read_md_files(config / "rules")
+    return _read_md_files(config / "rules", limit=None)
 
 
 def load_project_rules(project_path: Optional[str]) -> List[tuple[str, str]]:
@@ -182,7 +185,7 @@ def load_project_rules(project_path: Optional[str]) -> List[tuple[str, str]]:
     files: List[tuple[str, str]] = []
     seen: set[str] = set()
     for cuttle in _cuttle_dirs(project_path):
-        for name, text in _read_md_files(cuttle / "rules"):
+        for name, text in _read_md_files(cuttle / "rules", limit=None):
             key = name.lower()
             if key in seen:
                 continue
