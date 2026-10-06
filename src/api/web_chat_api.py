@@ -1776,7 +1776,7 @@ def serve_task_management():
 
 @app.route('/jobs_page.html')
 def serve_jobs_page():
-    """Serve the Jobs page (pipelines/scheduled jobs browser)"""
+    """Serve the device workers and mesh jobs page"""
     return send_from_directory(project_root / 'web', 'jobs_page.html')
 
 
@@ -1806,12 +1806,6 @@ def serve_achievements_preview():
     achievements flag nor any API route. Owner-only: it is a dev/demo surface.
     """
     return send_from_directory(project_root / 'web', 'achievements_preview.html')
-
-
-@app.route('/about_page.html')
-def serve_about_page():
-    """Serve the about page"""
-    return send_from_directory(project_root / 'web', 'about_page.html')
 
 
 @app.route('/api/status', methods=['GET'])
@@ -6147,7 +6141,7 @@ def api_agent_context_compact():
 
 @app.route('/api/ollama-models', methods=['GET'])
 def ollama_models():
-    """Return installed local-LLM model names for the node editor dropdown.
+    """Return installed local-LLM model names for chat and settings.
 
     Works for both backends: llama.cpp via OpenAI /v1/models, Ollama via its
     native /api/tags (richer names) with a /v1/models fallback.
@@ -8649,7 +8643,6 @@ if __name__ == '__main__':
     print("  GET  /                    - App shell")
     print("  GET  /git_ui.html         - Git Web UI")
     print("  GET  /settings_page.html  - Settings page")
-    print("  GET  /about_page.html     - About page")
     print("  POST /api/chat            - Send chat message")
     print("  GET  /api/health          - Health check")
     print("  GET  /api/sessions        - List sessions")

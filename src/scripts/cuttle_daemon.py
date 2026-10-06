@@ -9,9 +9,7 @@ LOCAL_LLM_BACKEND=llamacpp is NOT started at boot: it launches on demand when a
 Local-mode chat asks for it (Yes/No prompt), via POST /api/local-llm/start, or
 from the tray menu — and then stays running until stopped. Supports:
 - Start/stop/restart services
-- Pipeline hot-reload (reload running pipelines from disk)
-- Cron scheduler (fires trigger-schedule nodes in running pipelines)
-- System tray icon (right-click → Open, Node Editor, Restart, Reload, Exit)
+- System tray icon (right-click → Open Cuttle, Open Router, Restart Flask, Exit)
 """
 import os
 import sys
@@ -1321,7 +1319,7 @@ class _Tee:
 
 
 def run_daemon():
-    """Run daemon loop: start services, watch pipelines for hot-reload, system tray."""
+    """Run daemon loop: start Flask, device worker and restart watchers, system tray."""
     global daemon_running
 
     _enable_windows_ansi()
