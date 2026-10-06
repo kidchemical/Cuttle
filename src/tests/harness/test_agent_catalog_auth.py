@@ -81,6 +81,9 @@ def test_public_rows_expose_the_new_fields():
 
 
 def test_cli_authed_agent_is_ready_without_any_key(monkeypatch):
+    from scripts.utilities import cursor_cli_tool
+    # Installed-CLI fake: readiness must not depend on this machine's PATH.
+    monkeypatch.setattr(cursor_cli_tool, "_resolve_cursor_agent_argv", lambda *a, **k: ["cursor-agent"])
     for name in ("META_API_KEY", "GEMINI_API_KEY", "DEEPSEEK_API_KEY"):
         monkeypatch.delenv(name, raising=False)
     row = next(r for r in cat.public_catalog() if r["id"] == "cursor")

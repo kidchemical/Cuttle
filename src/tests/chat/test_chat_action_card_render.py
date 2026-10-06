@@ -9,6 +9,7 @@ and `esc` explicitly; DOM/fetch/timers/action execution stay outside.
 
 from __future__ import annotations
 
+import os
 import json
 import shutil
 import subprocess
@@ -168,7 +169,7 @@ process.stdout.write(JSON.stringify(out));
 
 
 def _run_harness():
-    env = {"MOD_JS": str(MOD_JS), "PATH": "/usr/bin:/bin"}
+    env = {"MOD_JS": str(MOD_JS), "PATH": os.environ["PATH"]}
     proc = subprocess.run(
         ["node", "-e", HARNESS],
         capture_output=True, text=True, timeout=120, env=env,

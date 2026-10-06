@@ -4,6 +4,8 @@ from pathlib import Path
 import subprocess
 import pytest
 
+from tests.browser_guard import launch_chromium
+
 REPO = Path(__file__).resolve().parents[3]
 
 
@@ -47,7 +49,7 @@ def test_app_disabled_enabled_rescan_and_hidden_content(tmp_path):
     secret_title = hidden['title']
     state = {'enabled': False, 'scans': 0}
     with playwright.sync_playwright() as driver:
-        browser = driver.chromium.launch(headless=True)
+        browser = launch_chromium(driver)
         page = browser.new_page(viewport={'width': 1100, 'height': 800})
         errors = []
         page.on('pageerror', lambda error: errors.append(str(error)))

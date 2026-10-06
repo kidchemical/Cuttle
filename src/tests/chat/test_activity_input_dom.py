@@ -2,6 +2,8 @@
 from pathlib import Path
 import pytest
 
+from tests.browser_guard import launch_chromium
+
 WEB = Path(__file__).resolve().parents[2] / 'web'
 
 
@@ -15,7 +17,7 @@ def _function(name):
 def test_input_card_submit_and_remove_update_title_history_and_space():
     playwright = pytest.importorskip('playwright.sync_api')
     with playwright.sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True)
+        browser = launch_chromium(pw)
         page = browser.new_page()
         page.set_content('''<div id="chatSessionTitle" style="display:flex"><span id="chatSessionUnreadIcon"></span>
           <span id="chatSessionQueuedIcon"></span><span id="chatSessionPausedIcon"></span>
