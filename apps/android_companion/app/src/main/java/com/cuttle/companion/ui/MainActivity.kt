@@ -8,6 +8,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.cuttle.companion.core.Prefs
+import com.cuttle.companion.core.validateBaseUrl
 import com.cuttle.companion.databinding.ActivityMainBinding
 import com.cuttle.companion.sse.EventStreamService
 
@@ -28,7 +29,15 @@ class MainActivity : AppCompatActivity() {
         binding.token.setText(Prefs.getToken(this))
 
         binding.startBtn.setOnClickListener {
-            Prefs.setBaseUrl(this, binding.baseUrl.text?.toString() ?: "")
+            val rawBase = binding.baseUrl.text?.toString() ?: ""
+            val problem = validateBaseUrl(rawBase)
+            if (problem != null) {
+                binding.status.text = problem
+                return@setOnClickListener
+            }
+            // Stored verbatim (trimmed of trailing slashes only): the scheme
+            // and port the user typed are used as-is, never rewritten.
+            Prefs.setBaseUrl(this, rawBase.trim())
             Prefs.setToken(this, binding.token.text?.toString() ?: "")
             EventStreamService.start(this)
             binding.status.text = "Started"

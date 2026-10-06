@@ -49,6 +49,27 @@ export function cuttleEntryUrl(baseUrl) {
   return `${base}/app_shell.html`;
 }
 
+/**
+ * Strict port parsing for user-entered ports. Returns an integer 1–65535,
+ * or NaN when the input is not a valid port. Empty means unset (caller
+ * applies the default); anything else malformed is rejected, never clamped
+ * or silently replaced — clamping would connect to a port the user did not
+ * choose.
+ */
+export function parsePortNumber(raw) {
+  if (typeof raw === 'number') {
+    return Number.isInteger(raw) ? raw : NaN;
+  }
+  const text = String(raw ?? '').trim();
+  if (!text) return NaN;
+  if (!/^\d+$/.test(text)) return NaN;
+  return Number(text);
+}
+
+export function isValidPort(port) {
+  return Number.isInteger(port) && port >= 1 && port <= 65535;
+}
+
 export function recentHostKey(entry) {
   const host = cleanHost(entry?.host);
   const port = Number(entry?.port) || DEFAULT_PORT_HTTP;
@@ -88,9 +109,18 @@ async function loadConfig() {
     Preferences.get({ key: PREFS.notify }),
     Preferences.get({ key: PREFS.token }),
   ]);
+  // A missing stored port is a legacy default (8000). A present-but-invalid
+  // stored port is returned as-is so the form shows it and every action
+  // blocks until it is corrected — never silently swapped for another target
+  // while the saved base URL still names the old one.
+  const rawStored = port.value;
+  const storedPort =
+    rawStored == null || String(rawStored).trim() === ''
+      ? DEFAULT_PORT_HTTP
+      : parsePortNumber(rawStored);
   return {
     host: host.value || '',
-    port: port.value ? Number(port.value) : DEFAULT_PORT_HTTP,
+    port: storedPort,
     useHttps: https.value === '1',
     baseUrl: baseUrl.value || '',
     notifyEnabled: notify.value !== '0',
@@ -215,7 +245,9 @@ function readForm() {
   let useHttps = $('#use-https')?.checked || false;
 
   if (preset === 'custom') {
-    port = Number($('#port-custom')?.value || DEFAULT_PORT_HTTP);
+    // Empty custom is unset, not 8000: callers reject it and ask for a port.
+    // The 8000 preset remains the supported default.
+    port = parsePortNumber($('#port-custom')?.value);
   } else {
     port = Number(preset);
   }
@@ -322,10 +354,17 @@ function populateForm(config) {
       preset.value = '8000';
     } else if (config.port === DEFAULT_PORT_HTTPS) {
       preset.value = '8888';
-    } else {
+    } else if (isValidPort(config.port)) {
       preset.value = 'custom';
       const custom = $('#port-custom');
       if (custom) custom.value = String(config.port);
+    } else {
+      // Corrupt saved port: show the custom slot with whatever is salvageable
+      // (out-of-range numbers verbatim, non-numeric blank) so the user sees
+      // what needs correcting. Actions stay blocked until then.
+      preset.value = 'custom';
+      const custom = $('#port-custom');
+      if (custom) custom.value = Number.isInteger(config.port) ? String(config.port) : '';
     }
   }
   const httpsBox = $('#use-https');
@@ -387,6 +426,10 @@ function bindForm() {
       showStatus('Save your PC address first, then try again.', 'warn');
       return;
     }
+    if (!isValidPort(port)) {
+      showStatus('Enter a valid port 1–65535. The saved address was not changed.', 'warn');
+      return;
+    }
     const baseUrl = buildBaseUrl(host, port, useHttps);
     showStatus(`Open this on the phone to install: ${baseUrl}/api/mobile/android/app-debug.apk`, 'ok');
   });
@@ -396,6 +439,10 @@ function bindForm() {
     const { host, port, useHttps } = readForm();
     if (!host) {
       showStatus('Enter your PC address (LAN IP or Tailscale).', 'warn');
+      return;
+    }
+    if (!isValidPort(port)) {
+      showStatus('Enter a valid port 1–65535.', 'warn');
       return;
     }
     const baseUrl = buildBaseUrl(host, port, useHttps);
@@ -423,6 +470,10 @@ function bindForm() {
     const { host, port, useHttps, notifyEnabled, token } = readForm();
     if (!host) {
       showStatus('Enter your PC address (LAN IP or Tailscale).', 'warn');
+      return;
+    }
+    if (!isValidPort(port)) {
+      showStatus('Enter a valid port 1–65535. Nothing was saved or opened.', 'warn');
       return;
     }
     const baseUrl = buildBaseUrl(host, port, useHttps);
@@ -467,8 +518,8 @@ async function init() {
   const config = await loadConfig();
   populateForm(config);
   renderRecentHosts(await loadRecentHosts());
-  // Seed history with the current saved host if present.
-  if (config.host) {
+  // Seed history with the current saved host if present and usable.
+  if (config.host && isValidPort(config.port)) {
     const seeded = await rememberHost(config.host, config.port, config.useHttps);
     renderRecentHosts(seeded);
   }

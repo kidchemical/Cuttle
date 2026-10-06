@@ -229,7 +229,7 @@
             if (!isLoopbackHost()) {
                 showTerminalBlocked({
                     error: 'Could not verify terminal access from this device.',
-                    hint: 'The web terminal only runs on the Cuttle PC. Open https://127.0.0.1:8080 on that machine.',
+                    hint: 'The web terminal only runs on the Cuttle PC. Open this page on that machine.',
                     localhost_url: LOCALHOST_TERMINAL_URL,
                 });
                 return { success: false };
@@ -563,8 +563,8 @@
 
             ws.onerror = () => {
                 const hint = isLoopbackHost()
-                    ? 'WebSocket failed — confirm Cuttle is running, then hard-refresh https://127.0.0.1:8080'
-                    : 'Terminal only works on the Cuttle PC at https://127.0.0.1:8080';
+                    ? 'WebSocket failed — confirm Cuttle is running, then hard-refresh this page'
+                    : 'Terminal only works on the Cuttle PC — open this page there';
                 this.term.writeln('\r\n\x1b[31m[WebSocket connection failed]\x1b[0m');
                 this.term.writeln('\x1b[33m' + hint + '\x1b[0m');
                 setStatus('WebSocket connection failed', 'error');
@@ -840,7 +840,7 @@
             if (!isLoopbackHost()) {
                 showTerminalBlocked({
                     error: 'Could not load terminal shells from this device.',
-                    hint: 'Use https://127.0.0.1:8080 on the Cuttle PC.',
+                    hint: 'Open this page on the Cuttle PC.',
                     localhost_url: LOCALHOST_TERMINAL_URL,
                 });
             }
