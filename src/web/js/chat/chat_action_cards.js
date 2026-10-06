@@ -826,6 +826,11 @@
         // delegating. A failed ack write leaves the in-memory flight as
         // the single coalescing point for concurrent offers.
         const followupFlights = new Map();
+        // Keys this controller saw persist. The storage ack can fail
+        // (setItem throws), and a flight is deleted once it settles, so
+        // without this a late, non-overlapping offer POSTs a duplicate.
+        // Keys only (no content), bounded, controller lifetime.
+        const followupDelivered = new Set();
         async function offerJobSuccessDiscordForm(card, data) {
             const spec = data && data.discord_form;
             if (!spec || typeof spec !== 'object') return;
@@ -837,7 +842,7 @@
             const key = 'cuttle.discordFollowup.' + sid + '.' + String((data && (data.build_id || data.time)) || '');
             let mark = null;
             try { mark = host.storage.getItem(key); } catch (_) { mark = null; }
-            if (mark === '1') {
+            if (mark === '1' || followupDelivered.has(key)) {
                 // Already delivered by an earlier claimant: recover the
                 // canonical server row, never paint a cached copy.
                 if (isCurrent(card, life)) {
@@ -879,6 +884,10 @@
                     // confirmed success. Failure records nothing, so a
                     // later live offer retries with a new flight.
                     if (flight.persisted) {
+                        followupDelivered.add(key);
+                        if (followupDelivered.size > 200) {
+                            followupDelivered.delete(followupDelivered.values().next().value);
+                        }
                         try { host.storage.setItem(key, '1'); } catch (_) {}
                     }
                     return flight;
