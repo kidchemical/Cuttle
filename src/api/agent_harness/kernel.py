@@ -43,6 +43,32 @@ def _put_status(status_queue: Any, message: str) -> None:
         pass
 
 
+# Agent-visible markers for context fallbacks (CH-000999 F07). Banners carry
+# stage wording only — never exception text, which may contain paths, keys,
+# or other secrets. Diagnostics carry stage + exception type for the same
+# reason (see _context_error).
+_CTX_BRIEFING_NOTICE = (
+    "[Cuttle context notice: compiled project briefing unavailable, so "
+    "project rules/context may be incomplete. Follow the request as "
+    "written and do not assume project conventions.]"
+)
+_CTX_HANDOFF_NOTICE = (
+    "[Cuttle context notice: Cuttle could not transfer recent transcript "
+    "context; some earlier discussion may be missing. Proceed from the "
+    "context actually present.]"
+)
+
+
+def _context_error(stage: str, exc: Exception) -> str:
+    """Bounded stage + exception-type tag for context diagnostics.
+
+    The raw message is deliberately excluded: it may carry file paths,
+    secret keys, or other sensitive material.
+    """
+    name = type(exc).__name__ or "Error"
+    return f"{stage}: {name}"
+
+
 def _adapter_execute_kwargs(adapter: Any, **kwargs: Any) -> Dict[str, Any]:
     """Drop kwargs the adapter ``execute()`` does not accept (except ``**kwargs``)."""
     try:
@@ -281,6 +307,7 @@ def _compile_agent_prompt(
     from api.cuttle_brain.context_compiler import _USER_REQUEST_HEADER
 
     handoff = None
+    handoff_error: Optional[str] = None
     try:
         from api.cuttle_brain.handoff import build_handoff
 
@@ -292,8 +319,54 @@ def _compile_agent_prompt(
             current_prompt=prompt,
             full_history=not manifest.resume,
         )
-    except Exception:
+    except Exception as exc:
+        # A failed handoff means the agent misses unseen conversation, not
+        # that it is caught up — keep stage + type for diagnostics and mark
+        # it undelivered below. The raw message is never kept.
         handoff = None
+        handoff_error = _context_error("handoff", exc)
+
+    # Operator diagnostics for this turn (stage + type only). Snapshot
+    # bookkeeping failures land here too: on their own they mean the full
+    # envelope was still sent, so they never imply missing context.
+    context_errors: List[str] = []
+    if handoff_error is not None:
+        context_errors.append(handoff_error)
+        print(f"[kernel] context {handoff_error}", flush=True)
+
+    def _with_diagnostics(
+        text: str,
+        brain: Dict[str, Any],
+        receipt: Any,
+        *,
+        briefing_missing: bool = False,
+        handoff_delivered: bool = True,
+    ) -> tuple:
+        """Attach notices + error signal without changing availability.
+
+        ``handoff_delivered`` is True when the handoff text rides in the
+        sent prompt (or nothing was unseen); a failed handoff build always
+        counts as undelivered. Callers use the returned flag to hold the
+        handoff seen-cursor so missed conversation is retried, not skipped.
+        """
+        notices = []
+        if briefing_missing:
+            notices.append(_CTX_BRIEFING_NOTICE)
+        if handoff_error is not None or not handoff_delivered:
+            notices.append(_CTX_HANDOFF_NOTICE)
+        final_brain = dict(brain)
+        if context_errors:
+            final_brain["context_errors"] = list(context_errors)
+        if notices:
+            final_brain["degraded"] = True
+            text = "\n\n".join(notices) + "\n\n" + text
+        # prompt_chars always describes the exact bytes handed to the CLI,
+        # including any banners above.
+        final_brain["prompt_chars"] = len(text)
+        final_brain["handoff_delivered"] = bool(
+            handoff_delivered and handoff_error is None
+        )
+        return text, final_brain, receipt
 
     def _full_envelope(reason=None):
         """Fresh full briefing plus the exact snapshot it sends (ack after delivery).
@@ -311,8 +384,14 @@ def _compile_agent_prompt(
             from api.cuttle_brain.context_delta import compute_snapshot
 
             stable_before = compute_snapshot(cwd)
-        except Exception:
+        except Exception as exc:
+            # Bookkeeping only: the envelope below still carries the full
+            # briefing, so this alone is an operator diagnostic, never a
+            # missing-context notice.
             stable_before = None
+            entry = _context_error("snapshot_before", exc)
+            context_errors.append(entry)
+            print(f"[kernel] context {entry}", flush=True)
         try:
             from api.cuttle_brain.context_compiler import compile_context
 
@@ -328,25 +407,57 @@ def _compile_agent_prompt(
                 include_chat_store_hint=True,
                 chat_session_id=chat_session_id,
             )
-        except Exception:
+        except Exception as exc:
+            entry = _context_error("compile", exc)
+            context_errors.append(entry)
+            print(f"[kernel] context {entry}", flush=True)
             if handoff and handoff.text.strip():
                 text = f"{handoff.text.strip()}\n\n{_USER_REQUEST_HEADER}\n{prompt}"
-                return text, {"mode": "fallback_handoff", "prompt_chars": len(text)}, None
+                # Handoff text rides along: conversation is delivered even
+                # though the governing briefing is missing.
+                return _with_diagnostics(
+                    text,
+                    {"mode": "fallback_handoff", "prompt_chars": len(text)},
+                    None,
+                    briefing_missing=True,
+                    handoff_delivered=True,
+                )
             try:
                 from api.cuttle_ui_capabilities import with_cuttle_ui_capabilities
 
                 text = with_cuttle_ui_capabilities(prompt, inject=True)
-                return text, {"mode": "fallback_caps", "prompt_chars": len(text)}, None
-            except Exception:
-                return prompt, {"mode": "fallback_bare", "prompt_chars": len(prompt or "")}, None
+                return _with_diagnostics(
+                    text,
+                    {"mode": "fallback_caps", "prompt_chars": len(text)},
+                    None,
+                    briefing_missing=True,
+                    handoff_delivered=(handoff is None),
+                )
+            except Exception as caps_exc:
+                caps_entry = _context_error("capabilities", caps_exc)
+                context_errors.append(caps_entry)
+                print(f"[kernel] context {caps_entry}", flush=True)
+                return _with_diagnostics(
+                    prompt,
+                    {
+                        "mode": "fallback_bare",
+                        "prompt_chars": len(prompt or ""),
+                    },
+                    None,
+                    briefing_missing=True,
+                    handoff_delivered=(handoff is None),
+                )
         try:
             from api.cuttle_brain.context_delta import compute_snapshot
 
             prepared = compute_snapshot(cwd)
             if stable_before is None or prepared != stable_before:
                 prepared = None
-        except Exception:
+        except Exception as exc:
             prepared = None
+            entry = _context_error("snapshot_after", exc)
+            context_errors.append(entry)
+            print(f"[kernel] context {entry}", flush=True)
         meta = dict(compiled.meta or {})
         inv = meta.get("inventory") if isinstance(meta.get("inventory"), dict) else {}
         brain = {
@@ -384,7 +495,11 @@ def _compile_agent_prompt(
             }
         if reason:
             brain["full_reason"] = reason
-        return compiled.prompt, brain, prepared
+        # Full briefing sent: nothing briefing-side is missing. A failed
+        # handoff still gets its own notice via _with_diagnostics.
+        return _with_diagnostics(
+            compiled.prompt, brain, prepared, handoff_delivered=True
+        )
 
     if not has_resume:
         return _full_envelope()
@@ -394,27 +509,40 @@ def _compile_agent_prompt(
     # confirmed this context — send the full briefing, never a bare prompt
     # that assumes it knows the rules. No receipt is fabricated here; the
     # full path prepares its own stability-checked snapshot.
+    snapshot_read_error: Optional[str] = None
     try:
         from api.cuttle_brain.context_delta import load_injected_snapshot
 
         acknowledged = load_injected_snapshot(chat_session_id, manifest.id, cwd)
-    except Exception:
+    except Exception as exc:
+        # An unreadable snapshot is not a first briefing: the agent may have
+        # confirmed context before, but this turn cannot prove it.
         acknowledged = None
+        snapshot_read_error = _context_error("snapshot_read", exc)
     if acknowledged is None:
+        if snapshot_read_error is not None:
+            context_errors.append(snapshot_read_error)
+            print(f"[kernel] context {snapshot_read_error}", flush=True)
+            return _full_envelope(reason="snapshot_read_failed")
         return _full_envelope(reason="missing_snapshot")
 
     # Delta + optional handoff, never a full re-inject. Preparation never
     # acknowledges. A preparation failure falls back to the full briefing
     # (which prepares its own receipt) rather than a bare resume.
     prepare_failed = False
+    prepare_error: Optional[str] = None
     plan = None
     try:
         from api.cuttle_brain.context_delta import prepare_resume_delta
 
         plan = prepare_resume_delta(chat_session_id, manifest.id, cwd)
-    except Exception:
+    except Exception as exc:
         prepare_failed = True
+        prepare_error = _context_error("delta_prepare", exc)
     if prepare_failed:
+        if prepare_error is not None:
+            context_errors.append(prepare_error)
+            print(f"[kernel] context {prepare_error}", flush=True)
         return _full_envelope(reason="delta_prepare_failed")
     if plan is not None and plan.truncated:
         # A truncated delta withholds instructions: never acknowledge it as
@@ -429,15 +557,31 @@ def _compile_agent_prompt(
     if parts:
         body = "\n\n".join(parts)
         text = f"{body}\n\n{_USER_REQUEST_HEADER}\n{prompt}"
-        return text, {
-            "mode": "resume_delta" if delta_text else "resume_handoff",
-            "prompt_chars": len(text),
-            "delta_chars": len(delta_text),
-            "handoff_chars": len(handoff.text.strip()) if handoff else 0,
-            "handoff_messages": handoff.message_count if handoff else 0,
-            "handoff_from": getattr(handoff, "from_agent", None) if handoff else None,
-        }, (plan.snapshot if plan is not None else None)
-    return prompt, {"mode": "resume", "prompt_chars": len(prompt or "")}, None
+        # Handoff/delta text rides along when present, so conversation is
+        # delivered; a failed handoff build still earns its own notice.
+        return _with_diagnostics(
+            text,
+            {
+                "mode": "resume_delta" if delta_text else "resume_handoff",
+                "prompt_chars": len(text),
+                "delta_chars": len(delta_text),
+                "handoff_chars": len(handoff.text.strip()) if handoff else 0,
+                "handoff_messages": handoff.message_count if handoff else 0,
+                "handoff_from": getattr(handoff, "from_agent", None)
+                if handoff
+                else None,
+            },
+            (plan.snapshot if plan is not None else None),
+            handoff_delivered=True,
+        )
+    # Bare resume: nothing new to deliver, so no receipt — but a failed
+    # handoff still means unseen conversation never arrived.
+    return _with_diagnostics(
+        prompt,
+        {"mode": "resume", "prompt_chars": len(prompt or "")},
+        None,
+        handoff_delivered=(handoff is None),
+    )
 
 
 def run_agent_web_command(
@@ -671,6 +815,10 @@ def run_agent_web_command(
                             "layers": (brain_meta or {}).get("layers") or [],
                             "prompt_chars": (brain_meta or {}).get("prompt_chars"),
                             "delta_chars": (brain_meta or {}).get("delta_chars"),
+                            "degraded": bool((brain_meta or {}).get("degraded")),
+                            "context_errors": list(
+                                (brain_meta or {}).get("context_errors") or []
+                            ),
                         },
                     )
                     tr.set_sent(agent_prompt, resume=bool(resume))
@@ -779,13 +927,23 @@ def run_agent_web_command(
         )
         if result.success and not handled_by_meta:
             # Settings/meta answers never reached the CLI: they must not move
-            # this agent's seen cursor or claim the chat's last agent.
-            try:
-                from api.cuttle_brain.handoff import record_last_agent
+            # this agent's seen cursor or claim the chat's last agent. The
+            # same holds for undelivered handoffs: the missed conversation
+            # must be retried next turn, never skipped by an advanced cursor.
+            # File-snapshot receipts are unaffected (they cover the briefing,
+            # not conversation).
+            if brain_meta.get("handoff_delivered", True):
+                try:
+                    from api.cuttle_brain.handoff import record_last_agent
 
-                record_last_agent(sid, manifest.id)
-            except Exception:
-                pass
+                    record_last_agent(sid, manifest.id)
+                except Exception:
+                    pass
+            else:
+                print(
+                    "[kernel] context handoff cursor held (undelivered)",
+                    flush=True,
+                )
         if compacted and not handled_by_meta:
             # The CLI summarized its context this turn; the briefing may be
             # gone. Drop the acknowledgement so the next turn re-sends it.
@@ -816,8 +974,11 @@ def run_agent_web_command(
                     from api.cuttle_brain.context_delta import record_snapshot
 
                     record_snapshot(sid, manifest.id, cwd, brain_receipt)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # Logging only: the notice stays pending and repeats
+                    # next turn; availability and receipts are unchanged.
+                    entry = _context_error("snapshot_record", exc)
+                    print(f"[kernel] context {entry}", flush=True)
 
         if (
             result.success
