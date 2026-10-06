@@ -697,21 +697,51 @@ def pick_base_urls() -> List[str]:
     http_fb = (
         os.environ.get("CUTTLE_DEVICE_WORKERS_COORDINATOR_URL_HTTP") or ""
     ).strip().rstrip("/")
+    # Explicit single-endpoint policy emitted by Electron (CUTTLE_ENDPOINT_SINGLE=1):
+    # only explicitly configured endpoints are used — even the documented
+    # default pair is NOT inferred for an explicit selection.
+    single = (os.environ.get("CUTTLE_ENDPOINT_SINGLE") or "").strip() == "1"
     if primary:
         urls.append(primary)
-    if http_fb and http_fb not in urls:
+    # Explicit companion URL only — never derive HTTP from an HTTPS URL by
+    # reusing the same port (protocol mismatch), and never guess :8000
+    # for a custom primary. The legacy default pair (8080 -> 8000) is
+    # inferred only in actual legacy default-mode: not a single selection,
+    # primary is exactly the default HTTPS listener, no explicit companion.
+    if not single and http_fb and http_fb not in urls:
         urls.append(http_fb)
-    # If primary is https://host:8080, also try http://host:8000
-    if primary.lower().startswith("https://"):
+    if (
+        not single
+        and not http_fb
+        and primary.lower().startswith("https://")
+        and _is_default_https_primary(primary)
+    ):
         try:
             rest = primary.split("://", 1)[1]
             host = rest.split("/")[0].split(":")[0]
-            alt = f"http://{host}:8000"
+            alt = f"http://{host}:{_DEFAULT_HTTP_PORT}"
             if alt not in urls:
                 urls.append(alt)
         except Exception:
             pass
     return urls
+
+
+_DEFAULT_HTTPS_PORT = 8080
+_DEFAULT_HTTP_PORT = 8000
+
+
+def _is_default_https_primary(primary: str) -> bool:
+    """True only for the documented default-mode https://host:8080 URL."""
+    try:
+        rest = primary.split("://", 1)[1]
+        authority = rest.split("/")[0]
+        if ":" not in authority:
+            # No explicit port (protocol-default 443) is not default-mode.
+            return False
+        return int(authority.rsplit(":", 1)[1]) == _DEFAULT_HTTPS_PORT
+    except Exception:
+        return False
 
 
 def worker_id() -> str:

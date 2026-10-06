@@ -21428,6 +21428,60 @@
             }
         }, 3500);
     }
+    // Companion-HTTP target for an HTTPS pool stall (armConnectingWatchdog).
+    // Pure except for the injected getDesktopConfig: resolves to
+    // { probeUrl, destBase, httpPort } or null (fail closed — the caller
+    // shows a generic message instead of guessing an unrelated endpoint).
+    // Local paired mode requires matching host and HTTPS port. Explicit
+    // single targets never auto-downgrade. Only true legacy
+    // default-mode (exact https://127.0.0.1|localhost:8080 with no config
+    // available, e.g. plain browser) keeps the documented :8000 companion.
+    function poolStallSameHost(cfgHost, normHost, loopback127) {
+        const cfgNorm = String(cfgHost || '').trim().replace(/^\[|\]$/g, '').toLowerCase();
+        if (!cfgNorm) return false;
+        if (cfgNorm === normHost) return true;
+        return !!(loopback127 && (cfgNorm === '127.0.0.1' || cfgNorm === 'localhost'));
+    }
+    function poolStallTarget(host, httpPort) {
+        return {
+            probeUrl: `http://${host}:${httpPort}/api/status`,
+            destBase: `http://${host}:${httpPort}`,
+            httpPort,
+        };
+    }
+    async function poolStallHttpTarget({ origin, getDesktopConfig }) {
+        const m = /^https:\/\/(\[[^\]]+\]|[^/:]+):(\d+)$/i.exec(String(origin || ''));
+        if (!m) return null;
+        const host = m[1];
+        const httpsPort = Number(m[2]);
+        if (!Number.isSafeInteger(httpsPort) || httpsPort < 1 || httpsPort > 65535) return null;
+        const normHost = host.replace(/^\[|\]$/g, '').toLowerCase();
+        const loopback127 = normHost === '127.0.0.1' || normHost === 'localhost';
+        let cfg = null;
+        try {
+            cfg = typeof getDesktopConfig === 'function' ? await getDesktopConfig() : null;
+        } catch (_) {
+            cfg = null;
+        }
+        // Explicit connections never change protocol, including saved configs
+        // that contain companion metadata from an older desktop build.
+        const ep = cfg ? cfg.endpoint : null;
+        if (ep && ep.kind === 'single') return null;
+        // A local paired target knows both owner-resolved listeners.
+        if (cfg && Number(cfg.httpsPort) === httpsPort
+            && poolStallSameHost(cfg.host, normHost, loopback127)) {
+            const httpPort = Number(cfg.httpPort);
+            if (Number.isSafeInteger(httpPort) && httpPort >= 1 && httpPort <= 65535) {
+                return poolStallTarget(host, httpPort);
+            }
+            return null;
+        }
+        // Plain-browser legacy compatibility: no desktop config is available.
+        if (!cfg && loopback127 && httpsPort === 8080) {
+            return poolStallTarget('127.0.0.1', 8000);
+        }
+        return null;
+    }
     function armConnectingWatchdog() {
         clearConnectingWatchdog();
         connectingWatchdogTimer = setTimeout(async () => {
@@ -21468,21 +21522,26 @@
                 const cur = document.getElementById('typing-status')
                     || document.querySelector('#typing-indicator .typing-status');
                 if (cur && (cur.textContent || '').indexOf('Still connecting') >= 0) {
-                    // Electron on HTTPS :8080 often hits Chromium's 6-conn limit.
-                    // Offer (and auto-try) the plain HTTP portal on a fresh pool.
-                    const onHttpsLoopback = /^https:\/\/(127\.0\.0\.1|localhost):8080$/i.test(
-                        window.location.origin || ''
-                    );
+                    // HTTPS pool stall (Chromium's ~6-conn limit): switch to
+                    // the plain-HTTP companion only when its endpoint is
+                    // known — poolStallHttpTarget never guesses an unrelated
+                    // default for custom/explicit origins.
                     const inElectron = !!(window.electron && window.electron.isElectron);
-                    if (onHttpsLoopback) {
-                        cur.textContent = 'HTTPS pool stalled — switching to HTTP portal (:8000)…';
+                    const stallTarget = await poolStallHttpTarget({
+                        origin: window.location.origin || '',
+                        getDesktopConfig: inElectron && window.electron.desktop && window.electron.desktop.getConfig
+                            ? () => window.electron.desktop.getConfig()
+                            : null,
+                    });
+                    if (stallTarget) {
+                        cur.textContent = `HTTPS pool stalled — switching to HTTP portal (:${stallTarget.httpPort})…`;
                         try {
-                            const probe = await fetchWithTimeout('http://127.0.0.1:8000/api/status', {
+                            const probe = await fetchWithTimeout(stallTarget.probeUrl, {
                                 cache: 'no-store',
                                 mode: 'cors',
                             }, 3000);
                             if (probe && probe.ok) {
-                                const dest = 'http://127.0.0.1:8000' + (window.location.pathname || '/app_shell.html')
+                                const dest = stallTarget.destBase + (window.location.pathname || '/app_shell.html')
                                     + (window.location.search || '') + (window.location.hash || '');
                                 try {
                                     if (window.top && window.top !== window) {
@@ -21496,8 +21555,8 @@
                         } catch (_) { /* fall through */ }
                     }
                     cur.textContent = inElectron
-                        ? 'Cannot reach Cuttle API — Electron connection pool stalled. Quit Cuttle.exe fully and reopen (or use http://127.0.0.1:8000).'
-                        : 'Cannot reach Cuttle API quickly — stream may be stalled. Try Stop, or open the HTTP portal (:8000).';
+                        ? 'Cannot reach Cuttle API — Electron connection pool stalled. Quit Cuttle.exe fully and reopen (or use the HTTP portal for your connected host).'
+                        : 'Cannot reach Cuttle API quickly — stream may be stalled. Try Stop, or open the HTTP portal for this host.';
                 }
             }
         }, 12000);

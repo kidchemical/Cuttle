@@ -340,12 +340,6 @@ def _jvm_toolchain():
 
     kotlinc = shutil.which("kotlinc")
     java = shutil.which("java")
-    home_kotlinc = Path.home() / ".local" / "kotlinc" / "kotlinc" / "bin" / "kotlinc"
-    home_java = Path.home() / ".local" / "jdk" / "bin" / "java"
-    if kotlinc is None and home_kotlinc.exists():
-        kotlinc = str(home_kotlinc)
-    if java is None and home_java.exists():
-        java = str(home_java)
     env_java_home = os.environ.get("JAVA_HOME")
     return kotlinc, java, env_java_home
 

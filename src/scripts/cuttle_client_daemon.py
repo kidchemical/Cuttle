@@ -111,7 +111,48 @@ def http_json(
         raise RuntimeError(f"HTTP {e.code} {path}: {err}") from e
 
 
-def enroll(cfg: Dict[str, Any], https_base: str, http_base: str) -> Dict[str, Any]:
+def _bracket(host: str) -> str:
+    host = (host or "").strip()
+    if not host or host.startswith("[") or ":" not in host:
+        return host
+    return f"[{host}]"
+
+
+def coordinator_bases(cfg: Dict[str, Any], host: str) -> list:
+    """Ordered coordinator bases from the persisted endpoint policy.
+
+    A single-endpoint policy yields ONLY the selected endpoint, ignoring
+    historical companion metadata. Legacy configs
+    without a policy keep the historical https-then-http pair.
+    """
+    ep = cfg.get("endpoint") if isinstance(cfg.get("endpoint"), dict) else None
+    if ep and ep.get("kind") == "single":
+        port = ep.get("port")
+        if (
+            ep.get("scheme") not in ("http", "https")
+            or ep.get("host") != host
+            or type(port) is not int
+            or not 1 <= port <= 65535
+        ):
+            raise ValueError("Invalid saved endpoint; reconnect with a valid URL.")
+        return [f"{ep['scheme']}://{_bracket(host)}:{port}"]
+    try:
+        https_port = int(cfg.get("httpsPort") or 8080)
+    except (TypeError, ValueError):
+        https_port = 8080
+    try:
+        http_port = int(cfg.get("httpPort") or 8000)
+    except (TypeError, ValueError):
+        http_port = 8000
+    return [f"https://{_bracket(host)}:{https_port}", f"http://{_bracket(host)}:{http_port}"]
+
+
+def enroll(cfg: Dict[str, Any], bases: list) -> Dict[str, Any]:
+    """Enroll against coordinator bases strictly in the given order.
+
+    Single selections contain one base. Legacy pairs retain their order
+    from :func:`coordinator_bases`.
+    """
     worker_id = str(
         cfg.get("workerId") or socket.gethostname() or "cuttle-client"
     ).lower().replace(" ", "-")
@@ -119,7 +160,7 @@ def enroll(cfg: Dict[str, Any], https_base: str, http_base: str) -> Dict[str, An
     token = str(cfg.get("workerToken") or "")
     headers_tok = token
     last_err = None
-    for base in (https_base, http_base):
+    for base in bases:
         try:
             data = http_json(
                 "POST",
@@ -156,13 +197,21 @@ def main() -> int:
     if not host:
         print("[CLIENT-DAEMON] No host in desktop-config.json — connect Client once first")
         return 2
-    https_port = int(cfg.get("httpsPort") or 8080)
-    http_port = int(cfg.get("httpPort") or 8000)
-    https_base = f"https://{host}:{https_port}"
-    http_base = f"http://{host}:{http_port}"
+    # Enrollment, the worker loop, and status share the selected endpoint.
+    # Single policies contain no alternate protocol or listener.
+    try:
+        bases = coordinator_bases(cfg, host)
+    except ValueError as exc:
+        print(f"[CLIENT-DAEMON] {exc}")
+        return 2
+    selected_base = bases[0]
+    http_base = next(
+        (b for b in bases if b.startswith("http://") and not b.startswith("https://")),
+        "",
+    )
 
     try:
-        enrolled = enroll(cfg, https_base, http_base)
+        enrolled = enroll(cfg, bases)
         token = str(enrolled.get("token") or "")
         worker_id = str(enrolled.get("worker_id") or cfg.get("workerId") or "")
         save_desktop_config(
@@ -183,7 +232,7 @@ def main() -> int:
         print(f"[CLIENT-DAEMON] enroll failed ({e}); using saved token")
 
     os.environ["CUTTLE_DEVICE_WORKERS_ENABLED"] = "1"
-    os.environ["CUTTLE_DEVICE_WORKERS_COORDINATOR_URL"] = https_base
+    os.environ["CUTTLE_DEVICE_WORKERS_COORDINATOR_URL"] = selected_base
     os.environ["CUTTLE_DEVICE_WORKERS_COORDINATOR_URL_HTTP"] = http_base
     os.environ["CUTTLE_DEVICE_WORKERS_TOKEN"] = token
     os.environ["CUTTLE_DEVICE_WORKER_ID"] = worker_id
@@ -198,7 +247,7 @@ def main() -> int:
         {
             "state": "running",
             "worker_id": worker_id,
-            "coordinator": https_base,
+            "coordinator": selected_base,
             "repo": str(PROJECT_ROOT),
             "owns_worker": True,
         }
@@ -215,11 +264,11 @@ def main() -> int:
 
     from api.device_workers.worker_loop import run_remote_worker_loop
 
-    print(f"[CLIENT-DAEMON] worker loop → {https_base} id={worker_id}")
+    print(f"[CLIENT-DAEMON] worker loop → {selected_base} id={worker_id}")
     try:
         run_remote_worker_loop(
             should_continue=lambda: not stop.is_set(),
-            base_url=https_base,
+            base_url=selected_base,
         )
     except KeyboardInterrupt:
         print("[CLIENT-DAEMON] stopped")

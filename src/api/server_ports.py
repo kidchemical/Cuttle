@@ -150,6 +150,43 @@ def read_ports_file(path: Union[str, Path]) -> dict:
     return {key: val for key, val in values.items() if key in _PORT_KEYS and val is not None}
 
 
+def ports_json(env_file: Union[str, Path, None] = None) -> str:
+    """Read-only JSON snapshot of the listener triple (no side effects).
+
+    Exists so the Electron Host can consume this owner without a second
+    dotenv parser: ``python -m api.server_ports [--env-file PATH]`` prints
+    ``{"https": N, "http": N, "phone_https": N}``. Raises
+    :exc:`PortConfigError` on malformed config (callers fail closed).
+    """
+    import json
+
+    ports = resolve_with_env_file(env_file=env_file)
+    return json.dumps({"https": ports.https, "http": ports.http, "phone_https": ports.phone_https})
+
+
+def main(argv: Optional[list] = None) -> int:
+    """Read-only CLI: print the listener triple as JSON. Never mutates env."""
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(
+        prog="api.server_ports",
+        description="Print the configured listener ports as JSON (read-only).",
+    )
+    parser.add_argument(
+        "--env-file",
+        default=None,
+        help="Dotenv file to read (default: checkout src/.env). Test seam only.",
+    )
+    args = parser.parse_args(argv)
+    try:
+        sys.stdout.write(ports_json(env_file=args.env_file) + "\n")
+    except PortConfigError as exc:
+        sys.stderr.write(f"invalid listener-port configuration: {exc}\n")
+        return 2
+    return 0
+
+
 def resolve_with_env_file(
     env: Optional[Mapping[str, str]] = None,
     env_file: Union[str, Path, None] = None,
@@ -177,3 +214,7 @@ def resolve_with_env_file(
             continue  # empty means unset; file/default applies
         merged[key] = raw
     return resolve_server_ports(merged)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

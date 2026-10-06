@@ -1,5 +1,5 @@
 const { app, BrowserWindow, Menu, dialog, Tray, ipcMain, nativeImage, screen } = require('electron');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -85,6 +85,45 @@ function applyDesktopTarget({ host, httpPort, httpsPort, clientMode }) {
     CLIENT_MODE = !!clientMode;
 }
 
+/** Probe and preserve the explicitly selected endpoint. */
+async function probeAndResolve(parsed) {
+    const probe = await probeCuttle(parsed.host, parsed.httpPort, parsed.httpsPort, {
+        prefer: parsed.preferredScheme || undefined,
+        single: parsed.single && !!parsed.preferredScheme,
+    });
+    if (!probe.ok) return { probe };
+    const selPort = probe.scheme === 'https' ? parsed.httpsPort : parsed.httpPort;
+    const httpPort = parsed.httpPort;
+    const httpsPort = parsed.httpsPort;
+    return {
+        probe,
+        httpPort,
+        httpsPort,
+        policy: {
+            kind: parsed.single ? 'single' : 'paired',
+            scheme: probe.scheme,
+            host: parsed.host,
+            port: selPort,
+            companion: null,
+        },
+    };
+}
+
+/** Apply a connected target and persist its endpoint policy in one place. */
+function applyConnectTarget({ host, httpPort, httpsPort, clientMode, policy }) {
+    applyDesktopTarget({ host, httpPort, httpsPort, clientMode });
+    saveDesktopConfig({
+        mode: clientMode ? 'client' : 'local',
+        host,
+        httpPort,
+        httpsPort,
+        scheme: policy.scheme,
+        endpoint: policy,
+        lastError: '',
+        workerMode: loadDesktopConfig().workerMode !== false,
+    });
+}
+
 function localDesktopHash() {
     const h = crypto.createHash('sha256');
     for (const name of DESKTOP_HASH_FILES) {
@@ -114,33 +153,105 @@ function desktopLaunchMode() {
     return '';
 }
 
+function parsePortNumber(raw, what) {
+    const text = String(raw == null ? '' : raw).trim();
+    if (!text) throw new Error(`${what} is missing.`);
+    if (!/^[0-9]+$/.test(text)) throw new Error(`${what} must be a port 1-65535, got ${JSON.stringify(text)}.`);
+    const p = Number(text);
+    if (!Number.isSafeInteger(p) || p < 1 || p > 65535) {
+        throw new Error(`${what} must be a port 1-65535, got ${JSON.stringify(text)}.`);
+    }
+    return p;
+}
+
+/** Bracket an IPv6 literal for URL authorities; pass anything else through. */
+function formatHost(host) {
+    const h = String(host || '');
+    if (!h) return h;
+    if (h.startsWith('[')) return h;
+    return h.includes(':') ? `[${h}]` : h;
+}
+
 function parseHostInput(raw) {
     const text = String(raw || '').trim();
     if (!text) throw new Error('Enter a host address.');
     let host = text;
     let httpPort = DEFAULT_HTTP_PORT;
     let httpsPort = DEFAULT_HTTPS_PORT;
+    // preferredScheme preserves the protocol the user selected so probes try
+    // the selected endpoint first instead of guessing an unrelated default.
+    // explicitPort records whether the user supplied a port at all.
+    // schemeExplicit records whether the user typed a scheme (vs bare host).
+    let preferredScheme = '';
+    let explicitPort = false;
+    let schemeExplicit = false;
     try {
         if (text.includes('://') || text.includes('/')) {
+            schemeExplicit = text.includes('://');
             const u = new URL(text.includes('://') ? text : `http://${text}`);
+            if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+                throw new Error(`Unsupported URL scheme ${JSON.stringify(u.protocol)} — use http:// or https://.`);
+            }
+            if (u.username || u.password) {
+                throw new Error('URLs with credentials are not supported — use a bare host or host:port.');
+            }
             host = u.hostname;
+            if (!host) throw new Error('Enter a host address.');
+            preferredScheme = u.protocol === 'https:' ? 'https' : 'http';
+            // Explicit http(s) URL without a port means the protocol default
+            // (80/443) — never the Cuttle listener defaults. URL elides
+            // :80/:443 to '', so consult the raw authority for explicitness.
+            const authority = text.includes('://')
+                ? text.split('://', 2)[1].split(/[/?#]/, 1)[0]
+                : '';
+            const explicitAuthorityPort = /:(\d+)$/.exec(authority) && !authority.endsWith(']');
             if (u.port) {
-                const p = Number(u.port);
+                const p = parsePortNumber(u.port, 'Port');
+                explicitPort = true;
                 if (u.protocol === 'https:') httpsPort = p;
                 else httpPort = p;
+            } else if (schemeExplicit) {
+                explicitPort = !!explicitAuthorityPort;
+                if (u.protocol === 'https:') httpsPort = 443;
+                else httpPort = 80;
             }
+        } else if (text.startsWith('[')) {
+            // Bracketed IPv6 literal, optional :port suffix.
+            const close = text.indexOf(']');
+            if (close < 0) throw new Error('That does not look like a host or URL.');
+            host = text.slice(1, close);
+            const rest = text.slice(close + 1);
+            if (rest.startsWith(':') && rest.length > 1) {
+                // Bare host:port keeps the documented HTTP meaning.
+                httpPort = parsePortNumber(rest.slice(1), 'Port');
+                explicitPort = true;
+                preferredScheme = 'http';
+            } else if (rest && rest !== '') {
+                throw new Error('That does not look like a host or URL.');
+            }
+            if (!host) throw new Error('Enter a host address.');
         } else if (text.includes(':')) {
             const parts = text.split(':');
+            if (parts.length !== 2) throw new Error('That does not look like a host or URL.');
             host = parts[0];
-            const p = Number(parts[1]);
-            if (Number.isFinite(p) && p > 0) httpPort = p;
+            // Bare host:port keeps the documented HTTP meaning.
+            httpPort = parsePortNumber(parts[1], 'Port');
+            explicitPort = true;
+            preferredScheme = 'http';
         }
     } catch (err) {
+        if (/port 1-65535|host or URL|host address|scheme|credentials/i.test(err && err.message || '')) throw err;
         throw new Error('That does not look like a host or URL.');
     }
     host = (host || '').replace(/^\[|\]$/g, '').trim();
     if (!host) throw new Error('Enter a host address.');
-    return { host, httpPort, httpsPort };
+    if (host.includes(':') && !/^[0-9a-fA-F:.]+$/.test(host)) {
+        throw new Error('That does not look like a host or URL.');
+    }
+    // An explicit scheme selection (typed :// URL, or documented bare
+    // host:port HTTP) is a single-endpoint policy: use ONLY it.
+    const single = schemeExplicit || (explicitPort && preferredScheme === 'http' && !text.includes('/'));
+    return { host, httpPort, httpsPort, preferredScheme, explicitPort, schemeExplicit, single };
 }
 
 function jsonRequest(url, { timeoutMs = 4000, method = 'GET', body = null, headers = null } = {}) {
@@ -196,24 +307,106 @@ function looksLikeCuttle(json) {
     return json.service === 'cuttle' || json.service === 'cuttle-desktop' || json.status === 'healthy' || json.status === 'ok' || json.ok === true;
 }
 
-async function probeCuttle(host, httpPort, httpsPort) {
-    const httpUrl = `http://${host}:${httpPort}/api/health`;
+// Selected-endpoint policy (single owner for candidate ordering).
+// Persisted as `endpoint` in desktop-config.json:
+//   { kind: 'single'|'paired', scheme, host, port,
+//     companion: { scheme, host, port } | null }
+// - 'single': an explicitly selected endpoint (typed :// URL, documented
+//   bare host:port HTTP). ONLY the selected endpoint is used. Ignore old
+//   companion metadata: an explicit selection never changes protocol/port.
+// - 'paired': both listeners are known (local Host via api.server_ports,
+//   or legacy bare-host defaults). HTTP first (pool-wedge default).
+function endpointUrl(c) {
+    return `${c.scheme}://${formatHost(c.host)}:${c.port}`;
+}
+
+function isSingleEndpointPolicy() {
     try {
-        const r = await jsonRequest(httpUrl);
-        if (r.status >= 200 && r.status < 500 && looksLikeCuttle(r.json)) {
-            return { ok: true, host, httpPort, httpsPort, uiUrl: `http://${host}:${httpPort}/app_shell.html` };
-        }
-    } catch (_) {}
-    const httpsUrl = `https://${host}:${httpsPort}/api/health`;
-    try {
-        const r = await jsonRequest(httpsUrl);
-        if (r.status >= 200 && r.status < 500 && looksLikeCuttle(r.json)) {
-            return { ok: true, host, httpPort, httpsPort, uiUrl: `https://${host}:${httpsPort}/app_shell.html` };
-        }
-    } catch (err) {
-        return { ok: false, error: err.message || 'Could not reach Cuttle on that host.' };
+        const cfg = loadDesktopConfig() || {};
+        const ep = cfg.endpoint || null;
+        return !!(ep && ep.kind === 'single' && ep.host === FLASK_HOST);
+    } catch (_) {
+        return false;
     }
-    return { ok: false, error: 'No Cuttle server responded at that address.' };
+}
+
+/** Ordered endpoint candidates for the live target. Single policy yields
+ *  only the selected endpoint; paired/unknown yields both listeners, HTTP first. */
+function endpointCandidates() {
+    const host = FLASK_HOST;
+    try {
+        const cfg = loadDesktopConfig() || {};
+        const ep = cfg.endpoint || null;
+        if (ep && ep.kind === 'single') {
+            const port = Number(ep.port);
+            if (ep.host !== host || !['http', 'https'].includes(ep.scheme)
+                || !Number.isSafeInteger(port) || port < 1 || port > 65535) {
+                throw new Error('Invalid saved endpoint; reconnect with a valid URL.');
+            }
+            return [{ scheme: ep.scheme, host, port }];
+        }
+    } catch (err) { throw err; }
+    return [
+        { scheme: 'http', host, port: FLASK_HTTP_PORT },
+        { scheme: 'https', host, port: FLASK_HTTPS_PORT },
+    ];
+}
+
+/** Ordered full URLs for a route path, from the candidate owner. */
+function candidateUrls(pathname) {
+    const pathPart = pathname.startsWith('/') ? pathname : `/${pathname}`;
+    return endpointCandidates().map((c) => `${endpointUrl(c)}${pathPart}`);
+}
+
+/** Worker coordinator endpoints from the candidate owner: primary is the
+ *  first candidate; https/http are the known candidates of that scheme
+ *  (http is '' when no HTTP endpoint is known — never a guessed default).
+ *  single mirrors the persisted single-endpoint policy for the sidecar. */
+function workerCoordinatorEnv() {
+    const cands = endpointCandidates();
+    const primary = endpointUrl(cands[0]);
+    const httpsCand = cands.find((c) => c.scheme === 'https');
+    const httpCand = cands.find((c) => c.scheme === 'http');
+    return {
+        primary,
+        https: httpsCand ? endpointUrl(httpsCand) : primary,
+        http: httpCand ? endpointUrl(httpCand) : '',
+        single: isSingleEndpointPolicy(),
+    };
+}
+
+async function probeUrlList(list) {
+    let lastError = 'No Cuttle server responded at that address.';
+    for (const c of list) {
+        try {
+            const r = await jsonRequest(`${endpointUrl(c)}/api/health`);
+            if (r.status >= 200 && r.status < 500 && looksLikeCuttle(r.json)) {
+                return { ok: true, host: c.host, scheme: c.scheme, port: c.port, uiUrl: `${endpointUrl(c)}/app_shell.html` };
+            }
+        } catch (err) {
+            lastError = (err && err.message) || 'Could not reach Cuttle on that host.';
+        }
+    }
+    return { ok: false, error: lastError };
+}
+
+async function probeCuttle(host, httpPort, httpsPort, opts = {}) {
+    // opts.prefer: 'https' | 'http' — try the user-selected scheme first.
+    // opts.single: probe ONLY the preferred endpoint (explicit selection);
+    // never touch an unrelated default port or downgrade the protocol.
+    const prefer = opts.prefer === 'https' ? 'https' : opts.prefer === 'http' ? 'http' : '';
+    const candidates = prefer === 'https'
+        ? ['https', 'http']
+        : prefer === 'http'
+            ? ['http', 'https']
+            : ['http', 'https'];
+    const order = opts.single && prefer ? [prefer] : candidates;
+    const list = order.map((scheme) => ({
+        scheme, host, port: scheme === 'https' ? httpsPort : httpPort,
+    }));
+    const r = await probeUrlList(list);
+    if (!r.ok) return r;
+    return { ok: true, host, httpPort, httpsPort, scheme: r.scheme, uiUrl: r.uiUrl };
 }
 
 function connectPageUrl() {
@@ -273,6 +466,10 @@ function publicDesktopConfig() {
         host: FLASK_HOST,
         httpPort: FLASK_HTTP_PORT,
         httpsPort: FLASK_HTTPS_PORT,
+        scheme: cfg.scheme || '',
+        // Selected-endpoint policy for web clients (pool-switch companion
+        // resolution): kind/single/companion-known. Absent on legacy configs.
+        endpoint: cfg.endpoint || null,
         packaged: app.isPackaged,
         hash: localDesktopHash(),
         packageVersion,
@@ -280,14 +477,12 @@ function publicDesktopConfig() {
     };
 }
 
-function cuttleAppUrl(pathname = '/app_shell.html') {
+/** Preferred UI URL: first candidate of the endpoint owner. */
+function preferredAppUrl(pathname = '/app_shell.html') {
     const pathPart = pathname.startsWith('/') ? pathname : `/${pathname}`;
-    return `http://${FLASK_HOST}:${FLASK_HTTP_PORT}${pathPart}`;
-}
-
-function cuttleHttpsAppUrl(pathname = '/app_shell.html') {
-    const pathPart = pathname.startsWith('/') ? pathname : `/${pathname}`;
-    return `https://${FLASK_HOST}:${FLASK_HTTPS_PORT}${pathPart}`;
+    const cands = endpointCandidates();
+    const c = cands[0] || { scheme: 'http', host: FLASK_HOST, port: FLASK_HTTP_PORT };
+    return `${endpointUrl(c)}${pathPart}`;
 }
 
 // Resolve a Python executable that can be spawned as a subprocess.
@@ -375,6 +570,98 @@ function resolvePythonExe(projectRoot) {
     return null;
 }
 
+/**
+ * Local-Host listener ports, read-only from the Python owner
+ * (api.server_ports: env over src/.env, defaults 8080/8000/8888).
+ * Electron never parses src/.env itself — single parser stays in Python.
+ * Returns { https, http, phone_https } or throws fail-closed (malformed
+ * config must not silently fall back: the defaults may be live elsewhere).
+ * Remote targets never call this; their ports come from desktop-config.json.
+ */
+function localPortError(code, message) {
+    const err = new Error(message);
+    err.code = code;
+    return err;
+}
+
+/**
+ * Local-Host listener ports, read-only from the Python owner
+ * (api.server_ports: env over src/.env, defaults 8080/8000/8888).
+ * Electron never parses src/.env itself — single parser stays in Python.
+ * Returns { https, http, phone_https }.
+ * Throws code 'local-port-config' on malformed config (fail closed: callers
+ * must NOT probe defaults or spawn after this) or 'local-port-unavailable'
+ * when no host Python exists to ask.
+ * Remote targets never call this; their ports come from desktop-config.json.
+ */
+function queryLocalServerPorts(projectRoot) {
+    const pythonExe = resolvePythonExe(projectRoot);
+    if (!pythonExe) {
+        throw localPortError('local-port-unavailable', 'No usable Python found — cannot read local listener ports.');
+    }
+    let r;
+    try {
+        r = spawnSync(pythonExe, ['-m', 'api.server_ports'], {
+            cwd: projectRoot,
+            env: { ...process.env, PYTHONPATH: path.join(projectRoot, 'src') },
+            encoding: 'utf8',
+            timeout: 20000,
+        });
+    } catch (err) {
+        throw localPortError('local-port-unavailable', `Local port query failed: ${err.message || err}`);
+    }
+    const out = String((r && r.stdout) || '').trim();
+    if (!r || r.status !== 0) {
+        const detail = String((r && r.stderr) || '').trim().split('\n').pop();
+        throw localPortError('local-port-config',
+            `Invalid listener-port configuration${detail ? `: ${detail}` : ''}. ` +
+            'Fix CUTTLE_HTTPS_PORT/CUTTLE_HTTP_PORT/CUTTLE_PHONE_HTTPS_PORT in src/.env, then cold-restart the daemon.'
+        );
+    }
+    let ports;
+    try {
+        ports = JSON.parse(out);
+    } catch (_) {
+        throw localPortError('local-port-config', 'Local port query returned non-JSON output.');
+    }
+    for (const key of ['https', 'http', 'phone_https']) {
+        const p = ports ? ports[key] : null;
+        if (!Number.isSafeInteger(p) || p < 1 || p > 65535) {
+            throw localPortError('local-port-config', `Local port query returned bad ${key}: ${JSON.stringify(p)}.`);
+        }
+    }
+    if (new Set([ports.https, ports.http, ports.phone_https]).size !== 3) {
+        throw localPortError('local-port-config', 'Local listener ports must be distinct.');
+    }
+    return ports;
+}
+
+/** Local-Host desktop target from the Python owner. Throws fail-closed. */
+function localDesktopTarget(projectRoot) {
+    const ports = queryLocalServerPorts(projectRoot);
+    return { host: '127.0.0.1', httpPort: ports.http, httpsPort: ports.https, clientMode: false };
+}
+
+/** Apply the local-Host target with its paired endpoint policy (both ports
+ *  known from the Python owner, HTTP preferred). Throws like the query. */
+function applyLocalTarget(projectRoot) {
+    const local = localDesktopTarget(projectRoot);
+    applyConnectTarget({
+        host: local.host,
+        httpPort: local.httpPort,
+        httpsPort: local.httpsPort,
+        clientMode: false,
+        policy: {
+            kind: 'paired',
+            scheme: 'http',
+            host: local.host,
+            port: local.httpPort,
+            companion: { scheme: 'https', host: local.host, port: local.httpsPort },
+        },
+    });
+    return local;
+}
+
 /** Copy asar/dev device-worker script into userData so Python can execute it. */
 function materializeDeviceWorkerScript() {
     const destDir = path.join(app.getPath('userData'), 'device-worker');
@@ -459,37 +746,37 @@ function waitForFlask(retries = 45, intervalMs = 1000) {
 /** Host-only: ask Flask to drop expired /output/shared/ media (7d TTL). */
 async function purgeSharedMediaExpired() {
     if (CLIENT_MODE) return;
-    try {
-        const httpsUrl = `https://${FLASK_HOST}:${FLASK_HTTPS_PORT}/api/shared-media/purge`;
-        const r = await jsonRequest(httpsUrl, { method: 'POST', timeoutMs: 8000 });
-        if (r.status >= 200 && r.status < 300 && r.json && r.json.success) {
-            const n = r.json.deleted || 0;
-            if (n) console.log(`Shared media purge: deleted ${n} expired file(s)`);
-            return;
+    for (const url of candidateUrls('/api/shared-media/purge')) {
+        try {
+            const r = await jsonRequest(url, { method: 'POST', timeoutMs: 8000 });
+            if (r.status >= 200 && r.status < 300 && r.json && r.json.success) {
+                const n = r.json.deleted || 0;
+                if (n) console.log(`Shared media purge: deleted ${n} expired file(s)`);
+                return;
+            }
+        } catch (err) {
+            console.warn(`Shared media purge via ${url} failed:`, err && err.message ? err.message : err);
         }
-    } catch (err) {
-        console.warn('Shared media purge (HTTPS) failed:', err && err.message ? err.message : err);
-    }
-    try {
-        const httpUrl = `http://${FLASK_HOST}:${FLASK_HTTP_PORT}/api/shared-media/purge`;
-        const r = await jsonRequest(httpUrl, { method: 'POST', timeoutMs: 8000 });
-        if (r.status >= 200 && r.status < 300 && r.json && r.json.success) {
-            const n = r.json.deleted || 0;
-            if (n) console.log(`Shared media purge (HTTP): deleted ${n} expired file(s)`);
-        }
-    } catch (err2) {
-        console.warn('Shared media purge skipped:', err2 && err2.message ? err2.message : err2);
     }
 }
 
 async function resolveUiBaseUrl() {
-    const httpUp = await waitForPort(FLASK_HTTP_PORT, 5, 400, 'HTTP portal');
-    if (httpUp) {
-        console.log(`Using HTTP portal http://${FLASK_HOST}:${FLASK_HTTP_PORT}`);
-        return cuttleAppUrl('/app_shell.html');
+    // Ordered candidates from the endpoint owner: single policy tries ONLY
+    // the selected endpoint;
+    // paired/legacy keeps HTTP-first (Chromium TLS/SSE pool wedge).
+    const cands = endpointCandidates();
+    for (const c of cands) {
+        const label = c.scheme === 'https' ? 'HTTPS portal' : 'HTTP portal';
+        const up = await waitForPort(c.port, 5, 400, label);
+        if (up) {
+            console.log(`Using ${label} ${endpointUrl(c)}`);
+            return `${endpointUrl(c)}/app_shell.html`;
+        }
+        console.warn(`${label} ${endpointUrl(c)} not up`);
     }
-    console.warn(`HTTP :${FLASK_HTTP_PORT} not up — falling back to HTTPS :${FLASK_HTTPS_PORT}`);
-    return cuttleHttpsAppUrl('/app_shell.html');
+    // No candidate answered yet — return the preferred URL and let the
+    // window show the loading/error page (existing did-fail-load path).
+    return preferredAppUrl('/app_shell.html');
 }
 
 // Spawn the Cuttle daemon (detached so it survives Electron being closed).
@@ -557,8 +844,9 @@ function startDaemon() {
 async function enrollWorkerWithHost() {
     const cfg = loadDesktopConfig();
     const workerId = String(cfg.workerId || os.hostname() || 'cuttle-client').toLowerCase().replace(/\s+/g, '-');
-    const coordinatorHttps = `https://${FLASK_HOST}:${FLASK_HTTPS_PORT}`;
-    const coordinatorHttp = `http://${FLASK_HOST}:${FLASK_HTTP_PORT}`;
+    // Enroll over the endpoint-owner candidates in order: a single-endpoint
+    // policy never touches a guessed other-protocol URL.
+    const bases = endpointCandidates().map(endpointUrl);
     const body = { worker_id: workerId, hostname: os.hostname() };
     const headers = {};
     if (cfg.workerToken) {
@@ -579,12 +867,16 @@ async function enrollWorkerWithHost() {
         throw new Error(err);
     }
 
-    try {
-        return await tryEnroll(coordinatorHttps);
-    } catch (httpsErr) {
-        console.warn('Worker enroll via HTTPS failed, trying HTTP:', httpsErr.message || httpsErr);
-        return await tryEnroll(coordinatorHttp);
+    let lastErr = null;
+    for (const base of bases) {
+        try {
+            return await tryEnroll(base);
+        } catch (err) {
+            console.warn(`Worker enroll via ${base} failed:`, (err && err.message) || err);
+            lastErr = err;
+        }
     }
+    throw lastErr || new Error('Worker enroll failed.');
 }
 
 async function startWorkerSidecar() {
@@ -661,8 +953,12 @@ async function startWorkerSidecar() {
     const scriptPath = materialized.scriptPath;
     console.log('Device worker script:', scriptPath, '(from', materialized.source + ')');
 
-    const coordinatorHttps = `https://${FLASK_HOST}:${FLASK_HTTPS_PORT}`;
-    const coordinatorHttp = `http://${FLASK_HOST}:${FLASK_HTTP_PORT}`;
+    // Coordinator URLs come from the endpoint owner (workerCoordinatorEnv):
+    // the selected endpoint only in single mode. CUTTLE_ENDPOINT_SINGLE
+    // tells the sidecar to suppress legacy default-pair inference.
+    const coord = workerCoordinatorEnv();
+    const primary = coord.primary;
+    const coordinatorHttp = coord.http;
     const logPath = path.join(app.getPath('userData'), 'device-worker.log');
     let desktopVersion = '';
     try {
@@ -673,8 +969,9 @@ async function startWorkerSidecar() {
         PYTHONUTF8: '1',
         PYTHONIOENCODING: 'utf-8',
         CUTTLE_DEVICE_WORKERS_ENABLED: '1',
-        CUTTLE_DEVICE_WORKERS_COORDINATOR_URL: coordinatorHttps,
+        CUTTLE_DEVICE_WORKERS_COORDINATOR_URL: primary,
         CUTTLE_DEVICE_WORKERS_COORDINATOR_URL_HTTP: coordinatorHttp,
+        CUTTLE_ENDPOINT_SINGLE: isSingleEndpointPolicy() ? '1' : '0',
         CUTTLE_DEVICE_WORKERS_TOKEN: String(workerToken),
         CUTTLE_DEVICE_WORKER_ID: String(workerId || os.hostname()),
         CUTTLE_DEVICE_WORKER_LOG: logPath,
@@ -683,7 +980,7 @@ async function startWorkerSidecar() {
         CUTTLE_FLASK_HOST: String(FLASK_HOST || ''),
     };
 
-    console.log('Starting device worker sidecar →', coordinatorHttps, '(http fallback', coordinatorHttp + ')');
+    console.log('Starting device worker sidecar →', primary, '(http fallback', coordinatorHttp + ')');
     console.log('Device worker log:', logPath);
 
     // Use an opened fd — createWriteStream is not valid for spawn stdio until 'open'
@@ -873,9 +1170,38 @@ function downloadToFile(url, dest) {
     });
 }
 
+/** GET a desktop API path over the endpoint-owner candidates, in order. */
+async function desktopApiGet(pathname, timeoutMs = 6000) {
+    const urls = candidateUrls(pathname);
+    let lastErr = null;
+    for (const url of urls) {
+        try {
+            return await jsonRequest(url, { timeoutMs });
+        } catch (err) {
+            lastErr = err;
+        }
+    }
+    throw lastErr || new Error('Desktop API unreachable.');
+}
+
+/** Download a desktop path over the endpoint-owner candidates, in order. */
+async function desktopDownload(pathname, dest) {
+    const urls = candidateUrls(pathname);
+    let lastErr = null;
+    for (const url of urls) {
+        try {
+            await downloadToFile(url, dest);
+            return;
+        } catch (err) {
+            lastErr = err;
+        }
+    }
+    throw lastErr || new Error('Failed to download desktop update.');
+}
+
 async function checkDesktopUpdate() {
     try {
-        const r = await jsonRequest(cuttleAppUrl('/api/desktop/electron'), { timeoutMs: 6000 });
+        const r = await desktopApiGet('/api/desktop/electron', 6000);
         const remote = r.json || {};
         const local = localDesktopHash();
         // Laptop clients only. The host already runs live Flask UI; hashing
@@ -911,9 +1237,9 @@ async function applyDesktopUpdate() {
     }
     const tmp = path.join(process.resourcesPath, 'app.asar.new');
     try {
-        await downloadToFile(cuttleAppUrl('/api/desktop/electron/app.asar'), tmp);
+        await desktopDownload('/api/desktop/electron/app.asar', tmp);
     } catch (err) {
-        return { ok: false, error: err.message || 'Failed to download desktop update.' };
+        return { ok: false, error: (err && err.message) || 'Failed to download desktop update.' };
     }
     const exe = app.getPath('exe');
     const bat = path.join(os.tmpdir(), `cuttle-update-${Date.now()}.cmd`);
@@ -1218,7 +1544,7 @@ async function createWindow(opts = {}) {
                 mainWindow.webContents.reload();
             } catch (err) {
                 console.error('Failed to reload after renderer crash:', err);
-                mainWindow.loadURL(mainWindow._cuttleUiUrl || cuttleAppUrl('/app_shell.html'));
+                mainWindow.loadURL(mainWindow._cuttleUiUrl || preferredAppUrl('/app_shell.html'));
             }
         }, 250);
     });
@@ -1278,7 +1604,7 @@ ipcMain.on('window-reload', (event) => {
         } catch (err) {
             console.warn('reloadIgnoringCache failed, falling back to loadURL:', err);
             try {
-                win.loadURL(win._cuttleUiUrl || cuttleAppUrl('/app_shell.html'));
+                win.loadURL(win._cuttleUiUrl || preferredAppUrl('/app_shell.html'));
             } catch (err2) {
                 console.error('loadURL fallback failed:', err2);
             }
@@ -1416,44 +1742,36 @@ ipcMain.handle('desktop-show-connect', () => {
 ipcMain.handle('desktop-connect', async (_event, raw) => {
     try {
         const parsed = parseHostInput(raw);
-        const probe = await probeCuttle(parsed.host, parsed.httpPort, parsed.httpsPort);
-        if (!probe.ok) return probe;
-        applyDesktopTarget({
+        const resolved = await probeAndResolve(parsed);
+        if (!resolved.probe.ok) return resolved.probe;
+        applyConnectTarget({
             host: parsed.host,
-            httpPort: parsed.httpPort,
-            httpsPort: parsed.httpsPort,
+            httpPort: resolved.httpPort,
+            httpsPort: resolved.httpsPort,
             clientMode: true,
-        });
-        saveDesktopConfig({
-            mode: 'client',
-            host: parsed.host,
-            httpPort: parsed.httpPort,
-            httpsPort: parsed.httpsPort,
-            lastError: '',
-            workerMode: loadDesktopConfig().workerMode !== false,
+            policy: resolved.policy,
         });
         await loadCuttleUi();
         await startWorkerSidecar();
-        return { ok: true, host: parsed.host };
+        return { ok: true, host: parsed.host, scheme: resolved.policy.scheme };
     } catch (err) {
         return { ok: false, error: err.message || String(err) };
     }
 });
 ipcMain.handle('desktop-use-local', async () => {
     stopWorkerSidecar();
-    applyDesktopTarget({
-        host: '127.0.0.1',
-        httpPort: DEFAULT_HTTP_PORT,
-        httpsPort: DEFAULT_HTTPS_PORT,
-        clientMode: false,
-    });
-    saveDesktopConfig({
-        mode: 'local',
-        host: '127.0.0.1',
-        httpPort: DEFAULT_HTTP_PORT,
-        httpsPort: DEFAULT_HTTPS_PORT,
-        lastError: '',
-    });
+    // Local-Host ports come from the Python owner (api.server_ports), never
+    // hardcoded defaults. Malformed config fails closed here — do not spawn
+    // a daemon the health check could mistake for another instance.
+    try {
+        const isDev = !app.isPackaged;
+        const projectRoot = isDev
+            ? path.join(__dirname, '..')
+            : path.join(process.resourcesPath, 'app');
+        applyLocalTarget(projectRoot);
+    } catch (err) {
+        return { ok: false, error: err.message || String(err) };
+    }
     const already = await waitForFlask(3, 400);
     if (!already) {
         startDaemon();
@@ -1485,10 +1803,12 @@ function isCuttleSelfSignedHttpsUrl(url) {
     try {
         const u = new URL(url);
         // HTTPS page loads and WSS (web terminal PTY) both need the same
-        // self-signed cert exception. Loopback plus the configured client host.
+        // self-signed cert exception. Loopback plus the selected endpoint
+        // host, on the effective HTTPS port only — no literal allowlist.
+        // An omitted port is the protocol default (443), compared always.
         if (u.protocol !== 'https:' && u.protocol !== 'wss:') return false;
-        const port = u.port || '';
-        if (port && port !== String(FLASK_HTTPS_PORT) && port !== '8080' && port !== '8888') return false;
+        const port = u.port ? Number(u.port) : 443;
+        if (!Number.isSafeInteger(port) || port !== FLASK_HTTPS_PORT) return false;
         return isCuttleTrustedHost(u.hostname);
     } catch (_) {
         return false;
@@ -1556,48 +1876,46 @@ app.whenReady().then(async () => {
     if (cliHost) {
         try {
             const parsed = parseHostInput(cliHost);
-            const probe = await probeCuttle(parsed.host, parsed.httpPort, parsed.httpsPort);
-            if (probe.ok) {
-                applyDesktopTarget({
+            const resolved = await probeAndResolve(parsed);
+            if (resolved.probe.ok) {
+                applyConnectTarget({
                     host: parsed.host,
-                    httpPort: parsed.httpPort,
-                    httpsPort: parsed.httpsPort,
+                    httpPort: resolved.httpPort,
+                    httpsPort: resolved.httpsPort,
                     clientMode: true,
-                });
-                saveDesktopConfig({
-                    mode: 'client',
-                    host: parsed.host,
-                    httpPort: parsed.httpPort,
-                    httpsPort: parsed.httpsPort,
-                    lastError: '',
-                    workerMode: loadDesktopConfig().workerMode !== false,
+                    policy: resolved.policy,
                 });
                 await createWindow();
                 await startWorkerSidecar();
                 app.on('activate', activate);
                 return;
             }
-            saveDesktopConfig({ lastError: probe.error || 'Could not reach --host.' });
+            saveDesktopConfig({ lastError: resolved.probe.error || 'Could not reach --host.' });
         } catch (err) {
             saveDesktopConfig({ lastError: err.message || String(err) });
         }
+        await createWindow({ connect: true });
+        app.on('activate', activate);
+        return;
     }
 
     const saved = loadDesktopConfig();
     if (LAUNCH_MODE === 'host') {
-        applyDesktopTarget({
-            host: '127.0.0.1',
-            httpPort: DEFAULT_HTTP_PORT,
-            httpsPort: DEFAULT_HTTPS_PORT,
-            clientMode: false,
-        });
-        saveDesktopConfig({
-            mode: 'local',
-            host: '127.0.0.1',
-            httpPort: DEFAULT_HTTP_PORT,
-            httpsPort: DEFAULT_HTTPS_PORT,
-            lastError: '',
-        });
+        // Host-mode local ports come from the Python owner, not defaults.
+        // Malformed config fails closed with a connect page: no probing of
+        // defaults, no daemon spawn against the wrong ports.
+        try {
+            const isDev = !app.isPackaged;
+            const projectRoot = isDev
+                ? path.join(__dirname, '..')
+                : path.join(process.resourcesPath, 'app');
+            applyLocalTarget(projectRoot);
+        } catch (err) {
+            saveDesktopConfig({ lastError: err.message || String(err) });
+            await createWindow({ connect: true });
+            app.on('activate', activate);
+            return;
+        }
         const alreadyRunning = await waitForFlask(3, 500);
         if (!alreadyRunning) {
             startDaemon();
@@ -1623,7 +1941,15 @@ app.whenReady().then(async () => {
             httpsPort: saved.httpsPort,
             clientMode: true,
         });
-        const probe = await probeCuttle(FLASK_HOST, FLASK_HTTP_PORT, FLASK_HTTPS_PORT);
+        // Restore probes the persisted endpoint policy in order: a single
+        // policy touches ONLY the selected endpoint; legacy paired restores
+        // probe both defaults.
+        let probe;
+        try {
+            probe = await probeUrlList(endpointCandidates());
+        } catch (err) {
+            probe = { ok: false, error: err.message || String(err) };
+        }
         if (probe.ok) {
             await createWindow();
             await startWorkerSidecar();
@@ -1636,12 +1962,22 @@ app.whenReady().then(async () => {
         return;
     }
 
-    applyDesktopTarget({
-        host: '127.0.0.1',
-        httpPort: DEFAULT_HTTP_PORT,
-        httpsPort: DEFAULT_HTTPS_PORT,
-        clientMode: false,
-    });
+    // No saved mode: local ports still come from the Python owner when
+    // available, so a custom-port Flask is recognized as already running.
+    // Malformed config fails closed with a connect error: no probing of
+    // defaults, no daemon spawn against the wrong ports.
+    try {
+        const isDev = !app.isPackaged;
+        const projectRoot = isDev
+            ? path.join(__dirname, '..')
+            : path.join(process.resourcesPath, 'app');
+        applyLocalTarget(projectRoot);
+    } catch (err) {
+        saveDesktopConfig({ lastError: err.message || String(err) });
+        await createWindow({ connect: true });
+        app.on('activate', activate);
+        return;
+    }
     const alreadyRunning = await waitForFlask(3, 500);
     if (alreadyRunning) {
         console.log('Flask already running — skipping daemon spawn.');
@@ -1691,9 +2027,13 @@ function stopSpawnedDaemon() {
 
 /** Running agent turns / jobs on this host, or -1 when Flask cannot say. */
 async function fetchActiveWorkCount() {
+    let r = null;
     try {
-        const url = `https://${FLASK_HOST}:${FLASK_HTTPS_PORT}/api/flask/restart/status`;
-        const r = await jsonRequest(url, { timeoutMs: 3000 });
+        r = await desktopApiGet('/api/flask/restart/status', 3000);
+    } catch (_) {
+        return -1;
+    }
+    try {
         const work = r.json && r.json.active_work;
         if (!work || work.enumeration_failed) return -1;
         return Number(work.active_count) || 0;

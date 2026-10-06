@@ -51,15 +51,51 @@ paths) — standalone CLIs read the same `src/.env` with process-env
 precedence, so no exports are needed. The dev shadow refuses both the
 defaults and the configured ports.
 
-Residual limitations with custom ports: the Electron desktop app, the
-Capacitor mobile shell, and native Android companions still target the
-default ports. Standalone scripts keep literal defaults: `diagnose_lan.bat`,
+Custom ports on mobile clients: the Capacitor mobile shell accepts a custom
+port in Server settings (8000 / 8888 presets or Custom 1–65535) and uses the
+entered scheme + port for the WebView, reachability probes, notifications,
+and update downloads; invalid ports are rejected before anything is saved.
+The native Android companion takes a full base URL and uses the entered
+scheme + port verbatim for SSE and replies, but still requires
+platform-trusted HTTPS (a valid proxy certificate, as before) — the app does
+not opt into cleartext or bypass certificate validation, and failed HTTPS
+connections never rewrite the saved server to HTTP.
+
+Custom ports on desktop Electron: the local Host resolves listener ports
+from `api.server_ports` via `python -m api.server_ports` (read-only,
+fail-closed — Electron never parses `src/.env` itself) and loads the UI
+from the configured ports, so a custom-port Flask is recognized as already
+running. A malformed port configuration shows a connect error with no
+probing of defaults and no daemon spawn. An unavailable local Python or
+port query also shows the connection error instead of guessing defaults. LAN client mode probes the entered host
+and ports as given and persists a selected-endpoint policy with the saved
+target, reapplied on launch:
+
+- An explicitly selected endpoint (typed `http(s)://` URL, or documented
+  bare `host:port` HTTP) is used **singly** — probing, UI load, API/update/
+  enrollment/worker requests, and chat pool-switch redirects touch only it.
+  An explicit URL without a port means the protocol default (443/80), never
+  8080/8000. Invalid ports, unsupported schemes, and URL credentials are
+  rejected before anything is saved.
+- Explicit connections ignore historical companion metadata and never discover
+  or try another listener. If the selected endpoint is down, the connection
+  fails there; it does not silently switch ports or downgrade HTTPS to HTTP.
+  Local Host mode uses the configured listener pair, HTTP first. Bare-host
+  legacy targets keep the default HTTP-first pair.
+- The Host certificate exception likewise covers exactly the selected
+  endpoint host + effective HTTPS port (an omitted port counts as 443).
+
+Residual limitations with custom ports: standalone scripts keep literal defaults: `diagnose_lan.bat`,
 `enable_lan_firewall.ps1` (add Windows firewall rules for custom ports
 manually), and the `src/scripts/utilities/* --base` helpers (pass `--base`
 explicitly). Web-UI hint strings that name a port render the configured one
 from the server; other hardcoded examples in docs/samples may still show
 8080. OAuth provider redirect URIs are port-sensitive and must be updated in
-the provider console.
+the provider console. Pre-policy Electron configs (saved before the
+selected-endpoint policy) restore as legacy pairs until the next explicit
+connect writes a policy; explicit URLs remain single endpoints regardless of host version. Packaged-app Host Python resolution and a real custom-port
+daemon boot remain runtime-unverified (no live runtime in this change);
+coverage is behavioral suites with fakes plus the temp-env CLI smoke.
 
 ## mDNS discovery (optional)
 
