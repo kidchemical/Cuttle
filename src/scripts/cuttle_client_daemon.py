@@ -59,21 +59,29 @@ def load_desktop_config() -> Dict[str, Any]:
         return {}
 
 
+_status_lock = threading.Lock()
+
+
 def write_status(patch: Dict[str, Any]) -> None:
+    # The heartbeat thread and main() both write; readers (Electron) must never
+    # see a torn file, so merge under a lock and replace atomically.
     path = status_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    cur: Dict[str, Any] = {}
-    if path.is_file():
-        try:
-            cur = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(cur, dict):
+    with _status_lock:
+        cur: Dict[str, Any] = {}
+        if path.is_file():
+            try:
+                cur = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(cur, dict):
+                    cur = {}
+            except Exception:
                 cur = {}
-        except Exception:
-            cur = {}
-    cur.update(patch)
-    cur["updated_at"] = time.time()
-    cur["pid"] = os.getpid()
-    path.write_text(json.dumps(cur, indent=2), encoding="utf-8")
+        cur.update(patch)
+        cur["updated_at"] = time.time()
+        cur["pid"] = os.getpid()
+        tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(cur, indent=2), encoding="utf-8")
+        os.replace(tmp, path)
 
 
 def _ssl_ctx() -> ssl.SSLContext:
@@ -260,7 +268,8 @@ def main() -> int:
             write_status({"state": "running", "worker_id": worker_id})
             stop.wait(5)
 
-    threading.Thread(target=heartbeat_status, daemon=True).start()
+    heartbeat = threading.Thread(target=heartbeat_status, daemon=True)
+    heartbeat.start()
 
     from api.device_workers.worker_loop import run_remote_worker_loop
 
@@ -274,6 +283,7 @@ def main() -> int:
         print("[CLIENT-DAEMON] stopped")
     finally:
         stop.set()
+        heartbeat.join(timeout=2)
         write_status({"state": "stopped"})
     return 0
 

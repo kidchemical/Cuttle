@@ -789,6 +789,13 @@ def _run_client_daemon_main(monkeypatch, tmp_path, cfg):
     monkeypatch.delenv("LOCALAPPDATA", raising=False)
     monkeypatch.delenv("APPDATA", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
+    # main() exports worker settings into os.environ; restore them afterwards.
+    for name in ("CUTTLE_DEVICE_WORKERS_ENABLED", "CUTTLE_DEVICE_WORKERS_COORDINATOR_URL",
+                 "CUTTLE_DEVICE_WORKERS_COORDINATOR_URL_HTTP", "CUTTLE_DEVICE_WORKERS_TOKEN",
+                 "CUTTLE_DEVICE_WORKER_ID", "CUTTLE_CLIENT_DAEMON", "CUTTLE_REPO_ROOT",
+                 "CUTTLE_DEVICE_WORKER_LOG"):
+        monkeypatch.setenv(name, "")
+        monkeypatch.delenv(name)
     conf_dir = tmp_path / "cuttle-desktop"
     conf_dir.mkdir(parents=True, exist_ok=True)
     (conf_dir / "desktop-config.json").write_text(json.dumps(cfg), encoding="utf-8")
