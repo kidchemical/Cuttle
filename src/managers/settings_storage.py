@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import tempfile
 import threading
+import time
 
 SCHEMA_VERSION = 1
 MACHINE_KEYS = frozenset({"device_workers", "discovery"})
@@ -24,10 +25,25 @@ _locks: dict[str, threading.RLock] = {}
 _locks_guard = threading.Lock()
 
 
+def _retry_sharing(operation):
+    """Windows refuses to open or replace a file another process holds open.
+
+    Readers are unlocked, so a read can meet another process's os.replace (or
+    vice versa) for a few milliseconds. POSIX never raises here.
+    """
+    for attempt in range(40):
+        try:
+            return operation()
+        except PermissionError:
+            if os.name != "nt" or attempt == 39:
+                raise
+            time.sleep(0.025)
+
+
 def read_json(path: Path) -> dict:
     if not path.exists():
         return {}
-    value = json.loads(path.read_text(encoding="utf-8"))
+    value = json.loads(_retry_sharing(lambda: path.read_text(encoding="utf-8")))
     if not isinstance(value, dict):
         raise ValueError(f"Settings must be a JSON object: {path}")
     return value
@@ -52,7 +68,7 @@ def atomic_write(path: Path, value: dict) -> None:
             stream.write("\n")
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, path)
+        _retry_sharing(lambda: os.replace(temporary, path))
     finally:
         temporary.unlink(missing_ok=True)
 

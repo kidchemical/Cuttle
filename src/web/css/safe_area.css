@@ -127,7 +127,7 @@ html.is-cuttle-mobile.keyboard-open .chat-input-container {
 }
 
 html.is-cuttle-mobile.keyboard-open .chat-messages {
-    padding-bottom: 12px;
+    padding-bottom: 10px;
 }
 
 html.is-cuttle-mobile .chat-messages {
@@ -135,10 +135,12 @@ html.is-cuttle-mobile .chat-messages {
     padding-right: calc(15px + var(--cuttle-safe-right));
 }
 
+/* No safe-bottom here: the composer sits below the transcript and already
+   clears the nav bar, so adding it again only pads past the last bubble. */
 @media (max-width: 768px) {
     html.is-cuttle-mobile .chat-messages {
         padding-top: calc(80px + var(--cuttle-safe-top));
-        padding-bottom: calc(24px + var(--cuttle-safe-bottom));
+        padding-bottom: 10px;
     }
 }
 
