@@ -1727,20 +1727,48 @@
     const STARRED_PROJECT_STORAGE_KEY = 'cuttleStarredProject';
 
     /** Per-chat prefs: project + sticky slash agent (e.g. /cursor). */
+    // Memoized session-prefs map. History paints read prefs ~3× per chat,
+    // and every read re-parsed the whole map from localStorage — O(chats²)
+    // JSON parsing per paint (seconds on phones at 660 chats). Invalidated
+    // on every same-frame write and on cross-frame `storage` events (shell
+    // and chat iframe share localStorage).
+    let sessionPrefsMapCache = null;
+    let sessionPrefsMapCached = false;
+    function invalidateSessionPrefsMapCache() {
+        sessionPrefsMapCache = null;
+        sessionPrefsMapCached = false;
+    }
+
     function readSessionPrefsMap() {
+        if (sessionPrefsMapCached) return sessionPrefsMapCache;
+        let out = {};
         try {
             const raw = localStorage.getItem(SESSION_PREFS_STORAGE_KEY);
             const o = raw ? JSON.parse(raw) : {};
-            return o && typeof o === 'object' && !Array.isArray(o) ? o : {};
+            out = o && typeof o === 'object' && !Array.isArray(o) ? o : {};
         } catch (_) {
-            return {};
+            out = {};
         }
+        sessionPrefsMapCache = out;
+        sessionPrefsMapCached = true;
+        return out;
     }
 
     function writeSessionPrefsMap(map) {
         try {
             localStorage.setItem(SESSION_PREFS_STORAGE_KEY, JSON.stringify(map || {}));
         } catch (_) {}
+        invalidateSessionPrefsMapCache();
+    }
+
+    // Guarded: node test harnesses eval page slices with a minimal window
+    // stub (no addEventListener); browsers always take this branch.
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+        window.addEventListener('storage', (event) => {
+            if (event && event.key === SESSION_PREFS_STORAGE_KEY) {
+                invalidateSessionPrefsMapCache();
+            }
+        });
     }
 
     function getSessionPrefs(sessionId) {
@@ -2595,7 +2623,10 @@
             ).trim().toLowerCase();
             const proj = (origin === 'discord_dm' || origin === 'discord_guild')
                 ? { key: '__discord__', id: null, name: 'Discord', path: '' }
-                : resolveSessionProjectInfo(entry.sessionId, entry.session);
+                // Prefer the entry's own row (server rows carry project
+                // fields): passing only entry.session (null for server
+                // entries) forced a full-list scan per chat — O(n²) paints.
+                : resolveSessionProjectInfo(entry.sessionId, historyGroupEntrySessionObj(entry));
             if (!groups.has(proj.key)) {
                 groups.set(proj.key, { project: proj, entries: [], latest: 0 });
             }
@@ -16280,6 +16311,42 @@
     // section at the bottom of the history panel (server is source of truth).
     let archivedChatSessions = [];
     let archivedSessionsLoaded = false;
+    // Active (main-list) ids for archive reconciliation — the Archived fetch
+    // may hit a backend that predates ?archived= (new JS ships from disk
+    // before Flask restarts), which answers with the full list. Populated on
+    // every full-list paint; see CuttleChatHistoryArchive.
+    let activeHistorySessionIds = new Set();
+
+    function historyArchiveModule() {
+        return window.CuttleChatHistoryArchive || null;
+    }
+
+    // Every id form the page uses for one session: raw, frame-canonical,
+    // and auth-db numeric — so the active set matches archived marks.
+    function archiveIdExtras(id) {
+        const out = [];
+        if (id != null && id !== '') out.push(String(id));
+        try {
+            const canon = canonicalizeChatSessionId(id);
+            if (canon != null && canon !== '') out.push(String(canon));
+        } catch (_) {}
+        const authSid = toAuthDbSessionId(id);
+        if (authSid != null && authSid !== '') out.push(String(authSid));
+        return out;
+    }
+
+    function rememberActiveHistorySessions(serverSessions) {
+        const mod = historyArchiveModule();
+        if (!mod) {
+            activeHistorySessionIds = new Set();
+            return;
+        }
+        activeHistorySessionIds = mod.activeSessionIdSet(serverSessions || [], archiveIdExtras);
+        // A chat back in the main list is not archived (unarchived on another
+        // device, or mis-marked by an unfiltered response) — drop stale marks.
+        mod.staleArchivedMarks(Array.from(archivedChatSessionIds), activeHistorySessionIds)
+            .forEach((marked) => unmarkChatSessionArchived(marked));
+    }
 
     function isArchiveSectionCollapsed() {
         try {
@@ -16318,10 +16385,18 @@
             const response = await fetch('/api/auth/sessions?archived=only', { credentials: 'include' });
             const data = await response.json().catch(() => ({}));
             if (data && data.success) {
-                archivedChatSessions = data.sessions || [];
+                const mod = historyArchiveModule();
+                const listed = Array.isArray(data.sessions) ? data.sessions : [];
+                // Drop chats the main list already shows: a backend without
+                // ?archived= support answers with the full list, which must
+                // not duplicate the panel or mark everything archived.
+                archivedChatSessions = mod
+                    ? mod.filterArchivedSessions(listed, activeHistorySessionIds, archiveIdExtras)
+                    : [];
                 archivedSessionsLoaded = true;
                 archivedChatSessionIds.clear();
                 archivedChatSessions.forEach((s) => markChatSessionArchived(s && s.id));
+                if (!mod) console.warn('[Cuttle Chat] Archive module missing; skipping Archived section.');
             }
         } catch (error) {
             console.error('Error loading archived sessions:', error);
@@ -16335,10 +16410,17 @@
         const prev = document.getElementById('historyArchivedSection');
         if (prev) prev.remove();
         if (!archivedSessionsLoaded || !archivedChatSessions.length) return;
+        const mod = historyArchiveModule();
+        // Defensive re-filter: the main list may have refreshed after the
+        // Archived fetch resolved (archive toggle, delete, second device).
+        const visible = mod
+            ? mod.filterArchivedSessions(archivedChatSessions, activeHistorySessionIds, archiveIdExtras)
+            : archivedChatSessions;
+        if (!visible.length) return;
         const collapsed = isArchiveSectionCollapsed();
-        const count = archivedChatSessions.length;
+        const count = visible.length;
         let itemsHtml = '';
-        archivedChatSessions.forEach((s) => {
+        visible.forEach((s) => {
             itemsHtml += createAuthHistoryItemHTML(s, {});
         });
         const section = document.createElement('div');
@@ -16447,6 +16529,9 @@
                 return;
             }
             applyGeneratingFlagsFromSessions(serverSessions);
+            // Record the main-list ids before the Archived fetch resolves so
+            // an unfiltered (?archived=-unaware) response can't duplicate it.
+            rememberActiveHistorySessions(serverSessions);
             // First paint kicks off the Archived section fetch (cached after).
             if (!archivedSessionsLoaded) refreshArchivedSessions();
             const entries = serverSessions.map((s) => ({

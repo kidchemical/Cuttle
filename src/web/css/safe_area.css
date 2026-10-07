@@ -140,11 +140,6 @@ html.is-cuttle-mobile.keyboard-open .welcome-screen {
         calc(20px + var(--cuttle-safe-left));
 }
 
-html.is-cuttle-mobile.keyboard-open .welcome-logo,
-html.is-cuttle-mobile.keyboard-open .welcome-subtitle {
-    display: none;
-}
-
 /* Blade toolbar (left icon rail): the footer icons clear the nav bar via
    safe-bottom, but with the keyboard open the IME covers that bar — drop
    the inset so the rail doesn't float on a dead gap. Top inset stays: the
