@@ -26,6 +26,13 @@ def test_feed_and_full_detail(browser,static_server):
         page.set_viewport_size({'width':390,'height':800})
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
         page.screenshot(path='temp/agent-feed-phone.png',full_page=True)
+        page.locator('.feed-advanced summary').click()
+        expect(page.locator('[name=agent]')).to_be_visible()
+        assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+        page.locator('[name=agent]').fill('codex')
+        page.get_by_role('button',name='Apply filters').click()
+        expect(page.locator('#feedFilterCount')).to_have_text('· 1')
+        expect(page.locator('[name=agent]')).to_be_hidden()
         assert not errors
     finally:page.close()
 
