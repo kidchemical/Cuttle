@@ -52,13 +52,11 @@ PY="$REPO/.venv/bin/python3"
 [[ -x "$PY" ]] || PY="$REPO/.venv/bin/python"
 [[ -x "$PY" ]] || PY="python3"
 
-if [[ "$SKIP_PULL" -eq 0 ]]; then
-  # Shared preservation owner runs before any lifecycle effects.
-  UPDATE_HELPER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/client-update-checkout.py"
-  "$PY" "$UPDATE_HELPER" --repo "$REPO" >>"$LOG" 2>&1 || { log "ERROR checkout update refused; see $LOG"; exit 1; }
-else
-  log "SkipPull set"
-fi
+# SkipPull skips the completed merge, never the lifecycle safety recheck.
+UPDATE_HELPER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/client-update-checkout.py"
+CHECK_ARGS=()
+[[ "$SKIP_PULL" -eq 0 ]] || CHECK_ARGS+=(--check-only)
+"$PY" "$UPDATE_HELPER" --repo "$REPO" "${CHECK_ARGS[@]}" >>"$LOG" 2>&1 || { log "ERROR checkout update refused; see $LOG"; exit 1; }
 
 while read -r pid; do
   [[ -z "$pid" ]] && continue
@@ -67,12 +65,12 @@ while read -r pid; do
   if [[ "$cmd" == *cuttle_daemon.py* || "$cmd" == *web_chat_api* ]]; then
     continue
   fi
-  if [[ "$cmd" == *cuttle_client_daemon.py* || "$cmd" == *cuttle_device_worker.py* ]]; then
+  if [[ "$DO_DAEMON" -eq 1 && ( "$cmd" == *"$REPO/src/scripts/cuttle_client_daemon.py"* || "$cmd" == *"$REPO/src/scripts/cuttle_device_worker.py"* ) ]]; then
     log "stopping pid=$pid"
     kill "$pid" 2>/dev/null || true
     continue
   fi
-  if [[ "$cmd" == *"$REPO/electron"* || "$cmd" == *cuttle-desktop* ]]; then
+  if [[ "$DO_ELECTRON" -eq 1 && "$cmd" == *"$REPO/electron/"* ]]; then
     log "stopping pid=$pid"
     kill "$pid" 2>/dev/null || true
   fi
@@ -83,7 +81,7 @@ sleep 3
 
 pkg="$REPO/electron/package.json"
 if [[ -f "$pkg" ]]; then
-  ver="$(python3 -c "import json; print(json.load(open('$pkg')).get('version',''))" 2>/dev/null || true)"
+  ver="$("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1])).get("version",""))' "$pkg" 2>/dev/null || true)"
   if [[ -n "$ver" ]]; then
     export CUTTLE_PACKAGE_VERSION="$ver"
     log "CUTTLE_PACKAGE_VERSION=$CUTTLE_PACKAGE_VERSION"

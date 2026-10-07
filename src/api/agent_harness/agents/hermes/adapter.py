@@ -1,8 +1,7 @@
 """Hermes Agent harness adapter — wraps ``scripts.utilities.hermes_cli_tool``.
 
-Reads model/provider from Hermes ``config.yaml`` when not overridden. Local
-backends (custom / llama.cpp / Ollama / LM Studio) may still go through the
-web layer's llama-server launch offer; cloud providers (OpenRouter, …) skip it.
+Reads model/provider from Hermes ``config.yaml`` when not overridden.
+Hermes owns provider selection; users manage any local model server.
 
 Per-chat ``/hermes model`` + ``/hermes effort`` pins mirror Muse Code's badge-
 gated palette controls.

@@ -10,6 +10,9 @@ env var:
   - "llamacpp"           : llama.cpp `llama-server --jinja`. OpenAI API at
                             e.g. http://127.0.0.1:8081/v1
 
+Cuttle only connects to these servers; it never starts or stops them. Run
+llama-server / Ollama yourself (or as a service) and point the env vars at it.
+
 Everything is read from the environment at call time, so editing src/.env and
 reloading the daemon switches backends without code changes.
 
@@ -144,115 +147,6 @@ def local_reachable(timeout: float = 0.6) -> bool:
         import requests as _requests
         resp = _requests.get(f"{get_local_base_url()}/models", timeout=timeout)
         return resp.status_code == 200
-    except Exception:
-        return False
-
-
-# ---------------------------------------------------------------------------
-# On-demand llama-server lifecycle (llamacpp backend only)
-# ---------------------------------------------------------------------------
-
-def get_llamacpp_start_script() -> str:
-    """Path to the PowerShell script that starts llama-server (LLAMACPP_START_SCRIPT)."""
-    return (os.getenv('LLAMACPP_START_SCRIPT') or r'F:\llama.cpp\start-qwen-coder.ps1').strip()
-
-
-def _llamacpp_log_path():
-    from pathlib import Path
-    log_dir = Path.home() / 'cuttle_logs'
-    try:
-        log_dir.mkdir(parents=True, exist_ok=True)
-    except Exception:
-        pass
-    return log_dir / 'llamacpp.log'
-
-
-def launch_llamacpp_detached() -> tuple:
-    """Start llama-server fully detached from the calling process.
-
-    Uses a short-lived intermediary (PowerShell Start-Process) so the server is
-    NOT part of Flask's process tree — the daemon restarts Flask with
-    `taskkill /T`, and a directly-spawned child would be killed with it. The
-    server stays up until the user stops it (or asks Cuttle to).
-
-    Returns (ok, error_message). ok=True when the server is already reachable
-    or the launch was kicked off.
-    """
-    import subprocess
-    import sys
-    from datetime import datetime
-    from pathlib import Path
-
-    if not is_llamacpp():
-        return False, 'LOCAL_LLM_BACKEND is not llamacpp'
-    if local_reachable(timeout=1.5):
-        return True, ''
-
-    script_path = Path(get_llamacpp_start_script())
-    if not script_path.is_file():
-        return False, (
-            f'llama-server start script not found: {script_path} '
-            '(set LLAMACPP_START_SCRIPT in src/.env)'
-        )
-
-    log_path = _llamacpp_log_path()
-    try:
-        with open(log_path, 'a', encoding='utf-8') as logf:
-            logf.write(f"\n--- llama-server launched on demand {datetime.now().isoformat()} ---\n")
-    except Exception:
-        pass
-
-    try:
-        if sys.platform == 'win32':
-            # Inner PS runs the start script appending all output to the log.
-            # Start-Process detaches it: once this outer PS exits, the server
-            # is orphaned from Flask's tree and survives Flask restarts.
-            inner = f"& ''{script_path}'' 2>&1 | Out-File -FilePath ''{log_path}'' -Append -Encoding utf8"
-            outer = (
-                "Start-Process powershell -WindowStyle Hidden "
-                f"-WorkingDirectory '{script_path.parent}' "
-                "-ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-Command',"
-                f"'{inner}'"
-            )
-            subprocess.run(
-                ['powershell', '-NoProfile', '-Command', outer],
-                capture_output=True,
-                timeout=30,
-            )
-        else:
-            with open(log_path, 'a', encoding='utf-8') as logf:
-                subprocess.Popen(
-                    ['bash', str(script_path)],
-                    cwd=str(script_path.parent),
-                    stdout=logf,
-                    stderr=subprocess.STDOUT,
-                    start_new_session=True,
-                )
-    except Exception as e:
-        return False, f'Failed to launch llama-server: {e}'
-    return True, ''
-
-
-def stop_llamacpp() -> bool:
-    """Force-stop any running llama-server processes. Returns True if the stop command ran."""
-    import subprocess
-    import sys
-    if sys.platform != 'win32':
-        try:
-            subprocess.run(['pkill', '-f', 'llama-server'], capture_output=True, timeout=15)
-            return True
-        except Exception:
-            return False
-    try:
-        subprocess.run(
-            [
-                'powershell', '-NoProfile', '-Command',
-                "Get-Process -Name 'llama-server' -ErrorAction SilentlyContinue | Stop-Process -Force",
-            ],
-            capture_output=True,
-            timeout=15,
-        )
-        return True
     except Exception:
         return False
 

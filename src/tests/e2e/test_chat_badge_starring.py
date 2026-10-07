@@ -1,4 +1,4 @@
-"""
+r"""
 E2E test for chat badge + starring + Muse model persistence.
 
 Covers:
@@ -136,6 +136,11 @@ def _chip_html(page):
 
 
 def test_badge_starring_and_muse_contributor_flow(page, chat_base_url):
+    # New-chat defaults are owned by the server, even with a static fixture.
+    page.route("**/api/settings/starred-slash", lambda route: route.fulfill(
+        status=200, content_type="application/json",
+        body='{"success": true, "prefixes": ["/cursor "]}',
+    ))
     # Navigate directly to chat_page for deterministic DOM (not via app_shell iframe)
     # Use chat_base_url which may be Flask or static server
     # If Flask, chat_page is at /chat_page.html ; static server also serves same
@@ -144,30 +149,30 @@ def test_badge_starring_and_muse_contributor_flow(page, chat_base_url):
     page.wait_for_selector("#chatInput, #welcomeChatInput", timeout=10000)
     page.wait_for_timeout(1000)
 
-    # Clean slate: clear storage, set starred to /cursor
-    page.evaluate("""() => {
+    # Seed on document load: unload saves the old composer draft before reload.
+    page.add_init_script("""(() => {
         localStorage.clear();
         sessionStorage.clear();
         // also clear indexed? not needed
         localStorage.setItem('cuttleStarredSlashCommands', JSON.stringify(['/cursor ']));
         localStorage.setItem('cuttleChatSessionPrefs', JSON.stringify({}));
         localStorage.setItem('chatSessions', JSON.stringify({}));
-    }""")
+    })()""")
     page.reload(wait_until="domcontentloaded")
     page.wait_for_selector("#welcomeChatInput", timeout=10000)
     page.wait_for_timeout(1500)
 
     # 1. New chat defaults to Cursor Auto badge (starred)
     html = _chip_html(page)
-    # welcome row should be visible and contain Cursor Agent
+    # welcome row should be visible and contain Cursor
     assert html["welcome"] is not None
-    assert "Cursor Agent" in html["welcome"], f"Expected Cursor badge on new chat, got {html}"
+    assert "Cursor" in html["welcome"], f"Expected Cursor badge on new chat, got {html}"
     # It should show · Auto or a model label
     assert "Cursor" in html["welcome"]
     print(f"[step1] new chat welcome chips: {html['welcome'][:500]}")
 
     # Ensure chat row also mirrored (both composers share chips)
-    assert "Cursor Agent" in html["chat"], f"Chat composer should mirror starred Cursor, got {html['chat'][:500]}"
+    assert "Cursor" in html["chat"], f"Chat composer should mirror starred Cursor, got {html['chat'][:500]}"
 
     # Mock /api/muse/models to include contributor before we switch to it
     # Intercept fetch by stubbing window.fetch for that endpoint (keep others)
@@ -235,11 +240,11 @@ def test_badge_starring_and_muse_contributor_flow(page, chat_base_url):
     assert removed, "Remove button not found"
     page.wait_for_timeout(700)
     html2 = _chip_html(page)
-    assert "Cursor Agent" not in (html2["welcome"] or ""), f"Cursor should be removed, got {html2}"
-    assert "Cursor Agent" not in (html2["chat"] or ""), f"Cursor should be removed from chat composer too"
+    assert "Cursor" not in (html2["welcome"] or ""), f"Cursor should be removed, got {html2}"
+    assert "Cursor" not in (html2["chat"] or ""), f"Cursor should be removed from chat composer too"
     print("[step2] after remove verified empty")
 
-    # 3. Add Muse via palette: type "/muse" and pick Muse Code
+    # 3. Add Muse via palette: type "/muse" and pick Muse
     # Determine which input is visible
     input_sel = "#welcomeChatInput"
     if not page.locator(input_sel).is_visible():
@@ -253,13 +258,13 @@ def test_badge_starring_and_muse_contributor_flow(page, chat_base_url):
     menu = page.locator(menu_sel)
     menu.wait_for(state="visible", timeout=5000)
     menu_text = menu.inner_text()
-    assert "Muse" in menu_text, f"Palette should show Muse Code, got {menu_text[:500]}"
-    # Select first Muse entry - press Enter (first item is Muse Code when filter is "muse")
+    assert "Muse" in menu_text, f"Palette should show Muse, got {menu_text[:500]}"
+    # Select first Muse entry - press Enter (first item is Muse when filter is "muse")
     page.keyboard.press("Enter")
     page.wait_for_timeout(700)
     html3 = _chip_html(page)
-    assert "Muse Code" in html3["chat"], f"Expected Muse Code badge after palette pick, got {html3['chat'][:800]}"
-    assert "Muse Code" in html3["welcome"], "Muse should mirror to both composers"
+    assert "Muse" in html3["chat"], f"Expected Muse badge after palette pick, got {html3['chat'][:800]}"
+    assert "Muse" in html3["welcome"], "Muse should mirror to both composers"
     print(f"[step3] after /muse add: {html3['chat'][:600]}")
 
     # 4. Switch to Muse Spark Contributor: type "/muse spark" and pick contributor
@@ -298,7 +303,7 @@ def test_badge_starring_and_muse_contributor_flow(page, chat_base_url):
     print(f"[step4] after contributor pick chat HTML: {html4['chat'][:800]}")
     # Should show contributor label
     assert "Contributor" in html4["chat"], f"Expected Contributor in badge, got {html4['chat'][:800]}"
-    assert "Muse Code" in html4["chat"]
+    assert "Muse" in html4["chat"]
 
     # Verify via mocked global map that POST would have persisted (internal supplement not on window)
     persisted = page.evaluate("""() => {
@@ -369,7 +374,7 @@ def test_badge_starring_and_muse_contributor_flow(page, chat_base_url):
         localStorage.setItem('lastChatSessionId', origId);
         // Ensure prefs sticky correctly set so reload doesn't need inference
         const prefs = JSON.parse(localStorage.getItem('cuttleChatSessionPrefs')||'{}');
-        prefs[origId] = { stickyChips: [{prefix:'/muse ', label:'Muse Code', category:'command'}], projectId: null, projectPath: '' };
+        prefs[origId] = { stickyChips: [{prefix:'/muse ', label:'Muse', category:'command'}], projectId: null, projectPath: '' };
         localStorage.setItem('cuttleChatSessionPrefs', JSON.stringify(prefs));
         window._musePrefMap = window._musePrefMap || {};
         window._musePrefMap[origId] = 'muse-spark-1.2-contributor';
@@ -410,8 +415,8 @@ def test_badge_starring_and_muse_contributor_flow(page, chat_base_url):
         window._musePrefMap['orig_contrib'] = 'muse-spark-1.2-contributor';
         localStorage.setItem('chatSessions', JSON.stringify(sessions));
         const prefs = JSON.parse(localStorage.getItem('cuttleChatSessionPrefs')||'{}');
-        prefs['other_cursor'] = { stickyChips: [{prefix:'/cursor ', label:'Cursor Agent', category:'command'}] };
-        prefs['other_plain_spark'] = { stickyChips: [{prefix:'/muse ', label:'Muse Code', category:'command'}] };
+        prefs['other_cursor'] = { stickyChips: [{prefix:'/cursor ', label:'Cursor', category:'command'}] };
+        prefs['other_plain_spark'] = { stickyChips: [{prefix:'/muse ', label:'Muse', category:'command'}] };
         localStorage.setItem('cuttleChatSessionPrefs', JSON.stringify(prefs));
     }""")
 
@@ -445,7 +450,7 @@ def test_badge_starring_and_muse_contributor_flow(page, chat_base_url):
     page.wait_for_timeout(1500)
     html_back = _chip_html(page)
     print(f"[switch back] chips: {html_back['chat'][:800]}")
-    assert "Muse Code" in html_back["chat"], f"Should still be Muse after round-trip, got {html_back['chat'][:600]}"
+    assert "Muse" in html_back["chat"], f"Should still be Muse after round-trip, got {html_back['chat'][:600]}"
     assert "Contributor" in html_back["chat"], f"CRITICAL: Contributor badge lost after switch! Got {html_back['chat'][:600]}"
 
     # Final FPS sanity

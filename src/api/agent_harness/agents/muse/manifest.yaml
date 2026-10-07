@@ -30,7 +30,7 @@ resume: true
 capabilities_inject: once_per_resume
 env_profile: native
 activity: jsonl
-hint: Run Meta Muse Code CLI (`muse exec`) with per-chat resume (Auto/Cloud)
+hint: Run Meta Muse Code CLI (`muse exec`) with per-chat resume
 auth_command: muse login
 missing_cli_hint: >-
   Install native Muse Code for this host and ensure `muse` is on PATH,

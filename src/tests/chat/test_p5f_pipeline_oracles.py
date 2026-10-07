@@ -4,7 +4,7 @@ The pipeline is the no-LLM fallback lane, not a graph engine. It covers:
 
 - sync route pipeline lane (claimed ``run_pipeline_sync_turn``) whose
   executor is ``process_message_with_bot``;
-- ``process_message_with_bot`` itself (compat entry: local-mode prompts,
+- ``process_message_with_bot`` itself (compat entry:
   ``/api/sessions/send``): unclaimed ``submit_agent_turn`` for
   harness/plain-router arms, naked no-LLM fallback otherwise;
 - stream route pipeline lane (``_generate_chat_stream`` lifecycle).

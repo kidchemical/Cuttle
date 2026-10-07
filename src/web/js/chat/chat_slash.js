@@ -20,56 +20,50 @@ const SLASH_COMMANDS = [
     {
         prefix: '/claude ',
         label: 'Claude Code',
-        hint: 'Run Claude Code on the project (Auto/Cloud)',
+        hint: 'Run Claude Code on the project',
         category: 'command',
-        requiresCloud: true,
         stickySession: true,
     },
     {
         prefix: '/hermes ',
         label: 'Hermes Agent',
-        hint: 'Run Hermes Agent on the local llama.cpp model (Qwen3-Coder)',
+        hint: 'Run Hermes Agent using its configured provider',
         category: 'hermes',
         stickySession: true,
     },
     {
         prefix: '/cursor ',
         label: 'Cursor Agent',
-        hint: 'Run Cursor `agent` CLI one-shot (Auto/Cloud)',
+        hint: 'Run Cursor `agent` CLI one-shot',
         category: 'cursor',
-        requiresCloud: true,
         stickySession: true,
     },
     {
         prefix: '/codex ',
         label: 'Codex',
-        hint: 'Run OpenAI Codex CLI (`codex exec`) with per-chat resume (Auto/Cloud)',
+        hint: 'Run OpenAI Codex CLI (`codex exec`) with per-chat resume',
         category: 'codex',
-        requiresCloud: true,
         stickySession: true,
     },
     {
         prefix: '/muse ',
         label: 'Muse Code',
-        hint: 'Run Meta Muse Code CLI (`muse exec`) with per-chat resume (Auto/Cloud)',
+        hint: 'Run Meta Muse Code CLI (`muse exec`) with per-chat resume',
         category: 'muse',
-        requiresCloud: true,
         stickySession: true,
     },
     {
         prefix: '/opencode ',
         label: 'OpenCode',
-        hint: 'Run OpenCode CLI (`opencode run`) with per-chat resume (Auto/Cloud)',
+        hint: 'Run OpenCode CLI (`opencode run`) with per-chat resume',
         category: 'opencode',
-        requiresCloud: true,
         stickySession: true,
     },
     {
         prefix: '/antigravity ',
         label: 'Antigravity CLI',
-        hint: 'Run Google Antigravity CLI (`agy`) with per-chat resume (Auto/Cloud)',
+        hint: 'Run Google Antigravity CLI (`agy`) with per-chat resume',
         category: 'command',
-        requiresCloud: true,
         stickySession: true,
     },
     {
@@ -77,7 +71,6 @@ const SLASH_COMMANDS = [
         label: 'DeepSeek Harness',
         hint: 'Run DeepSeek Harness CLI (`dsh --profile headless`; Flash by default)',
         category: 'command',
-        requiresCloud: true,
         stickySession: true,
     },
     {
@@ -85,7 +78,6 @@ const SLASH_COMMANDS = [
         label: 'Coordinator',
         hint: 'Supervised mode: status, mode, profile, worker, review-loops',
         category: 'command',
-        requiresCloud: true,
         controlCommand: true,
         keywords: 'coordinator supervised diet-frontier mode profile worker',
     },
@@ -94,7 +86,6 @@ const SLASH_COMMANDS = [
         label: 'Coordinate task',
         hint: 'Run supervised task (Codex Sol low → Cursor Auto) or status/cancel',
         category: 'command',
-        requiresCloud: true,
         controlCommand: true,
         keywords: 'coordinate supervised task followup cancel status',
     },
@@ -276,7 +267,6 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
                 ...cmd,
                 label: a.label || cmd.label,
                 hint,
-                requiresCloud: a.requires_cloud != null ? !!a.requires_cloud : cmd.requiresCloud,
                 stickySession: a.stickySession != null ? !!a.stickySession : cmd.stickySession,
                 harness: true,
                 available,
@@ -296,7 +286,6 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
                 label: a.label || a.id || prefix.trim(),
                 hint: (!available && install) ? install : (a.hint || install || 'Harness agent'),
                 category: 'command',
-                requiresCloud: a.requires_cloud !== false,
                 stickySession: a.sticky !== false && a.stickySession !== false,
                 harness: true,
                 available,
@@ -307,12 +296,9 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
         return out;
     }
 
-    /** Registry for the current inference mode (local hides cloud-only). */
-    function slashCommandsForCurrentMode(mode, harnessAgents) {
-        const base = mode !== 'local'
-            ? SLASH_COMMANDS.slice()
-            : SLASH_COMMANDS.filter((c) => !c.requiresCloud);
-        return mergeHarnessAgentsIntoSlashCommands(base, harnessAgents);
+    /** Built-in registry plus installed harness agents. */
+    function availableSlashCommands(harnessAgents) {
+        return mergeHarnessAgentsIntoSlashCommands(SLASH_COMMANDS.slice(), harnessAgents);
     }
 
     const TITLE_SLASH_SKIP = { help: 1, project: 1, cd: 1 };
@@ -661,14 +647,14 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
         return (prefixes || []).includes(prefix);
     }
 
-    /** Starred sticky chips for welcome/new chats (local mode drops cloud). */
-    function starredStickyChips(prefixes, mode, commands) {
+    /** Starred sticky chips for welcome/new chats. */
+    function starredStickyChips(prefixes, commands) {
         const list = prefixes || [];
         if (!list.length) return [];
         return list
             .map((prefix) => (commands || SLASH_COMMANDS)
                 .find((c) => c.prefix === prefix && c.stickySession))
-            .filter((c) => c && !(mode === 'local' && c.requiresCloud))
+            .filter(Boolean)
             .map((c) => ({
                 prefix: c.prefix,
                 label: c.label,
@@ -1096,7 +1082,7 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
         TITLE_SLASH_SKIP,
         harnessCostSlashCommand,
         mergeHarnessAgentsIntoSlashCommands,
-        slashCommandsForCurrentMode,
+        availableSlashCommands,
         parseStoredSlashCommandHead,
         parseStoredSlashCommandMessage,
         parseProjectOrGenericSlashHead,

@@ -43,14 +43,13 @@ def test_suggest_session_title_uses_llm_without_saving(tmp_path: Path, monkeypat
     db, _owner, sid, _foreign, _token = _seed_chat(tmp_path)
     monkeypatch.setattr("api.auth_db.get_auth_db", lambda: db)
 
-    def fake_generate(messages, inference_mode, current_title="", avoid_titles=None, temperature=None):
+    def fake_generate(messages, current_title="", avoid_titles=None, temperature=None):
         assert messages
-        assert inference_mode == "cloud"
         return "✨ Rename chat titles"
 
     monkeypatch.setattr(chat_titler, "_generate_title", fake_generate)
     before = db.get_session_naming_info(sid)["session_name"]
-    out = chat_titler.suggest_session_title(sid, inference_mode="cloud")
+    out = chat_titler.suggest_session_title(sid)
     assert out["source"] == "llm"
     assert out["title"] == "✨ Rename chat titles"
     assert "/cursor" not in out["title"]
@@ -67,14 +66,13 @@ def test_suggest_session_title_avoids_previous(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("api.auth_db.get_auth_db", lambda: db)
     seen = []
 
-    def fake_generate(messages, inference_mode, current_title="", avoid_titles=None, temperature=None):
+    def fake_generate(messages, current_title="", avoid_titles=None, temperature=None):
         seen.append(list(avoid_titles or []))
         return "🧪 Fresh title"
 
     monkeypatch.setattr(chat_titler, "_generate_title", fake_generate)
     out = chat_titler.suggest_session_title(
         sid,
-        inference_mode="cloud",
         avoid_titles=["💬 general"],
     )
     assert out["title"] == "🧪 Fresh title"
@@ -133,7 +131,7 @@ def test_suggest_falls_back_to_recent_topic(tmp_path: Path, monkeypatch):
     db.add_message(sid, "user", "/muse Why is double-checking slow? RCA it")
     monkeypatch.setattr("api.auth_db.get_auth_db", lambda: db)
     monkeypatch.setattr(chat_titler, "_generate_title", lambda *_a, **_k: None)
-    out = chat_titler.suggest_session_title(sid, inference_mode="cloud")
+    out = chat_titler.suggest_session_title(sid)
     assert out["source"] == "fallback"
     assert "double-checking" in out["title"].lower()
 
@@ -156,7 +154,7 @@ def test_patch_and_suggest_title_api(tmp_path: Path, monkeypatch):
 
     suggest = client.post(
         f"/api/auth/sessions/{sid}/suggest-title",
-        json={"inference_mode": "cloud"},
+        json={},
     )
     assert suggest.status_code == 200
     body = suggest.get_json()

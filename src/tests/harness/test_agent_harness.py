@@ -191,16 +191,6 @@ def test_hermes_adapter_missing_cli(monkeypatch):
     assert ad.available() is False
 
 
-def test_hermes_stays_usable_in_local_mode():
-    from api.inference_mode import is_cloud_cli_slash_command, cloud_cli_slash_blocked_message
-
-    assert is_cloud_cli_slash_command("/hermes list files") is False
-    assert is_cloud_cli_slash_command("/cursor hello") is True
-    blocked = cloud_cli_slash_blocked_message("local")
-    assert blocked is not None
-    assert "/hermes" in blocked
-
-
 def test_deepseek_is_cloud_and_skips_resume():
     from api.agent_router.registry import normalize_agent_id
 
@@ -223,15 +213,6 @@ def test_deepseek_adapter_missing_cli(monkeypatch):
     monkeypatch.setattr(ds, "dsh_argv", lambda: None)
     ad = ds.build_adapter()
     assert ad.available() is False
-
-
-def test_deepseek_blocked_in_local_mode():
-    from api.inference_mode import is_cloud_cli_slash_command, cloud_cli_slash_blocked_message
-
-    assert is_cloud_cli_slash_command("/deepseek ping") is True
-    blocked = cloud_cli_slash_blocked_message("local")
-    assert blocked is not None
-    assert "/deepseek" in blocked
 
 
 def test_muse_env_profile_is_native():

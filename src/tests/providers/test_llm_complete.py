@@ -23,7 +23,7 @@ def test_complete_strips_think_blocks(monkeypatch):
     assert complete(user="x", providers=("local",)) == "Title here"
 
 
-def test_complete_local_mode_skips_cloud(monkeypatch):
+def test_complete_explicit_local_provider_skips_cloud(monkeypatch):
     monkeypatch.setattr(
         "api.llm_complete._via_openai",
         lambda *a, **k: "cloud",
@@ -32,7 +32,7 @@ def test_complete_local_mode_skips_cloud(monkeypatch):
         "api.llm_complete._via_local",
         lambda *a, **k: "on device",
     )
-    assert complete(user="x", inference_mode="local") == "on device"
+    assert complete(user="x", providers=("local",)) == "on device"
 
 
 def test_provider_failure_is_visible_without_sensitive_body(monkeypatch, caplog):

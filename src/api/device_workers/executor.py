@@ -529,7 +529,7 @@ def _shell_recipe(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _cuttle_self_update(params: Dict[str, Any]) -> Dict[str, Any]:
-    """Stash+pull synchronously (visible failure), then detach kill/relaunch only."""
+    """Preserve and fast-forward synchronously, then schedule lifecycle."""
     repo = _repo_root(params)
     if not (repo / ".git").is_dir():
         raise JobExecError(f"not a git repo: {repo}")
@@ -579,9 +579,9 @@ def _cuttle_self_update(params: Dict[str, Any]) -> Dict[str, Any]:
     # Prefer Host-embedded script_text so dirty/old Clients get the latest updater.
     script_path = _materialize_updater_script(params, repo, log_path)
 
-    pull = _git_stash_and_pull(repo, log_path)
+    pull = _git_update_checkout(repo, log_path, script_path.parent / "client-update-checkout.py")
     if not pull.get("ok"):
-        raise JobExecError(str(pull.get("error") or "git pull failed"))
+        raise JobExecError(str(pull.get("error") or "checkout update refused"))
 
     spawn_kind = "posix-detached"
     try:
@@ -622,10 +622,10 @@ def _cuttle_self_update(params: Dict[str, Any]) -> Dict[str, Any]:
                 ps_args.append("-RestartDaemon")
             else:
                 ps_args.append("-NoDaemon")
-            arg_list = ", ".join("'{0}'".format(a.replace("'", "''")) for a in ps_args)
+            arg_list = subprocess.list2cmdline(ps_args).replace("'", "''")
             cmd = (
                 "Start-Process -FilePath powershell.exe -WindowStyle Hidden "
-                f"-ArgumentList @({arg_list})"
+                f"-ArgumentList '{arg_list}'"
             )
             subprocess.Popen(
                 ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmd],
@@ -678,7 +678,7 @@ def _cuttle_self_update(params: Dict[str, Any]) -> Dict[str, Any]:
         "stashed": bool(pull.get("stashed")),
         "head": pull.get("head"),
         "pull_log": (pull.get("log") or "")[-1500:],
-        "note": "Stash+pull succeeded; detached updater will stop Electron and relaunch.",
+        "note": "Preservation checks and fast-forward succeeded; detached updater rechecks before relaunch.",
     }
 
 
@@ -695,20 +695,18 @@ def _materialize_updater_script(
                 text = fallback
     else:
         text = str(params.get("script_text") or params.get("updater_script") or "")
-    suffix = ".sh" if posix else ".ps1"
     name = "client-self-update.sh" if posix else "client-self-update.ps1"
     if text.strip():
-        dest_dir = log_path.parent if log_path else Path(tempfile.gettempdir())
-        dest = dest_dir / f"client-self-update-embedded-{int(time.time())}{suffix}"
+        dest_dir = log_path.parent
         try:
-            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest_dir = Path(tempfile.mkdtemp(prefix="client-update-", dir=str(dest_dir)))
+            dest = dest_dir / name
             dest.write_text(text, encoding="utf-8")
-            repo_script = repo / ".cuttle_global" / "scripts" / name
-            try:
-                repo_script.parent.mkdir(parents=True, exist_ok=True)
-                repo_script.write_text(text, encoding="utf-8")
-            except OSError:
-                pass
+            helper_text = str(params.get("checkout_helper_text") or "")
+            if not helper_text.strip():
+                helper_text = (repo / ".cuttle_global" / "scripts" / "client-update-checkout.py").read_text(encoding="utf-8")
+            (dest_dir / "client-update-checkout.py").write_text(helper_text, encoding="utf-8")
             return dest
         except OSError as e:
             raise JobExecError(f"failed to write embedded updater: {e}") from e
@@ -718,76 +716,29 @@ def _materialize_updater_script(
     return script
 
 
-def _git_stash_and_pull(repo: Path, log_path: Path | None = None) -> Dict[str, Any]:
-    """Fetch + hard-reset to upstream + clean. Clients are deploy-only checkouts."""
-    lines: List[str] = []
-
-    def run(argv: List[str], timeout: int = 180) -> Tuple[int, str, str]:
-        try:
-            completed = subprocess.run(
-                argv,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                cwd=str(repo),
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-        except subprocess.TimeoutExpired:
-            return 124, "", f"timeout running {' '.join(argv)}"
-        except OSError as e:
-            return 1, "", str(e)
-        out = (completed.stdout or "").strip()
-        err = (completed.stderr or "").strip()
-        lines.append(f"$ {' '.join(argv)} → {completed.returncode}")
-        if out:
-            lines.append(out)
-        if err:
-            lines.append(err)
-        return completed.returncode, out, err
-
-    def flush_log() -> None:
-        if not log_path:
-            return
-        try:
+def _git_update_checkout(repo: Path, log_path: Path | None = None, helper_path: Path | None = None) -> Dict[str, Any]:
+    """Run the shared preservation contract; never stash, reset, or clean."""
+    helper = helper_path or repo / ".cuttle_global" / "scripts" / "client-update-checkout.py"
+    try:
+        result = subprocess.run(
+            [sys.executable, str(helper), "--repo", str(repo)],
+            capture_output=True, text=True, timeout=240, cwd=str(repo),
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        output = (result.stdout or "") + (result.stderr or "")
+        if log_path:
             log_path.parent.mkdir(parents=True, exist_ok=True)
-            with log_path.open("a", encoding="utf-8") as lf:
-                lf.write("\n---- sync reset-to-upstream ----\n")
-                lf.write("\n".join(lines) + "\n")
-        except OSError:
-            pass
-
-    rc, _, err = run(["git", "fetch", "--all", "--prune"])
-    if rc != 0:
-        flush_log()
-        return {"ok": False, "error": f"git fetch failed: {err or rc}", "log": "\n".join(lines)}
-
-    rc, branch, _ = run(["git", "rev-parse", "--abbrev-ref", "HEAD"])
-    branch = (branch or "master").strip() or "master"
-    rc_u, upstream, _ = run(["git", "rev-parse", "--abbrev-ref", "@{u}"])
-    upstream = (upstream or "").strip() if rc_u == 0 else ""
-    if not upstream:
-        upstream = f"origin/{branch}"
-
-    rc, _, err = run(["git", "reset", "--hard", upstream])
-    if rc != 0:
-        flush_log()
-        return {
-            "ok": False,
-            "error": f"git reset --hard {upstream} failed: {err or rc}",
-            "log": "\n".join(lines),
-        }
-
-    run(["git", "clean", "-fd"])
-    rc, head, _ = run(["git", "rev-parse", "--short", "HEAD"])
-    flush_log()
-    return {
-        "ok": True,
-        "stashed": False,
-        "reset": True,
-        "upstream": upstream,
-        "head": (head or "").strip(),
-        "log": "\n".join(lines),
-    }
+            with log_path.open("a", encoding="utf-8") as log:
+                log.write("\n---- preservation update ----\n" + output)
+        if result.returncode:
+            return {"ok": False, "error": output or "checkout update refused", "log": output}
+        head = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, check=True, timeout=30,
+        ).stdout.strip()
+        return {"ok": True, "stashed": False, "head": head, "log": output}
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"ok": False, "error": f"checkout update refused: {exc}"}
 
 def _as_path(path: str) -> Path:
     expanded = _expand(path)

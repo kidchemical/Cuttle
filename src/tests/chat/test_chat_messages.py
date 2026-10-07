@@ -284,7 +284,7 @@ const F = (content, opts) => A.formatUserMessageForDisplay(content, opts, deps);
 const out = {};
 out.plain = F('hello world', {});
 out.selected = F('Selected:  Foo <bar>', {});
-out.buttonKnown = F('[button:launch-local-llm-yes]', {});
+out.buttonKnown = F('[button:project-action-confirm]', {});
 out.buttonGeneric = F('[button:approve-this]', {});
 out.buttonXss = F('[button:<img src=x>]', {});
 out.formSel = F('[form-selection] Pick A (a), Pick B (b)', {});
@@ -325,7 +325,7 @@ def test_user_bubble_selection_button_form_branches():
         "<strong>Foo &lt;bar&gt;</strong></div>")
     assert res["buttonKnown"] == (
         '<div class="cuttle-button-selection">Selected: '
-        "<strong>Yes, launch llama.cpp</strong></div>")
+        "<strong>Confirm action</strong></div>")
     assert "approve this" in res["buttonGeneric"]
     # angle brackets in a button id are escaped, not emitted as markup
     assert "&lt;img src=x&gt;" in res["buttonXss"]
@@ -619,7 +619,7 @@ eval(span('    function normalizeMdHref(url) {', '    function isSafeMdHref(url)
 eval(span('    function isSafeMdHref(url) {', '    function mdLinkChipLabel(label, url) {'));
 eval(span('    function mdLinkChipLabel(label, url) {', '    function renderMdLinkChip(label, url) {'));
 eval(span('    function renderMdLinkChip(label, url) {', '    async function openFileInDefaultApp(href) {'));
-eval(span('    function safeJsonParse(s) {', '    function slashCommandsForCurrentMode() {'));
+eval(span('    function safeJsonParse(s) {', '    function availableSlashCommands() {'));
 eval(span('    function clamp(n, min, max) {', '    function safeJsonParse(s) {'));
 eval(span('    function mediaKindFromUrl(url) {', '    function mediaPosterUrl(src) {'));
 // Block/inline markdown + tables moved to chat_markdown.js (Slice 8E);

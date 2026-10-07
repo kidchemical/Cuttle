@@ -90,8 +90,7 @@ POST /api/chat (chat_endpoint)
     (api.chat_delivery) + action-form rewrite
 ```
 
-`process_message_with_bot` is the compat entry for local-mode prompts and
-`/api/sessions/send` — it submits **unclaimed** through the same
+`process_message_with_bot` is the compat entry for `/api/sessions/send` — it submits **unclaimed** through the same
 coordinator; route agent lanes submit **claimed** with precomputed
 selections. Owners never read the Flask request; `request_data` is captured
 once at ingress. Empty messages select `pipeline`; nonempty unmatched
@@ -129,7 +128,7 @@ routes each).
 | `/api/shell` | pane layout (root-owned; agent read via `python -m api.panes_cli`) |
 | `/api/chat` + steer/cancel/pending/live-status | `chat_turn*` / `chat_coordinator` / `chat_delivery` / `chat_run_registry` |
 | `/api/flask/restart*`, `/api/restart`, `/api/status`, `/api/health` | `flask_restart`; health is **not** the daemon liveness probe (`/api/status` is) |
-| `/api/local-llm`, `/api/ollama-models`, `/api/llm-request` | llama.cpp launch; Ollama fan-in serialized by the root `_ollama_request_lock` |
+| `/api/local-llm/status`, `/api/ollama-models` | user-managed local server status and model discovery for router/completion providers |
 | `/api/pairing` | user/DM pairing (not worker pairing) |
 | `/api/cursor-agent`, `/api/project-commands` | harness catalog / `api.project_commands` |
 | `/api/mobile`, `/api/supervised`, `/api/agent-context`, `/api/agent-defaults` | respective owners |

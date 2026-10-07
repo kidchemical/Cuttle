@@ -92,14 +92,17 @@ class TestEnhancePrompt:
         assert result["ok"] is True
         assert result["source"] == "anthropic"
 
-    def test_local_mode_skips_cloud(self, monkeypatch):
+    def test_configured_local_completion_provider(self, monkeypatch):
+        monkeypatch.setattr("api.completion_providers.resolve_order", lambda: ["local"])
+
         def fail(_prompt):
-            raise AssertionError("cloud provider must not run in local mode")
+            raise AssertionError("provider outside configured order must not run")
 
         monkeypatch.setattr(pe, "_via_openai", fail)
         monkeypatch.setattr(pe, "_via_anthropic", fail)
         monkeypatch.setattr(pe, "_via_local", lambda p: "Local rewrite")
-        result = pe.enhance_prompt("rough ask", inference_mode="local")
+        result = pe.enhance_prompt("rough ask")
+        assert result["ok"] is True
         assert result["prompt"] == "Local rewrite"
         assert result["source"] == "local"
 

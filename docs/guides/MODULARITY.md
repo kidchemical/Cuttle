@@ -60,7 +60,7 @@ A **socket** is that definition plus discovery (“what is plugged in?”) plus 
 
 | Socket | Today | Target |
 |---|---|---|
-| **Agent / tentacle** | Folder-per-CLI: `manifest.yaml` + `adapter.py`; catalog + shared kernel | Done for chat slash. Keep inference-mode lists on the catalog so they cannot bypass it. |
+| **Agent / tentacle** | Folder-per-CLI: `manifest.yaml` + `adapter.py`; catalog + shared kernel | Done for chat slash. All chat execution uses catalog adapters or the router. |
 | **Router** | `api` / `local` / `agent` modes; runners still late-bind Flask | A socket: task + available tentacles in; chosen tentacle + reason out. Plug = cheap LLM, local LLM, preference table, or another harness as brain. See [`.cuttle/docs/agent-router-todo.md`](../../.cuttle/docs/agent-router-todo.md). |
 | **LLM (API calling)** | `api.llm_complete.complete` for titles/commits/enhance/router brain; Jev separate; TTS/vision own clients | Same shape as agents: `llm_providers/<id>/`. Router brain and cheap jobs consume the helper. |
 | **Brain / context** | Context Compiler layers are a function with a fixed order | Layers become registered plugs (contract, rules, profile, inventory, handoff, later retrieval). Kernel stays the consumer. |
@@ -106,7 +106,6 @@ Agents are plugins. Almost nothing else is.
 
 | Gap | Why it hurts the goals |
 |---|---|
-| `inference_mode.py` hardcodes cloud slashes (partially catalog-aware) | Local-mode blocking drifts from the catalog. |
 | Router `_default_runners` imports `web_chat_api` | The router socket is not extractable. Goal 5 stalls. |
 | No Cuttle-owned event log | Query JSON sidecars, `chat_messages`, and compiler envelopes are three stories. You cannot replay what the model saw. Self-calibration and anti-dogfood (goal 3) stay blind. |
 | LLM providers are not a catalog | Gemini-as-API vs Gemini-as-CLI stays a Flask special case. |
@@ -135,14 +134,14 @@ Security in [`docs/ROADMAP.md`](../ROADMAP.md) still comes first when it conflic
 
 **Close the tentacle socket**
 
-1. Drive Local-mode cloud blocking from `manifest.requires_cloud`, not a hardcoded slash list.
+1. Chat selects catalog adapters explicitly or through Cuttle Router; provider configuration belongs to the selected CLI.
 2. Point router runners at `kernel.run_agent_web_command` directly — no Flask import.
 
 **Then copy the pattern**
 
 3. Keep this file as the seam map. Add sockets only when a second provider is real (do not invent empty registries).
 4. Cuttle-owned session events next to chat messages: `user/message`, `context/inject`, `handoff`, `assistant/message`, `tool/call`, `tool/result`, `router/decision`. Compiler layers become events, not a blob that vanishes into the CLI. Query reports become a projection. **Model-visible means logged.**
-5. `src/api/llm_providers/<id>/` for API calling. `/api/llm-request` and the router brain consume it.
+5. `src/api/llm_providers/<id>/` for API calling. Completion helpers and the router brain consume it.
 6. Register Context Compiler layers the same way. Knowledge retrieval is a new layer provider.
 
 **Router after the catalog is honest**

@@ -409,15 +409,21 @@ def ssh_approval_request():
 
 @workers_bp.route("/ssh-approval/<request_id>", methods=["GET"])
 def ssh_approval_get(request_id: str):
-    denied = _ui_or_worker_or_401()
-    if denied:
-        return denied
+    # Operators can inspect approvals; device credentials see only their own.
+    bound = None
+    denied = _ui_operator_or_401()
+    if denied is not None:
+        ok, bound, err = resolve_worker_identity(request)
+        if not ok:
+            return jsonify({"success": False, "error": err or "unauthorized"}), 401
     from api.device_workers import ssh_approval as sa
 
     sa.expire_stale()
     row = sa.get_request(request_id)
     if not row:
         return jsonify({"success": False, "error": "not found"}), 404
+    if bound and row.get("worker_id") != bound:
+        return jsonify({"success": False, "error": "approval belongs to another worker"}), 403
     return jsonify({"success": True, "request": row})
 
 

@@ -44,15 +44,12 @@ class TurnRequest:
     message: str = ""
     attachments: List[Any] = field(default_factory=list)
     session_id: Any = None
-    inference_mode: str = "auto"
     wants_stream: bool = True
     error: Optional[str] = None
 
 
 def normalize_chat_post(data: Optional[dict]) -> TurnRequest:
     """Shape the raw route body; ``error`` carries the 400 cases."""
-    from api.inference_mode import normalize_inference_mode
-
     if not data or 'message' not in data:
         return TurnRequest(error='No message provided')
     message = strip_invisible_leading(data.get('message') or '').strip()
@@ -63,7 +60,6 @@ def normalize_chat_post(data: Optional[dict]) -> TurnRequest:
         message=message,
         attachments=attachments,
         session_id=data.get('session_id'),
-        inference_mode=normalize_inference_mode(data.get('inference_mode')),
         wants_stream=parse_stream_flag(data.get('stream', True)),
     )
 
@@ -72,7 +68,7 @@ def normalize_chat_post(data: Optional[dict]) -> TurnRequest:
 class TurnSelection:
     """Agent-selection decision. ``kind`` selects the workflow arm."""
 
-    kind: str  # restart | harness | harness_empty_prompt | mode_blocked | router
+    kind: str  # restart | harness | harness_empty_prompt | router
     agent_id: Optional[str] = None
     prompt: Optional[str] = None
     block_message: Optional[str] = None
@@ -81,10 +77,8 @@ class TurnSelection:
 def classify_selection(
     message: str,
     *,
-    inference_mode: str,
     match_harness: Callable[[str], Optional[Tuple[str, str]]],
     is_restart: Callable[[str], bool],
-    cloud_blocked: Callable[[str, str], Optional[str]],
 ) -> TurnSelection:
     """Decide the turn arm. Native control wins over harness matches."""
     if is_restart(message):
@@ -92,9 +86,6 @@ def classify_selection(
     matched = match_harness(message)
     if matched:
         agent_id, prompt = matched
-        blocked = cloud_blocked(message, inference_mode)
-        if blocked:
-            return TurnSelection(kind='mode_blocked', agent_id=agent_id, block_message=blocked)
         if not prompt:
             return TurnSelection(
                 kind='harness_empty_prompt',
@@ -122,7 +113,6 @@ def build_turn_context(
     session_kind: Optional[str],
     routing_key: Optional[str],
     is_owner: bool,
-    inference_mode: str,
     recent_messages: List[Dict[str, Any]],
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """Assemble the ``user_context``/``session_data`` dict pair."""
@@ -137,7 +127,6 @@ def build_turn_context(
         'session_id': session_id,
         'recent_messages': recent_messages,
         'web_ui': True,
-        'inference_mode': inference_mode,
     }
     sk = session_kind if session_kind is not None else 'web_anon'
     rk = routing_key if routing_key is not None else f'web_anon_{session_id}'
@@ -148,6 +137,5 @@ def build_turn_context(
         'timestamp': _time.time(),
         'session_kind': sk,
         'routing_key': rk,
-        'inference_mode': inference_mode,
     }
     return user_context, session_data

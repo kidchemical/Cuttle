@@ -85,9 +85,8 @@ target, reapplied on launch:
 - The Host certificate exception likewise covers exactly the selected
   endpoint host + effective HTTPS port (an omitted port counts as 443).
 
-Residual limitations with custom ports: standalone scripts keep literal defaults: `diagnose_lan.bat`,
-`enable_lan_firewall.ps1` (add Windows firewall rules for custom ports
-manually), and the `src/scripts/utilities/* --base` helpers (pass `--base`
+Residual limitations with custom ports: standalone scripts keep literal defaults: `diagnose_lan.bat`
+and the `src/scripts/utilities/* --base` helpers (pass `--base`
 explicitly). Web-UI hint strings that name a port render the configured one
 from the server; other hardcoded examples in docs/samples may still show
 8080. OAuth provider redirect URIs are port-sensitive and must be updated in

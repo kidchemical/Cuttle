@@ -21,7 +21,7 @@ missing_cli_hint: >-
 install_hint: >-
   Install NousResearch hermes-agent (Python venv install), then ensure
   `hermes` is on PATH or set `HERMES_CLI_PATH`. For local backends, llama-server
-  must be up (Cuttle offers to launch it). Cloud backends use Hermes config.yaml.
+  must be started by the user. Provider selection uses Hermes config.yaml.
 executable_names:
   - hermes
 auto_install: false
