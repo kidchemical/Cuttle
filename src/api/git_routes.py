@@ -711,6 +711,9 @@ def prompt_enhance():
       project (optional) — project name for context
       context (optional) — [{role, content}] recent turns for grounding
     """
+    from api.experimental import is_enabled
+    if not is_enabled('composer_prompt_enhance'):
+        return jsonify({'success': False, 'disabled': True, 'error': 'Prompt enhancer is disabled'})
     try:
         from api.inference_mode import normalize_inference_mode
         from api.prompt_enhancer import MAX_PROMPT_CHARS, enhance_prompt
