@@ -49,12 +49,6 @@ temp_*
 *.tmp
 *.log
 logs/
-cuttle_notify_queue.jsonl
-cuttle_ui_toasts.jsonl
-cuttle_flask_restart_status.json
-cuttle_flask_restart_request.json
-cuttle_flask_restart_status.json.tmp
-cuttle_flask_restart_request.json.tmp
 
 # IDE files
 .vscode/

@@ -132,12 +132,16 @@ _ANSI = {
     "dim": "\033[90m",      # gray
 }
 
-# Notify queue for tray toasts (Flask appends, daemon reads)
-NOTIFY_QUEUE_PATH = PROJECT_ROOT / "cuttle_notify_queue.jsonl"
+# Notify queue for tray toasts (Flask appends, daemon reads) + graceful Flask
+# restart IPC — per-user instance state dir, never the checkout root (which
+# may be read-only once installed).
+from core.runtime_paths import flask_restart_request_path
+from core.runtime_paths import flask_restart_status_path
+from core.runtime_paths import notify_queue_path
 
-# Graceful Flask restart IPC (Flask writes request; daemon owns stop/start/health)
-FLASK_RESTART_REQUEST_PATH = PROJECT_ROOT / "cuttle_flask_restart_request.json"
-FLASK_RESTART_STATUS_PATH = PROJECT_ROOT / "cuttle_flask_restart_status.json"
+NOTIFY_QUEUE_PATH = notify_queue_path()
+FLASK_RESTART_REQUEST_PATH = flask_restart_request_path()
+FLASK_RESTART_STATUS_PATH = flask_restart_status_path()
 
 # Daemon/Flask logs (in user home for easy access, gitignore-safe)
 LOGS_DIR = Path.home() / "cuttle_logs"
