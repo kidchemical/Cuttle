@@ -128,6 +128,30 @@ def test_palette_matches_legacy_shell_palette():
         {"name": "Purple", "hex": "#c58af9"},
         {"name": "Cyan", "hex": "#78d9ec"},
         {"name": "Orange", "hex": "#fcad70"},
+        {"name": "Teal", "hex": "#469990"},
+        {"name": "Magenta", "hex": "#f032e6"},
+        {"name": "Lime", "hex": "#bfef45"},
+        {"name": "Brown", "hex": "#9a6324"},
+        {"name": "Navy", "hex": "#000075"},
+    ]
+
+
+@node_only
+def test_new_swatches_sanitize_and_persist():
+    """The 5 added presets must survive sanitize (old code dropped them)."""
+    import subprocess as sp, os
+    proc = sp.run(
+        ["node", "-e",
+         "const S=require(process.env.STATE_JS);"
+         "const hexes=['#469990','#f032e6','#bfef45','#9a6324','#000075'];"
+         "const out=hexes.map((h)=>S.sanitizeColor(h.toUpperCase()));"
+         "process.stdout.write(JSON.stringify(out))"],
+        capture_output=True, text=True, encoding="utf-8", timeout=30,
+        env={"PATH": os.environ["PATH"], "STATE_JS": str(STATE_JS)},
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout) == [
+        "#469990", "#f032e6", "#bfef45", "#9a6324", "#000075",
     ]
 
 
