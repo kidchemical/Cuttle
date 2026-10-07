@@ -270,6 +270,10 @@ def _vendor_cli_in_argv(args, fake_roots=()) -> str:
     roots = [Path(tempfile.gettempdir()), *fake_roots]
     if argv and any(Path(argv[0]).resolve().is_relative_to(Path(r).resolve()) for r in roots):
         return ""
+    # Inline `node --eval` runs no vendor script, even when the first `node` on
+    # PATH is the one bundled inside ~/.local/share/cursor-agent (agent shells).
+    if argv and Path(argv[0]).stem.lower() == "node" and any(a in ("-e", "--eval") for a in argv[1:]):
+        return ""
     for entry in argv[:2]:
         for part in Path(entry).parts:
             name = part.lower()
