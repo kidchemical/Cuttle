@@ -21,7 +21,7 @@ from api.chat_widgets import (
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CHAT_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_page.js"
-WIDGETS_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_widgets.js"
+WIDGETS_JS = REPO_ROOT / "src" / "web" / "js" / "gizmos/tasks_gizmo.js"
 
 node_only = pytest.mark.skipif(
     shutil.which("node") is None, reason="node not available"
@@ -494,8 +494,8 @@ const root = {
 };
 const blenderPayload = {
     success: true,
-    widgets_revision: 3,
-    widgets: [{
+    revision: 3,
+    gizmos: [{
         id: 'blender-todo',
         type: 'tasks',
         status: 'active',
@@ -508,7 +508,7 @@ const blenderPayload = {
 const fetchFn = (url) => {
     const empty = !/session_id=42\\b/.test(String(url));
     const data = empty
-        ? { success: true, widgets: [], widgets_revision: 0 }
+        ? { success: true, gizmos: [], revision: 0 }
         : blenderPayload;
     return Promise.resolve({ json: async () => data });
 };
@@ -580,8 +580,8 @@ const root = {
 };
 const blenderPayload = {
     success: true,
-    widgets_revision: 3,
-    widgets: [{
+    revision: 3,
+    gizmos: [{
         id: 'blender-todo',
         type: 'tasks',
         status: 'active',
@@ -591,7 +591,7 @@ const blenderPayload = {
         payload: { items: [{ id: '1', text: 'Rig', done: false, children: [] }] },
     }],
 };
-const emptyPayload = { success: true, widgets: [], widgets_revision: 0 };
+const emptyPayload = { success: true, gizmos: [], revision: 0 };
 let resolveSlow;
 const slow = new Promise((resolve) => { resolveSlow = resolve; });
 let phase = 'race';
@@ -875,8 +875,8 @@ const root = {
 };
 const payload = {
     success: true,
-    widgets_revision: 5,
-    widgets: [
+    revision: 5,
+    gizmos: [
         {
             id: 'sess-agent',
             type: 'tasks',

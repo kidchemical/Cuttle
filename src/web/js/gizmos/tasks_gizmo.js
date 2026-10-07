@@ -1,4 +1,4 @@
-/* Chat widgets strip (Tasks) — durable panels above the composer. */
+/* Tasks gizmos — scoped composer dock, controlled through the Gizmos API. */
 (function (global) {
     'use strict';
 
@@ -38,6 +38,8 @@
         var widgets = [];
         var revision = 0;
         var expanded = {};
+        var histories = {};
+        var historyOpen = {};
         var inFlight = false;
         var dirty = false;
         /** Bumps on every refresh start so stale in-flight responses are ignored. */
@@ -139,6 +141,7 @@
                     '<button type="button" class="chat-widget-scope" data-widget-scope data-tooltip="Pin to this chat or whole project">' +
                     scopeLabel +
                     '</button>' +
+                    '<button type="button" class="chat-widget-scope" data-widget-history data-tooltip="Attributed interaction history">History</button>' +
                     '<button type="button" class="chat-widget-archive" data-widget-archive data-tooltip="Archive">✕</button>' +
                     '</div>' +
                     '<div class="chat-widget-body" ' + (isOpen ? '' : 'hidden') + '>' +
@@ -146,18 +149,35 @@
                         ? '<p class="chat-widget-desc">' + esc(desc) + '</p>'
                         : '') +
                     '<ul class="chat-widget-task-list">' + renderTaskItems(items, shared) + '</ul>' +
+                    (historyOpen[w.id] ? renderHistory(histories[w.id]) : '') +
                     '</div></div>'
                 );
             }).join('');
+        }
+
+        function renderHistory(events) {
+            if (!events) return '<p class="chat-widget-desc">Loading history…</p>';
+            if (!events.length) return '<p class="chat-widget-desc">No recorded interactions yet.</p>';
+            return '<ol class="chat-widget-task-list" aria-label="Task interaction history">' + events.map(function (event) {
+                var actor = event.actor || {};
+                var sid = String(actor.session_id || '').replace(/^db_session_/, '');
+                var chat = /^\d+$/.test(sid) ? 'CH-' + sid.padStart(6, '0') : sid;
+                var parts = [event.operation, actor.agent_id || actor.source || 'Unknown source'];
+                if (chat) parts.push(chat);
+                if (actor.model) parts.push(actor.model);
+                if (actor.run_id) parts.push(actor.run_id);
+                if (event.created_at) parts.push(String(event.created_at));
+                return '<li class="chat-widget-desc">' + esc(parts.join(' · ')) + '</li>';
+            }).join('') + '</ol>';
         }
 
         function applyData(data, expectedGen, expectedKey) {
             if (expectedGen != null && expectedGen !== fetchGen) return;
             if (expectedKey != null && expectedKey !== contextKey()) return;
             if (!data || !data.success) return;
-            widgets = Array.isArray(data.widgets) ? data.widgets : [];
+            widgets = Array.isArray(data.gizmos) ? data.gizmos : [];
             // Empty chats report widgets_revision=0 — must not keep the prior chat's rev.
-            revision = Number(data.widgets_revision || 0);
+            revision = Number(data.revision || 0);
             lastFetchedKey = expectedKey != null ? expectedKey : contextKey();
             render();
         }
@@ -183,7 +203,7 @@
             inFlight = true;
             var myGen = ++fetchGen;
             var proj = encodeURIComponent(getProjectPath() || '');
-            var url = '/api/widgets?session_id=' + encodeURIComponent(sid) +
+            var url = '/api/gizmos/tasks?session_id=' + encodeURIComponent(sid) +
                 (proj ? ('&project_path=' + proj) : '');
             return fetchFn(url, { credentials: 'same-origin' })
                 .then(function (r) { return r.json(); })
@@ -206,17 +226,17 @@
         }
 
         function patchWidget(id, body) {
-            return fetchFn('/api/widgets/' + encodeURIComponent(id), {
+            return fetchFn('/api/gizmos/tasks/' + encodeURIComponent(id), {
                 method: 'PATCH',
                 credentials: 'same-origin',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body || {}),
+                body: JSON.stringify(Object.assign({session_id: sessionParam()}, body || {})),
             }).then(function (r) { return r.json(); }).then(function (data) {
-                if (data && data.widget) {
+                if (data && data.gizmo) {
                     var idx = widgets.findIndex(function (w) { return w.id === id; });
-                    if (idx >= 0) widgets[idx] = data.widget;
-                    else widgets.push(data.widget);
-                    revision = Math.max(revision, Number(data.widget.revision || 0));
+                    if (idx >= 0) widgets[idx] = data.gizmo;
+                    else widgets.push(data.gizmo);
+                    refresh();
                     render();
                 } else {
                     refresh();
@@ -226,19 +246,19 @@
 
         function patchItem(widgetId, itemId, done) {
             return fetchFn(
-                '/api/widgets/' + encodeURIComponent(widgetId) +
+                '/api/gizmos/tasks/' + encodeURIComponent(widgetId) +
                 '/items/' + encodeURIComponent(itemId),
                 {
                     method: 'PATCH',
                     credentials: 'same-origin',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ done: !!done }),
+                    body: JSON.stringify({ done: !!done, session_id: sessionParam() }),
                 }
             ).then(function (r) { return r.json(); }).then(function (data) {
-                if (data && data.widget) {
+                if (data && data.gizmo) {
                     var idx = widgets.findIndex(function (w) { return w.id === widgetId; });
-                    if (idx >= 0) widgets[idx] = data.widget;
-                    revision = Math.max(revision, Number(data.widget.revision || 0));
+                    if (idx >= 0) widgets[idx] = data.gizmo;
+                    refresh();
                     render();
                 } else {
                     refresh();
@@ -259,6 +279,25 @@
                 if (t.closest('[data-widget-toggle]')) {
                     expanded[wid] = !expanded[wid];
                     render();
+                    return;
+                }
+                if (t.closest('[data-widget-history]')) {
+                    historyOpen[wid] = !historyOpen[wid];
+                    expanded[wid] = true;
+                    if (!historyOpen[wid]) { render(); return; }
+                    histories[wid] = null;
+                    var expectedKey = contextKey();
+                    render();
+                    fetchFn('/api/gizmos/tasks/' + encodeURIComponent(wid) + '/history?limit=20&session_id=' + encodeURIComponent(sessionParam()),
+                        { credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (data) {
+                        if (expectedKey !== contextKey()) return;
+                        histories[wid] = data.success && Array.isArray(data.events) ? data.events : [];
+                        render();
+                    }).catch(function () {
+                        if (expectedKey !== contextKey()) return;
+                        histories[wid] = [];
+                        render();
+                    });
                     return;
                 }
                 if (t.closest('[data-widget-info]')) {
@@ -330,5 +369,6 @@
         };
     }
 
-    global.CuttleChatWidgets = { create: create };
+    global.CuttleTaskGizmos = { create: create };
+    global.CuttleChatWidgets = global.CuttleTaskGizmos; // legacy embed alias
 })(typeof window !== 'undefined' ? window : this);

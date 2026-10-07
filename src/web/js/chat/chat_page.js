@@ -742,8 +742,8 @@
     let activeRequestController = null;
     let activeEventSource = null;
 
-    const chatWidgetsCtrl = (window.CuttleChatWidgets && typeof window.CuttleChatWidgets.create === 'function')
-        ? window.CuttleChatWidgets.create({
+    const chatWidgetsCtrl = (window.CuttleTaskGizmos && typeof window.CuttleTaskGizmos.create === 'function')
+        ? window.CuttleTaskGizmos.create({
             getSessionId: function () { return currentSessionId; },
             getProjectPath: function () {
                 return (currentProject && currentProject.path) ? String(currentProject.path) : '';
@@ -22110,76 +22110,6 @@
     }
 
 
-    const _widgetIngestQueued = new Set();
-
-    function parseHtmlAttrBlob(attrs, name) {
-        const re = new RegExp(
-            String(name) + '\\s*=\\s*(?:"([^"]*)"|\'([^\']*)\'|([^\\s"\'>]+))',
-            'i'
-        );
-        const m = re.exec(attrs || '');
-        if (!m) return '';
-        return String(m[1] != null ? m[1] : (m[2] != null ? m[2] : (m[3] || ''))).trim();
-    }
-
-    function queueClientWidgetUpsert(attrs, body) {
-        const id = parseHtmlAttrBlob(attrs, 'id') || ('w-' + Date.now().toString(36));
-        if (_widgetIngestQueued.has(id)) return;
-        _widgetIngestQueued.add(id);
-        let payload = {};
-        try {
-            payload = JSON.parse(String(body || '').trim() || '{}') || {};
-        } catch (_) {
-            payload = {};
-        }
-        const items = Array.isArray(payload.items) ? payload.items : (
-            Array.isArray(payload) ? payload : []
-        );
-        const sid = toAuthDbSessionId(currentSessionId);
-        const scope = parseHtmlAttrBlob(attrs, 'scope') || 'session';
-        const title = parseHtmlAttrBlob(attrs, 'title') || 'Tasks';
-        const wtype = parseHtmlAttrBlob(attrs, 'type') || 'tasks';
-        const op = parseHtmlAttrBlob(attrs, 'op') || '';
-        const descAttr = parseHtmlAttrBlob(attrs, 'description')
-            || parseHtmlAttrBlob(attrs, 'summary');
-        let description;
-        if (descAttr) {
-            description = descAttr;
-        } else if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
-            if (Object.prototype.hasOwnProperty.call(payload, 'description')) {
-                description = payload.description;
-            } else if (Object.prototype.hasOwnProperty.call(payload, 'summary')) {
-                description = payload.summary;
-            } else if (Object.prototype.hasOwnProperty.call(payload, 'set_description')) {
-                description = payload.set_description;
-            }
-        }
-        const bodyObj = {
-            type: wtype,
-            title: title,
-            scope: scope,
-            session_id: sid,
-            project_path: (currentProject && (currentProject.path || currentProject.project_path)) || '',
-            payload: { items: items },
-        };
-        if (description != null) bodyObj.description = description;
-        if (op === 'patch') {
-            bodyObj.op = 'patch';
-            bodyObj.patch = payload;
-        }
-        fetch('/api/widgets/' + encodeURIComponent(id), {
-            method: op === 'patch' ? 'PATCH' : 'PUT',
-            credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(bodyObj),
-        }).then(() => {
-            if (typeof refreshChatWidgets === 'function') refreshChatWidgets();
-        }).catch(() => {}).finally(() => {
-            // Allow a later patch with the same id.
-            setTimeout(() => _widgetIngestQueued.delete(id), 2000);
-        });
-    }
-
     /** Page-owned seams for structured-block render planning (chat_messages.js). */
     function structuredRenderDeps() {
         return {
@@ -22195,18 +22125,14 @@
     function ingestAndStripCuttleWidgets(text) {
         return String(text || '').replace(
             /<cuttle_widget\b([^>]*)>([\s\S]*?)<\/cuttle_widget\s*>/gi,
-            function (_, attrs, inner) {
-                queueClientWidgetUpsert(attrs, inner);
-                const title = parseHtmlAttrBlob(attrs, 'title') || 'Tasks';
-                return '\n\n> 📌 ' + title + ' *(pinned above composer)*\n\n';
-            }
+            ''
         );
     }
 
     function formatMessage(text) {
         const live = CuttleUsageLive.render(text, formatMessage);
         if (live !== null) return live;
-        // Client-side fallback: pin cuttle_widget tags even if Flask missed rewrite.
+        // Historical Tasks tags are presentation only; Gizmos API owns writes.
         if (typeof text === 'string' && /<cuttle_widget\b/i.test(text)) {
             text = ingestAndStripCuttleWidgets(text);
         }

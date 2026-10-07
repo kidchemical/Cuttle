@@ -61,9 +61,9 @@ EXECUTOR_RESPONSE = (
 
 def _widget_rows(origin, token, sid):
     status, body = _api(
-        origin, token, "GET", f"/api/widgets?session_id={sid}")
+        origin, token, "GET", f"/api/gizmos/tasks?session_id={sid}")
     assert status == 200 and body.get("success") is True, body
-    return body["widgets"]
+    return body["gizmos"]
 
 
 def test_shadow_widget_order_base_then_patch(shadow, browser):
@@ -156,6 +156,7 @@ def test_shadow_widget_order_base_then_patch(shadow, browser):
 
         # Store proof over the real widget API: base item done, added item
         # present, document order kept.
+        page.locator('#chatWidgetsStrip [data-widget-id="w-shadow-1"]').wait_for(state="visible")
         widgets = _widget_rows(origin, token, sid)
         assert [w["id"] for w in widgets] == ["w-shadow-1"], widgets
         items = widgets[0]["payload"]["items"]

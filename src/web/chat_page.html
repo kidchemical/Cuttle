@@ -255,8 +255,8 @@
                 </div>
                 
                 <div class="chat-input-container">
-                    <!-- Durable agent widgets (Tasks, …) — top-most above queue + pending changes -->
-                    <div class="chat-widgets" id="chatWidgetsStrip" hidden aria-label="Chat widgets"></div>
+                    <!-- Scoped Tasks gizmos — top-most above queue + pending changes -->
+                    <div class="chat-widgets" id="chatWidgetsStrip" hidden aria-label="Tasks gizmos"></div>
                     <!-- Pending-prompt queue only — never used for supervised worker activity -->
                     <div class="followup-queue" id="followupQueue" hidden aria-label="Queued follow-up messages"></div>
                     <div class="pending-changes-host" id="pendingChangesHost" aria-label="Pending git changes"></div>
@@ -406,7 +406,7 @@
     <script src="/js/shared/auth.js?v=20260926authLogin"></script>
     <script src="/js/chat/supervised_control.js?v=20260816bubble1"></script>
     <script src="/js/chat/chat_find.js?v=20260819find"></script>
-    <script src="/js/chat/chat_widgets.js?v=20260922widgetstrip"></script>
+    <script src="/js/gizmos/tasks_gizmo.js?v=20261007tasks1"></script>
     <script src="/js/git/pending_changes_panel.js?v=20261007nomode"></script>
     <script src="/js/git/git_push_report.js"></script>
     <script src="/js/git/diff_modal.js?v=20261001sharedDiff"></script>
@@ -435,7 +435,7 @@
     <script src="/js/chat/chat_vfx.js?v=20261003vfx1"></script>
     <script src="/js/chat/chat_subagent_fleet.js?v=20261004fleetLive"></script>
     <script src="/js/chat/chat_history_archive.js?v=20261007archivededupe"></script>
-    <script src="/js/chat/chat_page.js?v=20261007histSlide"></script>
+    <script src="/js/chat/chat_page.js?v=20261007tasks1"></script>
     <!-- highlight.js / Vega: load after boot so offline WAN never blocks the chat UI -->
     <script src="/js/shared/optional_cdn.js?v=20260815vegaReady"></script>
 </body>
