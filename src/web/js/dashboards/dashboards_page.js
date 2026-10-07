@@ -183,7 +183,7 @@
         const perf = isPerf();
         const src = (payload && payload.source) || {};
         AXIS_LABELS.score = (src.score_name || (perf ? 'Accept score' : 'DeepSWE pass@1')) + ' (%)';
-        AXIS_LABELS.mean_cost_usd = perf ? 'Cost / turn (USD)' : 'Cost / task (USD)';
+        AXIS_LABELS.mean_cost_usd = perf ? 'API-equivalent cost / turn (USD)' : 'Cost / task (USD)';
         AXIS_LABELS.mean_duration_seconds = perf ? 'Median turn time (sec)' : 'Duration (sec)';
         AXIS_LABELS.mean_output_tokens = perf ? 'Output tokens / turn' : 'Output tokens';
     }
@@ -1047,7 +1047,7 @@
                 <th data-sort="success_rate">Finished</th>
                 <th data-sort="mean_duration_seconds" title="Median time from send to reply">Median time</th>
                 <th data-sort="mean_output_tokens">Out tokens</th>
-                <th data-sort="mean_cost_usd">Cost / turn</th>
+                <th data-sort="mean_cost_usd">API-equivalent cost / turn</th>
                 <th data-sort="zone_distance" title="Euclidean distance to the current optimal zone, normalized to the plotted axes. Zero means inside the zone.">Zone distance</th>
             </tr></thead>`;
         const body = rows.map((r) => {
@@ -2581,7 +2581,7 @@
             `<div class="dash-stat-card"><div class="dash-stat-value">${escapeHtml(fmtUsageValue(m.unit, totals[m.id]))}</div><div class="dash-stat-label">${escapeHtml(m.label)}</div></div>`
         ).join('');
         const coverage = {
-            cost_usd: `${stats.with_cost || 0} of ${stats.turns || 0} turns report cost`,
+            cost_usd: `${stats.with_cost || 0} of ${stats.turns || 0} turns have cost data. API-equivalent estimates and agent-reported values; subscription fees are excluded.`,
             total_tokens: `${stats.with_tokens || 0} of ${stats.turns || 0} turns report tokens`,
             input_tokens: `${stats.with_tokens || 0} of ${stats.turns || 0} turns report tokens`,
             cached_input_tokens: `${stats.with_cached || 0} of ${stats.turns || 0} turns report cached tokens`,

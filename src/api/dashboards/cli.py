@@ -43,8 +43,27 @@ def main(argv: Optional[list[str]] = None) -> int:
         help="Create My Cuttle Performance rows from past chat replies (idempotent)",
     )
     p_backfill.add_argument("--dry-run", action="store_true")
+    p_repair = sub.add_parser("repair-api-costs", help="Audit/back up and repair saved Claude API-equivalent costs")
+    p_repair.add_argument("--apply", action="store_true")
+    p_repair.add_argument("--backup-dir", type=Path)
+    p_repair.add_argument("--resume-logs", action="store_true", help="Finish sidecars from an interrupted backup audit")
 
     args = parser.parse_args(argv)
+    if args.cmd == "repair-api-costs":
+        from api.dashboards.cost_repair import repair, resume_logs
+        from api.agent_router.outcomes import database_path
+        from api.query_events import logs_dir
+        from core.runtime_paths import data_db_dir
+        if args.resume_logs:
+            if not args.backup_dir:
+                parser.error("--resume-logs requires --backup-dir")
+            print(json.dumps(resume_logs(backup_dir=args.backup_dir, logs_path=logs_dir()), indent=2))
+            return 0
+        if args.apply and not args.backup_dir:
+            parser.error("--apply requires --backup-dir")
+        print(json.dumps(repair(auth_path=data_db_dir() / "cuttle_auth.db", outcomes_path=database_path(),
+                                logs_path=logs_dir(), backup_dir=args.backup_dir, apply=args.apply), indent=2))
+        return 0
     if args.cmd == "list":
         print(json.dumps(service.hub(), indent=2))
         return 0

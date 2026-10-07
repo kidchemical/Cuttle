@@ -37,7 +37,7 @@ SOURCES = [
     {"id": "router", "name": "Agent router"},
 ]
 METRICS = [
-    {"id": "cost_usd", "label": "Total cost", "unit": "usd"},
+    {"id": "cost_usd", "label": "API-equivalent cost (estimate)", "unit": "usd"},
     {"id": "total_tokens", "label": "Total tokens", "unit": "tokens"},
     {"id": "turns", "label": "Turns", "unit": "count"},
     {"id": "input_tokens", "label": "Input tokens", "unit": "tokens"},
