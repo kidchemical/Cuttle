@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from contextlib import closing, contextmanager
 import sqlite3
 import time
 from pathlib import Path
@@ -17,6 +18,22 @@ DEFAULT_DB_PATH = Path(__file__).resolve().parents[2] / "data" / "db" / "router_
 def database_path() -> Path:
     override = os.getenv("CUTTLE_ROUTER_DB", "").strip()
     return Path(override).expanduser() if override else DEFAULT_DB_PATH
+
+
+@contextmanager
+def _session(db_path: Optional[Path] = None):
+    """Commit (or roll back) and always close.
+
+    ``with sqlite3.connect(...)`` only manages the transaction; the
+    connection lingered until GC, whose late WAL checkpoint rewrote the
+    database file after callers had finished.
+    """
+    conn = _connect(db_path)
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
 
 
 def _connect(db_path: Optional[Path] = None) -> sqlite3.Connection:
@@ -135,7 +152,7 @@ def record_attempt(
     payload = dict(result or {})
     usage = _usage(payload)
     try:
-        with _connect(db_path) as conn:
+        with _session(db_path) as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO router_outcomes (
@@ -206,7 +223,7 @@ def record_turn(
     usage = _usage(payload)
     verb = "INSERT OR REPLACE" if replace else "INSERT OR IGNORE"
     try:
-        with _connect(db_path) as conn:
+        with _session(db_path) as conn:
             conn.execute(
                 f"""
                 {verb} INTO router_outcomes (
@@ -247,7 +264,7 @@ def record_turn(
 
 
 def known_query_ids(*, db_path: Optional[Path] = None) -> set:
-    with _connect(db_path) as conn:
+    with _session(db_path) as conn:
         rows = conn.execute(
             "SELECT DISTINCT query_id FROM router_outcomes WHERE query_id IS NOT NULL"
         ).fetchall()
@@ -266,7 +283,7 @@ def all_outcomes(
         sql += " WHERE recorded_at >= ?"
         params.append(float(since))
     sql += " ORDER BY recorded_at DESC, attempt_index DESC"
-    with _connect(db_path) as conn:
+    with _session(db_path) as conn:
         return [dict(row) for row in conn.execute(sql, params).fetchall()]
 
 
@@ -283,7 +300,7 @@ def set_feedback_for_query(
     qid = str(query_id or "").strip()
     if not qid:
         return None
-    with _connect(db_path) as conn:
+    with _session(db_path) as conn:
         row = conn.execute(
             """
             SELECT decision_id, attempt_index FROM router_outcomes
@@ -316,7 +333,7 @@ def list_outcomes(
         params.append(decision_id)
     sql += " ORDER BY recorded_at DESC, attempt_index DESC LIMIT ?"
     params.append(max(1, min(int(limit), 5000)))
-    with _connect(db_path) as conn:
+    with _session(db_path) as conn:
         return [dict(row) for row in conn.execute(sql, params).fetchall()]
 
 
@@ -328,7 +345,7 @@ def recent_decisions(*, limit: int = 6, db_path: Optional[Path] = None) -> List[
     path = Path(db_path or database_path()).resolve()
     if not path.exists():
         return []
-    with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=2) as conn:
+    with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=2)) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             """
@@ -358,7 +375,7 @@ def outcomes_since(
 ) -> List[Dict[str, Any]]:
     """All attempts recorded within the last ``seconds`` (drift windows)."""
     cutoff = time.time() - max(1.0, float(seconds))
-    with _connect(db_path) as conn:
+    with _session(db_path) as conn:
         rows = conn.execute(
             """
             SELECT * FROM router_outcomes
@@ -377,7 +394,7 @@ def recent_session_decision_ids(
     db_path: Optional[Path] = None,
 ) -> List[str]:
     """Most recent distinct decision ids for a session (newest first)."""
-    with _connect(db_path) as conn:
+    with _session(db_path) as conn:
         rows = conn.execute(
             """
             SELECT decision_id, MAX(recorded_at) AS last_at
@@ -403,7 +420,7 @@ def set_feedback(
     value = str(feedback or "").strip().lower()
     if value not in {"good", "bad"}:
         raise ValueError("feedback must be good or bad")
-    with _connect(db_path) as conn:
+    with _session(db_path) as conn:
         chosen = str(decision_id or "").strip()
         if not chosen:
             if session_id is None:
@@ -444,7 +461,7 @@ def metrics_summary(
 ) -> List[Dict[str, Any]]:
     """Aggregate recent attempts by agent/model for chat and future charts."""
     cutoff = time.time() - max(1, int(days)) * 86400
-    with _connect(db_path) as conn:
+    with _session(db_path) as conn:
         rows = conn.execute(
             """
             SELECT
