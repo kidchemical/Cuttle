@@ -429,7 +429,11 @@ def _cuttle_self_update_local(params: Dict[str, Any]) -> Dict[str, Any]:
     import tempfile
 
     repo = _repo_root(params)
-    log_dir = Path(os.environ.get("LOCALAPPDATA") or ".") / "cuttle-desktop"
+    if os.name == "nt":
+        state_base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or str(Path.home())
+    else:
+        state_base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
+    log_dir = Path(state_base) / "cuttle-desktop"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / "client-self-update.log"
 
@@ -472,36 +476,31 @@ def _cuttle_self_update_local(params: Dict[str, Any]) -> Dict[str, Any]:
         "no",
     )
 
-    # Prefer Host-embedded updater so we are not stuck on an old on-disk script.
-    script_text = str(params.get("script_text") or params.get("updater_script") or "")
+    # Stage delivered files outside the checkout; never overwrite local work.
+    posix = os.name != "nt"
+    name = "client-self-update.sh" if posix else "client-self-update.ps1"
+    script_text = str(params.get("script_text_posix" if posix else "script_text") or "")
+    if not script_text.strip():
+        fallback = str(params.get("updater_script") or params.get("script_text") or "")
+        if not posix or fallback.lstrip().startswith("#!") or "BASH_SOURCE" in fallback:
+            script_text = fallback
     if script_text.strip():
-        script = log_dir / f"client-self-update-embedded-{int(time.time())}.ps1"
+        stage = Path(tempfile.mkdtemp(prefix="client-update-", dir=str(log_dir)))
+        script = stage / name
         script.write_text(script_text, encoding="utf-8")
-        try:
-            repo_script = repo / ".cuttle" / "scripts" / "client-self-update.ps1"
-            repo_script.parent.mkdir(parents=True, exist_ok=True)
-            repo_script.write_text(script_text, encoding="utf-8")
-        except OSError:
-            pass
+        helper_text = str(params.get("checkout_helper_text") or "")
+        if not helper_text.strip():
+            helper_text = (repo / ".cuttle_global" / "scripts" / "client-update-checkout.py").read_text(encoding="utf-8")
+        (stage / "client-update-checkout.py").write_text(helper_text, encoding="utf-8")
     else:
-        script = repo / ".cuttle" / "scripts" / "client-self-update.ps1"
+        script = repo / ".cuttle_global" / "scripts" / name
     if not script.is_file():
-        raise RuntimeError(f"client-self-update.ps1 missing under {repo}")
+        raise RuntimeError(f"updater missing: {script}")
 
-    # Sync stash+pull while Electron is still up — fail the job loudly on error.
-    pull = _git_stash_and_pull_local(repo, log_file)
+    # Refuse unsafe checkouts before scheduling any lifecycle.
+    pull = _git_update_checkout_local(repo, log_file, script.parent / "client-update-checkout.py")
     if not pull.get("ok"):
-        raise RuntimeError(str(pull.get("error") or "git pull failed"))
-
-    try:
-        desk = Path.home() / "Desktop" / "cuttle-self-update-scheduled.txt"
-        desk.write_text(
-            f"{time.strftime('%Y-%m-%d %H:%M:%S')} scheduled repo={repo} host={host!r} "
-            f"head={pull.get('head')} stashed={pull.get('stashed')}\n",
-            encoding="utf-8",
-        )
-    except Exception:
-        pass
+        raise RuntimeError(str(pull.get("error") or "checkout update refused"))
 
     ps_args = [
         "-NoProfile",
@@ -525,10 +524,10 @@ def _cuttle_self_update_local(params: Dict[str, Any]) -> Dict[str, Any]:
         ps_args.append("-RestartDaemon")
     else:
         ps_args.append("-NoDaemon")
-    arg_list = ", ".join("'{0}'".format(a.replace("'", "''")) for a in ps_args)
+    arg_list = subprocess.list2cmdline(ps_args).replace("'", "''")
     cmd = (
         "Start-Process -FilePath powershell.exe -WindowStyle Hidden "
-        f"-ArgumentList @({arg_list})"
+        f"-ArgumentList '{arg_list}'"
     )
     with log_file.open("a", encoding="utf-8") as lf:
         lf.write(
@@ -536,14 +535,20 @@ def _cuttle_self_update_local(params: Dict[str, Any]) -> Dict[str, Any]:
             f"host={host!r} electron={restart_electron} daemon={restart_daemon} "
             f"skip_pull=1 head={pull.get('head')} ----\n"
         )
+    argv = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmd]
+    if posix:
+        argv = ["bash", str(script), "--repo", str(repo), "--log", str(log_file), "--skip-pull"]
+        if host:
+            argv.extend(["--host", host])
+        if not restart_electron:
+            argv.append("--no-electron")
+        if not restart_daemon:
+            argv.append("--no-daemon")
     subprocess.Popen(
-        ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmd],
-        cwd=str(repo),
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        argv, cwd=str(repo), stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        close_fds=True,
+        start_new_session=posix, close_fds=True,
     )
     return {
         "ok": True,
@@ -554,68 +559,36 @@ def _cuttle_self_update_local(params: Dict[str, Any]) -> Dict[str, Any]:
         "restart_electron": restart_electron,
         "restart_daemon": restart_daemon,
         "log": str(log_file),
-        "spawn": "start-process",
+        "spawn": "posix-detached" if posix else "start-process",
         "skip_pull": True,
         "stashed": bool(pull.get("stashed")),
         "head": pull.get("head"),
     }
 
 
-def _git_stash_and_pull_local(repo: Path, log_file: Path) -> Dict[str, Any]:
-    import subprocess
-
-    lines: list[str] = []
-
-    def run(argv: list[str], timeout: int = 180) -> tuple[int, str, str]:
-        try:
-            completed = subprocess.run(
-                argv,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                cwd=str(repo),
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-        except Exception as e:
-            return 1, "", str(e)
-        out = (completed.stdout or "").strip()
-        err = (completed.stderr or "").strip()
-        lines.append(f"$ {' '.join(argv)} → {completed.returncode}")
-        if out:
-            lines.append(out)
-        if err:
-            lines.append(err)
-        return completed.returncode, out, err
-
-    def flush() -> None:
-        try:
-            with log_file.open("a", encoding="utf-8") as lf:
-                lf.write("\n---- sync reset-to-upstream ----\n" + "\n".join(lines) + "\n")
-        except OSError:
-            pass
-
-    rc, _, err = run(["git", "fetch", "--all", "--prune"])
-    if rc != 0:
-        flush()
-        return {"ok": False, "error": f"git fetch failed: {err or rc}"}
-
-    rc, branch, _ = run(["git", "rev-parse", "--abbrev-ref", "HEAD"])
-    branch = (branch or "master").strip() or "master"
-    rc_u, upstream, _ = run(["git", "rev-parse", "--abbrev-ref", "@{u}"])
-    upstream = (upstream or "").strip() if rc_u == 0 else ""
-    if not upstream:
-        upstream = f"origin/{branch}"
-
-    rc, _, err = run(["git", "reset", "--hard", upstream])
-    if rc != 0:
-        flush()
-        return {"ok": False, "error": f"git reset --hard {upstream} failed: {err or rc}"}
-
-    run(["git", "clean", "-fd"])
-    rc, head, _ = run(["git", "rev-parse", "--short", "HEAD"])
-    flush()
-    return {"ok": True, "stashed": False, "reset": True, "head": (head or "").strip()}
-
+def _git_update_checkout_local(repo: Path, log_path: Path | None = None, helper_path: Path | None = None) -> Dict[str, Any]:
+    """Run the shared preservation contract; never stash, reset, or clean."""
+    helper = helper_path or repo / ".cuttle_global" / "scripts" / "client-update-checkout.py"
+    try:
+        result = subprocess.run(
+            [sys.executable, str(helper), "--repo", str(repo)],
+            capture_output=True, text=True, timeout=240, cwd=str(repo),
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        output = (result.stdout or "") + (result.stderr or "")
+        if log_path:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            with log_path.open("a", encoding="utf-8") as log:
+                log.write("\n---- preservation update ----\n" + output)
+        if result.returncode:
+            return {"ok": False, "error": output or "checkout update refused", "log": output}
+        head = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, check=True, timeout=30,
+        ).stdout.strip()
+        return {"ok": True, "stashed": False, "head": head, "log": output}
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"ok": False, "error": f"checkout update refused: {exc}"}
 
 def _blender_render_local(params: Dict[str, Any]) -> Dict[str, Any]:
     import subprocess
