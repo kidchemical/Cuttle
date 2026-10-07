@@ -91,7 +91,7 @@ const watchdog = setTimeout(() => { console.error('SMOKE_TIMEOUT'); app.exit(1);
   const popout = BrowserWindow.getAllWindows().find(w => w !== main);
   await until(() => /gizmo_popout\.html/.test(popout.webContents.getURL()), 'popout navigation');
   assert.match(popout.webContents.getURL(), /gizmo_popout\.html/);
-  assert.equal(popout.isAlwaysOnTop(), true);
+  await until(() => popout.isVisible() && popout.isAlwaysOnTop(), 'visible always-on-top popout');
   await main.webContents.executeJavaScript('window.electron.gizmos.syncPopouts([])');
   await until(() => BrowserWindow.getAllWindows().length === 1, 'popout close');
   // Exercise Electron's native tray/menu API without a shared lifecycle tray.
