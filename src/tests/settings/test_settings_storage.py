@@ -130,7 +130,7 @@ assert m.set_setting('device_workers', {'ssh_host': 'keep', 'enabled': False})
 
 
 
-@pytest.mark.parametrize("platform,failures", [("nt", 2), ("nt", 40), ("posix", 1)])
+@pytest.mark.parametrize("platform,failures", [("nt", 2), ("nt", 10_000), ("posix", 1)])
 def test_sharing_retry_is_bounded_and_windows_only(monkeypatch, platform, failures):
     from types import SimpleNamespace
     from managers import settings_storage
@@ -145,15 +145,18 @@ def test_sharing_retry_is_bounded_and_windows_only(monkeypatch, platform, failur
             raise PermissionError("sharing violation")
         return "read or replaced"
 
-    if platform == "nt" and failures < 40:
+    if platform == "nt" and failures < 100:
         assert settings_storage._retry_sharing(operation) == "read or replaced"
         assert len(attempts) == failures + 1
-        assert delays == [0.025] * failures
+        assert delays and delays == sorted(delays)  # backs off, never shrinks
     else:
         with pytest.raises(PermissionError, match="sharing violation"):
             settings_storage._retry_sharing(operation)
-        assert len(attempts) == (40 if platform == "nt" else 1)
-        assert len(delays) == len(attempts) - 1
+        if platform == "nt":
+            # Bounded: gives up after ~10 s of waiting, with capped steps.
+            assert 9.0 <= sum(delays) <= 10.5 and max(delays) <= 0.25
+        else:
+            assert len(attempts) == 1 and delays == []
 
 
 def test_sharing_retry_does_not_hide_other_errors(monkeypatch):
