@@ -14,6 +14,10 @@
         'nav-git': 22,
         'nav-jobs': 186,
         'nav-dashboards': 236,
+        'nav-settings': 150,
+        'nav-account': 262,
+        'nav-notifications': 45,
+        'nav-workspace': 190,
     };
     const PIN_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
 
@@ -49,8 +53,17 @@
 
     function openApp(app) {
         closeMenu();
-        if (inShell) post({ type: 'cuttle-navigate', page: app.page });
-        else window.location.href = app.page;
+        if (app.page) {
+            if (inShell) post({ type: 'cuttle-navigate', page: app.page });
+            else window.location.href = app.page;
+            return;
+        }
+        // Footer utilities (Account, Notifications, Workspace) have no page;
+        // the shell activates the matching rail button instead.
+        if (app.action) {
+            if (inShell) post({ type: 'cuttle-rail-action', id: app.action });
+            else showStatus(`${app.label} needs the Cuttle shell`);
+        }
     }
 
     function setPinned(app, pinned) {
@@ -81,7 +94,7 @@
             return b;
         };
         const first = addItem('Open', () => openApp(app));
-        if (inShell) {
+        if (inShell && app.pinnable !== false && app.page) {
             addItem(app.pinned ? 'Remove from blade bar' : 'Add to blade bar', () => setPinned(app, !app.pinned));
         }
 
@@ -201,7 +214,8 @@
         if (!inShell || e.source !== window.parent) return;
         const d = e.data;
         if (!d || d.type !== 'cuttle-apps' || !Array.isArray(d.apps)) return;
-        apps = d.apps.filter(a => a && typeof a.id === 'string' && typeof a.page === 'string');
+        apps = d.apps.filter(a => a && typeof a.id === 'string'
+            && (typeof a.page === 'string' || typeof a.action === 'string'));
         received = true;
         render();
     });

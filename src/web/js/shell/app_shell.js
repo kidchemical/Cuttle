@@ -617,6 +617,7 @@ const CANONICAL_RAIL_ITEM_ORDER = [
     'nav-jobs',
     'nav-dashboards',
     'nav-achievements',
+    'nav-agent-feed',
     'nav-gizmos',
     'nav-projects',
     'nav-apps',
@@ -628,9 +629,9 @@ const CANONICAL_RAIL_FOOTER_ORDER = ['nav-account', 'nav-notifications', 'nav-wo
 // The Apps launcher is the way back to every stashed app, so it can never be removed.
 const RAIL_LOCKED_IDS = new Set(['nav-apps']);
 // Cuttle web apps that live in the Apps grid (not the blade bar) until the user pins them.
-const DEFAULT_RAIL_HIDDEN = ['nav-achievements', 'nav-gizmos', 'nav-projects'];
+const DEFAULT_RAIL_HIDDEN = ['nav-achievements', 'nav-gizmos', 'nav-projects', 'nav-agent-feed'];
 // Bump when defaults change; saved layouts below this version get DEFAULT_RAIL_HIDDEN merged in once.
-const RAIL_LAYOUT_VERSION = 7;
+const RAIL_LAYOUT_VERSION = 8;
 
 const DEFAULT_LAYOUT = {
     rail_items: CANONICAL_RAIL_ITEM_ORDER.filter(id => !DEFAULT_RAIL_HIDDEN.includes(id)),
@@ -3749,6 +3750,7 @@ function setupColumnListeners(colIdx, colEl) {
 
     const { column, toggle } = els;
     ensureRailPaneGrip(column);
+    ensureRailEditScrim(column);
     observeRailHeight(column);
     bindRailLogoModifierKeys();
 
@@ -4032,9 +4034,9 @@ function migrateUILayout(saved) {
     const hidden = new Set(Array.isArray(saved.rail_hidden) ? saved.rail_hidden : []);
     // Existing v4 user pins remain intact; only the new App starts stashed.
     const version = Number(saved.layout_version) || 0;
-    const additions = version >= 6 ? ['nav-gizmos']
-        : version >= 5 ? ['nav-projects', 'nav-gizmos']
-        : version >= 4 ? ['nav-achievements', 'nav-projects', 'nav-gizmos']
+    const additions = version >= 7 ? ['nav-agent-feed'] : version >= 6 ? ['nav-gizmos', 'nav-agent-feed']
+        : version >= 5 ? ['nav-projects', 'nav-gizmos', 'nav-agent-feed']
+        : version >= 4 ? ['nav-achievements', 'nav-projects', 'nav-gizmos', 'nav-agent-feed']
         : DEFAULT_RAIL_HIDDEN;
     additions.forEach(id => hidden.add(id));
     const known = new Set(CANONICAL_RAIL_ITEM_ORDER);
@@ -4046,6 +4048,9 @@ function migrateUILayout(saved) {
 }
 
 // ── Cuttle web apps (Apps page ↔ blade bar) ─────────────────────
+// Footer utilities live outside the pinnable rail order but belong in the
+// Apps grid too. panelToggle is view chrome (collapse sidebar), not an app.
+const RAIL_FOOTER_APP_IDS = ['nav-account', 'nav-notifications', 'nav-workspace', 'nav-settings'];
 /** Every page app on the rail or in the stash, alphabetical like an app drawer. */
 function getAppsList() {
     const col = getColumnEl(0);
@@ -4063,6 +4068,20 @@ function getAppsList() {
             pinned: !!el.closest('.rail-items'),
         });
     });
+    RAIL_FOOTER_APP_IDS.forEach(id => {
+        const el = col.querySelector(`.rail-footer .rail-item[data-id="${id}"]`);
+        if (!el) return;
+        const entry = {
+            id,
+            label: el.dataset.tooltip || id.replace(/^nav-/, ''),
+            icon: el.querySelector('svg')?.outerHTML || '',
+            pinned: true,
+            pinnable: false,
+        };
+        if (el.dataset.page) entry.page = el.dataset.page;
+        else entry.action = id;
+        apps.push(entry);
+    });
     apps.sort((a, b) => a.label.localeCompare(b.label));
     return apps;
 }
@@ -4079,6 +4098,12 @@ window.addEventListener('message', (e) => {
     } else if (d.type === 'cuttle-apps-pin' && typeof d.id === 'string') {
         if (d.pinned) showRailItem(d.id);
         else hideRailItem(d.id);
+    } else if (d.type === 'cuttle-rail-action' && typeof d.id === 'string') {
+        // Apps-grid tiles for footer utilities (Account, Notifications,
+        // Workspace) carry no page. Activate the rail button so the same
+        // popover/modal handlers run. Allowlisted to footer app ids only.
+        if (!RAIL_FOOTER_APP_IDS.includes(d.id)) return;
+        getColumnEl(0)?.querySelector(`.rail-footer .rail-item[data-id="${d.id}"]`)?.click();
     }
 });
 
@@ -4094,7 +4119,37 @@ function hideRailAddPicker() {
 function setRailEditing(on) {
     railEditing = !!on;
     document.querySelectorAll('.icon-rail').forEach(r => r.classList.toggle('rail-editing', railEditing));
+    document.querySelectorAll('.rail-edit-scrim').forEach(s => { s.hidden = !railEditing; });
     if (!railEditing) hideRailAddPicker();
+}
+
+/**
+ * Transparent tap catcher over page content while the rail is in edit mode.
+ * Taps inside the content iframe never reach the shell document, so without
+ * this there is no tap-outside-to-exit on most of the screen. Tapping the
+ * scrim (or Done) leaves edit mode; the tap itself is swallowed.
+ */
+function ensureRailEditScrim(colEl) {
+    const main = colEl?.querySelector?.('.shell-main');
+    if (!main || main.querySelector('.rail-edit-scrim')) return;
+    const scrim = document.createElement('div');
+    scrim.className = 'rail-edit-scrim';
+    scrim.hidden = !railEditing;
+    const done = document.createElement('button');
+    done.type = 'button';
+    done.className = 'rail-edit-done';
+    done.textContent = 'Done';
+    done.setAttribute('aria-label', 'Done editing sidebar');
+    done.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setRailEditing(false);
+    });
+    scrim.appendChild(done);
+    scrim.addEventListener('pointerdown', (e) => {
+        if (e.target !== scrim) return;
+        setRailEditing(false);
+    });
+    main.appendChild(scrim);
 }
 
 function ensureRailEditChrome(colEl) {
