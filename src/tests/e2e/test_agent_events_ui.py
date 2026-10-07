@@ -1,7 +1,73 @@
 """Offline UI workflows for event detail and database policy controls."""
 import json
+import pytest
 from playwright.sync_api import expect
 from .test_shared_diff_modal import browser,static_server  # noqa: F401
+
+
+@pytest.mark.parametrize('reduced_motion', ['no-preference', 'reduce'])
+def test_live_feed_motion_handles_bursts_and_preserves_detail(browser,static_server,reduced_motion):
+    page=browser.new_page(viewport={'width':1100,'height':900},reduced_motion=reduced_motion)
+    errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
+    row={'id':1,'query_id':'test','seq':1,'kind':'tool','ts':1,'rev':1,'summary':'First step','agent_id':'codex'}
+    detail_requests=[]
+    def handle(route):
+        if '/events/1' in route.request.url:
+            detail_requests.append(route.request.url)
+            body={'detail':{'output':'Loaded detail'}}
+        else:
+            body={'events':[row],'next_cursor':1,'stream_cursor':1}
+        route.fulfill(content_type='application/json',body=json.dumps(body))
+    page.route('**/api/agent-events**',handle)
+    page.add_init_script('''
+        window.EventSource=class {
+            constructor() { window.feedSource=this; }
+            close() {}
+        };
+        window.feedAnimations=[];
+        const animate=Element.prototype.animate;
+        Element.prototype.animate=function(frames,options) {
+            const animation=animate.call(this,frames,options);
+            feedAnimations.push({id:this.dataset.id,frames,options,animation});
+            return animation;
+        };
+    ''')
+    try:
+        page.goto(static_server+'/agent_feed.html')
+        expect(page.locator('.feed-step')).to_have_count(1)
+        page.wait_for_function('!!window.feedSource')
+        assert page.evaluate('feedAnimations.length')==0  # History loads quietly.
+        page.locator('.feed-step summary').click()
+        expect(page.locator('.feed-step pre')).to_have_text('Loaded detail')
+        page.evaluate('''() => {
+            window.originalStep=document.querySelector('.feed-step');
+            originalStep.querySelector('summary').focus();
+            window.originalTop=originalStep.getBoundingClientRect().top;
+        }''')
+        incoming=[dict(row,id=i,seq=i,ts=i,summary=f'Step {i}') for i in range(2,8)]
+        page.evaluate('''events => {
+            for(const row of events) feedSource.onmessage({data:JSON.stringify({events:[row]})});
+        }''',incoming)
+        expect(page.locator('.feed-step')).to_have_count(7)
+        assert page.evaluate("document.querySelector('[data-id=\"1\"]')===originalStep")
+        assert page.evaluate("originalStep.open && document.activeElement===originalStep.querySelector('summary')")
+        assert len(detail_requests)==1
+        if reduced_motion=='reduce':
+            assert page.evaluate('feedAnimations.length')==0
+        else:
+            assert page.evaluate("feedAnimations.some(a=>a.id==='1' && a.frames[0].transform!=='translateY(0)')")
+            assert page.evaluate("feedAnimations.some(a=>a.id==='7' && a.frames[0].opacity===0)")
+            assert page.evaluate('feedAnimations.every(a=>a.options.duration===250)')
+        # Interrupt motion with a second burst; all effects must settle promptly.
+        incoming=[dict(row,id=i,seq=i,ts=i) for i in range(8,38)]
+        page.evaluate('events => feedSource.onmessage({data:JSON.stringify({events})})',incoming)
+        expect(page.locator('.feed-step')).to_have_count(37)
+        page.wait_for_function('document.getAnimations().length===0')
+        assert page.locator('.feed-step').first.get_attribute('data-id')=='37'
+        assert page.evaluate("originalStep.getBoundingClientRect().top>originalTop")
+        assert page.evaluate("getComputedStyle(originalStep).transform==='none'")
+        assert not errors
+    finally:page.close()
 
 
 def test_feed_and_full_detail(browser,static_server):
