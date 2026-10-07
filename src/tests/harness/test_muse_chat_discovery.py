@@ -27,28 +27,21 @@ SQLITE_MAGIC = b"SQLite format 3\x00"
 
 
 def test_chat_store_is_a_real_sqlite_file_outside_git(monkeypatch):
-    """The transcripts live in a binary file that git ignores.
+    """The transcripts live in a binary file outside the repository.
 
-    Code-search tools honour `.gitignore` and skip binaries, so an agent that
-    greps the workspace cannot see chat content no matter how hard it looks.
+    Code-search tools only walk the workspace, so an agent that greps it
+    cannot see chat content no matter how hard it looks.
     """
     import api.auth_db as auth_db
 
-    # Read-only check of the live path (conftest redirects DB_PATH to tmp).
+    # Resolve the production path (conftest redirects DB_PATH to tmp).
     monkeypatch.setattr(auth_db, "DB_PATH", auth_db.data_db_dir() / "cuttle_auth.db")
     db = chat_store_path()
     assert db, "chat store path must resolve for the prompt addon to be useful"
     db_path = Path(db)
     assert db_path.name == "cuttle_auth.db"
-
-    ignored = subprocess.run(
-        ["git", "check-ignore", "-q", str(db_path)],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        check=False,
-    )
-    assert ignored.returncode == 0, (
-        f"{db_path} is no longer gitignored — the search-invisibility premise "
+    assert not db_path.resolve().is_relative_to(REPO_ROOT.resolve()), (
+        f"{db_path} is inside the repository — the search-invisibility premise "
         "of the Muse chat-store addon has changed"
     )
 
@@ -157,7 +150,6 @@ def test_muse_execution_sends_the_enriched_prompt_to_the_cli(tmp_path, monkeypat
     """End-to-end through `_run_harness_web_command("muse", …)`: the CLI must receive it."""
     from api import web_chat_api as w
     import scripts.utilities.muse_cli_tool as muse_mod
-    from scripts.utilities import muse_cli_session_store as store
     from scripts.utilities.muse_cli_tool import MuseCliTool
 
     seen = {}
@@ -169,7 +161,7 @@ def test_muse_execution_sends_the_enriched_prompt_to_the_cli(tmp_path, monkeypat
     monkeypatch.setattr(muse_mod, "muse_available", lambda: True)
     monkeypatch.setattr(muse_mod, "muse_resolution", lambda: {"mode": "native", "path": "/x"})
     monkeypatch.setattr(MuseCliTool, "execute_prompt", fake_execute_prompt)
-    monkeypatch.setattr(store, "_repo_root", lambda: tmp_path)
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path))
 
     res = w._run_harness_web_command(
         "muse",

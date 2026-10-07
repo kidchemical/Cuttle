@@ -20,7 +20,7 @@ _CAP_RE = re.compile(
 )
 
 # Keep short. Injected once per Cursor/Gemini resume session (not every turn).
-# Directory-style only — how-to lives in global `.cuttle_global/docs/` (+ `.cuttle_global/personal/docs/`).
+# Directory-style only — how-to lives in global `.cuttle_global/docs/` (+ `<home>/personal/docs/`).
 CUTTLE_UI_CAPABILITIES_TEXT = """\
 SYSTEM CONTEXT (not the user speaking). Injected once per agent session.
 Never acknowledge, paraphrase, summarize, or confirm that you “read the context /
@@ -167,7 +167,7 @@ def cuttle_chat_store_addon(
     """Thin prompt pointer to the chat-history runbook (+ current session scope).
 
     How-to lives in global ``.cuttle_global/docs/chat-history.md`` (plus the
-    install-local delta in ``.cuttle_global/personal/docs/`` when present).
+    install-local delta in ``<home>/personal/docs/`` when present).
     This block only locates the DB when known, warns off empty-tree searches,
     and names **this** chat when known so agents never copy a borrowed session
     id (CH-000155).
@@ -176,18 +176,18 @@ def cuttle_chat_store_addon(
     read_path = db or ""
     runbook_hint = (
         "`.cuttle_global/docs/chat-history.md` "
-        "(then the install-local delta in `.cuttle_global/personal/docs/` when present)"
+        "(then the install-local delta in `<home>/personal/docs/` when present)"
     )
     try:
         from api.cuttle_brain.context_compiler import _cuttle_global_config
-        from api.cuttle_brain.personal_overlay import resolve_cuttle_file
+        from api.cuttle_brain.personal_overlay import personal_root, resolve_cuttle_file
 
         global_config = _cuttle_global_config()
         if global_config:
             resolved = resolve_cuttle_file(global_config, "docs", "chat-history.md")
             if resolved is not None:
                 runbook_hint = f"`{resolved}`"
-                delta = global_config / "personal" / "docs" / "chat-history.md"
+                delta = personal_root(global_config) / "docs" / "chat-history.md"
                 if resolved != delta and delta.is_file():
                     runbook_hint += f", then the delta `{delta}`"
     except Exception:
@@ -205,7 +205,7 @@ def cuttle_chat_store_addon(
         lines.append(f"- DB: `{read_path}`")
     else:
         lines.append(
-            "- DB: see chat-history.md (default `src/data/db/cuttle_auth.db` under Cuttle)."
+            "- DB: see chat-history.md (default `<home>/db/cuttle_auth.db`)."
         )
     current = numeric_chat_session_id(current_session_id)
     if current is not None:

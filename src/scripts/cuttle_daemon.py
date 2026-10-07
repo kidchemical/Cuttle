@@ -42,7 +42,7 @@ _SSL_CTX = _local_ssl_ctx()
 def startup_ports():
     """Daemon boot triple, snapshotted at import and held for daemon life.
 
-    Set from env over src/.env right after the initial dotenv load, before
+    Set from env over <home>/.env right after the initial dotenv load, before
     any reload can run — so a .env edit followed by a Flask-only restart can
     never redirect the daemon's probes or the spawned child. Only a daemon
     cold restart takes a new triple.
@@ -58,7 +58,7 @@ def flask_port() -> int:
 def _flask_child_env(base_env) -> dict:
     """Spawn environment pinned to the daemon boot triple.
 
-    Called after _reload_env_file(), so even if src/.env changed mid-life
+    Called after _reload_env_file(), so even if <home>/.env changed mid-life
     the Flask child keeps the startup ports until a daemon cold restart.
     """
     boot = startup_ports()
@@ -88,9 +88,15 @@ PROJECT_ROOT = SRC_ROOT.parent
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-# Load src/.env so API keys and optional REST tokens (e.g. DISCORD_TOKEN for agent-ops) are available
-_env_file = SRC_ROOT / ".env"
-if _env_file.exists():
+# Load <home>/.env so API keys and optional REST tokens (e.g. DISCORD_TOKEN for agent-ops) are available
+from core.runtime_paths import env_file as _home_env_file
+
+_env_file = _home_env_file()
+
+
+def _load_env_file() -> None:
+    if not _env_file.exists():
+        return
     try:
         from dotenv import load_dotenv
         load_dotenv(_env_file)
@@ -102,6 +108,9 @@ if _env_file.exists():
                 if _line and not _line.startswith('#') and '=' in _line:
                     _k, _, _v = _line.partition('=')
                     os.environ.setdefault(_k.strip(), _v.strip().strip('"').strip("'"))
+
+
+_load_env_file()
 
 # Snapshot the listener triple immediately after the initial dotenv load,
 # before any reload can run — even a direct start_flask() call sees the boot
@@ -143,8 +152,10 @@ NOTIFY_QUEUE_PATH = notify_queue_path()
 FLASK_RESTART_REQUEST_PATH = flask_restart_request_path()
 FLASK_RESTART_STATUS_PATH = flask_restart_status_path()
 
-# Daemon/Flask logs (in user home for easy access, gitignore-safe)
-LOGS_DIR = Path.home() / "cuttle_logs"
+# Daemon/Flask logs live in the per-user Cuttle home
+from core.runtime_paths import logs_dir
+
+LOGS_DIR = logs_dir()
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Process tracking
@@ -353,7 +364,7 @@ def _electron_package_version() -> str:
 def open_cuttle_ui(extra_args: Optional[List[str]] = None, browser_path: str = "/app_shell.html") -> bool:
     """Open the Electron app (or browser fallback). Returns True if Electron was spawned."""
     env = os.environ.copy()
-    # Electron must not spawn a second cuttle_daemon.py (blank console, cwd=src/.env).
+    # Electron must not spawn a second cuttle_daemon.py (blank console).
     env["CUTTLE_HOSTED_BY_DAEMON"] = "1"
     # Packaged Cuttle.exe bakes package.json into app.asar at build time. Stamp the
     # live checkout version so titlebar / worker ads match mesh bumps.
@@ -438,7 +449,7 @@ def start_flask() -> bool:
         flask_port()
     except Exception as exc:
         print(f"[DAEMON] Refusing Flask start: {exc}")
-        print("[DAEMON] Fix CUTTLE_HTTPS_PORT/CUTTLE_HTTP_PORT/CUTTLE_PHONE_HTTPS_PORT in src/.env, "
+        print(f"[DAEMON] Fix CUTTLE_HTTPS_PORT/CUTTLE_HTTP_PORT/CUTTLE_PHONE_HTTPS_PORT in {_env_file}, "
               "then cold-restart the daemon (port changes need a daemon restart, not a Flask-only restart).")
         return False
     _warn_primary_port_conflicts()
@@ -482,7 +493,7 @@ def _restore_startup_port_env() -> None:
 
 
 def _reload_env_file() -> None:
-    """Re-read src/.env so per-service restarts pick up env changes without daemon restart.
+    """Re-read <home>/.env so per-service restarts pick up env changes without daemon restart.
 
     Non-port keys reload normally; the listener triple is re-pinned to the
     boot snapshot afterwards (see _restore_startup_port_env).
@@ -1220,9 +1231,21 @@ class _Tee:
 
 def run_daemon():
     """Run daemon loop: start Flask, device worker and restart watchers, system tray."""
-    global daemon_running
+    global daemon_running, _STARTUP_PORTS
 
     _enable_windows_ansi()
+
+    # Move an older checkout's state (and ~/cuttle_logs) into the per-user home
+    # before any owned service, scheduler thread, or this log opens a file
+    # there. Fail closed below: running on an empty home beside unmigrated
+    # state would split chat history.
+    migration_error = None
+    try:
+        from core.runtime_data import migrate_when_stopped
+
+        moved = migrate_when_stopped(PROJECT_ROOT)
+    except Exception as e:
+        moved, migration_error = [], e
 
     # Redirect daemon output to log file (also to original stdout/stderr if attached)
     try:
@@ -1240,16 +1263,15 @@ def run_daemon():
     signal.signal(signal.SIGINT, handler)
     signal.signal(signal.SIGTERM, handler)
 
-    # Migrate storage only before any owned services or scheduler threads start.
-    # An already-running host or destination conflict leaves legacy state in use.
-    try:
-        from core.runtime_data import migrate_when_stopped
+    if migration_error is not None:
+        print(f"[DAEMON] Refusing to start: runtime state migration failed: {migration_error}")
+        sys.exit(1)
+    if moved:
+        from core.runtime_paths import cuttle_home
 
-        moved = migrate_when_stopped(PROJECT_ROOT)
-        if moved:
-            print(f"[DAEMON] Migrated {len(moved)} runtime data paths to owned folders")
-    except Exception as e:
-        print(f"[DAEMON] Runtime data migration skipped; retaining legacy paths: {e}")
+        print(f"[DAEMON] Moved {len(moved)} runtime state paths into {cuttle_home()}")
+        _load_env_file()
+        _STARTUP_PORTS = _resolve_boot_ports()
 
     # Start system tray icon (runs in separate thread)
     tray_thread = threading.Thread(target=_setup_tray, daemon=False)
@@ -1260,7 +1282,7 @@ def run_daemon():
     try:
         from api.shared_media import purge_expired
 
-        purged = purge_expired(project_root=PROJECT_ROOT)
+        purged = purge_expired()
         n = purged.get("deleted") or 0
         if n:
             print(f"[DAEMON] Purged {n} expired shared media file(s) (TTL {purged.get('ttl_days')}d)")
@@ -1272,7 +1294,7 @@ def run_daemon():
         live_primary_port = flask_port()
     except Exception as exc:
         print(f"[DAEMON] Refusing to start: {exc}")
-        print("[DAEMON] Fix CUTTLE_HTTPS_PORT/CUTTLE_HTTP_PORT/CUTTLE_PHONE_HTTPS_PORT in src/.env, "
+        print(f"[DAEMON] Fix CUTTLE_HTTPS_PORT/CUTTLE_HTTP_PORT/CUTTLE_PHONE_HTTPS_PORT in {_env_file}, "
               "then cold-restart the daemon (port changes need a daemon restart, not a Flask-only restart).")
         raise SystemExit(2)
     start_flask()

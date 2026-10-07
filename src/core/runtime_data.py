@@ -1,77 +1,150 @@
-"""Offline runtime-data migration: PYTHONPATH=src python -m core.runtime_data."""
+"""Move runtime state out of the install tree: PYTHONPATH=src python -m core.runtime_data.
+
+The install tree (checkout, ``Program Files``, AppImage mount) is code only;
+every mutable byte belongs in the per-user Cuttle home
+(``core.runtime_paths.cuttle_home``). This moves an older checkout's state
+there once, at daemon cold start, while nothing holds the files open.
+"""
 from __future__ import annotations
 
 import argparse
+import os
+import shutil
+import time
 from pathlib import Path
 
-from core.runtime_paths import runtime_data_dir, secrets_dir
-
-SESSION_FILES = (
-    "antigravity", "claude", "codex", "cursor", "hermes", "muse", "opencode",
-)
-CACHE_FILES = ("models_dev_pricing_cache.json", "opencode_models_cache.json",
-               "task_benchmarks_cache.json")
+from core.runtime_paths import cuttle_home
 
 
-def migration_pairs(root: Path) -> list[tuple[Path, Path]]:
-    base = runtime_data_dir(root)
-    pairs = [(base / "workspace" / f"{agent}_cli_session_map.json",
-              base / "sessions" / f"{agent}_cli_session_map.json") for agent in SESSION_FILES]
-    pairs += [(base / "workspace" / "harness_last_agent_map.json",
-               base / "sessions" / "harness_last_agent_map.json"),
-              (base / "workspace" / "context_inject_snapshots.json",
-               base / "brain" / "context_inject_snapshots.json")]
-    pairs += [(base / "workspace" / name, base / "cache" / name) for name in CACHE_FILES]
-    pairs += [(base / "workspace" / name, base / name)
-              for name in ("supervised_tasks", "edit_attribution")]
-    pairs += [(base / "db" / "action_hmac_secret", secrets_dir(root) / "action_hmac_secret")]
-    pairs += [(base / "agent_memory", base / "archive" / "agent_memory"),
-              (base / "workspace" / "gemini_cli_session_map.json",
-               base / "archive" / "gemini_cli_session_map.json")]
-    legacy = base / "harness_agents"
-    if legacy.is_dir():
-        pairs += [(p, root / ".cuttle_global" / "personal" / "agents" / p.name)
-                  for p in legacy.iterdir() if p.is_dir()]
-    return [(source, target) for source, target in pairs if source.exists()]
+def _install_sources(root: Path, home: Path) -> list[tuple[Path, Path]]:
+    """Checkout-relative state locations and where each lives in the home."""
+    return [
+        (root / "src/data", home),
+        (root / "src/settings.json", home / "config/settings.json"),
+        (root / "src/output", home / "output"),
+        (root / "src/web/logs", home / "logs/queries"),
+        (root / "src/.env", home / ".env"),
+        (root / ".cuttle/personal/secrets", home / "secrets"),
+        (root / ".cuttle/personal/path-aliases.json", home / "personal/path-aliases.json"),
+        (root / ".cuttle_global/personal", home / "personal"),
+    ]
 
 
-def migrate(root: Path) -> list[tuple[Path, Path]]:
+def _files(path: Path) -> list[Path]:
+    if path.is_file() or path.is_symlink():
+        return [path]
+    if not path.is_dir():
+        return []
+    return sorted(p for p in path.rglob("*") if p.is_file() or p.is_symlink())
+
+
+def _legacy_logs(home: Path) -> list[tuple[Path, Path]]:
+    """``~/cuttle_logs`` predates the home. Only the real default home adopts it:
+    an explicit ``CUTTLE_HOME`` (tests, shadows, a second checkout) never does."""
+    if (os.environ.get("CUTTLE_HOME") or "").strip():
+        return []
+    return [(Path.home() / "cuttle_logs", home / "logs")]
+
+
+def migration_pairs(root: Path, home: Path | None = None) -> list[tuple[Path, Path]]:
+    """Sources that still hold state (empty directories do not count)."""
+    sources = _install_sources(root, cuttle_home() if home is None else home)
+    if home is None:
+        sources += _legacy_logs(cuttle_home())
+    return [(source, target) for source, target in sources if _files(source)]
+
+
+def pending_install_state(root: Path) -> list[Path]:
+    """Install-tree state a host must not run beside (old logs never block)."""
+    return [source for source, _ in migration_pairs(root) if source.is_relative_to(root)]
+
+
+def _file_moves(source: Path, target: Path) -> list[tuple[Path, Path]]:
+    if source.is_file() or source.is_symlink():
+        return [(source, target)]
+    return [(path, target / path.relative_to(source)) for path in _files(source)]
+
+
+def _prune_empty_dirs(path: Path) -> None:
+    if not path.is_dir() or path.is_symlink():
+        return
+    for child in sorted(path.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+        if child.is_dir() and not child.is_symlink() and not any(child.iterdir()):
+            child.rmdir()
+    if not any(path.iterdir()):
+        path.rmdir()
+
+
+_SQLITE_SIDECARS = ("-wal", "-shm", "-journal")
+
+
+def _displaced(moves: list[tuple[Path, Path]], stamp: str) -> list[tuple[Path, Path]]:
+    """Home files the move would collide with, and where each is set aside.
+
+    Short-lived helpers (harness CLIs) run fresh code and can write the home
+    before the long-lived host restarts. The install tree's copy is the
+    authoritative one; the newer stray is kept beside it, never overwritten.
+    A migrated database must not pair with a stray WAL, so orphan sidecars
+    of an incoming database are set aside too.
+    """
+    targets = {target for _, target in moves}
+    clashes = {target for target in targets if target.exists() or target.is_symlink()}
+    for target in targets:
+        for suffix in _SQLITE_SIDECARS:
+            sidecar = target.with_name(target.name + suffix)
+            if sidecar not in targets and (sidecar.exists() or sidecar.is_symlink()):
+                clashes.add(sidecar)
+    return [(path, path.with_name(f"{path.name}.pre-migration-{stamp}")) for path in sorted(clashes)]
+
+
+def migrate(root: Path, home: Path | None = None) -> list[tuple[Path, Path]]:
     """Caller must ensure all Cuttle processes using this checkout are stopped.
 
-    Preflight every destination before moving anything. Never merge or overwrite.
-    Moves preserve bytes and SQLite sidecars because their whole directory moves.
+    Never overwrites a file: a colliding home file is renamed aside first.
+    Directories merge file by file (the home may already hold owner folders),
+    so SQLite sidecars travel with their database. Rolls back on failure.
     """
-    from managers.settings_storage import migrate_settings, migration_needed
-
-    pairs = migration_pairs(root)
-    conflicts = [str(target) for _, target in pairs if target.exists() or target.is_symlink()]
-    if conflicts:
-        raise FileExistsError("Migration destinations already exist: " + ", ".join(conflicts))
-    if migration_needed(root):
-        for name in ("machine_settings.json", "ui_state.json"):
-            target = runtime_data_dir(root) / "config" / name
-            if target.exists() or target.is_symlink():
-                raise FileExistsError(f"Settings migration destination already exists: {target}")
-    moved = []
+    pairs = migration_pairs(root, home)
+    moves = [move for source, target in pairs for move in _file_moves(source, target)]
+    steps = _displaced(moves, time.strftime("%Y%m%d%H%M%S")) + moves
+    done = []
     try:
-        for source, target in pairs:
+        for source, target in steps:
+            if target.exists() or target.is_symlink():
+                raise FileExistsError(f"Migration destination already exists: {target}")
             target.parent.mkdir(parents=True, exist_ok=True)
-            source.rename(target)
-            moved.append((source, target))
-        settings_changes = migrate_settings(root) if migration_needed(root) else []
-    except (OSError, ValueError):
-        # Keep legacy generation coherent if a later rename fails.
-        for source, target in reversed(moved):
-            target.rename(source)
+            shutil.move(source, target)
+            done.append((source, target))
+    except OSError:
+        for source, target in reversed(done):
+            source.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(target, source)
         raise
-    workspace = runtime_data_dir(root) / "workspace"
-    if workspace.is_dir() and not any(workspace.iterdir()):
-        workspace.rmdir()
-    return pairs + settings_changes
+    for source, _ in pairs:
+        _prune_empty_dirs(source)
+    (root / "src/settings.json.lock").unlink(missing_ok=True)
+    return pairs
+
+
+def refuse_unmigrated(root: Path) -> None:
+    """Exit rather than run on an empty home beside unmigrated install state.
+
+    A Flask-only restart after upgrading would otherwise open fresh stores
+    (no chats, owner bootstrap reopened) while the real ones sit unmigrated.
+    An explicit ``CUTTLE_HOME`` (tests, shadow instances) opts out.
+    """
+    if (os.environ.get("CUTTLE_HOME") or "").strip():
+        return
+    pending = pending_install_state(root)
+    if pending:
+        raise SystemExit(
+            "Cuttle state is still inside the install tree ("
+            + ", ".join(str(p) for p in pending)
+            + f"). Exit Cuttle from the tray and relaunch: the daemon moves it to {cuttle_home()}."
+        )
 
 
 def active_processes(root: Path) -> list[int]:
-    import os
     import psutil
 
     found = []
@@ -105,9 +178,7 @@ def active_processes(root: Path) -> list[int]:
 
 def migrate_when_stopped(root: Path) -> list[tuple[Path, Path]]:
     """Startup/CLI guard; excludes the current daemon before it starts services."""
-    from managers.settings_storage import migration_needed
-
-    if not migration_pairs(root) and not migration_needed(root):
+    if not migration_pairs(root):
         return []
     active = active_processes(root)
     if active:
@@ -127,12 +198,8 @@ def main() -> None:
             parser.error(str(exc))
     else:
         pairs = migration_pairs(root)
-        from managers.settings_storage import migration_needed
-        if migration_needed(root):
-            pairs += [(root / "src/settings.json", runtime_data_dir(root) / "config" / name)
-                      for name in ("machine_settings.json", "ui_state.json")]
     for source, target in pairs:
-        print(f"{source.relative_to(root)} -> {target.relative_to(root)}")
+        print(f"{source} -> {target}")
 
 
 if __name__ == "__main__":

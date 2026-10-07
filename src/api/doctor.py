@@ -4,11 +4,7 @@ Runs checks for auth, ports, environment, and chat backend availability.
 """
 
 import os
-from pathlib import Path
 from typing import Dict, List, Any
-
-# Project root (src)
-PROJECT_ROOT = Path(__file__).parent.parent
 
 
 def run_checks() -> Dict[str, Any]:
@@ -17,23 +13,25 @@ def run_checks() -> Dict[str, Any]:
     suggestions: List[str] = []
 
     # 4. Auth DB / pairing store writable
-    data_dir = PROJECT_ROOT / "data"
-    data_ok = data_dir.exists() or True  # will be created on first use
+    from core.runtime_paths import cuttle_home
+
+    data_dir = cuttle_home()
+    error = ""
     try:
         data_dir.mkdir(parents=True, exist_ok=True)
         test_file = data_dir / ".doctor_write_test"
         test_file.write_text("ok")
         test_file.unlink()
-        data_ok = True
     except Exception as e:
-        data_ok = False
+        error = str(e)
+    data_ok = not error
     checks.append({
         "name": "data_dir",
         "status": "ok" if data_ok else "fail",
-        "message": "Data directory writable" if data_ok else f"Data directory not writable: {e}",
+        "message": f"Cuttle home writable ({data_dir})" if data_ok else f"Cuttle home not writable ({data_dir}): {error}",
     })
     if not data_ok:
-        suggestions.append("Ensure src/data exists and is writable (for auth and pairing store).")
+        suggestions.append(f"Ensure {data_dir} is writable, or set CUTTLE_HOME to a writable folder.")
 
     # 5. API keys (env) – optional
     openai_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("API_KEY")

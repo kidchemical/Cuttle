@@ -41,7 +41,7 @@ _ATTR_RE = re.compile(
 _PENDING_TTL_SEC = 3600
 _pending_lock = threading.RLock()
 _pending: Dict[str, Dict[str, Any]] = {}  # action_id -> record
-from core.runtime_paths import action_hmac_secret_path
+from core.runtime_paths import action_hmac_secret_path, personal_dir
 
 _HMAC_SECRET_PATH = action_hmac_secret_path()
 _hmac_secret_cache: Optional[bytes] = None
@@ -104,9 +104,10 @@ def _actions_dirs_for_project(
             # Owning root for Unity-style nested .cuttle is still the project root.
             seen.add(key + "::source")
             out.append((nested, owner_r))
-        if not include_global:
+        if not include_global or not (owner_r / ".cuttle_global").is_dir():
             return
-        hub_personal = owner_r / ".cuttle_global" / "personal" / "actions"
+        # The shared layer's install-local overlay lives in the per-user home.
+        hub_personal = personal_dir() / "actions"
         if hub_personal.is_dir():
             seen.add(key + "::global-personal")
             out.append((hub_personal, owner_r))
@@ -205,12 +206,15 @@ def list_project_actions(
             seen.add(key)
             if action["raw"].get("disabled") is True and not _include_disabled:
                 continue
-            parts = actions_dir.relative_to(owner_root).parts
-            scope = "global" if ".cuttle_global" in parts else "project"
-            if scope == "project" and "source" in actions_dir.relative_to(owner_root).parts:
-                scope += "-nested"
-            if "personal" in parts:
-                scope += "-personal"
+            if actions_dir == personal_dir() / "actions":
+                scope = "global-personal"
+            else:
+                parts = actions_dir.relative_to(owner_root).parts
+                scope = "global" if ".cuttle_global" in parts else "project"
+                if scope == "project" and "source" in parts:
+                    scope += "-nested"
+                if "personal" in parts:
+                    scope += "-personal"
             action["source"] = scope
             action["ref"] = f"{scope}/{key}"
             out.append(action)
@@ -304,7 +308,7 @@ def find_project_action_resolved(
         except Exception:
             pass
 
-    # Optional sibling checkouts from gitignored .cuttle_global/personal/path-aliases.json.
+    # Optional sibling checkouts from <home>/personal/path-aliases.json.
     try:
         from core.runtime_paths import (
             personal_sibling_project_paths,

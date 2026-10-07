@@ -317,7 +317,7 @@
             <div class="settings-intro">Try new features. Their tools live in Apps or the relevant settings tab.</div>
             <details class="settings-disclosure">
                 <summary>About experiments</summary>
-                <p>Features may change. Each switch shows its current state. Set <code>CUTTLE_EXPERIMENTAL=0</code> in <code>src/.env</code> to force all experiments off.</p>
+                <p>Features may change. Each switch shows its current state. Set <code>CUTTLE_EXPERIMENTAL=0</code> in Cuttle's <code>.env</code> (<code>~/.local/share/cuttle</code> or <code>%LOCALAPPDATA%\Cuttle</code>) to force all experiments off.</p>
             </details>
             <div class="settings-group">
                 <h3 class="settings-title"><span class="emoji">🧪</span> Features <span class="settings-scope" data-scope="server" title="Stored in settings.json — these apply to every device and client that talks to this Cuttle.">All devices</span></h3>
@@ -1090,7 +1090,7 @@
                 } else if (agent.available && !agent.credential_present && (agent.credential_env || []).length) {
                     const hint = document.createElement('div');
                     hint.className = 'agent-card-hint';
-                    hint.textContent = 'Add ' + agent.credential_env.join(' or ') + ' to src/.env to finish setup.';
+                    hint.textContent = 'Add ' + agent.credential_env.join(' or ') + ' to Cuttle\'s .env to finish setup.';
                     detail.appendChild(hint);
                 } else if (agent.available && agent.auth_command) {
                     const hint = document.createElement('div');
@@ -1105,7 +1105,7 @@
                     actions.appendChild(agentCopyButton('Copy setup instructions', agent.install_hint));
                 } else if (agent.available && !agent.credential_present && (agent.credential_env || []).length) {
                     actions.appendChild(agentCopyButton('Copy setup instructions',
-                        'Add ' + agent.credential_env.join(' or ') + ' to src/.env to finish setup.'));
+                        'Add ' + agent.credential_env.join(' or ') + ' to Cuttle\'s .env to finish setup.'));
                 } else if (agent.available && agent.auth_command) {
                     actions.appendChild(agentCopyButton('Copy login command', agent.auth_command));
                 }

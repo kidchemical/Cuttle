@@ -1442,7 +1442,7 @@ def _git_commit_env(cwd: str) -> Dict[str, str]:
 
     Linux clones often have no local/global git identity; Windows setups
     usually already have one. ``GIT_AUTHOR_NAME`` / ``GIT_AUTHOR_EMAIL`` from
-    ``src/.env`` fill the gap.
+    ``<home>/.env`` fill the gap.
     """
     env = os.environ.copy()
     from api.github_app import commit_env

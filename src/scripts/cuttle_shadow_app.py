@@ -835,6 +835,10 @@ def main() -> int:
     data = get("CUTTLE_SHADOW_DATA", "")
     log = get("CUTTLE_SHADOW_LOG", "")
     root = os.path.realpath(os.path.dirname(os.path.abspath(manifest_path)))
+    home = get("CUTTLE_HOME", "")
+    if not home or not os.path.realpath(home).startswith(root + os.sep):
+        print("shadow: CUTTLE_HOME missing or outside the instance root; refusing boot", flush=True)
+        return 2
     sock_state = install_socket_guard(fixed_port)
     install_subprocess_guard()
     _manifest_norm = os.path.normcase(os.path.abspath(manifest_path))

@@ -11,16 +11,16 @@ from typing import Optional, Dict, Any
 class SettingsManager:
     """Manages persistent application settings"""
     
-    def __init__(self, settings_file: str = "settings.json"):
+    def __init__(self, settings_file: Optional[str] = None):
         """Initialize settings manager
-        
+
         Args:
-            settings_file: Path to settings file (relative to project root)
+            settings_file: Explicit settings path (tests); default is the
+                per-user home's ``config/settings.json``.
         """
-        self.project_root = Path(__file__).parent.parent
-        self.settings_file = self.project_root / settings_file
         from managers.settings_storage import storage_for
-        self.storage = storage_for(self.settings_file)
+        self.storage = storage_for(Path(settings_file) if settings_file else None)
+        self.settings_file = self.storage.server
         self.settings = self._load_settings()
     
     def _load_settings(self) -> Dict[str, Any]:

@@ -1,7 +1,7 @@
 """
 Shared chat media staging for markdown images / video in Cuttle bubbles.
 
-Agents (and auto-rewrite) copy files into ``src/output/shared/`` so LAN/phone
+Agents (and auto-rewrite) copy files into ``<home>/output/shared/`` so LAN/phone
 clients can preview via ``/output/shared/<id>.ext``. Staged copies expire after
 ``SHARED_MEDIA_TTL_DAYS`` (default 7) and are purged on daemon / Flask /
 Electron host start.
@@ -41,9 +41,10 @@ _FFMPEG_CACHE: Optional[str] = None
 _FFPROBE_CACHE: Optional[str] = None
 
 
-def shared_media_root(project_root: Optional[Path] = None) -> Path:
-    root = Path(project_root) if project_root else _default_project_root()
-    return (root / "src" / "output" / "shared").resolve()
+def shared_media_root() -> Path:
+    from core.runtime_paths import output_dir
+
+    return (output_dir() / "shared").resolve()
 
 
 def _default_project_root() -> Path:
@@ -102,11 +103,10 @@ def write_stage_meta(
     *,
     original_path: str | Path | None,
     original_name: Optional[str] = None,
-    project_root: Optional[Path] = None,
     extra: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Persist original source info next to a staged shared media file."""
-    shared = shared_media_root(project_root)
+    shared = shared_media_root()
     shared.mkdir(parents=True, exist_ok=True)
     name = Path(staged_filename).name
     meta_path = shared / meta_filename_for(name)
@@ -131,8 +131,6 @@ def write_stage_meta(
 
 def read_stage_meta(
     url_or_filename: str,
-    *,
-    project_root: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Load sidecar meta for a staged ``/output/shared/…`` URL or filename."""
     import json
@@ -142,7 +140,7 @@ def read_stage_meta(
     if not name:
         return {"success": False, "error": "filename required"}
 
-    shared = shared_media_root(project_root)
+    shared = shared_media_root()
     if name.lower().endswith(POSTER_SUFFIX):
         stem = name[: -len(POSTER_SUFFIX)]
         meta_path = shared / f"{stem}{META_SUFFIX}"
@@ -323,8 +321,6 @@ def extract_midframe_poster(
 
 def ensure_video_poster(
     video_path: Path | str,
-    *,
-    project_root: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """
     Ensure a ``*.poster.jpg`` sidecar exists next to a staged (or any) video.
@@ -339,7 +335,7 @@ def ensure_video_poster(
         return {"success": False, "error": "not a video file"}
 
     poster_name = poster_filename_for(src.name)
-    shared = shared_media_root(project_root)
+    shared = shared_media_root()
     try:
         src.relative_to(shared)
         dest = shared / poster_name
@@ -372,8 +368,6 @@ def ensure_video_poster(
 
 def ensure_poster_for_shared_url(
     url: str,
-    *,
-    project_root: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Lazy poster for ``/output/shared/<video>`` (used by serve + API)."""
     u = _unwrap_md_dest(url).split("?")[0].split("#")[0]
@@ -382,16 +376,14 @@ def ensure_poster_for_shared_url(
     name = Path(u).name
     if Path(name).suffix.lower() not in VIDEO_EXTS:
         return {"success": False, "error": "not a video url"}
-    video_path = shared_media_root(project_root) / name
+    video_path = shared_media_root() / name
     if not video_path.is_file():
         return {"success": False, "error": "video not found"}
-    return ensure_video_poster(video_path, project_root=project_root)
+    return ensure_video_poster(video_path)
 
 
 def ensure_poster_sidecar_file(
     poster_rel: str,
-    *,
-    project_root: Optional[Path] = None,
 ) -> Optional[Path]:
     """
     If ``shared/<stem>.poster.jpg`` is missing, try to build it from the
@@ -400,7 +392,7 @@ def ensure_poster_sidecar_file(
     name = Path(poster_rel).name
     if not name.lower().endswith(POSTER_SUFFIX):
         return None
-    shared = shared_media_root(project_root)
+    shared = shared_media_root()
     poster_path = shared / name
     if poster_path.is_file() and poster_path.stat().st_size >= 32:
         return poster_path
@@ -408,7 +400,7 @@ def ensure_poster_sidecar_file(
     for ext in VIDEO_EXTS:
         cand = shared / f"{stem}{ext}"
         if cand.is_file():
-            result = ensure_video_poster(cand, project_root=project_root)
+            result = ensure_video_poster(cand)
             if result.get("success") and poster_path.is_file():
                 return poster_path
             break
@@ -510,11 +502,10 @@ def resolve_local_path(url: str, project_root: Optional[Path] = None) -> Optiona
 def stage_file(
     source: Path | str,
     *,
-    project_root: Optional[Path] = None,
     preferred_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Copy a local media file into ``src/output/shared/``.
+    Copy a local media file into ``<home>/output/shared/``.
 
     Returns ``{success, url, filename, kind, path, poster_url?}`` or
     ``{success: False, error}``.
@@ -542,7 +533,7 @@ def stage_file(
             "error": f"file too large ({size} bytes; max {MAX_STAGE_BYTES})",
         }
 
-    dest_dir = shared_media_root(project_root)
+    dest_dir = shared_media_root()
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     ext = src.suffix.lower() or ".bin"
@@ -572,14 +563,13 @@ def stage_file(
         filename,
         original_path=src,
         original_name=out["original_name"],
-        project_root=project_root,
         extra={"kind": kind, "bytes": size},
     )
     if meta_result.get("success"):
         out["meta"] = meta_result.get("meta")
 
     if kind == "video":
-        poster = ensure_video_poster(dest, project_root=project_root)
+        poster = ensure_video_poster(dest)
         if poster.get("success"):
             out["poster_url"] = poster.get("poster_url")
             out["poster_filename"] = poster.get("poster_filename")
@@ -591,12 +581,11 @@ def stage_file(
 
 def purge_expired(
     *,
-    project_root: Optional[Path] = None,
     ttl: Optional[int] = None,
     now: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Delete staged files older than TTL days (by mtime)."""
-    root = shared_media_root(project_root)
+    root = shared_media_root()
     days = ttl if ttl is not None else ttl_days()
     cutoff = (now if now is not None else time.time()) - (days * 86400)
     deleted = []
@@ -661,7 +650,7 @@ def rewrite_local_media_refs(
         if path is None or not path.is_file():
             cache[key] = raw_url
             return raw_url
-        result = stage_file(path, project_root=project_root)
+        result = stage_file(path)
         if not result.get("success"):
             cache[key] = raw_url
             return raw_url

@@ -17,19 +17,19 @@ PNG_1PX = bytes.fromhex(
 
 
 @pytest.fixture
-def project(tmp_path: Path):
-    (tmp_path / "src" / "output").mkdir(parents=True)
+def project(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path / "home"))
     return tmp_path
 
 
 def test_stage_file_copies_into_shared(project: Path):
     src = project / "shot.png"
     src.write_bytes(PNG_1PX)
-    result = sm.stage_file(src, project_root=project, preferred_name="shot.png")
+    result = sm.stage_file(src, preferred_name="shot.png")
     assert result["success"] is True
     assert result["kind"] == "image"
     assert result["url"].startswith("/output/shared/")
-    dest = project / "src" / "output" / "shared" / result["filename"]
+    dest = project / "home" / "output" / "shared" / result["filename"]
     assert dest.is_file()
     assert dest.read_bytes() == PNG_1PX
 
@@ -37,12 +37,12 @@ def test_stage_file_copies_into_shared(project: Path):
 def test_stage_rejects_non_media(project: Path):
     src = project / "notes.txt"
     src.write_text("hi", encoding="utf-8")
-    result = sm.stage_file(src, project_root=project)
+    result = sm.stage_file(src)
     assert result["success"] is False
 
 
 def test_purge_expired_by_mtime(project: Path, monkeypatch):
-    root = sm.shared_media_root(project)
+    root = sm.shared_media_root()
     root.mkdir(parents=True)
     keep = root / "keep-aaaaaaaaaa.png"
     drop = root / "old-bbbbbbbbbb.png"
@@ -56,7 +56,7 @@ def test_purge_expired_by_mtime(project: Path, monkeypatch):
     os.utime(drop, (old, old))
     os.utime(keep, (now, now))
 
-    result = sm.purge_expired(project_root=project, ttl=7, now=now)
+    result = sm.purge_expired(ttl=7, now=now)
     assert result["success"] is True
     assert result["deleted"] == 1
     assert drop.name in result["files"]
@@ -119,11 +119,11 @@ def test_stage_writes_original_path_meta(project: Path):
     src = project / "temp" / "hero.png"
     src.parent.mkdir(parents=True)
     src.write_bytes(PNG_1PX)
-    result = sm.stage_file(src, project_root=project, preferred_name="hero.png")
+    result = sm.stage_file(src, preferred_name="hero.png")
     assert result["success"] is True
     assert result["original_name"] == "hero.png"
     assert "temp/hero.png" in result["original_path"].replace("\\", "/")
-    meta = sm.read_stage_meta(result["url"], project_root=project)
+    meta = sm.read_stage_meta(result["url"])
     assert meta["success"] is True
     assert meta["meta"]["original_name"] == "hero.png"
     assert meta["meta"]["original_path"].endswith("temp/hero.png") or "temp/hero.png" in meta["meta"]["original_path"]
@@ -152,16 +152,16 @@ def test_stage_video_makes_midframe_poster(project: Path, monkeypatch):
 
     monkeypatch.setattr(sm, "extract_midframe_poster", fake_extract)
     monkeypatch.setattr(sm, "find_ffmpeg", lambda: "ffmpeg")
-    result = sm.stage_file(src, project_root=project, preferred_name="clip.mp4")
+    result = sm.stage_file(src, preferred_name="clip.mp4")
     assert result["success"] is True
     assert result["kind"] == "video"
     assert result.get("poster_url", "").endswith(".poster.jpg")
-    poster = project / "src" / "output" / "shared" / Path(result["poster_url"]).name
+    poster = project / "home" / "output" / "shared" / Path(result["poster_url"]).name
     assert poster.is_file()
 
 
 def test_ensure_poster_sidecar_lazy(project: Path, monkeypatch):
-    shared = sm.shared_media_root(project)
+    shared = sm.shared_media_root()
     shared.mkdir(parents=True)
     video = shared / "demo-aaaaaaaaaa.mp4"
     video.write_bytes(b"\x00\x00\x00\x18ftypmp42")
@@ -172,7 +172,7 @@ def test_ensure_poster_sidecar_lazy(project: Path, monkeypatch):
         return {"success": True, "path": str(dest), "bytes": 6, "seek_seconds": 0.5}
 
     monkeypatch.setattr(sm, "extract_midframe_poster", fake_extract)
-    path = sm.ensure_poster_sidecar_file("demo-aaaaaaaaaa.poster.jpg", project_root=project)
+    path = sm.ensure_poster_sidecar_file("demo-aaaaaaaaaa.poster.jpg")
     assert path is not None
     assert path.is_file()
     assert path.name == "demo-aaaaaaaaaa.poster.jpg"

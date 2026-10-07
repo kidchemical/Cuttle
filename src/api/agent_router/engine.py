@@ -83,8 +83,10 @@ def actionable_router_hint(error: str) -> str:
     """Short actionable hint for a routing-brain failure (main response)."""
     msg = str(error or "")
     if "OPENAI_API_KEY" in msg:
+        from core.runtime_paths import env_file
+
         return (
-            "routing needs OPENAI_API_KEY in src/.env "
+            f"routing needs OPENAI_API_KEY in {env_file()} "
             "(or switch the router to local/agent mode)"
         )
     if "no provider" in msg.lower():

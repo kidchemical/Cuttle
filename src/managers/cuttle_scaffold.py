@@ -94,7 +94,7 @@ Gitignored twin of tracked `.cuttle/`. Rule/doc markdown appends a personal delt
 after tracked text. Commands/actions replace by declared name; skills replace by
 directory id. Personal-only units are supported. A structured unit with
 `disabled: true` hides lower-priority units of the same identity. Put LAN hosts, absolute paths, and guild/repo examples here — not
-in tracked docs. See the Cuttle global `.cuttle_global/personal/README.md` for the full contract.
+in tracked docs. Full contract: Cuttle's `docs/architecture/cuttle-home.md` (Personal overlays).
 """
 
 _GLOBAL_INI = """# `.cuttle/GLOBAL.ini` — per-project routing contract: which global layers apply here.

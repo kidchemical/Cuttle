@@ -19,7 +19,7 @@ Layout (folder per agent)::
 
 Drop-in roots (same manifest + adapter contract; cannot shadow bundled ids)::
 
-    .cuttle_global/personal/agents/<id>/
+    <home>/personal/agents/<id>/
     {Cuttle}/.cuttle_global/agents/<id>/
     {project}/.cuttle/agents/<id>/
     CUTTLE_AGENTS_DIR (extra search paths)

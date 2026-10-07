@@ -84,24 +84,27 @@ def _oauth_redirect_uri(provider: str) -> str:
 
 
 # OAuth client env names per provider (read at request time so a key added
-# to src/.env without a restart is honored).
+# to the Cuttle home .env without a restart is honored).
 _OAUTH_ENV_NAMES = {
     'google': ('GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'),
     'microsoft': ('MICROSOFT_CLIENT_ID', 'MICROSOFT_CLIENT_SECRET'),
     'facebook': ('FACEBOOK_APP_ID', 'FACEBOOK_APP_SECRET'),
 }
 
-_OAUTH_SETUP_HINT = (
-    'Add the client ID and secret to src/.env (see the OAuth section of the '
-    'Settings page or docs) and restart Flask, then try again.'
-)
+def _oauth_setup_hint() -> str:
+    from core.runtime_paths import env_file
+
+    return (
+        f'Add the client ID and secret to {env_file()} (see the OAuth section of the '
+        'Settings page or docs) and restart Flask, then try again.'
+    )
 
 
 def _oauth_live_config(provider: str) -> dict:
     """OAuth config with credentials resolved from the live environment.
 
     Credentials come strictly from the live environment — never from the
-    import-time ``OAUTH_CONFIGS`` snapshot, so a key added to ``src/.env``
+    import-time ``OAUTH_CONFIGS`` snapshot, so a key added to ``<home>/.env``
     (or removed) is honored without depending on import order.
     """
     base = dict(OAUTH_CONFIGS.get(provider, {}))
@@ -405,7 +408,7 @@ def oauth_login(provider):
         config = _oauth_live_config(provider)
 
         if not (config.get('client_id') or '').strip() or not (config.get('client_secret') or '').strip():
-            message = f'{provider.title()} login is not set up on this server. {_OAUTH_SETUP_HINT}'
+            message = f'{provider.title()} login is not set up on this server. {_oauth_setup_hint()}'
             # Browser navigation (the login button is a plain link) lands on
             # the app with guidance in the auth dialog instead of raw JSON.
             best = request.accept_mimetypes.best_match(['text/html', 'application/json'])
@@ -416,7 +419,7 @@ def oauth_login(provider):
                 'error': message,
                 'code': 'oauth_not_configured',
                 'provider': provider,
-                'setup': _OAUTH_SETUP_HINT,
+                'setup': _oauth_setup_hint(),
             }), 503
         
         db = get_auth_db()
@@ -1025,11 +1028,11 @@ def delete_chat_session(session_id):
         # Delete uploaded attachments tied to this session
         try:
             import shutil
-            from pathlib import Path
             from werkzeug.utils import secure_filename
-            # uploads are stored under src/output/uploads/{safe_session}
+            from core.runtime_paths import output_dir
+            # uploads are stored under <home>/output/uploads/{safe_session}
             for sid in (str(session_id), secure_filename(str(session_id))):
-                up = Path(__file__).resolve().parent.parent / 'output' / 'uploads' / sid
+                up = output_dir() / 'uploads' / sid
                 if up.exists():
                     shutil.rmtree(up, ignore_errors=True)
         except Exception as ce:

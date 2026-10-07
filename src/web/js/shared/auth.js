@@ -391,7 +391,7 @@ function checkAuthRedirect() {
             openAuthModal('login');
             showAuthError(
                 `${provider} login is not set up on this server yet. ` +
-                'Add the client ID and secret to src/.env, restart Flask, then try again — ' +
+                'Add the client ID and secret to Cuttle\'s .env, restart Flask, then try again — ' +
                 'or continue with a local account or as guest.'
             );
         } else {
@@ -584,12 +584,12 @@ function _refreshOauthAvailability(listEl) {
                 if (st && st.configured === false) {
                     a.classList.add('auth-oauth-unavailable');
                     a.setAttribute('aria-disabled', 'true');
-                    a.title = 'Not set up on this server — add the client ID and secret to src/.env';
+                    a.title = 'Not set up on this server — add the client ID and secret to Cuttle\'s .env';
                     a.addEventListener('click', (e) => {
                         e.preventDefault();
                         showAuthError(
                             'Google login is not set up on this server yet. ' +
-                            'Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to src/.env, ' +
+                            'Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to Cuttle\'s .env, ' +
                             'restart Flask, then try again — or continue with a local account or as guest.'
                         );
                     });

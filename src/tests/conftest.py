@@ -1,8 +1,10 @@
 """Pytest configuration and path setup for Cuttle tests.
 Ensures src/ is on sys.path so imports like scripts.utilities.cursor_cli_tool work.
 """
+import atexit
 import importlib
 import re
+import shutil
 import sys
 from pathlib import Path
 from typing import Any, Dict, List
@@ -12,6 +14,11 @@ import tempfile
 import traceback
 
 import pytest
+
+# Every store resolves through the Cuttle home. Pin it before any import
+# computes a path so no test run can read or write the live one.
+os.environ["CUTTLE_HOME"] = tempfile.mkdtemp(prefix="cuttle-test-home-")
+atexit.register(shutil.rmtree, os.environ["CUTTLE_HOME"], ignore_errors=True)
 
 # Add src to path (conftest lives in tests/)
 src_root = Path(__file__).resolve().parent.parent
@@ -166,9 +173,11 @@ def _isolated_application_settings(tmp_path, monkeypatch):
     import managers.settings_manager as managers
     from managers.settings_storage import SettingsStorage
 
+    from core.runtime_paths import settings_path
+
     manager = managers.SettingsManager(str(tmp_path / 'application-settings.json'))
     monkeypatch.setattr(managers, '_settings_manager', manager)
-    production = (src_root / 'settings.json').resolve()
+    production = settings_path().resolve()
     update = SettingsStorage.update
 
     def private_update(self, key, transform):
@@ -374,7 +383,7 @@ def _isolated_auth_db(tmp_path, monkeypatch):
     from-imported ``get_auth_db``). Owner mode is single-user unless a test
     sets ``OWNER_USER_EMAIL`` itself — a developer's shell value must not turn
     freshly registered test users into non-owners. Empty (not unset) so the
-    ``src/.env`` load on first ``web_chat_api`` import (override=False) cannot
+    ``<home>/.env`` load on first ``web_chat_api`` import (override=False) cannot
     put it back mid-test.
     """
     import api.auth_db as auth_db
@@ -410,7 +419,7 @@ def _isolated_brain_state(tmp_path, monkeypatch):
     """Harness turns in tests must not write live Brain state or query logs.
 
     Briefing receipts, handoff cursors, context metrics, and query sidecars
-    all default to ``src/data`` / ``src/web/logs``; pytest runs used to leave
+    all default to the Cuttle home; pytest runs used to leave
     hundreds of ``muse-badge-session|…/pytest-of-…`` records there.
     """
     from api.cuttle_brain import context_delta, handoff

@@ -65,21 +65,15 @@ def _empty_metrics() -> Dict[str, float]:
 
 
 def _outcomes_db_path() -> Path:
-    try:
-        from api.agent_router.outcomes import database_path
+    from api.agent_router.outcomes import database_path
 
-        return Path(database_path())
-    except Exception:  # pragma: no cover
-        return Path(__file__).resolve().parents[2] / "data" / "db" / "router_outcomes.db"
+    return Path(database_path())
 
 
 def _auth_db_path() -> Path:
-    try:
-        from api.auth_db import DB_PATH
+    from api.auth_db import DB_PATH
 
-        return Path(DB_PATH)
-    except Exception:  # pragma: no cover
-        return Path(__file__).resolve().parents[2] / "data" / "db" / "cuttle_auth.db"
+    return Path(DB_PATH)
 
 
 def _connect_ro(path: Path) -> Optional[sqlite3.Connection]:

@@ -94,7 +94,7 @@ def _now() -> float:
 def get_mobile_token() -> str:
     """
     Shared secret token required by the phone to connect and reply.
-    Set CUTTLE_MOBILE_TOKEN in environment (or src/.env loaded by daemon).
+    Set CUTTLE_MOBILE_TOKEN in environment (or <home>/.env loaded by daemon).
     """
     token = (os.environ.get("CUTTLE_MOBILE_TOKEN") or "").strip()
     return token if token else "dev-local-token"

@@ -191,7 +191,7 @@ def test_summarize_deepseek_missing_credential():
     msg = summarize_deepseek_error("MISSING_CREDENTIAL: DEEPSEEK_API_KEY is not set", 1)
     # CLI auth stays with the DeepSeek CLI; never point users at Cuttle's .env.
     assert "deepseek cli" in msg.lower()
-    assert "src/.env" not in msg.lower()
+    assert ".env" not in msg.lower()
     assert "\n" not in msg
     assert "MISSING_CREDENTIAL" not in msg
 

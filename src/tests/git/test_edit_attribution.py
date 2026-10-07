@@ -11,12 +11,7 @@ import pytest
 
 @pytest.fixture
 def journal_db(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        "api.edit_attribution.journal._cuttle_root",
-        lambda: tmp_path,
-    )
-    db_dir = tmp_path / "src" / "data" / "workspace" / "edit_attribution"
-    db_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path))
     return tmp_path
 
 

@@ -19,12 +19,9 @@ from typing import Any, Dict, List, Optional
 
 
 def _default_db_path() -> Path:
-    try:
-        from core.runtime_paths import data_db_dir
+    from core.runtime_paths import data_db_dir
 
-        return Path(data_db_dir()) / "achievements.db"
-    except Exception:  # pragma: no cover - standalone/test fallback
-        return Path(__file__).resolve().parents[2] / "data" / "db" / "achievements.db"
+    return data_db_dir() / "achievements.db"
 
 
 DEFAULT_DB_PATH = _default_db_path()

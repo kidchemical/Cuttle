@@ -16,8 +16,8 @@ def _owner_client(tmp_path, monkeypatch):
     monkeypatch.setattr("api.web_chat_api.get_auth_db", lambda: db)
     monkeypatch.delenv("OWNER_USER_EMAIL", raising=False)
     # Isolate the .env file the endpoints read/write.
-    monkeypatch.setattr(wca, "actual_project_root", tmp_path)
-    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path / "home"))
+    (tmp_path / "home").mkdir(parents=True, exist_ok=True)
     owner = db.create_user("owner@local", "Owner", "local", password="x")
     token = db.create_auth_session(owner)
     client = wca.app.test_client()
@@ -30,7 +30,7 @@ def test_load_returns_hints_never_plaintext(tmp_path, monkeypatch):
 
     client = _owner_client(tmp_path, monkeypatch)
     secret = "sk-test-openai-secret-value-1234"
-    (tmp_path / "src" / ".env").write_text(
+    (tmp_path / "home" / ".env").write_text(
         f"# comment line\n\nexport OTHER=keep\nOPENAI_API_KEY={secret}\n",
         encoding="utf-8",
     )
@@ -50,7 +50,7 @@ def test_load_returns_hints_never_plaintext(tmp_path, monkeypatch):
 
 def test_save_preserves_unrelated_lines_and_applies_env(tmp_path, monkeypatch):
     client = _owner_client(tmp_path, monkeypatch)
-    (tmp_path / "src" / ".env").write_text(
+    (tmp_path / "home" / ".env").write_text(
         "# keep me\n\nexport OTHER=keep\nOPENAI_API_KEY=old\n",
         encoding="utf-8",
     )
@@ -61,7 +61,7 @@ def test_save_preserves_unrelated_lines_and_applies_env(tmp_path, monkeypatch):
         json={"api_type": "openai", "api_key": "sk-new-value-abcdef123456"},
     )
     assert res.status_code == 200
-    text = (tmp_path / "src" / ".env").read_text(encoding="utf-8")
+    text = (tmp_path / "home" / ".env").read_text(encoding="utf-8")
     assert "# keep me" in text
     assert "export OTHER=keep" in text
     assert "OPENAI_API_KEY=sk-new-value-abcdef123456" in text
@@ -76,19 +76,19 @@ def test_save_preserves_unrelated_lines_and_applies_env(tmp_path, monkeypatch):
         json={"api_type": "anthropic", "api_key": "sk-ant-new-value-123456"},
     )
     assert res.status_code == 200
-    text = (tmp_path / "src" / ".env").read_text(encoding="utf-8")
+    text = (tmp_path / "home" / ".env").read_text(encoding="utf-8")
     assert "OPENAI_API_KEY=sk-new-value-abcdef123456" in text
 
 
 def test_save_rejects_unknown_type_and_masked_hints(tmp_path, monkeypatch):
     client = _owner_client(tmp_path, monkeypatch)
-    (tmp_path / "src" / ".env").write_text("", encoding="utf-8")
+    (tmp_path / "home" / ".env").write_text("", encoding="utf-8")
 
     res = client.post(
         "/api/save-api-key", json={"api_type": "bogus", "api_key": "x" * 20}
     )
     assert res.status_code == 400
-    assert (tmp_path / "src" / ".env").read_text(encoding="utf-8") == ""
+    assert (tmp_path / "home" / ".env").read_text(encoding="utf-8") == ""
 
     res = client.post(
         "/api/save-api-key",
@@ -102,7 +102,7 @@ def test_discord_legacy_name_visible_and_converged(tmp_path, monkeypatch):
 
     client = _owner_client(tmp_path, monkeypatch)
     legacy = "x" * 60
-    (tmp_path / "src" / ".env").write_text(
+    (tmp_path / "home" / ".env").write_text(
         f"DISCORD_TOKEN={legacy}\n", encoding="utf-8"
     )
     monkeypatch.delenv("DISCORD_BOT_TOKEN", raising=False)
@@ -118,7 +118,7 @@ def test_discord_legacy_name_visible_and_converged(tmp_path, monkeypatch):
         "/api/save-api-key", json={"api_type": "discord", "api_key": new_tok}
     )
     assert res.status_code == 200
-    text = (tmp_path / "src" / ".env").read_text(encoding="utf-8")
+    text = (tmp_path / "home" / ".env").read_text(encoding="utf-8")
     assert "DISCORD_BOT_TOKEN=" in text
     assert "DISCORD_TOKEN=" not in text
 
@@ -139,7 +139,7 @@ def test_test_endpoint_uses_saved_key_when_input_empty(tmp_path, monkeypatch):
 
     client = _owner_client(tmp_path, monkeypatch)
     secret = "sk-saved-openai-secret-5678"
-    (tmp_path / "src" / ".env").write_text(f"OPENAI_API_KEY={secret}\n", encoding="utf-8")
+    (tmp_path / "home" / ".env").write_text(f"OPENAI_API_KEY={secret}\n", encoding="utf-8")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("API_KEY", raising=False)
     seen = {}

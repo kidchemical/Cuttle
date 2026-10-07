@@ -5,7 +5,7 @@ briefing mode/size by layer, handoff size, and the agent's reported window
 fill. Owned by Cuttle Brain; the Context dashboard reads it
 (``api.dashboards.context``). Failures never affect a turn.
 
-Store: ``src/data/brain/context_metrics.db`` (``CUTTLE_CONTEXT_METRICS_DB``
+Store: ``<home>/brain/context_metrics.db`` (``CUTTLE_CONTEXT_METRICS_DB``
 overrides; tests isolate it).
 """
 
@@ -60,8 +60,7 @@ def database_path() -> Path:
     override = (os.environ.get("CUTTLE_CONTEXT_METRICS_DB") or "").strip()
     if override:
         return Path(override).expanduser()
-    root = Path(__file__).resolve().parents[3]
-    return runtime_state_path("brain", "context_metrics.db", project_root=root)
+    return runtime_state_path("brain", "context_metrics.db")
 
 
 def connect(db_path: Optional[Path] = None) -> sqlite3.Connection:

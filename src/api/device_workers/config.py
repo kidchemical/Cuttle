@@ -11,7 +11,9 @@ from typing import Any, Dict, List
 def _read_env_file() -> Dict[str, str]:
     out: Dict[str, str] = {}
     try:
-        env_path = Path(__file__).resolve().parents[2] / ".env"
+        from core.runtime_paths import env_file
+
+        env_path = env_file()
         if not env_path.is_file():
             return out
         for line in env_path.read_text(encoding="utf-8").splitlines():

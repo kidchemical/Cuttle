@@ -1,4 +1,4 @@
-"""OS-aware paths for the Cuttle checkout (venv Python, Electron, env files).
+"""OS-aware paths: the install tree (code) and the per-user Cuttle home (state).
 
 Stdlib only — imported by the daemon before optional packages are guaranteed.
 """
@@ -47,63 +47,98 @@ def venv_python(project_root: Path) -> Path:
     return Path(sys.executable)
 
 
-def env_file_candidates(project_root: Path, src_root: Optional[Path] = None) -> List[Path]:
-    """Canonical secrets file is ``src/.env`` only."""
-    src = Path(src_root) if src_root is not None else Path(project_root) / "src"
-    return [src / ".env"]
+def cuttle_home() -> Path:
+    """Per-user Cuttle home: every mutable byte Cuttle owns lives here.
+
+    The install tree (checkout, ``Program Files``, read-only AppImage mount)
+    is code only and is never written. ``CUTTLE_HOME`` overrides (tests,
+    shadow instances, a second checkout that must not share history).
+    Windows: ``%LOCALAPPDATA%/Cuttle``. POSIX: ``$XDG_DATA_HOME/cuttle`` or
+    ``~/.local/share/cuttle``. Pure (creates nothing).
+
+    Layout: ``.env``, ``config/`` (settings), ``db/``, ``sessions/``,
+    ``brain/``, ``cache/``, ``agent_events/``, ``supervised_tasks/``,
+    ``edit_attribution/``, ``output/``, ``logs/``, ``secrets/``, ``personal/``.
+    """
+    override = (os.environ.get("CUTTLE_HOME") or "").strip()
+    if override:
+        return Path(override).expanduser()
+    if is_windows():
+        base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or str(Path.home())
+        return Path(base) / "Cuttle"
+    xdg = (os.environ.get("XDG_DATA_HOME") or "").strip()
+    return (Path(xdg) if xdg else Path.home() / ".local" / "share") / "cuttle"
 
 
-def data_db_dir(project_root: Optional[Path] = None) -> Path:
-    """SQLite store: ``src/data/db/*.db`` (gitignored)."""
-    root = Path(project_root) if project_root is not None else _repo_root()
-    d = root / "src" / "data" / "db"
+def env_file() -> Path:
+    """Provider keys and env config, loaded by the daemon before children spawn."""
+    return cuttle_home() / ".env"
+
+
+def data_db_dir() -> Path:
+    """SQLite application stores (``<home>/db``)."""
+    d = cuttle_home() / "db"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
-def runtime_data_dir(project_root: Optional[Path] = None) -> Path:
-    """Install-wide runtime state, independent of the selected guest project."""
-    root = Path(project_root) if project_root is not None else _repo_root()
-    return root / "src" / "data"
-
-
-def runtime_state_path(owner: str, name: str = "", *,
-                       project_root: Optional[Path] = None,
-                       legacy: Optional[str] = None) -> Path:
-    """Resolve owned state without moving files underneath a running process.
-
-    Existing legacy state remains authoritative until the offline migration.
-    New installations use the canonical owner directory immediately.
-    """
-    base = runtime_data_dir(project_root)
-    if legacy is not None and (base / legacy).exists():
-        path = base / legacy
-    else:
-        path = base / owner / name
+def runtime_state_path(owner: str, name: str = "") -> Path:
+    """``<home>/<owner>[/<name>]``; ensures the owning directory exists."""
+    path = cuttle_home() / owner / name if name else cuttle_home() / owner
     (path.parent if name else path).mkdir(parents=True, exist_ok=True)
     return path
 
 
-def runtime_cache_path(name: str, project_root: Optional[Path] = None) -> Path:
-    return runtime_state_path("cache", name, project_root=project_root,
-                              legacy=f"workspace/{name}")
+def runtime_cache_path(name: str) -> Path:
+    """Replaceable caches: deleting one only causes a refresh."""
+    return runtime_state_path("cache", name)
 
 
-def secrets_dir(project_root: Optional[Path] = None) -> Path:
-    """Install-local secret files: ``.cuttle/personal/secrets/`` (gitignored).
+def config_dir() -> Path:
+    """Settings files (server, machine, UI state). Pure."""
+    return cuttle_home() / "config"
 
-    Key material that is file-shaped (PEM keys, TLS certs, token files).
-    Environment-variable secrets stay in ``src/.env``. Creates nothing.
+
+def settings_path() -> Path:
+    """Server preferences (``settings.json``); owned by ``SettingsManager``."""
+    return config_dir() / "settings.json"
+
+
+def output_dir() -> Path:
+    """Generated output served at ``/output/`` (uploads, shared media, job status). Pure."""
+    return cuttle_home() / "output"
+
+
+def logs_dir() -> Path:
+    """Daemon/Flask logs and restart events. Pure."""
+    return cuttle_home() / "logs"
+
+
+def query_logs_dir() -> Path:
+    """Per-query sidecars served at ``/logs/``. Pure."""
+    return logs_dir() / "queries"
+
+
+def secrets_dir() -> Path:
+    """File-shaped secrets (TLS cert/key, PEM keys, token files). Pure.
+
+    Environment-variable secrets stay in :func:`env_file`.
     """
-    root = Path(project_root) if project_root is not None else _repo_root()
-    return root / ".cuttle" / "personal" / "secrets"
+    return cuttle_home() / "secrets"
 
 
-def action_hmac_secret_path(project_root: Optional[Path] = None) -> Path:
-    """Keep existing action signatures valid until the offline secret move."""
-    root = Path(project_root) if project_root is not None else _repo_root()
-    legacy = runtime_data_dir(root) / "db" / "action_hmac_secret"
-    return legacy if legacy.exists() else secrets_dir(root) / "action_hmac_secret"
+def action_hmac_secret_path() -> Path:
+    return secrets_dir() / "action_hmac_secret"
+
+
+def personal_dir() -> Path:
+    """Install-local overlay of the shared ``.cuttle_global/`` layer. Pure.
+
+    Mirrors its layout (docs, rules, actions, commands, scripts, skills,
+    agents) plus ``path-aliases.json``. A project's own ``.cuttle/personal/``
+    stays in that project: the project, not the install, owns it.
+    """
+    return cuttle_home() / "personal"
 
 
 def electron_packaged_exe(project_root: Path) -> Optional[Path]:
@@ -167,17 +202,13 @@ def _repo_root() -> Path:
 def load_personal_path_aliases(project_root: Optional[Path] = None) -> dict:
     """Install-local path aliases (gitignored). Stdlib JSON only.
 
-    See ``.cuttle_global/personal/README.md``. Missing file → empty dict.
+    ``<home>/personal/path-aliases.json``. Missing file → empty dict.
     """
     import json
 
-    root = Path(project_root) if project_root is not None else _repo_root()
-    candidates = (
-        root / ".cuttle" / "personal" / "path-aliases.json",
-        root / ".cuttle_global" / "personal" / "path-aliases.json",
-    )
-    path = next((p for p in candidates if p.is_file()), None)
-    if path is None:
+    _ = project_root
+    path = personal_dir() / "path-aliases.json"
+    if not path.is_file():
         return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -225,7 +256,7 @@ def rewrite_windows_cuttle_path(path: str, project_root: Optional[Path] = None) 
     Matching is generic: any path *segment* equal to this repo's folder name
     (usually ``Cuttle``) maps onto ``project_root``. Extra prefixes that do not
     contain that folder name live in gitignored
-    ``.cuttle_global/personal/path-aliases.json`` (or ``CUTTLE_WINDOWS_PREFIXES``).
+    ``<home>/personal/path-aliases.json`` (or ``CUTTLE_WINDOWS_PREFIXES``).
     """
     raw = (path or "").strip()
     if not raw or is_windows():

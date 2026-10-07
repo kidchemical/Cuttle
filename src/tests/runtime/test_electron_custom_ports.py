@@ -17,7 +17,7 @@ Attempt 1 (parent CH-001002 followup):
 
 JS behavior runs in Node with extracted sources + fakes (whole Electron
 cannot import hermetically); Python CLI tests use tmp env files only —
-never the real src/.env, never a daemon spawn, never the network.
+never the real <home>/.env, never a daemon spawn, never the network.
 """
 
 from __future__ import annotations

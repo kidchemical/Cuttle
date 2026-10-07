@@ -1,91 +1,125 @@
-"""Storage migration preserves state and refuses ambiguous destinations."""
+"""Install-tree state moves into the Cuttle home once, all or nothing."""
 from pathlib import Path
 
 import pytest
 
-from core.runtime_data import migrate
-from core.runtime_paths import runtime_state_path
+from core.runtime_data import migrate, migration_pairs, refuse_unmigrated
 
 
-def test_legacy_remains_authoritative_until_migration(tmp_path):
-    base = tmp_path / "src/data"
-    old = base / "workspace/codex_cli_session_map.json"
-    old.parent.mkdir(parents=True)
-    old.write_bytes(b'{"resume":"native-thread"}')
-    assert runtime_state_path("sessions", old.name, project_root=tmp_path,
-                              legacy="workspace/" + old.name) == old
-    moved = migrate(tmp_path)
-    new = base / "sessions" / old.name
-    assert (old, new) in moved
-    assert new.read_bytes() == b'{"resume":"native-thread"}'
-    assert not old.exists()
-    assert runtime_state_path("sessions", old.name, project_root=tmp_path,
-                              legacy="workspace/" + old.name) == new
-    assert migrate(tmp_path) == []
+def _write(path: Path, data: bytes = b"x") -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    return path
 
 
-def test_preflight_conflict_moves_nothing(tmp_path):
-    base = tmp_path / "src/data"
-    for relative in ("workspace/codex_cli_session_map.json", "sessions/codex_cli_session_map.json",
-                     "workspace/harness_last_agent_map.json"):
-        p = base / relative
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(relative, encoding="utf-8")
-    with pytest.raises(FileExistsError):
-        migrate(tmp_path)
-    assert (base / "workspace/harness_last_agent_map.json").exists()
-    assert (base / "workspace/codex_cli_session_map.json").exists()
+def test_every_install_location_lands_in_the_home(tmp_path):
+    root, home = tmp_path / "checkout", tmp_path / "home"
+    _write(root / "src/data/db/cuttle_auth.db", b"chats")
+    _write(root / "src/data/sessions/codex_cli_session_map.json", b"{}")
+    _write(root / "src/settings.json", b'{"schema_version": 1}')
+    _write(root / "src/settings.json.lock")
+    _write(root / "src/output/uploads/7/shot.png", b"png")
+    _write(root / "src/web/logs/query_data_1.json", b"{}")
+    _write(root / "src/.env", b"OPENAI_API_KEY=k")
+    _write(root / ".cuttle/personal/secrets/localhost.pem", b"pem")
+    _write(root / ".cuttle/personal/path-aliases.json", b"{}")
+    _write(root / ".cuttle/personal/learnings/LEARNINGS.md", b"stays")
+    _write(root / ".cuttle_global/personal/docs/discord.md", b"delta")
+
+    migrate(root, home)
+
+    assert (home / "db/cuttle_auth.db").read_bytes() == b"chats"
+    assert (home / "sessions/codex_cli_session_map.json").is_file()
+    assert (home / "config/settings.json").read_bytes() == b'{"schema_version": 1}'
+    assert (home / "output/uploads/7/shot.png").read_bytes() == b"png"
+    assert (home / "logs/queries/query_data_1.json").is_file()
+    assert (home / ".env").read_bytes() == b"OPENAI_API_KEY=k"
+    assert (home / "secrets/localhost.pem").read_bytes() == b"pem"
+    assert (home / "personal/path-aliases.json").is_file()
+    assert (home / "personal/docs/discord.md").read_bytes() == b"delta"
+    for gone in ("src/data", "src/settings.json", "src/settings.json.lock", "src/output",
+                 "src/web/logs", "src/.env", ".cuttle/personal/secrets", ".cuttle_global/personal"):
+        assert not (root / gone).exists(), gone
+    # The project overlay is the project's, not the install's.
+    assert (root / ".cuttle/personal/learnings/LEARNINGS.md").read_bytes() == b"stays"
+    assert migration_pairs(root, home) == []
 
 
-def test_directory_migration_preserves_sidecars_and_unknown_files(tmp_path):
-    base = tmp_path / "src/data"
-    for name in ("edit_journal.sqlite3", "edit_journal.sqlite3-wal", "edit_journal.sqlite3-shm"):
-        p = base / "workspace/edit_attribution" / name
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_bytes(name.encode())
-    unknown = base / "workspace/custom.json"
-    unknown.write_text("keep", encoding="utf-8")
-    pack = base / "harness_agents/custom"
-    pack.mkdir(parents=True)
-    (pack / "adapter.py").write_text("# custom adapter", encoding="utf-8")
-    migrate(tmp_path)
-    for name in ("edit_journal.sqlite3", "edit_journal.sqlite3-wal", "edit_journal.sqlite3-shm"):
-        assert (base / "edit_attribution" / name).read_bytes() == name.encode()
-    assert unknown.read_text(encoding="utf-8") == "keep"
-    assert (tmp_path / ".cuttle_global/personal/agents/custom/adapter.py").is_file()
+def test_merges_into_existing_empty_owner_folders_with_sidecars(tmp_path):
+    root, home = tmp_path / "checkout", tmp_path / "home"
+    (home / "db").mkdir(parents=True)  # created by an import-time data_db_dir()
+    for name in ("router_outcomes.db", "router_outcomes.db-wal", "router_outcomes.db-shm"):
+        _write(root / "src/data/db" / name, name.encode())
+    migrate(root, home)
+    for name in ("router_outcomes.db", "router_outcomes.db-wal", "router_outcomes.db-shm"):
+        assert (home / "db" / name).read_bytes() == name.encode()
+
+
+def test_empty_install_dirs_are_not_pending(tmp_path):
+    root, home = tmp_path / "checkout", tmp_path / "home"
+    (root / "src/data/db").mkdir(parents=True)
+    (root / "src/output").mkdir(parents=True)
+    assert migration_pairs(root, home) == []
+
+
+def test_stray_home_files_are_set_aside_never_overwritten(tmp_path):
+    """Harness CLIs run fresh code and may write the home before the host restarts."""
+    root, home = tmp_path / "checkout", tmp_path / "home"
+    _write(root / "src/data/db/gizmos.db", b"real")
+    _write(root / "src/data/sessions/cursor_cli_session_map.json", b"old map")
+    _write(home / "db/gizmos.db", b"stray")
+    _write(home / "db/gizmos.db-wal", b"stray wal")  # must never pair with the real DB
+    _write(home / "sessions/cursor_cli_session_map.json", b"new map")
+    migrate(root, home)
+    assert (home / "db/gizmos.db").read_bytes() == b"real"
+    assert not (home / "db/gizmos.db-wal").exists()
+    assert (home / "sessions/cursor_cli_session_map.json").read_bytes() == b"old map"
+    aside = {p.name.split(".pre-migration-")[0] for p in home.rglob("*.pre-migration-*")}
+    assert aside == {"cursor_cli_session_map.json", "gizmos.db", "gizmos.db-wal"}
+    assert {p.read_bytes() for p in home.rglob("*.pre-migration-*")} == {
+        b"stray", b"stray wal", b"new map"}
+
+
+def test_failed_move_rolls_back_prior_moves(tmp_path, monkeypatch):
+    import shutil
+
+    root, home = tmp_path / "checkout", tmp_path / "home"
+    first = _write(root / "src/data/db/a.db", b"first")
+    second = _write(root / "src/data/db/b.db", b"second")
+    original = shutil.move
+
+    def fail_second(source, target):
+        if Path(source) == second:
+            raise PermissionError("blocked")
+        return original(source, target)
+
+    monkeypatch.setattr(shutil, "move", fail_second)
+    _write(home / "db/a.db", b"stray")
+    with pytest.raises(PermissionError):
+        migrate(root, home)
+    assert first.read_bytes() == b"first"
+    assert second.read_bytes() == b"second"
+    assert (home / "db/a.db").read_bytes() == b"stray"
+    assert not list(home.rglob("*.pre-migration-*"))
+
+
+def test_flask_refuses_to_open_an_empty_home_beside_unmigrated_state(tmp_path, monkeypatch):
+    _write(tmp_path / "src/data/db/cuttle_auth.db")
+    monkeypatch.delenv("CUTTLE_HOME")
+    with pytest.raises(SystemExit, match="Exit Cuttle from the tray"):
+        refuse_unmigrated(tmp_path)
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path / "home"))
+    refuse_unmigrated(tmp_path)
 
 
 def test_startup_skips_migration_when_another_host_is_active(tmp_path, monkeypatch):
     from core import runtime_data
-    old = tmp_path / "src/data/workspace/harness_last_agent_map.json"
-    old.parent.mkdir(parents=True)
-    old.write_text("{}", encoding="utf-8")
+
+    old = _write(tmp_path / "src/data/sessions/harness_last_agent_map.json", b"{}")
     monkeypatch.setattr(runtime_data, "active_processes", lambda root: [123])
     with pytest.raises(RuntimeError, match="123"):
         runtime_data.migrate_when_stopped(tmp_path)
     assert old.is_file()
-
-
-def test_failed_move_rolls_back_prior_moves(tmp_path, monkeypatch):
-    base = tmp_path / "src/data/workspace"
-    base.mkdir(parents=True)
-    first = base / "antigravity_cli_session_map.json"
-    second = base / "codex_cli_session_map.json"
-    first.write_text("first", encoding="utf-8")
-    second.write_text("second", encoding="utf-8")
-    original = Path.rename
-
-    def fail_second(source, target):
-        if source == second:
-            raise PermissionError("blocked")
-        return original(source, target)
-
-    monkeypatch.setattr(Path, "rename", fail_second)
-    with pytest.raises(PermissionError):
-        migrate(tmp_path)
-    assert first.read_text(encoding="utf-8") == "first"
-    assert second.read_text(encoding="utf-8") == "second"
-    assert not (tmp_path / "src/data/sessions/antigravity_cli_session_map.json").exists()
 
 
 @pytest.mark.parametrize("hidden_attribute", ["cmdline", "cwd"])
@@ -93,9 +127,7 @@ def test_migration_refuses_unreadable_process_attributes(tmp_path, monkeypatch, 
     import psutil
     from core.runtime_data import migrate_when_stopped
 
-    old = tmp_path / "src/data/workspace/harness_last_agent_map.json"
-    old.parent.mkdir(parents=True)
-    old.write_text("{}", encoding="utf-8")
+    old = _write(tmp_path / "src/data/sessions/harness_last_agent_map.json", b"{}")
 
     class Process:
         pid = 123456789
@@ -114,8 +146,7 @@ def test_migration_refuses_unreadable_process_attributes(tmp_path, monkeypatch, 
     monkeypatch.setattr(psutil, "process_iter", lambda *args, **kwargs: iter([Process()]))
     with pytest.raises(RuntimeError, match="migration refused"):
         migrate_when_stopped(tmp_path)
-    assert old.read_text(encoding="utf-8") == "{}"
-    assert not (tmp_path / "src/data/sessions/harness_last_agent_map.json").exists()
+    assert old.read_bytes() == b"{}"
 
 
 def test_absolute_host_path_blocks_without_requiring_cwd(tmp_path, monkeypatch):
@@ -133,3 +164,21 @@ def test_absolute_host_path_blocks_without_requiring_cwd(tmp_path, monkeypatch):
 
     monkeypatch.setattr(psutil, "process_iter", lambda *args, **kwargs: iter([Process()]))
     assert active_processes(tmp_path) == [123456789]
+
+
+def test_default_home_adopts_old_log_folder_explicit_home_never_does(tmp_path, monkeypatch):
+    from core import runtime_data
+
+    root = tmp_path / "checkout"
+    old_logs = _write(tmp_path / "cuttle_logs/flask.log", b"history").parent
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    # Tests, shadows and second checkouts set CUTTLE_HOME: ~/cuttle_logs stays put.
+    assert migration_pairs(root) == []
+    monkeypatch.delenv("CUTTLE_HOME")
+    monkeypatch.setattr(runtime_data, "cuttle_home", lambda: tmp_path / "home")
+    assert migration_pairs(root) == [(old_logs, tmp_path / "home/logs")]
+    # Old logs alone never stop a host from booting.
+    refuse_unmigrated(root)
+    migrate(root)
+    assert (tmp_path / "home/logs/flask.log").read_bytes() == b"history"
+    assert not old_logs.exists()

@@ -12,6 +12,7 @@ import sqlite3
 import time
 import uuid
 from api.session_keys import bare_chat_session_id
+from core.runtime_paths import data_db_dir
 
 TTL = 30
 
@@ -23,7 +24,7 @@ def session_key(value):
 
 @contextmanager
 def _connect():
-    path = Path(os.getenv('CUTTLE_CHAT_VFX_DB') or Path(__file__).resolve().parents[2] / 'data/db/chat_vfx.db')
+    path = Path(os.getenv('CUTTLE_CHAT_VFX_DB') or data_db_dir() / 'chat_vfx.db')
     path.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(path, timeout=10)
     db.execute('CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT, session INTEGER, expires REAL, payload TEXT)')

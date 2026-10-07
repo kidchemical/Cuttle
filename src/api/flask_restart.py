@@ -17,16 +17,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-# Project root (parent of src/) — legacy location of the files below.
-_SRC = Path(__file__).resolve().parent.parent
-PROJECT_ROOT = _SRC.parent
-
-from core.runtime_paths import flask_restart_request_path  # noqa: E402
-from core.runtime_paths import flask_restart_status_path  # noqa: E402
+from core.runtime_paths import flask_restart_request_path
+from core.runtime_paths import flask_restart_status_path
+from core.runtime_paths import logs_dir
 
 STATUS_PATH = flask_restart_status_path()
 REQUEST_PATH = flask_restart_request_path()
-EVENTS_PATH = Path.home() / "cuttle_logs" / "flask_restart_events.jsonl"
+EVENTS_PATH = logs_dir() / "flask_restart_events.jsonl"
 
 # Observable delivery states only (no fake client ACKs).
 DELIVERY_PERSISTED = "persisted"

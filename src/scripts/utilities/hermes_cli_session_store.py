@@ -1,7 +1,7 @@
 """
 Map Cuttle chat session → Hermes pins (model / effort) and CLI resume ids.
 
-Stored under src/data/sessions/hermes_cli_session_map.json (gitignored).
+Stored under <home>/sessions/hermes_cli_session_map.json (gitignored).
 - model/effort keys are per chat (``model\\x1f{sid}``, ``effort\\x1f{sid}``)
 - resume keys are per cwd + chat (``{cwd}\\x1f{sid}``), matching Muse/OpenCode
 """
@@ -22,14 +22,9 @@ _lock = threading.Lock()
 _HERMES_SESSION_RE = re.compile(r"^[0-9A-Za-z][0-9A-Za-z_.-]{5,128}$")
 
 
-def _repo_root() -> Path:
-    # .../Cuttle/src/scripts/utilities/this_file.py -> Cuttle
-    return Path(__file__).resolve().parents[3]
-
 
 def _map_file() -> Path:
-    return runtime_state_path("sessions", "hermes_cli_session_map.json", project_root=_repo_root(),
-                              legacy="workspace/hermes_cli_session_map.json")
+    return runtime_state_path("sessions", "hermes_cli_session_map.json")
 
 
 def _normalize_session_id(cuttle_session_id: Optional[Any]) -> str:

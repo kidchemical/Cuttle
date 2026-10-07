@@ -13,9 +13,7 @@ _lock = threading.Lock()
 
 
 def _map_file() -> Path:
-    root = Path(__file__).resolve().parents[5]
-    return runtime_state_path("sessions", "antigravity_cli_session_map.json",
-                              project_root=root, legacy="workspace/antigravity_cli_session_map.json")
+    return runtime_state_path("sessions", "antigravity_cli_session_map.json")
 
 
 def _key(cwd: str, cuttle_session_id: Any) -> str:

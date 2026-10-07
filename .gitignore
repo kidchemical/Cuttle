@@ -1,3 +1,12 @@
+# Runtime state never lives in the install tree: it belongs in the per-user
+# Cuttle home (core.runtime_paths.cuttle_home). These stay ignored so an older
+# checkout awaiting its one-time daemon move can never commit them.
+src/data/
+src/settings.json
+src/settings.json.lock
+src/.settings.json.*
+src/web/logs/
+
 # Environment variables (contains sensitive tokens)
 .env
 src/.env
@@ -60,10 +69,9 @@ logs/
 .DS_Store
 Thumbs.db
 
-# Secret files live in .cuttle/personal/secrets/ (covered by .cuttle/personal/).
-# Retired secret locations stay ignored so older checkouts never commit them.
+# Secret files live in <Cuttle home>/secrets/. Retired locations stay ignored
+# so older checkouts never commit them.
 .secret_DONOTSHIP/
-src/data/certs/
 .cuttle/certs/
 
 # Install-local Cuttle overlay (machine paths, LAN hosts, guild notes) — never ship
@@ -75,18 +83,11 @@ src/data/certs/
 # Hub config lives at repo-root `.cuttle/` — ignore accidental scaffold under src/
 src/.cuttle/
 
-# Workspace data (user/session data — never commit)
-src/data/workspace/
-
 # Local runtime DBs
 *.db
 *.db-journal
 *.db-wal
 *.db-shm
-src/data/db/action_hmac_secret
-
-# Local agent memory / chroma indexes
-src/data/agent_memory/
 
 
 # Playwright browser profiles (contain cookies/session data — never commit)
@@ -137,9 +138,8 @@ docs/marketing/
 /src/verify_nav_history.png
 /src/output.txt
 
-# Global install-local overlay (paths, LAN hosts, private project notes)
-/.cuttle_global/personal/*
-!/.cuttle_global/personal/README.md
+# Retired global overlay location (now <Cuttle home>/personal/)
+/.cuttle_global/personal/
 
 # Muse agent run transcripts (local runtime data)
 /work/muse-runs/
@@ -148,23 +148,8 @@ docs/marketing/
 /.cuttle_global/keys/
 /.cuttle/keys/
 
-# Owned install-local runtime state (legacy paths above remain ignored).
-src/data/sessions/
-src/data/brain/
-src/data/cache/
-src/data/supervised_tasks/
-src/data/edit_attribution/
-src/data/archive/
-src/data/harness_agents/
-src/data/agent_events/
-
 # Developer test artifacts live with tests, never with production scripts.
 src/tests/results/
 src/tests/test-results/
 src/test-results/
 src/scripts/output/
-src/data/config/
-
-# Settings atomic-write scratch and stable process lock (install-local).
-src/settings.json.lock
-src/.settings.json.*

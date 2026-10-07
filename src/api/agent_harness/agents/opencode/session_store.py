@@ -14,14 +14,9 @@ from core.runtime_paths import runtime_state_path
 _lock = threading.Lock()
 
 
-def _repo_root() -> Path:
-    # .../Cuttle/src/api/agent_harness/agents/opencode/this_file.py -> Cuttle
-    return Path(__file__).resolve().parents[5]
-
 
 def _map_file() -> Path:
-    return runtime_state_path("sessions", "opencode_cli_session_map.json", project_root=_repo_root(),
-                              legacy="workspace/opencode_cli_session_map.json")
+    return runtime_state_path("sessions", "opencode_cli_session_map.json")
 
 
 def _session_key(cwd: str, cuttle_session_id: Any) -> str:

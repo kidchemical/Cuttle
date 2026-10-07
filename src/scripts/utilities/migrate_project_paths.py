@@ -2,10 +2,10 @@
 """
 Remap stored Cuttle project paths after a move (drive letter, UNC share, folder rename).
 
-Updates:
-  - src/data/db/projects.db  (registered projects)
-  - src/data/db/cuttle_auth.db  (chat_sessions.project_path, chat_messages.project_path)
-  - src/settings.json  (starred_project.path, when set)
+Updates (in the per-user Cuttle home, ``core.runtime_paths.cuttle_home``):
+  - db/projects.db  (registered projects)
+  - db/cuttle_auth.db  (chat_sessions.project_path, chat_messages.project_path)
+  - config/settings.json  (starred_project.path, when set)
 
 Examples:
   # Preview prefix swap (default is dry-run):
@@ -31,9 +31,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[2]
-PROJECTS_DB = SRC / "data" / "db" / "projects.db"
-AUTH_DB = SRC / "data" / "db" / "cuttle_auth.db"
-SETTINGS_JSON = SRC / "settings.json"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from core.runtime_paths import cuttle_home, settings_path  # noqa: E402
+
+PROJECTS_DB = cuttle_home() / "db" / "projects.db"
+AUTH_DB = cuttle_home() / "db" / "cuttle_auth.db"
+SETTINGS_JSON = settings_path()
 
 
 def _norm_key(path: str) -> str:

@@ -3,7 +3,7 @@
 
 Uses the same soft-delete as DELETE /api/auth/sessions/<id> (is_active = 0).
 Default keeps starred chats. Optionally removes upload dirs under
-src/output/uploads/<session_id>.
+<Cuttle home>/output/uploads/<session_id>.
 
 Examples:
   .venv\\Scripts\\python.exe .cuttle\\scripts\\cleanup-idle-sessions.py --hours 24 --dry-run
@@ -22,8 +22,12 @@ from pathlib import Path
 import os
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DB_PATH = REPO_ROOT / "src" / "data" / "db" / "cuttle_auth.db"
-UPLOADS_ROOT = REPO_ROOT / "src" / "output" / "uploads"
+sys.path.insert(0, str(REPO_ROOT / "src"))
+
+from core.runtime_paths import cuttle_home, output_dir  # noqa: E402
+
+DB_PATH = cuttle_home() / "db" / "cuttle_auth.db"
+UPLOADS_ROOT = output_dir() / "uploads"
 
 
 def _normalize_ts(value: str | None) -> str:
@@ -115,7 +119,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--skip-uploads",
         action="store_true",
-        help="Do not remove src/output/uploads/<id> dirs",
+        help="Do not remove <Cuttle home>/output/uploads/<id> dirs",
     )
     args = parser.parse_args(argv)
 

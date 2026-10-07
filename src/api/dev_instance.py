@@ -45,7 +45,7 @@ RESERVED_PORTS = frozenset(_DEFAULT_LIVE_PORTS)
 
 
 def reserved_ports() -> frozenset:
-    """Shadow denylist: defaults plus configured ports (env over src/.env).
+    """Shadow denylist: defaults plus configured ports (env over <home>/.env).
 
     Fail closed: malformed config in either source refuses the shadow.
     """
@@ -409,6 +409,8 @@ def build_child_env(seed: dict, scenario: str, port: int) -> dict[str, str]:
         "CUTTLE_ACTION_HMAC_SECRET": secrets.token_hex(32),
         "CUTTLE_SHADOW_SNAPSHOT": seed["app_dir"],
         "CUTTLE_SHADOW_DATA": data,
+        # Every store resolves through the Cuttle home; never the live one.
+        "CUTTLE_HOME": str(Path(data) / "home"),
         "CUTTLE_SHADOW_MANIFEST": seed["manifest"],
         "CUTTLE_SHADOW_CODEHASH": seed["codehash"],
         "CUTTLE_SHADOW_PORT": str(port),

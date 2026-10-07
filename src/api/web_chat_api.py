@@ -106,32 +106,39 @@ def cert_needs_regeneration(cert_file: Path, lan_ip: Optional[str] = None) -> bo
     except Exception:
         return not cert_file.is_file()
 
-# Load src/.env so API keys are available whether started by daemon or directly
-_env_candidates = [
-    actual_project_root / 'src' / '.env',
-]
-for _env_path in _env_candidates:
-    if _env_path.exists():
-        try:
-            from dotenv import load_dotenv
-            load_dotenv(_env_path, override=False)
-        except ImportError:
-            # Manual parse fallback if python-dotenv not installed
-            with open(_env_path, encoding="utf-8") as _f:
-                for _line in _f:
-                    _line = _line.strip()
-                    if _line and not _line.startswith('#') and '=' in _line:
-                        _k, _v = _line.split('=', 1)
-                        os.environ.setdefault(_k.strip(), _v.strip())
-        break
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
+# State lives in the per-user Cuttle home, never the install tree; refuse to
+# open fresh stores while an older checkout's state awaits the daemon's move.
+from core.runtime_data import refuse_unmigrated as _refuse_unmigrated
+
+_refuse_unmigrated(actual_project_root)
+
+# Load <home>/.env so API keys are available whether started by daemon or directly
+from core.runtime_paths import env_file as _env_file
+
+_env_path = _env_file()
+if _env_path.exists():
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(_env_path, override=False)
+    except ImportError:
+        # Manual parse fallback if python-dotenv not installed
+        with open(_env_path, encoding="utf-8") as _f:
+            for _line in _f:
+                _line = _line.strip()
+                if _line and not _line.startswith('#') and '=' in _line:
+                    _k, _v = _line.split('=', 1)
+                    os.environ.setdefault(_k.strip(), _v.strip())
+
 # Paths for self-signed certificate
 from core.runtime_paths import notify_queue_path as _notify_queue_path
+from core.runtime_paths import output_dir as _output_dir
+from core.runtime_paths import query_logs_dir as _query_logs_dir
 from core.runtime_paths import secrets_dir as _secrets_dir
 
-CERT_DIR = _secrets_dir(actual_project_root)
+CERT_DIR = _secrets_dir()
 CERT_FILE = CERT_DIR / "localhost.pem"
 KEY_FILE = CERT_DIR / "localhost-key.pem"
 
@@ -2448,10 +2455,10 @@ def serve_output(filename):
         if norm.startswith('shared/') and norm.lower().endswith('.poster.jpg'):
             from api.shared_media import ensure_poster_sidecar_file
 
-            ensure_poster_sidecar_file(Path(norm).name, project_root=actual_project_root)
+            ensure_poster_sidecar_file(Path(norm).name)
     except Exception as e:
         print(f"[OUTPUT] poster ensure failed for {filename}: {e}")
-    resp = make_response(send_from_directory(project_root / 'output', filename))
+    resp = make_response(send_from_directory(_output_dir(), filename))
     # Phone / LAN download: ?download=1 forces attachment disposition
     as_download = (request.args.get('download') or '').strip().lower() in (
         '1', 'true', 'yes',
@@ -2474,7 +2481,7 @@ def api_shared_media_stage():
         if not raw_path:
             return jsonify({'success': False, 'error': 'path required'}), 400
         preferred = (data.get('filename') or data.get('name') or '').strip() or None
-        result = stage_file(raw_path, project_root=actual_project_root, preferred_name=preferred)
+        result = stage_file(raw_path, preferred_name=preferred)
         status = 200 if result.get('success') else 400
         return jsonify(result), status
     except Exception as e:
@@ -2495,7 +2502,7 @@ def api_shared_media_poster():
             url = (data.get('url') or data.get('src') or '').strip()
         if not url:
             return jsonify({'success': False, 'error': 'url required'}), 400
-        result = ensure_poster_for_shared_url(url, project_root=actual_project_root)
+        result = ensure_poster_for_shared_url(url)
         status = 200 if result.get('success') else 400
         return jsonify(result), status
     except Exception as e:
@@ -2516,7 +2523,7 @@ def api_shared_media_meta():
             url = (data.get('url') or data.get('src') or '').strip()
         if not url:
             return jsonify({'success': False, 'error': 'url required'}), 400
-        result = read_stage_meta(url, project_root=actual_project_root)
+        result = read_stage_meta(url)
         status = 200 if result.get('success') else 400
         return jsonify(result), status
     except Exception as e:
@@ -2532,7 +2539,7 @@ def api_shared_media_purge():
     try:
         from api.shared_media import purge_expired
 
-        result = purge_expired(project_root=actual_project_root)
+        result = purge_expired()
         return jsonify(result)
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -2540,18 +2547,18 @@ def api_shared_media_purge():
 @app.route('/logs/')
 def serve_logs_directory():
     """Serve the logs directory listing"""
-    return send_from_directory(project_root / 'web' / 'logs', 'index.html')
+    return send_from_directory(_query_logs_dir(), 'index.html')
 
 @app.route('/logs/<path:filename>')
 def serve_logs(filename):
-    """Serve files from the web/logs directory"""
+    """Serve files from the query logs directory (<home>/logs/queries)"""
     if filename.startswith('query_report_') and filename.endswith('.html'):
         stem = filename[len('query_report_'):-5]
         qid = (stem.split('_')[0] if stem else '').strip()
         if qid:
             return redirect(f'/query_log.html?id={qid}', code=302)
     resp = make_response(
-        send_from_directory(project_root / 'web' / 'logs', filename)
+        send_from_directory(_query_logs_dir(), filename)
     )
     return resp
 
@@ -2563,7 +2570,7 @@ def test_api_key():
         data = request.get_json()
         api_type = data.get('api_type')
         api_key = (data.get('api_key') or '').strip()
-        # Empty input tests the saved key (env, then src/.env).
+        # Empty input tests the saved key (env, then <home>/.env).
         saved_names = {
             'openai': ('OPENAI_API_KEY', 'API_KEY'),
             'anthropic': ('ANTHROPIC_API_KEY',),
@@ -2809,7 +2816,7 @@ def test_discord_key(token):
 def save_api_key():
     """Save an API key securely.
 
-    Only the named credential is modified; every other line of ``src/.env``
+    Only the named credential is modified; every other line of ``<home>/.env``
     (comments, blanks, ``export`` prefixes, unrelated keys) is preserved.
     ``DISCORD_BOT_TOKEN`` is the canonical settings key — saving a Discord
     token also clears a legacy ``DISCORD_TOKEN`` line so a stale shadowed
@@ -2845,8 +2852,7 @@ def save_api_key():
             }), 400
 
         env_name = _key_names[api_type]
-        # Save to src/.env only
-        env_file = actual_project_root / 'src' / '.env'
+        env_file = _env_file()
 
         lines: list = []
         if env_file.exists():
@@ -2914,7 +2920,7 @@ def _mask_credential_for_display(value: str) -> str:
 
 
 def _read_env_credential(names) -> str:
-    """First non-empty value for one of ``names`` (env, then ``src/.env``)."""
+    """First non-empty value for one of ``names`` (env, then ``<home>/.env``)."""
     if isinstance(names, str):
         names = (names,)
     for name in names:
@@ -2922,7 +2928,7 @@ def _read_env_credential(names) -> str:
         if v:
             return v
     try:
-        env_file = actual_project_root / 'src' / '.env'
+        env_file = _env_file()
         if env_file.exists():
             with open(env_file, 'r', encoding='utf-8') as f:
                 for line in f:
@@ -3600,7 +3606,7 @@ def _run_attachment_prepass(message_content: str, raw_attachments, chat_session_
     """
     from api.vision_prepass import append_attachment_digest, resolve_upload_refs
 
-    uploads_root = actual_project_root / 'src' / 'output' / 'uploads'
+    uploads_root = _output_dir() / 'uploads'
     resolved = resolve_upload_refs(raw_attachments, uploads_root)
     if not resolved:
         print(f"[VISION] no usable attachment refs in {len(raw_attachments)} upload(s)")
@@ -3964,7 +3970,7 @@ def upload_attachments():
             session_id = str(_nid)
         # Keep session folder name filesystem-safe
         safe_session = secure_filename(session_id) or 'anon'
-        upload_dir = actual_project_root / 'src' / 'output' / 'uploads' / safe_session
+        upload_dir = _output_dir() / 'uploads' / safe_session
         upload_dir.mkdir(parents=True, exist_ok=True)
 
         allowed_ext = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.pdf'}
@@ -3997,7 +4003,7 @@ def upload_attachments():
                 stem, suffix = dest.stem, dest.suffix
                 dest = upload_dir / f"{stem}_{int(time.time())}{suffix}"
             f.save(dest)
-            # Public URL via existing /output/ static serve (src/output/...)
+            # Public URL via existing /output/ static serve (<home>/output/...)
             public_url = f'/output/uploads/{safe_session}/{dest.name}'
             results.append({
                 'filename': dest.name,
@@ -7712,7 +7718,7 @@ if __name__ == '__main__':
         _ports = resolve_with_env_file()
     except Exception as exc:
         print(f"[PORTS] Invalid listener-port configuration: {exc}")
-        print("[PORTS] Fix CUTTLE_HTTPS_PORT/CUTTLE_HTTP_PORT/CUTTLE_PHONE_HTTPS_PORT in src/.env, "
+        print(f"[PORTS] Fix CUTTLE_HTTPS_PORT/CUTTLE_HTTP_PORT/CUTTLE_PHONE_HTTPS_PORT in {_env_file()}, "
               "then cold-restart the daemon (port changes need a daemon restart, not a Flask-only restart).")
         raise SystemExit(2)
 
@@ -7760,7 +7766,7 @@ if __name__ == '__main__':
         try:
             from api.shared_media import purge_expired
 
-            purged = purge_expired(project_root=actual_project_root)
+            purged = purge_expired()
             n = purged.get('deleted') or 0
             print(
                 f"[SHARED-MEDIA] purge: deleted={n} ttl_days={purged.get('ttl_days')}",

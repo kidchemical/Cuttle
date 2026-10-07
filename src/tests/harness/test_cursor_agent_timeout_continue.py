@@ -34,7 +34,7 @@ def test_max_segments_default_and_clamp(monkeypatch):
 
 
 def _isolate_session_map(monkeypatch, tmp_path):
-    """Keep resume lookups/writes off the real src/data/workspace map."""
+    """Keep resume lookups/writes off the real session map in the Cuttle home."""
     monkeypatch.setattr(
         "scripts.utilities.cursor_cli_session_store._map_file",
         lambda: tmp_path / "cursor_cli_session_map.json",

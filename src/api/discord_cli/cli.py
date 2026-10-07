@@ -1,6 +1,6 @@
 """CLI: ``python -m api.discord_cli <verb> …``
 
-Read Discord channels / history via the bot token in ``src/.env``.
+Read Discord channels / history via the bot token in ``<home>/.env``.
 Outbound posts stay on ``discord.post`` action forms — this CLI is **read-only**.
 
 Examples::
@@ -45,7 +45,9 @@ def _discord_request(
 
     token = load_discord_bot_token()
     if not token:
-        return 0, None, "Discord bot token not found (DISCORD_TOKEN / DISCORD_BOT_TOKEN in src/.env)"
+        from core.runtime_paths import env_file
+
+        return 0, None, f"Discord bot token not found (DISCORD_TOKEN / DISCORD_BOT_TOKEN in {env_file()})"
     url = "https://discord.com/api/v10" + path
     headers = {
         "Authorization": f"Bot {token}",

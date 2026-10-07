@@ -79,7 +79,7 @@ def test_parse_codex_jsonl_preserves_cached_input():
 
 
 def test_codex_session_store_roundtrip(tmp_path: Path, monkeypatch):
-    monkeypatch.setattr(store, "_repo_root", lambda: tmp_path)
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path))
     cwd = str(tmp_path / "proj")
     Path(cwd).mkdir()
     sid = "db_session_42"
@@ -91,7 +91,7 @@ def test_codex_session_store_roundtrip(tmp_path: Path, monkeypatch):
 
 
 def test_codex_session_store_rejects_garbage(tmp_path: Path, monkeypatch):
-    monkeypatch.setattr(store, "_repo_root", lambda: tmp_path)
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path))
     cwd = str(tmp_path / "proj")
     Path(cwd).mkdir()
     store.save_codex_resume_id(cwd, "s1", "not-a-uuid")
@@ -304,7 +304,7 @@ def test_starred_slash_allows_codex():
 
 
 def test_codex_model_session_pins(tmp_path: Path, monkeypatch):
-    monkeypatch.setattr(store, "_repo_root", lambda: tmp_path)
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path))
     assert store.load_codex_model("42") is None
     assert store.save_codex_model("42", "gpt-5.6-sol") == "gpt-5.6-sol"
     assert store.load_codex_model("42") == "gpt-5.6-sol"
@@ -413,7 +413,7 @@ def test_codex_models_endpoints(tmp_path: Path, monkeypatch):
     from api import web_chat_api as w
     from api.agent_harness.agents.codex import model_catalog as mc
 
-    monkeypatch.setattr(store, "_repo_root", lambda: tmp_path)
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path))
     mc.clear_codex_catalog_cache()
     monkeypatch.setattr(
         mc,

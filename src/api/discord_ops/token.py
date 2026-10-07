@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from typing import Optional
 
 
@@ -12,9 +11,9 @@ def load_discord_bot_token() -> Optional[str]:
         val = (os.getenv(key) or "").strip().strip('"').strip("'")
         if val and not val.startswith("your_"):
             return val
-    try:
-        from core.runtime_paths import secrets_dir
+    from core.runtime_paths import env_file, secrets_dir
 
+    try:
         secret = secrets_dir() / "discord bot token.txt"
         if secret.is_file():
             tok = secret.read_text(encoding="utf-8").strip()
@@ -23,7 +22,7 @@ def load_discord_bot_token() -> Optional[str]:
     except OSError:
         pass
     try:
-        env_path = Path(__file__).resolve().parents[2] / ".env"
+        env_path = env_file()
         if env_path.is_file():
             for line in env_path.read_text(encoding="utf-8").splitlines():
                 if line.startswith("DISCORD_TOKEN=") or line.startswith("DISCORD_BOT_TOKEN="):

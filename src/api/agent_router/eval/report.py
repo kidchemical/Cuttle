@@ -230,10 +230,11 @@ def format_batch_summary(
 
 
 def save_eval_report(report: Dict[str, Any], *, logs_dir: Optional[Path] = None) -> Tuple[Path, Path, str]:
-    """Write JSON + markdown under web/logs. Returns (json_path, md_path, url)."""
+    """Write JSON + markdown beside the query logs (served at ``/logs/``). Returns (json_path, md_path, url)."""
     if logs_dir is None:
-        # src/api/agent_router/eval/report.py -> parents[3] = src
-        logs_dir = Path(__file__).resolve().parents[3] / "web" / "logs"
+        from core.runtime_paths import query_logs_dir
+
+        logs_dir = query_logs_dir()
     logs_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     suite = str(report.get("suite") or "suite")
