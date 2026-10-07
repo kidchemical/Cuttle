@@ -60,7 +60,8 @@ Some rules that trip up first contributions:
   `src/api/experimental/features.py`.
 - New vendor CLIs are adapters under `src/api/agent_harness/agents/<id>/`.
   Cuttle discovers CLIs; it never installs them.
-- File-shaped secrets live in `.cuttle/personal/secrets/`, never in `src/data/`
+- Runtime state and secrets live in the per-user Cuttle home (`<home>/secrets/`,
+  `<home>/.env`), never in the repository; see `docs/architecture/cuttle-home.md`
   or the repo.
 
 ## Pull requests
@@ -75,7 +76,7 @@ Some rules that trip up first contributions:
   `git update-index --chmod=+x path/to/script.sh` (a test checks this).
   `.bat`/`.cmd` files check out with CRLF and everything else with LF, per
   `.gitattributes`.
-- Never commit `src/.env`, databases, certificates, keystores, browser
+- Never commit a `.env`, databases, certificates, keystores, browser
   profiles or anything under `personal/`.
 
 ## License

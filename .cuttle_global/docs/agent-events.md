@@ -1,12 +1,12 @@
 # Agent events and database settings
 
 New harness activity lives in `api.agent_events`: SQLite headers plus compressed,
-content-addressed full payloads under `src/data/agent_events/`. Harness adapters
+content-addressed full payloads under `<home>/agent_events/`. Harness adapters
 own vendor shapes; the event owner owns persistence, snapshots and retention.
 
 - Query inspector: paged steps, lazy full payloads, Changes tab and unified / side
   by side patches. Existing query links still work; pre-store turns read their
-  legacy JSON files. Old truncation cannot be recovered from those files.
+  legacy JSON files in `<home>/logs/queries/`. Old truncation cannot be recovered from those files.
 - Apps → Agent Feed: enable **Agent Feed** in Settings → Experimental for live
   SSE. Shows this server's agents; remote-worker aggregation is deferred.
 - Settings → Data → Databases: sizes for known stores, plus agent-events policy,
@@ -34,9 +34,9 @@ edit-class completion snapshots supplement vendors without native patches.
 Non-Git workspaces currently have tool activity but no line snapshot.
 
 Commit attribution uses the same SQLite store through `api.edit_attribution`.
-The old journal imports incrementally when attribution is first used after
-restart; its file remains as a rollback copy. Unsettled imported rows older than
-seven days are stale and cannot receive credit. Terminal commits can be settled
+The old journal was imported once; its file remains in `<home>/edit_attribution/`
+as a rollback copy and is never read again. Imported rows that were unsettled and
+older than seven days are stale and cannot receive credit. Terminal commits can be settled
 by content later; existing terminal commits cannot gain trailers retroactively.
 
 Run from the Cuttle root with the project venv:

@@ -36,7 +36,7 @@ inspect the envelope. Day-to-day, Flask injects it — no extra round-trip.
 | Path | Role vs compiler |
 |---|---|
 | `{Cuttle}/.cuttle_global/rules/` | **Always-on global** guidelines — compiled for every registered project. |
-| `{Cuttle}/.cuttle_global/personal/` | **Install-local global overlay** (gitignored) — same layout; personal markdown appends as a delta, other files win by basename. |
+| `<home>/personal/` (Cuttle home) | **Install-local global overlay** (gitignored) — same layout; personal markdown appends as a delta, other files win by basename. |
 | `{project}/.cuttle/rules/` | **Always-on project** guidelines — compiled after global rules. |
 | `{Cuttle}/.cuttle/rules/` | **Cuttle-repo-only** rules — compiled only when the chat targets Cuttle itself. |
 | `commands/*.md` | **On-demand** via `/name` expand (`project_commands`). Listed in inventory; not dumped every turn. |
@@ -79,7 +79,7 @@ See `context_delta.py`.
 
 ## Metrics
 
-Every harness turn appends a row to `src/data/brain/context_metrics.db`
+Every harness turn appends a row to `<home>/brain/context_metrics.db`
 (`metrics.py`): briefing mode, size per layer, handoff size, agent-reported
 window fill and limit, compaction. The **Context** dashboard reads it
 (`python -m api.cuttle_brain metrics list|backfill`).

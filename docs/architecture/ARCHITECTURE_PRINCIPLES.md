@@ -54,6 +54,18 @@ Before adding mutable state, determine:
 
 Do not create multiple mutable copies of the same logical state.
 
+**Persistent state lives in the Cuttle home, never the install tree.** The
+checkout, `Program Files` folder or AppImage mount is code only: it may be
+read-only, is replaced on upgrade, and can be shared by several users. Every
+database, settings file, upload, log, cache, `.env`, secret and install-local
+overlay resolves through `core.runtime_paths` (`cuttle_home()` and its helpers),
+never by joining onto `__file__`, `src/` or the repository root. A new store gets
+a `runtime_paths` helper or a `runtime_state_path(owner, name)` call, and a test
+redirects it with `CUTTLE_HOME`. A project's own `.cuttle/` (tracked config and
+its `personal/` overlay) belongs to that project and is not runtime state.
+`src/tests/quality/test_state_outside_install_tree.py` enforces this; layout and
+migration: [`cuttle-home.md`](cuttle-home.md).
+
 Pure decision modules should receive snapshots and return decisions or transitions rather than secretly reading unrelated global state.
 
 ## 5. Keep decisions separate from effects
@@ -166,7 +178,7 @@ Line count is a warning signal, not an architecture metric by itself.
 For a non-trivial change, answer:
 
 1. **Who owns this behavior?**
-2. **Who owns the state, and what is its lifetime?**
+2. **Who owns the state, what is its lifetime, and does it live in the Cuttle home?**
 3. **What is the narrowest interface this change should use?**
 4. **Am I duplicating logic that already has an owner?**
 5. **Can I test the behavior without exercising unrelated systems?**

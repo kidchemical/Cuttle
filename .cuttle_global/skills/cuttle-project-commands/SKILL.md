@@ -178,7 +178,7 @@ already tells every agent to emit a watch card when an OS job will run a long ti
 Project commands only need a **kick** recipe and a **job id** if they write a
 non-default status file.
 
-Status JSON lives at Cuttle `src/output/<id>-status.json` (`GET /output/<id>-status.json`):
+Status JSON lives at Cuttle `<home>/output/<id>-status.json` (`GET /output/<id>-status.json`):
 
 ```text
 python -m api.job_watch write --id my-job --state running --percent 40 --label "Compiling"

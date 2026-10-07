@@ -93,7 +93,7 @@ The agent harness rewrite is the correct **hub** slice:
 - Folder + manifest + thin CLI adapter; kernel owns status, resume, Context Compiler, hot-swap handoff, error shaping.
 - Neutral SQLite chat transcript + **per-tentacle** native resume. Same-agent resume sends only the user prompt; a sticky switch injects a short handoff delta.
 - Context Compiler is Cuttle-owned briefing — not a copy of each vendor’s skill registry.
-- Drop-in roots (`.cuttle_global/personal/agents/`, `{project}/.cuttle/agents/`, `CUTTLE_AGENTS_DIR`). Bundled ids cannot be shadowed.
+- Drop-in roots (`<home>/personal/agents/`, `{project}/.cuttle/agents/`, `CUTTLE_AGENTS_DIR`). Bundled ids cannot be shadowed.
 - Windows `.cmd` traps, lossless prompt transport, auth sync without the LLM seeing keys, contract tests + gated live smoke.
 
 `/deepseek` is already a bundled tentacle (`dsh --profile headless`, Flash by default, `DEEPSEEK_API_KEY`). Headless preview has **no native per-chat resume**. Treat that as a connector limitation, not a reason to wait on the socket work.
@@ -124,7 +124,7 @@ A newcomer should be able to:
 
 If step 4 is required, open an issue — that is a process failure, same as shipping an agent without a test.
 
-Drop-ins under `{project}/.cuttle/agents/` and `.cuttle_global/personal/agents/` are the on-ramp for experiments. Bundled connectors are for tentacles we are willing to smoke and support.
+Drop-ins under `{project}/.cuttle/agents/` and `<home>/personal/agents/` are the on-ramp for experiments. Bundled connectors are for tentacles we are willing to smoke and support.
 
 ---
 
@@ -158,7 +158,7 @@ Security in [`docs/ROADMAP.md`](../ROADMAP.md) still comes first when it conflic
 |---|---|
 | Bundled adapter | `src/api/agent_harness/agents/deepseek/` — `/deepseek`, auto-install `@deepseek-ai/dsh` |
 | Default / smoke model | `deepseek-v4-flash` (do not smoke Pro by accident) |
-| Auth | `DEEPSEEK_API_KEY` in `src/.env`; optional `DEEPSEEK_BASE_URL` |
+| Auth | `DEEPSEEK_API_KEY` in `<home>/.env`; optional `DEEPSEEK_BASE_URL` |
 | Resume | **No** — headless one-shot; Cuttle handoff still applies on sticky switch |
 | Router | Not yet a first-class OOB / preference-table target — that is remaining work |
 | Kernel ideas | This file — independent of the adapter |
@@ -171,7 +171,7 @@ When dsh grows native resume or a stable non-preview CLI, upgrade the adapter in
 
 | Need | Where |
 |---|---|
-| Phases, security, OpenClaw, what not to build | `docs/ROADMAP.md` (public); `.cuttle_global/personal/docs/roadmap-2026.md` (this install) |
+| Phases, security, OpenClaw, what not to build | `docs/ROADMAP.md` (public); `<home>/personal/docs/roadmap-2026.md` (this install) |
 | Router work items, CuttleRouter-as-agent, authority order | `.cuttle/docs/agent-router-todo.md` |
 | Router economics, backends-as-black-boxes, eval notes | `docs/ROUTER_RESEARCH_NOTES.md` |
 | How routing works in chat | `docs/guides/AGENT_ROUTER.md` |

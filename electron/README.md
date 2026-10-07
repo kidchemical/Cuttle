@@ -15,7 +15,7 @@ Python; a UI-only Client connects to the remote Host.
 
 Source development/builds need Node and npm. Install the chosen vendor CLI and
 authenticate it separately: Codex uses `codex login`, Cursor its CLI login, and
-Claude account login or an Anthropic key. Optional keys in `src/.env` serve
+Claude account login or an Anthropic key. Optional keys in `<home>/.env` serve
 Cuttle's routing brain, direct LLM calls and vision; they do not log every CLI in.
 
 From the repository root, install Python runtime dependencies:

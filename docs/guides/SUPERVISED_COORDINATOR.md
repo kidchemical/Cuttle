@@ -98,7 +98,7 @@ created → coordinating → delegated → worker_running → reviewing
     └─ budget → budget_exhausted
 ```
 
-Durable JSON: `src/data/workspace/supervised_tasks/<task_id>.json` (+ `_index.json`).
+Durable JSON: `<home>/supervised_tasks/<task_id>.json` (+ `_index.json`).
 Raw worker stdout: `supervised_tasks/<task_id>/runs/<run_id>.raw.txt` (full text; chat previews may truncate separately).
 
 **Control lane (exactly-once):** parse → authorize (`_resolve_auth_chat_session`) → mutate once → optional `control_request_id` idempotency → terminal return. Recognized control commands never fall through into router/agent dispatch. Transport retries with the same `control_request_id` must not append a second chat pair (`skip_history_persist` / `reconcile_only`).
@@ -221,7 +221,7 @@ Do **not** run until approved — consumes Codex allocation + Cursor Auto capaci
 6. Wait for a concise terminal answer; open Activity for worker/evidence details.
 7. `/coordinate cancel` on a second run to verify cancellation.
 8. Optional: `/restart graceful` after a mid-run kill of Flask (daemon-owned) and confirm
-   task JSON under `src/data/workspace/supervised_tasks/` still loads via `/coordinate status`.
+   task JSON under `<home>/supervised_tasks/` still loads via `/coordinate status`.
 
 ## Restart
 

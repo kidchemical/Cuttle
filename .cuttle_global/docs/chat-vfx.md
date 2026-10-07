@@ -28,7 +28,7 @@ Clients poll every two seconds. Events expire after 30 seconds, so closed chats
 will miss them. Each browser has an independent cursor; refresh can replay an
 unexpired event. No promise of exactly-once display across refresh or devices.
 Expired events are removed on reads/writes; at most 1,000 events are retained per
-session. The private SQLite store defaults to `src/data/db/chat_vfx.db`;
+session. The private SQLite store defaults to `<home>/db/chat_vfx.db`;
 `CUTTLE_CHAT_VFX_DB` overrides it for isolated tests.
 
 Achievements retains its durable unlock/ack flow and shares the generic confetti

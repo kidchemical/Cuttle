@@ -13,7 +13,8 @@ Pytest suite. Default entry (per AGENTS.md):
 
 Run tests with `pytest` (see above). Generated artifacts belong in the gitignored
 `results/` directory; do not write developer reports under `src/scripts/output/`,
-`src/web/logs/`, or `src/test-results/`.
+the Cuttle home, or `src/test-results/`. `conftest.py` pins `CUTTLE_HOME` to a
+throwaway folder for every run, so no test can touch live state.
 
 Operator network diagnostics are the narrow exception: `src/scripts/diagnose_*`
 are manually invoked troubleshooting tools, not pytest tests. The phone connectivity
@@ -92,8 +93,8 @@ unset CUTTLE_ALLOW_SPEND CUTTLE_AGENT_SMOKE CUTTLE_AGENT_SMOKE_SCOPE \
 allowance aligned; `GIT_CEILING_DIRECTORIES` keeps intentional non-repo
 fixtures from resolving into the real checkout. Run everything in a
 subshell so the scrubbed/exported env never alters the user shell. This
-recipe assumes an isolated checkout with no live `src/.env`, live DB,
-settings, or resume copies — root imports can reload keys from `src/.env`
+recipe assumes an isolated `CUTTLE_HOME` with no live `.env`, live DB,
+settings, or resume copies — root imports can reload keys from `<home>/.env`
 (`override=False`), so no existing worktree is automatically safe. Not
 main-checkout-only: any isolated worktree runs the same recipe.)
 
@@ -156,7 +157,7 @@ remain blocked without changing the pending status or writing a daemon request.
 
 ## Architecture transport and history-sync gates
 
-Run in the scrubbed isolated environment above (no `src/.env` or user data):
+Run in the scrubbed isolated environment above (no `<home>/.env` or user data):
 
 ```bash
 .venv/bin/python -m pytest -q src/tests/chat/test_chat_stream.py src/tests/chat/test_chat_generation.py src/tests/quality/test_architecture_boundaries.py

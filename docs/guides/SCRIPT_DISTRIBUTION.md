@@ -10,7 +10,7 @@ Reviewed `AGENTS.md`, `docs/architecture/ARCHITECTURE_PRINCIPLES.md`, `docs/arch
 - **Do not purge `src/scripts/utilities/`.** Most of it is imported production code for harness execution, resume, steering, usage and Git UI.
 - **Removed obsolete setup/example leftovers (2026-10-06 follow-through):** `example_project_setup.py`, `hello_world.py`, `update_project_paths.py`. Tracked callers were checked before removal; none were found. The old drive updater had an executable `F:` → `E:` default and a broken database-root calculation.
 - **Local model servers are user-owned (done):** the daemon and Flask no longer start, stop or kill llama.cpp (the `F:\llama.cpp\start-qwen-coder.ps1` fallback and the on-demand launch prompt are gone); Cuttle only connects to the configured endpoint.
-- **Windows firewall helper repaired:** `enable_lan_firewall.ps1` now creates LocalSubnet + Private-profile rules only, replaces earlier open rules, and reads ports from `src/.env`. The phone isolation test now scopes and removes its temporary rule and URL reservation.
+- **Windows firewall helper repaired:** `enable_lan_firewall.ps1` now creates LocalSubnet + Private-profile rules only, replaces earlier open rules, and reads ports from `<home>/.env`. The phone isolation test now scopes and removes its temporary rule and URL reservation.
 - **Source and bundled-worker update preservation repaired (2026-10-06).** Both executors now stage and invoke the shared preservation helper before detached lifecycle work; see below. This means updates of Cuttle itself through Jobs / `workers.self-update` (including shell update buttons that use that endpoint), not ordinary mesh jobs or updates to guest projects. The explicit Host UI restart and packaged ASAR updater use separate paths.
 - **Optional README/promo tools are maintainer tooling, not Cuttle runtime.** Keep the reusable README capture chain on GitHub; the Blender sculpture and launch promo are optional media-production assets. The external Playwright MCP launcher and redundant Muse shim have no confirmed bundled caller.
 
@@ -20,7 +20,7 @@ Disposition legend: **Ship** = GitHub + applicable runtime/setup distribution; *
 
 | File | Purpose and caller evidence | Portability/staleness and disposition |
 |---|---|---|
-| `src/scripts/cuttle_daemon.py` | Owns Flask lifetime, restart/watchers, tray, local worker. Invoked by `start_cuttle.sh`, `start-cuttle.cmd`, systemd helper and desktop host bootstrap. | **Ship.** Does not manage local model servers. `~/cuttle_logs` is generic generated state, not a private checkout path. Reads `src/.env` without shipping it. |
+| `src/scripts/cuttle_daemon.py` | Owns Flask lifetime, restart/watchers, tray, local worker. Invoked by `start_cuttle.sh`, `start-cuttle.cmd`, systemd helper and desktop host bootstrap. | **Ship.** Does not manage local model servers. `<home>/logs` is generic generated state, not a private checkout path. Reads `<home>/.env` without shipping it. |
 | `src/scripts/cuttle_client_daemon.py` | Persistent Client worker/enrollment loop; started by desktop host code and both `client-self-update` launchers. Delegates to `api.device_workers.worker_loop`. | **Ship with full-tree Client support.** Uses user-data `desktop-config.json`, configured host/ports and enrolled tokens; no fixed lab host. Generated config/status must remain local. |
 | `src/scripts/cuttle_device_worker.py` | Standalone full-package remote worker entry; calls `run_remote_worker_loop`. | **Ship as optional headless/full-tree worker entry.** No tracked normal startup invocation found; references in updater/restart scripts are process filters, not starts. Uses configured coordinator, log override or user home. Header correctly prefers the separate desktop-bundled stdlib sidecar for Client mode; do not conflate the two files. |
 | `start_cuttle.sh` | Canonical POSIX daemon launcher; used by README, AGENTS and `cuttle-service.sh`. | **Ship.** Resolves checkout and root venv relative to itself, forwards arguments, gives dependency guidance if venv is missing. |
@@ -59,7 +59,7 @@ Every filename in this table is beneath **`src/scripts/utilities/`**. Full paths
 | `git_graph.py` | Commit graph/detail/file-diff collection; `api.git_routes`. | **Ship.** Git cwd passed by owning services. |
 | `git_credential_helper.py` | Git credential protocol output; `git_pending_changes.git_credential_helper_arg()` supplies helper when explicit password env exists. | **Ship.** Intentionally prints credentials only to Git's protocol; never run for audit/display. No credential value embedded. |
 
-The five `*_cli_session_store.py` modules use `core.runtime_paths.runtime_state_path` for generated `src/data/sessions` files with `workspace/*_cli_session_map.json` legacy compatibility. **Those legacy strings are intentional migration support, not grounds to remove the modules.** Vendor homes, standard Program Files locations and env names are similarly not hardcoded private devices. Only source ships; generated maps, transcripts, tokens and vendor authentication do not.
+The five `*_cli_session_store.py` modules use `core.runtime_paths.runtime_state_path` for generated `<home>/sessions` files in the per-user Cuttle home. Vendor homes, standard Program Files locations and env names are similarly not hardcoded private devices. Only source ships; generated maps, transcripts, tokens and vendor authentication do not.
 
 ## 3. Action bridges, deployment and maintenance
 
@@ -113,7 +113,7 @@ The five `*_cli_session_store.py` modules use `core.runtime_paths.runtime_state_
 | `src/scripts/diagnose_phone_connectivity.bat` | Wrapper invokes same-name PS script. No runtime caller found. | **Optional developer troubleshooting only, together with repaired PS helper.** No fixed checkout. |
 | `src/scripts/diagnose_phone_connectivity.ps1` | Admin `HttpListener` test on `http://+:9999/`; wrapper invokes it. | **Ship (repaired).** Temporary rule is LocalSubnet + Private only, URL reservation is for the current user, both removed in `finally` (Ctrl+C or 5-minute timeout). |
 | `src/scripts/enable_lan_firewall.bat` | Elevating wrapper for firewall PS script; shortcut helper invokes it. | **Ship with the repaired PS helper.** |
-| `src/scripts/enable_lan_firewall.ps1` | Admin firewall setup; wrapper invokes it; Flask startup warning recommends it by path. | **Ship (repaired).** Every rule is `-RemoteAddress LocalSubnet -Profile Private`; reruns delete earlier `Cuttle LAN*` / `Cuttle Python LAN*` rules (including old Any-address ones); ports from `-HttpsPort/-HttpPort/-PhonePort` or `src/.env`; no Network Discovery change. Guarded by `test_lan_firewall_script.py`. |
+| `src/scripts/enable_lan_firewall.ps1` | Admin firewall setup; wrapper invokes it; Flask startup warning recommends it by path. | **Ship (repaired).** Every rule is `-RemoteAddress LocalSubnet -Profile Private`; reruns delete earlier `Cuttle LAN*` / `Cuttle Python LAN*` rules (including old Any-address ones); ports from `-HttpsPort/-HttpPort/-PhonePort` or `<home>/.env`; no Network Discovery change. Guarded by `test_lan_firewall_script.py`. |
 
 ## Distribution follow-through
 

@@ -12,7 +12,7 @@ With LAN disabled, listeners bind to loopback; enabling it binds for remote
 access. Apply binding changes through the daemon-owned restart path, and permit
 only the intended network/devices in the firewall. In Cuttle chat use the
 restart card; see [action forms](../../.cuttle_global/docs/action-forms.md).
-On a headless server, set `CUTTLE_LAN_ACCESS=1` in `src/.env` instead; see
+On a headless server, set `CUTTLE_LAN_ACCESS=1` in `<home>/.env` instead; see
 [Headless Linux server Host](HEADLESS_SERVER.md).
 
 For a browser, use `https://<host>:8080`. Verify the Host certificate before
@@ -24,7 +24,7 @@ credentials and traffic are acceptable.
 ## Custom ports (env-only)
 
 The three listener ports default to 8080 (primary HTTPS), 8000 (companion
-HTTP), and 8888 (phone HTTPS). Override in `src/.env`:
+HTTP), and 8888 (phone HTTPS). Override in `<home>/.env`:
 
 ```ini
 CUTTLE_HTTPS_PORT=8443
@@ -47,7 +47,7 @@ side of the same triple.
 Covered by the owner: daemon health/conflict checks, Flask listeners,
 mDNS advertisement, CORS, generated portal/QR URLs, OAuth redirect fallback,
 terminal URLs, and the Python CLIs (`panes_cli`, device-worker approval
-paths) — standalone CLIs read the same `src/.env` with process-env
+paths) — standalone CLIs read the same `<home>/.env` with process-env
 precedence, so no exports are needed. The dev shadow refuses both the
 defaults and the configured ports.
 
@@ -63,7 +63,7 @@ connections never rewrite the saved server to HTTP.
 
 Custom ports on desktop Electron: the local Host resolves listener ports
 from `api.server_ports` via `python -m api.server_ports` (read-only,
-fail-closed — Electron never parses `src/.env` itself) and loads the UI
+fail-closed — Electron never parses `<home>/.env` itself) and loads the UI
 from the configured ports, so a custom-port Flask is recognized as already
 running. A malformed port configuration shows a connect error with no
 probing of defaults and no daemon spawn. An unavailable local Python or

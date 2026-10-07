@@ -11,14 +11,14 @@ Model Benchmarks supports DeepSWE, SWE-bench Verified, and Aider Polyglot. The A
 
 Each source has its own score definition: DeepSWE pass@1, SWE-bench Verified resolved percentage, and Aider Polyglot pass@1. Filters include provider, reasoning effort, and harness. **NEW** marks DeepSWE configs first seen by Cuttle in the last 48 hours.
 
-**My Cuttle Performance** (`?d=cuttle-performance`) uses the same 3D widget, one point per agent / model / reasoning effort, built from *your* turns in `src/data/db/router_outcomes.db`:
+**My Cuttle Performance** (`?d=cuttle-performance`) uses the same 3D widget, one point per agent / model / reasoning effort, built from *your* turns in `<home>/db/router_outcomes.db`:
 
 - **Router** turns are recorded by `agent_router.dispatch` (one row per attempt).
 - **Pinned** turns (starred agent, chip, `/cursor`, `/codex`, …) are recorded by `_run_pinned_harness_turn` in `web_chat_api.py` (`source=pinned`). Native controls (`/cost`, `/muse model …`, session clear) carry `meta_command` and are skipped.
 - Turns from before pinned logging existed come from `backfill-performance` (idempotent, keyed by message id and `query_id`).
 - **Accept score** = 👍/👎 on the reply (chat footer → `POST /api/turn-feedback`) → Jev label → finished without error. With no feedback it barely separates configs, because most runs finish.
 - Axes: accept score, finished %, median turn time, cost / turn (Cursor reports none), output / total tokens per turn, turns (log). Filters: provider, reasoning, agent, plus a Turns picker (all / pinned / router) and a window (7 / 30 / 90 days / all time).
-- **Jev labels** (`api/jev/labels.py`) run as a cheap batched classifier. Thumbs, errors, cancels and transport failures are labeled by rule without a call. Other turns go 10 per System One call with the ask, a trimmed reply, and your next message ("did the user push back?"). Accept scores between 0.4 and 0.6 count as unsure. Unlabeled turns are labeled in the background on page load and hourly (`jev.label_turns`). Manual runs: menu **Label with Jev**, or `python -m api.jev label --all`. Cache: `src/output/dashboards/jev_turn_labels.json` (override with `CUTTLE_JEV_LABEL_CACHE`).
+- **Jev labels** (`api/jev/labels.py`) run as a cheap batched classifier. Thumbs, errors, cancels and transport failures are labeled by rule without a call. Other turns go 10 per System One call with the ask, a trimmed reply, and your next message ("did the user push back?"). Accept scores between 0.4 and 0.6 count as unsure. Unlabeled turns are labeled in the background on page load and hourly (`jev.label_turns`). Manual runs: menu **Label with Jev**, or `python -m api.jev label --all`. Cache: `<home>/output/dashboards/jev_turn_labels.json` (override with `CUTTLE_JEV_LABEL_CACHE`).
 
 **Cuttle Usage** (`?d=cuttle-usage`) charts totals from the same outcomes store (`src/api/dashboards/usage.py`): total cost, total tokens, turns, input and output tokens, and agent time.
 
@@ -28,7 +28,7 @@ Each source has its own score definition: DeepSWE pass@1, SWE-bench Verified res
 - **Chart**: stacked columns over time, or a breakdown of totals by group. Legend chips hide a group in every chart and in the table.
 - Every attempt counts, including fallbacks and cancelled turns. Cost only includes harnesses that report it (not Cursor).
 
-**Context** (`?d=cuttle-context`) charts what Cuttle sends each agent turn, from the Brain's per-turn metrics store (`src/data/brain/context_metrics.db`, owner `api.cuttle_brain.metrics`; dashboard `src/api/dashboards/context.py`).
+**Context** (`?d=cuttle-context`) charts what Cuttle sends each agent turn, from the Brain's per-turn metrics store (`<home>/brain/context_metrics.db`, owner `api.cuttle_brain.metrics`; dashboard `src/api/dashboards/context.py`).
 
 - Full briefing size per day, average size by layer (capabilities, global/project rules, inventory + tasks, handoff, …), and the mix of what each turn sent (full briefing / rules-changed note / handoff only / prompt only).
 - Context window fill per chat over time (agent-reported tokens; ◆ marks a compaction). Claude fill comes from its own transcript (input + cache tokens of the last call).
@@ -73,7 +73,7 @@ subscription charges or historical invoices.
 | GET | `/api/dashboards/cuttle-context` | `?range=7d\|30d\|90d`, `?tz=<minutes>` |
 | POST | `/api/turn-feedback` | `{session_id, query_id, feedback: "good"\|"bad"\|null}` — thumbs on a reply; stored on the outcome row and message metadata |
 
-Caches: `src/output/dashboards/` (gitignored with the rest of `src/output/`); each feed has a 6h cache.
+Caches: `<home>/output/dashboards/` (per-user Cuttle home, never the repo); each feed has a 6h cache.
 
 ## Sources (v1)
 

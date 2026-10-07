@@ -64,7 +64,8 @@ AGP 8.13.0, Gradle 8.14.3, minimum Android API 24, compile/target API 36.
 Debug APKs are for development, not public releases. Gradle normally uses its
 local debug keystore. To retain an existing development installation's signing
 identity, explicitly set `CUTTLE_ANDROID_DEBUG_KEYSTORE` to its original keystore
-under the ignored `.cuttle/personal/secrets/` directory. Cuttle never searches
+under the Cuttle home's `secrets/` directory (`~/.local/share/cuttle/secrets/`,
+`%LOCALAPPDATA%\Cuttle\secrets\`, or `$CUTTLE_HOME/secrets/`). Cuttle never searches
 other installations or disks for keys. Changing the signer requires an explicit
 uninstall/reinstall (which can remove local app data); the updater never does that.
 
@@ -81,7 +82,7 @@ passwords. Users installing published APKs do not need build tools or the
 publisher's private key. This updater supports one stable signer; signing-key
 rotation needs a separate migration design.
 
-Place the keystore under `.cuttle/personal/secrets/` and supply these environment
+Place the keystore under the Cuttle home's `secrets/` and supply these environment
 variables through your private build environment:
 
 - `CUTTLE_ANDROID_KEYSTORE`: absolute keystore path

@@ -10,7 +10,8 @@ This map describes **what exists and how it boots**, not a mandate to extract `w
 
 ```
 start_cuttle.sh | src/scripts/cuttle_daemon.py
-  → load src/.env
+  → move an older checkout's state into the Cuttle home (fail closed)
+  → load <home>/.env
   → spawn Flask: python src/api/web_chat_api.py  (HTTPS :8080)
   → tray / cron / local worker loop (platform-dependent)
   → Flask restart: daemon reads the restart request file from the per-user instance state dir (not agent taskkill)
@@ -112,7 +113,7 @@ independently. Pinned by the updated
 
 **Discord:** no inbound chat gateway; see [`extension-boundaries.md`](extension-boundaries.md).
 
-**Discord channel read/post (keep; no gateway required):** `python -m api.discord_cli` (REST GET) and `discord.post` (REST POST via `api.discord_ops` / `project_actions`). Token from `src/.env` does not start a gateway. Per-project aliases: `{project}/.cuttle/actions/discord-post.yaml`. Arbitrary snowflakes cannot bypass the post allowlist.
+**Discord channel read/post (keep; no gateway required):** `python -m api.discord_cli` (REST GET) and `discord.post` (REST POST via `api.discord_ops` / `project_actions`). Token from `<home>/.env` does not start a gateway. Per-project aliases: `{project}/.cuttle/actions/discord-post.yaml`. Arbitrary snowflakes cannot bypass the post allowlist.
 
 **Live turn:** `api.chat_delivery` (turn tokens `current_turn` /
 `is_stale_turn`, `try_begin`/`end`, `is_turn_cancelled`,
@@ -169,7 +170,7 @@ release), `build_pipeline_body`, `busy_response_body`,
 service; Flask serialize/SSE transport stays in the route.
 `api.agent_harness.runners` owns all `run_*_web_command` entries.
 
-**History:** `api.auth_db` SQLite (`src/data/db/`, gitignored). Pairing store for **users** is separate from **worker** enroll.
+**History:** `api.auth_db` SQLite (`<home>/db/`, gitignored). Pairing store for **users** is separate from **worker** enroll.
 
 ---
 
@@ -252,11 +253,10 @@ Coordinator HTTP: `/api/workers/*` (`device_workers`). Store: gitignored SQLite 
 HTTP is extracted: `settings_bp` (`api.settings_routes`, url prefix
 `/api`) owns validation/persistence/defaults/authorization; app defaults
 live in `src/managers/settings_manager.py`; `managers.settings_storage` owns
-locked atomic persistence. `src/settings.json` owns server preferences,
-`src/data/config/machine_settings.json` owns `device_workers`/`discovery`, and
-`src/data/config/ui_state.json` owns `ui_layout`/`shell_workspaces` (all gitignored).
-Existing unversioned settings stay monolithic until the guarded cold-start migration;
-`schema_version: 1` records the split, independently of the release SemVer.
+locked atomic persistence. `<home>/config/settings.json` owns server preferences,
+`<home>/config/machine_settings.json` owns `device_workers`/`discovery`, and
+`<home>/config/ui_state.json` owns `ui_layout`/`shell_workspaces`.
+`schema_version: 1` marks the storage schema, independently of the release SemVer.
 No `/api/settings` routes live on the Flask root.
 
 **Local model preference:** retired with the old `RuntimeConfig`
@@ -277,23 +277,15 @@ saved server UI state is still install-wide, not newly account-scoped.
 
 ## Persistence
 
-Runtime storage layout is owned by `core.runtime_paths`: `src/data/db/`,
-`sessions/`, `brain/`, `supervised_tasks/`, `edit_attribution/`, and `cache/`.
-Existing `workspace/` files stay
-authoritative until `core.runtime_data` migrates them offline. The daemon invokes
-the guarded migration before starting services on its next cold launch; a live
-host or destination conflict skips migration. Details: `src/data/README.md`.
-Install-local harness packs belong in `.cuttle_global/personal/agents/`; legacy
-Legacy `src/data/harness_agents/` packs are no longer discovered; the offline migration moves them to `.cuttle_global/personal/agents/`.
-
-
-| Store | Tracked? |
-|---|---|
-| `cuttle_auth.db` chat/auth | ignored |
-| HMAC secret file | ignored |
-| Certs | ignored |
-| Pairing JSON | likely ignored `*.json` |
-| Query logs / uploads | `src/output`, `src/web/logs` ignored or generated |
+All runtime state lives in the per-user Cuttle home, owned by
+`core.runtime_paths.cuttle_home()` (`CUTTLE_HOME` overrides): `db/`, `config/`,
+`sessions/`, `brain/`, `agent_events/`, `supervised_tasks/`, `cache/`, `output/`,
+`logs/`, `secrets/`, `personal/`, and `.env`. The install tree is code only and is
+never written, so a read-only `Program Files` or AppImage install works. The
+daemon moves an older checkout's state there on cold start (`core.runtime_data`)
+and refuses to start if it cannot; Flask refuses to boot beside unmigrated state.
+Install-local harness packs belong in `<home>/personal/agents/`. Details:
+[`cuttle-home.md`](cuttle-home.md).
 
 ---
 

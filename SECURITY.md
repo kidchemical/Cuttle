@@ -37,7 +37,7 @@ In scope, for example:
 - Authentication, session, pairing or CORS bypass on the Flask API
 - Forging or replaying signed action cards (`git.push`, `flask.restart`, …)
 - Path traversal (uploads, `/output/…`, project paths)
-- Secret leakage (`src/.env`, `.cuttle/personal/secrets/`, tokens in logs or
+- Secret leakage (`<home>/.env`, `<home>/secrets/`, tokens in logs or
   chat transcripts)
 - TLS validation failures in the Electron or Android clients
 - A Cuttle Workers peer executing jobs it was not authorized for

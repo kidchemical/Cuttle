@@ -1,7 +1,7 @@
 # Chat media (images / video)
 
 Share screenshots and clips in chat as **markdown images** (or `<media>`).
-Cuttle stages a copy under `src/output/shared/`, serves it at `/output/shared/…`,
+Cuttle stages a copy under `<home>/output/shared/`, serves it at `/output/shared/…`,
 and shows a clickable preview. Click opens a **lightbox** that covers the full
 app shell (all split panes), not just the chat column. ←/→ for multiple items
 in that bubble, Esc to close, Download for phone/LAN. Zoom with **+/−**,
@@ -101,7 +101,7 @@ Staged copies expire after **7 days** (mtime). Override with
 - Flask API start
 - Electron **host** start (not client mode)
 
-Original files outside `src/output/shared/` are never deleted by purge.
+Original files outside `<home>/output/shared/` are never deleted by purge.
 
 ## Download
 

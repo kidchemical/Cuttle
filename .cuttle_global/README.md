@@ -16,11 +16,13 @@ it does not inherit another project's commands or actions. See the
 [project reference layout](../.cuttle/README.md) and
 [commands and actions guide](docs/commands-and-actions.md).
 
-Install-local facts belong under `.cuttle_global/personal/` for shared configuration
+`<home>` is the per-user Cuttle home (`~/.local/share/cuttle`, `%LOCALAPPDATA%\Cuttle`, or `$CUTTLE_HOME`; `core.runtime_paths.cuttle_home()`).
+
+Install-local facts belong under `<home>/personal/` for shared configuration
 or `{project}/.cuttle/personal/` for a project. Rule/doc Markdown merges by
 appending a personal delta to tracked text; supported non-Markdown overlays such
 as action YAML replace by basename. This is not a universal replacement promise
-for every loader or literal script path. See the [overlay contract](personal/README.md).
+for every loader or literal script path. See the [overlay contract](../docs/architecture/cuttle-home.md#personal-overlays).
 
 Scratch belongs under `{project}/temp/`; see the scratch invariant in
 `rules/00-core.md`. New projects are scaffolded through

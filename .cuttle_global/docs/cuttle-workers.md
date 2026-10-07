@@ -3,7 +3,7 @@
 LAN **device worker** mesh: host coordinates; machines claim allowlisted jobs.
 
 Canonical design: `docs/guides/CUTTLE_WORKERS.md` (under the Cuttle install).
-Install-local LAN / SSH / hostname notes: `.cuttle_global/personal/docs/cuttle-workers.md`.
+Install-local LAN / SSH / hostname notes: `<home>/personal/docs/cuttle-workers.md`.
 
 ## When to use (intent)
 
@@ -81,12 +81,12 @@ unrelated installations.
    (elevated on Windows; LAN CIDR + loopback `from=` restriction applied):
    - Windows: `install-cuttle-mesh-lan-key.ps1 -PubKeyFile <peer.pub> -Alias <name>`
    - Linux/macOS: `install-cuttle-mesh-lan-key.sh --pubkey <peer.pub> --alias <name>`
-3. Point `src/settings.json` at **this** install's private key
+3. Point `<home>/config/settings.json` at **this** install's private key
    (`device_workers.ssh_host` / `ssh_identity`).
 
-Configure keys / `authorized_keys` / `ssh_host` in `src/settings.json` for **this** install.
+Configure keys / `authorized_keys` / `ssh_host` in `<home>/config/settings.json` for **this** install.
 Document your LAN CIDR, key paths, and host aliases under
-`.cuttle_global/personal/docs/cuttle-workers.md` — do not commit them to the tracked global doc.
+`<home>/personal/docs/cuttle-workers.md` — do not commit them to the tracked global doc.
 
 Legacy note: early installs trusted one shared provisioned key. Cuttle no
 longer ships or installs it, and pairing never purges existing

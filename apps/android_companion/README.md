@@ -7,7 +7,7 @@ It is a prototype, separate from the main [mobile app](../mobile/README.md).
 
 ## Backend and transport
 
-Set a random `CUTTLE_MOBILE_TOKEN` in the Host's `src/.env` and apply it through
+Set a random `CUTTLE_MOBILE_TOKEN` in the Host's `<home>/.env` and apply it through
 the daemon-owned restart path. Enter that exact token in the app: an empty field
 is not valid. The backend's development fallback is `dev-local-token`; do not
 use that shared fallback on a remotely reachable installation.

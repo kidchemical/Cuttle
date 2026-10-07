@@ -11,7 +11,7 @@ and `--help`; do not assume every helper resolves paths the same way.
 - `claude_cli_tool.py`: Claude Code `claude -p`, resume and JSON usage.
 - `claude_cli_session_store.py`: per-chat resume/model state.
 - Query inspector: `/query_log.html?id=<query_id>`; logs under
-  `src/web/logs/query_data_<id>.json` are indexed by chat `query_id`.
+  `<home>/logs/queries/query_data_<id>.json` are indexed by chat `query_id`.
 
 ## API-dependent utilities
 

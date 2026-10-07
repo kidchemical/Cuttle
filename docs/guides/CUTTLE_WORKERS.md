@@ -23,7 +23,7 @@ The user talks to **Cuttle**. Cuttle (orchestrator + Brain) decides when work sh
 
 | Piece | Location |
 |---|---|
-| SQLite store (workers + jobs) | `src/api/device_workers/store.py` → `src/data/db/device_workers.db` |
+| SQLite store (workers + jobs) | `src/api/device_workers/store.py` → `<home>/db/device_workers.db` |
 | Coordinator HTTP API | `/api/workers/*` (`routes.py`), registered from Flask |
 | Local host worker loop | Daemon thread `run_device_workers_loop` in `cuttle_daemon.py` |
 | Client sidecar | `electron/device-worker/cuttle_device_worker.py` (stdlib; shipped in Client asar) + Electron `startWorkerSidecar()` |

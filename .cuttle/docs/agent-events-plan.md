@@ -53,7 +53,7 @@ behind an experimental flag (`.cuttle/docs/experimental-features.md`).
 | Question | Answer | Consequence |
 |---|---|---|
 | What does the journal record? | Path + content digest before/after, one comparison per **turn** (`edit_attribution/journal.py`, snapshots at `agent_harness/kernel.py:843` / `:896`). No line content. | Line-level history needs actual content captured, not digests. |
-| What does the query log keep? | JSON sidecars in `src/web/logs/`, `MAX_EVENTS = 400` per turn (oldest dropped), tool args cut to a 4k preview, results 24k, live view only the last 120 events (`query_events.py`, `query_tracker.py`). 163 MB across 4,354 turns (each turn is written twice: timestamped + stable copy). | Caps and duplicate files go. Large payloads move to compressed blobs instead of being truncated. |
+| What does the query log keep? | JSON sidecars (then `src/web/logs/`, now `<home>/logs/queries/`), `MAX_EVENTS = 400` per turn (oldest dropped), tool args cut to a 4k preview, results 24k, live view only the last 120 events (`query_events.py`, `query_tracker.py`). 163 MB across 4,354 turns (each turn is written twice: timestamped + stable copy). | Caps and duplicate files go. Large payloads move to compressed blobs instead of being truncated. |
 | Do tool events carry arguments today? | **Claude:** 22/22 tools have args + results. **Cursor:** edits carry `streamContent`, which is the new text only, no before-text. **Codex, Muse:** **0** tools have args. They reach the log only as status-bar strings via `QueryStatusTee` → `ingest_status_message`. | Codex and Muse need structured capture. That's the largest gap. |
 | Do the CLIs expose real diffs? | **Codex** app-server (verified against `codex app-server generate-json-schema`, v0.159.3): `FileUpdateChange {path, kind, diff}` on file-change items and patch updates, plus `TurnDiffUpdatedNotification` for the turn's running diff. Today `codex_app_server_turn.py` turns these into a status line. **Claude Code** (verified in session JSONL): edit results carry `toolUseResult {filePath, structuredPatch, originalFile, userModified}`. `claude_stream.py` ignores them. **OpenCode** (verified in `opencode.db`): tool part `state.metadata.filediff {file, patch, additions, deletions}` + `metadata.diff`. **Cursor, Muse, Hermes, DeepSeek, Antigravity:** unverified, probe in Phase 0. | Native per-step diffs are available for three CLIs. The universal snapshot layer (§2A) covers the rest. |
 | Is the journal accurate? | **Path bug:** `_run_git` strips its whole output (`supervised/evidence.py:102`), which eats the leading space of the first `" M path"` porcelain line, and `ln[3:]` then drops the path's first char. Rows like `lectron/main.js` and `EADME.md` exist. Quoted paths (spaces, non-ASCII) are C-escaped and also unparsed. | Fix in Phase 0 with `git status --porcelain -z`. It also affects the supervised-coordinator evidence. |
@@ -165,7 +165,7 @@ New owned slice **`src/api/agent_events/`**:
 | `routes.py` | `/api/agent-events*` blueprint (self-registering, like `chat_tts`) |
 | `cli.py` / `__main__.py` | `python -m api.agent_events tail\|get\|search\|diff\|stats` |
 
-Location: `runtime_state_path("agent_events")` → `agent_events.sqlite3` + `blobs/`.
+Location: `runtime_state_path("agent_events")` → `<home>/agent_events/` (`agent_events.sqlite3` + `blobs/`) in the per-user Cuttle home, never the checkout ([cuttle-home.md](../../docs/architecture/cuttle-home.md)).
 
 ### Schema (sketch)
 
@@ -269,10 +269,10 @@ Settlement also gets fixed:
 - **Commit trailers** only credit edits whose `digest_after` matches the staged blob.
   Exact content proof replaces "any open row on this path".
 
-**Migration:** existing journal rows are imported as `edits` with
-`source=digest` (no patch). Rows whose path can't be resolved (the first-char
-bug) are dropped. Rows older than 7 days that never settled are imported as
-`stale` and never credited.
+**Migration (done 2026-10-07; importer since removed):** existing journal rows
+were imported as `edits` with `source=digest` (no patch). Rows whose path couldn't
+be resolved (the first-char bug) were dropped. Rows older than 7 days that never
+settled were imported as `stale` and are never credited.
 
 ---
 
@@ -392,7 +392,7 @@ Initial rows:
 | Router outcomes | 0.9 MB | configurable | typed confirm (warn: feeds achievements + routing) |
 | Device workers | 0.7 MB | — | never |
 | Brain metrics / inject snapshots | 1.5 MB | `cuttle_brain prune` | allowed |
-| Shared output / uploads (`src/output`) | 67 MB | existing 7 d TTL for `/output/shared` | allowed |
+| Shared output / uploads (`<home>/output`) | 67 MB | existing 7 d TTL for `/output/shared` | allowed |
 
 **UI:** a "Databases" group in the Data panel (scope badge "This server"), with one row
 per store: label, owner, size (bar against quota), rows, oldest record,
@@ -516,8 +516,10 @@ database management surface and CLI.
   show sizes only; their retention/reset hooks require their owning slices’
   contracts before exposing destructive operations in this generic surface.
 - New turns stop writing JSON sidecars. Existing files remain readable as legacy
-  data; their old caps cannot be recovered. The legacy journal remains a read-only
-  rollback artifact after migration, not a second writer.
+  data under `<home>/logs/queries/`; their old caps cannot be recovered. The legacy
+  journal was fully imported (32,853 rows) and the importer removed; its file
+  stays at `<home>/edit_attribution/` as a read-only rollback artifact that
+  Settings → Data can reset.
 - Commit reconciliation scans bounded recent path history after each edit’s time;
   deletion settlement and a full superseded/reverted state machine remain deferred.
   Trailer selection fails closed on content mismatch, stale rows and overlaps.
