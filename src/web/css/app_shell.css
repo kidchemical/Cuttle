@@ -1707,6 +1707,59 @@ body.light-mode .rail-logo-clickable[data-tooltip]::after {
     opacity: 0;
 }
 
+/* Hold-to-edit exit scrim: page taps land in the content iframe and never
+   reach the shell document, so the rail needs its own tap catcher over the
+   content area. Transparent — jiggle + Done already signal the mode. */
+.rail-edit-scrim {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    background: transparent;
+}
+
+.rail-edit-done {
+    position: absolute;
+    left: 50%;
+    bottom: 16px;
+    transform: translateX(-50%);
+    padding: 8px 22px;
+    border-radius: 999px;
+    border: 1px solid var(--rail-border);
+    background: var(--rail-bg);
+    color: var(--rail-icon-hover);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+    white-space: nowrap;
+}
+
+/* Edit-mode jiggle on every rail icon (like iOS: everything shakes, but
+   only removable entries carry a minus badge — footer utilities and the
+   locked Apps entry stay put badge-wise). */
+@keyframes rail-jiggle {
+    0%, 100% { transform: rotate(-2deg) translateY(0); }
+    50% { transform: rotate(2deg) translateY(-1px); }
+}
+
+.icon-rail.rail-editing .rail-items .rail-item {
+    animation: rail-jiggle 0.45s ease-in-out infinite;
+}
+
+.icon-rail.rail-editing .rail-items .rail-item:nth-child(2n) {
+    animation-delay: -0.15s;
+}
+
+.icon-rail.rail-editing .rail-items .rail-item:nth-child(3n) {
+    animation-delay: -0.3s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .icon-rail.rail-editing .rail-items .rail-item {
+        animation: none;
+    }
+}
+
 .rail-add-slot {
     display: none;
     position: relative;
