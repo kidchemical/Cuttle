@@ -1276,7 +1276,7 @@
             statusHeader.insertAdjacentHTML('beforeend', CuttleChatMessages.renderAssistantStatusHtml(
                 { routing_badge: msg.routing_badge || meta.routing_badge }, el.dataset.failed === '1', raw, escapeHtmlInline));
         }
-        const usage = normalizeUsagePayload(msg.usage) || normalizeUsagePayload(meta.usage);
+        const usage = normalizeUsagePayload(msg.usage, meta) || normalizeUsagePayload(meta.usage, meta);
         if (usage) {
             const wrap = el.querySelector('.message-content-wrapper');
             if (wrap) {
@@ -20325,107 +20325,15 @@
     wireVoiceModeControls();
 
     function formatTokenCount(n) {
-        const v = Number(n);
-        if (!Number.isFinite(v) || v < 0) return '0';
-        if (v >= 1_000_000) {
-            return (v / 1_000_000).toFixed(v >= 10_000_000 ? 0 : 1).replace(/\.0$/, '') + 'M';
-        }
-        if (v >= 1000) {
-            return (v / 1000).toFixed(v >= 10_000 ? 0 : 1).replace(/\.0$/, '') + 'k';
-        }
-        return String(Math.round(v));
+        return CuttleChatUsage.formatTokenCount(n);
     }
 
-    function formatUsageCostUsd(cost, estimated) {
-        const v = Number(cost);
-        if (!Number.isFinite(v) || v < 0) return null;
-        const prefix = estimated ? '~$' : '$';
-        if (v === 0) return prefix + '0';
-        if (v < 0.01) return prefix + v.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
-        if (v < 1) return prefix + v.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
-        return prefix + v.toFixed(2);
-    }
-
-    function normalizeUsagePayload(raw) {
-        if (!raw || typeof raw !== 'object') return null;
-        const pt = Number(
-            raw.prompt_tokens != null ? raw.prompt_tokens
-                : (raw.input_tokens != null ? raw.input_tokens : raw.inputTokens)
-        ) || 0;
-        const ct = Number(
-            raw.completion_tokens != null ? raw.completion_tokens
-                : (raw.output_tokens != null ? raw.output_tokens : raw.outputTokens)
-        ) || 0;
-        let total = Number(raw.total_tokens != null ? raw.total_tokens : raw.totalTokens) || 0;
-        if (!total && (pt || ct)) total = pt + ct;
-        const cacheRead = Number(
-            raw.cache_read_tokens != null ? raw.cache_read_tokens
-                : (raw.cacheReadTokens != null ? raw.cacheReadTokens
-                    : (raw.cached_input_tokens != null ? raw.cached_input_tokens
-                        : (raw.cached_tokens != null ? raw.cached_tokens : 0)))
-        ) || 0;
-        const cacheWrite = Number(
-            raw.cache_write_tokens != null ? raw.cache_write_tokens
-                : (raw.cacheWriteTokens != null ? raw.cacheWriteTokens : 0)
-        ) || 0;
-        let cost = raw.cost;
-        if (cost != null) {
-            cost = Number(cost);
-            if (!Number.isFinite(cost) || cost < 0) cost = null;
-        } else {
-            cost = null;
-        }
-        if (!pt && !ct && cost == null && !cacheRead && !cacheWrite) return null;
-        return {
-            prompt_tokens: pt,
-            completion_tokens: ct,
-            total_tokens: total,
-            cache_read_tokens: cacheRead,
-            cache_write_tokens: cacheWrite,
-            cost,
-            cost_estimated: !!raw.cost_estimated,
-            model: raw.model ? String(raw.model) : '',
-        };
+    function normalizeUsagePayload(raw, metadata) {
+        return CuttleChatUsage.normalize(raw, metadata);
     }
 
     function getMessageUsageHtml(usage) {
-        const u = normalizeUsagePayload(usage);
-        if (!u) return '';
-        const parts = [];
-        if (u.prompt_tokens || u.completion_tokens || u.cache_read_tokens) {
-            parts.push(
-                `<span class="message-usage-in" title="Input tokens">↑ ${escapeHtml(formatTokenCount(u.prompt_tokens))}</span>`
-            );
-            if (u.cache_read_tokens > 0) {
-                let tip = 'Cached input tokens';
-                if (u.prompt_tokens > 0 && u.cache_read_tokens <= u.prompt_tokens) {
-                    const pct = Math.round((1000 * u.cache_read_tokens) / u.prompt_tokens) / 10;
-                    const pctLabel = Number.isInteger(pct) ? String(pct) : pct.toFixed(1);
-                    tip = `Cached input tokens (${pctLabel}% of reported input)`;
-                } else if (u.prompt_tokens > 0) {
-                    tip = 'Cached input tokens (billed separately from input)';
-                }
-                parts.push(
-                    `<span class="message-usage-cache" title="${escapeHtml(tip)}">↑ ${escapeHtml(formatTokenCount(u.cache_read_tokens))}</span>`
-                );
-            }
-            parts.push(
-                `<span class="message-usage-out" title="Output tokens">↓ ${escapeHtml(formatTokenCount(u.completion_tokens))}</span>`
-            );
-        }
-        const costLabel = formatUsageCostUsd(u.cost, u.cost_estimated);
-        if (costLabel) {
-            const tip = u.cost_estimated
-                ? (u.cache_read_tokens > 0
-                    ? 'Estimated from models.dev list prices (cache-adjusted)'
-                    : 'Estimated from models.dev list prices')
-                : 'Cost reported by the agent';
-            parts.push(
-                `<span class="message-usage-cost" title="${escapeHtml(tip)}">${escapeHtml(costLabel)}</span>`
-            );
-        }
-        if (!parts.length) return '';
-        return `<div class="message-usage" aria-label="Token usage">${parts.join('<span class="message-usage-sep">·</span>')}</div>`;
+        return CuttleChatUsage.render(usage, escapeHtml);
     }
 
     function getQueryLogLinkHtml(reportUrl) {
@@ -20663,38 +20571,17 @@
             raw.context_tokens != null ? raw.context_tokens
                 : (raw.peak_context_tokens != null ? raw.peak_context_tokens : raw.contextTokens)
         ) || 0;
-        const fill = peak > 0 ? peak : (u && u.prompt_tokens > 0 ? u.prompt_tokens : 0);
-        // Cursor long turns often report huge cacheRead aggregates — don't paint 100%.
-        if (agent === 'cursor') {
+        // Billing input is summed across calls. Only seed the ring from an
+        // explicit occupancy stamp; the API supplies live/transcript fallbacks.
+        let fill = peak;
+        if (agent === 'cursor' && peak > 0) {
             const cr = Number(raw.cache_read_tokens || raw.cacheReadTokens || 0) || 0;
-            const inn = Number(
-                raw.inputTokens != null ? raw.inputTokens
-                    : (raw.input_tokens != null ? raw.input_tokens
-                        : (u && u.prompt_tokens) || 0)
-            ) || 0;
             const cw = Number(raw.cache_write_tokens || raw.cacheWriteTokens || 0) || 0;
-            const stamped = peak || 0;
-            const sumIn = inn + cr + cw;
-            const looksAgg = cr >= 400000 || sumIn >= 1200000
-                || (stamped >= 400000 && cr >= 200000 && stamped >= cr
-                    && Math.abs(stamped - sumIn) <= Math.max(2000, stamped * 0.03));
-            if (looksAgg) {
-                paintContextGaugeFromStatus({
-                    success: true,
-                    agent_id: agent,
-                    model: (u && u.model) || '',
-                    used_tokens: 0,
-                    limit_tokens: 1000000,
-                    percent: 0,
-                    estimated: true,
-                    token_source: 'aggregated',
-                    compact_available: true,
-                    hint: 'Last turn was a long multi-step run (billing totals, not a single context snapshot). Context % refreshes after the next reply.',
-                });
-                scheduleAgentContextGaugeRefresh(250);
-                return;
-            }
+            const sumIn = ((u && u.prompt_tokens) || 0) + cr + cw;
+            if (peak >= 400000 && cr >= 200000 && peak >= cr &&
+                    Math.abs(peak - sumIn) <= Math.max(2000, peak * 0.03)) fill = 0;
         }
+        if (!fill) scheduleAgentContextGaugeRefresh(250);
         if (!fill) return;
         const prev = _agentContextStatus || {};
         const limit = Number(prev.limit_tokens) || (

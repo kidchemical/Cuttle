@@ -433,6 +433,7 @@ class Adapter:
             "completion_tokens": int(uq.get("output_tokens") or 0),
             "total_tokens": int(uq.get("total_tokens") or 0),
             "model": mid or "",
+            "cache_inclusive": False,
         }
         if usage_raw.get("context_tokens"):
             try:

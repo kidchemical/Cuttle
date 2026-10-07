@@ -397,6 +397,8 @@ class Adapter:
                 usage["cost"] = float(uq["cost"])
             except (TypeError, ValueError):
                 pass
+        if isinstance(uq.get("cost_estimated"), bool):
+            usage["cost_estimated"] = uq["cost_estimated"]
         hermes_sid = raw.get("hermes_session_id") or resume
         if hermes_sid:
             try:

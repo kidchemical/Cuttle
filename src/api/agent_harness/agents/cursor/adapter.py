@@ -314,6 +314,7 @@ class Adapter:
         # is additive (inputTokens excludes cached reads), so the inclusive
         # heuristic must not subtract cache reads from the prompt. "auto"
         # turns have no public per-model rate and stay unpriced.
+        usage["cache_inclusive"] = False
         try:
             from api.model_pricing import attach_estimated_cost
 

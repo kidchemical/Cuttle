@@ -18,6 +18,29 @@ BODY = "I will check every adapter. " * 30
 THOUGHT = "Check the documented event contract. " * 20
 
 
+def test_deepseek_step_usage_separates_billing_from_context():
+    from api.agent_harness.agents.deepseek.stream import DeepSeekStream
+
+    stream = DeepSeekStream(queue.Queue())
+    for usage in [
+        {"inputTokens": 100, "outputTokens": 5, "cacheReadTokens": 800, "cacheWriteTokens": 200},
+        {"inputTokens": 0, "outputTokens": 2, "cacheReadTokens": 600, "cacheWriteTokens": 100},
+    ]:
+        stream.feed(json.dumps({"type": "status", "phase": "step_end", "usage": usage}))
+    assert stream.usage["prompt_tokens"] == 100
+    assert stream.usage["completion_tokens"] == 7
+    assert stream.usage["cache_read_tokens"] == 1400
+    assert stream.usage["cache_write_tokens"] == 300
+    assert stream.usage["context_tokens"] == 700
+    assert stream.usage["peak_context_tokens"] == 1100
+    assert stream.usage["cache_inclusive"] is False
+    stream.feed(json.dumps({"type": "status", "phase": "step_end", "usage": {}}))
+    assert stream.usage["context_tokens"] == 700
+    stream.feed(json.dumps({"type": "status", "phase": "step_end", "usage": {"inputTokens": 0}}))
+    assert stream.usage["context_tokens"] == 0
+    assert stream.usage["peak_context_tokens"] == 1100
+
+
 def _claude_events():
     return [
         {"type": "system", "subtype": "init", "session_id": "claude-s", "model": "fake"},

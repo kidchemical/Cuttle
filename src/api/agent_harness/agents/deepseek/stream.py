@@ -47,11 +47,21 @@ class DeepSeekStream:
         elif typ == "status":
             self.activity.emit(f"DeepSeek Harness: {event.get('phase') or 'working'}")
             if event.get("phase") == "step_end" and isinstance(event.get("usage"), dict):
+                call = {}
                 for source, target in (("inputTokens", "prompt_tokens"), ("outputTokens", "completion_tokens"),
                                        ("cacheReadTokens", "cache_read_tokens"), ("cacheWriteTokens", "cache_write_tokens")):
                     value = event["usage"].get(source)
                     if isinstance(value, (int, float)):
                         self.usage[target] = self.usage.get(target, 0) + int(value)
+                        call[target] = int(value)
+                # dsh TokenUsage is disjoint, even when the provider's raw
+                # prompt_tokens includes cache. See upstream llm/src/types.ts.
+                if any(key in call for key in ("prompt_tokens", "cache_read_tokens", "cache_write_tokens")):
+                    context = sum(call.get(key, 0) for key in
+                                  ("prompt_tokens", "cache_read_tokens", "cache_write_tokens"))
+                    self.usage["cache_inclusive"] = False
+                    self.usage["context_tokens"] = context
+                    self.usage["peak_context_tokens"] = max(self.usage.get("peak_context_tokens", 0), context)
         elif typ == "error":
             message = str(event.get("message") or "DeepSeek Harness failed")
             self.errors.append(message)

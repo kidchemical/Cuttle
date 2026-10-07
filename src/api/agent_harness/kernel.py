@@ -210,6 +210,7 @@ def _usage_from_result(usage: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         ),
         (("context_tokens", "contextTokens"), "context_tokens"),
         (("peak_context_tokens",), "peak_context_tokens"),
+        (("reasoning_tokens", "reasoningTokens"), "reasoning_tokens"),
     ):
         for key in src_keys:
             if u.get(key) is None:
@@ -223,6 +224,16 @@ def _usage_from_result(usage: Optional[Dict[str, Any]]) -> Dict[str, Any]:
             break
     if cost_f is not None and cost_f >= 0:
         payload["cost"] = cost_f
+    for key in ("cost_estimated", "cache_inclusive"):
+        if isinstance(u.get(key), bool):
+            payload[key] = u[key]
+    if u.get("reported_cost") is not None:
+        try:
+            payload["reported_cost"] = float(u["reported_cost"])
+        except (TypeError, ValueError):
+            pass
+    if payload.get("cache_inclusive") is False:
+        payload["total_tokens"] = pt + ct + int(payload.get("cache_read_tokens") or 0) + int(payload.get("cache_write_tokens") or 0)
     return payload
 
 
@@ -1054,9 +1065,13 @@ def run_agent_web_command(
                 "cache_write_tokens",
                 "context_tokens",
                 "peak_context_tokens",
+                "reasoning_tokens",
             ):
                 if usage_payload.get(key):
                     tok_payload[key] = int(usage_payload[key])
+            for key in ("cost_estimated", "reported_cost", "cache_inclusive"):
+                if key in usage_payload:
+                    tok_payload[key] = usage_payload[key]
         call_cost = float(usage_payload.get("cost") or 0) if usage_payload.get("cost") is not None else 0.0
         _result_meta = result.meta if isinstance(result.meta, dict) else {}
         if result.model:

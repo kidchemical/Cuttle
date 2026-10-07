@@ -151,6 +151,25 @@ def test_opencode_cache_read_survives_to_outcome_store(tmp_path):
     assert stored["cached_tokens"] == 402904
 
 
+def test_opencode_context_refreshes_fully_cached_steps():
+    import json
+    from api.agent_harness.agents.opencode.adapter import _parse_opencode_stdout
+
+    steps = [
+        {"input": 100, "output": 5, "cache": {"read": 800, "write": 200}},
+        {"input": 0, "output": 2, "cache": {"read": 600, "write": 100}},
+    ]
+    raw = "\n".join(json.dumps({"type": "step_finish", "part": {"tokens": step}}) for step in steps)
+    _, _, usage, _ = _parse_opencode_stdout(raw)
+    assert usage["prompt_tokens"] == 100
+    assert usage["completion_tokens"] == 7
+    assert usage["cache_read_tokens"] == 1400
+    assert usage["cache_write_tokens"] == 300
+    assert usage["context_tokens"] == 700
+    assert usage["peak_context_tokens"] == 1100
+    assert usage["cache_inclusive"] is False
+
+
 @pytest.mark.asyncio
 async def test_opencode_exec_emits_jsonl_activity(monkeypatch, tmp_path):
     import asyncio

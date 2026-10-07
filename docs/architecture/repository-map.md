@@ -333,6 +333,10 @@ arguments or injected host interfaces):
 | `chat_action_cards.js` (`CuttleChatActionCards`) | card-effects controller: `mountCards(root, host)` validates an explicit chat root plus required host capabilities (throws otherwise) and composes one instance per root; card mount/submission/dismissal, lock/progress DOM effects, watch/restart loops, choice storage, adoption and linked-restart recovery; one explicit lifetime record per mount (signal-bound listeners, abortable fetches, cancellable waits, token-guarded continuations), one root-scoped observer plus dispose/destroy lifecycle (moves within root preserved, removal equals explicit disposal, re-mount installs a fresh lifetime); restart scans scoped to the owning root, discord followup coalesced through one controller-owned in-flight write per logical followup with the storage ack recorded only after confirmed server persistence (coalescing holds within the controller lifetime only; cross-reload delivery stays ambiguous — no durable pre-request claim, server-side idempotency separately owned) | send lanes, history panel, composer, message transport, session/project/auth context (all arrive as explicit host capabilities incl. deferred storage triple; never page scope) |
 | `chat_usage_live.js` (`CuttleUsageLive`) | `render(text, format)` is pure; `createBroker(host)` owns coalesced fetch + refresh timers via `host`, but `start(format)` reads `root.document`/`window` directly (`MutationObserver`, scroll/visibility/resize listeners, `innerHTML` paint) and caches the broker on `host.__cuttleUsageLiveBroker` — the page does not own its scheduler | `usage_live_bp` API (`api.usage_live`) |
 
+`chat_usage.js` (`CuttleChatUsage`) owns pure per-turn usage normalization,
+cache convention interpretation and footer markup. The page delegates rendering;
+`chat_messages` passes saved harness metadata for legacy usage conventions.
+
 Pure today: `chat_action_forms` model/watch interpretation + card HTML planning,
 `chat_messages`/`chat_markdown` planning, turn/stop/queue/generation
 decisions. Effects live in `chat_activate` helpers, the

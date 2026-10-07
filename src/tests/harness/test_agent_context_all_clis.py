@@ -232,7 +232,7 @@ def test_muse_msp_view_fill(monkeypatch):
     assert 0 < st["percent"] < 5
 
 
-def test_muse_message_prompt_tokens_when_no_msp(monkeypatch):
+def test_muse_cumulative_prompt_unavailable_when_no_msp(monkeypatch):
     monkeypatch.setattr(ac, "lookup_catalog_context_limit", lambda _m: 1_000_000)
     monkeypatch.setattr(ac, "_load_resume_id", lambda *_a, **_k: "muse-resume")
     monkeypatch.setattr(ac, "_resolve_model_for_agent", lambda *_a, **_k: "muse-spark-1.3")
@@ -249,9 +249,9 @@ def test_muse_message_prompt_tokens_when_no_msp(monkeypatch):
     st = ac.get_agent_context_status(
         chat_session_id=1, agent_id="muse", cwd="C:/Projects/Cuttle", messages=msgs
     )
-    assert st["used_tokens"] == 50_000
-    assert st["token_source"] == "prompt"
-    assert st["percent"] == 5.0
+    assert st["used_tokens"] == 0
+    assert st["token_source"] == "aggregated"
+    assert st["percent"] == 0.0
 
 
 def test_opencode_prompt_tokens_fill(monkeypatch):

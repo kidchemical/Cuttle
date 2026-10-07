@@ -49,6 +49,22 @@ def test_seven_day_range_by_harness(tmp_path: Path):
     assert out["stats"]["with_cost"] == 1
 
 
+def test_dashboard_input_includes_additive_cache_once(tmp_path: Path):
+    db = tmp_path / "outcomes.db"
+    record_turn(
+        decision_id="cache", target_agent="opencode", target_model="fixture",
+        source="pinned", failure_kind="none", latency_ms=10, recorded_at=NOW,
+        result={"usage": {"prompt_tokens": 1000, "completion_tokens": 100,
+            "cache_read_tokens": 9000, "cache_write_tokens": 2000,
+            "cache_inclusive": False, "total_tokens": 12100}}, db_path=db,
+    )
+    out = usage.cuttle_usage(range_id="1d", group_by="harness", db_path=db, now=NOW)
+    assert out["totals"]["input_tokens"] == 12000
+    assert out["totals"]["cached_input_tokens"] == 9000
+    assert out["totals"]["output_tokens"] == 100
+    assert out["totals"]["total_tokens"] == 12100
+
+
 def test_model_grouping_strips_effort_and_tags_ambiguous_models(tmp_path: Path):
     db = tmp_path / "outcomes.db"
     _seed(db)

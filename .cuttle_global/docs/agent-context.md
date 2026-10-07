@@ -9,7 +9,7 @@ fill and a **Compact** action when the CLI supports one.
 Fill % ≈ **peak / live occupancy** ÷ model **context limit**.
 
 Billing totals with huge `cache_read` are **never** painted as fill (Cursor,
-Codex, Claude, Hermes, Antigravity). When only an aggregate is available the
+Codex, Claude, Hermes, Antigravity, Muse). When only an aggregate is available the
 gauge shows 0% with a hint instead of a false 100%.
 
 | Agent | Fill source | Compact |
@@ -21,7 +21,7 @@ gauge shows 0% with a hint instead of a false 100%.
 | Claude | JSON `usage` / snapshot (distrusts aggregates) | `claude -p --resume … "/compact"` |
 | Hermes | Active non-compacted transcript in `state.db` | `hermes chat -Q -q "/compact" --resume …` |
 | Antigravity | Last-turn JSON usage | *(none — auto-compacts)* |
-| DeepSeek | Last-turn usage only | *(none — headless is one-shot)* |
+| DeepSeek | Last model-call input, including cache | *(none — headless is one-shot)* |
 
 **Codex:** prefers live app-server occupancy after each turn / on gauge open.
 Turn-completed `input_tokens` with huge `cached_input_tokens` is billing, not fill.
@@ -74,12 +74,25 @@ POST /api/agent-context/compact
 **Not used for Codex:** `codex exec resume … "/compact"` — slash commands are
 unreliable in exec mode (often treated as ordinary prompt text).
 
-**OpenCode gauge:** each `step_finish.tokens.input` overwrites `context_tokens`
-(last step = fill). Summed `prompt_tokens` stay for billing only.
+**OpenCode gauge:** each `step_finish` overwrites `context_tokens` with
+`tokens.input + tokens.cache.read + tokens.cache.write`, including fully cached
+steps. Summed `prompt_tokens` stay for billing only. DeepSeek uses the same
+disjoint input/cache convention and stamps its last `step_end` occupancy.
 
 **Muse gauge:** MSP view on disk (`tokenUsage` / `context_anchor`). Pure
 headless sessions that never wrote MSP snapshots may show 0% until the next
 turn that materializes a view.
+The current MSP view replaces older readings even when smaller after compaction.
+
+## Turn usage footers
+
+Footers label total input and its cached portion as “cached (included)”. Muse
+and Codex native input includes cache; Cursor, Claude, OpenCode and DeepSeek
+report disjoint input/cache buckets, which the footer adds once. Each adapter
+stamps `cache_inclusive` for pricing and display. Unknown conventions retain
+“reported input” and “cache read” labels. Saved older footers use the harness
+badge where its convention is known; historical billing records are not rewritten.
+Estimated costs retain `cost_estimated` through the kernel and show `~$`.
 
 **Claude Code:** native `claude -p --output-format stream-json --verbose
 --include-partial-messages` against the project
