@@ -54,13 +54,9 @@ _SKIP_MODEL_IDS = frozenset(
 )
 
 
-def _repo_root() -> Path:
-    # .../src/api/model_pricing.py → Cuttle
-    return Path(__file__).resolve().parents[2]
-
 
 def _cache_path() -> Path:
-    return runtime_cache_path("models_dev_pricing_cache.json", project_root=_repo_root())
+    return runtime_cache_path("models_dev_pricing_cache.json")
 
 
 def _normalize_key(value: str) -> str:

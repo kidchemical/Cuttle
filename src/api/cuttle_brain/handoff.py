@@ -23,14 +23,9 @@ from api.cuttle_brain.key_store import KeyStore
 _lock = threading.Lock()
 
 
-def _repo_root() -> Path:
-    # .../Cuttle/src/api/cuttle_brain/this_file.py -> Cuttle
-    return Path(__file__).resolve().parents[3]
-
 
 def _map_file() -> Path:
-    return runtime_state_path("sessions", "harness_last_agent_map.json", project_root=_repo_root(),
-                              legacy="workspace/harness_last_agent_map.json")
+    return runtime_state_path("sessions", "harness_last_agent_map.json")
 
 
 def _sid_key(chat_session_id: Any) -> Optional[str]:

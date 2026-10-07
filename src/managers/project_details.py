@@ -10,8 +10,10 @@ CONFIG_KINDS = ('commands', 'rules', 'actions', 'agents', 'docs', 'scripts', 'sk
 def config_inventory(project):
     """Show project and shared layers without reading secrets or executing config."""
     root = Path(project['resolved_path']) if project.get('available') else None
+    from core.runtime_paths import personal_dir
+
     global_root = Path(__file__).resolve().parents[2] / '.cuttle_global'
-    layers = [('Shared', global_root), ('Shared personal', global_root / 'personal')]
+    layers = [('Shared', global_root), ('Shared personal', personal_dir())]
     if root:
         layers += [('Project', root / '.cuttle'), ('Project personal', root / '.cuttle' / 'personal')]
     result = []

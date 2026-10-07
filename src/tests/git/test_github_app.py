@@ -123,29 +123,17 @@ def test_get_config_reports_missing_key(monkeypatch, tmp_path):
     }
 
 
-def test_key_path_is_gitignored():
-    """The live key file must never be committable. Regression guard."""
-    import shutil
-    import subprocess
-
-    if shutil.which("git") is None:
-        pytest.skip("git not available")
+def test_key_path_lives_outside_the_repository():
+    """The live key file can never be committed: it is not in the repo at all."""
     repo_root = Path(__file__).resolve().parents[3]
-    rel = github_app.KEY_PATH.relative_to(repo_root).as_posix()
-    res = subprocess.run(
-        ["git", "check-ignore", "-q", rel],
-        cwd=repo_root,
-        capture_output=True,
-    )
-    assert res.returncode == 0, f"{rel} is not covered by .gitignore"
+    assert not github_app.KEY_PATH.resolve().is_relative_to(repo_root.resolve())
 
 
 def test_key_path_lives_in_designated_secret_dir():
-    """Key material belongs in the install-local secrets dir."""
-    repo_root = Path(__file__).resolve().parents[3]
-    assert github_app.KEY_PATH.relative_to(repo_root).as_posix().startswith(
-        ".cuttle/personal/secrets/"
-    )
+    """Key material belongs in the Cuttle home's secrets dir."""
+    from core.runtime_paths import secrets_dir
+
+    assert github_app.KEY_PATH.parent == secrets_dir()
 
 
 def test_remove_config_clears_everything(monkeypatch, tmp_path):

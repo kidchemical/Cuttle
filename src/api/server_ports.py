@@ -7,26 +7,26 @@ advertises, or reports a listener port resolves through here:
 - ``http`` — companion plain-HTTP listener, same Flask app (default 8000)
 - ``phone_https`` — optional LAN phone HTTPS listener (default 8888)
 
-Configuration is process env over the checkout's ``src/.env``::
+Configuration is process env over the Cuttle home's ``.env``::
 
     CUTTLE_HTTPS_PORT=8443
     CUTTLE_HTTP_PORT=8001
     CUTTLE_PHONE_HTTPS_PORT=8890
 
-Set them in ``src/.env`` or the process environment (env wins). An empty
+Set them in ``<home>/.env`` or the process environment (env wins). An empty
 value means unset (the file, then the default, applies). A malformed
 *effective* value raises :exc:`PortConfigError` — callers must fail closed,
 never silently fall back to the defaults, because the defaults may still be
 live on another instance. (A file value overridden by a valid env value for
 the same key is ignored, not rejected.) Standalone CLIs that never load
-``src/.env`` resolve through :func:`resolve_with_env_file`, which reads ONLY
+``<home>/.env`` resolve through :func:`resolve_with_env_file`, which reads ONLY
 these three keys (never mutates the environment, never exposes other entries).
 
 Restart policy: changing these ports requires a **daemon cold restart**
 (tray Exit, then start again). A Flask-only restart cannot help: the daemon
 resolves the primary port for its health/conflict checks and spawns Flask as
 a child, so both sides must boot from the same environment. The daemon
-re-reads ``src/.env`` before resolving; children inherit the same triple
+re-reads ``<home>/.env`` before resolving; children inherit the same triple
 through the spawned environment.
 """
 
@@ -117,15 +117,17 @@ _PORT_KEYS = (ENV_HTTPS_PORT, ENV_HTTP_PORT, ENV_PHONE_HTTPS_PORT)
 
 
 def default_env_file() -> Path:
-    """The checkout's ``src/.env`` (package-relative, cwd-independent)."""
-    return Path(__file__).resolve().parents[1] / ".env"
+    """The Cuttle home's ``.env`` (cwd-independent)."""
+    from core.runtime_paths import env_file
+
+    return env_file()
 
 
 def read_ports_file(path: Union[str, Path]) -> dict:
     """Read ONLY the three port keys from a dotenv file. No side effects.
 
     Parsing is ``python-dotenv`` semantics (the same parser the daemon uses
-    to load ``src/.env``): quotes, inline comments, ``export`` prefixes, and
+    to load ``<home>/.env``): quotes, inline comments, ``export`` prefixes, and
     interpolation all behave identically — only the returned keys are
     filtered. Never mutates ``os.environ`` and never returns any other entry
     (no secret dumping). A missing file means no file values ({}). An
@@ -176,7 +178,7 @@ def main(argv: Optional[list] = None) -> int:
     parser.add_argument(
         "--env-file",
         default=None,
-        help="Dotenv file to read (default: checkout src/.env). Test seam only.",
+        help="Dotenv file to read (default: <home>/.env). Test seam only.",
     )
     args = parser.parse_args(argv)
     try:
@@ -194,7 +196,7 @@ def resolve_with_env_file(
     """Resolve with explicit seams: process env > dotenv file > defaults.
 
     ``env`` defaults to ``os.environ``; ``env_file`` defaults to the
-    checkout's ``src/.env``. An empty env value counts as unset, so the file
+    Cuttle home's ``.env``. An empty env value counts as unset, so the file
     (then the default) applies. A malformed *effective* value raises
     :exc:`PortConfigError` — but a file value overridden by a valid env value
     for the same key is simply ignored, not rejected. Pure

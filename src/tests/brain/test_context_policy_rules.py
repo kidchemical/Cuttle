@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 import api.cuttle_brain.context_compiler as _compiler
+from core.runtime_paths import personal_dir
 from api.cuttle_brain.context_compiler import compile_context
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -46,6 +47,7 @@ def _no_providers_and_isolated_install(tmp_path, monkeypatch):
     checkout's live personal overlay cannot leak into base measurements.
     """
     monkeypatch.setenv("CUTTLE_JEV_DISABLED", "1")
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path / "home"))
     for key in ("TYPESAFE_API_KEY", "OPENROUTER_API_KEY",
                 "CUTTLE_JEV_BASE_URL"):
         monkeypatch.delenv(key, raising=False)
@@ -139,9 +141,9 @@ def test_safety_survives_policy_off_and_shadow_twin(tmp_path):
 
 def test_personal_overlay_appends_explicitly(
         tmp_path, _no_providers_and_isolated_install):
-    iso = _no_providers_and_isolated_install
-    (iso / ".cuttle_global" / "personal" / "rules").mkdir(parents=True)
-    (iso / ".cuttle_global" / "personal" / "rules" / "00-core.md").write_text(
+    personal = personal_dir()
+    (personal / "rules").mkdir(parents=True, exist_ok=True)
+    (personal / "rules" / "00-core.md").write_text(
         "# Local\n\nOverlay marker.\n", encoding="utf-8")
     env = _env("hello", _guest(tmp_path))
     assert "Overlay marker" in env

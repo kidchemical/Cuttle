@@ -2,7 +2,7 @@
 Map Cuttle chat session + working directory → Cursor Agent CLI session state.
 
 Stores resume UUID for --resume plus optional per-chat agent options
-(model, mode, sandbox). Stored under src/data/sessions/ (gitignored). Thread-safe.
+(model, mode, sandbox). Stored under <home>/sessions/ (gitignored). Thread-safe.
 """
 
 from __future__ import annotations
@@ -22,14 +22,9 @@ _VALID_SANDBOX = frozenset({"enabled", "disabled"})
 _MAX_RECENT_RUNS = 20
 
 
-def _repo_root() -> Path:
-    # .../Cuttle/src/scripts/utilities/this_file.py -> Cuttle
-    return Path(__file__).resolve().parents[3]
-
 
 def _map_file() -> Path:
-    return runtime_state_path("sessions", "cursor_cli_session_map.json", project_root=_repo_root(),
-                              legacy="workspace/cursor_cli_session_map.json")
+    return runtime_state_path("sessions", "cursor_cli_session_map.json")
 
 
 def _normalize_session_id(cuttle_session_id: Optional[str]) -> str:

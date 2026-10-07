@@ -22,7 +22,7 @@ def test_missing_openai_key_falls_back_before_inference(monkeypatch):
     assert "OPENAI_API_KEY" in (meta["api_error"] or "")
     assert engine.routing_never_ran(decision) is True
     assert "OPENAI_API_KEY" in engine.actionable_router_hint(decision.reason)
-    assert "src/.env" in engine.actionable_router_hint(decision.reason)
+    assert ".env" in engine.actionable_router_hint(decision.reason)
 
 
 def test_successful_routing_still_says_routed():
@@ -72,7 +72,7 @@ def test_fallback_note_does_not_claim_routing():
         f"({actionable_router_hint(decision.reason)})"
     )
     assert note.startswith("Default `cursor` / `auto`")
-    assert "OPENAI_API_KEY" not in note or "src/.env" in note
+    assert "OPENAI_API_KEY" not in note or ".env" in note
     out = _annotate_result(
         {"response": "hi", "success": True},
         target=used,

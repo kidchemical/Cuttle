@@ -4,7 +4,7 @@
 # Canonical paths (verified against cuttle_daemon.py + launcher.py):
 #   WorkingDirectory = <repo root>            (PROJECT_ROOT; this script's ../..)
 #   Script            = src\scripts\cuttle_daemon.py
-# Daemon resolves SRC_ROOT / .env / logs via __file__, not cwd; cwd must still
+# Daemon resolves SRC_ROOT via __file__ and .env / logs via the Cuttle home, not cwd; cwd must still
 # make the script path exist (do NOT use WD=src with ArgumentList src\scripts\...).
 #
 # Launcher/worker note: Windows venv starts a .venv\Scripts\python.exe launcher

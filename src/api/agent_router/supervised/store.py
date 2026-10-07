@@ -15,14 +15,9 @@ from api.agent_router.supervised.types import SupervisedTask
 _lock = threading.RLock()
 
 
-def _repo_root() -> Path:
-    # .../src/api/agent_router/supervised/store.py -> Cuttle
-    return Path(__file__).resolve().parents[4]
-
 
 def store_dir() -> Path:
-    d = runtime_state_path("supervised_tasks", project_root=_repo_root(),
-                           legacy="workspace/supervised_tasks")
+    d = runtime_state_path("supervised_tasks")
     return d
 
 

@@ -2,7 +2,7 @@
 Map Cuttle chat session + working directory → Codex CLI thread UUID for resume,
 plus per-chat model / reasoning-effort pins (slash palette).
 
-Stored under src/data/sessions/ (gitignored). Thread-safe.
+Stored under <home>/sessions/ (gitignored). Thread-safe.
 """
 
 from __future__ import annotations
@@ -23,14 +23,9 @@ _UUID_RE = re.compile(
 )
 
 
-def _repo_root() -> Path:
-    # .../Cuttle/src/scripts/utilities/this_file.py -> Cuttle
-    return Path(__file__).resolve().parents[3]
-
 
 def _map_file() -> Path:
-    return runtime_state_path("sessions", "codex_cli_session_map.json", project_root=_repo_root(),
-                              legacy="workspace/codex_cli_session_map.json")
+    return runtime_state_path("sessions", "codex_cli_session_map.json")
 
 
 def _normalize_session_id(cuttle_session_id: Optional[Any]) -> str:

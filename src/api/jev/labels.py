@@ -44,7 +44,9 @@ def _cache_path() -> Path:
     override = os.environ.get("CUTTLE_JEV_LABEL_CACHE", "").strip()
     if override:
         return Path(override)
-    return Path(__file__).resolve().parents[2] / "output" / "dashboards" / CACHE_NAME
+    from core.runtime_paths import output_dir
+
+    return output_dir() / "dashboards" / CACHE_NAME
 
 
 def cache_key(row: Dict[str, Any]) -> str:

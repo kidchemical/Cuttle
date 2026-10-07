@@ -53,13 +53,9 @@ def is_truncated_delta_text(text: str) -> bool:
     return RULE_TRUNC_MARKER in body or DELTA_TRUNC_MARKER in body
 
 
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[3]
-
 
 def _map_file() -> Path:
-    return runtime_state_path("brain", "context_inject_snapshots.json", project_root=_repo_root(),
-                              legacy="workspace/context_inject_snapshots.json")
+    return runtime_state_path("brain", "context_inject_snapshots.json")
 
 
 def _sid_key(chat_session_id: Any) -> Optional[str]:

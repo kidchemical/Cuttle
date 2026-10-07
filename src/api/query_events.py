@@ -346,7 +346,9 @@ def logs_dir() -> Path:
     override = (os.environ.get("CUTTLE_QUERY_LOG_DIR") or "").strip()
     if override:
         return Path(override)
-    return Path(__file__).resolve().parents[1] / "web" / "logs"
+    from core.runtime_paths import query_logs_dir
+
+    return query_logs_dir()
 
 
 def stable_json_path(query_id: str) -> Path:

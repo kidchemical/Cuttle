@@ -29,7 +29,6 @@ def restart_paths(tmp_path, monkeypatch):
     monkeypatch.setattr("api.flask_restart.STATUS_PATH", status)
     monkeypatch.setattr("api.flask_restart.REQUEST_PATH", request)
     monkeypatch.setattr("api.flask_restart.EVENTS_PATH", events)
-    monkeypatch.setattr("api.flask_restart.PROJECT_ROOT", tmp_path)
     yield {"status": status, "request": request, "events": events, "root": tmp_path}
 
 

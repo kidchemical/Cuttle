@@ -10,9 +10,9 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 
-# Default store path relative to project root (src)
-DATA_DIR = Path(__file__).parent.parent / "data"
-PAIRING_STORE_FILE = DATA_DIR / "pairing_store.json"
+from core.runtime_paths import cuttle_home
+
+PAIRING_STORE_FILE = cuttle_home() / "pairing_store.json"
 
 # Code validity seconds
 CODE_TTL_SECONDS = 600  # 10 minutes

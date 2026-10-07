@@ -32,11 +32,7 @@ pytestmark_node = pytest.mark.skipif(shutil.which("node") is None, reason="node 
 def supervised_env(tmp_path, monkeypatch):
     from api.agent_router.supervised.profiles import reset_supervised_settings
 
-    monkeypatch.setattr(
-        "api.agent_router.supervised.store._repo_root",
-        lambda: tmp_path,
-    )
-    (tmp_path / "src" / "data" / "workspace" / "supervised_tasks").mkdir(parents=True)
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path))
     reset_supervised_settings()
     yield tmp_path
 

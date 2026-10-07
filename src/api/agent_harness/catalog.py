@@ -4,7 +4,7 @@ Roots (first wins for a given id; bundled always preferred)::
 
 1. ``src/api/agent_harness/agents/<id>/`` — shipped connectors
 2. ``CUTTLE_AGENTS_DIR`` (os.pathsep-separated)
-3. ``{Cuttle}/.cuttle_global/personal/agents/<id>/`` — install-local drop-ins
+3. ``<home>/personal/agents/<id>/`` — install-local drop-ins
    + ``{Cuttle}/.cuttle_global/agents/<id>/`` — shared instance drop-ins
 4. ``{project}/.cuttle/agents/<id>/`` — project drop-ins (when ``project_path`` given)
 
@@ -39,11 +39,12 @@ import yaml
 
 from api.agent_harness.model_capabilities import load_model_capability_rules
 from api.agent_harness.types import AgentAdapter, AgentManifest
+from core.runtime_paths import personal_dir
 
 _AGENTS_ROOT = Path(__file__).resolve().parent / "agents"
 _CUTTLE_ROOT = Path(__file__).resolve().parents[3]  # .../Cuttle
 _INSTANCE_AGENTS_ROOT = _CUTTLE_ROOT / ".cuttle_global" / "agents"
-_PERSONAL_AGENTS_ROOT = _CUTTLE_ROOT / ".cuttle_global" / "personal" / "agents"
+_PERSONAL_AGENTS_ROOT = personal_dir() / "agents"
 
 # (manifest, adapter, agent_dir)
 _AgentEntry = Tuple[AgentManifest, AgentAdapter, Path]

@@ -13,15 +13,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from core.runtime_paths import runtime_state_path
-
 _lock = threading.Lock()
-
-
-
-def _cuttle_root() -> Path:
-    # .../Cuttle/src/api/edit_attribution/journal.py → Cuttle
-    return Path(__file__).resolve().parents[3]
 
 
 def _db_path() -> Path:
@@ -31,19 +23,12 @@ def _db_path() -> Path:
 
 def _connect() -> sqlite3.Connection:
     from api.agent_events.store import SCHEMA
-    import os
     path = _db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path), timeout=30.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(SCHEMA)
-    if not os.environ.get("CUTTLE_AGENT_EVENTS_DIR"):
-        base = _cuttle_root() / "src" / "data"
-        for legacy in (base / "workspace/edit_attribution/edit_journal.sqlite3", base / "edit_attribution/edit_journal.sqlite3"):
-            if legacy.is_file():
-                import_legacy(legacy, path)
-                break
     return conn
 
 
@@ -394,46 +379,6 @@ def attribution_summary_lines(attribution: Dict[str, Any]) -> List[str]:
         lines.append(f"{len(unattributed)} file(s) unattributed")
     return lines
 
-
-def import_legacy(path: Path, target: Optional[Path] = None) -> Dict[str, int]:
-    """Idempotent read-only import; retain legacy DB as a rollback artifact."""
-    target=target or _db_path()
-    if not path.is_file() or path.resolve()==target.resolve():
-        return {'imported':0,'stale':0}
-    target.parent.mkdir(parents=True,exist_ok=True)
-    probe=sqlite3.connect(target)
-    from api.agent_events.store import SCHEMA
-    probe.executescript(SCHEMA)
-    cursor_key='legacy_import:'+str(path.resolve())
-    saved=probe.execute('SELECT value FROM state_meta WHERE key=?',(cursor_key,)).fetchone()
-    last_id=int(saved[0]) if saved else probe.execute('SELECT COALESCE(MAX(legacy_id),0) FROM edit_events').fetchone()[0]
-    probe.close()
-    old=sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True)
-    old.row_factory=sqlite3.Row
-    try:
-        rows=old.execute('SELECT * FROM edit_events WHERE id>? ORDER BY id',(last_id,)).fetchall()
-    finally:
-        old.close()
-    from api.agent_events.store import SCHEMA
-    conn=sqlite3.connect(target)
-    conn.executescript(SCHEMA)
-    imported=stale=0
-    try:
-        with conn:
-            for row in rows:
-                item=dict(row)
-                state='open' if item['commit_sha'] is None and item['ts']>=time.time()-7*86400 else ('settled' if item['commit_sha'] else 'stale')
-                cursor=conn.execute('''INSERT OR IGNORE INTO edit_events(repo_root,rel_path,ts,agent_id,model,
-                    query_id,chat_session_id,digest_before,digest_after,commit_sha,legacy_id,settlement)
-                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?)''',tuple(item.get(k) for k in
-                    ('repo_root','rel_path','ts','agent_id','model','query_id','chat_session_id','digest_before','digest_after','commit_sha','id'))+(state,))
-                imported+=cursor.rowcount
-                stale+=cursor.rowcount if state=='stale' else 0
-            if rows:
-                conn.execute('INSERT OR REPLACE INTO state_meta(key,value) VALUES(?,?)',(cursor_key,str(rows[-1]['id'])))
-    finally:
-        conn.close()
-    return {'imported':imported,'stale':stale}
 
 
 def reconcile_commits(path: Optional[Path] = None) -> int:

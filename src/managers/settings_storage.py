@@ -1,7 +1,6 @@
 """Settings persistence: one owner, scoped files, locked atomic updates.
 
-Legacy installations stay in one file until the guarded cold-start migration.
-The schema marker is committed last; reads never migrate or create files.
+Production files live in ``<home>/config/``; reads never create files.
 """
 from __future__ import annotations
 
@@ -115,11 +114,7 @@ class SettingsStorage:
         self.server, self.machine, self.ui = server, machine, ui
         self.lock = server.with_suffix(server.suffix + ".lock")
 
-    def _path(self, key: str, server: dict) -> Path:
-        # Preserve the legacy generation until the offline migration. A new
-        # installation has no legacy file and immediately uses scoped storage.
-        if self.server.exists() and "schema_version" not in server:
-            return self.server
+    def _path(self, key: str) -> Path:
         if key in MACHINE_KEYS:
             return self.machine
         if key in UI_KEYS:
@@ -127,10 +122,7 @@ class SettingsStorage:
         return self.server
 
     def read(self) -> dict:
-        server = read_server(self.server)
-        if self.server.exists() and "schema_version" not in server:
-            return clean_settings(server)
-        out = clean_settings(server)
+        out = clean_settings(read_server(self.server))
         # Only the declared keys can come from scoped files; unknown keys in
         # those files survive updates but cannot override server preferences.
         for path, keys in ((self.machine, MACHINE_KEYS), (self.ui, UI_KEYS)):
@@ -141,78 +133,27 @@ class SettingsStorage:
         if key in RETIRED_KEYS or key == "schema_version":
             raise ValueError(f"Not a writable setting: {key}")
         with settings_lock(self.lock):
-            server = read_server(self.server)
-            legacy = self.server.exists() and "schema_version" not in server
-            path = self._path(key, server)
-            document = read_json(path)
+            path = self._path(key)
+            document = read_server(path) if path == self.server else read_json(path)
             document[key] = transform(document.get(key))
             if key == "device_workers" and path == self.machine and isinstance(document[key], dict):
                 workers = dict(document[key])
                 if workers.pop("token", ""):
-                    raise ValueError("Shared worker tokens belong in src/.env or the secrets directory")
+                    raise ValueError("Shared worker tokens belong in <home>/.env or the secrets directory")
                 document[key] = workers
             if path == self.server:
-                # Never mark legacy data as split merely because a key changed.
-                if not legacy:
-                    document["schema_version"] = SCHEMA_VERSION
+                document["schema_version"] = SCHEMA_VERSION
                 document = clean_settings(document)
             atomic_write(path, document)
             return self.read()
 
 
-def storage_for(server: Path) -> SettingsStorage:
-    # Explicit test/embedding paths keep all sibling files beside that path.
-    # Production is resolved independently of the working directory.
-    canonical = Path(__file__).resolve().parents[1] / "settings.json"
-    folder = server.parent / "data" / "config" if server == canonical else server.parent / (server.stem + ".d")
+def storage_for(server: Path | None = None) -> SettingsStorage:
+    """Production storage, or an explicit path with its scoped files beside it (tests)."""
+    if server is None:
+        from core.runtime_paths import config_dir, settings_path
+
+        folder, server = config_dir(), settings_path()
+    else:
+        folder = server.parent / (server.stem + ".d")
     return SettingsStorage(server, machine=folder / "machine_settings.json", ui=folder / "ui_state.json")
-
-
-def migration_needed(root: Path) -> bool:
-    path = root / "src/settings.json"
-    return path.exists() and "schema_version" not in read_json(path)
-
-
-def migrate_settings(root: Path) -> list[tuple[Path, Path]]:
-    """Offline only. Preserve active/unknown values; refuse destination conflicts."""
-    server = root / "src/settings.json"
-    folder = root / "src/data/config"
-    storage = SettingsStorage(server, machine=folder / "machine_settings.json", ui=folder / "ui_state.json")
-    with settings_lock(storage.lock):
-        if not migration_needed(root):
-            return []
-        for path in (storage.machine, storage.ui):
-            if path.exists() or path.is_symlink():
-                raise FileExistsError(f"Settings migration destination already exists: {path}")
-        original = read_json(server)
-        active = clean_settings(original)
-        machine = {k: active.pop(k) for k in MACHINE_KEYS if k in active}
-        ui = {k: active.pop(k) for k in UI_KEYS if k in active}
-        workers = machine.get("device_workers") or {}
-        if not isinstance(workers, dict):
-            raise ValueError("device_workers must be a JSON object")
-        workers = dict(workers)
-        token = workers.pop("token", "")
-        if not isinstance(token, str):
-            raise ValueError("Legacy shared worker token must be a string")
-        if "device_workers" in machine:
-            machine["device_workers"] = workers
-        from core.runtime_paths import secrets_dir
-        secret_path = secrets_dir(root) / "worker_shared_token.json"
-        if token and (secret_path.exists() or secret_path.is_symlink()):
-            raise FileExistsError(f"Worker secret migration destination already exists: {secret_path}")
-        active["schema_version"] = SCHEMA_VERSION
-        created = []
-        try:
-            if token:
-                atomic_write(secret_path, {"token": token})
-                created.append(secret_path)
-            for path, document in ((storage.machine, machine), (storage.ui, ui)):
-                atomic_write(path, document)
-                created.append(path)
-            atomic_write(server, active)
-        except (OSError, ValueError, TypeError):
-            for path in created:
-                path.unlink(missing_ok=True)
-            raise
-        return [(server, storage.machine), (server, storage.ui)]

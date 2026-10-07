@@ -1,8 +1,9 @@
 """Install-local ``personal/`` overlay (gitignored).
 
-Mirrors the tracked layout (rules, docs, actions, commands, scripts, skills) beside
-whichever cuttle root it belongs to — ``{project}/.cuttle/personal/`` or
-``{install}/.cuttle_global/personal/``.
+Mirrors the tracked layout (rules, docs, actions, commands, scripts, skills) of
+whichever cuttle root it belongs to — ``{project}/.cuttle/personal/`` beside a
+project, or ``<home>/personal/`` for the shared ``.cuttle_global/`` layer (the
+install tree may be read-only; the home is per-user).
 
 Two behaviors, by file kind:
 
@@ -36,9 +37,17 @@ PERSONAL_SUBDIRS = (
 )
 
 
+GLOBAL_CONFIG_DIRNAME = ".cuttle_global"
+
+
 def personal_root(cuttle_root: Path) -> Path:
-    """``personal/`` beside a cuttle root (``{project}/.cuttle`` or ``{install}/.cuttle_global``)."""
-    return Path(cuttle_root) / PERSONAL_DIRNAME
+    """``{project}/.cuttle/personal``, or ``<home>/personal`` for ``.cuttle_global``."""
+    root = Path(cuttle_root)
+    if root.name == GLOBAL_CONFIG_DIRNAME:
+        from core.runtime_paths import personal_dir
+
+        return personal_dir()
+    return root / PERSONAL_DIRNAME
 
 
 def resolve_cuttle_file(cuttle_root: Path, *parts: str) -> Optional[Path]:
@@ -263,7 +272,7 @@ def scoped_unit_dirs(
             for config, scope in ((root / ".cuttle", "project"), (root / "source" / ".cuttle", "project-nested")):
                 out.extend(((config / "personal" / category, scope + "-personal"), (config / category, scope)))
     if include_global:
-        out.extend(((global_root / "personal" / category, "global-personal"), (global_root / category, "global")))
+        out.extend(((personal_root(global_root) / category, "global-personal"), (global_root / category, "global")))
     return out
 
 

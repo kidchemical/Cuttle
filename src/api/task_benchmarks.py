@@ -10,7 +10,7 @@ Sources, in preference order:
 Costs from different benchmarks are on different scales (task size, harness),
 so a ``/cost`` table uses **one** benchmark: the one covering the most rows.
 
-Cache: ``src/data/cache/task_benchmarks_cache.json`` (24h TTL).
+Cache: ``<home>/cache/task_benchmarks_cache.json`` (24h TTL).
 """
 
 from __future__ import annotations
@@ -96,7 +96,7 @@ _mem: Dict[str, Any] = {}
 
 
 def _cache_path() -> Path:
-    return runtime_cache_path("task_benchmarks_cache.json", project_root=Path(__file__).resolve().parents[2])
+    return runtime_cache_path("task_benchmarks_cache.json")
 
 
 def normalize_effort(value: Any) -> str:

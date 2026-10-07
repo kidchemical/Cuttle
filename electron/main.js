@@ -588,8 +588,8 @@ function resolvePythonExe(projectRoot) {
 
 /**
  * Local-Host listener ports, read-only from the Python owner
- * (api.server_ports: env over src/.env, defaults 8080/8000/8888).
- * Electron never parses src/.env itself — single parser stays in Python.
+ * (api.server_ports: env over <Cuttle home>/.env, defaults 8080/8000/8888).
+ * Electron never parses .env itself — single parser stays in Python.
  * Returns { https, http, phone_https } or throws fail-closed (malformed
  * config must not silently fall back: the defaults may be live elsewhere).
  * Remote targets never call this; their ports come from desktop-config.json.
@@ -602,8 +602,8 @@ function localPortError(code, message) {
 
 /**
  * Local-Host listener ports, read-only from the Python owner
- * (api.server_ports: env over src/.env, defaults 8080/8000/8888).
- * Electron never parses src/.env itself — single parser stays in Python.
+ * (api.server_ports: env over <Cuttle home>/.env, defaults 8080/8000/8888).
+ * Electron never parses .env itself — single parser stays in Python.
  * Returns { https, http, phone_https }.
  * Throws code 'local-port-config' on malformed config (fail closed: callers
  * must NOT probe defaults or spawn after this) or 'local-port-unavailable'
@@ -631,7 +631,7 @@ function queryLocalServerPorts(projectRoot) {
         const detail = String((r && r.stderr) || '').trim().split('\n').pop();
         throw localPortError('local-port-config',
             `Invalid listener-port configuration${detail ? `: ${detail}` : ''}. ` +
-            'Fix CUTTLE_HTTPS_PORT/CUTTLE_HTTP_PORT/CUTTLE_PHONE_HTTPS_PORT in src/.env, then cold-restart the daemon.'
+            'Fix CUTTLE_HTTPS_PORT/CUTTLE_HTTP_PORT/CUTTLE_PHONE_HTTPS_PORT in the Cuttle home .env, then cold-restart the daemon.'
         );
     }
     let ports;

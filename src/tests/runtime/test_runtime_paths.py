@@ -45,12 +45,13 @@ def test_rewrite_windows_cuttle_path_on_posix():
     assert rewrite_windows_cuttle_path("C:/Projects/Cuttle", REPO) == str(REPO.resolve())
 
 
-def test_rewrite_windows_lab_path_uses_personal_mappings(tmp_path):
+def test_rewrite_windows_lab_path_uses_personal_mappings(tmp_path, monkeypatch):
     if is_windows():
         return
     root = tmp_path / "drive" / "Projects"
     (root / "DemoGame").mkdir(parents=True)
-    d = tmp_path / ".cuttle" / "personal"
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path / "home"))
+    d = tmp_path / "home" / "personal"
     d.mkdir(parents=True)
     (d / "path-aliases.json").write_text(
         json.dumps({"path_mappings": {"E:/Projects": [str(tmp_path / "missing"), str(root)]}}),
@@ -58,7 +59,8 @@ def test_rewrite_windows_lab_path_uses_personal_mappings(tmp_path):
     )
     mapped = rewrite_windows_lab_path(r"E:\Projects\DemoGame", tmp_path)
     assert Path(mapped) == (root / "DemoGame").resolve()
-    # No mapping on a fresh clone: foreign paths are left alone.
+    # No mapping in a fresh home: foreign paths are left alone.
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path / "fresh"))
     raw = r"E:\Projects\DemoGame"
     assert rewrite_windows_lab_path(raw, tmp_path / "fresh") == raw
 
@@ -78,15 +80,17 @@ def test_rewrite_windows_cuttle_path_env_prefix(monkeypatch):
     assert mapped == str((REPO / "src").resolve())
 
 
-def test_personal_sibling_project_paths(tmp_path):
-    d = tmp_path / ".cuttle" / "personal"
+def test_personal_sibling_project_paths(tmp_path, monkeypatch):
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path))
+    d = tmp_path / "personal"
     d.mkdir(parents=True)
     (d / "path-aliases.json").write_text(
         json.dumps({"sibling_project_paths": [r"E:\Projects\DemoGame"]}),
         encoding="utf-8",
     )
-    assert personal_sibling_project_paths(tmp_path) == [r"E:\Projects\DemoGame"]
-    assert personal_sibling_project_paths(tmp_path / "missing") == []
+    assert personal_sibling_project_paths() == [r"E:\Projects\DemoGame"]
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path / "missing"))
+    assert personal_sibling_project_paths() == []
 
 
 def test_electron_launch_argv_is_none_or_existing():

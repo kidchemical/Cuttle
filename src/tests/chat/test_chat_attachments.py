@@ -126,7 +126,8 @@ def cursor_chat(tmp_path, monkeypatch, stub_vision, owner_session):
     """`/api/chat` wired to a fake DB + fake Cursor CLI, with a real upload on disk."""
     from api import web_chat_api as wca
 
-    uploads = tmp_path / "src" / "output" / "uploads" / "77"
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path / "home"))
+    uploads = tmp_path / "home" / "output" / "uploads" / "77"
     uploads.mkdir(parents=True)
     image = uploads / "shot.png"
     image.write_bytes(PNG_1PX)

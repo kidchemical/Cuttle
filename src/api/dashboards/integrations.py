@@ -11,6 +11,7 @@ import yaml
 
 import api.dashboards.deepswe as deepswe
 from api.dashboards.http_fetch import get_json, get_text
+from core.runtime_paths import output_dir
 
 SWE_BENCH_URL = "https://raw.githubusercontent.com/SWE-bench/swe-bench.github.io/master/data/leaderboards.json"
 SWE_BENCH_PAGE = "https://www.swebench.com/"
@@ -29,7 +30,7 @@ JsonFetcher = Callable[[str], Any]
 
 
 def _cache_path(cache_dir: Optional[Path], key: str) -> Path:
-    base = cache_dir or (Path(__file__).resolve().parents[2] / "output" / "dashboards")
+    base = cache_dir or (output_dir() / "dashboards")
     return base / f"{key}.json"
 
 

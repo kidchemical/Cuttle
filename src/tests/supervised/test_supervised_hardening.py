@@ -44,11 +44,7 @@ def supervised_env(tmp_path: Path, monkeypatch):
         "api.cursor_agent_commands.list_cursor_agent_models",
         lambda: [{"id": "auto", "label": "Auto"}, {"id": "grok-4.6", "label": "Grok"}],
     )
-    monkeypatch.setattr(
-        "api.agent_router.supervised.store._repo_root",
-        lambda: tmp_path,
-    )
-    (tmp_path / "src" / "data" / "workspace" / "supervised_tasks").mkdir(parents=True)
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path))
     reset_router_config()
     reset_supervised_settings()
     test_isolation.activate_test_isolation(reason="test_supervised_hardening")

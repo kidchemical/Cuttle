@@ -6,7 +6,8 @@
 # including old releases' open (Any-address) rules.
 #
 # Ports: -HttpsPort/-HttpPort/-PhonePort, else CUTTLE_HTTPS_PORT /
-# CUTTLE_HTTP_PORT / CUTTLE_PHONE_HTTPS_PORT from src\.env, else 8080/8000/8888.
+# CUTTLE_HTTP_PORT / CUTTLE_PHONE_HTTPS_PORT from the Cuttle home .env
+# ($env:CUTTLE_HOME, else %LOCALAPPDATA%\Cuttle), else 8080/8000/8888.
 param(
     [int]$HttpsPort = 0,
     [int]$HttpPort = 0,
@@ -26,8 +27,9 @@ if (-not $isAdmin) {
 }
 
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+$cuttleHome = if ($env:CUTTLE_HOME) { $env:CUTTLE_HOME } else { Join-Path $env:LOCALAPPDATA 'Cuttle' }
 $envValues = @{}
-$envFile = Join-Path $repo 'src\.env'
+$envFile = Join-Path $cuttleHome '.env'
 if (Test-Path -LiteralPath $envFile) {
     foreach ($line in Get-Content -LiteralPath $envFile -Encoding UTF8) {
         if ($line -match '^\s*(CUTTLE_(HTTPS|HTTP|PHONE_HTTPS)_PORT)\s*=\s*"?(\d+)"?\s*$') {

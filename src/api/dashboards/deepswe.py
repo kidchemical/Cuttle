@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from api.dashboards.http_fetch import get_json
+from core.runtime_paths import output_dir
 
 DEEPSWE_LIVE_URL = "https://deepswe.datacurve.ai/artifacts/v1.1/leaderboard-live.json"
 CACHE_TTL = timedelta(hours=6)
@@ -18,7 +19,7 @@ JsonFetcher = Callable[[str], Any]
 
 
 def default_cache_dir() -> Path:
-    return Path(__file__).resolve().parents[2] / "output" / "dashboards"
+    return output_dir() / "dashboards"
 
 
 def _now() -> datetime:

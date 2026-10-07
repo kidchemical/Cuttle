@@ -75,15 +75,15 @@ def set_policy(ident,raw,manager=None):
 
 
 def list_stores():
-    from core.runtime_paths import runtime_data_dir
-    base=runtime_data_dir()
+    from core.runtime_paths import cuttle_home, output_dir, query_logs_dir
+    base=cuttle_home()
     paths={'chats':[base/'db'/'cuttle_auth.db'],
-           'query_logs':[Path(__file__).resolve().parents[2]/'web'/'logs'],
+           'query_logs':[query_logs_dir()],
            'router_outcomes':[base/'db'/'router_outcomes.db'],
            'device_workers':[base/'db'/'device_workers.db'],
            'brain_metrics':[base/'brain'/'context_metrics.db'],
-           'outputs':[Path(__file__).resolve().parents[2]/'output'],
-           'edit_journal':[base/'edit_attribution'/'edit_journal.sqlite3',base/'workspace'/'edit_attribution'/'edit_journal.sqlite3']}
+           'outputs':[output_dir()],
+           'edit_journal':[base/'edit_attribution'/'edit_journal.sqlite3']}
     rows=[]
     for spec in REGISTRY:
         if spec.id=='agent_events':

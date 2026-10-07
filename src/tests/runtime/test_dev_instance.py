@@ -170,6 +170,7 @@ def test_child_env_allowlist(monkeypatch):
     monkeypatch.setenv("CUTTLE_ROUTER_DB", "sentinel-live-db")
     monkeypatch.setenv("MUSE_MODEL", "sentinel-live-model")
     monkeypatch.setenv("HERMES_HOME", "sentinel-live-hermes")
+    monkeypatch.setenv("CUTTLE_HOME", "sentinel-live-home")
     # HOME/CODEX_HOME are never touched (not even in tests); the original
     # environment stays intact and neither may reach the child.
     seed = {
@@ -191,6 +192,8 @@ def test_child_env_allowlist(monkeypatch):
     # Exact vendor-fixture values; inherited overrides never leak in.
     assert env["MUSE_MODEL"] == "muse-spark-1.3"
     assert env["HERMES_HOME"] == "/tmp/shadow/data/vendor/hermes"
+    # Every Cuttle store resolves inside the private instance, never the live home.
+    assert env["CUTTLE_HOME"] == str(Path("/tmp/shadow/data/home"))
     assert "HOME" not in env and "CODEX_HOME" not in env
     assert json.loads(env["CUTTLE_SHADOW_ANCHORS"]) == {"a": "b"}
     env2 = build_child_env(seed, "blocked", 0)
@@ -308,8 +311,8 @@ def test_file_policy_unit(tmp_path):
     r = _roots(tmp_path)
     kw = {"read_roots": r["read"], "write_roots": r["write"],
           "exact_write": r["exact"]}
-    # Private app-relative DB path writable (trial finding: auth_db import
-    # creates app/src/data/db); manifest.tmp -> manifest rename allowed.
+    # Private app-relative writes allowed (trial finding: an import once
+    # created app/src/data/db); manifest.tmp -> manifest rename allowed.
     boot.check_file_event(
         "open", (str(r["snap"] / "src" / "data" / "db" / "a.db"), "w", 0),
         **kw)

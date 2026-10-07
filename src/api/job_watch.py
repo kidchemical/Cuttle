@@ -1,6 +1,6 @@
 """Pollable job status for Cuttle action-form progress bars.
 
-Writes ``src/output/<id>-status.json``, served as ``/output/<id>-status.json``.
+Writes ``<home>/output/<id>-status.json``, served as ``/output/<id>-status.json``.
 CLI: ``python -m api.job_watch write --id my-job --state running --percent 40 --label "…"``
 """
 
@@ -19,8 +19,9 @@ _STATES = ("running", "done", "failed")
 
 
 def output_dir() -> Path:
-    # src/api/job_watch.py → src/output
-    return Path(__file__).resolve().parents[1] / "output"
+    from core.runtime_paths import output_dir as home_output_dir
+
+    return home_output_dir()
 
 
 def status_path(job_id: str) -> Path:

@@ -15,6 +15,7 @@ import requests
 from urllib.parse import urlparse
 from contextlib import contextmanager
 
+from core.runtime_paths import data_db_dir
 from managers.cuttle_scaffold import ensure_cuttle_scaffold
 from managers.project_locations import check_paths, validate_paths, require_project_path
 
@@ -627,8 +628,8 @@ class ProjectManager:
             'current_project': self.current_project['name'] if self.current_project else None
         }
 
-# Global project manager instance — always use src/data/db/projects.db (not cwd-relative).
-_PROJECTS_DB_PATH = Path(__file__).resolve().parents[1] / "data" / "db" / "projects.db"
+# Global project manager instance — the per-user home's projects.db (not cwd-relative).
+_PROJECTS_DB_PATH = data_db_dir() / "projects.db"
 project_manager = ProjectManager(str(_PROJECTS_DB_PATH))
 
 # Repo root (parent of src/) for cwd fallbacks that cannot rely on the

@@ -1,10 +1,15 @@
 apply plugin: 'com.android.application'
 
-def secretsRoot = file("${rootProject.projectDir}/../../../.cuttle/personal/secrets").canonicalFile
+// Mirrors core.runtime_paths.cuttle_home(): CUTTLE_HOME, else the per-user home.
+def cuttleHome = System.getenv("CUTTLE_HOME") ?: (
+    System.getProperty("os.name").toLowerCase().contains("windows")
+        ? "${System.getenv("LOCALAPPDATA") ?: System.getenv("APPDATA")}/Cuttle"
+        : "${System.getenv("XDG_DATA_HOME") ?: System.getProperty("user.home") + "/.local/share"}/cuttle")
+def secretsRoot = file("${cuttleHome}/secrets").canonicalFile
 def signingFile = { String value ->
     def key = file(value).canonicalFile
     if (!key.toPath().startsWith(secretsRoot.toPath()) || !key.isFile()) {
-        throw new GradleException("Android signing keystore must be an existing file under .cuttle/personal/secrets")
+        throw new GradleException("Android signing keystore must be an existing file under ${secretsRoot}")
     }
     return key
 }

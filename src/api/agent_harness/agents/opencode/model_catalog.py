@@ -35,13 +35,9 @@ _MODEL_ID_RE = re.compile(
 )
 
 
-def _repo_root() -> Path:
-    # .../agents/opencode/model_catalog.py → Cuttle
-    return Path(__file__).resolve().parents[5]
-
 
 def _cache_path() -> Path:
-    return runtime_cache_path("opencode_models_cache.json", project_root=_repo_root())
+    return runtime_cache_path("opencode_models_cache.json")
 
 
 def _label_from_id(model_id: str) -> str:

@@ -13,7 +13,7 @@ env var:
 Cuttle only connects to these servers; it never starts or stops them. Run
 llama-server / Ollama yourself (or as a service) and point the env vars at it.
 
-Everything is read from the environment at call time, so editing src/.env and
+Everything is read from the environment at call time, so editing <home>/.env and
 reloading the daemon switches backends without code changes.
 
 Relevant env vars:

@@ -13,11 +13,11 @@ from typing import Any, Dict, List, Optional, Tuple
 from api.jev import thresholds as T
 from api.jev.client import JevError, get_client, jev_available
 from api.jev.types import choice, noul
+from core.runtime_paths import output_dir, query_logs_dir
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SRC_ROOT = REPO_ROOT / "src"
-LOGS_DIR = SRC_ROOT / "web" / "logs"
-STATE_PATH = SRC_ROOT / "output" / "jev" / "last_regress.json"
+LOGS_DIR = query_logs_dir()
+STATE_PATH = output_dir() / "jev" / "last_regress.json"
 
 # Named suites Jev may pick. Paths are pytest node prefixes from repo root.
 SUITES: Dict[str, Dict[str, Any]] = {

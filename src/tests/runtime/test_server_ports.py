@@ -2,11 +2,11 @@
 
 Hermetic by construction:
 
-- The checkout's real ``src/.env`` is never read: the fixture repoints the
+- The checkout's real ``<home>/.env`` is never read: the fixture repoints the
   file seam at a nonexistent temp path, and every file test injects an
   explicit temp ``.env``.
 - The daemon is loaded with a stubbed ``dotenv`` loader, so importing it
-  cannot merge the real ``src/.env`` into the test process.
+  cannot merge the real ``<home>/.env`` into the test process.
 - No sockets are bound (fake socket class), no daemon is started, no server
   is spawned, and no subprocess imports the monolith: listener args are
   proven in-process through ``start_listener_servers`` with fake
@@ -56,7 +56,7 @@ def clean_port_env(monkeypatch, tmp_path):
     monkeypatch.delenv("CUTTLE_DEVICE_WORKERS_COORDINATOR_URL", raising=False)
     monkeypatch.delenv("CUTTLE_FLASK_URL", raising=False)
     monkeypatch.delenv("CUTTLE_SHADOW_RESERVED_PORTS", raising=False)
-    # Hermetic file seam: the real src/.env is never consulted unless a
+    # Hermetic file seam: the real <home>/.env is never consulted unless a
     # test injects an explicit env_file.
     monkeypatch.setattr(
         "api.server_ports.default_env_file", lambda: tmp_path / "no-such.env"
@@ -247,7 +247,7 @@ def test_valid_env_overrides_malformed_file_without_reject(tmp_path, monkeypatch
     assert resolve_with_env_file(env_file=env).https == 8443
 
 
-# --- consumers (env over injected temp file; real src/.env never read) ---------
+# --- consumers (env over injected temp file; real <home>/.env never read) ---------
 
 
 def test_lan_access_getters_follow_env(monkeypatch):
@@ -493,7 +493,7 @@ def test_daemon_start_flask_pins_child_after_reload(monkeypatch, tmp_path):
     assert daemon.flask_port() == 8443
 
     def fake_reload():
-        # Simulate a mid-life src/.env edit picked up by the reload.
+        # Simulate a mid-life <home>/.env edit picked up by the reload.
         monkeypatch.setenv("CUTTLE_HTTPS_PORT", "9443")
         monkeypatch.setenv("CUTTLE_HTTP_PORT", "9001")
         monkeypatch.setenv("CUTTLE_PHONE_HTTPS_PORT", "9002")

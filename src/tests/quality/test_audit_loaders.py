@@ -1,4 +1,5 @@
 """Offline scope/overlay regressions using isolated configuration trees."""
+import os
 from pathlib import Path
 
 import pytest
@@ -18,8 +19,14 @@ def put(root, rel, text):
     return path
 
 
+def _home():
+    """The shared layer's personal overlay lives in the Cuttle home."""
+    return Path(os.environ["CUTTLE_HOME"])
+
+
 @pytest.fixture
 def trees(tmp_path, monkeypatch):
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path / "home"))
     project = tmp_path / "project"
     project.mkdir()
     global_root = tmp_path / "install" / ".cuttle_global"
@@ -47,7 +54,7 @@ def test_commands_precedence_identity_and_disable(trees):
                  (project, ".cuttle/commands", "project"),
                  (project, "source/.cuttle/personal/commands", "project-nested-personal"),
                  (project, "source/.cuttle/commands", "project-nested"),
-                 (hub, "personal/commands", "global-personal"),
+                 (_home(), "personal/commands", "global-personal"),
                  (hub, "commands", "global")]
     paths = [put(root, f"{rel}/ship.md", f"---\nname: ship\naliases: [deploy]\n---\n{source}")
              for root, rel, source in locations]
@@ -60,7 +67,7 @@ def test_commands_precedence_identity_and_disable(trees):
     put(hub, "commands/ship.md", "global")
     put(project, ".cuttle/personal/commands/renamed.md", "---\nname: ship\ndisabled: true\n---\n")
     assert commands.find_project_command(str(project), "ship") is None
-    put(hub, "personal/commands/only.md", "personal only")
+    put(_home(), "personal/commands/only.md", "personal only")
     assert commands.find_project_command(str(project), "only")["source"] == "global-personal"
     put(project, ".cuttle/personal/GLOBAL.ini", "[global]\ncommands=off\n")
     assert commands.list_project_commands(str(project)) == []
@@ -72,7 +79,7 @@ def test_skills_list_get_precedence_disable_and_isolation(trees):
                  (project, ".cuttle/skills", "project"),
                  (project, "source/.cuttle/personal/skills", "project-nested-personal"),
                  (project, "source/.cuttle/skills", "project-nested"),
-                 (hub, "personal/skills", "global-personal"), (hub, "skills", "global")]
+                 (_home(), "personal/skills", "global-personal"), (hub, "skills", "global")]
     paths = [put(root, f"{rel}/same/SKILL.md", f"---\nname: Test\ndescription: {scope}\n---\n# {scope}")
              for root, rel, scope in locations]
     for path, (_, _, scope) in zip(paths, locations):

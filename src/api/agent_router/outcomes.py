@@ -10,9 +10,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from api.agent_router.types import ExecutionTarget, RoutingDecision
+from core.runtime_paths import data_db_dir
 
 
-DEFAULT_DB_PATH = Path(__file__).resolve().parents[2] / "data" / "db" / "router_outcomes.db"
+DEFAULT_DB_PATH = data_db_dir() / "router_outcomes.db"
 
 
 def database_path() -> Path:

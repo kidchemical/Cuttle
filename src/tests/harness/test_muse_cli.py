@@ -231,7 +231,7 @@ def test_native_resolver_prefers_meta_windows_muse_bin(tmp_path: Path, monkeypat
 
 
 def test_muse_effort_store_roundtrip(tmp_path: Path, monkeypatch):
-    monkeypatch.setattr(store, "_repo_root", lambda: tmp_path)
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path))
     assert store.load_muse_effort("s1") is None
     store.save_muse_effort("s1", "high")
     assert store.load_muse_effort("s1") == "high"
@@ -240,7 +240,7 @@ def test_muse_effort_store_roundtrip(tmp_path: Path, monkeypatch):
 
 
 def test_muse_effort_slash_set_list_reject(tmp_path: Path, monkeypatch):
-    monkeypatch.setattr(store, "_repo_root", lambda: tmp_path)
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path))
     from api.agent_harness.agents.muse.adapter import build_adapter
 
     adapter = build_adapter()
@@ -282,7 +282,7 @@ def test_messages_payload_carries_muse_pins(tmp_path: Path, monkeypatch):
     plain_sid = db.create_chat_session(owner, "no pins")
     token = db.create_auth_session(owner)
 
-    monkeypatch.setattr(store, "_repo_root", lambda: tmp_path)
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path))
     store.save_muse_model(sid, "muse-spark-1.3-contributor")
     store.save_muse_effort(sid, "high")
     # No starred defaults — an install-local star must not leak in.
@@ -388,7 +388,7 @@ def test_usage_for_query_report():
 
 
 def test_muse_session_store_roundtrip(tmp_path: Path, monkeypatch):
-    monkeypatch.setattr(store, "_repo_root", lambda: tmp_path)
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path))
     cwd = str(tmp_path / "proj")
     Path(cwd).mkdir()
     sid = "db_session_42"
@@ -401,7 +401,7 @@ def test_muse_session_store_roundtrip(tmp_path: Path, monkeypatch):
 
 def test_muse_session_store_accepts_int_chat_id(tmp_path: Path, monkeypatch):
     """Auth /api/chat passes numeric session_id; store must not call .strip() on int."""
-    monkeypatch.setattr(store, "_repo_root", lambda: tmp_path)
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path))
     cwd = str(tmp_path / "proj")
     Path(cwd).mkdir()
     uuid = "3d64e574-a415-4c86-961b-d330058b5491"
@@ -413,7 +413,7 @@ def test_muse_session_store_accepts_int_chat_id(tmp_path: Path, monkeypatch):
 
 
 def test_muse_session_store_rejects_garbage(tmp_path: Path, monkeypatch):
-    monkeypatch.setattr(store, "_repo_root", lambda: tmp_path)
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path))
     cwd = str(tmp_path / "proj")
     Path(cwd).mkdir()
     store.save_muse_resume_id(cwd, "s1", "not-a-uuid")
@@ -494,7 +494,7 @@ async def test_execute_prompt_timeout_preserves_session_and_partial(
 
     cwd = tmp_path / "ws"
     cwd.mkdir()
-    monkeypatch.setattr(store, "_repo_root", lambda: tmp_path)
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path))
     saved: dict = {}
 
     class HangReader:
@@ -778,7 +778,7 @@ def test_muse_web_success_returns_agent_model(tmp_path: Path, monkeypatch):
 
     monkeypatch.setattr(muse_mod, "muse_available", lambda: True)
     monkeypatch.setattr(MuseCliTool, "execute_prompt", fake_execute_prompt)
-    monkeypatch.setattr(store, "_repo_root", lambda: tmp_path)
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path))
 
     res = w._run_harness_web_command(
         "muse",
@@ -859,7 +859,7 @@ def test_muse_stream_forwards_agent_model_to_client(monkeypatch, owner_session):
 
 
 def test_muse_model_store_roundtrip(tmp_path: Path, monkeypatch):
-    monkeypatch.setattr(store, "_repo_root", lambda: tmp_path)
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path))
 
     assert store.load_muse_model("sess-1") is None
     assert store.save_muse_model("sess-1", "muse-spark-1.1") == "muse-spark-1.1"
@@ -880,7 +880,7 @@ def test_muse_model_command_sets_and_lists(tmp_path: Path, monkeypatch):
     from api import web_chat_api as w
 
     monkeypatch.setattr(muse_mod, "muse_available", lambda: True)
-    monkeypatch.setattr(store, "_repo_root", lambda: tmp_path)
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path))
 
     listing = w._run_harness_web_command(
         "muse",
@@ -909,7 +909,7 @@ def test_muse_model_command_does_not_hijack_real_prompts(tmp_path: Path, monkeyp
     """`/muse model the login flow` is a task, not a model switch."""
     from api import web_chat_api as w
 
-    monkeypatch.setattr(store, "_repo_root", lambda: tmp_path)
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path))
     assert w._handle_muse_model_command("model the login flow", "s", "muse-spark-1.2") is None
     assert w._handle_muse_model_command("models are hard", "s", "muse-spark-1.2") is None
     assert store.load_muse_model("s") is None
@@ -928,7 +928,7 @@ def test_muse_session_model_is_used_for_the_run(tmp_path: Path, monkeypatch):
 
     monkeypatch.setattr(muse_mod, "muse_available", lambda: True)
     monkeypatch.setattr(MuseCliTool, "execute_prompt", fake_execute_prompt)
-    monkeypatch.setattr(store, "_repo_root", lambda: tmp_path)
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path))
     store.save_muse_model("muse-pinned", "muse-spark-1.2-contributor")
 
     res = w._run_harness_web_command("muse", "say hi", "muse-pinned", project_path=str(tmp_path))
@@ -945,7 +945,7 @@ def test_muse_clear_session_reply(tmp_path: Path, monkeypatch):
     from api import web_chat_api as w
 
     monkeypatch.setattr(muse_mod, "muse_available", lambda: True)
-    monkeypatch.setattr(store, "_repo_root", lambda: tmp_path)
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path))
     store.save_muse_resume_id(
         str(tmp_path), "muse-clear", "3d64e574-a415-4c86-961b-d330058b5491"
     )
@@ -962,7 +962,7 @@ def test_muse_clear_session_reply(tmp_path: Path, monkeypatch):
 def test_muse_models_endpoints(tmp_path: Path, monkeypatch, owner_session):
     from api import web_chat_api as w
 
-    monkeypatch.setattr(store, "_repo_root", lambda: tmp_path)
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path))
 
     with w.app.test_client() as client:
         owner_session.sign_in(client)

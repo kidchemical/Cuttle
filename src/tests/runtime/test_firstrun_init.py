@@ -96,7 +96,7 @@ def test_oauth_login_unconfigured_gives_guidance(monkeypatch):
     assert res.status_code == 503
     body = res.get_json()
     assert body["success"] is False
-    assert "src/.env" in body["error"]
+    assert ".env" in body["error"]
     assert "OAuth not configured" not in body["error"]
 
     res = client.get("/api/auth/oauth/google", headers={"Accept": "text/html"})

@@ -17,12 +17,9 @@ from typing import Any, Dict, List, Optional
 
 
 def _default_db_path() -> Path:
-    try:
-        from core.runtime_paths import data_db_dir
+    from core.runtime_paths import data_db_dir
 
-        return Path(data_db_dir()) / "gizmos.db"
-    except Exception:  # pragma: no cover - standalone/test fallback
-        return Path(__file__).resolve().parents[2] / "data" / "db" / "gizmos.db"
+    return data_db_dir() / "gizmos.db"
 
 
 def database_path() -> Path:

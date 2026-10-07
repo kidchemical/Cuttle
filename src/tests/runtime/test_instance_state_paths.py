@@ -1,9 +1,11 @@
 """Runtime files live in the per-user instance state dir, never the checkout root."""
 import importlib
 import json
+from pathlib import Path
 
 from core import runtime_paths
 from core.runtime_paths import (
+    cuttle_home,
     flask_restart_request_path,
     flask_restart_status_path,
     instance_state_dir,
@@ -65,3 +67,22 @@ def test_notify_tray_writes_state_dir_never_repo_root(tmp_path, monkeypatch):
     finally:
         monkeypatch.delenv("XDG_STATE_HOME", raising=False)
         importlib.reload(ui_notify)
+
+
+def test_cuttle_home_is_per_user_and_overridable(tmp_path, monkeypatch):
+    """All mutable state resolves outside the install tree (read-only installs)."""
+    monkeypatch.delenv("CUTTLE_HOME", raising=False)
+    monkeypatch.setattr(runtime_paths, "is_windows", lambda: False)
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))  # Path.home() on Windows
+    assert cuttle_home() == tmp_path / ".local" / "share" / "cuttle"
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    assert cuttle_home() == tmp_path / "xdg" / "cuttle"
+    monkeypatch.setattr(runtime_paths, "is_windows", lambda: True)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    assert cuttle_home() == tmp_path / "local" / "Cuttle"
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path / "explicit"))
+    assert cuttle_home() == tmp_path / "explicit"
+    repo = Path(runtime_paths.__file__).resolve().parents[2]
+    assert not runtime_paths.settings_path().is_relative_to(repo)
