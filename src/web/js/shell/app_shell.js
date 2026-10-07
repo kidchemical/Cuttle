@@ -4095,10 +4095,20 @@ function getAppsList() {
     RAIL_FOOTER_APP_IDS.forEach(id => {
         const el = col.querySelector(`.rail-footer .rail-item[data-id="${id}"]`);
         if (!el) return;
+        // The Account button renders the user's profile photo (or initials)
+        // inside .rail-account-avatar, not as an <svg> — forward that so the
+        // Apps grid tile shows the same picture as the rail.
+        let iconHtml = '';
+        if (id === 'nav-account') {
+            const avatar = el.querySelector('.rail-account-avatar');
+            iconHtml = (avatar && avatar.innerHTML) || el.querySelector('svg')?.outerHTML || '';
+        } else {
+            iconHtml = el.querySelector('svg')?.outerHTML || '';
+        }
         const entry = {
             id,
             label: el.dataset.tooltip || id.replace(/^nav-/, ''),
-            icon: el.querySelector('svg')?.outerHTML || '',
+            icon: iconHtml,
             pinned: true,
             pinnable: false,
         };
@@ -4590,6 +4600,9 @@ function renderAccountButtons() {
 function setShellAuthUser(user) {
     shellAuthUser = user || null;
     renderAccountButtons();
+    // The Account Apps-grid tile carries the profile photo — rebroadcast so
+    // an open Apps page swaps the placeholder for the picture on sign in/out.
+    broadcastAppsList();
 }
 
 async function refreshShellAuth() {

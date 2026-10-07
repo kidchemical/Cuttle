@@ -120,7 +120,16 @@
         const icon = document.createElement('span');
         icon.className = 'apps-icon';
         icon.style.setProperty('--app-hue', String(hueFor(app.id)));
-        icon.innerHTML = app.icon || '';
+        const iconHtml = app.icon || '';
+        icon.innerHTML = iconHtml;
+        // The Account tile forwards the rail avatar: a profile photo (<img>)
+        // or initials text instead of an <svg>. Drop the gradient tile behind
+        // the photo so the picture fills the icon like the rail does.
+        if (/<\s*img[\s>]/i.test(iconHtml)) {
+            icon.classList.add('has-photo');
+        } else if (app.id === 'nav-account' && iconHtml && !/<\s*svg[\s>]/i.test(iconHtml)) {
+            icon.classList.add('has-initials');
+        }
         if (app.pinned) {
             const pin = document.createElement('span');
             pin.className = 'apps-pin';

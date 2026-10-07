@@ -33,7 +33,8 @@ def _shell_prelude():
     locked = source[locked_start: source.index("\n", locked_start)]
     footer_ids = _extract(source, "const RAIL_FOOTER_APP_IDS =", "];") + "];"
     get_apps = _extract(source, "function getAppsList()", "function broadcastAppsList")
-    return "\n".join([order, locked, footer_ids, get_apps])
+    # getAppsList reads the shell's agent-feed flag; default it off for the harness.
+    return "\n".join(["let agentFeedEnabled = false;", order, locked, footer_ids, get_apps])
 
 
 SHELL_STUB = """
@@ -145,6 +146,55 @@ const document = {
 
 
 @node_only
+def test_apps_list_account_tile_forwards_profile_photo():
+    """The Account Apps tile carries the rail avatar (photo or initials)."""
+    import subprocess
+
+    script = "const assert = require('node:assert/strict');\n"
+    script += _shell_prelude() + "\n"
+    script += """
+function makeBtn(id, cfg) {
+    const dataset = { id, tooltip: cfg.tooltip };
+    if (cfg.page) dataset.page = cfg.page;
+    return {
+        dataset,
+        querySelector: (sel) => {
+            if (sel === '.rail-account-avatar' && cfg.avatarHtml != null) {
+                return { innerHTML: cfg.avatarHtml };
+            }
+            return { outerHTML: '<svg></svg>' };
+        },
+        closest: (sel) => (sel === '.rail-items' && cfg.container === 'rail-items')
+            ? {} : null,
+    };
+}
+function colWith(avatarHtml) {
+    const account = makeBtn('nav-account', { container: 'rail-footer', tooltip: 'Account', avatarHtml });
+    return {
+        querySelector: (sel) => {
+            const m = /data-id="([^"]+)"/.exec(sel);
+            if (!m || m[1] !== 'nav-account') return null;
+            if (!sel.includes('.rail-footer')) return null;
+            return account;
+        },
+    };
+}
+let _col = colWith('<img src="https://example.com/pic.jpg" alt="User">');
+function getColumnEl() { return _col; }
+let apps = getAppsList();
+assert.ok(apps[0].icon.includes('<img'), 'photo forwarded, got: ' + apps[0].icon);
+assert.ok(apps[0].icon.includes('https://example.com/pic.jpg'));
+_col = colWith('AB');
+apps = getAppsList();
+assert.equal(apps[0].icon, 'AB', 'initials forwarded when no photo');
+_col = colWith('<svg></svg>');
+apps = getAppsList();
+assert.ok(apps[0].icon.includes('<svg'), 'signed-out placeholder still forwarded');
+"""
+    subprocess.run(["node", "-e", script], check=True)
+
+
+@node_only
 def test_apps_page_opens_action_tiles_via_shell():
     import subprocess
 
@@ -179,5 +229,80 @@ const fireMenu = (id) => {
 };
 assert.deepEqual(fireMenu('nav-git'), ['Open', 'Add to blade bar']);
 assert.deepEqual(fireMenu('nav-notifications'), ['Open']);
+"""
+    subprocess.run(["node", "-e", script], check=True)
+
+
+APPS_AVATAR_STUB = """
+const posted = [];
+const winHandlers = {};
+const docHandlers = {};
+function makeEl(tag) {
+    const added = [];
+    return {
+        tag, children: [], dataset: {},
+        style: { _p: {}, setProperty(k, v) { this._p[k] = v; } },
+        classList: {
+            _added: added,
+            add(c) { this._added.push(c); },
+            remove() {},
+            contains(c) { return this._added.includes(c); },
+        },
+        handlers: {},
+        textContent: '', innerHTML: '', hidden: true, title: '', value: '',
+        offsetWidth: 120, offsetHeight: 60,
+        addEventListener(t, f) { (this.handlers[t] = this.handlers[t] || []).push(f); },
+        append(...c) { this.children.push(...c); },
+        appendChild(c) { this.children.push(c); return c; },
+        setAttribute() {}, focus() {},
+        getBoundingClientRect() { return { left: 10, top: 10, width: 20, bottom: 30 }; },
+        replaceChildren(...c) { this.children = c; },
+        contains() { return false; },
+    };
+}
+const els = {};
+for (const id of ['appsGrid', 'appsEmpty', 'appsSearch', 'appsSummary', 'appsMenu', 'appsStatus']) {
+    els[id] = makeEl('div');
+}
+const parentWindow = { postMessage: (msg) => posted.push(msg) };
+const window = {
+    parent: parentWindow,
+    location: { href: '' },
+    addEventListener(t, f) { winHandlers[t] = f; },
+    get innerWidth() { return 800; },
+    get innerHeight() { return 600; },
+};
+const document = {
+    getElementById: (id) => els[id],
+    createElement: (t) => makeEl(t),
+    addEventListener(t, f) { docHandlers[t] = f; },
+};
+"""
+
+
+@node_only
+def test_apps_page_account_tile_uses_profile_photo():
+    """The Account tile flags photo/initials icons so CSS fills the tile."""
+    import subprocess
+
+    script = "const assert = require('node:assert/strict');\n"
+    script += APPS_AVATAR_STUB + "\n"
+    script += APPS_SRC.read_text(encoding="utf-8") + "\n"
+    script += """
+const iconOf = (id) => els['appsGrid'].children
+    .find(t => t.dataset.id === id).children[0];
+winHandlers['message']({ source: parentWindow, data: { type: 'cuttle-apps', apps: [
+    { id: 'nav-git', label: 'Git', page: '/git_graph_page.html', icon: '<svg></svg>', pinned: false },
+    { id: 'nav-account', label: 'Account', action: 'nav-account',
+      icon: '<img src="https://example.com/pic.jpg" alt="User">', pinned: true, pinnable: false },
+] } });
+assert.ok(iconOf('nav-account').classList.contains('has-photo'), 'photo tile flagged');
+assert.ok(!iconOf('nav-git').classList.contains('has-photo'), 'svg tile untouched');
+assert.ok(!iconOf('nav-git').classList.contains('has-initials'));
+winHandlers['message']({ source: parentWindow, data: { type: 'cuttle-apps', apps: [
+    { id: 'nav-account', label: 'Account', action: 'nav-account', icon: 'AB', pinned: true, pinnable: false },
+] } });
+assert.ok(iconOf('nav-account').classList.contains('has-initials'), 'initials tile flagged');
+assert.ok(!iconOf('nav-account').classList.contains('has-photo'));
 """
     subprocess.run(["node", "-e", script], check=True)
