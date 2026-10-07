@@ -3986,6 +3986,7 @@ function applyLayoutToColumn(colEl, layout) {
 
 function applyLayoutToAllColumns(layout) {
     document.querySelectorAll('.split-column').forEach(col => applyLayoutToColumn(col, layout));
+    applyAgentFeedAvailability();
     if (typeof window.ensureCuttleMobileApkUpdateUi === 'function') {
         window.ensureCuttleMobileApkUpdateUi();
     }
@@ -4047,6 +4048,29 @@ function migrateUILayout(saved) {
     return { layout, changed: true };
 }
 
+// Experiment availability does not change the user's saved pin preferences.
+let agentFeedEnabled = false;
+function applyAgentFeedAvailability() {
+    document.querySelectorAll('[data-id="nav-agent-feed"]').forEach(el => {
+        el.style.setProperty('display', agentFeedEnabled ? '' : 'none', 'important');
+    });
+}
+async function refreshAgentFeedAvailability() {
+    try {
+        const response = await fetch('/api/experimental/flags', {credentials:'include', cache:'no-store'});
+        if (!response.ok) return;
+        const data = await response.json();
+        agentFeedEnabled = !data.kill_switch && data.flags.some(flag => flag.id === 'agent_feed' && flag.enabled);
+    } catch (_) { agentFeedEnabled = false; }
+    applyAgentFeedAvailability();
+    broadcastAppsList();
+}
+window.addEventListener('focus', refreshAgentFeedAvailability);
+window.addEventListener('message', e => {
+    if (e.origin === location.origin && e.data?.type === 'cuttle-experimental-flags-changed') refreshAgentFeedAvailability();
+});
+refreshAgentFeedAvailability();
+
 // ── Cuttle web apps (Apps page ↔ blade bar) ─────────────────────
 // Footer utilities live outside the pinnable rail order but belong in the
 // Apps grid too. panelToggle is view chrome (collapse sidebar), not an app.
@@ -4057,7 +4081,7 @@ function getAppsList() {
     if (!col) return [];
     const apps = [];
     CANONICAL_RAIL_ITEM_ORDER.forEach(id => {
-        if (RAIL_LOCKED_IDS.has(id)) return;
+        if (RAIL_LOCKED_IDS.has(id) || (id === 'nav-agent-feed' && !agentFeedEnabled)) return;
         const el = col.querySelector(`.rail-items .rail-item[data-id="${id}"], .rail-stash .rail-item[data-id="${id}"]`);
         if (!el || !el.dataset.page) return;
         apps.push({
@@ -4210,7 +4234,7 @@ function openRailAddPicker(anchor) {
     const list = picker?.querySelector('.rail-add-picker-list');
     if (!picker || !list) return;
     const layout = getLayoutFromDOM(getColumnEl(0));
-    const hiddenIds = (layout.rail_hidden || []).filter(id => CANONICAL_RAIL_ITEM_ORDER.includes(id));
+    const hiddenIds = (layout.rail_hidden || []).filter(id => CANONICAL_RAIL_ITEM_ORDER.includes(id) && (id !== 'nav-agent-feed' || agentFeedEnabled));
     list.innerHTML = '';
     if (!hiddenIds.length) {
         const empty = document.createElement('div');
