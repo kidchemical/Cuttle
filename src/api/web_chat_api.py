@@ -135,6 +135,7 @@ if _env_path.exists():
 # Paths for self-signed certificate
 from core.runtime_paths import notify_queue_path as _notify_queue_path
 from core.runtime_paths import output_dir as _output_dir
+from core.runtime_paths import logs_dir as _logs_dir
 from core.runtime_paths import query_logs_dir as _query_logs_dir
 from core.runtime_paths import secrets_dir as _secrets_dir
 
@@ -7481,9 +7482,6 @@ def _message_is_slash_remote_agent(msg: str) -> bool:
 # Slow request logging (ms). Set CUTTLE_SLOW_REQUEST_MS=0 to disable.
 _SLOW_REQ_MS = int(os.environ.get('CUTTLE_SLOW_REQUEST_MS', '800') or '800')
 
-NAV_LOG_PATH = os.path.join(os.path.expanduser('~'), 'cuttle_nav_debug.log')
-NET_LOG_PATH = os.path.join(os.path.expanduser('~'), 'cuttle_net_debug.log')
-
 @app.route('/api/debug-log', methods=['POST'])
 @owner_required
 def debug_log():
@@ -7491,7 +7489,9 @@ def debug_log():
         payload = request.json or {}
         msg = payload.get('msg', '')
         channel = (payload.get('channel') or 'nav').strip().lower()
-        path = NET_LOG_PATH if channel == 'net' else NAV_LOG_PATH
+        filename = 'cuttle_net_debug.log' if channel == 'net' else 'cuttle_nav_debug.log'
+        path = _logs_dir() / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, 'a', encoding='utf-8') as f:
             f.write(msg + '\n')
         return jsonify({'ok': True})

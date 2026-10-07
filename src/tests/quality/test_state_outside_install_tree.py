@@ -17,6 +17,7 @@ _FORBIDDEN = [
     re.compile(r"""['"]personal['"]\s*/\s*['"]secrets['"]"""),
     re.compile(r"""['"]\.cuttle_global['"]\s*/\s*['"]personal['"]"""),
     re.compile(r"""Path\.home\(\)\s*/\s*['"]cuttle_logs['"]"""),
+    re.compile(r"""(?:project_root|SRC_ROOT)\s*/\s*output_dir"""),
 ]
 # The one-time mover names the old locations on purpose.
 _ALLOWED = {Path("core/runtime_data.py")}

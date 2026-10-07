@@ -14,10 +14,19 @@ from api.query_events import (
     reset_query_id,
 )
 from api.query_tracker import (
+    QueryTracker,
     finish_query_tracking,
     get_query_tracker,
     start_query_tracking,
 )
+
+
+def test_relative_query_log_directory_uses_cuttle_home(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setenv("CUTTLE_HOME", str(home))
+    tracker = QueryTracker("logs/custom")
+    assert tracker.output_dir == home / "logs/custom"
+    assert tracker.output_dir.is_dir()
 
 
 def test_status_tee_records_thinking_and_tools():

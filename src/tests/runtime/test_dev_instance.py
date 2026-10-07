@@ -162,7 +162,7 @@ def test_safe_member_rejects_escapes(tmp_path):
     assert _is_safe_member(tmp_path, "inner.txt")
 
 
-def test_child_env_allowlist(monkeypatch):
+def test_child_env_allowlist(tmp_path, monkeypatch):
     """No os.environ.copy(): sentinel secrets never reach the child."""
     import json
 
@@ -170,7 +170,7 @@ def test_child_env_allowlist(monkeypatch):
     monkeypatch.setenv("CUTTLE_ROUTER_DB", "sentinel-live-db")
     monkeypatch.setenv("MUSE_MODEL", "sentinel-live-model")
     monkeypatch.setenv("HERMES_HOME", "sentinel-live-hermes")
-    monkeypatch.setenv("CUTTLE_HOME", "sentinel-live-home")
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path / "sentinel-live-home"))
     # HOME/CODEX_HOME are never touched (not even in tests); the original
     # environment stays intact and neither may reach the child.
     seed = {

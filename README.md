@@ -92,7 +92,10 @@ Ubuntu / Linux:
 git clone https://github.com/kidchemical/Cuttle.git cuttle && cd cuttle
 python3 -m venv .venv
 .venv/bin/pip install -r src/requirements/requirements.txt
-mkdir -p ~/.local/share/cuttle && cp src/.env.example ~/.local/share/cuttle/.env
+mkdir -p ~/.local/share/cuttle
+if [ ! -e ~/.local/share/cuttle/.env ]; then
+  cp src/.env.example ~/.local/share/cuttle/.env
+fi
 # Edit ~/.local/share/cuttle/.env for optional direct-LLM, router-brain or vision provider keys
 ./start_cuttle.sh
 ```
@@ -104,7 +107,9 @@ git clone https://github.com/kidchemical/Cuttle.git cuttle; cd cuttle
 python -m venv .venv
 .\.venv\Scripts\pip.exe install -r src\requirements\requirements.txt
 New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\Cuttle" | Out-Null
-Copy-Item src\.env.example "$env:LOCALAPPDATA\Cuttle\.env"
+if (-not (Test-Path "$env:LOCALAPPDATA\Cuttle\.env")) {
+    Copy-Item src\.env.example "$env:LOCALAPPDATA\Cuttle\.env"
+}
 # Edit %LOCALAPPDATA%\Cuttle\.env for optional direct-LLM, router-brain or vision provider keys
 .\.venv\Scripts\python.exe src\scripts\cuttle_daemon.py
 ```

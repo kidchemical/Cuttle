@@ -3,6 +3,8 @@ import importlib
 import json
 from pathlib import Path
 
+import pytest
+
 from core import runtime_paths
 from core.runtime_paths import (
     cuttle_home,
@@ -86,3 +88,24 @@ def test_cuttle_home_is_per_user_and_overridable(tmp_path, monkeypatch):
     assert cuttle_home() == tmp_path / "explicit"
     repo = Path(runtime_paths.__file__).resolve().parents[2]
     assert not runtime_paths.settings_path().is_relative_to(repo)
+
+
+def test_relative_cuttle_home_is_rejected(monkeypatch):
+    monkeypatch.setenv("CUTTLE_HOME", "src/data")
+    with pytest.raises(ValueError, match="absolute path"):
+        cuttle_home()
+
+
+@pytest.mark.parametrize("channel,filename", [
+    ("nav", "cuttle_nav_debug.log"),
+    ("net", "cuttle_net_debug.log"),
+])
+def test_debug_log_writes_under_cuttle_home(tmp_path, monkeypatch, owner_session, channel, filename):
+    from api.web_chat_api import app
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("CUTTLE_HOME", str(home))
+    client = owner_session.sign_in(app.test_client())
+    response = client.post("/api/debug-log", json={"channel": channel, "msg": "debug event"})
+    assert response.get_json() == {"ok": True}
+    assert (home / "logs" / filename).read_text(encoding="utf-8") == "debug event\n"
