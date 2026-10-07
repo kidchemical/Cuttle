@@ -18,18 +18,20 @@ def welcome(browser, static_server):
     context.close()
 
 
-@pytest.mark.parametrize("width,height,keyboard", [
-    (390, 420, True), (390, 650, True), (900, 440, False), (390, 844, False),
+@pytest.mark.parametrize("width,height,keyboard,mobile", [
+    (390, 420, True, True), (390, 650, True, True),
+    (390, 420, False, True), (900, 440, False, False),
+    (390, 440, False, False), (390, 844, False, True),
 ])
-def test_welcome_centers_composer_and_clears_insets(welcome, width, height, keyboard):
+def test_welcome_centers_composer_and_clears_insets(welcome, width, height, keyboard, mobile):
     page = welcome
     page.set_viewport_size({"width": width, "height": height})
-    page.evaluate("""keyboard => {
-        document.documentElement.classList.add('is-cuttle-mobile');
+    page.evaluate("""([keyboard, mobile]) => {
+        document.documentElement.classList.toggle('is-cuttle-mobile', mobile);
         document.documentElement.classList.toggle('keyboard-open', keyboard);
         document.documentElement.style.setProperty('--safe-area-inset-top', '24px');
         document.documentElement.style.setProperty('--safe-area-inset-bottom', '48px');
-    }""", keyboard)
+    }""", [keyboard, mobile])
     content = page.locator('.welcome-content').bounding_box()
     screen = page.locator('#welcomeScreen').bounding_box()
     assert content['y'] > 50
@@ -41,8 +43,8 @@ def test_welcome_centers_composer_and_clears_insets(welcome, width, height, keyb
     usable_center = screen['y'] + geometry['top'] + (
         screen['height'] - geometry['top'] - geometry['bottom']) / 2
     assert abs(content['y'] + content['height'] / 2 - usable_center) < 2
-    assert page.locator('.welcome-logo').is_visible() == (not keyboard and height > 560)
-    assert page.locator('.welcome-subtitle').is_visible() == (not keyboard and height > 560)
+    assert page.locator('.welcome-logo').is_visible() == (mobile or height > 560)
+    assert page.locator('.welcome-subtitle').is_visible() == (mobile or height > 560)
     if keyboard:
         assert geometry['bottom'] == 8
 

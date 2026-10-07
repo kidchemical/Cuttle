@@ -2300,15 +2300,14 @@ body.has-video-background .chat-restore-loader {
     box-sizing: border-box;
 }
 
-/* Short viewports (small window height, short split panes): the splash
-   branding would push the composer below the fold, so drop the logo and
-   greeting while keeping the composer centered. */
+/* Short desktop windows / split panes: keep micro chats usable. Mobile
+   keyboard resizing must not toggle the welcome branding. */
 @media (max-height: 560px) {
-    .welcome-screen {
+    html:not(.is-cuttle-mobile) .welcome-screen {
         padding-top: 24px;
     }
-    .welcome-logo,
-    .welcome-subtitle {
+    html:not(.is-cuttle-mobile) .welcome-logo,
+    html:not(.is-cuttle-mobile) .welcome-subtitle {
         display: none;
     }
 }
@@ -7578,7 +7577,20 @@ button.cuttle-button.is-unselected {
 
 /* Responsive Design */
 @media (max-width: 768px) {
+    /* Mobile history: full-width sheet docked to the right edge */
+    .chat-history-panel {
+        left: auto;
+        right: 0;
+        width: 100%;
+        max-width: 100%;
+        border-right: none;
+        border-left: 1px solid var(--border-color);
+        border-radius: 16px 0 0 16px;
+        transform: translateX(100%);
+        box-shadow: -6px 0 32px rgba(0, 0, 0, 0.35);
+    }
     /* Mobile sidebar - shown when open (back-compat with .mobile-open) */
+    .chat-history-panel.open,
     .chat-history-panel.mobile-open {
         transform: translateX(0);
     }
