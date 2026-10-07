@@ -24,9 +24,9 @@ class QueryTracker:
         # Handle both absolute and relative paths
         output_path = Path(output_dir)
         if not output_path.is_absolute():
-            # Relative paths are resolved from the project root (src/)
-            project_root = Path(__file__).parent.parent
-            output_path = project_root / output_dir
+            from core.runtime_paths import cuttle_home
+
+            output_path = cuttle_home() / output_path
         self.output_dir = output_path
         self.output_dir.mkdir(parents=True, exist_ok=True)
         # Serialize query sessions so adhoc runs are not interrupted by another start_query (stale tracker / stuck live report).
@@ -870,4 +870,3 @@ def finish_query_tracking(success: bool = True, error_message: str = None) -> tu
         return tracker.finish_query(success, error_message)
     finally:
         _unregister_active_tracker(tracker)
-

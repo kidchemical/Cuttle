@@ -133,7 +133,10 @@ def test_migration_refuses_unreadable_process_attributes(tmp_path, monkeypatch, 
         pid = 123456789
         # Reproduce process_iter(attrs=...) swallowing this failure into None.
         info = {"cmdline": None if hidden_attribute == "cmdline" else
-                ["python", "src/scripts/cuttle_daemon.py"], "cwd": None}
+                ["python", "src/scripts/cuttle_shadow_app.py"], "cwd": None}
+
+        def name(self):
+            return "python.exe"
 
         def cmdline(self):
             if hidden_attribute == "cmdline":
@@ -155,6 +158,9 @@ def test_absolute_host_path_blocks_without_requiring_cwd(tmp_path, monkeypatch):
 
     class Process:
         pid = 123456789
+
+        def name(self):
+            return "python"
 
         def cmdline(self):
             return ["python", str(tmp_path / "src/scripts/cuttle_daemon.py")]
@@ -182,3 +188,118 @@ def test_default_home_adopts_old_log_folder_explicit_home_never_does(tmp_path, m
     migrate(root)
     assert (tmp_path / "home/logs/flask.log").read_bytes() == b"history"
     assert not old_logs.exists()
+
+
+def test_own_launcher_is_not_another_host(tmp_path, monkeypatch):
+    """A Windows venv launcher repeats the daemon's command line one level up."""
+    import os
+    import psutil
+    from core.runtime_data import active_processes
+    monkeypatch.setattr("core.runtime_data.is_windows", lambda: True)
+
+    class Process:
+        def __init__(self, pid):
+            self.pid = pid
+
+        def cmdline(self):
+            return ["python", str(tmp_path / "src/scripts/cuttle_daemon.py")]
+
+        def name(self):
+            return "python.exe"
+
+        def parents(self):
+            return [Process(424242)]
+
+    monkeypatch.setattr(psutil, "Process", lambda pid=None: Process(os.getpid()))
+    monkeypatch.setattr(psutil, "process_iter",
+                        lambda *a, **k: iter([Process(os.getpid()), Process(424242), Process(515151)]))
+    assert active_processes(tmp_path) == [515151]
+
+
+def test_live_host_ancestor_is_not_excluded(tmp_path, monkeypatch):
+    """An agent CLI launched by Flask must still refuse to move Flask's stores."""
+    import os
+    import psutil
+    from core.runtime_data import active_processes
+
+    monkeypatch.setattr("core.runtime_data.is_windows", lambda: True)
+
+    class Process:
+        def __init__(self, pid):
+            self.pid = pid
+
+        def name(self):
+            return "python.exe"
+
+        def cmdline(self):
+            script = "runtime_data.py" if self.pid == os.getpid() else "web_chat_api.py"
+            return ["python", str(tmp_path / "src/api" / script)]
+
+        def parents(self):
+            return [Process(424242)]
+
+    monkeypatch.setattr(psutil, "Process", lambda pid=None: Process(os.getpid()))
+    monkeypatch.setattr(psutil, "process_iter", lambda: iter([Process(os.getpid()), Process(424242)]))
+    assert active_processes(tmp_path) == [424242]
+
+
+def test_unrelated_protected_system_process_does_not_block_migration(tmp_path, monkeypatch):
+    import psutil
+    from core.runtime_data import migrate_when_stopped
+
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path / "home"))
+    old = _write(tmp_path / "src/data/db/example.db", b"chats")
+
+    class Process:
+        pid = 4
+
+        def name(self):
+            return "System"
+
+        def cmdline(self):
+            raise psutil.AccessDenied(self.pid)
+
+    monkeypatch.setattr(psutil, "process_iter", lambda: iter([Process()]))
+    assert migrate_when_stopped(tmp_path)
+    assert not old.exists()
+
+
+@pytest.mark.parametrize("script", ["cuttle_daemon.py", "web_chat_api.py"])
+def test_host_in_another_checkout_blocks_shared_home_migration(tmp_path, monkeypatch, script):
+    import psutil
+    from core.runtime_data import migrate_when_stopped
+
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path / "home"))
+    root = tmp_path / "checkout"
+    old = _write(root / "src/data/db/example.db", b"chats")
+
+    class Process:
+        pid = 515151
+
+        def name(self):
+            return "python"
+
+        def cmdline(self):
+            return ["python", str(tmp_path / "another-checkout/src" / script)]
+
+    monkeypatch.setattr(psutil, "process_iter", lambda: iter([Process()]))
+    with pytest.raises(RuntimeError, match="Cuttle is running"):
+        migrate_when_stopped(root)
+    assert old.read_bytes() == b"chats"
+
+
+def test_default_home_adopts_old_debug_logs(tmp_path, monkeypatch):
+    from core import runtime_data
+
+    root, home = tmp_path / "checkout", tmp_path / "home"
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(runtime_data, "cuttle_home", lambda: home)
+    old = _write(tmp_path / "cuttle_nav_debug.log", b"nav history")
+    _write(tmp_path / "cuttle_net_debug.log", b"net history")
+    assert migration_pairs(root) == []  # Explicit homes never adopt user logs.
+    monkeypatch.delenv("CUTTLE_HOME")
+    refuse_unmigrated(root)
+    migrate(root)
+    assert not old.exists()
+    assert (home / "logs/cuttle_nav_debug.log").read_bytes() == b"nav history"
+    assert (home / "logs/cuttle_net_debug.log").read_bytes() == b"net history"

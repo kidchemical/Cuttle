@@ -31,7 +31,8 @@ User-visible changes to Cuttle. The format follows
   `Program Files` and AppImage installs work and upgrades keep your data. On the
   first cold start the daemon moves an existing checkout's `src/data/`,
   `src/settings.json`, `src/output/`, `src/web/logs/`, `src/.env`,
-  `.cuttle/personal/secrets/`, `.cuttle_global/personal/` and `~/cuttle_logs/`
+  `.cuttle/personal/secrets/`, `.cuttle_global/personal/`, `~/cuttle_logs/`
+  and the old navigation/network debug logs
   there. Exit from the tray and relaunch; a Flask-only restart refuses to start
   until then.
 - The Android app now enforces TLS certificate validation and no longer falls

@@ -9,7 +9,7 @@ Cuttle owns lives in one per-user folder, the **Cuttle home**, resolved by
 |---|---|
 | Windows | `%LOCALAPPDATA%\Cuttle` |
 | Linux / macOS | `$XDG_DATA_HOME/cuttle`, else `~/.local/share/cuttle` |
-| Any | `CUTTLE_HOME` overrides (tests, shadow instances, a second checkout that must not share history) |
+| Any | `CUTTLE_HOME` overrides with an absolute path (tests, shadow instances, a second checkout that must not share history) |
 
 Code asks `runtime_paths` for a path (`data_db_dir()`, `runtime_state_path()`,
 `settings_path()`, `output_dir()`, `logs_dir()`, `secrets_dir()`,
@@ -31,6 +31,7 @@ state.
   cache/               replaceable pricing / model / benchmark caches
   output/              served at /output/: uploads/, shared/ (7-day TTL), job status, dashboards
   logs/                daemon.log, flask.log, flask_restart_events.jsonl
+                       cuttle_nav_debug.log, cuttle_net_debug.log
   logs/queries/        per-query sidecars, served at /logs/
   secrets/             file-shaped secrets: TLS cert/key, GitHub App key, token files,
                        action_hmac_secret, Android keystores
@@ -86,12 +87,18 @@ Secrets never go in an overlay: use `.env` or `secrets/`.
 
 Older checkouts kept state in `src/data/`, `src/settings.json`, `src/output/`,
 `src/web/logs/`, `src/.env`, `.cuttle/personal/secrets/`, and
-`.cuttle_global/personal/`, and logs in `~/cuttle_logs/`. On cold start, before
+`.cuttle_global/personal/`, and logs in `~/cuttle_logs/`,
+`~/cuttle_nav_debug.log` and `~/cuttle_net_debug.log`. On cold start, before
 any service or log opens a file in the home, the daemon moves all of it there
 (`core.runtime_data`). `~/cuttle_logs/` moves only into the default home, never
 into an explicit `CUTTLE_HOME`, and old logs never block a boot. The move:
 
-- refuses to run while another Cuttle process uses the checkout;
+- refuses to run while another Cuttle host is active, including in another
+  checkout that could share the destination home. Private shadow children
+  block only their own checkout. Only the
+  current process and identical Windows Python launchers are excluded, so a
+  live Flask/daemon ancestor still blocks migration. Unrelated executables
+  are filtered before requesting protected command lines;
 - never overwrites: a home file in the way (for example one written by a
   harness CLI that already ran the new code) is renamed
   `<name>.pre-migration-<timestamp>`, and so are stray SQLite sidecars of an
@@ -110,4 +117,3 @@ Preview or apply by hand with Cuttle stopped:
 PYTHONPATH=src .venv/bin/python -m core.runtime_data          # preview
 PYTHONPATH=src .venv/bin/python -m core.runtime_data --apply
 ```
-

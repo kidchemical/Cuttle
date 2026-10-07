@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
+import sys
 import time
 from pathlib import Path
 
-from core.runtime_paths import cuttle_home
+from core.runtime_paths import cuttle_home, is_windows
 
 
 def _install_sources(root: Path, home: Path) -> list[tuple[Path, Path]]:
@@ -43,7 +45,11 @@ def _legacy_logs(home: Path) -> list[tuple[Path, Path]]:
     an explicit ``CUTTLE_HOME`` (tests, shadows, a second checkout) never does."""
     if (os.environ.get("CUTTLE_HOME") or "").strip():
         return []
-    return [(Path.home() / "cuttle_logs", home / "logs")]
+    return [
+        (Path.home() / "cuttle_logs", home / "logs"),
+        (Path.home() / "cuttle_nav_debug.log", home / "logs/cuttle_nav_debug.log"),
+        (Path.home() / "cuttle_net_debug.log", home / "logs/cuttle_net_debug.log"),
+    ]
 
 
 def migration_pairs(root: Path, home: Path | None = None) -> list[tuple[Path, Path]]:
@@ -150,17 +156,41 @@ def active_processes(root: Path) -> list[int]:
     found = []
     checkout = root.resolve()
     markers = ("cuttle_daemon", "web_chat_api", "cuttle_shadow_app")
+    own = {os.getpid()}
+    # Windows venv python.exe launches a child with the same argv. Exclude only
+    # those identical launchers, never a Flask/daemon ancestor hosting this CLI.
+    if is_windows():
+        try:
+            current = psutil.Process()
+            args = current.cmdline()
+            for parent in current.parents():
+                if not args or parent.cmdline() != args:
+                    break
+                own.add(parent.pid)
+        except psutil.Error:
+            pass  # An ambiguous parent stays subject to the normal guard.
+    interpreter = Path(sys.executable).name.casefold()
     # Read attributes explicitly: process_iter(attrs=...) suppresses AccessDenied
     # and returns None, which must never be mistaken for evidence of no host.
     for proc in psutil.process_iter():
-        if proc.pid == os.getpid():
+        if proc.pid in own:
             continue
         try:
+            # System processes often deny cmdline access on Windows. Cuttle's
+            # hosts run Python; skip other executables before requesting it.
+            name = proc.name().casefold()
+            if name != interpreter and not re.fullmatch(r"(?:pythonw?|pypy)(?:\d+(?:\.\d+)*)?(?:\.exe)?", name):
+                continue
             args = proc.cmdline()
             command = " ".join(args)
             if not any(marker in command for marker in markers):
                 continue
-            if str(checkout) in command:
+            # Checkouts share the default home. A host in a different checkout
+            # may still hold destination databases open; migration must wait.
+            # Private shadow children remain scoped to their own checkout.
+            if str(checkout) in command or any(
+                marker in command for marker in ("cuttle_daemon", "web_chat_api")
+            ):
                 found.append(proc.pid)
                 continue
             cwd = proc.cwd()

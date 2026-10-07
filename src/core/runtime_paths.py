@@ -62,7 +62,10 @@ def cuttle_home() -> Path:
     """
     override = (os.environ.get("CUTTLE_HOME") or "").strip()
     if override:
-        return Path(override).expanduser()
+        path = Path(override).expanduser()
+        if not path.is_absolute():
+            raise ValueError("CUTTLE_HOME must be an absolute path")
+        return path
     if is_windows():
         base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or str(Path.home())
         return Path(base) / "Cuttle"
@@ -403,5 +406,4 @@ def flask_restart_status_path(project_root: Optional[Path] = None) -> Path:
 def flask_restart_request_path(project_root: Optional[Path] = None) -> Path:
     """Flask restart request (Flask writes, daemon consumes)."""
     return instance_state_dir(project_root) / "cuttle_flask_restart_request.json"
-
 

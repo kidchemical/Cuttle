@@ -132,7 +132,7 @@ def test_gizmos_app_starts_stashed_and_migrates_once():
     assert "const DEFAULT_RAIL_HIDDEN = ['nav-achievements', 'nav-gizmos', 'nav-projects', 'nav-agent-feed'];" in source
     assert "const RAIL_LAYOUT_VERSION = 8;" in source
     start = source.index("function migrateUILayout(saved)")
-    end = source.index("// ── Cuttle web apps", start)
+    end = source.index("\n}\n", start) + len("\n}\n")
     script = """const assert = require('assert');
 const DEFAULT_LAYOUT={}; const DEFAULT_RAIL_HIDDEN=['nav-achievements','nav-gizmos','nav-projects','nav-agent-feed'];
 const RAIL_LAYOUT_VERSION=8;
