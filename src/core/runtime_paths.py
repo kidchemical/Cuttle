@@ -186,15 +186,30 @@ def electron_dev_bin(project_root: Path) -> Optional[Path]:
     return None
 
 
+def electron_display_args() -> List[str]:
+    """Linux Wayland sessions run the desktop UI under XWayland.
+
+    Native Wayland (Electron 38+'s default) spins before 'ready' when no output
+    is active — the Host relaunches its UI unattended — and cannot keep pop-outs
+    on top or restore window positions. ``CUTTLE_ELECTRON_WAYLAND=1`` opts out.
+    Mirrors ``.cuttle/scripts/electron-display.sh`` (shell launchers).
+    """
+    if sys.platform.startswith("linux") \
+            and (os.environ.get("XDG_SESSION_TYPE") or "").lower() == "wayland" \
+            and not os.environ.get("CUTTLE_ELECTRON_WAYLAND"):
+        return ["--ozone-platform=x11"]
+    return []
+
+
 def electron_launch_argv(project_root: Path) -> Optional[List[str]]:
     """Argv to open the desktop UI: packaged app, else local electron binary."""
     root = Path(project_root)
     packaged = electron_packaged_exe(root)
     if packaged is not None:
-        return [str(packaged)]
+        return [str(packaged), *electron_display_args()]
     dev = electron_dev_bin(root)
     if dev is not None:
-        return [str(dev), str(root / "electron")]
+        return [str(dev), *electron_display_args(), str(root / "electron")]
     return None
 
 

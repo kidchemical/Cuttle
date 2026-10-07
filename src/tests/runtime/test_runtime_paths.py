@@ -98,8 +98,9 @@ def test_electron_launch_argv_is_none_or_existing():
     if argv is None:
         return
     assert Path(argv[0]).is_file()
-    if sys.platform != "win32" and len(argv) >= 2:
-        assert Path(argv[1]).is_dir() or Path(argv[1]).is_file()
+    paths = [a for a in argv[1:] if not a.startswith("--")]
+    if sys.platform != "win32" and paths:
+        assert Path(paths[-1]).is_dir() or Path(paths[-1]).is_file()
 
 
 def test_desktop_state_dir_is_named_cuttle_desktop():
