@@ -100,7 +100,19 @@ def test_cursor_is_never_fully_blocked():
     assert body["blocked"] is False
     assert {w["id"] for w in body["windows"]} == {"total", "api"}
     assert body["windows"][0]["reset_at"] == int(NOW + 86400)
-    assert "Auto" in body["extras"]["note"]
+    assert "bonus usage spent" in body["extras"]["note"]
+
+
+def test_cursor_note_tracks_bonus_usage():
+    pu = {"totalPercentUsed": 100, "autoPercentUsed": 100, "apiPercentUsed": 100,
+          "bonusSpend": 44144, "remainingBonus": True}
+    body = usage.normalize_cursor({"success": True, "plan_usage": pu}, NOW)
+    assert body["extras"] == {"credits": "$441.44 bonus used",
+                              "note": "Included usage spent; running on Cursor bonus usage"}
+    pu["remainingBonus"] = False
+    assert "may limit" in usage.normalize_cursor({"success": True, "plan_usage": pu}, NOW)["extras"]["note"]
+    pu.update(totalPercentUsed=40, autoPercentUsed=40, apiPercentUsed=40, bonusSpend=0)
+    assert usage.normalize_cursor({"success": True, "plan_usage": pu}, NOW)["extras"] == {}
 
 
 def test_vendor_failure_is_an_error_not_an_exception():
@@ -155,10 +167,25 @@ def test_register_provider_extends_usage_meter_agents(monkeypatch):
 def test_create_defaults_and_auto_title():
     g = service.create("usage_meter", config={"agent": "claude"})
     assert g["title"] == "Claude Code usage"
-    assert g["config"] == {"agent": "claude", "window": "tightest", "show": "remaining"}
+    assert g["config"] == {"agent": "claude", "window": "tightest", "show": "remaining",
+                           "notify_on_unblock": False}
     assert g["placement"] == {"dock": "titlebar", "order": 0.0}
     second = service.create("usage_meter", config={"agent": "codex"})
     assert second["placement"]["order"] == 1.0
+
+
+def test_notify_on_unblock_arms_disarms_and_survives_other_updates():
+    g = service.create("usage_meter", config={"agent": "codex"})
+    assert g["config"]["notify_on_unblock"] is False
+    armed = service.update(g["id"], config={"notify_on_unblock": True})
+    assert armed["config"]["notify_on_unblock"] is True
+    # Other config edits keep the armed flag; auto-title still follows.
+    renamed = service.update(g["id"], config={"agent": "cursor"})
+    assert renamed["config"] == {"agent": "cursor", "window": "tightest", "show": "remaining",
+                                 "notify_on_unblock": True}
+    assert renamed["title"] == "Cursor usage"
+    off = service.update(g["id"], config={"notify_on_unblock": "off"})
+    assert off["config"]["notify_on_unblock"] is False
 
 
 def test_auto_title_follows_agent_but_custom_title_sticks():
@@ -309,6 +336,10 @@ def test_cli_create_move_update_remove(capsys, enabled):
     assert out["gizmo"]["placement"]["dock"] == "popout"
     code, out = _cli(capsys, "update", "claude-meter", "--show", "used", "--title", "Claude left")
     assert out["gizmo"]["config"]["show"] == "used" and out["gizmo"]["title"] == "Claude left"
+    code, out = _cli(capsys, "update", "claude-meter", "--notify-on-unblock")
+    assert code == 0 and out["gizmo"]["config"]["notify_on_unblock"] is True
+    code, out = _cli(capsys, "update", "claude-meter", "--no-notify-on-unblock")
+    assert code == 0 and out["gizmo"]["config"]["notify_on_unblock"] is False
     code, out = _cli(capsys, "list")
     assert out["revision"] >= 3 and len(out["gizmos"]) == 1
     code, out = _cli(capsys, "remove", "claude-meter")

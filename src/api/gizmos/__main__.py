@@ -43,6 +43,9 @@ def _config_from(args: argparse.Namespace) -> Dict[str, Any]:
         value = getattr(args, key, None)
         if value is not None:
             config[key] = value
+    notify = getattr(args, "notify_on_unblock", None)
+    if notify is not None:
+        config["notify_on_unblock"] = bool(notify)
     return config
 
 
@@ -76,6 +79,12 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--agent", help="usage_meter: codex | claude | cursor | …")
         p.add_argument("--window", help="usage_meter: 'tightest' or a window id (five_hour, weekly, …)")
         p.add_argument("--show", choices=["remaining", "used"])
+        p.add_argument("--notify-on-unblock", dest="notify_on_unblock",
+                       action="store_true", default=None,
+                       help="notify (tray + UI toast) when a blocked account unblocks")
+        p.add_argument("--no-notify-on-unblock", dest="notify_on_unblock",
+                       action="store_false", default=None,
+                       help="stop notifying when a blocked account unblocks")
         p.add_argument("--config", help="JSON object merged into the config")
 
     p_create = sub.add_parser("create", help="spawn a gizmo")

@@ -22,8 +22,8 @@ blocked account unblocks. It is the same data as `/usage`, normalized.
 | `popout` | always-on-top desktop window (one per gizmo) | `float` in a browser |
 
 `order` sorts gizmos within `titlebar`/`rail`. Users drag gizmos between
-docks, or click/right-click one for details, agent, move, refresh, remove.
-Apps → **Gizmos** creates and edits them without an agent.
+docks, or click/right-click one for details, agent, move, refresh, notify,
+remove. Apps → **Gizmos** creates and edits them without an agent.
 
 ## Agent ops CLI
 
@@ -46,8 +46,25 @@ create a second meter for an agent that already has one unless asked.
 
 `usage_meter` config: `agent` (`codex` | `claude` | `cursor`), `window`
 (`tightest` or a window id from `usage <agent>`, e.g. `five_hour`, `weekly`),
-`show` (`remaining` | `used`). Changing the agent keeps a default title in step;
-a custom title sticks.
+`show` (`remaining` | `used`), `notify_on_unblock` (bool, default off).
+Changing the agent keeps a default title in step; a custom title sticks.
+
+### Notify when unblocked
+
+The click panel has a **Notify when unblocked** button. Arming it queues a
+tray + UI-toast notification the next time the shell sees that account go
+from blocked to open, then disarms (one-shot). Agents use the same flag:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m api.gizmos update codex-meter --notify-on-unblock
+PYTHONPATH=src .venv/bin/python -m api.gizmos update codex-meter --no-notify-on-unblock
+```
+
+The shell must be open to observe the transition (same caveat as
+completion notifications); the toast drains into every open Cuttle window,
+phone browser included. Raw verbs: `python -m api.ui_notify send "…"`.
+The panel is clamped inside the viewport (20 px bottom clearance for the
+phone gesture bar) and scrolls when taller than the screen.
 
 ## REST (owner session)
 

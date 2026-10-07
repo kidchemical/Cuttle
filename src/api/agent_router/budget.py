@@ -148,8 +148,8 @@ def parse_cursor(data: Dict[str, Any], now: float) -> Account:
     pu = data.get("plan_usage") or ((data.get("period") or {}).get("planUsage")) or {}
     api_used = _pct(pu.get("apiPercentUsed"))
     bonus = bool(pu.get("remainingBonus"))
-    # Auto keeps running past the included pool (bonus/promo capacity), so
-    # only named premium models are ever blocked from this data.
+    # Auto is metered on current plans, but Cursor keeps serving it past 100%
+    # at its discretion, so this data only demotes named premium models.
     acc.premium_blocked = api_used is not None and api_used >= 100 and not bonus
     acc.headroom = None if api_used is None else max(0.0, 1.0 - api_used / 100.0)
     end = (data.get("period") or {}).get("billingCycleEnd")

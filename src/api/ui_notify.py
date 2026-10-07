@@ -5,6 +5,9 @@ tray balloon and ``GET /api/ui-toasts`` drains the ui toast file for
 Electron/app_shell toasts. Both files live in the per-user instance state
 dir (``core.runtime_paths.instance_state_dir``) — never the checkout root,
 which may be read-only once installed.
+
+Agent CLI: ``python -m api.ui_notify send "Build done" --variant success``
+(JSON out, nonzero failures).
 """
 
 from __future__ import annotations
@@ -75,3 +78,56 @@ def pull_ui_toasts() -> List[dict]:
         except json.JSONDecodeError:
             continue
     return out
+
+
+def build_parser():
+    """Argparse front for ``python -m api.ui_notify`` (agent ops CLI)."""
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="python -m api.ui_notify",
+        description="Cuttle tray + in-app toast notifications.",
+    )
+    sub = parser.add_subparsers(dest="cmd")
+    p_send = sub.add_parser("send", help="queue a tray + UI toast")
+    p_send.add_argument("message", help="toast text (max 500 chars)")
+    p_send.add_argument("--variant", default="info",
+                        help="toast variant (info, success, warning, error)")
+    p_pending = sub.add_parser("pending", help="drain pending UI toasts")
+    p_pending.add_argument("--limit", type=int, default=50,
+                           help="max toasts to return")
+    return parser
+
+
+def main(argv=None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.cmd == "send":
+        message = str(args.message or "").strip()
+        if not message:
+            print(json.dumps({"success": False, "error": "message required"}))
+            return 2
+        variant = str(args.variant or "info").strip().lower() or "info"
+        if variant not in ("info", "success", "warning", "error"):
+            print(json.dumps({"success": False,
+                              "error": "variant must be info, success, warning, or error"}))
+            return 2
+        notify_tray(message, variant=variant)
+        print(json.dumps({"success": True, "message": message[:500], "variant": variant}))
+        return 0
+    if args.cmd == "pending":
+        try:
+            limit = max(1, min(500, int(args.limit)))
+        except (TypeError, ValueError):
+            print(json.dumps({"success": False, "error": "limit must be a number"}))
+            return 2
+        print(json.dumps({"success": True, "toasts": pull_ui_toasts()[:limit]}))
+        return 0
+    parser.print_help()
+    return 2
+
+
+if __name__ == "__main__":
+    import sys
+
+    raise SystemExit(main())
