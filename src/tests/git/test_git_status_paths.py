@@ -1,5 +1,8 @@
 """Regression tests against real Git: paths must survive observation intact."""
+import os
 import subprocess
+
+import pytest
 
 from core.git_status import parse_status_z
 from api.agent_router.supervised.evidence import snapshot_worktree
@@ -9,6 +12,7 @@ def git(root, *args):
     return subprocess.run(['git', *args], cwd=root, check=True, capture_output=True)
 
 
+@pytest.mark.skipif(os.name == "nt", reason='these names use " and > and trailing spaces, which Windows forbids')
 def test_literal_paths_and_rename(tmp_path):
     git(tmp_path, 'init')
     git(tmp_path, 'config', 'user.email', 'test@example.test')
