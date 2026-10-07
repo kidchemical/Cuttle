@@ -132,7 +132,7 @@ The router never overwrites an already-selected session agent/model unless you e
 1. Prefer **Cursor Agent CLI — Auto** for ordinary low/medium coding work (currently the preferred low-cost path).
 2. A **task** failure (the agent ran and reported failure: nonzero exit, `[FAIL]`, tests failed) is **terminal**. You get the agent's own output plus `/retry frontier`, `/retry fallback`, `/route …` hints. Rerunning the same prompt on another model would repeat side effects and hide what happened.
 3. A **transport** failure (the target never ran: quota/usage, auth, missing CLI, connection) walks the fallback chain. When Auto cannot start, that chain begins with Grok.
-4. **Quota is account-wide.** After an out-of-usage/quota error, the rest of the turn skips that agent's other premium models. For Cursor it tries `cursor`/`auto` first, because Auto keeps working when premium usage is exhausted.
+4. **Quota is account-wide.** After an out-of-usage/quota error, the rest of the turn skips that agent's other premium models. For Cursor it tries `cursor`/`auto` first, because Auto draws on its own usage pool and often still runs when premium (API) usage is exhausted.
 5. If every target fails, stop and report each attempt with its real error line, with no unbounded loops. Each step ("Router → cursor / grok-4.6…", "… unavailable (…) — trying cursor / auto…") appears in the chat activity bubble.
 
 ## Configuration

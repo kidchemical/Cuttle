@@ -55,6 +55,14 @@ def types_payload() -> List[Dict[str, Any]]:
 USAGE_SHOW = ("remaining", "used")
 
 
+def _truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    return str(value or "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def _usage_config(raw: Dict[str, Any], existing: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     base = dict(existing or {})
     raw = raw if isinstance(raw, dict) else {}
@@ -71,7 +79,11 @@ def _usage_config(raw: Dict[str, Any], existing: Optional[Dict[str, Any]] = None
     show = str(raw.get("show", base.get("show", "remaining")) or "remaining").strip().lower()
     if show not in USAGE_SHOW:
         raise ValueError("show must be 'remaining' or 'used'")
-    return {"agent": agent, "window": window, "show": show}
+    if "notify_on_unblock" in raw:
+        notify = _truthy(raw.get("notify_on_unblock"))
+    else:
+        notify = _truthy(base.get("notify_on_unblock", False))
+    return {"agent": agent, "window": window, "show": show, "notify_on_unblock": notify}
 
 
 def _usage_title(config: Dict[str, Any]) -> str:

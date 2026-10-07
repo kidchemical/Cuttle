@@ -80,6 +80,7 @@
             title, agentLabel, show, pct: 0, value: '…', valueLabel: show === 'used' ? 'used' : 'left',
             caption: '', resetText: '', rows: [], tone: 'unknown', state: 'loading',
             error: '', stale: false, plan: '', updatedAt: null, unblockAt: null, extras: {},
+            notifyArmed: !!cfg.notify_on_unblock,
         };
         if (!data) return base;
         const windows = Array.isArray(data.windows) ? data.windows : [];
@@ -212,11 +213,14 @@
             : '';
         const updated = model.updatedAt
             ? 'Updated ' + new Date(model.updatedAt * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
+        const armed = model.notifyArmed
+            ? '<div class="gizmo-detail-notes">Will notify when this account unblocks.</div>' : '';
         return '<div class="gizmo-detail">'
             + '<div class="gizmo-detail-title">' + escape(model.title) + '</div>'
             + status
             + (model.rows.length ? renderRows(model) : '<div class="gizmo-detail-empty">' + escape(model.error || 'Loading…') + '</div>')
             + (notes.length ? '<div class="gizmo-detail-notes">' + notes.map(escape).join(' · ') + '</div>' : '')
+            + armed
             + '<div class="gizmo-detail-meta">' + escape(updated)
             + (model.error && model.rows.length ? ' · ⚠ ' + escape(model.error) : '') + '</div>'
             + '</div>';

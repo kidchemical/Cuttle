@@ -129,18 +129,22 @@ def test_shell_loads_gizmos_after_app_shell():
 def test_gizmos_app_starts_stashed_and_migrates_once():
     source = (WEB / "js" / "shell" / "app_shell.js").read_text(encoding="utf-8")
     assert "'nav-gizmos'" in source.split("const CANONICAL_RAIL_ITEM_ORDER")[1].split("];")[0]
-    assert "const DEFAULT_RAIL_HIDDEN = ['nav-achievements', 'nav-gizmos', 'nav-projects'];" in source
+    assert "const DEFAULT_RAIL_HIDDEN = ['nav-achievements', 'nav-gizmos', 'nav-projects', 'nav-agent-feed'];" in source
+    assert "const RAIL_LAYOUT_VERSION = 8;" in source
     start = source.index("function migrateUILayout(saved)")
     end = source.index("// ── Cuttle web apps", start)
     script = """const assert = require('assert');
-const DEFAULT_LAYOUT={}; const DEFAULT_RAIL_HIDDEN=['nav-achievements','nav-gizmos','nav-projects'];
-const RAIL_LAYOUT_VERSION=7;
-const CANONICAL_RAIL_ITEM_ORDER=['nav-chat','nav-achievements','nav-gizmos','nav-projects','nav-apps'];
+const DEFAULT_LAYOUT={}; const DEFAULT_RAIL_HIDDEN=['nav-achievements','nav-gizmos','nav-projects','nav-agent-feed'];
+const RAIL_LAYOUT_VERSION=8;
+const CANONICAL_RAIL_ITEM_ORDER=['nav-chat','nav-achievements','nav-gizmos','nav-projects','nav-agent-feed','nav-apps'];
 """ + source[start:end] + """
 let r = migrateUILayout({layout_version:6, rail_items:['nav-chat','nav-achievements','nav-apps'], rail_hidden:['nav-projects']});
-assert.deepEqual(r.layout.rail_hidden.sort(), ['nav-gizmos','nav-projects']);
+assert.deepEqual(r.layout.rail_hidden.sort(), ['nav-agent-feed','nav-gizmos','nav-projects']);
 assert(r.layout.rail_items.includes('nav-achievements'));
 r = migrateUILayout({layout_version:7, rail_items:['nav-chat','nav-gizmos'], rail_hidden:[]});
+assert.equal(r.changed, true); assert(r.layout.rail_items.includes('nav-gizmos'));
+assert.deepEqual(r.layout.rail_hidden, ['nav-agent-feed']);
+r = migrateUILayout({layout_version:8, rail_items:['nav-chat','nav-gizmos'], rail_hidden:[]});
 assert.equal(r.changed, false); assert(r.layout.rail_items.includes('nav-gizmos'));
 """
     if not shutil.which("node"):
@@ -170,10 +174,56 @@ def test_popover_closes_when_focus_leaves_shell_document():
     assert "root.addEventListener('blur', () => { if (state.popoverId) closePopover(); });" in src
 
 
+NOTIFY_HARNESS = r"""
+const M = require(process.env.MODEL);
+const now = 1_800_000_000_000;
+const data = {label: 'Codex', plan: 'plus', blocked: true, unblock_at: 1_800_000_000 + 7200,
+  updated_at: 1_800_000_000,
+  windows: [{id: 'five_hour', label: '5-hour', used_percent: 100, remaining_percent: 0,
+    reset_at: 1_800_000_000 + 7200}]};
+const base = {id: 'm1', type: 'usage_meter', title: 'Codex usage',
+  config: {agent: 'codex', window: 'tightest', show: 'remaining'},
+  placement: {dock: 'titlebar', order: 0}};
+const out = {};
+out.off = M.meterModel(base, data, now).notifyArmed;
+const armed = {...base, config: {...base.config, notify_on_unblock: true}};
+out.on = M.meterModel(armed, data, now).notifyArmed;
+out.detailOff = M.renderDetailHtml(base, data, now).includes('Will notify');
+out.detailOn = M.renderDetailHtml(armed, data, now).includes('Will notify');
+console.log(JSON.stringify(out));
+"""
+
+
+def test_notify_armed_state_reaches_detail_markup():
+    if not shutil.which("node"):
+        pytest.skip("node not available")
+    proc = subprocess.run(["node", "-e", NOTIFY_HARNESS], env={**os.environ, "MODEL": str(MODEL)},
+                          capture_output=True, text=True, encoding="utf-8", check=True)
+    out = json.loads(proc.stdout)
+    assert out == {"off": False, "on": True, "detailOff": False, "detailOn": True}
+
+
+def test_shell_popover_has_notify_action_and_viewport_clamp():
+    src = (WEB / "js" / "gizmos" / "gizmos_shell.js").read_text(encoding="utf-8")
+    # Toggle button wired to config, one-shot blocked→open watcher.
+    assert 'data-gizmo-action="notify"' in src
+    assert "config: { notify_on_unblock:" in src
+    assert "watchUnblock(key, res.body.data)" in src
+    assert "notify_on_unblock: false" in src
+    # Viewport clamp honors the repo safe-area vars, not a hardcoded margin.
+    assert "function safeInsets()" in src
+    assert "--cuttle-safe-" in src
+    assert "visualViewport" in src
+    assert "H - PAD - safe.bottom - ph" in src
+    css = (REPO / "src" / "web" / "css" / "gizmos.css").read_text(encoding="utf-8")
+    assert "max-height: calc(100dvh - 24px - var(--cuttle-safe-top, 0px) - var(--cuttle-safe-bottom, 0px));" in css
+
+
 # ---------------------------------------------------------------------------
 # browser: shell controller
 # ---------------------------------------------------------------------------
 SHELL_FIXTURE = """<!DOCTYPE html><html><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <link rel="stylesheet" href="/css/app_shell.css"><link rel="stylesheet" href="/css/gizmos.css"></head>
 <body class="is-electron">
 <div class="shell-titlebar" id="shellTitlebar"><div class="shell-titlebar-drag" id="shellTitlebarDrag">
@@ -307,6 +357,78 @@ def test_shell_controller_docks_drags_and_removes(tmp_path):
         state["enabled"] = False
         page.evaluate("window.postMessage({type: 'cuttle-experimental-flags-changed'}, '*')")
         page.wait_for_function("!document.querySelector('.shell-gizmo')")
+        assert not errors
+        browser.close()
+
+
+def test_popover_stays_inside_phone_safe_area(tmp_path):
+    """Phone regression: a meter near the bottom opens its panel fully
+    inside the usable viewport (OS insets + finger padding), never under
+    the gesture bar."""
+    playwright = pytest.importorskip("playwright.sync_api")
+    now = int(time.time())
+    state = {
+        "enabled": True, "revision": 1,
+        "gizmos": [
+            {"id": "codex-m", "type": "usage_meter", "title": "Codex usage",
+             "config": {"agent": "codex", "window": "tightest", "show": "remaining"},
+             "placement": {"dock": "float", "order": 0, "x": 0.5, "y": 0.85}, "created_by": "ui"},
+        ],
+    }
+    usage = {"label": "Codex", "plan": "plus", "blocked": True, "unblock_at": now + 7200,
+             "updated_at": now, "windows": [
+                 {"id": "five_hour", "label": "5-hour", "used_percent": 100,
+                  "remaining_percent": 0, "reset_at": now + 7200},
+                 {"id": "weekly", "label": "Weekly", "used_percent": 40,
+                  "remaining_percent": 60, "reset_at": now + 86400}]}
+    types = [{"id": "usage_meter", "label": "Usage meter", "options": {
+        "agents": [{"agent": "codex", "label": "Codex"}]}}]
+
+    with playwright.sync_playwright() as driver:
+        browser = launch_chromium(driver)
+        page = browser.new_page(viewport={"width": 390, "height": 844},
+                                has_touch=True, is_mobile=True, device_scale_factor=2)
+        errors = []
+        page.on("pageerror", lambda error: errors.append(str(error)))
+
+        def route(route):
+            from urllib.parse import urlparse
+            req = route.request
+            path = urlparse(req.url).path
+            if path == "/fixture.html":
+                return route.fulfill(body=SHELL_FIXTURE, content_type="text/html")
+            if path == "/api/gizmos":
+                return route.fulfill(json={"success": True, "revision": state["revision"],
+                                           "gizmos": state["gizmos"], "types": types})
+            if path.startswith("/api/gizmos/") and path.endswith("/data"):
+                return route.fulfill(json={"success": True, "data": usage})
+            if path.startswith("/api/gizmos/"):
+                return route.fulfill(json={"success": True,
+                                           "gizmo": state["gizmos"][0]})
+            file = WEB / path.lstrip("/")
+            if file.is_file():
+                ctype = {".js": "application/javascript", ".css": "text/css"}.get(file.suffix, "text/plain")
+                return route.fulfill(body=file.read_bytes(), content_type=ctype)
+            return route.fulfill(status=404, body="missing")
+
+        page.route("**/*", route)
+        page.goto("http://cuttle.test/fixture.html")
+        page.locator("#shellGizmoFloatLayer .shell-gizmo").wait_for()
+        # Simulate the OS insets ui_boot publishes on a phone with a
+        # gesture bar (fixture has no safe_area.css, so the shell reads
+        # the --safe-area-inset-* fallback, like production does).
+        page.evaluate("document.documentElement.style.setProperty('--safe-area-inset-top', '20px')")
+        page.evaluate("document.documentElement.style.setProperty('--safe-area-inset-bottom', '34px')")
+        page.locator("#shellGizmoFloatLayer .shell-gizmo").click()
+        popover = page.locator("#shellGizmoPopover")
+        popover.wait_for(state="visible")
+        box = popover.bounding_box()
+        assert box is not None
+        assert box["y"] >= 20 + 8 - 1, box
+        assert box["y"] + box["height"] <= 844 - 34 - 8 + 1, box
+        assert box["x"] >= 8 - 1, box
+        assert box["x"] + box["width"] <= 390 - 8 + 1, box
+        page.screenshot(path=str(tmp_path / "gizmos-popover-safe-area.png"))
         assert not errors
         browser.close()
 

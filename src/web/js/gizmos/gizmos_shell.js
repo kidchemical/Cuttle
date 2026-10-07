@@ -22,6 +22,7 @@
         const state = {
             enabled: false, revision: -1, gizmos: [], types: [],
             data: new Map(), fetchedAt: new Map(), inflight: new Set(),
+            wasBlocked: new Map(),
             popoutKey: null, listTimer: null, drag: null, popoverId: null,
         };
 
@@ -33,6 +34,21 @@
                 titlebar: !!(tb && !tb.hidden && root.getComputedStyle(tb).display !== 'none'),
                 popout: !!(popoutApi && typeof popoutApi.syncPopouts === 'function'),
             };
+        }
+
+        /** OS safe-area insets (px) via the repo vars ui_boot maintains. */
+        function safeInsets() {
+            const out = { top: 0, right: 0, bottom: 0, left: 0 };
+            try {
+                const cs = root.getComputedStyle(doc.documentElement);
+                ['top', 'right', 'bottom', 'left'].forEach(side => {
+                    const raw = cs.getPropertyValue('--cuttle-safe-' + side)
+                        || cs.getPropertyValue('--safe-area-inset-' + side);
+                    const n = parseFloat(raw);
+                    if (Number.isFinite(n) && n > 0) out[side] = n;
+                });
+            } catch (_) { /* no insets without computed style */ }
+            return out;
         }
 
         async function api(path, init) {
@@ -240,7 +256,12 @@
                 if (!force && (age < DATA_MS || doc.hidden)) return;
                 state.inflight.add(key);
                 api('/api/gizmos/' + encodeURIComponent(g.id) + '/data' + (force ? '?refresh=1' : ''))
-                    .then(res => { if (res.body && res.body.success) state.data.set(key, res.body.data); })
+                    .then(res => {
+                        if (res.body && res.body.success) {
+                            state.data.set(key, res.body.data);
+                            watchUnblock(key, res.body.data);
+                        }
+                    })
                     .catch(() => { /* next tick retries */ })
                     .finally(() => {
                         state.fetchedAt.set(key, Date.now());
@@ -248,6 +269,33 @@
                         render();
                     });
             });
+        }
+
+        // ── notify-on-unblock ────────────────────────────────────────
+        // One-shot: when a meter armed in its popover sees blocked → open,
+        // queue a tray + UI toast (the shell heartbeat drains it into every
+        // open Cuttle window, phone browser included) and disarm so it fires
+        // once. The page must be open to observe the transition — same
+        // caveat as completion notifications.
+        function watchUnblock(key, data) {
+            const blocked = !!(data && data.blocked);
+            const was = state.wasBlocked.get(key);
+            state.wasBlocked.set(key, blocked);
+            if (was !== true || blocked) return;
+            const armed = state.gizmos.filter(g => M.dataKey(g) === key
+                && g.config && g.config.notify_on_unblock);
+            if (!armed.length) return;
+            const label = (data && data.label)
+                || (armed[0].config && armed[0].config.agent) || 'Agent';
+            armed.forEach(g => { g.config = { ...g.config, notify_on_unblock: false }; });
+            render();
+            if (state.popoverId && armed.some(g => g.id === state.popoverId)) refreshPopover();
+            api('/api/toast', {
+                method: 'POST',
+                body: JSON.stringify({ message: label + ' unblocked — usage limits reset', variant: 'success' }),
+            }).catch(() => { /* heartbeat shows the local toast below anyway */ });
+            toast(label + ' unblocked', 'success');
+            armed.forEach(g => patch(g.id, { config: { notify_on_unblock: false } }));
         }
 
         // ── drag to re-dock ────────────────────────────────────────────
@@ -421,6 +469,12 @@
                     + ['remaining', 'used'].map(s => '<option value="' + s + '"' + ((g.config.show || 'remaining') === s ? ' selected' : '')
                         + '>' + (s === 'used' ? 'Used' : 'Remaining') + '</option>').join('') + '</select></label>'
                 : '';
+            const armed = !!(g.config && g.config.notify_on_unblock);
+            const notifyBtn = g.type === 'usage_meter'
+                ? '<button type="button" data-gizmo-action="notify"'
+                    + (armed ? ' class="is-current" aria-pressed="true"' : '')
+                    + '>' + (armed ? 'Stop notify' : 'Notify when unblocked') + '</button>'
+                : '';
             const html = M.renderDetailHtml(g, state.data.get(M.dataKey(g)), Date.now())
                 + agentField
                 + '<div class="shell-gizmo-popover-section">Move to</div><div class="shell-gizmo-popover-docks">'
@@ -429,19 +483,40 @@
                     + esc(M.DOCK_LABELS[dk]) + '</button>').join('') + '</div>'
                 + '<div class="shell-gizmo-popover-actions">'
                 + '<button type="button" data-gizmo-action="refresh">Refresh</button>'
+                + notifyBtn
                 + (options.openApp ? '<button type="button" data-gizmo-action="manage">Gizmos app</button>' : '')
                 + '<button type="button" data-gizmo-action="remove" class="is-danger">Remove</button></div>';
             if (el.__gizmoHtml !== html) { el.innerHTML = html; el.__gizmoHtml = html; }
             el.hidden = false;
+            // Clamp inside the usable viewport: the repo's safe-area insets
+            // (--cuttle-safe-*, set by ui_boot from env()/native values) plus
+            // a finger's padding. CSS max-height caps the panel first, so
+            // offsetWidth/Height already reflect the cap. visualViewport keeps
+            // a pinched page honest: rects are visual-relative while fixed
+            // positioning is layout-relative, so shift by the viewport offset.
+            const safe = safeInsets();
+            const PAD = 8;
+            const vv = root.visualViewport;
+            const W = (vv && vv.width) || root.innerWidth;
+            const H = (vv && vv.height) || root.innerHeight;
+            const vox = (vv && vv.offsetLeft) || 0;
+            const voy = (vv && vv.offsetTop) || 0;
             const r = anchor.getBoundingClientRect();
             const pw = el.offsetWidth, ph = el.offsetHeight;
-            const below = r.bottom + 8 + ph <= root.innerHeight;
-            const left = r.right + 8 + pw <= root.innerWidth && r.width < 80 && r.left < 120
-                ? r.right + 8 : Math.max(8, Math.min(root.innerWidth - pw - 8, r.left));
-            const top = left === r.right + 8 ? Math.max(8, Math.min(root.innerHeight - ph - 8, r.top))
-                : (below ? r.bottom + 8 : Math.max(8, r.top - ph - 8));
-            el.style.left = Math.round(left) + 'px';
-            el.style.top = Math.round(top) + 'px';
+            const minLeft = PAD + safe.left, minTop = PAD + safe.top;
+            const maxLeft = Math.max(minLeft, W - PAD - safe.right - pw);
+            const maxTop = Math.max(minTop, H - PAD - safe.bottom - ph);
+            let left, top;
+            if (r.right + 8 + pw <= W - PAD - safe.right && r.width < 80 && r.left < 120) {
+                left = r.right + 8;
+                top = Math.max(minTop, Math.min(maxTop, r.top));
+            } else {
+                left = Math.max(minLeft, Math.min(maxLeft, r.left));
+                const fitsBelow = r.bottom + 8 + ph <= H - PAD - safe.bottom;
+                top = fitsBelow ? r.bottom + 8 : Math.max(minTop, Math.min(maxTop, r.top - ph - 8));
+            }
+            el.style.left = Math.round(vox + Math.max(minLeft, Math.min(maxLeft, left))) + 'px';
+            el.style.top = Math.round(voy + Math.max(minTop, Math.min(maxTop, top))) + 'px';
         }
 
         function onPopoverClick(ev) {
@@ -454,6 +529,11 @@
                 patch(id, { placement: { dock: btn.dataset.dock } });
             } else if (action === 'refresh') {
                 refreshDue(true, id);
+            } else if (action === 'notify') {
+                const cur = state.gizmos.find(x => x.id === id);
+                const on = !(cur && cur.config && cur.config.notify_on_unblock);
+                patch(id, { config: { notify_on_unblock: on } });
+                toast(on ? 'Will notify when unblocked' : 'Unblock notification off', 'info');
             } else if (action === 'manage') {
                 closePopover();
                 options.openApp('/gizmos_page.html');

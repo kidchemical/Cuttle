@@ -195,10 +195,15 @@ def normalize_cursor(data: Dict[str, Any], now: float) -> Dict[str, Any]:
             windows.append(win)
     plan_info = data.get("plan_info") if isinstance(data.get("plan_info"), dict) else {}
     extras: Dict[str, Any] = {}
-    api = next((w for w in windows if w["id"] == "api"), None)
-    if api and api["used_percent"] >= 100 and not pu.get("remainingBonus"):
-        extras["note"] = "Premium models paused; Auto keeps running"
-    # Auto keeps running past the included pool, so Cursor is never fully blocked.
+    bonus_cents = _num(pu.get("bonusSpend"))
+    if bonus_cents and bonus_cents > 0:
+        extras["credits"] = f"${bonus_cents / 100:.2f} bonus used"
+    if any(w["used_percent"] >= 100 for w in windows):
+        extras["note"] = ("Included usage spent; running on Cursor bonus usage"
+                          if pu.get("remainingBonus")
+                          else "Included and bonus usage spent; Cursor may limit requests until reset")
+    # Auto is metered on current plans, but Cursor keeps serving some requests
+    # past 100% at its discretion, so this data never proves a hard block.
     return {"plan": plan_info.get("planName") or "", "windows": windows,
             "blocked": False, "extras": extras}
 
