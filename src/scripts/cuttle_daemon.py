@@ -2,12 +2,11 @@
 """
 Cuttle Daemon - Process manager for hot-swap and restarts.
 
-Manages the Flask web server (and on-demand llama.cpp). Discord is **not**
-a daemon child: optional REST agent-ops (``python -m api.discord_cli``,
-``discord.post``) use a token without an inbound gateway.
-LOCAL_LLM_BACKEND=llamacpp is NOT started at boot: it launches on demand when a
-Local-mode chat asks for it (Yes/No prompt), via POST /api/local-llm/start, or
-from the tray menu — and then stays running until stopped. Supports:
+Manages the Flask web server. Discord is **not** a daemon child: optional REST
+agent-ops (``python -m api.discord_cli``, ``discord.post``) use a token without
+an inbound gateway. A local model server (llama.cpp, Ollama, …) is the user's
+own process: Cuttle connects to it (core.local_llm) but never starts or
+stops it. Supports:
 - Start/stop/restart services
 - System tray icon (right-click → Open Cuttle, Open Router, Restart Flask, Exit)
 """
@@ -465,71 +464,6 @@ def start_flask() -> bool:
     return True
 
 
-def _llamacpp_enabled() -> bool:
-    try:
-        from core.local_llm import is_llamacpp
-        return is_llamacpp()
-    except Exception:
-        val = (os.getenv("LOCAL_LLM_BACKEND") or "ollama").strip().lower()
-        return val in ("llamacpp", "llama.cpp", "llama_cpp", "llama-cpp", "llama", "llama-server", "llamaserver")
-
-
-def _llamacpp_reachable(timeout: float = 1.5) -> bool:
-    try:
-        from core.local_llm import local_reachable
-        return local_reachable(timeout=timeout)
-    except Exception:
-        return False
-
-
-def start_llamacpp() -> bool:
-    """Start llama-server if LOCAL_LLM_BACKEND=llamacpp and nothing is listening yet."""
-    if not _llamacpp_enabled():
-        return False
-    if "llamacpp" in processes and processes["llamacpp"].poll() is None:
-        return True
-    if _llamacpp_reachable(timeout=1.5):
-        print("[DAEMON] llama-server already running — skipping spawn")
-        return True
-
-    _reload_env_file()
-    script = (os.getenv("LLAMACPP_START_SCRIPT") or r"F:\llama.cpp\start-qwen-coder.ps1").strip()
-    script_path = Path(script)
-    if not script_path.is_file():
-        print(f"[DAEMON] llama-server start script not found: {script_path}")
-        print("[DAEMON] Set LLAMACPP_START_SCRIPT in src/.env or start llama-server manually")
-        return False
-
-    log_path = LOGS_DIR / "llamacpp.log"
-    logf = open(log_path, "a", encoding="utf-8")
-    _process_log_handles.append(logf)
-    logf.write(f"\n--- llama-server started {datetime.now().isoformat()} ---\n")
-    logf.flush()
-    creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-    suffix = script_path.suffix.lower()
-    if suffix == ".ps1":
-        argv = [
-            "powershell",
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(script_path),
-        ]
-    else:
-        argv = [str(script_path)] if os.access(script_path, os.X_OK) else ["bash", str(script_path)]
-    proc = subprocess.Popen(
-        argv,
-        cwd=str(script_path.parent),
-        stdout=logf,
-        stderr=subprocess.STDOUT,
-        creationflags=creationflags,
-    )
-    processes["llamacpp"] = proc
-    print(f"[DAEMON] Starting llama-server (model load may take 1–2 min) — log: {log_path}")
-    return True
-
-
 def _restore_startup_port_env() -> None:
     """Re-pin the listener triple after any env reload.
 
@@ -566,7 +500,7 @@ def _reload_env_file() -> None:
 
 
 def _kill_process_tree(pid: int) -> None:
-    """Terminate a process and its children (Flask launcher+child, llama-server)."""
+    """Terminate a process and its children (Flask launcher + child)."""
     try:
         from api.process_kill_safety import may_kill_pid
     except Exception:
@@ -663,29 +597,6 @@ def _kill_processes_by_cmdline(fragment: str) -> None:
         pass
 
 
-def _kill_llama_server_processes() -> None:
-    """Stop llama-server so a managed restart can bind port 8081 again."""
-    if sys.platform == "win32":
-        try:
-            subprocess.run(
-                [
-                    "powershell",
-                    "-NoProfile",
-                    "-Command",
-                    "Get-Process -Name 'llama-server' -ErrorAction SilentlyContinue | Stop-Process -Force",
-                ],
-                capture_output=True,
-                timeout=15,
-            )
-        except Exception:
-            pass
-        return
-    try:
-        subprocess.run(["pkill", "-f", "llama-server"], capture_output=True, timeout=15)
-    except Exception:
-        pass
-
-
 def stop_process(name: str) -> bool:
     """Stop a managed process (and its child tree on Windows)."""
     if name in processes:
@@ -702,15 +613,13 @@ def stop_process(name: str) -> bool:
         del processes[name]
         if name == "flask":
             _kill_processes_by_cmdline("web_chat_api")
-        elif name == "llamacpp":
-            _kill_llama_server_processes()
         time.sleep(0.5)
         return True
     return False
 
 
 def stop_all_processes():
-    """Stop all managed processes (Flask, llama-server)."""
+    """Stop all managed processes."""
     for name in list(processes.keys()):
         stop_process(name)
 
@@ -719,14 +628,7 @@ def restart_process(name: str) -> bool:
     """Restart a managed process."""
     if name == "flask":
         return perform_flask_restart(restart_id=None, mode="daemon", source="restart_process")
-    if name == "llamacpp" and _llamacpp_enabled():
-        stop_process(name)
-        _kill_llama_server_processes()
-        time.sleep(1.0)
-        return start_llamacpp()
     stop_process(name)
-    if name == "llamacpp":
-        return start_llamacpp()
     return False
 
 
@@ -1171,10 +1073,6 @@ def _setup_tray():
         print("[DAEMON] Tray: restarting Flask server...")
         restart_process("flask")
 
-    def on_restart_llamacpp(icon, item):
-        print("[DAEMON] Tray: restarting llama-server...")
-        restart_process("llamacpp")
-
     def on_exit(icon, item):
         request_shutdown("tray-exit")
 
@@ -1185,8 +1083,6 @@ def _setup_tray():
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Restart Flask", on_restart_flask),
     ]
-    if _llamacpp_enabled():
-        menu_items.append(pystray.MenuItem("Start/Restart llama-server", on_restart_llamacpp))
     menu_items.extend([
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Exit", on_exit),
@@ -1368,13 +1264,6 @@ def run_daemon():
             print(f"[DAEMON] Shared media TTL check OK (0 expired, TTL {purged.get('ttl_days')}d)")
     except Exception as e:
         print(f"[DAEMON] Shared media purge skipped: {e}")
-    if _llamacpp_enabled():
-        # On-demand model server: not started at boot. Local-mode chat, Auto when
-        # local is needed (/hermes or LLM fallback), tray menu, or POST /api/local-llm/start.
-        if _llamacpp_reachable():
-            print("[DAEMON] llama-server already running (external)")
-        else:
-            print("[DAEMON] llama-server not started at boot (on-demand) — chat Yes/No prompt or tray menu launches it")
     try:
         live_primary_port = flask_port()
     except Exception as exc:
@@ -1433,12 +1322,6 @@ def run_daemon():
         for name in list(processes.keys()):
             proc = processes[name]
             if proc.poll() is None:
-                continue
-            if name == "llamacpp":
-                # On-demand model server: don't auto-respawn. The user (or a
-                # chat Yes/No launch prompt) starts it again when needed.
-                print(f"[DAEMON] llama-server exited (code {proc.returncode}) — staying stopped (on-demand)")
-                del processes[name]
                 continue
             if name == "flask" and _flask_restart_in_progress:
                 continue

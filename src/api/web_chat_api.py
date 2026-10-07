@@ -668,28 +668,13 @@ def _emit_chat_complete_mobile(session_id: str, result: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# On-demand llama.cpp launch (Local + Auto when local is needed)
+# Local model server unavailable (Local mode, local-backed /hermes, llm-local)
 # ---------------------------------------------------------------------------
-# When llama-server isn't running and a chat needs it, we don't fail or
-# silently skip — we stash the message and reply with Yes/No <cuttle_button>
-# tags. The web UI renders them; clicking sends "[button:<id>]" back through
-# /api/chat.
-#
-# Triggers:
-#   - Local mode: every message (local is required)
-#   - Auto/Cloud: /hermes only when Hermes config uses a local backend
-#   - Auto: when LLM fallback is about to invoke local (see
-#     _offer_local_llm_launch_if_needed)
-_LOCAL_LAUNCH_BUTTON_YES = 'launch-local-llm-yes'
-_LOCAL_LAUNCH_BUTTON_NO = 'launch-local-llm-no'
-# session_id -> original message waiting for the user's launch decision
-_pending_local_llm_messages: dict = {}
-# Sessions that clicked "Not now" — skip local until they launch or switch to Local
-_declined_local_llm_sessions: set = set()
+# The local server (llama.cpp, Ollama, …) is the user's own process: Cuttle
+# connects to it but never starts or stops it. When a turn needs it and it is
+# down, reply with where Cuttle looked instead of failing deep in the client.
 
 _CUTTLE_BUTTON_LABELS = {
-    _LOCAL_LAUNCH_BUTTON_YES: 'Yes, launch llama.cpp',
-    _LOCAL_LAUNCH_BUTTON_NO: 'Not now',
     'project-action-confirm': 'Confirm',
     'project-action-cancel': 'Cancel',
 }
@@ -776,152 +761,39 @@ def _message_needs_local_llm(message_content, chat_inference_mode: str) -> bool:
     return False
 
 
-def _local_llm_launch_prompt_for(message_content, chat_inference_mode: str = 'auto') -> str:
-    mode = (chat_inference_mode or 'auto').strip().lower()
-    if mode == 'local':
-        why = (
-            "This chat is set to **Local**, but llama.cpp isn't up yet. "
-            "Want me to launch it?"
-        )
-    elif _hermes_slash_needs_local_llm(message_content):
-        why = "Hermes needs the local llama.cpp model, but it isn't up yet. Want me to launch it?"
-    else:
-        why = (
-            "This request needs the local llama.cpp model, but it isn't up yet. "
-            "Want me to launch it?"
-        )
-    return (
-        "**No local model is running right now.**\n\n"
-        f"{why} Loading the model usually takes a minute or two.\n\n"
-        "Once it's running it stays up until you close it yourself or ask me to shut it down.\n\n"
-        f'<cuttle_button id="{_LOCAL_LAUNCH_BUTTON_YES}" label="Yes, launch llama.cpp"/>\n'
-        f'<cuttle_button id="{_LOCAL_LAUNCH_BUTTON_NO}" label="Not now"/>'
-    )
-
-
-def _launch_local_llm_and_wait(session_id, timeout: float = 240.0):
-    """Kick off llama-server and block until it answers (with live status updates).
-
-    Returns (ok, error_message).
-    """
-    from core.local_llm import launch_llamacpp_detached, local_reachable
-
-    emit_chat_status(session_id, 'Launching llama.cpp...')
-    ok, err = launch_llamacpp_detached()
-    if not ok:
-        return False, err
-
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if local_reachable(timeout=2.0):
-            _declined_local_llm_sessions.discard(session_id)
-            return True, ''
-        emit_chat_status(session_id, 'Loading local model (llama.cpp) — this can take 1–2 minutes...')
-        time.sleep(3)
-    return False, (
-        f'llama.cpp did not become ready within {int(timeout)}s. '
-        'Check ~/cuttle_logs/llamacpp.log for details.'
-    )
-
-
-def _offer_local_llm_launch_if_needed(session_id, message_content, chat_inference_mode: str = 'auto'):
-    """If llama.cpp is the active backend and down, stash message and return a Yes/No reply.
-
-    Returns a reply dict when the chat should stop and show the launch prompt;
-    otherwise None (caller continues). Honours prior "Not now" for this session
-    unless the message hard-requires local (Local mode / local Hermes).
-    """
+def _local_llm_unavailable_reply(session_id, message_content, chat_inference_mode: str = 'auto'):
+    """A chat reply when this turn needs the local server and it is down, else None."""
     if not session_id:
         return None
     try:
-        from core.local_llm import is_llamacpp, local_reachable
-        if not is_llamacpp() or local_reachable(timeout=1.0):
-            _declined_local_llm_sessions.discard(session_id)
+        from core.local_llm import get_local_base_url, get_local_label, local_reachable
+        if local_reachable(timeout=1.0):
             return None
+        base_url, label = get_local_base_url(), get_local_label()
     except Exception as e:
         print(f"[LOCAL-LLM] reachability check failed: {e}")
         return None
-
-    requires = _message_needs_local_llm(message_content, chat_inference_mode)
-    if session_id in _declined_local_llm_sessions and not requires:
-        return None
-
-    _pending_local_llm_messages[session_id] = message_content
-    return {
-        'success': True,
-        'response': _local_llm_launch_prompt_for(message_content, chat_inference_mode),
-        'output': _local_llm_launch_prompt_for(message_content, chat_inference_mode),
-        'type': 'local_llm_launch_prompt',
-    }
+    text = (
+        f"**The local model server isn't reachable** ({label} at `{base_url}`).\n\n"
+        "Cuttle doesn't start local model servers. Start yours (for example "
+        "`llama-server` or `ollama serve`) and send your message again, or switch "
+        "this chat to **Auto** or **Cloud**. Set `LOCAL_LLM_BACKEND` and its base URL "
+        "in `src/.env` if it runs somewhere else."
+    )
+    return {'success': True, 'response': text, 'output': text, 'type': 'local_llm_unavailable'}
 
 
-def _handle_local_llm_launch_gate(message_content, session_id, chat_inference_mode):
-    """Intercept chats that need llama.cpp when it's down, and Yes/No button replies.
+def _local_llm_gate(message_content, session_id, chat_inference_mode):
+    """Stop turns that require the local server while it is down.
 
-    Returns (reply_dict, new_message_content). reply_dict is a final chat
-    response when set; otherwise new_message_content is the (possibly restored
-    pending) message to keep processing.
+    Returns (reply_dict, message_content); reply_dict is a final chat response
+    when set.
     """
-    stripped = (message_content or '').strip()
     mode = (chat_inference_mode or 'auto').strip().lower()
-
-    if stripped.startswith(f'[button:{_LOCAL_LAUNCH_BUTTON_NO}]'):
-        pending = _pending_local_llm_messages.pop(session_id, None)
-        pending_needs_local = _message_needs_local_llm(pending or '', mode)
-        # Local mode or Hermes cannot continue without the model
-        if mode == 'local' or pending_needs_local:
-            return {
-                'success': True,
-                'response': (
-                    "Okay, leaving llama.cpp off. Switch this chat to **Auto** or **Cloud** "
-                    "to keep going without a local model, or send your message again "
-                    "whenever you want to launch it."
-                ),
-                'type': 'local_llm_launch',
-            }, message_content
-        # Auto: remember decline and continue the pending turn without local
-        _declined_local_llm_sessions.add(session_id)
-        if pending:
-            emit_chat_status(session_id, 'Continuing without llama.cpp...')
-            return None, pending
-        return {
-            'success': True,
-            'response': (
-                "Okay, leaving llama.cpp off for now. I'll use cloud models when I can. "
-                "Send a message again anytime if you want to launch the local model."
-            ),
-            'type': 'local_llm_launch',
-        }, message_content
-
-    if stripped.startswith(f'[button:{_LOCAL_LAUNCH_BUTTON_YES}]'):
-        ok, err = _launch_local_llm_and_wait(session_id)
-        pending = _pending_local_llm_messages.pop(session_id, None)
-        if not ok:
-            return {
-                'success': True,
-                'response': f"❌ **Couldn't start llama.cpp.** {err}",
-                'type': 'local_llm_launch',
-            }, message_content
-        if pending:
-            emit_chat_status(session_id, 'llama.cpp is ready — picking up your message...')
-            return None, pending
-        return {
-            'success': True,
-            'response': (
-                '✅ **llama.cpp is up.** It stays running until you close it or ask me to. '
-                'Go ahead and send your message.'
-            ),
-            'type': 'local_llm_launch',
-        }, message_content
-
-    if stripped.startswith('[button:'):
-        return None, message_content
-
-    if _message_needs_local_llm(stripped, mode):
-        offer = _offer_local_llm_launch_if_needed(session_id, message_content, mode)
-        if offer is not None:
-            return offer, message_content
-
+    if _message_needs_local_llm((message_content or '').strip(), mode):
+        reply = _local_llm_unavailable_reply(session_id, message_content, mode)
+        if reply is not None:
+            return reply, message_content
     return None, message_content
 
 
@@ -974,8 +846,8 @@ def process_message_with_bot(
 
         chat_inference_mode = normalize_inference_mode(inference_mode)
 
-        # Local mode / /hermes / Yes-No launch replies when llama.cpp is down.
-        _launch_reply, message_content = _handle_local_llm_launch_gate(
+        # Local mode / local-backed /hermes when the local server is down.
+        _launch_reply, message_content = _local_llm_gate(
             message_content, session_id, chat_inference_mode
         )
         if _launch_reply is not None:
@@ -4767,19 +4639,15 @@ def chat_endpoint():
                 request_data=_current_request_data(),
             )
 
-        # On-demand llama.cpp for /hermes and launch Yes/No buttons (before slash handlers).
-        # Local-mode prompts still run in process_message_with_bot (after the user message is saved).
+        # Local-backed /hermes while the local server is down (before slash handlers).
+        # Local-mode prompts are gated in process_message_with_bot (after the user message is saved).
         _launch_gate_sid = (
             f"db_session_{chat_session_id}" if _auth_user and chat_session_id is not None
             else (str(chat_session_id) if chat_session_id is not None else None)
         )
         _mc_stripped = (message_content or '').strip()
-        if _launch_gate_sid and (
-            _mc_stripped.startswith(f'[button:{_LOCAL_LAUNCH_BUTTON_YES}]')
-            or _mc_stripped.startswith(f'[button:{_LOCAL_LAUNCH_BUTTON_NO}]')
-            or _is_hermes_slash_command(_mc_stripped)
-        ):
-            _launch_reply, message_content = _handle_local_llm_launch_gate(
+        if _launch_gate_sid and _is_hermes_slash_command(_mc_stripped):
+            _launch_reply, message_content = _local_llm_gate(
                 message_content, _launch_gate_sid, chat_inference_mode
             )
             if _launch_reply is not None:
@@ -5479,30 +5347,6 @@ def local_llm_status():
         'running': running,
         'models': list_local_models() if running else [],
     })
-
-
-@app.route('/api/local-llm/start', methods=['POST'])
-@owner_required
-def local_llm_start():
-    """Launch llama-server on demand (detached; survives Flask restarts)."""
-    from core.local_llm import launch_llamacpp_detached, local_reachable
-    if local_reachable(timeout=1.5):
-        return jsonify({'success': True, 'running': True, 'message': 'Local model server already running'})
-    ok, err = launch_llamacpp_detached()
-    if not ok:
-        return jsonify({'success': False, 'running': False, 'error': err}), 400
-    return jsonify({'success': True, 'running': False, 'message': 'llama-server launching — model load can take 1–2 minutes'})
-
-
-@app.route('/api/local-llm/stop', methods=['POST'])
-@owner_required
-def local_llm_stop():
-    """Stop llama-server (e.g. when the user asks Cuttle to close the local model)."""
-    from core.local_llm import stop_llamacpp, local_reachable
-    stop_llamacpp()
-    time.sleep(1.0)
-    still_up = local_reachable(timeout=1.5)
-    return jsonify({'success': not still_up, 'running': still_up})
 
 
 @app.route('/api/health', methods=['GET'])
@@ -8115,12 +7959,12 @@ def llm_request():
                 data.get('inferenceMode') or data.get('inference_mode') or 'auto'
             )
             if session_id:
-                offer = _offer_local_llm_launch_if_needed(session_id, prompt, chat_inference_mode)
+                offer = _local_llm_unavailable_reply(session_id, prompt, chat_inference_mode)
                 if offer is not None:
                     return jsonify({
                         'success': True,
-                        'response': offer.get('response') or offer.get('output') or '',
-                        'type': 'local_llm_launch_prompt',
+                        'response': offer.get('response') or '',
+                        'type': offer['type'],
                     })
             # Local inference — OpenAI-compatible; supports MCP tools when toolsConfig provided.
             # Backend is selected by LOCAL_LLM_BACKEND (ollama | llamacpp). Both speak the OpenAI API.

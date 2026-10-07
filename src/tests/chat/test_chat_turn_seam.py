@@ -232,7 +232,7 @@ def test_coordinator_local_mode_blocks_cloud_cli(coordinator, monkeypatch):
     wca, calls = coordinator
     # Upstream llama.cpp launch gate is not under test; let the turn through.
     monkeypatch.setattr(
-        wca, "_handle_local_llm_launch_gate", lambda m, s, mode: (None, m)
+        wca, "_local_llm_gate", lambda m, s, mode: (None, m)
     )
     out = wca.process_message_with_bot(
         "/cursor do the thing", "seam-h2", inference_mode="local"

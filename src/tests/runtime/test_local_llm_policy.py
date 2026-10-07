@@ -68,7 +68,7 @@ def test_http_queue_cancel_and_timeout_never_start_model(monkeypatch, stop):
     monkeypatch.setattr(llm, '_request_lock', lock)
     monkeypatch.setenv('LOCAL_LLM_QUEUE_TIMEOUT_SEC', '0.01')
     monkeypatch.setattr(llm, 'resolve_local_model', lambda *a, **k: 'fixture')
-    monkeypatch.setattr(api, '_offer_local_llm_launch_if_needed', lambda *a: None)
+    monkeypatch.setattr(api, '_local_llm_unavailable_reply', lambda *a: None)
     monkeypatch.setattr(api, '_get_combined_openai_tools', lambda *a: None)
     stopped = []
     monkeypatch.setattr(chat_delivery, 'current_turn', lambda sid: 1)
