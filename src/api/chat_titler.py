@@ -5,12 +5,8 @@ Strategy (cheapest first):
   1. Instant fallback — the first user message, truncated, replaces the
      default "Chat Session N" name as soon as the first message lands.
   2. Background LLM title — a tiny completion generates a short descriptive
-     title (emoji + 3–6 words). Provider follows the chat's inference mode:
-       - local  → the already-loaded local model (llama.cpp Qwen3 / Ollama).
-                  One model server, one model — a title request just queues
-                  behind normal traffic, so no second model is needed.
-       - cloud/auto → configured completion provider first, then the
-                  remaining providers in registry order.
+     title (emoji + 3–6 words). Uses the configured completion provider,
+     followed by the remaining providers in registry order.
   3. Progressive re-titles — as the conversation grows, the title is
      regenerated at increasing user-message counts so it tracks the topic.
 
@@ -328,7 +324,6 @@ def _is_avoided_title(title: str, avoid_titles) -> bool:
 
 def _generate_title(
     messages,
-    inference_mode: str,
     current_title: str = "",
     avoid_titles=None,
     temperature: float = None,
@@ -338,15 +333,10 @@ def _generate_title(
     temp = temperature
     if temp is None:
         temp = 0.95 if regenerating else 0.3
-    if (inference_mode or "").lower() == "local":
-        providers = (_title_via_local,)
-        if not regenerating and temperature is None:
-            temp = 0.2
-    else:
-        from api.completion_providers import resolve_order
-        by_id = {"openai": _title_via_openai, "anthropic": _title_via_anthropic,
-                 "local": _title_via_local}
-        providers = tuple(by_id[name] for name in resolve_order())
+    from api.completion_providers import resolve_order
+    by_id = {"openai": _title_via_openai, "anthropic": _title_via_anthropic,
+             "local": _title_via_local}
+    providers = tuple(by_id[name] for name in resolve_order())
 
     attempts = 3 if regenerating else 1
     last = None
@@ -387,7 +377,6 @@ def _pack_title_result(descriptive: str, messages, source: str) -> dict:
 
 def suggest_session_title(
     chat_session_id: int,
-    inference_mode: str = "auto",
     avoid_titles=None,
 ) -> dict:
     """Generate a title suggestion without persisting it.
@@ -410,7 +399,6 @@ def suggest_session_title(
         if messages:
             descriptive = _generate_title(
                 messages,
-                inference_mode,
                 current_title=current_desc,
                 avoid_titles=avoid or None,
             )
@@ -438,7 +426,7 @@ def suggest_session_title(
         }
 
 
-def _run_llm_titling(chat_session_id: int, inference_mode: str):
+def _run_llm_titling(chat_session_id: int):
     try:
         from api.auth_db import get_auth_db
         db = get_auth_db()
@@ -449,7 +437,7 @@ def _run_llm_titling(chat_session_id: int, inference_mode: str):
         if not messages:
             return
         descriptive = _generate_title(
-            messages, inference_mode, current_title=info.get("session_name") or ""
+            messages, current_title=info.get("session_name") or ""
         )
         title = compose_session_title(descriptive, messages) if descriptive else None
         if title and db.set_session_name(chat_session_id, title, auto=True):
@@ -461,7 +449,7 @@ def _run_llm_titling(chat_session_id: int, inference_mode: str):
             _inflight_sessions.discard(chat_session_id)
 
 
-def schedule_session_autoname(chat_session_id: int, inference_mode: str = "auto"):
+def schedule_session_autoname(chat_session_id: int):
     """Call after an assistant reply is stored. Cheap; never raises.
 
     Applies the instant fallback name (first user message) if the session
@@ -500,7 +488,7 @@ def schedule_session_autoname(chat_session_id: int, inference_mode: str = "auto"
 
         threading.Thread(
             target=_run_llm_titling,
-            args=(chat_session_id, inference_mode),
+            args=(chat_session_id,),
             daemon=True,
             name=f"chat-titler-{chat_session_id}",
         ).start()

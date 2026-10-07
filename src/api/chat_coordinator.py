@@ -15,11 +15,11 @@ Surfaces and their (intentionally different) entry semantics:
   bodies. The sync pipeline lane runs the owned claiming
   ``run_pipeline_sync_turn`` itself (same skeleton family, lane leaf
   effects); the stream pipeline lane submits here (pipeline arm).
-- ``process_message_with_bot`` (local-mode prompts, ``/api/sessions/send``):
+- ``process_message_with_bot`` (``/api/sessions/send``):
   ``claim=False`` (no delivery interaction, exactly as before),
   no-op persistence, plain shortcut bodies, owned pipeline fallback.
 
-Non-executed shortcut arms (mode blocks, empty prompts) return control
+Non-executed shortcut arms (empty prompts) return control
 to the caller with the selection attached. The fallback arms (pipeline
 entry, plain-router abstain) return the owned no-LLM outcome
 (``pipeline_fallback_result``) — never None — so no surface reimplements
@@ -38,7 +38,6 @@ class PreparedAgentTurn:
 
     message: str
     session_id: Any
-    inference_mode: str = "auto"
     wants_stream: bool = True
     request_data: Mapping[str, Any] = field(default_factory=dict)
     project_path: str = ""
@@ -56,10 +55,9 @@ class PreparedAgentTurn:
 class AgentSelection:
     """Which arm handles the turn (single decision tree, all surfaces)."""
 
-    kind: str  # router_family | plain_router | harness | mode_blocked | harness_empty_prompt | pipeline
+    kind: str  # router_family | plain_router | harness | harness_empty_prompt | pipeline
     agent_id: Optional[str] = None
     prompt: Optional[str] = None
-    block_message: Optional[str] = None
 
 
 def default_match_harness(message: str, project_path: Optional[str] = None):
@@ -72,40 +70,21 @@ def default_match_harness(message: str, project_path: Optional[str] = None):
         return None
 
 
-def default_cloud_blocked(message: str, inference_mode: str) -> Optional[str]:
-    """Local-mode block message for cloud CLI slash commands, else None."""
-    from api.inference_mode import (
-        is_cloud_cli_slash_command,
-        cloud_cli_slash_blocked_message,
-    )
-
-    if is_cloud_cli_slash_command(message):
-        return cloud_cli_slash_blocked_message(inference_mode)
-    return None
-
-
 def select_agent_turn(
     message: str,
     *,
-    inference_mode: str,
     is_router_family: Callable[[str], bool],
     match_harness: Callable[..., Optional[Tuple[str, str]]] = default_match_harness,
-    cloud_blocked: Callable[[str, str], Optional[str]] = default_cloud_blocked,
     project_path: Optional[str] = None,
 ) -> AgentSelection:
     """One decision tree for every surface: router-family → harness
-    (mode block wins over execution, empty prompt wins over run) →
+    (empty prompt wins over run) →
     plain-router → pipeline fallback."""
     if is_router_family(message):
         return AgentSelection(kind="router_family")
     matched = match_harness(message, project_path)
     if matched:
         agent_id, prompt = matched
-        blocked = cloud_blocked(message, inference_mode)
-        if blocked:
-            return AgentSelection(
-                kind="mode_blocked", agent_id=agent_id, block_message=blocked
-            )
         if not prompt:
             return AgentSelection(kind="harness_empty_prompt", agent_id=agent_id)
         return AgentSelection(kind="harness", agent_id=agent_id, prompt=prompt)
@@ -202,12 +181,11 @@ def submit_agent_turn(
     message = prepared.message or ""
     sel = selection or select_agent_turn(
         message,
-        inference_mode=prepared.inference_mode,
         is_router_family=is_router_family,
         project_path=prepared.project_path or None,
     )
 
-    if sel.kind in ("mode_blocked", "harness_empty_prompt"):
+    if sel.kind == "harness_empty_prompt":
         return AgentTurnResult(
             body=io.format_shortcut(sel.kind, sel), status=200, selection=sel
         )
@@ -322,12 +300,11 @@ def submit_agent_stream_turn(
     message = prepared.message or ""
     sel = selection or select_agent_turn(
         message,
-        inference_mode=prepared.inference_mode,
         is_router_family=is_router_family,
         project_path=prepared.project_path or None,
     )
 
-    if sel.kind in ("mode_blocked", "harness_empty_prompt"):
+    if sel.kind == "harness_empty_prompt":
         yield ("shortcut", io.format_shortcut(sel.kind, sel))
         return
 

@@ -142,7 +142,6 @@ def complete(
     system: str = "",
     max_tokens: int = 200,
     temperature: float = 0.3,
-    inference_mode: str = "auto",
     openai_model: Optional[str] = None,
     anthropic_model: Optional[str] = None,
     timeout: float = 45.0,
@@ -152,14 +151,12 @@ def complete(
 ) -> Optional[str]:
     """Return cleaned completion text, or None if every provider failed.
 
-    ``inference_mode=local`` uses only the local server. Otherwise the order is
-    the provider registry's: the user's pinned provider (if any) first, then
+    The order is the provider registry's: the user's pinned provider (if any) first, then
     OpenAI → Anthropic → local. Pass ``providers`` to pin an exact chain
     (wrappers in titler/commit/enhance do this so tests can stub a hop).
     """
-    mode = (inference_mode or "auto").strip().lower()
     if providers is None:
-        providers = ("local",) if mode == "local" else resolve_order()
+        providers = resolve_order()
     oai = resolve_model("openai", openai_model)
     ant = resolve_model("anthropic", anthropic_model)
     for name in providers:

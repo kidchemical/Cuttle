@@ -269,8 +269,10 @@ def test_composer_caption_text_removed_everywhere():
     assert "Send queues follow-ups" not in html
     css = (REPO / "src" / "web" / "css" / "chat_page.css").read_text(encoding="utf-8")
     assert ".input-hint" not in css
-    # Empty footer (inference toggle disabled) collapses instead of gap.
-    assert ".input-footer:has(.inference-mode-bar[hidden])" in css
+    # The retired mode toggle and its empty footer are removed entirely.
+    assert "inference-mode-bar" not in html
+    assert "input-footer" not in html
+    assert "inference-mode-bar" not in css
 
 
 def test_keyboard_open_drops_nav_inset_under_composer():

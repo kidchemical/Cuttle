@@ -968,7 +968,6 @@ def test_palette_offers_cost_for_every_harness_badge(tmp_path):
     script = (
         f"const CuttleChatSlash = require({slash_mod!r});\n"
         "let slashCtx = {chat: {chips: []}, welcome: {chips: []}};\n"
-        "let mode = 'cloud';\nfunction readInferenceMode() { return mode; }\n"
         "const { isStickyAgentChip, isStickyMuseAgentChip, isStickyCodexAgentChip, "
         "isStickyHermesAgentChip, isStickyOpenCodeAgentChip, harnessCostSlashCommand, "
         "isHarnessNestedCommandChip, composerChipAgentId } = CuttleChatSlash;\n"
@@ -998,11 +997,6 @@ for (const [agent, chip] of Object.entries(badges)) {
 }
 slashCtx.chat.chips = [];
 out.none = harnessUsageSlashCommandsForPalette().length;
-mode = 'local';
-slashCtx.chat.chips = [badges.codex];
-out.localCodex = harnessUsageSlashCommandsForPalette().length;
-slashCtx.chat.chips = [badges.hermes];
-out.localHermes = harnessUsageSlashCommandsForPalette().map((c) => c.prefix);
 console.log(JSON.stringify(out));
 """
     )
@@ -1020,8 +1014,6 @@ console.log(JSON.stringify(out));
     for agent in ("deepseek", "antigravity"):
         assert res[agent]["prefixes"] == ["/cost"]
     assert res["none"] == 0
-    assert res["localCodex"] == 0
-    assert res["localHermes"] == ["/usage", "/usage-live", "/cost"]
 
 
 def test_cursor_palette_has_cost_and_sendable_gate():

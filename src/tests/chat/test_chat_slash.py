@@ -87,8 +87,7 @@ out.activeChip = S.activeStickyAgentChip([], [{ prefix: '/codex ' }]);
 // starred
 out.isStarred = S.isSlashCommandStarred(['/cursor '], '/cursor ');
 out.notStarred = S.isSlashCommandStarred(['/cursor '], '/codex ');
-out.starChips = S.starredStickyChips(['/cursor ', '/nope'], 'cloud');
-out.starChipsLocal = S.starredStickyChips(['/cursor '], 'local');
+out.starChips = S.starredStickyChips(['/cursor ', '/nope']);
 // native control
 out.nativeRestart = S.isNativeControlCommand('/restart graceful');
 out.nativeBare = S.isNativeControlCommand('restart');
@@ -213,7 +212,6 @@ def test_starred_and_control():
     assert res["notStarred"] is False
     assert res["starChips"] == [{"prefix": "/cursor ", "label": "Cursor Agent",
                                  "category": "cursor"}]
-    assert res["starChipsLocal"] == []  # cloud-only star drops in local mode
     assert res["nativeRestart"] is True
     assert res["nativeBare"] is False
     assert res["nativeAgent"] is False

@@ -23,7 +23,7 @@ resume: true
 capabilities_inject: once_per_resume
 env_profile: native
 activity: jsonl
-hint: Run Cursor Agent CLI (`agent -p`) with per-chat resume (Auto/Cloud)
+hint: Run Cursor Agent CLI (`agent -p`) with per-chat resume
 missing_cli_hint: >-
   Install the Cursor `agent` command (or legacy `cursor-agent`) and ensure it
   is on PATH.

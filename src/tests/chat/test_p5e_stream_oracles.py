@@ -616,7 +616,7 @@ def test_direct_stream_entry_busy_arm_claims_nothing():
 
 
 def test_direct_stream_entry_shortcut_arm_before_claim():
-    """Local-mode cloud slash yields the shortcut arm without claiming."""
+    """An empty harness prompt yields a shortcut without claiming."""
     from api.chat_coordinator import (
         PreparedAgentTurn,
         submit_agent_stream_turn,
@@ -626,8 +626,7 @@ def test_direct_stream_entry_shortcut_arm_before_claim():
     events = list(
         submit_agent_stream_turn(
             PreparedAgentTurn(
-                message="/cursor hi", session_id="p5e-dshort",
-                inference_mode="local",
+                message="/cursor", session_id="p5e-dshort",
             ),
             io=_entry_io(log, lambda *a, **k: (_ for _ in ()).throw(
                 AssertionError("executor must not run for shortcut"))),
@@ -637,7 +636,7 @@ def test_direct_stream_entry_shortcut_arm_before_claim():
     )
     assert len(events) == 1
     assert events[0][0] == "shortcut"
-    assert events[0][1]["shortcut"] == "mode_blocked"
+    assert events[0][1]["shortcut"] == "harness_empty_prompt"
     assert log == []  # not even a claim attempt
     assert chat_delivery.try_begin("p5e-dshort") is True
     chat_delivery.end("p5e-dshort")
