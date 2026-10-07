@@ -109,7 +109,9 @@ def test_executor_fast_forward_preserves_personal_and_delivers_helper(worker, ch
     if embedded:
         staged = list((tmp_path / 'state with spaces').rglob('client-update-checkout.py'))
         assert len(staged) == 1
-        assert staged[0].read_bytes() == (SCRIPTS / 'client-update-checkout.py').read_bytes()
+        # Embedded delivery is UTF-8 text; Windows may materialize CRLF.
+        # Compare the delivered source, while file preservation above stays byte-exact.
+        assert staged[0].read_text(encoding='utf-8') == params(client, embedded)['checkout_helper_text']
 
 
 @pytest.mark.parametrize('embedded', [False, True])
