@@ -27,6 +27,11 @@
         { name: 'Purple', hex: '#c58af9' },
         { name: 'Cyan', hex: '#78d9ec' },
         { name: 'Orange', hex: '#fcad70' },
+        { name: 'Teal', hex: '#469990' },
+        { name: 'Magenta', hex: '#f032e6' },
+        { name: 'Lime', hex: '#bfef45' },
+        { name: 'Brown', hex: '#9a6324' },
+        { name: 'Navy', hex: '#000075' },
     ];
     const STORAGE_KEY = 'shell_spaces_v1';
     const MAX_NAME = 60;
