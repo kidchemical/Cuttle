@@ -357,6 +357,17 @@ class AuthDatabase:
             'ON chat_widgets(user_id, project_path)'
         )
 
+        # Tasks gizmo audit shares the task write transaction.
+        cursor.execute('''CREATE TABLE IF NOT EXISTS task_gizmo_events (
+            sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+            gizmo_id TEXT NOT NULL, user_id INTEGER NOT NULL,
+            operation TEXT NOT NULL, actor TEXT NOT NULL,
+            before_state TEXT, after_state TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_task_gizmo_events '
+                       'ON task_gizmo_events(user_id, gizmo_id, sequence)')
         # Local username accounts (email remains for OAuth / legacy)
         try:
             cursor.execute('ALTER TABLE users ADD COLUMN username TEXT')
@@ -2177,6 +2188,9 @@ class AuthDatabase:
         status: str = "active",
         edit_mode: str = "agent",
         description: str = "",
+        actor: Optional[Dict[str, Any]] = None,
+        operation: str = "update",
+        expected_revision: Optional[int] = None,
     ) -> Optional[Dict[str, Any]]:
         if isinstance(payload, (dict, list)):
             payload_s = json.dumps(payload, ensure_ascii=False)
@@ -2189,55 +2203,98 @@ class AuthDatabase:
         while proj.endswith("/"):
             proj = proj[:-1]
         conn = self._get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT revision FROM chat_widgets WHERE id = ? AND user_id = ?",
-            (str(widget_id), int(user_id)),
-        )
-        prev = cursor.fetchone()
-        rev = int(prev["revision"] if prev else 0) + 1
-        cursor.execute(
-            '''
-            INSERT INTO chat_widgets (
-                id, user_id, type, title, description, scope, session_id, project_path,
-                payload, status, edit_mode, revision, updated_at, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            ON CONFLICT(id) DO UPDATE SET
-                user_id = excluded.user_id,
-                type = excluded.type,
-                title = excluded.title,
-                description = excluded.description,
-                scope = excluded.scope,
-                session_id = excluded.session_id,
-                project_path = excluded.project_path,
-                payload = excluded.payload,
-                status = excluded.status,
-                edit_mode = excluded.edit_mode,
-                revision = excluded.revision,
-                updated_at = CURRENT_TIMESTAMP
-            ''',
-            (
-                str(widget_id),
-                int(user_id),
-                str(wtype),
-                str(title or ""),
-                desc_n,
-                scope_n,
-                int(session_id) if session_id is not None and scope_n == "session" else None,
-                proj if scope_n == "project" else "",
-                payload_s,
-                str(status or "active"),
-                edit_n,
-                rev,
-            ),
-        )
-        conn.commit()
-        cursor.execute(
-            "SELECT * FROM chat_widgets WHERE id = ?", (str(widget_id),)
-        )
-        row = cursor.fetchone()
-        conn.close()
+        try:
+            with conn:
+                conn.execute("BEGIN IMMEDIATE")
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT * FROM chat_widgets WHERE id = ?",
+                    (str(widget_id),),
+                )
+                prev = cursor.fetchone()
+                if prev and int(prev["user_id"]) != int(user_id):
+                    raise ValueError("Tasks id belongs to another user")
+                if expected_revision is not None and int(prev["revision"] if prev else 0) != expected_revision:
+                    raise ValueError("Tasks revision conflict")
+                rev = int(prev["revision"] if prev else 0) + 1
+                cursor.execute(
+                    '''
+                    INSERT INTO chat_widgets (
+                        id, user_id, type, title, description, scope, session_id, project_path,
+                        payload, status, edit_mode, revision, updated_at, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ON CONFLICT(id) DO UPDATE SET
+                        user_id = excluded.user_id,
+                        type = excluded.type,
+                        title = excluded.title,
+                        description = excluded.description,
+                        scope = excluded.scope,
+                        session_id = excluded.session_id,
+                        project_path = excluded.project_path,
+                        payload = excluded.payload,
+                        status = excluded.status,
+                        edit_mode = excluded.edit_mode,
+                        revision = excluded.revision,
+                        updated_at = CURRENT_TIMESTAMP
+                    ''',
+                    (
+                        str(widget_id),
+                        int(user_id),
+                        str(wtype),
+                        str(title or ""),
+                        desc_n,
+                        scope_n,
+                        int(session_id) if session_id is not None and scope_n == "session" else None,
+                        proj if scope_n == "project" else "",
+                        payload_s,
+                        str(status or "active"),
+                        edit_n,
+                        rev,
+                    ),
+                )
+                cursor.execute(
+                    "SELECT * FROM chat_widgets WHERE id = ?", (str(widget_id),)
+                )
+                row = cursor.fetchone()
+                from core.agent_cli_env import operation_actor
+
+                cursor.execute(
+                    'INSERT INTO task_gizmo_events '
+                    '(gizmo_id, user_id, operation, actor, before_state, after_state) VALUES (?, ?, ?, ?, ?, ?)',
+                    (str(widget_id), int(user_id), operation if prev else "create",
+                     json.dumps(actor if actor is not None else operation_actor(source="legacy", session_id=session_id, user_id=user_id)),
+                     json.dumps(self._decode_widget_row(prev)) if prev else None,
+                     json.dumps(self._decode_widget_row(row))),
+                )
+        finally:
+            conn.close()
         return self._decode_widget_row(row)
+
+    def task_gizmo_history(self, widget_id: str, *, user_id: int, limit: int = 100):
+        conn = self._get_connection()
+        try:
+            rows = conn.execute(
+                'SELECT * FROM task_gizmo_events WHERE gizmo_id = ? AND user_id = ? '
+                'ORDER BY sequence DESC LIMIT ?', (widget_id, user_id, max(1, min(500, limit))),
+            ).fetchall()
+            out = []
+            for row in rows:
+                event = dict(row)
+                for key in ("actor", "before_state", "after_state"):
+                    event[key] = json.loads(event[key]) if event[key] else None
+                out.append(event)
+            return out
+        finally:
+            conn.close()
+
+    def record_task_gizmo_interaction(self, widget_id: str, *, user_id: int, operation: str, actor: dict):
+        conn = self._get_connection()
+        try:
+            with conn:
+                conn.execute('INSERT INTO task_gizmo_events (gizmo_id, user_id, operation, actor) '
+                             'VALUES (?, ?, ?, ?)', (widget_id, user_id, operation, json.dumps(actor)))
+        finally:
+            conn.close()
 
     def widgets_revision_for(
         self,
@@ -2246,19 +2303,16 @@ class AuthDatabase:
         session_id: Optional[int] = None,
         project_path: Optional[str] = None,
     ) -> int:
-        rows = self.list_chat_widgets(
-            user_id=user_id,
-            session_id=session_id,
-            project_path=project_path,
-            status="active",
-        )
-        rev = 0
-        for w in rows:
-            try:
-                rev = max(rev, int(w.get("revision") or 0))
-            except Exception:
-                pass
-        return rev
+        # A monotonic write sequence also observes archive/removal of the last
+        # active list and edits to a list whose row revision is below another's.
+        conn = self._get_connection()
+        try:
+            return int(conn.execute(
+                "SELECT COALESCE(MAX(sequence), 0) FROM task_gizmo_events "
+                "WHERE user_id = ? AND after_state IS NOT NULL", (int(user_id),)
+            ).fetchone()[0])
+        finally:
+            conn.close()
 
 
 # Singleton instance

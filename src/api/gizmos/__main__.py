@@ -111,9 +111,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_data.add_argument("gizmo_id")
     p_data.add_argument("--refresh", action="store_true")
 
+    p_history = sub.add_parser("history", help="attributed gizmo interaction log (survives removal)")
+    p_history.add_argument("gizmo_id")
+    p_history.add_argument("--limit", type=int, default=100)
+
     p_usage = sub.add_parser("usage", help="normalized plan usage for one agent")
     p_usage.add_argument("agent", nargs="?", help="omit to list providers")
     p_usage.add_argument("--refresh", action="store_true")
+    from api.gizmos.tasks_cli import add_parser
+    add_parser(sub)
     return parser
 
 
@@ -126,36 +132,55 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     from api.gizmos import FLAG_ID, is_enabled, service, usage
 
+    if args.cmd == "tasks":
+        from api.gizmos.tasks_cli import run
+        try:
+            return _emit(run(args))
+        except (service.GizmoError, ValueError) as exc:
+            return _emit({"success": False, "error": str(exc), "code": getattr(exc, "code", "invalid")}, 2)
+
     if not is_enabled():
         return _emit({"success": False, "disabled": True,
                       "error": f"gizmos flag is off (python -m api.experimental set {FLAG_ID} on)"}, 1)
+    from core.agent_cli_env import operation_actor
+    from api.gizmos import store
+    actor = operation_actor()
     try:
+        if args.cmd == "history":
+            return _emit({"success": True, "events": store.history(args.gizmo_id, args.limit)})
         if args.cmd == "types":
             return _emit({"success": True, "types": service.types()})
         if args.cmd == "list":
-            return _emit({"success": True, **service.list_payload()})
+            payload = service.list_payload()
+            for gizmo in payload["gizmos"]:
+                store.record_interaction(gizmo["id"], "list", actor)
+            return _emit({"success": True, **payload})
         if args.cmd == "get":
-            return _emit({"success": True, "gizmo": service.get(args.gizmo_id)})
+            gizmo = service.get(args.gizmo_id)
+            store.record_interaction(args.gizmo_id, "get", actor)
+            return _emit({"success": True, "gizmo": gizmo})
         if args.cmd == "create":
             gizmo = service.create(args.type, config=_config_from(args),
                                    placement=_placement_from(args) or None,
-                                   title=args.title, gizmo_id=args.gizmo_id, created_by="agent")
+                                   title=args.title, gizmo_id=args.gizmo_id, created_by="agent", actor=actor)
             return _emit({"success": True, "gizmo": gizmo})
         if args.cmd == "update":
             config = _config_from(args)
             placement = _placement_from(args)
             gizmo = service.update(args.gizmo_id, title=args.title,
-                                   config=config or None, placement=placement or None)
+                                   config=config or None, placement=placement or None, actor=actor)
             return _emit({"success": True, "gizmo": gizmo})
         if args.cmd == "move":
             placement = _placement_from(args)
             if not placement:
                 return _emit({"success": False, "error": "pass --dock and/or --order/--x/--y"}, 2)
-            return _emit({"success": True, "gizmo": service.update(args.gizmo_id, placement=placement)})
+            return _emit({"success": True, "gizmo": service.update(args.gizmo_id, placement=placement, actor=actor)})
         if args.cmd == "remove":
-            service.remove(args.gizmo_id)
+            service.remove(args.gizmo_id, actor=actor)
             return _emit({"success": True, "id": args.gizmo_id})
         if args.cmd == "data":
+            service.get(args.gizmo_id)
+            store.record_interaction(args.gizmo_id, "data", actor)
             return _emit({"success": True, "id": args.gizmo_id,
                           "data": service.resolve_data(args.gizmo_id, refresh=args.refresh)})
         if args.cmd == "usage":

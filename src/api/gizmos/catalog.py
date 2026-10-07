@@ -109,3 +109,19 @@ register_type(GizmoType(
     resolve_data=_usage_data,
     options=_usage_options,
 ))
+
+
+# Scoped composer gizmo. The Tasks transport carries chat identity and uses
+# auth-owned durable rows; it must not enter the install-wide placement store.
+def _tasks_config(raw, existing=None):
+    from api.gizmos.tasks_model import normalize_tasks_payload
+    return {**(existing or {}), **raw, **normalize_tasks_payload(raw if "items" in raw else existing)}
+
+
+register_type(GizmoType(
+    id="tasks", label="Tasks", icon="☑",
+    description="Chat/project plans updated through the Gizmos API throughout an agent turn.",
+    normalize_config=_tasks_config, default_title=lambda config: "Tasks",
+    resolve_data=lambda config, refresh: config,
+    options=lambda: {"docks": ["composer"], "scoped": True, "experimental": False},
+))

@@ -328,7 +328,7 @@ def test_tasks_digest_reaches_runtime_block(monkeypatch, tmp_path):
     from api.cuttle_brain.context_compiler import compile_context
 
     db, sid = _chat()
-    monkeypatch.setattr("api.chat_widgets.format_tasks_digest", lambda widgets: "## Active Tasks\n- [ ] ship it")
+    monkeypatch.setattr("api.gizmos.tasks_model.format_tasks_digest", lambda widgets: "## Active Tasks\n- [ ] ship it")
     compiled = compile_context("hi", project_path=str(tmp_path), chat_session_id=str(sid))
     assert "ship it" in compiled.envelope
 

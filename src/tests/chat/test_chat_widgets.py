@@ -161,9 +161,9 @@ def test_apply_widget_tags_upserts(tmp_path, monkeypatch):
     digest = format_tasks_digest([row2])
     assert "Tasks" in digest
     assert "`1`" in digest
-    assert "Patch only" in digest
-    assert "Do **not** create another Tasks" in digest
-    assert "pinned above composer" in digest
+    assert "api.gizmos tasks patch" in digest
+    assert "Do not create another list" in digest
+    assert "markdown tags" in digest
     assert "auto-archives" in digest
 
     # Last open item → auto-archive; strip chip notes archived.

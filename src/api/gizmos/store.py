@@ -53,7 +53,47 @@ def _connect() -> sqlite3.Connection:
         "CREATE TABLE IF NOT EXISTS gizmo_meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL)"
     )
     conn.execute("INSERT OR IGNORE INTO gizmo_meta (key, value) VALUES ('revision', 0)")
+    conn.execute('''CREATE TABLE IF NOT EXISTS gizmo_events (
+        sequence INTEGER PRIMARY KEY AUTOINCREMENT, gizmo_id TEXT NOT NULL,
+        operation TEXT NOT NULL, actor TEXT NOT NULL, before_state TEXT,
+        after_state TEXT, created_at REAL NOT NULL
+    )''')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_gizmo_events ON gizmo_events(gizmo_id, sequence)')
+    conn.commit()
     return conn
+
+
+def _event(conn, gizmo_id, operation, actor, before=None, after=None):
+    from core.agent_cli_env import operation_actor
+    conn.execute('INSERT INTO gizmo_events '
+                 '(gizmo_id, operation, actor, before_state, after_state, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+                 (gizmo_id, operation, json.dumps(actor if actor is not None else operation_actor(source="local")),
+                  json.dumps(before) if before else None, json.dumps(after) if after else None, time.time()))
+
+
+def history(gizmo_id: str, limit: int = 100):
+    conn = _connect()
+    try:
+        rows = conn.execute('SELECT * FROM gizmo_events WHERE gizmo_id = ? '
+                            'ORDER BY sequence DESC LIMIT ?', (gizmo_id, max(1, min(500, limit)))).fetchall()
+        out = []
+        for row in rows:
+            event = dict(row)
+            for key in ('actor', 'before_state', 'after_state'):
+                event[key] = json.loads(event[key]) if event[key] else None
+            out.append(event)
+        return out
+    finally:
+        conn.close()
+
+
+def record_interaction(gizmo_id, operation, actor):
+    conn = _connect()
+    try:
+        with conn:
+            _event(conn, gizmo_id, operation, actor)
+    finally:
+        conn.close()
 
 
 def _bump(conn: sqlite3.Connection) -> int:
@@ -100,7 +140,7 @@ def get_gizmo(gizmo_id: str) -> Optional[Dict[str, Any]]:
 
 
 def insert_gizmo(*, gizmo_id: str, gtype: str, title: str, config: Dict[str, Any],
-                 placement: Dict[str, Any], created_by: str) -> Dict[str, Any]:
+                 placement: Dict[str, Any], created_by: str, actor=None) -> Dict[str, Any]:
     now = time.time()
     conn = _connect()
     try:
@@ -112,16 +152,20 @@ def insert_gizmo(*, gizmo_id: str, gtype: str, title: str, config: Dict[str, Any
                 (gizmo_id, gtype, title, json.dumps(config), json.dumps(placement),
                  created_by, now, now, rev),
             )
+            after = _row(conn.execute('SELECT * FROM gizmos WHERE id = ?', (gizmo_id,)).fetchone())
+            _event(conn, gizmo_id, 'create', actor, after=after)
     finally:
         conn.close()
     return get_gizmo(gizmo_id) or {}
 
 
 def update_gizmo(gizmo_id: str, *, title: str, config: Dict[str, Any],
-                 placement: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+                 placement: Dict[str, Any], actor=None) -> Optional[Dict[str, Any]]:
     conn = _connect()
     try:
         with conn:
+            conn.execute('BEGIN IMMEDIATE')
+            before = conn.execute('SELECT * FROM gizmos WHERE id = ?', (gizmo_id,)).fetchone()
             rev = _bump(conn)
             cur = conn.execute(
                 "UPDATE gizmos SET title = ?, config = ?, placement = ?, updated_at = ?, "
@@ -130,6 +174,9 @@ def update_gizmo(gizmo_id: str, *, title: str, config: Dict[str, Any],
             )
             if cur.rowcount == 0:
                 raise LookupError(gizmo_id)
+            after = _row(conn.execute('SELECT * FROM gizmos WHERE id = ?', (gizmo_id,)).fetchone())
+            operation = 'move' if before and _row(before)['placement'] != placement else 'update'
+            _event(conn, gizmo_id, operation, actor, before=_row(before), after=after)
     except LookupError:
         return None
     finally:
@@ -137,13 +184,16 @@ def update_gizmo(gizmo_id: str, *, title: str, config: Dict[str, Any],
     return get_gizmo(gizmo_id)
 
 
-def delete_gizmo(gizmo_id: str) -> bool:
+def delete_gizmo(gizmo_id: str, *, actor=None) -> bool:
     conn = _connect()
     try:
         with conn:
+            conn.execute('BEGIN IMMEDIATE')
+            before = conn.execute('SELECT * FROM gizmos WHERE id = ?', (gizmo_id,)).fetchone()
             cur = conn.execute("DELETE FROM gizmos WHERE id = ?", (gizmo_id,))
             if cur.rowcount:
                 _bump(conn)
+                _event(conn, gizmo_id, 'remove', actor, before=_row(before))
             return cur.rowcount > 0
     finally:
         conn.close()

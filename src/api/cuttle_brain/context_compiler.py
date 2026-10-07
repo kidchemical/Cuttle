@@ -354,9 +354,10 @@ def _runtime_block(
             "(commands/rules/docs/actions)."
         )
 
-    # Active Tasks widgets for this chat / project (when available).
+    # Active Tasks gizmos for this chat / project (when available).
     try:
-        from api.chat_widgets import format_tasks_digest
+        from api.gizmos.tasks_model import format_tasks_digest
+        from api.gizmos.tasks import list_tasks
         from api.auth_db import get_auth_db
         from api.cuttle_ui_capabilities import parse_chat_handle
 
@@ -368,7 +369,8 @@ def _runtime_block(
             if sess:
                 uid = int(sess.get("user_id"))
                 proj = (sess.get("project_path") or "").strip()
-                widgets = db.list_chat_widgets(
+                widgets = list_tasks(
+                    db=db,
                     user_id=uid,
                     session_id=int(sid),
                     project_path=proj or None,

@@ -859,22 +859,26 @@ def run_agent_web_command(
             except Exception:
                 edit_baseline = None
             def _run_execute(prompt_text: str, resume_id: Optional[str]) -> AgentResult:
-                return asyncio.run(
-                    adapter.execute(
-                        prompt_text,
-                        **_adapter_execute_kwargs(
-                            adapter,
-                            cwd=cwd,
-                            resume=resume_id,
-                            model=model,
-                            status_queue=status_queue,
-                            chat_session_id=sid,
-                            timeout=timeout,
-                            cancel_event=cancel_event,
-                            **(execute_kwargs or {}),
-                        ),
+                from core.agent_cli_env import agent_operation_context
+
+                with agent_operation_context(session_id=sid, agent_id=manifest.id,
+                                             model=model, run_id=query_id, project_path=cwd):
+                    return asyncio.run(
+                        adapter.execute(
+                            prompt_text,
+                            **_adapter_execute_kwargs(
+                                adapter,
+                                cwd=cwd,
+                                resume=resume_id,
+                                model=model,
+                                status_queue=status_queue,
+                                chat_session_id=sid,
+                                timeout=timeout,
+                                cancel_event=cancel_event,
+                                **(execute_kwargs or {}),
+                            ),
+                        )
                     )
-                )
 
             try:
                 result = _run_execute(agent_prompt, resume)

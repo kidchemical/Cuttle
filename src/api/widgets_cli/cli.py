@@ -3,8 +3,8 @@
 Inspect and patch Tasks widgets stored in ``cuttle_auth.db``. Semantics match
 ``apply_tasks_patch`` / ``/api/widgets``.
 
-During a chat reply, prefer a ``<cuttle_widget op="patch">`` tag so the bubble
-shows the pin. Use this CLI to list/read, or to patch without emitting a tag.
+Compatibility alias. New agents use ``python -m api.gizmos tasks`` during
+planning and work; markdown tags are deprecated.
 
 Examples::
 
@@ -218,39 +218,11 @@ def cmd_patch(args: argparse.Namespace) -> int:
         )
         return 2
 
-    wtype = str(existing.get("type") or "tasks")
-    base = existing.get("payload") or {"items": []}
-    if isinstance(base, str):
-        try:
-            base = json.loads(base)
-        except Exception:
-            base = {"items": []}
-    payload = apply_tasks_patch(base, ops) if wtype == "tasks" else base
-    description = _description_from_sources(ops, existing=existing)
-    title = str(args.title or existing.get("title") or "Tasks").strip()
-    scope = _norm_scope(existing.get("scope"), "session")
-    edit_mode = _norm_edit_mode(existing.get("edit_mode"), "agent")
-    status = (
-        resolve_tasks_widget_status(
-            payload,
-            existing_status=existing.get("status"),
-        )
-        if wtype == "tasks"
-        else str(existing.get("status") or "active")
-    )
-    row = db.upsert_chat_widget(
-        widget_id=str(existing.get("id")),
-        user_id=int(existing["user_id"]),
-        wtype=wtype,
-        title=title,
-        scope=scope,
-        session_id=existing.get("session_id"),
-        project_path=existing.get("project_path") or "",
-        payload=payload,
-        status=status,
-        edit_mode=edit_mode,
-        description=description,
-    )
+    from api.gizmos import tasks
+    from core.agent_cli_env import operation_actor
+    if args.title is not None:
+        ops["title"] = args.title
+    row = tasks.patch(args.widget_id, ops, db=db, actor=operation_actor(source="legacy_cli"))
     widget = _public_widget(row or {})
     _emit({"ok": True, "widget": widget}, as_json=args.json, text=f"patched {widget.get('id')} rev={widget.get('revision')}\n")
     return 0

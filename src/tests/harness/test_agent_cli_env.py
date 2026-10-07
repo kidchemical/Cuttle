@@ -44,3 +44,28 @@ def test_bundled_catalog_does_not_request_host_api_credentials():
     for path in root.glob('*/manifest.yaml'):
         manifest = yaml.safe_load(path.read_text(encoding="utf-8"))
         assert not manifest.get('credential_env'), path
+
+
+def test_parallel_turn_contexts_are_isolated_and_propagate_to_tool_threads():
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from core.agent_cli_env import agent_operation_context
+    barrier = Barrier(2)
+    before = dict(os.environ)
+
+    def turn(sid):
+        with agent_operation_context(session_id=sid, agent_id='fixture',
+                                     model=f'model-{sid}', run_id=f'query-{sid}'):
+            barrier.wait(timeout=5)
+            async def sample():
+                return await asyncio.to_thread(agent_cli_env)
+            return asyncio.run(sample())
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outputs = list(pool.map(turn, ['111', '222']))
+    for sid, env in zip(['111', '222'], outputs):
+        assert env['CUTTLE_CHAT_SESSION_ID'] == sid
+        assert env['CUTTLE_AGENT_RUN_ID'] == f'query-{sid}'
+    assert dict(os.environ) == before
+    assert agent_cli_env() == agent_cli_env(before)

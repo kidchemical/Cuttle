@@ -368,7 +368,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--timeout", type=float, default=900.0)
     sp.add_argument("--route", action="store_true", help="Ask the Cuttle router to pick each child's harness")
     sp.add_argument("--watch", action="store_true", help="Write a job_watch status JSON with per-child bars")
-    sp.add_argument("--tasks", action="store_true", help="Pin a Tasks widget on the parent chat")
+    sp.add_argument("--tasks", action="store_true", help="Create a Tasks gizmo on the parent chat")
     sp.set_defaults(func=_cmd_spawn)
 
     st = sub.add_parser("status", parents=[common], help="Show a batch or all batches for a parent")

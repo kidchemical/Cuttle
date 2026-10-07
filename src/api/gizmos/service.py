@@ -100,11 +100,13 @@ def _next_order(dock: str) -> float:
 
 def create(type_id: str, *, config: Optional[Dict[str, Any]] = None,
            placement: Optional[Dict[str, Any]] = None, title: Optional[str] = None,
-           gizmo_id: Optional[str] = None, created_by: str = "ui") -> Dict[str, Any]:
+           gizmo_id: Optional[str] = None, created_by: str = "ui", actor=None) -> Dict[str, Any]:
     spec = catalog.get(type_id)
     if spec is None:
         known = ", ".join(t.id for t in catalog.all_types())
         raise GizmoError(f"unknown gizmo type {type_id!r} (known: {known})")
+    if spec.id == "tasks":
+        raise GizmoError("Tasks are chat-scoped: use python -m api.gizmos tasks create or POST /api/gizmos/tasks")
     if store.count() >= MAX_GIZMOS:
         raise GizmoError(f"gizmo limit reached ({MAX_GIZMOS}); remove one first")
     gid = str(gizmo_id or "").strip().lower() or f"{spec.id.replace('_', '-')}-{uuid.uuid4().hex[:8]}"
@@ -121,12 +123,12 @@ def create(type_id: str, *, config: Optional[Dict[str, Any]] = None,
         place["order"] = _next_order(place["dock"])
     who = created_by if created_by in CREATED_BY else "ui"
     row = store.insert_gizmo(gizmo_id=gid, gtype=spec.id, title=_title(title, spec.default_title(cfg)),
-                             config=cfg, placement=place, created_by=who)
+                             config=cfg, placement=place, created_by=who, actor=actor)
     return public(row)
 
 
 def update(gizmo_id: str, *, title: Optional[str] = None, config: Optional[Dict[str, Any]] = None,
-           placement: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+           placement: Optional[Dict[str, Any]] = None, actor=None) -> Dict[str, Any]:
     row = store.get_gizmo(str(gizmo_id or ""))
     if not row:
         raise GizmoError(f"gizmo {gizmo_id!r} not found", "not_found")
@@ -152,23 +154,23 @@ def update(gizmo_id: str, *, title: Optional[str] = None, config: Optional[Dict[
         new_title = spec.default_title(cfg)  # keep auto titles in step with the agent
     else:
         new_title = row["title"]
-    updated = store.update_gizmo(row["id"], title=new_title, config=cfg, placement=place)
+    updated = store.update_gizmo(row["id"], title=new_title, config=cfg, placement=place, actor=actor)
     if not updated:
         raise GizmoError(f"gizmo {gizmo_id!r} not found", "not_found")
     return public(updated)
 
 
 def move(gizmo_id: str, dock: str, *, order: Optional[float] = None,
-         x: Optional[float] = None, y: Optional[float] = None) -> Dict[str, Any]:
+         x: Optional[float] = None, y: Optional[float] = None, actor=None) -> Dict[str, Any]:
     placement: Dict[str, Any] = {"dock": dock}
     for key, value in (("order", order), ("x", x), ("y", y)):
         if value is not None:
             placement[key] = value
-    return update(gizmo_id, placement=placement)
+    return update(gizmo_id, placement=placement, actor=actor)
 
 
-def remove(gizmo_id: str) -> bool:
-    if not store.delete_gizmo(str(gizmo_id or "")):
+def remove(gizmo_id: str, *, actor=None) -> bool:
+    if not store.delete_gizmo(str(gizmo_id or ""), actor=actor):
         raise GizmoError(f"gizmo {gizmo_id!r} not found", "not_found")
     return True
 

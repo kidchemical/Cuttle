@@ -1,4 +1,4 @@
-"""Optional watch-card bars and parent Tasks widget for a sub-agent batch."""
+"""Optional watch-card bars and parent Tasks gizmo for a sub-agent batch."""
 
 from __future__ import annotations
 
@@ -95,17 +95,19 @@ def ensure_parent_tasks(db, batch: BatchRecord) -> Optional[str]:
             }
         )
     try:
-        db.upsert_chat_widget(
-            widget_id=batch.widget_id,
-            user_id=int(batch.user_id),
-            wtype="tasks",
-            title="Subagents",
-            scope="session",
-            session_id=int(batch.parent_session_id),
-            project_path="",
-            payload={"items": items},
-            description="High-level sub-agent objectives for this chat.",
-        )
+        from api.gizmos import tasks
+        from core.agent_cli_env import operation_actor
+        actor = operation_actor(source="subagents", session_id=batch.parent_session_id,
+                                user_id=batch.user_id)
+        actor["batch_id"] = batch.id
+        existing = db.get_chat_widget(batch.widget_id, user_id=batch.user_id)
+        if existing:
+            tasks.patch(batch.widget_id, {"items": items}, user_id=batch.user_id,
+                        session_id=batch.parent_session_id, db=db, actor=actor)
+        elif items:
+            tasks.create(gizmo_id=batch.widget_id, title="Subagents", items=items,
+                         session_id=batch.parent_session_id, user_id=batch.user_id,
+                         description="High-level sub-agent objectives for this chat.", db=db, actor=actor)
     except Exception:
         return None
     return batch.widget_id
