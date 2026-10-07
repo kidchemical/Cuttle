@@ -251,31 +251,100 @@
     font-size: 0.92em;
 }
 
+/* One row per agent; the detail (meta, hints, model/effort/steer) opens on tap. */
 .agent-cli-list {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-    gap: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
 }
 
 .agent-card {
     border: 1px solid var(--border-color);
     border-radius: 8px;
-    padding: 9px 11px;
+    padding: 4px 6px;
     background: var(--panel-hover, rgba(127, 127, 127, 0.06));
     display: flex;
     flex-direction: column;
-    gap: 5px;
+    gap: 0;
     min-width: 0;
 }
 
 .agent-card-head {
     display: flex;
     align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
+    gap: 8px;
+    width: 100%;
+    padding: 6px 5px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.agent-card-head:hover {
+    background: var(--panel-hover, rgba(127, 127, 127, 0.1));
+}
+
+.agent-card-head:focus-visible {
+    outline: 2px solid var(--accent-color);
+    outline-offset: 1px;
+}
+
+/* Glyph tile: text symbol from the catalog payload, initial letter fallback. */
+.agent-icon {
+    flex: 0 0 auto;
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1;
+    background: var(--section-bg);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+}
+
+/* CSS chevron: points right, rotates down when the row is open. */
+.agent-card-chevron {
+    flex: 0 0 auto;
+    width: 8px;
+    height: 8px;
+    margin-left: auto;
+    border-right: 2px solid var(--text-secondary);
+    border-bottom: 2px solid var(--text-secondary);
+    transform: rotate(-45deg);
+    transition: transform 0.15s ease;
+}
+
+.agent-card.is-open .agent-card-chevron {
+    transform: rotate(45deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .agent-card-chevron {
+        transition: none;
+    }
+}
+
+.agent-card-detail {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    padding: 2px 5px 6px 43px;
+}
+
+.agent-card-detail[hidden] {
+    display: none;
 }
 
 .agent-card-name {
+    flex: 1 1 100px;
     font-weight: 600;
     font-size: 0.86rem;
     color: var(--text-primary);
@@ -392,8 +461,8 @@
 }
 
 @media (max-width: 640px) {
-    .agent-cli-list {
-        grid-template-columns: 1fr;
+    .agent-card-detail {
+        padding-left: 5px;
     }
 
     .provider-picker select.setting-input,
@@ -401,6 +470,43 @@
         min-width: 0;
         width: 100%;
     }
+}
+
+/* ── Agents → Advanced (Git, drop-ins, routing, name live collapsed) ─────── */
+
+.settings-advanced-summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    list-style: none;
+}
+
+.settings-advanced-summary::-webkit-details-marker {
+    display: none;
+}
+
+.settings-advanced-summary::before {
+    content: '';
+    flex: 0 0 auto;
+    width: 8px;
+    height: 8px;
+    border-right: 2px solid var(--text-secondary);
+    border-bottom: 2px solid var(--text-secondary);
+    transform: rotate(-45deg);
+}
+
+.settings-advanced[open] > .settings-advanced-summary::before {
+    transform: rotate(45deg);
+}
+
+.settings-advanced-hint {
+    font-size: 0.72rem;
+    font-weight: 400;
+    color: var(--text-secondary);
 }
 
 /* ── Compact shell overrides ─────────────────────────────────── */
@@ -488,4 +594,44 @@ body.compact-shell-page .settings-scope {
     margin: 8px 0 12px;
     font-size: 13px;
     line-height: 1.5;
+}
+
+/* Agents stay readable at phone widths, including long drop-in labels. */
+.agent-card-head {
+    flex-wrap: wrap;
+    min-height: 44px;
+}
+.agent-card-name {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+.agent-card-head .provider-chip {
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+.agent-card-hint {
+    overflow-wrap: anywhere;
+}
+.agent-default-picker {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+.agent-default-picker select {
+    max-width: 100%;
+    min-width: 0;
+}
+@media (max-width: 640px) {
+    .agent-default-picker select {
+        width: 100%;
+    }
+    .agent-card-head .agent-card-slash {
+        display: none;
+    }
+    .agent-card-head .provider-chip {
+        max-width: 110px;
+    }
 }

@@ -4,7 +4,7 @@ Folder-per-agent. Adding an agent means filling `agents/<id>/` — **not** forki
 
 ```
 agents/<id>/
-  manifest.yaml   # declarative record (id, label, slash, models, resume, hints)
+  manifest.yaml   # declarative record (id, label, slash, models, resume, hints, icon)
   adapter.py      # build_adapter() -> object with available()/resolve_cwd()/*_resume()/execute()
   __init__.py     # optional for bundled package agents
 ```
@@ -249,6 +249,7 @@ remote-script auto-install). Bundled connectors declare **guidance
 only** so a missing CLI answers with an actionable message:
 
 ```yaml
+icon: "○"  # optional single-glyph Settings tile; empty falls back to the label initial
 executable_names: [tool-name]
 missing_cli_hint: >-
   Install Tool and ensure `tool` is on PATH (see https://…/docs/).

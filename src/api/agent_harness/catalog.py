@@ -170,9 +170,14 @@ def _manifest_from_dict(
     model_caps = ()
     if agent_dir is not None:
         model_caps = load_model_capability_rules(agent_dir, manifest_raw=data)
+    icon_raw = str(data.get("icon") or "").strip()
+    # Single short glyph only — never prose or a path. Keeps the wire shape
+    # boring for drop-ins that set something odd.
+    icon = icon_raw[:8]
     return AgentManifest(
         id=mid,
         label=str(data.get("label") or mid).strip(),
+        icon=icon,
         slash=_canonical_slash(str(data.get("slash") or ""), mid),
         requires_cloud=bool(data.get("requires_cloud", True)),
         sticky=bool(data.get("sticky", True)),

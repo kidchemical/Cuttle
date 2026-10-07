@@ -68,6 +68,10 @@ class AgentManifest:
     # Optional palette / UX
     hint: str = ""
     install_hint: str = ""
+    # Optional single-glyph tile for Settings (emoji or symbol, e.g. "◉").
+    # Empty = frontend falls back to the label initial. Never a logo file:
+    # no trademarked paths, no network, theme-neutral text glyphs only.
+    icon: str = ""
     # Trusted, declarative CLI bootstrap. Only bundled connectors may use it.
     install_kind: str = ""  # npm_global | script_url
     install_package: str = ""
@@ -120,6 +124,7 @@ class AgentManifest:
             "activity": self.activity,
             "hint": hint,
             "install_hint": install,
+            "icon": self.icon or "",
             "installable": bool(self.install_kind),
             "auto_install": bool(self.auto_install),
             "notes": self.notes,

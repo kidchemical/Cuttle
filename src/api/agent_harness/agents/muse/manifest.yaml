@@ -1,6 +1,7 @@
 id: muse
 label: Muse Code
 slash: /muse
+icon: "✦"
 requires_cloud: true
 sticky: true
 # Empty — unpinned turns omit --model so the Muse CLI default wins

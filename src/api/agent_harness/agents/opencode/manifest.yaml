@@ -1,6 +1,7 @@
 id: opencode
 label: OpenCode
 slash: /opencode
+icon: "○"
 requires_cloud: true
 auth_command: opencode auth login
 sticky: true

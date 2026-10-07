@@ -1,6 +1,7 @@
 id: hermes
 label: Hermes Agent
 slash: /hermes
+icon: "⬣"
 requires_cloud: false
 # Auth is the CLI's own login; no Cuttle-managed credential.
 sticky: true

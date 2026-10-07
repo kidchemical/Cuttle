@@ -497,6 +497,25 @@ def test_opencode_effort_store_roundtrip(tmp_path, monkeypatch):
     assert store.load_opencode_effort("s1") is None
 
 
+def test_public_catalog_icon_tiles_come_from_manifests():
+    """Settings tiles render agent.icon from the manifest, never a page map."""
+    from api.agent_harness.types import AgentManifest
+
+    rows = public_catalog()
+    by_id = {r["id"]: r for r in rows}
+    for aid, pair in (("cursor", get_agent("cursor")), ("codex", get_agent("codex"))):
+        assert pair is not None
+        assert pair[0].icon, f"{aid} manifest needs an icon glyph"
+        assert by_id[aid]["icon"] == pair[0].icon
+    # Wire shape stays boring: short glyph, always present, never prose.
+    for row in rows:
+        assert "icon" in row
+        assert isinstance(row["icon"], str)
+        assert len(row["icon"]) <= 8
+    # Default: empty manifest icon falls back to the label initial in the page.
+    assert AgentManifest(id="x", label="X", slash="/x").to_public_dict()["icon"] == ""
+
+
 def test_public_catalog_install_ux_fields():
     rows = public_catalog()
     by_id = {r["id"]: r for r in rows}
