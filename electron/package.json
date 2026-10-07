@@ -13,10 +13,12 @@
     "bugs":  {
                  "url":  "https://github.com/kidchemical/Cuttle/issues"
              },
+    "engines":  {
+                    "node":  ">=22.12.0"
+                },
     "scripts":  {
                     "start":  "electron .",
-                    "engines": { "node": ">=22.12.0" },
-    "build":  "electron-builder build --win --publish never",
+                    "build":  "electron-builder build --win --publish never",
                     "build:dir":  "electron-builder build --win --dir",
                     "build:linux":  "electron-builder build --linux AppImage --publish never",
                     "build:linux:dir":  "electron-builder build --linux --dir",
