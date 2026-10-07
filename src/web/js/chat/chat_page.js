@@ -290,6 +290,12 @@
         if (authKey && authKey !== key) _sessionTitleById[authKey] = name;
     }
 
+    function updateChatSessionArchivedBadge(sessionId) {
+        const badge = document.getElementById('chatSessionArchivedBadge');
+        if (!badge) return;
+        badge.hidden = !(sessionId != null && sessionId !== '' && isChatSessionArchived(sessionId));
+    }
+
     function updateChatSessionTitle(sessionId) {
         const wrap = document.getElementById('chatSessionTitle');
         const text = document.getElementById('chatSessionTitleText');
@@ -299,6 +305,7 @@
             text.textContent = '';
             wrap.removeAttribute('title');
             updateChatSessionStarButton(null);
+            updateChatSessionArchivedBadge(null);
             updateSessionTitleUnreadDot();
             updateSessionTitleRunningIcon();
             return;
@@ -318,6 +325,7 @@
         wrap.title = name;
         wrap.hidden = false;
         updateChatSessionStarButton(sessionId);
+        updateChatSessionArchivedBadge(sessionId);
         updateSessionTitleUnreadDot();
         updateSessionTitleRunningIcon();
     }
@@ -6543,15 +6551,15 @@
         if (!data || typeof data !== 'object') return;
         const key = sessionId != null ? String(sessionId) : '';
         const serverModel = sessionPin(data, 'muse', 'model');
-        if (serverModel) {
+        if (serverModel && !slashPaletteSupplement.museModelDirty) {
             slashPaletteSupplement.museModel = serverModel;
             if (key) slashPaletteSupplement.museModelsKey = key;
         }
         const serverEffort = sessionPin(data, 'muse', 'effort').toLowerCase();
-        if (serverEffort) {
+        if (serverEffort && !slashPaletteSupplement.museEffortDirty) {
             slashPaletteSupplement.museEffort = serverEffort;
             if (key) slashPaletteSupplement.museEffortKey = key;
-        } else if (key && data && ((data.agent_pins && data.agent_pins.muse) || ('muse_effort' in data))) {
+        } else if (!slashPaletteSupplement.museEffortDirty && key && data && ((data.agent_pins && data.agent_pins.muse) || ('muse_effort' in data))) {
             // Explicitly unpinned — don't inherit another chat's effort.
             slashPaletteSupplement.museEffort = '';
             slashPaletteSupplement.museEffortKey = key;
@@ -6697,15 +6705,15 @@
         if (!data || typeof data !== 'object') return;
         const key = sessionId != null ? String(sessionId) : '';
         const serverModel = sessionPin(data, 'hermes', 'model');
-        if (serverModel) {
+        if (serverModel && !slashPaletteSupplement.hermesModelDirty) {
             slashPaletteSupplement.hermesModel = serverModel;
             if (key) slashPaletteSupplement.hermesModelsKey = key;
         }
         const serverEffort = sessionPin(data, 'hermes', 'effort').toLowerCase();
-        if (serverEffort) {
+        if (serverEffort && !slashPaletteSupplement.hermesEffortDirty) {
             slashPaletteSupplement.hermesEffort = serverEffort;
             if (key) slashPaletteSupplement.hermesEffortKey = key;
-        } else if (key && data && ((data.agent_pins && data.agent_pins.hermes) || ('hermes_effort' in data))) {
+        } else if (!slashPaletteSupplement.hermesEffortDirty && key && data && ((data.agent_pins && data.agent_pins.hermes) || ('hermes_effort' in data))) {
             slashPaletteSupplement.hermesEffort = '';
             slashPaletteSupplement.hermesEffortKey = key;
         }
@@ -7000,15 +7008,15 @@
         if (!data || typeof data !== 'object') return;
         const key = sessionId != null ? String(sessionId) : '';
         const serverModel = sessionPin(data, 'opencode', 'model');
-        if (serverModel) {
+        if (serverModel && !slashPaletteSupplement.opencodeModelDirty) {
             slashPaletteSupplement.opencodeModel = serverModel;
             if (key) slashPaletteSupplement.opencodeModelsKey = key;
         }
         const serverEffort = sessionPin(data, 'opencode', 'effort').toLowerCase();
-        if (serverEffort) {
+        if (serverEffort && !slashPaletteSupplement.opencodeEffortDirty) {
             slashPaletteSupplement.opencodeEffort = serverEffort;
             if (key) slashPaletteSupplement.opencodeEffortKey = key;
-        } else if (key && data && ((data.agent_pins && data.agent_pins.opencode) || ('opencode_effort' in data))) {
+        } else if (!slashPaletteSupplement.opencodeEffortDirty && key && data && ((data.agent_pins && data.agent_pins.opencode) || ('opencode_effort' in data))) {
             slashPaletteSupplement.opencodeEffort = '';
             slashPaletteSupplement.opencodeEffortKey = key;
         }
@@ -7304,15 +7312,15 @@
         if (!data || typeof data !== 'object') return;
         const key = sessionId != null ? String(sessionId) : '';
         const serverModel = sessionPin(data, 'codex', 'model');
-        if (serverModel) {
+        if (serverModel && !slashPaletteSupplement.codexModelDirty) {
             slashPaletteSupplement.codexModel = serverModel;
             if (key) slashPaletteSupplement.codexModelsKey = key;
         }
         const serverEffort = sessionPin(data, 'codex', 'effort').toLowerCase();
-        if (serverEffort) {
+        if (serverEffort && !slashPaletteSupplement.codexEffortDirty) {
             slashPaletteSupplement.codexEffort = serverEffort;
             if (key) slashPaletteSupplement.codexEffortKey = key;
-        } else if (key && data && ((data.agent_pins && data.agent_pins.codex) || ('codex_effort' in data))) {
+        } else if (!slashPaletteSupplement.codexEffortDirty && key && data && ((data.agent_pins && data.agent_pins.codex) || ('codex_effort' in data))) {
             slashPaletteSupplement.codexEffort = '';
             slashPaletteSupplement.codexEffortKey = key;
         }
@@ -7728,15 +7736,15 @@
         if (!data || typeof data !== 'object') return;
         const key = sessionId != null ? String(sessionId) : '';
         const serverModel = sessionPin(data, 'claude', 'model');
-        if (serverModel) {
+        if (serverModel && !slashPaletteSupplement.claudeModelDirty) {
             slashPaletteSupplement.claudeModel = serverModel;
             if (key) slashPaletteSupplement.claudeModelsKey = key;
         }
         const serverEffort = sessionPin(data, 'claude', 'effort').toLowerCase();
-        if (serverEffort) {
+        if (serverEffort && !slashPaletteSupplement.claudeEffortDirty) {
             slashPaletteSupplement.claudeEffort = serverEffort;
             if (key) slashPaletteSupplement.claudeEffortKey = key;
-        } else if (key && data && ((data.agent_pins && data.agent_pins.claude) || ('claude_effort' in data))) {
+        } else if (!slashPaletteSupplement.claudeEffortDirty && key && data && ((data.agent_pins && data.agent_pins.claude) || ('claude_effort' in data))) {
             slashPaletteSupplement.claudeEffort = '';
             slashPaletteSupplement.claudeEffortKey = key;
         }
@@ -8524,7 +8532,7 @@
                 if (!hasStickyAgentChip()) markStickyAgentCleared(true);
                 renderSlashChips(key, textarea);
                 renderSlashChips(other, document.getElementById(other === 'chat' ? 'chatInput' : 'welcomeChatInput'));
-                persistStickySlashForCurrentSession();
+                persistStickySlashForCurrentSession(true);
                 saveComposerDraftControls(currentSessionId || 'new', key);
                 if (textarea) {
                     try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
@@ -9109,7 +9117,7 @@
             slashCtx[other].chips = ctx.chips.slice();
             renderSlashChips(other, document.getElementById(other === 'chat' ? 'chatInput' : 'welcomeChatInput'));
             markStickyAgentCleared(false);
-            persistStickySlashForCurrentSession();
+            persistStickySlashForCurrentSession(true);
         }
         renderSlashChips(key, textarea);
         try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
@@ -9312,7 +9320,7 @@
         hideSlashMenu('chat');
         renderSlashChips('chat', document.getElementById('chatInput'));
         renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-        persistStickySlashForCurrentSession();
+        persistStickySlashForCurrentSession(true);
         return stickyCmd;
     }
 
@@ -9330,7 +9338,7 @@
         return CuttleChatSlash.isStickySlashAssistantFailure(stickyCmd, data);
     }
 
-    function persistStickySlashForCurrentSession() {
+    function persistStickySlashForCurrentSession(publishShared = false) {
         const prefsId = currentSessionId || newComposerPrefsId;
         const chips = (slashCtx.chat.chips && slashCtx.chat.chips.length)
             ? slashCtx.chat.chips
@@ -9340,7 +9348,7 @@
             return match && match.stickySession;
         });
         if (sticky.length) stickyAgentClearedPending = false;
-        updateSessionPrefs(prefsId, {
+        const selection = {
             stickyChips: sticky.map((c) => {
                 const live = liveAgentBadgeLabelForChip(c);
                 const paletteCat = resolveSlashChipPaletteCategory(c);
@@ -9351,7 +9359,9 @@
                 };
             }),
             stickyCleared: sticky.length ? false : stickyAgentClearedPending,
-        });
+        };
+        updateSessionPrefs(prefsId, selection);
+        if (publishShared) publishSharedComposerSelection(selection);
     }
 
     // Removing the agent badge is a real choice: this chat must fall through to
@@ -9400,6 +9410,80 @@
         if (getSessionPrefs(newComposerPrefsId)) {
             restoreSessionStickySlash(newComposerPrefsId, []);
         }
+    }
+
+    // Session-scoped snapshots: execution identity and next-send preferences
+    // have distinct lifetimes. Canonical ids also cover CH-/db_session aliases.
+    const turnBadgeBySession = new Map();
+    const sharedComposerState = new Map();
+
+    function rememberTurnBadge(messages, liveStatus) {
+        // Before the new user row is saved, a local send's history poll may
+        // still contain the previous turn. Its send-time snapshot stays put.
+        if (isLoadingThisSession() && !(liveStatus && liveStatus.active && liveStatus.slash_command)) return;
+        const meta = CuttleChatAgentModel.turnSlashFromMessages(messages, liveStatus);
+        if (meta !== undefined) {
+            turnBadgeBySession.set(String(canonicalizeChatSessionId(currentSessionId) || ''), meta);
+        }
+    }
+
+    function hydrateAgentSelectionFromSessionData(data, sessionId) {
+        const incoming = data && data.composer_selection;
+        const state = sharedComposerState.get(String(canonicalizeChatSessionId(sessionId)));
+        // Reject stale/pending-write snapshots BEFORE seeding model/effort as
+        // well as the chip. Otherwise a delayed GET could undo an accepted pick.
+        if (incoming && !CuttleChatAgentModel.shouldAdoptComposerSelection(incoming, state)) return;
+        seedMuseSupplementFromSessionData(data, sessionId);
+        seedHermesSupplementFromSessionData(data, sessionId);
+        seedOpenCodeSupplementFromSessionData(data, sessionId);
+        seedCodexSupplementFromSessionData(data, sessionId);
+        seedClaudeSupplementFromSessionData(data, sessionId);
+        applySharedComposerSelection(data, sessionId);
+    }
+
+    function applySharedComposerSelection(data, sessionId) {
+        const incoming = data && data.composer_selection;
+        const key = String(canonicalizeChatSessionId(sessionId));
+        const state = sharedComposerState.get(key);
+        if (!CuttleChatAgentModel.shouldAdoptComposerSelection(incoming, state)) return;
+        const revision = Number(incoming.revision || 0);
+        const pins = JSON.stringify(data.agent_pins || {});
+        if (state && state.appliedRevision === revision && state.pins === pins) return;
+        sharedComposerState.set(key, { ...state, revision, appliedRevision: revision, pins });
+        const prefs = getSessionPrefs(sessionId);
+        const draft = prefs && prefs.composerDraft;
+        const composerDraft = CuttleChatComposer.draftWithSharedAgent(
+            draft, incoming, CuttleChatSlash.SLASH_COMMANDS
+        );
+        updateSessionPrefs(sessionId, {
+            stickyChips: incoming.stickyChips,
+            stickyCleared: !!incoming.stickyCleared,
+            composerDraft,
+        });
+        restoreSessionStickySlash(sessionId, []);
+    }
+
+    function publishSharedComposerSelection(selection) {
+        const sid = toAuthDbSessionId(currentSessionId);
+        if (!isAuthMode() || !sid || !/^\d+$/.test(sid)) return;
+        const key = String(canonicalizeChatSessionId(currentSessionId));
+        const state = sharedComposerState.get(key) || { revision: 0 };
+        state.pending = (state.pending || 0) + 1;
+        sharedComposerState.set(key, state);
+        // Serialize local writes so a slow earlier choice cannot win later.
+        state.write = (state.write || Promise.resolve()).catch(() => {}).then(async () => {
+            const response = await fetch('/api/auth/sessions/' + sid + '/composer', {
+                method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(selection),
+            });
+            if (!response.ok) throw new Error('Composer sync HTTP ' + response.status);
+            const result = await response.json();
+            if (result.success && result.composer_selection) {
+                state.revision = Math.max(state.revision, Number(result.composer_selection.revision || 0));
+            }
+        }).catch((error) => {
+            console.warn('[Cuttle Chat] composer selection sync failed:', error);
+        }).finally(() => { state.pending--; });
     }
 
     function restoreSessionStickySlash(sessionId, messages) {
@@ -10230,26 +10314,9 @@
         return CuttleChatSlash.activeStickyAgentChip(slashCtx.chat.chips, slashCtx.welcome.chips);
     }
 
-    /**
-     * Sticky agent chip + preferred model/effort — used when typing UI is
-     * recreated mid-run (chat switch while still generating).
-     */
+    /** Frozen turn identity, also used when recreating typing UI after navigation. */
     function currentTypingSlashMeta() {
-        const sticky = activeStickyAgentChip();
-        if (!sticky) return null;
-        const prefix = String(sticky.prefix || sticky.meta || '').trim();
-        const metaTok = (prefix.split(/\s+/)[0] || prefix);
-        return pendingSlashForTypingIndicator(
-            {
-                chips: [{
-                    label: sticky.label || metaTok || 'Agent',
-                    meta: sticky.meta || metaTok,
-                    category: sticky.category || 'command',
-                    prefix: sticky.prefix,
-                }],
-            },
-            sticky
-        );
+        return turnBadgeBySession.get(String(canonicalizeChatSessionId(currentSessionId) || '')) || null;
     }
 
     function syncPreferredModelFromResponse(data) {
@@ -11866,6 +11933,22 @@
     }
 
     // Chat history panel (off-canvas) — opened by the corner button
+    // The slide transition lives only under .hist-slide (applied here and in
+    // close): the panel has no base transition, so viewport/breakpoint flips
+    // from shell resizes can never replay as a visible sweep.
+    let historyPanelSlideTimer = 0;
+    function animateHistoryPanelSlide(panel) {
+        if (!panel) return;
+        if (historyPanelSlideTimer) clearTimeout(historyPanelSlideTimer);
+        panel.classList.add('hist-slide');
+        // Let the class paint before the open-state flips, then drop it so
+        // later style flips stay instant.
+        void panel.offsetWidth;
+        historyPanelSlideTimer = setTimeout(function () {
+            panel.classList.remove('hist-slide');
+            historyPanelSlideTimer = 0;
+        }, 350);
+    }
     function openChatHistoryPanel() {
         const panel = getChatHistoryPanel();
         const overlay = document.getElementById('chatHistoryPanelOverlay');
@@ -11875,6 +11958,7 @@
         if (window.CuttleTooltips && typeof window.CuttleTooltips.hide === 'function') {
             window.CuttleTooltips.hide();
         }
+        animateHistoryPanelSlide(panel);
         panel.classList.add('open');
         if (overlay) overlay.classList.add('active');
         // Pull latest sessions on open so chats started on another device show up
@@ -11895,6 +11979,7 @@
         historyGroupVisibleCount.clear();
         const panel = getChatHistoryPanel();
         const overlay = document.getElementById('chatHistoryPanelOverlay');
+        animateHistoryPanelSlide(panel);
         if (panel) panel.classList.remove('open', 'mobile-open');
         if (overlay) overlay.classList.remove('active');
         stopHistoryGeneratingPoll();
@@ -12634,11 +12719,7 @@
                     // Same for Muse: the messages payload carries the session
                     // pins, so badges paint correctly on the first pass with
                     // no /api/muse/* round trip (and no heal flicker).
-                    seedMuseSupplementFromSessionData(data, sessionId);
-                    seedHermesSupplementFromSessionData(data, sessionId);
-                    seedOpenCodeSupplementFromSessionData(data, sessionId);
-                    seedCodexSupplementFromSessionData(data, sessionId);
-                    seedClaudeSupplementFromSessionData(data, sessionId);
+                    hydrateAgentSelectionFromSessionData(data, sessionId);
                     applySessionIdentity(data);
                     // Title from the same payload — don't wait for the session
                     // list (history panel) or the delayed title-refresh timers.
@@ -13005,6 +13086,11 @@
             migrateComposerDraft(prev, sessionId);
             if (!isAuthMode()) migrateLocalChatSession(prev, sessionId);
         }
+        const previousBadgeKey = String(canonicalizeChatSessionId(prev) || '');
+        if (previousBadgeKey !== String(sessionId) && turnBadgeBySession.has(previousBadgeKey)) {
+            turnBadgeBySession.set(String(sessionId), turnBadgeBySession.get(previousBadgeKey));
+            turnBadgeBySession.delete(previousBadgeKey);
+        }
         const wasNew = currentSessionId == null || !sessionIdsEqual(currentSessionId, sessionId);
         if (window.CuttleCompletionNotifications && generation.loading) {
             window.CuttleCompletionNotifications.broker().adopt(prev || completionNotificationPendingId, sessionId);
@@ -13021,7 +13107,7 @@
         if (prev == null) clearSessionPrefs(newComposerPrefsId);
         // Persist project / sticky agent chosen before the server assigned an id.
         persistProjectForCurrentSession();
-        persistStickySlashForCurrentSession();
+        persistStickySlashForCurrentSession(wasNew);
         // Persist a Muse model/effort picked while the chat had no id yet. Only
         // dirty picks persist here — persisting the in-memory default would
         // clobber the stored pin (e.g. Contributor reset to plain Spark 1.3).
@@ -13992,6 +14078,8 @@
     }
 
     function updateRemoteWaitingFromMessages(messages, liveStatus) {
+        rememberTurnBadge(messages, liveStatus);
+        refreshTypingIndicatorHeaderBadges();
         noteWidgetsRevision(liveStatus);
         updateSupervisedTaskIndicator(liveStatus, currentSessionId);
         // Local stream owns this chat's turn — keep/restore the typing bubble
@@ -14626,11 +14714,7 @@
             if (!syncStillCurrent()) return;
             applyServerFollowups(data.followups);
             // Keep badges truthful on incremental syncs too (same seeding as open).
-            seedMuseSupplementFromSessionData(data, currentSessionId);
-            seedHermesSupplementFromSessionData(data, currentSessionId);
-            seedOpenCodeSupplementFromSessionData(data, currentSessionId);
-            seedCodexSupplementFromSessionData(data, currentSessionId);
-            seedClaudeSupplementFromSessionData(data, currentSessionId);
+            hydrateAgentSelectionFromSessionData(data, currentSessionId);
             applySessionIdentity(data);
             if (data.session_name) {
                 rememberChatSessionTitle(currentSessionId, data.session_name);
@@ -16379,6 +16463,8 @@
             archivedChatSessions = [];
             archivedSessionsLoaded = true;
             renderArchivedSection();
+            if (typeof currentSessionId !== 'undefined' && currentSessionId != null && currentSessionId !== '')
+                updateChatSessionTitle(currentSessionId);
             return;
         }
         try {
@@ -16402,6 +16488,10 @@
             console.error('Error loading archived sessions:', error);
         }
         renderArchivedSection();
+        // Archived marks arrive after the title renders on page load (and
+        // change on archive toggle) — re-sync the title-bar badge.
+        if (typeof currentSessionId !== 'undefined' && currentSessionId != null && currentSessionId !== '')
+            updateChatSessionTitle(currentSessionId);
     }
 
     function renderArchivedSection() {
@@ -18130,6 +18220,7 @@
         const pendingSlash = replySlash
             ? pendingSlashForTypingIndicator(replySlash, stickyCmd)
             : null;
+        turnBadgeBySession.set(String(canonicalizeChatSessionId(currentSessionId) || ''), pendingSlash);
         addTypingIndicator(pendingSlash);
 
         let skipFollowupDrain = false;
@@ -18297,6 +18388,10 @@
                                         finalResult = streamEv.result;
                                     } else if (streamEv.kind === 'query') {
                                         sawProgress = true;
+                                        if (canPaintTurnHere() && ev.slash_command) {
+                                            rememberTurnBadge([], { active: true, slash_command: ev.slash_command });
+                                            refreshTypingIndicatorHeaderBadges();
+                                        }
                                         if (streamEv.reportUrl && canPaintTurnHere()) {
                                             updateTypingIndicatorQueryLink(streamEv.reportUrl);
                                             const qid = streamEv.queryId || '';

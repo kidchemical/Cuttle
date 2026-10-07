@@ -479,3 +479,105 @@ def test_v1_flat_layout_migrates(browser, static_server):
         assert errors == [], errors
     finally:
         context.close()
+
+
+def _park_state(page):
+    return page.evaluate(
+        """() => {
+            const live = [...document.querySelectorAll(
+                ".split-column:not([data-split-discarded='1'])")];
+            const col = document.querySelector(
+                ".split-column[data-leaf-id='L1']");
+            const main = col && col.querySelector('.shell-main');
+            const rail = col && col.querySelector('.icon-rail');
+            const frame = col && col.querySelector(
+                'iframe[data-park-probe="live"]');
+            return {
+                leaves: live.length,
+                parked: document.querySelectorAll(
+                    '.split-column.pane-collapsed').length,
+                colWidth: col ? col.offsetWidth : -1,
+                railVisible: !!(rail && rail.offsetWidth > 0),
+                mainWidth: main ? main.offsetWidth : -1,
+                frameAlive: !!(frame && frame.contentDocument),
+                expandHandle: !!document.querySelector(
+                    '#splitContainer > .split-resize-handle.pane-expand'),
+            };
+        }""")
+
+
+def _saved_leaf_collapsed(page, leaf_id):
+    root = _saved_root(page)
+    found = {}
+
+    def walk(node):
+        if node.get("type") == "leaf":
+            if node.get("id") == leaf_id:
+                found["collapsed"] = node.get("collapsed", False)
+            return
+        for child in node.get("children", []):
+            walk(child)
+
+    walk(root)
+    assert "collapsed" in found, f"leaf {leaf_id} missing from saved root"
+    return found["collapsed"]
+
+
+def test_collapsed_pane_parks_to_blade_and_restores(browser, static_server):
+    """Parking (not closing) a pane: blade stays, divider restores it."""
+    world = ShellWorld()
+    context, page, errors, blocked = _open(
+        browser, static_server, world, seed=V2_NESTED)
+    try:
+        _load_shell(page, static_server)
+        _pump_until(page, lambda: _col_count(page) == 3, 20000, "3 panes")
+        # Park L1 through the same entry the sub-100px drag release uses.
+        # Tag its live iframe first: parking must not touch the frame.
+        page.evaluate(
+            "() => { const col = document.querySelector("
+            "\" .split-column[data-leaf-id='L1']\");"
+            " col.querySelector('iframe').dataset.parkProbe = 'live';"
+            " window.setPaneCollapsed(col, true); }")
+        _pump_until(page, lambda: _park_state(page)["parked"] == 1,
+                    20000, "L1 parked")
+        state = _park_state(page)
+        assert state["leaves"] == 3, state       # parked, not closed
+        assert state["railVisible"], state       # blade toolbar stays put
+        assert state["mainWidth"] == 0, state    # content hidden in place
+        assert state["frameAlive"], state        # live iframe untouched
+        assert state["expandHandle"], state      # divider restore affordance
+        assert 48 <= state["colWidth"] <= 64, state  # blade width only
+        assert _saved_leaf_collapsed(page, "L1") is True
+        # Park survives a full reload through the restore path.
+        page.reload(wait_until="domcontentloaded")
+        page.wait_for_function(
+            "typeof window.snapshotLayoutTree === 'function'")
+        _pump_until(page, lambda: _col_count(page) == 3, 20000,
+                    "3 panes after reload")
+        _pump_until(page, lambda: _park_state(page)["parked"] == 1,
+                    20000, "park restored after reload")
+        # Restore through the real divider UI (release, not a drag).
+        page.locator(
+            "#splitContainer > .split-resize-handle.pane-expand").click()
+        _pump_until(page, lambda: _park_state(page)["parked"] == 0,
+                    20000, "L1 restored")
+        restored = page.evaluate(
+            """() => {
+                const col = document.querySelector(
+                    ".split-column[data-leaf-id='L1']");
+                return {
+                    leaves: [...document.querySelectorAll(
+                        ".split-column:not([data-split-discarded='1'])")
+                    ].length,
+                    colWidth: col ? col.offsetWidth : -1,
+                    expandHandle: !!document.querySelector(
+                        '.split-resize-handle.pane-expand'),
+                };
+            }""")
+        assert restored["leaves"] == 3, restored
+        assert restored["colWidth"] > 100, restored
+        assert not restored["expandHandle"], restored
+        _assert_blocked_api_free(blocked)
+        assert errors == [], errors
+    finally:
+        context.close()

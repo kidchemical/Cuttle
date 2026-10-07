@@ -1796,6 +1796,7 @@ def chat_live_status():
         'updated_at': live.get('updated_at'),
         'report_url': live.get('report_url'),
         'query_id': live.get('query_id'),
+        'slash_command': live.get('slash_command'),
         # Busy lock OR live status — stream can die while the worker is still going.
         # Deliberately excludes supervised background work (separate field).
         # Cancelled (Stop) wins: refresh must not resurrect the spinner.
@@ -1870,6 +1871,7 @@ def chat_live_status_batch():
             'updated_at': live.get('updated_at'),
             'report_url': live.get('report_url'),
             'query_id': live.get('query_id'),
+            'slash_command': live.get('slash_command'),
             'generating': generating,
             'cancelled': cancelled,
             'supervised_task': supervised,
@@ -3716,7 +3718,7 @@ def _frame_stream_lifecycle_event(kind, payload, session_id_for_status):
     if kind == 'query_started':
         _pq = payload or {}
         return [
-            f"data: {json.dumps({'type': 'query_started', 'query_id': _pq.get('query_id'), 'report_url': _pq.get('report_url')}, ensure_ascii=False)}\n\n"
+            f"data: {json.dumps({'type': 'query_started', 'query_id': _pq.get('query_id'), 'report_url': _pq.get('report_url'), 'slash_command': _pq.get('slash_command')}, ensure_ascii=False)}\n\n"
         ]
     if kind == 'done':
         result = payload or {}

@@ -69,6 +69,80 @@ def test_slash_palette_click_off_and_selection(welcome):
     assert input.input_value() != '/'
 
 
+def test_history_panel_never_slides_except_on_toggle(welcome):
+    """Closed history panel stays parked across the 768px sheet breakpoint.
+
+    Regression: the hidden panel docks to opposite edges above/below
+    768px, and an armed slide transition replayed that flip as a visible
+    horizontal sweep on every chat-width change (pane drag, + button).
+    """
+    page = welcome
+    errors = []
+    page.on("pageerror", lambda exc: errors.append(str(exc)))
+    panel = page.locator("#chatHistoryPanel")
+
+    def panel_state():
+        return panel.evaluate("""el => {
+            const cs = getComputedStyle(el);
+            const rect = el.getBoundingClientRect();
+            return {
+                open: el.classList.contains('open'),
+                sliding: el.classList.contains('hist-slide'),
+                duration: cs.transitionDuration,
+                x: rect.x,
+                width: rect.width,
+                viewport: window.innerWidth,
+            };
+        }""")
+
+    # Wide pane: closed panel carries no transition and sits fully off-edge.
+    page.set_viewport_size({"width": 900, "height": 844})
+    rest = panel_state()
+    assert rest["open"] is False
+    assert rest["duration"] in ("0s", ""), rest
+    assert rest["x"] + rest["width"] <= 0, rest
+    # Crossing the breakpoint must jump, never sweep: read back immediately
+    # (inside the old 0.28s window) and require the docked rest pose.
+    page.set_viewport_size({"width": 700, "height": 844})
+    crossed = panel_state()
+    assert crossed["open"] is False, crossed
+    assert crossed["x"] >= crossed["viewport"], crossed
+    page.set_viewport_size({"width": 900, "height": 844})
+    back = panel_state()
+    assert back["x"] + back["width"] <= 0, back
+    # Intentional open still slides, then settles open without the class.
+    page.locator("#chatHistoryPanelButton").click()
+    page.wait_for_function(
+        "document.getElementById('chatHistoryPanel')"
+        ".classList.contains('hist-slide')",
+        timeout=2000)
+    page.wait_for_function(
+        "document.getElementById('chatHistoryPanel')"
+        ".classList.contains('open')",
+        timeout=2000)
+    page.wait_for_function(
+        "!document.getElementById('chatHistoryPanel')"
+        ".classList.contains('hist-slide')",
+        timeout=5000)
+    opened = panel_state()
+    assert opened["open"] is True, opened
+    assert opened["duration"] in ("0s", ""), opened
+    # Intentional close slides shut and ends fully parked (via the
+    # panel's own close button — the open sheet covers the corner one).
+    page.locator("#chatHistoryPanelClose").click()
+    page.wait_for_function(
+        "!document.getElementById('chatHistoryPanel')"
+        ".classList.contains('open')",
+        timeout=5000)
+    page.wait_for_function(
+        "!document.getElementById('chatHistoryPanel')"
+        ".classList.contains('hist-slide')",
+        timeout=5000)
+    shut = panel_state()
+    assert shut["x"] + shut["width"] <= 0, shut
+    assert errors == [], errors
+
+
 def test_tiny_welcome_can_scroll_a_tall_draft(welcome):
     page = welcome
     page.set_viewport_size({"width": 390, "height": 180})

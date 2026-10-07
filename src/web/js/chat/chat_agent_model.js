@@ -183,7 +183,32 @@
         return patch;
     }
 
+    // A running badge never reads next-send controls. Live execution wins;
+    // before it arrives, use the latest real user's frozen send-time badge.
+    function turnSlashFromMessages(messages, liveStatus) {
+        if (liveStatus && liveStatus.active && liveStatus.slash_command) return liveStatus.slash_command;
+        for (let i = (messages || []).length - 1; i >= 0; i--) {
+            const message = messages[i];
+            if (!message || message.role !== 'user') continue;
+            let meta = message.metadata || {};
+            if (typeof meta === 'string') {
+                try { meta = JSON.parse(meta); } catch (_) { meta = {}; }
+            }
+            if (meta.steered || meta.speaker_kind === 'parent') continue;
+            return meta.slash_command || message.slash_command || null;
+        }
+        return undefined; // An empty hub update supplies no new transcript.
+    }
+
+    function shouldAdoptComposerSelection(incoming, state) {
+        return !!incoming && Array.isArray(incoming.stickyChips)
+            && !(state && state.pending)
+            && Number(incoming.revision || 0) >= Number((state && state.revision) || 0);
+    }
+
     const api = {
+        turnSlashFromMessages,
+        shouldAdoptComposerSelection,
         draftOverrides,
         draftSupplementPatch,
         sessionPin,

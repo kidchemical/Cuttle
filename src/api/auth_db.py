@@ -161,6 +161,8 @@ class AuthDatabase:
             'ALTER TABLE chat_sessions ADD COLUMN discord_channel_id TEXT',
             'ALTER TABLE chat_sessions ADD COLUMN discord_username TEXT',
             'ALTER TABLE chat_sessions ADD COLUMN followup_queue TEXT',
+            'ALTER TABLE chat_sessions ADD COLUMN composer_selection TEXT',
+            'ALTER TABLE chat_sessions ADD COLUMN composer_revision INTEGER DEFAULT 0',
         ):
             try:
                 cursor.execute(col_sql)
@@ -1610,6 +1612,17 @@ class AuthDatabase:
         ''', (chat_session_id, role, content, metadata_json))
         
         message_id = cursor.lastrowid
+        # A send from any surface updates the shared next-turn agent, using
+        # the frozen user badge. Steers and parent-injected messages do not.
+        if role == 'user':
+            from api.chat_composer_selection import selection_from_message
+            selection = selection_from_message(metadata)
+            if selection is not None:
+                cursor.execute(
+                    'UPDATE chat_sessions SET composer_selection = ?, '
+                    'composer_revision = composer_revision + 1 WHERE id = ?',
+                    (json.dumps(selection), chat_session_id),
+                )
         conn.commit()
         conn.close()
         
@@ -1617,6 +1630,52 @@ class AuthDatabase:
         self.update_session_activity(chat_session_id)
         
         return message_id
+
+    def get_composer_selection(self, session_id: int, user_id: int) -> Optional[Dict]:
+        """Owned shared preference, with a read-only legacy-history fallback."""
+        conn = self._get_connection()
+        try:
+            row = conn.execute(
+                'SELECT composer_selection, composer_revision FROM chat_sessions '
+                'WHERE id = ? AND user_id = ? AND is_active = 1',
+                (session_id, user_id),
+            ).fetchone()
+            if row is None:
+                return None
+            if row['composer_selection']:
+                return {**json.loads(row['composer_selection']), 'revision': row['composer_revision']}
+            from api.chat_composer_selection import selection_from_message
+            for msg in conn.execute(
+                "SELECT metadata FROM chat_messages WHERE chat_session_id = ? "
+                "AND role = 'user' ORDER BY id DESC LIMIT 40", (session_id,),
+            ):
+                try:
+                    metadata = json.loads(msg['metadata'] or '{}')
+                except (TypeError, ValueError):
+                    continue
+                selection = selection_from_message(metadata)
+                if selection is not None:
+                    return {**selection, 'revision': 0}
+            return None
+        finally:
+            conn.close()
+
+    def set_composer_selection(self, session_id: int, user_id: int, value: Dict) -> Optional[Dict]:
+        from api.chat_composer_selection import normalize_selection
+        selection = normalize_selection(value)
+        conn = self._get_connection()
+        try:
+            row = conn.execute(
+                'UPDATE chat_sessions SET composer_selection = ?, '
+                'composer_revision = composer_revision + 1 '
+                'WHERE id = ? AND user_id = ? AND is_active = 1 '
+                'RETURNING composer_revision',
+                (json.dumps(selection), session_id, user_id),
+            ).fetchone()
+            conn.commit()
+            return {**selection, 'revision': row['composer_revision']} if row else None
+        finally:
+            conn.close()
 
     def get_completion_message(self, chat_session_id: int, delivery_key: str) -> Optional[Dict]:
         """Recover the canonical persisted completion receipt."""

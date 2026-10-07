@@ -1101,6 +1101,66 @@ body.is-electron .split-group.split-vertical > .split-group {
     background: var(--accent, #4f8cff);
 }
 
+/* Drag-release below SPLIT_COLLAPSE_PX parks the pane — preview it. */
+.split-column.pane-will-collapse .shell-main {
+    opacity: 0.45;
+}
+.split-column.pane-will-collapse {
+    outline: 1px dashed rgba(229, 83, 75, 0.7);
+    outline-offset: -1px;
+}
+.split-resize-handle.will-collapse {
+    background: rgba(229, 83, 75, 0.85);
+}
+
+/* Parked viewport pane: blade toolbar stays, content hides in place. The
+   live iframe keeps running untouched — this is a layout park, not a close.
+   Stylesheet guard (!important) beats any inline ratio flex writers. */
+.split-column.pane-collapsed {
+    flex: 0 0 auto !important;
+    grid-template-columns: var(--rail-width) 0;
+}
+.split-column.pane-collapsed .shell-main {
+    width: 0;
+    min-width: 0;
+    overflow: hidden;
+    visibility: hidden;
+}
+
+/* Divider touching a parked pane: wider, clickable restore affordance with
+   a chevron pointing at the parked side. */
+.split-resize-handle.pane-expand {
+    width: 11px;
+    flex-basis: 11px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--panel-border, #2a2a3e);
+    cursor: pointer;
+}
+.split-resize-handle.pane-expand::after {
+    content: '›';
+    font-size: 11px;
+    line-height: 1;
+    color: var(--panel-dim, #606070);
+}
+.split-resize-handle.pane-expand[data-expand-dir='right']::after {
+    content: '›';
+}
+.split-resize-handle.pane-expand[data-expand-dir='left']::after {
+    content: '‹';
+}
+.split-resize-handle.pane-expand[data-expand-dir='both']::after {
+    content: '‹›';
+    font-size: 9px;
+}
+.split-resize-handle.pane-expand:hover {
+    background: var(--accent, #4f8cff);
+}
+.split-resize-handle.pane-expand:hover::after {
+    color: #fff;
+}
+
 /* ================================================================
    ICON RAIL
    ================================================================ */

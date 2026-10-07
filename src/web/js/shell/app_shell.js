@@ -760,6 +760,7 @@ function snapshotLayoutTree(nodeEl) {
             page,
             flex: nodeEl.style.flex || '',
         };
+        if (state && state.paneCollapsed) entry.collapsed = true;
         if (handles.chat) entry.chat = String(handles.chat);
         if (handles.terminal) entry.terminal = String(handles.terminal);
         if (!entry.chat || !entry.terminal) {
@@ -3280,6 +3281,70 @@ function addSplitColumn(initialPage, opts) {
 // ── Split sizing (per-group; ratios scale with window) ───────────
 const SPLIT_MIN_PX = 72;           // horizontal (width) floor
 const SPLIT_MIN_PX_VERTICAL = 36;  // vertical (height) floor — keep short stacks scrollable
+const SPLIT_COLLAPSE_PX = 100;     // horizontal drag-release below this parks the pane
+
+function isPaneCollapsedEl(el) {
+    return !!(el && el.classList && el.classList.contains('pane-collapsed'));
+}
+
+/**
+ * Park / restore a viewport pane in place. Collapsing keeps the blade
+ * toolbar (rail) visible and usable and hides only .shell-main; the live
+ * iframe is never touched, so there is no teardown, renumber, or reload
+ * flash. The rail is forced open on collapse so the blade never vanishes.
+ * Options: { quiet: true } applies class/flex/state only (layout restore —
+ * the caller owns redistribute + persist).
+ */
+function setPaneCollapsed(colOrIdx, collapsed, opts) {
+    const col = (typeof colOrIdx === 'number' || typeof colOrIdx === 'string')
+        ? getColumnEl(parseInt(colOrIdx, 10))
+        : colOrIdx;
+    if (!col || !col.classList?.contains('split-column')) return false;
+    collapsed = !!collapsed;
+    const idx = parseInt(col.dataset.column, 10);
+    col.classList.toggle('pane-collapsed', collapsed);
+    if (Number.isFinite(idx)) getState(idx).paneCollapsed = collapsed;
+    if (collapsed) {
+        applyRailCollapsed(idx, false);
+        col.style.flex = '0 0 auto';
+        clearPaneBoxStyles(col);
+    } else {
+        col.style.flex = '';
+        clearPaneBoxStyles(col);
+    }
+    if (opts && opts.quiet) return true;
+    const host = getLeafParentGroup(col);
+    const kids = host ? getGroupChildNodes(host) : [];
+    if (kids.length >= 2) {
+        applySplitRatioFlex(kids, kids.map(() => 1), getGroupOrientation(host), host);
+    } else if (kids.length === 1) {
+        kids[0].style.flex = '';
+        clearPaneBoxStyles(kids[0]);
+    }
+    if (host) rebuildGroupResizeHandles(host);
+    persistSplitLayout();
+    return true;
+}
+
+/** Restore collapsed panes adjacent to a divider (the expand affordance). */
+function expandAdjacentCollapsedPanes(groupEl, leftPos, rightPos) {
+    if (!groupEl) return false;
+    const cols = getGroupChildNodes(groupEl);
+    let expanded = false;
+    [cols[leftPos], cols[rightPos]].forEach((col) => {
+        if (col && col.classList?.contains('split-column') && isPaneCollapsedEl(col)) {
+            // Quiet each restore; one redistribute + persist at the end.
+            setPaneCollapsed(col, false, { quiet: true });
+            expanded = true;
+        }
+    });
+    if (!expanded) return false;
+    const kids = getGroupChildNodes(groupEl);
+    applySplitRatioFlex(kids, kids.map(() => 1), getGroupOrientation(groupEl), groupEl);
+    rebuildGroupResizeHandles(groupEl);
+    persistSplitLayout();
+    return true;
+}
 /** Must match `.split-resize-handle` thickness in app_shell.css */
 const SPLIT_HANDLE_PX = 5;
 
@@ -3369,17 +3434,30 @@ function applySplitRatioFlex(cols, widths, orientation, groupEl) {
     const group = groupEl || (cols[0] && getLeafParentGroup(cols[0])) || splitContainer;
     const ori = orientation || getGroupOrientation(group);
     const budget = getSplitGroupBudget(group, cols.length);
-    const weights = cols.map((_, i) => Math.max(0, Number(widths?.[i]) || 0));
+    // Collapsed panes stay pinned to their blade width; only fluid panes
+    // share the remaining budget.
+    const pinned = cols.map((c) => (isPaneCollapsedEl(c) ? measureSplitMain(c, ori) : 0));
+    const pinnedTotal = pinned.reduce((a, b) => a + b, 0);
+    const fluidIdx = cols.map((_, i) => i).filter((i) => !pinned[i]);
+    cols.forEach((c, i) => {
+        if (pinned[i]) {
+            c.style.flex = '0 0 auto';
+            clearPaneBoxStyles(c);
+        }
+    });
+    if (fluidIdx.length === 0) return;
+    const fluidBudget = Math.max(fluidIdx.length, budget - pinnedTotal);
+    const weights = fluidIdx.map((i) => Math.max(0, Number(widths?.[i]) || 0));
     const weightSum = weights.reduce((a, b) => a + b, 0);
     const normalized = weightSum > 0
-        ? weights.map((w) => (w / weightSum) * budget)
-        : cols.map(() => budget / cols.length);
-    const safe = clampSplitWidths(normalized, budget, ori);
+        ? weights.map((w) => (w / weightSum) * fluidBudget)
+        : fluidIdx.map(() => fluidBudget / fluidIdx.length);
+    const safe = clampSplitWidths(normalized, fluidBudget, ori);
     const total = safe.reduce((a, b) => a + b, 0) || 1;
-    cols.forEach((c, i) => {
-        const ratio = safe[i] / total;
-        c.style.flex = `${ratio.toFixed(6)} 1 0%`;
-        clearPaneBoxStyles(c);
+    fluidIdx.forEach((colIdx, k) => {
+        const ratio = safe[k] / total;
+        cols[colIdx].style.flex = `${ratio.toFixed(6)} 1 0%`;
+        clearPaneBoxStyles(cols[colIdx]);
     });
 }
 
@@ -3417,6 +3495,12 @@ function applySplitPixelFlex(cols, widths, orientation, groupEl) {
     const budget = getSplitGroupBudget(group, cols.length);
     const clamped = clampSplitWidths(widths, budget, ori);
     cols.forEach((c, i) => {
+        // A parked pane never takes pixel flex — it keeps its blade width.
+        if (isPaneCollapsedEl(c)) {
+            c.style.flex = '0 0 auto';
+            clamped[i] = measureSplitMain(c, ori);
+            return;
+        }
         c.style.flex = `0 0 ${clamped[i]}px`;
     });
     return clamped;
@@ -3530,6 +3614,7 @@ function mountLayoutTree(node, parentEl, opts) {
             applyLayoutToColumn(col, lastUILayout);
         }
         if (col && node.flex) col.style.flex = node.flex;
+        if (col && node.collapsed) setPaneCollapsed(col, true, { quiet: true });
         return;
     }
 
@@ -3650,6 +3735,9 @@ function restoreSplitLayout() {
             if (!node || !el) return;
             if (node.type === 'leaf' || (!node.type && node.page)) {
                 if (node.flex) el.style.flex = node.flex;
+                if (node.collapsed && el.classList?.contains('split-column')) {
+                    setPaneCollapsed(el, true, { quiet: true });
+                }
                 return;
             }
             if (node.type === 'group') {
@@ -3659,6 +3747,8 @@ function restoreSplitLayout() {
             }
         };
         applyFlexWalk(layout.root, splitContainer);
+        // Parked panes change which dividers are restore affordances.
+        rebuildSplitResizeHandles();
         // Drop empty nested groups that would show as blank blade-less regions.
         sanitizeSplitDom();
     } finally {
@@ -6842,6 +6932,20 @@ function rebuildGroupResizeHandles(groupEl) {
         handle.style.order = String(i * 2 + 1);
         handle.dataset.groupId = groupEl.dataset.groupId || groupEl.id || '';
         handle.dataset.between = `${i}-${i + 1}`;
+        // A divider touching a parked pane restores it on release — mark it
+        // as an expand affordance (chevron points at the parked side).
+        const leftParked = isPaneCollapsedEl(kids[i]);
+        const rightParked = isPaneCollapsedEl(kids[i + 1]);
+        if (leftParked || rightParked) {
+            handle.classList.add('pane-expand');
+            handle.dataset.expand = '1';
+            handle.title = 'Expand pane';
+            handle.setAttribute('role', 'button');
+            handle.setAttribute('aria-label', 'Expand collapsed pane');
+            if (leftParked && !rightParked) handle.dataset.expandDir = 'left';
+            else if (rightParked && !leftParked) handle.dataset.expandDir = 'right';
+            else handle.dataset.expandDir = 'both';
+        }
         groupEl.appendChild(handle);
         setupGroupSplitResize(handle, groupEl, i, i + 1);
     }
@@ -7223,11 +7327,39 @@ function setupGroupSplitResize(handleEl, groupEl, leftPos, rightPos) {
         if (!dragging) return;
         dragging = false;
         handleEl.classList.remove('dragging');
+        handleEl.classList.remove('will-collapse');
         splitContainer?.classList.remove('split-resizing');
         document.body.style.cursor = '';
         document.body.style.userSelect = '';
+        groupEl?.querySelectorAll(':scope > .pane-will-collapse').forEach((c) => {
+            c.classList.remove('pane-will-collapse');
+        });
         finalizeGroupToRatios(groupEl);
         persistSplitLayout();
+    }
+
+    /**
+     * Collapse a pane in place: it parks down to its blade toolbar (the
+     * rail stays visible and usable) with the content hidden but the live
+     * iframe untouched — no teardown, no renumber, no navigation. The
+     * adjacent divider becomes the restore affordance. Single-pane shells
+     * and vertical stacks never collapse.
+     */
+    function maybeCollapseNarrowPane(cols, shrinkingPos, widths, vertical) {
+        if (vertical || shrinkingPos < 0 || shrinkingPos >= cols.length) return false;
+        if (!Array.isArray(widths) || widths[shrinkingPos] >= SPLIT_COLLAPSE_PX) return false;
+        const target = cols[shrinkingPos];
+        if (!target?.classList?.contains('split-column')) return false;
+        if (isPaneCollapsedEl(target)) return false;
+        if (getGroupChildNodes(groupEl).length < 2) return false;
+        handleEl.classList.remove('dragging');
+        handleEl.classList.remove('will-collapse');
+        splitContainer?.classList.remove('split-resizing');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        dragging = false;
+        setPaneCollapsed(target, true);
+        return true;
     }
 
     handleEl.addEventListener('pointerdown', (e) => {
@@ -7236,6 +7368,20 @@ function setupGroupSplitResize(handleEl, groupEl, leftPos, rightPos) {
         if (cols.length < 2) return;
         if (leftPos < 0 || rightPos < 0 || rightPos !== leftPos + 1) return;
         if (rightPos >= cols.length) return;
+
+        // Divider next to a parked pane is a restore affordance, not a
+        // resize: release brings the pane back, no drag tracking.
+        if (handleEl.dataset.expand === '1') {
+            e.preventDefault();
+            const done = () => {
+                handleEl.removeEventListener('pointerup', done);
+                handleEl.removeEventListener('pointercancel', done);
+                expandAdjacentCollapsedPanes(groupEl, leftPos, rightPos);
+            };
+            handleEl.addEventListener('pointerup', done);
+            handleEl.addEventListener('pointercancel', done);
+            return;
+        }
 
         e.preventDefault();
         handleEl.setPointerCapture(e.pointerId);
@@ -7257,6 +7403,8 @@ function setupGroupSplitResize(handleEl, groupEl, leftPos, rightPos) {
         document.body.style.userSelect = 'none';
 
         applySplitPixelFlex(cols, startWidths, ori, groupEl);
+        let lastWidths = startWidths.slice();
+        let lastShrinking = -1;
 
         const onMove = (ev) => {
             if (!dragging) return;
@@ -7266,36 +7414,60 @@ function setupGroupSplitResize(handleEl, groupEl, leftPos, rightPos) {
 
             if (remaining > 0) {
                 for (let i = rightPos; i < widths.length && remaining > 0; i++) {
+                    if (isPaneCollapsedEl(cols[i])) continue;
                     const can = widths[i] - minPx;
                     if (can <= 0) continue;
                     const take = Math.min(can, remaining);
                     widths[i] -= take;
                     remaining -= take;
                 }
-                widths[leftPos] += delta - remaining;
+                if (!isPaneCollapsedEl(cols[leftPos])) widths[leftPos] += delta - remaining;
             } else if (remaining < 0) {
                 let need = -remaining;
                 for (let i = leftPos; i >= 0 && need > 0; i--) {
+                    if (isPaneCollapsedEl(cols[i])) continue;
                     const can = widths[i] - minPx;
                     if (can <= 0) continue;
                     const take = Math.min(can, need);
                     widths[i] -= take;
                     need -= take;
                 }
-                widths[rightPos] += (-remaining) - need;
+                if (!isPaneCollapsedEl(cols[rightPos])) widths[rightPos] += (-remaining) - need;
             }
             applySplitPixelFlex(cols, widths, ori, groupEl);
+            // Collapse preview: flag the shrinking pane while it sits under
+            // SPLIT_COLLAPSE_PX so release-to-park is visible mid-drag.
+            lastWidths = widths;
+            lastShrinking = delta > 0 ? rightPos : (delta < 0 ? leftPos : -1);
+            const willCollapse = !vertical
+                && lastShrinking >= 0
+                && widths[lastShrinking] < SPLIT_COLLAPSE_PX
+                && cols[lastShrinking]?.classList?.contains('split-column');
+            cols.forEach((c, i) => {
+                c.classList.toggle('pane-will-collapse', !!willCollapse && i === lastShrinking);
+            });
+            handleEl.classList.toggle('will-collapse', !!willCollapse);
         };
-        const onUp = () => {
+        const endDragListeners = () => {
             try { handleEl.releasePointerCapture(e.pointerId); } catch (_) {}
             handleEl.removeEventListener('pointermove', onMove);
             handleEl.removeEventListener('pointerup', onUp);
-            handleEl.removeEventListener('pointercancel', onUp);
+            handleEl.removeEventListener('pointercancel', onCancel);
+        };
+        const onUp = () => {
+            endDragListeners();
+            if (maybeCollapseNarrowPane(cols, lastShrinking, lastWidths, vertical)) return;
+            stopDrag();
+        };
+        // An interrupted gesture leaves the pane at its last dragged size —
+        // only a real release snaps a sub-threshold pane shut.
+        const onCancel = () => {
+            endDragListeners();
             stopDrag();
         };
         handleEl.addEventListener('pointermove', onMove);
         handleEl.addEventListener('pointerup', onUp);
-        handleEl.addEventListener('pointercancel', onUp);
+        handleEl.addEventListener('pointercancel', onCancel);
     });
     // Intentionally no document/window listeners — rebuilds used to leak them and freeze Chrome.
 }

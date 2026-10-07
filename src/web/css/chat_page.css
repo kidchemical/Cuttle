@@ -246,7 +246,10 @@ body {
     border-radius: 0 16px 16px 0;
     display: flex;
     flex-direction: column;
-    transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+    /* No base transition: the hidden panel docks to opposite edges above /
+       below 768px, and an armed transition would replay that flip as a
+       visible sweep on every iframe resize (pane drag, + button, rotate).
+       The slide runs only under .hist-slide, applied by open/close. */
     z-index: 200;
     position: fixed;
     top: 0;
@@ -261,6 +264,10 @@ body {
 
 .chat-history-panel.open {
     transform: translateX(0);
+}
+
+.chat-history-panel.hist-slide {
+    transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 /* Collapsed chat history panel */
@@ -463,6 +470,23 @@ body {
 }
 
 .chat-session-title-star[hidden] {
+    display: none !important;
+}
+
+.chat-session-archived-badge {
+    flex: 0 0 auto;
+    font-size: 12px;
+    font-weight: 550;
+    color: #c9ced6;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 12px;
+    padding: 1px 8px;
+    line-height: 1.5;
+    white-space: nowrap;
+}
+
+.chat-session-archived-badge[hidden] {
     display: none !important;
 }
 
@@ -2309,6 +2333,54 @@ body.has-video-background .chat-restore-loader {
     html:not(.is-cuttle-mobile) .welcome-logo,
     html:not(.is-cuttle-mobile) .welcome-subtitle {
         display: none;
+    }
+}
+
+/* Narrow split panes (Electron viewport panels): the new-chat splash runs in
+   a pane-width iframe, so iframe-viewport queries fire per pane. Compress
+   branding and stack suggestions instead of squeezing the 700px form. */
+@media (max-width: 560px) {
+    .welcome-screen {
+        padding: 12px 8px;
+    }
+    .welcome-content {
+        max-width: 100%;
+    }
+    .welcome-logo img {
+        height: 48px;
+        margin-bottom: 12px;
+    }
+    .welcome-subtitle {
+        font-size: 1em;
+        margin-bottom: 20px;
+    }
+    .welcome-input-container {
+        padding: 0 8px;
+    }
+    .suggestion-cards {
+        grid-template-columns: 1fr;
+        gap: 10px;
+        margin-top: 20px;
+    }
+    .suggestion-card {
+        padding: 12px;
+    }
+}
+
+/* Very narrow panes: drop the greeting, keep logo + composer usable. */
+@media (max-width: 360px) {
+    .welcome-screen {
+        padding: 8px 4px;
+    }
+    .welcome-logo img {
+        height: 36px;
+        margin-bottom: 8px;
+    }
+    .welcome-subtitle {
+        display: none;
+    }
+    .welcome-input-container {
+        padding: 0 4px;
     }
 }
 

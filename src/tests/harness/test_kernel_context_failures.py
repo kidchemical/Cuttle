@@ -499,3 +499,31 @@ def test_failed_adapter_result_holds_receipts(monkeypatch, tmp_path):
     assert seen["prompt"] == "FULL-ENVELOPE user-prompt"  # fake full envelope
     assert cursor_calls == []  # failed turn moves no cursor...
     assert ack_calls == []  # ...and acknowledges no snapshot
+
+
+def test_query_started_carries_selected_model_effort_and_sse_badge(monkeypatch, tmp_path):
+    """Real kernel + transport framing; a fake adapter is the only executor."""
+    import json
+    import queue
+    from api.web_chat_api import _frame_stream_lifecycle_event
+
+    seen = {}
+    _quiet_kernel(monkeypatch, _manifest(id='codex', slash='/codex', label='Codex'), seen)
+    monkeypatch.setattr(kernel, '_compile_agent_prompt', lambda manifest, prompt, **kw: (prompt, {}, None))
+    status = queue.Queue()
+    result = kernel.run_agent_web_command(
+        'codex', 'offline probe', '148', status_queue=status,
+        project_path=str(tmp_path), model_override='gpt-6.1-sol',
+        execute_kwargs={'reasoning_effort': 'medium'},
+    )
+    assert result['success'] is True
+    events = []
+    while not status.empty():
+        events.append(status.get_nowait())
+    query = next(payload for kind, payload in events if kind == 'query_started')
+    chip = query['slash_command']['chips'][0]
+    assert chip['category'] == 'codex'
+    assert 'model gpt-6.1-sol' in chip['meta']
+    assert 'effort medium' in chip['meta']
+    frame = _frame_stream_lifecycle_event('query_started', query, '148')[0]
+    assert json.loads(frame.removeprefix('data: ').strip())['slash_command'] == query['slash_command']

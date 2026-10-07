@@ -202,6 +202,22 @@ Execution is `api.agent_harness.runners` → `kernel.run_agent_web_command`; tur
 
 **Turn persistence:** `api.chat_turn_persist` owns `make_assistant_saver` (skip guards: supervised-owned rows, empty failures, `[CANCELLED]`, `ui == 'system'`, cancelled turns), `persist_user_turn` (badge/history/project merge), and `persist_auth_user_message`. All take explicit `db` + `request_data` (captured once at ingress) — no Flask reads inside. The entry wrappers only inject project/metadata/titler shapers. Stream-thread saves merge the captured body instead of an empty re-read.
 
+**Chat agent identity:** user badges snapshot the sent selection; working badges
+use the selected harness's `query_started.slash_command` (also retained by
+`chat_live_status` for single/batch polling), with the latest real user's frozen
+badge as the pre-query fallback. `CuttleChatAgentModel.turnSlashFromMessages`
+owns that choice. Working badges never read composer controls. Next-send agent
+selection is session-owned (`AuthDatabase.composer_selection` + monotonic
+revision; `chat_composer_selection` validates; `auth_api` exposes PUT
+`/api/auth/sessions/<id>/composer` and includes the snapshot in GET messages).
+User sends update it atomically with their row; steers, parent injections and
+assistant fallbacks do not. The page serializes explicit selection writes,
+rejects older/pending-write poll snapshots, and reconciles saved draft chips
+through `CuttleChatComposer.draftWithSharedAgent`. Text drafts stay device-local.
+Regression: `test_working_bubble_badge_chat_switch.py`,
+`auth/test_chat_composer_selection.py`, and CI's isolated browser
+`e2e/test_chat_badge_identity.py`.
+
 **Application coordinator:** `api.chat_coordinator` is the
 transport-neutral turn entry — `PreparedAgentTurn` (frozen plain data),
 `AgentSelection` (`router_family` | `plain_router` | `harness` |

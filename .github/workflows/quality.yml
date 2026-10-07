@@ -55,7 +55,7 @@ jobs:
       - run: .venv/bin/python -m pip install -r src/requirements/requirements.txt -r src/requirements/requirements-dev.txt
       - run: .venv/bin/python -m playwright install --with-deps chromium
       - name: Isolated Chromium chat rendering
-        run: .venv/bin/python -m pytest src/tests/e2e/test_chat_action_card_render.py src/tests/e2e/test_chat_action_cards_controller.py --basetemp="${{ runner.temp }}/browser"
+        run: .venv/bin/python -m pytest src/tests/e2e/test_chat_action_card_render.py src/tests/e2e/test_chat_action_cards_controller.py src/tests/e2e/test_chat_badge_identity.py --basetemp="${{ runner.temp }}/browser"
   android:
     runs-on: ubuntu-latest
     env:

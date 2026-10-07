@@ -666,12 +666,17 @@ def run_agent_web_command(
         register_execution(query_id, label)
         if status_queue:
             try:
+                from api.chat_metadata import execution_badge_metadata
                 status_queue.put(
                     (
                         "query_started",
                         {
                             "query_id": query_id,
                             "report_url": f"/query_log.html?id={query_id}",
+                            "slash_command": execution_badge_metadata(
+                                manifest.id, label, sid, model=model_override,
+                                effort=(execute_kwargs or {}).get("reasoning_effort"),
+                            ),
                         },
                     )
                 )

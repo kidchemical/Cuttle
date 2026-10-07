@@ -1408,6 +1408,22 @@ async function createWindow(opts = {}) {
     mainWindow.removeMenu();
     Menu.setApplicationMenu(null);
 
+    // Links to other sites open in the OS default browser instead of a bare
+    // Electron window. Same-origin app pages (query log inspector, reports)
+    // keep opening in-app.
+    mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+        const { routeWindowOpen } = require('./external-link-policy.js');
+        const route = routeWindowOpen(url, mainWindow._cuttleUiUrl || preferredAppUrl('/app_shell.html'));
+        if (route === 'external') {
+            try {
+                const opened = require('electron').shell.openExternal(url);
+                if (opened && typeof opened.catch === 'function') opened.catch(() => {});
+            } catch (_) {}
+            return { action: 'deny' };
+        }
+        return { action: route === 'in-app' ? 'allow' : 'deny' };
+    });
+
     // F11 toggles true OS fullscreen (covers the Windows taskbar).
     // Ctrl+F is intercepted so Chromium's find-in-page cannot highlight
     // every split chat iframe at once; the shell routes it to one pane.
