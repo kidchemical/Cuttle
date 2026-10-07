@@ -217,6 +217,14 @@ console.log(JSON.stringify({html, cards:(many.match(/subagent-fleet-card /g)||[]
     assert '<span class="slash-chip-label">codex</span>' in html
     assert "codex | gpt-5.6 | low" in html
     assert ">gpt-5.6<" not in html
+    # Outcome is icon-only: the label never renders as visible card text (it
+    # used to spill off narrow cards next to long names), but stays available
+    # via the icon title, the card tooltip, and the card aria-label.
+    for label in ("Queued", "Running", "Done", "Failed", "Cancelled", "Lost"):
+        assert f">{label}<" not in html
+        assert f'title="{label}"' in html
+    assert "(Done)" in html  # aria-label "Open … (Done)"
+    assert "✓" in html and "✕" in html
     assert "1m 05s" in html and html.count("1m 05s") == 4  # running/queued show no duration
     assert out["cards"] == 24 and out["more"] and out["dur"] == "1m 05s"
     assert out["has"] is True and out["none"] is False
