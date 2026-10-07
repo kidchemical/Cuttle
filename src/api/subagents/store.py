@@ -274,11 +274,19 @@ def update_child(
     owner_pid: Optional[int] = None,
     query_id: Optional[str] = None,
     live_turn_id: Optional[str] = None,
+    model: Optional[str] = None,
+    effort: Optional[str] = None,
     started: bool = False,
     finished: bool = False,
 ) -> None:
     sets = []
     args: List[Any] = []
+    if model is not None:
+        sets.append("model = ?")
+        args.append(str(model) or None)
+    if effort is not None:
+        sets.append("effort = ?")
+        args.append(str(effort) or None)
     if status is not None:
         sets.append("status = ?")
         args.append(status)
