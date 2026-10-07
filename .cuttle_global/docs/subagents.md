@@ -67,7 +67,7 @@ that omitted them (or set `"route": true`).
 
 `--watch` writes `/output/subagents-<id>-status.json` with an overall bar plus
 one worker bar per child (emit a watch card from the parent reply if the job is
-long). `--tasks` pins a parent Tasks widget with one item per child.
+long). `--tasks` pins a parent Tasks gizmo with one item per child.
 
 ## Other verbs
 

@@ -21,7 +21,7 @@ agent toolkit.
 | Chat handles / transcripts | `python -m api.chat_cli` | `chat-history.md` |
 | Chat visual effects | `python -m api.chat_vfx` | `chat-vfx.md` |
 | Experimental flags | `python -m api.experimental` (list, get, set, reset) | Cuttle `.cuttle/docs/experimental-features.md` |
-| Tasks widgets | `python -m api.widgets_cli` | `widgets.md` |
+| Tasks gizmos | `python -m api.gizmos tasks` | `gizmos.md` |
 | Tray + UI toast notifications | `python -m api.ui_notify` (`send`, `pending`) | `gizmos.md` (notify-on-unblock) |
 | Gizmos (usage meters; experimental) | `python -m api.gizmos` | `gizmos.md` |
 | Cuttle QA / promo accounts | `python -m api.fixture_accounts` | Cuttle project `.cuttle/docs/fixture-accounts.md` |

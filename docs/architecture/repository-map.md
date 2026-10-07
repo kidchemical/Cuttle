@@ -350,7 +350,8 @@ selection and exceptions are documented in `.cuttle/docs/experimental-features.m
 inside bubbles). `api.gizmos` owns types (`catalog`), normalized vendor plan
 usage (`usage`, reused from `api.agent_usage` fetchers), validation/placement
 (`service`), and an install-wide SQLite store with a revision counter
-(`store`); `gizmos.routes` is owner-only transport and `python -m api.gizmos`
+(`store`); scoped composer Tasks use `gizmos.tasks` + `tasks_model`, with
+auth-owned existing task rows and transactional attribution logs; `gizmos.routes` is owner-only transport and `python -m api.gizmos`
 the agent verbs. `gizmos_model.js` (`CuttleGizmos`) is pure model/markup shared
 by the shell, the Gizmos App, and the pop-out page; `gizmos_shell.js` owns dock
 containers (title bar, leftmost blade bar, float layer), drag-to-redock, the
