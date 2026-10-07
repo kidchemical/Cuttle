@@ -605,26 +605,36 @@ def oauth_callback(provider):
 
 @auth_bp.route('/sessions', methods=['GET'])
 def get_chat_sessions():
-    """Get all chat sessions for current user"""
+    """Get all chat sessions for current user.
+
+    ``?archived=include`` returns active + archived, ``?archived=only``
+    returns just the Archived section. Default hides archived chats.
+    """
     try:
         session_token = get_request_session_token()
-        
+
         if not session_token:
             return jsonify({
                 'success': False,
                 'error': 'Not authenticated'
             }), 401
-        
+
         db = get_auth_db()
         user = db.verify_auth_session(session_token)
-        
+
         if not user:
             return jsonify({
                 'success': False,
                 'error': 'Invalid session'
             }), 401
-        
-        sessions = db.get_user_chat_sessions(user['id'])
+
+        archived_mode = (request.args.get('archived') or '').strip().lower()
+        if archived_mode == 'only':
+            sessions = db.get_archived_chat_sessions(user['id'])
+        elif archived_mode == 'include':
+            sessions = db.get_user_chat_sessions(user['id']) + db.get_archived_chat_sessions(user['id'])
+        else:
+            sessions = db.get_user_chat_sessions(user['id'])
 
         # Mark chats that still have an in-flight reply (history spinner after refresh).
         try:
@@ -788,7 +798,7 @@ def create_chat_session():
 
 @auth_bp.route('/sessions/<int:session_id>', methods=['PATCH'])
 def patch_chat_session(session_id):
-    """Update chat session fields (name, starred, and/or working project)."""
+    """Update chat session fields (name, starred, archived, and/or working project)."""
     try:
         session_token = get_request_session_token()
 
@@ -856,6 +866,17 @@ def patch_chat_session(session_id):
             out['starred'] = starred
             touched = True
 
+        if 'archived' in data:
+            archived = bool(data.get('archived'))
+            success = db.set_session_archived(session_id, user['id'], archived)
+            if not success:
+                return jsonify({
+                    'success': False,
+                    'error': 'Session not found or access denied'
+                }), 404
+            out['archived'] = archived
+            touched = True
+
         project_keys = ('project_id', 'project_name', 'project_path', 'projectId', 'projectName', 'projectPath')
         if any(k in data for k in project_keys):
             pid = data.get('project_id', data.get('projectId'))
@@ -881,7 +902,7 @@ def patch_chat_session(session_id):
         if not touched:
             return jsonify({
                 'success': False,
-                'error': 'No supported fields to update (expected session_name, starred, and/or project_id/project_name/project_path)'
+                'error': 'No supported fields to update (expected session_name, starred, archived, and/or project_id/project_name/project_path)'
             }), 400
 
         return jsonify(out)
