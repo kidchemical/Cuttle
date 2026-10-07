@@ -289,3 +289,16 @@ def test_keyboard_open_drops_nav_inset_under_composer():
     # While the IME covers the nav bar, no safe-bottom term under the composer.
     block = css.split("html.is-cuttle-mobile.keyboard-open .chat-input-container", 1)[1].split("}", 1)[0]
     assert "safe-bottom" not in block
+
+
+def test_transcript_has_no_dead_space_past_last_bubble():
+    safe = (REPO / "src" / "web" / "css" / "safe_area.css").read_text(encoding="utf-8")
+    # The composer below the transcript owns the nav-bar inset; repeating it
+    # on .chat-messages pads past the last bubble.
+    for chunk in safe.split("html.is-cuttle-mobile")[1:]:
+        selector, _, rest = chunk.partition("{")
+        if selector.strip() == ".chat-messages":
+            assert "safe-bottom" not in rest.split("}", 1)[0]
+    chat = (REPO / "src" / "web" / "css" / "chat_page.css").read_text(encoding="utf-8")
+    base = chat.split("\n.chat-messages {", 1)[1].split("}", 1)[0]
+    assert "overscroll-behavior: none" in base
