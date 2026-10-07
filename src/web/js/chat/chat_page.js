@@ -10934,8 +10934,6 @@
 
     /** User bubble: show slash commands as chips + optional body (not raw /prefix). */
     const CUTTLE_KNOWN_BUTTON_LABELS = {
-        'launch-local-llm-yes': 'Yes, launch llama.cpp',
-        'launch-local-llm-no': 'Not now',
         'project-action-confirm': 'Confirm action',
         'project-action-cancel': 'Cancel action',
     };

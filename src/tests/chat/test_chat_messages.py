@@ -284,7 +284,7 @@ const F = (content, opts) => A.formatUserMessageForDisplay(content, opts, deps);
 const out = {};
 out.plain = F('hello world', {});
 out.selected = F('Selected:  Foo <bar>', {});
-out.buttonKnown = F('[button:launch-local-llm-yes]', {});
+out.buttonKnown = F('[button:project-action-confirm]', {});
 out.buttonGeneric = F('[button:approve-this]', {});
 out.buttonXss = F('[button:<img src=x>]', {});
 out.formSel = F('[form-selection] Pick A (a), Pick B (b)', {});
@@ -325,7 +325,7 @@ def test_user_bubble_selection_button_form_branches():
         "<strong>Foo &lt;bar&gt;</strong></div>")
     assert res["buttonKnown"] == (
         '<div class="cuttle-button-selection">Selected: '
-        "<strong>Yes, launch llama.cpp</strong></div>")
+        "<strong>Confirm action</strong></div>")
     assert "approve this" in res["buttonGeneric"]
     # angle brackets in a button id are escaped, not emitted as markup
     assert "&lt;img src=x&gt;" in res["buttonXss"]
