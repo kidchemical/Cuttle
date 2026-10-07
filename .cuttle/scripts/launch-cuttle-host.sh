@@ -7,5 +7,6 @@ if [[ ! -x "$ELECTRON" ]]; then
 fi
 export PATH="$HOME/.local/opt/node/bin:$ROOT/.venv/bin:${PATH:-}"
 source "$ROOT/.cuttle/scripts/electron-sandbox.sh"
+source "$ROOT/.cuttle/scripts/electron-display.sh"
 cd "$ROOT/electron"
-exec "$ELECTRON" "${SANDBOX_ARGS[@]}" --mode=host --class=CuttleHost "$ROOT/electron"
+exec "$ELECTRON" "${SANDBOX_ARGS[@]}" "${DISPLAY_ARGS[@]}" --mode=host --class=CuttleHost "$ROOT/electron"

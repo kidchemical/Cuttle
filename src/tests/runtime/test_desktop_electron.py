@@ -107,11 +107,36 @@ console.log('ok');
     assert "ok" in (proc.stdout or "")
 
 
-def test_linux_wayland_sessions_relaunch_under_x11_by_default():
-    """Electron 38+ picks native Wayland, which hangs before 'ready' with no active
-    output and lacks always-on-top/positioning; relaunch under XWayland unless opted in."""
+def test_linux_wayland_sessions_launch_under_xwayland(monkeypatch, tmp_path):
+    """Native Wayland spins before 'ready' with no active output and lacks
+    always-on-top/positioning, so every launcher passes --ozone-platform=x11 on
+    Wayland sessions (no in-process relaunch: that broke on Electron 28)."""
+    import subprocess
+    from core import runtime_paths
+
     main_js = (desk.ELECTRON_DIR / "main.js").read_text(encoding="utf-8")
-    head = main_js[: main_js.index("let mainWindow")]
-    assert "process.platform === 'linux'" in head
-    assert "CUTTLE_ELECTRON_WAYLAND" in head
-    assert "'--ozone-platform=x11'" in head and "app.relaunch(" in head
+    assert "app.relaunch(" not in main_js[: main_js.index("let mainWindow")]
+
+    monkeypatch.setattr(runtime_paths.sys, "platform", "linux")
+    monkeypatch.setenv("XDG_SESSION_TYPE", "wayland")
+    monkeypatch.delenv("CUTTLE_ELECTRON_WAYLAND", raising=False)
+    assert runtime_paths.electron_display_args() == ["--ozone-platform=x11"]
+    monkeypatch.setenv("CUTTLE_ELECTRON_WAYLAND", "1")
+    assert runtime_paths.electron_display_args() == []
+    monkeypatch.setenv("XDG_SESSION_TYPE", "x11")
+    monkeypatch.delenv("CUTTLE_ELECTRON_WAYLAND")
+    assert runtime_paths.electron_display_args() == []
+
+    helper = desk.ELECTRON_DIR.parent / ".cuttle" / "scripts" / "electron-display.sh"
+    def shell_args(**env):
+        out = subprocess.run(["bash", "-c", f'source "{helper}"; echo "${{DISPLAY_ARGS[*]}}"'],
+                             capture_output=True, text=True, encoding="utf-8",
+                             env={"PATH": "/usr/bin:/bin", **env})
+        return out.stdout.strip()
+    if subprocess.run(["bash", "-c", "true"]).returncode == 0:
+        assert shell_args(XDG_SESSION_TYPE="wayland") == "--ozone-platform=x11"
+        assert shell_args(XDG_SESSION_TYPE="wayland", CUTTLE_ELECTRON_WAYLAND="1") == ""
+        assert shell_args(XDG_SESSION_TYPE="x11") == ""
+    for name in ("launch-cuttle-host.sh", "launch-cuttle-client.sh"):
+        script = (helper.parent / name).read_text(encoding="utf-8")
+        assert "electron-display.sh" in script and '"${DISPLAY_ARGS[@]}"' in script
