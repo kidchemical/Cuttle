@@ -1,6 +1,7 @@
 id: cursor
 label: Cursor Agent
 slash: /cursor
+icon: "◉"
 requires_cloud: true
 auth_command: cursor-agent login
 sticky: true

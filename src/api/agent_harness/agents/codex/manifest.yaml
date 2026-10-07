@@ -1,6 +1,7 @@
 id: codex
 label: Codex
 slash: /codex
+icon: "⬢"
 requires_cloud: true
 auth_command: codex login
 sticky: true

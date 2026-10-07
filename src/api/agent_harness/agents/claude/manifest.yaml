@@ -1,6 +1,7 @@
 id: claude
 label: Claude Code
 slash: /claude
+icon: "✳"
 requires_cloud: true
 auth_command: claude auth login
 sticky: true

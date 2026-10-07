@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="css/shared_navigation.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/landing_page.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/compact_page.css?v=20260814playBtn">
-    <link rel="stylesheet" href="css/settings_page.css?v=20261005agentcfg">
+    <link rel="stylesheet" href="css/settings_page.css?v=20261007agents">
 </head>
 <body class="compact-shell-page" data-page="settings">
     <div class="page-content">
@@ -234,10 +234,25 @@
 
             <section class="settings-panel" id="panel-agents" role="tabpanel" aria-labelledby="tab-agents" tabindex="0" hidden>
             <div class="settings-group">
-                <h3 class="settings-title"><span class="emoji">🤖</span> Agent CLIs <span class="settings-scope" data-scope="server" title="Detection runs on the server that hosts the agent; a CLI installed on another machine is invisible here.">This server</span></h3>
-                <div class="settings-intro">Every agent is a CLI you install yourself. Pick one with <code>/name</code> in any chat. Cuttle never installs or patches them — add a new one by dropping a folder (see below).</div>
+                <h3 class="settings-title">Default agent <span class="settings-scope" data-scope="server">This server</span></h3>
+                <label class="agent-default-picker" for="defaultAgentSelect">
+                    <span>Start new chats with</span>
+                    <select id="defaultAgentSelect" class="setting-input" disabled aria-describedby="defaultAgentHelp defaultAgentStatus">
+                        <option>Loading agents…</option>
+                    </select>
+                </label>
+                <div class="setting-description" id="defaultAgentHelp">The same default as the star in chat. Choose Automatic to let your router pick.</div>
+                <div id="defaultAgentStatus" class="provider-status" role="status" aria-live="polite"></div>
+            </div>
+
+            <div class="settings-group">
+                <h3 class="settings-title"><span class="emoji">🤖</span> All agents <span class="settings-scope" data-scope="server" title="Detection runs on the server that hosts the agent; a CLI installed on another machine is invisible here.">This server</span></h3>
+                <div class="settings-intro">Pick one with <code>/name</code> in any chat. Cuttle never installs them — tap a row for setup and defaults.</div>
                 <div id="agentCliList" class="agent-cli-list"></div>
             </div>
+
+            <details class="settings-group settings-advanced" id="agentAdvanced">
+                <summary class="settings-advanced-summary"><span class="emoji">🛠️</span> Advanced <span class="settings-advanced-hint">Git, drop-in folders, router, name</span></summary>
 
             <div class="settings-group">
                 <h3 class="settings-title"><span class="emoji">🌿</span> Git <span class="settings-scope" data-scope="server" title="Saved in this server's settings; applies to every chat it runs.">This server</span></h3>
@@ -307,6 +322,7 @@
                     </div>
                 </div>
             </div>
+            </details>
             </section>
 
             <section class="settings-panel" id="panel-experimental" role="tabpanel" aria-labelledby="tab-experimental" tabindex="0" hidden>
@@ -921,10 +937,90 @@
             return chip;
         }
 
+        // One row per agent: icon tile + name + status, tap to expand.
+        // The glyph comes from the catalog payload (manifest `icon`), never
+        // a per-id map here — a drop-in folder shows up with no page edit.
+        function agentIconTile(agent) {
+            const tile = document.createElement('span');
+            tile.className = 'agent-icon';
+            tile.setAttribute('aria-hidden', 'true');
+            const label = String(agent.label || agent.id || '?');
+            const initial = (label.match(/[A-Za-z0-9]/) || ['?'])[0].toUpperCase();
+            tile.textContent = agent.icon || initial;
+            return tile;
+        }
+
+        // Server preferences own the default; this control only presents and
+        // saves the existing star. Its confirmed value lives with this render.
+        function renderDefaultAgentPicker(payload, star) {
+            const select = document.getElementById('defaultAgentSelect');
+            const status = document.getElementById('defaultAgentStatus');
+            if (!select || !status) return;
+            select.innerHTML = '';
+            select.onchange = null;
+            const option = (value, label, disabled) => {
+                const opt = document.createElement('option');
+                opt.value = value;
+                opt.textContent = label;
+                opt.disabled = !!disabled;
+                select.appendChild(opt);
+            };
+            if (!payload || !payload.success || !star || !star.success || !Array.isArray(star.prefixes)) {
+                option('', 'Could not load default', false);
+                select.disabled = true;
+                status.textContent = 'Reload Settings to try again.';
+                return;
+            }
+            let confirmed = star.prefixes[0] || '';
+            option('', 'Automatic (router)', false);
+            ((payload && payload.agents) || []).filter(agent => agent.sticky).forEach(agent => {
+                const prefix = agent.prefix || String(agent.slash).trim() + ' ';
+                option(prefix, (agent.label || agent.id) + (agent.ready ? '' : ' — Setup needed'), !agent.ready);
+            });
+            // A removed drop-in must not silently turn its saved star into
+            // Automatic. Keep it visible until the user changes the default.
+            if (confirmed && !Array.from(select.options).some(opt => opt.value === confirmed)) {
+                option(confirmed, confirmed.trim() + ' — Unavailable', true);
+            }
+            select.value = confirmed;
+            select.disabled = false;
+            status.textContent = '';
+            // Chat still migrates the browser star on an empty server default.
+            // Keep that compatibility copy in sync, especially on clear.
+            const syncBrowserStar = prefixes => {
+                try { localStorage.setItem('cuttleStarredSlashCommands', JSON.stringify(prefixes)); } catch (_) {}
+            };
+            syncBrowserStar(star.prefixes);
+            select.onchange = async () => {
+                const chosen = select.value;
+                select.disabled = true;
+                status.textContent = 'Saving…';
+                try {
+                    const r = await fetch('/api/settings/starred-slash', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ prefixes: chosen ? [chosen] : [] }),
+                    });
+                    const data = await r.json();
+                    if (!r.ok || !data.success || !Array.isArray(data.prefixes)) throw new Error(data.error || 'Save failed');
+                    confirmed = data.prefixes[0] || '';
+                    syncBrowserStar(data.prefixes);
+                    status.textContent = confirmed ? 'Default saved for new chats.' : 'New chats will use the router.';
+                } catch (e) {
+                    status.textContent = 'Could not save: ' + (e.message || e);
+                } finally {
+                    select.value = confirmed;
+                    select.disabled = false;
+                }
+            };
+        }
+
         function renderAgentCliList(payload) {
             const box = document.getElementById('agentCliList');
             if (!box) return;
             const agents = (payload && payload.agents) || [];
+            const openIds = new Set(Array.from(box.querySelectorAll('.agent-card.is-open'))
+                .map(card => card.dataset.agentId));
             box.innerHTML = '';
             if (!agents.length) {
                 const empty = document.createElement('div');
@@ -936,9 +1032,13 @@
             agents.forEach(agent => {
                 const card = document.createElement('div');
                 card.className = 'agent-card';
+                card.dataset.agentId = agent.id;
 
-                const head = document.createElement('div');
+                const head = document.createElement('button');
+                head.type = 'button';
                 head.className = 'agent-card-head';
+                head.setAttribute('aria-expanded', 'false');
+                head.appendChild(agentIconTile(agent));
                 const name = document.createElement('span');
                 name.className = 'agent-card-name';
                 name.textContent = agent.label || agent.id;
@@ -956,7 +1056,19 @@
                     src.title = 'Drop-in adapter, not bundled with Cuttle';
                     head.appendChild(src);
                 }
+                const chevron = document.createElement('span');
+                chevron.className = 'agent-card-chevron';
+                chevron.setAttribute('aria-hidden', 'true');
+                head.appendChild(chevron);
                 card.appendChild(head);
+
+                const detail = document.createElement('div');
+                detail.className = 'agent-card-detail';
+                detail.id = 'agent-detail-' + agent.id;
+                detail.hidden = !openIds.has(agent.id);
+                head.setAttribute('aria-controls', detail.id);
+                head.setAttribute('aria-expanded', String(!detail.hidden));
+                card.classList.toggle('is-open', !detail.hidden);
 
                 const meta = document.createElement('div');
                 meta.className = 'agent-card-meta';
@@ -965,28 +1077,36 @@
                 if (agent.resume) bits.push('resumes sessions');
                 if (agent.requires_cloud === false) bits.push('can run locally');
                 meta.textContent = bits.join(' · ');
-                card.appendChild(meta);
+                detail.appendChild(meta);
 
                 // Only show the actionable line — a ready agent needs no prose.
                 if (!agent.available && agent.install_hint) {
                     const hint = document.createElement('div');
                     hint.className = 'agent-card-hint';
                     hint.textContent = agent.install_hint;
-                    card.appendChild(hint);
+                    detail.appendChild(hint);
                 } else if (agent.available && !agent.credential_present && (agent.credential_env || []).length) {
                     const hint = document.createElement('div');
                     hint.className = 'agent-card-hint';
                     hint.textContent = 'Add ' + agent.credential_env.join(' or ') + ' to src/.env to finish setup.';
-                    card.appendChild(hint);
+                    detail.appendChild(hint);
                 } else if (agent.available && agent.auth_command) {
                     const hint = document.createElement('div');
                     hint.className = 'agent-card-hint is-quiet';
                     hint.textContent = 'Not signed in? Run `' + agent.auth_command + '`.';
-                    card.appendChild(hint);
+                    detail.appendChild(hint);
                 }
 
                 const config = agentConfigSection(agent, adapterConfig);
-                if (config) card.appendChild(config);
+                if (config) detail.appendChild(config);
+
+                head.addEventListener('click', () => {
+                    const open = detail.hidden;
+                    detail.hidden = !open;
+                    head.setAttribute('aria-expanded', String(open));
+                    card.classList.toggle('is-open', open);
+                });
+                card.appendChild(detail);
 
                 box.appendChild(card);
             });
@@ -1203,8 +1323,9 @@
 
         function loadAgentCatalog() {
             const getJson = url => fetch(url).then(r => (r.ok ? r.json() : null)).catch(() => null);
-            return Promise.all([getJson('/api/agents'), getJson('/api/settings/agent-adapters')])
-                .then(([data, cfg]) => {
+            return Promise.all([getJson('/api/agents'), getJson('/api/settings/agent-adapters'), getJson('/api/settings/starred-slash')])
+                .then(([data, cfg, star]) => {
+                    renderDefaultAgentPicker(data, star);
                     adapterConfig = cfg && cfg.success ? cfg : null;
                     renderProjectAdaptersToggle(adapterConfig);
                     if (!data || !data.success) return;

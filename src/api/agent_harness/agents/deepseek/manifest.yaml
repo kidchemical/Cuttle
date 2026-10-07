@@ -1,6 +1,7 @@
 id: deepseek
 label: DeepSeek Harness
 slash: /deepseek
+icon: "≈"
 requires_cloud: true
 sticky: true
 # Empty — unpinned turns use the dsh CLI default (no model patch).

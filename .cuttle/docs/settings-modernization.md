@@ -74,6 +74,25 @@ disagree about "installed". Tests:
 `src/tests/harness/test_agent_catalog_auth.py`,
 `src/tests/settings/test_settings_agent_providers_ui.py`.
 
+## Shipped: compact Agents list and default picker
+
+Agent rows show a catalog icon, name, status, and an accessible disclosure
+button. Setup guidance and model/effort/steering controls live in the detail;
+open rows stay open across catalog reloads. Git, drop-in roots, routing, and
+identity live in the collapsed Advanced section.
+
+The Default agent picker uses the existing
+`GET/POST /api/settings/starred-slash` preference, shared with the chat palette
+star. Automatic clears the star and lets the router select new chats.
+Choices come from sticky catalog entries; agents needing setup cannot be newly
+selected. An unavailable saved agent remains visible until explicitly changed.
+Failed saves restore the confirmed value. The browser star compatibility copy
+updates only from confirmed server values.
+
+Tests: `src/tests/e2e/test_settings_agents.py` exercises the production page
+with isolated APIs, including save/clear/reload, failure rollback, removed
+drop-ins, keyboard disclosure, and phone layout.
+
 ## Shipped: wizard reads the same catalog
 
 `/api/wizard/status` no longer reports the retired `default_pipeline` step

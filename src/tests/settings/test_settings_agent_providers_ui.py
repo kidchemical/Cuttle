@@ -117,9 +117,13 @@ def test_page_explains_that_cuttle_does_not_install_agents():
 # ── layout ────────────────────────────────────────────────────────────────
 
 
-def test_agent_cards_use_a_responsive_grid():
+def test_agent_cards_use_a_single_column_row_list():
+    """Phone-simple: one row per agent, detail behind a tap — not a card grid."""
     css = CSS.read_text(encoding="utf-8")
-    assert re.search(r"\.agent-cli-list\s*\{[^}]*grid-template-columns", css)
+    lst = re.search(r"\.agent-cli-list\s*\{([^}]*)\}", css)
+    assert lst, "no .agent-cli-list rule"
+    assert "flex" in lst.group(1)
+    assert "grid-template-columns" not in lst.group(1)
     assert re.search(r"\.agent-card\s*\{[^}]*display:\s*flex", css)
     assert re.search(r"@media \(max-width: 640px\)", css)
 
@@ -128,10 +132,39 @@ def test_agent_card_and_provider_chip_classes_all_exist_in_css():
     css = CSS.read_text(encoding="utf-8")
     for cls in (
         "agent-card-head", "agent-card-name", "agent-card-slash",
-        "agent-card-meta", "agent-card-hint", "provider-chip", "provider-status",
-        "provider-picker",
+        "agent-card-meta", "agent-card-hint", "agent-card-detail",
+        "agent-card-chevron", "agent-icon", "provider-chip", "provider-status",
+        "provider-picker", "settings-advanced-summary",
     ):
         assert f".{cls}" in css, cls
+
+
+def test_agent_rows_collapse_behind_a_tap():
+    """Meta, hints, and model/effort/steer live in a hidden detail per row."""
+    html = _page()
+    assert "function agentIconTile" in html
+    assert "className = 'agent-card-detail'" in html
+    assert "setAttribute('aria-expanded'" in html
+    assert "className = 'agent-card-chevron'" in html
+    # Head is a real button so keyboard users can open rows too.
+    assert "createElement('button')" in html
+
+
+def test_agent_icons_come_from_the_catalog_payload():
+    """Glyphs render from agent.icon (manifest), never a per-id map in the page."""
+    html = _page()
+    assert "agent.icon" in html
+    for agent_id in BUNDLED_AGENTS:
+        assert f"'{agent_id}'" not in html, agent_id
+        assert f'"{agent_id}"' not in html, agent_id
+
+
+def test_agent_extras_live_in_a_collapsed_advanced_block():
+    """Git, drop-in folders, routing, and name sit behind one Advanced opener."""
+    html = _page()
+    assert 'id="agentAdvanced"' in html
+    assert "settings-advanced-summary" in html
+    assert "Advanced" in html
 
 
 def test_video_list_rows_no_longer_squash():

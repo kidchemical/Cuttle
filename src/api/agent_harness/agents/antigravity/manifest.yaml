@@ -1,6 +1,7 @@
 id: antigravity
 label: Antigravity CLI
 slash: /antigravity
+icon: "▲"
 requires_cloud: true
 auth_command: agy login
 sticky: true
