@@ -525,3 +525,14 @@ database management surface and CLI.
   before fetching rows so reconnect can duplicate rather than omit a new event.
   Failed SQLite batches spool locally for retry, and capture errors are visible
   in database settings. Remote aggregation remains deferred; the local CLI provides full-detail tail output.
+
+### Feed availability and presentation follow-up
+
+The `agent_feed` experiment controls Apps discovery, rail/pin-picker visibility,
+direct page access and the live stream. Saved pin preferences survive disabling
+and re-enabling. The shell refreshes availability after experiment changes and
+window focus; shared event-detail/history APIs remain available to the inspector.
+The Feed uses a compact search/type/live toolbar, collapsed optional filters and
+responsive activity rows. Full edit diffs are shown before optional raw payloads.
+These corrections do not close the deferred reconciliation and per-store
+maintenance work listed above.
