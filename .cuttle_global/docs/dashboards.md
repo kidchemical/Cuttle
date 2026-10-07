@@ -46,11 +46,21 @@ PYTHONPATH=src .venv/bin/python -m api.dashboards get cuttle-performance --sourc
 PYTHONPATH=src .venv/bin/python -m api.dashboards get cuttle-usage --range 7d --group harness
 PYTHONPATH=src .venv/bin/python -m api.dashboards get cuttle-usage --start 2026-09-01 --end 2026-09-15 --interval week
 PYTHONPATH=src .venv/bin/python -m api.dashboards backfill-performance [--dry-run]
+PYTHONPATH=src .venv/bin/python -m api.dashboards repair-api-costs
+PYTHONPATH=src .venv/bin/python -m api.dashboards repair-api-costs --apply --backup-dir temp/cost-repair/unique-run
 PYTHONPATH=src .venv/bin/python -m api.dashboards get cuttle-context --range 7d
 PYTHONPATH=src .venv/bin/python -m api.cuttle_brain metrics list --days 1
 ```
 
 (Flags after the verb. `--json` is implied: stdout is JSON.)
+
+`repair-api-costs` defaults to a dry run. It repairs historical Claude subscription
+usage into API-equivalent estimates using cached catalog rates and saved model
+versions, updating chat metadata, matching outcome costs, and matching query
+sidecars. Apply requires a new backup directory; SQLite snapshots, original
+sidecars and an audit retain the original values. Ambiguous models, attempts,
+or mismatched sidecars are skipped. These are list-price estimates, not paid
+subscription charges or historical invoices.
 
 ## HTTP
 
