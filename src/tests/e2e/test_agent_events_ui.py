@@ -56,3 +56,31 @@ def test_database_controls(browser,static_server):
         expect(page.get_by_role('button',name='Reset agent events')).to_be_disabled()
         assert not errors
     finally:page.close()
+
+
+def test_feed_experiment_controls_apps_and_saved_pin(browser,static_server):
+    page=browser.new_page()
+    enabled=False
+    def handle(route):
+        if '/api/experimental/flags' in route.request.url:
+            body={'flags':[{'id':'agent_feed','enabled':enabled}],'kill_switch':False}
+        elif '/api/settings/ui-layout' in route.request.url:
+            body={'ui_layout':{'layout_version':8,'rail_items':['nav-chat','nav-apps','nav-agent-feed'],'rail_hidden':[]}}
+        else:body={}
+        route.fulfill(content_type='application/json',body=json.dumps(body))
+    page.route('**/api/**',handle)
+    try:
+        page.goto(static_server+'/app_shell.html')
+        page.wait_for_function('typeof getAppsList === "function"')
+        assert not page.evaluate('getAppsList().some(app=>app.id==="nav-agent-feed")')
+        expect(page.locator('[data-id="nav-agent-feed"]').first).to_be_hidden()
+        enabled=True
+        page.evaluate('refreshAgentFeedAvailability()')
+        page.wait_for_function('getAppsList().some(app=>app.id==="nav-agent-feed")')
+        expect(page.locator('.rail-items [data-id="nav-agent-feed"]').first).to_be_visible()
+        enabled=False
+        page.evaluate('refreshAgentFeedAvailability()')
+        page.wait_for_function('!getAppsList().some(app=>app.id==="nav-agent-feed")')
+        expect(page.locator('[data-id="nav-agent-feed"]').first).to_be_hidden()
+        assert page.evaluate('lastUILayout.rail_items.includes("nav-agent-feed")')
+    finally:page.close()

@@ -49,3 +49,13 @@ def test_history_filters_and_live_cursor(client):
     payload=client.get('/api/agent-events?model=cheap&project=project&chat=CH-001066&search=searchable').get_json()
     assert len(payload['events'])==1 and payload['stream_cursor']>0
     assert client.get('/api/agent-events?model=other').get_json()['events']==[]
+
+
+def test_feed_page_requires_experiment_but_inspector_remains_available(client,monkeypatch):
+    import api.experimental
+    monkeypatch.setattr(api.experimental,'is_enabled',lambda flag:False)
+    assert client.get('/agent_feed.html').status_code==403
+    assert client.get('/api/agent-events/stream').status_code==403
+    assert client.get('/api/agent-events').status_code==200
+    monkeypatch.setattr(api.experimental,'is_enabled',lambda flag:True)
+    assert client.get('/agent_feed.html').status_code==200

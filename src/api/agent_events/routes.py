@@ -17,6 +17,9 @@ def store():
 @bp.get('/agent_feed.html')
 @owner_required
 def page():
+    from api.experimental import is_enabled
+    if not is_enabled('agent_feed'):
+        return jsonify(error='Enable Agent Feed in Experimental settings'),403
     return send_from_directory(Path(__file__).resolve().parents[2]/'web','agent_feed.html')
 
 
@@ -70,7 +73,7 @@ def stream():
     def generate():
         nonlocal cursor
         db=store()
-        while True:
+        while is_enabled('agent_feed'):
             payload=db.changes(cursor)
             cursor=payload['cursor']
             if payload['events'] and any(filters.values()):
