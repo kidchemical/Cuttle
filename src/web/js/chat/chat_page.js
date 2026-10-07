@@ -499,7 +499,8 @@
         toast('Pushing ' + (repoLabel || name) + '…', 'info', {
             toastId: 'git-push',
             sticky: true,
-            progress: true
+            progress: true,
+            skipHistory: true
         });
         try {
             const body = {};
@@ -536,9 +537,12 @@
             } else if (branch) {
                 okMsg = 'Pushed ' + branch;
             }
-            if (repoLabel) okMsg = repoLabel + ': ' + okMsg;
+            // Single-repo projects don't need the repo prefix; the outcome
+            // reuses the progress toast id so it swaps in place (one toast,
+            // one history entry per push).
+            if (repoLabel && Array.isArray(repos) && repos.length > 1) okMsg = repoLabel + ': ' + okMsg;
             closePushProgress();
-            toast(okMsg, 'success');
+            toast(okMsg, 'success', { toastId: 'git-push' });
         } catch (err) {
             closePushProgress();
             toast((err && err.message) || 'Git push failed', 'error');
@@ -8047,6 +8051,31 @@
             slashCtx[key].paletteDismissed = true;
         }
     }
+
+    // Click / tap outside an open palette (and outside its composer) closes it
+    // like Escape: the `/…` token stays, but the menu won't reopen until the
+    // token changes. Capture phase so menu-item picks (handled on click) and
+    // textarea focus are unaffected — both targets are skipped below.
+    document.addEventListener('pointerdown', (e) => {
+        const pairs = { chat: 'chatInput', welcome: 'welcomeChatInput' };
+        for (const key of Object.keys(pairs)) {
+            const menu = document.getElementById(slashMenuId(key));
+            if (!menu || menu.hidden) continue;
+            const ta = document.getElementById(pairs[key]);
+            const t = e.target;
+            if ((ta && (t === ta || ta.contains(t))) || menu.contains(t)) continue;
+            hideSlashMenu(key, { dismiss: true });
+        }
+    }, true);
+
+    // Focus leaving this iframe also means clicking off the palette, e.g.
+    // into a neighboring pane or the shell's navigation rail.
+    window.addEventListener('blur', () => {
+        for (const key of ['chat', 'welcome']) {
+            const menu = document.getElementById(slashMenuId(key));
+            if (menu && !menu.hidden) hideSlashMenu(key, { dismiss: true });
+        }
+    });
 
     function buildSlashPaletteFilterBarHtml(typeCounts) {
         const counts = typeCounts || {};

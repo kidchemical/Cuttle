@@ -471,6 +471,10 @@
         }
 
         doc.addEventListener('keydown', ev => { if (ev.key === 'Escape' && state.popoverId) closePopover(); });
+        // Clicking into a chat pane (or any iframe) never reaches the shell
+        // document's pointerdown handler above, so the panel would stay open.
+        // Focus moving into embedded content means the user clicked off it.
+        root.addEventListener('blur', () => { if (state.popoverId) closePopover(); });
         root.addEventListener('resize', () => { closePopover(); if (state.enabled) render(); });
         doc.addEventListener('visibilitychange', () => { if (!doc.hidden && state.enabled) { render(); refreshDue(false); } });
         root.addEventListener('message', ev => {

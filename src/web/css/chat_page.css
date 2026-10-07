@@ -2243,11 +2243,18 @@ body.has-video-background .chat-restore-loader {
     justify-content: center;
     height: 100%;
     padding: 20px;
+    box-sizing: border-box;
+    min-height: 0;
+    overflow-y: auto;
 }
 
 .welcome-content {
     text-align: center;
     max-width: 600px;
+    /* Auto margins center when there is room and yield to scrolling when
+       a tall draft is larger than the available viewport. */
+    margin-block: auto;
+    flex-shrink: 0;
 }
 
 .welcome-logo img {
@@ -2291,6 +2298,19 @@ body.has-video-background .chat-restore-loader {
     min-height: 44px;
     width: 100%;
     box-sizing: border-box;
+}
+
+/* Short viewports (small window height, short split panes): the splash
+   branding would push the composer below the fold, so drop the logo and
+   greeting while keeping the composer centered. */
+@media (max-height: 560px) {
+    .welcome-screen {
+        padding-top: 24px;
+    }
+    .welcome-logo,
+    .welcome-subtitle {
+        display: none;
+    }
 }
 
 .suggestion-cards {

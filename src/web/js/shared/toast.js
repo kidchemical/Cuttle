@@ -155,23 +155,23 @@
             display: flex;
             align-items: center;
             flex-wrap: wrap;
-            gap: 12px;
-            padding: 14px 12px 14px 20px;
+            gap: 8px;
+            padding: 10px 10px 10px 14px;
             background: ${v.bg};
             border: 1px solid ${v.border};
             border-radius: 10px;
             box-shadow: 0 10px 40px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.05) inset;
             color: #e6edf3;
-            font-size: 14px;
+            font-size: 13px;
             font-weight: 500;
             z-index: 999999;
             animation: cuttle-toast-in 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
-            max-width: 380px;
+            max-width: 300px;
             line-height: 1.4;
         `;
 
         const icon = el.querySelector('.cuttle-toast-icon');
-        if (icon) icon.style.cssText = 'color:' + v.border + ';font-size:18px;flex-shrink:0';
+        if (icon) icon.style.cssText = 'color:' + v.border + ';font-size:16px;flex-shrink:0';
 
         const closeBtn = el.querySelector('.cuttle-toast-close');
         if (closeBtn) {
@@ -268,7 +268,9 @@
         if (!VARIANTS[variant]) variant = 'info';
         options = options && typeof options === 'object' ? options : {};
 
-        pushNotificationHistory(message, variant, options);
+        // Transient progress toasts (e.g. "Pushing …") opt out so one job
+        // leaves one history entry — the outcome, not the play-by-play.
+        if (!options.skipHistory) pushNotificationHistory(message, variant, options);
 
         const toastId = options.toastId != null ? String(options.toastId) : '';
         const sticky = !!options.sticky;
@@ -375,6 +377,7 @@
                 kind: options.kind || null,
                 sticky: !!options.sticky,
                 progress: !!options.progress,
+                skipHistory: !!options.skipHistory,
                 duration: options.duration > 0 ? options.duration : null,
                 achievement: options.achievement || null,
                 toastId: options.toastId != null ? String(options.toastId) : null
@@ -422,6 +425,7 @@
                 actionId: actionId || null,
                 sticky: !!e.data.sticky,
                 progress: !!e.data.progress,
+                skipHistory: !!e.data.skipHistory,
                 duration: e.data.duration > 0 ? e.data.duration : null,
                 achievement: e.data.achievement || null,
                 toastId: e.data.toastId != null ? String(e.data.toastId) : null
