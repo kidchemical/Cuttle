@@ -45,6 +45,7 @@ def run_update(tmp_path, client):
     # No process discovery, stops, launchers, sleeps, or model calls occur.
     bin_dir = tmp_path / 'bin'
     bin_dir.mkdir()
+    (bin_dir / 'python3').symlink_to(sys.executable)
     for command in ('pgrep', 'sleep'):
         stub = bin_dir / command
         stub.write_text('#!/bin/sh\nexit 0\n', encoding="utf-8")
@@ -113,3 +114,70 @@ def test_incoming_file_does_not_overwrite_ignored_personal(checkout, tmp_path):
     assert result.returncode != 0
     assert git(client, 'rev-parse', 'HEAD') == before
     assert (personal / 'local.md').read_text(encoding="utf-8") == 'my ignored content'
+
+
+@pytest.mark.parametrize('skip_pull', [False, True])
+def test_refusal_happens_before_process_discovery_even_with_skip_pull(checkout, tmp_path, skip_pull):
+    client, _ = checkout
+    (client / 'file.txt').write_text('late user edit\n', encoding='utf-8')
+    marker = tmp_path / 'lifecycle-called'
+    bin_dir = tmp_path / 'guard-bin'
+    bin_dir.mkdir()
+    (bin_dir / 'python3').symlink_to(sys.executable)
+    # Refusal must precede even process discovery. All lifecycle commands are
+    # inert spies; an accidental call never reaches the real OS command.
+    for command in ('pgrep', 'ps', 'kill', 'npm', 'electron'):
+        stub = bin_dir / command
+        stub.write_text('#!/bin/sh\n: > "$LIFECYCLE_MARKER"\nexit 0\n')
+        stub.chmod(0o755)
+    (bin_dir / 'sleep').write_text('#!/bin/sh\nexit 0\n')
+    (bin_dir / 'sleep').chmod(0o755)
+    env = dict(os.environ, PATH=f'{bin_dir}{os.pathsep}{os.environ["PATH"]}',
+               XDG_STATE_HOME=str(tmp_path / 'state'), LIFECYCLE_MARKER=str(marker))
+    argv = ['bash', str(SCRIPT), '--repo', str(client), '--no-electron', '--no-daemon']
+    if skip_pull:
+        argv.append('--skip-pull')
+    result = subprocess.run(argv, env=env, capture_output=True, text=True, timeout=20)
+    assert result.returncode != 0
+    assert not marker.exists()
+    assert (client / 'file.txt').read_text() == 'late user edit\n'
+
+
+@pytest.mark.parametrize('flags,expected', [
+    (['--no-electron', '--no-daemon'], []),
+    (['--no-electron'], ['101', '102']),
+    (['--no-daemon'], ['103']),
+    ([], ['101', '102', '103']),
+])
+def test_process_stops_respect_checkout_and_requested_components(checkout, tmp_path, flags, expected):
+    client, _ = checkout
+    marker = tmp_path / 'stopped'
+    startup = tmp_path / 'bash-env'
+    # Shell functions replace lifecycle commands, including Bash's kill builtin.
+    # No test PID can reach a real OS signal or launch a real application.
+    startup.write_text('''
+pgrep() { printf '%s\\n' 101 102 103 104 105 106 107; }
+ps() {
+    case "$2" in
+        101) echo "python $TEST_REPO/src/scripts/cuttle_client_daemon.py" ;;
+        102) echo "python $TEST_REPO/src/scripts/cuttle_device_worker.py" ;;
+        103) echo "$TEST_REPO/electron/node_modules/electron/dist/electron ." ;;
+        104) echo "python /another/cuttle/src/scripts/cuttle_client_daemon.py" ;;
+        105) echo "/another/cuttle/electron/node_modules/electron/dist/electron ." ;;
+        106) echo "python $TEST_REPO/src/scripts/cuttle_daemon.py" ;;
+        107) echo "python $TEST_REPO/src/api/web_chat_api.py" ;;
+    esac
+}
+kill() { echo "$1" >> "$TEST_STOPPED"; }
+sleep() { :; }
+nohup() { :; }
+npm() { :; }
+''', encoding='utf-8')
+    # An empty Electron directory permits the inert npm launch fallback.
+    (client / 'electron').mkdir()
+    env = dict(os.environ, BASH_ENV=str(startup), TEST_REPO=str(client),
+               TEST_STOPPED=str(marker), XDG_STATE_HOME=str(tmp_path / 'state'))
+    result = subprocess.run(['bash', str(SCRIPT), '--repo', str(client), *flags],
+                            env=env, capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (marker.read_text().splitlines() if marker.exists() else []) == expected

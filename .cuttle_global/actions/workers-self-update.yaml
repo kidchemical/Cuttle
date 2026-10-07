@@ -1,8 +1,9 @@
 name: workers.self-update
 title: Client self-update
 description: >-
-  Ask a Client worker (client daemon) to git pull --ff-only and restart
-  Electron + client daemon. Params: target (worker_id), repo?, no_electron?, no_daemon?
+  Fast-forward a clean tracking Client checkout, then restart Electron + client
+  daemon. Refuses dirty/untracked files, local commits, divergence, and incoming
+  paths that collide with ignored personal files before stopping anything. Params: target (worker_id), repo?, no_electron?, no_daemon?
 type: shell
 run: powershell -NoProfile -ExecutionPolicy Bypass -File .cuttle_global\scripts\workers-cli.ps1 self-update
 run_posix: .venv/bin/python -m api.device_workers.cli self-update

@@ -917,7 +917,7 @@ def submit_self_update(
     submitted_by: str = "platform",
     host: str = "",
 ) -> Dict[str, Any]:
-    """Enqueue cuttle_self_update on a Client worker (stash+pull, then relaunch).
+    """Enqueue cuttle_self_update on a Client worker (preservation checks + fast-forward, then relaunch).
 
     Embeds the Host's current updater scripts so Clients still on an old
     checkout run the latest updater even before git pull succeeds.
@@ -930,26 +930,20 @@ def submit_self_update(
         params["repo"] = repo
     if (host or "").strip():
         params["host"] = host.strip()
-    # Ship the latest updater bytes with the job (chicken-egg with dirty Clients).
+    # Deliver all three files as one contract. Missing/empty Host files refuse
+    # submission rather than falling back to an old Client lifecycle script.
     scripts_dir = Path(__file__).resolve().parents[3] / ".cuttle_global" / "scripts"
-    try:
-        ps1 = scripts_dir / "client-self-update.ps1"
-        if ps1.is_file():
-            text = ps1.read_text(encoding="utf-8")
-            if text.strip():
-                params["script_text"] = text
-                params["script_name"] = "client-self-update.ps1"
-    except OSError:
-        pass
-    try:
-        sh = scripts_dir / "client-self-update.sh"
-        if sh.is_file():
-            text = sh.read_text(encoding="utf-8")
-            if text.strip():
-                params["script_text_posix"] = text
-                params["script_name_posix"] = "client-self-update.sh"
-    except OSError:
-        pass
+    for name, key in (
+        ("client-self-update.ps1", "script_text"),
+        ("client-self-update.sh", "script_text_posix"),
+        ("client-update-checkout.py", "checkout_helper_text"),
+    ):
+        text = (scripts_dir / name).read_text(encoding="utf-8")
+        if not text.strip():
+            raise RuntimeError(f"self-update delivery file is empty: {name}")
+        params[key] = text
+    params["script_name"] = "client-self-update.ps1"
+    params["script_name_posix"] = "client-self-update.sh"
     return submit_job(
         job_type="cuttle_self_update",
         params=params,
