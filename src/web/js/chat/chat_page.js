@@ -14837,6 +14837,8 @@
             copy: '<svg class="chat-id-badge-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="18" cy="5" r="3" stroke="currentColor" stroke-width="2"/><circle cx="6" cy="12" r="3" stroke="currentColor" stroke-width="2"/><circle cx="18" cy="19" r="3" stroke="currentColor" stroke-width="2"/><line x1="8.6" y1="10.5" x2="15.4" y2="6.6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="8.6" y1="13.5" x2="15.4" y2="17.4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><svg class="chat-id-badge-check" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20 6 9 17l-5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
             pencil: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>',
             trash: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>',
+            archive: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><line x1="10" y1="12" x2="14" y2="12"/></svg>',
+            unarchive: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><polyline points="12 12 12 16"/><polyline points="9.5 13.5 12 11 14.5 13.5"/></svg>',
             starOutline: '<svg class="chat-star-menu-icon chat-star-menu-icon--outline" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3.5l2.6 5.3 5.9.9-4.2 4.1 1 5.8L12 16.8 6.7 19.6l1-5.8-4.2-4.1 5.9-.9L12 3.5z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>',
             starFilled: '<svg class="chat-star-menu-icon chat-star-menu-icon--filled" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3.5l2.6 5.3 5.9.9-4.2 4.1 1 5.8L12 16.8 6.7 19.6l1-5.8-4.2-4.1 5.9-.9L12 3.5z"/></svg>',
             unread: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="5" fill="currentColor" opacity="0.9"/><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.6" opacity="0.45"/></svg>',
@@ -14852,7 +14854,7 @@
 
     /**
      * Shared overflow items for chrome + history session menus.
-     * Order: Copy → Star → Mark unread → Rename → Sub-agents → Git push → Terminal → Voice → Delete.
+     * Order: Copy → Star → Mark unread → Rename → Sub-agents → Git push → Terminal → Voice → Archive → Delete.
      */
     function buildSessionMenuHTML(sessionId, opts) {
         opts = opts || {};
@@ -14940,6 +14942,20 @@
             + '<span class="chat-chrome-menu-item-label">Voice</span>'
             + '</button>'
         );
+        // Archive lives on server sessions only (local-fallback and terminal
+        // entries have no archived state to toggle).
+        if (hasSession && isAuthMode() && !isTerminalSessionId(sessionId)) {
+            const archived = !!((opts && opts.archived) || isChatSessionArchived(sessionId));
+            const archiveLabel = archived ? 'Unarchive' : 'Archive';
+            parts.push(
+                '<button type="button" class="chat-chrome-menu-item" role="menuitem"'
+                + ' title="' + archiveLabel + '" aria-label="' + archiveLabel + '"'
+                + ' onclick="window.chatPageToggleArchiveSession(\'' + sid + '\', event)">'
+                + (archived ? icons.unarchive : icons.archive)
+                + '<span class="chat-chrome-menu-item-label">' + archiveLabel + '</span>'
+                + '</button>'
+            );
+        }
         if (includeDelete) {
             parts.push(
                 '<button type="button" class="chat-chrome-menu-item is-danger" role="menuitem"'
@@ -15155,6 +15171,66 @@
         if (deletedChatSessionIds.has(String(canonicalizeChatSessionId(sessionId)))) return true;
         const authSid = toAuthDbSessionId(sessionId);
         return authSid != null && deletedChatSessionIds.has(String(authSid));
+    }
+
+    // Sessions this tab knows are archived (populated from ?archived=only).
+    // Drives the Archive/Unarchive menu label; the server list is the source
+    // of truth after every archive toggle.
+    const archivedChatSessionIds = new Set();
+
+    function markChatSessionArchived(sessionId) {
+        if (sessionId == null || sessionId === '') return;
+        archivedChatSessionIds.add(String(canonicalizeChatSessionId(sessionId)));
+        const authSid = toAuthDbSessionId(sessionId);
+        if (authSid != null) archivedChatSessionIds.add(String(authSid));
+    }
+
+    function unmarkChatSessionArchived(sessionId) {
+        if (sessionId == null || sessionId === '') return;
+        archivedChatSessionIds.delete(String(canonicalizeChatSessionId(sessionId)));
+        const authSid = toAuthDbSessionId(sessionId);
+        if (authSid != null) archivedChatSessionIds.delete(String(authSid));
+    }
+
+    function isChatSessionArchived(sessionId) {
+        if (sessionId == null || sessionId === '') return false;
+        if (archivedChatSessionIds.has(String(canonicalizeChatSessionId(sessionId)))) return true;
+        const authSid = toAuthDbSessionId(sessionId);
+        return authSid != null && archivedChatSessionIds.has(String(authSid));
+    }
+
+    async function toggleArchiveChatSession(sessionId, event) {
+        if (event) {
+            event.stopPropagation();
+            event.preventDefault();
+        }
+        if (sessionId == null || sessionId === '') return;
+        closeAllSessionMenus();
+        if (!isAuthMode() || isTerminalSessionId(sessionId)) return;
+        const authSid = toAuthDbSessionId(sessionId);
+        if (authSid == null) return;
+        const next = !isChatSessionArchived(sessionId);
+        try {
+            const response = await fetch(`/api/auth/sessions/${encodeURIComponent(authSid)}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ archived: next }),
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok || !data.success) {
+                console.warn('[Cuttle Chat] Archive toggle failed:', data.error || response.status);
+                return;
+            }
+            if (next) markChatSessionArchived(sessionId);
+            else unmarkChatSessionArchived(sessionId);
+        } catch (error) {
+            console.error('Error toggling chat archive:', error);
+            return;
+        }
+        // Archiving the open chat keeps it open — it only leaves the list.
+        await refreshChatHistoryList();
+        await refreshArchivedSessions();
     }
 
     let pendingDeleteSessionId = null;
@@ -15391,6 +15467,8 @@
             }
             clearSessionPrefs(sessionId);
             await refreshChatHistoryList();
+            // Deleting from the Archived section must update its count too.
+            await refreshArchivedSessions();
             return;
         }
 
@@ -16198,6 +16276,94 @@
         }
     }
 
+    // Archived chats: hidden from the main list, restorable from a collapsed
+    // section at the bottom of the history panel (server is source of truth).
+    let archivedChatSessions = [];
+    let archivedSessionsLoaded = false;
+
+    function isArchiveSectionCollapsed() {
+        try {
+            return localStorage.getItem('cuttleArchiveSectionCollapsed') !== '0';
+        } catch (_) {
+            return true;
+        }
+    }
+
+    function toggleArchiveSection(event) {
+        if (event) {
+            event.stopPropagation();
+            event.preventDefault();
+        }
+        try {
+            localStorage.setItem('cuttleArchiveSectionCollapsed', isArchiveSectionCollapsed() ? '0' : '1');
+        } catch (_) {}
+        renderArchivedSection();
+    }
+
+    function toggleArchiveSectionKey(event) {
+        if (event && (event.key === 'Enter' || event.key === ' ')) {
+            event.preventDefault();
+            toggleArchiveSection(event);
+        }
+    }
+
+    async function refreshArchivedSessions() {
+        if (!isAuthMode()) {
+            archivedChatSessions = [];
+            archivedSessionsLoaded = true;
+            renderArchivedSection();
+            return;
+        }
+        try {
+            const response = await fetch('/api/auth/sessions?archived=only', { credentials: 'include' });
+            const data = await response.json().catch(() => ({}));
+            if (data && data.success) {
+                archivedChatSessions = data.sessions || [];
+                archivedSessionsLoaded = true;
+                archivedChatSessionIds.clear();
+                archivedChatSessions.forEach((s) => markChatSessionArchived(s && s.id));
+            }
+        } catch (error) {
+            console.error('Error loading archived sessions:', error);
+        }
+        renderArchivedSection();
+    }
+
+    function renderArchivedSection() {
+        const historyContainer = document.getElementById('chatHistory');
+        if (!historyContainer) return;
+        const prev = document.getElementById('historyArchivedSection');
+        if (prev) prev.remove();
+        if (!archivedSessionsLoaded || !archivedChatSessions.length) return;
+        const collapsed = isArchiveSectionCollapsed();
+        const count = archivedChatSessions.length;
+        let itemsHtml = '';
+        archivedChatSessions.forEach((s) => {
+            itemsHtml += createAuthHistoryItemHTML(s, {});
+        });
+        const section = document.createElement('div');
+        section.className = 'history-section history-archived-section' + (collapsed ? ' is-collapsed' : '');
+        section.id = 'historyArchivedSection';
+        section.innerHTML =
+            '<div class="history-section-header is-collapsible" role="button" tabindex="0"'
+            + ' aria-expanded="' + (collapsed ? 'false' : 'true') + '"'
+            + ' aria-label="Archived chats"'
+            + ' onclick="window.chatPageToggleArchiveSection(event)"'
+            + ' onkeydown="window.chatPageToggleArchiveSectionKey(event)">'
+            + '<span class="history-section-chevron" aria-hidden="true">'
+            + '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">'
+            + '<polyline points="6 9 12 15 18 9"/>'
+            + '</svg>'
+            + '</span>'
+            + '<div class="history-section-title">Archived'
+            + '<span class="history-section-count" title="' + count + ' archived chat' + (count === 1 ? '' : 's') + '">' + count + '</span>'
+            + '</div>'
+            + '<div class="history-section-actions"></div>'
+            + '</div>'
+            + '<div class="history-section-body">' + itemsHtml + '</div>';
+        historyContainer.appendChild(section);
+    }
+
     function paintHistoryEntries(entries, renderEntry, opts) {
         const historyContainer = document.getElementById('chatHistory');
         if (!historyContainer) return;
@@ -16215,6 +16381,7 @@
                     <div class="empty-state-text">${escapeHtml(text)}</div>
                 </div>
             `;
+            renderArchivedSection();
             return;
         }
         const groups = groupSessionsByProject(entries);
@@ -16255,6 +16422,7 @@
         syncHistoryUnreadIndicators();
         applyHistorySubagentExpandState();
         scheduleSlashChipCompactLabels(historyContainer);
+        renderArchivedSection();
     }
 
     function loadChatHistory() {
@@ -16279,6 +16447,8 @@
                 return;
             }
             applyGeneratingFlagsFromSessions(serverSessions);
+            // First paint kicks off the Archived section fetch (cached after).
+            if (!archivedSessionsLoaded) refreshArchivedSessions();
             const entries = serverSessions.map((s) => ({
                 sessionId: s.id,
                 session: null,
@@ -17051,6 +17221,7 @@
         syncHistoryUnreadIndicators();
         applyHistorySubagentExpandState();
         scheduleSlashChipCompactLabels(historyContainer);
+        renderArchivedSection();
     }
 
     function searchChats(opts) {
@@ -22812,6 +22983,9 @@
     window.loadChatSession = loadChatSession;
     window.chatPageNavigateToChatHandle = navigateToChatHandle;
     window.chatPageOpenTerminalSession = openTerminalSession;
+    window.chatPageToggleArchiveSession = toggleArchiveChatSession;
+    window.chatPageToggleArchiveSection = toggleArchiveSection;
+    window.chatPageToggleArchiveSectionKey = toggleArchiveSectionKey;
     window.chatPageRequestDeleteSession = requestDeleteChatSession;
     window.chatPageCancelDeleteSession = cancelDeleteChatSession;
     window.chatPageConfirmDeleteSession = confirmDeleteChatSession;

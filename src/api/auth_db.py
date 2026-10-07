@@ -137,6 +137,12 @@ class AuthDatabase:
         except sqlite3.OperationalError:
             pass  # column already exists
 
+        # Archive: hidden from the history list, restorable from the Archived section
+        try:
+            cursor.execute('ALTER TABLE chat_sessions ADD COLUMN is_archived INTEGER DEFAULT 0')
+        except sqlite3.OperationalError:
+            pass  # column already exists
+
         # Per-chat working project (cwd for /cursor, /antigravity, etc.)
         for col_sql in (
             'ALTER TABLE chat_sessions ADD COLUMN project_id INTEGER',
@@ -1119,25 +1125,35 @@ class AuthDatabase:
         Empty sessions stay active so deep-links like ``/?chat=<id>`` keep working
         until the first message — we used to soft-delete them here, which raced
         with opening a brand-new chat and made the second tab 404 on live-status.
+
+        Archived sessions are excluded here; see ``get_archived_chat_sessions``.
         """
+        return self._fetch_chat_sessions(user_id, archived_only=False)
+
+    def get_archived_chat_sessions(self, user_id: int) -> List[Dict[str, Any]]:
+        """Get the user's archived chat sessions (same shape, restorable)."""
+        return self._fetch_chat_sessions(user_id, archived_only=True)
+
+    def _fetch_chat_sessions(self, user_id: int, *, archived_only: bool) -> List[Dict[str, Any]]:
         conn = self._get_connection()
         cursor = conn.cursor()
 
         cursor.execute('''
-            SELECT cs.*, 
+            SELECT cs.*,
                    COUNT(cm.id) as message_count,
                    MAX(cm.timestamp) as last_message_time
             FROM chat_sessions cs
             LEFT JOIN chat_messages cm ON cs.id = cm.chat_session_id
             WHERE cs.user_id = ? AND cs.is_active = 1
+              AND COALESCE(cs.is_archived, 0) = ?
             GROUP BY cs.id
             HAVING COUNT(cm.id) > 0
             ORDER BY COALESCE(MAX(cm.timestamp), cs.last_activity) DESC
-        ''', (user_id,))
-        
+        ''', (user_id, 1 if archived_only else 0))
+
         rows = cursor.fetchall()
         conn.close()
-        
+
         return [dict(row) for row in rows]
 
     @staticmethod
@@ -1201,6 +1217,7 @@ class AuthDatabase:
             FROM chat_sessions cs
             LEFT JOIN chat_messages cm ON cs.id = cm.chat_session_id
             WHERE cs.user_id = ? AND cs.is_active = 1
+              AND COALESCE(cs.is_archived, 0) = 0
               AND (
                     LOWER(IFNULL(cs.session_name, '')) LIKE ? ESCAPE '\\'
                  OR LOWER(CAST(cs.id AS TEXT)) LIKE ? ESCAPE '\\'
@@ -1235,6 +1252,7 @@ class AuthDatabase:
             FROM chat_sessions cs
             INNER JOIN chat_messages cm ON cs.id = cm.chat_session_id
             WHERE cs.user_id = ? AND cs.is_active = 1
+              AND COALESCE(cs.is_archived, 0) = 0
               AND cs.id IN (
                     SELECT DISTINCT chat_session_id FROM chat_messages
                     WHERE LOWER(IFNULL(content, '')) LIKE ? ESCAPE '\\'
@@ -1333,6 +1351,23 @@ class AuthDatabase:
             WHERE id = ? AND user_id = ? AND is_active = 1
             ''',
             (1 if starred else 0, session_id, user_id),
+        )
+        affected = cursor.rowcount
+        conn.commit()
+        conn.close()
+        return affected > 0
+
+    def set_session_archived(self, session_id: int, user_id: int, archived: bool) -> bool:
+        """Archive / unarchive a chat session owned by the user."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            '''
+            UPDATE chat_sessions
+            SET is_archived = ?
+            WHERE id = ? AND user_id = ? AND is_active = 1
+            ''',
+            (1 if archived else 0, session_id, user_id),
         )
         affected = cursor.rowcount
         conn.commit()
