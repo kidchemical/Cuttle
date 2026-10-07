@@ -182,9 +182,6 @@ def _selectors(family=()):
             "/cursor do it": ("cursor", "do it"),
             "/cursor": ("cursor", ""),
         }.get(m),
-        cloud_blocked=lambda m, mode: (
-            "blocked" if (mode == "local" and m.startswith("/cursor")) else None
-        ),
     )
 
 
@@ -192,36 +189,36 @@ def test_select_router_family_wins():
     from api import chat_coordinator as coord
 
     sel = coord.select_agent_turn(
-        "/route /cursor do it", inference_mode="auto", **_selectors(family=("/route /cursor do it",))
+        "/route /cursor do it", **_selectors(family=("/route /cursor do it",))
     )
     assert sel.kind == "router_family"
 
 
-def test_select_harness_mode_and_empty_arms():
+def test_select_harness_and_empty_arms():
     from api import chat_coordinator as coord
 
-    sel = coord.select_agent_turn("/cursor do it", inference_mode="auto", **_selectors())
+    sel = coord.select_agent_turn("/cursor do it", **_selectors())
     assert (sel.kind, sel.agent_id, sel.prompt) == ("harness", "cursor", "do it")
-    sel = coord.select_agent_turn("/cursor do it", inference_mode="local", **_selectors())
-    assert (sel.kind, sel.block_message) == ("mode_blocked", "blocked")
-    sel = coord.select_agent_turn("/cursor", inference_mode="auto", **_selectors())
+    sel = coord.select_agent_turn("/cursor", **_selectors())
     assert (sel.kind, sel.agent_id) == ("harness_empty_prompt", "cursor")
 
 
 def test_select_plain_and_pipeline_arms():
     from api import chat_coordinator as coord
 
-    assert coord.select_agent_turn("hello?", inference_mode="auto", **_selectors()).kind == "plain_router"
-    assert coord.select_agent_turn("", inference_mode="auto", **_selectors()).kind == "pipeline"
+    assert coord.select_agent_turn("hello?", **_selectors()).kind == "plain_router"
+    assert coord.select_agent_turn("", **_selectors()).kind == "pipeline"
 
 
-def test_same_turn_http_sync_and_direct_agree(http_env):
+@pytest.mark.parametrize("legacy_mode", [None, "local", "cloud", "auto"])
+def test_same_turn_http_sync_and_direct_agree(http_env, legacy_mode):
     from api import chat_coordinator as coord
     from api import chat_delivery
 
     wca, db, calls = http_env
     res = _client(wca).post("/api/chat", json={
         "message": "/cursor do the thing", "session_id": "acc-sync", "stream": False,
+        "inference_mode": legacy_mode,
     })
     assert res.status_code == 200
     assert res.get_json()["response"] == "coordinated!"
@@ -241,7 +238,7 @@ def test_same_turn_http_sync_and_direct_agree(http_env):
         make_saver=parts["make_saver"],
         should_save=lambda body: bool(body.get("success")),
         notify_mobile=lambda body: None,
-        format_shortcut=lambda kind, sel: {"success": True, "response": sel.block_message},
+        format_shortcut=lambda kind, sel: {"success": True, "response": f"Please provide a prompt after /{sel.agent_id}."},
     )
     out = coord.submit_agent_turn(
         prepared, io=io, delivery=chat_delivery, claim=True,
@@ -342,7 +339,7 @@ def test_unclaimed_sync_still_runs_after_run():
         make_saver=parts["make_saver"],
         should_save=lambda body: bool(body.get("success")),
         notify_mobile=lambda body: notified.append(body),
-        format_shortcut=lambda kind, sel: {"success": True, "response": sel.block_message},
+        format_shortcut=lambda kind, sel: {"success": True, "response": f"Please provide a prompt after /{sel.agent_id}."},
     )
     out = coord.submit_agent_turn(
         prepared, io=io, delivery=chat_delivery, claim=False,

@@ -161,7 +161,6 @@ def test_web_chat_plain_message_returns_router_result_before_pipeline(monkeypatc
     result = web.process_message_with_bot(
         "plain smoke request",
         "router-smoke",
-        inference_mode="auto",
     )
     assert result["type"] == "router_execution"
     assert result["response"] == "CuttleRouter handled it"

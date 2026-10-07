@@ -109,7 +109,6 @@ def test_generate_title_retries_when_avoided(monkeypatch):
     )
     title = _generate_title(
         [{"role": "user", "content": "test"}],
-        "cloud",
         avoid_titles=["💬 general"],
     )
     assert title == "🧪 Smoke test chat"
@@ -134,27 +133,8 @@ def test_generate_title_prefers_openai(monkeypatch):
     monkeypatch.setattr("api.chat_titler._title_via_local", boom)
     title = _generate_title(
         [{"role": "user", "content": "name chats like commits"}],
-        "cloud",
     )
     assert title == "✨ Auto-name chat sessions"
-
-
-def test_generate_title_local_skips_cloud(monkeypatch):
-    def fake_local(prompt, temperature=0.2):
-        return "💬 Local title"
-
-    def fake_openai(prompt, temperature=0.3):
-        return "Should not use OpenAI"
-
-    fake_local.__name__ = "_title_via_local"
-    fake_openai.__name__ = "_title_via_openai"
-    monkeypatch.setattr("api.chat_titler._title_via_local", fake_local)
-    monkeypatch.setattr("api.chat_titler._title_via_openai", fake_openai)
-    title = _generate_title(
-        [{"role": "user", "content": "hello"}],
-        "local",
-    )
-    assert title == "💬 Local title"
 
 
 def test_title_honors_completion_provider_preference(monkeypatch):
@@ -162,7 +142,7 @@ def test_title_honors_completion_provider_preference(monkeypatch):
     monkeypatch.setattr('api.completion_providers.resolve_order', lambda: ['local', 'openai', 'anthropic'])
     monkeypatch.setattr(titler, '_title_via_local', lambda *a, **k: 'Fix commit staging')
     monkeypatch.setattr(titler, '_title_via_openai', lambda *a, **k: (_ for _ in ()).throw(AssertionError('wrong provider')))
-    assert titler._generate_title([{'role': 'user', 'content': 'fix commits'}], 'auto') == 'Fix commit staging'
+    assert titler._generate_title([{'role': 'user', 'content': 'fix commits'}]) == 'Fix commit staging'
 
 
 def test_title_delegates_model_selection_to_completion_owner(monkeypatch):

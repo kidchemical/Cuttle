@@ -794,7 +794,7 @@ def _unregister_active_tracker(tracker: "QueryTracker") -> None:
 def get_query_tracker(query_id: str = None) -> "QueryTracker":
     """Return the tracker for an in-flight query, or this thread's current tracker.
 
-    Prefer ``query_id`` when known (e.g. ``/api/llm-request`` on another thread).
+    Prefer ``query_id`` when known (e.g. a completion helper on another thread).
     """
     global _fallback_tracker
     if query_id is not None and str(query_id).strip():

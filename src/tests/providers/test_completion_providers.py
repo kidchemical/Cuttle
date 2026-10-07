@@ -247,8 +247,8 @@ def test_llm_complete_order_comes_from_the_registry(monkeypatch, store):
     assert tried == ["anthropic", "openai", "local"]
 
 
-def test_llm_complete_local_mode_stays_local_only(monkeypatch):
-    """inference_mode=local must not walk the chain and burn a cloud key."""
+def test_llm_complete_explicit_local_provider_stays_local_only(monkeypatch):
+    """An explicit local provider must not walk the cloud fallback chain."""
     from api import llm_complete
 
     tried = []
@@ -258,7 +258,7 @@ def test_llm_complete_local_mode_stays_local_only(monkeypatch):
     monkeypatch.setattr(
         llm_complete, "_via_openai", lambda *a, **k: tried.append("openai") or None
     )
-    llm_complete.complete(user="hi", inference_mode="local")
+    llm_complete.complete(user="hi", providers=("local",))
     assert tried == ["local"]
 
 

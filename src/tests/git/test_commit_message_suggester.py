@@ -127,7 +127,6 @@ def test_suggest_falls_back_to_intent_heuristic(monkeypatch):
     out = suggest_commit_message(
         ctx,
         user_prompts=["add include/exclude for pending git commits"],
-        inference_mode="cloud",
     )
     assert out["source"] == "heuristic"
     assert "src/api" not in out["message"]
@@ -155,7 +154,7 @@ def test_suggest_prefers_openai(monkeypatch):
     fake_anthropic.__name__ = "_via_anthropic"
     monkeypatch.setattr("api.commit_message_suggester._via_openai", fake_openai)
     monkeypatch.setattr("api.commit_message_suggester._via_anthropic", fake_anthropic)
-    out = suggest_commit_message(ctx, user_prompts=[], inference_mode="cloud")
+    out = suggest_commit_message(ctx, user_prompts=[])
     assert out["source"] == "openai"
     assert "include" in out["message"].lower()
 
@@ -199,7 +198,6 @@ def test_suggest_avoids_previous_subjects(monkeypatch):
     out = suggest_commit_message(
         ctx,
         user_prompts=[],
-        inference_mode="cloud",
         avoid_messages=["Update pending changes naming"],
     )
     assert out["message"] == "Vary commit message suggestions"

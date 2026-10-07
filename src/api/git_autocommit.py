@@ -87,7 +87,7 @@ def commit_turn(
         try:
             ctx = collect_commit_suggest_context(root, paths=paths)
             suggestion = suggest_commit_message(
-                ctx, user_prompts=[prompt] if prompt.strip() else [], inference_mode="auto"
+                ctx, user_prompts=[prompt] if prompt.strip() else []
             )
             message = (suggestion.get("message") or suggestion.get("heuristic_message") or "").strip()
             if not message:

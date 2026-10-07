@@ -1638,7 +1638,6 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     prompt,
-                    inference_mode: getInferenceModeForRequest(),
                     project: (currentProject && currentProject.name) || '',
                     context: recentMessagesForEnhance(),
                 }),
@@ -3165,9 +3164,6 @@
         session owned by chat_prompt_history.js; the page holds this
         instance plus storage/session/DOM/slash IO. */
     const PROMPT_HISTORY_STORAGE_KEY = 'cuttlePromptHistoryBySession';
-    const INFERENCE_MODE_STORAGE_KEY = 'cuttleChatInferenceMode';
-    /** Temporarily off — agent router owns routing; re-enable UI when needed. */
-    const INFERENCE_MODE_TOGGLE_ENABLED = false;
     const promptHistoryState = CuttlePromptHistory.createState();
 
     function readPromptHistoryMap() {
@@ -3263,58 +3259,6 @@
         const map = readPromptHistoryMap();
         map[currentSessionId] = promptHistoryState.list.slice();
         writePromptHistoryMap(map);
-    }
-
-    function readInferenceMode() {
-        if (!INFERENCE_MODE_TOGGLE_ENABLED) return 'auto';
-        try {
-            const v = localStorage.getItem(INFERENCE_MODE_STORAGE_KEY);
-            if (v === 'local' || v === 'cloud' || v === 'auto') return v;
-        } catch (_) {}
-        return 'auto';
-    }
-
-    function writeInferenceMode(mode) {
-        if (!INFERENCE_MODE_TOGGLE_ENABLED) return;
-        try {
-            localStorage.setItem(INFERENCE_MODE_STORAGE_KEY, mode);
-        } catch (_) {}
-    }
-
-    function syncInferenceModeUi(mode) {
-        document.querySelectorAll('.inference-mode-btn').forEach((btn) => {
-            const active = btn.getAttribute('data-mode') === mode;
-            btn.classList.toggle('active', active);
-            btn.setAttribute('aria-pressed', active ? 'true' : 'false');
-        });
-    }
-
-    function initInferenceModeToggle() {
-        document.querySelectorAll('.inference-mode-bar').forEach((bar) => {
-            bar.hidden = !INFERENCE_MODE_TOGGLE_ENABLED;
-        });
-        if (!INFERENCE_MODE_TOGGLE_ENABLED) return;
-        let mode = readInferenceMode();
-        syncInferenceModeUi(mode);
-        document.querySelectorAll('.inference-mode-btn').forEach((btn) => {
-            btn.addEventListener('click', () => {
-                const next = btn.getAttribute('data-mode');
-                if (!next || next === mode) return;
-                mode = next;
-                writeInferenceMode(mode);
-                syncInferenceModeUi(mode);
-                pruneCloudSlashChipsForLocalMode();
-                // On welcome / new chat, re-apply starred default when leaving Local
-                // (cloud agent chips were pruned while Local was active).
-                if (!currentSessionId && mode !== 'local') {
-                    applyStarredSlashChips();
-                }
-            });
-        });
-    }
-
-    function getInferenceModeForRequest() {
-        return readInferenceMode();
     }
 
     function recordPromptHistory(composedMessage) {
@@ -5210,13 +5154,11 @@
         return null;
     }
 
-    /** Slash commands: / menu + chips (stack multiple). `category` drives palette styling.
-     *  requiresCloud: hidden/blocked when chat inference mode is Local. */
+    /** Slash commands: / menu + chips (stack multiple). `category` drives palette styling. */
 
     // Slash decisions live in chat_slash.js; wrappers bind page state.
-    function slashCommandsForCurrentMode() {
-        return CuttleChatSlash.slashCommandsForCurrentMode(
-            readInferenceMode(), slashPaletteSupplement.harnessAgents || []);
+    function availableSlashCommands() {
+        return CuttleChatSlash.availableSlashCommands(slashPaletteSupplement.harnessAgents || []);
     }
 
     /**
@@ -5316,8 +5258,6 @@
 
     function cursorAgentSlashCommandsForPalette() {
         if (!hasActiveCursorAgentChip()) return [];
-        const mode = readInferenceMode();
-        if (mode === 'local') return [];
         return CuttleChatSlash.CURSOR_AGENT_SLASH_COMMANDS.slice();
     }
 
@@ -5342,7 +5282,6 @@
 
     /** Nested harness one-shots (``/usage`` where supported, ``/cost``) for the active badge. */
     function harnessUsageSlashCommandsForPalette() {
-        const mode = readInferenceMode();
         const forAgent = (agent) => {
             const out = [];
             const usageTable = CuttleChatSlash.HARNESS_USAGE_SLASH_BY_AGENT;
@@ -5356,11 +5295,6 @@
             out.push(harnessCostSlashCommand(agent));
             return out;
         };
-        if (mode === 'local') {
-            // Hermes still works in Local mode.
-            if (hasActiveHermesAgentChip()) return forAgent('hermes');
-            return [];
-        }
         if (hasActiveMuseAgentChip()) return forAgent('muse');
         if (hasActiveCodexAgentChip()) return forAgent('codex');
         if (hasActiveHermesAgentChip()) return forAgent('hermes');
@@ -5452,7 +5386,7 @@
     }
 
     function getStarredStickyChips() {
-        return CuttleChatSlash.starredStickyChips(readStarredSlashPrefixes(), readInferenceMode());
+        return CuttleChatSlash.starredStickyChips(readStarredSlashPrefixes());
     }
 
     /** Apply globally starred sticky agent chips (new chat / welcome only). */
@@ -5580,23 +5514,6 @@
             renderProjectChips();
         }
         return !wasStarred;
-    }
-
-    function pruneCloudSlashChipsForLocalMode() {
-        if (readInferenceMode() !== 'local') return;
-        let changed = false;
-        ['welcome', 'chat'].forEach((key) => {
-            const before = slashCtx[key].chips.length;
-            slashCtx[key].chips = slashCtx[key].chips.filter((c) => {
-                const match = CuttleChatSlash.SLASH_COMMANDS.find((s) => s.prefix === c.prefix);
-                return !(match && match.requiresCloud);
-            });
-            if (slashCtx[key].chips.length !== before) changed = true;
-        });
-        if (changed) {
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-            renderSlashChips('chat', document.getElementById('chatInput'));
-        }
     }
 
     const slashPaletteSupplement = {
@@ -7959,7 +7876,7 @@
 
     function filterSlashPaletteItems(filter) {
         const f = (filter || '').toLowerCase();
-        const cmds = slashCommandsForCurrentMode().filter((c) => slashPaletteItemMatches(c, f));
+        const cmds = availableSlashCommands().filter((c) => slashPaletteItemMatches(c, f));
         const cursorCmds = cursorAgentSlashCommandsForPalette().filter((c) =>
             slashPaletteItemMatches(c, f)
         );
@@ -10934,8 +10851,6 @@
 
     /** User bubble: show slash commands as chips + optional body (not raw /prefix). */
     const CUTTLE_KNOWN_BUTTON_LABELS = {
-        'launch-local-llm-yes': 'Yes, launch llama.cpp',
-        'launch-local-llm-no': 'Not now',
         'project-action-confirm': 'Confirm action',
         'project-action-cancel': 'Cancel action',
     };
@@ -11549,13 +11464,6 @@
         pendingChangesCtl = window.CuttlePendingChangesPanel.create({
             getProject: function () { return currentProject; },
             getSessionId: function () { return currentSessionId; },
-            getInferenceMode: function () {
-                try {
-                    return (window.cuttleInferenceMode || localStorage.getItem('cuttleInferenceMode') || 'auto');
-                } catch (_) {
-                    return 'auto';
-                }
-            },
             getPrompts: function () {
                 try {
                     if (typeof getComposerPromptHistory === 'function') {
@@ -15659,7 +15567,7 @@
         setHistoryRenameStatus('', false);
         try {
             const authSid = toAuthDbSessionId(sessionId);
-            const body = { inference_mode: getInferenceModeForRequest() };
+            const body = {};
             if (force && renameAvoidTitles.length) {
                 body.avoid = renameAvoidTitles.slice();
             } else if (input && String(input.value || '').trim()) {
@@ -17965,7 +17873,6 @@
                 message: message,
                 session_id: authSessionIdForRequest(),
                 stream: true,
-                inference_mode: getInferenceModeForRequest(),
             };
             // Stable per-send id so a stream=false retry cannot mint a second
             // chat when this first POST still has a null session_id (CH-000559).
@@ -22527,7 +22434,6 @@
         }
 
         loadSlashPaletteSupplement();
-        initInferenceModeToggle();
         hydrateStarredSlashFromServer();
         hydrateStarredProjectFromServer();
         window.addEventListener('cuttle-vega-ready', function () {

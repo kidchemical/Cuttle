@@ -13,23 +13,26 @@ class UpdateRefused(RuntimeError):
 
 
 def git(repo: Path, *args: str) -> bytes:
-    result = subprocess.run(['git', '-C', str(repo), *args], capture_output=True)
+    result = subprocess.run(['git', '-C', str(repo), *args], capture_output=True, timeout=180)
     if result.returncode:
         raise UpdateRefused(f'git {args[0]} failed: {result.stderr.decode(errors="replace").strip()}')
     return result.stdout
 
 
 def require_clean(repo: Path) -> None:
-    if git(repo, 'status', '--porcelain', '--untracked-files=all'):
+    if git(repo, 'status', '--porcelain', '--untracked-files=all', '--ignore-submodules=none'):
         raise UpdateRefused('checkout has local changes or untracked files; preserve/commit them before updating')
 
 
-def update_checkout(repo: Path) -> None:
+def update_checkout(repo: Path, *, check_only: bool = False) -> None:
     require_clean(repo)
     git(repo, 'symbolic-ref', '-q', 'HEAD')  # Detached checkouts are never updated.
     upstream = git(repo, 'rev-parse', '--abbrev-ref', '@{u}').decode().strip()
-    print('git fetch --all --prune', flush=True)
-    git(repo, 'fetch', '--all', '--prune')
+    if not check_only:
+        print('git fetch --all --prune', flush=True)
+        git(repo, 'fetch', '--all', '--prune')
+    # Pin the fetched target so a concurrent fetch cannot change the merge.
+    upstream = git(repo, 'rev-parse', '--verify', '@{u}^{commit}').decode().strip()
     try:
         git(repo, 'merge-base', '--is-ancestor', 'HEAD', upstream)
     except UpdateRefused:
@@ -49,6 +52,8 @@ def update_checkout(repo: Path) -> None:
         ancestors.update(b'/'.join(parts[:n]) for n in range(1, len(parts)))
         if ancestors & incoming or local in incoming_ancestors:
             raise UpdateRefused('incoming tracked paths would overwrite ignored local files; preserve them before updating')
+    if check_only:
+        return
     print(f'git merge --ff-only --no-overwrite-ignore {upstream}', flush=True)
     git(repo, 'merge', '--ff-only', '--no-overwrite-ignore', upstream)
 
@@ -56,10 +61,11 @@ def update_checkout(repo: Path) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--repo', type=Path, required=True)
+    parser.add_argument('--check-only', action='store_true', help='Recheck preservation before lifecycle; do not fetch or merge')
     args = parser.parse_args()
     try:
-        update_checkout(args.repo)
-    except (UpdateRefused, OSError) as exc:
+        update_checkout(args.repo, check_only=args.check_only)
+    except (UpdateRefused, OSError, subprocess.TimeoutExpired) as exc:
         print(f'ERROR update refused: {exc}', file=sys.stderr)
         return 1
     return 0

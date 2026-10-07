@@ -287,3 +287,39 @@ def test_debug_build_publish_uses_gradle_sdk_and_is_non_fatal():
     hook = gradle.split("variant.assembleProvider.configure", 1)[1]
     assert 'environment "ANDROID_HOME", android.sdkDirectory' in hook
     assert "ignoreExitValue true" in hook
+
+
+@pytest.mark.parametrize("install_fails", [False, True])
+def test_automatic_rebuild_installs_locked_dependencies_before_sync(monkeypatch, tmp_path, install_fails):
+    from types import SimpleNamespace
+    calls = []
+    published = []
+    monkeypatch.setattr(apk, "MOBILE_DIR", tmp_path / "mobile")
+    monkeypatch.setattr(apk, "_rebuild_command", lambda: ["fixture-gradle"])
+    monkeypatch.setattr(apk, "_rebuild_state", {})
+
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        failure = install_fails and argv[1:] == ["ci"]
+        return SimpleNamespace(returncode=1 if failure else 0,
+                               stderr="fixture install failure" if failure else "", stdout="")
+
+    def publish(digest):
+        published.append(digest)
+        return tmp_path / "verified.apk"
+
+    monkeypatch.setattr(apk.subprocess, "run", run)
+    monkeypatch.setattr(apk, "publish_gradle_apk", publish)
+    apk._run_rebuild("a" * 20)
+    assert calls[0][0][1:] == ["ci"]
+    assert calls[0][1]["cwd"] == str(apk.MOBILE_DIR)
+    if install_fails:
+        assert len(calls) == 1
+        assert published == []
+        assert apk._rebuild_state["exitCode"] == 1
+        assert "dependency installation failed" in apk._rebuild_state["error"]
+    else:
+        assert calls[1][0][1:] == ["run", "sync:android"]
+        assert calls[2][0] == ["fixture-gradle"]
+        assert published == ["a" * 20]
+        assert apk._rebuild_state["exitCode"] == 0

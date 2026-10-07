@@ -667,29 +667,7 @@ def _emit_chat_complete_mobile(session_id: str, result: dict) -> None:
         print(f"[MOBILE] chat_complete emit failed: {exc}", flush=True)
 
 
-# ---------------------------------------------------------------------------
-# On-demand llama.cpp launch (Local + Auto when local is needed)
-# ---------------------------------------------------------------------------
-# When llama-server isn't running and a chat needs it, we don't fail or
-# silently skip — we stash the message and reply with Yes/No <cuttle_button>
-# tags. The web UI renders them; clicking sends "[button:<id>]" back through
-# /api/chat.
-#
-# Triggers:
-#   - Local mode: every message (local is required)
-#   - Auto/Cloud: /hermes only when Hermes config uses a local backend
-#   - Auto: when LLM fallback is about to invoke local (see
-#     _offer_local_llm_launch_if_needed)
-_LOCAL_LAUNCH_BUTTON_YES = 'launch-local-llm-yes'
-_LOCAL_LAUNCH_BUTTON_NO = 'launch-local-llm-no'
-# session_id -> original message waiting for the user's launch decision
-_pending_local_llm_messages: dict = {}
-# Sessions that clicked "Not now" — skip local until they launch or switch to Local
-_declined_local_llm_sessions: set = set()
-
 _CUTTLE_BUTTON_LABELS = {
-    _LOCAL_LAUNCH_BUTTON_YES: 'Yes, launch llama.cpp',
-    _LOCAL_LAUNCH_BUTTON_NO: 'Not now',
     'project-action-confirm': 'Confirm',
     'project-action-cancel': 'Cancel',
 }
@@ -745,186 +723,6 @@ def _persist_auth_launch_gate_reply(db, chat_session_id, user_message: str, laun
         print(f"[CHAT] persist launch-gate reply failed: {e}")
 
 
-def _is_hermes_slash_command(message: str) -> bool:
-    if not isinstance(message, str):
-        return False
-    low = message.lstrip('\ufeff\u200b\u200c\u200d\u2060').strip().lower()
-    return low == '/hermes' or low.startswith('/hermes ')
-
-
-def _hermes_slash_needs_local_llm(message_content) -> bool:
-    """True when ``/hermes`` is aimed at a local Hermes backend (llama.cpp / Ollama / …)."""
-    if not _is_hermes_slash_command(message_content or ''):
-        return False
-    try:
-        from scripts.utilities.hermes_cli_tool import hermes_uses_local_backend
-
-        return bool(hermes_uses_local_backend())
-    except Exception as e:
-        print(f"[LOCAL-LLM] hermes backend probe failed: {e}", flush=True)
-        # Fail closed to the historical local-first behavior.
-        return True
-
-
-def _message_needs_local_llm(message_content, chat_inference_mode: str) -> bool:
-    """True when this chat turn requires the local backend (llama.cpp / Ollama)."""
-    mode = (chat_inference_mode or 'auto').strip().lower()
-    if mode == 'local':
-        return True
-    if _hermes_slash_needs_local_llm(message_content):
-        return True
-    return False
-
-
-def _local_llm_launch_prompt_for(message_content, chat_inference_mode: str = 'auto') -> str:
-    mode = (chat_inference_mode or 'auto').strip().lower()
-    if mode == 'local':
-        why = (
-            "This chat is set to **Local**, but llama.cpp isn't up yet. "
-            "Want me to launch it?"
-        )
-    elif _hermes_slash_needs_local_llm(message_content):
-        why = "Hermes needs the local llama.cpp model, but it isn't up yet. Want me to launch it?"
-    else:
-        why = (
-            "This request needs the local llama.cpp model, but it isn't up yet. "
-            "Want me to launch it?"
-        )
-    return (
-        "**No local model is running right now.**\n\n"
-        f"{why} Loading the model usually takes a minute or two.\n\n"
-        "Once it's running it stays up until you close it yourself or ask me to shut it down.\n\n"
-        f'<cuttle_button id="{_LOCAL_LAUNCH_BUTTON_YES}" label="Yes, launch llama.cpp"/>\n'
-        f'<cuttle_button id="{_LOCAL_LAUNCH_BUTTON_NO}" label="Not now"/>'
-    )
-
-
-def _launch_local_llm_and_wait(session_id, timeout: float = 240.0):
-    """Kick off llama-server and block until it answers (with live status updates).
-
-    Returns (ok, error_message).
-    """
-    from core.local_llm import launch_llamacpp_detached, local_reachable
-
-    emit_chat_status(session_id, 'Launching llama.cpp...')
-    ok, err = launch_llamacpp_detached()
-    if not ok:
-        return False, err
-
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if local_reachable(timeout=2.0):
-            _declined_local_llm_sessions.discard(session_id)
-            return True, ''
-        emit_chat_status(session_id, 'Loading local model (llama.cpp) — this can take 1–2 minutes...')
-        time.sleep(3)
-    return False, (
-        f'llama.cpp did not become ready within {int(timeout)}s. '
-        'Check ~/cuttle_logs/llamacpp.log for details.'
-    )
-
-
-def _offer_local_llm_launch_if_needed(session_id, message_content, chat_inference_mode: str = 'auto'):
-    """If llama.cpp is the active backend and down, stash message and return a Yes/No reply.
-
-    Returns a reply dict when the chat should stop and show the launch prompt;
-    otherwise None (caller continues). Honours prior "Not now" for this session
-    unless the message hard-requires local (Local mode / local Hermes).
-    """
-    if not session_id:
-        return None
-    try:
-        from core.local_llm import is_llamacpp, local_reachable
-        if not is_llamacpp() or local_reachable(timeout=1.0):
-            _declined_local_llm_sessions.discard(session_id)
-            return None
-    except Exception as e:
-        print(f"[LOCAL-LLM] reachability check failed: {e}")
-        return None
-
-    requires = _message_needs_local_llm(message_content, chat_inference_mode)
-    if session_id in _declined_local_llm_sessions and not requires:
-        return None
-
-    _pending_local_llm_messages[session_id] = message_content
-    return {
-        'success': True,
-        'response': _local_llm_launch_prompt_for(message_content, chat_inference_mode),
-        'output': _local_llm_launch_prompt_for(message_content, chat_inference_mode),
-        'type': 'local_llm_launch_prompt',
-    }
-
-
-def _handle_local_llm_launch_gate(message_content, session_id, chat_inference_mode):
-    """Intercept chats that need llama.cpp when it's down, and Yes/No button replies.
-
-    Returns (reply_dict, new_message_content). reply_dict is a final chat
-    response when set; otherwise new_message_content is the (possibly restored
-    pending) message to keep processing.
-    """
-    stripped = (message_content or '').strip()
-    mode = (chat_inference_mode or 'auto').strip().lower()
-
-    if stripped.startswith(f'[button:{_LOCAL_LAUNCH_BUTTON_NO}]'):
-        pending = _pending_local_llm_messages.pop(session_id, None)
-        pending_needs_local = _message_needs_local_llm(pending or '', mode)
-        # Local mode or Hermes cannot continue without the model
-        if mode == 'local' or pending_needs_local:
-            return {
-                'success': True,
-                'response': (
-                    "Okay, leaving llama.cpp off. Switch this chat to **Auto** or **Cloud** "
-                    "to keep going without a local model, or send your message again "
-                    "whenever you want to launch it."
-                ),
-                'type': 'local_llm_launch',
-            }, message_content
-        # Auto: remember decline and continue the pending turn without local
-        _declined_local_llm_sessions.add(session_id)
-        if pending:
-            emit_chat_status(session_id, 'Continuing without llama.cpp...')
-            return None, pending
-        return {
-            'success': True,
-            'response': (
-                "Okay, leaving llama.cpp off for now. I'll use cloud models when I can. "
-                "Send a message again anytime if you want to launch the local model."
-            ),
-            'type': 'local_llm_launch',
-        }, message_content
-
-    if stripped.startswith(f'[button:{_LOCAL_LAUNCH_BUTTON_YES}]'):
-        ok, err = _launch_local_llm_and_wait(session_id)
-        pending = _pending_local_llm_messages.pop(session_id, None)
-        if not ok:
-            return {
-                'success': True,
-                'response': f"❌ **Couldn't start llama.cpp.** {err}",
-                'type': 'local_llm_launch',
-            }, message_content
-        if pending:
-            emit_chat_status(session_id, 'llama.cpp is ready — picking up your message...')
-            return None, pending
-        return {
-            'success': True,
-            'response': (
-                '✅ **llama.cpp is up.** It stays running until you close it or ask me to. '
-                'Go ahead and send your message.'
-            ),
-            'type': 'local_llm_launch',
-        }, message_content
-
-    if stripped.startswith('[button:'):
-        return None, message_content
-
-    if _message_needs_local_llm(stripped, mode):
-        offer = _offer_local_llm_launch_if_needed(session_id, message_content, mode)
-        if offer is not None:
-            return offer, message_content
-
-    return None, message_content
-
-
 def process_message_with_bot(
     message_content,
     session_id,
@@ -932,12 +730,11 @@ def process_message_with_bot(
     routing_key=None,
     is_owner=False,
     status_queue=None,
-    inference_mode='auto',
 ):
-    """Process a chat/Discord turn: slash agents, router, then a no-graph fallback.
+    """Process a compatibility chat turn through the shared coordinator.
 
-    Compatibility entry for non-lane surfaces (local-mode prompts,
-    `/api/sessions/send` cross-session sends): it submits the turn to
+    Compatibility entry for non-lane surfaces (`/api/sessions/send`
+    cross-session sends): it submits the turn to
     the shared application entry (`api.chat_coordinator`) unclaimed,
     with plain shortcut bodies and a naked pipeline fallback — the
     same contract as before, not a second execution path. Authed web
@@ -967,21 +764,8 @@ def process_message_with_bot(
     try:
         # Ensure the session row exists (return value unused since P5-F
         # removed the naked-fallback context build; kept for the side
-        # effect sessions/send and local-mode prompts rely on).
+        # effect sessions/send relies on).
         _session = get_or_create_session(session_id)
-        
-        from api.inference_mode import normalize_inference_mode
-
-        chat_inference_mode = normalize_inference_mode(inference_mode)
-
-        # Local mode / /hermes / Yes-No launch replies when llama.cpp is down.
-        _launch_reply, message_content = _handle_local_llm_launch_gate(
-            message_content, session_id, chat_inference_mode
-        )
-        if _launch_reply is not None:
-            if status_queue is None:
-                _emit_chat_complete_mobile(session_id, _launch_reply)
-            return _launch_reply
 
         # Native Cuttle control command — must win over sticky agent prefixes.
         try:
@@ -1048,8 +832,6 @@ def process_message_with_bot(
                 return None
 
         def _legacy_shortcut(_kind, _sel):
-            if _kind == 'mode_blocked':
-                return {'success': True, 'response': _sel.block_message, 'type': 'mode_blocked'}
             return {
                 'success': True,
                 'response': f'❌ Please provide a prompt after /{_sel.agent_id}.',
@@ -1071,7 +853,6 @@ def process_message_with_bot(
         _turn_out = _submit_turn(
             _PreparedAgentTurn(
                 message=message_content, session_id=session_id,
-                inference_mode=chat_inference_mode,
                 session_kind=session_kind or 'web_anon',
                 routing_key=routing_key or f'web_anon_{session_id}',
                 is_owner=is_owner, project_path=_legacy_proj or '',
@@ -3847,7 +3628,7 @@ def _run_attachment_prepass(message_content: str, raw_attachments, chat_session_
     return agent_message, note, att_meta
 
 
-def _make_auth_assistant_saver(chat_session_id, inference_mode=None, project_path=None):
+def _make_auth_assistant_saver(chat_session_id, project_path=None):
     """Return on_result callback that persists assistant replies for auth DB sessions.
 
     Construction (and its request-data capture) is owned by
@@ -3866,7 +3647,6 @@ def _make_auth_assistant_saver(chat_session_id, inference_mode=None, project_pat
 
     return _owned(
         chat_session_id=chat_session_id,
-        inference_mode=inference_mode,
         project_path=project_path,
         db=get_auth_db(),
         request_data=_req,
@@ -4247,7 +4027,6 @@ def chat_endpoint():
         message_content = _turn_req.message
         raw_attachments = _turn_req.attachments
         chat_session_id = _turn_req.session_id
-        chat_inference_mode = _turn_req.inference_mode
         wants_stream = _turn_req.wants_stream
 
         _auth_user_early, auth_err = require_authenticated()
@@ -4310,7 +4089,7 @@ def chat_endpoint():
                         _persist_auth_user_message(chat_session_id, message_content, metadata=None)
                         if not already_persisted:
                             saver = _make_auth_assistant_saver(
-                                chat_session_id, chat_inference_mode
+                                chat_session_id
                             )
                             if saver:
                                 saver(_rr)
@@ -4611,7 +4390,7 @@ def chat_endpoint():
         if message_content.startswith('/help'):
             help_text = """**🦑 Cuttle Web Chat Commands**
 
-**AI Commands (Auto / Cloud mode):**
+**Agent CLI commands:**
 • `/claude "prompt"` - Claude Code CLI
 • `/opencode "prompt"` - OpenCode CLI (`opencode run`, resumes per chat)
 • `/antigravity "prompt"` - Google Antigravity CLI (`agy`, auto-installs, resumes per chat)
@@ -4625,7 +4404,7 @@ def chat_endpoint():
 • `/hermes /usage` - Hermes local insights (tokens, tools, models)
 • `/opencode /usage` - OpenCode local stats (cost, tools, models)
 • `/claude /usage` - Claude Code local session usage (tokens, models)
-• `/hermes "prompt"` - Hermes on local llama.cpp (also works in Local mode)
+• `/hermes "prompt"` - Hermes Agent using its configured provider
 • `/deepseek "prompt"` - DeepSeek Harness CLI (`dsh --profile headless`; Flash by default)
 
 **Agent router** (when no sticky agent is selected):
@@ -4641,8 +4420,6 @@ def chat_endpoint():
 • `/restart graceful` - restart only if idle
 • `/restart when-idle` - schedule after active work finishes
 • `/restart force --yes` - interrupt active work (requires confirmation)
-
-**Local mode:** only `/hermes` (and help). Switch to Auto or Cloud for the others.
 
 
 **Project commands** (from the chat project's ``.cuttle/commands/*.md``):
@@ -4712,7 +4489,6 @@ def chat_endpoint():
             _sticky_applied = apply_default_sticky_prefix(
                 message_content,
                 chat_session_id if isinstance(chat_session_id, int) else None,
-                allow_cloud_cli=(chat_inference_mode != 'local'),
                 star_on_new_session_only=True,
                 no_agent=is_no_agent_request(data),
             )
@@ -4767,29 +4543,11 @@ def chat_endpoint():
                 request_data=_current_request_data(),
             )
 
-        # On-demand llama.cpp for /hermes and launch Yes/No buttons (before slash handlers).
-        # Local-mode prompts still run in process_message_with_bot (after the user message is saved).
         _launch_gate_sid = (
             f"db_session_{chat_session_id}" if _auth_user and chat_session_id is not None
             else (str(chat_session_id) if chat_session_id is not None else None)
         )
         _mc_stripped = (message_content or '').strip()
-        if _launch_gate_sid and (
-            _mc_stripped.startswith(f'[button:{_LOCAL_LAUNCH_BUTTON_YES}]')
-            or _mc_stripped.startswith(f'[button:{_LOCAL_LAUNCH_BUTTON_NO}]')
-            or _is_hermes_slash_command(_mc_stripped)
-        ):
-            _launch_reply, message_content = _handle_local_llm_launch_gate(
-                message_content, _launch_gate_sid, chat_inference_mode
-            )
-            if _launch_reply is not None:
-                body = dict(_launch_reply)
-                body['session_id'] = chat_session_id
-                if _auth_user and chat_session_id is not None:
-                    _persist_auth_launch_gate_reply(
-                        get_auth_db(), chat_session_id, _mc_stripped, _launch_reply
-                    )
-                return jsonify(body)
 
         # Project confirm actions (no LLM) — e.g. Discord post after <cuttle_confirm>.
         if _launch_gate_sid and _mc_stripped.startswith('[button:project-action-'):
@@ -4905,7 +4663,7 @@ def chat_endpoint():
                 if _auth_user and chat_session_id is not None:
                     try:
                         _persist_user_turn(chat_session_id)
-                        _saver = _make_auth_assistant_saver(chat_session_id, chat_inference_mode)
+                        _saver = _make_auth_assistant_saver(chat_session_id)
                         if _saver:
                             _saver({
                                 'success': bool(reply.get('success')),
@@ -5040,7 +4798,6 @@ def chat_endpoint():
                     persist_user=lambda: (_persist_user_turn(chat_session_id) if _auth_user else None),
                     make_saver=lambda: _make_auth_assistant_saver(
                         chat_session_id if _auth_user else None,
-                        chat_inference_mode,
                         project_path=_router_proj,
                     ),
                     notify_mobile=lambda _b: _emit_chat_complete_mobile(chat_session_id, _b),
@@ -5049,7 +4806,7 @@ def chat_endpoint():
                 return _stream_agent_turn_response(
                     _PreparedAgentTurn(
                         message=message_content, session_id=chat_session_id,
-                        inference_mode=chat_inference_mode, wants_stream=wants_stream,
+                        wants_stream=wants_stream,
                         request_data=data or {}, project_path=_router_proj or '',
                     ),
                     io=_stream_router_io,
@@ -5066,7 +4823,7 @@ def chat_endpoint():
             )
 
             def _guarded_router_saver():
-                _saver = _make_auth_assistant_saver(chat_session_id, chat_inference_mode)
+                _saver = _make_auth_assistant_saver(chat_session_id)
                 if _saver is None:
                     return None
 
@@ -5104,7 +4861,7 @@ def chat_endpoint():
             _turn_out = _submit_turn(
                 _PreparedAgentTurn(
                     message=message_content, session_id=chat_session_id,
-                    inference_mode=chat_inference_mode, wants_stream=wants_stream,
+                    wants_stream=wants_stream,
                     request_data=data or {}, project_path=_router_proj or '',
                 ),
                 io=_router_io, delivery=_chat_delivery, claim=True,
@@ -5117,22 +4874,7 @@ def chat_endpoint():
                 _lane_body.setdefault('session_id', chat_session_id)
             return jsonify(_lane_body)
 
-        # Cloud CLI slash commands require Auto/Cloud inference mode
-        from api.inference_mode import is_cloud_cli_slash_command, cloud_cli_slash_blocked_message
-        if is_cloud_cli_slash_command(message_content):
-            blocked = cloud_cli_slash_blocked_message(chat_inference_mode)
-            if blocked:
-                return jsonify({
-                    'success': True,
-                    'response': blocked,
-                    'session_id': chat_session_id,
-                    'type': 'mode_blocked',
-                })
-
-        # Start a new command-dispatch chain here.  The mode check above also
-        # matches every allowed cloud CLI command; making this an ``elif``
-        # caused Auto/Cloud commands to skip their native handlers entirely
-        # whenever ``blocked`` was false and fall through to the pipeline.
+        # Start a new command-dispatch chain here.
         # Harness agents live under api/agent_harness/agents/<id>/ (folder per agent)
         # plus optional drop-ins under .cuttle_global/agents and {project}/.cuttle/agents.
         project_path = _resolve_request_project_path({
@@ -5173,20 +4915,7 @@ def chat_endpoint():
                             'session_id': chat_session_id,
                             'type': f'{_eaid}_error',
                         }
-                    from api.inference_mode import (
-                        is_cloud_cli_slash_command as _is_cloud,
-                        cloud_cli_slash_blocked_message as _blocked_msg,
-                    )
-                    _blocked = (
-                        _blocked_msg(chat_inference_mode)
-                        if _is_cloud(message_content) else ''
-                    )
-                    return {
-                        'success': True,
-                        'response': _blocked,
-                        'session_id': chat_session_id,
-                        'type': 'mode_blocked',
-                    }
+                    raise RuntimeError(f'unexpected shortcut arm: {_kind}')
 
                 def _stream_unreachable_harness(*_a, **_k):
                     raise RuntimeError('unreachable arm in harness stream lane')
@@ -5200,7 +4929,6 @@ def chat_endpoint():
                     persist_user=lambda: (_persist_user_turn(chat_session_id) if _auth_user else None),
                     make_saver=lambda: _make_auth_assistant_saver(
                         chat_session_id if _auth_user else None,
-                        chat_inference_mode,
                         project_path=project_path,
                     ),
                     notify_mobile=lambda _b: _emit_chat_complete_mobile(chat_session_id, _b),
@@ -5209,7 +4937,7 @@ def chat_endpoint():
                 return _stream_agent_turn_response(
                     _PreparedAgentTurn(
                         message=message_content, session_id=chat_session_id,
-                        inference_mode=chat_inference_mode, wants_stream=wants_stream,
+                        wants_stream=wants_stream,
                         request_data=data or {}, project_path=project_path or '',
                     ),
                     io=_stream_harness_io,
@@ -5228,7 +4956,6 @@ def chat_endpoint():
             def _guarded_harness_saver():
                 _saver = _make_auth_assistant_saver(
                     chat_session_id,
-                    chat_inference_mode,
                     project_path=project_path,
                 )
                 if _saver is None:
@@ -5262,7 +4989,7 @@ def chat_endpoint():
             _turn_out = _submit_turn(
                 _PreparedAgentTurn(
                     message=message_content, session_id=chat_session_id,
-                    inference_mode=chat_inference_mode, wants_stream=wants_stream,
+                    wants_stream=wants_stream,
                     request_data=data or {}, project_path=project_path or '',
                 ),
                 io=_harness_io, delivery=_chat_delivery, claim=True,
@@ -5323,7 +5050,7 @@ def chat_endpoint():
                     # for live-session precedence. Return the (possibly
                     # rewritten-in-place) result for the body.
                     _saver = _make_auth_assistant_saver(
-                        chat_session_id, chat_inference_mode,
+                        chat_session_id,
                         project_path=project_path,
                     )
                     if _saver is None:
@@ -5344,8 +5071,7 @@ def chat_endpoint():
                         message_content, _session_id,
                         session_kind='web_user', routing_key=f'web_user_{user["id"]}',
                         is_owner=_user_is_owner, status_queue=None,
-                        inference_mode=chat_inference_mode,
-                    ),
+                        ),
                     save_assistant=_pipeline_save_assistant,
                     build_body=lambda _res: _build_body(
                         _res, chat_session_id,
@@ -5380,7 +5106,7 @@ def chat_endpoint():
                     metadata=_user_msg_meta,
                 ),
                 make_saver=lambda: _make_auth_assistant_saver(
-                    chat_session_id, chat_inference_mode,
+                    chat_session_id,
                     project_path=project_path,
                 ),
                 notify_mobile=lambda _b: _emit_chat_complete_mobile(chat_session_id, _b),
@@ -5389,13 +5115,12 @@ def chat_endpoint():
                     message_content, _session_id,
                     session_kind='web_user', routing_key=f'web_user_{user["id"]}',
                     is_owner=_user_is_owner, status_queue=status_queue,
-                    inference_mode=chat_inference_mode,
-                ),
+                    ),
             )
             return _stream_pipeline_turn_response(
                 _PreparedAgentTurn(
                     message=message_content, session_id=chat_session_id,
-                    inference_mode=chat_inference_mode, wants_stream=wants_stream,
+                    wants_stream=wants_stream,
                     request_data=data or {},
                     # Unused: selection is explicit pipeline (no catalog
                     # match) and the pipeline worker is not rewritten.
@@ -5479,30 +5204,6 @@ def local_llm_status():
         'running': running,
         'models': list_local_models() if running else [],
     })
-
-
-@app.route('/api/local-llm/start', methods=['POST'])
-@owner_required
-def local_llm_start():
-    """Launch llama-server on demand (detached; survives Flask restarts)."""
-    from core.local_llm import launch_llamacpp_detached, local_reachable
-    if local_reachable(timeout=1.5):
-        return jsonify({'success': True, 'running': True, 'message': 'Local model server already running'})
-    ok, err = launch_llamacpp_detached()
-    if not ok:
-        return jsonify({'success': False, 'running': False, 'error': err}), 400
-    return jsonify({'success': True, 'running': False, 'message': 'llama-server launching — model load can take 1–2 minutes'})
-
-
-@app.route('/api/local-llm/stop', methods=['POST'])
-@owner_required
-def local_llm_stop():
-    """Stop llama-server (e.g. when the user asks Cuttle to close the local model)."""
-    from core.local_llm import stop_llamacpp, local_reachable
-    stop_llamacpp()
-    time.sleep(1.0)
-    still_up = local_reachable(timeout=1.5)
-    return jsonify({'success': not still_up, 'running': still_up})
 
 
 @app.route('/api/health', methods=['GET'])
@@ -7732,567 +7433,6 @@ def clear_session(session_id):
         }), 404
 
 
-# ==================== LLM REQUEST (cloud / local tool rounds) ====================
-
-def _normalize_tools_config(tools_config) -> Optional[dict]:
-    """Split unified tools payload: MCP section vs bundled CLI/API toolsets."""
-    if tools_config is None:
-        return None
-    if not isinstance(tools_config, dict):
-        return None
-    if 'mcp' in tools_config or 'bundledCli' in tools_config or 'bundledApi' in tools_config:
-        return {
-            'mcp': tools_config.get('mcp'),
-            'bundledCli': tools_config.get('bundledCli'),
-            'bundledApi': tools_config.get('bundledApi'),
-        }
-    return {'mcp': dict(tools_config), 'bundledCli': None, 'bundledApi': None}
-
-
-def _get_combined_openai_tools(tools_config) -> list:
-    """Bundled CLI/API tools (Cuttle hosts no MCP tools; guest harnesses own MCP)."""
-    norm = _normalize_tools_config(tools_config)
-    from api.bundled_llm_tools import bundled_tool_specs_openai
-
-    if not norm:
-        return []
-    return bundled_tool_specs_openai(norm.get('bundledCli'), norm.get('bundledApi'))
-
-
-def _invoke_llm_tool(name: str, arguments: dict, tools_config, session_id: Optional[str]) -> str:
-    """Dispatch a single tool call from OpenAI/Anthropic/Ollama tool rounds."""
-    from api.bundled_llm_tools import BUNDLED_TOOL_NAMES, invoke_bundled_tool
-    if name in BUNDLED_TOOL_NAMES:
-        norm = _normalize_tools_config(tools_config)
-        return invoke_bundled_tool(
-            name,
-            arguments or {},
-            (norm or {}).get('bundledCli'),
-            (norm or {}).get('bundledApi'),
-            project_root=str(actual_project_root),
-            session_id=session_id,
-        )
-    return f"Error: Cuttle does not host MCP tools (tool {name}). Use a guest harness MCP or python -m api.*."
-
-
-def _build_cuttle_trace_block(query_id: str) -> str:
-    """
-    Collapsible appendix for web chat: which LLM/tool steps actually ran, plus a verification disclaimer.
-    Rendered by chat UI as <cuttle_trace> (see formatMessage in chat_page.js).
-    """
-    if not query_id:
-        return ""
-    try:
-        from api.query_tracker import get_query_tracker
-        t = get_query_tracker(query_id)
-        if not t or t.query_id != query_id or not getattr(t, "execution_data", None):
-            return ""
-        ed = t.execution_data
-    except Exception:
-        return ""
-    import html as html_mod
-
-    lines = [
-        f"Query {query_id} — full report: /query_log.html?id={query_id}",
-        "",
-        "WHAT ACTUALLY RAN (query log; not the model’s story)",
-    ]
-    llms = ed.get("llm_calls") or []
-    for i, c in enumerate(llms, 1):
-        nid = c.get("node_id")
-        model = c.get("model") or ""
-        prev = (c.get("response_preview") or "").replace("\n", " ")[:320]
-        lines.append(f"{i}. LLM node_id={nid} model={model}")
-        lines.append(f"   preview: {prev}")
-    tools = ed.get("tool_calls") or []
-    if tools:
-        lines.append("")
-        lines.append("TOOLS INVOKED")
-        for tc in tools:
-            lines.append(f"- {tc.get('tool_name', '?')}")
-    lines.append("")
-    lines.append(
-        "VERIFICATION: The assistant message may claim work that was not performed. "
-        "Only the tools above actually ran. For security or code claims, confirm with git diff or open the named files."
-    )
-    body = "\n".join(lines)
-    return f"<cuttle_trace>\n{html_mod.escape(body)}\n</cuttle_trace>"
-
-
-def _record_failed_llm_for_query(
-    query_id,
-    node_id,
-    model: str,
-    start_time: float,
-    error_message: str,
-    prompt_preview: str = "",
-):
-    """Append a failed LLM row to the active query report (only when tracker matches query_id)."""
-    if not query_id:
-        return
-    try:
-        from api.query_tracker import get_query_tracker
-        tracker = get_query_tracker(query_id)
-        if not tracker or tracker.query_id != query_id or not tracker.execution_data:
-            return
-        end_time = time.time()
-        err = (error_message or "")[:800]
-        pp = (prompt_preview or "")[:400]
-        tracker.add_llm_call(
-            model=model or "unknown",
-            prompt_tokens=0,
-            completion_tokens=0,
-            total_tokens=0,
-            start_time=start_time,
-            end_time=end_time,
-            success=False,
-            response_preview=err,
-            prompt_preview=pp,
-            node_id=node_id,
-            notes="LLM request failed",
-        )
-    except Exception as ex:
-        print(f"[QUERY] Error recording failed LLM call: {ex}")
-
-
-@app.route('/api/llm-request', methods=['POST'])
-@owner_required
-def llm_request():
-    """Execute an LLM request. Supports toolsConfig from MCP toolset for tool-calling."""
-    import time
-    start_time = time.time()
-    
-    try:
-        data = request.get_json()
-        
-        node_type = data.get('nodeType', 'llm-openai')
-        provider = data.get('provider', None)  # Provider for unified llm node
-        model = data.get('model', 'gpt-4o-mini')
-        prompt = data.get('prompt', '')
-        system_prompt = data.get('systemPrompt') or 'You are a helpful AI assistant.'
-        tools_config = data.get('toolsConfig')
-        knowledge_inputs = data.get('knowledgeInputs') if isinstance(data.get('knowledgeInputs'), list) else []
-        try:
-            from api.cuttle_ui_capabilities import cuttle_ui_system_addon
-
-            system_prompt = (system_prompt or '').rstrip() + cuttle_ui_system_addon()
-        except Exception as _ui_cap_err:
-            print(f"[LLM] UI capabilities inject skipped: {_ui_cap_err}")
-        # When tools are available, instruct the model to use them and reason about results
-        if _get_combined_openai_tools(tools_config):
-            try:
-                from core.mcp_tool_coaching import mcp_tools_system_prompt_suffix
-                system_prompt = (system_prompt or '').rstrip() + mcp_tools_system_prompt_suffix()
-            except Exception:
-                system_prompt = (system_prompt or '').rstrip() + (
-                    "\n\nYou have access to tools. Call them via the tool API; do not imitate shell commands."
-                )
-        temperature = data.get('temperature', 0.7)
-        max_tokens = data.get('maxTokens', 2000)
-        query_id = data.get('queryId', None)  # Optional query ID for tracking
-        node_id = data.get('nodeId', None)  # Optional node ID for tracking
-        session_id = data.get('sessionId', None)  # Optional; used to emit chat status (e.g. "Waiting for local LLM...")
-        extended_thinking = data.get('extendedThinking', False)
-        thinking_budget = int(data.get('thinkingBudget', 10000))
-        
-        # Determine provider for unified llm node
-        if node_type == 'llm':
-            if provider == 'anthropic':
-                node_type = 'llm-anthropic'
-            elif provider == 'local':
-                node_type = 'llm-local'
-            else:
-                node_type = 'llm-openai'  # Default to OpenAI
-        
-        if 'openai' in node_type:
-            from openai import OpenAI
-            import asyncio
-            api_key = os.getenv("OPENAI_API_KEY")
-            
-            if not api_key:
-                _record_failed_llm_for_query(
-                    query_id, node_id, model, start_time,
-                    'OpenAI API key not configured', prompt_preview=prompt or '',
-                )
-                return jsonify({
-                    'success': False,
-                    'error': 'OpenAI API key not configured'
-                }), 400
-            
-            client = OpenAI(api_key=api_key)
-            openai_tools = _get_combined_openai_tools(tools_config)
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt}
-            ]
-            create_kw = dict(model=model, temperature=temperature, max_tokens=max_tokens, messages=messages)
-            if openai_tools:
-                prompt_lower = (prompt or '').lower()
-                requires_tool = any(kw in prompt_lower for kw in [
-                    'read file', 'write file', 'create file', 'create a file', 'make file', 'delete file',
-                    'file named', 'file at', 'project root', 'exact file path', 'folder', 'directory',
-                    'run command', 'execute command', 'powershell', 'python script',
-                    'navigate', 'click', 'fill', 'browser', 'screenshot'
-                ])
-                create_kw["tools"] = openai_tools
-                create_kw["tool_choice"] = "required" if requires_tool else "auto"
-            response = client.chat.completions.create(**create_kw)
-            response_message = response.choices[0].message
-            response_text = response_message.content or ''
-            max_tool_rounds = 10
-            while openai_tools and getattr(response_message, 'tool_calls', None) and max_tool_rounds > 0:
-                max_tool_rounds -= 1
-                if session_id:
-                    emit_chat_status(session_id, "Calling Tools...")
-                messages.append({
-                    "role": "assistant",
-                    "content": response_message.content or None,
-                    "tool_calls": [
-                        {"id": tc.id, "type": "function", "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
-                        for tc in response_message.tool_calls
-                    ]
-                })
-                for tc in response_message.tool_calls:
-                    name = tc.function.name
-                    try:
-                        import json as _json
-                        args = _json.loads(tc.function.arguments) if tc.function.arguments else {}
-                    except Exception:
-                        args = {}
-                    if session_id:
-                        emit_chat_status(session_id, f"Waiting for Tools... ({name})")
-                    content = _invoke_llm_tool(name, args, tools_config, session_id)
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": content
-                    })
-                if session_id:
-                    emit_chat_status(session_id, "Thinking further...")
-                response = client.chat.completions.create(
-                    model=model, messages=messages, tools=openai_tools, tool_choice="auto",
-                    temperature=temperature, max_tokens=max_tokens
-                )
-                response_message = response.choices[0].message
-                response_text = response_message.content or ''
-
-            if session_id and openai_tools:
-                emit_chat_status(session_id, "Finalizing...")
-            end_time = time.time()
-            # Track in query report if query_id provided
-            if query_id:
-                try:
-                    from api.query_tracker import get_query_tracker
-                    tracker = get_query_tracker(query_id)
-                    if tracker and tracker.query_id == query_id:
-                        usage = getattr(response, 'usage', None)
-                        tracker.add_llm_call(
-                            model=model,
-                            prompt_tokens=usage.prompt_tokens if usage else 0,
-                            completion_tokens=usage.completion_tokens if usage else 0,
-                            total_tokens=usage.total_tokens if usage else 0,
-                            start_time=start_time,
-                            end_time=end_time,
-                            success=True,
-                            response_preview=response_text,
-                            prompt_preview=prompt,
-                            node_id=node_id,
-                            knowledge_inputs=knowledge_inputs,
-                        )
-                except Exception as track_error:
-                    print(f"[QUERY] Error tracking LLM call: {track_error}")
-            
-            return jsonify({
-                'success': True,
-                'response': response_text,
-                'usage': {
-                    'prompt_tokens': getattr(response.usage, 'prompt_tokens', 0),
-                    'completion_tokens': getattr(response.usage, 'completion_tokens', 0),
-                    'total_tokens': getattr(response.usage, 'total_tokens', 0)
-                }
-            })
-            
-        elif 'anthropic' in node_type:
-            from anthropic import Anthropic
-            import asyncio
-            api_key = os.getenv("ANTHROPIC_API_KEY")
-            
-            if not api_key:
-                _record_failed_llm_for_query(
-                    query_id, node_id, model, start_time,
-                    'Anthropic API key not configured', prompt_preview=prompt or '',
-                )
-                return jsonify({
-                    'success': False,
-                    'error': 'Anthropic API key not configured'
-                }), 400
-            
-            client = Anthropic(api_key=api_key)
-            openai_tools = _get_combined_openai_tools(tools_config)
-            anthropic_tools = None
-            if openai_tools:
-                anthropic_tools = [
-                    {"name": t["function"]["name"], "description": t["function"].get("description", ""), "input_schema": t["function"].get("parameters", {"type": "object", "properties": {}})}
-                    for t in openai_tools
-                ]
-            messages = [{"role": "user", "content": prompt}]
-            create_kwargs = dict(
-                model=model,
-                max_tokens=max_tokens,
-                system=system_prompt,
-                messages=messages
-            )
-            if anthropic_tools:
-                create_kwargs["tools"] = anthropic_tools
-            if extended_thinking:
-                create_kwargs['thinking'] = {"type": "enabled", "budget_tokens": thinking_budget}
-            else:
-                create_kwargs['temperature'] = temperature
-            response = client.messages.create(**create_kwargs)
-            response_text = next((block.text for block in response.content if getattr(block, 'type', None) == 'text'), '')
-            max_tool_rounds = 10
-            while anthropic_tools and max_tool_rounds > 0:
-                tool_uses = [b for b in response.content if getattr(b, 'type', None) == 'tool_use']
-                if not tool_uses:
-                    break
-                max_tool_rounds -= 1
-                if session_id:
-                    emit_chat_status(session_id, "Calling Tools...")
-                messages.append({"role": "assistant", "content": response.content})
-                tool_results = []
-                for tu in tool_uses:
-                    tid = getattr(tu, 'id', None)
-                    name = getattr(tu, 'name', None)
-                    args = getattr(tu, 'input', None) or {}
-                    if session_id:
-                        emit_chat_status(session_id, f"Waiting for Tools... ({name})")
-                    content = _invoke_llm_tool(name, args if isinstance(args, dict) else {}, tools_config, session_id)
-                    tool_results.append({"type": "tool_result", "tool_use_id": tid, "content": content})
-                messages.append({"role": "user", "content": tool_results})
-                if session_id:
-                    emit_chat_status(session_id, "Thinking further...")
-                response = client.messages.create(
-                    model=model, max_tokens=max_tokens, system=system_prompt, messages=messages,
-                    tools=anthropic_tools, temperature=create_kwargs.get('temperature', temperature)
-                )
-                response_text = next((block.text for block in response.content if getattr(block, 'type', None) == 'text'), '')
-            end_time = time.time()
-            if session_id and anthropic_tools:
-                emit_chat_status(session_id, "Finalizing...")
-            if query_id:
-                try:
-                    from api.query_tracker import get_query_tracker
-                    tracker = get_query_tracker(query_id)
-                    if tracker and tracker.query_id == query_id:
-                        tracker.add_llm_call(
-                            model=model,
-                            prompt_tokens=response.usage.input_tokens,
-                            completion_tokens=response.usage.output_tokens,
-                            total_tokens=response.usage.input_tokens + response.usage.output_tokens,
-                            start_time=start_time,
-                            end_time=end_time,
-                            success=True,
-                            response_preview=response_text,
-                            prompt_preview=prompt,
-                            node_id=node_id,
-                            knowledge_inputs=knowledge_inputs,
-                        )
-                except Exception as track_error:
-                    print(f"[QUERY] Error tracking LLM call: {track_error}")
-            return jsonify({
-                'success': True,
-                'response': response_text,
-                'usage': {
-                    'input_tokens': response.usage.input_tokens,
-                    'output_tokens': response.usage.output_tokens,
-                    'total_tokens': response.usage.input_tokens + response.usage.output_tokens
-                }
-            })
-        elif node_type == 'llm-local':
-            from api.inference_mode import normalize_inference_mode
-
-            chat_inference_mode = normalize_inference_mode(
-                data.get('inferenceMode') or data.get('inference_mode') or 'auto'
-            )
-            if session_id:
-                offer = _offer_local_llm_launch_if_needed(session_id, prompt, chat_inference_mode)
-                if offer is not None:
-                    return jsonify({
-                        'success': True,
-                        'response': offer.get('response') or offer.get('output') or '',
-                        'type': 'local_llm_launch_prompt',
-                    })
-            # Local inference — OpenAI-compatible; supports MCP tools when toolsConfig provided.
-            # Backend is selected by LOCAL_LLM_BACKEND (ollama | llamacpp). Both speak the OpenAI API.
-            # We serialize requests (one at a time) and show "Waiting for local LLM..." when queued.
-            from openai import OpenAI as _OAI
-            from core.local_llm import (
-                get_local_base_url, get_local_api_key, get_local_label,
-                resolve_local_model, local_request_slot, chat_completion_with_fallback,
-                check_local_cancelled, LocalRequestCancelled, LocalQueueTimeout,
-            )
-            import asyncio
-            ollama_base = get_local_base_url()
-            local_label = get_local_label()
-            ollama_model = model
-            from api import chat_delivery
-
-            local_turn = chat_delivery.current_turn(session_id) if session_id else None
-            cancelled = lambda: bool(session_id) and (
-                chat_delivery.is_turn_cancelled(session_id)
-                or chat_delivery.is_stale_turn(session_id, local_turn)
-            )
-            slot = local_request_slot(
-                cancelled=cancelled,
-                on_wait=lambda: emit_chat_status(session_id, f"Waiting for local LLM ({local_label})...") if session_id else None,
-            )
-            slot_entered = False
-            try:
-                waited_for_ollama = slot.__enter__()
-                slot_entered = True
-                ollama_model = resolve_local_model(model, with_tools=bool(tools_config))
-                check_local_cancelled(cancelled)
-                client = _OAI(base_url=ollama_base, api_key=get_local_api_key())
-                if session_id:
-                    emit_chat_status(session_id, f"Calling local LLM ({local_label})...")
-                openai_tools = _get_combined_openai_tools(tools_config)
-                messages = [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt}
-                ]
-                create_kw = dict(model=ollama_model, messages=messages, temperature=temperature, max_tokens=max_tokens)
-                if openai_tools:
-                    create_kw["tools"] = openai_tools
-                    # auto: many local models behave poorly with forced tool_choice=required on every turn;
-                    # plan-then-act (pipeline) + follow-up auto lets them finish with text after tool results.
-                    create_kw["tool_choice"] = "auto"
-                # Tool rounds + slow local models need more than 45s per completion.
-                request_timeout_sec = int(
-                    os.getenv('OLLAMA_REQUEST_TIMEOUT_SEC', '300' if openai_tools else '120')
-                )
-                create_kw["timeout"] = request_timeout_sec
-
-                response = chat_completion_with_fallback(client, create_kw, ollama_model, cancelled=cancelled)
-                response_message = response.choices[0].message
-                response_text = response_message.content or ''
-                max_tool_rounds = 10
-                while openai_tools and getattr(response_message, 'tool_calls', None) and max_tool_rounds > 0:
-                    max_tool_rounds -= 1
-                    if session_id:
-                        emit_chat_status(session_id, "Calling Tools...")
-                    messages.append({
-                        "role": "assistant",
-                        "content": response_message.content or None,
-                        "tool_calls": [{"id": tc.id, "type": "function", "function": {"name": tc.function.name, "arguments": tc.function.arguments}} for tc in response_message.tool_calls]
-                    })
-                    for tc in response_message.tool_calls:
-                        check_local_cancelled(cancelled)
-                        import json as _json
-                        args = _json.loads(tc.function.arguments) if getattr(tc.function, 'arguments', None) else {}
-                        if session_id:
-                            emit_chat_status(session_id, f"Waiting for Tools... ({tc.function.name})")
-                        content = _invoke_llm_tool(tc.function.name, args, tools_config, session_id)
-                        messages.append({"role": "tool", "tool_call_id": tc.id, "content": content})
-                    if session_id:
-                        emit_chat_status(session_id, "Thinking further...")
-                    follow_up_kw = dict(
-                        model=ollama_model,
-                        messages=messages,
-                        tools=openai_tools,
-                        tool_choice="auto",
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        timeout=request_timeout_sec,
-                    )
-                    response = chat_completion_with_fallback(client, follow_up_kw, ollama_model, cancelled=cancelled)
-                    response_message = response.choices[0].message
-                    response_text = response_message.content or ''
-                end_time = time.time()
-                if session_id and openai_tools:
-                    emit_chat_status(session_id, "Finalizing...")
-                # Preserve <redacted_thinking>...</redacted_thinking> for the web UI (chat_page.js).
-                usage = response.usage
-                # Track in query report if query_id provided (Ollama may not return usage)
-                if query_id:
-                    try:
-                        from api.query_tracker import get_query_tracker
-                        tracker = get_query_tracker(query_id)
-                        if tracker.query_id == query_id:
-                            if usage:
-                                prompt_tokens = getattr(usage, 'prompt_tokens', None) or 0
-                                completion_tokens = getattr(usage, 'completion_tokens', None) or 0
-                                total_tokens = getattr(usage, 'total_tokens', None) or (prompt_tokens + completion_tokens)
-                            else:
-                                prompt_tokens = completion_tokens = total_tokens = 0
-                            tracker.add_llm_call(
-                                model=ollama_model,
-                                prompt_tokens=prompt_tokens,
-                                completion_tokens=completion_tokens,
-                                total_tokens=total_tokens,
-                                start_time=start_time,
-                                end_time=end_time,
-                                success=True,
-                                response_preview=response_text[:200],
-                                prompt_preview=prompt[:200] if prompt else '',
-                                node_id=node_id,
-                                notes=(f'Waited for prior local LLM ({local_label}) request to finish; requests are serialized—only one runs at a time.' if waited_for_ollama else f'Local LLM ({local_label}); requests are serialized—only one runs at a time.'),
-                                knowledge_inputs=knowledge_inputs,
-                            )
-                    except Exception as track_error:
-                        print(f"[QUERY] Error tracking Ollama LLM call: {track_error}")
-                return jsonify({
-                    'success': True,
-                    'response': response_text,
-                    'usage': {
-                        'prompt_tokens': usage.prompt_tokens if usage else 0,
-                        'completion_tokens': usage.completion_tokens if usage else 0,
-                        'total_tokens': usage.total_tokens if usage else 0,
-                    }
-                })
-            except LocalRequestCancelled as exc:
-                return jsonify({'success': False, 'error': str(exc), 'cancelled': True}), 409
-            except LocalQueueTimeout as exc:
-                return jsonify({'success': False, 'error': str(exc)}), 503
-            except Exception as ollama_err:
-                err_txt = f'Local LLM ({local_label}) error (is {local_label} running at {ollama_base}?): {ollama_err}'
-                _record_failed_llm_for_query(
-                    query_id, node_id, ollama_model, start_time,
-                    err_txt, prompt_preview=(prompt or '')[:400],
-                )
-                return jsonify({
-                    'success': False,
-                    'error': err_txt
-                }), 502
-            finally:
-                if slot_entered:
-                    slot.__exit__(None, None, None)
-        else:
-            _record_failed_llm_for_query(
-                query_id, node_id, model, start_time,
-                f'Unknown LLM type: {node_type}', prompt_preview=prompt or '',
-            )
-            return jsonify({
-                'success': False,
-                'error': f'Unknown LLM type: {node_type}'
-            }), 400
-            
-    except Exception as e:
-        print(f"LLM request error: {e}")
-        _qid = locals().get("query_id")
-        _nid = locals().get("node_id")
-        _model = locals().get("model") or "unknown"
-        _prompt = locals().get("prompt") or ""
-        if _qid:
-            _record_failed_llm_for_query(
-                _qid, _nid, _model, start_time, str(e),
-                prompt_preview=_prompt[:400] if _prompt else "",
-            )
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-
 def _strip_invisible_leading(s: str) -> str:
     """Remove BOM / ZW* chars that break slash-command detection."""
     if not isinstance(s, str):
@@ -8512,7 +7652,7 @@ def start_listener_servers(app, ports, *, lan_enabled, lan_ip, bind_host, mdns_e
     runner = primary_runner
     if runner is None:
         def runner(*, host, port):
-            # threaded=True allows pipeline triggers to make internal API calls (e.g. llm-request) without deadlock
+            # threaded=True lets a request make internal API calls back into this app without deadlock
             app.run(
                 debug=False,
                 host=host,

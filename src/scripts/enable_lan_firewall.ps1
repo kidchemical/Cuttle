@@ -1,7 +1,20 @@
-﻿# Run as Administrator. Allows Cuttle from phones on home LAN only (LocalSubnet).
+﻿# Run as Administrator. Lets devices on this PC's own subnet reach Cuttle.
+#
+# Every rule is LocalSubnet + Private profile only: never "Any" remote address
+# and never the Public profile, so a laptop on cafe/hotel Wi-Fi stays closed.
+# Re-running replaces every earlier "Cuttle LAN*" / "Cuttle Python LAN*" rule,
+# including old releases' open (Any-address) rules.
+#
+# Ports: -HttpsPort/-HttpPort/-PhonePort, else CUTTLE_HTTPS_PORT /
+# CUTTLE_HTTP_PORT / CUTTLE_PHONE_HTTPS_PORT from src\.env, else 8080/8000/8888.
+param(
+    [int]$HttpsPort = 0,
+    [int]$HttpPort = 0,
+    [int]$PhonePort = 0
+)
 $ErrorActionPreference = 'Stop'
 Write-Host ''
-Write-Host '=== Cuttle LAN Firewall Setup ===' -ForegroundColor Cyan
+Write-Host '=== Cuttle LAN Firewall Setup (local subnet, Private networks only) ===' -ForegroundColor Cyan
 Write-Host ''
 
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -12,106 +25,92 @@ if (-not $isAdmin) {
     exit 1
 }
 
-# Remove legacy firewall rule on 8081 (that port is llama.cpp LLAMACPP_BASE_URL, not the web UI)
-$oldHttp = Get-NetFirewallRule -DisplayName 'Cuttle LAN HTTP (LocalSubnet)' -ErrorAction SilentlyContinue
-if ($oldHttp) {
-    $pf = Get-NetFirewallPortFilter -AssociatedNetFirewallRule $oldHttp -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($pf -and $pf.LocalPort -eq 8081) {
-        Remove-NetFirewallRule -DisplayName 'Cuttle LAN HTTP (LocalSubnet)' -ErrorAction SilentlyContinue
-        Write-Host '[OK] Removed old firewall rule on port 8081 (llama.cpp API port)' -ForegroundColor Yellow
+$repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+$envValues = @{}
+$envFile = Join-Path $repo 'src\.env'
+if (Test-Path -LiteralPath $envFile) {
+    foreach ($line in Get-Content -LiteralPath $envFile -Encoding UTF8) {
+        if ($line -match '^\s*(CUTTLE_(HTTPS|HTTP|PHONE_HTTPS)_PORT)\s*=\s*"?(\d+)"?\s*$') {
+            $envValues[$Matches[1]] = [int]$Matches[3]
+        }
+    }
+}
+function Resolve-Port([int]$given, [string]$name, [int]$default) {
+    if ($given -gt 0) { return $given }
+    if ($envValues.ContainsKey($name)) { return $envValues[$name] }
+    return $default
+}
+$HttpsPort = Resolve-Port $HttpsPort 'CUTTLE_HTTPS_PORT' 8080
+$HttpPort = Resolve-Port $HttpPort 'CUTTLE_HTTP_PORT' 8000
+$PhonePort = Resolve-Port $PhonePort 'CUTTLE_PHONE_HTTPS_PORT' 8888
+$ports = @($HttpsPort, $HttpPort, $PhonePort) | Select-Object -Unique
+
+# Replace, never extend: earlier versions created Any-address rules.
+foreach ($pattern in @('Cuttle LAN*', 'Cuttle Python LAN*')) {
+    $old = @(Get-NetFirewallRule -DisplayName $pattern -ErrorAction SilentlyContinue)
+    foreach ($rule in $old) {
+        Remove-NetFirewallRule -Name $rule.Name -ErrorAction SilentlyContinue
+        Write-Host "[..] Removed old rule: $($rule.DisplayName)" -ForegroundColor Yellow
     }
 }
 
-$rules = @(
-    @{ Name = 'Cuttle LAN HTTPS (LocalSubnet)'; Port = 8080; Remote = 'LocalSubnet' },
-    @{ Name = 'Cuttle LAN HTTP (LocalSubnet)'; Port = 8888; Remote = 'LocalSubnet' },
-    @{ Name = 'Cuttle LAN HTTP (Open LAN)'; Port = 8888; Remote = 'Any' },
-    @{ Name = 'Cuttle LAN HTTP alt (8000)'; Port = 8000; Remote = 'Any' }
-)
 $ok = $true
-foreach ($r in $rules) {
-    $existing = Get-NetFirewallRule -DisplayName $r.Name -ErrorAction SilentlyContinue
-    $needsCreate = $true
-    if ($existing) {
-        $pf = Get-NetFirewallPortFilter -AssociatedNetFirewallRule $existing -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($pf -and [string]$pf.LocalPort -eq [string]$r.Port) {
-            Write-Host "[OK] Already exists: $($r.Name) (port $($r.Port))" -ForegroundColor Green
-            $needsCreate = $false
-        } else {
-            Remove-NetFirewallRule -DisplayName $r.Name -ErrorAction SilentlyContinue
-            Write-Host "[..] Recreating $($r.Name) for port $($r.Port)" -ForegroundColor Yellow
-        }
-    }
-    if ($needsCreate) {
-        try {
-            New-NetFirewallRule -DisplayName $r.Name -Direction Inbound -Protocol TCP -LocalPort $r.Port -Action Allow -Profile Private,Public -RemoteAddress $r.Remote | Out-Null
-            Write-Host "[OK] Created: $($r.Name) (port $($r.Port), remote $($r.Remote))" -ForegroundColor Green
-        } catch {
-            Write-Host "[FAIL] $($r.Name): $_" -ForegroundColor Red
-            $ok = $false
-        }
-    }
-}
-
-# Allow python.exe (Cuttle Flask) inbound on LAN HTTP port — some PCs need program rules too.
-$pyPaths = @(
-    "$env:LOCALAPPDATA\Programs\Python\Python311\python.exe",
-    (Join-Path (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path '.venv\Scripts\python.exe')
+$rules = @(
+    @{ Name = 'Cuttle LAN HTTPS'; Port = $HttpsPort },
+    @{ Name = 'Cuttle LAN HTTP'; Port = $HttpPort },
+    @{ Name = 'Cuttle LAN Phone HTTPS'; Port = $PhonePort }
 )
-foreach ($py in $pyPaths) {
-    if (-not (Test-Path -LiteralPath $py)) { continue }
-    $label = if ($py -match 'venv') { 'venv' } else { 'system' }
-    $ruleName = "Cuttle Python LAN ($label)"
-    $existing = Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue
-    if ($existing) {
-        Write-Host "[OK] Already exists: $ruleName" -ForegroundColor Green
-        continue
-    }
+foreach ($r in $rules) {
     try {
-        New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Action Allow `
-            -Program $py -Protocol TCP -LocalPort 8888,8080 `
-            -Profile Private,Public | Out-Null
-        Write-Host "[OK] Created program rule: $ruleName" -ForegroundColor Green
+        New-NetFirewallRule -DisplayName $r.Name -Direction Inbound -Protocol TCP `
+            -LocalPort $r.Port -Action Allow -Profile Private -RemoteAddress LocalSubnet | Out-Null
+        Write-Host "[OK] $($r.Name): TCP $($r.Port) from LocalSubnet (Private networks)" -ForegroundColor Green
     } catch {
-        Write-Host "[WARN] Program rule $ruleName : $_" -ForegroundColor Yellow
+        Write-Host "[FAIL] $($r.Name): $_" -ForegroundColor Red
+        $ok = $false
     }
 }
 
-try {
-    Enable-NetFirewallRule -DisplayGroup 'Network Discovery' -ErrorAction SilentlyContinue | Out-Null
-    Write-Host '[OK] Network Discovery firewall rules enabled' -ForegroundColor Green
-} catch {
-    Write-Host "[WARN] Network Discovery rules: $_" -ForegroundColor Yellow
+# Some PCs also need a program rule for the venv interpreter; same scope.
+$py = Join-Path $repo '.venv\Scripts\python.exe'
+if (Test-Path -LiteralPath $py) {
+    try {
+        New-NetFirewallRule -DisplayName 'Cuttle Python LAN (venv)' -Direction Inbound -Action Allow `
+            -Program $py -Protocol TCP -LocalPort $ports `
+            -Profile Private -RemoteAddress LocalSubnet | Out-Null
+        Write-Host '[OK] Cuttle Python LAN (venv): LocalSubnet (Private networks)' -ForegroundColor Green
+    } catch {
+        Write-Host "[WARN] Program rule: $_" -ForegroundColor Yellow
+    }
 }
 
 Write-Host ''
 Write-Host 'Current rules:' -ForegroundColor Cyan
-Get-NetFirewallRule -DisplayName 'Cuttle LAN*' -ErrorAction SilentlyContinue |
+Get-NetFirewallRule -DisplayName 'Cuttle*LAN*' -ErrorAction SilentlyContinue |
     Select-Object DisplayName, Enabled, Profile, Direction, Action |
     Format-Table -AutoSize
 
-$wifi = Get-NetConnectionProfile | Where-Object { $_.InterfaceAlias -match 'Wi-Fi|WLAN' } | Select-Object -First 1
-if ($wifi -and $wifi.NetworkCategory -eq 'Public') {
-    Write-Host 'Note: Wi-Fi is PUBLIC — set to Private in Windows Settings for best results.' -ForegroundColor Yellow
-    Write-Host '  Settings → Network & Internet → Wi-Fi → your network → Private network' -ForegroundColor Yellow
+$public = @(Get-NetConnectionProfile | Where-Object { $_.NetworkCategory -eq 'Public' })
+if ($public.Count -gt 0) {
+    Write-Host 'Note: these networks are PUBLIC, so the rules above do not apply on them:' -ForegroundColor Yellow
+    foreach ($p in $public) { Write-Host "  $($p.InterfaceAlias) ($($p.Name))" -ForegroundColor Yellow }
+    Write-Host '  If this is your home network, set it to Private in Windows Settings:' -ForegroundColor Yellow
+    Write-Host '  Settings > Network & Internet > (your network) > Private network' -ForegroundColor Yellow
 }
 
 Write-Host ''
 if ($ok) {
     Write-Host 'Done. Restart Cuttle, then on your phone open:' -ForegroundColor Green
+    $ip = $null
     try {
-        $ip = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -match '^192\.168\.' -or $_.IPAddress -match '^10\.' } | Select-Object -First 1).IPAddress
-        if ($ip) {
-            Write-Host "  https://${ip}:8888/phone" -ForegroundColor White
-            Write-Host "  http://${ip}:8000/phone  (plain HTTP fallback)" -ForegroundColor Gray
-        } else {
-            Write-Host '  http://YOUR_PC_IP:8888/phone' -ForegroundColor White
-        }
-    } catch {
-        Write-Host '  http://YOUR_PC_IP:8888/phone' -ForegroundColor White
-    }
+        $ip = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {
+            $_.IPAddress -match '^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)' } | Select-Object -First 1).IPAddress
+    } catch {}
+    if (-not $ip) { $ip = 'YOUR_PC_IP' }
+    Write-Host "  https://${ip}:${PhonePort}/phone" -ForegroundColor White
+    Write-Host "  http://${ip}:${HttpPort}/phone  (plain HTTP fallback)" -ForegroundColor Gray
 } else {
-    Write-Host 'Some rules failed — read errors above.' -ForegroundColor Red
+    Write-Host 'Some rules failed - read errors above.' -ForegroundColor Red
 }
 
 Write-Host ''

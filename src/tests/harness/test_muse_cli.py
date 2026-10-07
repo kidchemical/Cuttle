@@ -690,14 +690,6 @@ async def test_e2e_muse_echo_provider():
     assert result.get("muse_session_id")
 
 
-def test_inference_mode_includes_muse():
-    from api.inference_mode import is_cloud_cli_slash_command, cloud_cli_slash_blocked_message
-
-    assert is_cloud_cli_slash_command("/muse hello") is True
-    assert cloud_cli_slash_blocked_message("local") is not None
-    assert "/muse" in (cloud_cli_slash_blocked_message("local") or "")
-
-
 def test_starred_slash_allows_muse():
     from api.starred_slash import normalize_sticky_prefix, sticky_prefix_from_text
 
@@ -747,7 +739,6 @@ def test_chat_endpoint_dispatches_muse_in_auto_mode(monkeypatch, owner_session):
             json={
                 "message": "/muse inspect routing",
                 "session_id": "muse-routing-regression",
-                "inference_mode": "auto",
                 "stream": False,
             },
         )
@@ -855,7 +846,6 @@ def test_muse_stream_forwards_agent_model_to_client(monkeypatch, owner_session):
             json={
                 "message": "/muse inspect routing",
                 "session_id": "muse-stream-badge",
-                "inference_mode": "auto",
                 "stream": True,
             },
         )

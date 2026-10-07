@@ -157,8 +157,7 @@ turn seam — `TurnRequest`/`normalize_chat_post` (route-head validation),
 `TurnSelection`/`classify_selection` (restart → harness → router with
 injected matchers), `split_db_session_id`, `build_turn_context`. The
 `/api/chat` route and `process_message_with_bot` delegate to it.
-`process_message_with_bot` is the compat entry for local-mode prompts and
-`/api/sessions/send`.
+`process_message_with_bot` is the compat entry for `/api/sessions/send`.
 
 **Turn workflow:** `api.chat_turn_workflow` owns lane orchestration —
 `run_agent_sync_turn` (harness + router-family sync lanes),

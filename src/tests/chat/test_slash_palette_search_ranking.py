@@ -39,7 +39,7 @@ let commands = S.SLASH_COMMANDS;
 let cursorCommands = S.CURSOR_AGENT_SLASH_COMMANDS;
 let projectCommands = [];
 let stars = [];
-const slashCommandsForCurrentMode = () => commands;
+const availableSlashCommands = () => commands;
 const cursorAgentSlashCommandsForPalette = () => cursorCommands;
 const harnessUsageSlashCommandsForPalette = () => [];
 const buildProjectPaletteItems = () => [];

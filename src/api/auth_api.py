@@ -915,11 +915,6 @@ def suggest_chat_session_title(session_id):
             }), 404
 
         data = request.get_json(silent=True) or {}
-        inference_mode = (
-            data.get('inference_mode')
-            or data.get('inferenceMode')
-            or 'auto'
-        )
         avoid_raw = data.get('avoid') or data.get('avoid_titles') or data.get('previous')
         avoid_titles = []
         if isinstance(avoid_raw, list):
@@ -932,7 +927,6 @@ def suggest_chat_session_title(session_id):
         from api.chat_titler import suggest_session_title
         result = suggest_session_title(
             session_id,
-            inference_mode=str(inference_mode),
             avoid_titles=avoid_titles or None,
         )
         title = (result.get('title') or '').strip()

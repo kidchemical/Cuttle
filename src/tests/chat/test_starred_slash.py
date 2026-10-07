@@ -83,12 +83,3 @@ def test_star_seeds_new_chat_but_not_a_running_one(tmp_path: Path, monkeypatch):
     assert ss.apply_default_sticky_prefix("and what do they eat", running) == (
         "/cursor and what do they eat"
     )
-
-
-def test_local_mode_skips_cloud_cli_star(monkeypatch):
-    monkeypatch.setattr(ss, "get_starred_prefixes", lambda: ["/cursor "])
-    monkeypatch.setattr(ss, "infer_session_sticky_prefix", lambda _sid: None)
-    assert ss.apply_default_sticky_prefix("hi", allow_cloud_cli=False) == "hi"
-
-    monkeypatch.setattr(ss, "get_starred_prefixes", lambda: ["/hermes "])
-    assert ss.apply_default_sticky_prefix("hi", allow_cloud_cli=False) == "/hermes hi"

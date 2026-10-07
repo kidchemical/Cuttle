@@ -28,12 +28,6 @@ def _restart_factory(markers=("/restart",)):
     return is_restart
 
 
-def _cloud_blocked(message, inference_mode):
-    if inference_mode == "local" and (message or "").startswith("/cursor"):
-        return "blocked-in-local"
-    return None
-
-
 # --------------------------------------------------------------------------
 # normalize_chat_post
 # --------------------------------------------------------------------------
@@ -50,7 +44,6 @@ def test_normalize_defaults():
     assert req.error is None
     assert req.attachments == []
     assert req.session_id is None
-    assert req.inference_mode == "auto"
     assert req.wants_stream is True
 
 
@@ -62,14 +55,6 @@ def test_normalize_stream_flag_forms():
     for raw in (True, "true", "yes", "1", ""):
         req = ct.normalize_chat_post({"message": "hi", "stream": raw})
         assert req.wants_stream is True, raw
-
-
-def test_normalize_inference_modes():
-    assert ct.normalize_chat_post({"message": "hi"}).inference_mode == "auto"
-    req = ct.normalize_chat_post({"message": "hi", "inference_mode": "Local"})
-    assert req.inference_mode == "local"
-    req = ct.normalize_chat_post({"message": "hi", "inference_mode": "bogus"})
-    assert req.inference_mode == "auto"
 
 
 def test_normalize_missing_message_is_an_error():
@@ -104,10 +89,8 @@ def test_normalize_non_string_message_coerced():
 def test_classify_restart_wins_over_harness_match():
     sel = ct.classify_selection(
         "/restart status",
-        inference_mode="auto",
         match_harness=_harness_factory({"/restart status": ("restart", "x")}),
         is_restart=_restart_factory(),
-        cloud_blocked=_cloud_blocked,
     )
     assert sel.kind == "restart"
 
@@ -115,10 +98,8 @@ def test_classify_restart_wins_over_harness_match():
 def test_classify_harness_turn():
     sel = ct.classify_selection(
         "/cursor do it",
-        inference_mode="auto",
         match_harness=_harness_factory({"/cursor do it": ("cursor", "do it")}),
         is_restart=_restart_factory(),
-        cloud_blocked=_cloud_blocked,
     )
     assert sel.kind == "harness"
     assert sel.agent_id == "cursor"
@@ -128,34 +109,18 @@ def test_classify_harness_turn():
 def test_classify_harness_empty_prompt():
     sel = ct.classify_selection(
         "/cursor",
-        inference_mode="auto",
         match_harness=_harness_factory({"/cursor": ("cursor", "")}),
         is_restart=_restart_factory(),
-        cloud_blocked=_cloud_blocked,
     )
     assert sel.kind == "harness_empty_prompt"
     assert "prompt after /cursor" in sel.block_message
 
 
-def test_classify_local_mode_blocks_cloud_cli():
-    sel = ct.classify_selection(
-        "/cursor do it",
-        inference_mode="local",
-        match_harness=_harness_factory({"/cursor do it": ("cursor", "do it")}),
-        is_restart=_restart_factory(),
-        cloud_blocked=_cloud_blocked,
-    )
-    assert sel.kind == "mode_blocked"
-    assert sel.block_message == "blocked-in-local"
-
-
 def test_classify_plain_message_goes_to_router():
     sel = ct.classify_selection(
         "just a question",
-        inference_mode="auto",
         match_harness=_harness_factory({}),
         is_restart=_restart_factory(),
-        cloud_blocked=_cloud_blocked,
     )
     assert sel.kind == "router"
 
@@ -179,7 +144,6 @@ def test_build_turn_context_shape():
         session_kind=None,
         routing_key=None,
         is_owner=True,
-        inference_mode="auto",
         recent_messages=[{"role": "user"}],
     )
     assert user_ctx["display_name"] == "Web User"
@@ -226,19 +190,6 @@ def test_coordinator_harness_arm_uses_real_matcher(coordinator):
     assert out["type"] == "fake"
     agent_id, prompt, sid, _kw = calls["run"]
     assert (agent_id, prompt, sid) == ("cursor", "do the thing", "seam-h1")
-
-
-def test_coordinator_local_mode_blocks_cloud_cli(coordinator, monkeypatch):
-    wca, calls = coordinator
-    # Upstream llama.cpp launch gate is not under test; let the turn through.
-    monkeypatch.setattr(
-        wca, "_handle_local_llm_launch_gate", lambda m, s, mode: (None, m)
-    )
-    out = wca.process_message_with_bot(
-        "/cursor do the thing", "seam-h2", inference_mode="local"
-    )
-    assert out["type"] == "mode_blocked"
-    assert "run" not in calls
 
 
 def test_coordinator_harness_empty_prompt(coordinator):
@@ -310,9 +261,7 @@ def test_build_turn_context_explicit_kind_and_key():
         session_kind="guild",
         routing_key="rk",
         is_owner=False,
-        inference_mode="cloud",
         recent_messages=[],
     )
     assert session_data["session_kind"] == "guild"
     assert session_data["routing_key"] == "rk"
-    assert session_data["inference_mode"] == "cloud"

@@ -148,10 +148,6 @@ _NO_AGENT_TOKENS = frozenset(
     {"none", "off", "no", "false", "router", "no-agent", "no_agent"}
 )
 
-# Everything except /hermes needs a cloud CLI, which Local mode refuses.
-_LOCAL_SAFE_PREFIXES = ("/hermes ",)
-
-
 def is_no_agent_request(data: Any) -> bool:
     """True when the request asked to run without a sticky/starred agent."""
     if not isinstance(data, dict):
@@ -198,16 +194,13 @@ def apply_default_sticky_prefix(
     message: str,
     db_sid: Optional[int] = None,
     *,
-    allow_cloud_cli: bool = True,
     star_on_new_session_only: bool = False,
     no_agent: bool = False,
 ) -> str:
     """Prepend the session sticky or starred default onto a plain message.
 
     Leaves explicit slash commands alone (``/help``, ``/cursor …``).
-    With ``allow_cloud_cli`` false (Local-mode chats) only local-capable
-    prefixes are applied, so a plain message never turns into a blocked
-    cloud-CLI command. ``no_agent`` is the user removing the agent badge: the
+    ``no_agent`` is the user removing the agent badge: the
     star and the session's own history both lose, and the turn reaches the
     agent router.
     """
@@ -222,7 +215,5 @@ def apply_default_sticky_prefix(
         text, db_sid, star_on_new_session_only=star_on_new_session_only
     )
     if not prefix:
-        return text
-    if not allow_cloud_cli and prefix not in _LOCAL_SAFE_PREFIXES:
         return text
     return prefix + text

@@ -184,7 +184,6 @@ def enhance_prompt(
     *,
     context_messages: Optional[Sequence[Dict[str, Any]]] = None,
     project_name: str = "",
-    inference_mode: str = "auto",
 ) -> Dict[str, Any]:
     """Return {ok, prompt, source, error}. `prompt` is the full text incl. slash prefix."""
     original = (prompt or "").strip()
@@ -212,15 +211,9 @@ def enhance_prompt(
         context_messages=context_messages,
         project_name=project_name,
     )
-    mode = (inference_mode or "auto").lower()
-    if mode == "local":
-        providers = (("local", _via_local),)
-    else:
-        providers = (
-            ("openai", _via_openai),
-            ("anthropic", _via_anthropic),
-            ("local", _via_local),
-        )
+    from api.completion_providers import resolve_order
+    by_id = {"openai": _via_openai, "anthropic": _via_anthropic, "local": _via_local}
+    providers = tuple((name, by_id[name]) for name in resolve_order())
 
     last_error = ""
     for name, provider in providers:

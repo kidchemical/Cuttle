@@ -319,8 +319,18 @@ def _run_rebuild(target_hash: str) -> None:
         studio_jbr = Path(r"C:\Program Files\Android\Android Studio\jbr")
         if studio_jbr.is_dir() and (studio_jbr / "bin" / "java.exe").is_file():
             env.setdefault("JAVA_HOME", str(studio_jbr))
+        # Dependency upgrades must reach the native project before Capacitor sync.
+        # Source APK builds are opt-in; use the checked-in lockfile for this app.
+        npm = "npm.cmd" if os.name == "nt" else "npm"
+        install = subprocess.run(
+            [npm, "ci"], cwd=str(MOBILE_DIR), env=env, check=False,
+            capture_output=True, text=True, timeout=300,
+        )
+        if install.returncode != 0:
+            raise RuntimeError("Android dependency installation failed: "
+                               + (install.stderr or install.stdout)[-500:])
         sync = subprocess.run(
-            ["npm.cmd" if os.name == "nt" else "npm", "run", "sync:android"],
+            [npm, "run", "sync:android"],
             cwd=str(MOBILE_DIR), env=env, check=False, capture_output=True,
             text=True, timeout=300,
         )

@@ -88,3 +88,16 @@ def test_stale_saved_token_still_enrolls_a_new_worker(client):
     res = _enroll(client, "worker-c", token="token-from-a-reset-host")
     assert res.status_code == 200
     assert res.get_json()["token"] != "token-from-a-reset-host"
+
+
+def test_worker_can_poll_only_its_own_approval(client, monkeypatch):
+    from api.device_workers import ssh_approval as sa
+    monkeypatch.setattr(sa, '_pending', {})
+    a = _enroll(client, 'worker-a').get_json()['token']
+    b = _enroll(client, 'worker-b').get_json()['token']
+    row = client.post('/api/workers/ssh-approval/request', json={'worker_id': 'worker-a'},
+                      headers=_bearer(a), environ_base=LAN).get_json()['request']
+    path = f"/api/workers/ssh-approval/{row['id']}"
+    assert client.get(path, headers=_bearer(a), environ_base=LAN).status_code == 200
+    assert client.get(path, headers=_bearer(b), environ_base=LAN).status_code == 403
+    assert client.get(path, environ_base=LAN).status_code == 401

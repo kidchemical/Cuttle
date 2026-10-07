@@ -1,5 +1,7 @@
 /// <reference types="@capacitor-community/safe-area" />
 
+import { SystemBarsStyle } from '@capacitor-community/safe-area';
+
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
@@ -25,15 +27,18 @@ const config: CapacitorConfig = {
   android: {
     allowMixedContent: true,
     appendUserAgent: ' CuttleMobile/0.1',
-    adjustMarginsForEdgeToEdge: 'disable',
   },
   ios: {
     appendUserAgent: ' CuttleMobile/0.1',
   },
   plugins: {
+    // SafeArea owns insets and bar styling; avoid a second core inset controller.
+    SystemBars: {
+      insetsHandling: 'disable',
+    },
     SafeArea: {
-      statusBarStyle: 'DARK',
-      navigationBarStyle: 'DARK',
+      statusBarStyle: SystemBarsStyle.Dark,
+      navigationBarStyle: SystemBarsStyle.Dark,
       initialViewportFitCover: true,
       detectViewportFitCoverChanges: true,
     },

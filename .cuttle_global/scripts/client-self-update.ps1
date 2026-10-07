@@ -33,24 +33,26 @@ if (-not (Test-Path -LiteralPath $Repo)) {
 
 $py = Join-Path $Repo '.venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $py)) { $py = 'python' }
-if (-not $SkipPull) {
-    # Shared preservation owner runs before any lifecycle effects.
-    $helper = Join-Path $PSScriptRoot 'client-update-checkout.py'
-    & $py $helper --repo $Repo 2>&1 | ForEach-Object { Log "$_" }
+# SkipPull skips the completed merge, never the lifecycle safety recheck.
+$helper = Join-Path $PSScriptRoot 'client-update-checkout.py'
+$checkArgs = @('--repo', $Repo)
+if ($SkipPull) { $checkArgs += '--check-only' }
+$LASTEXITCODE = 1
+try {
+    & $py $helper @checkArgs 2>&1 | ForEach-Object { Log "$_" }
     if ($LASTEXITCODE -ne 0) { Log "ERROR checkout update refused"; exit 1 }
-} else {
-    Log "SkipPull set"
-}
+} catch { Log "ERROR checkout update refused: $_"; exit 1 }
 
 # Stop client UI / sidecar / client-daemon only (never host flask daemon).
 Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
     $cmd = [string]$_.CommandLine
-    $name = [string]$_.Name
     if ($cmd -match 'cuttle_daemon\.py|web_chat_api') { return $false }
-    if ($cmd -match 'cuttle_client_daemon\.py|cuttle_device_worker\.py') { return $true }
-    if ($name -match '^(electron|Cuttle)\.exe$') { return $true }
-    if ($cmd -match 'Cuttle\.exe') { return $true }
-    if ($cmd -match 'electron\.exe' -and ($cmd -match [regex]::Escape($Repo) -or $cmd -match 'cuttle\\electron|\\Cuttle\\')) { return $true }
+    $clientDaemon = [regex]::Escape((Join-Path $Repo 'src\scripts\cuttle_client_daemon.py'))
+    $clientWorker = [regex]::Escape((Join-Path $Repo 'src\scripts\cuttle_device_worker.py'))
+    $electronRoot = [regex]::Escape((Join-Path $Repo 'electron\'))
+    $exe = [string]$_.ExecutablePath
+    if ($doDaemon -and ($cmd -match $clientDaemon -or $cmd -match $clientWorker)) { return $true }
+    if ($doElectron -and ($exe -match "^$electronRoot" -or $cmd -match $electronRoot)) { return $true }
     return $false
 } | ForEach-Object {
     Log "stopping pid=$($_.ProcessId) name=$($_.Name)"
