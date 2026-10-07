@@ -59,36 +59,10 @@ def test_stop_during_call_never_retries(monkeypatch):
     assert seen == ['first']
 
 
-@pytest.mark.parametrize('stop', [True, False])
-def test_http_queue_cancel_and_timeout_never_start_model(monkeypatch, stop):
-    import inspect
-    import openai
-    from api import web_chat_api as api, chat_delivery
-    lock = threading.Lock()
-    monkeypatch.setattr(llm, '_request_lock', lock)
-    monkeypatch.setenv('LOCAL_LLM_QUEUE_TIMEOUT_SEC', '0.01')
-    monkeypatch.setattr(llm, 'resolve_local_model', lambda *a, **k: 'fixture')
-    monkeypatch.setattr(api, '_local_llm_unavailable_reply', lambda *a: None)
-    monkeypatch.setattr(api, '_get_combined_openai_tools', lambda *a: None)
-    stopped = []
-    monkeypatch.setattr(chat_delivery, 'current_turn', lambda sid: 1)
-    monkeypatch.setattr(chat_delivery, 'is_stale_turn', lambda *a: False)
-    monkeypatch.setattr(chat_delivery, 'is_turn_cancelled', lambda sid: bool(stopped))
-    monkeypatch.setattr(api, 'emit_chat_status', lambda *a: stopped.append(True) if stop else None)
-    calls = []
-    monkeypatch.setattr(openai, 'OpenAI', lambda **kw: NS(chat=NS(completions=NS(create=lambda **kw: calls.append(kw)))))
-    lock.acquire()
-    try:
-        with api.app.test_request_context('/api/llm-request', method='POST', json={
-            'nodeType': 'llm-local', 'model': 'fixture', 'prompt': 'hello', 'sessionId': 42,
-        }):
-            reply, code = inspect.unwrap(api.llm_request)()
-        assert code == (409 if stop else 503)
-        assert not reply.get_json()['success']
-        assert calls == []
-        assert lock.locked()
-    finally:
-        lock.release()
+def test_retired_direct_llm_endpoint_is_not_registered():
+    from api import web_chat_api as api
+
+    assert '/api/llm-request' not in {rule.rule for rule in api.app.url_map.iter_rules()}
 
 
 @pytest.mark.parametrize('timeout', ['nan', 'inf', 0, -1])

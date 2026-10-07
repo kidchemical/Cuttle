@@ -36,7 +36,7 @@ resume: true
 capabilities_inject: once_per_resume
 env_profile: either
 activity: jsonl
-hint: Run Anthropic Claude Code CLI (`claude -p`) with per-chat resume (Auto/Cloud)
+hint: Run Anthropic Claude Code CLI (`claude -p`) with per-chat resume
 missing_cli_hint: >-
   Install Claude Code (`npm i -g @anthropic-ai/claude-code` or the native
   installer) and ensure `claude` is on PATH. Authenticate with

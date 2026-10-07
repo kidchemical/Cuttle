@@ -119,7 +119,6 @@
      * @param {object} options
      * @param {() => ({path:string,name?:string}|null)} options.getProject
      * @param {() => (string|number|null|undefined)} [options.getSessionId]
-     * @param {() => string} [options.getInferenceMode]
      * @param {() => string[]} [options.getPrompts]
      * @param {(relPath:string, meta:{repoRoot:string}) => void} [options.onOpenDiff]
      * @param {() => void} [options.onAfterCommit]
@@ -136,7 +135,6 @@
         const docRoot = options.root || document;
         const getProject = options.getProject || function () { return null; };
         const getSessionId = options.getSessionId || function () { return null; };
-        const getInferenceMode = options.getInferenceMode || function () { return 'auto'; };
         const getPrompts = options.getPrompts || function () { return []; };
         const onOpenDiff = options.onOpenDiff || function () {};
         const onAfterCommit = options.onAfterCommit || function () {};
@@ -678,7 +676,6 @@
                     const body = {
                         path: currentProject().path,
                         repo_root: repoRoot,
-                        inference_mode: getInferenceMode(),
                     };
                     if (included.length) body.files = included;
                     const sid = getSessionId();

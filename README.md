@@ -73,7 +73,7 @@ The codebase is set up so an agent can do that well:
 | **Cuttle Workers** | A multi-device LAN mesh: file copy, shell recipes, a Blender render farm with work stealing, and self-update for every client. |
 | **Dashboards** | Model Benchmarks (cost vs. pass rate vs. duration), Jev performance tracking, and per-agent cost. |
 | **Projects** | Every registered project owns a `.cuttle/` tree of commands, rules, actions, and docs, compiled into each agent turn by the Context Compiler (Cuttle Brain). |
-| **Local models** | Ollama and llama.cpp paths for cloud-off work. |
+| **Local models** | Configure local inference in your agent CLI; user-managed endpoints can also serve router and completion helpers. |
 | **Agent ops CLIs** | Agents drive Cuttle through `python -m api.<module>` verbs (chats, widgets, Discord, workers, brain) instead of raw SQL ([`agent-ops-cli.md`](.cuttle_global/docs/agent-ops-cli.md)). |
 
 ## Quick start

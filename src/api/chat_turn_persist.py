@@ -73,7 +73,6 @@ def persist_user_turn(
 def make_assistant_saver(
     *,
     chat_session_id: Any,
-    inference_mode: Any = None,
     project_path: Optional[str] = None,
     db: Any,
     request_data: Optional[dict] = None,
@@ -212,7 +211,7 @@ def make_assistant_saver(
             print(f"[CHAT] persist assistant message failed: {e}")
             return
         try:
-            schedule_autoname(chat_session_id, inference_mode)
+            schedule_autoname(chat_session_id)
         except Exception as _te:
             print(f"[TITLER] hook failed: {_te}")
         # Experimental (opt-in, no-op when the flag is off): reward progress for

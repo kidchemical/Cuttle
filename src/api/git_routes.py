@@ -596,7 +596,6 @@ def git_suggest_commit_message():
       path (required) — registered project path
       repo_root (optional) — nested work tree when the project has several
       session_id (optional) — auth chat session id for recent user prompts
-      inference_mode (optional) — auto|local|cloud (same as chat titler)
     """
     try:
         from scripts.utilities.git_pending_changes import (
@@ -614,7 +613,6 @@ def git_suggest_commit_message():
     body = request.get_json(silent=True) or {}
     path = (body.get('path') or '').strip() or None
     repo_root = (body.get('repo_root') or '').strip() or None
-    inference_mode = (body.get('inference_mode') or 'auto').strip().lower() or 'auto'
     pid_raw = body.get('project_id')
     project_id = None
     if pid_raw not in (None, ''):
@@ -683,7 +681,6 @@ def git_suggest_commit_message():
     result = suggest_commit_message(
         ctx,
         user_prompts=prompts,
-        inference_mode=inference_mode,
         avoid_messages=avoid_messages or None,
     )
     return jsonify({
@@ -707,7 +704,6 @@ def prompt_enhance():
 
     JSON body:
       prompt (required) — raw composer text
-      inference_mode (optional) — auto|local|cloud
       project (optional) — project name for context
       context (optional) — [{role, content}] recent turns for grounding
     """
@@ -715,7 +711,6 @@ def prompt_enhance():
     if not is_enabled('composer_prompt_enhance'):
         return jsonify({'success': False, 'disabled': True, 'error': 'Prompt enhancer is disabled'})
     try:
-        from api.inference_mode import normalize_inference_mode
         from api.prompt_enhancer import MAX_PROMPT_CHARS, enhance_prompt
     except ImportError as e:
         return jsonify({'success': False, 'error': f'enhancer unavailable: {e}'}), 500
@@ -730,7 +725,6 @@ def prompt_enhance():
             'error': f'Prompt too long (>{MAX_PROMPT_CHARS} chars)',
         }), 400
 
-    inference_mode = normalize_inference_mode(body.get('inference_mode'))
     project_name = str(body.get('project') or '').strip()[:120]
 
     context_messages = []
@@ -752,7 +746,6 @@ def prompt_enhance():
             prompt,
             context_messages=context_messages,
             project_name=project_name,
-            inference_mode=inference_mode,
         )
     except Exception as e:
         print(f"[PROMPT-ENHANCE] failed: {e}", flush=True)

@@ -448,7 +448,6 @@ def suggest_commit_message(
     context: Dict[str, Any],
     *,
     user_prompts: Optional[Sequence[str]] = None,
-    inference_mode: str = "auto",
     avoid_messages: Optional[Sequence[str]] = None,
 ) -> Dict[str, Any]:
     """Return {message, source, heuristic_message}."""
@@ -465,13 +464,9 @@ def suggest_commit_message(
         area_summary=str(context.get("area_summary") or ""),
         avoid_messages=avoid or None,
     )
-    mode = (inference_mode or "auto").lower()
-    if mode == "local":
-        providers = (_via_local,)
-    else:
-        from api.completion_providers import resolve_order
-        by_id = {"openai": _via_openai, "anthropic": _via_anthropic, "local": _via_local}
-        providers = tuple(by_id[name] for name in resolve_order())
+    from api.completion_providers import resolve_order
+    by_id = {"openai": _via_openai, "anthropic": _via_anthropic, "local": _via_local}
+    providers = tuple(by_id[name] for name in resolve_order())
 
     base_temp = 0.95 if regenerating else 0.3
     attempts = 3 if regenerating else 1
