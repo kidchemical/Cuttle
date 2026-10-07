@@ -33,6 +33,14 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: electron/package-lock.json
+      # The Host shell resolves Python from the checkout's .venv before it
+      # opens the window (the smoke stubs the daemon itself); the runner's
+      # tool-cache Python is not on that search path.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: python -m venv .venv
+        working-directory: .
       - run: npm ci
       - run: node node_modules/electron/install.js
       - name: Real Host and Client shell (Linux)
