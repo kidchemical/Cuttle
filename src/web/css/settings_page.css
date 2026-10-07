@@ -635,3 +635,142 @@ body.compact-shell-page .settings-scope {
         max-width: 110px;
     }
 }
+
+/* Shared Settings rhythm: familiar rows, readable labels, touch-sized controls. */
+body.compact-shell-page .container {
+    max-width: 1000px;
+    margin-inline: auto;
+}
+body.compact-shell-page .settings-tab {
+    min-height: 40px;
+    font-size: 0.85rem;
+    padding-inline: 12px;
+}
+body.compact-shell-page .settings-group {
+    padding: 18px;
+    border-radius: 14px;
+    margin-bottom: 14px;
+}
+body.compact-shell-page .settings-title {
+    font-size: 1rem;
+    text-transform: none;
+    letter-spacing: normal;
+    margin: 0 0 12px;
+}
+body.compact-shell-page .setting-item {
+    gap: 18px;
+    padding-block: 14px;
+}
+body.compact-shell-page .setting-label {
+    min-width: 0;
+    flex: 1 1 45%;
+}
+body.compact-shell-page .setting-label strong {
+    font-size: 0.9rem;
+}
+body.compact-shell-page .setting-description,
+body.compact-shell-page .settings-intro {
+    font-size: 0.8rem;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+body.compact-shell-page .setting-control {
+    flex-wrap: wrap;
+    min-width: 0;
+    max-width: 100%;
+}
+body.compact-shell-page .setting-input,
+body.compact-shell-page .control-button {
+    min-height: 40px;
+    max-width: 100%;
+    box-sizing: border-box;
+}
+body.compact-shell-page .setting-control input.setting-input {
+    min-width: 0;
+}
+.settings-disclosure {
+    margin-block: 12px;
+    border-top: 1px solid var(--border-color);
+    padding-top: 8px;
+}
+.settings-disclosure > summary {
+    cursor: pointer;
+    min-height: 40px;
+    display: list-item;
+    align-content: center;
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+.settings-disclosure > p {
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    line-height: 1.5;
+}
+.credential-summary {
+    float: right;
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    font-weight: 400;
+}
+.agent-setup-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-block: 6px;
+}
+.agent-refresh {
+    margin-top: 12px;
+}
+#agentSetupStatus {
+    display: block;
+    font-size: 0.8rem;
+    margin-top: 6px;
+    color: var(--text-secondary);
+}
+.toggle-switch:focus-visible,
+.settings-disclosure > summary:focus-visible,
+.settings-advanced-summary:focus-visible {
+    outline: 2px solid var(--accent-color);
+    outline-offset: 4px;
+}
+body.compact-shell-page .toggle-switch {
+    flex: 0 0 50px;
+}
+@media (max-width: 640px) {
+    body.compact-shell-page .setting-item {
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+    body.compact-shell-page .setting-label {
+        flex-basis: 65%;
+    }
+    body.compact-shell-page .setting-control:has(.setting-input),
+    body.compact-shell-page .setting-control--stack {
+        width: 100%;
+    }
+    body.compact-shell-page .setting-control .setting-input {
+        min-width: 0 !important;
+        flex: 1 1 160px;
+    }
+    body.compact-shell-page .settings-group {
+        padding: 14px;
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .settings-tab,
+    .toggle-switch,
+    .toggle-switch::after,
+    .toggle-switch .slider {
+        transition: none;
+    }
+}
+
+/* Context help uses the shared Cuttle tooltip, never row-sized action styling. */
+body.compact-shell-page button.cuttle-info {
+    min-height: 20px;
+    width: 20px;
+    height: 20px;
+    margin-left: 6px;
+    vertical-align: middle;
+}

@@ -93,6 +93,28 @@ Tests: `src/tests/e2e/test_settings_agents.py` exercises the production page
 with isolated APIs, including save/clear/reload, failure rollback, removed
 drop-ins, keyboard disclosure, and phone layout.
 
+## Shipped: setup actions and Settings presentation
+
+Agent details offer copyable setup instructions or login commands; Check again
+refreshes detection without reloading Settings. Uninstalled agents show setup
+guidance before exposing model controls. Authentication remains with the CLI.
+
+Appearance keeps theme and playback controls visible, with transition timing
+and wallpaper adjustments behind disclosures. Providers shows credential
+presence on expandable key rows. Voice keeps everyday playback and voice
+choices visible; model selection is advanced. Account setup instructions are
+on demand. All tabs share readable row spacing and responsive controls. Secondary
+descriptions use the shared `button.cuttle-info` / `data-tooltip` component
+from `ui_boot`, including dynamically rendered experiment descriptions.
+Operational status, setup guidance, and restart notices remain inline.
+
+`settings_page_accessibility.js` owns presentation names and keyboard switch
+activation, including dynamically rendered experiment rows. Existing page
+handlers continue to own preference saves; the presentation controller observes
+their active state for ARIA. Production-browser coverage:
+`src/tests/e2e/test_settings_polish.py` (all nine tabs at phone/desktop widths,
+keyboard switching/disclosures, credential hints, copy and refresh).
+
 ## Shipped: wizard reads the same catalog
 
 `/api/wizard/status` no longer reports the retired `default_pipeline` step
