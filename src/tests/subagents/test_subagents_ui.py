@@ -292,6 +292,19 @@ def test_fleet_agent_chip_uses_shared_slash_chip():
     assert proc.returncode == 0, proc.stderr or proc.stdout
 
 
+def test_subagent_fleet_cards_clip_to_card():
+    """Long names/statuses must truncate inside the card, never spill past it."""
+    import re
+
+    css = CHAT_CSS.read_text(encoding="utf-8")
+    card = re.search(r"\.subagent-fleet-card \{([^}]*)\}", css)
+    assert card and "overflow:hidden" in card.group(1).replace(" ", "")
+    head = re.search(r"\.subagent-fleet-head \{([^}]*)\}", css)
+    assert head and "overflow:hidden" in head.group(1).replace(" ", "")
+    name = re.search(r"\.subagent-fleet-name \{([^}]*)\}", css)
+    assert name and "text-overflow:ellipsis" in name.group(1).replace(" ", "")
+
+
 def test_subagent_markup_present():
     js = CHAT_JS.read_text(encoding="utf-8")
     css = CHAT_CSS.read_text(encoding="utf-8")
