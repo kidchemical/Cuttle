@@ -27,8 +27,8 @@
                          "electron-squirrel-startup":  "^1.0.0"
                      },
     "devDependencies":  {
-                            "electron":  "^28.1.0",
-                            "electron-builder":  "^24.9.1"
+                            "electron":  "^44.5.1",
+                            "electron-builder":  "^26.15.3"
                         },
     "build":  {
                   "appId":  "com.cuttle.desktop",
