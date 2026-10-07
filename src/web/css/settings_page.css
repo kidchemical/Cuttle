@@ -558,16 +558,6 @@ body.compact-shell-page .settings-scope {
     flex-direction: column;
 }
 
-.experimental-flag-list .setting-item {
-    border-left: 3px solid color-mix(in srgb, var(--accent-color) 55%, transparent);
-}
-
-/* Risk is declared by the flag spec (api/experimental/flags.py) and only ever
-   changes the styling — enforcement lives in the gated code paths. */
-.experimental-flag-list .setting-item--risk {
-    border-left-color: #f85149;
-}
-
 /* Published releases (presentation owner: settings_releases.js). */
 #cuttleReleaseSettings [data-release-version] {
     color: var(--text-primary);
