@@ -28,15 +28,19 @@ def _retry_sharing(operation):
     """Windows refuses to open or replace a file another process holds open.
 
     Readers are unlocked, so a read can meet another process's os.replace (or
-    vice versa) for a few milliseconds. POSIX never raises here.
+    vice versa); antivirus scanners also hold freshly written files briefly.
+    Back off up to ~10 s in total. POSIX never raises here.
     """
-    for attempt in range(40):
+    delay, waited = 0.01, 0.0
+    while True:
         try:
             return operation()
         except PermissionError:
-            if os.name != "nt" or attempt == 39:
+            if os.name != "nt" or waited >= 10.0:
                 raise
-            time.sleep(0.025)
+            time.sleep(delay)
+            waited += delay
+            delay = min(delay * 2, 0.25)
 
 
 def read_json(path: Path) -> dict:
@@ -88,7 +92,17 @@ def settings_lock(path: Path):
                     stream.write(b"\0")
                     stream.flush()
                 stream.seek(0)
-                msvcrt.locking(stream.fileno(), msvcrt.LK_LOCK, 1)
+                # LK_LOCK retries only once a second and gives up after ten
+                # tries, so a busy lock starves waiters; poll non-blocking.
+                deadline = time.monotonic() + 30.0
+                while True:
+                    try:
+                        msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+                        break
+                    except OSError:
+                        if time.monotonic() >= deadline:
+                            raise
+                        time.sleep(0.025)
             else:
                 import fcntl
                 fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
