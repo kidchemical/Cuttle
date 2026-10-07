@@ -1,4 +1,18 @@
 const { app, BrowserWindow, Menu, dialog, Tray, ipcMain, nativeImage, screen } = require('electron');
+
+// Linux: Electron 38+ auto-selects native Wayland, where this shell never
+// reaches app "ready" on some Wayland compositors. Run under
+// XWayland like Electron <=37 did. Opt into native Wayland with
+// CUTTLE_ELECTRON_WAYLAND=1 or an explicit --ozone-platform flag. The switch
+// must be decided before Chromium starts, so relaunch once with it.
+if (process.platform === 'linux'
+    && !process.argv.some((arg) => arg.startsWith('--ozone-platform'))
+    && !process.env.CUTTLE_ELECTRON_WAYLAND
+    && String(process.env.XDG_SESSION_TYPE || '').toLowerCase() === 'wayland') {
+    process.env.XDG_SESSION_TYPE = 'x11';
+    app.relaunch({ args: process.argv.slice(1).concat(['--ozone-platform=x11']) });
+    app.exit(0);
+}
 const { spawn, spawnSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');

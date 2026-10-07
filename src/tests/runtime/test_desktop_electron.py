@@ -105,3 +105,13 @@ console.log('ok');
         )
     assert proc.returncode == 0, (proc.stdout or "") + (proc.stderr or "")
     assert "ok" in (proc.stdout or "")
+
+
+def test_linux_wayland_sessions_relaunch_under_x11_by_default():
+    """Electron 38+ picks native Wayland, where the shell never reaches 'ready'
+    on some compositors; main.js must relaunch under XWayland unless opted in."""
+    main_js = (desk.ELECTRON_DIR / "main.js").read_text(encoding="utf-8")
+    head = main_js[: main_js.index("let mainWindow")]
+    assert "process.platform === 'linux'" in head
+    assert "CUTTLE_ELECTRON_WAYLAND" in head
+    assert "'--ozone-platform=x11'" in head and "app.relaunch(" in head
