@@ -293,6 +293,32 @@ def test_keyboard_open_drops_nav_inset_under_composer():
     assert "safe-bottom" not in block
 
 
+def test_keyboard_open_drops_nav_inset_under_welcome_and_rail():
+    css = (REPO / "src" / "web" / "css" / "safe_area.css").read_text(encoding="utf-8")
+    # New-chat composer: while the IME covers the nav bar there is no
+    # safe-bottom to clear.
+    welcome = css.split(
+        "html.is-cuttle-mobile.keyboard-open .welcome-screen", 1)[1].split("}", 1)[0]
+    assert "safe-bottom" not in welcome
+    assert "safe-top" in welcome  # status bar is still visible
+    # Blade toolbar (left icon rail): footer icons must not float on the dead
+    # nav-bar gap while typing; the rail top inset stays.
+    rail = css.split(
+        "html.is-cuttle-mobile.keyboard-open .rail-footer", 1)[1].split("}", 1)[0]
+    assert "safe-bottom" not in rail
+    assert "padding-bottom: 0" in rail
+
+
+def test_short_viewport_collapses_welcome_branding():
+    css = (REPO / "src" / "web" / "css" / "chat_page.css").read_text(encoding="utf-8")
+    assert css.count("@media (max-height: 560px)") == 1
+    # Nested rules follow the query header; scan the whole query block.
+    block = css.split("@media (max-height: 560px)", 1)[1][:600]
+    # Logo + greeting hide so the composer stays above the fold.
+    assert ".welcome-logo" in block and ".welcome-subtitle" in block
+    assert "display: none" in block
+
+
 def test_transcript_has_no_dead_space_past_last_bubble():
     safe = (REPO / "src" / "web" / "css" / "safe_area.css").read_text(encoding="utf-8")
     # The composer below the transcript owns the nav-bar inset; repeating it

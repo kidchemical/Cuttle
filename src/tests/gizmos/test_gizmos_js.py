@@ -163,6 +163,13 @@ def test_settings_toggle_notifies_shell():
     assert "cuttle-experimental-flags-changed" in (WEB / "js" / "gizmos" / "gizmos_shell.js").read_text(encoding="utf-8")
 
 
+def test_popover_closes_when_focus_leaves_shell_document():
+    # Clicks into a chat pane land in the content iframe and never reach the
+    # shell document's pointerdown closer — window blur closes the panel.
+    src = (WEB / "js" / "gizmos" / "gizmos_shell.js").read_text(encoding="utf-8")
+    assert "root.addEventListener('blur', () => { if (state.popoverId) closePopover(); });" in src
+
+
 # ---------------------------------------------------------------------------
 # browser: shell controller
 # ---------------------------------------------------------------------------
@@ -249,6 +256,20 @@ def test_shell_controller_docks_drags_and_removes(tmp_path):
         page.wait_for_function("document.querySelector('#shellGizmoDockTitlebar .gizmo-value').textContent === '30%'")
         assert page.locator("#shellGizmoFloatLayer .gizmo--float").count() == 1
         assert page.locator("#shellGizmoDockRail .shell-gizmo").count() == 0
+
+        # Click-off works both in the shell and across the iframe boundary;
+        # clicking a control inside the popover must leave it open.
+        page.locator("#shellGizmoFloatLayer .shell-gizmo").click()
+        popover = page.locator("#shellGizmoPopover")
+        popover.wait_for(state="visible")
+        popover.locator('select[data-gizmo-field="show"]').focus()
+        assert popover.is_visible()
+        page.frame_locator('iframe').locator('p').click(position={"x": 10, "y": 5})
+        popover.wait_for(state="hidden")
+        page.locator("#shellGizmoFloatLayer .shell-gizmo").click()
+        popover.wait_for(state="visible")
+        page.locator('.shell-titlebar-label').click()
+        popover.wait_for(state="hidden")
 
         # Drag the title-bar meter onto the blade bar.
         box = titlebar.bounding_box()

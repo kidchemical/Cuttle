@@ -130,6 +130,29 @@ html.is-cuttle-mobile.keyboard-open .chat-messages {
     padding-bottom: 10px;
 }
 
+/* Same dead-gap rule for the new-chat composer: while the IME covers the
+   nav bar there is no safe-bottom to clear, so run tight base padding. */
+html.is-cuttle-mobile.keyboard-open .welcome-screen {
+    padding:
+        calc(20px + var(--cuttle-safe-top))
+        calc(20px + var(--cuttle-safe-right))
+        8px
+        calc(20px + var(--cuttle-safe-left));
+}
+
+html.is-cuttle-mobile.keyboard-open .welcome-logo,
+html.is-cuttle-mobile.keyboard-open .welcome-subtitle {
+    display: none;
+}
+
+/* Blade toolbar (left icon rail): the footer icons clear the nav bar via
+   safe-bottom, but with the keyboard open the IME covers that bar — drop
+   the inset so the rail doesn't float on a dead gap. Top inset stays: the
+   status bar is still visible. */
+html.is-cuttle-mobile.keyboard-open .rail-footer {
+    padding-bottom: 0;
+}
+
 html.is-cuttle-mobile .chat-messages {
     padding-left: calc(15px + var(--cuttle-safe-left));
     padding-right: calc(15px + var(--cuttle-safe-right));
