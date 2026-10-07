@@ -229,6 +229,13 @@ def request_via_coordinator(
         import urllib.error
         import urllib.request
 
+        from api.device_workers.config import worker_token
+
+        headers = {"Accept": "application/json"}
+        token = worker_token()
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+
         payload = json.dumps(
             {
                 "worker_id": worker_id,
@@ -241,7 +248,7 @@ def request_via_coordinator(
         req = urllib.request.Request(
             base + "/api/workers/ssh-approval/request",
             data=payload,
-            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            headers={**headers, "Content-Type": "application/json"},
             method="POST",
         )
         ctx = None
@@ -258,7 +265,7 @@ def request_via_coordinator(
         while time.time() < deadline:
             greq = urllib.request.Request(
                 base + f"/api/workers/ssh-approval/{rid}",
-                headers={"Accept": "application/json"},
+                headers=headers,
                 method="GET",
             )
             with urllib.request.urlopen(greq, timeout=10, context=ctx) as resp:
