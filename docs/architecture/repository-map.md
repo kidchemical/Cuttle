@@ -13,7 +13,7 @@ start_cuttle.sh | src/scripts/cuttle_daemon.py
   → load src/.env
   → spawn Flask: python src/api/web_chat_api.py  (HTTPS :8080)
   → tray / cron / local worker loop (platform-dependent)
-  → Flask restart: daemon reads cuttle_flask_restart_request.json (not agent taskkill)
+  → Flask restart: daemon reads the restart request file from the per-user instance state dir (not agent taskkill)
 ```
 
 **Electron Host:** `.cuttle/scripts/launch-cuttle-host.sh` → `electron/main.js` `--mode=host` (Chromium sandbox via `electron-sandbox.sh`). Host talks to local Flask.

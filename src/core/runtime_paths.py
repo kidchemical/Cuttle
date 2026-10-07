@@ -315,3 +315,62 @@ def desktop_state_dir() -> Path:
     if xdg:
         return Path(xdg) / "cuttle-desktop"
     return Path.home() / ".local" / "state" / "cuttle-desktop"
+
+
+def user_state_dir() -> Path:
+    """Writable per-user runtime state (notify queues, restart IPC).
+
+    Never the checkout root: an installed Cuttle may live in a read-only
+    program folder (the Windows ``Program Files`` case), and the checkout
+    is shared while these files are per-user and per-machine.
+    POSIX: ``$XDG_STATE_HOME/cuttle`` or ``~/.local/state/cuttle``.
+    Windows: ``%LOCALAPPDATA%/Cuttle`` (else ``%APPDATA%``).
+    Pure (creates nothing); writers ensure the parent.
+    """
+    if is_windows():
+        base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or str(Path.home())
+        return Path(base) / "Cuttle"
+    xdg = (os.environ.get("XDG_STATE_HOME") or "").strip()
+    if xdg:
+        return Path(xdg) / "cuttle"
+    return Path.home() / ".local" / "state" / "cuttle"
+
+
+def instance_state_dir(project_root: Optional[Path] = None) -> Path:
+    """Where this instance keeps mutable runtime files.
+
+    Shadow dev children (``CUTTLE_SHADOW_DATA`` set by ``api.dev_instance``)
+    stay inside their private snapshot data dir — isolated and pruned with
+    the snapshot, so a shadow never touches the live queues. The snapshot
+    directory itself is the key; no install-id bookkeeping needed.
+    The live install uses the shared per-user state dir unkeyed (only one
+    live daemon can bind the ports, so there is nothing to collide with).
+    Pure (creates nothing); writers ensure the parent.
+    """
+    shadow_data = (os.environ.get("CUTTLE_SHADOW_DATA") or "").strip()
+    if shadow_data:
+        return Path(shadow_data) / "state"
+    _ = project_root
+    return user_state_dir()
+
+
+def notify_queue_path(project_root: Optional[Path] = None) -> Path:
+    """Tray-notify queue (Flask appends, daemon drains)."""
+    return instance_state_dir(project_root) / "cuttle_notify_queue.jsonl"
+
+
+def ui_toast_path(project_root: Optional[Path] = None) -> Path:
+    """In-app UI toasts (Flask appends, ``GET /api/ui-toasts`` drains)."""
+    return instance_state_dir(project_root) / "cuttle_ui_toasts.jsonl"
+
+
+def flask_restart_status_path(project_root: Optional[Path] = None) -> Path:
+    """Durable Flask-restart status (daemon owns stop/start/health)."""
+    return instance_state_dir(project_root) / "cuttle_flask_restart_status.json"
+
+
+def flask_restart_request_path(project_root: Optional[Path] = None) -> Path:
+    """Flask restart request (Flask writes, daemon consumes)."""
+    return instance_state_dir(project_root) / "cuttle_flask_restart_request.json"
+
+

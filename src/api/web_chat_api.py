@@ -128,6 +128,7 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 # Paths for self-signed certificate
+from core.runtime_paths import notify_queue_path as _notify_queue_path
 from core.runtime_paths import secrets_dir as _secrets_dir
 
 CERT_DIR = _secrets_dir(actual_project_root)
@@ -2032,8 +2033,9 @@ def api_query_log(query_id):
     return jsonify(payload)
 
 
-# Notify queue path for tray notifications (daemon watches this file)
-NOTIFY_QUEUE_PATH = actual_project_root / "cuttle_notify_queue.jsonl"
+# Notify queue path for tray notifications (daemon watches this file).
+# Kept for compatibility; the live writer is api.ui_notify.notify_tray.
+NOTIFY_QUEUE_PATH = _notify_queue_path()
 
 # App-shell split panes (reading order: left→right or top→bottom). Client POSTs on layout change; agents read via GET.
 # columns: [{ "page": "/chat_page.html?chat=42", "flex": "..." }, ...]
