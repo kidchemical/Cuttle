@@ -565,7 +565,7 @@ class QueryTracker:
             return
         from api.agent_events.writer import record
         metadata = {key: value for key, value in self.execution_data.items()
-                    if key not in ("events", "llm_calls", "tool_calls", "execution_stages", "graph_structure")}
+                    if key not in ("events", "execution_stages", "graph_structure")}
         record("run", self.query_id, metadata)
 
     def persist_event(self, kind: str, payload: Dict[str, Any]) -> None:
