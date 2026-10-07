@@ -60,3 +60,21 @@ def test_staged_rename_removes_source_from_snapshot(tmp_path):
     assert 'rename from old.txt' in event['text']
     assert 'rename to new.txt' in event['text']
     assert (tmp_path/'.git/index').read_bytes()==staged
+
+
+def test_file_vanishing_between_status_and_add_is_skipped(tmp_path, monkeypatch):
+    import api.agent_events.snapshots as snapshots
+
+    git(tmp_path,'init')
+    git(tmp_path,'config','user.name','Test'); git(tmp_path,'config','user.email','test@example.test')
+    (tmp_path/'kept.txt').write_text('kept\n')
+    (tmp_path/'db.sqlite3-shm').write_text('transient\n')
+    real = snapshots.git
+    def racing_git(root, *args, env=None):
+        if args[:1] == ('--literal-pathspecs',) and args[-1] == 'db.sqlite3-shm':
+            (tmp_path/'db.sqlite3-shm').unlink(missing_ok=True)
+        return real(root, *args, env=env)
+    monkeypatch.setattr(snapshots, 'git', racing_git)
+    out = snapshots.snapshot(str(tmp_path), 'race', 'start')
+    assert out['skipped'] == {'db.sqlite3-shm': 'vanished'}
+    assert 'kept.txt' in real(tmp_path, 'ls-tree', '--name-only', out['tree'])
