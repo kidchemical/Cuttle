@@ -53,7 +53,14 @@ def snapshot(root,qid,phase,limit=2_000_000):
                 with path.open('rb') as f:
                     if b'\0' in f.read(8192):
                         skipped[rel]='binary'; continue
-            git(root,'--literal-pathspecs','add','-A','--',rel,env=env)
+            try:
+                git(root,'--literal-pathspecs','add','-A','--',rel,env=env)
+            except RuntimeError as exc:
+                # Gone between status and add (lock files, SQLite -shm/-wal,
+                # build temp files): nothing to record, not a failed snapshot.
+                if 'did not match any files' not in str(exc):
+                    raise
+                skipped[rel]='vanished'
         tree=git(root,'write-tree',env=env).strip()
         # Trees can be pinned directly: no synthetic author or commit needed.
         ref=f'refs/cuttle/turns/{qid}/{phase}'
