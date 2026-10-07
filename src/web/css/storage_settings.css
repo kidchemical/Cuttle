@@ -1,0 +1,8 @@
+#storageStores {overflow-wrap:anywhere;}
+#storageStores .setting-label {width:100%;min-width:0;}
+.storage-policy {display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin:12px 0;max-width:900px;}
+.storage-policy label {display:grid;gap:5px;font-size:.85rem;}
+.storage-policy input,.storage-policy select {width:100%;min-width:0;box-sizing:border-box;}
+#storageStores input,#storageStores select,#storageStores button {font:inherit;color:var(--text-primary);background:var(--section-bg);border:1px solid var(--border-color);border-radius:6px;padding:7px;max-width:100%;box-sizing:border-box;}
+#storageStores form:not(.storage-policy) {margin-top:16px;}
+#storageStores meter {width:100%;max-width:500px;}

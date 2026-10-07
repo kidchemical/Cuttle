@@ -356,6 +356,12 @@ except Exception as _achievements_err:
     print(f"[ACHIEVEMENTS] Failed to register routes: {_achievements_err}")
 
 try:
+    from api.agent_events.routes import bp as agent_events_bp
+    app.register_blueprint(agent_events_bp)
+except Exception as exc:
+    print(f"[agent_events] routes unavailable: {exc}", flush=True)
+
+try:
     from api.gizmos.routes import gizmos_bp, gizmos_pages_bp
     app.register_blueprint(gizmos_bp)
     app.register_blueprint(gizmos_pages_bp)

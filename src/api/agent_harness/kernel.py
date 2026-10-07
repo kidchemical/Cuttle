@@ -839,10 +839,18 @@ def run_agent_web_command(
             # Observed edit attribution: snapshot before the CLI run so only
             # digest deltas during this turn are journaled (no session guessing).
             edit_baseline = None
+            line_baseline = None
+            line_event = None
             try:
                 from api.edit_attribution.recorder import snapshot_for_attribution
 
                 edit_baseline = snapshot_for_attribution(cwd)
+                line_baseline = None
+                try:
+                    from api.agent_events.snapshots import begin
+                    line_baseline = begin(cwd, query_id)
+                except Exception as exc:
+                    print(f"[agent_events] snapshot start unavailable: {exc}", flush=True)
             except Exception:
                 edit_baseline = None
             def _run_execute(prompt_text: str, resume_id: Optional[str]) -> AgentResult:
@@ -891,10 +899,19 @@ def run_agent_web_command(
                             break
             finally:
                 try:
+                    if line_baseline:
+                        try:
+                            from api.agent_events.snapshots import finish
+                            from api.agent_events.writer import record
+                            line_event = finish(line_baseline)
+                            record("event", query_id, {"kind": "edit", **line_event})
+                        except Exception as exc:
+                            print(f"[agent_events] snapshot finish unavailable: {exc}", flush=True)
                     from api.edit_attribution.recorder import record_run_deltas
 
                     record_run_deltas(
                         edit_baseline,
+                        line_snapshot=line_event,
                         cwd=cwd,
                         agent_id=manifest.id,
                         agent_model=model,
@@ -1041,6 +1058,8 @@ def run_agent_web_command(
             model_name = "unknown"
         else:
             model_name = model or manifest.id
+        if tracker and tracker.execution_data and callable(getattr(tracker, "set_harness", None)):
+            tracker.set_harness({**tracker.execution_data.get("harness", {}), "model": model_name})
         preview = (result.output or "")[:8000]
         report_url = f"/query_log.html?id={query_id}"
         tool_params = {

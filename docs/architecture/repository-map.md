@@ -173,6 +173,18 @@ service; Flask serialize/SSE transport stays in the route.
 
 ---
 
+## Agent activity and storage
+
+`api.agent_events` owns durable step capture, compressed payloads, private Git
+snapshot refs and retention. `query_tracker` / `query_events` enqueue capture;
+adapters own native tool and patch shapes. `api.edit_attribution` retains its
+public interface and uses the same database for content-proven commit trailers.
+`api.storage.service` owns the database policy registry and validated settings;
+`settings_routes` transports owner-only reads and updates. The inspector pages
+headers and lazily loads detail; `CuttleAgentFeed` owns pure row merging/filtering,
+with its page as transport/DOM composition. Runbook:
+[agent-events.md](../../.cuttle_global/docs/agent-events.md).
+
 ## Agent subsystem
 
 | Piece | Location |

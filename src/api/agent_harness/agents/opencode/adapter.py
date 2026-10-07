@@ -797,8 +797,9 @@ class Adapter:
         started_at = time.monotonic()
         last_emit = [started_at]
         last_activity = ["starting"]
-        from api.agent_harness.activity import TextActivityLog
+        from api.agent_harness.activity import TextActivityLog, ToolActivityLog, ActivityEmitter
         text_log = TextActivityLog("opencode")
+        native_tools = ToolActivityLog("opencode", ActivityEmitter(status_queue, agent_label="OpenCode", record_tool_previews=False))
 
         def _emit(activity: str) -> None:
             now = time.monotonic()
@@ -928,7 +929,16 @@ class Adapter:
                         if not part.get("id"):
                             text = text_log.delta(kind, text)
                         text_log.save(kind, text, part.get("id"))
-                    if status_queue is not None:
+                    if ev.get("type") == "tool_use":
+                        state = part.get("state") or {}
+                        native_tools.record(part.get("id") or part.get("callID"), _opencode_tool_label(str(part.get("tool") or "tool"), str(state.get("title") or "")), state.get("input"),
+                                            phase=str(state.get("status") or "completed"), result=state.get("output"),
+                                            failed=state.get("status") == "error")
+                        metadata = state.get("metadata") or {}
+                        diff = metadata.get("filediff") or {}
+                        if isinstance(diff, dict) and diff.get("file") and diff.get("patch") is not None:
+                            native_tools.record_edit(part.get("id"), diff["file"], diff["patch"])
+                    elif status_queue is not None:
                         activity = _opencode_activity_for_event(ev, activity_state)
                         if activity:
                             _emit(activity)

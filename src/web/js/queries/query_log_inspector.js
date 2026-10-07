@@ -4,6 +4,9 @@
 
     var pollTimer = null;
     var currentId = '';
+    var pageAfter = 0;
+    var pageStack = [];
+    var pageSeq = 0;
     var lastTab = 'timeline';
     var lastStamp = '';
     var openKeys = Object.create(null);
@@ -29,6 +32,7 @@
             lastTab,
             data && data.executing,
             ev.length,
+            ev.map(function (e) { return e.rev || 0; }).join(','),
             last.t || '',
             data && data.total_tokens,
             (data && data.sent && data.sent.chars) || 0,
@@ -52,7 +56,7 @@
     function eventHasBody(ev) {
         if (!ev) return false;
         return !!(
-            ev.text ||
+            ev.detail_id || ev.patch || ev.text ||
             ev.args ||
             ev.preview ||
             (ev.layers && ev.layers.length) ||
@@ -76,6 +80,7 @@
             '</div></header>' +
             '<div class="query-log-tabs" id="queryLogTabs">' +
             '<button type="button" data-tab="timeline" class="is-on">Timeline</button>' +
+            '<button type="button" data-tab="changes">Changes</button>' +
             '<button type="button" data-tab="known">Known</button>' +
             '<button type="button" data-tab="sent">Sent</button>' +
             '<button type="button" data-tab="json">JSON</button>' +
@@ -106,7 +111,7 @@
             });
             var cached = overlay._payload;
             if (cached) renderBody(cached);
-            if (lastTab === 'timeline') tick();
+            if (lastTab === 'timeline' || lastTab === 'changes') tick();
         });
         document.addEventListener('keydown', function (e) {
             if (e.key === 'Escape' && overlay && !overlay.hidden) closeInspector();
@@ -266,7 +271,12 @@
         if (durText) tsBits.push(esc(durText));
         if (abs) tsBits.push(esc(abs));
         if (tsBits.length) extra += '<div class="query-log-ts">' + tsBits.join(' · ') + '</div>';
+        if (ev.compacted) extra += '<p>' + esc(ev.compacted === 'thinking_expired' ? 'Full thinking text expired; short excerpt retained.' : 'Full payload compacted: ' + ev.compacted) + '</p>';
+        if (ev.files) extra += '<ul>' + ev.files.map(function(file) {return '<li>' + esc(file.path) + ' · +' + esc(file.additions) + ' / −' + esc(file.deletions) + '</li>';}).join('') + '</ul>';
+        if (ev.source) extra += '<p>' + esc(ev.source) + (ev.ambiguous ? ' · ambiguous overlap' : '') + '</p>';
+        if (ev.patch) extra += '<pre class="query-log-pre">' + esc(typeof ev.patch === 'string' ? ev.patch : JSON.stringify(ev.patch, null, 2)) + '</pre>';
         if (ev.text) extra += '<pre class="query-log-pre">' + esc(ev.text) + '</pre>';
+        if (ev.raw) extra += '<details><summary>Vendor payload</summary><pre class="query-log-pre">' + esc(JSON.stringify(ev.raw, null, 2)) + '</pre></details>';
         if (ev.args) extra += '<pre class="query-log-pre query-log-pre--json"><code class="language-json">' + jsonToHighlightedHtml(ev.args) + '</code></pre>';
         if (ev.layers && ev.layers.length) extra += '<div>' + esc(ev.layers.join(', ')) + '</div>';
         if (ev.chars != null) extra += '<div>' + esc(String(ev.chars)) + ' chars' + (ev.resume ? ' · resume' : '') + '</div>';
@@ -280,7 +290,20 @@
         var slot = detailsEl && detailsEl.querySelector('.query-log-event-body');
         if (!slot || slot.getAttribute('data-filled') === '1') return;
         slot.setAttribute('data-filled', '1');
-        slot.innerHTML = eventBodyHtml(ev, durText);
+        if (ev.detail_id) {
+            slot.textContent = 'Loading full detail…';
+            fetch('/api/agent-events/events/' + ev.detail_id, {credentials: 'include', cache: 'no-store'})
+                .then(function (r) { if (!r.ok) throw new Error('Detail unavailable'); return r.json(); })
+                .then(function (row) {
+                    var detail = row.detail || row;
+                    slot.innerHTML = eventBodyHtml(detail, durText);
+                    if (detail.kind === 'edit' && window.CuttleEventDiff && (detail.patch || detail.text)) {
+                        var diffHost = document.createElement('div'); slot.prepend(diffHost);
+                        window.CuttleEventDiff.render(diffHost, detail.patch || detail.text);
+                    }
+                })
+                .catch(function (error) { slot.textContent = error.message; slot.removeAttribute('data-filled'); });
+        } else slot.innerHTML = eventBodyHtml(ev, durText);
     }
 
     function renderTimeline(data) {
@@ -302,7 +325,7 @@
             var isNative = isNativeTool(ev);
             var nativeAttr = isNative ? ' data-native="1"' : '';
             var nativePill = isNative ? '<span class="query-log-pill query-log-pill--native">native</span>' : '';
-            var step = '<span class="query-log-step">' + (i + 1) + '</span>';
+            var step = '<span class="query-log-step">' + (ev.seq || i + 1) + '</span>';
             var rel = formatRel(t0 == null ? null : relSecs(ev, t0));
             var relHtml = rel ? '<span class="query-log-rel" title="Elapsed since first step">@ ' + esc(rel) + '</span>' : '';
             var abs = formatAbs(ev && ev.t);
@@ -321,6 +344,7 @@
                 '<div class="query-log-event-body"></div>' +
                 '</details>';
         }).join('');
+        if (data.event_store) html += '<div class="query-log-pages"><button type="button" data-log-page="previous"' + (pageStack.length ? '' : ' disabled') + '>Previous steps</button><button type="button" data-log-page="next"' + (data.has_more ? '' : ' disabled') + '>Next steps</button></div>';
         if (isLive(data)) {
             html += '<div class="query-log-live" aria-live="polite"><span class="query-log-spinner" aria-hidden="true"></span><span>Live…</span></div>';
         }
@@ -389,7 +413,11 @@
         var body = document.getElementById('queryLogBody');
         if (!body) return;
         body.classList.toggle('query-log-body--json', lastTab === 'json');
-        if (lastTab === 'known') body.innerHTML = renderKnown(data);
+        if (lastTab === 'changes') {
+            var changes = Object.assign({}, data, {events: (data.events || []).filter(function(e) {return e.kind === 'edit';})});
+            body.innerHTML = '<p>Edits on this page of steps. Use Next steps to inspect later changes.</p>' + renderTimeline(changes);
+            bindTimeline(body, changes.events);
+        } else if (lastTab === 'known') body.innerHTML = renderKnown(data);
         else if (lastTab === 'sent') body.innerHTML = renderSent(data);
         else if (lastTab === 'json') {
             body.innerHTML = renderJson(data);
@@ -412,6 +440,14 @@
                 else body.scrollTop = body.scrollHeight;
             }
         }
+            body.querySelectorAll('[data-log-page]').forEach(function(button) {
+                button.addEventListener('click', function() {
+                    if (button.dataset.logPage === 'next') {pageStack.push(pageAfter); pageAfter = data.next_cursor;}
+                    else pageAfter = pageStack.pop() || 0;
+                    pageSeq = 0; lastStamp = ''; tick();
+                });
+            });
+
     }
 
     function paint(data, force) {
@@ -432,14 +468,18 @@
     }
 
     function fetchLog(qid) {
-        return fetch('/api/query-log/' + encodeURIComponent(qid), { credentials: 'include', cache: 'no-store' })
-            .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); });
+        var suffix = '?after=' + pageAfter + (pageSeq ? '&seq=' + pageSeq : '');
+        return fetch('/api/agent-events/runs/' + encodeURIComponent(qid) + '/log' + suffix, {credentials: 'include', cache: 'no-store'})
+            .then(function(r) {
+                if (r.status === 404) return fetch('/api/query-log/' + encodeURIComponent(qid), {credentials: 'include', cache: 'no-store'});
+                return r;
+            }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); });
     }
 
     function tick() {
         if (!currentId) return;
         var overlay = document.getElementById('queryLogOverlay');
-        if ((overlay && overlay.hidden) || lastTab !== 'timeline') return;
+        if ((overlay && overlay.hidden) || !['timeline','changes'].includes(lastTab)) return;
         fetchLog(currentId).then(function (res) {
             if (!res.ok) {
                 var body = document.getElementById('queryLogBody');
@@ -458,6 +498,7 @@
     function openInspector(queryId) {
         var qid = String(queryId || '').trim();
         if (!qid) return;
+        pageAfter = 0; pageStack = []; pageSeq = Number(new URLSearchParams(location.search).get('seq')) || 0;
         currentId = qid;
         lastStamp = '';
         var overlay = ensureDom();

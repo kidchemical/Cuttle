@@ -189,6 +189,28 @@ def _codex_tool_label(item: Dict[str, Any]) -> str:
     return "tool"
 
 
+def record_codex_item(tools, item, *, complete=False):
+    """Native exec/app-server tool payloads; vendor translation stays here."""
+    kind = re.sub(r"(?<!^)(?=[A-Z])", "_", str(item.get("type") or "")).lower()
+    if kind not in ("command_execution", "file_change", "mcp_tool_call", "dynamic_tool_call", "web_search", "web_search_call"):
+        return False
+    ident = item.get("id")
+    if not ident:
+        return False
+    failed = str(item.get("status") or "").lower() in ("failed", "error", "declined")
+    args = {k:v for k,v in item.items() if k not in ("aggregatedOutput", "aggregated_output", "result", "error")}
+    output = item.get("aggregatedOutput", item.get("aggregated_output", item.get("result")))
+    if not isinstance(output, str) and output is not None:
+        output = json.dumps(output, ensure_ascii=False)
+    tools.record(ident, kind, args, phase="failed" if failed else ("completed" if complete else "started"),
+                 result=output, failed=failed)
+    if kind == "file_change" and complete and not failed:
+        for change in item.get("changes") or []:
+            if isinstance(change, dict) and change.get("path") and change.get("diff") is not None:
+                tools.record_edit(ident, change["path"], change["diff"], change=change.get("kind", "modify"))
+    return True
+
+
 def _looks_like_codex_transport_recovery(msg: str) -> bool:
     """True for Codex reconnect / WS→HTTPS fallback noise (not a hard failure).
 
@@ -564,10 +586,11 @@ class CodexCliTool:
             env = agent_cli_env()
             # Cursor-style strip: event lines + silent contextual heartbeat.
             # Do not also heartbeat from the adapter — that stomps tool lines.
-            from api.agent_harness.activity import ActivityEmitter, TextActivityLog
+            from api.agent_harness.activity import ActivityEmitter, TextActivityLog, ToolActivityLog
 
-            activity = ActivityEmitter(status_queue, agent_label="Codex", record_text_previews=False)
+            activity = ActivityEmitter(status_queue, agent_label="Codex", record_text_previews=False, record_tool_previews=False)
             text_log = TextActivityLog("codex")
+            tools = ToolActivityLog("codex", activity)
             activity.emit(
                 "Resuming Codex…" if rid else "Starting Codex…",
                 force=True,
@@ -695,7 +718,8 @@ class CodexCliTool:
                             text_log.start(kind, item.get("id"))
                         text_log.save(kind, (_extract_agent_text(item) or "") if kind == "writing"
                                       else _codex_reasoning_text(item), item.get("id"))
-                    line_status = _codex_activity_for_event(ev, activity_state)
+                    captured = record_codex_item(tools, item, complete=ev.get("type") == "item.completed") if isinstance(item, dict) else False
+                    line_status = None if captured else _codex_activity_for_event(ev, activity_state)
                     if line_status:
                         activity.emit(line_status, force=ev.get("type") == "item.completed" and bool(kind))
 

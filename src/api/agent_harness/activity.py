@@ -196,19 +196,17 @@ class TextActivityLog:
 
     def delta(self, kind: str, text: str, item_id: Any = None) -> str:
         """Append a vendor chunk; save on a live tick or flush at completion."""
-        from api.query_events import MAX_TEXT
-
         key = self.key(kind, item_id)
-        self.buffers[key] = (self.buffers.get(key, "") + text)[:MAX_TEXT + 1]
+        self.buffers[key] = self.buffers.get(key, "") + text
         return self.buffers[key]
 
     def save(self, kind: str, text: str = "", item_id: Any = None) -> None:
         """Replace with a cumulative snapshot, or publish the accumulated chunks."""
-        from api.query_events import MAX_TEXT, record_agent_text
+        from api.query_events import record_agent_text
 
         key = self.key(kind, item_id)
         if text:
-            self.buffers[key] = text[:MAX_TEXT + 1]
+            self.buffers[key] = text
         record_agent_text(kind, self.buffers.get(key, ""), f"{self.source_id}:{key[1]}")
 
     def flush(self) -> None:
@@ -222,13 +220,14 @@ class ToolActivityLog:
     def __init__(self, agent_id: str, emitter: ActivityEmitter) -> None:
         from uuid import uuid4
         self.source_id = f"{agent_id}:{uuid4().hex}"
+        self.agent_id = agent_id
         self.emitter = emitter
         self.tools: dict = {}
 
     def record(self, tool_id: Any, name: str = "", args: Any = None, *,
                phase: str = "started", result: Any = None, failed: bool = False) -> None:
         from api.query_events import record_agent_tool
-        key = str(tool_id)
+        key = str(tool_id) if tool_id is not None else f"anonymous-{len(self.tools)+1}"
         previous = self.tools.get(key)
         index, old_name, old_args = previous or (len(self.tools) + 1, "tool", None)
         name = name or old_name
@@ -243,7 +242,22 @@ class ToolActivityLog:
         summary = name + detail
         record_agent_tool(f"{self.source_id}:{key}", summary, phase=phase,
                           args=args, result=result, failed=failed)
+        if phase == "completed" and self.agent_id not in ("codex", "claude", "opencode"):
+            from api.query_events import current_query_id
+            if any(part in name.lower() for part in ("edit", "write", "patch", "bash", "shell", "exec")):
+                try:
+                    from api.agent_events.snapshots import record_step
+                    record_step(current_query_id(), f"{self.source_id}:{key}")
+                except Exception:
+                    import logging
+                    logging.getLogger(__name__).exception("Step snapshot unavailable")
         if failed:
             self.emitter.emit(f"tool failed: {summary}", force=True)
         elif previous is None or (phase == "started" and (name != old_name or args != old_args)):
             self.emitter.emit(f"tool {index}: {summary}", force=True)
+
+    def record_edit(self, tool_id: Any, path: str, patch: Any, *, change: Any = 'modify', source: str = 'native') -> None:
+        """Preserve vendor edit evidence without interpreting it in the kernel."""
+        from api.query_events import add_event
+        add_event('edit', block_id=f'{self.source_id}:{tool_id}:edit:{path}',
+                  summary=f'Edit {path}', path=path, patch=patch, change=change, source=source)
