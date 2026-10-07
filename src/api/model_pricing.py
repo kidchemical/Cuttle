@@ -749,6 +749,11 @@ def enrich_usage_for_display(
     if cost is not None:
         out["cost"] = float(cost)
         out["cost_estimated"] = bool(cost_estimated)
+    if u.get("reported_cost") is not None:
+        try:
+            out["reported_cost"] = float(u["reported_cost"])
+        except (TypeError, ValueError):
+            pass
     for key in ("context_tokens", "peak_context_tokens"):
         raw = u.get(key)
         if raw is None:

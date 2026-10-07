@@ -448,6 +448,9 @@ class Adapter:
                 usage["cost"] = float(uq["cost"])
             except (TypeError, ValueError):
                 pass
+        for key in ("cost_estimated", "reported_cost"):
+            if key in uq:
+                usage[key] = uq[key]
 
         sid = raw.get("claude_session_id")
         transcript = claude_transcript_stats(str(sid).strip()) if sid else None

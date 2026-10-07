@@ -233,6 +233,36 @@ def _parse_claude_json(raw: str) -> Dict[str, Any]:
         except (TypeError, ValueError):
             pass
 
+    # The CLI's total_cost_usd can value subscription cache reads at full
+    # input price. Price each concrete model instead of the requested alias
+    # (e.g. "opus"), and never publish a partial multi-model estimate.
+    if model_usage:
+        from api.model_pricing import estimate_cost_usd
+
+        estimates = []
+        for model_id, row in model_usage.items():
+            if not isinstance(row, dict):
+                break
+            try:
+                estimated = estimate_cost_usd(
+                    model_id,
+                    int(row.get("inputTokens") or row.get("input_tokens") or 0),
+                    int(row.get("outputTokens") or row.get("output_tokens") or 0),
+                    cache_read_tokens=int(row.get("cacheReadInputTokens") or row.get("cache_read_input_tokens") or row.get("cacheReadTokens") or 0),
+                    cache_write_tokens=int(row.get("cacheCreationInputTokens") or row.get("cache_creation_input_tokens") or row.get("cacheWriteTokens") or 0),
+                    cache_inclusive=False,
+                )
+            except (TypeError, ValueError):
+                break
+            if estimated is None:
+                break
+            estimates.append(estimated)
+        else:
+            if "cost" in usage:
+                usage["reported_cost"] = usage["cost"]
+            usage["cost"] = round(sum(estimates), 6)
+            usage["cost_estimated"] = True
+
     errors: List[str] = []
     subtype = str(obj.get("subtype") or "").lower()
     is_error = subtype.startswith("error") or subtype in ("failure", "failed") or bool(obj.get("is_error"))
@@ -287,7 +317,7 @@ def _replay_text(obj: Dict[str, Any]) -> Optional[str]:
 
 _SUMMED_USAGE = (
     "prompt_tokens", "completion_tokens", "total_tokens",
-    "cache_read_tokens", "cache_write_tokens", "cost",
+    "cache_read_tokens", "cache_write_tokens", "cost", "reported_cost",
 )
 
 
@@ -304,6 +334,8 @@ def _merge_results(parsed: List[Dict[str, Any]]) -> Dict[str, Any]:
         if vals:
             usage[key] = sum(vals)
     last["usage"] = usage
+    if len(parsed) > 1 and not all((p.get("usage") or {}).get("cost_estimated") for p in parsed):
+        usage.pop("cost_estimated", None)
     last["output"] = "\n\n".join(
         str(p.get("output") or "").strip() for p in parsed if str(p.get("output") or "").strip()
     )
@@ -337,6 +369,9 @@ def usage_for_query_report(usage: Dict[str, Any], model: str) -> Dict[str, Any]:
         "model": (model or "claude").strip() or "claude",
         "cost": usage.get("cost"),
     }
+    for key in ("cost_estimated", "reported_cost"):
+        if key in usage:
+            out[key] = usage[key]
     try:
         cr = int(usage.get("cache_read_tokens") or 0)
     except (TypeError, ValueError):
