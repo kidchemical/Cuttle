@@ -111,7 +111,7 @@
                 + ' data-tooltip="' + esc(tip) + '" aria-label="' + esc('Open ' + name + ' (' + meta.label + ')') + '">'
                 + '<span class="subagent-fleet-head">' + avatar
                 + '<span class="subagent-fleet-name">' + esc(name) + '</span>'
-                + '<span class="subagent-fleet-outcome"><i aria-hidden="true">' + esc(meta.icon) + '</i>' + esc(meta.label) + '</span>'
+                + '<span class="subagent-fleet-outcome" title="' + esc(meta.label) + '"><i aria-hidden="true">' + esc(meta.icon) + '</i></span>'
                 + '</span>'
                 + (chipHtml(s) || '')
                 + '<span class="subagent-fleet-summary' + (live ? ' subagent-fleet-summary--live' : '') + '">' + esc(summary) + '</span>'
