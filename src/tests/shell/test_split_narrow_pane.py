@@ -44,6 +44,26 @@ def test_narrow_pane_compacts_welcome_splash():
     assert "grid-template-columns: 1fr" in block
 
 
+def test_welcome_composer_matches_in_chat_width():
+    css = CHAT_CSS.read_text(encoding="utf-8")
+    box = css.split(".welcome-input-container {", 1)[1].split("}", 1)[0]
+    # In-chat parity (.input-wrapper 820px / 16px sides), still capped.
+    assert "max-width: 820px" in box
+    assert "padding: 0 16px" in box
+
+
+def test_welcome_content_shrinks_with_narrow_panes():
+    css = CHAT_CSS.read_text(encoding="utf-8")
+    content = css.split(".welcome-content {", 1)[1].split("}", 1)[0]
+    # Width-bound (never wider than its max) and shrinkable: the old
+    # flex-shrink: 0 let the splash overflow panes as they narrowed.
+    assert "width: 100%" in content
+    assert "max-width: 860px" in content
+    assert "min-width: 0" in content
+    assert "box-sizing: border-box" in content
+    assert "flex-shrink" not in content
+
+
 def test_very_narrow_pane_drops_greeting():
     css = CHAT_CSS.read_text(encoding="utf-8")
     _, block = _media_block(css, "@media (max-width: 360px)")
@@ -54,7 +74,7 @@ def test_very_narrow_pane_drops_greeting():
 
 def test_sub_threshold_drag_parks_pane_in_place():
     js = SHELL_JS.read_text(encoding="utf-8")
-    assert "SPLIT_COLLAPSE_PX = 100" in js
+    assert "SPLIT_COLLAPSE_PX = 200" in js
     assert "function setPaneCollapsed" in js
     assert "function isPaneCollapsedEl" in js
     collapse = js.split("function maybeCollapseNarrowPane", 1)[1][:1600]
@@ -63,11 +83,24 @@ def test_sub_threshold_drag_parks_pane_in_place():
     assert "closeSplitColumn" not in collapse
     # Parked panes stay pinned while fluid siblings share the budget.
     assert "'0 0 auto'" in js
-    # The touching divider restores on release.
-    assert "expandAdjacentCollapsedPanes" in js
+    # The touching divider unparks first, then drags to a chosen width;
+    # a pure click restores at equal shares, a small drag floors at 200px.
+    assert "expandTargets" in js
+    assert "maxDelta" in js
+    assert "SPLIT_COLLAPSE_PX" in js
+    # Blade icons unpark their pane before navigating.
+    assert "isPaneCollapsedEl(column)) setPaneCollapsed(column, false)" in js
     assert "dataset.expand" in js
     assert "pane-will-collapse" in js
     assert "will-collapse" in js
+
+
+def test_park_and_restore_leave_no_preview_crumbs():
+    js = SHELL_JS.read_text(encoding="utf-8")
+    collapse = js.split("function setPaneCollapsed", 1)[1][:1500]
+    # The dim + red dash belong to an in-flight gesture only.
+    assert "pane-will-collapse" in collapse
+    assert "will-collapse" in collapse
 
 
 def test_collapsed_flag_persists_across_reload():

@@ -565,18 +565,98 @@ def test_collapsed_pane_parks_to_blade_and_restores(browser, static_server):
             """() => {
                 const col = document.querySelector(
                     ".split-column[data-leaf-id='L1']");
+                const main = col && col.querySelector('.shell-main');
                 return {
                     leaves: [...document.querySelectorAll(
                         ".split-column:not([data-split-discarded='1'])")
                     ].length,
                     colWidth: col ? col.offsetWidth : -1,
+                    mainOpacity: main
+                        ? getComputedStyle(main).opacity : '?',
+                    crumbs: document.querySelectorAll(
+                        '.pane-will-collapse, .split-resize-handle.will-collapse'
+                    ).length,
                     expandHandle: !!document.querySelector(
                         '.split-resize-handle.pane-expand'),
                 };
             }""")
         assert restored["leaves"] == 3, restored
-        assert restored["colWidth"] > 100, restored
+        # Pure click restores at equal shares, not the collapse floor.
+        assert restored["colWidth"] > 300, restored
         assert not restored["expandHandle"], restored
+        # No leftover drag preview: no dim, no red dash.
+        assert restored["mainOpacity"] == "1", restored
+        assert restored["crumbs"] == 0, restored
+        _assert_blocked_api_free(blocked)
+        assert errors == [], errors
+    finally:
+        context.close()
+
+
+def _park_leaf(page, leaf_id):
+    page.evaluate(
+        "() => window.setPaneCollapsed(document.querySelector("
+        f"\" .split-column[data-leaf-id='{leaf_id}']\"), true)")
+
+
+def _leaf_width(page, leaf_id):
+    return page.evaluate(
+        "() => document.querySelector("
+        f"\" .split-column[data-leaf-id='{leaf_id}']\").offsetWidth")
+
+
+def _drag_expand_handle(page, dx):
+    box = page.locator(
+        "#splitContainer > .split-resize-handle.pane-expand").bounding_box()
+    assert box is not None and box["width"] > 0
+    x0, y0 = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+    page.mouse.move(x0, y0)
+    page.mouse.down()
+    page.mouse.move(x0 + dx, y0, steps=8)
+    page.mouse.up()
+
+
+def test_expand_divider_drag_sets_restored_width(browser, static_server):
+    """Drag the expand divider to choose the width; nudges floor at 200."""
+    world = ShellWorld()
+    context, page, errors, blocked = _open(
+        browser, static_server, world, seed=V2_NESTED)
+    try:
+        _load_shell(page, static_server)
+        _pump_until(page, lambda: _col_count(page) == 3, 20000, "3 panes")
+        _park_leaf(page, "L1")
+        _pump_until(page, lambda: _park_state(page)["parked"] == 1,
+                    20000, "L1 parked")
+        # A real drag follows the pointer (blade 56px + 250px of drag).
+        _drag_expand_handle(page, 250)
+        _pump_until(page, lambda: _park_state(page)["parked"] == 0,
+                    20000, "L1 restored by drag")
+        dragged = _leaf_width(page, "L1")
+        assert 270 <= dragged <= 340, dragged
+        # A nudge past the press point settles at the collapse threshold.
+        _park_leaf(page, "L1")
+        _pump_until(page, lambda: _park_state(page)["parked"] == 1,
+                    20000, "L1 parked again")
+        _drag_expand_handle(page, 10)
+        _pump_until(page, lambda: _park_state(page)["parked"] == 0,
+                    20000, "L1 restored by nudge")
+        nudged = _leaf_width(page, "L1")
+        assert 185 <= nudged <= 215, nudged
+        crumbs = page.evaluate(
+            "() => document.querySelectorAll("
+            "'.pane-will-collapse, "
+            ".split-resize-handle.will-collapse').length")
+        assert crumbs == 0, crumbs
+        # A blade icon on the parked pane unparks it too.
+        _park_leaf(page, "L1")
+        _pump_until(page, lambda: _park_state(page)["parked"] == 1,
+                    20000, "L1 parked once more")
+        page.locator(
+            ".split-column[data-leaf-id='L1'] "
+            ".rail-item[data-page]").first.click()
+        _pump_until(page, lambda: _park_state(page)["parked"] == 0,
+                    20000, "L1 restored by blade icon")
+        assert _leaf_width(page, "L1") > 300, _leaf_width(page, "L1")
         _assert_blocked_api_free(blocked)
         assert errors == [], errors
     finally:

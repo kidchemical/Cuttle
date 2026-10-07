@@ -143,6 +143,50 @@ def test_history_panel_never_slides_except_on_toggle(welcome):
     assert errors == [], errors
 
 
+def test_narrow_welcome_splash_never_overflows_pane(welcome):
+    """The splash fills (up to its cap) at any pane width, never spilling.
+
+    Regression: above 768px the splash had no width, so the flex item
+    shrank to the textarea's intrinsic ~254px — narrowing the pane toward
+    768px made the composer jump wider instead of staying put.
+    """
+    page = welcome
+    errors = []
+    page.on("pageerror", lambda exc: errors.append(str(exc)))
+
+    def metrics():
+        return page.locator("#welcomeScreen").evaluate("""el => {
+            const content = document.querySelector('.welcome-content');
+            const composer = document.querySelector(
+                '.welcome-input-container');
+            return {
+                screenScroll: el.scrollWidth,
+                screenClient: el.clientWidth,
+                contentScroll: content.scrollWidth,
+                contentClient: content.clientWidth,
+                contentWidth: content.getBoundingClientRect().width,
+                composer: composer.getBoundingClientRect().width,
+            };
+        }""")
+
+    # Wide pane: splash fills to its cap (old code: 254px intrinsic strip).
+    page.set_viewport_size({"width": 900, "height": 800})
+    wide = metrics()
+    assert wide["contentWidth"] > 800, wide
+    assert wide["composer"] <= 820, wide
+    assert wide["composer"] > 700, wide
+    # Narrow pane: everything shrinks along, nothing spills horizontally.
+    page.set_viewport_size({"width": 250, "height": 800})
+    narrow = metrics()
+    assert narrow["contentScroll"] <= narrow["contentClient"] + 1, narrow
+    assert narrow["screenScroll"] <= narrow["screenClient"] + 1, narrow
+    # Very wide: the composer keeps its cap instead of full-bleed.
+    page.set_viewport_size({"width": 1400, "height": 900})
+    huge = metrics()
+    assert huge["composer"] <= 820 + 1, huge
+    assert errors == [], errors
+
+
 def test_tiny_welcome_can_scroll_a_tall_draft(welcome):
     page = welcome
     page.set_viewport_size({"width": 390, "height": 180})
