@@ -49,6 +49,46 @@ def test_parse_claude_json_error_subtype():
     assert "rate limited" in parsed["errors"][0]
 
 
+def test_claude_cost_prices_cache_per_concrete_model(monkeypatch):
+    from api import model_pricing
+    from scripts.utilities.claude_cli_tool import usage_for_query_report, _merge_results
+
+    rates = {"opus-concrete": {"input": 4, "output": 20, "cache_read": .2, "cache_write": 5},
+             "haiku-concrete": {"input": 1, "output": 5, "cache_read": .1, "cache_write": 1.25}}
+    monkeypatch.setattr(model_pricing, "lookup_model_rates", rates.get)
+    result = {
+        "total_cost_usd": 83.985179,
+        "modelUsage": {
+            "opus-concrete": {"inputTokens": 48, "outputTokens": 16644,
+                              "cacheReadInputTokens": 20323108, "cacheCreationInputTokens": 28271},
+            "haiku-concrete": {"inputTokens": 1000000},
+        },
+    }
+    parsed = _parse_claude_json(json.dumps(result))
+    usage = parsed["usage"]
+    assert usage["cost"] == pytest.approx(5.539049)
+    assert usage["reported_cost"] == pytest.approx(83.985179)
+    assert usage["cost_estimated"] is True
+    report = usage_for_query_report(usage, "opus")
+    display = model_pricing.enrich_usage_for_display(report, model="opus")
+    assert display["cost_estimated"] is True
+    assert display["reported_cost"] == usage["reported_cost"]
+    merged = _merge_results([parsed, parsed])["usage"]
+    assert merged["cost"] == pytest.approx(2 * usage["cost"])
+    assert merged["reported_cost"] == pytest.approx(2 * usage["reported_cost"])
+
+
+@pytest.mark.parametrize("row", [{"inputTokens": 10}, {"inputTokens": "invalid"}, None])
+def test_claude_cost_keeps_reported_total_if_any_model_unpriceable(monkeypatch, row):
+    from api import model_pricing
+    monkeypatch.setattr(model_pricing, "lookup_model_rates", lambda model: None)
+    usage = _parse_claude_json(json.dumps({
+        "total_cost_usd": 12.5, "modelUsage": {"unknown": row},
+    }))["usage"]
+    assert usage["cost"] == 12.5
+    assert not usage.get("cost_estimated")
+
+
 def test_parse_claude_terminal_errors_and_empty_output():
     empty = _parse_claude_json(json.dumps({"type": "result", "result": ""}))
     assert empty["output"] == ""
