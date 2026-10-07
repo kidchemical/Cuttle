@@ -1,9 +1,10 @@
 """Tray + in-app toast notifications (daemon pystray queue, app shell poll).
 
-Writers call :func:`notify_tray`; the daemon drains ``cuttle_notify_queue.jsonl``
-for its tray balloon and ``GET /api/ui-toasts`` drains ``cuttle_ui_toasts.jsonl``
-for Electron/app_shell toasts. Both files sit at the checkout root, where the
-daemon reads them.
+Writers call :func:`notify_tray`; the daemon drains the notify queue for its
+tray balloon and ``GET /api/ui-toasts`` drains the ui toast file for
+Electron/app_shell toasts. Both files live in the per-user instance state
+dir (``core.runtime_paths.instance_state_dir``) — never the checkout root,
+which may be read-only once installed.
 """
 
 from __future__ import annotations
@@ -11,14 +12,14 @@ from __future__ import annotations
 import json
 import threading
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import List
+
+from core.runtime_paths import notify_queue_path, ui_toast_path
 
 _lock = threading.Lock()
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
-_NOTIFY_PATH = _PROJECT_ROOT / "cuttle_notify_queue.jsonl"
-_UI_TOAST_PATH = _PROJECT_ROOT / "cuttle_ui_toasts.jsonl"
+_NOTIFY_PATH = notify_queue_path()
+_UI_TOAST_PATH = ui_toast_path()
 
 
 def _utc_iso() -> str:
@@ -43,6 +44,7 @@ def notify_tray(message: str, *, variant: str = "info") -> None:
     )
     try:
         with _lock:
+            _NOTIFY_PATH.parent.mkdir(parents=True, exist_ok=True)
             with open(_NOTIFY_PATH, "a", encoding="utf-8") as f:
                 f.write(tray_entry)
             with open(_UI_TOAST_PATH, "a", encoding="utf-8") as f:
