@@ -548,6 +548,11 @@ def test_collapsed_pane_parks_to_blade_and_restores(browser, static_server):
         assert state["expandHandle"], state      # divider restore affordance
         assert 48 <= state["colWidth"] <= 64, state  # blade width only
         assert _saved_leaf_collapsed(page, "L1") is True
+        # Parked-left divider chevron points where the pane grows (right).
+        chevron = page.locator(
+            "#splitContainer > .split-resize-handle.pane-expand").evaluate(
+            "el => getComputedStyle(el, '::after').content")
+        assert chevron == '"›"', chevron
         # Park survives a full reload through the restore path.
         page.reload(wait_until="domcontentloaded")
         page.wait_for_function(
@@ -597,6 +602,20 @@ def _park_leaf(page, leaf_id):
     page.evaluate(
         "() => window.setPaneCollapsed(document.querySelector("
         f"\" .split-column[data-leaf-id='{leaf_id}']\"), true)")
+
+
+def _vpark_state(page, leaf_id):
+    return page.evaluate(
+        """(leafId) => {
+            const col = document.querySelector(
+                ".split-column[data-leaf-id='" + leafId + "']");
+            const frame = col && col.querySelector('iframe');
+            return {
+                parked: !!(col && col.classList.contains('pane-collapsed')),
+                barHeight: col ? col.offsetHeight : -1,
+                frameAlive: !!(frame && frame.contentDocument),
+            };
+        }""", leaf_id)
 
 
 def _leaf_width(page, leaf_id):
@@ -657,6 +676,52 @@ def test_expand_divider_drag_sets_restored_width(browser, static_server):
         _pump_until(page, lambda: _park_state(page)["parked"] == 0,
                     20000, "L1 restored by blade icon")
         assert _leaf_width(page, "L1") > 300, _leaf_width(page, "L1")
+        _assert_blocked_api_free(blocked)
+        assert errors == [], errors
+    finally:
+        context.close()
+
+
+def test_vertical_park_collapses_to_restore_bar(browser, static_server):
+    """Vertical stacks park to a slim bar; divider drag parks, bar restores."""
+    world = ShellWorld()
+    context, page, errors, blocked = _open(
+        browser, static_server, world, seed=V2_NESTED)
+    try:
+        _load_shell(page, static_server)
+        _pump_until(page, lambda: _col_count(page) == 3, 20000, "3 panes")
+        # Drag the vertical divider down to shrink the bottom pane (L3)
+        # under the threshold — release parks it instead of closing it.
+        box = page.locator(
+            ".split-group[data-group-id='G2'] > "
+            ".split-resize-handle").bounding_box()
+        assert box is not None and box["height"] > 0
+        x0 = box["x"] + box["width"] / 2
+        y0 = box["y"] + box["height"] / 2
+        page.mouse.move(x0, y0)
+        page.mouse.down()
+        page.mouse.move(x0, y0 + 400, steps=8)
+        page.mouse.up()
+        _pump_until(
+            page, lambda: _vpark_state(page, "L3")["parked"], 20000,
+            "L3 parked")
+        state = _vpark_state(page, "L3")
+        assert 24 <= state["barHeight"] <= 32, state  # title bar, not a blade
+        assert state["frameAlive"], state             # iframe untouched
+        assert _col_count(page) == 3, state           # parked, not closed
+        title = page.evaluate(
+            "() => document.querySelector("
+            "\" .split-column[data-leaf-id='L3']\").dataset.parkedTitle")
+        assert title == "Chat", title
+        # The whole bar is the restore affordance.
+        page.locator(".split-column[data-leaf-id='L3']").click()
+        _pump_until(
+            page, lambda: not _vpark_state(page, "L3")["parked"], 20000,
+            "L3 restored by bar click")
+        tall = page.evaluate(
+            "() => document.querySelector("
+            "\" .split-column[data-leaf-id='L3']\").offsetHeight")
+        assert tall > 100, tall
         _assert_blocked_api_free(blocked)
         assert errors == [], errors
     finally:

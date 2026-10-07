@@ -2351,6 +2351,7 @@ function attachFrameLoadListener(colIdx, frameEl) {
             );
             const activePage = canonicalizeShellPage(path + (url.search || ''));
             rememberChatHandleFromPage(colIdx, activePage);
+            refreshParkedPaneTitle(colIdx);
             const state = getState(colIdx);
             retryFailedShellFrame(colIdx, frameEl);
             if (state.page !== activePage) {
@@ -3287,11 +3288,55 @@ function isPaneCollapsedEl(el) {
     return !!(el && el.classList && el.classList.contains('pane-collapsed'));
 }
 
+/** Bar label for a vertically parked pane: live chat name, else page title. */
+function parkedPaneTitle(col, idx) {
+    try {
+        const frame = col.querySelector('.shell-main iframe');
+        const name = frame?.contentDocument
+            ?.getElementById('chatSessionTitleText')?.textContent?.trim();
+        if (name) return name;
+    } catch (_) { /* cross-origin or unloading: fall through to the page */ }
+    const state = Number.isFinite(idx) ? columnState.get(idx) : null;
+    const base = String((state && state.page) || '').split('?')[0];
+    if (base && PAGE_TITLES[base]) return PAGE_TITLES[base];
+    return 'Pane';
+}
+
+function refreshParkedPaneTitle(colOrIdx) {
+    const col = (typeof colOrIdx === 'number' || typeof colOrIdx === 'string')
+        ? getColumnEl(parseInt(colOrIdx, 10))
+        : colOrIdx;
+    if (!col || !isPaneCollapsedEl(col)) return;
+    const host = getLeafParentGroup(col);
+    if (!host || getGroupOrientation(host) !== 'vertical') {
+        col.removeAttribute('data-parked-title');
+        return;
+    }
+    col.dataset.parkedTitle = parkedPaneTitle(col, parseInt(col.dataset.column, 10));
+}
+
+// Vertically parked panes show a slim bar instead of a blade — the whole
+// bar is the restore affordance (horizontal panes restore via divider or
+// blade icon; their rail clicks must keep reaching the rail buttons).
+if (typeof document !== 'undefined') {
+    document.addEventListener('click', (e) => {
+        if (e.button !== 0) return;
+        const bar = e.target?.closest?.(
+            '.split-vertical > .split-column.pane-collapsed,'
+            + ' .split-container.split-vertical > .split-column.pane-collapsed'
+        );
+        if (!bar || !bar.classList?.contains('split-column')) return;
+        e.preventDefault();
+        setPaneCollapsed(bar, false);
+    });
+}
+
 /**
- * Park / restore a viewport pane in place. Collapsing keeps the blade
- * toolbar (rail) visible and usable and hides only .shell-main; the live
- * iframe is never touched, so there is no teardown, renumber, or reload
- * flash. The rail is forced open on collapse so the blade never vanishes.
+ * Park / restore a viewport pane in place. Horizontal stacks keep the blade
+ * toolbar (rail) visible and usable and hide only .shell-main; vertical
+ * stacks park the whole pane to a slim clickable bar. The live iframe is
+ * never touched, so there is no teardown, renumber, or reload flash. The
+ * rail is forced open on horizontal collapse so the blade never vanishes.
  * Options: { quiet: true } applies class/flex/state only (layout restore —
  * the caller owns redistribute + persist).
  */
@@ -3301,6 +3346,8 @@ function setPaneCollapsed(colOrIdx, collapsed, opts) {
         : colOrIdx;
     if (!col || !col.classList?.contains('split-column')) return false;
     collapsed = !!collapsed;
+    const host = getLeafParentGroup(col);
+    const verticalHost = !!host && getGroupOrientation(host) === 'vertical';
     const idx = parseInt(col.dataset.column, 10);
     col.classList.toggle('pane-collapsed', collapsed);
     if (Number.isFinite(idx)) getState(idx).paneCollapsed = collapsed;
@@ -3309,21 +3356,23 @@ function setPaneCollapsed(colOrIdx, collapsed, opts) {
     // collapse path bypasses stopDrag, so clear it here or the parked /
     // restored pane keeps the dim + red dash.
     col.classList.remove('pane-will-collapse');
-    getLeafParentGroup(col)?.querySelectorAll(
+    host?.querySelectorAll(
         ':scope > .pane-will-collapse, :scope > .will-collapse'
     ).forEach((el) => {
         el.classList.remove('pane-will-collapse', 'will-collapse');
     });
     if (collapsed) {
-        applyRailCollapsed(idx, false);
+        if (!verticalHost) applyRailCollapsed(idx, false);
+        refreshParkedPaneTitle(col);
         col.style.flex = '0 0 auto';
         clearPaneBoxStyles(col);
     } else {
+        col.removeAttribute('data-parked-title');
+        col.removeAttribute('title');
         col.style.flex = '';
         clearPaneBoxStyles(col);
     }
     if (opts && opts.quiet) return true;
-    const host = getLeafParentGroup(col);
     const kids = host ? getGroupChildNodes(host) : [];
     if (kids.length >= 2) {
         applySplitRatioFlex(kids, kids.map(() => 1), getGroupOrientation(host), host);
@@ -6926,7 +6975,8 @@ function rebuildGroupResizeHandles(groupEl) {
         handle.dataset.groupId = groupEl.dataset.groupId || groupEl.id || '';
         handle.dataset.between = `${i}-${i + 1}`;
         // A divider touching a parked pane restores it on release — mark it
-        // as an expand affordance (chevron points at the parked side).
+        // as an expand affordance. The chevron points where the pane will
+        // grow (expansion direction), not at the parked side.
         const leftParked = isPaneCollapsedEl(kids[i]);
         const rightParked = isPaneCollapsedEl(kids[i + 1]);
         if (leftParked || rightParked) {
@@ -6935,9 +6985,14 @@ function rebuildGroupResizeHandles(groupEl) {
             handle.title = 'Expand pane';
             handle.setAttribute('role', 'button');
             handle.setAttribute('aria-label', 'Expand collapsed pane');
-            if (leftParked && !rightParked) handle.dataset.expandDir = 'left';
-            else if (rightParked && !leftParked) handle.dataset.expandDir = 'right';
-            else handle.dataset.expandDir = 'both';
+            const verticalHandles = getGroupOrientation(groupEl) === 'vertical';
+            if (leftParked && !rightParked) {
+                handle.dataset.expandDir = verticalHandles ? 'down' : 'right';
+            } else if (rightParked && !leftParked) {
+                handle.dataset.expandDir = verticalHandles ? 'up' : 'left';
+            } else {
+                handle.dataset.expandDir = 'both';
+            }
         }
         groupEl.appendChild(handle);
         setupGroupSplitResize(handle, groupEl, i, i + 1);
@@ -7328,18 +7383,21 @@ function setupGroupSplitResize(handleEl, groupEl, leftPos, rightPos) {
             c.classList.remove('pane-will-collapse');
         });
         finalizeGroupToRatios(groupEl);
+        // Parking / restoring changes which dividers are expand affordances —
+        // refresh them here or a drag-restored pane keeps the thick divider.
+        rebuildGroupResizeHandles(groupEl);
         persistSplitLayout();
     }
 
     /**
-     * Collapse a pane in place: it parks down to its blade toolbar (the
-     * rail stays visible and usable) with the content hidden but the live
-     * iframe untouched — no teardown, no renumber, no navigation. The
-     * adjacent divider becomes the restore affordance. Single-pane shells
-     * and vertical stacks never collapse.
+     * Collapse a pane in place. Horizontal: parks down to its blade toolbar
+     * (rail stays visible and usable). Vertical: parks to a slim restore
+     * bar (a stacked rail would eat full width). Either way the live iframe
+     * is untouched — no teardown, no renumber, no navigation. Single-pane
+     * shells never collapse.
      */
     function maybeCollapseNarrowPane(cols, shrinkingPos, widths, vertical) {
-        if (vertical || shrinkingPos < 0 || shrinkingPos >= cols.length) return false;
+        if (shrinkingPos < 0 || shrinkingPos >= cols.length) return false;
         if (!Array.isArray(widths) || widths[shrinkingPos] >= SPLIT_COLLAPSE_PX) return false;
         const target = cols[shrinkingPos];
         if (!target?.classList?.contains('split-column')) return false;
@@ -7427,18 +7485,27 @@ function setupGroupSplitResize(handleEl, groupEl, leftPos, rightPos) {
                 if (!isPaneCollapsedEl(cols[rightPos])) widths[rightPos] += (-remaining) - need;
             }
             applySplitPixelFlex(cols, widths, ori, groupEl);
-            // Collapse preview: flag the shrinking pane while it sits under
-            // SPLIT_COLLAPSE_PX so release-to-park is visible mid-drag.
+            // Threshold preview: flag any pane sitting under SPLIT_COLLAPSE_PX —
+            // the shrinking pane (release parks it) and a restored pane still
+            // in the zone (release settles it at the threshold) — so the gray
+            // shows while the outcome is still live. Axis-agnostic: vertical
+            // stacks report heights through the same widths.
             lastWidths = widths;
             lastShrinking = delta > 0 ? rightPos : (delta < 0 ? leftPos : -1);
-            const willCollapse = !vertical
-                && lastShrinking >= 0
+            const previewIdx = new Set();
+            if (lastShrinking >= 0
                 && widths[lastShrinking] < SPLIT_COLLAPSE_PX
-                && cols[lastShrinking]?.classList?.contains('split-column');
-            cols.forEach((c, i) => {
-                c.classList.toggle('pane-will-collapse', !!willCollapse && i === lastShrinking);
+                && cols[lastShrinking]?.classList?.contains('split-column')) {
+                previewIdx.add(lastShrinking);
+            }
+            expandTargets.forEach((c) => {
+                const i = cols.indexOf(c);
+                if (i >= 0 && widths[i] < SPLIT_COLLAPSE_PX) previewIdx.add(i);
             });
-            handleEl.classList.toggle('will-collapse', !!willCollapse);
+            cols.forEach((c, i) => {
+                c.classList.toggle('pane-will-collapse', previewIdx.has(i));
+            });
+            handleEl.classList.toggle('will-collapse', previewIdx.size > 0);
         };
         const endDragListeners = () => {
             try { handleEl.releasePointerCapture(e.pointerId); } catch (_) {}
