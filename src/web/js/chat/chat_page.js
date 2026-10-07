@@ -1701,6 +1701,23 @@
         }
     }
 
+    /** Composer controls tagged data-experimental-flag stay hidden unless their flag is on. */
+    async function syncExperimentalComposerControls() {
+        const controls = document.querySelectorAll('[data-experimental-flag]');
+        if (!controls.length) return;
+        let enabled = new Set();
+        try {
+            const r = await fetch('/api/experimental/flags', { credentials: 'include', cache: 'no-store' });
+            const d = await r.json();
+            if (r.ok && d && d.success && !d.kill_switch) {
+                enabled = new Set((d.flags || []).filter(f => f.enabled).map(f => f.id));
+            }
+        } catch (_) {}
+        controls.forEach((el) => {
+            el.hidden = !enabled.has(el.getAttribute('data-experimental-flag'));
+        });
+    }
+
     const SESSION_PREFS_STORAGE_KEY = 'cuttleChatSessionPrefs';
     /** Global default sticky slash agents (e.g. /cursor) applied to new chats. */
     const STARRED_SLASH_STORAGE_KEY = 'cuttleStarredSlashCommands';
@@ -12308,9 +12325,9 @@
         const textarea = document.getElementById('welcomeChatInput');
         if (textarea) {
             textarea.style.height = 'auto';
-            const next = Math.min(textarea.scrollHeight, 200);
+            const next = Math.min(textarea.scrollHeight, 168);
             textarea.style.height = next + 'px';
-            textarea.style.overflowY = textarea.scrollHeight > 200 ? 'auto' : 'hidden';
+            textarea.style.overflowY = textarea.scrollHeight > 168 ? 'auto' : 'hidden';
         }
     }
     
@@ -22427,9 +22444,9 @@
         const textarea = document.getElementById('chatInput');
         if (textarea) {
             textarea.style.height = 'auto';
-            const next = Math.min(textarea.scrollHeight, 200);
+            const next = Math.min(textarea.scrollHeight, 168);
             textarea.style.height = next + 'px';
-            textarea.style.overflowY = textarea.scrollHeight > 200 ? 'auto' : 'hidden';
+            textarea.style.overflowY = textarea.scrollHeight > 168 ? 'auto' : 'hidden';
         }
     }
     
@@ -22586,6 +22603,8 @@
 
         wireAttachControls();
         wireEnhanceControls();
+        syncExperimentalComposerControls();
+        window.addEventListener('focus', syncExperimentalComposerControls);
 
         // Direct listeners
         if (welcomeInput) {

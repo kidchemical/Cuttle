@@ -5,4 +5,4 @@
 # .venv/bin/pip install -r src/requirements/requirements-optional.txt
 
 # LAN discovery (api/discovery_mdns.py); LAN access and mdns_enabled must also be enabled.
-zeroconf>=0.131.0
+zeroconf>=0.151.5

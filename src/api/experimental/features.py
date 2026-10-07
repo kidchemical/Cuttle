@@ -51,6 +51,18 @@ register_flag(FlagSpec(
 ))
 
 register_flag(FlagSpec(
+    id="composer_attach_button", label="Composer attach button",
+    description="Show the paperclip button in the chat composer for attaching an image or PDF (described to the agent by the vision pre-pass). It is the only way to attach files from chat.",
+    default=False, category="chat", risk="low", since="0.0.0", needs_restart=False,
+))
+
+register_flag(FlagSpec(
+    id="composer_prompt_enhance", label="Composer prompt enhancer",
+    description="Show the wand button in the chat composer that rewrites your draft prompt with AI (click again to undo).",
+    default=False, category="chat", risk="low", since="0.0.0", needs_restart=False,
+))
+
+register_flag(FlagSpec(
     id="gizmos", label="Gizmos",
     description="Live UI objects outside chat bubbles: pin usage meters (Codex, Claude, Cursor) to the title bar or blade bar, float them over every Space, or pop them out as always-on-top desktop windows. Manage them in Apps → Gizmos.",
     default=False, category="ui", risk="low", since="0.0.0", needs_restart=False,
