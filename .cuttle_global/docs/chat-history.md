@@ -5,7 +5,8 @@ Transcripts live in a **gitignored SQLite DB**, not in the working tree. Empty
 answer “no traces of Cuttle chats found” on that basis alone.
 
 Open this file before reading or summarizing chat history.
-Prefer `.cuttle_global/personal/docs/chat-history.md` when it exists (install-local DB path).
+Prefer `<home>/personal/docs/chat-history.md` when it exists (install-local DB path).
+`<home>` is the per-user Cuttle home (`~/.local/share/cuttle`, `%LOCALAPPDATA%\Cuttle`, or `$CUTTLE_HOME`; `core.runtime_paths.cuttle_home()`).
 
 ## Agent ops CLI (preferred)
 
@@ -59,7 +60,7 @@ Library (same semantics): `resolve_chat_handle_message`,
 
 | | |
 |---|---|
-| Default path | `{CuttleInstall}/src/data/db/cuttle_auth.db` (resolve via runtime / `api.auth_db.DB_PATH`) |
+| Default path | `<home>/db/cuttle_auth.db` (resolve via runtime / `api.auth_db.DB_PATH`) |
 
 Tables: `chat_sessions(id, user_id, session_name, last_activity, is_active)`,
 `chat_messages(chat_session_id, role, content, timestamp)`.

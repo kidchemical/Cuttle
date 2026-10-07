@@ -16,7 +16,7 @@ top of this context; `python -m api.*` verbs are owned by `02-agent-ops-cli.md`,
 `03-subagents.md`. The rules below are the invariants those pointers do not carry.
 
 1. Prefer project `.cuttle/commands`, `.cuttle/actions`, `.cuttle/docs` over inventing parallel paths.
-   Install-local overrides live in `personal/` beside each tree (`.cuttle_global/personal/`,
+   Install-local overrides live in `personal/` overlays (`<home>/personal/` in the Cuttle home,
    `{project}/.cuttle/personal/`; gitignored). Personal *markdown* appends after the
    tracked file as a delta; other personal files replace by basename.
 2. User-visible choices, confirmations, watches, and progress → `cuttle_action_form`

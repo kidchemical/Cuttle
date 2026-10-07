@@ -61,5 +61,5 @@ body:
     id: logs
     attributes:
       label: Logs
-      description: Relevant lines from `~/cuttle_logs` or the browser console. Remove tokens and personal paths first.
+      description: Relevant lines from the Cuttle logs folder (`~/.local/share/cuttle/logs` or `%LOCALAPPDATA%\Cuttle\logs`) or the browser console. Remove tokens and personal paths first.
       render: text

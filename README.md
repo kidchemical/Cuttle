@@ -92,8 +92,8 @@ Ubuntu / Linux:
 git clone https://github.com/kidchemical/Cuttle.git cuttle && cd cuttle
 python3 -m venv .venv
 .venv/bin/pip install -r src/requirements/requirements.txt
-cp src/.env.example src/.env
-# Edit src/.env for optional direct-LLM, router-brain or vision provider keys
+mkdir -p ~/.local/share/cuttle && cp src/.env.example ~/.local/share/cuttle/.env
+# Edit ~/.local/share/cuttle/.env for optional direct-LLM, router-brain or vision provider keys
 ./start_cuttle.sh
 ```
 
@@ -103,10 +103,17 @@ Windows:
 git clone https://github.com/kidchemical/Cuttle.git cuttle; cd cuttle
 python -m venv .venv
 .\.venv\Scripts\pip.exe install -r src\requirements\requirements.txt
-copy src\.env.example src\.env
-# Edit src\.env for optional direct-LLM, router-brain or vision provider keys
+New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\Cuttle" | Out-Null
+Copy-Item src\.env.example "$env:LOCALAPPDATA\Cuttle\.env"
+# Edit %LOCALAPPDATA%\Cuttle\.env for optional direct-LLM, router-brain or vision provider keys
 .\.venv\Scripts\python.exe src\scripts\cuttle_daemon.py
 ```
+
+Cuttle never writes inside the folder you installed or cloned it to. Chats,
+settings, uploads, logs, keys and secrets live in your per-user **Cuttle home**
+(`~/.local/share/cuttle` or `%LOCALAPPDATA%\Cuttle`; set `CUTTLE_HOME` to move
+it), so a read-only install or an upgrade never touches your data. See
+[`docs/architecture/cuttle-home.md`](docs/architecture/cuttle-home.md).
 
 Open [https://127.0.0.1:8080](https://127.0.0.1:8080) (self-signed HTTPS). Configure agents and providers in Settings; health checks are available through `/api/doctor`.
 
@@ -191,7 +198,6 @@ flowchart LR
 | `apps/mobile/` | Android app (Capacitor WebView onto the Host). |
 | `.cuttle_global/` | Shared global rules, docs, actions, scripts, and agent configuration for every project. |
 | `.cuttle/` | Project configuration for Cuttle itself; every registered project has its own tree. |
-| `.cuttle_global/personal/` | Install-local global overlay (gitignored). |
 | `.cuttle/personal/` | Install-local project overlay (gitignored). |
 | `src/tests/` | pytest suite. |
 
@@ -199,12 +205,13 @@ flowchart LR
 
 | File | Purpose |
 |------|---------|
-| `src/.env` | Secrets (gitignored). Start from `src/.env.example`. |
-| `src/settings.json` | Runtime preferences, agent router, steering toggles (local; often gitignored via `*.json` rules) |
+| Cuttle home | All runtime state, per user: `~/.local/share/cuttle` (Linux/macOS) or `%LOCALAPPDATA%\Cuttle` (Windows); `CUTTLE_HOME` overrides. The install folder is never written. [Layout](docs/architecture/cuttle-home.md). |
+| `<home>/.env` | Secrets. Start from `src/.env.example`. |
+| `<home>/config/settings.json` | Runtime preferences, agent router, steering toggles |
+| `<home>/personal/` | Install-local overlay of `.cuttle_global/`. |
 | `.cuttle_global/` | Shared configuration for all projects ([reference](.cuttle_global/README.md)). |
 | `.cuttle/` | Cuttle repository project configuration ([reference](.cuttle/README.md)). |
-| `.cuttle_global/personal/` | Install-local global overlay (gitignored). |
-| `.cuttle/personal/` | Install-local project overlay (gitignored). Rule/doc Markdown appends a delta; supported YAML overlays replace by basename. See the [overlay contract](.cuttle_global/personal/README.md). |
+| `.cuttle/personal/` | Install-local project overlay (gitignored). Rule/doc Markdown appends a delta; supported YAML overlays replace by basename. See the [overlay contract](docs/architecture/cuttle-home.md#personal-overlays). |
 | `_personal/` | Your dogfood skills and docs (gitignored); not part of the product |
 | `/settings_page.html` | API keys and preferences in the UI |
 
@@ -277,7 +284,7 @@ Captures use the Lavender Dream light theme at 2x and are framed by [`readme_pro
 - The first account must be created on the host itself and becomes the owner; self-registration then closes (`settings.json` → `auth.allow_registration` reopens it for non-owner accounts).
 - Worker tokens are bound to the device they were issued to. A LAN peer cannot re-enroll an existing worker id; remove the device in **Jobs → Devices** to re-pair it.
 - Auth uses bcrypt passwords, a CORS origin allowlist, and rate limits on login and pairing.
-- Keep secrets in `src/.env` (gitignored). Never commit it, certs, `*.db`, or Playwright profiles.
+- Keep secrets in `<home>/.env` and `<home>/secrets/`, outside the repository. Never commit certs, `*.db`, or Playwright profiles.
 - Found a vulnerability? Report it privately; see [`SECURITY.md`](SECURITY.md).
 
 ## License

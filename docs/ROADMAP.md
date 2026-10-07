@@ -2,7 +2,7 @@
 
 **Status:** public, self-hosted / home-lab. Not a turnkey SaaS product.
 
-Cuttle is a **harness of harnesses**: a daemon + chat UI that hosts vendor agent CLIs (Cursor, Codex, Claude, Muse, Hermes, …), routes work, and fans jobs across a LAN mesh. The long 2026-08 architecture dump (OpenClaw comparison, old LOC counts, pipeline-era phases) lives on the install as `.cuttle_global/personal/docs/roadmap-2026.md` and is **not** the public plan.
+Cuttle is a **harness of harnesses**: a daemon + chat UI that hosts vendor agent CLIs (Cursor, Codex, Claude, Muse, Hermes, …), routes work, and fans jobs across a LAN mesh. The long 2026-08 architecture dump (OpenClaw comparison, old LOC counts, pipeline-era phases) lives on the install as `<home>/personal/docs/roadmap-2026.md` and is **not** the public plan.
 
 Day-to-day backlog: [GitHub issues](https://github.com/kidchemical/Cuttle/issues). Socket thesis: [`guides/MODULARITY.md`](guides/MODULARITY.md). Flask composition root: [`guides/WEB_CHAT_API.md`](guides/WEB_CHAT_API.md) (map only — not a cue to extract).
 

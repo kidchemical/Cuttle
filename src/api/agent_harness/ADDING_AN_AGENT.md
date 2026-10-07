@@ -22,7 +22,7 @@ Shared project context (rules, inventory, handoff) comes from **Cuttle Brain** â
 | Root | Purpose |
 |---|---|
 | `src/api/agent_harness/agents/<id>/` | **Bundled** first-party connectors (shipped with Cuttle) |
-| `CUTTLE_AGENTS_DIR` (pathsep list) + `.cuttle_global/personal/agents/<id>/` | **User / instance** drop-ins |
+| `CUTTLE_AGENTS_DIR` (pathsep list) + `<home>/personal/agents/<id>/` | **User / instance** drop-ins |
 | `{Cuttle}/.cuttle_global/agents/<id>/` | Shared instance drop-ins (same contract) |
 | `{project}/.cuttle/agents/<id>/` | **Project** drop-ins (chat project path) |
 
@@ -226,7 +226,7 @@ each CLI adapter. Do not teach Cursor one `/build` dance and Codex another.
 | Piece | Owner |
 |---|---|
 | `{project}/.cuttle/commands/*.md` with `execute: shell` + `run:` + optional `watch:` | Cuttle (Flask expands `/name` **before** any agent) |
-| Status JSON `src/output/<id>-status.json` (`python -m api.job_watch`) | Cuttle |
+| Status JSON `<home>/output/<id>-status.json` (`python -m api.job_watch`) | Cuttle |
 | Watch card (progress bar, Continue / I'll reply) | Cuttle chat UI |
 | Adapter `execute()` | Only the vendor CLI for *chat* turns |
 
@@ -335,7 +335,7 @@ Put the cheap id in `smoke_model` so a forgotten env still does not spend Pro.
 
 1. **Write the folder** â€” `manifest.yaml` + `adapter.py`. Keep CLI-specific quirks in the adapter.
    Put first-party agents under the bundled root; put experiments / third-party packs under
-   `.cuttle_global/personal/agents/` or `{project}/.cuttle/agents/`.
+   `<home>/personal/agents/` or `{project}/.cuttle/agents/`.
    For a bundled agent, add a declarative installer when an official source exists.
 2. **Inspect the real CLI.** Install it, run `--version`, `--help`, and any `help` subcommand,
    then map its non-interactive prompt, structured output, resume, model, timeout, permission,
@@ -462,6 +462,6 @@ with fake processes/event fixtures, never paid CLI calls in ordinary tests.
 Use `core.agent_cli_env.agent_cli_env()` for every CLI subprocess, including
 model discovery, usage probes, and persistent servers. Cuttle provider credentials
 must never override guest CLI authentication. Preserve native configuration paths
-and let the CLI read its own login/configuration. Do not load Cuttle `src/.env`
+and let the CLI read its own login/configuration. Do not load Cuttle `<home>/.env`
 in adapters or embed its credentials in argv. Catalog `credential_env` must not
 request Cuttle API keys for guest CLIs.

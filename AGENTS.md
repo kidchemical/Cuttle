@@ -34,14 +34,19 @@ Windows PowerShell, from the repository root:
 .\.venv\Scripts\python.exe src\scripts\cuttle_daemon.py
 ```
 
+**Runtime state never lives in the install tree.** Every mutable byte (DBs,
+settings, uploads, logs, `.env`, secrets, the shared personal overlay) lives in
+the per-user Cuttle home, `core.runtime_paths.cuttle_home()`:
+`%LOCALAPPDATA%\Cuttle` on Windows, `~/.local/share/cuttle` on POSIX,
+`CUTTLE_HOME` to override. Resolve paths through `runtime_paths` helpers; never
+join state onto `__file__`. Layout and the one-time move of older checkouts:
+[`docs/architecture/cuttle-home.md`](docs/architecture/cuttle-home.md).
+
 **Environment:** optional provider/API keys and Discord REST agent-ops token
-live in `src/.env`; the daemon loads this before spawning child processes.
+live in `<home>/.env`; the daemon loads this before spawning child processes.
 File-shaped secrets (TLS cert/key, GitHub App `.pem`, token files) live only in
-`.cuttle/personal/secrets/` via `core.runtime_paths.secrets_dir()` — never
-`src/data/`, `_personal/`, or a new ad-hoc folder. Exception: an existing
-`src/data/db/action_hmac_secret` remains authoritative until the guarded offline
-migration, so previously signed action cards stay valid; new installations use
-`secrets_dir()` for it.
+`<home>/secrets/` via `core.runtime_paths.secrets_dir()` — never a project
+`.cuttle/`, `_personal/`, or a new ad-hoc folder.
 Vendor CLI authentication is separate (see the agent catalog manifests).
 
 ## Development dependencies and tests
@@ -93,7 +98,7 @@ The web UI is vanilla JS served by Flask at port 8080. Key files:
 
 ### Settings & Routing
 
-`src/settings.json` + `src/managers/settings_manager.py` handle starred slash agents, sandbox mode, and LAN/auth settings.
+`<home>/config/settings.json` + `src/managers/settings_manager.py` handle starred slash agents, sandbox mode, and LAN/auth settings.
 
 ### Ownership (stabilization, Phase 7)
 
@@ -182,7 +187,7 @@ Portable lessons belong in `AGENTS.md`, architecture docs, or tests; public bugs
 
 - Turn dispatch lives in owned services, not the entry module: `api.agent_harness.runners` (all harness CLI entries), `api.chat_turn` (request/selection seam), `api.chat_coordinator` (shared transport-neutral submit: `PreparedAgentTurn`/`select_agent_turn`/`submit_agent_turn`; route lanes submit claimed, legacy surfaces unclaimed), `api.chat_turn_workflow` (lane orchestration), `api.chat_turn_persist` (saver/user persist). `process_message_with_bot` in `web_chat_api.py` is only the compat entry for `/api/sessions/send`.
 - Flask runs on port **8080** (not 5000)
-- Discord token is read from `src/.env` — the daemon loads this before child processes; Discord is REST-only, with no inbound bot subprocess
+- Discord token is read from `<home>/.env` — the daemon loads this before child processes; Discord is REST-only, with no inbound bot subprocess
 - **Project commands**: `{project}/.cuttle/commands/*.md` (YAML frontmatter + body) appear in the chat `/` palette for that project. See `.cuttle_global/skills/cuttle-project-commands/SKILL.md`. Invoke as `/{name}` or `/cmd {name}` (works after sticky `/cursor` too).
 
 ### Chat attachments (images / PDFs)
@@ -191,7 +196,7 @@ Portable lessons belong in `AGENTS.md`, architecture docs, or tests; public bugs
 - The pre-pass runs in `/api/chat` **above every slash-agent handler** (`_run_attachment_prepass`, just after the starred sticky prefix). It used to run at the bottom, so `/cursor`-badged turns reached the CLI with no description and persisted no attachment metadata.
 - The digest is **appended**, never prefixed — each handler matches `^/cursor`/`^/muse`/… against `message_content` and slices the prompt off the front.
 - History stores the short `[Attached: …]` note plus `metadata.attachments` (`filename`/`mime`/`url`), not the digest (`_attachment_history_text`). That metadata is what re-renders thumbnails after a refresh; without it the image disappears.
-- Uploads land in `src/output/uploads/{session}/`, served via `/output/…`. `resolve_upload_refs` rejects any client path outside that root.
+- Uploads land in `<home>/output/uploads/{session}/`, served via `/output/…`. `resolve_upload_refs` rejects any client path outside that root.
 - Tests: `src/tests/chat/test_chat_attachments.py`.
 
 ## Local file references

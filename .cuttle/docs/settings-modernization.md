@@ -145,7 +145,7 @@ placeholder glyph. Row CSS is page-owned in `css/settings_page.css`
 |---|---|---|
 | 1 | General | Agent name (localStorage only) |
 | 2 | Appearance | Theme, UI animations (localStorage only) |
-| 3 | API Keys | OpenAI / Anthropic / Discord credential inputs (server `src/.env`) |
+| 3 | API Keys | OpenAI / Anthropic / Discord credential inputs (server `<home>/.env`) |
 | 4 | AI Configuration | Default cloud model select, tool Ollama model select |
 | 5 | Chat voice (TTS) | TTS prefs |
 | 6 | Phone / LAN access | LAN settings |
@@ -171,7 +171,7 @@ placeholder glyph. Row CSS is page-owned in `css/settings_page.css`
   credential-presence indicators shipped in this batch. The OAuth setup
   guidance added to `auth.js` should be mirrored here (currently only in the
   login dialog).
-- **Devices & Mesh has no home.** `ssh_host` / `ssh_identity` (`src/settings.json`),
+- **Devices & Mesh has no home.** `ssh_host` / `ssh_identity` (`<home>/config/settings.json`),
   phone portal, and desktop app are split across sections 6–7 and an untracked
   JSON file. Proposed: one Devices & Mesh group (phone/LAN, desktop, mesh
   workers, identity path with portable default).
@@ -191,9 +191,9 @@ install-wide UI behavior; it does not make server UI state account-specific.
 ## Shipped: scoped storage and retired-settings cleanup
 
 `managers.settings_storage` owns persistence behind SettingsManager. Server
-preferences remain in `src/settings.json`; worker/LAN configuration lives in
-`src/data/config/machine_settings.json`; rail/workspace state lives in
-`src/data/config/ui_state.json`. Browser preferences remain in localStorage.
+preferences remain in `<home>/config/settings.json`; worker/LAN configuration lives in
+`<home>/config/machine_settings.json`; rail/workspace state lives in
+`<home>/config/ui_state.json`. Browser preferences remain in localStorage.
 Router config stays with server preferences, rather than adding a fourth file.
 
 Existing installs split only on a guarded cold daemon start (or the offline
@@ -212,10 +212,10 @@ only the owning file. Reads create no files. Corrupt/unsupported JSON cannot be
 silently replaced with defaults. Settings read-modify-write routes use the locked
 update interface; callers replacing an entire key intentionally own its value.
 
-The legacy action HMAC key moves to `.cuttle/personal/secrets/` without rotation;
+The legacy action HMAC key moves to `<home>/secrets/` without rotation;
 a shared worker token, when present in legacy JSON, is extracted there as well.
-API credentials remain in `src/.env`. Auth and worker databases still hold
-sensitive session/enrollment material; see `src/data/README.md`.
+API credentials remain in `<home>/.env`. Auth and worker databases still hold
+sensitive session/enrollment material; see `docs/architecture/cuttle-home.md`.
 
 Tests: `test_settings_storage.py`, settings/routes, runtime migration, auth,
 worker, GitHub App and architecture-boundary suites.

@@ -137,7 +137,7 @@ The router never overwrites an already-selected session agent/model unless you e
 
 ## Configuration
 
-Stored in `src/settings.json` under `agent_router` (via `SettingsManager`), same persistence path as starred slash commands and inference preferences.
+Stored in `<home>/config/settings.json` under `agent_router` (via `SettingsManager`), same persistence path as starred slash commands and inference preferences.
 
 ## Use cases — the declared routing table
 
@@ -301,7 +301,7 @@ type / difficulty / target (including Auto↔Grok oscillation and confidence
 min/mean/max).
 
 Suites live in `src/api/agent_router/suites/*.json` (tracked in git). Reports are
-written under `src/web/logs/router_eval_<suite>_<timestamp>.json` (and a matching
+written under `<home>/logs/queries/router_eval_<suite>_<timestamp>.json` (and a matching
 `.md`; those logs stay gitignored).
 
 ## Supervised coordination
@@ -313,7 +313,7 @@ See [SUPERVISED_COORDINATOR.md](./SUPERVISED_COORDINATOR.md). Strategy type
 ## Limitations (v1)
 
 - `local` and `agent` router modes are configurable but not fully wired.
-- Routed attempts are stored locally in `src/data/db/router_outcomes.db`; `/router metrics summary`
+- Routed attempts are stored locally in `<home>/db/router_outcomes.db`; `/router metrics summary`
   shows current totals.
 - Drift detection is the **basic** version: fail-rate windows + temporary demotion.
   EWMA/CUSUM tuning, soft signals, and learned weights are not implemented yet.

@@ -5,7 +5,7 @@ unencrypted RSA PEM private key. Save, then Re-check to verify the installation
 and resolve the app's bot user ID. Previously saved configurations need a fresh
 Re-check before they can attribute commits.
 
-The private key stays in `.cuttle/personal/secrets/github_app_key.pem` (ignored,
+The private key stays in `<home>/secrets/github_app_key.pem` (ignored,
 mode 0600). Public identifiers and verified identity facts live in the
 `github_app` settings entry. Invalid keys are rejected before replacing existing
 credentials; failed settings writes restore the previous key.

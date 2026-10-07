@@ -11,9 +11,11 @@ auto-open on its own. Stop it with SIGTERM (systemd) instead of tray **Exit**.
 ## 1. Install the checkout
 
 Follow the Ubuntu steps in the [README](../../README.md#install-and-run) (clone,
-`.venv`, requirements, `src/.env`). Electron is not needed on the server.
+`.venv`, requirements, `<home>/.env`). Electron is not needed on the server.
 
-## 2. Configure `src/.env`
+## 2. Configure `<home>/.env`
+
+`<home>` is the per-user Cuttle home (`~/.local/share/cuttle`, `%LOCALAPPDATA%\Cuttle`, or `$CUTTLE_HOME`; `core.runtime_paths.cuttle_home()`).
 
 ```bash
 CUTTLE_LAN_ACCESS=1          # listen on 0.0.0.0 instead of loopback (see REMOTE_ACCESS.md)
@@ -65,7 +67,7 @@ Restarts keep their normal owners:
 | Whole daemon | `.cuttle/scripts/restart-daemon.sh` (defers to `systemctl --user restart cuttle` when the unit is active) |
 | Stop | `systemctl --user stop cuttle` |
 
-Logs: `journalctl --user -u cuttle -f` and the daemon log under `~/cuttle_logs`.
+Logs: `journalctl --user -u cuttle -f` and the daemon log under `<home>/logs`.
 
 ## 5. Host prep
 

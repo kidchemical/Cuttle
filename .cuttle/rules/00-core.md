@@ -48,7 +48,14 @@ These files under `.cuttle/rules/` are compiled into the fresh/full Cuttle-chat 
    dashboard (catalog/service/routes/JS) → `.cuttle/docs/dashboards-dev.md`.
 5. **Agent router backlog** — `.cuttle/docs/agent-router-todo.md` (product TODO, not a runbook).
 
-6. **New Cuttle feature / experimental UI** — follow `.cuttle/docs/experimental-features.md`
+6. **Runtime state never lives in this checkout** — when code creates or
+   writes a database, settings/config file, upload, log, cache, `.env`, secret
+   or install-local overlay, resolve it through `core.runtime_paths`
+   (`cuttle_home()` helpers), never `__file__`/`src/`/repo-relative paths; tests
+   redirect it with `CUTTLE_HOME`. Not for tracked `.cuttle/` config or
+   `temp/` scratch. Owner: `docs/architecture/cuttle-home.md`.
+
+7. **New Cuttle feature / experimental UI** — follow `.cuttle/docs/experimental-features.md`
    for default rollout practice and surface placement. The Experimental tab owns
    toggles, not feature workflows. This guidance applies to Cuttle development,
    not features in guest projects.

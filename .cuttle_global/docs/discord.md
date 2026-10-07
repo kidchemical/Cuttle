@@ -7,7 +7,7 @@ that project's `.cuttle/actions/discord-post.yaml` (and optional project
 `.cuttle/docs/discord.md`).
 
 **Do not** reverse-engineer Cuttle's Discord stack or hunt for tokens when this file exists.
-Install-local path notes may live in `.cuttle_global/personal/docs/discord.md`.
+Install-local path notes may live in `<home>/personal/docs/discord.md`.
 
 ## When the user mentions Discord
 
@@ -20,8 +20,10 @@ Install-local path notes may live in `.cuttle_global/personal/docs/discord.md`.
 
 Bot token — **do not commit**:
 
-1. `{CuttleInstall}/src/.env` → `DISCORD_TOKEN=` or `DISCORD_BOT_TOKEN=`
-2. Optional fallback file under a local secrets dir (never commit)
+1. `<home>/.env` → `DISCORD_TOKEN=` or `DISCORD_BOT_TOKEN=`
+2. Optional fallback file `<home>/secrets/discord bot token.txt`
+
+`<home>` is the per-user Cuttle home (`~/.local/share/cuttle`, `%LOCALAPPDATA%\Cuttle`, or `$CUTTLE_HOME`; `core.runtime_paths.cuttle_home()`).
 
 ## Read channel history (agent ops CLI)
 

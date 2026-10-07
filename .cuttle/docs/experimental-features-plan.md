@@ -119,7 +119,7 @@ src/api/achievements/routes.py      # /api/achievements (transport only)
 src/api/achievements/__main__.py    # python -m api.achievements list|progress|scan|…
 ```
 
-Store: `src/data/db/achievements.db` (per `src/data/db/README.md`, resolved via
+Store: `<home>/db/achievements.db` (per `docs/architecture/cuttle-home.md`, resolved via
 `core.runtime_paths.data_db_dir()`). Vocabulary in code, state in SQL —
 same split as `outcomes.py`.
 
@@ -239,7 +239,7 @@ Removing achievements completely, leaving the experimental system intact:
    entry from `NATIVE_SFX_FILES` (`electron/main.js`);
 8b. delete `src/web/achievements_preview.html` and its route block in
    `src/api/web_chat_api.py`;
-9. optionally delete `src/data/db/achievements.db`.
+9. optionally delete `<home>/db/achievements.db`.
 
 Adding a *second* experimental feature is cheaper: one `FlagSpec` row + the
 package + the gated call sites. Choose feature UI independently: an App, a settings tab, or an existing surface as appropriate. The Experimental tab remains generic.

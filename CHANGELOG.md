@@ -10,7 +10,7 @@ User-visible changes to Cuttle. The format follows
 
 ### Added
 - Configurable listener ports: set `CUTTLE_HTTPS_PORT`, `CUTTLE_HTTP_PORT` and
-  `CUTTLE_PHONE_HTTPS_PORT` in `src/.env` (defaults 8080/8000/8888; needs a
+  `CUTTLE_PHONE_HTTPS_PORT` in Cuttle's `.env` (defaults 8080/8000/8888; needs a
   full daemon restart). Desktop and mobile clients keep the port you enter.
 - Agent router turn classification: it labels the kind of work and routes
   around accounts that are out of quota.
@@ -24,6 +24,16 @@ User-visible changes to Cuttle. The format follows
 - `SECURITY.md`, `CONTRIBUTING.md`, this changelog, and issue and PR templates.
 
 ### Changed
+- All runtime state now lives in a per-user Cuttle home instead of the install
+  folder: `%LOCALAPPDATA%\Cuttle` on Windows, `~/.local/share/cuttle` on Linux
+  and macOS, or `CUTTLE_HOME`. This covers chats and other databases, settings,
+  uploads, logs, `.env`, secrets, and the shared personal overlay, so
+  `Program Files` and AppImage installs work and upgrades keep your data. On the
+  first cold start the daemon moves an existing checkout's `src/data/`,
+  `src/settings.json`, `src/output/`, `src/web/logs/`, `src/.env`,
+  `.cuttle/personal/secrets/`, `.cuttle_global/personal/` and `~/cuttle_logs/`
+  there. Exit from the tray and relaunch; a Flask-only restart refuses to start
+  until then.
 - The Android app now enforces TLS certificate validation and no longer falls
   back from HTTPS to HTTP silently. Self-signed HTTPS needs its CA installed on
   the phone; plain HTTP on the LAN still works.

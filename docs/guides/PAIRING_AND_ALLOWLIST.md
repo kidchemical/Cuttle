@@ -19,7 +19,7 @@ An owner can update channel settings in Settings or through authenticated
 {"channel":"webchat","dmPolicy":"pairing","allowFrom":["web_user_1"]}
 ```
 
-These values are stored under `channels.webchat` in `src/settings.json`.
+These values are stored under `channels.webchat` in `<home>/config/settings.json`.
 Identities are `web_user_<authenticated user id>`, including authenticated
 guest accounts. Client-provided chat/session ids do not identify the sender.
 
@@ -47,7 +47,7 @@ is the owner and later accounts are not. Pairing alone does not change that
 role policy.
 
 Open-policy allowlist rejection returns `error: "allowlist_denied"` without a
-pairing code. Approved/pending identities live in `src/data/pairing_store.json`;
+pairing code. Approved/pending identities live in `<home>/pairing_store.json`;
 unapproved codes expire after ten minutes. Approval is stored separately from
 the settings allowlist, so removing an allowlist entry alone does not revoke an
 existing approval.

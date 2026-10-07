@@ -33,7 +33,7 @@ against any live listener there, so a second instance can mistake the
 production listener for its own readiness signal. `CUTTLE_INTERNAL_API_BASE`
 overrides internal clients only. The listener-port knob is env-only
 (`CUTTLE_HTTPS_PORT` / `CUTTLE_HTTP_PORT` / `CUTTLE_PHONE_HTTPS_PORT` in
-`src/.env`, defaults 8080/8000/8888, owned by `api.server_ports`, daemon
+`<home>/.env`, defaults 8080/8000/8888, owned by `api.server_ports`, daemon
 cold restart required); there is no settings/UI knob and no CLI override.
 The shadow denylist is the defaults plus the configured triple. Remaining
 future policy, unimplemented: CLI > env > config > defaults, loopback default
@@ -82,9 +82,11 @@ Runtime: allowlist child env, never inherited. Every guard flag verified read:
 `CUTTLE_MOBILE_AUTO_REBUILD=0`, `CUTTLE_JEV_WATCH=0`, `CUTTLE_AGENT_STEER=0`,
 `CUTTLE_DEVICE_WORKERS_ENABLED=0`, `CUTTLE_LAN_ACCESS=0`,
 `CHAT_TITLE_DISABLED=1`, `CUTTLE_TEST_MODE=1`; private `MUSE_MODEL` /
-`HERMES_HOME` (actually consumed), never `HOME` / `CODEX_HOME`. Writes span
-the entire private instance (app+data); config/DBs resolve snapshot-relative
-via `__file__` paths. Guards install before app import: subprocess deny,
+`HERMES_HOME` (actually consumed), and a private `CUTTLE_HOME` under the
+instance data dir; never `HOME` / `CODEX_HOME`. Writes span the entire private
+instance (app+data); config/DBs resolve through that `CUTTLE_HOME`, and the
+child refuses to boot when it is missing or outside the instance root. Guards
+install before app import: subprocess deny,
 loopback single-bind sockets, audit-hook file/sqlite policy, first-position
 route gate, executor fakes at 4 owner seams + routing-decision stub (default
 `blocked`). Real coordinator/workflow/saver/persist/routes process every fake

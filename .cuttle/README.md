@@ -28,5 +28,5 @@ New projects are scaffolded by `managers.cuttle_scaffold.ensure_cuttle_scaffold`
 Global-layer selection lives in `GLOBAL.ini`; the global safety core is always
 retained. Rule/doc Markdown personal twins append marked deltas; commands/actions replace by normalized declared name and skills by directory id.
 Script recipes use explicit literal paths. Consult the
-[overlay contract](../.cuttle_global/personal/README.md) for loader-specific scope.
+[overlay contract](../docs/architecture/cuttle-home.md#personal-overlays) for loader-specific scope.
 Machine paths and workflow notes belong in the install-local personal trees.
