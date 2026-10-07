@@ -1,10 +1,12 @@
 const { app, BrowserWindow, Menu, dialog, Tray, ipcMain, nativeImage, screen } = require('electron');
 
-// Linux: Electron 38+ auto-selects native Wayland, where this shell never
-// reaches app "ready" on some Wayland compositors. Run under
-// XWayland like Electron <=37 did. Opt into native Wayland with
-// CUTTLE_ELECTRON_WAYLAND=1 or an explicit --ozone-platform flag. The switch
-// must be decided before Chromium starts, so relaunch once with it.
+// Linux: Electron 38+ auto-selects native Wayland. Run under XWayland (what
+// Electron <=37 did) because (1) with no active output — monitor off or asleep —
+// Chromium's Wayland backend spins before app 'ready', and the Host relaunches
+// this UI unattended (updates, restarts); (2) gizmo pop-outs need always-on-top
+// and window restore needs positioning, which Wayland clients cannot do.
+// Opt into native Wayland with CUTTLE_ELECTRON_WAYLAND=1 or --ozone-platform.
+// The backend is fixed before Chromium starts, so relaunch once with it.
 if (process.platform === 'linux'
     && !process.argv.some((arg) => arg.startsWith('--ozone-platform'))
     && !process.env.CUTTLE_ELECTRON_WAYLAND

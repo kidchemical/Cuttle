@@ -108,8 +108,8 @@ console.log('ok');
 
 
 def test_linux_wayland_sessions_relaunch_under_x11_by_default():
-    """Electron 38+ picks native Wayland, where the shell never reaches 'ready'
-    on some compositors; main.js must relaunch under XWayland unless opted in."""
+    """Electron 38+ picks native Wayland, which hangs before 'ready' with no active
+    output and lacks always-on-top/positioning; relaunch under XWayland unless opted in."""
     main_js = (desk.ELECTRON_DIR / "main.js").read_text(encoding="utf-8")
     head = main_js[: main_js.index("let mainWindow")]
     assert "process.platform === 'linux'" in head

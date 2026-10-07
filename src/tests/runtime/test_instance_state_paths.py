@@ -17,6 +17,7 @@ def test_user_state_dir_defaults_posix(tmp_path, monkeypatch):
     monkeypatch.setattr(runtime_paths, "is_windows", lambda: False)
     monkeypatch.delenv("XDG_STATE_HOME", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))  # Path.home() on Windows
     assert user_state_dir() == tmp_path / ".local" / "state" / "cuttle"
 
 
