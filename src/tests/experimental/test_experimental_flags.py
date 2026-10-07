@@ -88,6 +88,29 @@ def test_achievements_flag_is_opt_in():
     assert flags.get_flag("achievements").default is False
 
 
+@pytest.mark.parametrize("flag_id,button_ids", [
+    ("composer_attach_button", ("attachButton", "welcomeAttachButton")),
+    ("composer_prompt_enhance", ("enhanceButton", "welcomeEnhanceButton")),
+])
+def test_composer_buttons_are_opt_in(flag_id, button_ids):
+    assert flags.get_flag(flag_id).default is False
+    html = (Path(__file__).resolve().parents[2] / "web" / "chat_page.html").read_text(encoding="utf-8")
+    for button_id in button_ids:
+        tag = html.split(f'id="{button_id}"', 1)[1].split(">", 1)[0]
+        assert f'data-experimental-flag="{flag_id}"' in tag
+        assert " hidden" in tag
+
+
+def test_prompt_enhance_route_respects_flag():
+    from flask import Flask
+
+    import api.git_routes as git_routes
+
+    with Flask(__name__).test_request_context(json={"prompt": "fix it"}):
+        resp = git_routes.prompt_enhance.__wrapped__()
+    assert resp.get_json()["disabled"] is True
+
+
 def test_set_enabled_drops_redundant_default(monkeypatch):
     """Writing the spec default must not leave a value in settings.json."""
     written = {}

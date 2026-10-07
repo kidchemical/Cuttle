@@ -2355,13 +2355,16 @@ body.has-video-background .chat-restore-loader {
     flex: 1;
     overflow-x: hidden;
     overflow-y: auto;
-    padding: 56px 48px 16px 20px;
+    padding: 56px 48px 8px 20px;
     display: flex;
     flex-direction: column;
     gap: 20px;
     min-width: 0;
     min-height: 0;
     -webkit-overflow-scrolling: touch;
+    /* No Android stretch / rubber-band past the last bubble, and no chaining
+       the fling into the shell once the transcript hits its end. */
+    overscroll-behavior: none;
     scroll-padding-bottom: 8px;
     /* Fade bubble content to alpha under the chrome — not a solid overlay */
     -webkit-mask-image: linear-gradient(
@@ -2401,7 +2404,7 @@ body.has-video-background .chat-restore-loader {
 
 /* Keep last bubble clear of the pending-changes strip + composer. */
 .chat-area:has(#pendingChangesPanel:not([hidden])) .chat-messages {
-    padding-bottom: 16px;
+    padding-bottom: 8px;
 }
 
 /* Extra clearance after messages so the final jump-to-message target isn't tucked under the pending strip. */
@@ -2743,8 +2746,10 @@ body.has-video-background .chat-restore-loader {
         flex: 1 1 100%;
         order: 3;
     }
+    /* Bare icons only: icons inside .message-footer must stay inline with
+       the usage line, not take a full row of their own above or below it. */
     .message:not(.system) .message-footer,
-    .message:not(.system) .message-footer-icons {
+    .message:not(.system) .message-content-wrapper > .message-footer-icons {
         flex: 1 1 100%;
         order: 3;
         margin-top: 0;
@@ -2996,7 +3001,7 @@ body.midnight-mode .message.assistant .message-sender-group .slash-command-chip-
 .message-footer-icons {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 2px;
     flex-shrink: 0;
 }
 
@@ -3018,7 +3023,7 @@ body.midnight-mode .message.assistant .message-sender-group .slash-command-chip-
     flex-wrap: wrap;
     align-items: center;
     justify-content: flex-end;
-    gap: 6px;
+    gap: 3px;
     margin-left: auto;
     font-size: 11px;
     line-height: 1.3;
@@ -3051,8 +3056,8 @@ body.midnight-mode .message.assistant .message-sender-group .slash-command-chip-
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 28px;
-    height: 28px;
+    width: 26px;
+    height: 26px;
     padding: 0;
     color: var(--text-tertiary);
     background: transparent;
@@ -3082,14 +3087,14 @@ body.midnight-mode .message.assistant .message-sender-group .slash-command-chip-
 /* Larger tap target on touch devices without changing visual size much */
 @media (pointer: coarse) {
     .message-icon-btn {
-        width: 36px;
-        height: 36px;
+        width: 32px;
+        height: 32px;
     }
 }
 
 .message-icon-btn svg {
-    width: 16px;
-    height: 16px;
+    width: 15px;
+    height: 15px;
 }
 
 .message-feedback-btn.is-on {
@@ -5628,6 +5633,10 @@ pre.has-code-copy:hover .code-copy-btn,
     margin: 0 auto 8px;
 }
 
+.pending-changes-host:not(:has(> .pending-changes:not([hidden]))) {
+    display: none;
+}
+
 .pending-changes-host .pending-changes {
     margin-bottom: 0;
 }
@@ -7251,7 +7260,7 @@ button.cuttle-button.is-unselected {
     font-size: 0.95em;
     font-family: inherit;
     resize: none;
-    max-height: 200px;
+    max-height: 168px;
     /* Hidden until multi-line / max height so empty field has no scrollbar */
     overflow-y: hidden;
     user-select: text;
@@ -7306,6 +7315,10 @@ button.cuttle-button.is-unselected {
     justify-content: center;
     transition: background 0.2s, border-color 0.2s, color 0.2s, transform 0.08s;
     flex: 0 0 auto;
+}
+
+.attach-button[hidden] {
+    display: none !important;
 }
 
 .attach-button svg {
@@ -7658,7 +7671,7 @@ button.cuttle-button.is-unselected {
     
     .chat-messages {
         padding-top: 80px;
-        padding-bottom: 24px;
+        padding-bottom: 10px;
         padding-left: 15px;
         overflow-x: hidden;
         -webkit-mask-image: linear-gradient(
