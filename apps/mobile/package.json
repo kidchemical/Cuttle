@@ -19,19 +19,23 @@
     "build:android": "npm run sync && build-android-debug.bat",
     "open:android": "cap open android",
     "open:ios": "cap open ios",
-    "sync:android": "npm run build && cap sync android"
+    "sync:android": "npm run build && cap sync android",
+    "check": "tsc --noEmit"
   },
   "dependencies": {
-    "@capacitor-community/safe-area": "^7.0.0",
-    "@capacitor/android": "^7.2.0",
-    "@capacitor/app": "^7.0.1",
-    "@capacitor/core": "^7.2.0",
-    "@capacitor/ios": "^7.2.0",
-    "@capacitor/preferences": "^7.0.1"
+    "@capacitor-community/safe-area": "^8.0.1",
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/app": "^8.1.2",
+    "@capacitor/core": "^8.5.2",
+    "@capacitor/ios": "^8.5.2",
+    "@capacitor/preferences": "^8.0.1"
   },
   "devDependencies": {
-    "@capacitor/cli": "^7.2.0",
-    "typescript": "^5.8.2",
-    "vite": "^6.2.2"
+    "@capacitor/cli": "^8.5.2",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.2"
+  },
+  "engines": {
+    "node": ">=22.12.0"
   }
 }

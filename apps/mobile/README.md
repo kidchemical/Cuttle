@@ -22,9 +22,9 @@ The phone does **not** run the Python daemon. It is a full-screen native window 
 
 ## Build / install (Android)
 
-Build prerequisites (both platforms): **Node.js 20 or newer**, **JDK 21**
-(`JAVA_HOME` pointing to that JDK), and Android SDK **Platform 35** with SDK
-licenses accepted. Create the repository-root `.venv` and install
+Build prerequisites (both platforms): **Node.js 22.12 or newer**, **JDK 21**
+(`JAVA_HOME` pointing to that JDK), and Android SDK **Platform 36** and **Build Tools 36.0.0**, with
+SDK licenses accepted. Create the repository-root `.venv` and install
 `src/requirements/requirements.txt` as described in the [root README](../../README.md)
 first; Gradle uses that venv for shell hashing and APK publication, never PATH
 Python. Configure the SDK with `ANDROID_HOME` or `android/local.properties`
@@ -50,6 +50,14 @@ cd android
 ```
 
 APK: `android/app/build/outputs/apk/debug/app-debug.apk`
+
+For isolated worktree/CI validation, set `CUTTLE_ANDROID_PUBLISH=0` to skip
+automatic LAN update publication. `CUTTLE_ANDROID_PYTHON` can point to an existing
+Cuttle venv interpreter when the worktree has no `.venv`; build hashing still uses
+the worktree sources. Keep Gradle and Android user caches private to that build.
+
+The Android toolchain follows the [Capacitor 8 migration guide](https://capacitorjs.com/docs/updating/8-0):
+AGP 8.13.0, Gradle 8.14.3, minimum Android API 24, compile/target API 36.
 
 ### Development signing
 
@@ -146,4 +154,6 @@ restart Flask is enough for CSS/JS served from the PC.
 
 ## iOS
 
-Project under `ios/` — build on a Mac with Xcode (`npm run open:ios`).
+Project under `ios/` requires Xcode 26+ and iOS 15+. Build on a Mac
+(`npm run open:ios`). The optional Capacitor 8.5 scene lifecycle migration for
+Xcode 27 has not been applied to the custom native notification bridge.

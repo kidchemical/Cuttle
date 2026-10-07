@@ -242,3 +242,42 @@ assert m.storage.ui == root / 'src/data/config/ui_state.json'
         assert result.returncode == 0, result.stderr.decode()
     assert read_json(tmp_path / "src/settings.json") == {"schema_version": 1, "extension": 42}
     assert read_json(tmp_path / "src/data/config/machine_settings.json")["device_workers"]["enabled"] is False
+
+
+@pytest.mark.parametrize("platform,failures", [("nt", 2), ("nt", 40), ("posix", 1)])
+def test_sharing_retry_is_bounded_and_windows_only(monkeypatch, platform, failures):
+    from types import SimpleNamespace
+    from managers import settings_storage
+    monkeypatch.setattr(settings_storage, "os", SimpleNamespace(name=platform))
+    delays = []
+    monkeypatch.setattr(settings_storage.time, "sleep", delays.append)
+    attempts = []
+
+    def operation():
+        attempts.append(1)
+        if len(attempts) <= failures:
+            raise PermissionError("sharing violation")
+        return "read or replaced"
+
+    if platform == "nt" and failures < 40:
+        assert settings_storage._retry_sharing(operation) == "read or replaced"
+        assert len(attempts) == failures + 1
+        assert delays == [0.025] * failures
+    else:
+        with pytest.raises(PermissionError, match="sharing violation"):
+            settings_storage._retry_sharing(operation)
+        assert len(attempts) == (40 if platform == "nt" else 1)
+        assert len(delays) == len(attempts) - 1
+
+
+def test_sharing_retry_does_not_hide_other_errors(monkeypatch):
+    from types import SimpleNamespace
+    from managers import settings_storage
+    monkeypatch.setattr(settings_storage, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(settings_storage.time, "sleep", lambda _: pytest.fail("unexpected retry"))
+
+    def operation():
+        raise OSError("disk error")
+
+    with pytest.raises(OSError, match="disk error"):
+        settings_storage._retry_sharing(operation)
