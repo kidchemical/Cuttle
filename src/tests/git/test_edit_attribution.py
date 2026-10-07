@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -51,6 +52,11 @@ def test_append_and_build_attribution_unattributed(journal_db, tmp_path):
 
     repo = str((tmp_path / "proj").resolve())
     Path(repo).mkdir()
+    _git_init(Path(repo))
+    (Path(repo) / "src").mkdir()
+    (Path(repo) / "src/a.py").write_text("final a")
+    (Path(repo) / "src/b.py").write_text("final b")
+    digest = lambda text: hashlib.sha256(text.encode()).hexdigest()
     append_events(
         [
             {
@@ -59,6 +65,7 @@ def test_append_and_build_attribution_unattributed(journal_db, tmp_path):
                 "agent_id": "cursor",
                 "model": "cursor-grok-4.6-high",
                 "query_id": "q1",
+                "digest_after": digest("intermediate a"),
             },
             {
                 "repo_root": repo,
@@ -66,6 +73,8 @@ def test_append_and_build_attribution_unattributed(journal_db, tmp_path):
                 "agent_id": "codex",
                 "model": "o3",
                 "query_id": "q2",
+                "digest_before": digest("intermediate a"),
+                "digest_after": digest("final a"),
             },
             {
                 "repo_root": repo,
@@ -73,6 +82,7 @@ def test_append_and_build_attribution_unattributed(journal_db, tmp_path):
                 "agent_id": "muse",
                 "model": "muse-spark-1.3",
                 "query_id": "q3",
+                "digest_after": digest("final b"),
             },
         ]
     )
@@ -194,6 +204,7 @@ def test_commit_pending_changes_adds_trailers(journal_db, tmp_path):
                 "agent_id": "cursor",
                 "model": "composer-2.5",
                 "query_id": "abc",
+                "digest_after": __import__("hashlib").sha256(b"v2\n").hexdigest(),
             }
         ]
     )
@@ -217,3 +228,33 @@ def test_commit_pending_changes_adds_trailers(journal_db, tmp_path):
     assert "Cuttle-Attributed: tracked.py=cursor/composer-2.5" in body
     assert "Cuttle-Unattributed: orphan.txt" in body
     assert "Cuttle-Query: abc" in body
+
+
+def test_old_content_cannot_credit_a_later_unobserved_change(journal_db,tmp_path):
+    from api.edit_attribution.journal import append_events,build_commit_attribution
+    repo=tmp_path/'proof';repo.mkdir();_git_init(repo)
+    path=repo/'file.txt';path.write_text('human final')
+    append_events([{'repo_root':str(repo),'rel_path':'file.txt','agent_id':'codex',
+                    'digest_after':hashlib.sha256(b'agent earlier').hexdigest()}])
+    assert build_commit_attribution(str(repo),['file.txt'])['attributed_count']==0
+
+
+def test_ambiguous_edits_never_get_trailers(journal_db,tmp_path):
+    from api.edit_attribution.journal import append_events,build_commit_attribution
+    repo=tmp_path/'overlap';repo.mkdir();_git_init(repo)
+    (repo/'file.txt').write_text('overlap')
+    append_events([{'repo_root':str(repo),'rel_path':'file.txt','agent_id':'codex',
+                    'digest_after':hashlib.sha256(b'overlap').hexdigest(),'ambiguous':True}])
+    assert build_commit_attribution(str(repo),['file.txt'])['attributed_count']==0
+
+
+def test_terminal_commit_settles_by_content(journal_db,tmp_path):
+    from api.edit_attribution.journal import append_events,reconcile_commits,open_events_for_paths,_db_path
+    repo=tmp_path/'terminal';repo.mkdir();_git_init(repo)
+    (repo/'file.txt').write_text('agent change')
+    append_events([{'repo_root':str(repo),'rel_path':'file.txt','agent_id':'codex',
+                    'digest_after':hashlib.sha256(b'agent change').hexdigest()}])
+    subprocess.run(['git','add','.'],cwd=repo,check=True,capture_output=True)
+    subprocess.run(['git','commit','-m','terminal commit'],cwd=repo,check=True,capture_output=True)
+    assert reconcile_commits(_db_path())==1
+    assert open_events_for_paths(str(repo),['file.txt'])==[]

@@ -1156,6 +1156,9 @@ class MuseCliTool:
                         payload = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
                         inner = payload.get("event") if isinstance(payload.get("event"), dict) else {}
                         pt = str(ev.get("payload_type") or "")
+                        if pt.startswith(("task.lifecycle.", "tool.")):
+                            from api.query_events import add_event
+                            add_event("tool.raw", summary=pt, vendor="muse", payload=ev)
                         kind = "writing" if pt == "run.output.delta" else "thinking" if "reasoning" in pt else None
                         if kind:
                             raw = payload.get("text") or inner.get("text") or inner.get("chunk") or ""

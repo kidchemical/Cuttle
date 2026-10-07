@@ -1,6 +1,6 @@
 """Structured query-log events for harness turns (Brain, sent prompt, tools, thinking).
 
-Source of truth is JSON sidecars under ``web/logs/query_data_<id>.json``.
+Full-detail activity lives in ``api.agent_events``; JSON sidecars are legacy reads.
 The inspector reads ``GET /api/query-log/<id>``. Bind ``query_id`` with
 :func:`bind_query_id` so CLI worker threads (``asyncio.to_thread``) can record
 without extra kwargs.
@@ -100,12 +100,13 @@ def record_thinking(text: str, *, query_id: Optional[str] = None) -> None:
         if isinstance(last, dict) and last.get("kind") == "thinking":
             last["text"] = blob
             last["t"] = time.time()
+            tracker.persist_event("thinking", {"block_id": last["block_id"], "text": text})
             try:
                 tracker._publish_live_snapshot()
             except Exception:
                 pass
             return
-    add_event("thinking", query_id=query_id, text=blob)
+    add_event("thinking", query_id=query_id, text=text)
 
 
 def record_agent_text(kind: str, text: str, block_id: str) -> None:
@@ -116,6 +117,7 @@ def record_agent_text(kind: str, text: str, block_id: str) -> None:
     if tracker is None:
         return
     blob = _cap(text, MAX_TEXT)
+    tracker.persist_event(kind, {"text": text, "block_id": block_id})
     events = (getattr(tracker, "execution_data", None) or {}).get("events", [])
     for event in reversed(events):
         if event.get("kind") == kind and event.get("block_id") == block_id:
@@ -125,7 +127,7 @@ def record_agent_text(kind: str, text: str, block_id: str) -> None:
             except Exception:
                 pass
             return
-    add_event(kind, text=blob, block_id=block_id)
+    add_event(kind, text=text, block_id=block_id)
 
 
 def record_agent_tool(block_id: str, summary: str, *, phase: str, args: Any = None,
@@ -139,8 +141,14 @@ def record_agent_tool(block_id: str, summary: str, *, phase: str, args: Any = No
     if result is not None:
         payload["text"] = _cap(result, MAX_TEXT)
     tracker = _tracker()
-    if tracker is None:
+    if tracker is None or not getattr(tracker, "query_id", None):
         return
+    full = {"block_id": block_id, "summary": summary, "phase": phase, "failed": failed}
+    if args is not None:
+        full["args"] = args
+    if result is not None:
+        full["text"] = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
+    tracker.persist_event("tool", full)
     for event in reversed((getattr(tracker, "execution_data", None) or {}).get("events", [])):
         if event.get("kind") == "tool" and event.get("block_id") == block_id:
             event.update(payload)
@@ -149,7 +157,9 @@ def record_agent_tool(block_id: str, summary: str, *, phase: str, args: Any = No
             except Exception:
                 pass
             return
-    add_event("tool", **payload)
+    add_event("tool", **full)
+    if tracker.execution_data.get("events"):
+        tracker.execution_data["events"][-1].update(payload)
 
 
 def enrich_or_record_tool(
@@ -161,6 +171,15 @@ def enrich_or_record_tool(
     query_id: Optional[str] = None,
 ) -> None:
     args = _tool_args_preview(tool_call) if tool_call else None
+    full = {"summary": summary, "phase": phase, "failed": failed}
+    if tool_call:
+        full["raw"] = tool_call
+        for key, val in tool_call.items():
+            if str(key).endswith("ToolCall") and isinstance(val, dict):
+                full["args"] = {"name": str(key)[:-8], "args": val.get("args")}
+                if val.get("result") is not None:
+                    full["text"] = json.dumps(val["result"], ensure_ascii=False)
+                break
     tracker = _tracker(query_id)
     if tracker is None:
         add_event(
@@ -179,6 +198,8 @@ def enrich_or_record_tool(
             if not isinstance(ev, dict) or ev.get("kind") != "tool":
                 continue
             prev = str(ev.get("summary") or ev.get("text") or "")
+            if phase == "started" and tool_call and ev.get("phase") in ("completed", "failed"):
+                continue
             if summary and (summary == prev or summary in prev or prev in summary):
                 if args and not ev.get("args"):
                     ev["args"] = args
@@ -186,6 +207,8 @@ def enrich_or_record_tool(
                 if failed:
                     ev["failed"] = True
                 ev["t"] = time.time()
+                if tool_call:
+                    tracker.persist_event("tool", {"block_id": ev["block_id"], **full})
                 try:
                     tracker._publish_live_snapshot()
                 except Exception:
@@ -199,6 +222,8 @@ def enrich_or_record_tool(
         failed=failed,
         args=args,
     )
+    if tool_call:
+        tracker.persist_event("tool", {"block_id": tracker.execution_data["events"][-1]["block_id"], **full})
 
 
 def _tool_args_preview(tool_call: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -233,6 +258,9 @@ def _tool_args_preview(tool_call: Optional[Dict[str, Any]]) -> Optional[Dict[str
 def ingest_status_message(message: str, *, query_id: Optional[str] = None) -> None:
     text = (message or "").strip()
     if not text or _HEARTBEAT_RE.search(text):
+        return
+    if text.lower().startswith(("steer queued:", "steer received:")):
+        add_event("steer", query_id=query_id, text=text)
         return
     m = _THINKING_RE.match(text)
     if m:
@@ -329,6 +357,25 @@ def load_query_json(query_id: str) -> Optional[Dict[str, Any]]:
     qid = (query_id or "").strip()
     if not qid or len(qid) > 36:
         return None
+    try:
+        from api.agent_events.store import EventStore, state_dir
+        store = EventStore(state_dir())
+        run = store.run(qid)
+        if run:
+            data = run["metadata"]
+            events = []
+            cursor = 0
+            while True:
+                page = store.events(qid, after=cursor, limit=500, full=True)
+                if not page:
+                    break
+                events.extend(page)
+                cursor = page[-1]["id"]
+            data["events"] = events
+            data["query_id"] = qid
+            return data
+    except Exception:
+        pass
     path = stable_json_path(qid)
     if path.is_file():
         try:

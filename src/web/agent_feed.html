@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Feed · Cuttle</title><link rel="stylesheet" href="/css/ui_boot.css"><script src="/js/shared/ui_boot.js"></script>
+<link rel="stylesheet" href="/css/shared_navigation.css"><link rel="stylesheet" href="/css/compact_page.css"><link rel="stylesheet" href="/css/agent_feed.css"><link rel="stylesheet" href="/css/query_log_inspector.css"></head>
+<body class="compact-shell-page" data-page="agent-feed"><main class="agent-feed">
+<header class="compact-page-title"><h1>Agent Feed</h1><p>Live activity across your agents</p></header>
+<p id="feedStatus" role="status" aria-live="polite">Connecting…</p>
+<form id="feedFilters" class="feed-controls">
+<label>Agent<input name="agent" placeholder="All agents"></label><label>Model<input name="model" placeholder="All models"></label>
+<label>Chat<input name="chat" placeholder="CH-001066"></label><label>Project<input name="project" placeholder="All projects"></label>
+<label>Kind<select name="kind"><option value="">All steps</option><option>tool</option><option>edit</option><option>thinking</option><option>writing</option><option>run.start</option><option>run.resume</option><option>finish</option><option>status</option><option value="failure">Failures</option></select></label>
+<label>Search<input name="search" type="search" placeholder="Search activity"></label><button type="submit">Apply filters</button>
+<button id="feedFollow" type="button" aria-pressed="true">Following live</button></form>
+<p><a href="/settings_page.html?tab=data">Database settings</a> · <a href="/settings_page.html?tab=experimental">Experimental settings</a></p>
+<section id="feedRows" aria-label="Agent steps"></section><button id="feedOlder" type="button">Older steps</button>
+</main><script src="/js/agent_events/diff.js"></script><script src="/js/agent_events/feed_model.js"></script><script src="/js/agent_events/feed_page.js"></script></body></html>

@@ -40,6 +40,9 @@ except ImportError:
 # backend, its validator, and its auth. Add rows here, not new modules.
 # backend: "settings-manager" | named helper module.
 SETTING_FAMILIES = (
+    {"name": "storage", "routes": ["GET /settings/storage", "POST /settings/storage/<id>", "POST /settings/storage/<id>/<operation>"],
+     "backend": "api.storage.service + api.agent_events.service", "validator": "api.storage.service.validate",
+     "read": "owner", "write": "owner"},
     {"name": "lan-access", "routes": ["GET/POST /settings/lan-access"],
      "backend": "settings-manager key 'discovery' + api.lan_access (live)",
      "validator": "validate_lan_access_update", "read": "owner", "write": "owner"},
@@ -664,3 +667,30 @@ def get_all_app_settings():
 def get_published_releases():
     from api.releases import check_releases
     return jsonify(check_releases(force=request.args.get('force') == '1'))
+
+
+@settings_bp.route('/settings/storage', methods=['GET'])
+@owner_required
+def storage_settings():
+    from api.storage.service import list_stores
+    return jsonify(stores=list_stores())
+
+
+@settings_bp.route('/settings/storage/<ident>', methods=['POST'])
+@owner_required
+def update_storage_settings(ident):
+    from api.storage.service import set_policy
+    try:
+        return jsonify(success=True,policy=set_policy(ident,request.get_json()))
+    except ValueError as exc:
+        return jsonify(error=str(exc)),400
+
+
+@settings_bp.route('/settings/storage/<ident>/<operation>', methods=['POST'])
+@owner_required
+def storage_operation(ident,operation):
+    from api.agent_events.service import operate
+    try:
+        return jsonify(success=True,result=operate(ident,operation,(request.get_json(silent=True) or {}).get('confirm')))
+    except ValueError as exc:
+        return jsonify(error=str(exc)),400

@@ -217,7 +217,7 @@ async def run_codex_turn_app_server(
     rid = (resume or "").strip()
 
     from api.agent_harness import steer as steer_registry
-    from api.agent_harness.activity import ActivityEmitter, TextActivityLog, text_preview
+    from api.agent_harness.activity import ActivityEmitter, TextActivityLog, ToolActivityLog, text_preview
 
     from api.agent_harness import codex_thread_ownership as _ownership
 
@@ -274,8 +274,9 @@ async def run_codex_turn_app_server(
     attach_to_chat_run(chat_session_id, proc)
 
     rpc = StdioRpc(proc, loop=loop)
-    activity = ActivityEmitter(status_queue, agent_label="Codex", record_text_previews=False)
+    activity = ActivityEmitter(status_queue, agent_label="Codex", record_text_previews=False, record_tool_previews=False)
     text_log = TextActivityLog("codex")
+    tools = ToolActivityLog("codex", activity)
     activity.emit("Resuming Codex…" if rid else "Starting Codex…", force=True)
     activity_state: Dict[str, Any] = {"tool_count": 0}
     st: Dict[str, Any] = {
@@ -547,6 +548,9 @@ async def run_codex_turn_app_server(
                 text_log.save(text_kind, str(item.get("text") or "") if text_kind == "writing"
                               else _codex_reasoning_text(item), item.get("id"))
             if itype in _SKIP_ACTIVITY_ITEMS:
+                return
+            from scripts.utilities.codex_cli_tool import record_codex_item
+            if record_codex_item(tools, item, complete=method == "item/completed"):
                 return
             event_type = "item.started" if method == "item/started" else "item.completed"
             line = _codex_activity_for_event(_exec_style_event(event_type, item), activity_state)

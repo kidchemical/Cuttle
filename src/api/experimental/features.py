@@ -86,3 +86,9 @@ register_flag(
         needs_restart=False,
     )
 )
+
+register_flag(FlagSpec(
+    id="agent_feed", label="Agent Feed",
+    description="Observe agent tool calls, edits and CLI-exposed thinking across chats. Uses the shared event store.",
+    default=False, category="agents", risk="low", since="0.0.0", needs_restart=False,
+))

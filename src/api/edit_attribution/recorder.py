@@ -63,6 +63,7 @@ def record_run_deltas(
     baseline: Optional[Dict[str, Any]],
     *,
     cwd: str,
+    line_snapshot: Optional[Dict[str, Any]] = None,
     agent_id: str,
     agent_model: Optional[str] = None,
     result_model: Optional[str] = None,
@@ -119,8 +120,21 @@ def record_run_deltas(
                     "chat_session_id": chat_session_id,
                     "digest_before": b.get("digest"),
                     "digest_after": e.get("digest"),
+                    "ambiguous": bool((line_snapshot or {}).get("ambiguous")),
                 }
             )
+        if line_snapshot:
+            import hashlib
+            import subprocess
+            # Snapshot trees use Git-cleaned content, exactly like staged blobs.
+            for event in events:
+                if event['rel_path'] in line_snapshot.get('skipped', {}):
+                    continue
+                for phase, field in (('start_sha', 'digest_before'), ('end_sha', 'digest_after')):
+                    result = subprocess.run(['git', 'show', line_snapshot[phase] + ':' + event['rel_path']],
+                                            cwd=repo_root, capture_output=True, timeout=15)
+                    event[field] = hashlib.sha256(result.stdout).hexdigest() if not result.returncode else None
+        events = [event for event in events if event.get("digest_before") != event.get("digest_after")]
         return append_events(events)
     except Exception as exc:
         print(f"[edit_attribution] record failed: {exc}", flush=True)

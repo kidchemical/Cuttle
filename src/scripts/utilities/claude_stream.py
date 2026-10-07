@@ -74,7 +74,7 @@ class ClaudeStream:
                     if self.activity.emit(f"{channel}: {text_preview(full)}"):
                         self.text.save(channel, full, key)
                 elif delta.get("type") == "input_json_delta":
-                    block["partial_json"] = (block.get("partial_json", "") + str(delta.get("partial_json") or ""))[:24000]
+                    block["partial_json"] = (block.get("partial_json", "") + str(delta.get("partial_json") or ""))
             elif et == "content_block_stop":
                 key, block = self.blocks.get((scope, index), (None, {}))
                 kind = block.get("type")
@@ -88,8 +88,6 @@ class ClaudeStream:
                         args = block.get("partial_json")
                     self.tools.record(f"{scope}:{block.get('id')}", str(block.get("name") or "tool"), args)
         elif typ == "assistant":
-            from api.query_events import MAX_TEXT
-
             message = obj.get("message") or {}
             message_id = str(message.get("id") or self.messages.get(scope) or "pending")
             if scope == "root":
@@ -102,7 +100,7 @@ class ClaudeStream:
                     kind = block.get("type")
                     if kind in ("text", "thinking"):
                         channel = "writing" if kind == "text" else "thinking"
-                        text = str(block.get("text" if kind == "text" else "thinking") or "")[:MAX_TEXT + 1]
+                        text = str(block.get("text" if kind == "text" else "thinking") or "")
                         # Snapshot positions can shift when thinking is omitted.
                         # Match within this message, once per snapshot block, so
                         # identical text in distinct blocks remains distinct.
@@ -123,6 +121,11 @@ class ClaudeStream:
                     failed = bool(block.get("is_error"))
                     self.tools.record(f"{scope}:{block.get('tool_use_id')}", phase="failed" if failed else "completed",
                                       result=result, failed=failed)
+                    native = obj.get("tool_use_result") or obj.get("toolUseResult")
+                    if not failed and isinstance(native, dict) and native.get("filePath") and native.get("structuredPatch") is not None:
+                        self.tools.record_edit(f"{scope}:{block.get('tool_use_id')}", native["filePath"],
+                                               native["structuredPatch"])
+
 
     def partial_output(self):
         prefix = f"root:{self.last_root_message or 'pending'}:"

@@ -10,16 +10,36 @@ it changed. Three surfaces read it:
 A fourth piece, **Databases** in Settings → 💾 Data, makes retention, quotas,
 sizes and resets for every Cuttle store visible and editable.
 
-Status: **design, not started** (2026-10-06). Nothing here is implemented yet.
+Status: **initial implementation in the working tree** (2026-10-07), pending
+hosting Flask restart and opt-in live Feed use. Runbook:
+[agent-events.md](../../.cuttle_global/docs/agent-events.md).
 
-Decisions taken (owner calls, 2026-10-06):
+The initial implementation includes the shared store, full payload capture,
+turn/step snapshots, native patches for supported streams, journal storage
+fold-in, content-checked trailers, paged inspector, Feed, and agent-events policy
+controls. This document retains the intended design; the delivery notes below
+identify differences and deferred refinements.
+
+Decisions taken (owner calls, 2026-10-06–07):
 
 | Question | Decision |
 |---|---|
 | Design doc before code? | **Yes** — this file. |
-| Full-detail retention | **90 days** by default, changeable from Settings. |
+| Full-detail retention | **90 days** by default, changeable from Settings; thinking has the shorter policy below. |
+| Thinking text | Keep the full text exposed by the CLI for **14 days**, then retain a short summary. |
+| Starred chats | **Same 90-day policy** as other chats’ agent events; no exemption. |
+| Agent events quota | **5 GB** by default, changeable from Settings. |
 | Where do quotas/sizes/resets live? | A **Databases** section in Settings → 💾 Data (§8 explains why not a separate app). |
-| Journal: fold in or keep separate? | **Proposed: fold in** (§5). The owner asked for clarification; confirm before Phase 3. |
+| Journal: fold in or keep separate? | **Fold in** (§5): one store, with commit attribution and trailers preserved. |
+| Next step | **Revise this doc first**; no implementation in this revision. |
+
+**Defaults versus user configuration:** the retention, thinking-text, starred-chat
+and quota choices above are the owner’s desired initial configuration and proposed
+Cuttle defaults, not fixed product policies. The database management surface
+(Settings → Data initially; a DBMS app can use the same registry later) must let
+users customize these policies per store where supported. Journal fold-in is an
+architecture decision; “revise the doc first” is a workflow decision, not a database
+setting.
 
 Architecture rules held: owned slices under `src/api/`, no reverse imports of
 `web_chat_api`, settings via `settings_routes.py` + `settings_manager`, agent
@@ -40,7 +60,7 @@ behind an experimental flag (`.cuttle/docs/experimental-features.md`).
 | Do journal rows get matched to commits? | 32,560 rows, **26,209 never matched to a commit**, 20,224 older than 7 days. Settlement runs only when committing through Cuttle's Git UI (`git_pending_changes.py:1642-1700`). Commits from a terminal or by an agent never settle. | Stale rows can credit an agent on a later, unrelated commit of the same path. Settlement must work by content, not by commit path (§5). |
 | Who reads the journal? | `git_pending_changes.py` (`build_commit_attribution`, `settle_events`) and `git_autocommit.py` (`open_paths_for_query`). | Keep `api.edit_attribution` as the public interface; swap its storage. |
 | Is there any retention today? | None for query logs, journal or `router_outcomes`. Brain has `cuttle_brain prune`, and auth sessions expire. | New registry + daily maintenance job (§8). |
-| Volume? | Turns/day from sidecars: typically 100–800, peaks of ~1,800 (2026-10-01). | Full fidelity at ~100 KB/turn uncompressed is about 3.6 GB per 90 days at 400 turns/day, roughly 1 GB gzipped. Measure in Phase 1 before fixing the default quota. |
+| Volume? | Turns/day from sidecars: typically 100–800, peaks of ~1,800 (2026-10-01). | Full fidelity at ~100 KB/turn uncompressed is about 3.6 GB per 90 days at 400 turns/day, roughly 1 GB gzipped. Measure in Phase 1 to validate the chosen 5 GB quota and show actual growth. |
 
 ---
 
@@ -212,7 +232,7 @@ the store first and falls back to the sidecar for pre-store turns.
 `src/web/js/queries/query_log_inspector.js` reads `GET /api/agent-events/runs/<qid>`.
 
 - **No cap:** a virtualized timeline; paged by `seq` for very long runs.
-- **Full payloads:** args/results/thinking fetched lazily from blobs when a step is expanded.
+- **Full payloads:** args/results/thinking fetched lazily from blobs when a step is expanded, within the retention policy (§7). Compacted thinking shows its short summary and an explicit “full text expired” label; quota compaction is also labelled.
 - **Edit steps** render a unified diff (side-by-side toggle), with `native` / `snapshot` badges.
 - **Changes tab:** the turn's aggregate snapshot diff, per-file `+/-`, "unreported
   changes" when native and snapshot disagree, and an "ambiguous" marker for overlaps.
@@ -231,7 +251,7 @@ aren't credited twice. That's what writes the agent trailers on commits.
 - **Keep separate** = a second SQLite file with its own copy of edit data, written
   by its own code. Two records of the same edit can disagree, which is what the
   path bug and the 26k unsettled rows show today.
-- **Fold in** (proposed) = the journal's database goes away. Its job keeps working
+- **Fold in** (chosen) = the journal's database goes away. Its job keeps working
   but reads the `edits` table above. `commit_sha` / `settled_at` are just columns there.
   `api.edit_attribution` stays as the public interface, so
   `git_pending_changes.py` and `git_autocommit.py` don't change.
@@ -290,21 +310,50 @@ lets agents watch the fleet too (e.g. a supervisor sub-agent).
 
 ## 7. Retention & compaction
 
-Default **90 days full detail**, set from Settings (§8) or
-`python -m api.storage set agent_events --retention-days N`.
+Default **90 days full detail** for agent events, with **14 days of full
+thinking text**, and a **5 GB quota**. Settings (§8) exposes all three values.
+The 90-day policy applies equally to agent events from starred and unstarred
+chats **by default**; users can configure a starred-chat exception in the database
+settings. It does not change chat-transcript retention in `cuttle_auth.db`.
 
 | Age | What's kept |
 |---|---|
-| ≤ retention | Everything: events, blobs, snapshot refs, patches. |
-| > retention | **Compact:** runs + event skeleton (kind, summary, ts, agent, model, failed) + `edits` stats (path, `+/-`, digests, commit). Payload/patch blobs deleted; `refs/cuttle/turns/<qid>` removed so `git gc` can reclaim. |
+| ≤ 14 days | Full CLI-exposed thinking text, plus all other events, blobs, snapshot refs and patches. |
+| > 14 days, ≤ 90 days | Thinking becomes a short summary; all other detail remains. |
+| > 90 days | **Compact:** runs + event skeleton (kind, short summary, ts, agent, model, failed) + `edits` stats (path, `+/-`, digests, commit/settlement state). Payload/patch blobs deleted; `refs/cuttle/turns/<qid>` removed so git can reclaim unreferenced objects. |
 | > retention × 4 (optional, off by default) | Delete rows entirely. |
 
-Proposed exceptions (confirm): runs in **starred chats** stay at full detail,
-and settled edits keep their patch as long as the commit exists (it's cheap
-and is the "who changed this line" answer).
+Age is measured from a completed item's `ts_end` (or `ts` for instantaneous
+events). Active runs are never compacted. The table uses defaults; Settings
+can change the full-detail and thinking windows, with the thinking window no
+longer than the full-detail window.
 
-The order is retention first, then quota. If the store is still over its quota
-after retention, the oldest runs are compacted first, never in-progress runs.
+**Thinking summaries:** capture only text the CLI exposes. Maintain a short,
+bounded summary separately from the full text, preferring a vendor-provided
+summary; otherwise use a labelled deterministic excerpt (no extra model call).
+At the 14-day boundary, replace inline full text with that summary, remove full
+thinking payload references and update FTS so expired text is no longer
+searchable. Shared blobs are deleted only after their last reference is removed.
+The short summary survives normal 90-day compaction as part of the skeleton.
+
+**Default patch policy:** settled edits follow the same 90-day policy. Their
+attribution metadata survives compaction so commit trailers keep working;
+trailers already written to git remain there. Future attribution can use retained
+digests and settlement state without keeping full patches indefinitely.
+
+**Quota:** 5 GB means 5,000,000,000 bytes (5,000 decimal MB in `quota_mb`). Count
+SQLite, WAL and compressed payload/patch blobs together. Report git snapshot
+storage separately, because objects are shared with repository history and their
+physical size cannot be charged exactly to this store. Removing snapshot refs
+does not guarantee immediate physical reclamation by git.
+
+The order is content-based settlement (§5), thinking expiry, general retention,
+then quota. If still over quota, compact the oldest completed runs first, even
+inside the retention window; preserve skeletons and attribution metadata and
+show the effective full-detail window and reason for compaction in Settings and
+the inspector. Never compact active runs. If metadata or active runs alone
+exceed quota, report the overage rather than silently deleting attribution or
+interrupting execution. The quota is a maintenance target, not a hard write cap.
 
 ---
 
@@ -326,7 +375,7 @@ StoreSpec(
   paths=lambda: [...],                 # db + wal + blobs dir (size = sum)
   stats=callable,                      # rows, oldest, newest
   retention=RetentionSpec(default_days=90, min_days=7),
-  quota=QuotaSpec(default_mb=2048),
+  quota=QuotaSpec(default_mb=5000),    # decimal MB: 5 GB
   prune=callable, vacuum=callable,
   reset=ResetPolicy.TYPED_CONFIRM,     # ALLOWED | TYPED_CONFIRM | NEVER
 )
@@ -336,7 +385,7 @@ Initial rows:
 
 | Store | Size today | Retention | Reset |
 |---|---|---|---|
-| Agent events (new) | — | 90 d | typed confirm |
+| Agent events (new; 5 GB quota) | — | 90 d; full thinking 14 d | typed confirm |
 | Query log sidecars (legacy, read-only after Phase 3) | 163 MB | 90 d | typed confirm |
 | Chats & accounts (`cuttle_auth.db`) | 20 MB | none (use `/cleanup-sessions`) | **never** (vacuum only) |
 | Edit journal (legacy; removed after Phase 3) | 10 MB | — | typed confirm |
@@ -348,14 +397,29 @@ Initial rows:
 **UI:** a "Databases" group in the Data panel (scope badge "This server"), with one row
 per store: label, owner, size (bar against quota), rows, oldest record,
 retention (days), quota (MB), and actions **Prune now · Vacuum · Reset**.
+Agent events also exposes **Full thinking days** (default 14), a thinking storage
+mode (**full then summary** by default, or **summary only**), and a **Starred-chat
+retention** policy (**same as other chats** by default, or a separately configured
+detail window / exemption). Starred exemptions remain subject to quota pressure
+and never imply unlimited storage. Each control explains how it affects existing
+records; increasing retention cannot restore already expired payloads.
+The surface also shows quota pressure,
+effective detail coverage and separately reported git snapshot storage.
 Reset requires typing the store name. `NEVER` stores show no Reset button.
 
-**Settings:** key `storage: {<store_id>: {retention_days, quota_mb}}`, routed
+**Settings:** key `storage: {<store_id>: {retention_days, quota_mb}}`; agent events
+also accepts `thinking_full_days` (default 14, validated against the applicable
+detail window), `thinking_mode` (`full_then_summary` by default), and
+`starred_retention_days` (`-1` follows ordinary retention; `0` is an age
+exemption; positive values override the window).
+These capabilities and allowed values belong to the store’s registry policy
+schema, so the UI and CLI expose the same validated configuration. Routed
 through `settings_routes.py` (`SETTING_FAMILIES`), never `web_chat_api.py`.
 Unknown ids are dropped (the registry is the allowlist, as with flags).
 
 **Maintenance job:** a daily background pass started with Flask (plus a pass 5 min
-after startup): retention, then quota, then content-based settlement (§5), then
+after startup): content-based settlement (§5), then thinking expiry, general
+retention and quota compaction, then
 `VACUUM` for stores whose free pages are over 25%. It reports to the Tasks/notify
 surface only when it fails.
 
@@ -407,7 +471,13 @@ Phase 4 can come before Phase 3 if disk growth from Phase 1 becomes a concern.
 - Adapter fixtures: recorded Codex/Claude/OpenCode streams → expected `edits` rows.
 - Settlement: terminal commit settles by digest; revert closes `reverted`; stale never credited.
 - Writer: back-pressure, `block_id` upsert, `rev` ordering, crash-safe batch.
-- Retention/quota: compaction keeps skeleton, removes blobs + refs; starred exemption.
+- Retention/quota: 14-day thinking expiry removes inline/blob/FTS full text while
+  keeping a short summary; 90-day compaction removes payloads + refs and keeps
+  skeleton/attribution metadata; starred and unstarred runs behave identically
+  by default, and configured exceptions are honored subject to quota.
+- Quota: 5 GB default and decimal units; oldest completed runs compact first;
+  active runs protected; shared blobs retained until unreferenced; overage and
+  early compaction visible; retained metadata still supports commit attribution.
 - Storage registry: unknown ids dropped, `NEVER` resets refused (API + CLI).
 - Boundary: `agent_events` / `storage` never import `web_chat_api`
   (`test_architecture_boundaries.py`).
@@ -415,10 +485,43 @@ Phase 4 can come before Phase 3 if disk growth from Phase 1 becomes a concern.
 
 ---
 
-## 12. Open questions
+## 12. Deferred scope
 
-1. Confirm **fold in** for the journal (§5).
-2. Keep full **thinking** text, or summaries only past N days?
-3. Exempt **starred chats** from compaction?
-4. Default **quota** for agent events (proposed 2 GB, revisit after Phase 0 measurement).
-5. Should mesh workers' runs (remote turns) report into the Host's feed? Out of scope now; the schema has room (`project_root`, `agent_id`).
+Mesh workers’ runs reporting into the Host’s feed remains out of scope for this
+iteration; the schema leaves room for a later design. The journal fold-in,
+14-day full thinking window, equal retention for starred chats and 5 GB quota
+are decided initial settings and proposed defaults, not open questions or
+hardcoded limits. Their supported policy overrides must be available through the
+database management surface and CLI.
+
+
+## 13. Initial delivery notes (2026-10-07)
+
+- No paid probes were run. Existing parsers and offline recorded/synthetic stream
+  fixtures established capture contracts. Claude live probing was excluded because
+  the owner has no Claude budget. Cursor native before/after patch fields remain
+  unverified; its complete vendor tool payload is preserved and snapshots supply
+  net line changes. Muse exec preserves complete task payloads; serve records
+  structured tools. Hermes already polls its owned vendor DB for structured tools.
+- Snapshot refs pin trees directly rather than creating synthetic commits. This
+  avoids author identity dependencies and works in an unborn repository. Snapshots
+  capture net turn changes, not every transient write; native and completion-step
+  records supply intermediate edits. Non-Git line snapshots are not implemented.
+- Inspector pagination bounds DOM work (100 steps/page), rather than a scroll
+  virtualizer. Changes shows edit records on the selected page. Aggregate/native
+  reconciliation into an “unreported changes” verdict remains deferred; both
+  sources and overlap/skip markers are visible without claiming proof.
+- Retention uses deterministic short excerpts, labelled as such; no paid summary
+  calls. Agent-events policies are editable. Other registered stores currently
+  show sizes only; their retention/reset hooks require their owning slices’
+  contracts before exposing destructive operations in this generic surface.
+- New turns stop writing JSON sidecars. Existing files remain readable as legacy
+  data; their old caps cannot be recovered. The legacy journal remains a read-only
+  rollback artifact after migration, not a second writer.
+- Commit reconciliation scans bounded recent path history after each edit’s time;
+  deletion settlement and a full superseded/reverted state machine remain deferred.
+  Trailer selection fails closed on content mismatch, stale rows and overlaps.
+- Stream cursors include item revisions. History reads capture their tail cursor
+  before fetching rows so reconnect can duplicate rather than omit a new event.
+  Failed SQLite batches spool locally for retry, and capture errors are visible
+  in database settings. Remote aggregation remains deferred; the local CLI provides full-detail tail output.

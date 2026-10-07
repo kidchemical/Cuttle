@@ -17,10 +17,12 @@ agent toolkit.
 
 | Domain | Module | Doc |
 |---|---|---|
+| Agent activity / database policies | `python -m api.agent_events` / `python -m api.storage` | `agent-events.md` |
 | Chat handles / transcripts | `python -m api.chat_cli` | `chat-history.md` |
 | Chat visual effects | `python -m api.chat_vfx` | `chat-vfx.md` |
 | Experimental flags | `python -m api.experimental` (list, get, set, reset) | Cuttle `.cuttle/docs/experimental-features.md` |
 | Tasks widgets | `python -m api.widgets_cli` | `widgets.md` |
+| Tray + UI toast notifications | `python -m api.ui_notify` (`send`, `pending`) | `gizmos.md` (notify-on-unblock) |
 | Gizmos (usage meters; experimental) | `python -m api.gizmos` | `gizmos.md` |
 | Cuttle QA / promo accounts | `python -m api.fixture_accounts` | Cuttle project `.cuttle/docs/fixture-accounts.md` |
 | Discord reads | `python -m api.discord_cli` | `discord.md` (posts stay on `discord.post`) |

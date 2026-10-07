@@ -419,6 +419,7 @@ def _isolated_brain_state(tmp_path, monkeypatch):
     monkeypatch.setenv("CUTTLE_CONTEXT_METRICS_DB", str(tmp_path / "context_metrics.db"))
     # Not created up front: the tracker makes it on first use.
     monkeypatch.setenv("CUTTLE_QUERY_LOG_DIR", str(tmp_path / "query_logs"))
+    monkeypatch.setenv("CUTTLE_AGENT_EVENTS_DIR", str(tmp_path / "agent_events"))
     import api.query_tracker as qt
 
     monkeypatch.setattr(qt, "_fallback_tracker", None, raising=False)
@@ -429,6 +430,12 @@ def _isolated_brain_state(tmp_path, monkeypatch):
     with qt._registry_lock:
         qt._active_trackers.clear()
     yield
+    from api.agent_events.writer import _writers, _lock
+    root = (tmp_path / "agent_events").resolve()
+    with _lock:
+        event_writer = _writers.pop(root, None)
+    if event_writer:
+        event_writer.close()
     with qt._registry_lock:
         qt._active_trackers.clear()
 

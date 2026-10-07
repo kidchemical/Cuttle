@@ -156,6 +156,7 @@ src/data/supervised_tasks/
 src/data/edit_attribution/
 src/data/archive/
 src/data/harness_agents/
+src/data/agent_events/
 
 # Developer test artifacts live with tests, never with production scripts.
 src/tests/results/

@@ -1,5 +1,5 @@
 """
-In-memory query tracker. Persists JSON sidecars under web/logs (query_data_<id>.json).
+In-memory query tracker with full-detail persistence owned by api.agent_events.
 """
 
 import copy
@@ -14,7 +14,7 @@ from typing import Dict, List, Any, Optional
 import uuid
 
 class QueryTracker:
-    """Tracks one query; writes JSON sidecars, not HTML."""
+    """Tracks one query and enqueues durable activity."""
     
     def __init__(self, output_dir: Optional[str] = None):
         if output_dir is None:
@@ -85,6 +85,7 @@ class QueryTracker:
         }
 
     def _publish_live_snapshot(self) -> None:
+        self._persist_run_metadata()
         """Copy stages/llm/tool lists for this query_id so live polling survives tracker handoff."""
         qid = (self.query_id or "").strip()
         if not qid or not self.execution_data:
@@ -187,6 +188,7 @@ class QueryTracker:
         except Exception as e:
             print(f"[QUERY] Error adding input stage: {e}")
 
+        self.add_event("run.start", {"summary": "Turn started"})
         return self.query_id
     
     def _add_input_stage(self, user_context: Dict = None):
@@ -558,6 +560,18 @@ class QueryTracker:
             self.execution_data["total_tokens"] += tokens.get("total_tokens", 0)
         self._publish_live_snapshot()
 
+    def _persist_run_metadata(self) -> None:
+        if not self.execution_data or not self.query_id:
+            return
+        from api.agent_events.writer import record
+        metadata = {key: value for key, value in self.execution_data.items()
+                    if key not in ("events", "llm_calls", "tool_calls", "execution_stages", "graph_structure")}
+        record("run", self.query_id, metadata)
+
+    def persist_event(self, kind: str, payload: Dict[str, Any]) -> None:
+        from api.agent_events.writer import record
+        record("event", self.query_id, {"kind": kind, "t": time.time(), **payload})
+
     def add_event(self, kind: str, payload: Dict[str, Any] = None) -> None:
         if not self.execution_data:
             return
@@ -567,7 +581,10 @@ class QueryTracker:
             self.execution_data["events"] = events
         from api.query_events import MAX_EVENTS, MAX_TEXT, _cap
 
+        from uuid import uuid4
         body = dict(payload or {})
+        body.setdefault("block_id", uuid4().hex)
+        self.persist_event(str(kind or "event"), body)
         for key in ("text", "summary", "error"):
             if key in body:
                 body[key] = _cap(body[key], MAX_TEXT if key == "text" else 2000)
@@ -611,17 +628,20 @@ class QueryTracker:
             "resume": bool(resume),
             "text": _cap(text, MAX_SENT),
         }
+        if resume:
+            self.add_event("run.resume", {"summary": "Resumed agent session"})
         self.add_event(
             "sent",
             {
                 "chars": len(text),
                 "resume": bool(resume),
                 "preview": _cap(text, 1200),
+                "text": text,
             },
         )
 
     def finish_query(self, success: bool = True, error_message: str = None):
-        """Finish tracking the query and persist JSON."""
+        """Finish tracking the query and finalize durable capture."""
         if not self._tracker_session_open:
             print("[QUERY FINISH_QUERY] Skipped: no active session (already finished or duplicate finish)")
             return None, None
@@ -647,6 +667,7 @@ class QueryTracker:
                 print(f"[QUERY FINISH_QUERY] Warning: start_time is None! Cannot calculate execution time.")
                 self.execution_data["total_execution_time"] = 0
 
+            self.execution_data["finished_at"] = current_time
             self.execution_data["success"] = success
             self.execution_data["error_message"] = error_message
             try:
@@ -663,7 +684,7 @@ class QueryTracker:
                 import traceback
                 traceback.print_exc()
 
-            print(f"[QUERY FINISH_QUERY] Saving execution data JSON...")
+            print(f"[QUERY FINISH_QUERY] Finalizing event capture...")
             try:
                 json_path = self._save_execution_data()
                 print(f"[QUERY FINISH_QUERY] Execution data saved: {json_path}")
@@ -687,27 +708,10 @@ class QueryTracker:
                 pass
 
     def _save_execution_data(self) -> str:
-        """Persist execution data as JSON sidecars (timestamped + stable)."""
-        # Check if execution_data exists
-        if not self.execution_data:
-            print("[QUERY] Error: execution_data is None, cannot save execution data")
-            return None
-            
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"query_data_{self.query_id}_{timestamp}.json"
-        filepath = self.output_dir / filename
-        
-        with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(self.execution_data, f, indent=2)
-
-        try:
-            stable = self.output_dir / f"query_data_{self.query_id}.json"
-            with open(stable, 'w', encoding='utf-8') as f:
-                json.dump(self.execution_data, f, indent=2)
-        except Exception:
-            pass
-        
-        return str(filepath)
+        """Persist through the event owner; legacy JSON sidecars are read-only."""
+        from api.agent_events.store import state_dir
+        self._persist_run_metadata()
+        return str(state_dir() / "agent_events.sqlite3")
 
 
 def _live_snap_from_execution(execution_data: Dict[str, Any]) -> Dict[str, Any]:

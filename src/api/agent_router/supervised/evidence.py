@@ -71,7 +71,9 @@ class EvidenceBundle:
 
 def normalize_workspace_path(workspace: str, relative: str) -> Optional[Path]:
     """Resolve a workspace-relative path; reject traversal / escape."""
-    rel = (relative or "").strip().replace("\\", "/")
+    rel = (relative or "")
+    if __import__("os").name == "nt":
+        rel = rel.replace("\\", "/")
     if not rel or rel.startswith("/") or re.match(r"^[A-Za-z]:/", rel):
         return None
     if _TRAVERSAL_RE.search(rel) or "\x00" in rel:
@@ -98,8 +100,8 @@ def _run_git(workspace: str, *args: str, timeout: float = 15.0) -> tuple[int, st
             timeout=timeout,
             check=False,
         )
-        out = (proc.stdout or "") + (("\n" + proc.stderr) if proc.stderr else "")
-        return int(proc.returncode), out.strip()
+        out = (proc.stdout or "") if proc.returncode == 0 else ((proc.stdout or "") + (proc.stderr or ""))
+        return int(proc.returncode), out
     except (OSError, subprocess.TimeoutExpired) as e:
         return 1, str(e)
 
@@ -110,13 +112,8 @@ def _file_content_digest(path: Path, *, limit: int = 2_000_000) -> Optional[str]
             return None
         h = hashlib.sha256()
         with path.open("rb") as f:
-            remaining = limit
-            while remaining > 0:
-                chunk = f.read(min(65536, remaining))
-                if not chunk:
-                    break
+            while chunk := f.read(65536):
                 h.update(chunk)
-                remaining -= len(chunk)
         return h.hexdigest()
     except OSError:
         return None
@@ -124,19 +121,9 @@ def _file_content_digest(path: Path, *, limit: int = 2_000_000) -> Optional[str]
 
 def _parse_porcelain_paths(status_out: str) -> Dict[str, str]:
     """Map relative path -> porcelain XY status code."""
-    out: Dict[str, str] = {}
-    for ln in (status_out or "").splitlines():
-        if not ln.strip():
-            continue
-        # porcelain v1: XY PATH or XY ORIG -> PATH
-        code = ln[:2] if len(ln) >= 2 else "??"
-        rest = ln[3:] if len(ln) > 3 else ln.strip()
-        if " -> " in rest:
-            rest = rest.split(" -> ", 1)[-1]
-        path = rest.strip().strip('"')
-        if path:
-            out[path.replace("\\", "/")] = code
-    return out
+    from core.git_status import parse_status_z
+
+    return parse_status_z(status_out)
 
 
 def snapshot_worktree(workspace: str) -> Dict[str, Any]:
@@ -156,7 +143,7 @@ def snapshot_worktree(workspace: str) -> Dict[str, Any]:
         snap["error"] = "workspace missing"
         return snap
     root = Path(ws).resolve()
-    rc, status_out = _run_git(ws, "status", "--porcelain")
+    rc, status_out = _run_git(ws, "status", "--porcelain=v1", "-z", "--untracked-files=all")
     if rc != 0:
         snap["error"] = status_out[:200]
         return snap
@@ -365,15 +352,15 @@ def collect_programmatic_evidence(
         )
 
     # Absolute end-state porcelain (informational; not attribution)
-    rc, status_out = _run_git(ws, "status", "--porcelain")
+    rc, status_out = _run_git(ws, "status", "--porcelain=v1", "-z", "--untracked-files=all")
     if rc == 0:
-        lines = [ln for ln in status_out.splitlines() if ln.strip()]
+        lines = _parse_porcelain_paths(status_out)
         bundle.items.append(
             EvidenceItem(
                 key="git_status_porcelain_end",
                 source="cuttle_verified",
                 detail=(f"{len(lines)} dirty path(s) at task end" if lines else "clean at task end")
-                + (f" (sample: {status_out[:200]})" if status_out else ""),
+                + (f" (sample: {repr(status_out[:200])})" if status_out else ""),
                 ok=True,
             )
         )

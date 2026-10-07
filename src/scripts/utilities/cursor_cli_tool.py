@@ -943,6 +943,7 @@ def _run_cursor_agent_stream_segment(
         elif et == "tool_call":
             tc = evt.get("tool_call") or {}
             summary = _cursor_tool_summary(tc)
+
             try:
                 from api.cursor_plan_bridge import extract_create_plan_from_tool_call
 

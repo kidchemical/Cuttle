@@ -155,7 +155,7 @@ async def run_muse_turn_serve(
     meta_provider = not prov or prov.lower() == "meta"
 
     from api.agent_harness import steer as steer_registry
-    from api.agent_harness.activity import ActivityEmitter, TextActivityLog, text_preview
+    from api.agent_harness.activity import ActivityEmitter, TextActivityLog, ToolActivityLog, text_preview
 
     argv = [muse_bin, "serve", "--trust-workspace"]
     if yolo:
@@ -176,8 +176,9 @@ async def run_muse_turn_serve(
     attach_to_chat_run(chat_session_id, proc)
 
     rpc = StdioRpc(proc, loop=loop, jsonrpc_tag=True)
-    activity = ActivityEmitter(status_queue, agent_label="Muse Code", record_text_previews=False)
+    activity = ActivityEmitter(status_queue, agent_label="Muse Code", record_text_previews=False, record_tool_previews=False)
     text_log = TextActivityLog("muse")
+    tools = ToolActivityLog("muse", activity)
     text_kinds: Dict[Any, str] = {}
     activity.emit("Resuming Muse Code…" if rid else "Starting Muse Code…", force=True)
     st: Dict[str, Any] = {
@@ -399,11 +400,17 @@ async def run_muse_turn_serve(
             return
         if kind in ("toolCall", "subagent", "workflow", "userShell"):
             status = str(item.get("status") or "").lower()
-            if method == "item/started":
-                st["tool_count"] += 1
-                activity.emit(f"tool {st['tool_count']}: {_tool_label(item)}")
-            elif method == "item/completed" and status in ("failed", "error", "cancelled", "denied"):
-                activity.emit(f"tool failed: {_tool_label(item)}")
+            args = item.get("args")
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except ValueError:
+                    pass
+            failed = status in ("failed", "error", "cancelled", "denied")
+            tools.record(item.get("itemId"), str(item.get("tool") or item.get("toolName") or kind), args,
+                         phase="failed" if failed else ("completed" if method == "item/completed" else "started"),
+                         result=json.dumps(item, ensure_ascii=False) if method == "item/completed" else None,
+                         failed=failed)
 
     def _on_line(raw: bytes) -> None:
         try:
