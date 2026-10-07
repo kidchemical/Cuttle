@@ -33,18 +33,19 @@ process.stdout.write(JSON.stringify({
     result = subprocess.run(["node", "-e", script, str(MODULE)], capture_output=True, text=True, check=True)
     out = json.loads(result.stdout)
     # Compact footer: arrows + numbers only, no text labels (mobile layout).
-    # Inclusion detail lives in title tooltips, not visible text.
-    assert "↑ 9.5M</span>" in out["muse"]
+    # Input shows non-cached tokens only; cache is the separate span.
+    assert "↑ 44k</span>" in out["muse"]
     assert "↑ 9.4M</span>" in out["muse"]
-    assert "9.5M input" not in out["muse"]
+    assert "9.5M" not in out["muse"]
     assert "cached (included)" not in out["muse"]
     assert "output</span>" not in out["muse"]
-    assert "99.5% of input; already included above" in out["muse"]
+    assert "99.5% of total input" in out["muse"]
     assert "~$0.029" in out["muse"]
-    assert "↑ 11k</span>" in out["additive"]
-    assert "8.9% of input" in out["additive"]
+    assert "↑ 10k</span>" in out["additive"]
+    assert "8.9% of total input" in out["additive"]
     assert "cache write (included)" not in out["additive"]
-    assert "↑ 1.2k</span>" in out["fullyCached"]
+    assert "↑ 0</span>" in out["fullyCached"]
+    assert "83.3% of total input" in out["fullyCached"]
     assert "reported input</span>" not in out["unknown"]
     assert "included)" not in out["unknown"]
     assert out["unknownHasCost"] is False

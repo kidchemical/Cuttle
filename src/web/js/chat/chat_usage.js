@@ -87,25 +87,33 @@
     }
 
     // Compact footer: arrows + numbers only (no text labels — mobile layout).
-    // Inclusion info lives in title tooltips. Inclusive input math stays:
-    // additive harnesses (cache_inclusive === false) fold cache into input.
+    // Input shows ONLY non-cached tokens; cached reads are the separate span,
+    // so the two never double-count. Inclusive harnesses (cache_inclusive
+    // === true) report cache as a subset of prompt, so subtract it; additive
+    // harnesses already report prompt without cache. Unknown convention keeps
+    // the provider-reported number untouched.
     function getMessageUsageHtml(usage, escapeHtml) {
         const u = normalizeUsagePayload(usage);
         if (!u) return '';
         const parts = [];
         if (u.prompt_tokens || u.completion_tokens || u.cache_read_tokens || u.cache_write_tokens) {
-            const input = u.prompt_tokens + (u.cache_inclusive === false ? u.cache_read_tokens + u.cache_write_tokens : 0);
             const known = u.cache_inclusive != null;
-            const inputTip = known ? 'Total input tokens, including cached input' : 'Provider-reported input; cache convention unavailable';
+            const totalInput = u.cache_inclusive === false
+                ? u.prompt_tokens + u.cache_read_tokens + u.cache_write_tokens
+                : u.prompt_tokens;
+            const input = u.cache_inclusive === true
+                ? Math.max(0, u.prompt_tokens - u.cache_read_tokens - u.cache_write_tokens)
+                : u.prompt_tokens;
+            const inputTip = known ? 'Input tokens, excluding cached input' : 'Provider-reported input; cache convention unavailable';
             parts.push(
                 `<span class="message-usage-in" title="${escapeHtml(inputTip)}">↑ ${escapeHtml(formatTokenCount(input))}</span>`
             );
             if (u.cache_read_tokens > 0) {
                 let tip = 'Cached input tokens';
-                if (known && input > 0) {
-                    const pct = Math.round((1000 * u.cache_read_tokens) / input) / 10;
+                if (known && totalInput > 0) {
+                    const pct = Math.round((1000 * u.cache_read_tokens) / totalInput) / 10;
                     const pctLabel = Number.isInteger(pct) ? String(pct) : pct.toFixed(1);
-                    tip = `Cached input tokens (${pctLabel}% of input; already included above)`;
+                    tip = `Cached input tokens (${pctLabel}% of total input)`;
                 } else {
                     tip = 'Provider-reported cache reads; may be included in reported input';
                 }

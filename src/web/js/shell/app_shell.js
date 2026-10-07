@@ -6974,22 +6974,27 @@ function rebuildGroupResizeHandles(groupEl) {
         handle.style.order = String(i * 2 + 1);
         handle.dataset.groupId = groupEl.dataset.groupId || groupEl.id || '';
         handle.dataset.between = `${i}-${i + 1}`;
-        // A divider touching a parked pane restores it on release — mark it
-        // as an expand affordance. The chevron points where the pane will
-        // grow (expansion direction), not at the parked side.
+        // Exactly one restore divider per parked pane: its leading edge
+        // (left/top). A neighbor-side divider stays a pure resizer — no
+        // chevron, no click-restore, no mid-drag reopen — so a pane parked
+        // up against open C keeps C's divider quiet. First panes, having
+        // no leading edge, fall back to their trailing divider. The chevron
+        // points where the pane will grow from this divider.
         const leftParked = isPaneCollapsedEl(kids[i]);
         const rightParked = isPaneCollapsedEl(kids[i + 1]);
-        if (leftParked || rightParked) {
+        const isLeadingEdge = rightParked;
+        const isTrailingFallback = i === 0 && leftParked && !rightParked;
+        if (isLeadingEdge || isTrailingFallback) {
             handle.classList.add('pane-expand');
             handle.dataset.expand = '1';
             handle.title = 'Expand pane';
             handle.setAttribute('role', 'button');
             handle.setAttribute('aria-label', 'Expand collapsed pane');
             const verticalHandles = getGroupOrientation(groupEl) === 'vertical';
-            if (leftParked && !rightParked) {
-                handle.dataset.expandDir = verticalHandles ? 'down' : 'right';
-            } else if (rightParked && !leftParked) {
+            if (rightParked && !leftParked) {
                 handle.dataset.expandDir = verticalHandles ? 'up' : 'left';
+            } else if (leftParked && !rightParked) {
+                handle.dataset.expandDir = verticalHandles ? 'down' : 'right';
             } else {
                 handle.dataset.expandDir = 'both';
             }
@@ -7441,27 +7446,51 @@ function setupGroupSplitResize(handleEl, groupEl, leftPos, rightPos) {
         document.body.style.cursor = vertical ? 'row-resize' : 'col-resize';
         document.body.style.userSelect = 'none';
 
-        // A divider touching a parked pane unparks it now that widths are
-        // captured, then runs a normal resize: drag to choose the restored
-        // width, or release nearly in place (a click) for equal shares.
-        const expandTargets = [cols[leftPos], cols[rightPos]].filter(
-            (c) => c && c.classList?.contains('split-column') && isPaneCollapsedEl(c)
-        );
-        expandTargets.forEach((c) => setPaneCollapsed(c, false, { quiet: true }));
+        // A divider touching parked panes never unparks them upfront:
+        // drags keep them pinned (only pushing one past the threshold
+        // reopens it mid-drag), and only a clean click restores one pane.
+        // Unparking on press is what used to cascade — collapsing B
+        // unparked A, resizing C unparked B.
+        const unparkedMidDrag = [];
 
         applySplitPixelFlex(cols, startWidths, ori, groupEl);
         let lastWidths = startWidths.slice();
         let lastShrinking = -1;
         let maxDelta = 0;
 
+        // Only the marked restore divider reopens mid-drag; a plain
+        // neighbor-side divider keeps parked panes pinned no matter what.
+        const canExpand = handleEl.dataset.expand === '1';
         const onMove = (ev) => {
             if (!dragging) return;
             const coord = vertical ? ev.clientY : ev.clientX;
             const delta = coord - startCoord;
             if (Math.abs(delta) > maxDelta) maxDelta = Math.abs(delta);
+            // Pushing a parked pane past the threshold reopens it mid-drag
+            // (this is the only drag that unparks); anything less leaves it
+            // pinned so neighbors resize around it.
+            if (canExpand && delta > 0 && isPaneCollapsedEl(cols[leftPos])
+                && startWidths[leftPos] + delta >= SPLIT_COLLAPSE_PX
+                && !unparkedMidDrag.includes(cols[leftPos])) {
+                setPaneCollapsed(cols[leftPos], false, { quiet: true });
+                unparkedMidDrag.push(cols[leftPos]);
+            } else if (canExpand && delta < 0 && isPaneCollapsedEl(cols[rightPos])
+                && startWidths[rightPos] - delta >= SPLIT_COLLAPSE_PX
+                && !unparkedMidDrag.includes(cols[rightPos])) {
+                setPaneCollapsed(cols[rightPos], false, { quiet: true });
+                unparkedMidDrag.push(cols[rightPos]);
+            }
             const widths = startWidths.slice();
             let remaining = delta;
-
+            // Pinned panes are transparent to space flow: freed space lands
+            // on the nearest fluid pane on the growing side, so a shrink
+            // against a parked neighbor still moves the divider.
+            const giveTo = (from, dir) => {
+                for (let i = from; i >= 0 && i < cols.length; i += dir) {
+                    if (!isPaneCollapsedEl(cols[i])) return i;
+                }
+                return -1;
+            };
             if (remaining > 0) {
                 for (let i = rightPos; i < widths.length && remaining > 0; i++) {
                     if (isPaneCollapsedEl(cols[i])) continue;
@@ -7471,7 +7500,8 @@ function setupGroupSplitResize(handleEl, groupEl, leftPos, rightPos) {
                     widths[i] -= take;
                     remaining -= take;
                 }
-                if (!isPaneCollapsedEl(cols[leftPos])) widths[leftPos] += delta - remaining;
+                const giveLeft = giveTo(leftPos, -1);
+                if (giveLeft >= 0) widths[giveLeft] += delta - remaining;
             } else if (remaining < 0) {
                 let need = -remaining;
                 for (let i = leftPos; i >= 0 && need > 0; i--) {
@@ -7482,7 +7512,8 @@ function setupGroupSplitResize(handleEl, groupEl, leftPos, rightPos) {
                     widths[i] -= take;
                     need -= take;
                 }
-                if (!isPaneCollapsedEl(cols[rightPos])) widths[rightPos] += (-remaining) - need;
+                const giveRight = giveTo(rightPos, 1);
+                if (giveRight >= 0) widths[giveRight] += (-remaining) - need;
             }
             applySplitPixelFlex(cols, widths, ori, groupEl);
             // Threshold preview: flag any pane sitting under SPLIT_COLLAPSE_PX —
@@ -7493,12 +7524,15 @@ function setupGroupSplitResize(handleEl, groupEl, leftPos, rightPos) {
             lastWidths = widths;
             lastShrinking = delta > 0 ? rightPos : (delta < 0 ? leftPos : -1);
             const previewIdx = new Set();
+            // Never preview an already-parked pane: its pin shields it from
+            // parking again, so dimming its blade is pure noise.
             if (lastShrinking >= 0
+                && !isPaneCollapsedEl(cols[lastShrinking])
                 && widths[lastShrinking] < SPLIT_COLLAPSE_PX
                 && cols[lastShrinking]?.classList?.contains('split-column')) {
                 previewIdx.add(lastShrinking);
             }
-            expandTargets.forEach((c) => {
+            unparkedMidDrag.forEach((c) => {
                 const i = cols.indexOf(c);
                 if (i >= 0 && widths[i] < SPLIT_COLLAPSE_PX) previewIdx.add(i);
             });
@@ -7513,42 +7547,51 @@ function setupGroupSplitResize(handleEl, groupEl, leftPos, rightPos) {
             handleEl.removeEventListener('pointerup', onUp);
             handleEl.removeEventListener('pointercancel', onCancel);
         };
+        // Panes reopened mid-drag that land under the threshold settle AT
+        // it (never instantly re-park); still-pinned panes keep their pin.
+        const floorRestoredPanes = () => {
+            let floored = false;
+            unparkedMidDrag.forEach((c) => {
+                const i = cols.indexOf(c);
+                if (i >= 0 && lastWidths[i] < SPLIT_COLLAPSE_PX) {
+                    lastWidths[i] = SPLIT_COLLAPSE_PX;
+                    floored = true;
+                }
+            });
+            if (floored) applySplitPixelFlex(cols, lastWidths, ori, groupEl);
+            return floored;
+        };
         const onUp = () => {
             endDragListeners();
-            if (expandTargets.length > 0 && maxDelta < 2) {
-                // Pure click on an expand divider: restore at equal shares,
-                // exactly as before — only a real drag sets an explicit width.
-                expandTargets.forEach((c) => setPaneCollapsed(c, false, { quiet: true }));
-                const kids = getGroupChildNodes(groupEl);
-                applySplitRatioFlex(kids, kids.map(() => 1), getGroupOrientation(groupEl), groupEl);
-                rebuildGroupResizeHandles(groupEl);
-                stopDrag();
-                return;
-            }
-            if (expandTargets.length > 0) {
-                // A real drag that lands a restored pane under the threshold
-                // settles it AT the threshold instead of instantly re-parking.
-                let floored = false;
-                expandTargets.forEach((c) => {
-                    const i = cols.indexOf(c);
-                    if (i >= 0 && lastWidths[i] < SPLIT_COLLAPSE_PX) {
-                        lastWidths[i] = SPLIT_COLLAPSE_PX;
-                        floored = true;
-                    }
-                });
-                if (floored) {
-                    applySplitPixelFlex(cols, lastWidths, ori, groupEl);
+            if (canExpand && maxDelta < 2) {
+                // Pure click on the marked restore divider restores exactly
+                // one pane — the right (leading-edge) neighbor if parked,
+                // else the left (trailing-fallback) one. Never both: stacked
+                // parks must open one at a time.
+                const target = [cols[rightPos], cols[leftPos]].find(
+                    (c) => c && c.classList?.contains('split-column')
+                        && isPaneCollapsedEl(c));
+                if (target) {
+                    setPaneCollapsed(target, false, { quiet: true });
+                    const kids = getGroupChildNodes(groupEl);
+                    applySplitRatioFlex(kids, kids.map(() => 1), getGroupOrientation(groupEl), groupEl);
+                    rebuildGroupResizeHandles(groupEl);
                     stopDrag();
                     return;
                 }
             }
+            if (floorRestoredPanes()) {
+                stopDrag();
+                return;
+            }
             if (maybeCollapseNarrowPane(cols, lastShrinking, lastWidths, vertical)) return;
             stopDrag();
         };
-        // An interrupted gesture leaves the pane at its last dragged size —
-        // only a real release snaps a sub-threshold pane shut.
+        // An interrupted gesture keeps current sizes, floored the same way —
+        // it never parks, never restores.
         const onCancel = () => {
             endDragListeners();
+            floorRestoredPanes();
             stopDrag();
         };
         handleEl.addEventListener('pointermove', onMove);

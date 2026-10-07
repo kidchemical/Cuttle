@@ -83,11 +83,24 @@ def test_sub_threshold_drag_parks_pane_in_place():
     assert "closeSplitColumn" not in collapse
     # Parked panes stay pinned while fluid siblings share the budget.
     assert "'0 0 auto'" in js
-    # The touching divider unparks first, then drags to a chosen width;
-    # a pure click restores at equal shares, a small drag floors at 200px.
-    assert "expandTargets" in js
+    # Dividers never unpark upfront: drags pin parked panes (only pushing
+    # one past the threshold reopens it mid-drag); a pure click restores
+    # exactly one pane (right neighbor first); mid-drag reopens floor
+    # at 200px. Parked panes never preview or re-park.
     assert "maxDelta" in js
+    assert "unparkedMidDrag" in js
+    assert "floorRestoredPanes" in js
     assert "SPLIT_COLLAPSE_PX" in js
+    assert "cols[rightPos], cols[leftPos]" in js
+    assert "!isPaneCollapsedEl(cols[lastShrinking])" in js
+    # One restore divider per parked pane (leading edge, trailing fallback
+    # for first panes); the neighbor side stays a pure resizer that
+    # neither restores on click nor reopens mid-drag.
+    assert "isLeadingEdge" in js
+    assert "isTrailingFallback" in js
+    assert "canExpand" in js
+    # Freed space lands on the nearest fluid pane past pinned ones.
+    assert "giveTo" in js
     # Blade icons unpark their pane before navigating.
     assert "isPaneCollapsedEl(column)) setPaneCollapsed(column, false)" in js
     assert "dataset.expand" in js
@@ -129,6 +142,8 @@ def test_vertical_stacks_park_to_a_restore_bar():
     assert ".split-vertical > .split-column.pane-collapsed" in css
     assert "height: 28px" in css
     assert "attr(data-parked-title)" in css
+    # The bar reads as the blade: same background as the rail toolbar.
+    assert "background: var(--rail-bg" in css
     assert "data-expand-dir='down']::after" in css
     assert "data-expand-dir='up']::after" in css
 

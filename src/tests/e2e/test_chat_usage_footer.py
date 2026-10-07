@@ -21,14 +21,14 @@ def test_muse_history_footer_clarifies_included_cache(browser, static_server):
     try:
         footer = frame.locator(".message.assistant .message-usage")
         footer.wait_for(state="visible")
-        assert "9.5M" in footer.inner_text()
+        assert "44k" in footer.inner_text()
         assert "9.4M" in footer.inner_text()
         assert "input" not in footer.inner_text()
         assert "cached" not in footer.inner_text()
         assert "~$0.029" in footer.inner_text()
         cache = footer.locator(".message-usage-cache")
         tip = cache.get_attribute("title") or cache.get_attribute("data-tooltip") or ""
-        assert "99.5% of input" in tip
+        assert "99.5% of total input" in tip
         assert not errors
     finally:
         page.close()

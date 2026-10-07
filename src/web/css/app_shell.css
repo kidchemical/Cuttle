@@ -1188,7 +1188,8 @@ body.is-electron .split-group.split-vertical > .split-group {
     height: 28px;
     overflow: hidden;
     cursor: pointer;
-    background: var(--panel-border, #2a2a3e);
+    /* Match the blade toolbar so the parked bar reads as its rail. */
+    background: var(--rail-bg, #0d1117);
     border-radius: 3px;
 }
 .split-vertical > .split-column.pane-collapsed .icon-rail,
@@ -1232,6 +1233,15 @@ body.is-electron .split-group.split-vertical > .split-group {
 .split-vertical > .split-column.pane-collapsed:hover::after,
 .split-container.split-vertical > .split-column.pane-collapsed:hover::after {
     color: #fff;
+}
+
+/* Electron's own vertical rules outrank the bar above
+   (body.is-electron … height:auto wins ties); re-assert here or parked
+   panes size to content (hundreds of px of rail) instead of 28px. */
+body.is-electron .split-vertical > .split-column.pane-collapsed,
+body.is-electron .split-container.split-vertical > .split-column.pane-collapsed {
+    height: 28px;
+    min-height: 0;
 }
 
 /* ================================================================
