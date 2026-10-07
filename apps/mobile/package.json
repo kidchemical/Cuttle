@@ -19,7 +19,8 @@
     "build:android": "npm run sync && build-android-debug.bat",
     "open:android": "cap open android",
     "open:ios": "cap open ios",
-    "sync:android": "npm run build && cap sync android"
+    "sync:android": "npm run build && cap sync android",
+    "check": "tsc --noEmit"
   },
   "dependencies": {
     "@capacitor-community/safe-area": "^8.0.1",
@@ -33,5 +34,8 @@
     "@capacitor/cli": "^8.5.2",
     "typescript": "^7.0.2",
     "vite": "^8.3.2"
+  },
+  "engines": {
+    "node": ">=22.12.0"
   }
 }

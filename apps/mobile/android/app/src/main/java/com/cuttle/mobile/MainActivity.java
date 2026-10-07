@@ -35,7 +35,7 @@ import com.cuttle.mobile.notify.CuttleApi;
 import com.cuttle.mobile.notify.NetworkUtil;
 import com.cuttle.mobile.notify.ShellUpdate;
 import com.getcapacitor.BridgeActivity;
-import com.getcapacitor.community.safearea.SafeAreaWebViewClient;
+import com.getcapacitor.BridgeWebViewClient;
 import org.json.JSONObject;
 
 /**
@@ -206,7 +206,9 @@ public class MainActivity extends BridgeActivity {
     }
 
     private void attachShellClient(WebView webView) {
-        webView.setWebViewClient(new SafeAreaWebViewClient(bridge) {
+        // SafeArea 8 registers its own Bridge WebViewListener for viewport changes.
+        // Keep the bridge client so those listeners receive navigation callbacks.
+        webView.setWebViewClient(new BridgeWebViewClient(bridge) {
             @Override
             public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
                 // WebView must never bypass certificate or hostname validation.
