@@ -15,13 +15,16 @@
              },
     "scripts":  {
                     "start":  "electron .",
-                    "build":  "electron-builder build --win --publish never",
+                    "engines": { "node": ">=22.12.0" },
+    "build":  "electron-builder build --win --publish never",
                     "build:dir":  "electron-builder build --win --dir",
                     "build:linux":  "electron-builder build --linux AppImage --publish never",
                     "build:linux:dir":  "electron-builder build --linux --dir",
                     "build:portable":  "electron-builder build --win portable",
                     "dist":  "electron-builder",
-                    "postinstall":  "electron-builder install-app-deps"
+                    "postinstall":  "electron-builder install-app-deps",
+                    "smoke:host": "electron tests/smoke-main.cjs",
+                    "smoke:client": "electron tests/smoke-main.cjs --smoke-client"
                 },
     "dependencies":  {
                          "electron-squirrel-startup":  "^1.0.0"

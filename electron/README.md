@@ -90,3 +90,17 @@ files. See the [workers guide](../docs/guides/CUTTLE_WORKERS.md) for checkout
 preservation and updater behavior.
 
 For launch and packaging failures, see [troubleshooting](BUILD_TROUBLESHOOTING.md).
+
+## Upgrade validation
+
+Use Node 22.12 or newer (`.nvmrc` selects Node 22). Run `npm ci`, then
+`npm run smoke:host` and `npm run smoke:client`. These tests boot the real
+Electron main/preload and renderer against an ephemeral loopback fixture, use
+private profiles, and forbid daemon/worker/CLI subprocesses. They exercise the
+secure preload bridge, zoom, update status, native tray API, and gizmo pop-outs.
+Linux CI runs them under Xvfb with sandboxing disabled only for test processes;
+production sandbox behavior still needs platform validation.
+
+The Desktop smoke workflow runs both modes and builds native unpacked desktop
+packages on Windows and Linux. It supplements the shared browser/Python checks;
+it does not validate trusted-host TLS, signed updates, or a physical phone.
