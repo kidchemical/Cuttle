@@ -114,22 +114,25 @@ const PIP_QUIET = ['--disable-pip-version-check', '--no-input', '--no-cache-dir'
 async function writeLock(py) {
     fs.mkdirSync(scratchDir, { recursive: true });
     const pins = new Map();
-    // pip evaluates markers for the machine it runs on, not --platform, so
-    // marker-gated requirements are added explicitly for their target.
-    const markerReqs = (marker) => fs.readFileSync(requirements, 'utf8').split(/\r?\n/)
-        .filter((line) => line.includes(';') && line.replace(/\s+/g, '').includes(marker))
-        .map((line) => line.split(';')[0].trim());
+    // pip evaluates markers on the build machine, even with --platform.
+    // Select the direct OS dependencies explicitly so --lock also works on Windows.
+    const sourceLines = fs.readFileSync(requirements, 'utf8').split(/\r?\n/);
     const targets = [
-        { label: 'linux', args: ['--platform', 'manylinux2014_x86_64', '--platform', 'manylinux_2_28_x86_64',
-            ...markerReqs('sys_platform=="linux"')] },
-        { label: 'windows', args: ['--platform', 'win_amd64', ...markerReqs('sys_platform=="win32"')] },
+        { label: 'linux', sysPlatform: 'linux', args: ['--platform', 'manylinux2014_x86_64', '--platform', 'manylinux_2_28_x86_64'] },
+        { label: 'windows', sysPlatform: 'win32', args: ['--platform', 'win_amd64'] },
     ];
     for (const t of targets) {
         const report = path.join(scratchDir, `pip-report-${t.label}.json`);
+        const targetRequirements = path.join(scratchDir, `requirements-${t.label}.txt`);
+        const selected = sourceLines.flatMap(line => {
+            const match = line.match(/;\s*sys_platform\s*==\s*["']([^"']+)["']/);
+            return match ? (match[1] === t.sysPlatform ? [line.split(';')[0].trim()] : []) : [line];
+        });
+        fs.writeFileSync(targetRequirements, selected.join('\n'));
         run(py, ['-m', 'pip', 'install', ...PIP_QUIET, '--dry-run', '--ignore-installed', '--only-binary=:all:',
             '--python-version', lock.pythonVersion.split('.').slice(0, 2).join('.'), '--implementation', 'cp',
             ...t.args, '--target', path.join(scratchDir, 'pip-unused'),
-            '--report', report, '-r', requirements]);
+            '--report', report, '-r', targetRequirements]);
         const data = JSON.parse(fs.readFileSync(report, 'utf8'));
         for (const item of data.install || []) {
             const name = String(item.metadata.name).toLowerCase().replace(/[-_.]+/g, '-');
