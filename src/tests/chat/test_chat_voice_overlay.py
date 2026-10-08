@@ -331,6 +331,66 @@ def test_server_engine_records_without_speech_recognizer():
 
 
 @node_only
+def test_voice_steers_the_running_agent():
+    _node(CONTROLLER_HARNESS + r"""
+(async () => {
+  let generating = true;
+  const steered = [], queued = [];
+  host.isGenerating = () => generating;
+  host.steer = async (m) => { steered.push(m); return true; };
+  host.enqueue = (m) => { queued.push(m); };
+  voice.enter();
+  await sleep(5);
+  assert.strictEqual(mic.disabled, false, 'mic stays live while the agent works');
+  mic.dispatch('click', ev(mic));
+  await sleep(5);
+  assert.strictEqual(recs.length, 1, 'tapping while the agent works starts listening');
+  assert.match(document.getElementById('voiceModeStatus').textContent, /running agent/);
+  recs[0].onresult({ results: [res('also check the tests', true)] });
+  mic.dispatch('click', ev(mic));
+  await sleep(5);
+  assert.deepStrictEqual(steered, ['also check the tests']);
+  assert.deepStrictEqual(queued, []);
+  assert.deepStrictEqual(submitted, [], 'a steer is not a new turn');
+  assert.strictEqual(document.getElementById('voiceModeStatus').textContent, 'Added to the running reply…');
+
+  host.steer = async () => false;
+  mic.dispatch('click', ev(mic));
+  await sleep(5);
+  recs[1].onresult({ results: [res('then deploy', true)] });
+  mic.dispatch('click', ev(mic));
+  await sleep(5);
+  assert.deepStrictEqual(queued, ['then deploy'], 'non-steerable agent → follow-up queue');
+})().catch((e) => { console.error(e); process.exit(1); });
+""")
+
+
+@node_only
+def test_reply_waits_while_user_is_talking():
+    _node(CONTROLLER_HARNESS + r"""
+(async () => {
+  let generating = true;
+  host.isGenerating = () => generating;
+  host.steer = async () => true;
+  voice.enter();
+  mic.dispatch('click', ev(mic));
+  await sleep(5);
+  generating = false;
+  voice.onGenerationEnded({});
+  await sleep(150);
+  assert.strictEqual(played, 0, 'reply never talks over the user');
+  assert.strictEqual(recs[0].stopped, undefined, 'still listening');
+  assert.match(document.getElementById('voiceModeStatus').textContent, /Reply ready/);
+  recs[0].onresult({ results: [res('one more thing', true)] });
+  mic.dispatch('click', ev(mic));
+  await sleep(10);
+  assert.deepStrictEqual(submitted, ['one more thing']);
+  assert.strictEqual(played, 1, 'held reply plays after the send');
+})().catch((e) => { console.error(e); process.exit(1); });
+""")
+
+
+@node_only
 def test_server_engine_fallback_names_the_missing_feature():
     _node(CONTROLLER_HARNESS + r"""
 (async () => {
@@ -430,3 +490,9 @@ def test_voice_overlay_markup_and_styles():
     for sel in (".voice-mode-segment-remove", ".voice-mode-watch-btn", ".voice-mode-mic-btn"):
         assert sel in css
     assert "touch-action: none" in css, "mic must opt out of touch scrolling for reliable holds"
+    # The typing status sets inline visibility:visible; only !important on
+    # descendants keeps it from showing through the transparent overlay.
+    assert "body.voice-mode .chat-area *" in css
+    assert "visibility: hidden !important" in css
+    stage = css[css.index(".voice-mode-stage {"):]
+    assert "max-height: 100%" in stage.split("}")[0], "stage must fit the viewport"

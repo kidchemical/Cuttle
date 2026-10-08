@@ -50,24 +50,36 @@ def test_flag_registered_default_off():
     assert voice_narrator.is_enabled() is False
 
 
-def test_agent_label_from_sticky_slash():
-    assert voice_narrator.agent_label("/cursor fix the mic") == "Cursor"
-    assert voice_narrator.agent_label("/codex run tests") == "Codex"
-    assert voice_narrator.agent_label("fix the mic") == "the agent"
+def test_strip_slash():
     assert voice_narrator.strip_slash("/cursor fix the mic") == "fix the mic"
+    assert voice_narrator.strip_slash("fix the mic") == "fix the mic"
 
 
-def test_ack_prompt_names_agent_and_mode(_no_external):
+def test_ack_prompt_carries_request_and_mode(_no_external):
     line = voice_narrator.ack_line("/cursor make the mic stay on", mode="steer")
     assert line == "Got it, checking the voice module now."
     prompt = _no_external.calls[-1]["user"]
     assert "make the mic stay on" in prompt and "/cursor" not in prompt
-    assert "Cursor's turn that is already running" in prompt
+    assert "folding this into it" in prompt
 
 
 def test_ack_promises_to_keep_user_posted(_no_external):
     voice_narrator.ack_line("/cursor make the mic stay on")
     assert "keep them posted" in _no_external.calls[-1]["system"]
+
+
+@pytest.mark.parametrize("kind", ["ack", "heartbeat", "progress"])
+def test_narrator_speaks_as_cuttle_never_names_the_agent(_no_external, kind):
+    if kind == "ack":
+        voice_narrator.ack_line("/codex run the tests")
+    elif kind == "heartbeat":
+        voice_narrator.progress_line("/codex run the tests", [], elapsed_sec=30)
+    else:
+        voice_narrator.progress_line("/codex run the tests", ["tool 1: Run pytest"])
+    call = _no_external.calls[-1]
+    assert "You are Cuttle" in call["system"] and "first person" in call["system"]
+    assert 'never say "the agent"' in call["system"]
+    assert "Codex" not in call["user"] and "Agent:" not in call["user"]
 
 
 def test_progress_skip_says_nothing(_no_external):
@@ -85,11 +97,11 @@ def test_quiet_agent_gets_still_working_heartbeat(_no_external):
 
 
 def test_progress_prompt_carries_events_and_said(_no_external):
-    _no_external.reply = "Cursor is editing the voice controller."
+    _no_external.reply = "I'm editing the voice controller."
     line = voice_narrator.progress_line(
         "/cursor x", ["Reading chat_page.js", "Editing chat_voice.js"], ["On it."]
     )
-    assert line == "Cursor is editing the voice controller."
+    assert line == "I'm editing the voice controller."
     prompt = _no_external.calls[-1]["user"]
     assert "- Editing chat_voice.js" in prompt and "- On it." in prompt
 

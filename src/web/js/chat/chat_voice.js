@@ -69,6 +69,8 @@
         let speakToken = 0;
         /** A voice turn was sent and its reply should speak aloud even if the overlay closed mid-run. */
         let replyPending = false;
+        /** Reply that finished while the user was talking: `{opts, el}`. */
+        let deferredReply = null;
         let escapeHandler = null;
         let stars = null;
         const phrases = Segments.createState();
@@ -97,6 +99,11 @@
             if (el) el.textContent = String(text || '');
         }
 
+        function listeningText() {
+            if (deferredReply) return 'Reply ready — it plays after you send';
+            return host.isGenerating() ? 'Listening… tap mic to send to the running agent' : 'Listening… tap mic to send';
+        }
+
         function setPhase(next, statusText) {
             phase = next || 'idle';
             const overlay = overlayEl();
@@ -108,10 +115,11 @@
             const busy = phase === 'processing' || phase === 'speaking';
             const mic = byId('voiceModeMicBtn');
             if (mic) {
-                mic.disabled = busy;
+                mic.disabled = closing;
                 mic.setAttribute('aria-pressed', phase === 'listening' ? 'true' : 'false');
-                if (phase === 'listening') mic.title = 'Tap to send';
-                else if (busy) mic.title = phase === 'speaking' ? 'Speaking…' : 'Working…';
+                if (phase === 'listening') mic.title = host.isGenerating() ? 'Tap to send to the running agent' : 'Tap to send';
+                else if (phase === 'speaking') mic.title = 'Tap to interrupt and talk';
+                else if (busy) mic.title = 'Tap to talk to the running agent';
                 else mic.title = 'Tap to talk';
                 mic.setAttribute('aria-label', mic.title);
             }
@@ -119,7 +127,7 @@
             if (watch) watch.hidden = !(active && busy);
             if (statusText != null) setStatus(statusText);
             else if (phase === 'idle') setStatus('Tap the mic to talk');
-            else if (phase === 'listening') setStatus('Listening… tap mic to send');
+            else if (phase === 'listening') setStatus(listeningText());
             else if (phase === 'processing') setStatus('Thinking…');
             else if (phase === 'speaking') setStatus('Speaking…');
         }
@@ -301,8 +309,7 @@
         }
 
         function onMicToastAction() {
-            if (!active) return;
-            if (phase === 'processing' || phase === 'speaking') return;
+            if (!active || closing || phase === 'listening') return;
             try {
                 if (root.cuttleMobile && typeof root.cuttleMobile.openAppSettings === 'function') {
                     ensureMicAccess().then((mic) => {
@@ -330,10 +337,8 @@
                 setStatus('Speech recognition not available in this browser');
                 return;
             }
-            if (host.isGenerating()) {
-                setPhase('processing', 'Wait for the current reply…');
-                return;
-            }
+            // Barge-in: silence narration / the spoken reply; a running turn keeps going.
+            speakToken += 1;
             host.stopSpeech();
             wantListening = true;
             closing = false;
@@ -346,7 +351,7 @@
                     host.logError('Voice recording failed to start', e);
                     wantListening = false;
                     promptMicPermission('Allow microphone access for voice mode');
-                    setPhase('idle');
+                    settlePhase();
                     return;
                 }
                 if (!wantListening || !active) {
@@ -361,7 +366,7 @@
             if (!mic.ok) {
                 wantListening = false;
                 promptMicPermission('Allow microphone access for voice mode');
-                setPhase('idle');
+                settlePhase();
                 return;
             }
             if (!wantListening || !active) return;
@@ -393,7 +398,7 @@
             rec.onresult = function (event) {
                 Segments.applyResults(phrases, event.results);
                 renderPhrases();
-                if (phase === 'listening') setStatus('Listening… tap mic to send');
+                if (phase === 'listening') setStatus(listeningText());
             };
             rec.onerror = function (event) {
                 const err = (event && event.error) || 'error';
@@ -407,7 +412,7 @@
                     wantListening = false;
                     promptMicPermission('Allow microphone access for voice mode');
                     stopRecognition();
-                    if (active) setPhase('idle');
+                    settlePhase();
                     return;
                 }
                 setStatus('Could not hear that — try again');
@@ -433,7 +438,7 @@
                 recognition = null;
                 if (phase !== 'listening') {
                     wantListening = false;
-                    setPhase('idle', 'Could not start microphone — tap mic to retry');
+                    settlePhase('Could not start microphone — tap mic to retry');
                     promptMicPermission(String((e && e.message) || e));
                     return;
                 }
@@ -443,6 +448,17 @@
                 }
                 restartSoon(Ctor, 500);
             }
+        }
+
+        /** Back to rest: "working" while the agent still runs (narration resumes), else idle. */
+        function settlePhase(text) {
+            if (!active) return;
+            if (host.isGenerating()) {
+                setPhase('processing', text || 'Working…');
+                scheduleProgress();
+                return;
+            }
+            setPhase('idle', text);
         }
 
         async function finishListeningAndSend() {
@@ -456,11 +472,15 @@
             if (recorder) recorder.resetContext();
             closing = false;
             if (!active) return;
+            const held = deferredReply;
+            deferredReply = null;
             if (!spoken) {
-                setPhase('idle', 'Nothing to send — tap mic to talk');
+                if (held) speakReply(held.opts, held.el);
+                else settlePhase('Nothing to send — tap mic to talk');
                 return;
             }
-            send(spoken);
+            await send(spoken);
+            if (held) speakReply(held.opts, held.el);
         }
 
         /** Screen off / app backgrounded: stop the mic but keep every phrase. */
@@ -470,7 +490,7 @@
             await stopInput(true);
             renderPhrases();
             if (!active) return;
-            setPhase('idle', Segments.isEmpty(phrases)
+            settlePhase(Segments.isEmpty(phrases)
                 ? 'Paused — tap mic to talk'
                 : 'Paused — tap mic to keep talking; your phrases are kept');
         }
@@ -480,8 +500,7 @@
         }
 
         function toggleListening() {
-            if (!active) return;
-            if (phase === 'processing' || phase === 'speaking') return;
+            if (!active || closing) return;
             if (phase === 'listening') {
                 finishListeningAndSend();
                 return;
@@ -492,7 +511,7 @@
         async function send(spoken) {
             const message = host.compose(spoken);
             if (!message || !host.isSendable(message)) {
-                setPhase('idle', 'Nothing to send');
+                settlePhase('Nothing to send');
                 return;
             }
             replyPending = true;
@@ -522,15 +541,21 @@
         }
 
         // ── Spoken reply ────────────────────────────────────────────────
-        async function speakReply(opts) {
+        async function speakReply(opts, heldEl) {
             if (!active && !replyPending) return;
             if (opts && opts.isError) {
                 replyPending = false;
-                if (active) setPhase('idle', 'Reply failed — tap mic to try again');
+                if (active) settlePhase('Reply failed — tap mic to try again');
                 return;
             }
-            const messageEl = host.lastAssistantMessage();
+            const messageEl = heldEl || host.lastAssistantMessage();
             if (!messageEl) { replyPending = false; return; }
+            if (active && (phase === 'listening' || closing)) {
+                // Never talk over the user: the reply plays once they send (or stop).
+                deferredReply = { opts: opts || {}, el: messageEl };
+                setStatus(listeningText());
+                return;
+            }
             const key = speakKey(messageEl);
             if (key && key === lastSpokenKey) return;
             if (key) lastSpokenKey = key;
@@ -546,14 +571,14 @@
                 if (token === speakToken && active) {
                     const raw = String((messageEl.dataset && messageEl.dataset.rawContent) || '');
                     appendTranscriptLine('assistant', raw.slice(0, 600));
-                    setPhase('idle', 'Could not speak — transcript shown');
+                    settlePhase('Could not speak — transcript shown');
                 }
                 host.toast(String((e && e.message) || e), 'error');
                 return;
             }
             if (!speech) {
                 replyPending = false;
-                if (active) setPhase('idle');
+                settlePhase();
                 return;
             }
             if (token !== speakToken || (!active && !replyPending)) return;
@@ -571,11 +596,11 @@
                 host.toast('Browser blocked autoplay — tap the mic once, then try again', 'error');
                 return;
             }
-            setPhase('idle', 'Tap the mic to talk');
+            settlePhase('Tap the mic to talk');
         }
 
         function onGenerationStarted() {
-            if (active && phase !== 'speaking') setPhase('processing', 'Thinking…');
+            if (active && (phase === 'idle' || phase === 'processing')) setPhase('processing', 'Thinking…');
         }
 
         /** Live agent status line (same text as the typing indicator). */
@@ -691,6 +716,7 @@
             if (exitBtn) exitBtn.hidden = false;
             lastSpokenKey = '';
             replyPending = false;
+            deferredReply = null;
             endNarration();
             narratorOn = false;
             flagsReady = host.experimentalFlags().then((on) => {
@@ -728,6 +754,7 @@
             speaking = false;
             host.stopSpeech();
             speakToken += 1;
+            deferredReply = null;
             if (!wasRunning) {
                 replyPending = false;
                 endNarration();
@@ -761,14 +788,13 @@
         function onMicPointerDown(e) {
             if (!active) return;
             if (e && e.pointerType === 'mouse' && typeof e.button === 'number' && e.button !== 0) return;
-            if (phase === 'processing' || phase === 'speaking') return;
+            if (closing) return;
             holdDown = true;
             holdOwner = false;
             clearHoldTimer();
             holdTimer = setTimeout(() => {
                 holdTimer = 0;
-                if (!holdDown || !active) return;
-                if (phase === 'processing' || phase === 'speaking') return;
+                if (!holdDown || !active || closing) return;
                 if (phase !== 'listening') toggleListening();
                 holdOwner = true;
             }, HOLD_MS);

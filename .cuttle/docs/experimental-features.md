@@ -134,8 +134,9 @@ Turning the flag off hides every gizmo and closes pop-outs; rows are kept.
 ## Voice narrator
 
 Flag `voice_narrator`. Enhances voice mode in place (no App or settings tab).
-After a voice send, Cuttle speaks a one-line acknowledgment that the agent is on
-it, then progress lines paraphrasing the live status lines: the first after
+After a voice send, Cuttle speaks a one-line acknowledgment, in the first person
+as Cuttle (never naming the harness or saying "the agent"), then progress lines
+paraphrasing the live status lines: the first after
 about 6 s, then at most one every 10 s, with a "still working" heartbeat every
 25 s while the agent is quiet (12 lines per turn).
 The sticky agent or Cuttle Router still runs the turn; the narrator never answers
