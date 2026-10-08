@@ -46,6 +46,8 @@
                                 "main.js",
                                 "preload.js",
                                 "connect.html",
+                                "tls-trust.js",
+                                "external-link-policy.js",
                                 "package.json",
                                 "assets/**/*",
                                 "device-worker/**/*"

@@ -26,7 +26,10 @@ _REPO_ROOT = _SRC_DIR.parent
 ELECTRON_DIR = _REPO_ROOT / "electron"
 # package.json is omitted: electron-builder rewrites it inside app.asar.
 # Keep in sync with electron/pack-desktop-update.js HASH_FILES.
-HASH_FILES = ("connect.html", "main.js", "preload.js", "device-worker/cuttle_device_worker.py")
+HASH_FILES = (
+    "connect.html", "main.js", "preload.js", "tls-trust.js", "external-link-policy.js",
+    "device-worker/cuttle_device_worker.py",
+)
 UPDATE_DIR = ELECTRON_DIR / "dist" / "update"
 UPDATE_ASAR = UPDATE_DIR / "app.asar"
 UPDATE_MANIFEST = UPDATE_DIR / "manifest.json"

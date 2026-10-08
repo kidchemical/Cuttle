@@ -53,7 +53,7 @@ MAIN_FUNCS = (
     "endpointCandidates",
     "candidateUrls",
     "desktopApiGet",
-    "desktopDownload",
+    "pinnedUpdateBase",
     "enrollWorkerWithHost",
     "probeUrlList",
     "probeCuttle",
@@ -63,7 +63,8 @@ MAIN_FUNCS = (
     "probeAndResolve",
     "localPortError",
     "queryLocalServerPorts",
-    "isCuttleTrustedHost",
+    "cuttleHttpsUrlPort",
+    "isPinnedCuttleCertificate",
     "isCuttleSelfSignedHttpsUrl",
 )
 
@@ -140,6 +141,14 @@ def _run_node(script: str) -> subprocess.CompletedProcess:
 NODE_PRELUDE = """
 const path = require('path');
 const os = require('os');
+const tlsTrust = require('./electron/tls-trust.js');
+let CLIENT_MODE = true;
+let __pinChecks = [];
+let __pinError = null;
+async function ensureTlsPin(host, port, opts) {
+    __pinChecks.push(host + ':' + port + (opts && opts.allowReplace ? ':replace' : ''));
+    if (__pinError) throw __pinError;
+}
 let FLASK_HOST = '127.0.0.1';
 let FLASK_HTTP_PORT = 8000;
 let FLASK_HTTPS_PORT = 8080;
@@ -292,35 +301,128 @@ console.log('ok');
     assert proc.returncode == 0, (proc.stdout or "") + (proc.stderr or "")
 
 
+def _self_signed_pem(cn: str = "localhost") -> str:
+    from datetime import datetime, timedelta, timezone
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
+    now = datetime.now(timezone.utc)
+    cert = (
+        x509.CertificateBuilder().subject_name(name).issuer_name(name)
+        .public_key(key.public_key()).serial_number(x509.random_serial_number())
+        .not_valid_before(now).not_valid_after(now + timedelta(days=1))
+        .sign(key, hashes.SHA256())
+    )
+    return cert.public_bytes(serialization.Encoding.PEM).decode("ascii")
+
+
 @node_only
-def test_cert_allowcheck_is_exact_endpoint_only():
+def test_cert_allowcheck_loopback_only_and_remote_by_pin():
+    """Self-signed trust is loopback-only; a remote Host needs its key pin."""
+    pinned = _self_signed_pem("host")
+    other = _self_signed_pem("impostor")
     script = (
         NODE_PRELUDE
         + _extract_main_js()
+        + f"""
+const PINNED = {json.dumps(pinned)};
+const OTHER = {json.dumps(other)};
+"""
         + """
 FLASK_HOST = '192.168.1.20';
 FLASK_HTTP_PORT = 8001;
 FLASK_HTTPS_PORT = 8443;
-check('allow-selected-https', isCuttleSelfSignedHttpsUrl('https://192.168.1.20:8443/app_shell.html') === true);
-check('allow-selected-wss', isCuttleSelfSignedHttpsUrl('wss://192.168.1.20:8443/api/terminal/ws') === true);
+resetCfg({});
+check('deny-remote-hostname-trust', isCuttleSelfSignedHttpsUrl('https://192.168.1.20:8443/app_shell.html') === false);
+check('deny-remote-wss-hostname-trust', isCuttleSelfSignedHttpsUrl('wss://192.168.1.20:8443/api/terminal/ws') === false);
 check('allow-loopback-selected-port', isCuttleSelfSignedHttpsUrl('https://127.0.0.1:8443/') === true);
-check('deny-omitted-port-vs-8443', isCuttleSelfSignedHttpsUrl('https://192.168.1.20/app_shell.html') === false);
-check('deny-omitted-port-wss-vs-8443', isCuttleSelfSignedHttpsUrl('wss://192.168.1.20/api/terminal/ws') === false);
-FLASK_HTTPS_PORT = 443;
-check('allow-omitted-port-vs-443', isCuttleSelfSignedHttpsUrl('https://192.168.1.20/app_shell.html') === true);
-check('deny-explicit-vs-443', isCuttleSelfSignedHttpsUrl('https://192.168.1.20:8443/') === false);
-FLASK_HTTPS_PORT = 8443;
-check('deny-default-https-literal', isCuttleSelfSignedHttpsUrl('https://192.168.1.20:8080/') === false);
-check('deny-phone-literal', isCuttleSelfSignedHttpsUrl('https://192.168.1.20:8888/') === false);
-check('deny-http-port-on-https', isCuttleSelfSignedHttpsUrl('https://192.168.1.20:8001/') === false);
-check('deny-untrusted-host', isCuttleSelfSignedHttpsUrl('https://evil.example:8443/') === false);
-check('deny-plain-http', isCuttleSelfSignedHttpsUrl('http://192.168.1.20:8001/') === false);
+check('allow-localhost-selected-port', isCuttleSelfSignedHttpsUrl('wss://localhost:8443/x') === true);
+check('deny-loopback-other-port', isCuttleSelfSignedHttpsUrl('https://127.0.0.1:8888/') === false);
+check('deny-plain-http', isCuttleSelfSignedHttpsUrl('http://127.0.0.1:8443/') === false);
+const cert = { data: PINNED };
+check('deny-unpinned-remote', isPinnedCuttleCertificate('https://192.168.1.20:8443/', cert) === false);
+resetCfg({ tlsPins: { '192.168.1.20:8443': { spki: tlsTrust.spkiSha256(PINNED) } } });
+check('allow-pinned-https', isPinnedCuttleCertificate('https://192.168.1.20:8443/app_shell.html', cert) === true);
+check('allow-pinned-wss', isPinnedCuttleCertificate('wss://192.168.1.20:8443/api/terminal/ws', cert) === true);
+check('deny-other-key', isPinnedCuttleCertificate('https://192.168.1.20:8443/', { data: OTHER }) === false);
+check('deny-other-host', isPinnedCuttleCertificate('https://192.168.1.21:8443/', cert) === false);
+check('deny-other-port', isPinnedCuttleCertificate('https://192.168.1.20:8080/', cert) === false);
+check('deny-omitted-port-vs-8443', isPinnedCuttleCertificate('https://192.168.1.20/', cert) === false);
+check('deny-no-cert', isPinnedCuttleCertificate('https://192.168.1.20:8443/', null) === false);
 if (__failures.length) { console.error(__failures.join('\\n')); process.exit(1); }
 console.log('ok');
 """
     )
     proc = _run_node(script)
     assert proc.returncode == 0, (proc.stdout or "") + (proc.stderr or "")
+
+
+@node_only
+def test_tls_trust_requests_need_pin_for_remote_hosts():
+    pem = _self_signed_pem("host")
+    script = f"""
+const T = require('./electron/tls-trust.js');
+const PEM = {json.dumps(pem)};
+"""
+    script += """
+const fails = [];
+const check = (n, c) => { if (!c) fails.push(n); };
+check('loopback-self-signed', T.requestOptions('127.0.0.1', 8080, {}).rejectUnauthorized === false);
+check('loopback-127-8', T.isLoopbackHost('127.0.0.5') && T.isLoopbackHost('[::1]') && !T.isLoopbackHost('192.168.1.2'));
+let code = '';
+try { T.requestOptions('192.168.1.20', 8443, {}); } catch (e) { code = e.code; }
+check('remote-unpinned-throws', code === 'CUTTLE_TLS_UNPINNED');
+const spki = T.spkiSha256(PEM);
+const opts = T.requestOptions('192.168.1.20', 8443, { '192.168.1.20:8443': { spki } });
+check('remote-pinned-agent', opts.agent instanceof T.PinnedAgent && opts.rejectUnauthorized === undefined);
+check('pin-key-normalized', T.pinKey('[FE80::1]', '8443') === 'fe80::1:8443');
+check('fingerprint-format', /^([0-9A-F]{2}:){31}[0-9A-F]{2}$/.test(T.formatFingerprint(spki)));
+if (fails.length) { console.error(fails.join('\\n')); process.exit(1); }
+console.log('ok');
+"""
+    proc = _run_node(script)
+    assert proc.returncode == 0, (proc.stdout or "") + (proc.stderr or "")
+
+
+def test_host_fingerprint_matches_client_pin(monkeypatch, tmp_path):
+    """api.tls_cert pins the same SPKI hash the Client computes, and keeps the
+    key when the certificate is re-issued for a new LAN IP."""
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path))
+    sys.path.insert(0, str(SRC_DIR))
+    from api import tls_cert
+
+    cert_path, _key = tls_cert.ensure_certificate(lan_ip="192.168.1.20")
+    first = tls_cert.current_fingerprint()
+    tls_cert.ensure_certificate(lan_ip="192.168.1.30")
+    second = tls_cert.current_fingerprint()
+    assert first["spki_sha256"] == second["spki_sha256"]
+    pem = Path(cert_path).read_text()
+    from cryptography import x509
+    from cryptography.hazmat.primitives.serialization import Encoding
+
+    cert = x509.load_pem_x509_certificate(pem.encode())
+    san = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+    assert "192.168.1.30" in {str(ip) for ip in san.get_values_for_type(x509.IPAddress)}
+    if shutil.which("node"):
+        proc = _run_node(
+            "const T=require('./electron/tls-trust.js');"
+            f"process.stdout.write(T.spkiSha256({json.dumps(pem)}));"
+        )
+        assert proc.stdout == first["spki_sha256"], proc.stderr
+    sidecar = _load_sidecar(monkeypatch)
+    assert sidecar.spki_sha256(cert.public_bytes(Encoding.DER)) == first["spki_sha256"]
+
+
+def test_sidecar_refuses_remote_https_without_pin(monkeypatch):
+    mod = _load_sidecar(monkeypatch)
+    monkeypatch.delenv("CUTTLE_COORDINATOR_TLS_SPKI_SHA256", raising=False)
+    with pytest.raises(RuntimeError, match="no pinned certificate key"):
+        mod.http_json("GET", "https://192.168.1.20:8443", "/api/workers/x", token="t", timeout=1)
 
 
 @node_only
@@ -870,8 +972,6 @@ def test_client_daemon_main_keeps_single_https_first(monkeypatch, tmp_path):
 @node_only
 def test_explicit_https_api_enrollment_and_download_never_downgrade():
     script = NODE_PRELUDE + _extract_main_js() + """
-let downloaded = [];
-async function downloadToFile(url) { downloaded.push(url); throw new Error('TLS failed'); }
 (async () => {
 FLASK_HOST = '192.168.1.20'; FLASK_HTTP_PORT = 8001; FLASK_HTTPS_PORT = 8443;
 resetCfg({ endpoint: { kind: 'single', host: FLASK_HOST, scheme: 'https', port: 8443,
@@ -888,9 +988,25 @@ for (const [path, operation] of [
     check('failure-kept', failed);
     check('selected-only-request', __requested.length === 1 && __requested[0] === 'https://192.168.1.20:8443' + path, JSON.stringify(__requested));
 }
-let failed = false;
-try { await desktopDownload('/update.asar', '/unused'); } catch (_) { failed = true; }
-check('download-selected-only', failed && downloaded.length === 1 && downloaded[0] === 'https://192.168.1.20:8443/update.asar', JSON.stringify(downloaded));
+// Updates: only the pinned HTTPS endpoint (identity checked first).
+__pinChecks = [];
+const base = await pinnedUpdateBase();
+check('update-base-https', base === 'https://192.168.1.20:8443', base);
+check('update-pin-checked', __pinChecks.join(',') === '192.168.1.20:8443', __pinChecks.join(','));
+resetCfg({ endpoint: { kind: 'single', host: FLASK_HOST, scheme: 'http', port: 8001 } });
+let refused = false;
+try { await pinnedUpdateBase(); } catch (_) { refused = true; }
+check('update-refuses-http-only', refused);
+resetCfg({ endpoint: { kind: 'single', host: FLASK_HOST, scheme: 'https', port: 8443 } });
+__pinError = Object.assign(new Error('declined'), { code: 'CUTTLE_TLS_DECLINED' });
+refused = false;
+try { await pinnedUpdateBase(); } catch (_) { refused = true; }
+check('update-refuses-untrusted', refused);
+__pinError = null;
+FLASK_HOST = '127.0.0.1';
+refused = false;
+try { await pinnedUpdateBase(); } catch (_) { refused = true; }
+check('update-refuses-local-host', refused);
 if (__failures.length) { console.error(__failures.join('\\n')); process.exit(1); }
 })();
 """

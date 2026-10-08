@@ -8,8 +8,11 @@ const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 
 const electronDir = __dirname;
-const HASH_FILES = ['connect.html', 'main.js', 'preload.js', 'device-worker/cuttle_device_worker.py'];
-const PACK_FILES = ['connect.html', 'main.js', 'package.json', 'preload.js'];
+const HASH_FILES = [
+    'connect.html', 'main.js', 'preload.js', 'tls-trust.js', 'external-link-policy.js',
+    'device-worker/cuttle_device_worker.py',
+];
+const PACK_FILES = ['connect.html', 'main.js', 'package.json', 'preload.js', 'tls-trust.js', 'external-link-policy.js'];
 
 function sourceHash() {
     const h = crypto.createHash('sha256');

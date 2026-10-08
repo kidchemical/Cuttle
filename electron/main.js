@@ -7,6 +7,7 @@ const net = require('net');
 const http = require('http'); // Keep http for non-Cuttle requests if any, though likely will convert all to https
 const https = require('https'); // Import https module
 const crypto = require('crypto');
+const tlsTrust = require('./tls-trust.js');
 
 // Chromium: allow invalid certs for localhost only (covers WSS; certificate-error
 // alone is unreliable for WebSockets on some Electron builds).
@@ -32,7 +33,11 @@ const PROJECT_ROOT = path.join(__dirname, '..');
 const SRC_ROOT = path.join(PROJECT_ROOT, 'src');
 // package.json is omitted: electron-builder rewrites it inside app.asar, which
 // made the host always look "stale" even after a fresh build.
-const DESKTOP_HASH_FILES = ['connect.html', 'main.js', 'preload.js'];
+// Keep in sync with pack-desktop-update.js HASH_FILES and desktop_electron.py.
+const DESKTOP_HASH_FILES = [
+    'connect.html', 'main.js', 'preload.js', 'tls-trust.js', 'external-link-policy.js',
+    'device-worker/cuttle_device_worker.py',
+];
 const DEFAULT_HTTP_PORT = 8000;
 const DEFAULT_HTTPS_PORT = 8080;
 
@@ -87,9 +92,12 @@ function applyDesktopTarget({ host, httpPort, httpsPort, clientMode }) {
 
 /** Probe and preserve the explicitly selected endpoint. */
 async function probeAndResolve(parsed) {
+    // Explicit connects only: a changed certificate key may be re-trusted
+    // here, after the user confirms it (never silently, never on restore).
     const probe = await probeCuttle(parsed.host, parsed.httpPort, parsed.httpsPort, {
         prefer: parsed.preferredScheme || undefined,
         single: parsed.single && !!parsed.preferredScheme,
+        allowReplace: true,
     });
     if (!probe.ok) return { probe };
     const selPort = probe.scheme === 'https' ? parsed.httpsPort : parsed.httpPort;
@@ -254,6 +262,17 @@ function parseHostInput(raw) {
     return { host, httpPort, httpsPort, preferredScheme, explicitPort, schemeExplicit, single };
 }
 
+/**
+ * TLS options for one request to a Cuttle host (owner: tls-trust.js).
+ * Loopback keeps the local self-signed exception; any other HTTPS host must
+ * match its pinned key or the request fails (CUTTLE_TLS_UNPINNED / mismatch).
+ */
+function tlsRequestOptions(parsed) {
+    if (parsed.protocol !== 'https:') return {};
+    const port = Number(parsed.port || 443);
+    return tlsTrust.requestOptions(parsed.hostname, port, loadDesktopConfig().tlsPins);
+}
+
 function jsonRequest(url, { timeoutMs = 4000, method = 'GET', body = null, headers = null } = {}) {
     return new Promise((resolve, reject) => {
         let parsed;
@@ -264,6 +283,13 @@ function jsonRequest(url, { timeoutMs = 4000, method = 'GET', body = null, heade
             return;
         }
         const lib = parsed.protocol === 'https:' ? https : http;
+        let tlsOpts;
+        try {
+            tlsOpts = tlsRequestOptions(parsed);
+        } catch (err) {
+            reject(err);
+            return;
+        }
         const payload = body == null ? null : (typeof body === 'string' ? body : JSON.stringify(body));
         const reqHeaders = Object.assign(
             {},
@@ -277,7 +303,7 @@ function jsonRequest(url, { timeoutMs = 4000, method = 'GET', body = null, heade
                 path: `${parsed.pathname}${parsed.search}`,
                 method: method || 'GET',
                 headers: reqHeaders,
-                rejectUnauthorized: false,
+                ...tlsOpts,
                 timeout: timeoutMs,
             },
             (res) => {
@@ -375,10 +401,84 @@ function workerCoordinatorEnv() {
     };
 }
 
-async function probeUrlList(list) {
+function saveTlsPin(host, port, peer, basis) {
+    const cfg = loadDesktopConfig();
+    const pins = cfg.tlsPins && typeof cfg.tlsPins === 'object' ? cfg.tlsPins : {};
+    saveDesktopConfig({
+        tlsPins: {
+            ...pins,
+            [tlsTrust.pinKey(host, port)]: {
+                spki: peer.spki,
+                certSha256: peer.certSha256,
+                subject: peer.subject,
+                basis,
+                pinnedAt: new Date().toISOString(),
+            },
+        },
+    });
+}
+
+async function confirmHostCertificate(host, port, peer, previousSpki) {
+    const changed = !!previousSpki;
+    const detail = [
+        'Certificate key fingerprint (SHA-256):',
+        tlsTrust.formatFingerprint(peer.spki),
+        changed ? `\nPreviously trusted key:\n${tlsTrust.formatFingerprint(previousSpki)}` : '',
+        '\nOn the host, `python -m api.tls_cert fingerprint` prints its fingerprint.',
+        'Trust this host only if the two match.',
+    ].filter(Boolean).join('\n');
+    const opts = {
+        type: changed ? 'warning' : 'question',
+        title: changed ? 'Host certificate changed' : 'Trust this Cuttle host?',
+        message: changed
+            ? `The certificate key for ${tlsTrust.pinKey(host, port)} has changed.`
+            : `First HTTPS connection to ${tlsTrust.pinKey(host, port)}.`,
+        detail,
+        buttons: ['Cancel', changed ? 'Trust the new key' : 'Trust this host'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+    };
+    const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+    const { response } = parent
+        ? await dialog.showMessageBox(parent, opts)
+        : await dialog.showMessageBox(opts);
+    return response === 1;
+}
+
+/**
+ * Trust-on-first-use for a remote HTTPS endpoint; verification itself lives
+ * in tls-trust.js. Loopback needs no pin and a matching pin passes silently.
+ * A first certificate the OS already trusts for this host name is pinned
+ * without asking (and may roll forward the same way). Any other first
+ * certificate, and every other key change, needs the user's confirmation;
+ * a change is only offered on an explicit connect (allowReplace).
+ */
+async function ensureTlsPin(host, port, { allowReplace = false } = {}) {
+    if (tlsTrust.isLoopbackHost(host)) return;
+    const cfg = loadDesktopConfig();
+    const entry = (cfg.tlsPins || {})[tlsTrust.pinKey(host, port)] || null;
+    const existing = tlsTrust.pinFor(cfg.tlsPins, host, port);
+    const peer = await tlsTrust.fetchPeerCertificate(host, port, { timeoutMs: 4000 });
+    if (existing && existing === peer.spki) return;
+    if (peer.webpkiAuthorized && (!existing || (entry && entry.basis === 'webpki'))) {
+        saveTlsPin(host, port, peer, 'webpki');
+        return;
+    }
+    if (existing && !allowReplace) throw tlsTrust.pinMismatchError(host, port, existing, peer.spki);
+    if (!(await confirmHostCertificate(host, port, peer, existing))) {
+        const err = new Error(`The certificate for ${tlsTrust.pinKey(host, port)} was not trusted.`);
+        err.code = 'CUTTLE_TLS_DECLINED';
+        throw err;
+    }
+    saveTlsPin(host, port, peer, 'user');
+}
+
+async function probeUrlList(list, opts = {}) {
     let lastError = 'No Cuttle server responded at that address.';
     for (const c of list) {
         try {
+            if (c.scheme === 'https') await ensureTlsPin(c.host, c.port, { allowReplace: !!opts.allowReplace });
             const r = await jsonRequest(`${endpointUrl(c)}/api/health`);
             if (r.status >= 200 && r.status < 500 && looksLikeCuttle(r.json)) {
                 return { ok: true, host: c.host, scheme: c.scheme, port: c.port, uiUrl: `${endpointUrl(c)}/app_shell.html` };
@@ -404,7 +504,7 @@ async function probeCuttle(host, httpPort, httpsPort, opts = {}) {
     const list = order.map((scheme) => ({
         scheme, host, port: scheme === 'https' ? httpsPort : httpPort,
     }));
-    const r = await probeUrlList(list);
+    const r = await probeUrlList(list, { allowReplace: !!opts.allowReplace });
     if (!r.ok) return r;
     return { ok: true, host, httpPort, httpsPort, scheme: r.scheme, uiUrl: r.uiUrl };
 }
@@ -958,6 +1058,10 @@ async function startWorkerSidecar() {
     // tells the sidecar to suppress legacy default-pair inference.
     const coord = workerCoordinatorEnv();
     const primary = coord.primary;
+    const httpsCoord = endpointCandidates().find((c) => c.scheme === 'https');
+    const coordinatorPin = httpsCoord && !tlsTrust.isLoopbackHost(httpsCoord.host)
+        ? tlsTrust.pinFor(loadDesktopConfig().tlsPins, httpsCoord.host, httpsCoord.port)
+        : '';
     const coordinatorHttp = coord.http;
     const logPath = path.join(app.getPath('userData'), 'device-worker.log');
     let desktopVersion = '';
@@ -972,6 +1076,8 @@ async function startWorkerSidecar() {
         CUTTLE_DEVICE_WORKERS_COORDINATOR_URL: primary,
         CUTTLE_DEVICE_WORKERS_COORDINATOR_URL_HTTP: coordinatorHttp,
         CUTTLE_ENDPOINT_SINGLE: isSingleEndpointPolicy() ? '1' : '0',
+        // Remote HTTPS coordinator key pin (sidecar refuses remote HTTPS without it).
+        CUTTLE_COORDINATOR_TLS_SPKI_SHA256: coordinatorPin,
         CUTTLE_DEVICE_WORKERS_TOKEN: String(workerToken),
         CUTTLE_DEVICE_WORKER_ID: String(workerId || os.hostname()),
         CUTTLE_DEVICE_WORKER_LOG: logPath,
@@ -1143,20 +1249,24 @@ function downloadToFile(url, dest) {
             return;
         }
         const lib = parsed.protocol === 'https:' ? https : http;
+        let tlsOpts;
+        try {
+            tlsOpts = tlsRequestOptions(parsed);
+        } catch (err) {
+            reject(err);
+            return;
+        }
         const req = lib.get(
             {
                 hostname: parsed.hostname,
                 port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
                 path: `${parsed.pathname}${parsed.search}`,
-                rejectUnauthorized: false,
+                ...tlsOpts,
                 timeout: 120000,
             },
             (res) => {
-                if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-                    res.resume();
-                    downloadToFile(res.headers.location, dest).then(resolve, reject);
-                    return;
-                }
+                // Never follow redirects: a hop could leave the pinned endpoint
+                // or downgrade to HTTP.
                 if (res.statusCode !== 200) {
                     res.resume();
                     reject(new Error(`Download failed (${res.statusCode})`));
@@ -1184,21 +1294,6 @@ async function desktopApiGet(pathname, timeoutMs = 6000) {
         }
     }
     throw lastErr || new Error('Desktop API unreachable.');
-}
-
-/** Download a desktop path over the endpoint-owner candidates, in order. */
-async function desktopDownload(pathname, dest) {
-    const urls = candidateUrls(pathname);
-    let lastErr = null;
-    for (const url of urls) {
-        try {
-            await downloadToFile(url, dest);
-            return;
-        } catch (err) {
-            lastErr = err;
-        }
-    }
-    throw lastErr || new Error('Failed to download desktop update.');
 }
 
 async function checkDesktopUpdate() {
@@ -1239,6 +1334,26 @@ function fileSha256(file) {
     });
 }
 
+/**
+ * Base URL for authenticated desktop updates: the remote Host's HTTPS
+ * endpoint with a pinned key (asks to trust it first if needed). Throws when
+ * no HTTPS endpoint is known — updates fail closed rather than use HTTP.
+ */
+async function pinnedUpdateBase() {
+    if (!CLIENT_MODE || tlsTrust.isLoopbackHost(FLASK_HOST)) {
+        throw new Error('Desktop updates come from a remote Host; this window is the Host.');
+    }
+    const httpsCand = endpointCandidates().find((c) => c.scheme === 'https');
+    if (!httpsCand) {
+        throw new Error(
+            'Desktop updates need an HTTPS connection to the host so its identity can be verified. '
+            + 'Reconnect with https://<host>:<port>.'
+        );
+    }
+    await ensureTlsPin(httpsCand.host, httpsCand.port);
+    return endpointUrl(httpsCand);
+}
+
 async function applyDesktopUpdate() {
     if (!app.isPackaged) {
         return { ok: false, error: 'Unpackaged dev builds already run the source shell.' };
@@ -1251,17 +1366,29 @@ async function applyDesktopUpdate() {
     if (!fs.existsSync(asarPath)) {
         return { ok: false, error: 'This build has no app.asar to replace.' };
     }
+    // Authenticity = the pinned Host identity. The manifest (with its
+    // checksum) and the artifact come only from the remote Host's pinned
+    // HTTPS endpoint — never plain HTTP, never an unpinned key. A SHA-256
+    // served by an unauthenticated peer would prove integrity only.
+    let base;
+    try {
+        base = await pinnedUpdateBase();
+    } catch (err) {
+        return { ok: false, error: (err && err.message) || 'Could not verify the host certificate.' };
+    }
     let expected = '';
     try {
-        const manifest = (await desktopApiGet('/api/desktop/electron', 6000)).json || {};
+        const manifest = (await jsonRequest(`${base}/api/desktop/electron`, { timeoutMs: 6000 })).json || {};
         expected = String(manifest.artifactSha256 || '').toLowerCase();
-    } catch (_) {}
+    } catch (err) {
+        return { ok: false, error: (err && err.message) || 'Could not read the update manifest.' };
+    }
     if (!/^[0-9a-f]{64}$/.test(expected)) {
         return { ok: false, error: 'Host did not publish an update checksum; update the host first.' };
     }
     const tmp = path.join(process.resourcesPath, 'app.asar.new');
     try {
-        await desktopDownload('/api/desktop/electron/app.asar', tmp);
+        await downloadToFile(`${base}/api/desktop/electron/app.asar`, tmp);
         const actual = await fileSha256(tmp);
         if (actual !== expected) {
             throw new Error('Downloaded desktop update failed checksum verification.');
@@ -1956,29 +2083,35 @@ ipcMain.handle('gizmo-popouts-sync', (event, list) => {
     return { ok: true, open: Array.from(wanted.keys()) };
 });
 
-function isCuttleTrustedHost(hostname) {
-    const h = (hostname || '').toLowerCase();
-    const target = (FLASK_HOST || '').toLowerCase();
-    return (
-        h === '127.0.0.1'
-        || h === 'localhost'
-        || h === '[::1]'
-        || h === '::1'
-        || (target && h === target)
-    );
+/** The selected endpoint's effective HTTPS port for an https:/wss: URL, else 0. */
+function cuttleHttpsUrlPort(u) {
+    if (u.protocol !== 'https:' && u.protocol !== 'wss:') return 0;
+    // An omitted port is the protocol default (443), compared always.
+    const port = u.port ? Number(u.port) : 443;
+    return Number.isSafeInteger(port) && port === FLASK_HTTPS_PORT ? port : 0;
+}
+
+/** Remote Host: trusted only when the certificate key matches its pin. */
+function isPinnedCuttleCertificate(url, certificate) {
+    try {
+        const u = new URL(url);
+        const port = cuttleHttpsUrlPort(u);
+        if (!port) return false;
+        if (tlsTrust.normalizeHost(u.hostname) !== tlsTrust.normalizeHost(FLASK_HOST)) return false;
+        return tlsTrust.certificateMatchesPin(loadDesktopConfig().tlsPins, u.hostname, port, certificate);
+    } catch (_) {
+        return false;
+    }
 }
 
 function isCuttleSelfSignedHttpsUrl(url) {
     try {
         const u = new URL(url);
         // HTTPS page loads and WSS (web terminal PTY) both need the same
-        // self-signed cert exception. Loopback plus the selected endpoint
-        // host, on the effective HTTPS port only — no literal allowlist.
-        // An omitted port is the protocol default (443), compared always.
-        if (u.protocol !== 'https:' && u.protocol !== 'wss:') return false;
-        const port = u.port ? Number(u.port) : 443;
-        if (!Number.isSafeInteger(port) || port !== FLASK_HTTPS_PORT) return false;
-        return isCuttleTrustedHost(u.hostname);
+        // self-signed cert exception — for the local Host (loopback) only,
+        // on the effective HTTPS port. Remote hosts go through their pin.
+        if (!cuttleHttpsUrlPort(u)) return false;
+        return tlsTrust.isLoopbackHost(u.hostname);
     } catch (_) {
         return false;
     }
@@ -1990,8 +2123,9 @@ function isCuttleSelfSignedHttpsUrl(url) {
 // allow-insecure-localhost (top of file) + certificate-error below are enough.
 
 app.on('certificate-error', (event, webContents, url, error, certificate, callback) => {
-    // Trust Cuttle's self-signed cert for loopback (127.0.0.1, localhost, ::1) on our port
-    if (isCuttleSelfSignedHttpsUrl(url)) {
+    // Local Host: Cuttle's self-signed cert on loopback. Remote Host: only the
+    // pinned key (trust-on-first-use at connect). Everything else is refused.
+    if (isCuttleSelfSignedHttpsUrl(url) || isPinnedCuttleCertificate(url, certificate)) {
         event.preventDefault();
         callback(true);
     } else {
