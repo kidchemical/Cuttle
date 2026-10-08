@@ -39,7 +39,7 @@ batch-watch writes invoke it; `AuthDatabase.add_message_once` owns atomic chat
 delivery receipts. Runbook: [render-result-attachments.md](../../.cuttle/docs/render-result-attachments.md).
 
 `src/api/web_chat_api.py` owns the `Flask app`, HTML routes, chat-turn HTTP,
-process-control 410s, TLS helpers, and **registers**. Only the `try/except`
+TLS helpers, and **registers**. Only the `try/except`
 rows below are nonfatal (failure logged, boot continues); `auth_bp` and
 `usage_live_bp` register unconditionally (a failure there is fatal):
 
