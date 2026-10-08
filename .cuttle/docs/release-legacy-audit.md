@@ -9,7 +9,8 @@ still have owners; removing an obsolete interface must not discard that data.
 - Seed-priority rewrites, unused LAN port snapshots, supervised card builders,
   unused helper aliases and shared worker-token authentication (earlier audit commits).
 - Automatic renaming of the old default project and implicit machine-alias
-  substitution in project registry reads. The saved locations now determine resolution.
+  substitution in project registry reads. Installed single-path rows are
+  migrated once to an explicit location list; saved locations determine resolution.
 - Flat session model/effort response readers. The current messages endpoint
   already supplies `agent_pins`; a blank pin stays blank.
 - Tiered use-case routing (`preferred`/`escalation`/`fallbacks`) and the duplicate
@@ -30,6 +31,7 @@ still have owners; removing an obsolete interface must not discard that data.
 | --- | --- |
 | `core.runtime_data`, `core.runtime_paths`, settings storage and database schema upgrades | Move existing mutable files out of an old checkout and preserve installed databases, secrets and settings. These are transactional installed-data migrations, not an alternate execution path. |
 | Brain `key_store` / `handoff` | Import installed JSON stores once, then read SQLite. Existing handoff rows describe already-delivered context; discarding them would replay or omit context. |
+| Project registry location migration | The installed Cuttle project was still a single-path row using a personal alias. Persist the resolved path and original path once as ordered locations. Subsequent reads and restarts use that list; later alias changes cannot redirect it. |
 | Chat messages, attachments, usage and badge readers | Saved transcripts contain older metadata and inline attachment notes. Readers preserve history; new turns write the current shape. |
 | Composer selection and project history association | Existing sessions may lack the newer preference/project-ID columns. History supplies a read-only initial preference and project association until an explicit current value exists. |
 | Query events, edit journal and storage services | Old query artifacts remain user-owned inspectable records. New events use `agent_events`; the old journal importer is already removed. |

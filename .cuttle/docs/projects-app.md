@@ -14,9 +14,10 @@ Windows drive/UNC paths are preserved on Linux and marked Different OS.
 Linux network paths must already be mounted; Cuttle does not mount shares.
 A leading `~/` is expanded using the host's home directory.
 
-The UI keeps registered paths separate from the resolved path. Resolution uses
-only the saved list in its exact order (or the registered path for a record
-without a list). It does not silently substitute machine path aliases.
+The UI keeps registered paths separate from the resolved path. Installed
+single-path records migrate once to a saved list, using an existing personal
+alias if needed. Resolution then uses only that list in its exact order.
+Subsequent alias changes do not redirect a registered project.
 Missing paths can be saved for a future host or mount. If every location is
 unavailable, turns bound to that project are rejected before execution. Resolution
 is pinned for the current request; edits apply to subsequent turns. Project IDs

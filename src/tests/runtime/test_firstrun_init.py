@@ -44,6 +44,30 @@ def test_existing_project_names_are_not_rewritten(tmp_path):
     assert [p['name'] for p in pm.get_projects()] == ['Cuttle Development']
 
 
+def test_installed_locations_migrate_once_without_repeated_alias_resolution(tmp_path, monkeypatch):
+    pm = _make_pm(tmp_path)
+    mapped = tmp_path / 'mapped'
+    mapped.mkdir()
+    original = str(tmp_path / 'missing')
+    pid = pm.get_projects()[0]['id']
+    with pm.get_db_connection() as conn:
+        conn.execute('UPDATE projects SET path = ?, config = ? WHERE id = ?',
+                     (original, '{"custom":"kept"}', pid))
+        conn.commit()
+    calls = []
+    monkeypatch.setattr('core.runtime_paths.rewrite_windows_lab_path',
+                        lambda path: calls.append(path) or str(mapped))
+    pm.ensure_default_project()
+    record = pm.get_project(pid)
+    assert record['paths'] == [str(mapped), original]
+    assert record['available'] and record['resolved_path'] == str(mapped)
+    assert record['config']['custom'] == 'kept'
+    assert record['stored_path'] == original
+    pm.ensure_default_project()
+    assert calls == [original]
+    assert pm.get_project(pid)['paths'] == [str(mapped), original]
+
+
 def _oauth_client(monkeypatch):
     from api.auth_api import auth_bp
     from flask import Flask

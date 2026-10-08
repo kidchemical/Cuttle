@@ -129,6 +129,7 @@ class ProjectManager:
         and would register the wrong directory on fresh installs.
         """
         try:
+            self._migrate_registered_locations()
             # Check if we already have any projects
             projects = self.get_projects()
             if projects:
@@ -155,6 +156,33 @@ class ProjectManager:
 
         except Exception as e:
             print(f"Warning: Could not create default project: {e}")
+
+    def _migrate_registered_locations(self):
+        """Persist installed single-path records as explicit ordered locations.
+
+        Personal aliases may be needed for an existing registry copied between
+        machines. Resolve them once; normal reads use only the saved list.
+        """
+        from core.runtime_paths import rewrite_windows_lab_path
+
+        with self.get_db_connection() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            rows = conn.execute('SELECT id, path, config FROM projects').fetchall()
+            for pid, stored, raw_config in rows:
+                config = json.loads(raw_config or '{}')
+                if 'paths' in config:
+                    continue
+                paths = [stored]
+                mapped = rewrite_windows_lab_path(stored)
+                if mapped and mapped != stored:
+                    paths.insert(0, mapped)
+                config['paths'] = validate_paths(paths)
+                conn.execute('UPDATE projects SET config = ? WHERE id = ?',
+                             (json.dumps(config), pid))
+                conn.execute('INSERT INTO project_history(project_id, action, details) VALUES (?, ?, ?)',
+                             (pid, 'updated', json.dumps({'paths': config['paths'],
+                                                         'migration': 'ordered_locations'})))
+            conn.commit()
 
     def register_project(self, name, path, description='', tags=None, repo_url=''):
         values = _validated_project_changes({'name': name, 'paths': [path],
