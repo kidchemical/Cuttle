@@ -692,7 +692,7 @@ def update_storage_settings(ident):
 @settings_bp.route('/settings/storage/<ident>/<operation>', methods=['POST'])
 @owner_required
 def storage_operation(ident,operation):
-    from api.agent_events.service import operate
+    from api.storage.service import operate
     try:
         return jsonify(success=True,result=operate(ident,operation,(request.get_json(silent=True) or {}).get('confirm')))
     except ValueError as exc:

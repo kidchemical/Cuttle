@@ -107,12 +107,15 @@ def test_database_controls(browser,static_server):
     page=browser.new_page(viewport={'width':900,'height':800})
     errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
     sent=[]
-    policy={'retention_days':90,'thinking_full_days':14,'quota_mb':5000,'thinking_mode':'full_then_summary','starred_retention_days':-1}
+    agent_policy={'retention_days':90,'thinking_full_days':14,'quota_mb':5000,'thinking_mode':'full_then_summary','starred_retention_days':-1}
+    stores=[{'id':'agent_events','label':'Agent events','bytes':123456,'events':42,'configurable':True,'reset':True,'reset_policy':'typed_confirm','supports_prune':True,'supports_vacuum':True,'policy':agent_policy},
+            {'id':'query_logs','label':'Legacy query logs','bytes':789,'configurable':True,'reset':True,'reset_policy':'typed_confirm','supports_prune':True,'supports_vacuum':False,'policy':{'retention_days':90}},
+            {'id':'chats','label':'Chats and accounts','bytes':456,'configurable':False,'reset':False,'reset_policy':'never','supports_prune':False,'supports_vacuum':False,'policy':None}]
     def handle(route):
         if route.request.method=='POST':
-            sent.append(route.request.post_data_json)
-            body={'success':True,'policy':sent[-1]}
-        else:body={'stores':[{'id':'agent_events','label':'Agent events','bytes':123456,'events':42,'configurable':True,'reset':True,'policy':policy}]}
+            sent.append((route.request.url,route.request.post_data_json))
+            body={'success':True,'policy':sent[-1][1]}
+        else:body={'stores':stores}
         route.fulfill(content_type='application/json',body=json.dumps(body))
     page.route('**/api/settings/storage**',handle)
     # Isolate the new component with production settings CSS and JS. Other
@@ -122,11 +125,25 @@ def test_database_controls(browser,static_server):
         page.set_content('<link rel="stylesheet" href="'+static_server+'/css/settings_page.css"><div id="storageStores"></div>')
         page.add_script_tag(url=static_server+'/js/settings/settings_storage.js')
         expect(page.get_by_role('heading',name='Agent events')).to_be_visible()
+        expect(page.get_by_role('heading',name='Legacy query logs')).to_be_visible()
+        expect(page.get_by_role('heading',name='Chats and accounts')).to_be_visible()
         page.locator('[name="quota_mb"]').fill('6000')
-        page.get_by_role('button',name='Save policy').click()
-        expect(page.get_by_role('status')).to_contain_text('Policy saved')
-        assert sent[-1]['quota_mb']==6000
-        expect(page.get_by_role('button',name='Reset agent events')).to_be_disabled()
+        page.get_by_role('button',name='Save policy').first.click()
+        expect(page.get_by_role('status').first).to_contain_text('Policy saved')
+        assert sent[-1][0].endswith('/api/settings/storage/agent_events')
+        assert sent[-1][1]=={'retention_days':90,'thinking_full_days':14,'quota_mb':6000,'thinking_mode':'full_then_summary','starred_retention_days':-1}
+        expect(page.get_by_role('button',name='Reset Agent events')).to_be_disabled()
+        logs_section=page.locator('section',has=page.get_by_role('heading',name='Legacy query logs'))
+        logs_section.locator('[name="retention_days"]').fill('30')
+        assert logs_section.locator('[name="quota_mb"]').count()==0
+        logs_section.get_by_role('button',name='Save policy').click()
+        expect(logs_section.get_by_role('status')).to_contain_text('Policy saved')
+        assert sent[-1][1]=={'retention_days':30}
+        expect(logs_section.get_by_role('button',name='Prune now')).to_be_visible()
+        assert logs_section.get_by_role('button',name='Vacuum').count()==0
+        chats_section=page.locator('section',has=page.get_by_role('heading',name='Chats and accounts'))
+        assert chats_section.get_by_text('Size monitoring only').count()==1
+        assert chats_section.get_by_role('button').count()==0
         assert not errors
     finally:page.close()
 
