@@ -278,6 +278,7 @@
         // once. The page must be open to observe the transition — same
         // caveat as completion notifications.
         function watchUnblock(key, data) {
+            if (!data || data.stale || data.error) return;
             const blocked = !!(data && data.blocked);
             const was = state.wasBlocked.get(key);
             state.wasBlocked.set(key, blocked);

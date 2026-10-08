@@ -1177,11 +1177,17 @@ def _claude_plan_windows(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def fetch_claude_plan_limits() -> Dict[str, Any]:
+    from api.claude_usage_cache import snapshot
+
+    oauth = _read_claude_oauth()
+    return snapshot(_claude_credentials_path(), oauth, lambda: _fetch_claude_plan_limits(oauth))
+
+
+def _fetch_claude_plan_limits(oauth) -> Dict[str, Any]:
     """Plan windows from the Claude Code OAuth usage endpoint (same data as ``claude /usage``).
 
     Read-only: never refreshes or rewrites Claude Code credentials.
     """
-    oauth = _read_claude_oauth()
     if not oauth or not oauth.get("accessToken"):
         return {"success": False, "error": (
             "No Claude Code login found (`~/.claude/.credentials.json`). "
@@ -1286,6 +1292,12 @@ def format_claude_usage_markdown(data: Dict[str, Any]) -> str:
     lines = ["**Claude Code — usage**", ""]
     plan = data.get("plan") if isinstance(data.get("plan"), dict) else {}
     if plan.get("success"):
+        if plan.get("stale"):
+            checked = datetime.fromtimestamp(plan["updated_at"], timezone.utc).isoformat()
+            lines.append(f"- Cached usage · last checked {checked} · {plan.get('error') or 'refresh unavailable'}")
+            if any(w.get("reset_at") and w["reset_at"] <= datetime.now(timezone.utc).timestamp()
+                   for w in plan.get("windows") or []):
+                lines.append("- Scheduled reset passed; awaiting verification.")
         plan_type = str(plan.get("plan_type") or "claude").strip() or "claude"
         lines.append(f"- Plan: {plan_type.title()}")
         windows = [w for w in plan.get("windows") or [] if isinstance(w, dict)]

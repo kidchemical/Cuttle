@@ -175,7 +175,8 @@ def normalize_claude(data: Dict[str, Any], now: float) -> Dict[str, Any]:
     if extra.get("is_enabled"):
         extras["credits"] = "Extra usage on" + (" (limit reached)" if extra.get("spend_limit_reached") else "")
     return {"plan": data.get("plan_type") or "", "windows": windows,
-            "blocked": blocked, "extras": extras}
+            "blocked": blocked, "extras": extras, "stale": bool(data.get("stale")),
+            "error": data.get("error"), "updated_at": data.get("updated_at")}
 
 
 def normalize_cursor(data: Dict[str, Any], now: float) -> Dict[str, Any]:
@@ -256,10 +257,10 @@ def snapshot(agent: Any, *, force: bool = False) -> Dict[str, Any]:
         except Exception:
             body = {"error": "Usage refresh failed"}
         result = {"agent": provider.agent, "label": provider.label, **finalize(body, now),
-                  "updated_at": now, "stale": False}
-        if result["error"] and cached and not cached[1].get("error"):
+                  "updated_at": body.get("updated_at") or now, "stale": bool(body.get("stale"))}
+        if provider.agent != "claude" and result["error"] and not result["windows"] and cached and not cached[1].get("error"):
             result = {**cached[1], "error": result["error"], "stale": True}
-        elif result["error"] and cached and cached[1].get("stale"):
+        elif provider.agent != "claude" and result["error"] and not result["windows"] and cached and cached[1].get("stale"):
             result = {**cached[1], "error": result["error"]}
         _cache[provider.agent] = (time.monotonic(), result)
         return dict(result)
