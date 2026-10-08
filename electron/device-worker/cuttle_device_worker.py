@@ -8,7 +8,7 @@ Shipped inside the Electron asar and copied to userData on Client connect.
 Env:
   CUTTLE_DEVICE_WORKERS_COORDINATOR_URL  e.g. https://192.168.1.20:8080
   CUTTLE_DEVICE_WORKERS_COORDINATOR_URL_HTTP  optional http://host:8000 fallback
-  CUTTLE_DEVICE_WORKERS_TOKEN            bearer from auto-enroll
+  CUTTLE_DEVICE_WORKERS_TOKEN            bearer from host-approved pairing (Electron enrolls first)
   CUTTLE_DEVICE_WORKER_ID                stable id (default: hostname)
   CUTTLE_DEVICE_WORKER_LOG               optional log path
 """

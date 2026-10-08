@@ -55,6 +55,7 @@ MAIN_FUNCS = (
     "desktopApiGet",
     "pinnedUpdateBase",
     "enrollWorkerWithHost",
+    "pollPairingApproval",
     "probeUrlList",
     "probeCuttle",
     "workerCoordinatorEnv",
@@ -149,6 +150,8 @@ async function ensureTlsPin(host, port, opts) {
     __pinChecks.push(host + ':' + port + (opts && opts.allowReplace ? ':replace' : ''));
     if (__pinError) throw __pinError;
 }
+const crypto = require('crypto');
+const dialog = { showMessageBox: async () => ({ response: 0 }) };
 let FLASK_HOST = '127.0.0.1';
 let FLASK_HTTP_PORT = 8000;
 let FLASK_HTTPS_PORT = 8080;

@@ -958,8 +958,48 @@ function startDaemon() {
  * Host/local mode already runs a local worker inside cuttle_daemon — do not double-spawn.
  * Default: enabled when Client unless desktop-config workerMode === false.
  *
- * Auth: auto-enroll with the host (same trust as Client UI on LAN). No manual token.
+ * Auth: host-approved pairing with the host (same trust as Client UI on LAN
+ * plus an owner approve step in Jobs -> Devices). No manual token.
  */
+async function pollPairingApproval(base, pending, pairingSecret) {
+    const requestId = String(pending.request_id || '');
+    const code = String(pending.code || '');
+    // Show the code once; the dialog may stay open while we poll.
+    try {
+        dialog.showMessageBox({
+            type: 'info',
+            title: 'Approve this device',
+            message: `Approve this device on the host with code ${code}.`,
+            detail: 'On the host: Jobs → Devices → pending pairing. ' +
+                'This dialog can stay open; enrollment completes automatically once approved.',
+        }).catch(() => {});
+    } catch (_) {}
+    console.log(`Device pairing pending (code ${code}) — polling ${base} for approval.`);
+    const deadline = Date.now() + 10 * 60 * 1000;
+    let lastErr = null;
+    while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 3000));
+        try {
+            const r = await jsonRequest(`${base}/api/workers/enroll/${requestId}/poll`, {
+                method: 'POST',
+                body: { pairing_secret: pairingSecret },
+                timeoutMs: 8000,
+            });
+            if (r.json && r.json.status === 'approved' && r.json.token) {
+                return r.json;
+            }
+            if (r.json && (r.json.status === 'denied' || r.json.status === 'expired')) {
+                throw new Error(`Pairing ${r.json.status} on the host.`);
+            }
+            lastErr = (r.json && (r.json.status || r.json.error)) || `HTTP ${r.status}`;
+        } catch (err) {
+            if (err && /denied|expired/i.test(err.message || '')) throw err;
+            lastErr = (err && err.message) || err;
+        }
+    }
+    throw lastErr || new Error('Pairing approval timed out.');
+}
+
 async function enrollWorkerWithHost() {
     const cfg = loadDesktopConfig();
     const workerId = String(cfg.workerId || os.hostname() || 'cuttle-client').toLowerCase().replace(/\s+/g, '-');
@@ -968,8 +1008,13 @@ async function enrollWorkerWithHost() {
     const bases = endpointCandidates().map(endpointUrl);
     const body = { worker_id: workerId, hostname: os.hostname() };
     const headers = {};
+    let pairingSecret = '';
     if (cfg.workerToken) {
         headers.Authorization = `Bearer ${cfg.workerToken}`;
+    } else {
+        // First pairing: client-random secret; the host shows a code to approve.
+        pairingSecret = crypto.randomBytes(16).toString('hex');
+        body.pairing_secret = pairingSecret;
     }
 
     async function tryEnroll(base) {
@@ -979,7 +1024,13 @@ async function enrollWorkerWithHost() {
             headers,
             timeoutMs: 8000,
         });
-        if (r.status >= 200 && r.status < 300 && r.json && r.json.success && r.json.token) {
+        if (r.status === 202 && r.json && r.json.request_id) {
+            if (!pairingSecret) {
+                throw new Error('Host asked for pairing approval; reconnect without a saved token to pair.');
+            }
+            return await pollPairingApproval(base, r.json, pairingSecret);
+        }
+        if (r.status >= 200 && r.status < 300 && r.json && r.json.success) {
             return r.json;
         }
         const err = (r.json && r.json.error) || `HTTP ${r.status}`;
@@ -1029,7 +1080,8 @@ async function startWorkerSidecar() {
     let workerId = cfg.workerId || '';
     try {
         const enrolled = await enrollWorkerWithHost();
-        workerToken = enrolled.token;
+        // Re-enroll with a saved credential returns no credential (never echoed).
+        if (enrolled.token) workerToken = enrolled.token;
         workerId = enrolled.worker_id || workerId;
         saveDesktopConfig({
             workerToken,

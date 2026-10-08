@@ -194,6 +194,7 @@ def request_via_coordinator(
     job_id: str = "",
     job_kind: str = "execute_shell_ssh",
     timeout_seconds: float = 300.0,
+    auth_token: Optional[str] = None,
 ) -> str:
     """Create approval on coordinator (local import or HTTP) and wait.
 
@@ -232,7 +233,7 @@ def request_via_coordinator(
         from api.device_workers.config import worker_token
 
         headers = {"Accept": "application/json"}
-        token = worker_token()
+        token = (auth_token or "") or worker_token()
         if token:
             headers["Authorization"] = f"Bearer {token}"
 

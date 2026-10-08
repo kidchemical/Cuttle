@@ -155,11 +155,47 @@ def coordinator_bases(cfg: Dict[str, Any], host: str) -> list:
     return [f"https://{_bracket(host)}:{https_port}", f"http://{_bracket(host)}:{http_port}"]
 
 
+def _poll_pairing(base: str, request_id: str, pairing_secret: str, code: str) -> Dict[str, Any]:
+    """Wait up to 10 min for the host owner to approve a pairing request."""
+    print(
+        f"[CLIENT-DAEMON] pairing pending — approve on the host "
+        f"(Jobs -> Devices) with code {code}",
+        flush=True,
+    )
+    deadline = time.time() + 10 * 60
+    last = "pending"
+    while time.time() < deadline:
+        time.sleep(3)
+        try:
+            data = http_json(
+                "POST",
+                base,
+                f"/api/workers/enroll/{request_id}/poll",
+                token="",
+                body={"pairing_secret": pairing_secret},
+                timeout=10,
+            )
+        except Exception as e:
+            last = str(e)
+            continue
+        status = str(data.get("status") or "")
+        if status == "approved" and data.get("token"):
+            return data
+        if status in ("denied", "expired"):
+            raise RuntimeError(f"pairing {status} on the host")
+        last = status or last
+    raise RuntimeError(f"pairing approval timed out (last={last})")
+
+
 def enroll(cfg: Dict[str, Any], bases: list) -> Dict[str, Any]:
     """Enroll against coordinator bases strictly in the given order.
 
     Single selections contain one base. Legacy pairs retain their order
     from :func:`coordinator_bases`.
+
+    First pairing (no saved credential) files a pairing request and polls
+    until the host owner approves; re-enroll with a saved credential returns
+    no credential (never echoed) and keeps the saved one.
     """
     worker_id = str(
         cfg.get("workerId") or socket.gethostname() or "cuttle-client"
@@ -167,6 +203,12 @@ def enroll(cfg: Dict[str, Any], bases: list) -> Dict[str, Any]:
     body = {"worker_id": worker_id, "hostname": socket.gethostname()}
     token = str(cfg.get("workerToken") or "")
     headers_tok = token
+    pairing_secret = ""
+    if not token:
+        import secrets
+
+        pairing_secret = secrets.token_hex(16)
+        body["pairing_secret"] = pairing_secret
     last_err = None
     for base in bases:
         try:
@@ -178,7 +220,17 @@ def enroll(cfg: Dict[str, Any], bases: list) -> Dict[str, Any]:
                 body=body,
                 timeout=10,
             )
-            if data.get("success") and data.get("token"):
+            if data.get("status") == "pending" and data.get("request_id"):
+                if not pairing_secret:
+                    last_err = "host asked for pairing approval; clear workerToken to pair"
+                    continue
+                return _poll_pairing(
+                    base,
+                    str(data["request_id"]),
+                    pairing_secret,
+                    str(data.get("code") or ""),
+                )
+            if data.get("success"):
                 return data
             last_err = data.get("error") or "enroll failed"
         except Exception as e:
@@ -220,7 +272,8 @@ def main() -> int:
 
     try:
         enrolled = enroll(cfg, bases)
-        token = str(enrolled.get("token") or "")
+        # Re-enroll never echoes the saved credential — keep it.
+        token = str(enrolled.get("token") or cfg.get("workerToken") or "")
         worker_id = str(enrolled.get("worker_id") or cfg.get("workerId") or "")
         save_desktop_config(
             {

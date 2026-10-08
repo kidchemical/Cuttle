@@ -257,6 +257,7 @@ def _execute_shell_unsafe(params: Dict[str, Any]) -> Dict[str, Any]:
         target="local",
         command=command,
         job_id=str(params.get("_job_id") or ""),
+        auth_token=str(params.get("_worker_auth_token") or "") or None,
     )
     cwd = str(params.get("cwd") or "").strip()
     if cwd:
@@ -342,6 +343,7 @@ def _execute_shell_ssh(params: Dict[str, Any]) -> Dict[str, Any]:
         target=target,
         command=command,
         job_id=str(params.get("_job_id") or ""),
+        auth_token=str(params.get("_worker_auth_token") or "") or None,
     )
 
     argv = ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", "-p", str(ssh_port)]
@@ -396,6 +398,7 @@ def _ensure_unsafe_shell_hitl(
     target: str = "",
     command: str = "",
     job_id: str = "",
+    auth_token: Optional[str] = None,
 ) -> None:
     """Block until user approves first unsafe shell in this worker process (or session grant)."""
     from api.device_workers import ssh_approval as sa
@@ -428,6 +431,7 @@ def _ensure_unsafe_shell_hitl(
         job_id=job_id,
         job_kind=job_kind,
         timeout_seconds=timeout,
+        auth_token=auth_token,
     )
     if decision == "session":
         sa.grant_session()
