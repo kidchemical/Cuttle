@@ -586,7 +586,10 @@ function preferredAppUrl(pathname = '/app_shell.html') {
 }
 
 // Resolve a Python executable that can be spawned as a subprocess.
-// Priority: project .venv > Cuttle dev .venv (packaged fallback) > python3.13 > python
+// Packaged builds: only the bundled runtime (resources/python, built by
+// bundle-python.js), or the interpreter of the daemon that launched this
+// window. Never system Python or a repo .venv.
+// Source checkout (dev): project .venv > common installs > PATH.
 function _isUsablePythonExe(exePath) {
     if (!exePath || !fs.existsSync(exePath)) return false;
     const lower = String(exePath).toLowerCase();
@@ -595,7 +598,40 @@ function _isUsablePythonExe(exePath) {
     return true;
 }
 
+function bundledPythonExe() {
+    const rel = process.platform === 'win32' ? ['python.exe'] : ['bin', 'python3'];
+    return path.join(process.resourcesPath, 'python', ...rel);
+}
+
+/** Child env for the Python we spawn: packaged builds ignore the user's
+ *  PYTHONHOME/PYTHONPATH/user site and never write bytecode into the
+ *  (possibly read-only) install tree. */
+function pythonChildEnv(projectRoot, extra = {}, { srcPath = true } = {}) {
+    const env = { ...process.env, ...extra };
+    if (srcPath) env.PYTHONPATH = path.join(projectRoot, 'src');
+    if (app.isPackaged) {
+        if (!srcPath) delete env.PYTHONPATH;
+        delete env.PYTHONHOME;
+        env.PYTHONNOUSERSITE = '1';
+        env.PYTHONDONTWRITEBYTECODE = '1';
+    }
+    return env;
+}
+
 function resolvePythonExe(projectRoot) {
+    if (app.isPackaged) {
+        const hostedBy = process.env.CUTTLE_HOSTED_BY_DAEMON === '1'
+            ? String(process.env.CUTTLE_DAEMON_PYTHON || '')
+            : '';
+        for (const cand of [bundledPythonExe(), hostedBy]) {
+            if (cand && _isUsablePythonExe(cand)) {
+                console.log('Using Python:', cand);
+                return cand;
+            }
+        }
+        console.error(`Packaged Cuttle is missing its bundled Python runtime (${bundledPythonExe()}). Reinstall Cuttle.`);
+        return null;
+    }
     const candidates = [];
     const isWin = process.platform === 'win32';
     // 1. Project-local venv (Windows Scripts/ vs POSIX bin/)
@@ -607,23 +643,8 @@ function resolvePythonExe(projectRoot) {
             path.join(projectRoot, '.venv', 'bin', 'python'),
         );
     }
-    // 2. When packaged, walk up from exe dir to find the repo .venv
-    if (app.isPackaged) {
-        const exeDir = path.dirname(app.getPath('exe'));
-        if (isWin) {
-            candidates.push(
-                path.join(exeDir, '..', '..', '..', '..', '.venv', 'Scripts', 'python.exe'),
-                path.join(exeDir, '..', '..', '..', '.venv', 'Scripts', 'python.exe'),
-            );
-        } else {
-            candidates.push(
-                path.join(exeDir, '..', '..', '..', '..', '.venv', 'bin', 'python3'),
-                path.join(exeDir, '..', '..', '..', '.venv', 'bin', 'python3'),
-            );
-        }
-    }
     if (isWin) {
-        // 3. Common Windows installs (never WindowsApps stubs)
+        // 2. Common Windows installs (never WindowsApps stubs)
         const local = process.env.LOCALAPPDATA || '';
         const pf = process.env.ProgramFiles || 'C:\\Program Files';
         for (const ver of ['Python311', 'Python312', 'Python313', 'Python310', 'Python39']) {
@@ -640,7 +661,7 @@ function resolvePythonExe(projectRoot) {
             return norm;
         }
     }
-    // 4. Last resort: launcher / PATH
+    // 3. Last resort: launcher / PATH
     try {
         const { spawnSync } = require('child_process');
         if (isWin) {
@@ -703,7 +724,7 @@ function queryLocalServerPorts(projectRoot) {
     try {
         r = spawnSync(pythonExe, ['-m', 'api.server_ports'], {
             cwd: projectRoot,
-            env: { ...process.env, PYTHONPATH: path.join(projectRoot, 'src') },
+            env: pythonChildEnv(projectRoot),
             encoding: 'utf8',
             timeout: 20000,
         });
@@ -905,14 +926,12 @@ function startDaemon() {
 
     console.log('Starting Cuttle daemon:', scriptPath);
 
-    const env = {
-        ...process.env,
-        PYTHONPATH: path.join(projectRoot, 'src'),
+    const env = pythonChildEnv(projectRoot, {
         // Host/Client already created the window + tray. Do not spawn a second
         // Electron (different userData → second instance lock) or pystray icon.
         CUTTLE_NO_UI: '1',
         CUTTLE_NO_TRAY: '1',
-    };
+    });
 
     // detached + unref: daemon outlives Electron (survives window close)
     // windowsHide: suppress the extra blank python console on Windows.
@@ -1069,7 +1088,8 @@ async function startWorkerSidecar() {
         desktopVersion = String(publicDesktopConfig().packageVersion || '');
     } catch (_) {}
     const env = {
-        ...process.env,
+        // The sidecar is a standalone script: no src/ on its path.
+        ...pythonChildEnv(projectRoot, {}, { srcPath: false }),
         PYTHONUTF8: '1',
         PYTHONIOENCODING: 'utf-8',
         CUTTLE_DEVICE_WORKERS_ENABLED: '1',
