@@ -44,6 +44,16 @@ brief bubble flashes, newer remote activity, idle Stop cleanup, and refresh):
 .venv/bin/python -m pytest src/tests/e2e/test_chat_terminal_activity.py -q
 ```
 
+Cross-device badge correctness is also covered by the CI browser job:
+
+```bash
+CUTTLE_REQUIRE_BROWSER=1 .venv/bin/python -m pytest src/tests/e2e/test_chat_badge_identity.py -q
+```
+
+It exercises stale Claude composer/draft state during a Codex turn, shared
+selection changes/removal, navigation/reload, completion, and router fallback.
+Working badges use turn identity; composer chips describe the next send.
+
 Requires Playwright and Chromium from `src/requirements/requirements-dev.txt`.
 This test serves production assets with an isolated API; it never reaches the
 running Flask or a provider. Set `CUTTLE_API_URL=http://127.0.0.1:9` for a full

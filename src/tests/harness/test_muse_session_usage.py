@@ -222,3 +222,21 @@ def test_adapter_keeps_cli_reported_cost_over_estimate(tmp_path, monkeypatch):
     assert result.usage["cost"] == 0.0019
     assert "cost_estimated" not in result.usage
     assert not called
+
+
+def test_session_log_zero_cache_clears_stale_msp_split(tmp_path, monkeypatch):
+    _muse_data_home(monkeypatch, tmp_path)
+    _write_session_log(tmp_path, {"main": [_completed(50000, 500)], "sub": []})
+    _patch_cli_tool(monkeypatch, {
+        "success": True, "output": "done", "usage": {}, "muse_session_id": SID,
+    }, SID)
+    monkeypatch.setattr(store, "read_muse_msp_context", lambda _sid: {
+        "prompt_tokens": 1000, "context_tokens": 1000, "cached_tokens": 900,
+    })
+    monkeypatch.setattr("api.model_pricing.estimate_cost_usd", lambda *a, **k: 0.01)
+    from api.agent_harness.agents.muse.adapter import build_adapter
+    result = asyncio.run(build_adapter().execute("task", cwd=str(tmp_path),
+        resume=None, model="muse-spark-1.3-contributor", chat_session_id=None))
+    assert result.usage["prompt_tokens"] == 50000
+    assert result.usage["cache_read_tokens"] == 0
+    assert result.usage["cache_inclusive"] is True

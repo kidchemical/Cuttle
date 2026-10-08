@@ -125,6 +125,10 @@ def test_cursor_stamped_peak_from_cache_sum_distrusted():
 
 
 def test_get_agent_context_status_from_messages(monkeypatch):
+    monkeypatch.setattr(
+        "scripts.utilities.muse_cli_session_store.read_muse_msp_context",
+        lambda _sid: None,
+    )
     monkeypatch.setattr(ac, "lookup_catalog_context_limit", lambda _m: 200_000)
     monkeypatch.setattr(ac, "_load_resume_id", lambda *_a, **_k: "resume-uuid")
     monkeypatch.setattr(ac, "_resolve_model_for_agent", lambda *_a, **_k: "auto")
@@ -135,7 +139,7 @@ def test_get_agent_context_status_from_messages(monkeypatch):
             "content": "ok",
             "metadata": {
                 "slash_command": {"chips": [{"prefix": "/muse "}]},
-                "usage": {"prompt_tokens": 100_000, "completion_tokens": 10},
+                "usage": {"context_tokens": 100_000, "prompt_tokens": 300_000, "completion_tokens": 10},
             },
         }
     ]
@@ -227,3 +231,17 @@ def pricing_cache_with_context(tmp_path, monkeypatch):
     )
     mp.ensure_models_dev_pricing(refresh_if_stale=False)
     return cache
+
+
+@pytest.mark.parametrize("agent_id", ["cursor", "codex", "claude", "hermes", "antigravity", "muse"])
+@pytest.mark.parametrize("stamp", ["context_tokens", "peak_context_tokens", "contextTokens"])
+@pytest.mark.parametrize("cache_key", ["cacheReadTokens", "cache_read_tokens", "cached_input_tokens"])
+def test_explicit_context_snapshot_survives_large_cache_bill(agent_id, stamp, cache_key):
+    usage = {"prompt_tokens": 209952, cache_key: 4127872, stamp: 50000}
+    assert ac._usage_context_fill_tokens(usage, agent_id=agent_id) == (50000, "peak")
+
+
+@pytest.mark.parametrize("stamp", ["context_tokens", "peak_context_tokens", "contextTokens"])
+def test_cursor_aggregate_sum_stamp_aliases_rejected(stamp):
+    usage = {"prompt_tokens": 109965, "cached_input_tokens": 921344, stamp: 1031309}
+    assert ac._usage_context_fill_tokens(usage, agent_id="cursor") == (0, "aggregated")

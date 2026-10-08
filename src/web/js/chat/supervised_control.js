@@ -161,11 +161,6 @@
         };
     }
 
-    // Back-compat alias used by older tests.
-    function activityCardStateFromTask(task) {
-        return activityStateFromTask(task);
-    }
-
     function formatElapsed(createdAt, updatedAt) {
         try {
             const a = Date.parse(createdAt || '');
@@ -297,22 +292,6 @@
         );
     }
 
-    /**
-     * Legacy card builder — kept for tests; default UI no longer mounts a
-     * separate worker participant card.
-     */
-    function buildActivityCardHtml(state) {
-        if (!state) return '';
-        // Quiet disclosure only (not a Cursor participant card).
-        return (
-            '<div class="supervised-activity-card is-inline" '
-            + 'data-supervised-task-id="' + escapeHtml(state.task_id) + '" '
-            + 'role="group" aria-label="Task activity">'
-            + buildActivityDisclosureHtml(state)
-            + '</div>'
-        );
-    }
-
     function activityStatusText(state) {
         if (!state) return 'Working…';
         if (state.status_text) return String(state.status_text);
@@ -441,10 +420,8 @@
         shouldAppendControlAssistantBubble,
         newControlRequestId,
         activityStateFromTask,
-        activityCardStateFromTask,
         formatElapsed,
         buildActivityDisclosureHtml,
-        buildActivityCardHtml,
         buildWorkingBubbleHtml,
         buildRestartFormHtml,
         shouldShowJumpNotification,

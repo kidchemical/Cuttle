@@ -78,7 +78,7 @@ ALLOW_EXACT = frozenset({
     ("GET", "/api/settings/starred-project"),
     ("GET", "/api/settings/starred-slash"),
     ("GET", "/api/projects"),
-    ("GET", "/api/widgets"),
+    ("GET", "/api/gizmos/tasks"),
     ("GET", "/api/status"),
     ("GET", "/"),
     ("GET", "/chat_page.html"),

@@ -28,7 +28,7 @@ The router answers two questions, in this order, and keeps them separate:
 | Lane | Meaning | Example |
 |---|---|---|
 | `basic_ask` (chat) | conversation, quick general question | "hello", "what's 2+2?" |
-| `explain` | question about this codebase / chats / logs; read, don't change | "how does the router pick fallbacks?", "look at CH-000989" |
+| `explain` | question about this codebase / chats / logs; read, don't change | "how does the router pick fallbacks?", "summarize yesterday's thread" |
 | `coding` | implement or change code | "add a clear-cache button to settings" |
 | `debugging` | something is broken; find the cause and fix it | "why did this hang for 13s?", "the host keeps crashing" |
 | `architecture` | design, plans, cross-cutting restructure | "re-imagine the router classification" |
@@ -173,9 +173,8 @@ pin → table → brain/learning → defaults).
 
 The first target in the chain runs the task; later entries are tried in order
 when an earlier one cannot run (transport failure walks the remaining chain;
-a task failure stops the turn). The legacy
-`preferred` / `escalation` / `fallbacks` fields are still read and flatten
-into the chain on load.
+a task failure stops the turn). Use-case routing accepts only the ordered
+`targets` list; the obsolete tiered fields are rejected.
 
 A fresh install is seeded with one block per kind of work: *Quick chat*,
 *Ops & chores*, *Writing & docs* (Claude first), *Explain the codebase*,

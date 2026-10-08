@@ -21,7 +21,7 @@ from api.chat_widgets import (
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CHAT_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_page.js"
-WIDGETS_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_widgets.js"
+WIDGETS_JS = REPO_ROOT / "src" / "web" / "js" / "gizmos/tasks_gizmo.js"
 
 node_only = pytest.mark.skipif(
     shutil.which("node") is None, reason="node not available"
@@ -161,9 +161,9 @@ def test_apply_widget_tags_upserts(tmp_path, monkeypatch):
     digest = format_tasks_digest([row2])
     assert "Tasks" in digest
     assert "`1`" in digest
-    assert "Patch only" in digest
-    assert "Do **not** create another Tasks" in digest
-    assert "pinned above composer" in digest
+    assert "api.gizmos tasks patch" in digest
+    assert "Do not create another list" in digest
+    assert "markdown tags" in digest
     assert "auto-archives" in digest
 
     # Last open item → auto-archive; strip chip notes archived.
@@ -271,12 +271,12 @@ def test_api_widgets_list_requires_auth_not_500():
     """Regression: missing get_request_session_token import used to 500 the strip."""
     from flask import Flask
 
-    from api.chat_widgets import register_chat_widget_routes
+    from api.gizmos.tasks_routes import tasks_bp
 
     app = Flask(__name__)
-    register_chat_widget_routes(app)
+    app.register_blueprint(tasks_bp, url_prefix="/api/gizmos/tasks")
     client = app.test_client()
-    r = client.get("/api/widgets?session_id=1")
+    r = client.get("/api/gizmos/tasks?session_id=1")
     assert r.status_code == 401
     data = r.get_json()
     assert data and data.get("success") is False
@@ -286,7 +286,7 @@ def test_api_widgets_list_returns_session_widget(tmp_path, monkeypatch):
     from flask import Flask
 
     from api import auth_db as auth_db_mod
-    from api.chat_widgets import register_chat_widget_routes
+    from api.gizmos.tasks_routes import tasks_bp
 
     db_path = tmp_path / "widgets_api.db"
     monkeypatch.setattr(auth_db_mod, "DB_PATH", db_path)
@@ -310,17 +310,17 @@ def test_api_widgets_list_returns_session_widget(tmp_path, monkeypatch):
     token = db.create_auth_session(uid)
 
     app = Flask(__name__)
-    register_chat_widget_routes(app)
+    app.register_blueprint(tasks_bp, url_prefix="/api/gizmos/tasks")
     client = app.test_client()
     r = client.get(
-        f"/api/widgets?session_id={sess_id}",
+        f"/api/gizmos/tasks?session_id={sess_id}",
         headers={"Authorization": f"Bearer {token}"},
     )
     assert r.status_code == 200
     data = r.get_json()
     assert data["success"] is True
-    assert any(w.get("id") == "api-demo" for w in data["widgets"])
-    assert data["widgets_revision"] >= 1
+    assert any(w.get("id") == "api-demo" for w in data["gizmos"])
+    assert data["revision"] >= 1
 
 
 def test_widgets_do_not_leak_across_sessions_or_projects(tmp_path, monkeypatch):
@@ -328,7 +328,7 @@ def test_widgets_do_not_leak_across_sessions_or_projects(tmp_path, monkeypatch):
     from flask import Flask
 
     from api import auth_db as auth_db_mod
-    from api.chat_widgets import register_chat_widget_routes
+    from api.gizmos.tasks_routes import tasks_bp
 
     db_path = tmp_path / "widgets_isolation.db"
     monkeypatch.setattr(auth_db_mod, "DB_PATH", db_path)
@@ -379,17 +379,17 @@ def test_widgets_do_not_leak_across_sessions_or_projects(tmp_path, monkeypatch):
 
     token = db.create_auth_session(uid)
     app = Flask(__name__)
-    register_chat_widget_routes(app)
+    app.register_blueprint(tasks_bp, url_prefix="/api/gizmos/tasks")
     client = app.test_client()
 
     # New chat with a different project must not see either blender widget.
     r = client.get(
-        f"/api/widgets?session_id={new_sid}&project_path={cuttle}",
+        f"/api/gizmos/tasks?session_id={new_sid}&project_path={cuttle}",
         headers={"Authorization": f"Bearer {token}"},
     )
     assert r.status_code == 200
     data = r.get_json()
-    ids = {w.get("id") for w in data["widgets"]}
+    ids = {w.get("id") for w in data["gizmos"]}
     assert "blender-session-todo" not in ids
     assert "blender-project-todo" not in ids
 
@@ -398,13 +398,13 @@ def test_widgets_ignore_stale_client_project_path(tmp_path, monkeypatch):
     """Stale project_path from a prior chat chip must not leak project widgets.
 
     Reproduces: open blender chat (project-scoped To-do) → new chat on another
-    project → client still passes blender ``project_path`` on ``/api/widgets``.
+    project → client still passes blender ``project_path`` on ``/api/gizmos/tasks``.
     List must follow the session row's project, not the mismatched query string.
     """
     from flask import Flask
 
     from api import auth_db as auth_db_mod
-    from api.chat_widgets import register_chat_widget_routes
+    from api.gizmos.tasks_routes import tasks_bp
 
     db_path = tmp_path / "widgets_stale_proj.db"
     monkeypatch.setattr(auth_db_mod, "DB_PATH", db_path)
@@ -436,15 +436,15 @@ def test_widgets_ignore_stale_client_project_path(tmp_path, monkeypatch):
 
     token = db.create_auth_session(uid)
     app = Flask(__name__)
-    register_chat_widget_routes(app)
+    app.register_blueprint(tasks_bp, url_prefix="/api/gizmos/tasks")
     client = app.test_client()
 
     r = client.get(
-        f"/api/widgets?session_id={new_sid}&project_path={blender}",
+        f"/api/gizmos/tasks?session_id={new_sid}&project_path={blender}",
         headers={"Authorization": f"Bearer {token}"},
     )
     assert r.status_code == 200
-    ids = {w.get("id") for w in r.get_json()["widgets"]}
+    ids = {w.get("id") for w in r.get_json()["gizmos"]}
     assert "blender-project-todo" not in ids, (
         "stale project_path query must not leak another project's widgets "
         "onto a chat whose session row is a different project"
@@ -485,6 +485,7 @@ const strip = {
     hidden: true,
     innerHTML: '',
     __cuttleWidgetsBound: false,
+    querySelectorAll() { return []; },
     addEventListener() {},
 };
 const root = {
@@ -494,8 +495,8 @@ const root = {
 };
 const blenderPayload = {
     success: true,
-    widgets_revision: 3,
-    widgets: [{
+    revision: 3,
+    gizmos: [{
         id: 'blender-todo',
         type: 'tasks',
         status: 'active',
@@ -508,12 +509,12 @@ const blenderPayload = {
 const fetchFn = (url) => {
     const empty = !/session_id=42\\b/.test(String(url));
     const data = empty
-        ? { success: true, widgets: [], widgets_revision: 0 }
+        ? { success: true, gizmos: [], revision: 0 }
         : blenderPayload;
     return Promise.resolve({ json: async () => data });
 };
 
-const ctrl = global.CuttleChatWidgets.create({
+const ctrl = global.CuttleTaskGizmos.create({
     root,
     getSessionId: () => sessionId,
     getProjectPath: () => 'E:/Game Dev/Blender-Project',
@@ -571,6 +572,7 @@ const strip = {
     hidden: true,
     innerHTML: '',
     __cuttleWidgetsBound: false,
+    querySelectorAll() { return []; },
     addEventListener() {},
 };
 const root = {
@@ -580,8 +582,8 @@ const root = {
 };
 const blenderPayload = {
     success: true,
-    widgets_revision: 3,
-    widgets: [{
+    revision: 3,
+    gizmos: [{
         id: 'blender-todo',
         type: 'tasks',
         status: 'active',
@@ -591,7 +593,7 @@ const blenderPayload = {
         payload: { items: [{ id: '1', text: 'Rig', done: false, children: [] }] },
     }],
 };
-const emptyPayload = { success: true, widgets: [], widgets_revision: 0 };
+const emptyPayload = { success: true, gizmos: [], revision: 0 };
 let resolveSlow;
 const slow = new Promise((resolve) => { resolveSlow = resolve; });
 let phase = 'race';
@@ -607,7 +609,7 @@ const fetchFn = (url) => {
     return Promise.resolve({ json: async () => emptyPayload });
 };
 
-const ctrl = global.CuttleChatWidgets.create({
+const ctrl = global.CuttleTaskGizmos.create({
     root,
     getSessionId: () => sessionId,
     getProjectPath: () => projectPath,
@@ -681,7 +683,8 @@ def test_widget_scope_and_edit_visibility_across_chats(tmp_path, monkeypatch):
     from urllib.parse import quote
 
     from api import auth_db as auth_db_mod
-    from api.chat_widgets import apply_widget_tags_to_store, register_chat_widget_routes
+    from api.chat_widgets import apply_widget_tags_to_store
+    from api.gizmos.tasks_routes import tasks_bp
 
     db_path = tmp_path / "widgets_visibility.db"
     monkeypatch.setattr(auth_db_mod, "DB_PATH", db_path)
@@ -728,19 +731,19 @@ def test_widget_scope_and_edit_visibility_across_chats(tmp_path, monkeypatch):
 
     token = db.create_auth_session(uid)
     app = Flask(__name__)
-    register_chat_widget_routes(app)
+    app.register_blueprint(tasks_bp, url_prefix="/api/gizmos/tasks")
     client = app.test_client()
     headers = {"Authorization": f"Bearer {token}"}
 
     def _ids(session_id: int, project_path: str) -> dict:
         r = client.get(
-            f"/api/widgets?session_id={session_id}&project_path={quote(project_path)}",
+            f"/api/gizmos/tasks?session_id={session_id}&project_path={quote(project_path)}",
             headers=headers,
         )
         assert r.status_code == 200
         data = r.get_json()
         assert data["success"] is True
-        by_id = {w["id"]: w for w in data["widgets"]}
+        by_id = {w["id"]: w for w in data["gizmos"]}
         return by_id
 
     in_a = _ids(chat_a, cuttle)
@@ -866,6 +869,7 @@ const strip = {
     hidden: true,
     innerHTML: '',
     __cuttleWidgetsBound: false,
+    querySelectorAll() { return []; },
     addEventListener() {},
 };
 const root = {
@@ -875,8 +879,8 @@ const root = {
 };
 const payload = {
     success: true,
-    widgets_revision: 5,
-    widgets: [
+    revision: 5,
+    gizmos: [
         {
             id: 'sess-agent',
             type: 'tasks',
@@ -898,7 +902,7 @@ const payload = {
     ],
 };
 const fetchFn = () => Promise.resolve({ json: async () => payload });
-const ctrl = global.CuttleChatWidgets.create({
+const ctrl = global.CuttleTaskGizmos.create({
     root,
     getSessionId: () => 7,
     getProjectPath: () => 'C:/Projects/Cuttle',

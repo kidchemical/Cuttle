@@ -144,6 +144,23 @@ def test_enrich_prefers_cli_cost(pricing_cache):
     assert out["cost_estimated"] is False
 
 
+def test_explicit_cache_convention_beats_size_heuristic(pricing_cache):
+    usage = {
+        "prompt_tokens": 10000, "completion_tokens": 100,
+        "cache_read_tokens": 1000, "cache_inclusive": False,
+    }
+    out = mp.enrich_usage_for_display(usage, model="claude-sonnet-4-6")
+    assert out["cost"] == pytest.approx(0.0318)
+    assert out["cache_inclusive"] is False
+    assert out["total_tokens"] == 11100
+    assert out["prompt_tokens"] == 10000
+
+    usage["cache_inclusive"] = True
+    out = mp.enrich_usage_for_display(usage, model="claude-sonnet-4-6")
+    assert out["cost"] == pytest.approx(0.0288)
+    assert out["total_tokens"] == 10100
+
+
 def test_enrich_estimates_when_missing(pricing_cache):
     out = mp.enrich_usage_for_display(
         {"input_tokens": 1_000_000, "output_tokens": 0},

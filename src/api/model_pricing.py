@@ -587,7 +587,8 @@ def estimate_cost_usd(
 
     ``prompt_tokens`` semantics vary by provider:
     - Inclusive (OpenAI/Codex): cached reads are a subset of prompt → subtract.
-    - Exclusive (Anthropic/Cursor/OpenCode/Muse): prompt is uncached only → add.
+    - Exclusive (Anthropic/Cursor/OpenCode): prompt is uncached only → add.
+    - Muse Spark uses inclusive input, like OpenAI.
     Heuristic: when ``0 < cache_read <= prompt``, treat as inclusive. Pass
     ``cache_inclusive`` explicitly when the harness semantics are known
     (e.g. Cursor's additive usage would be mispriced by the heuristic).
@@ -704,6 +705,9 @@ def enrich_usage_for_display(
         total = pt + ct
 
     cache_read, cache_write = extract_cache_token_counts(u)
+    cache_inclusive = u.get("cache_inclusive") if isinstance(u.get("cache_inclusive"), bool) else None
+    if cache_inclusive is False:
+        total = pt + ct + cache_read + cache_write
 
     cost = u.get("cost")
     cost_estimated = bool(u.get("cost_estimated"))
@@ -723,6 +727,7 @@ def enrich_usage_for_display(
             ct,
             cache_read_tokens=cache_read,
             cache_write_tokens=cache_write,
+            cache_inclusive=cache_inclusive,
         )
         if est is not None:
             cost = est
@@ -742,6 +747,8 @@ def enrich_usage_for_display(
         out["cache_write_tokens"] = cache_write
     if model_name:
         out["model"] = model_name
+    if cache_inclusive is not None:
+        out["cache_inclusive"] = cache_inclusive
     if cost is not None:
         out["cost"] = float(cost)
         out["cost_estimated"] = bool(cost_estimated)
@@ -750,7 +757,7 @@ def enrich_usage_for_display(
             out["reported_cost"] = float(u["reported_cost"])
         except (TypeError, ValueError):
             pass
-    for key in ("context_tokens", "peak_context_tokens"):
+    for key in ("context_tokens", "peak_context_tokens", "reasoning_tokens"):
         raw = u.get(key)
         if raw is None:
             continue

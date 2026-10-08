@@ -188,7 +188,10 @@ def _assistant_identity_meta(
         result = annotate_runner_result(result, spec, session_id=child.session_id if child else None)
         # Child bubble = the child harness, never Auto inferred from a missing
         # model_override / session pin (that is what painted Grok Riddler as Auto).
-        meta["slash_command"] = child_slash_command(spec, child)
+        # With no spec model/effort the chip falls back to what the harness
+        # actually ran (result agent_model/agent_effort), so agent-only spawns
+        # still badge the full `Agent - model · effort` chip on the full page.
+        meta["slash_command"] = child_slash_command(spec, child, result=result)
         try:
             from api.chat_metadata import usage_meta_from_assistant_result
 
@@ -199,6 +202,9 @@ def _assistant_identity_meta(
             _usage = usage_meta_from_assistant_result(_res)
             if _usage:
                 meta["usage"] = _usage
+            _eff = str(_res.get("agent_effort") or "").strip()
+            if _eff and not meta.get("agent_effort"):
+                meta["agent_effort"] = _eff
         except Exception:
             pass
     name = name or (child.display_name or child.label or "").strip()
@@ -371,6 +377,23 @@ def run_child_turn(
     if sink.query_id and not result.get("query_id"):
         result["query_id"] = sink.query_id
         result["report_url"] = f"/query_log.html?id={sink.query_id}"
+
+    # Backfill what the turn actually ran onto the child row (the fleet
+    # source of truth) when the spawn named none — agent-only children used
+    # to keep NULL model/effort forever, so fleet tips stayed bare too.
+    try:
+        from api.subagents.identity import executed_harness
+
+        exec_model, exec_effort = executed_harness(result, child.agent)
+        row_patch: Dict[str, str] = {}
+        if not (child.model or "").strip() and exec_model:
+            row_patch["model"] = exec_model
+        if not (child.effort or "").strip() and exec_effort:
+            row_patch["effort"] = exec_effort
+        if row_patch:
+            store.update_child(db, child.id, **row_patch)
+    except Exception:
+        pass
 
     text = str(result.get("response") or result.get("output") or "").strip()
     already = store.latest_assistant_text(db, child.session_id)

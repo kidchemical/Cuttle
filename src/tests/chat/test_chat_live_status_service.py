@@ -243,3 +243,20 @@ def test_cancelled_wrapper_guard_matches_service_default():
         assert svc.get_live_status("guard-chat")["active"] is True
     finally:
         delivery._cancel_sticky.clear()
+
+
+def test_live_badge_preserved_for_status_updates_replaced_on_fallback_and_fenced():
+    from api import chat_live_status as live
+    codex = {'chips': [{'label': 'Codex - GPT-6.1-Sol', 'meta': '/codex'}]}
+    claude = {'chips': [{'label': 'Claude - Opus 5.5', 'meta': '/claude'}]}
+    live.set_live_status('12', turn=1, slash_command=codex)
+    live.set_live_status('12', 'Working', turn=1)
+    assert live.get_live_status('12')['slash_command'] == codex
+    live.set_live_status('12', turn=1, slash_command=claude)
+    assert live.get_live_status('12')['slash_command'] == claude
+    live.set_live_status('12', turn=2)
+    assert live.get_live_status('12')['slash_command'] is None
+    live.set_live_status('12', turn=1, slash_command=codex)
+    assert live.get_live_status('12')['slash_command'] is None
+    live.clear_live_status('12', turn=2)
+    assert not live.get_live_status('12')['active']

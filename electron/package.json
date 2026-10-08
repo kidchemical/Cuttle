@@ -18,11 +18,12 @@
                 },
     "scripts":  {
                     "start":  "electron .",
-                    "build":  "electron-builder build --win --publish never",
-                    "build:dir":  "electron-builder build --win --dir",
-                    "build:linux":  "electron-builder build --linux AppImage --publish never",
-                    "build:linux:dir":  "electron-builder build --linux --dir",
-                    "build:portable":  "electron-builder build --win portable",
+                    "bundle:python":  "node bundle-python.js",
+                    "build":  "node bundle-python.js && electron-builder build --win --publish never",
+                    "build:dir":  "node bundle-python.js && electron-builder build --win --dir",
+                    "build:linux":  "node bundle-python.js && electron-builder build --linux AppImage --publish never",
+                    "build:linux:dir":  "node bundle-python.js && electron-builder build --linux --dir",
+                    "build:portable":  "node bundle-python.js && electron-builder build --win portable",
                     "dist":  "electron-builder",
                     "postinstall":  "electron-builder install-app-deps",
                     "smoke:host": "electron tests/smoke-main.cjs",
@@ -46,11 +47,20 @@
                                 "main.js",
                                 "preload.js",
                                 "connect.html",
+                                "tls-trust.js",
+                                "external-link-policy.js",
                                 "package.json",
                                 "assets/**/*",
                                 "device-worker/**/*"
                             ],
                   "extraResources":  [
+                                         {
+                                             "from":  "python-bundle",
+                                             "to":  "python",
+                                             "filter":  [
+                                                            "**/*"
+                                                        ]
+                                         },
                                          {
                                              "from":  "../src",
                                              "to":  "app/src",

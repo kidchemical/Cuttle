@@ -1,5 +1,5 @@
 /**
- * Pack electron/main.js + preload + connect.html into dist/update/app.asar
+ * Pack the Electron shell files into <out>/app.asar (out: $CUTTLE_DESKTOP_UPDATE_DIR, else dist/update)
  * so LAN clients can replace their packaged shell without a full electron-builder run.
  */
 const fs = require('fs');
@@ -8,8 +8,11 @@ const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 
 const electronDir = __dirname;
-const HASH_FILES = ['connect.html', 'main.js', 'preload.js', 'device-worker/cuttle_device_worker.py'];
-const PACK_FILES = ['connect.html', 'main.js', 'package.json', 'preload.js'];
+const HASH_FILES = [
+    'connect.html', 'main.js', 'preload.js', 'tls-trust.js', 'external-link-policy.js',
+    'device-worker/cuttle_device_worker.py',
+];
+const PACK_FILES = ['connect.html', 'main.js', 'package.json', 'preload.js', 'tls-trust.js', 'external-link-policy.js'];
 
 function sourceHash() {
     const h = crypto.createHash('sha256');
@@ -25,8 +28,9 @@ function sourceHash() {
 
 function pack() {
     const hash = sourceHash();
-    const staging = path.join(electronDir, 'dist', 'update-staging');
-    const outDir = path.join(electronDir, 'dist', 'update');
+    // The Host passes its Cuttle-home cache dir; a manual run keeps dist/.
+    const outDir = process.env.CUTTLE_DESKTOP_UPDATE_DIR || path.join(electronDir, 'dist', 'update');
+    const staging = `${outDir}-staging`;
     fs.rmSync(staging, { recursive: true, force: true });
     fs.mkdirSync(staging, { recursive: true });
     fs.mkdirSync(outDir, { recursive: true });

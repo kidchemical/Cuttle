@@ -22,13 +22,7 @@ from typing import Any, Dict, Optional
 
 # Imports for SSL certificate generation
 import ssl
-import ipaddress
-from cryptography import x509
-from cryptography.x509.oid import NameOID
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.hazmat.primitives import serialization
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # Add project root to path (parent of api directory, which is 'src')
 script_dir = Path(__file__).parent
@@ -37,74 +31,9 @@ actual_project_root = project_root.parent  # repo root (parent of src/)
 
 
 def generate_self_signed_cert(lan_ip: Optional[str] = None, force_regenerate: bool = False):
-    """Generate or reuse a self-signed SSL certificate for localhost (+ optional LAN IP)."""
-    CERT_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
-
-    if not force_regenerate and not cert_needs_regeneration(CERT_FILE, lan_ip):
-        print("[HTTPS] Using existing SSL certificate.")
-        return str(CERT_FILE), str(KEY_FILE)
-
-    if CERT_FILE.exists() or KEY_FILE.exists():
-        reason = "LAN IP changed" if lan_ip else "certificate SAN mismatch"
-        print(f"[HTTPS] Regenerating self-signed SSL certificate ({reason})...")
-        try:
-            CERT_FILE.unlink(missing_ok=True)
-            KEY_FILE.unlink(missing_ok=True)
-        except Exception:
-            pass
-    else:
-        print("[HTTPS] Generating new self-signed SSL certificate...")
-
-    key = rsa.generate_private_key(
-        public_exponent=65537,
-        key_size=2048,
-    )
-    subject = issuer = x509.Name([
-        x509.NameAttribute(NameOID.COUNTRY_NAME, u"US"),
-        x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, u"CA"),
-        x509.NameAttribute(NameOID.LOCALITY_NAME, u"Mountain View"),
-        x509.NameAttribute(NameOID.ORGANIZATION_NAME, u"Cuttle"),
-        x509.NameAttribute(NameOID.COMMON_NAME, u"localhost"),
-    ])
-    san_entries = [
-        x509.DNSName(u"localhost"),
-        x509.IPAddress(ipaddress.IPv4Address("127.0.0.1")),
-    ]
-    if lan_ip:
-        try:
-            san_entries.append(x509.IPAddress(ipaddress.IPv4Address(lan_ip)))
-        except Exception:
-            pass
-    cert = (
-        x509.CertificateBuilder()
-        .subject_name(subject)
-        .issuer_name(issuer)
-        .public_key(key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(datetime.utcnow())
-        .not_valid_after(datetime.utcnow() + timedelta(days=365))
-        .add_extension(x509.SubjectAlternativeName(san_entries), critical=False)
-        .sign(key, hashes.SHA256())
-    )
-    with open(KEY_FILE, "wb") as f:
-        f.write(key.private_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PrivateFormat.PKCS8,
-            encryption_algorithm=serialization.NoEncryption(),
-        ))
-    with open(CERT_FILE, "wb") as f:
-        f.write(cert.public_bytes(encoding=serialization.Encoding.PEM))
-    print(f"[HTTPS] Generated: {CERT_FILE} and {KEY_FILE}")
-    return str(CERT_FILE), str(KEY_FILE)
-
-
-def cert_needs_regeneration(cert_file: Path, lan_ip: Optional[str] = None) -> bool:
-    """Delegate to lan_access when available; inline fallback for early import order."""
-    try:
-        from api.lan_access import cert_needs_regeneration as _needs
-        return _needs(cert_file, lan_ip)
-    except Exception:
-        return not cert_file.is_file()
+    """Host TLS cert (owner: ``api.tls_cert``; keeps the key so Client pins survive)."""
+    from api.tls_cert import ensure_certificate
+    return ensure_certificate(lan_ip=lan_ip, force_regenerate=force_regenerate)
 
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
@@ -137,11 +66,7 @@ from core.runtime_paths import notify_queue_path as _notify_queue_path
 from core.runtime_paths import output_dir as _output_dir
 from core.runtime_paths import logs_dir as _logs_dir
 from core.runtime_paths import query_logs_dir as _query_logs_dir
-from core.runtime_paths import secrets_dir as _secrets_dir
 
-CERT_DIR = _secrets_dir()
-CERT_FILE = CERT_DIR / "localhost.pem"
-KEY_FILE = CERT_DIR / "localhost-key.pem"
 
 from api.chat_status_phases import (
     PHASE_LLM,
@@ -382,6 +307,18 @@ try:
 except Exception as _vfx_err:
     print(f"[CHAT VFX] Failed to register routes: {_vfx_err}")
 
+try:
+    from api.voice_narrator.routes import voice_narrator_bp
+    app.register_blueprint(voice_narrator_bp)
+except Exception as _narrator_err:
+    print(f"[VOICE NARRATOR] Failed to register routes: {_narrator_err}")
+
+try:
+    from api.voice_stt.routes import voice_stt_bp
+    app.register_blueprint(voice_stt_bp)
+except Exception as _voice_stt_err:
+    print(f"[VOICE STT] Failed to register routes: {_voice_stt_err}")
+
 # Projects (transport owned by api.project_routes; logic in managers.project_manager)
 try:
     from api.project_routes import projects_bp, projects_pages_bp
@@ -432,13 +369,6 @@ try:
     _jev_watch_start()
 except Exception as _jev_watch_err:
     print(f"[JEV] regress watcher not started: {_jev_watch_err}")
-
-# Chat widgets (Tasks strip above composer)
-try:
-    from api.chat_widgets import register_chat_widget_routes
-    register_chat_widget_routes(app)
-except Exception as _widgets_err:
-    print(f"[WIDGETS] Failed to register routes: {_widgets_err}")
 
 # Chat bubble TTS (OpenAI summarize-then-speak, on-demand play button)
 try:
@@ -1796,6 +1726,7 @@ def chat_live_status():
         'updated_at': live.get('updated_at'),
         'report_url': live.get('report_url'),
         'query_id': live.get('query_id'),
+        'slash_command': live.get('slash_command'),
         # Busy lock OR live status — stream can die while the worker is still going.
         # Deliberately excludes supervised background work (separate field).
         # Cancelled (Stop) wins: refresh must not resurrect the spinner.
@@ -1870,6 +1801,7 @@ def chat_live_status_batch():
             'updated_at': live.get('updated_at'),
             'report_url': live.get('report_url'),
             'query_id': live.get('query_id'),
+            'slash_command': live.get('slash_command'),
             'generating': generating,
             'cancelled': cancelled,
             'supervised_task': supervised,
@@ -3716,7 +3648,7 @@ def _frame_stream_lifecycle_event(kind, payload, session_id_for_status):
     if kind == 'query_started':
         _pq = payload or {}
         return [
-            f"data: {json.dumps({'type': 'query_started', 'query_id': _pq.get('query_id'), 'report_url': _pq.get('report_url')}, ensure_ascii=False)}\n\n"
+            f"data: {json.dumps({'type': 'query_started', 'query_id': _pq.get('query_id'), 'report_url': _pq.get('report_url'), 'slash_command': _pq.get('slash_command')}, ensure_ascii=False)}\n\n"
         ]
     if kind == 'done':
         result = payload or {}

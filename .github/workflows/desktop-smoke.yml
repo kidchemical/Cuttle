@@ -1,21 +1,28 @@
 name: Desktop smoke
+# Merge gate: runs on every PR (no path filter, so it can be a required
+# check) and on main. Release calls it before publishing artifacts.
 on:
   pull_request:
-    paths:
-      - 'electron/**'
-      - 'src/web/**'
-      - 'src/api/device_workers/**'
-      - '.github/workflows/desktop-smoke.yml'
   push:
     branches: [main]
-    paths:
-      - 'electron/**'
-      - 'src/web/**'
-      - 'src/api/device_workers/**'
-      - '.github/workflows/desktop-smoke.yml'
+  workflow_call:
+    inputs:
+      packaged:
+        description: Also build, install and E2E the packaged Host
+        type: boolean
+        default: true
 permissions:
   contents: read
 jobs:
+  packaged-host:
+    # Release runs the packaged build itself (with uploads).
+    # toJSON keeps the comparison type-exact: on push/PR inputs is empty (null),
+    # and null == false under GitHub's loose equality.
+    if: ${{ toJSON(inputs.packaged) != 'false' }}
+    uses: ./.github/workflows/packaged-host.yml
+    with:
+      upload: false
+    secrets: inherit
   desktop:
     strategy:
       fail-fast: false

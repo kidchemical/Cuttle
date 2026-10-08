@@ -48,7 +48,7 @@ Global runbooks (match intent → open before acting; resolve via personal overl
   chat-history.md   — CH- handles + `api.chat_cli` / live panes: `api.panes_cli`
   headless-turns.md — one-shot CLI turn, long build/upload, no wait loops
   cursor-plan-bridge.md — CreatePlan must land as markdown (+ form) in Cuttle chat (the tool call alone is not delivered)
-  widgets.md        — Tasks strip; one list per concern then patch; never fake pin chips; shell: python -m api.widgets_cli
+  gizmos.md         — Tasks gizmos: create early, patch during work through python -m api.gizmos tasks; no Tasks markdown tags
   subagents.md      — spawn real child chats (python -m api.subagents); sibling orbs + parent/child launchers; agent profiles
 
 Hard stops: never force-kill web_chat_api, cuttle_daemon, or the Discord bot

@@ -25,23 +25,16 @@ from typing import Any, Deque, Dict, List, Optional
 # Recent inbound LAN probes (for phone connectivity diagnosis).
 _lan_probes: Deque[Dict[str, Any]] = deque(maxlen=30)
 
-from api.server_ports import (
-    DEFAULT_HTTP_PORT,
-    DEFAULT_HTTPS_PORT,
-    DEFAULT_PHONE_HTTPS_PORT,
-    resolve_with_env_file,
-)
+from api.server_ports import resolve_with_env_file
 
 _FIREWALL_RULE_HTTPS = "Cuttle LAN HTTPS (LocalSubnet)"
 _FIREWALL_RULE_HTTP = "Cuttle LAN HTTP (LocalSubnet)"
-_FIREWALL_RULE_HTTP_OPEN = "Cuttle LAN HTTP (Open LAN)"
 _FIREWALL_RULE_HTTP_ALT = "Cuttle LAN HTTP alt (8000)"
-# Legacy default snapshots (import compat only). Listener ports are owned by
-# api.server_ports (env-only); use the get_*_port() helpers for live values.
-LAN_PHONE_HTTPS_PORT = DEFAULT_PHONE_HTTPS_PORT  # HTTPS for phones
-LAN_HTTP_FALLBACK_PORT = DEFAULT_HTTP_PORT  # plain HTTP fallback
-LAN_HTTP_PORT = LAN_PHONE_HTTPS_PORT  # backwards compat
-PRIMARY_HTTPS_PORT = DEFAULT_HTTPS_PORT
+# Pre-scoping fallback rule names (created once with RemoteAddress Any).
+# Never created anymore — only removed (replace, never extend).
+_LEGACY_OPEN_RULE_DISPLAY_NAMES = ("Cuttle LAN HTTP (Open LAN)",)
+# Listener ports are owned by api.server_ports (env-only);
+# use the get_*_port() helpers below for live values.
 
 
 def get_primary_https_port() -> int:
@@ -229,12 +222,85 @@ def cert_needs_regeneration(cert_file: Path, lan_ip: Optional[str]) -> bool:
         return True
 
 
-def ensure_windows_lan_firewall_rule(port: Optional[int] = None) -> bool:
-    """Allow inbound TCP from LocalSubnet (same Wi‑Fi/LAN only).
+def _count_enabled_rules(rule_name: str) -> Optional[int]:
+    """Enabled firewall rules with this display name, any scope (None = unknown)."""
+    check = subprocess.run(
+        [
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            f"(Get-NetFirewallRule -DisplayName '{rule_name}' -ErrorAction SilentlyContinue | "
+            f"Where-Object {{ $_.Enabled -eq 'True' }} | Measure-Object).Count",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if check.returncode != 0:
+        return None
+    text = (check.stdout or "").strip()
+    return int(text) if text.isdigit() else None
 
-    Uses Private+Public profiles so home Wi‑Fi still works when Windows marks it Public.
-    RemoteAddress LocalSubnet prevents wide-open internet exposure without router port-forward.
-    ``None`` means the configured primary HTTPS port.
+
+def _count_scoped_rules(rule_name: str) -> Optional[int]:
+    """Enabled same-named rules that are Private-profile + LocalSubnet only."""
+    check = subprocess.run(
+        [
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            f"(Get-NetFirewallRule -DisplayName '{rule_name}' -ErrorAction SilentlyContinue | "
+            f"Where-Object {{ $_.Enabled -eq 'True' -and $_.Profile -eq 'Private' }} | "
+            f"Get-NetFirewallAddressFilter | "
+            f"Where-Object {{ @($_.RemoteAddress).Count -eq 1 -and $_.RemoteAddress -eq 'LocalSubnet' }} | Measure-Object).Count",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if check.returncode != 0:
+        return None
+    text = (check.stdout or "").strip()
+    return int(text) if text.isdigit() else None
+
+
+def _remove_firewall_rules(rule_name: str) -> None:
+    """Best-effort removal of every rule with this display name (any scope)."""
+    subprocess.run(
+        [
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            f"Remove-NetFirewallRule -DisplayName '{rule_name}' -ErrorAction SilentlyContinue",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+
+def _remove_legacy_open_firewall_rules() -> None:
+    """Delete the pre-scoping 'Open LAN' fallback rule (RemoteAddress Any)."""
+    if sys.platform != "win32":
+        return
+    for legacy_name in _LEGACY_OPEN_RULE_DISPLAY_NAMES:
+        try:
+            _remove_firewall_rules(legacy_name)
+        except Exception:
+            pass
+
+
+def ensure_windows_lan_firewall_rule(port: Optional[int] = None) -> bool:
+    """Allow inbound TCP from LocalSubnet on Private networks only.
+
+    Private profile only: if Windows marks home Wi‑Fi as Public, set it to
+    Private in Windows Settings instead of widening the rule. RemoteAddress
+    LocalSubnet prevents wide-open internet exposure without router
+    port-forward. ``None`` means the configured primary HTTPS port.
+
+    Replace, never extend: an existing same-named rule counts as OK only if
+    every enabled copy is Private + LocalSubnet; a broad or mixed leftover
+    from an older release is removed and recreated scoped.
     """
     if port is None:
         port = get_primary_https_port()
@@ -246,20 +312,11 @@ def ensure_windows_lan_firewall_rule(port: Optional[int] = None) -> bool:
         get_http_fallback_port(): _FIREWALL_RULE_HTTP_ALT,
     }.get(port, f"Cuttle LAN port {port}")
     try:
-        check = subprocess.run(
-            [
-                "powershell",
-                "-NoProfile",
-                "-Command",
-                f"(Get-NetFirewallRule -DisplayName '{rule_name}' -ErrorAction SilentlyContinue | "
-                f"Where-Object {{ $_.Enabled -eq 'True' }} | Measure-Object).Count",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        if check.returncode == 0 and (check.stdout or "").strip() not in ("", "0"):
+        total = _count_enabled_rules(rule_name)
+        scoped = _count_scoped_rules(rule_name)
+        if total is not None and scoped is not None and total > 0 and total == scoped:
             return True
+        _remove_firewall_rules(rule_name)
         create = subprocess.run(
             [
                 "powershell",
@@ -267,7 +324,7 @@ def ensure_windows_lan_firewall_rule(port: Optional[int] = None) -> bool:
                 "-Command",
                 f"New-NetFirewallRule -DisplayName '{rule_name}' "
                 f"-Direction Inbound -Protocol TCP -LocalPort {port} -Action Allow "
-                f"-Profile Private,Public -RemoteAddress LocalSubnet",
+                f"-Profile Private -RemoteAddress LocalSubnet",
             ],
             capture_output=True,
             text=True,
@@ -283,61 +340,14 @@ def ensure_windows_lan_firewall_rule(port: Optional[int] = None) -> bool:
         return False
 
 
-def ensure_windows_lan_firewall_rule_open(port: int = LAN_HTTP_PORT) -> bool:
-    """Fallback: allow inbound HTTP from any source on LAN port.
-
-    Still not reachable from the public internet without router port-forwarding.
-    Helps when LocalSubnet classification blocks some phones/routers.
-    """
-    if sys.platform != "win32":
-        return False
-    rule_name = _FIREWALL_RULE_HTTP_OPEN
-    try:
-        check = subprocess.run(
-            [
-                "powershell",
-                "-NoProfile",
-                "-Command",
-                f"(Get-NetFirewallRule -DisplayName '{rule_name}' -ErrorAction SilentlyContinue | "
-                f"Where-Object {{ $_.Enabled -eq 'True' }} | Measure-Object).Count",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        if check.returncode == 0 and (check.stdout or "").strip() not in ("", "0"):
-            return True
-        create = subprocess.run(
-            [
-                "powershell",
-                "-NoProfile",
-                "-Command",
-                f"New-NetFirewallRule -DisplayName '{rule_name}' "
-                f"-Direction Inbound -Protocol TCP -LocalPort {port} -Action Allow "
-                f"-Profile Private,Public -RemoteAddress Any",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        if create.returncode != 0:
-            print(f"[LAN] Open firewall rule failed: {(create.stderr or create.stdout or '').strip()}")
-            return False
-        print(f"[LAN] Firewall rule added: {rule_name} (Any, port {port})")
-        return True
-    except Exception as e:
-        print(f"[LAN] Open firewall rule skipped: {e}")
-        return False
-
-
 def ensure_all_lan_firewall_rules() -> bool:
     if sys.platform != "win32":
         # Desktop Linux typically has no Windows-style LAN firewall block.
         return True
+    _remove_legacy_open_firewall_rules()
     ok_https = ensure_windows_lan_firewall_rule(get_primary_https_port())
     ok_phone = ensure_windows_lan_firewall_rule(get_phone_https_port())
     ok_alt = ensure_windows_lan_firewall_rule(get_http_fallback_port())
-    ensure_windows_lan_firewall_rule_open(get_phone_https_port())
     return ok_https and ok_phone and ok_alt
 
 
@@ -345,21 +355,11 @@ def windows_firewall_rule_active() -> bool:
     if sys.platform != "win32":
         return False
     try:
-        names = (_FIREWALL_RULE_HTTPS, _FIREWALL_RULE_HTTP)
+        names = (_FIREWALL_RULE_HTTPS, _FIREWALL_RULE_HTTP, _FIREWALL_RULE_HTTP_ALT)
         for rule_name in names:
-            check = subprocess.run(
-                [
-                    "powershell",
-                    "-NoProfile",
-                    "-Command",
-                    f"(Get-NetFirewallRule -DisplayName '{rule_name}' -ErrorAction SilentlyContinue | "
-                    f"Where-Object {{ $_.Enabled -eq 'True' }} | Measure-Object).Count",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=15,
-            )
-            if check.returncode != 0 or (check.stdout or "").strip() in ("", "0"):
+            total = _count_enabled_rules(rule_name)
+            scoped = _count_scoped_rules(rule_name)
+            if total is None or scoped is None or total == 0 or total != scoped:
                 return False
         return True
     except Exception:

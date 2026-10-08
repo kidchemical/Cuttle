@@ -395,16 +395,16 @@ def test_file_copy_rejects_outside_allowlist(tmp_path, monkeypatch):
 
 
 def test_auth_loopback_without_token(monkeypatch):
+    # No loopback exemption: loopback without a bearer authorizes nothing.
     from api.device_workers import auth as auth_mod
 
-    monkeypatch.setattr(auth_mod, "worker_token", lambda: "")
 
     class Req:
         headers = {}
         remote_addr = "127.0.0.1"
 
     ok, err = auth_mod.authorize_worker_request(Req())
-    assert ok and err is None
+    assert not ok and err
 
     class Remote:
         headers = {}
@@ -417,7 +417,6 @@ def test_auth_loopback_without_token(monkeypatch):
 def test_auth_enrolled_token(worker_db, monkeypatch):
     from api.device_workers import auth as auth_mod
 
-    monkeypatch.setattr(auth_mod, "worker_token", lambda: "")
     enrolled = worker_db.enroll_device(worker_id="worker-a", hostname="WORKER-A", remote_addr="192.0.2.40")
     monkeypatch.setattr("api.device_workers.store.get_store", lambda: worker_db)
 
@@ -432,7 +431,6 @@ def test_enroll_from_lan(worker_db, monkeypatch):
     monkeypatch.setattr("api.device_workers.routes.device_workers_enabled", lambda: True)
     monkeypatch.setattr("api.device_workers.routes.get_store", lambda: worker_db)
     monkeypatch.setattr("api.device_workers.auth.lan_access_enabled", lambda: True)
-    monkeypatch.setattr("api.device_workers.auth.worker_token", lambda: "")
 
     from api.device_workers.routes import workers_bp
     from flask import Flask
@@ -443,12 +441,32 @@ def test_enroll_from_lan(worker_db, monkeypatch):
 
     r = client.post(
         "/api/workers/enroll",
-        json={"worker_id": "worker-a", "hostname": "WORKER-A"},
+        json={
+            "worker_id": "worker-a",
+            "hostname": "WORKER-A",
+            "pairing_secret": "ab" * 32,
+        },
         environ_base={"REMOTE_ADDR": "192.0.2.40"},
     )
-    assert r.status_code == 200
-    data = r.get_json()
-    assert data["success"] and data["token"]
+    assert r.status_code == 202
+    pending = r.get_json()
+    assert pending["status"] == "pending" and "token" not in pending
+
+    # Host owner approves; worker polls once for its token.
+    from api.device_workers import enroll_approval as enroll_mod
+
+    enroll_mod.decide(pending["request_id"], "approve")
+    store = worker_db
+    enrolled = store.enroll_device(
+        worker_id="worker-a", hostname="WORKER-A", rotate=store.is_enrolled("worker-a")
+    )
+    enroll_mod.attach_token(pending["request_id"], enrolled["token"])
+    data = client.post(
+        f"/api/workers/enroll/{pending['request_id']}/poll",
+        json={"pairing_secret": "ab" * 32},
+        environ_base={"REMOTE_ADDR": "192.0.2.40"},
+    ).get_json()
+    assert data["status"] == "approved" and data["token"]
 
     # Remote register with enrolled token
     r2 = client.post(
@@ -460,10 +478,12 @@ def test_enroll_from_lan(worker_db, monkeypatch):
     assert r2.status_code == 200
 
 
-def test_auth_bearer_token(monkeypatch):
+def test_auth_bearer_token(worker_db, monkeypatch):
     from api.device_workers import auth as auth_mod
 
-    monkeypatch.setattr(auth_mod, "worker_token", lambda: "secret")
+
+    token = worker_db.enroll_device(worker_id="fixture-worker")["token"]
+    monkeypatch.setattr("api.device_workers.store.get_store", lambda: worker_db)
 
     class Bad:
         headers = {"Authorization": "Bearer nope"}
@@ -472,7 +492,7 @@ def test_auth_bearer_token(monkeypatch):
     assert auth_mod.authorize_worker_request(Bad())[0] is False
 
     class Good:
-        headers = {"Authorization": "Bearer secret"}
+        headers = {"Authorization": f"Bearer {token}"}
         remote_addr = "192.0.2.50"
 
     assert auth_mod.authorize_worker_request(Good())[0] is True
@@ -485,9 +505,6 @@ def test_flask_workers_routes(worker_db, monkeypatch):
     )
     monkeypatch.setattr("api.device_workers.routes.get_store", lambda: worker_db)
     monkeypatch.setattr(
-        "api.device_workers.auth.worker_token", lambda: ""
-    )
-    monkeypatch.setattr(
         "api.device_workers.routes.require_ui_operator",
         lambda: ({"id": 1, "username": "test-owner", "auth_provider": "local"}, None),
     )
@@ -499,6 +516,10 @@ def test_flask_workers_routes(worker_db, monkeypatch):
     app.register_blueprint(workers_bp)
     client = app.test_client()
 
+    # Runtime routes need the worker's own bearer even on loopback.
+    bearer = worker_db.enroll_device(worker_id="worker-a")["token"]
+    auth_headers = {"Authorization": f"Bearer {bearer}"}
+
     r = client.post(
         "/api/workers/register",
         json={
@@ -506,6 +527,7 @@ def test_flask_workers_routes(worker_db, monkeypatch):
             "hostname": "WORKER-A",
             "capabilities": {"filesystem": True},
         },
+        headers=auth_headers,
         environ_base={"REMOTE_ADDR": "127.0.0.1"},
     )
     assert r.status_code == 200
@@ -531,6 +553,7 @@ def test_flask_workers_routes(worker_db, monkeypatch):
     r4 = client.post(
         "/api/workers/jobs/claim",
         json={"worker_id": "worker-a", "capabilities": {"filesystem": True}},
+        headers=auth_headers,
         environ_base={"REMOTE_ADDR": "127.0.0.1"},
     )
     assert r4.status_code == 200
@@ -541,6 +564,7 @@ def test_flask_workers_routes(worker_db, monkeypatch):
     r5 = client.post(
         f"/api/workers/jobs/{job_id}/complete",
         json={"worker_id": "worker-a", "result": {"pong": True}},
+        headers=auth_headers,
         environ_base={"REMOTE_ADDR": "127.0.0.1"},
     )
     assert r5.status_code == 200

@@ -98,7 +98,7 @@ def test_scoped_files_preserve_unknown_keys_without_overriding_server(tmp_path):
 
 def test_shared_token_cannot_be_written_to_new_machine_config(tmp_path):
     storage = store(tmp_path)
-    with pytest.raises(ValueError, match="secrets directory"):
+    with pytest.raises(ValueError, match="pair each device"):
         storage.update("device_workers", lambda _: {"token": "do-not-persist"})
     assert not storage.machine.exists()
 

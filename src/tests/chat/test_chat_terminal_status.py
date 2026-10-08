@@ -36,6 +36,7 @@ const ctx = {
   sessionIdsEqual: (a, b) => a === b,
   lastVisibleChatMessageEl: () => last,
   noteWidgetsRevision: () => {}, updateSupervisedTaskIndicator: () => {},
+  rememberTurnBadge: () => {}, refreshTypingIndicatorHeaderBadges: () => {},
   transcriptEndsWithGenerationStop: () => false,
   thisTurnHasAssistantReply: messages => messages.some(m => m.role === 'assistant'),
   turnAlreadyShowsAssistantReply: () => false, // inFlightUserMessage cleared

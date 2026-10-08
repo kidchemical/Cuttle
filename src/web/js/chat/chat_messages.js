@@ -88,7 +88,12 @@
             slash_command: m.slash_command || meta.slash_command,
             slash_command_failed: !!(m.slash_command_failed || meta.slash_command_failed),
             cursor_run: meta.cursor_run || m.cursor_run || undefined,
-            usage: normUsage(meta.usage || m.usage) || undefined,
+            usage: normUsage(meta.usage || m.usage, {
+                ...meta,
+                slash_command: m.slash_command || meta.slash_command,
+                routing_badge: meta.routing_badge || m.routing_badge,
+                cursor_run: meta.cursor_run || m.cursor_run,
+            }) || undefined,
             routing_badge: meta.routing_badge || m.routing_badge || undefined,
             user_feedback: meta.user_feedback || undefined,
             attachments: attachments.length ? attachments : undefined,

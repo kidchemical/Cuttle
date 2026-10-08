@@ -192,7 +192,7 @@ FRAMES = {
     "hero": promo.Frame(
         layout="hero", palette="dawn", eyebrow="Harness of harnesses",
         headline="Every agent.<br><em>One cockpit.</em>",
-        sub="Run Cursor, Codex, Claude, Muse Code, and OpenCode side by side, from your desktop, your phone, or Discord.",
+        sub="Run Cursor, Codex, Claude, Muse Code, and OpenCode side by side, from your desktop or your phone.",
         command="./start_cuttle.sh", dots=(0, 5)),
     "chat-hero": promo.Frame(
         palette="lilac", eyebrow="Visible work", label="CHAT &nbsp;/&nbsp; 01",

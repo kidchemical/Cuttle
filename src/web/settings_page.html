@@ -475,8 +475,9 @@
                 </div>
 </details>
                 <div class="setting-item">
-                    <div class="setting-control">
+                    <div class="setting-control" style="gap:8px">
                         <button type="button" class="control-button btn-start" onclick="saveChatTtsSettings()"><span class="emoji">💾</span> Save chat voice</button>
+                        <button type="button" class="control-button btn-info" onclick="previewChatTtsVoice(event)" title="Play a short sample with the selected voice and model">🔊 Try voice</button>
                     </div>
                 </div>
             </div>
@@ -2040,6 +2041,136 @@
                 if (toggle) toggle.classList.toggle('active', !next);
                 (window.showToast || alert)('Failed to update LAN access: ' + (e.message || e), 'error');
             }
+        }
+
+        function applyChatTtsToUi(t) {
+            const conf = (t && typeof t === 'object') ? t : {};
+            const enabled = document.getElementById('chatTtsEnabled');
+            const enabledToggle = document.getElementById('chatTtsEnabledToggle');
+            if (enabled) enabled.checked = conf.enabled !== false;
+            if (enabledToggle) enabledToggle.classList.toggle('active', conf.enabled !== false);
+            const summarize = document.getElementById('chatTtsSummarize');
+            const summarizeToggle = document.getElementById('chatTtsSummarizeToggle');
+            if (summarize) summarize.checked = conf.summarize !== false;
+            if (summarizeToggle) summarizeToggle.classList.toggle('active', conf.summarize !== false);
+            const voice = document.getElementById('chatTtsVoice');
+            if (voice && conf.voice) {
+                const v = String(conf.voice).toLowerCase();
+                if (!Array.from(voice.options).some((o) => o.value === v)) {
+                    const opt = document.createElement('option');
+                    opt.value = v;
+                    opt.textContent = v;
+                    voice.appendChild(opt);
+                }
+                voice.value = v;
+            }
+            const model = document.getElementById('chatTtsModel');
+            if (model && conf.tts_model) model.value = String(conf.tts_model);
+            const smodel = document.getElementById('chatTtsSummarizeModel');
+            if (smodel && conf.summarize_model) smodel.value = String(conf.summarize_model);
+        }
+
+        async function loadChatTtsSettings() {
+            try {
+                const r = await fetch('/api/settings/chat-tts', { cache: 'no-store' });
+                const d = await r.json();
+                if (!d.success) throw new Error(d.error || 'Failed to load');
+                applyChatTtsToUi(d.chat_tts);
+            } catch (e) {
+                (window.showToast || alert)('Could not load chat voice settings: ' + (e.message || e), 'error');
+            }
+        }
+
+        function readChatTtsFromUi() {
+            const val = (id) => {
+                const el = document.getElementById(id);
+                return el ? el.value : undefined;
+            };
+            const checked = (id) => {
+                const el = document.getElementById(id);
+                return el ? !!el.checked : undefined;
+            };
+            const out = {};
+            const enabled = checked('chatTtsEnabled');
+            if (enabled !== undefined) out.enabled = enabled;
+            const summarize = checked('chatTtsSummarize');
+            if (summarize !== undefined) out.summarize = summarize;
+            const voice = val('chatTtsVoice');
+            if (voice) out.voice = String(voice).toLowerCase();
+            const model = val('chatTtsModel');
+            if (model) out.tts_model = model;
+            const smodel = val('chatTtsSummarizeModel');
+            if (smodel) out.summarize_model = smodel;
+            return out;
+        }
+
+        async function saveChatTtsSettings() {
+            try {
+                const r = await fetch('/api/settings/chat-tts', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(readChatTtsFromUi()),
+                });
+                const d = await r.json();
+                if (!d.success) throw new Error(d.error || 'Save failed');
+                applyChatTtsToUi(d.chat_tts);
+                (window.showToast || alert)('Chat voice saved', 'info');
+            } catch (e) {
+                (window.showToast || alert)('Failed to save chat voice: ' + (e.message || e), 'error');
+            }
+        }
+
+        async function previewChatTtsVoice(event) {
+            const btn = event && event.currentTarget ? event.currentTarget : null;
+            try {
+                if (btn) btn.disabled = true;
+                const ui = readChatTtsFromUi();
+                const r = await fetch('/api/chat/tts', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        text: 'Hello! This is how I will sound when I read replies aloud.',
+                        summarize: false,
+                        tts_model: ui.tts_model,
+                        voice: ui.voice,
+                    }),
+                });
+                const d = await r.json();
+                if (!r.ok || !d.success || !d.audio_base64) {
+                    throw new Error((d && d.error) || ('Preview failed (' + r.status + ')'));
+                }
+                const bin = atob(d.audio_base64);
+                const bytes = new Uint8Array(bin.length);
+                for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+                const url = URL.createObjectURL(new Blob([bytes], { type: d.content_type || 'audio/mpeg' }));
+                await new Audio(url).play();
+            } catch (e) {
+                (window.showToast || alert)('Voice preview failed: ' + (e.message || e), 'error');
+            } finally {
+                if (btn) btn.disabled = false;
+            }
+        }
+
+        function toggleChatTtsEnabled(event) {
+            // Label + nested checkbox would otherwise fire this twice per click.
+            if (event) event.preventDefault();
+            const checkbox = document.getElementById('chatTtsEnabled');
+            const toggle = document.getElementById('chatTtsEnabledToggle');
+            if (!checkbox) return;
+            const next = !checkbox.checked;
+            checkbox.checked = next;
+            if (toggle) toggle.classList.toggle('active', next);
+        }
+
+        function toggleChatTtsSummarize(event) {
+            // Label + nested checkbox would otherwise fire this twice per click.
+            if (event) event.preventDefault();
+            const checkbox = document.getElementById('chatTtsSummarize');
+            const toggle = document.getElementById('chatTtsSummarizeToggle');
+            if (!checkbox) return;
+            const next = !checkbox.checked;
+            checkbox.checked = next;
+            if (toggle) toggle.classList.toggle('active', next);
         }
 
         function toggleNotifications(event) {

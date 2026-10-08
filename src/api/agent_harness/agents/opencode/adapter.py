@@ -206,22 +206,12 @@ def opencode_executable() -> Optional[str]:
     )
 
 
-# Back-compat for tests that import the old helper name.
-def _prefer_native_binary(path: str, *, is_windows: Optional[bool] = None) -> str:
-    from pathlib import Path
-
-    from api.agent_harness.win_cli import prefer_native_binary
-
-    extras = (Path(path).parent / "node_modules" / "opencode-ai" / "bin" / "opencode.exe",)
-    return prefer_native_binary(path, extra_candidates=extras, is_windows=is_windows)
-
-
 def _accumulate_opencode_usage(obj: Dict[str, Any], usage: Dict[str, Any]) -> None:
     """Accumulate ``step_finish`` billing totals + last-step context fill.
 
     ``prompt_tokens`` / ``completion_tokens`` are **sums** across steps (billing).
-    ``context_tokens`` is overwritten each step with that step's ``tokens.input`` —
-    the best single-call occupancy snapshot OpenCode emits (no peak field).
+    ``context_tokens`` is the last step's input plus cache reads and writes.
+    OpenCode reports those input buckets separately.
     """
     if (obj.get("type") or "").strip() != "step_finish":
         return
@@ -250,10 +240,12 @@ def _accumulate_opencode_usage(obj: Dict[str, Any], usage: Dict[str, Any]) -> No
         usage["cache_write_tokens"] = int(usage.get("cache_write_tokens") or 0) + cw
     # Last step wins — do not sum (would inflate the context gauge like Cursor
     # cacheRead aggregates).
-    if inp > 0:
-        usage["context_tokens"] = inp
+    context = inp + cr + cw
+    if any(key in tokens for key in ("input", "cache", "cacheRead", "cacheWrite")):
+        usage["cache_inclusive"] = False
+        usage["context_tokens"] = context
         usage["peak_context_tokens"] = max(
-            int(usage.get("peak_context_tokens") or 0), inp
+            int(usage.get("peak_context_tokens") or 0), context
         )
     cost = part.get("cost")
     if cost is not None:

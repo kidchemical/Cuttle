@@ -155,100 +155,47 @@ _ORB_HELPERS = (
     "mountLiveSubagentBadges",
 )
 
-_ORB_DRIVER = r"""
-let _subagentOrbList = [];
-%s
-const assert = require('assert');
-
-let inserted = [];
-let removed = 0;
-function makeLaunchersStub() {
-  return { outerHTML: '', remove() { removed += 1; } };
-}
-const fakeWrap = {
-  _launchers: null,
-  querySelector(sel) {
-    if (sel === '.subagent-launchers') return fakeWrap._launchers;
-    if (sel === '.message-footer') {
-      return {
-        insertAdjacentHTML(pos, html) {
-          inserted.push([pos, html]);
-          fakeWrap._launchers = makeLaunchersStub();
-          fakeWrap._launchers.outerHTML = html;
-        },
-      };
-    }
-    return null;
-  },
-  insertAdjacentHTML(pos, html) {
-    inserted.push([pos, html]);
-    fakeWrap._launchers = makeLaunchersStub();
-    fakeWrap._launchers.outerHTML = html;
-  },
-};
-const typingEl = { querySelector(sel) {
-  if (sel === '.message-content-wrapper') return fakeWrap;
-  return fakeWrap.querySelector(sel);
-} };
-global.document = {
-  querySelectorAll(sel) {
-    if (sel.indexOf('typing-indicator') >= 0) return [typingEl];
-    return [];
-  },
-};
-
-// Orbs live inside the fleet cards now: no standalone orb row, the live
-// badges mount cards (with mini orbit) onto the in-progress bubble.
-syncSubagentOrbs([
-  { handle: 'CH-000540', label: 'Chef A', agent: 'cursor', generating: true,
-    fleet: true, outcome: 'running', summary: 'Reading files' },
-]);
-assert.strictEqual(inserted.length, 1);
-assert.strictEqual(inserted[0][0], 'beforebegin');
-assert.ok(inserted[0][1].includes('subagent-launchers'), inserted[0][1]);
-assert.ok(inserted[0][1].includes('typing-orbit--fleet'), inserted[0][1]);
-assert.ok(inserted[0][1].includes('subagent-fleet-summary--live'), inserted[0][1]);
-assert.ok(inserted[0][1].includes('data-chat-handle="CH-000540"'), inserted[0][1]);
-assert.ok(inserted[0][1].includes('Chef A'), inserted[0][1]);
-
-// Second attach updates the badges in place instead of duplicating.
-syncSubagentOrbs([
-  { handle: 'CH-000540', label: 'Chef A', agent: 'cursor', generating: true,
-    fleet: true, outcome: 'running', summary: 'Reading files' },
-  { session_id: 541, title: 'Chef B', agent: 'codex', fleet: true, outcome: 'queued' },
-]);
-assert.strictEqual(inserted.length, 1);
-assert.ok(fakeWrap._launchers.outerHTML.includes('CH-000541'), fakeWrap._launchers.outerHTML);
-
-// Clearing (new turn) unmounts the live badges.
-clearSubagentOrbs();
-assert.strictEqual(removed, 1);
-
-console.log('ok');
-"""
-
-
-@node_only
 def test_subagent_live_orbs_and_badges():
+    """Exercise mounted cards with the browser's real template/DOM APIs."""
+    playwright = pytest.importorskip("playwright.sync_api")
+    from tests.browser_guard import launch_chromium
+
     src = CHAT_JS.read_text(encoding="utf-8")
     blob = "\n".join(_extract_function(src, name) for name in _ORB_HELPERS)
-    # Same as test_subagent_ui_helpers: formatChatDisplayId delegates to the
-    # CuttleChatActivity global, so the activity module must be required first.
-    # Fleet entries render through the fleet module, which self-registers on
-    # globalThis when required.
-    driver = (
-        "require(%s);\n" % json.dumps(str(ACTIVITY_JS))
-        + "require(%s);\n" % json.dumps(str(FLEET_JS))
-        + (_ORB_DRIVER % blob)
-    )
-    proc = subprocess.run(
-        ["node", "-e", driver],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
-    assert proc.returncode == 0, proc.stderr or proc.stdout
+    first = {"handle": "CH-000540", "label": "Chef A", "agent": "cursor",
+             "generating": True, "fleet": True, "outcome": "running",
+             "summary": "Reading files"}
+    second = {"session_id": 541, "title": "Chef B", "agent": "codex",
+              "fleet": True, "outcome": "queued"}
+    with playwright.sync_playwright() as driver:
+        browser = launch_chromium(driver)
+        page = browser.new_page()
+        try:
+            page.set_content('<div id="typing-indicator"><div class="message-content-wrapper">'
+                             '<div class="message-footer"></div></div></div>')
+            page.add_script_tag(content=ACTIVITY_JS.read_text(encoding="utf-8"))
+            page.add_script_tag(content=FLEET_JS.read_text(encoding="utf-8"))
+            page.add_script_tag(content="let _subagentOrbList = [];\n" + blob)
+            page.evaluate("rows => syncSubagentOrbs(rows)", [first])
+            group = page.locator(".subagent-launchers")
+            assert group.count() == 1
+            assert page.locator(".subagent-launchers + .message-footer").count() == 1
+            assert group.locator(".typing-orbit--fleet").count() == 1
+            assert group.locator(".subagent-fleet-summary--live").inner_text() == "Reading files"
+            assert group.locator('[data-chat-handle="CH-000540"]').count() == 1
+            assert "Chef A" in group.inner_text()
+            page.evaluate("window.initialGroup = document.querySelector('.subagent-launchers');"
+                          "window.initialCard = initialGroup.firstElementChild;")
+            page.evaluate("rows => syncSubagentOrbs(rows)", [first, second])
+            assert group.count() == 1
+            assert group.locator('[data-chat-handle="CH-000541"]').count() == 1
+            assert group.evaluate("el => el === window.initialGroup")
+            assert group.locator('[data-chat-handle="CH-000540"]').evaluate(
+                "el => el === window.initialCard")
+            page.evaluate("clearSubagentOrbs()")
+            assert group.count() == 0
+        finally:
+            browser.close()
 
 
 _FLEET_CHIP_HELPERS = (

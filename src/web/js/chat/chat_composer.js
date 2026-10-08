@@ -169,7 +169,18 @@
             .map((chip) => ({ ...chip }));
     }
 
+    function draftWithSharedAgent(draft, selection, commands) {
+        if (!draft) return null;
+        return {
+            ...draft,
+            chips: draftChips(draft.chips).filter((chip) => !(commands || []).some(
+                (cmd) => cmd.stickySession && cmd.prefix === chip.prefix
+            )).concat(draftChips(selection.stickyChips)),
+        };
+    }
+
     const api = {
+        draftWithSharedAgent,
         draftChips,
         enterSubmits,
         isSendableComposerMessage,

@@ -87,7 +87,15 @@ def _local_register(store: Any, ads: dict) -> None:
     )
 
 
-def _run_one(job: dict, *, complete, fail, heartbeat, lease_seconds: int = 600) -> None:
+def _run_one(
+    job: dict,
+    *,
+    complete,
+    fail,
+    heartbeat,
+    lease_seconds: int = 600,
+    auth_token: Optional[str] = None,
+) -> None:
     """Execute one job while refreshing the claim lease in the background.
 
     Long jobs (Cycles, Unity/compile shell) exceed the default lease (10m).
@@ -140,7 +148,7 @@ def _run_one(job: dict, *, complete, fail, heartbeat, lease_seconds: int = 600) 
         )
         pulse.start()
         try:
-            result = executor_mod.execute_job(job_exec)
+            result = executor_mod.execute_job(job_exec, auth_token=auth_token)
         finally:
             stop.set()
             pulse.join(timeout=5)
@@ -182,6 +190,7 @@ def run_local_worker_loop(*, should_continue: Callable[[], bool]) -> None:
 
     store = get_store()
     wid = worker_id()
+    local_token = store.ensure_local_worker_token(wid)
     poll = poll_seconds()
     lease = lease_seconds()
     print(f"[DAEMON] Device worker local loop worker_id={wid} poll={poll}s")
@@ -219,6 +228,7 @@ def run_local_worker_loop(*, should_continue: Callable[[], bool]) -> None:
                         jid, wid, lease_seconds=lease, progress=progress
                     ),
                     lease_seconds=lease,
+                    auth_token=local_token,
                 )
         except Exception as e:
             log.warning("local worker tick error: %s", e)
@@ -248,6 +258,7 @@ def run_remote_worker_loop(
         time.sleep(0.5)
 
     client = DeviceWorkerClient(base_url=url)
+    remote_token = client.token
     poll = poll_seconds()
     print(f"[WORKER] Device worker → {url} id={client.worker_id} poll={poll}s")
     log.info("remote device worker started url=%s id=%s", url, client.worker_id)
@@ -289,6 +300,7 @@ def run_remote_worker_loop(
                         jid, progress=progress
                     ),
                     lease_seconds=lease,
+                    auth_token=remote_token,
                 )
         except Exception as e:
             log.warning("remote worker tick error: %s", e)

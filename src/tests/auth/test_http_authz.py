@@ -119,7 +119,6 @@ def test_lan_enroll_denied_when_lan_disabled(worker_db, monkeypatch):
     monkeypatch.setattr("api.device_workers.routes.device_workers_enabled", lambda: True)
     monkeypatch.setattr("api.device_workers.routes.get_store", lambda: worker_db)
     monkeypatch.setattr("api.device_workers.auth.lan_access_enabled", lambda: False)
-    monkeypatch.setattr("api.device_workers.auth.worker_token", lambda: "")
 
     from api.device_workers.routes import workers_bp
 
@@ -137,7 +136,6 @@ def test_lan_enroll_denied_when_lan_disabled(worker_db, monkeypatch):
 def test_lan_job_submit_without_owner_is_401(worker_db, monkeypatch):
     monkeypatch.setattr("api.device_workers.routes.device_workers_enabled", lambda: True)
     monkeypatch.setattr("api.device_workers.routes.get_store", lambda: worker_db)
-    monkeypatch.setattr("api.device_workers.auth.worker_token", lambda: "")
 
     from api.device_workers.routes import workers_bp
 
@@ -155,7 +153,6 @@ def test_lan_job_submit_without_owner_is_401(worker_db, monkeypatch):
 def test_worker_token_cannot_submit_jobs(worker_db, monkeypatch):
     monkeypatch.setattr("api.device_workers.routes.device_workers_enabled", lambda: True)
     monkeypatch.setattr("api.device_workers.routes.get_store", lambda: worker_db)
-    monkeypatch.setattr("api.device_workers.auth.worker_token", lambda: "shared")
     monkeypatch.setattr("api.device_workers.store.get_store", lambda: worker_db)
 
     from api.device_workers.routes import workers_bp
@@ -163,10 +160,11 @@ def test_worker_token_cannot_submit_jobs(worker_db, monkeypatch):
     app = Flask(__name__)
     app.register_blueprint(workers_bp)
     client = app.test_client()
+    token = worker_db.enroll_device(worker_id="fixture-worker")["token"]
     r = client.post(
         "/api/workers/jobs",
         json={"type": "ping", "params": {"echo": 1}},
-        headers={"Authorization": "Bearer shared"},
+        headers={"Authorization": f"Bearer {token}"},
         environ_base={"REMOTE_ADDR": "192.0.2.99"},
     )
     assert r.status_code == 401
@@ -175,7 +173,6 @@ def test_worker_token_cannot_submit_jobs(worker_db, monkeypatch):
 def test_loopback_without_session_cannot_submit_jobs(worker_db, monkeypatch):
     monkeypatch.setattr("api.device_workers.routes.device_workers_enabled", lambda: True)
     monkeypatch.setattr("api.device_workers.routes.get_store", lambda: worker_db)
-    monkeypatch.setattr("api.device_workers.auth.worker_token", lambda: "")
 
     from api.device_workers.routes import workers_bp
 

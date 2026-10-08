@@ -1230,6 +1230,7 @@ def get_session_messages(session_id):
             'project_name': session.get('project_name'),
             'project_path': session.get('project_path'),
             'followups': db.get_followup_queue(session_id, user['id']),
+            'composer_selection': db.get_composer_selection(session_id, user['id']),
             'display_name': session.get('display_name') or '',
             'avatar': session.get('avatar') or '',
             'agent_profile_id': session.get('agent_profile_id') or '',
@@ -1324,6 +1325,22 @@ def _auth_user_or_error():
     return (db, user), None
 
 
+@auth_bp.route('/sessions/<int:session_id>/composer', methods=['PUT'])
+def session_composer_selection(session_id):
+    """Share next-send selection across devices, separately from turn identity."""
+    pair, err = _auth_user_or_error()
+    if err:
+        return err
+    db, user = pair
+    try:
+        selection = db.set_composer_selection(session_id, user['id'], request.get_json(silent=True))
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+    if selection is None:
+        return jsonify({'success': False, 'error': 'Session not found or access denied'}), 404
+    return jsonify({'success': True, 'composer_selection': selection})
+
+
 @auth_bp.route('/sessions/<int:session_id>/followups', methods=['GET', 'PUT', 'POST'])
 def session_followups(session_id):
     """Shared composer follow-up queue (phone + PC see the same items)."""
@@ -1373,4 +1390,3 @@ def take_session_followups(session_id):
     except Exception as e:
         print(f"Take followups error: {e}")
         return jsonify({'success': False, 'error': 'Failed to take follow-ups'}), 500
-

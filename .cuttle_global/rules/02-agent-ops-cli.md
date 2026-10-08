@@ -5,7 +5,7 @@ When you need Cuttle-owned data or platform verbs (chat transcripts, workers, br
 throwaway scripts.
 
 - Chat handles / history → `python -m api.chat_cli` (see `chat-history.md`)
-- Tasks widgets → `python -m api.widgets_cli` (see `widgets.md`; in-reply tags still preferred)
+- Tasks gizmos → `python -m api.gizmos tasks` (see `gizmos.md`; create during planning, patch during work, no Tasks markdown tags)
 - Gizmos (shell-docked usage meters, experimental) → `python -m api.gizmos` (see `gizmos.md`)
 - Discord reads → `python -m api.discord_cli` (see `discord.md`; posts stay on `discord.post`)
 - Forge issues → the active project's enabled integration runbook/CLI

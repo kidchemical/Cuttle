@@ -19,11 +19,11 @@ from __future__ import annotations
 import json
 import os
 import socket
-import ssl
 import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -84,13 +84,6 @@ def write_status(patch: Dict[str, Any]) -> None:
         os.replace(tmp, path)
 
 
-def _ssl_ctx() -> ssl.SSLContext:
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-    return ctx
-
-
 def http_json(
     method: str,
     base: str,
@@ -109,9 +102,11 @@ def http_json(
         data = json.dumps(body).encode("utf-8")
         headers["Content-Type"] = "application/json"
     req = urllib.request.Request(url, data=data, headers=headers, method=method.upper())
-    ctx = _ssl_ctx() if url.lower().startswith("https://") else None
+    from api.tls_cert import urlopen as tls_urlopen
+
+    # Remote HTTPS: the desktop app's pinned key (PIN_ENV), never unverified.
     try:
-        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+        with tls_urlopen(req, timeout=timeout) as resp:
             raw = resp.read() or b"{}"
             return json.loads(raw.decode("utf-8", errors="replace") or "{}")
     except urllib.error.HTTPError as e:
@@ -155,11 +150,47 @@ def coordinator_bases(cfg: Dict[str, Any], host: str) -> list:
     return [f"https://{_bracket(host)}:{https_port}", f"http://{_bracket(host)}:{http_port}"]
 
 
+def _poll_pairing(base: str, request_id: str, pairing_secret: str, code: str) -> Dict[str, Any]:
+    """Wait up to 10 min for the host owner to approve a pairing request."""
+    print(
+        f"[CLIENT-DAEMON] pairing pending — approve on the host "
+        f"(Jobs -> Devices) with code {code}",
+        flush=True,
+    )
+    deadline = time.time() + 10 * 60
+    last = "pending"
+    while time.time() < deadline:
+        time.sleep(3)
+        try:
+            data = http_json(
+                "POST",
+                base,
+                f"/api/workers/enroll/{request_id}/poll",
+                token="",
+                body={"pairing_secret": pairing_secret},
+                timeout=10,
+            )
+        except Exception as e:
+            last = str(e)
+            continue
+        status = str(data.get("status") or "")
+        if status == "approved" and data.get("token"):
+            return data
+        if status in ("denied", "expired"):
+            raise RuntimeError(f"pairing {status} on the host")
+        last = status or last
+    raise RuntimeError(f"pairing approval timed out (last={last})")
+
+
 def enroll(cfg: Dict[str, Any], bases: list) -> Dict[str, Any]:
     """Enroll against coordinator bases strictly in the given order.
 
     Single selections contain one base. Legacy pairs retain their order
     from :func:`coordinator_bases`.
+
+    First pairing (no saved credential) files a pairing request and polls
+    until the host owner approves; re-enroll with a saved credential returns
+    no credential (never echoed) and keeps the saved one.
     """
     worker_id = str(
         cfg.get("workerId") or socket.gethostname() or "cuttle-client"
@@ -167,6 +198,12 @@ def enroll(cfg: Dict[str, Any], bases: list) -> Dict[str, Any]:
     body = {"worker_id": worker_id, "hostname": socket.gethostname()}
     token = str(cfg.get("workerToken") or "")
     headers_tok = token
+    import secrets
+
+    # Always pair-capable: a stale saved bearer (host DB reset) answers 202,
+    # and the fresh secret lets this client re-pair without manual steps.
+    pairing_secret = secrets.token_hex(16)
+    body["pairing_secret"] = pairing_secret
     last_err = None
     for base in bases:
         try:
@@ -178,7 +215,14 @@ def enroll(cfg: Dict[str, Any], bases: list) -> Dict[str, Any]:
                 body=body,
                 timeout=10,
             )
-            if data.get("success") and data.get("token"):
+            if data.get("status") == "pending" and data.get("request_id"):
+                return _poll_pairing(
+                    base,
+                    str(data["request_id"]),
+                    pairing_secret,
+                    str(data.get("code") or ""),
+                )
+            if data.get("success"):
                 return data
             last_err = data.get("error") or "enroll failed"
         except Exception as e:
@@ -213,6 +257,16 @@ def main() -> int:
         print(f"[CLIENT-DAEMON] {exc}")
         return 2
     selected_base = bases[0]
+    # Remote HTTPS trust = the key the desktop app pinned for this host:port.
+    from api.tls_cert import PIN_ENV, desktop_pin
+
+    for base in bases:
+        parts = urllib.parse.urlsplit(base)
+        if parts.scheme == "https" and parts.port:
+            pin = desktop_pin(cfg.get("tlsPins"), host, parts.port)
+            if pin:
+                os.environ[PIN_ENV] = pin
+            break
     http_base = next(
         (b for b in bases if b.startswith("http://") and not b.startswith("https://")),
         "",
@@ -220,7 +274,8 @@ def main() -> int:
 
     try:
         enrolled = enroll(cfg, bases)
-        token = str(enrolled.get("token") or "")
+        # Re-enroll never echoes the saved credential — keep it.
+        token = str(enrolled.get("token") or cfg.get("workerToken") or "")
         worker_id = str(enrolled.get("worker_id") or cfg.get("workerId") or "")
         save_desktop_config(
             {
@@ -242,7 +297,7 @@ def main() -> int:
     os.environ["CUTTLE_DEVICE_WORKERS_ENABLED"] = "1"
     os.environ["CUTTLE_DEVICE_WORKERS_COORDINATOR_URL"] = selected_base
     os.environ["CUTTLE_DEVICE_WORKERS_COORDINATOR_URL_HTTP"] = http_base
-    os.environ["CUTTLE_DEVICE_WORKERS_TOKEN"] = token
+    os.environ["CUTTLE_DEVICE_WORKER_TOKEN"] = token
     os.environ["CUTTLE_DEVICE_WORKER_ID"] = worker_id
     os.environ["CUTTLE_CLIENT_DAEMON"] = "1"
     os.environ["CUTTLE_REPO_ROOT"] = str(PROJECT_ROOT)

@@ -179,6 +179,40 @@ out.clsKinds = [A.activityClassToKind('chat-history-item has-unread-error'),
   A.activityClassToKind('chat-history-item has-queued'),
   A.activityClassToKind('chat-history-item has-paused-queue'),
   A.activityClassToKind('chat-history-item')];
+// per-frame Spaces snapshot (collectFrameSnapshot)
+const frameBase = {
+  currentSessionId: '182',
+  localSessionId: null,
+  awaitingIds: [],
+  canonicalize: (sid) => A.canonicalizeChatSessionId(sid),
+  idsEqual: (a, b) => A.sessionIdsEqual(a, b),
+  spinnerFor: (sid) => String(sid) === '182',
+  attentionKindFor: (sid) => ({ '182': 'unread', '183': 'queued' }[String(sid)] || ''),
+  prefsFor: () => null,
+  attentionActive: false,
+  attentionIsError: false,
+  generationLoading: false,
+};
+out.snapBasic = A.collectFrameSnapshot(frameBase);
+out.snapIdleOwned = A.collectFrameSnapshot(Object.assign({}, frameBase,
+  { currentSessionId: 'CH-000190', spinnerFor: () => false, attentionKindFor: () => '' }));
+out.snapUnowned = A.collectFrameSnapshot(Object.assign({}, frameBase,
+  { spinnerFor: (sid) => String(sid) === '999' }));
+out.snapVisible = A.collectFrameSnapshot(Object.assign({}, frameBase, { attentionActive: true }));
+out.snapVisibleErr = A.collectFrameSnapshot(Object.assign({}, frameBase,
+  { attentionActive: true, attentionIsError: true }));
+out.snapInput = A.collectFrameSnapshot(Object.assign({}, frameBase, {
+  currentSessionId: '184', spinnerFor: () => false, attentionKindFor: () => 'unread',
+  prefsFor: (sid) => (String(sid) === '184' ? { awaitingInput: true } : null),
+}));
+out.snapLocal = A.collectFrameSnapshot(Object.assign({}, frameBase, {
+  localSessionId: '182', awaitingIds: ['db_session_182', '185'],
+  generationLoading: true, attentionKindFor: () => '',
+  spinnerFor: (sid) => String(sid) === '182' || String(sid) === '185',
+}));
+out.snapThrow = A.collectFrameSnapshot(Object.assign({}, frameBase,
+  { spinnerFor: () => false, attentionKindFor: () => { throw new Error('boom'); } }));
+out.snapEmpty = A.collectFrameSnapshot();
 process.stdout.write(JSON.stringify(out));
 """
 
@@ -337,6 +371,49 @@ def test_live_status_and_snapshot_mapping():
     assert res["liveNoTs"] is True  # no timestamp → trust the flag
     assert res["liveIdle"] is False
     assert res["clsKinds"] == ["error", "unread", "queued", "paused", ""]
+
+
+@node_only
+def test_collect_frame_snapshot():
+    res = _run()
+    basic = res["snapBasic"]
+    assert basic["owned"] == ["182"]
+    assert basic["sessions"] == [{"id": "182", "activity": "unread",
+                                 "running": True, "localRunning": False,
+                                 "visibleAttention": False}]
+    # Idle owned chats clear in the shell: listed in owned, absent from sessions.
+    assert res["snapIdleOwned"] == {"sessions": [], "owned": ["190"]}
+    # Unowned running rows (stale history classes) are never pushed.
+    unowned = res["snapUnowned"]
+    assert unowned["owned"] == ["182"]
+    assert all(s["id"] != "999" for s in unowned["sessions"])
+    assert unowned["sessions"] == [{"id": "182", "activity": "unread",
+                                   "running": False, "localRunning": False,
+                                   "visibleAttention": False}]
+    vis = res["snapVisible"]["sessions"]
+    assert vis == [{"id": "182", "activity": "unread", "running": True,
+                   "localRunning": False, "visibleAttention": True}]
+    vis_err = res["snapVisibleErr"]["sessions"]
+    assert [s["activity"] for s in vis_err] == ["error"]
+    assert all(s["visibleAttention"] for s in vis_err)
+    # awaitingInput prefs win over the history kind.
+    assert res["snapInput"]["sessions"] == [{"id": "184", "activity": "input",
+                                           "running": False, "localRunning": False,
+                                           "visibleAttention": False}]
+    local = res["snapLocal"]
+    assert local["owned"] == ["182", "185"]  # db_session_182 dedupes to 182
+    by_id = {s["id"]: s for s in local["sessions"]}
+    assert by_id["182"]["localRunning"] is True  # live local turn
+    assert by_id["185"]["localRunning"] is True  # pending action form
+    # Throwing attention resolver degrades to no activity, never throws.
+    assert res["snapThrow"] == {"sessions": [], "owned": ["182"]}
+    assert res["snapEmpty"] == {"sessions": [], "owned": []}
+
+
+@node_only
+def test_chat_page_delegates_frame_snapshot_to_activity_owner():
+    src = (REPO_ROOT / "src" / "web" / "js" / "chat/chat_page.js").read_text(encoding="utf-8")
+    assert "CuttleChatActivity.collectFrameSnapshot(" in src
 
 
 @node_only

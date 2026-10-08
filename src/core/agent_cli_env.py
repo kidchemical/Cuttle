@@ -1,7 +1,41 @@
 """Environment boundary for independently authenticated guest agent CLIs."""
 
 import os
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Mapping, Optional
+
+_operation_context = ContextVar("cuttle_operation_context", default={})
+
+
+def operation_actor(*, source="cli", session_id=None, agent_id=None, user_id=None):
+    """Bounded provenance for local agent operations (identity, not credentials)."""
+    env = dict(os.environ)
+    env.update(_operation_context.get())
+    return {
+        "source": source,
+        "session_id": str(session_id if session_id is not None else env.get("CUTTLE_CHAT_SESSION_ID", ""))[:80],
+        "agent_id": str(agent_id if agent_id is not None else env.get("CUTTLE_AGENT_ID", ""))[:80],
+        "model": env.get("CUTTLE_AGENT_MODEL", "")[:160] if source != "ui" else "",
+        "run_id": env.get("CUTTLE_AGENT_RUN_ID", "")[:160] if source != "ui" else "",
+        "project_path": env.get("CUTTLE_AGENT_PROJECT_PATH", "")[:2000] if source != "ui" else "",
+        "user_id": user_id,
+    }
+
+
+@contextmanager
+def agent_operation_context(*, session_id, agent_id, model=None, run_id=None, project_path=None):
+    """Per-execution attribution, never mutate the Flask process environment."""
+    values = {
+        "CUTTLE_CHAT_SESSION_ID": session_id, "CUTTLE_AGENT_ID": agent_id,
+        "CUTTLE_AGENT_MODEL": model, "CUTTLE_AGENT_RUN_ID": run_id,
+        "CUTTLE_AGENT_PROJECT_PATH": project_path,
+    }
+    token = _operation_context.set({k: str(v) if v is not None else "" for k, v in values.items()})
+    try:
+        yield
+    finally:
+        _operation_context.reset(token)
 
 # These override native CLI authentication or redirect provider requests.
 _AUTH_OVERRIDES = frozenset({
@@ -20,8 +54,10 @@ def agent_cli_env(source: Optional[Mapping[str, str]] = None) -> dict[str, str]:
     is never mutated, so Cuttle's direct API services retain their credentials.
     """
     source = os.environ if source is None else source
-    return {
+    env = {
         key: value for key, value in source.items()
         if key.upper() not in _AUTH_OVERRIDES
         and not key.upper().endswith(("API_KEY", "API_TOKEN", "AUTH_TOKEN"))
     }
+    env.update(_operation_context.get())
+    return env

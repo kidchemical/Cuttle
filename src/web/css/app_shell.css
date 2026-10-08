@@ -1101,6 +1101,149 @@ body.is-electron .split-group.split-vertical > .split-group {
     background: var(--accent, #4f8cff);
 }
 
+/* Drag-release below SPLIT_COLLAPSE_PX parks the pane — preview it. */
+.split-column.pane-will-collapse .shell-main {
+    opacity: 0.45;
+}
+.split-column.pane-will-collapse {
+    outline: 1px dashed rgba(229, 83, 75, 0.7);
+    outline-offset: -1px;
+}
+.split-resize-handle.will-collapse {
+    background: rgba(229, 83, 75, 0.85);
+}
+
+/* Parked viewport pane: blade toolbar stays, content hides in place. The
+   live iframe keeps running untouched — this is a layout park, not a close.
+   Stylesheet guard (!important) beats any inline ratio flex writers. */
+.split-column.pane-collapsed {
+    flex: 0 0 auto !important;
+    grid-template-columns: var(--rail-width) 0;
+}
+.split-column.pane-collapsed .shell-main {
+    width: 0;
+    min-width: 0;
+    overflow: hidden;
+    visibility: hidden;
+}
+
+/* Divider touching a parked pane: wider, clickable restore affordance with
+   a chevron pointing where the pane will grow (expansion direction). */
+.split-resize-handle.pane-expand {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--panel-border, #2a2a3e);
+    cursor: pointer;
+}
+.split-horizontal > .split-resize-handle.pane-expand,
+.split-container.split-horizontal > .split-resize-handle.pane-expand {
+    width: 11px;
+    flex-basis: 11px;
+}
+.split-vertical > .split-resize-handle.pane-expand,
+.split-container.split-vertical > .split-resize-handle.pane-expand {
+    height: 11px;
+    flex-basis: 11px;
+}
+.split-resize-handle.pane-expand::after {
+    content: '›';
+    font-size: 11px;
+    line-height: 1;
+    color: var(--panel-dim, #606070);
+}
+.split-resize-handle.pane-expand[data-expand-dir='right']::after {
+    content: '›';
+}
+.split-resize-handle.pane-expand[data-expand-dir='left']::after {
+    content: '‹';
+}
+.split-resize-handle.pane-expand[data-expand-dir='down']::after {
+    content: 'ˇ';
+}
+.split-resize-handle.pane-expand[data-expand-dir='up']::after {
+    content: 'ˆ';
+}
+.split-resize-handle.pane-expand[data-expand-dir='both']::after {
+    content: '‹›';
+    font-size: 9px;
+}
+.split-vertical > .split-resize-handle.pane-expand[data-expand-dir='both']::after,
+.split-container.split-vertical > .split-resize-handle.pane-expand[data-expand-dir='both']::after {
+    content: 'ˆˇ';
+}
+.split-resize-handle.pane-expand:hover {
+    background: var(--accent, #4f8cff);
+}
+.split-resize-handle.pane-expand:hover::after {
+    color: #fff;
+}
+
+/* Vertically parked pane: the whole pane becomes a clickable title bar
+   (a stacked blade would eat full width). Live iframe stays mounted. */
+.split-vertical > .split-column.pane-collapsed,
+.split-container.split-vertical > .split-column.pane-collapsed {
+    grid-template-columns: var(--rail-width) 0;
+    min-height: 0;
+    height: 28px;
+    overflow: hidden;
+    cursor: pointer;
+    /* Match the blade toolbar so the parked bar reads as its rail. */
+    background: var(--rail-bg, #0d1117);
+    border-radius: 3px;
+}
+.split-vertical > .split-column.pane-collapsed .icon-rail,
+.split-container.split-vertical > .split-column.pane-collapsed .icon-rail,
+.split-vertical > .split-column.pane-collapsed .shell-main,
+.split-container.split-vertical > .split-column.pane-collapsed .shell-main {
+    visibility: hidden;
+}
+.split-vertical > .split-column.pane-collapsed::before,
+.split-container.split-vertical > .split-column.pane-collapsed::before {
+    content: '↕';
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 10px;
+    line-height: 1;
+    color: var(--panel-dim, #606070);
+}
+.split-vertical > .split-column.pane-collapsed::after,
+.split-container.split-vertical > .split-column.pane-collapsed::after {
+    content: attr(data-parked-title);
+    position: absolute;
+    left: 28px;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 12px;
+    line-height: 1.2;
+    color: var(--panel-text, #b0b0c0);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.split-vertical > .split-column.pane-collapsed:hover,
+.split-container.split-vertical > .split-column.pane-collapsed:hover {
+    background: var(--accent, #4f8cff);
+}
+.split-vertical > .split-column.pane-collapsed:hover::before,
+.split-container.split-vertical > .split-column.pane-collapsed:hover::before,
+.split-vertical > .split-column.pane-collapsed:hover::after,
+.split-container.split-vertical > .split-column.pane-collapsed:hover::after {
+    color: #fff;
+}
+
+/* Electron's own vertical rules outrank the bar above
+   (body.is-electron … height:auto wins ties); re-assert here or parked
+   panes size to content (hundreds of px of rail) instead of 28px. */
+body.is-electron .split-vertical > .split-column.pane-collapsed,
+body.is-electron .split-container.split-vertical > .split-column.pane-collapsed {
+    height: 28px;
+    min-height: 0;
+}
+
 /* ================================================================
    ICON RAIL
    ================================================================ */

@@ -14,9 +14,10 @@ Windows drive/UNC paths are preserved on Linux and marked Different OS.
 Linux network paths must already be mounted; Cuttle does not mount shares.
 A leading `~/` is expanded using the host's home directory.
 
-The UI keeps registered paths separate from the resolved path. Projects registered
-before this feature retain the existing lab-path rewrite compatibility until an
-explicit path list is saved. Once saved, only that list is used, in its exact order.
+The UI keeps registered paths separate from the resolved path. Installed
+single-path records migrate once to a saved list, using an existing personal
+alias if needed. Resolution then uses only that list in its exact order.
+Subsequent alias changes do not redirect a registered project.
 Missing paths can be saved for a future host or mount. If every location is
 unavailable, turns bound to that project are rejected before execution. Resolution
 is pinned for the current request; edits apply to subsequent turns. Project IDs
@@ -45,6 +46,21 @@ remain available; the App uses a dedicated confirmed-removal endpoint.
 
 Deep analytics and arbitrary configuration-file editing remain follow-up work.
 
+## Default working branch
+
+In **Repository**, save a **Default working branch** such as `dev`. This is a
+per-project Cuttle preference stored in the existing registry and passed to agents
+in their active-project context. An empty value leaves branch choice to the current
+checkout. It does not change the forge's default branch or protection rules.
+Keep protected `main` as the PR base; work on `dev` or task branches.
+
+Saving a preference does not switch a shared checkout. **Switch / create default
+branch** is an explicit owner action on the selected project's host location. It
+refuses uncommitted tracked/untracked changes when switching, uses an existing local
+branch, tracks an existing `origin` branch, or creates a new branch at HEAD.
+Running turns share that checkout: switch only after their work is finished.
+No branch is reset, deleted, pushed, or merged by this action.
+
 ## Agent interface
 
 From the Cuttle root, with the project venv:
@@ -52,6 +68,8 @@ From the Cuttle root, with the project venv:
 ```bash
 PYTHONPATH=src .venv/bin/python -m api.projects_cli list
 PYTHONPATH=src .venv/bin/python -m api.projects_cli get 7
+PYTHONPATH=src .venv/bin/python -m api.projects_cli update 7 --json '{"default_branch":"dev"}'
+PYTHONPATH=src .venv/bin/python -m api.projects_cli use-branch 7
 PYTHONPATH=src .venv/bin/python -m api.projects_cli check 'D:/Projects/Game' '/home/me/Projects/Game'
 PYTHONPATH=src .venv/bin/python -m api.projects_cli update 7 --json '{"paths":["/home/me/Projects/Game","D:/Projects/Game"]}'
 PYTHONPATH=src .venv/bin/python -m api.projects_cli register --name Demo --path /home/me/Projects/Demo

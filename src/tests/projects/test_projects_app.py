@@ -219,3 +219,65 @@ def test_register_http_workflow_and_cli_share_registry(app_context, tmp_path, mo
     assert projects_cli.main(['update', str(new_id), '--json', '{"description":"CLI edit"}']) == 0
     capsys.readouterr()
     assert pm.get_project(new_id)['description'] == 'CLI edit'
+
+
+def test_default_working_branch_is_persistent_scoped_and_clearable(registry, tmp_path):
+    from managers.project_manager import ProjectManager
+    pm, pid, folder = registry
+    pm.update_project(pid, default_branch=' dev ')
+    restored = ProjectManager(pm.db_path)
+    assert restored.get_project(pid)['default_branch'] == 'dev'
+    assert restored.default_branch_for_path(str(folder)) == 'dev'
+    assert restored.default_branch_for_path(str(tmp_path / 'other')) == ''
+    assert any(h['details'].get('default_branch') == 'dev' for h in restored.get_project_history(pid))
+    restored.update_project(pid, default_branch='')
+    assert restored.default_branch_for_path(str(folder)) == ''
+
+
+@pytest.mark.parametrize('branch', [None, [], '-dev', 'HEAD', '@{-1}', 'dev..old', 'dev.lock', 'dev branch', 'dev\x00bad', 'x'*241])
+def test_invalid_default_branch_rejects_entire_update(registry, branch):
+    pm, pid, _ = registry
+    with pytest.raises(ValueError):
+        pm.update_project(pid, description='Must not save', default_branch=branch)
+    assert pm.get_project(pid)['description'] == ''
+    assert pm.get_project(pid)['default_branch'] == ''
+
+
+def test_branch_preference_and_switch_are_separate_owner_actions(app_context):
+    import subprocess
+    c, db, pm, pid, folder, owner, other = app_context
+    def git(*args):
+        return subprocess.run(['git', '-C', str(folder), *args], check=True, capture_output=True, text=True).stdout.strip()
+    git('init', '-b', 'main')
+    git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '--allow-empty', '-m', 'Initial')
+    login(c, db, other)
+    assert c.put(f'/api/projects/{pid}', json={'default_branch':'dev'}).status_code == 403
+    assert c.post(f'/api/projects/{pid}/branch', json={}).status_code == 403
+    login(c, db, owner)
+    assert c.put(f'/api/projects/{pid}', json={'default_branch':'dev'}).status_code == 200
+    assert git('branch', '--show-current') == 'main'
+    # Scaffolding is untracked; switching must refuse to carry it onto another branch.
+    blocked = c.post(f'/api/projects/{pid}/branch', json={})
+    assert blocked.status_code == 409
+    assert git('branch', '--show-current') == 'main'
+    git('add', '.')
+    git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'Scaffold')
+    assert c.post(f'/api/projects/{pid}/branch', json={}).status_code == 200
+    assert git('branch', '--show-current') == 'dev'
+    assert c.post(f'/api/projects/{pid}/branch', json={}).status_code == 200
+    pm.update_project(pid, default_branch='main')
+    assert c.post(f'/api/projects/{pid}/branch', json={}).status_code == 200
+    assert git('branch', '--show-current') == 'main'
+    assert c.post('/api/projects/999999/branch', json={}).status_code == 404
+    pm.update_project(pid, default_branch='')
+    assert c.post(f'/api/projects/{pid}/branch', json={}).status_code == 400
+
+
+def test_context_passes_only_active_project_working_branch(registry, monkeypatch, tmp_path):
+    from managers import project_manager as module
+    from api.cuttle_brain.context_compiler import _runtime_block
+    pm, pid, folder = registry
+    pm.update_project(pid, default_branch='dev')
+    monkeypatch.setattr(module, 'project_manager', pm)
+    assert 'Default working branch: "dev"' in _runtime_block(inventory={}, project_path=str(folder))
+    assert 'Default working branch:' not in _runtime_block(inventory={}, project_path=str(tmp_path))

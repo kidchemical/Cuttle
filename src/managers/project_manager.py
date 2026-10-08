@@ -20,24 +20,8 @@ from managers.cuttle_scaffold import ensure_cuttle_scaffold
 from managers.project_locations import check_paths, validate_paths, require_project_path
 
 
-def _live_project_path(path: Optional[str]) -> str:
-    """Rewrite cloned Windows paths onto this machine when they exist."""
-    raw = (path or "").strip()
-    if not raw:
-        return raw
-    try:
-        from core.runtime_paths import rewrite_windows_lab_path
-
-        mapped = (rewrite_windows_lab_path(raw) or "").strip()
-        if mapped:
-            return mapped
-    except Exception:
-        pass
-    return raw
-
-
 def _validated_project_changes(kwargs):
-    allowed = {'name', 'description', 'tags', 'paths', 'path', 'repo_url', 'archived'}
+    allowed = {'name', 'description', 'tags', 'paths', 'path', 'repo_url', 'archived', 'default_branch'}
     if set(kwargs) - allowed:
         raise ValueError('Unsupported project setting.')
     values = dict(kwargs)
@@ -61,6 +45,9 @@ def _validated_project_changes(kwargs):
         raise ValueError('Tags must be a list of up to 32 short strings.')
     if 'archived' in values and not isinstance(values['archived'], bool):
         raise ValueError('Archived must be true or false.')
+    if 'default_branch' in values:
+        from core.git_refs import validate_branch_name
+        values['default_branch'] = validate_branch_name(values['default_branch'], allow_empty=True)
     if 'repo_url' in values:
         url = values['repo_url'].strip()
         if url and not (url.startswith(('https://', 'http://', 'ssh://', 'git@'))):
@@ -145,10 +132,10 @@ class ProjectManager:
         and would register the wrong directory on fresh installs.
         """
         try:
+            self._migrate_registered_locations()
             # Check if we already have any projects
             projects = self.get_projects()
             if projects:
-                self._normalize_legacy_default_name(projects)
                 return  # Already have projects, no need to add default
 
             # Repository root from this file's location (robust to cwd).
@@ -173,44 +160,33 @@ class ProjectManager:
         except Exception as e:
             print(f"Warning: Could not create default project: {e}")
 
-    def _normalize_legacy_default_name(self, projects) -> None:
-        """Rename the auto-created fresh-install default to ``Cuttle``.
+    def _migrate_registered_locations(self):
+        """Persist installed single-path records as explicit ordered locations.
 
-        Early fresh installs registered the checkout as ``Cuttle
-        Development``. Only the untouched auto-created row is renamed
-        (matching name, default tag, and repo-root path) — user projects
-        and user-selected pins are never modified.
+        Personal aliases may be needed for an existing registry copied between
+        machines. Resolve them once; normal reads use only the saved list.
         """
-        try:
-            repo_root = str(Path(__file__).resolve().parents[2])
-            names = {str(p.get('name') or '') for p in projects}
-            if 'Cuttle' in names:
-                return
-            for p in projects:
-                if str(p.get('name') or '') != 'Cuttle Development':
+        from core.runtime_paths import rewrite_windows_lab_path
+
+        with self.get_db_connection() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            rows = conn.execute('SELECT id, path, config FROM projects').fetchall()
+            for pid, stored, raw_config in rows:
+                config = json.loads(raw_config or '{}')
+                if 'paths' in config:
                     continue
-                tags = p.get('tags') or []
-                if isinstance(tags, str):
-                    try:
-                        tags = json.loads(tags)
-                    except (ValueError, TypeError):
-                        tags = []
-                if 'default' not in [str(t) for t in tags]:
-                    continue
-                if str(p.get('path') or '') != repo_root:
-                    continue
-                with self.get_db_connection() as conn:
-                    cursor = conn.cursor()
-                    cursor.execute(
-                        'UPDATE projects SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-                        ('Cuttle', p['id']),
-                    )
-                    conn.commit()
-                print(f"✅ Renamed default project to Cuttle ({repo_root})")
-                return
-        except Exception as e:
-            print(f"Warning: Could not normalize default project name: {e}")
-    
+                paths = [stored]
+                mapped = rewrite_windows_lab_path(stored)
+                if mapped and mapped != stored:
+                    paths.insert(0, mapped)
+                config['paths'] = validate_paths(paths)
+                conn.execute('UPDATE projects SET config = ? WHERE id = ?',
+                             (json.dumps(config), pid))
+                conn.execute('INSERT INTO project_history(project_id, action, details) VALUES (?, ?, ?)',
+                             (pid, 'updated', json.dumps({'paths': config['paths'],
+                                                         'migration': 'ordered_locations'})))
+            conn.commit()
+
     def register_project(self, name, path, description='', tags=None, repo_url=''):
         values = _validated_project_changes({'name': name, 'paths': [path],
                     'description': description, 'tags': tags or [], 'repo_url': repo_url})
@@ -380,11 +356,6 @@ class ProjectManager:
         config = json.loads(row[10]) if row[10] else {}
         stored_path = row[3] or ''
         paths = config.get('paths') or [stored_path]
-        # Preserve legacy lab-path compatibility until the user saves an explicit list.
-        if 'paths' not in config:
-            mapped = _live_project_path(stored_path)
-            if mapped and mapped != stored_path:
-                paths = [mapped, stored_path]
         health = check_paths(paths)
         return {
             'id': row[0], 'name': row[1], 'type': row[2],
@@ -393,7 +364,8 @@ class ProjectManager:
             'description': row[4], 'tags': json.loads(row[5]) if row[5] else [],
             'created_at': row[6], 'updated_at': row[7], 'last_accessed': row[8],
             'is_active': bool(row[9]), 'config': config,
-            'archived': bool(config.get('archived', False)), **health,
+            'archived': bool(config.get('archived', False)),
+            'default_branch': config.get('default_branch', ''), **health,
         }
 
     def get_projects(self, include_archived=False) -> List[Dict[str, Any]]:
@@ -405,6 +377,14 @@ class ProjectManager:
             """).fetchall()
         projects = [self._project_record(row) for row in rows]
         return projects if include_archived else [p for p in projects if not p['archived']]
+
+    def default_branch_for_path(self, path):
+        """Return the active location's preference; never use another project's default."""
+        target = os.path.normcase(os.path.realpath(path))
+        for project in self.get_projects():
+            if project['available'] and os.path.normcase(os.path.realpath(project['resolved_path'])) == target:
+                return project['default_branch']
+        return ''
 
     def get_project(self, project_id: int) -> Optional[Dict[str, Any]]:
         with self.get_db_connection() as conn:
@@ -472,7 +452,7 @@ class ProjectManager:
             config = json.loads(row[0]) if row[0] else {}
             fields, args = [], []
             for key, value in values.items():
-                if key in ('paths', 'repo_url', 'archived'):
+                if key in ('paths', 'repo_url', 'archived', 'default_branch'):
                     config[key] = value
                     if key == 'paths':
                         fields.append('path = ?')

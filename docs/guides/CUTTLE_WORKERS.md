@@ -39,7 +39,7 @@ The user talks to **Cuttle**. Cuttle (orchestrator + Brain) decides when work sh
 1. Restart Flask/daemon so routes + local worker start.
 2. Open Jobs → **Devices** — host worker should show online within ~poll seconds.
 3. Click **Ping local worker** (or `POST /api/workers/jobs` with `{"type":"ping"}`).
-4. On the laptop: Electron **Client** → **Update** if offered (`cuttle-desktop@0.2.2+`), then connect to the PC. Worker **auto-enrolls** — no token to type. Needs a real Python 3.11+ (python.org; **not** the Windows Store stub). It should appear under Devices / green titlebar badge.
+4. On the laptop: Electron **Client** → **Update** if offered (`cuttle-desktop@0.2.2+`), then connect to the PC. Worker **pairs (host-approved)** — no token to type. Needs a real Python 3.11+ (python.org; **not** the Windows Store stub). It should appear under Devices / green titlebar badge.
 5. If the sidecar dies, open the sidecar log on the laptop — that file has the real traceback.
 6. File copy (paths allowlisted on the **target** worker) — same HTTP envelope; prefer platform verbs once they exist:
 
@@ -61,8 +61,8 @@ POST /api/workers/jobs
 | Key | Meaning |
 |---|---|
 | `device_workers.enabled` / `CUTTLE_DEVICE_WORKERS_ENABLED` | Master gate |
-| *(no manual token)* | Electron **Client** auto-calls `POST /api/workers/enroll` on connect; host stores a per-device bearer and Electron saves it in `desktop-config.json`. Same trust boundary as LAN Client UI (`discovery.lan_access_enabled`). The token is bound to that worker id: runtime calls can only act as that worker, and an already-enrolled id is re-issued only to its own token (otherwise 409 — remove the device in **Jobs → Devices**, then reconnect). |
-| `CUTTLE_DEVICE_WORKERS_TOKEN` | Optional **override only** (legacy); not required for Client workers |
+| *(no manual token)* | Electron **Client** calls `POST /api/workers/enroll` on connect with a client-random `pairing_secret`; the owner approves the 6-digit code in **Jobs → Devices → Pending pairing**, then the host mints a per-device bearer (delivered once on poll; Electron saves it in `desktop-config.json`). Same trust boundary as LAN Client UI (`discovery.lan_access_enabled`) plus an owner approve step. The bearer is bound to that worker id: runtime calls can only act as that worker. Re-enroll with the saved bearer returns no bearer (never echoed; a fresh one only with `rotate: true`). A lost bearer means remove the device in **Jobs → Devices** and pair again. There is no loopback exemption: the host local worker loop authenticates with its own per-device bearer. |
+| `CUTTLE_DEVICE_WORKER_TOKEN` | Per-device credential supplied by the enrolling Client launcher; Host authentication only accepts device-bound tokens |
 | `CUTTLE_DEVICE_WORKERS_COORDINATOR_URL` | Sidecar → host Flask (Electron sets this from the Client host you already chose) |
 | `device_workers.allowed_path_prefixes` | Extra UNC/local roots for `file_copy` |
 | Electron `desktop-config.json` `workerMode` | Client sidecar on/off (default on) |
@@ -278,7 +278,7 @@ Success criteria for the benchmark: correct frames, sensible scheduling (idle GP
 
 ## Security (non-negotiable before broad remote exec)
 
-- Worker ↔ coordinator auth (auto-enroll on LAN + per-device bearer); TLS on LAN where practical.
+- Worker ↔ coordinator auth (host-approved pairing + per-device bearer bound to the worker id); remote HTTPS pinned by public key.
 - Allowlisted job types and path roots; no open-ended remote shell for untrusted sessions.
 - Phase 1 items (CORS, owner checks, rate limits) remain higher priority than exposing a mesh.
 - Client devices: worker opt-in or clearly labeled default; easy disable (`workerMode: false`).

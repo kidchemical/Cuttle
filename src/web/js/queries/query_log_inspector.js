@@ -200,7 +200,7 @@
 
     // Cuttle agent-ops CLIs (`python -m api.<module> …`). Native means the tool
     // *ran* one of these — not that a search pattern or echo merely mentions one.
-    var NATIVE_API_MODS = 'subagents|chat_cli|panes_cli|widgets_cli|discord_cli|device_workers|dashboards|jev|cuttle_brain';
+    var NATIVE_API_MODS = 'subagents|chat_cli|panes_cli|gizmos|discord_cli|device_workers|dashboards|jev|cuttle_brain';
     var NATIVE_ACTION_RE = /^(discord\.post|flask\.restart|git\.push|cuttle_action_form|cuttle_confirm)\b/i;
     // Shell heads, path-aware: `bash …`, `/bin/bash -lc "…"`, `cmd …`.
     var SHELL_HEAD_RE = /^\s*(?:\S*\/)?(bash|sh|exec|shell|run|terminal|command|cmd|powershell)\b/i;

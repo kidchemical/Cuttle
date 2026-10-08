@@ -363,6 +363,7 @@ def run_agent_stream_turn(
             chat_live_status.set_live_status(
                 session_id, query_id=query.get("query_id"),
                 report_url=query.get("report_url"),
+                slash_command=query.get("slash_command"),
                 turn=token,
                 is_cancelled=lambda sid: is_turn_superseded(delivery, sid, token),
             )

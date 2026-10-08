@@ -8,13 +8,16 @@ Shipped inside the Electron asar and copied to userData on Client connect.
 Env:
   CUTTLE_DEVICE_WORKERS_COORDINATOR_URL  e.g. https://192.168.1.20:8080
   CUTTLE_DEVICE_WORKERS_COORDINATOR_URL_HTTP  optional http://host:8000 fallback
-  CUTTLE_DEVICE_WORKERS_TOKEN            bearer from auto-enroll
+  CUTTLE_DEVICE_WORKER_TOKEN            bearer from host-approved pairing (Electron enrolls first)
   CUTTLE_DEVICE_WORKER_ID                stable id (default: hostname)
   CUTTLE_DEVICE_WORKER_LOG               optional log path
 """
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import http.client
 import json
 import os
 import platform
@@ -26,6 +29,7 @@ import sys
 import time
 import traceback
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -218,13 +222,96 @@ def _worker_payload(wid: str, ads: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _ssl_context(url: str) -> Optional[ssl.SSLContext]:
-    if url.lower().startswith("https://"):
+def _der_tlv(buf: bytes, pos: int) -> tuple:
+    """(tag, content_start, content_end) of the DER element at ``pos``."""
+    tag = buf[pos]
+    length = buf[pos + 1]
+    pos += 2
+    if length & 0x80:
+        n = length & 0x7F
+        length = int.from_bytes(buf[pos:pos + n], "big")
+        pos += n
+    return tag, pos, pos + length
+
+
+def spki_sha256(cert_der: bytes) -> str:
+    """Base64 SHA-256 of a certificate's DER SubjectPublicKeyInfo.
+
+    Same value as electron/tls-trust.js ``spkiSha256`` (stdlib only: this
+    script runs on Client machines without third-party packages).
+    """
+    _tag, cert_start, _ = _der_tlv(cert_der, 0)
+    _tag, pos, _ = _der_tlv(cert_der, cert_start)  # tbsCertificate
+    tag, _, end = _der_tlv(cert_der, pos)
+    if tag == 0xA0:  # explicit [0] version
+        pos = end
+    for _field in range(5):  # serial, signature alg, issuer, validity, subject
+        _tag, _, pos = _der_tlv(cert_der, pos)
+    _tag, _, end = _der_tlv(cert_der, pos)
+    spki = cert_der[pos:end]
+    return base64.b64encode(hashlib.sha256(spki).digest()).decode("ascii")
+
+
+def _is_loopback_url(url: str) -> bool:
+    host = (urllib.parse.urlsplit(url).hostname or "").strip("[]").lower()
+    return host in ("localhost", "::1") or host.startswith("127.")
+
+
+def _coordinator_pin() -> str:
+    return (os.environ.get("CUTTLE_COORDINATOR_TLS_SPKI_SHA256") or "").strip()
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    """HTTPS connection that checks the peer key pin before any request byte."""
+
+    expected_spki = ""
+
+    def connect(self) -> None:
+        super().connect()
+        der = self.sock.getpeercert(binary_form=True) or b""
+        actual = ""
+        try:
+            actual = spki_sha256(der) if der else ""
+        except Exception:
+            actual = ""
+        if not actual or actual != self.expected_spki:
+            self.sock.close()
+            raise ssl.SSLError(
+                "coordinator certificate key does not match the key pinned by the desktop app"
+            )
+
+
+class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
+    def __init__(self, expected_spki: str) -> None:
+        ctx = ssl.create_default_context()
+        # The key pin replaces chain/hostname checks (self-signed LAN host).
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        super().__init__(context=ctx)
+        self._expected_spki = expected_spki
+
+    def https_open(self, req):
+        conn = type("PinnedConn", (_PinnedHTTPSConnection,), {"expected_spki": self._expected_spki})
+        return self.do_open(conn, req, context=self._context)
+
+
+def _urlopen(req: urllib.request.Request, url: str, timeout: float):
+    """Open ``req``: loopback HTTPS keeps the local self-signed exception;
+    remote HTTPS requires the pinned key; plain HTTP is unchanged."""
+    if not url.lower().startswith("https://"):
+        return urllib.request.urlopen(req, timeout=timeout)
+    if _is_loopback_url(url):
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
-        return ctx
-    return None
+        return urllib.request.urlopen(req, timeout=timeout, context=ctx)
+    pin = _coordinator_pin()
+    if not pin:
+        raise RuntimeError(
+            "remote HTTPS coordinator has no pinned certificate key "
+            "(CUTTLE_COORDINATOR_TLS_SPKI_SHA256); reconnect the desktop app to trust the host"
+        )
+    return urllib.request.build_opener(_PinnedHTTPSHandler(pin)).open(req, timeout=timeout)
 
 
 def http_json(
@@ -250,7 +337,7 @@ def http_json(
         headers["Content-Type"] = "application/json"
     req = urllib.request.Request(url, data=data, headers=headers, method=method.upper())
     try:
-        with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context(url)) as resp:
+        with _urlopen(req, url, timeout) as resp:
             raw = resp.read() or b"{}"
             return json.loads(raw.decode("utf-8", errors="replace") or "{}")
     except urllib.error.HTTPError as e:
@@ -725,7 +812,7 @@ def worker_id() -> str:
 
 
 def worker_token() -> str:
-    return (os.environ.get("CUTTLE_DEVICE_WORKERS_TOKEN") or "").strip()
+    return (os.environ.get("CUTTLE_DEVICE_WORKER_TOKEN") or "").strip()
 
 
 class Client:
@@ -800,7 +887,7 @@ def run_loop() -> int:
         return 2
     token = worker_token()
     if not token:
-        log("ERROR: missing CUTTLE_DEVICE_WORKERS_TOKEN (auto-enroll failed?)")
+        log("ERROR: missing CUTTLE_DEVICE_WORKER_TOKEN (auto-enroll failed?)")
         return 2
     wid = worker_id()
     client = Client(bases, token, wid)

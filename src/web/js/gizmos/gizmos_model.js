@@ -96,6 +96,12 @@
         if (data.blocked && data.unblock_at) resetText = 'Unblocks ' + relative(data.unblock_at, nowMs);
         else if (data.blocked) resetText = 'Limit reached';
         else if (win.reset_at) resetText = win.label + ' resets ' + relative(win.reset_at, nowMs);
+        if (data.stale) {
+            const now = (nowMs == null ? Date.now() : nowMs) / 1000;
+            if (windows.some(w => w.reset_at && w.reset_at <= now))
+                resetText = 'Scheduled reset passed; awaiting verification';
+            else resetText = 'Expected: ' + resetText;
+        }
         const rows = windows.map(w => {
             const left = clampPct(w.remaining_percent);
             return {

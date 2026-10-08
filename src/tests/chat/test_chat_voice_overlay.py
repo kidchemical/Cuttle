@@ -1,0 +1,598 @@
+"""Voice mode: owned by chat_voice*.js, not the chat_page.js composition root.
+
+Contracts pinned here:
+- a tap starts listening and only a second tap sends; recognizer pauses
+  restart listening instead of auto-sending (the old silence timer cut users off);
+- each recognized phrase is its own removable bubble; × drops it from the send;
+- cumulative STT re-emissions grow one bubble instead of duplicating text;
+- a sent voice turn still speaks its reply after the overlay closed mid-run;
+- the overlay offers "Watch agent work" while the agent runs.
+"""
+
+from __future__ import annotations
+
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+
+WEB = Path(__file__).resolve().parents[2] / "web"
+CHAT_JS = WEB / "js" / "chat"
+SEGMENTS_JS = CHAT_JS / "chat_voice_segments.js"
+STARS_JS = CHAT_JS / "chat_voice_stars.js"
+NARRATOR_JS = CHAT_JS / "chat_voice_narrator.js"
+RECORDER_JS = CHAT_JS / "chat_voice_recorder.js"
+VOICE_JS = CHAT_JS / "chat_voice.js"
+PAGE_JS = CHAT_JS / "chat_page.js"
+CHAT_HTML = WEB / "chat_page.html"
+VOICE_CSS = WEB / "css" / "chat_voice.css"
+
+node_only = pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+
+
+def _node(script: str) -> None:
+    proc = subprocess.run(
+        ["node", "-e", script, str(SEGMENTS_JS), str(STARS_JS), str(NARRATOR_JS), str(VOICE_JS), str(RECORDER_JS)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+    )
+    assert proc.returncode == 0, proc.stderr or proc.stdout
+
+
+@node_only
+def test_segments_commit_remove_and_join():
+    _node(r"""
+const assert = require('assert');
+const S = require(process.argv[1]);
+const r = (t, f) => ({ isFinal: f, 0: { transcript: t } });
+const st = S.createState();
+S.beginSession(st);
+S.applyResults(st, [r('hello there', true), r('and', false)]);
+assert.deepStrictEqual(st.segments.map((s) => s.text), ['hello there']);
+assert.strictEqual(st.live, 'and');
+S.applyResults(st, [r('hello there', true), r('and more', true)]);
+assert.deepStrictEqual(st.segments.map((s) => s.text), ['hello there', 'and more']);
+assert.strictEqual(st.live, '');
+S.endSession(st);
+S.beginSession(st);
+S.applyResults(st, [r('unfinished words', false)]);
+S.endSession(st);
+assert.strictEqual(S.utterance(st), 'hello there and more unfinished words');
+assert.ok(S.remove(st, st.segments[1].id));
+assert.strictEqual(S.utterance(st), 'hello there unfinished words');
+S.clear(st);
+assert.ok(S.isEmpty(st));
+""")
+
+
+@node_only
+def test_segments_cumulative_finals_grow_one_bubble():
+    _node(r"""
+const assert = require('assert');
+const S = require(process.argv[1]);
+const r = (t) => ({ isFinal: true, 0: { transcript: t } });
+const st = S.createState();
+S.beginSession(st);
+S.applyResults(st, [r('hello'), r('hello how'), r('hello how are you')]);
+assert.deepStrictEqual(st.segments.map((s) => s.text), ['hello how are you']);
+S.endSession(st);
+S.beginSession(st);
+S.applyResults(st, [r('hello how')]);
+assert.deepStrictEqual(st.segments.map((s) => s.text), ['hello how are you']);
+""")
+
+
+CONTROLLER_HARNESS = r"""
+const assert = require('assert');
+class CL {
+  constructor() { this.s = new Set(); }
+  add(...c) { c.forEach((x) => this.s.add(x)); }
+  remove(...c) { c.forEach((x) => this.s.delete(x)); }
+  toggle(c, on) { if (on) this.s.add(c); else this.s.delete(c); }
+  contains(c) { return this.s.has(c); }
+}
+class El {
+  constructor(id) { this.id = id; this.children = []; this.classList = new CL(); this.attrs = {};
+    this.dataset = {}; this.hidden = false; this._t = ''; this.listeners = {}; this.style = {}; }
+  set className(v) { this.classList = new CL(); String(v).split(/\s+/).filter(Boolean).forEach((c) => this.classList.add(c)); }
+  set textContent(v) { this._t = String(v); this.children = []; }
+  get textContent() { return this._t + this.children.map((c) => c.textContent).join(''); }
+  appendChild(c) { c.parentNode = this; this.children.push(c); return c; }
+  setAttribute(k, v) { this.attrs[k] = String(v); }
+  addEventListener(t, f) { (this.listeners[t] = this.listeners[t] || []).push(f); }
+  removeEventListener() {}
+  dispatch(t, ev) { (this.listeners[t] || []).forEach((f) => f(ev)); }
+  closest(sel) { let n = this; while (n) { if (n.classList.contains(sel.slice(1))) return n; n = n.parentNode; } return null; }
+}
+const els = {};
+globalThis.document = {
+  getElementById: (id) => (id === 'voiceModeStars' ? null : (els[id] = els[id] || new El(id))),
+  createElement: () => new El(),
+  body: new El('body'),
+  hidden: false,
+  listeners: {},
+  addEventListener(t, f) { (this.listeners[t] = this.listeners[t] || []).push(f); },
+  removeEventListener() {},
+  dispatch(t) { (this.listeners[t] || []).forEach((f) => f({})); },
+};
+globalThis.addEventListener = () => {};
+const recs = [];
+globalThis.SpeechRecognition = class { constructor() { recs.push(this); } start() { this.started = true; } stop() { this.stopped = true; } };
+require(process.argv[1]);
+require(process.argv[2]);
+const N = require(process.argv[3]);
+const R = require(process.argv[5]);
+const V = require(process.argv[4]);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const res = (t, f) => ({ isFinal: f, 0: { transcript: t } });
+const ev = (target) => ({ target, preventDefault() {}, stopPropagation() {} });
+const submitted = [];
+let played = 0;
+let stops = 0;
+let flagsOn = [];
+const clips = [];
+const narrateCalls = [];
+let narrateReply = () => ({ success: true, text: null });
+globalThis.URL.createObjectURL = () => 'blob:narration';
+const assistant = { dataset: { messageId: '42' } };
+const host = {
+  closeMenus() {}, isGenerating: () => false, compose: (s) => s, isSendable: (m) => !!m,
+  isControlLane: () => false, steer: async () => false, enqueue() {},
+  submit: async (m) => { submitted.push(m); },
+  lastAssistantMessage: () => assistant,
+  speechFor: async () => ({ url: 'blob:x', spoken: 'reply' }),
+  play: async () => { played += 1; return 'ended'; },
+  stopSpeech() { stops += 1; }, toast() {}, logError() {},
+  playClip: async (url) => { clips.push(url); return 'ended'; },
+  experimentalFlags: async () => new Set(flagsOn),
+  fetch: async (url, opts) => { const body = JSON.parse(opts.body); narrateCalls.push(body);
+    return { ok: true, json: async () => (narrateReply(body)) }; },
+};
+const voice = V.create(host);
+const mic = document.getElementById('voiceModeMicBtn');
+const box = document.getElementById('voiceModeSegments');
+"""
+
+
+@node_only
+def test_tap_listens_through_pauses_and_sends_only_on_second_tap():
+    _node(CONTROLLER_HARNESS + r"""
+(async () => {
+  voice.enter();
+  mic.dispatch('click', ev(mic));
+  await sleep(5);
+  assert.strictEqual(recs.length, 1);
+  assert.ok(recs[0].started);
+  recs[0].onresult({ results: [res('hello there', true)] });
+  assert.strictEqual(box.children.length, 1);
+  assert.strictEqual(box.hidden, false);
+  // Browser ends the session on a pause: keep listening, never send.
+  recs[0].onend();
+  await sleep(250);
+  assert.strictEqual(recs.length, 2, 'recognition restarts after a pause');
+  assert.deepStrictEqual(submitted, []);
+  recs[1].onresult({ results: [res('scratch that', true), res('send this', false)] });
+  assert.strictEqual(box.children.length, 3);
+  assert.ok(box.children[2].classList.contains('is-live'));
+  // × on the middle phrase removes it from what gets sent.
+  const removeBtn = box.children[1].children[1];
+  assert.ok(removeBtn.classList.contains('voice-mode-segment-remove'));
+  box.dispatch('click', ev(removeBtn));
+  assert.strictEqual(box.children.length, 2);
+  mic.dispatch('click', ev(mic));
+  await sleep(5);
+  assert.deepStrictEqual(submitted, ['hello there send this']);
+  assert.ok(recs[1].stopped);
+  assert.strictEqual(box.hidden, true);
+  assert.strictEqual(narrateCalls.length, 0, 'narrator flag off → no narration requests');
+})().catch((e) => { console.error(e); process.exit(1); });
+""")
+
+
+@node_only
+def test_pending_reply_still_speaks_after_leaving_overlay_mid_run():
+    _node(CONTROLLER_HARNESS + r"""
+(async () => {
+  voice.enter();
+  mic.dispatch('click', ev(mic));
+  await sleep(5);
+  recs[0].onresult({ results: [res('do the thing', true)] });
+  mic.dispatch('click', ev(mic));
+  await sleep(5);
+  assert.deepStrictEqual(submitted, ['do the thing']);
+  voice.exit();
+  assert.strictEqual(voice.isActive(), false);
+  voice.onGenerationEnded({ isError: false });
+  await sleep(300);
+  assert.strictEqual(played, 1, 'reply speaks even though the overlay closed');
+  voice.onGenerationEnded({ isError: false });
+  await sleep(300);
+  assert.strictEqual(played, 1, 'no pending reply → nothing more to speak');
+})().catch((e) => { console.error(e); process.exit(1); });
+""")
+
+
+@node_only
+def test_narrator_pacing():
+    _node(r"""
+const assert = require('assert');
+const N = require(process.argv[3]);
+const p = N.createPlan();
+assert.strictEqual(N.noteStatus(p, 'Editing a.py'), false, 'no open turn');
+const t = N.beginTurn(p, '/cursor x', 0);
+assert.strictEqual(N.dueIn(p, 0), N.FIRST_PROGRESS_MS - N.MIN_GAP_MS + N.HEARTBEAT_MS,
+  'quiet turn still gets a heartbeat');
+assert.ok(!N.noteStatus(p, 'Connecting...'));
+assert.ok(!N.noteStatus(p, 'Thinking…'));
+assert.ok(N.noteStatus(p, 'Editing a.py'));
+assert.ok(!N.noteStatus(p, 'Editing a.py'), 'repeat status is not progress');
+assert.strictEqual(N.dueIn(p, 0), N.FIRST_PROGRESS_MS);
+assert.strictEqual(N.takeProgress(p, 100), null);
+const pay = N.takeProgress(p, N.FIRST_PROGRESS_MS);
+assert.deepStrictEqual(pay.events, ['Editing a.py']);
+assert.strictEqual(pay.kind, 'progress');
+assert.strictEqual(N.dueIn(p, 1e9), null, 'in flight');
+N.finishRequest(p);
+N.noteSaid(p, 'Editing a.', 8000);
+N.noteStatus(p, 'Running tests');
+assert.strictEqual(N.dueIn(p, 8000), N.MIN_GAP_MS);
+N.setSpeaking(p, true);
+assert.strictEqual(N.dueIn(p, 1e9), null, 'never stack over a playing clip');
+N.setSpeaking(p, false);
+N.endTurn(p);
+assert.ok(!N.isCurrent(p, t));
+assert.strictEqual(N.dueIn(p, 1e9), null);
+""")
+
+
+@node_only
+def test_vad_cuts_phrases_at_pauses_and_ignores_blips():
+    _node(r"""
+const assert = require('assert');
+const R = require(process.argv[5]);
+const v = R.createVad();
+const f = R.VAD_DEFAULTS.frameMs;
+const run = (rms, ms) => { const out = []; for (let t = 0; t < ms; t += f) { const e = R.vadStep(v, rms); if (e) out.push(e); } return out; };
+assert.deepStrictEqual(run(0.001, 500), []);
+assert.deepStrictEqual(run(0.2, 100), [], 'a 100 ms click is not speech');
+assert.deepStrictEqual(run(0.001, 300), []);
+assert.deepStrictEqual(run(0.2, 600), ['speech_start']);
+assert.deepStrictEqual(run(0.001, 500), [], 'short pause keeps the phrase open');
+assert.deepStrictEqual(run(0.2, 300), []);
+assert.deepStrictEqual(run(0.001, R.VAD_DEFAULTS.endSilenceMs), ['phrase_end']);
+assert.deepStrictEqual(run(0.001, R.VAD_DEFAULTS.maxIdleMs), ['idle_rotate']);
+assert.ok(Math.abs(R.rmsOf(new Float32Array([0.5, -0.5])) - 0.5) < 1e-9);
+""")
+
+
+@node_only
+def test_native_app_mic_records_over_http_without_browser_apis():
+    _node(r"""
+const assert = require('assert');
+globalThis.isSecureContext = false;
+const calls = [];
+let queued = [];
+const wav = Buffer.alloc(44 + 32000);  // 1 s of 16 kHz mono 16-bit
+globalThis.parent = { cuttleMobile: {
+  micStart: () => { calls.push('start'); return 'ok'; },
+  micLevels: () => { const out = queued.join(','); queued = []; return out; },
+  micCut: (keep) => { calls.push('cut:' + keep); return keep ? wav.toString('base64') : ''; },
+  micStop: () => { calls.push('stop'); },
+} };
+const R = require(process.argv[5]);
+assert.deepStrictEqual(R.missingSupport(), [], 'app mic needs no secure page');
+assert.strictEqual(R.sourceKind(), 'native');
+const uploads = [], texts = [], speech = [];
+const rec = R.create({
+  fetch: async (url, opts) => {
+    const audio = opts.body.get('audio');
+    uploads.push({ url, type: audio.type, name: audio.name, size: audio.size, ms: opts.body.get('duration_ms') });
+    return { ok: true, json: async () => ({ success: true, text: 'hello there' }) };
+  },
+  onSpeech: (on) => speech.push(on), onPhraseText: (t) => texts.push(t),
+  onPending() {}, onError: (m) => { throw new Error(m); },
+});
+(async () => {
+  await rec.start();
+  queued = Array(6).fill(0.2).concat(Array(20).fill(0.001));
+  await new Promise((r) => setTimeout(r, 120));
+  await rec.stop({ flush: true });
+  assert.deepStrictEqual(speech.slice(0, 2), [true, false]);
+  assert.deepStrictEqual(texts, ['hello there']);
+  assert.strictEqual(uploads.length, 1, 'silence after the phrase is not uploaded');
+  assert.deepStrictEqual(uploads[0], { url: '/api/voice-stt/transcribe', type: 'audio/wav',
+    name: 'phrase.wav', size: wav.length, ms: '1000' });
+  assert.deepStrictEqual(calls, ['start', 'cut:true', 'cut:false', 'stop']);
+
+  globalThis.parent.cuttleMobile.micStart = () => 'denied';
+  await assert.rejects(rec.start(), (e) => e.name === 'NotAllowedError');
+  globalThis.parent.cuttleMobile.micStart = () => 'error:microphone busy';
+  await assert.rejects(rec.start(), (e) => e.name === 'NativeMicError' && /microphone busy/.test(e.message));
+})().catch((e) => { console.error(e); process.exit(1); });
+""")
+
+
+@node_only
+def test_screen_lock_keeps_phrases_and_retap_appends():
+    _node(CONTROLLER_HARNESS + r"""
+(async () => {
+  voice.enter();
+  mic.dispatch('click', ev(mic));
+  await sleep(5);
+  recs[0].onresult({ results: [res('keep me', true), res('and th', false)] });
+  document.hidden = true;
+  document.dispatch('visibilitychange');
+  await sleep(5);
+  assert.ok(recs[0].stopped, 'mic stops when the screen locks');
+  assert.strictEqual(box.children.length, 2, 'phrases kept, interim committed');
+  assert.match(document.getElementById('voiceModeStatus').textContent, /phrases are kept/);
+  document.hidden = false;
+  mic.dispatch('click', ev(mic));
+  await sleep(5);
+  assert.strictEqual(recs.length, 2);
+  assert.strictEqual(box.children.length, 2, 're-tapping the mic does not wipe phrases');
+  recs[1].onresult({ results: [res('and more', true)] });
+  mic.dispatch('click', ev(mic));
+  await sleep(5);
+  assert.deepStrictEqual(submitted, ['keep me and th and more']);
+})().catch((e) => { console.error(e); process.exit(1); });
+""")
+
+
+@node_only
+def test_server_engine_records_without_speech_recognizer():
+    _node(CONTROLLER_HARNESS + r"""
+(async () => {
+  let h = null, starts = 0, flushes = 0, tail = '';
+  R.missingSupport = () => [];
+  R.create = (hostArg) => { h = hostArg; return {
+    start: async () => { starts += 1; },
+    stop: async (o) => { if (o && o.flush) { flushes += 1; if (tail) h.onPhraseText(tail); } },
+    resetContext() {}, isRunning: () => false, pending: () => 0,
+  }; };
+  flagsOn = ['voice_server_stt'];
+  voice.enter();
+  mic.dispatch('click', ev(mic));
+  await sleep(5);
+  assert.strictEqual(starts, 1);
+  assert.strictEqual(recs.length, 0, 'no browser speech recognizer → no Android chime');
+  h.onSpeech(true);
+  assert.strictEqual(box.children[box.children.length - 1].textContent, 'Listening…');
+  h.onPhraseText('first part');
+  h.onSpeech(false);
+  h.onPending(1);
+  assert.strictEqual(box.children[box.children.length - 1].textContent, 'Transcribing…');
+  h.onPending(0);
+  tail = 'second part';
+  mic.dispatch('click', ev(mic));
+  await sleep(5);
+  assert.strictEqual(flushes, 1, 'send flushes the phrase in progress');
+  assert.deepStrictEqual(submitted, ['first part second part']);
+  assert.match(document.getElementById('voiceModeHint').textContent, /Server transcription$/);
+})().catch((e) => { console.error(e); process.exit(1); });
+""")
+
+
+@node_only
+def test_voice_steers_the_running_agent():
+    _node(CONTROLLER_HARNESS + r"""
+(async () => {
+  let generating = true;
+  const steered = [], queued = [];
+  host.isGenerating = () => generating;
+  host.steer = async (m) => { steered.push(m); return true; };
+  host.enqueue = (m) => { queued.push(m); };
+  voice.enter();
+  await sleep(5);
+  assert.strictEqual(mic.disabled, false, 'mic stays live while the agent works');
+  mic.dispatch('click', ev(mic));
+  await sleep(5);
+  assert.strictEqual(recs.length, 1, 'tapping while the agent works starts listening');
+  assert.match(document.getElementById('voiceModeStatus').textContent, /running agent/);
+  recs[0].onresult({ results: [res('also check the tests', true)] });
+  mic.dispatch('click', ev(mic));
+  await sleep(5);
+  assert.deepStrictEqual(steered, ['also check the tests']);
+  assert.deepStrictEqual(queued, []);
+  assert.deepStrictEqual(submitted, [], 'a steer is not a new turn');
+  assert.strictEqual(document.getElementById('voiceModeStatus').textContent, 'Added to the running reply…');
+
+  host.steer = async () => false;
+  mic.dispatch('click', ev(mic));
+  await sleep(5);
+  recs[1].onresult({ results: [res('then deploy', true)] });
+  mic.dispatch('click', ev(mic));
+  await sleep(5);
+  assert.deepStrictEqual(queued, ['then deploy'], 'non-steerable agent → follow-up queue');
+})().catch((e) => { console.error(e); process.exit(1); });
+""")
+
+
+@node_only
+def test_reply_waits_while_user_is_talking():
+    _node(CONTROLLER_HARNESS + r"""
+(async () => {
+  let generating = true;
+  host.isGenerating = () => generating;
+  host.steer = async () => true;
+  voice.enter();
+  mic.dispatch('click', ev(mic));
+  await sleep(5);
+  generating = false;
+  voice.onGenerationEnded({});
+  await sleep(150);
+  assert.strictEqual(played, 0, 'reply never talks over the user');
+  assert.strictEqual(recs[0].stopped, undefined, 'still listening');
+  assert.match(document.getElementById('voiceModeStatus').textContent, /Reply ready/);
+  recs[0].onresult({ results: [res('one more thing', true)] });
+  mic.dispatch('click', ev(mic));
+  await sleep(10);
+  assert.deepStrictEqual(submitted, ['one more thing']);
+  assert.strictEqual(played, 1, 'held reply plays after the send');
+})().catch((e) => { console.error(e); process.exit(1); });
+""")
+
+
+@node_only
+def test_server_engine_fallback_names_the_missing_feature():
+    _node(CONTROLLER_HARNESS + r"""
+(async () => {
+  const toasts = [];
+  host.toast = (m) => toasts.push(m);
+  R.missingSupport = () => ['MediaRecorder'];
+  document.getElementById('voiceModeHint').textContent = 'Tap to talk';
+  flagsOn = ['voice_server_stt'];
+  voice.enter();
+  mic.dispatch('click', ev(mic));
+  await sleep(5);
+  assert.strictEqual(recs.length, 1, 'falls back to the browser recognizer');
+  assert.strictEqual(document.getElementById('voiceModeHint').textContent,
+    'Tap to talk · Browser speech — server transcription needs MediaRecorder');
+  assert.deepStrictEqual(toasts, ['Server transcription unavailable here (needs MediaRecorder)']);
+})().catch((e) => { console.error(e); process.exit(1); });
+""")
+
+
+@node_only
+def test_narrator_acks_then_narrates_and_stops_at_reply():
+    _node(CONTROLLER_HARNESS + r"""
+(async () => {
+  const realSetTimeout = setTimeout;
+  globalThis.setTimeout = (f, ms) => realSetTimeout(f, Math.min(ms || 0, 5));
+  let clock = 1000000;
+  Date.now = () => clock;
+  flagsOn = ['voice_narrator'];
+  const audio = Buffer.from('mp3').toString('base64');
+  narrateReply = (b) => ({ success: true, audio_base64: audio,
+    text: b.kind === 'ack' ? 'On it.' : 'Editing the voice file.' });
+  voice.enter();
+  await sleep(0);
+  mic.dispatch('click', ev(mic));
+  await sleep(5);
+  recs[0].onresult({ results: [res('fix the mic', true)] });
+  mic.dispatch('click', ev(mic));
+  await sleep(30);
+  assert.deepStrictEqual(narrateCalls[0], { kind: 'ack', message: 'fix the mic', mode: 'new' });
+  assert.strictEqual(clips.length, 1, 'acknowledgment spoken right away');
+  const lines = document.getElementById('voiceModeTranscript').children;
+  assert.ok(lines[lines.length - 1].classList.contains('is-narration'));
+  voice.onAgentStatus('Connecting...');
+  voice.onAgentStatus('Editing chat_voice.js');
+  await sleep(30);
+  assert.strictEqual(narrateCalls.length, 1, 'progress waits for the pacing gap');
+  clock += N.MIN_GAP_MS;
+  await sleep(30);
+  assert.strictEqual(narrateCalls[1].kind, 'progress');
+  assert.deepStrictEqual(narrateCalls[1].events, ['Editing chat_voice.js']);
+  assert.deepStrictEqual(narrateCalls[1].said, ['On it.']);
+  assert.strictEqual(clips.length, 2);
+  // Agent goes quiet: a "still working" heartbeat, not silence.
+  clock += N.HEARTBEAT_MS;
+  await sleep(30);
+  assert.strictEqual(narrateCalls[2].kind, 'progress');
+  assert.deepStrictEqual(narrateCalls[2].events, []);
+  assert.ok(narrateCalls[2].elapsed_sec >= 35);
+  voice.onAgentStatus('Running tests');
+  clock += N.MIN_GAP_MS;
+  voice.onGenerationEnded({ isError: false });
+  await sleep(60);
+  assert.strictEqual(narrateCalls.length, 3, 'reply ended the turn: no late narration');
+  assert.strictEqual(played, 1, 'final reply still spoken');
+})().catch((e) => { console.error(e); process.exit(1); });
+""")
+
+
+def test_chat_page_does_not_own_voice_state():
+    page = PAGE_JS.read_text(encoding="utf-8")
+    for owned in ("SpeechRecognition", "voiceModePhase", "voiceModeActive", "_voiceHoldOwner"):
+        assert owned not in page, f"{owned} belongs in chat_voice.js, not chat_page.js"
+    assert "CuttleChatVoice.create(" in page
+
+
+@node_only
+def test_reply_shows_combined_usage_and_session_total():
+    _node(CONTROLLER_HARNESS + r"""
+(async () => {
+  const summed = [];
+  host.usageFor = (el) => ({ prompt_tokens: 1000, completion_tokens: 100,
+    cost: 0.01, cost_estimated: false });
+  host.sumUsage = (parts) => { summed.push(parts); return { prompt_tokens: 1600,
+    completion_tokens: 150, cost: 0.012, cost_estimated: true }; };
+  host.usageHtml = (u) => '<div class="message-usage">u:' + u.prompt_tokens + '</div>';
+  host.sessionUsage = () => ({ prompt_tokens: 1600, completion_tokens: 150,
+    cost: 0.012, cost_estimated: true });
+  host.speechFor = async () => ({ url: 'blob:x', spoken: 'reply text',
+    voiceUsage: { prompt_tokens: 600, completion_tokens: 50, cost: 0.002, cost_estimated: true } });
+  voice.enter();
+  mic.dispatch('click', ev(mic));
+  await sleep(5);
+  recs[0].onresult({ results: [res('hello there', true)] });
+  mic.dispatch('click', ev(mic));
+  await sleep(5);
+  assert.deepStrictEqual(submitted, ['hello there']);
+  voice.onGenerationEnded({});
+  await sleep(400);
+  assert.strictEqual(played, 1);
+  // Agent + voice layers summed for the reply footer.
+  assert.strictEqual(summed.length, 1);
+  assert.strictEqual(summed[0].length, 2);
+  assert.strictEqual(summed[0][1].prompt_tokens, 600);
+  const lines = document.getElementById('voiceModeTranscript').children;
+  const last = lines[lines.length - 1];
+  const usage = last.children.find((c) => c.classList.contains('voice-mode-line-usage'));
+  assert.ok(usage, 'assistant line carries a usage footer');
+  assert.match(usage.innerHTML, /message-usage/);
+  // Session-total strip appears with the same footer markup.
+  const strip = document.getElementById('voiceModeSessionUsage');
+  assert.strictEqual(strip.hidden, false);
+  assert.strictEqual(strip.children[0].textContent, 'Session total');
+  assert.match(strip.children[1].innerHTML, /message-usage/);
+})().catch((e) => { console.error(e); process.exit(1); });
+""")
+
+
+def test_voice_modules_load_before_page():
+    html = CHAT_HTML.read_text(encoding="utf-8")
+    order = [
+        html.find('src="/js/chat/chat_voice_segments.js'),
+        html.find('src="/js/chat/chat_voice_stars.js'),
+        html.find('src="/js/chat/chat_voice_narrator.js'),
+        html.find('src="/js/chat/chat_voice_recorder.js'),
+        html.find('src="/js/chat/chat_voice.js'),
+        html.find('src="/js/chat/chat_page.js'),
+    ]
+    assert all(i >= 0 for i in order) and order == sorted(order)
+    assert 'href="css/chat_voice.css' in html
+
+
+def test_voice_overlay_markup_and_styles():
+    html = CHAT_HTML.read_text(encoding="utf-8")
+    overlay_at = html.find('id="voiceModeOverlay"')
+    assert overlay_at >= 0
+    assert html.find('id="voiceModeSegments"') > overlay_at
+    assert html.find('id="voiceModeWatchBtn"') > overlay_at
+    css = VOICE_CSS.read_text(encoding="utf-8")
+    for sel in (".voice-mode-segment-remove", ".voice-mode-watch-btn", ".voice-mode-mic-btn"):
+        assert sel in css
+    assert "touch-action: none" in css, "mic must opt out of touch scrolling for reliable holds"
+    # The typing status sets inline visibility:visible; only !important on
+    # descendants keeps it from showing through the transparent overlay.
+    assert "body.voice-mode .chat-area *" in css
+    assert "visibility: hidden !important" in css
+    stage = css[css.index(".voice-mode-stage {"):]
+    assert "max-height: 100%" in stage.split("}")[0], "stage must fit the viewport"
+
+
+@node_only
+def test_recorder_level_starts_at_zero():
+    _node(r"""
+const assert = require('assert');
+const R = require(process.argv[5]);
+const rec = R.create({ fetch: async () => ({}), onSpeech() {}, onPhraseText() {}, onPending() {}, onError() {} });
+assert.strictEqual(typeof rec.level, 'function');
+assert.strictEqual(rec.level(), 0, 'idle recorder reports no level');
+""")

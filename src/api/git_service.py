@@ -460,6 +460,28 @@ def stage_and_commit(cwd: str, message: str, files: Any = '.') -> str:
     return (result.stdout or '')
 
 
+def use_working_branch(cwd: str, branch: str) -> Dict[str, str]:
+    """Explicit checkout action: refuse dirty worktrees and never overwrite a branch."""
+    from core.git_refs import validate_branch_name
+    branch = validate_branch_name(branch)
+    current = _check(_run(['branch', '--show-current'], cwd), 'Cannot read branch').stdout.strip()
+    if current == branch:
+        return {'message': f'Already on branch: {branch}', 'branch': branch}
+    status = _check(_run(['status', '--porcelain', '--untracked-files=all'], cwd), 'Cannot read worktree')
+    if status.stdout.strip():
+        raise GitError('Commit or stash pending changes before switching the working branch.')
+    exists = _run(['show-ref', '--verify', '--quiet', 'refs/heads/' + branch], cwd)
+    remote = _run(['show-ref', '--verify', '--quiet', 'refs/remotes/origin/' + branch], cwd)
+    if exists.returncode == 0:
+        args = ['switch', '--', branch]
+    elif remote.returncode == 0:
+        args = ['switch', '--track', '-c', branch, 'refs/remotes/origin/' + branch]
+    else:
+        args = ['switch', '-c', branch]
+    _check(_run(args, cwd), 'Cannot switch working branch')
+    return {'message': f'Switched to branch: {branch}', 'branch': branch}
+
+
 def branch_operation(cwd: str, action: str, branch: str) -> Dict[str, str]:
     """create / switch / delete a branch. Unknown actions raise ValueError
     (the route maps this to 400); git failures raise GitError."""

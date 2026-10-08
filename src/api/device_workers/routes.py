@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from flask import Blueprint, jsonify, request
 
+from api.device_workers import enroll_approval as enroll_requests
 from api.device_workers.auth import (
-    authorize_enroll_request,
     authorize_worker_request,
     extract_bearer,
+    pairing_eligible,
     resolve_worker_identity,
 )
 from api.device_workers.config import (
@@ -61,16 +62,19 @@ def _ui_or_worker_or_401():
 @workers_bp.route("/enroll", methods=["POST"])
 def enroll_worker():
     """
-    Auto-issue a per-device worker token.
+    Enroll a device worker.
 
-    Electron Client calls this after a successful host connect — same trust as
-    opening the UI over LAN. No manual .env token.
+    - Valid device bearer: re-enroll as its own worker only. The existing
+      credential is never echoed back; a fresh one is returned only with
+      ``rotate: true``.
+    - Anyone else eligible (bare LAN with lan_access_enabled, loopback, or a
+      stale saved credential): files a pairing request — HTTP 202, no
+      credential. The worker polls ``POST /enroll/<id>/poll`` with its
+      ``pairing_secret`` until the host owner approves in Jobs → Devices.
     """
     if not device_workers_enabled():
         return jsonify({"success": False, "error": "device workers disabled"}), 503
-    ok, err, may_reissue = authorize_enroll_request(request)
-    if not ok:
-        return jsonify({"success": False, "error": err or "enroll denied"}), 403
+    ok, bound, err = resolve_worker_identity(request)
 
     data = request.get_json(silent=True) or {}
     wid = str(data.get("worker_id") or "").strip()
@@ -79,37 +83,117 @@ def enroll_worker():
         return jsonify({"success": False, "error": "worker_id required"}), 400
     rotate = bool(data.get("rotate"))
     store = get_store()
-    if not may_reissue:
-        bound = None
-        if extract_bearer(request):
-            _ok, bound, _err = resolve_worker_identity(request)
-        if bound and bound != wid:
-            return jsonify({"success": False, "error": "worker token is bound to another worker"}), 403
-        if not bound and store.is_enrolled(wid):
-            # Never hand out or rotate another device's token for a bare id.
-            return jsonify({
-                "success": False,
-                "error": (
-                    f"worker id {wid!r} is already enrolled. Reconnect with its saved "
-                    "token, or remove it in Jobs → Devices on the host and enroll again."
-                ),
-            }), 409
+
+    if ok:
+        if bound != wid:
+            return jsonify({"success": False, "error": "worker credential is bound to another worker"}), 403
+        if not rotate:
+            return jsonify({"success": True, "worker_id": wid, "rotated": False})
+        try:
+            enrolled = store.enroll_device(
+                worker_id=wid,
+                hostname=hostname,
+                remote_addr=(request.remote_addr or ""),
+                rotate=True,
+            )
+        except ValueError as e:
+            return jsonify({"success": False, "error": str(e)}), 400
+        return jsonify({
+            "success": True,
+            "worker_id": enrolled["worker_id"],
+            "token": enrolled["token"],
+            "hostname": enrolled.get("hostname") or hostname,
+            "rotated": True,
+        })
+
+    eligible, elig_err = pairing_eligible(request)
+    if not eligible:
+        return jsonify({"success": False, "error": elig_err or "enroll denied"}), 403
     try:
-        enrolled = store.enroll_device(
+        pending = enroll_requests.create_request(
             worker_id=wid,
             hostname=hostname,
             remote_addr=(request.remote_addr or ""),
-            rotate=rotate,
+            pairing_secret=str(data.get("pairing_secret") or ""),
         )
+    except enroll_requests.PairingFullError as e:
+        return jsonify({"success": False, "error": str(e)}), 429
     except ValueError as e:
         return jsonify({"success": False, "error": str(e)}), 400
     return jsonify({
-        "success": True,
-        "worker_id": enrolled["worker_id"],
-        "token": enrolled["token"],
-        "hostname": enrolled.get("hostname") or hostname,
-        "rotated": enrolled.get("rotated"),
-    })
+        "success": False,
+        "status": "pending",
+        "request_id": pending["id"],
+        "code": pending["code"],
+    }), 202
+
+
+@workers_bp.route("/enroll/<request_id>/poll", methods=["POST"])
+def enroll_poll(request_id: str):
+    """Pairing worker poll: pending | denied | expired | approved (+credential once)."""
+    if not device_workers_enabled():
+        return jsonify({"success": False, "error": "device workers disabled"}), 503
+    data = request.get_json(silent=True) or {}
+    status, payload = enroll_requests.poll(
+        request_id, str(data.get("pairing_secret") or "")
+    )
+    if status == "not_found":
+        return jsonify({"success": False, "error": "not found"}), 404
+    if status == "approved" and payload:
+        return jsonify({
+            "success": True,
+            "status": "approved",
+            "worker_id": payload["worker_id"],
+            "token": payload["token"],
+        })
+    return jsonify({"success": False, "status": status})
+
+
+@workers_bp.route("/enroll-requests", methods=["GET"])
+def enroll_requests_list():
+    """Owner poll: pending pairing requests for Jobs → Devices."""
+    denied = _ui_operator_or_401()
+    if denied:
+        return denied
+    return jsonify({"success": True, "pending": enroll_requests.list_pending()})
+
+
+@workers_bp.route("/enroll-requests/<request_id>/approve", methods=["POST"])
+def enroll_request_approve(request_id: str):
+    """Owner approves pairing: mint a NEW credential (old one revoked)."""
+    denied = _ui_operator_or_401()
+    if denied:
+        return denied
+    existing = enroll_requests.get_request(request_id)
+    if not existing:
+        return jsonify({"success": False, "error": "not found"}), 404
+    if existing.get("status") != "pending":
+        return jsonify({"success": True, "request": existing})
+    row = enroll_requests.decide(request_id, "approve")
+    store = get_store()
+    try:
+        enrolled = store.enroll_device(
+            worker_id=str(existing.get("worker_id") or ""),
+            hostname=str(existing.get("hostname") or ""),
+            remote_addr=str(existing.get("remote_addr") or ""),
+            rotate=store.is_enrolled(str(existing.get("worker_id") or "")),
+        )
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+    enroll_requests.attach_token(request_id, str(enrolled.get("token") or ""))
+    return jsonify({"success": True, "request": enroll_requests.get_request(request_id)})
+
+
+@workers_bp.route("/enroll-requests/<request_id>/deny", methods=["POST"])
+def enroll_request_deny(request_id: str):
+    """Owner denies a pairing request."""
+    denied = _ui_operator_or_401()
+    if denied:
+        return denied
+    row = enroll_requests.decide(request_id, "deny")
+    if not row:
+        return jsonify({"success": False, "error": "not found"}), 404
+    return jsonify({"success": True, "request": row})
 
 
 @workers_bp.route("", methods=["GET"])

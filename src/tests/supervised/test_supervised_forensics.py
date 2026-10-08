@@ -436,7 +436,8 @@ def test_js_uses_canonical_bubble_without_composer_worker_strip(supervised_env):
     assert "upsertSupervisedActivityCard" in js
     assert "supervised_task" in js
     assert "control_request_id" in js
-    assert "buildActivityCardHtml" in helper
+    assert "buildActivityDisclosureHtml" in helper
+    assert "buildActivityCardHtml" not in helper
     html = (REPO_ROOT / "src/web/chat_page.html").read_text(encoding="utf-8")
     assert "supervisedTaskIndicator" not in html
     assert "Pending-prompt queue only" in html

@@ -50,7 +50,7 @@ out.codexSubagents = F.isNativeTool(T('tool', '/bin/bash -lc "PYTHONPATH=src .ve
 out.codexRg = F.isNativeTool(T('tool', "/bin/bash -lc 'rg --files src/api/agent_router/providers'"));
 out.codexSed = F.isNativeTool(T('tool', "/bin/bash -lc \"sed -n '1,235p' src/tests/test_a.py\""));
 out.readonlyRg = F.isNativeTool(T('tool', 'rg api.subagents --type py'));
-out.bareCmd = F.isNativeTool(T('tool', 'python -m api.widgets_cli list'));
+out.bareCmd = F.isNativeTool(T('tool', 'python -m api.gizmos tasks list'));
 out.pytest = F.isNativeTool(T('tool', 'bash .venv/bin/python -m pytest src/tests/ -q'));
 out.actionId = F.isNativeTool(T('tool', 'discord.post confirm=yes'));
 out.structured = F.isNativeTool(T('tool', 'child turn', { args: { name: 'subagents', args: {} } }));

@@ -202,7 +202,7 @@ def _usage_context_fill_tokens(
     """Return ``(tokens, source)`` for the composer context ring.
 
     Prefer an explicit peak / context_tokens stamp. For Cursor / Codex / Claude /
-    Hermes / Antigravity, never treat cumulative billing ``inputTokens`` (with
+    Hermes / Antigravity / Muse, never treat cumulative billing ``inputTokens`` (with
     huge cacheRead) as window fill.
     """
     if not isinstance(usage, dict) or not usage:
@@ -224,8 +224,6 @@ def _usage_context_fill_tokens(
             if cr is not None:
                 blob = dict(usage)
                 blob["cache_read_tokens"] = cr
-        if cursor_usage_looks_aggregated and cursor_usage_looks_aggregated(blob):
-            return 0, "aggregated"
         for key in ("context_tokens", "peak_context_tokens", "contextTokens"):
             raw = usage.get(key)
             if raw is None:
@@ -235,11 +233,29 @@ def _usage_context_fill_tokens(
             except (TypeError, ValueError):
                 continue
             if n > 0:
-                if cursor_usage_looks_aggregated and cursor_usage_looks_aggregated(
-                    {**blob, "context_tokens": n}
-                ):
-                    return 0, "aggregated"
+                # Large cache bills alone cannot invalidate an explicit snapshot.
+                # Old Cursor stamps copied the aggregate input+cache sum instead.
+                if aid == "cursor":
+                    def billing_int(*keys: str) -> int:
+                        for billing_key in keys:
+                            try:
+                                return int(blob[billing_key])
+                            except (KeyError, TypeError, ValueError):
+                                continue
+                        return 0
+
+                    cached = billing_int("cacheReadTokens", "cache_read_tokens")
+                    total = (
+                        billing_int("inputTokens", "input_tokens", "prompt_tokens")
+                        + cached
+                        + billing_int("cacheWriteTokens", "cache_write_tokens")
+                    )
+                    if n >= 400_000 and cached >= 200_000 and n >= cached:
+                        if abs(n - total) <= max(2000, int(n * 0.03)):
+                            return 0, "aggregated"
                 return n, "peak"
+        if cursor_usage_looks_aggregated and cursor_usage_looks_aggregated(blob):
+            return 0, "aggregated"
         if aid == "cursor" and cursor_usage_context_tokens:
             try:
                 ctx = cursor_usage_context_tokens(usage)
@@ -270,6 +286,9 @@ def _usage_context_fill_tokens(
             continue
         if n > 0:
             return n, "peak"
+    if aid == "muse":
+        # Muse prompt usage is cumulative billing, not current window occupancy.
+        return 0, "aggregated"
     for key in ("prompt_tokens", "input_tokens", "inputTokens"):
         raw = usage.get(key)
         if raw is None:
@@ -643,7 +662,8 @@ def get_agent_context_status(
             msp = None
         if isinstance(msp, dict):
             msp_tokens = int(msp.get("context_tokens") or msp.get("prompt_tokens") or 0)
-            if msp_tokens > 0 and (tokens <= 0 or msp_tokens >= tokens):
+            # The current MSP view supersedes historical peaks after compaction.
+            if msp_tokens > 0:
                 tokens = msp_tokens
                 token_source = "msp_view"
             if not model and msp.get("model"):

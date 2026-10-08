@@ -387,8 +387,3 @@ def cuttle_performance(
             "available", "running", "pending", "window_pending", "labeled", "cost_usd", "errors", "last_error",
         ) if k in jev_status},
     }
-
-
-def cuttle_performance_stub() -> Dict[str, Any]:
-    """Back-compat alias."""
-    return cuttle_performance()

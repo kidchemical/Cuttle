@@ -80,13 +80,54 @@ def parent_slash_command(db, parent_session_id: Optional[int]) -> Dict[str, Any]
     return fallback
 
 
+def _result_model(result: Any) -> str:
+    """Model the turn actually executed (kernel ``agent_model`` / usage)."""
+    if not isinstance(result, dict):
+        return ""
+    model = str(result.get("agent_model") or "").strip()
+    if not model:
+        usage = result.get("usage")
+        if isinstance(usage, dict):
+            model = str(usage.get("model") or "").strip()
+    if model.lower() in ("", "unknown"):
+        return ""
+    return model
+
+
+def _result_effort(result: Any) -> str:
+    """Effort the turn actually ran with (adapter-resolved, may be empty)."""
+    if not isinstance(result, dict):
+        return ""
+    return str(result.get("agent_effort") or "").strip()
+
+
+def executed_harness(result: Any, agent: str = "") -> tuple[str, str]:
+    """(model, effort) a turn actually ran, ``''`` when unknown.
+
+    Placeholders (empty, ``unknown``, the harness id itself) never count:
+    callers keep the bare agent label instead of badging ``Codex - codex``.
+    """
+    model = _result_model(result)
+    effort = _result_effort(result)
+    if model and model.lower() == str(agent or "").strip().lower():
+        model = ""
+    return model, effort
+
+
 def child_slash_command(
     spec: Optional[ChildSpec] = None,
     child: Optional[ChildRecord] = None,
     *,
     session_id: Any = None,
+    result: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Chips for who sent the child assistant bubble (child harness + model + effort)."""
+    """Chips for who sent the child assistant bubble (child harness + model + effort).
+
+    Spec/child-record values win; when the spawn named no model/effort (the
+    common agent-only case) fall back to what the harness actually ran
+    (``result``'s ``agent_model`` / ``agent_effort``). A bare agent label is
+    only kept when nothing is known — never invent a model or effort.
+    """
     agent = ""
     model = ""
     effort = ""
@@ -99,6 +140,12 @@ def child_slash_command(
         model = model or child.model
         effort = effort or child.effort
     agent = str(agent or "cursor").strip().lower()
+    if not model or not effort:
+        exec_model, exec_effort = executed_harness(result, agent)
+        if not model:
+            model = exec_model
+        if not effort:
+            effort = exec_effort
     model = resolve_child_model_id(agent, model, effort)
     identity = {"agent": agent, "model": model, "effort": str(effort or "").strip()}
     text = f"/{agent} ping"
@@ -272,7 +319,6 @@ def hydrate_subagent_message_badges(
         child = store.get_child_by_session(db, int(session_id))
     except Exception:
         child = None
-    child_sc = child_slash_command(child=child, session_id=session_id) if child else None
     if pin_session and child is not None:
         try:
             pin_child_session(
@@ -295,8 +341,23 @@ def hydrate_subagent_message_badges(
             meta["slash_command"] = parent_sc
             msg["metadata"] = meta
         elif role == "assistant" and str(meta.get("origin") or "") == "subagent":
-            if child_sc:
-                meta["slash_command"] = child_sc
+            # Legacy rows (e.g. agent-only spawns before result fallback) kept a
+            # bare chip while usage still records the executed model: rebuild
+            # from the stored result, never from live session pins.
+            stored_usage = meta.get("usage")
+            stored_result: Dict[str, Any] = {
+                "agent_model": meta.get("agent_model")
+                or (stored_usage.get("model") if isinstance(stored_usage, dict) else "")
+                or "",
+                "agent_effort": meta.get("agent_effort") or "",
+            }
+            repaired = (
+                child_slash_command(child=child, session_id=session_id, result=stored_result)
+                if child
+                else None
+            )
+            if repaired:
+                meta["slash_command"] = repaired
             if child and str(child.agent or "").lower() == "cursor":
                 mid = resolve_child_model_id(child.agent, child.model, child.effort)
                 if mid and mid.lower() not in ("auto", "default"):

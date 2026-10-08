@@ -93,6 +93,7 @@ def set_live_status(
     query_id: Optional[str] = None,
     is_cancelled: Optional[Callable[[Any], bool]] = None,
     turn: Optional[int] = None,
+    slash_command: Optional[dict] = None,
 ) -> None:
     """Publish (or refresh) live generation status for all devices watching this session."""
     keys = live_status_keys(session_id)
@@ -123,6 +124,7 @@ def set_live_status(
             "report_url": report_url if report_url is not None else prev.get("report_url"),
             "query_id": query_id if query_id is not None else prev.get("query_id"),
             "turn": turn if turn is not None else previous_turn,
+            "slash_command": slash_command if slash_command is not None else prev.get("slash_command"),
         }
         for k in keys:
             _STORE[k] = entry

@@ -91,6 +91,24 @@ def get_project(project_id):
             'error': str(e)
         }), 500
 
+@projects_bp.route('/projects/<int:project_id>/branch', methods=['POST'])
+@requires_project_manager
+@owner_required
+def use_project_branch(project_id):
+    from api.git_service import GitError, use_working_branch
+    from managers.project_locations import require_project_path
+    project = project_manager.get_project(project_id)
+    if project is None:
+        return jsonify(success=False, error='Project not found.'), 404
+    try:
+        result = use_working_branch(require_project_path(project), project['default_branch'])
+        return jsonify(success=True, data=result)
+    except ValueError as exc:
+        return jsonify(success=False, error=str(exc)), 400
+    except GitError as exc:
+        return jsonify(success=False, error=str(exc)), 409
+
+
 @projects_bp.route('/projects/current', methods=['GET'])
 @requires_project_manager
 @authenticated_required

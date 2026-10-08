@@ -16,13 +16,11 @@ def test_enrolled_remote_worker_can_request_and_poll(monkeypatch, tmp_path, deci
     monkeypatch.setenv('CUTTLE_DEVICE_WORKERS_DB', str(tmp_path / 'workers.db'))
     monkeypatch.setattr(store, '_store', None)
     monkeypatch.setattr(auth, 'lan_access_enabled', lambda: True)
-    monkeypatch.setattr(auth, 'worker_token', lambda: '')
     app = Flask(__name__)
     app.register_blueprint(routes.workers_bp)
     client = app.test_client()
     remote = {'REMOTE_ADDR': '192.168.1.44'}
-    token = client.post('/api/workers/enroll', json={'worker_id': 'fixture-worker'},
-                        environ_base=remote).get_json()['token']
+    token = store.get_store().enroll_device(worker_id='fixture-worker')['token']
     monkeypatch.setattr('api.device_workers.config.worker_token', lambda: token)
     monkeypatch.setenv('CUTTLE_DEVICE_WORKERS_COORDINATOR_URL', 'http://fixture-coordinator')
     monkeypatch.delenv('CUTTLE_SSH_APPROVAL_LOCAL', raising=False)

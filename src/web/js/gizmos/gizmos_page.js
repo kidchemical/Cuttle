@@ -48,7 +48,7 @@
         $('gizmosCreate').hidden = false;
         const typeSel = $('gizmoCreateType');
         if (!typeSel.options.length) {
-            typeSel.innerHTML = options(state.types, 'usage_meter', t => t.id, t => t.label);
+            typeSel.innerHTML = options(state.types.filter(t => !(t.options || {}).scoped), 'usage_meter', t => t.id, t => t.label);
             $('gizmoCreateDock').innerHTML = options(M.DOCKS, desktop ? 'titlebar' : 'rail', d => d, dockLabel);
         }
         const agentSel = $('gizmoCreateAgent');

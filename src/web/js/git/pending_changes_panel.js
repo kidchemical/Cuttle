@@ -150,17 +150,6 @@
                 ? docRoot.getElementById('pendingChangesHost')
                 : document.getElementById('pendingChangesHost');
         }
-        // Migrate legacy single-panel markup into a host if needed.
-        if (!host) {
-            const legacy = document.getElementById('pendingChangesPanel');
-            if (legacy && legacy.parentNode) {
-                host = document.createElement('div');
-                host.id = 'pendingChangesHost';
-                host.className = 'pending-changes-host';
-                legacy.parentNode.insertBefore(host, legacy);
-                legacy.remove();
-            }
-        }
         if (!host) {
             console.warn('[pending-changes] no host element');
             return {

@@ -515,6 +515,110 @@ def test_child_slash_command_includes_codex_effort():
     assert "effort low" in chip["meta"].lower()
 
 
+def test_agent_only_child_bubble_reports_actual_result_model_and_effort(tmp_path: Path):
+    """Agent-only spawn must still badge what the harness actually ran.
+
+    CH-001089-2 stored a bare ``Codex`` chip even though the turn executed
+    ``gpt-6.1-sol``: the chip was built from the empty spec alone and never
+    from the harness result. Fleet cards keep the minimal agent-only label;
+    the full chat bubble must carry the full ``Agent - model · effort`` chip.
+    """
+    db, _db_path, _owner, parent = _seed(tmp_path)
+
+    def runner(**kwargs):
+        return {
+            "success": True,
+            "response": "audit done",
+            "agent_id": "codex",
+            "agent_model": "gpt-6.1-sol",
+            "agent_effort": "medium",
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "total_tokens": 15,
+                "model": "gpt-6.1-sol",
+            },
+        }
+
+    payload = service.spawn(
+        parent_session_id=parent,
+        children=[{"title": "Audit", "agent": "codex", "message": "audit please"}],
+        wait=True,
+        timeout=6,
+        runner=runner,
+        db=db,
+    )
+    sid = payload["children"][0]["session_id"]
+    msgs = db.get_messages(sid)
+    asst = next(m for m in msgs if m["role"] == "assistant")
+    chips = asst["metadata"]["slash_command"]["chips"]
+    assert chips[0]["category"] == "codex"
+    blob = (chips[0]["label"] + " " + chips[0].get("meta", "")).lower()
+    assert "gpt-6.1-sol" in blob
+    assert "medium" in blob
+
+
+def test_agent_only_child_without_result_model_stays_bare(tmp_path: Path):
+    """No spec model and no result model: never invent one for the bubble."""
+    db, _db_path, _owner, parent = _seed(tmp_path)
+    payload = service.spawn(
+        parent_session_id=parent,
+        children=[{"title": "Audit", "agent": "codex", "message": "audit please"}],
+        wait=True,
+        timeout=6,
+        runner=_runner_factory(),
+        db=db,
+    )
+    sid = payload["children"][0]["session_id"]
+    msgs = db.get_messages(sid)
+    asst = next(m for m in msgs if m["role"] == "assistant")
+    chips = asst["metadata"]["slash_command"]["chips"]
+    assert chips[0]["label"] == "Codex"
+
+
+def test_hydrate_repairs_bare_chip_from_stored_usage(tmp_path: Path):
+    """Already-saved bare ``Codex`` bubbles repair from stored usage.model."""
+    from api.subagents.identity import hydrate_subagent_message_badges
+
+    db, _db_path, _owner, parent = _seed(tmp_path)
+
+    def runner(**kwargs):
+        return {
+            "success": True,
+            "response": "audit done",
+            "agent_id": "codex",
+            "agent_model": "gpt-6.1-sol",
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "total_tokens": 15,
+                "model": "gpt-6.1-sol",
+            },
+        }
+
+    payload = service.spawn(
+        parent_session_id=parent,
+        children=[{"title": "Audit", "agent": "codex", "message": "audit please"}],
+        wait=True,
+        timeout=6,
+        runner=runner,
+        db=db,
+    )
+    sid = payload["children"][0]["session_id"]
+    msgs = db.get_messages(sid)
+    user_msg = next(m for m in msgs if m["role"] == "user")
+    asst = next(m for m in msgs if m["role"] == "assistant")
+    # Simulate the legacy row (CH-001089-2): bare chip, usage intact.
+    asst["metadata"]["slash_command"] = {
+        "chips": [{"label": "Codex", "meta": "/codex", "category": "codex"}]
+    }
+    asst["metadata"].pop("agent_effort", None)
+    hydrate_subagent_message_badges(db, sid, [user_msg, asst])
+    chips = asst["metadata"]["slash_command"]["chips"]
+    assert chips[0]["category"] == "codex"
+    assert "gpt-6.1-sol" in (chips[0]["label"] + " " + chips[0].get("meta", "")).lower()
+
+
 def test_agent_to_agent_badges_are_parent_then_child(tmp_path: Path):
     db, _db_path, _owner, parent = _seed(tmp_path)
     seen = {}

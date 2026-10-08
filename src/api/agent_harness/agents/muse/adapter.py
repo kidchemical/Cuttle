@@ -438,6 +438,7 @@ class Adapter:
             "completion_tokens": int(uq.get("output_tokens") or 0),
             "total_tokens": int(uq.get("total_tokens") or 0),
             "model": mid,
+            "cache_inclusive": True,
         }
         if usage_raw.get("context_tokens"):
             try:
@@ -473,8 +474,7 @@ class Adapter:
             usage["completion_tokens"] = int(logged.get("output_tokens") or 0)
             usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
             for src in ("cache_read_tokens", "cache_write_tokens", "reasoning_tokens"):
-                if logged.get(src):
-                    usage[src] = int(logged[src])
+                usage[src] = int(logged.get(src) or 0)
         # CLI-reported cost wins; otherwise estimate from the diffed tokens.
         try:
             from api.model_pricing import attach_estimated_cost
@@ -493,6 +493,8 @@ class Adapter:
         meta = badge_meta("muse", mid, model_source, effort, effort_source)
         if raw.get("steered"):
             meta["steered"] = int(raw["steered"])
+        if raw.get("undelivered_steers"):
+            meta["undelivered_steers"] = list(raw["undelivered_steers"])
         # On interrupt, muse_cli_tool already packs partial text + digest into
         # output — prefer that for the chat bubble over the short error alone.
         if ok:

@@ -126,6 +126,11 @@ def _usage(result: Dict[str, Any]) -> Dict[str, Any]:
     total = usage.get("total_tokens")
     if total is None and (prompt is not None or completion is not None):
         total = int(prompt or 0) + int(completion or 0)
+    # Dashboard inputs use one convention across harnesses: all input counted
+    # once, including cache reads/writes. Adapter prompt counters stay verbatim.
+    if usage.get("cache_inclusive") is False:
+        prompt = int(prompt or 0) + int(_cached_tokens(usage) or 0) + int(usage.get("cache_write_tokens") or 0)
+        total = prompt + int(completion or 0)
     return {
         "prompt_tokens": _number(prompt, int),
         "completion_tokens": _number(completion, int),

@@ -24,6 +24,7 @@ from __future__ import annotations
 import itertools
 import json
 import os
+import re
 import sys
 import time
 import urllib.request
@@ -114,6 +115,9 @@ def _opener(jar=None):
         urllib.request.HTTPCookieProcessor(jar))
 
 
+_shadow_accounts = {}
+
+
 def _register_cookie(origin):
     import http.cookiejar
 
@@ -128,8 +132,15 @@ def _register_cookie(origin):
             return resp.status, json.loads(resp.read().decode())
 
     tag = next(_counter)
-    status, _ = post("/api/auth/register", {
-        "username": f"s2browser{tag}", "password": "shadow-pass-123"})
+    # Production closes registration after the first local account. Reuse
+    # that account through real login for subsequent journeys in this child.
+    username = _shadow_accounts.get(origin)
+    if username:
+        status, _ = post("/api/auth/login", {"username": username, "password": "shadow-pass-123"})
+    else:
+        username = f"s2browser{tag}"
+        status, _ = post("/api/auth/register", {"username": username, "password": "shadow-pass-123"})
+        _shadow_accounts[origin] = username
     assert status == 200
     status, body = post("/api/auth/sessions",
                         {"session_name": f"s2 browser {tag}"})
@@ -281,6 +292,7 @@ def _history_full(origin, token, sid):
 # Anything outside this set — any method/path, any file/socket/subprocess/
 # executor deny — fails. Never ignore-all-403s, never fake API.
 EXPECTED_ROUTE_DENIES = frozenset({
+    ("GET", "/api/experimental/flags"),
     ("GET", "/api/agents"),
     ("GET", "/api/cursor-agent/models"),
     ("GET", "/api/muse/models"),
@@ -293,6 +305,15 @@ EXPECTED_ROUTE_DENIES = frozenset({
     # Real git status spawn; stays blocked for B1.
     ("GET", "/api/git/pending-changes"),
 })
+
+# Modern page preferences, empty-queue probes and VFX remain denied by the private shadow. Enumerate
+# only their exact shapes; execution/history/auth/control routes still fail.
+def _expected_optional_deny(method, path):
+    return ((method, path) in EXPECTED_ROUTE_DENIES
+            or (method == "PUT" and re.fullmatch(r"/api/auth/sessions/[0-9]+/composer", path))
+            or (method == "GET" and re.fullmatch(r"/api/chat-vfx/[0-9]+", path))
+            or (method == "POST" and re.fullmatch(r"/api/auth/sessions/[0-9]+/followups/take", path)))
+
 
 # Journey routes that must NEVER appear blocked (history/SSE/paint/cancel,
 # auth, control plane).
@@ -316,7 +337,7 @@ def _assert_child_guard_profile(state, label):
         if entry.startswith("[shadow-guard] blocked route: "):
             rest = entry.split("blocked route: ", 1)[1]
             method, _, path = rest.partition(" ")
-            if (method, path) in EXPECTED_ROUTE_DENIES:
+            if _expected_optional_deny(method, path):
                 intentional += 1
                 continue
         unexpected.append(entry)
@@ -325,6 +346,10 @@ def _assert_child_guard_profile(state, label):
     assert unexpected == [], (
         f"{label}: unexpected blocked attempts: {unexpected}")
     for entry in attempts:
+        if entry.startswith("[shadow-guard] blocked route: "):
+            method, _, path = entry.split("blocked route: ", 1)[1].partition(" ")
+            if _expected_optional_deny(method, path):
+                continue
         for fragment in _PROTECTED_ROUTE_FRAGMENTS:
             assert fragment not in entry, (
                 f"{label}: journey route blocked: {entry}")

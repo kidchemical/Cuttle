@@ -52,34 +52,36 @@ def test_fresh_install_seeds_default_table(router_settings):
     assert [uc["id"] for uc in load_use_cases()] == ids
 
 
-def test_old_seed_priorities_are_migrated(router_settings):
-    """First seed run shipped frontier(20) between general(10) and coding(30)."""
+def test_stored_priorities_load_unchanged(router_settings):
+    """Stored blocks load as-is: no seed migration rewrites priorities on load."""
     sm = router_settings
     raw = sm.get_setting("agent_router") or {}
     raw["use_cases"] = [
         {"id": "general-chat", "name": "General chat / simple requests", "priority": 10,
          "criteria": {"task_types": ["basic_ask"], "difficulties": ["low"], "code_changes": False},
-         "routing": {"preferred": {"agent": "cursor", "model": "auto"}}},
+         "routing": {"targets": [{"agent": "cursor", "model": "auto"}]}},
         {"id": "frontier-coding", "name": "Frontier coding model", "priority": 20,
          "criteria": {"task_types": ["coding"], "difficulties": ["high"]},
-         "routing": {"preferred": {"agent": "cursor", "model": "grok-4.6"}}},
+         "routing": {"targets": [{"agent": "cursor", "model": "grok-4.6"}]}},
         {"id": "coding-model", "name": "Coding model", "priority": 30,
          "criteria": {"task_types": ["coding"], "difficulties": ["low", "medium"]},
-         "routing": {"preferred": {"agent": "cursor", "model": "auto"}}},
+         "routing": {"targets": [{"agent": "cursor", "model": "auto"}]}},
         # user-customized block must not be touched
         {"id": "research", "name": "Research", "priority": 20,
          "criteria": {"task_types": ["research"]},
-         "routing": {"preferred": {"agent": "antigravity", "model": "gemini-3.7-flash-high"}}},
+         "routing": {"targets": [{"agent": "antigravity", "model": "gemini-3.7-flash-high"}]}},
     ]
     sm.set_setting("agent_router", raw)
 
     loaded = load_use_cases()
     prio = {uc["id"]: uc["priority"] for uc in loaded}
-    assert prio["frontier-coding"] == 30
-    assert prio["coding-model"] == 20
+    assert prio["frontier-coding"] == 20
+    assert prio["coding-model"] == 30
     assert prio["general-chat"] == 10
     assert prio["research"] == 20  # not a seed block — untouched
-    # persisted, and a second load is idempotent
+    # load is read-only: stored priorities were not rewritten, second load stable
+    stored = {uc["id"]: uc["priority"] for uc in sm.get_setting("agent_router")["use_cases"]}
+    assert stored == {"general-chat": 10, "frontier-coding": 20, "coding-model": 30, "research": 20}
     assert load_use_cases() == loaded
 
 
@@ -110,7 +112,7 @@ def test_keywords_any_match(router_settings):
         {
             "name": "Cuttle questions",
             "criteria": {"keywords": ["cuttle", "squid"]},
-            "routing": {"preferred": {"agent": "cursor", "model": "auto"}},
+            "routing": {"targets": [{"agent": "cursor", "model": "auto"}]},
         }
     )
     assert err is None
@@ -125,7 +127,7 @@ def test_keywords_any_match(router_settings):
 def test_save_rejects_invalid_target_and_keeps_disk_truth(router_settings):
     existing = load_use_cases()  # seeds the default table
     saved, err = save_use_cases(
-        [{"name": "Bad", "routing": {"preferred": {"agent": "not-an-agent", "model": "x"}}}]
+        [{"name": "Bad", "routing": {"targets": [{"agent": "not-an-agent", "model": "x"}]}}]
     )
     assert err and "Unknown agent" in err
     # previous table untouched on disk
@@ -174,24 +176,15 @@ def test_targets_chain_maps_onto_decision(router_settings):
     ]
 
 
-def test_legacy_routing_shape_flattens_into_chain(router_settings):
-    saved, err = save_use_cases(
-        [
-            {
-                "name": "Old shape",
-                "routing": {
-                    "preferred": {"agent": "cursor", "model": "auto"},
-                    "escalation": {"agent": "cursor", "model": "grok-4.6"},
-                    "fallbacks": [{"agent": "codex", "model": ""}],
-                },
-            }
-        ]
-    )
-    assert err is None
-    routing = saved[0]["routing"]
-    assert [t["agent"] for t in routing["targets"]] == ["cursor", "cursor", "codex"]
-    assert routing["targets"][0] == {"agent": "cursor", "model": "auto"}
-    assert "preferred" not in routing and "fallbacks" not in routing
+def test_obsolete_routing_shape_is_rejected_without_changing_saved_routes(router_settings):
+    existing = load_use_cases()
+    saved, err = save_use_cases([{
+        "name": "Old shape",
+        "routing": {"preferred": {"agent": "cursor", "model": "auto"}},
+    }])
+    assert err == "Use routing.targets for the ordered target chain."
+    assert saved == existing
+    assert load_use_cases(seed=False) == existing
 
 
 def test_apply_table_overrides_brain_choice(router_settings):

@@ -90,5 +90,42 @@ def test_load_hermes_session_usage(tmp_path: Path, monkeypatch):
     u = hm.load_hermes_session_usage("sess1")
     assert u["input_tokens"] == 1000
     assert u["cache_read_tokens"] == 800
+    assert u["estimated_cost_usd"] == 0.02
     assert u["cost"] == 0.02
+    assert u["cost_estimated"] is True
+    assert "actual_cost_usd" not in u
+    assert "cache_inclusive" not in u
     assert hm.load_hermes_session_usage("missing") == {}
+
+
+def test_native_actual_cost_keeps_estimate_provenance(monkeypatch):
+    monkeypatch.setattr(hm, "_read_hermes_session_usage_row", lambda _sid: {
+        "input_tokens": 100, "estimated_cost_usd": 0.03, "actual_cost_usd": 0.0,
+    })
+    usage = hm.load_hermes_session_usage("s")
+    assert usage["cost"] == usage["actual_cost_usd"] == 0.0
+    assert usage["estimated_cost_usd"] == 0.03
+    report = hm.usage_for_query_report("m", hm._delta_hermes_usage({}, usage))
+    assert report["estimated_cost_usd"] == 0.03
+    assert report["actual_cost_usd"] == report["cost"] == 0.0
+    assert report["cost_estimated"] is False
+    assert "cache_inclusive" not in report
+
+
+def test_hermes_context_combines_counted_and_estimated_active_rows(tmp_path, monkeypatch):
+    with sqlite3.connect(tmp_path / "state.db") as conn:
+        conn.execute("CREATE TABLE sessions (id TEXT, model TEXT, input_tokens INTEGER, cache_read_tokens INTEGER)")
+        conn.execute("INSERT INTO sessions VALUES ('s', 'm', 900000, 800000)")
+        conn.execute("CREATE TABLE messages (session_id TEXT, content TEXT, tool_calls TEXT, reasoning TEXT, reasoning_content TEXT, token_count, active INTEGER, compacted INTEGER)")
+        conn.executemany("INSERT INTO messages VALUES ('s', ?, ?, ?, ?, ?, ?, ?)", [
+            ('counted content must not be estimated', '', '', '', 100, 1, 0),
+            ('12345678', '1234', '1234', '1234', None, 1, 0),
+            ('1234', '', '', '', 'invalid', 1, 0),
+            ('zero count is authoritative', '', '', '', 0, 1, 0),
+            ('excluded', '', '', '', 9000, 0, 0),
+            ('compacted', '', '', '', 9000, 1, 1),
+        ])
+    monkeypatch.setattr(hm, "_hermes_home", lambda: tmp_path)
+    usage = hm.load_hermes_context_occupancy("s")
+    assert usage["context_tokens"] == 106
+    assert usage["model"] == "m"

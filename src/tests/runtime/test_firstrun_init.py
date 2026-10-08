@@ -35,33 +35,37 @@ def test_default_project_uses_repo_root_not_cwd(tmp_path, monkeypatch):
     assert len(projects) == 1 and projects[0]["name"] == "Cuttle"
 
 
-def test_legacy_default_renamed_user_projects_untouched(tmp_path):
+def test_existing_project_names_are_not_rewritten(tmp_path):
     pm = _make_pm(tmp_path)
-    from managers import project_manager as pm_mod
-
-    repo_root = str(Path(pm_mod.__file__).resolve().parents[2])
-    assert pm.get_projects()[0]["name"] == "Cuttle"
-
-    # Simulate an early fresh install that registered "Cuttle Development".
-    pm2_path = tmp_path / "projects2.db"
-    pm2 = pm_mod.ProjectManager(db_path=str(pm2_path))
-    with pm2.get_db_connection() as conn:
+    with pm.get_db_connection() as conn:
         conn.execute("UPDATE projects SET name = 'Cuttle Development'")
-        conn.execute(
-            "INSERT INTO projects (name, type, path, description, tags, is_active)"
-            " VALUES ('My App', 'local', '/tmp/myapp', '', '[\"work\"]', 0)"
-        )
         conn.commit()
-    with pm2.get_db_connection() as conn:
-        conn.execute(
-            "UPDATE projects SET tags = '[\"cuttle\", \"development\", \"main\", \"default\"]'"
-            " WHERE name = 'Cuttle Development'"
-        )
-        conn.execute("UPDATE projects SET path = ? WHERE name = 'Cuttle Development'", (repo_root,))
+    pm.ensure_default_project()
+    assert [p['name'] for p in pm.get_projects()] == ['Cuttle Development']
+
+
+def test_installed_locations_migrate_once_without_repeated_alias_resolution(tmp_path, monkeypatch):
+    pm = _make_pm(tmp_path)
+    mapped = tmp_path / 'mapped'
+    mapped.mkdir()
+    original = str(tmp_path / 'missing')
+    pid = pm.get_projects()[0]['id']
+    with pm.get_db_connection() as conn:
+        conn.execute('UPDATE projects SET path = ?, config = ? WHERE id = ?',
+                     (original, '{"custom":"kept"}', pid))
         conn.commit()
-    pm2.ensure_default_project()
-    names = sorted(p["name"] for p in pm2.get_projects())
-    assert names == ["Cuttle", "My App"]
+    calls = []
+    monkeypatch.setattr('core.runtime_paths.rewrite_windows_lab_path',
+                        lambda path: calls.append(path) or str(mapped))
+    pm.ensure_default_project()
+    record = pm.get_project(pid)
+    assert record['paths'] == [str(mapped), original]
+    assert record['available'] and record['resolved_path'] == str(mapped)
+    assert record['config']['custom'] == 'kept'
+    assert record['stored_path'] == original
+    pm.ensure_default_project()
+    assert calls == [original]
+    assert pm.get_project(pid)['paths'] == [str(mapped), original]
 
 
 def _oauth_client(monkeypatch):

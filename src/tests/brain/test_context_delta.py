@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.brain.context_support import ack_snapshot, delta_text
+
 
 def test_compute_snapshot_tracks_rules(tmp_path):
     from api.cuttle_brain.context_delta import compute_snapshot
@@ -15,20 +17,16 @@ def test_compute_snapshot_tracks_rules(tmp_path):
 
 
 def test_build_delta_on_rule_change(tmp_path):
-    from api.cuttle_brain.context_delta import (
-        build_resume_delta,
-        record_injected_snapshot,
-    )
 
     rules = tmp_path / ".cuttle" / "rules"
     rules.mkdir(parents=True)
     (rules / "01-a.md").write_text("Rule A", encoding="utf-8")
     path = str(tmp_path)
 
-    record_injected_snapshot("9009", "cursor", path)
+    ack_snapshot("9009", "cursor", path)
     (rules / "01-a.md").write_text("Rule A updated with Discord pointer.", encoding="utf-8")
 
-    resumed = build_resume_delta("9009", "cursor", path)
+    resumed = delta_text("9009", "cursor", path)
     assert resumed is not None
     assert "<cuttle_context>" in resumed
     assert "Context delta" in resumed
@@ -36,23 +34,18 @@ def test_build_delta_on_rule_change(tmp_path):
 
 
 def test_build_resume_delta_none_when_unchanged(tmp_path):
-    from api.cuttle_brain.context_delta import build_resume_delta, record_injected_snapshot
 
     rules = tmp_path / ".cuttle" / "rules"
     rules.mkdir(parents=True)
     (rules / "01-a.md").write_text("Stable", encoding="utf-8")
     path = str(tmp_path)
 
-    record_injected_snapshot("9010", "cursor", path)
-    assert build_resume_delta("9010", "cursor", path) is None
+    ack_snapshot("9010", "cursor", path)
+    assert delta_text("9010", "cursor", path) is None
 
 
 def test_clear_injected_snapshot(tmp_path):
-    from api.cuttle_brain.context_delta import (
-        build_resume_delta,
-        clear_injected_snapshot,
-        record_injected_snapshot,
-    )
+    from api.cuttle_brain.context_delta import clear_injected_snapshot
 
     rules = tmp_path / ".cuttle" / "rules"
     rules.mkdir(parents=True)
@@ -60,9 +53,9 @@ def test_clear_injected_snapshot(tmp_path):
     rule_file = rules / "01-a.md"
     rule_file.write_text("v1", encoding="utf-8")
 
-    record_injected_snapshot("9011", "cursor", path)
+    ack_snapshot("9011", "cursor", path)
     rule_file.write_text("v2", encoding="utf-8")
-    assert build_resume_delta("9011", "cursor", path) is not None
+    assert delta_text("9011", "cursor", path) is not None
 
     clear_injected_snapshot("9011", "cursor", path)
-    assert build_resume_delta("9011", "cursor", path) is None
+    assert delta_text("9011", "cursor", path) is None

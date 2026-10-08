@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.brain.context_support import ack_snapshot, delta_text
+
 from pathlib import Path
 
 
@@ -141,7 +143,7 @@ def test_kernel_same_agent_skips_handoff_but_uses_resume(monkeypatch, tmp_path):
     from api.cuttle_brain import context_delta as cd
 
     monkeypatch.setattr(cd, "_map_file", lambda: tmp_path / "snapshots.json")
-    cd.record_injected_snapshot("9001", "fakeprobe", str(tmp_path))
+    ack_snapshot("9001", "fakeprobe", str(tmp_path))
 
     seen = {"resume": None, "prompt": None}
 
@@ -213,7 +215,7 @@ def test_kernel_switch_injects_handoff_and_keeps_target_resume(monkeypatch, tmp_
     from api.cuttle_brain import context_delta as cd
 
     monkeypatch.setattr(cd, "_map_file", lambda: tmp_path / "snapshots.json")
-    cd.record_injected_snapshot("9002", "opencode", str(tmp_path))
+    ack_snapshot("9002", "opencode", str(tmp_path))
 
     seen = {"resume": None, "prompt": None}
 

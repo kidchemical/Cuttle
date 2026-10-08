@@ -7,7 +7,8 @@ type is ``usage_meter`` (plan budget left + next reset/unblock per agent).
 
 Layers: :mod:`catalog` (types) → :mod:`service` (validation/placement) →
 :mod:`store` (SQLite + revision). Transport is :mod:`routes`; agents use
-``python -m api.gizmos``. Everything is gated on the ``gizmos`` flag.
+``python -m api.gizmos``. Usage meters/docks are gated on ``gizmos``. Established Tasks use the scoped
+``tasks`` owner and remain available without this flag.
 
 Teardown: delete the ``gizmos`` row in ``api/experimental/features.py``, this
 package, ``src/web/js/gizmos/`` + ``css/gizmos*.css`` + the two pages, their

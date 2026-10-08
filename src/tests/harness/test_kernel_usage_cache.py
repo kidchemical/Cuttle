@@ -46,3 +46,33 @@ def test_attach_usage_to_web_response_includes_cache():
         },
     )
     assert out["usage"]["cache_read_tokens"] == 5000
+
+
+def test_estimate_provenance_survives_kernel_and_display():
+    from api.model_pricing import enrich_usage_for_display
+
+    out = {}
+    _attach_usage_to_web_response(out, {
+        "prompt_tokens": 1000, "completion_tokens": 50,
+        "cache_read_tokens": 900, "cache_inclusive": True,
+        "reasoning_tokens": 20, "cost": 0.12, "cost_estimated": True,
+        "reported_cost": 0.11,
+    })
+    display = enrich_usage_for_display(out["usage"])
+    assert display["cost_estimated"] is True
+    assert display["cost"] == out["cost"] == 0.12
+    assert display["reported_cost"] == 0.11
+    assert display["cache_inclusive"] is True
+    assert display["reasoning_tokens"] == 20
+    assert display["total_tokens"] == 1050  # reasoning/cache are already included
+
+
+def test_additive_cache_total_counts_each_token_once():
+    usage = _usage_from_result({
+        "prompt_tokens": 1000, "completion_tokens": 100, "total_tokens": 1100,
+        "cache_read_tokens": 9000, "cache_write_tokens": 2000,
+        "cache_inclusive": False,
+    })
+    assert usage["prompt_tokens"] == 1000  # keep native counter
+    assert usage["total_tokens"] == 12100
+    assert _usage_from_result(usage) == usage  # repeated shaping is idempotent

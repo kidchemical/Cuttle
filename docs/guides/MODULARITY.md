@@ -1,6 +1,6 @@
 # Cuttle modularity — the harness of harnesses
 
-**Status:** Product + architecture thesis (locked 2026-08-17, CH-000162)  
+**Status:** Product + architecture thesis (locked 2026-08-17)  
 **Canonical strategy:** [`docs/ROADMAP.md`](../ROADMAP.md)  
 **Router backlog:** [`.cuttle/docs/agent-router-todo.md`](../../.cuttle/docs/agent-router-todo.md)  
 **Router research / economics:** [`docs/ROUTER_RESEARCH_NOTES.md`](../ROUTER_RESEARCH_NOTES.md)

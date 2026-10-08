@@ -131,6 +131,45 @@ pops it out as an always-on-top window that stays up while Cuttle sits in the
 tray. Agent verbs and REST: [gizmos.md](../../.cuttle_global/docs/gizmos.md).
 Turning the flag off hides every gizmo and closes pop-outs; rows are kept.
 
+## Voice narrator
+
+Flag `voice_narrator`. Enhances voice mode in place (no App or settings tab).
+After a voice send, Cuttle speaks a one-line acknowledgment, in the first person
+as Cuttle (never naming the harness or saying "the agent"), then progress lines
+paraphrasing the live status lines: the first after
+about 6 s, then at most one every 10 s, with a "still working" heartbeat every
+25 s while the agent is quiet (12 lines per turn).
+The sticky agent or Cuttle Router still runs the turn; the narrator never answers
+or decides anything. A reply, a mic tap, or leaving voice mode before a turn
+starts silences it. Lines come from `api.llm_complete` (gpt-4o-mini by default)
+voiced with the Settings → chat speech voice; `POST /api/voice-narrator/narrate`
+answers `{disabled: true}` while the flag is off. Owner `src/api/voice_narrator/`,
+client `src/web/js/chat/chat_voice_narrator.js`; tests
+`src/tests/chat/test_voice_narrator.py`, `test_chat_voice_overlay.py`.
+Teardown: drop the flag row, the package, its blueprint registration, the
+narrator script and the `narrate*` calls in `chat_voice.js`.
+
+## Voice server transcription
+
+Flag `voice_server_stt`. Voice mode records with the microphone instead of the
+browser speech recognizer, so Android stops chiming at every pause. Browsers
+only allow mic recording on a secure origin, so the audio source is: the Cuttle
+Android app's native recorder (`NativeMic`, works over LAN HTTP, no setup), else
+the browser (HTTPS or localhost only), else the old recognizer — the voice hint
+names which one is live. Rule of thumb: in Cuttle apps voice just works; in a
+plain browser it needs HTTPS. Nobody installs certificates for voice. A local
+energy detector cuts a phrase at each pause (about 0.9 s) and uploads it to
+`POST /api/voice-stt/transcribe` (OpenAI `gpt-4o-mini-transcribe`, falling back
+to `whisper-1`; needs `OPENAI_API_KEY`). Each phrase becomes its own removable
+bubble, in spoken order. Silence is never uploaded. The route answers
+`{disabled: true}` while the flag is off. Owner `src/api/voice_stt/`, client
+`src/web/js/chat/chat_voice_recorder.js`, Android
+`apps/mobile/.../voice/NativeMic.java` + `PcmClip.java` (bridge `cuttleMobile.mic*`);
+tests `src/tests/chat/test_voice_stt.py`, `test_chat_voice_overlay.py`,
+`PcmClipTest.java`. Teardown: drop the flag row, the package, its blueprint
+registration, the recorder script and the `engine === 'server'` branches in
+`chat_voice.js` (the native bridge is inert without them).
+
 ## Adding an achievement
 
 1. Add the row to `_ACHIEVEMENTS` in `src/api/achievements/catalog.py`.

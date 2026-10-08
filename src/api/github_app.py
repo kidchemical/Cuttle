@@ -6,7 +6,7 @@ installs. The private key stays local; short-lived tokens authenticate GitHub re
 
 Storage split (deliberate):
 - ``settings.json`` key ``github_app`` holds only non-secret config
-  (``app_id``, ``installation_id``). The open ``/api/app-settings``
+  (``app_id``, ``installation_id``). The owner-only ``/api/app-settings``
   aggregate can expose settings.json, so key material must never land there.
 - The RSA private key lives in the install-local secrets dir
   (``core.runtime_paths.secrets_dir()``, mode 0o600). Reads/writes of it

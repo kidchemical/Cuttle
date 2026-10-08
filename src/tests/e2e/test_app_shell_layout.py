@@ -41,6 +41,22 @@ V2_NESTED = {
     },
     "orientation": "horizontal",
 }
+V3H_ROOT3 = {
+    "version": 2,
+    "root": {
+        "type": "group", "id": "g-root", "orientation": "horizontal",
+        "flex": "1 1 0%",
+        "children": [
+            {"type": "leaf", "id": "A", "page": "/chat_page.html",
+             "flex": "1 1 0%"},
+            {"type": "leaf", "id": "B", "page": "/chat_page.html",
+             "flex": "1 1 0%"},
+            {"type": "leaf", "id": "C", "page": "/chat_page.html",
+             "flex": "1 1 0%"},
+        ],
+    },
+    "orientation": "horizontal",
+}
 
 
 def _live_flex(page):
@@ -475,6 +491,386 @@ def test_v1_flat_layout_migrates(browser, static_server):
         assert [_norm_page(c.get("page"))
                 for c in world.panes_posts[-1]["columns"]] == [
             "/chat_page.html", "/chat_page.html?chat=9"]
+        _assert_blocked_api_free(blocked)
+        assert errors == [], errors
+    finally:
+        context.close()
+
+
+def _park_state(page):
+    return page.evaluate(
+        """() => {
+            const live = [...document.querySelectorAll(
+                ".split-column:not([data-split-discarded='1'])")];
+            const col = document.querySelector(
+                ".split-column[data-leaf-id='L1']");
+            const main = col && col.querySelector('.shell-main');
+            const rail = col && col.querySelector('.icon-rail');
+            const frame = col && col.querySelector(
+                'iframe[data-park-probe="live"]');
+            return {
+                leaves: live.length,
+                parked: document.querySelectorAll(
+                    '.split-column.pane-collapsed').length,
+                colWidth: col ? col.offsetWidth : -1,
+                railVisible: !!(rail && rail.offsetWidth > 0),
+                mainWidth: main ? main.offsetWidth : -1,
+                frameAlive: !!(frame && frame.contentDocument),
+                expandHandle: !!document.querySelector(
+                    '#splitContainer > .split-resize-handle.pane-expand'),
+            };
+        }""")
+
+
+def _saved_leaf_collapsed(page, leaf_id):
+    root = _saved_root(page)
+    found = {}
+
+    def walk(node):
+        if node.get("type") == "leaf":
+            if node.get("id") == leaf_id:
+                found["collapsed"] = node.get("collapsed", False)
+            return
+        for child in node.get("children", []):
+            walk(child)
+
+    walk(root)
+    assert "collapsed" in found, f"leaf {leaf_id} missing from saved root"
+    return found["collapsed"]
+
+
+def test_collapsed_pane_parks_to_blade_and_restores(browser, static_server):
+    """Parking (not closing) a pane: blade stays, divider restores it."""
+    world = ShellWorld()
+    context, page, errors, blocked = _open(
+        browser, static_server, world, seed=V2_NESTED)
+    try:
+        _load_shell(page, static_server)
+        _pump_until(page, lambda: _col_count(page) == 3, 20000, "3 panes")
+        # Park L1 through the same entry the sub-100px drag release uses.
+        # Tag its live iframe first: parking must not touch the frame.
+        page.evaluate(
+            "() => { const col = document.querySelector("
+            "\" .split-column[data-leaf-id='L1']\");"
+            " col.querySelector('iframe').dataset.parkProbe = 'live';"
+            " window.setPaneCollapsed(col, true); }")
+        _pump_until(page, lambda: _park_state(page)["parked"] == 1,
+                    20000, "L1 parked")
+        state = _park_state(page)
+        assert state["leaves"] == 3, state       # parked, not closed
+        assert state["railVisible"], state       # blade toolbar stays put
+        assert state["mainWidth"] == 0, state    # content hidden in place
+        assert state["frameAlive"], state        # live iframe untouched
+        assert state["expandHandle"], state      # divider restore affordance
+        assert 48 <= state["colWidth"] <= 64, state  # blade width only
+        assert _saved_leaf_collapsed(page, "L1") is True
+        # Parked-left divider chevron points where the pane grows (right).
+        chevron = page.locator(
+            "#splitContainer > .split-resize-handle.pane-expand").evaluate(
+            "el => getComputedStyle(el, '::after').content")
+        assert chevron == '"›"', chevron
+        # Park survives a full reload through the restore path.
+        page.reload(wait_until="domcontentloaded")
+        page.wait_for_function(
+            "typeof window.snapshotLayoutTree === 'function'")
+        _pump_until(page, lambda: _col_count(page) == 3, 20000,
+                    "3 panes after reload")
+        _pump_until(page, lambda: _park_state(page)["parked"] == 1,
+                    20000, "park restored after reload")
+        # Restore through the real divider UI (release, not a drag).
+        page.locator(
+            "#splitContainer > .split-resize-handle.pane-expand").click()
+        _pump_until(page, lambda: _park_state(page)["parked"] == 0,
+                    20000, "L1 restored")
+        restored = page.evaluate(
+            """() => {
+                const col = document.querySelector(
+                    ".split-column[data-leaf-id='L1']");
+                const main = col && col.querySelector('.shell-main');
+                return {
+                    leaves: [...document.querySelectorAll(
+                        ".split-column:not([data-split-discarded='1'])")
+                    ].length,
+                    colWidth: col ? col.offsetWidth : -1,
+                    mainOpacity: main
+                        ? getComputedStyle(main).opacity : '?',
+                    crumbs: document.querySelectorAll(
+                        '.pane-will-collapse, .split-resize-handle.will-collapse'
+                    ).length,
+                    expandHandle: !!document.querySelector(
+                        '.split-resize-handle.pane-expand'),
+                };
+            }""")
+        assert restored["leaves"] == 3, restored
+        # Pure click restores at equal shares, not the collapse floor.
+        assert restored["colWidth"] > 300, restored
+        assert not restored["expandHandle"], restored
+        # No leftover drag preview: no dim, no red dash.
+        assert restored["mainOpacity"] == "1", restored
+        assert restored["crumbs"] == 0, restored
+        _assert_blocked_api_free(blocked)
+        assert errors == [], errors
+    finally:
+        context.close()
+
+
+def _park_leaf(page, leaf_id):
+    page.evaluate(
+        "() => window.setPaneCollapsed(document.querySelector("
+        f"\" .split-column[data-leaf-id='{leaf_id}']\"), true)")
+
+
+def _vpark_state(page, leaf_id):
+    return page.evaluate(
+        """(leafId) => {
+            const col = document.querySelector(
+                ".split-column[data-leaf-id='" + leafId + "']");
+            const frame = col && col.querySelector('iframe');
+            return {
+                parked: !!(col && col.classList.contains('pane-collapsed')),
+                barHeight: col ? col.offsetHeight : -1,
+                frameAlive: !!(frame && frame.contentDocument),
+            };
+        }""", leaf_id)
+
+
+def _leaf_width(page, leaf_id):
+    return page.evaluate(
+        "() => document.querySelector("
+        f"\" .split-column[data-leaf-id='{leaf_id}']\").offsetWidth")
+
+
+def _drag_expand_handle(page, dx):
+    box = page.locator(
+        "#splitContainer > .split-resize-handle.pane-expand").bounding_box()
+    assert box is not None and box["width"] > 0
+    x0, y0 = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+    page.mouse.move(x0, y0)
+    page.mouse.down()
+    page.mouse.move(x0 + dx, y0, steps=8)
+    page.mouse.up()
+
+
+def _abc_state(page):
+    return page.evaluate(
+        """() => {
+            const col = (id) => document.querySelector(
+                ".split-column[data-leaf-id='" + id + "']");
+            const state = {};
+            ["A", "B", "C"].forEach((id) => {
+                const c = col(id);
+                state[id] = {
+                    w: c ? c.offsetWidth : -1,
+                    parked: !!(c && c.classList.contains('pane-collapsed')),
+                };
+            });
+            state.expandHandles = [...document.querySelectorAll(
+                '#splitContainer > .split-resize-handle.pane-expand')].length;
+            return state;
+        }""")
+
+
+def _drag_root_handle(page, nth, dx):
+    box = page.locator(
+        "#splitContainer > .split-resize-handle").nth(nth).bounding_box()
+    assert box is not None and box["width"] > 0
+    x0, y0 = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+    page.mouse.move(x0, y0)
+    page.mouse.down()
+    page.mouse.move(x0 + dx, y0, steps=8)
+    page.mouse.up()
+
+
+def test_expand_divider_drag_sets_restored_width(browser, static_server):
+    """Drag the expand divider to choose the width; nudges floor at 200."""
+    world = ShellWorld()
+    context, page, errors, blocked = _open(
+        browser, static_server, world, seed=V2_NESTED)
+    try:
+        _load_shell(page, static_server)
+        _pump_until(page, lambda: _col_count(page) == 3, 20000, "3 panes")
+        _park_leaf(page, "L1")
+        _pump_until(page, lambda: _park_state(page)["parked"] == 1,
+                    20000, "L1 parked")
+        # A real drag follows the pointer (blade 56px + 250px of drag).
+        _drag_expand_handle(page, 250)
+        _pump_until(page, lambda: _park_state(page)["parked"] == 0,
+                    20000, "L1 restored by drag")
+        dragged = _leaf_width(page, "L1")
+        assert 270 <= dragged <= 340, dragged
+        # A nudge that never pushes past the threshold leaves it parked.
+        _park_leaf(page, "L1")
+        _pump_until(page, lambda: _park_state(page)["parked"] == 1,
+                    20000, "L1 parked again")
+        before = _leaf_width(page, "L1")
+        _drag_expand_handle(page, 10)
+        page.wait_for_timeout(400)
+        assert _park_state(page)["parked"] == 1
+        assert abs(_leaf_width(page, "L1") - before) <= 20, before
+        # Pushing past the threshold reopens mid-drag at the pointer width.
+        _drag_expand_handle(page, 160)
+        _pump_until(page, lambda: _park_state(page)["parked"] == 0,
+                    20000, "L1 restored by push-through")
+        pushed = _leaf_width(page, "L1")
+        assert 200 <= pushed <= 260, pushed
+        crumbs = page.evaluate(
+            "() => document.querySelectorAll("
+            "'.pane-will-collapse, "
+            ".split-resize-handle.will-collapse').length")
+        assert crumbs == 0, crumbs
+        # A blade icon on the parked pane unparks it too.
+        _park_leaf(page, "L1")
+        _pump_until(page, lambda: _park_state(page)["parked"] == 1,
+                    20000, "L1 parked once more")
+        page.locator(
+            ".split-column[data-leaf-id='L1'] "
+            ".rail-item[data-page]").first.click()
+        _pump_until(page, lambda: _park_state(page)["parked"] == 0,
+                    20000, "L1 restored by blade icon")
+        assert _leaf_width(page, "L1") > 300, _leaf_width(page, "L1")
+        _assert_blocked_api_free(blocked)
+        assert errors == [], errors
+    finally:
+        context.close()
+
+
+def test_stacked_parks_stay_put_while_neighbors_resize(browser, static_server):
+    """Parked panes are inert to neighbor drags; collapse never cascades."""
+    world = ShellWorld()
+    context, page, errors, blocked = _open(
+        browser, static_server, world, seed=V3H_ROOT3)
+    try:
+        _load_shell(page, static_server)
+        _pump_until(page, lambda: _col_count(page) == 3, 20000, "3 panes")
+        # Park B between two open panes.
+        _park_leaf(page, "B")
+        _pump_until(
+            page, lambda: _abc_state(page)["B"]["parked"], 20000, "B parked")
+        base = _abc_state(page)
+        assert base["A"]["parked"] is False
+        assert base["C"]["parked"] is False
+        # Resizing C against parked B leaves B parked and grows C.
+        _drag_root_handle(page, 1, -150)
+        page.wait_for_timeout(400)
+        grown = _abc_state(page)
+        assert grown["B"]["parked"] is True, grown
+        assert grown["C"]["w"] > base["C"]["w"] + 80, (base, grown)
+        # Shrinking C against parked B flows the space past it into A.
+        _drag_root_handle(page, 1, 200)
+        page.wait_for_timeout(400)
+        flowed = _abc_state(page)
+        assert flowed["B"]["parked"] is True, flowed
+        assert abs(flowed["B"]["w"] - grown["B"]["w"]) <= 12, (grown, flowed)
+        assert grown["C"]["w"] - flowed["C"]["w"] > 140, (grown, flowed)
+        assert flowed["A"]["w"] - grown["A"]["w"] > 140, (grown, flowed)
+        # Restore B through the divider, then park A beside open B/C.
+        page.locator(
+            "#splitContainer > .split-resize-handle.pane-expand"
+        ).first.click()
+        _pump_until(
+            page, lambda: not _abc_state(page)["B"]["parked"], 20000,
+            "B restored")
+        _park_leaf(page, "A")
+        _pump_until(
+            page, lambda: _abc_state(page)["A"]["parked"], 20000, "A parked")
+        # Narrow B through the far divider first...
+        _drag_root_handle(page, 1, -357)
+        _pump_until(
+            page, lambda: _abc_state(page)["B"]["w"] < 320, 20000,
+            "B narrowed")
+        mid = _abc_state(page)
+        assert mid["A"]["parked"] is True, mid
+        assert mid["B"]["parked"] is False, mid
+        # ...then finish through the shared divider: B parks, A stays put
+        # (no unpark cascade even though the gesture touches parked A).
+        _drag_root_handle(page, 0, 60)
+        _pump_until(
+            page, lambda: _abc_state(page)["B"]["parked"], 20000, "B parked")
+        final = _abc_state(page)
+        assert final["A"]["parked"] is True, final
+        assert final["C"]["parked"] is False, final
+        # Exactly one restore divider: B's leading edge. The B|C divider
+        # stays a plain resizer even though it touches parked B.
+        assert final["expandHandles"] == 1, final
+        # Clicking the plain neighbor-side divider restores nothing.
+        page.locator(
+            "#splitContainer > .split-resize-handle:not(.pane-expand)"
+        ).click()
+        page.wait_for_timeout(400)
+        assert _abc_state(page)["B"]["parked"] is True
+        # Stacked parks open one at a time: park C too, then restore C
+        # through its own leading divider — B must stay parked.
+        _park_leaf(page, "C")
+        _pump_until(
+            page, lambda: _abc_state(page)["C"]["parked"], 20000, "C parked")
+        page.locator(
+            "#splitContainer > .split-resize-handle.pane-expand"
+        ).nth(1).click()
+        _pump_until(
+            page, lambda: not _abc_state(page)["C"]["parked"], 20000,
+            "C restored")
+        single = _abc_state(page)
+        assert single["C"]["parked"] is False, single
+        assert single["B"]["parked"] is True, single
+        _assert_blocked_api_free(blocked)
+        assert errors == [], errors
+    finally:
+        context.close()
+
+
+def test_vertical_park_collapses_to_restore_bar(browser, static_server):
+    """Vertical stacks park to a slim bar; divider drag parks, bar restores."""
+    world = ShellWorld()
+    context, page, errors, blocked = _open(
+        browser, static_server, world, seed=V2_NESTED)
+    try:
+        _load_shell(page, static_server)
+        _pump_until(page, lambda: _col_count(page) == 3, 20000, "3 panes")
+        # Real Electron presentation: its own vertical rules outranked the
+        # parked bar once (height:auto → content-sized, hundreds of px).
+        page.evaluate("() => document.body.classList.add('is-electron')")
+        # Drag the vertical divider down to shrink the bottom pane (L3)
+        # under the threshold — release parks it instead of closing it.
+        box = page.locator(
+            ".split-group[data-group-id='G2'] > "
+            ".split-resize-handle").bounding_box()
+        assert box is not None and box["height"] > 0
+        x0 = box["x"] + box["width"] / 2
+        y0 = box["y"] + box["height"] / 2
+        page.mouse.move(x0, y0)
+        page.mouse.down()
+        page.mouse.move(x0, y0 + 400, steps=8)
+        page.mouse.up()
+        _pump_until(
+            page, lambda: _vpark_state(page, "L3")["parked"], 20000,
+            "L3 parked")
+        state = _vpark_state(page, "L3")
+        assert 24 <= state["barHeight"] <= 32, state  # title bar, not a blade
+        assert state["frameAlive"], state             # iframe untouched
+        assert _col_count(page) == 3, state           # parked, not closed
+        title = page.evaluate(
+            "() => document.querySelector("
+            "\" .split-column[data-leaf-id='L3']\").dataset.parkedTitle")
+        assert title == "Chat", title
+        # The bar matches the blade toolbar background.
+        colors = page.evaluate(
+            """() => ({
+                bar: getComputedStyle(document.querySelector(
+                    ".split-column[data-leaf-id='L3']")).backgroundColor,
+                rail: getComputedStyle(document.querySelector(
+                    ".split-column[data-leaf-id='L1'] .icon-rail"))
+                    .backgroundColor,
+            })""")
+        assert colors["bar"] == colors["rail"], colors
+        # The whole bar is the restore affordance.
+        page.locator(".split-column[data-leaf-id='L3']").click()
+        _pump_until(
+            page, lambda: not _vpark_state(page, "L3")["parked"], 20000,
+            "L3 restored by bar click")
+        tall = page.evaluate(
+            "() => document.querySelector("
+            "\" .split-column[data-leaf-id='L3']\").offsetHeight")
+        assert tall > 100, tall
         _assert_blocked_api_free(blocked)
         assert errors == [], errors
     finally:

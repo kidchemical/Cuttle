@@ -12,18 +12,26 @@ def main(argv=None):
     register.add_argument('--name', required=True); register.add_argument('--path', required=True)
     register.add_argument('--description', default=''); register.add_argument('--repo-url', default='')
     update = sub.add_parser('update'); update.add_argument('id', type=int)
-    update.add_argument('--json', required=True, help='Object with name, description, tags, paths, repo_url, or archived.')
+    update.add_argument('--json', required=True, help='Object with name, description, tags, paths, repo_url, archived, or default_branch (working branch; empty clears).')
+    branch = sub.add_parser('use-branch'); branch.add_argument('id', type=int)
     check = sub.add_parser('check'); check.add_argument('paths', nargs='+')
     remove = sub.add_parser('remove'); remove.add_argument('id', type=int)
     remove.add_argument('--confirm-name', required=True)
     args = parser.parse_args(argv)
     from managers.project_manager import project_manager as pm
     from managers.project_locations import check_paths, validate_paths
+    from api.git_service import GitError
     try:
         if args.command == 'list': result = pm.get_projects(include_archived=True)
         elif args.command == 'get':
             result = pm.get_project(args.id)
             if result is None: raise ValueError('Project not found.')
+        elif args.command == 'use-branch':
+            from api.git_service import use_working_branch
+            from managers.project_locations import require_project_path
+            project = pm.get_project(args.id)
+            if project is None: raise ValueError('Project not found.')
+            result = use_working_branch(require_project_path(project), project['default_branch'])
         elif args.command == 'check': result = check_paths(validate_paths(args.paths))
         elif args.command == 'register': result = {'id':pm.register_project(args.name, args.path, args.description, repo_url=args.repo_url)}
         elif args.command == 'update':
@@ -37,7 +45,7 @@ def main(argv=None):
             result = {'removed':pm.delete_project(args.id)}
         print(json.dumps({'success':True, 'data':result}, indent=2))
         return 0
-    except (ValueError, TypeError, OSError) as exc:
+    except (ValueError, TypeError, OSError, GitError) as exc:
         print(json.dumps({'success':False, 'error':str(exc)}))
         return 1
 

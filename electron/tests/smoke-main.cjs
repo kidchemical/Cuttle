@@ -94,6 +94,10 @@ const watchdog = setTimeout(() => { console.error('SMOKE_TIMEOUT'); app.exit(1);
   await until(() => popout.isVisible() && popout.isAlwaysOnTop(), 'visible always-on-top popout');
   await main.webContents.executeJavaScript('window.electron.gizmos.syncPopouts([])');
   await until(() => BrowserWindow.getAllWindows().length === 1, 'popout close');
+  // External links must not open Electron windows (they go to the OS browser).
+  await main.webContents.executeJavaScript(`window.open('https://example.invalid/cuttle-link-test','_blank')`);
+  await delay(1500);
+  assert.equal(BrowserWindow.getAllWindows().length, 1);
   // Exercise Electron's native tray/menu API without a shared lifecycle tray.
   const icon = nativeImage.createFromPath(path.join(root, 'src/img/cuttle-logo.png'));
   const tray = new Tray(icon.isEmpty() ? nativeImage.createFromBuffer(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a0nkAAAAASUVORK5CYII=', 'base64')) : icon);

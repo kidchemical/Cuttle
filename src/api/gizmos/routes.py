@@ -12,10 +12,14 @@ from pathlib import Path
 
 from flask import Blueprint, jsonify, request, send_from_directory
 
-from api.gizmos import is_enabled, service
+from api.gizmos import is_enabled, service, store
 from api.http_authz import authenticated_required, owner_required
+from api.gizmos.attribution import request_actor as _actor
+from api.gizmos.tasks_routes import tasks_bp
 
 gizmos_bp = Blueprint("gizmos", __name__, url_prefix="/api/gizmos")
+gizmos_bp.register_blueprint(tasks_bp)
+
 gizmos_pages_bp = Blueprint("gizmos_pages", __name__)
 
 _DISABLED = {"success": False, "disabled": True, "error": "Gizmos are disabled"}
@@ -67,7 +71,7 @@ def create_gizmo():
             placement=data.get("placement") if isinstance(data.get("placement"), dict) else None,
             title=data.get("title"),
             gizmo_id=data.get("id"),
-            created_by="ui",
+            created_by="ui", actor=_actor(data),
         )
     except service.GizmoError as exc:
         return _error(exc)
@@ -80,7 +84,9 @@ def get_gizmo(gizmo_id: str):
     if not is_enabled():
         return jsonify(_DISABLED)
     try:
-        return _no_store(jsonify({"success": True, "gizmo": service.get(gizmo_id)}))
+        gizmo = service.get(gizmo_id)
+        store.record_interaction(gizmo_id, "get", _actor())
+        return _no_store(jsonify({"success": True, "gizmo": gizmo}))
     except service.GizmoError as exc:
         return _error(exc)
 
@@ -96,7 +102,7 @@ def update_gizmo(gizmo_id: str):
             return jsonify({"success": False, "error": f"{key} must be an object"}), 400
     try:
         gizmo = service.update(gizmo_id, title=data.get("title"),
-                               config=data.get("config"), placement=data.get("placement"))
+                               config=data.get("config"), placement=data.get("placement"), actor=_actor(data))
     except service.GizmoError as exc:
         return _error(exc)
     return jsonify({"success": True, "gizmo": gizmo})
@@ -108,7 +114,7 @@ def delete_gizmo(gizmo_id: str):
     if not is_enabled():
         return jsonify(_DISABLED)
     try:
-        service.remove(gizmo_id)
+        service.remove(gizmo_id, actor=_actor())
     except service.GizmoError as exc:
         return _error(exc)
     return jsonify({"success": True, "id": gizmo_id})
@@ -122,9 +128,23 @@ def gizmo_data(gizmo_id: str):
     refresh = request.args.get("refresh", "").strip().lower() in ("1", "true", "yes")
     try:
         data = service.resolve_data(gizmo_id, refresh=refresh)
+        if refresh:
+            store.record_interaction(gizmo_id, "refresh", _actor())
     except service.GizmoError as exc:
         return _error(exc)
     return _no_store(jsonify({"success": True, "id": gizmo_id, "data": data}))
+
+
+@gizmos_bp.route("/<gizmo_id>/history", methods=["GET"])
+@owner_required
+def gizmo_history(gizmo_id):
+    if not is_enabled():
+        return jsonify(_DISABLED)
+    try:
+        limit = int(request.args.get("limit", 100))
+    except ValueError:
+        return jsonify(success=False, error="limit must be an integer"), 400
+    return _no_store(jsonify(success=True, events=store.history(gizmo_id, limit)))
 
 
 _WEB = Path(__file__).resolve().parents[2] / "web"

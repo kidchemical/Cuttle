@@ -290,6 +290,12 @@
         if (authKey && authKey !== key) _sessionTitleById[authKey] = name;
     }
 
+    function updateChatSessionArchivedBadge(sessionId) {
+        const badge = document.getElementById('chatSessionArchivedBadge');
+        if (!badge) return;
+        badge.hidden = !(sessionId != null && sessionId !== '' && isChatSessionArchived(sessionId));
+    }
+
     function updateChatSessionTitle(sessionId) {
         const wrap = document.getElementById('chatSessionTitle');
         const text = document.getElementById('chatSessionTitleText');
@@ -299,6 +305,7 @@
             text.textContent = '';
             wrap.removeAttribute('title');
             updateChatSessionStarButton(null);
+            updateChatSessionArchivedBadge(null);
             updateSessionTitleUnreadDot();
             updateSessionTitleRunningIcon();
             return;
@@ -318,6 +325,7 @@
         wrap.title = name;
         wrap.hidden = false;
         updateChatSessionStarButton(sessionId);
+        updateChatSessionArchivedBadge(sessionId);
         updateSessionTitleUnreadDot();
         updateSessionTitleRunningIcon();
     }
@@ -734,8 +742,8 @@
     let activeRequestController = null;
     let activeEventSource = null;
 
-    const chatWidgetsCtrl = (window.CuttleChatWidgets && typeof window.CuttleChatWidgets.create === 'function')
-        ? window.CuttleChatWidgets.create({
+    const chatWidgetsCtrl = (window.CuttleTaskGizmos && typeof window.CuttleTaskGizmos.create === 'function')
+        ? window.CuttleTaskGizmos.create({
             getSessionId: function () { return currentSessionId; },
             getProjectPath: function () {
                 return (currentProject && currentProject.path) ? String(currentProject.path) : '';
@@ -1268,8 +1276,11 @@
             statusHeader.insertAdjacentHTML('beforeend', CuttleChatMessages.renderAssistantStatusHtml(
                 { routing_badge: msg.routing_badge || meta.routing_badge }, el.dataset.failed === '1', raw, escapeHtmlInline));
         }
-        const usage = normalizeUsagePayload(msg.usage) || normalizeUsagePayload(meta.usage);
+        const usage = normalizeUsagePayload(msg.usage, meta) || normalizeUsagePayload(meta.usage, meta);
         if (usage) {
+            try {
+                el._cuttleUsage = usage;
+            } catch (_) {}
             const wrap = el.querySelector('.message-content-wrapper');
             if (wrap) {
                 let footer = wrap.querySelector('.message-footer');
@@ -1704,18 +1715,23 @@
         }
     }
 
-    /** Composer controls tagged data-experimental-flag stay hidden unless their flag is on. */
-    async function syncExperimentalComposerControls() {
-        const controls = document.querySelectorAll('[data-experimental-flag]');
-        if (!controls.length) return;
-        let enabled = new Set();
+    /** Ids of enabled experimental flags (empty when the kill switch is on or the fetch fails). */
+    async function fetchEnabledExperimentalFlags() {
         try {
             const r = await fetch('/api/experimental/flags', { credentials: 'include', cache: 'no-store' });
             const d = await r.json();
             if (r.ok && d && d.success && !d.kill_switch) {
-                enabled = new Set((d.flags || []).filter(f => f.enabled).map(f => f.id));
+                return new Set((d.flags || []).filter(f => f.enabled).map(f => f.id));
             }
         } catch (_) {}
+        return new Set();
+    }
+
+    /** Composer controls tagged data-experimental-flag stay hidden unless their flag is on. */
+    async function syncExperimentalComposerControls() {
+        const controls = document.querySelectorAll('[data-experimental-flag]');
+        if (!controls.length) return;
+        const enabled = await fetchEnabledExperimentalFlags();
         controls.forEach((el) => {
             el.hidden = !enabled.has(el.getAttribute('data-experimental-flag'));
         });
@@ -2901,9 +2917,7 @@
                     .then(() => syncSessionMessagesFromServer())
                     .catch(() => {});
             }
-            if (voiceModeActive) {
-                onVoiceModeGenerationEnded({ isError });
-            }
+            chatVoice.onGenerationEnded({ isError });
             return;
         }
         markChatSessionUnread(sid, { isError });
@@ -3949,20 +3963,54 @@
             if (existing) existing.remove();
             return;
         }
+        // Tooltips promote title attributes after mounting. Comparing outerHTML
+        // to our source then replaces unchanged cards on every history poll.
+        if (existing && existing.__cuttleLaunchersHtml === html) return;
+        const template = document.createElement('template');
+        template.innerHTML = html;
+        const next = template.content.firstElementChild;
         if (existing) {
-            if (existing.outerHTML === html) return;
-            const focused = document.activeElement && existing.contains(document.activeElement)
-                ? document.activeElement.getAttribute('data-chat-handle') : '';
-            existing.outerHTML = html;
-            if (focused) {
-                const replacement = wrap.querySelector('.subagent-launchers [data-chat-handle="' + CSS.escape(focused) + '"]');
-                if (replacement) replacement.focus({ preventScroll: true });
-            }
+            // Keep the group and its buttons mounted. Re-focusing replacement
+            // buttons can scroll an iPad iframe back to a fleet above the reader.
+            existing.className = next.className;
+            existing.setAttribute('aria-label', next.getAttribute('aria-label'));
+            const cards = new Map(Array.from(existing.children).map((el) => [el.getAttribute('data-chat-handle'), el]));
+            const kept = new Set();
+            let cursor = existing.firstElementChild;
+            Array.from(next.children).forEach((wanted) => {
+                const handle = wanted.getAttribute('data-chat-handle');
+                const card = handle && cards.get(handle);
+                const node = card || wanted;
+                const source = wanted.outerHTML;
+                if (card && card.__cuttleLauncherHtml !== source) {
+                    Array.from(card.attributes).forEach((attr) => {
+                        if (!wanted.hasAttribute(attr.name)) card.removeAttribute(attr.name);
+                    });
+                    Array.from(wanted.attributes).forEach((attr) => {
+                        if (card.getAttribute(attr.name) !== attr.value) card.setAttribute(attr.name, attr.value);
+                    });
+                    if (card.__cuttleLauncherBodyHtml !== wanted.innerHTML) card.innerHTML = wanted.innerHTML;
+                }
+                node.__cuttleLauncherHtml = source;
+                node.__cuttleLauncherBodyHtml = wanted.innerHTML;
+                kept.add(node);
+                if (node !== cursor) existing.insertBefore(node, cursor);
+                cursor = node.nextElementSibling;
+            });
+            Array.from(existing.children).forEach((el) => {
+                if (!kept.has(el)) el.remove();
+            });
+            existing.__cuttleLaunchersHtml = html;
             return;
         }
+        next.__cuttleLaunchersHtml = html;
+        Array.from(next.children).forEach((el) => {
+            el.__cuttleLauncherHtml = el.outerHTML;
+            el.__cuttleLauncherBodyHtml = el.innerHTML;
+        });
         const footer = wrap.querySelector('.message-footer');
-        if (footer) footer.insertAdjacentHTML('beforebegin', html);
-        else wrap.insertAdjacentHTML('beforeend', html);
+        if (footer) wrap.insertBefore(next, footer);
+        else wrap.appendChild(next);
     }
 
     function mountMessageLaunchers(messageEl, role, opts) {
@@ -5316,29 +5364,14 @@
     }
 
     /** Nested harness one-shots (``/usage`` where supported, ``/cost``) for the active badge. */
+    // Entries owned by chat_usage_live.js — page supplies chip state, domain builds the list.
+    // (Dedicated hasActive*Chip matchers delegate to hasActiveHarnessAgentChip per agent.)
     function harnessUsageSlashCommandsForPalette() {
-        const forAgent = (agent) => {
-            const out = [];
-            const usageTable = CuttleChatSlash.HARNESS_USAGE_SLASH_BY_AGENT;
-            if (usageTable[agent]) {
-                out.push(Object.assign({}, usageTable[agent]));
-                out.push(Object.assign({}, usageTable[agent], {
-                    prefix: '/usage-live', label: 'Live usage',
-                    hint: 'Usage refreshed every minute while visible (shared across panes)',
-                }));
-            }
-            out.push(harnessCostSlashCommand(agent));
-            return out;
-        };
-        if (hasActiveMuseAgentChip()) return forAgent('muse');
-        if (hasActiveCodexAgentChip()) return forAgent('codex');
-        if (hasActiveHermesAgentChip()) return forAgent('hermes');
-        if (hasActiveOpenCodeAgentChip()) return forAgent('opencode');
-        const others = ['claude', 'deepseek', 'antigravity'];
-        for (let i = 0; i < others.length; i++) {
-            if (hasActiveHarnessAgentChip(others[i])) return forAgent(others[i]);
-        }
-        return [];
+        return CuttleUsageLive.harnessUsageCommands({
+            isActive: (agent) => hasActiveHarnessAgentChip(agent),
+            usageTable: CuttleChatSlash.HARNESS_USAGE_SLASH_BY_AGENT,
+            costCommand: harnessCostSlashCommand,
+        });
     }
 
     function readStarredSlashPrefixes() {
@@ -6543,15 +6576,15 @@
         if (!data || typeof data !== 'object') return;
         const key = sessionId != null ? String(sessionId) : '';
         const serverModel = sessionPin(data, 'muse', 'model');
-        if (serverModel) {
+        if (serverModel && !slashPaletteSupplement.museModelDirty) {
             slashPaletteSupplement.museModel = serverModel;
             if (key) slashPaletteSupplement.museModelsKey = key;
         }
         const serverEffort = sessionPin(data, 'muse', 'effort').toLowerCase();
-        if (serverEffort) {
+        if (serverEffort && !slashPaletteSupplement.museEffortDirty) {
             slashPaletteSupplement.museEffort = serverEffort;
             if (key) slashPaletteSupplement.museEffortKey = key;
-        } else if (key && data && ((data.agent_pins && data.agent_pins.muse) || ('muse_effort' in data))) {
+        } else if (!slashPaletteSupplement.museEffortDirty && key && data && ((data.agent_pins && data.agent_pins.muse) || ('muse_effort' in data))) {
             // Explicitly unpinned — don't inherit another chat's effort.
             slashPaletteSupplement.museEffort = '';
             slashPaletteSupplement.museEffortKey = key;
@@ -6697,15 +6730,15 @@
         if (!data || typeof data !== 'object') return;
         const key = sessionId != null ? String(sessionId) : '';
         const serverModel = sessionPin(data, 'hermes', 'model');
-        if (serverModel) {
+        if (serverModel && !slashPaletteSupplement.hermesModelDirty) {
             slashPaletteSupplement.hermesModel = serverModel;
             if (key) slashPaletteSupplement.hermesModelsKey = key;
         }
         const serverEffort = sessionPin(data, 'hermes', 'effort').toLowerCase();
-        if (serverEffort) {
+        if (serverEffort && !slashPaletteSupplement.hermesEffortDirty) {
             slashPaletteSupplement.hermesEffort = serverEffort;
             if (key) slashPaletteSupplement.hermesEffortKey = key;
-        } else if (key && data && ((data.agent_pins && data.agent_pins.hermes) || ('hermes_effort' in data))) {
+        } else if (!slashPaletteSupplement.hermesEffortDirty && key && data && ((data.agent_pins && data.agent_pins.hermes) || ('hermes_effort' in data))) {
             slashPaletteSupplement.hermesEffort = '';
             slashPaletteSupplement.hermesEffortKey = key;
         }
@@ -7000,15 +7033,15 @@
         if (!data || typeof data !== 'object') return;
         const key = sessionId != null ? String(sessionId) : '';
         const serverModel = sessionPin(data, 'opencode', 'model');
-        if (serverModel) {
+        if (serverModel && !slashPaletteSupplement.opencodeModelDirty) {
             slashPaletteSupplement.opencodeModel = serverModel;
             if (key) slashPaletteSupplement.opencodeModelsKey = key;
         }
         const serverEffort = sessionPin(data, 'opencode', 'effort').toLowerCase();
-        if (serverEffort) {
+        if (serverEffort && !slashPaletteSupplement.opencodeEffortDirty) {
             slashPaletteSupplement.opencodeEffort = serverEffort;
             if (key) slashPaletteSupplement.opencodeEffortKey = key;
-        } else if (key && data && ((data.agent_pins && data.agent_pins.opencode) || ('opencode_effort' in data))) {
+        } else if (!slashPaletteSupplement.opencodeEffortDirty && key && data && ((data.agent_pins && data.agent_pins.opencode) || ('opencode_effort' in data))) {
             slashPaletteSupplement.opencodeEffort = '';
             slashPaletteSupplement.opencodeEffortKey = key;
         }
@@ -7304,15 +7337,15 @@
         if (!data || typeof data !== 'object') return;
         const key = sessionId != null ? String(sessionId) : '';
         const serverModel = sessionPin(data, 'codex', 'model');
-        if (serverModel) {
+        if (serverModel && !slashPaletteSupplement.codexModelDirty) {
             slashPaletteSupplement.codexModel = serverModel;
             if (key) slashPaletteSupplement.codexModelsKey = key;
         }
         const serverEffort = sessionPin(data, 'codex', 'effort').toLowerCase();
-        if (serverEffort) {
+        if (serverEffort && !slashPaletteSupplement.codexEffortDirty) {
             slashPaletteSupplement.codexEffort = serverEffort;
             if (key) slashPaletteSupplement.codexEffortKey = key;
-        } else if (key && data && ((data.agent_pins && data.agent_pins.codex) || ('codex_effort' in data))) {
+        } else if (!slashPaletteSupplement.codexEffortDirty && key && data && ((data.agent_pins && data.agent_pins.codex) || ('codex_effort' in data))) {
             slashPaletteSupplement.codexEffort = '';
             slashPaletteSupplement.codexEffortKey = key;
         }
@@ -7527,40 +7560,33 @@
 
     /** anyChat: load even without a /claude chip (user typed "claude" in the palette). */
     function loadClaudeModelsForPalette(anyChat, opts) {
-        if (!anyChat && !hasActiveHarnessAgentChip('claude')) return;
         const key = currentSessionId != null ? String(currentSessionId) : '';
         const forceRefresh = !!(opts && opts.refresh);
-        if (
-            !forceRefresh
-            && (
-                slashPaletteSupplement.claudeModelsLoading
-                || (slashPaletteSupplement.claudeModels.length
-                    && slashPaletteSupplement.claudeModelsKey === key)
-            )
-        ) {
-            return;
-        }
+        const gate = CuttleChatAgentModel.claudeModelsFetchForPalette({
+            anyChat,
+            hasClaudeChip: hasActiveHarnessAgentChip('claude'),
+            loading: slashPaletteSupplement.claudeModelsLoading,
+            modelsLength: (slashPaletteSupplement.claudeModels || []).length,
+            modelsKey: slashPaletteSupplement.claudeModelsKey,
+            sessionKey: key,
+            forceRefresh,
+        });
+        if (!gate.fetch) return;
         slashPaletteSupplement.claudeModelsLoading = true;
-        const params = new URLSearchParams();
-        if (key) params.set('session', key);
-        if (forceRefresh) params.set('refresh', '1');
-        const qs = params.toString();
-        const url = qs ? '/api/claude/models?' + qs : '/api/claude/models';
-        fetch(url, { cache: 'no-store' })
+        fetch(gate.url, { cache: 'no-store' })
             .then((r) => r.json())
             .then((j) => {
-                slashPaletteSupplement.claudeModels =
-                    j && j.success && Array.isArray(j.models) ? j.models : [];
-                if (!slashPaletteSupplement.claudeModelDirty) {
-                    slashPaletteSupplement.claudeModel = (j && j.preferredModel) || '';
+                const applied = CuttleChatAgentModel.applyClaudeModelsResponse(j, {
+                    modelDirty: slashPaletteSupplement.claudeModelDirty,
+                });
+                slashPaletteSupplement.claudeModels = applied.models;
+                if (applied.model !== null) {
+                    slashPaletteSupplement.claudeModel = applied.model;
                 }
                 slashPaletteSupplement.claudeModelsKey = key;
-                slashPaletteSupplement.claudeModelsSource =
-                    (j && j.source) || '';
-                slashPaletteSupplement.claudeModelsCount =
-                    (j && (j.count != null ? j.count : slashPaletteSupplement.claudeModels.length)) || 0;
-                slashPaletteSupplement.claudeCommonEfforts =
-                    j && Array.isArray(j.commonEfforts) ? j.commonEfforts : [];
+                slashPaletteSupplement.claudeModelsSource = applied.source;
+                slashPaletteSupplement.claudeModelsCount = applied.count;
+                slashPaletteSupplement.claudeCommonEfforts = applied.commonEfforts;
                 renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
                 renderSlashChips('chat', document.getElementById('chatInput'));
                 repaintClaudeUserBadges();
@@ -7568,7 +7594,7 @@
                 refreshHistoryAgentChips();
                 if (forceRefresh && window.showToast) {
                     const n = slashPaletteSupplement.claudeModelsCount || 0;
-                    const err = j && j.error ? String(j.error) : '';
+                    const err = applied.error;
                     window.showToast(
                         err && !n
                             ? ('Claude Code models refresh failed: ' + err)
@@ -7596,17 +7622,16 @@
     function persistClaudeModelSelection(modelId) {
         const id = String(modelId || '').trim();
         if (!id) return;
-        if (id.toLowerCase() === 'refresh' || id.toLowerCase() === '__refresh__') {
+        if (CuttleChatAgentModel.isClaudeModelRefreshPick(id)) {
             slashPaletteSupplement.claudeModelsKey = '';
             slashPaletteSupplement.claudeModels = [];
             loadClaudeModelsForPalette(true, { refresh: true });
             return;
         }
         slashPaletteSupplement.claudeModel = id;
-        slashPaletteSupplement.claudeModels = (slashPaletteSupplement.claudeModels || []).map((m) => ({
-            ...m,
-            current: String(m && m.id) === id,
-        }));
+        slashPaletteSupplement.claudeModels =
+            CuttleChatAgentModel.markClaudeCurrentModel(
+                slashPaletteSupplement.claudeModels, id);
         const sid = currentSessionId != null ? String(currentSessionId) : '';
         if (!sid) {
             slashPaletteSupplement.claudeModelDirty = true;
@@ -7639,11 +7664,7 @@
         if (!f) return [];
         loadClaudeModelsForPalette(true);
         const models = slashPaletteSupplement.claudeModels || [];
-        let modelFilter = f
-            .replace(/^claude\s+/, '')
-            .replace(/^models?\b\s*/, '')
-            .trim();
-        if (modelFilter === 'claude') modelFilter = '';
+        const modelFilter = CuttleChatAgentModel.claudeModelFilterForPalette(f);
         const preferred = String(slashPaletteSupplement.claudeModel || '').toLowerCase();
         // Stage as nested cmd chip — no instant run (same as Codex). Composes as
         // `/claude /model refresh` after the sticky agent prefix.
@@ -7677,30 +7698,7 @@
             return items;
         }
         const mapped = models
-            .map((m) => {
-                const id = String((m && m.id) || '').trim();
-                if (!id) return null;
-                const label = String((m && m.label) || id).trim() || id;
-                const current = id.toLowerCase() === preferred;
-                const fav = !!(m && (m.favorite === true || m.favorite === '1' || m.favorite === 1));
-                const modelEfforts = Array.isArray(m && m.efforts) ? m.efforts : [];
-                const effortHint = modelEfforts.length
-                    ? 'Supported efforts: ' + modelEfforts.join(', ')
-                    : 'No effort levels for this model';
-                return {
-                    category: 'claude-model',
-                    prefix: '/claude model ' + id,
-                    label: (fav ? '★ ' : '') + label + (current ? ' (current)' : ''),
-                    hint: [
-                        (m && m.description) || ('Set Claude Code model to ' + id),
-                        effortHint,
-                    ].filter(Boolean).join(' · '),
-                    meta: id,
-                    keywords: 'claude model ' + id + ' ' + label + ' ' + id.replace(/[-_/]+/g, ' '),
-                    modelId: id,
-                    claudeModel: true,
-                };
-            })
+            .map((m) => CuttleChatAgentModel.buildClaudeModelRow(m, preferred))
             .filter(Boolean)
             .filter((item) => (modelFilter ? slashPaletteItemMatches(item, modelFilter) : true));
         const MAX = 40;
@@ -7726,41 +7724,33 @@
 
     function seedClaudeSupplementFromSessionData(data, sessionId) {
         if (!data || typeof data !== 'object') return;
-        const key = sessionId != null ? String(sessionId) : '';
-        const serverModel = sessionPin(data, 'claude', 'model');
-        if (serverModel) {
-            slashPaletteSupplement.claudeModel = serverModel;
-            if (key) slashPaletteSupplement.claudeModelsKey = key;
-        }
-        const serverEffort = sessionPin(data, 'claude', 'effort').toLowerCase();
-        if (serverEffort) {
-            slashPaletteSupplement.claudeEffort = serverEffort;
-            if (key) slashPaletteSupplement.claudeEffortKey = key;
-        } else if (key && data && ((data.agent_pins && data.agent_pins.claude) || ('claude_effort' in data))) {
-            slashPaletteSupplement.claudeEffort = '';
-            slashPaletteSupplement.claudeEffortKey = key;
-        }
+        const patch = CuttleChatAgentModel.claudeSeedPatchFromSessionData(data, {
+            modelDirty: slashPaletteSupplement.claudeModelDirty,
+            effortDirty: slashPaletteSupplement.claudeEffortDirty,
+            sessionKey: sessionId != null ? String(sessionId) : '',
+        });
+        if (patch.model !== undefined) slashPaletteSupplement.claudeModel = patch.model;
+        if (patch.modelsKey !== undefined) slashPaletteSupplement.claudeModelsKey = patch.modelsKey;
+        if (patch.effort !== undefined) slashPaletteSupplement.claudeEffort = patch.effort;
+        if (patch.effortKey !== undefined) slashPaletteSupplement.claudeEffortKey = patch.effortKey;
     }
 
     function loadClaudeEffortForPalette() {
-        if (!hasActiveHarnessAgentChip('claude')) return;
         const key = currentSessionId != null ? String(currentSessionId) : '';
-        if (
-            slashPaletteSupplement.claudeEffortLoading
-            || (slashPaletteSupplement.claudeEffortKey === key && key)
-        ) {
-            return;
-        }
+        const gate = CuttleChatAgentModel.claudeEffortFetchForPalette({
+            hasClaudeChip: hasActiveHarnessAgentChip('claude'),
+            loading: slashPaletteSupplement.claudeEffortLoading,
+            effortKey: slashPaletteSupplement.claudeEffortKey,
+            sessionKey: key,
+        });
+        if (!gate.fetch) return;
         slashPaletteSupplement.claudeEffortLoading = true;
-        const url = key
-            ? '/api/claude/effort?session=' + encodeURIComponent(key)
-            : '/api/claude/effort';
-        fetch(url, { cache: 'no-store' })
+        fetch(gate.url, { cache: 'no-store' })
             .then((r) => r.json())
             .then((j) => {
                 if (slashPaletteSupplement.claudeEffortDirty) return;
                 slashPaletteSupplement.claudeEffort =
-                    (j && j.preferredEffort) || '';
+                    CuttleChatAgentModel.applyClaudeEffortResponse(j);
                 slashPaletteSupplement.claudeEffortKey = key;
                 renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
                 renderSlashChips('chat', document.getElementById('chatInput'));
@@ -7811,23 +7801,14 @@
         const f = (filterLower || '').toLowerCase().trim();
         if (!f) return [];
         loadClaudeEffortForPalette();
-        let effortFilter = f
-            .replace(/^claude\s+/, '')
-            .replace(/^efforts?\b\s*/, '')
-            .trim();
-        if (effortFilter === 'effort') effortFilter = '';
+        const effortFilter = CuttleChatAgentModel.claudeEffortFilterForPalette(f);
         const preferred = String(slashPaletteSupplement.claudeEffort || '').toLowerCase();
         const selectedModel = String(slashPaletteSupplement.claudeModel || '').toLowerCase();
-        const selectedRow = selectedModel
-            ? (slashPaletteSupplement.claudeModels || []).find((m) =>
-                String(m && m.id || '').toLowerCase() === selectedModel
-            )
-            : null;
-        const levels = selectedRow && Array.isArray(selectedRow.efforts)
-            ? selectedRow.efforts
-            : selectedModel
-                ? []
-                : (slashPaletteSupplement.claudeCommonEfforts || []);
+        const levels = CuttleChatAgentModel.claudeEffortLevelsForModel({
+            selectedModel,
+            models: slashPaletteSupplement.claudeModels,
+            commonEfforts: slashPaletteSupplement.claudeCommonEfforts,
+        });
         if (!levels.length) {
             return [{
                 category: 'claude-effort',
@@ -7846,16 +7827,9 @@
             }];
         }
         const items = levels
-            .map((id) => ({
-                category: 'claude-effort',
-                prefix: '/claude effort ' + id,
-                label: 'Effort ' + id + (id.toLowerCase() === preferred ? ' (current)' : ''),
-                hint: 'Set Claude Code effort (--effort) to ' + id
-                    + (selectedModel ? ' for ' + selectedModel : ' (CLI default model)'),
-                meta: id,
-                keywords: 'claude effort ' + id,
-                modelId: id,
-                claudeEffort: true,
+            .map((id) => CuttleChatAgentModel.buildClaudeEffortRow(id, {
+                preferredLower: preferred,
+                selectedModel,
             }))
             .filter((item) => (effortFilter ? slashPaletteItemMatches(item, effortFilter) : true));
         if (!items.length && effortFilter) {
@@ -8524,7 +8498,7 @@
                 if (!hasStickyAgentChip()) markStickyAgentCleared(true);
                 renderSlashChips(key, textarea);
                 renderSlashChips(other, document.getElementById(other === 'chat' ? 'chatInput' : 'welcomeChatInput'));
-                persistStickySlashForCurrentSession();
+                persistStickySlashForCurrentSession(true);
                 saveComposerDraftControls(currentSessionId || 'new', key);
                 if (textarea) {
                     try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
@@ -9109,7 +9083,7 @@
             slashCtx[other].chips = ctx.chips.slice();
             renderSlashChips(other, document.getElementById(other === 'chat' ? 'chatInput' : 'welcomeChatInput'));
             markStickyAgentCleared(false);
-            persistStickySlashForCurrentSession();
+            persistStickySlashForCurrentSession(true);
         }
         renderSlashChips(key, textarea);
         try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
@@ -9312,7 +9286,7 @@
         hideSlashMenu('chat');
         renderSlashChips('chat', document.getElementById('chatInput'));
         renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-        persistStickySlashForCurrentSession();
+        persistStickySlashForCurrentSession(true);
         return stickyCmd;
     }
 
@@ -9330,7 +9304,7 @@
         return CuttleChatSlash.isStickySlashAssistantFailure(stickyCmd, data);
     }
 
-    function persistStickySlashForCurrentSession() {
+    function persistStickySlashForCurrentSession(publishShared = false) {
         const prefsId = currentSessionId || newComposerPrefsId;
         const chips = (slashCtx.chat.chips && slashCtx.chat.chips.length)
             ? slashCtx.chat.chips
@@ -9340,7 +9314,7 @@
             return match && match.stickySession;
         });
         if (sticky.length) stickyAgentClearedPending = false;
-        updateSessionPrefs(prefsId, {
+        const selection = {
             stickyChips: sticky.map((c) => {
                 const live = liveAgentBadgeLabelForChip(c);
                 const paletteCat = resolveSlashChipPaletteCategory(c);
@@ -9351,7 +9325,9 @@
                 };
             }),
             stickyCleared: sticky.length ? false : stickyAgentClearedPending,
-        });
+        };
+        updateSessionPrefs(prefsId, selection);
+        if (publishShared) publishSharedComposerSelection(selection);
     }
 
     // Removing the agent badge is a real choice: this chat must fall through to
@@ -9400,6 +9376,80 @@
         if (getSessionPrefs(newComposerPrefsId)) {
             restoreSessionStickySlash(newComposerPrefsId, []);
         }
+    }
+
+    // Session-scoped snapshots: execution identity and next-send preferences
+    // have distinct lifetimes. Canonical ids also cover CH-/db_session aliases.
+    const turnBadgeBySession = new Map();
+    const sharedComposerState = new Map();
+
+    function rememberTurnBadge(messages, liveStatus) {
+        // Before the new user row is saved, a local send's history poll may
+        // still contain the previous turn. Its send-time snapshot stays put.
+        if (isLoadingThisSession() && !(liveStatus && liveStatus.active && liveStatus.slash_command)) return;
+        const meta = CuttleChatAgentModel.turnSlashFromMessages(messages, liveStatus);
+        if (meta !== undefined) {
+            turnBadgeBySession.set(String(canonicalizeChatSessionId(currentSessionId) || ''), meta);
+        }
+    }
+
+    function hydrateAgentSelectionFromSessionData(data, sessionId) {
+        const incoming = data && data.composer_selection;
+        const state = sharedComposerState.get(String(canonicalizeChatSessionId(sessionId)));
+        // Reject stale/pending-write snapshots BEFORE seeding model/effort as
+        // well as the chip. Otherwise a delayed GET could undo an accepted pick.
+        if (incoming && !CuttleChatAgentModel.shouldAdoptComposerSelection(incoming, state)) return;
+        seedMuseSupplementFromSessionData(data, sessionId);
+        seedHermesSupplementFromSessionData(data, sessionId);
+        seedOpenCodeSupplementFromSessionData(data, sessionId);
+        seedCodexSupplementFromSessionData(data, sessionId);
+        seedClaudeSupplementFromSessionData(data, sessionId);
+        applySharedComposerSelection(data, sessionId);
+    }
+
+    function applySharedComposerSelection(data, sessionId) {
+        const incoming = data && data.composer_selection;
+        const key = String(canonicalizeChatSessionId(sessionId));
+        const state = sharedComposerState.get(key);
+        if (!CuttleChatAgentModel.shouldAdoptComposerSelection(incoming, state)) return;
+        const revision = Number(incoming.revision || 0);
+        const pins = JSON.stringify(data.agent_pins || {});
+        if (state && state.appliedRevision === revision && state.pins === pins) return;
+        sharedComposerState.set(key, { ...state, revision, appliedRevision: revision, pins });
+        const prefs = getSessionPrefs(sessionId);
+        const draft = prefs && prefs.composerDraft;
+        const composerDraft = CuttleChatComposer.draftWithSharedAgent(
+            draft, incoming, CuttleChatSlash.SLASH_COMMANDS
+        );
+        updateSessionPrefs(sessionId, {
+            stickyChips: incoming.stickyChips,
+            stickyCleared: !!incoming.stickyCleared,
+            composerDraft,
+        });
+        restoreSessionStickySlash(sessionId, []);
+    }
+
+    function publishSharedComposerSelection(selection) {
+        const sid = toAuthDbSessionId(currentSessionId);
+        if (!isAuthMode() || !sid || !/^\d+$/.test(sid)) return;
+        const key = String(canonicalizeChatSessionId(currentSessionId));
+        const state = sharedComposerState.get(key) || { revision: 0 };
+        state.pending = (state.pending || 0) + 1;
+        sharedComposerState.set(key, state);
+        // Serialize local writes so a slow earlier choice cannot win later.
+        state.write = (state.write || Promise.resolve()).catch(() => {}).then(async () => {
+            const response = await fetch('/api/auth/sessions/' + sid + '/composer', {
+                method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(selection),
+            });
+            if (!response.ok) throw new Error('Composer sync HTTP ' + response.status);
+            const result = await response.json();
+            if (result.success && result.composer_selection) {
+                state.revision = Math.max(state.revision, Number(result.composer_selection.revision || 0));
+            }
+        }).catch((error) => {
+            console.warn('[Cuttle Chat] composer selection sync failed:', error);
+        }).finally(() => { state.pending--; });
     }
 
     function restoreSessionStickySlash(sessionId, messages) {
@@ -10230,26 +10280,9 @@
         return CuttleChatSlash.activeStickyAgentChip(slashCtx.chat.chips, slashCtx.welcome.chips);
     }
 
-    /**
-     * Sticky agent chip + preferred model/effort — used when typing UI is
-     * recreated mid-run (chat switch while still generating).
-     */
+    /** Frozen turn identity, also used when recreating typing UI after navigation. */
     function currentTypingSlashMeta() {
-        const sticky = activeStickyAgentChip();
-        if (!sticky) return null;
-        const prefix = String(sticky.prefix || sticky.meta || '').trim();
-        const metaTok = (prefix.split(/\s+/)[0] || prefix);
-        return pendingSlashForTypingIndicator(
-            {
-                chips: [{
-                    label: sticky.label || metaTok || 'Agent',
-                    meta: sticky.meta || metaTok,
-                    category: sticky.category || 'command',
-                    prefix: sticky.prefix,
-                }],
-            },
-            sticky
-        );
+        return turnBadgeBySession.get(String(canonicalizeChatSessionId(currentSessionId) || '')) || null;
     }
 
     function syncPreferredModelFromResponse(data) {
@@ -10762,22 +10795,13 @@
     }
 
     function prettyClaudeModelLabel(model) {
-        const raw = String(model || '').trim();
-        if (!raw) return 'Claude Code';
-        const known = (slashPaletteSupplement.claudeModels || []).find(
-            (m) => m && String(m.id).toLowerCase() === raw.toLowerCase()
-        );
-        if (known && known.label) return String(known.label);
-        const leaf = raw.includes('/') ? raw.split('/').pop() : raw;
-        return String(leaf || raw).replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+        return CuttleChatAgentModel.prettyClaudeModelLabel(
+            model, slashPaletteSupplement.claudeModels);
     }
 
     function claudeModelLabel(model) {
-        const raw = String(model || '').trim();
-        const known = (slashPaletteSupplement.claudeModels || []).find(
-            (m) => m && String(m.id).toLowerCase() === raw.toLowerCase()
-        );
-        return (known && known.label) || raw || 'default';
+        return CuttleChatAgentModel.claudeModelLabel(
+            model, slashPaletteSupplement.claudeModels);
     }
 
     function repaintClaudeUserBadges() {
@@ -11866,6 +11890,22 @@
     }
 
     // Chat history panel (off-canvas) — opened by the corner button
+    // The slide transition lives only under .hist-slide (applied here and in
+    // close): the panel has no base transition, so viewport/breakpoint flips
+    // from shell resizes can never replay as a visible sweep.
+    let historyPanelSlideTimer = 0;
+    function animateHistoryPanelSlide(panel) {
+        if (!panel) return;
+        if (historyPanelSlideTimer) clearTimeout(historyPanelSlideTimer);
+        panel.classList.add('hist-slide');
+        // Let the class paint before the open-state flips, then drop it so
+        // later style flips stay instant.
+        void panel.offsetWidth;
+        historyPanelSlideTimer = setTimeout(function () {
+            panel.classList.remove('hist-slide');
+            historyPanelSlideTimer = 0;
+        }, 350);
+    }
     function openChatHistoryPanel() {
         const panel = getChatHistoryPanel();
         const overlay = document.getElementById('chatHistoryPanelOverlay');
@@ -11875,6 +11915,7 @@
         if (window.CuttleTooltips && typeof window.CuttleTooltips.hide === 'function') {
             window.CuttleTooltips.hide();
         }
+        animateHistoryPanelSlide(panel);
         panel.classList.add('open');
         if (overlay) overlay.classList.add('active');
         // Pull latest sessions on open so chats started on another device show up
@@ -11895,6 +11936,7 @@
         historyGroupVisibleCount.clear();
         const panel = getChatHistoryPanel();
         const overlay = document.getElementById('chatHistoryPanelOverlay');
+        animateHistoryPanelSlide(panel);
         if (panel) panel.classList.remove('open', 'mobile-open');
         if (overlay) overlay.classList.remove('active');
         stopHistoryGeneratingPoll();
@@ -12634,11 +12676,7 @@
                     // Same for Muse: the messages payload carries the session
                     // pins, so badges paint correctly on the first pass with
                     // no /api/muse/* round trip (and no heal flicker).
-                    seedMuseSupplementFromSessionData(data, sessionId);
-                    seedHermesSupplementFromSessionData(data, sessionId);
-                    seedOpenCodeSupplementFromSessionData(data, sessionId);
-                    seedCodexSupplementFromSessionData(data, sessionId);
-                    seedClaudeSupplementFromSessionData(data, sessionId);
+                    hydrateAgentSelectionFromSessionData(data, sessionId);
                     applySessionIdentity(data);
                     // Title from the same payload — don't wait for the session
                     // list (history panel) or the delayed title-refresh timers.
@@ -13005,6 +13043,11 @@
             migrateComposerDraft(prev, sessionId);
             if (!isAuthMode()) migrateLocalChatSession(prev, sessionId);
         }
+        const previousBadgeKey = String(canonicalizeChatSessionId(prev) || '');
+        if (previousBadgeKey !== String(sessionId) && turnBadgeBySession.has(previousBadgeKey)) {
+            turnBadgeBySession.set(String(sessionId), turnBadgeBySession.get(previousBadgeKey));
+            turnBadgeBySession.delete(previousBadgeKey);
+        }
         const wasNew = currentSessionId == null || !sessionIdsEqual(currentSessionId, sessionId);
         if (window.CuttleCompletionNotifications && generation.loading) {
             window.CuttleCompletionNotifications.broker().adopt(prev || completionNotificationPendingId, sessionId);
@@ -13021,7 +13064,7 @@
         if (prev == null) clearSessionPrefs(newComposerPrefsId);
         // Persist project / sticky agent chosen before the server assigned an id.
         persistProjectForCurrentSession();
-        persistStickySlashForCurrentSession();
+        persistStickySlashForCurrentSession(wasNew);
         // Persist a Muse model/effort picked while the chat had no id yet. Only
         // dirty picks persist here — persisting the in-memory default would
         // clobber the stored pin (e.g. Contributor reset to plain Spark 1.3).
@@ -13699,9 +13742,7 @@
             const bare = String(currentSessionId).replace(/^db_session_/, '');
             if (String(task.parent_session_id) !== bare) return;
         }
-        const state = CS.activityStateFromTask
-            ? CS.activityStateFromTask(task)
-            : CS.activityCardStateFromTask(task);
+        const state = CS.activityStateFromTask(task);
         if (!state) return;
         const box = document.getElementById('chatMessages');
         if (!box) return;
@@ -13992,6 +14033,8 @@
     }
 
     function updateRemoteWaitingFromMessages(messages, liveStatus) {
+        rememberTurnBadge(messages, liveStatus);
+        refreshTypingIndicatorHeaderBadges();
         noteWidgetsRevision(liveStatus);
         updateSupervisedTaskIndicator(liveStatus, currentSessionId);
         // Local stream owns this chat's turn — keep/restore the typing bubble
@@ -14626,11 +14669,7 @@
             if (!syncStillCurrent()) return;
             applyServerFollowups(data.followups);
             // Keep badges truthful on incremental syncs too (same seeding as open).
-            seedMuseSupplementFromSessionData(data, currentSessionId);
-            seedHermesSupplementFromSessionData(data, currentSessionId);
-            seedOpenCodeSupplementFromSessionData(data, currentSessionId);
-            seedCodexSupplementFromSessionData(data, currentSessionId);
-            seedClaudeSupplementFromSessionData(data, currentSessionId);
+            hydrateAgentSelectionFromSessionData(data, currentSessionId);
             applySessionIdentity(data);
             if (data.session_name) {
                 rememberChatSessionTitle(currentSessionId, data.session_name);
@@ -15206,28 +15245,26 @@
 
     // Sessions this tab knows are archived (populated from ?archived=only).
     // Drives the Archive/Unarchive menu label; the server list is the source
-    // of truth after every archive toggle.
+    // of truth after every archive toggle. Mark decisions live in
+    // CuttleChatHistoryArchive over this tab-lifetime Set.
     const archivedChatSessionIds = new Set();
 
     function markChatSessionArchived(sessionId) {
-        if (sessionId == null || sessionId === '') return;
-        archivedChatSessionIds.add(String(canonicalizeChatSessionId(sessionId)));
-        const authSid = toAuthDbSessionId(sessionId);
-        if (authSid != null) archivedChatSessionIds.add(String(authSid));
+        const mod = historyArchiveModule();
+        if (!mod) return;
+        mod.markArchivedIds(archivedChatSessionIds, sessionId, archiveIdExtras(sessionId));
     }
 
     function unmarkChatSessionArchived(sessionId) {
-        if (sessionId == null || sessionId === '') return;
-        archivedChatSessionIds.delete(String(canonicalizeChatSessionId(sessionId)));
-        const authSid = toAuthDbSessionId(sessionId);
-        if (authSid != null) archivedChatSessionIds.delete(String(authSid));
+        const mod = historyArchiveModule();
+        if (!mod) return;
+        mod.unmarkArchivedIds(archivedChatSessionIds, sessionId, archiveIdExtras(sessionId));
     }
 
     function isChatSessionArchived(sessionId) {
-        if (sessionId == null || sessionId === '') return false;
-        if (archivedChatSessionIds.has(String(canonicalizeChatSessionId(sessionId)))) return true;
-        const authSid = toAuthDbSessionId(sessionId);
-        return authSid != null && archivedChatSessionIds.has(String(authSid));
+        const mod = historyArchiveModule();
+        if (!mod) return false;
+        return mod.isArchivedId(archivedChatSessionIds, sessionId, archiveIdExtras(sessionId));
     }
 
     async function toggleArchiveChatSession(sessionId, event) {
@@ -16047,9 +16084,7 @@
         if (begun.markRunning) {
             setHistorySessionRunning(begun.markRunning, true);
         }
-        if (voiceModeActive && voiceModePhase !== 'speaking') {
-            setVoiceModePhase('processing', 'Thinking…');
-        }
+        chatVoice.onGenerationStarted();
         // Do NOT poll live-status here. The chat SSE (or collectPendingResult after
         // we detach) already owns status updates. Extra GETs compete for Chromium's
         // ~6 HTTP/1.1 sockets per host and are the main Electron lockup cause.
@@ -16104,35 +16139,21 @@
      *  polls the server for those, and re-pushing them revived dead spinners.
      *  Idle owned chats are listed in `owned` so the shell clears them. */
     let _chatActivityBroadcastTimer = null;
+    // Snapshot decisions owned by chat_activity.js — page gathers, domain decides.
     function collectChatActivitySnapshot() {
-        const owned = new Map();
-        const own = (sid) => {
-            if (sid == null || sid === '') return;
-            const key = String(canonicalizeChatSessionId(sid));
-            if (key && !owned.has(key)) owned.set(key, sid);
-        };
-        own(currentSessionId);
-        own(generation.localSessionId);
-        formAwaitingSessionIds.forEach(own);
-        const sessions = [];
-        owned.forEach((sid, key) => {
-            const running = sessionShowsHistorySpinner(sid);
-            let activity = '';
-            try {
-                const kind = sessionHistoryAttentionKind(sid, null);
-                if (kind === 'error' || kind === 'unread'
-                    || kind === 'queued' || kind === 'paused') {
-                    activity = kind;
-                }
-            } catch (_) {}
-            const visibleAttention = !!(sessionIdsEqual(sid, currentSessionId) && chatAttentionActive());
-            if (visibleAttention) activity = chatAttentionIsError ? 'error' : 'unread';
-            if ((getSessionPrefs(sid) || {}).awaitingInput) activity = 'input';
-            const localRunning = !!((generation.loading && sessionIdsEqual(generation.localSessionId, sid))
-                || [...formAwaitingSessionIds].some(id => sessionIdsEqual(id, sid)));
-            if (running || activity) sessions.push({ id: key, activity, running, localRunning, visibleAttention });
+        return CuttleChatActivity.collectFrameSnapshot({
+            currentSessionId,
+            localSessionId: generation.localSessionId,
+            awaitingIds: [...formAwaitingSessionIds],
+            canonicalize: canonicalizeChatSessionId,
+            idsEqual: sessionIdsEqual,
+            spinnerFor: sessionShowsHistorySpinner,
+            attentionKindFor: (sid) => sessionHistoryAttentionKind(sid, null),
+            prefsFor: getSessionPrefs,
+            attentionActive: chatAttentionActive(),
+            attentionIsError: chatAttentionIsError,
+            generationLoading: generation.loading,
         });
-        return { sessions, owned: [...owned.keys()] };
     }
     function scheduleChatActivityBroadcast() {
         if (!inAppShell) return;
@@ -16348,12 +16369,20 @@
             .forEach((marked) => unmarkChatSessionArchived(marked));
     }
 
-    function isArchiveSectionCollapsed() {
+    // Safe storage handle for the owner (node harnesses eval page slices
+    // with no localStorage global; browsers always have it).
+    function pageArchiveStorage() {
         try {
-            return localStorage.getItem('cuttleArchiveSectionCollapsed') !== '0';
+            return (typeof localStorage !== 'undefined') ? localStorage : null;
         } catch (_) {
-            return true;
+            return null;
         }
+    }
+
+    function isArchiveSectionCollapsed() {
+        const mod = historyArchiveModule();
+        if (!mod) return true;
+        return mod.isArchiveSectionCollapsed(pageArchiveStorage());
     }
 
     function toggleArchiveSection(event) {
@@ -16361,9 +16390,8 @@
             event.stopPropagation();
             event.preventDefault();
         }
-        try {
-            localStorage.setItem('cuttleArchiveSectionCollapsed', isArchiveSectionCollapsed() ? '0' : '1');
-        } catch (_) {}
+        const mod = historyArchiveModule();
+        if (mod) mod.storeArchiveSectionCollapsed(pageArchiveStorage(), !isArchiveSectionCollapsed());
         renderArchivedSection();
     }
 
@@ -16379,6 +16407,8 @@
             archivedChatSessions = [];
             archivedSessionsLoaded = true;
             renderArchivedSection();
+            if (typeof currentSessionId !== 'undefined' && currentSessionId != null && currentSessionId !== '')
+                updateChatSessionTitle(currentSessionId);
             return;
         }
         try {
@@ -16402,6 +16432,10 @@
             console.error('Error loading archived sessions:', error);
         }
         renderArchivedSection();
+        // Archived marks arrive after the title renders on page load (and
+        // change on archive toggle) — re-sync the title-bar badge.
+        if (typeof currentSessionId !== 'undefined' && currentSessionId != null && currentSessionId !== '')
+            updateChatSessionTitle(currentSessionId);
     }
 
     function renderArchivedSection() {
@@ -16411,11 +16445,14 @@
         if (prev) prev.remove();
         if (!archivedSessionsLoaded || !archivedChatSessions.length) return;
         const mod = historyArchiveModule();
+        // Without the owner there is nothing to render:
+        // refreshArchivedSessions already fail-closes to an empty list
+        // then, so this return is unreachable in practice and changes no
+        // live behavior.
+        if (!mod) return;
         // Defensive re-filter: the main list may have refreshed after the
         // Archived fetch resolved (archive toggle, delete, second device).
-        const visible = mod
-            ? mod.filterArchivedSessions(archivedChatSessions, activeHistorySessionIds, archiveIdExtras)
-            : archivedChatSessions;
+        const visible = mod.filterArchivedSessions(archivedChatSessions, activeHistorySessionIds, archiveIdExtras);
         if (!visible.length) return;
         const collapsed = isArchiveSectionCollapsed();
         const count = visible.length;
@@ -16423,25 +16460,18 @@
         visible.forEach((s) => {
             itemsHtml += createAuthHistoryItemHTML(s, {});
         });
+        // Header template + section class live in CuttleChatHistoryArchive;
+        // the page keeps container/row-DOM wiring (it owns the row renderer
+        // and the window-facing toggle names passed in below).
         const section = document.createElement('div');
-        section.className = 'history-section history-archived-section' + (collapsed ? ' is-collapsed' : '');
+        section.className = mod.archivedSectionClassName(collapsed);
         section.id = 'historyArchivedSection';
-        section.innerHTML =
-            '<div class="history-section-header is-collapsible" role="button" tabindex="0"'
-            + ' aria-expanded="' + (collapsed ? 'false' : 'true') + '"'
-            + ' aria-label="Archived chats"'
-            + ' onclick="window.chatPageToggleArchiveSection(event)"'
-            + ' onkeydown="window.chatPageToggleArchiveSectionKey(event)">'
-            + '<span class="history-section-chevron" aria-hidden="true">'
-            + '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">'
-            + '<polyline points="6 9 12 15 18 9"/>'
-            + '</svg>'
-            + '</span>'
-            + '<div class="history-section-title">Archived'
-            + '<span class="history-section-count" title="' + count + ' archived chat' + (count === 1 ? '' : 's') + '">' + count + '</span>'
-            + '</div>'
-            + '<div class="history-section-actions"></div>'
-            + '</div>'
+        section.innerHTML = mod.archivedSectionHeaderHTML({
+                collapsed,
+                count,
+                toggleHandler: 'window.chatPageToggleArchiveSection(event)',
+                keyHandler: 'window.chatPageToggleArchiveSectionKey(event)',
+            })
             + '<div class="history-section-body">' + itemsHtml + '</div>';
         historyContainer.appendChild(section);
     }
@@ -18130,6 +18160,7 @@
         const pendingSlash = replySlash
             ? pendingSlashForTypingIndicator(replySlash, stickyCmd)
             : null;
+        turnBadgeBySession.set(String(canonicalizeChatSessionId(currentSessionId) || ''), pendingSlash);
         addTypingIndicator(pendingSlash);
 
         let skipFollowupDrain = false;
@@ -18297,6 +18328,10 @@
                                         finalResult = streamEv.result;
                                     } else if (streamEv.kind === 'query') {
                                         sawProgress = true;
+                                        if (canPaintTurnHere() && ev.slash_command) {
+                                            rememberTurnBadge([], { active: true, slash_command: ev.slash_command });
+                                            refreshTypingIndicatorHeaderBadges();
+                                        }
                                         if (streamEv.reportUrl && canPaintTurnHere()) {
                                             updateTypingIndicatorQueryLink(streamEv.reportUrl);
                                             const qid = streamEv.queryId || '';
@@ -19176,6 +19211,14 @@
                 : assistantDisplayName(opts));
         const reportUrl = opts.report_url || null;
         const messageFooter = getMessageFooterHtml(role, reportUrl, true, opts.usage, opts.user_feedback);
+        // Stash normalized usage for the voice overlay (per-reply + session totals).
+        try {
+            messageDiv._cuttleUsage = (role === 'assistant' && opts.usage)
+                ? normalizeUsagePayload(opts.usage)
+                : null;
+        } catch (_) {
+            messageDiv._cuttleUsage = null;
+        }
         const ts = resolveMessageTimestamp(opts.timestamp);
         const timeAgo = formatTimeAgo(ts);
         const timeLabel = timeAgo === 'now' ? 'Just now' : 'Sent ' + timeAgo + ' ago';
@@ -19547,132 +19590,12 @@
         }
     }
 
-    // ── Voice mode (same chat session; Web Speech STT + auto TTS) ──────────
-    let voiceModeActive = false;
-    /** @type {'idle'|'listening'|'processing'|'speaking'} */
-    let voiceModePhase = 'idle';
-    let _voiceRecognition = null;
-    let _voiceFinalTranscript = '';
-    let _voiceInterimTranscript = '';
-    let _voiceLastSpokenKey = '';
-    let _voiceEscapeHandler = null;
-    let _voiceSpeakToken = 0;
-    let _voiceListeningClosing = false;
-    let _voiceWantListening = false;
-    let _voiceSilenceTimer = null;
-    let _voiceCommittedTranscript = '';
-    let _voiceSessionTranscript = '';
-    /** Pause before auto-send after recognition ends. Override: localStorage cuttleVoiceSilenceMs */
-    const VOICE_SILENCE_SEND_DEFAULT_MS = 2800;
-
-    function voiceSilenceSendMs() {
-        try {
-            const n = parseInt(localStorage.getItem('cuttleVoiceSilenceMs') || '', 10);
-            if (Number.isFinite(n) && n >= 800 && n <= 15000) return n;
-        } catch (_) {}
-        return VOICE_SILENCE_SEND_DEFAULT_MS;
-    }
-
-    function clearVoiceSilenceTimer() {
-        if (_voiceSilenceTimer) {
-            clearTimeout(_voiceSilenceTimer);
-            _voiceSilenceTimer = null;
-        }
-    }
-
-    function scheduleVoiceSilenceSend() {
-        clearVoiceSilenceTimer();
-        const ms = voiceSilenceSendMs();
-        setVoiceModeStatus('Paused — keep talking, or tap mic to send');
-        _voiceSilenceTimer = setTimeout(() => {
-            _voiceSilenceTimer = null;
-            if (voiceModeActive && voiceModePhase === 'listening' && _voiceWantListening) {
-                finishVoiceListeningAndSend();
-            }
-        }, ms);
-    }
-
-    function voiceCurrentUtterance() {
-        const interim = String(_voiceInterimTranscript || '').replace(/\s+/g, ' ').trim();
-        let base = mergeCumulativeSpeech(_voiceCommittedTranscript, _voiceSessionTranscript);
-        if (interim) {
-            if (!base || interim.startsWith(base)) return interim;
-            return mergeCumulativeSpeech(base, interim);
-        }
-        return base;
-    }
-
-    function voiceSpeechRecognitionCtor() {
-        return window.SpeechRecognition || window.webkitSpeechRecognition || null;
-    }
-
-    function voiceOverlayEl() {
-        return document.getElementById('voiceModeOverlay');
-    }
-
-    function setVoiceModePhase(phase, statusText) {
-        voiceModePhase = phase || 'idle';
-        const overlay = voiceOverlayEl();
-        if (overlay) {
-            overlay.classList.toggle('is-listening', voiceModePhase === 'listening');
-            overlay.classList.toggle('is-processing', voiceModePhase === 'processing');
-            overlay.classList.toggle('is-speaking', voiceModePhase === 'speaking');
-        }
-        const mic = document.getElementById('voiceModeMicBtn');
-        if (mic) {
-            const busy = voiceModePhase === 'processing' || voiceModePhase === 'speaking';
-            mic.disabled = busy;
-            mic.setAttribute('aria-pressed', voiceModePhase === 'listening' ? 'true' : 'false');
-            if (voiceModePhase === 'listening') {
-                mic.title = 'Tap to send';
-                mic.setAttribute('aria-label', 'Tap to send');
-            } else if (busy) {
-                mic.title = voiceModePhase === 'speaking' ? 'Speaking…' : 'Working…';
-                mic.setAttribute('aria-label', mic.title);
-            } else {
-                mic.title = 'Tap to talk';
-                mic.setAttribute('aria-label', 'Tap to talk');
-            }
-        }
-        if (statusText != null) setVoiceModeStatus(statusText);
-        else if (voiceModePhase === 'idle') setVoiceModeStatus('Tap the mic to talk');
-        else if (voiceModePhase === 'listening') setVoiceModeStatus('Listening… tap mic when done');
-        else if (voiceModePhase === 'processing') setVoiceModeStatus('Thinking…');
-        else if (voiceModePhase === 'speaking') setVoiceModeStatus('Speaking…');
-    }
-
-    function setVoiceModeStatus(text) {
-        const el = document.getElementById('voiceModeStatus');
-        if (el) el.textContent = String(text || '');
-    }
-
-    function setVoiceModeInterim(text) {
-        const el = document.getElementById('voiceModeInterim');
-        if (!el) return;
-        const t = String(text || '').trim();
-        if (!t) {
-            el.hidden = true;
-            el.textContent = '';
-            return;
-        }
-        el.hidden = false;
-        el.textContent = t;
-    }
-
-    function appendVoiceTranscriptLine(role, text) {
-        const box = document.getElementById('voiceModeTranscript');
-        if (!box) return;
-        const line = document.createElement('div');
-        line.className = 'voice-mode-line is-' + (role === 'user' ? 'user' : 'assistant');
-        const label = document.createElement('span');
-        label.className = 'voice-mode-line-label';
-        label.textContent = role === 'user' ? 'You' : 'Cuttle';
-        const body = document.createElement('div');
-        body.textContent = String(text || '').trim();
-        line.appendChild(label);
-        line.appendChild(body);
-        box.appendChild(line);
-        box.scrollTop = box.scrollHeight;
+    // ── Voice mode: owned by chat_voice.js; the page supplies chat send + TTS ──
+    function lastAssistantMessageEl() {
+        const box = document.getElementById('chatMessages');
+        if (!box) return null;
+        const list = box.querySelectorAll(CHAT_RECORD_SELECTOR + '.assistant');
+        return list.length ? list[list.length - 1] : null;
     }
 
     function composeVoiceOutbound(spokenText) {
@@ -19690,647 +19613,196 @@
         }
     }
 
-    function stopVoiceRecognition() {
-        const rec = _voiceRecognition;
-        _voiceRecognition = null;
-        if (!rec) return;
-        try {
-            rec.onresult = null;
-            rec.onerror = null;
-            rec.onend = null;
-            rec.stop();
-        } catch (_) {
-            try { rec.abort(); } catch (_2) {}
-        }
-    }
-
-    function enterVoiceMode(event) {
-        if (event) {
-            event.preventDefault();
-            event.stopPropagation();
-        }
-        closeAllSessionMenus();
-        if (voiceModeActive) return;
-        const overlay = voiceOverlayEl();
-        if (!overlay) {
-            (window.showToast || function () {})('Voice mode UI missing — hard-refresh', 'error');
-            return;
-        }
-        voiceModeActive = true;
-        document.body.classList.add('voice-mode');
-        overlay.hidden = false;
-        overlay.setAttribute('aria-hidden', 'false');
-        const exitBtn = document.getElementById('voiceModeExitBtn');
-        if (exitBtn) exitBtn.hidden = false;
-        _voiceLastSpokenKey = '';
-        setVoiceModeInterim('');
-        if (isSessionGenerating()) {
-            setVoiceModePhase('processing', 'Working…');
-        } else {
-            setVoiceModePhase('idle');
-        }
-        if (!_voiceEscapeHandler) {
-            _voiceEscapeHandler = function (e) {
-                if (e.key === 'Escape' && voiceModeActive) {
-                    e.preventDefault();
-                    exitVoiceMode();
-                }
-            };
-            document.addEventListener('keydown', _voiceEscapeHandler);
-        }
-    }
-
-    function exitVoiceMode(event) {
-        if (event) {
-            event.preventDefault();
-            event.stopPropagation();
-        }
-        if (!voiceModeActive) return;
-        voiceModeActive = false;
-        _voiceWantListening = false;
-        clearVoiceSilenceTimer();
-        stopVoiceRecognition();
-        stopChatTtsPlayback();
-        _voiceSpeakToken += 1;
-        setVoiceModeInterim('');
-        setVoiceModePhase('idle');
-        document.body.classList.remove('voice-mode');
-        const exitBtn = document.getElementById('voiceModeExitBtn');
-        if (exitBtn) exitBtn.hidden = true;
-        const overlay = voiceOverlayEl();
-        if (overlay) {
-            overlay.hidden = true;
-            overlay.setAttribute('aria-hidden', 'true');
-            overlay.classList.remove('is-listening', 'is-processing', 'is-speaking');
-        }
-        if (_voiceEscapeHandler) {
-            document.removeEventListener('keydown', _voiceEscapeHandler);
-            _voiceEscapeHandler = null;
-        }
-    }
-
-    function toggleVoiceListening() {
-        if (!voiceModeActive) return;
-        if (voiceModePhase === 'processing' || voiceModePhase === 'speaking') return;
-        if (voiceModePhase === 'listening') {
-            finishVoiceListeningAndSend();
-            return;
-        }
-        startVoiceListening();
-    }
-
-    function promptVoiceMicPermission(message) {
-        setVoiceModeStatus(message || 'Microphone permission needed — tap toast or mic');
-        (window.showToast || function () {})(
-            (message || 'Microphone permission needed') + ' — tap to allow',
-            'error',
-            { actionId: 'voice-mic-retry' }
-        );
-        try {
-            if (window.cuttleMobile && typeof window.cuttleMobile.requestMicrophone === 'function') {
-                window.cuttleMobile.requestMicrophone();
-            }
-        } catch (_) {}
-    }
-
-    /**
-     * Ask for mic access before SpeechRecognition.
-     * Android WebView only shows the system dialog when RECORD_AUDIO is in the
-     * APK manifest + getUserMedia / native requestMicrophone runs.
-     */
-    async function ensureVoiceMicrophoneAccess() {
-        try {
-            if (window.cuttleMobile && typeof window.cuttleMobile.requestMicrophone === 'function') {
-                window.cuttleMobile.requestMicrophone();
-            }
-        } catch (_) {}
-        if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
-            return { ok: true };
-        }
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            try {
-                stream.getTracks().forEach((t) => t.stop());
-            } catch (_) {}
-            return { ok: true };
-        } catch (err) {
-            const name = String((err && err.name) || '');
-            const msg = String((err && err.message) || err || '');
-            LOG_ERR('Voice getUserMedia failed', name, msg);
-            return { ok: false, name, message: msg };
-        }
-    }
-
-    /**
-     * Android/Chrome continuous STT often re-emits the full phrase as each
-     * "final" (not a delta). Blind append → "hello hello how hello how are you".
-     */
-    function mergeCumulativeSpeech(prev, next) {
-        const a = String(prev || '').replace(/\s+/g, ' ').trim();
-        const b = String(next || '').replace(/\s+/g, ' ').trim();
-        if (!b) return a;
-        if (!a) return b;
-        if (b === a) return a;
-        if (b.startsWith(a)) return b;
-        if (a.startsWith(b)) return a;
-        const aWords = a.split(/\s+/).filter(Boolean);
-        for (let k = Math.min(aWords.length, 12); k >= 1; k--) {
-            const tail = aWords.slice(-k).join(' ');
-            if (b.startsWith(tail)) {
-                const head = aWords.slice(0, -k).join(' ');
-                return (head ? head + ' ' + b : b).replace(/\s+/g, ' ').trim();
-            }
-        }
-        return (a + ' ' + b).replace(/\s+/g, ' ').trim();
-    }
-
-    async function startVoiceListening() {
-        const Ctor = voiceSpeechRecognitionCtor();
-        if (!Ctor) {
-            (window.showToast || function () {})(
-                'Voice input needs Chrome or Edge (Web Speech API)',
-                'error'
-            );
-            setVoiceModeStatus('Speech recognition not available in this browser');
-            return;
-        }
-        if (isSessionGenerating()) {
-            setVoiceModePhase('processing', 'Wait for the current reply…');
-            return;
-        }
-        stopChatTtsPlayback();
-        clearVoiceSilenceTimer();
-        _voiceWantListening = true;
-        _voiceListeningClosing = false;
-        _voiceCommittedTranscript = '';
-        _voiceSessionTranscript = '';
-        _voiceFinalTranscript = '';
-        _voiceInterimTranscript = '';
-        setVoiceModeInterim('');
-        setVoiceModePhase('idle', 'Checking microphone…');
-
-        const mic = await ensureVoiceMicrophoneAccess();
-        if (!mic.ok) {
-            _voiceWantListening = false;
-            promptVoiceMicPermission('Allow microphone access for voice mode');
-            setVoiceModePhase('idle');
-            return;
-        }
-        if (!_voiceWantListening || !voiceModeActive) return;
-        beginVoiceRecognitionSession(Ctor);
-    }
-
-    function beginVoiceRecognitionSession(Ctor) {
-        if (!Ctor) Ctor = voiceSpeechRecognitionCtor();
-        if (!Ctor || !_voiceWantListening || !voiceModeActive) return;
-        if (voiceModePhase === 'processing' || voiceModePhase === 'speaking') return;
-
-        stopVoiceRecognition();
-        const rec = new Ctor();
-        _voiceRecognition = rec;
-        // Mobile WebView continuous mode stacks cumulative finals; one-shot + restart is reliable.
-        const mobileShell = !!(window.isCuttleMobile || (window.cuttleMobile && window.cuttleMobile.isNative));
-        rec.continuous = !mobileShell;
-        rec.interimResults = true;
-        rec.lang = (navigator.language || 'en-US');
-        rec.maxAlternatives = 1;
-        _voiceSessionTranscript = '';
-        _voiceInterimTranscript = '';
-
-        rec.onresult = function (event) {
-            clearVoiceSilenceTimer();
-            let rebuilt = '';
-            let interim = '';
-            for (let i = 0; i < event.results.length; i++) {
-                const r = event.results[i];
-                const t = String((r[0] && r[0].transcript) || '').replace(/\s+/g, ' ').trim();
-                if (!t) continue;
-                if (r.isFinal) rebuilt = mergeCumulativeSpeech(rebuilt, t);
-                else interim = interim ? (interim + ' ' + t) : t;
-            }
-            _voiceSessionTranscript = rebuilt;
-            _voiceInterimTranscript = interim;
-            _voiceFinalTranscript = voiceCurrentUtterance();
-            setVoiceModeInterim(_voiceFinalTranscript);
-            if (voiceModePhase === 'listening') {
-                setVoiceModeStatus('Listening… tap mic when done');
-            }
-        };
-        rec.onerror = function (event) {
-            const err = (event && event.error) || 'error';
-            if (err === 'aborted') return;
-            if (err === 'no-speech') {
-                // Pause — silence timer / restart handles it via onend.
-                return;
-            }
-            LOG_ERR('Voice recognition error', err);
-            if (err === 'not-allowed' || err === 'service-not-allowed') {
-                _voiceWantListening = false;
-                clearVoiceSilenceTimer();
-                promptVoiceMicPermission('Allow microphone access for voice mode');
-                stopVoiceRecognition();
-                if (voiceModeActive) setVoiceModePhase('idle');
-                return;
-            }
-            setVoiceModeStatus('Could not hear that — try again');
-        };
-        rec.onend = function () {
-            if (_voiceRecognition !== rec) return;
-            _voiceRecognition = null;
-            if (!_voiceWantListening || !voiceModeActive || voiceModePhase !== 'listening') {
-                return;
-            }
-            // Commit this segment, wait before auto-send, restart STT so pauses don't cut off.
-            if (_voiceSessionTranscript) {
-                _voiceCommittedTranscript = mergeCumulativeSpeech(
-                    _voiceCommittedTranscript,
-                    _voiceSessionTranscript
-                );
-                _voiceSessionTranscript = '';
-            }
-            _voiceInterimTranscript = '';
-            _voiceFinalTranscript = _voiceCommittedTranscript;
-            if (_voiceFinalTranscript) setVoiceModeInterim(_voiceFinalTranscript);
-            scheduleVoiceSilenceSend();
-            setTimeout(() => {
-                if (
-                    _voiceWantListening
-                    && voiceModeActive
-                    && voiceModePhase === 'listening'
-                    && !_voiceRecognition
-                ) {
-                    beginVoiceRecognitionSession(Ctor);
-                }
-            }, 120);
-        };
-        try {
-            rec.start();
-            setVoiceModePhase('listening');
-        } catch (e) {
-            LOG_ERR('Voice recognition start failed', e);
-            _voiceRecognition = null;
-            if (!_voiceCommittedTranscript && !_voiceSessionTranscript) {
-                _voiceWantListening = false;
-                setVoiceModePhase('idle', 'Could not start microphone');
-                promptVoiceMicPermission(String(e.message || e));
-            }
-        }
-    }
-
-    function onVoiceMicToastAction() {
-        if (!voiceModeActive) return;
-        if (voiceModePhase === 'processing' || voiceModePhase === 'speaking') return;
-        try {
-            if (window.cuttleMobile && typeof window.cuttleMobile.openAppSettings === 'function') {
-                ensureVoiceMicrophoneAccess().then((mic) => {
-                    if (mic && mic.ok) {
-                        startVoiceListening();
-                        return;
-                    }
-                    try { window.cuttleMobile.openAppSettings(); } catch (_) {}
-                    setVoiceModeStatus('Enable Microphone for Cuttle in Android Settings');
-                });
-                return;
-            }
-        } catch (_) {}
-        startVoiceListening();
-    }
-
-    if (!window.__cuttleVoiceToastWired) {
-        window.__cuttleVoiceToastWired = true;
-        window.addEventListener('cuttle-toast-action', function (e) {
-            const id = e && e.detail && e.detail.actionId;
-            if (id === 'voice-mic-retry') onVoiceMicToastAction();
-        });
-        window.addEventListener('message', function (e) {
-            if (e && e.data && e.data.type === 'cuttle-toast-action'
-                && e.data.actionId === 'voice-mic-retry') {
-                onVoiceMicToastAction();
-            }
-        });
-    }
-
-    function finishVoiceListeningAndSend() {
-        if (_voiceListeningClosing) return;
-        _voiceListeningClosing = true;
-        _voiceWantListening = false;
-        clearVoiceSilenceTimer();
-        stopVoiceRecognition();
-        const spoken = voiceCurrentUtterance().replace(/\s+/g, ' ').trim();
-        setVoiceModeInterim('');
-        _voiceFinalTranscript = '';
-        _voiceInterimTranscript = '';
-        _voiceCommittedTranscript = '';
-        _voiceSessionTranscript = '';
-        _voiceListeningClosing = false;
-        if (!spoken) {
-            setVoiceModePhase('idle', 'Nothing heard — tap mic to try again');
-            return;
-        }
-        sendVoiceUtterance(spoken);
-    }
-
-    async function sendVoiceUtterance(spokenText) {
-        const message = composeVoiceOutbound(spokenText);
-        if (!message || !isSendableComposerMessage(message, [])) {
-            setVoiceModePhase('idle', 'Nothing to send');
-            return;
-        }
-        if (isSessionGenerating() && !isImmediateControlLaneMessage(message)) {
-            appendVoiceTranscriptLine('user', spokenText);
-            if (await trySteerRunningTurn(message, [])) {
-                setVoiceModePhase('processing', 'Added to the running reply…');
-                return;
-            }
-            // Queue like the composer would.
-            enqueueFollowup(message, { rawMessage: spokenText });
-            setVoiceModePhase('processing', 'Queued — waiting for current reply…');
-            return;
-        }
-
-        appendVoiceTranscriptLine('user', String(spokenText).trim());
-        setVoiceModePhase('processing', 'Thinking…');
-
-        if (document.getElementById('chatArea') && document.getElementById('chatArea').style.display === 'none') {
+    async function submitVoiceTurn(message, spokenText) {
+        const chatArea = document.getElementById('chatArea');
+        if (chatArea && chatArea.style.display === 'none') {
             const welcome = document.getElementById('welcomeScreen');
             if (welcome) welcome.style.display = 'none';
-            document.getElementById('chatArea').style.display = 'flex';
+            chatArea.style.display = 'flex';
             if (typeof window.__cuttlePinChatLayout === 'function') window.__cuttlePinChatLayout();
         }
-
         dismissOpenInteractiveCards('Ignored');
-        const userTs = Date.now();
-        addMessageToUI(message, 'user', { timestamp: userTs });
+        addMessageToUI(message, 'user', { timestamp: Date.now() });
         saveChatSession(message, 'user');
         recordPromptHistory(spokenText || message);
         applyStickySlashAfterComposerSend(message);
-
         const controlLane = isImmediateControlLaneMessage(message);
         if (!controlLane) {
             beginLocalGeneration();
             inFlightUserMessage = message;
         }
-        try {
-            await processMessage(message, { controlLane });
-        } catch (e) {
-            LOG_ERR('Voice send failed', e);
-            if (voiceModeActive) {
-                setVoiceModePhase('idle', 'Send failed — tap mic to retry');
-            }
-        }
+        await processMessage(message, { controlLane });
     }
 
-    function lastAssistantMessageEl() {
-        const box = document.getElementById('chatMessages');
-        if (!box) return null;
-        const list = box.querySelectorAll(CHAT_RECORD_SELECTOR + '.assistant');
-        return list.length ? list[list.length - 1] : null;
-    }
-
-    function voiceMessageSpeakKey(messageEl) {
-        if (!messageEl) return '';
-        if (messageEl.dataset && messageEl.dataset.messageId) {
-            return 'id:' + messageEl.dataset.messageId;
+    /** Cached per bubble, shared with the bubble's speaker button. */
+    async function voiceSpeechForMessage(messageEl) {
+        if (messageEl._cuttleTtsUrl) {
+            return {
+                url: messageEl._cuttleTtsUrl,
+                spoken: messageEl._cuttleTtsSpoken || '',
+                summarized: !!messageEl._cuttleTtsSummarized,
+                voiceUsage: messageEl._cuttleVoiceUsage || null,
+            };
         }
-        const raw = String(messageEl.dataset.rawContent || '').trim();
-        return raw ? ('raw:' + raw.slice(0, 120)) : '';
-    }
-
-    async function maybeAutoSpeakVoiceReply(opts) {
-        if (!voiceModeActive) return;
-        if (opts && opts.isError) {
-            setVoiceModePhase('idle', 'Reply failed — tap mic to try again');
-            return;
-        }
-        const messageEl = lastAssistantMessageEl();
-        if (!messageEl) return;
-        const key = voiceMessageSpeakKey(messageEl);
-        if (key && key === _voiceLastSpokenKey) return;
-        if (key) _voiceLastSpokenKey = key;
-
         const btn = messageEl.querySelector('.message-tts-btn');
         const text = btn
             ? getMessageSpeakText(btn)
             : String(messageEl.dataset.rawContent || '').trim();
-        if (!text) {
-            setVoiceModePhase('idle');
-            return;
+        if (!text) return null;
+        const r = await fetch('/api/chat/tts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: text }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok || !d.success || !d.audio_base64) {
+            throw new Error((d && d.error) || ('TTS failed (' + r.status + ')'));
         }
-
-        const token = ++_voiceSpeakToken;
-        setVoiceModePhase('speaking', 'Preparing speech…');
-
+        const bin = atob(d.audio_base64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        const blob = new Blob([bytes], { type: d.content_type || 'audio/mpeg' });
+        messageEl._cuttleTtsUrl = URL.createObjectURL(blob);
+        messageEl._cuttleTtsSpoken = d.spoken_text || text;
+        messageEl._cuttleTtsSummarized = !!d.summarized;
         try {
-            let url = messageEl._cuttleTtsUrl;
-            let spoken = messageEl._cuttleTtsSpoken || '';
-            let summarized = !!messageEl._cuttleTtsSummarized;
-            if (!url) {
-                const r = await fetch('/api/chat/tts', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ text: text }),
-                });
-                const d = await r.json().catch(() => ({}));
-                if (!r.ok || !d.success || !d.audio_base64) {
-                    throw new Error((d && d.error) || ('TTS failed (' + r.status + ')'));
+            messageEl._cuttleVoiceUsage = (d.usage && typeof d.usage === 'object')
+                ? normalizeUsagePayload(d.usage)
+                : null;
+        } catch (_) {
+            messageEl._cuttleVoiceUsage = null;
+        }
+        applyTtsTranscriptLayout(messageEl, messageEl._cuttleTtsSpoken);
+        return {
+            url: messageEl._cuttleTtsUrl,
+            spoken: messageEl._cuttleTtsSpoken,
+            summarized: messageEl._cuttleTtsSummarized,
+            voiceUsage: messageEl._cuttleVoiceUsage || null,
+        };
+    }
+
+    function playVoiceSpeech(messageEl, speech) {
+        const btn = messageEl.querySelector('.message-tts-btn');
+        return playVoiceAudio(speech.url, btn, !!speech.summarized);
+    }
+
+    /** Playback analyser feeding the voice ring; null-safe when unavailable. */
+    let _voiceAudioCtx = null;
+    let _voicePlaybackAnalyser = null;
+    let _voicePlaybackFrame = null;
+
+    function voicePlaybackLevel() {
+        if (!_voicePlaybackAnalyser || !_voicePlaybackFrame) return null;
+        try {
+            _voicePlaybackAnalyser.getFloatTimeDomainData(_voicePlaybackFrame);
+            let sum = 0;
+            for (let i = 0; i < _voicePlaybackFrame.length; i++) {
+                sum += _voicePlaybackFrame[i] * _voicePlaybackFrame[i];
+            }
+            return Math.sqrt(sum / (_voicePlaybackFrame.length || 1));
+        } catch (_) {
+            return null;
+        }
+    }
+
+    /** One audio channel for replies, narration and bubble speakers. */
+    function playVoiceAudio(url, btn, summarized) {
+        stopChatTtsPlayback(btn || null);
+        const audio = new Audio(url);
+        _chatTtsAudio = audio;
+        try {
+            const Ctx = window.AudioContext || window.webkitAudioContext;
+            if (Ctx) {
+                if (!_voiceAudioCtx) _voiceAudioCtx = new Ctx();
+                if (_voiceAudioCtx && _voiceAudioCtx.state === 'suspended') {
+                    _voiceAudioCtx.resume().catch(() => {});
                 }
-                const bin = atob(d.audio_base64);
-                const bytes = new Uint8Array(bin.length);
-                for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-                const blob = new Blob([bytes], { type: d.content_type || 'audio/mpeg' });
-                url = URL.createObjectURL(blob);
-                spoken = d.spoken_text || text;
-                summarized = !!d.summarized;
-                messageEl._cuttleTtsUrl = url;
-                messageEl._cuttleTtsSpoken = spoken;
-                messageEl._cuttleTtsSummarized = summarized;
-                applyTtsTranscriptLayout(messageEl, spoken);
+                const src = _voiceAudioCtx.createMediaElementSource(audio);
+                const analyser = _voiceAudioCtx.createAnalyser();
+                analyser.fftSize = 1024;
+                src.connect(analyser);
+                analyser.connect(_voiceAudioCtx.destination);
+                _voicePlaybackAnalyser = analyser;
+                _voicePlaybackFrame = new Float32Array(analyser.fftSize);
             }
-            if (token !== _voiceSpeakToken || !voiceModeActive) return;
-
-            appendVoiceTranscriptLine('assistant', spoken || text);
-            setVoiceModePhase('speaking', 'Speaking…');
-
-            stopChatTtsPlayback(btn || null);
-            const audio = new Audio(url);
-            _chatTtsAudio = audio;
-            if (btn) {
-                _chatTtsActiveBtn = btn;
-                btn.classList.remove('is-loading');
-                btn.classList.add('is-playing');
-                btn.disabled = false;
-                btn.innerHTML = TTS_STOP_ICON;
-                btn.title = summarized ? 'Playing summary — click to stop' : 'Stop';
-            }
-            const finish = function () {
+        } catch (_) {
+            _voicePlaybackAnalyser = null;
+            _voicePlaybackFrame = null;
+        }
+        if (btn) {
+            _chatTtsActiveBtn = btn;
+            btn.classList.remove('is-loading');
+            btn.classList.add('is-playing');
+            btn.disabled = false;
+            btn.innerHTML = TTS_STOP_ICON;
+            btn.title = summarized ? 'Playing summary — click to stop' : 'Stop';
+        }
+        return new Promise((resolve) => {
+            let settled = false;
+            const finish = (outcome) => {
+                if (settled) return;
+                settled = true;
                 if (btn && _chatTtsActiveBtn === btn) {
                     _resetTtsButton(btn);
                     _chatTtsActiveBtn = null;
                 }
-                _chatTtsAudio = null;
-                if (token === _voiceSpeakToken && voiceModeActive) {
-                    setVoiceModePhase('idle', 'Tap the mic to talk');
-                }
+                if (_chatTtsAudio === audio) _chatTtsAudio = null;
+                _voicePlaybackAnalyser = null;
+                _voicePlaybackFrame = null;
+                resolve(outcome);
             };
-            audio.onended = finish;
-            audio.onerror = function () {
-                finish();
-                (window.showToast || function () {})('Audio playback failed', 'error');
-            };
-            try {
-                await audio.play();
-            } catch (err) {
-                finish();
-                setVoiceModeStatus('Tap to enable sound, then use the mic');
-                (window.showToast || function () {})(
-                    'Browser blocked autoplay — tap the mic once, then try again',
-                    'error'
-                );
-            }
-        } catch (e) {
-            LOG_ERR('Voice TTS failed', e);
-            if (token === _voiceSpeakToken && voiceModeActive) {
-                appendVoiceTranscriptLine('assistant', text.slice(0, 600));
-                setVoiceModePhase('idle', 'Could not speak — transcript shown');
-            }
-            (window.showToast || function () {})(String(e.message || e), 'error');
-        }
+            audio.onended = () => finish('ended');
+            audio.onerror = () => finish('error');
+            // stopChatTtsPlayback pauses and drops onended; settle so the caller never hangs.
+            audio.addEventListener('pause', () => finish(audio.ended ? 'ended' : 'stopped'));
+            audio.play().catch(() => finish('blocked'));
+        });
     }
 
-    function onVoiceModeGenerationEnded(opts) {
-        if (!voiceModeActive) return;
-        const trySpeak = (attempt) => {
-            if (!voiceModeActive) return;
-            const el = lastAssistantMessageEl();
-            if (!el && attempt < 6) {
-                setTimeout(() => trySpeak(attempt + 1), 180);
-                return;
-            }
-            maybeAutoSpeakVoiceReply(opts || {});
-        };
-        setTimeout(() => trySpeak(0), 100);
-    }
-
-    function wireVoiceModeControls() {
-        const mic = document.getElementById('voiceModeMicBtn');
-        if (mic && !mic._cuttleVoiceWired) {
-            mic._cuttleVoiceWired = true;
-            mic.addEventListener('click', function (e) {
-                e.preventDefault();
-                toggleVoiceListening();
+    const chatVoice = CuttleChatVoice.create({
+        closeMenus: closeAllSessionMenus,
+        isGenerating: isSessionGenerating,
+        compose: composeVoiceOutbound,
+        isSendable: (message) => isSendableComposerMessage(message, []),
+        isControlLane: isImmediateControlLaneMessage,
+        steer: (message) => trySteerRunningTurn(message, []),
+        enqueue: (message, spoken) => enqueueFollowup(message, { rawMessage: spoken }),
+        submit: submitVoiceTurn,
+        lastAssistantMessage: lastAssistantMessageEl,
+        speechFor: voiceSpeechForMessage,
+        play: playVoiceSpeech,
+        stopSpeech: () => stopChatTtsPlayback(),
+        playClip: (url) => playVoiceAudio(url, null, false),
+        playbackLevel: voicePlaybackLevel,
+        usageFor: (el) => (el && el._cuttleUsage) || null,
+        sumUsage: (parts) => CuttleChatUsage.sum(parts),
+        usageHtml: (usage) => getMessageUsageHtml(usage),
+        sessionUsage: () => {
+            const box = document.getElementById('chatMessages');
+            if (!box) return null;
+            const parts = [];
+            box.querySelectorAll(CHAT_RECORD_SELECTOR + '.assistant').forEach((el) => {
+                if (el._cuttleUsage) parts.push(el._cuttleUsage);
+                if (el._cuttleVoiceUsage) parts.push(el._cuttleVoiceUsage);
             });
-        }
-        const exitBtn = document.getElementById('voiceModeExitBtn');
-        if (exitBtn && !exitBtn._cuttleVoiceWired) {
-            exitBtn._cuttleVoiceWired = true;
-            exitBtn.addEventListener('click', exitVoiceMode);
-        }
-    }
-
-    wireVoiceModeControls();
+            return CuttleChatUsage.sum(parts);
+        },
+        experimentalFlags: fetchEnabledExperimentalFlags,
+        fetch: (url, opts) => fetch(url, opts),
+        toast: (message, variant, opts) => (window.showToast || function () {})(message, variant, opts),
+        logError: LOG_ERR,
+    });
 
     function formatTokenCount(n) {
-        const v = Number(n);
-        if (!Number.isFinite(v) || v < 0) return '0';
-        if (v >= 1_000_000) {
-            return (v / 1_000_000).toFixed(v >= 10_000_000 ? 0 : 1).replace(/\.0$/, '') + 'M';
-        }
-        if (v >= 1000) {
-            return (v / 1000).toFixed(v >= 10_000 ? 0 : 1).replace(/\.0$/, '') + 'k';
-        }
-        return String(Math.round(v));
+        return CuttleChatUsage.formatTokenCount(n);
     }
 
-    function formatUsageCostUsd(cost, estimated) {
-        const v = Number(cost);
-        if (!Number.isFinite(v) || v < 0) return null;
-        const prefix = estimated ? '~$' : '$';
-        if (v === 0) return prefix + '0';
-        if (v < 0.01) return prefix + v.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
-        if (v < 1) return prefix + v.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
-        return prefix + v.toFixed(2);
-    }
-
-    function normalizeUsagePayload(raw) {
-        if (!raw || typeof raw !== 'object') return null;
-        const pt = Number(
-            raw.prompt_tokens != null ? raw.prompt_tokens
-                : (raw.input_tokens != null ? raw.input_tokens : raw.inputTokens)
-        ) || 0;
-        const ct = Number(
-            raw.completion_tokens != null ? raw.completion_tokens
-                : (raw.output_tokens != null ? raw.output_tokens : raw.outputTokens)
-        ) || 0;
-        let total = Number(raw.total_tokens != null ? raw.total_tokens : raw.totalTokens) || 0;
-        if (!total && (pt || ct)) total = pt + ct;
-        const cacheRead = Number(
-            raw.cache_read_tokens != null ? raw.cache_read_tokens
-                : (raw.cacheReadTokens != null ? raw.cacheReadTokens
-                    : (raw.cached_input_tokens != null ? raw.cached_input_tokens
-                        : (raw.cached_tokens != null ? raw.cached_tokens : 0)))
-        ) || 0;
-        const cacheWrite = Number(
-            raw.cache_write_tokens != null ? raw.cache_write_tokens
-                : (raw.cacheWriteTokens != null ? raw.cacheWriteTokens : 0)
-        ) || 0;
-        let cost = raw.cost;
-        if (cost != null) {
-            cost = Number(cost);
-            if (!Number.isFinite(cost) || cost < 0) cost = null;
-        } else {
-            cost = null;
-        }
-        if (!pt && !ct && cost == null && !cacheRead && !cacheWrite) return null;
-        return {
-            prompt_tokens: pt,
-            completion_tokens: ct,
-            total_tokens: total,
-            cache_read_tokens: cacheRead,
-            cache_write_tokens: cacheWrite,
-            cost,
-            cost_estimated: !!raw.cost_estimated,
-            model: raw.model ? String(raw.model) : '',
-        };
+    function normalizeUsagePayload(raw, metadata) {
+        return CuttleChatUsage.normalize(raw, metadata);
     }
 
     function getMessageUsageHtml(usage) {
-        const u = normalizeUsagePayload(usage);
-        if (!u) return '';
-        const parts = [];
-        if (u.prompt_tokens || u.completion_tokens || u.cache_read_tokens) {
-            parts.push(
-                `<span class="message-usage-in" title="Input tokens">↑ ${escapeHtml(formatTokenCount(u.prompt_tokens))}</span>`
-            );
-            if (u.cache_read_tokens > 0) {
-                let tip = 'Cached input tokens';
-                if (u.prompt_tokens > 0 && u.cache_read_tokens <= u.prompt_tokens) {
-                    const pct = Math.round((1000 * u.cache_read_tokens) / u.prompt_tokens) / 10;
-                    const pctLabel = Number.isInteger(pct) ? String(pct) : pct.toFixed(1);
-                    tip = `Cached input tokens (${pctLabel}% of reported input)`;
-                } else if (u.prompt_tokens > 0) {
-                    tip = 'Cached input tokens (billed separately from input)';
-                }
-                parts.push(
-                    `<span class="message-usage-cache" title="${escapeHtml(tip)}">↑ ${escapeHtml(formatTokenCount(u.cache_read_tokens))}</span>`
-                );
-            }
-            parts.push(
-                `<span class="message-usage-out" title="Output tokens">↓ ${escapeHtml(formatTokenCount(u.completion_tokens))}</span>`
-            );
-        }
-        const costLabel = formatUsageCostUsd(u.cost, u.cost_estimated);
-        if (costLabel) {
-            const tip = u.cost_estimated
-                ? (u.cache_read_tokens > 0
-                    ? 'Estimated from models.dev list prices (cache-adjusted)'
-                    : 'Estimated from models.dev list prices')
-                : 'Cost reported by the agent';
-            parts.push(
-                `<span class="message-usage-cost" title="${escapeHtml(tip)}">${escapeHtml(costLabel)}</span>`
-            );
-        }
-        if (!parts.length) return '';
-        return `<div class="message-usage" aria-label="Token usage">${parts.join('<span class="message-usage-sep">·</span>')}</div>`;
+        return CuttleChatUsage.render(usage, escapeHtml);
     }
 
     function getQueryLogLinkHtml(reportUrl) {
@@ -20568,38 +20040,17 @@
             raw.context_tokens != null ? raw.context_tokens
                 : (raw.peak_context_tokens != null ? raw.peak_context_tokens : raw.contextTokens)
         ) || 0;
-        const fill = peak > 0 ? peak : (u && u.prompt_tokens > 0 ? u.prompt_tokens : 0);
-        // Cursor long turns often report huge cacheRead aggregates — don't paint 100%.
-        if (agent === 'cursor') {
+        // Billing input is summed across calls. Only seed the ring from an
+        // explicit occupancy stamp; the API supplies live/transcript fallbacks.
+        let fill = peak;
+        if (agent === 'cursor' && peak > 0) {
             const cr = Number(raw.cache_read_tokens || raw.cacheReadTokens || 0) || 0;
-            const inn = Number(
-                raw.inputTokens != null ? raw.inputTokens
-                    : (raw.input_tokens != null ? raw.input_tokens
-                        : (u && u.prompt_tokens) || 0)
-            ) || 0;
             const cw = Number(raw.cache_write_tokens || raw.cacheWriteTokens || 0) || 0;
-            const stamped = peak || 0;
-            const sumIn = inn + cr + cw;
-            const looksAgg = cr >= 400000 || sumIn >= 1200000
-                || (stamped >= 400000 && cr >= 200000 && stamped >= cr
-                    && Math.abs(stamped - sumIn) <= Math.max(2000, stamped * 0.03));
-            if (looksAgg) {
-                paintContextGaugeFromStatus({
-                    success: true,
-                    agent_id: agent,
-                    model: (u && u.model) || '',
-                    used_tokens: 0,
-                    limit_tokens: 1000000,
-                    percent: 0,
-                    estimated: true,
-                    token_source: 'aggregated',
-                    compact_available: true,
-                    hint: 'Last turn was a long multi-step run (billing totals, not a single context snapshot). Context % refreshes after the next reply.',
-                });
-                scheduleAgentContextGaugeRefresh(250);
-                return;
-            }
+            const sumIn = ((u && u.prompt_tokens) || 0) + cr + cw;
+            if (peak >= 400000 && cr >= 200000 && peak >= cr &&
+                    Math.abs(peak - sumIn) <= Math.max(2000, peak * 0.03)) fill = 0;
         }
+        if (!fill) scheduleAgentContextGaugeRefresh(250);
         if (!fill) return;
         const prev = _agentContextStatus || {};
         const limit = Number(prev.limit_tokens) || (
@@ -21831,9 +21282,7 @@
 
     function updateTypingStatus(statusText) {
         const next = statusText || 'Connecting...';
-        if (voiceModeActive && voiceModePhase === 'processing') {
-            setVoiceModeStatus(next);
-        }
+        chatVoice.onAgentStatus(next);
         const indicator = document.getElementById('typing-indicator');
         const el = indicator ? indicator.querySelector('.typing-status') : document.getElementById('typing-status');
         if (el) {
@@ -22015,76 +21464,6 @@
     }
 
 
-    const _widgetIngestQueued = new Set();
-
-    function parseHtmlAttrBlob(attrs, name) {
-        const re = new RegExp(
-            String(name) + '\\s*=\\s*(?:"([^"]*)"|\'([^\']*)\'|([^\\s"\'>]+))',
-            'i'
-        );
-        const m = re.exec(attrs || '');
-        if (!m) return '';
-        return String(m[1] != null ? m[1] : (m[2] != null ? m[2] : (m[3] || ''))).trim();
-    }
-
-    function queueClientWidgetUpsert(attrs, body) {
-        const id = parseHtmlAttrBlob(attrs, 'id') || ('w-' + Date.now().toString(36));
-        if (_widgetIngestQueued.has(id)) return;
-        _widgetIngestQueued.add(id);
-        let payload = {};
-        try {
-            payload = JSON.parse(String(body || '').trim() || '{}') || {};
-        } catch (_) {
-            payload = {};
-        }
-        const items = Array.isArray(payload.items) ? payload.items : (
-            Array.isArray(payload) ? payload : []
-        );
-        const sid = toAuthDbSessionId(currentSessionId);
-        const scope = parseHtmlAttrBlob(attrs, 'scope') || 'session';
-        const title = parseHtmlAttrBlob(attrs, 'title') || 'Tasks';
-        const wtype = parseHtmlAttrBlob(attrs, 'type') || 'tasks';
-        const op = parseHtmlAttrBlob(attrs, 'op') || '';
-        const descAttr = parseHtmlAttrBlob(attrs, 'description')
-            || parseHtmlAttrBlob(attrs, 'summary');
-        let description;
-        if (descAttr) {
-            description = descAttr;
-        } else if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
-            if (Object.prototype.hasOwnProperty.call(payload, 'description')) {
-                description = payload.description;
-            } else if (Object.prototype.hasOwnProperty.call(payload, 'summary')) {
-                description = payload.summary;
-            } else if (Object.prototype.hasOwnProperty.call(payload, 'set_description')) {
-                description = payload.set_description;
-            }
-        }
-        const bodyObj = {
-            type: wtype,
-            title: title,
-            scope: scope,
-            session_id: sid,
-            project_path: (currentProject && (currentProject.path || currentProject.project_path)) || '',
-            payload: { items: items },
-        };
-        if (description != null) bodyObj.description = description;
-        if (op === 'patch') {
-            bodyObj.op = 'patch';
-            bodyObj.patch = payload;
-        }
-        fetch('/api/widgets/' + encodeURIComponent(id), {
-            method: op === 'patch' ? 'PATCH' : 'PUT',
-            credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(bodyObj),
-        }).then(() => {
-            if (typeof refreshChatWidgets === 'function') refreshChatWidgets();
-        }).catch(() => {}).finally(() => {
-            // Allow a later patch with the same id.
-            setTimeout(() => _widgetIngestQueued.delete(id), 2000);
-        });
-    }
-
     /** Page-owned seams for structured-block render planning (chat_messages.js). */
     function structuredRenderDeps() {
         return {
@@ -22100,18 +21479,14 @@
     function ingestAndStripCuttleWidgets(text) {
         return String(text || '').replace(
             /<cuttle_widget\b([^>]*)>([\s\S]*?)<\/cuttle_widget\s*>/gi,
-            function (_, attrs, inner) {
-                queueClientWidgetUpsert(attrs, inner);
-                const title = parseHtmlAttrBlob(attrs, 'title') || 'Tasks';
-                return '\n\n> 📌 ' + title + ' *(pinned above composer)*\n\n';
-            }
+            ''
         );
     }
 
     function formatMessage(text) {
         const live = CuttleUsageLive.render(text, formatMessage);
         if (live !== null) return live;
-        // Client-side fallback: pin cuttle_widget tags even if Flask missed rewrite.
+        // Historical Tasks tags are presentation only; Gizmos API owns writes.
         if (typeof text === 'string' && /<cuttle_widget\b/i.test(text)) {
             text = ingestAndStripCuttleWidgets(text);
         }
@@ -23259,8 +22634,8 @@
     window.chatPageSpeakMessage = function(btn) {
         return speakMessageFromButton(btn);
     };
-    window.chatPageEnterVoiceMode = enterVoiceMode;
-    window.chatPageExitVoiceMode = exitVoiceMode;
+    window.chatPageEnterVoiceMode = chatVoice.enter;
+    window.chatPageExitVoiceMode = chatVoice.exit;
     window.chatPageCopyMessage = async function(btn) {
         const ok = await copyMessageToClipboard(btn);
         if (ok) {

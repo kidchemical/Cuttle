@@ -115,6 +115,7 @@ function updateSessionPrefs(id, patch) {{
 }}
 function liveAgentBadgeLabelForChip(c) {{ return c && c.label; }}
 function resolveSlashChipPaletteCategory(c) {{ return c && c.category; }}
+function publishSharedComposerSelection() {{}}
 const document = {{ getElementById: () => null }};
 {compose}
 {clear_chips}

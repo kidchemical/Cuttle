@@ -176,8 +176,7 @@ let messageSyncTimer = null;
 globalThis.CuttleFollowupQueue = require(process.env.MOD_FQ);
 const followupQueue = CuttleFollowupQueue.createQueueState();
 let sendDispatchGuard = true;
-let voiceModeActive = false;
-let voiceModePhase = '';
+const chatVoice = { onGenerationStarted() {} };
 // ---- effect log + stubs for leaves outside stop-state ownership ----
 const fx = [];
 const mkCtrl = (throwing) => ({ aborted: 0,
@@ -204,7 +203,6 @@ async function requestServerCancelCurrentRun(o) { fx.push(['cancel', o.cancelJob
 function syncComposerStopWithWatch() {}
 function scheduleFollowupDrain(ms) { fx.push(['drain', ms]); }
 function authSessionIdForRequest() { return currentSessionId; }
-function setVoiceModePhase() {}
 // ---- the REAL page bodies under test (9A-rewired: needs the guard) ----
 globalThis.CuttleTurnGuard = require(process.env.MOD_TG);
 let turnGeneration = CuttleTurnGuard.createGeneration();

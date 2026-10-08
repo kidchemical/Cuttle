@@ -482,6 +482,7 @@ class Adapter:
             "completion_tokens": int(uq.get("output_tokens") or 0),
             "total_tokens": int(uq.get("total_tokens") or 0),
             "model": mid or "codex",
+            "cache_inclusive": True,
         }
         if uq.get("cache_read_tokens"):
             usage["cache_read_tokens"] = int(uq.get("cache_read_tokens") or 0)

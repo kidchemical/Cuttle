@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.brain.context_support import ack_snapshot, delta_text
+
 from api.agent_harness.types import AgentManifest, AgentResult
 
 
@@ -276,8 +278,8 @@ def test_manual_compact_clears_receipt(tmp_path, monkeypatch):
     from api import agent_context as ac
     from api.cuttle_brain import context_delta as cd
 
-    cd.record_injected_snapshot("77", "cursor", str(tmp_path))
-    cd.record_injected_snapshot("77", "codex", str(tmp_path))
+    ack_snapshot("77", "cursor", str(tmp_path))
+    ack_snapshot("77", "codex", str(tmp_path))
     monkeypatch.setattr(ac, "_load_resume_id", lambda *a, **k: "rid")
     monkeypatch.setattr(ac, "_compact_cursor", lambda *a, **k: {"success": True})
     monkeypatch.setattr(ac, "get_agent_context_status", lambda **k: {})
@@ -292,8 +294,8 @@ def test_forget_chat_and_prune(tmp_path):
     from api.cuttle_brain import handoff as ho
     from api.cuttle_brain.state import forget_chat, prune
 
-    cd.record_injected_snapshot("5", "cursor", str(tmp_path))
-    cd.record_injected_snapshot("6", "cursor", str(tmp_path))
+    ack_snapshot("5", "cursor", str(tmp_path))
+    ack_snapshot("6", "cursor", str(tmp_path))
     ho.record_last_agent("5", "cursor", through_message_id=1)
     forget_chat(5)
     assert cd.load_injected_snapshot("5", "cursor", str(tmp_path)) is None
@@ -301,8 +303,8 @@ def test_forget_chat_and_prune(tmp_path):
 
     junk = tmp_path / "pytest-of-x" / "t"
     junk.mkdir(parents=True)
-    cd.record_injected_snapshot("muse-badge-session", "muse", str(junk))
-    cd.record_injected_snapshot("discord_", "cursor", "/srv/guest-project")
+    ack_snapshot("muse-badge-session", "muse", str(junk))
+    ack_snapshot("discord_", "cursor", "/srv/guest-project")
     ho.record_last_agent("9", "codex", through_message_id=1)
     out = prune(live_ids={6})
     assert out["snapshots_removed"] == 1 and out["handoff_removed"] == 1
@@ -328,7 +330,7 @@ def test_tasks_digest_reaches_runtime_block(monkeypatch, tmp_path):
     from api.cuttle_brain.context_compiler import compile_context
 
     db, sid = _chat()
-    monkeypatch.setattr("api.chat_widgets.format_tasks_digest", lambda widgets: "## Active Tasks\n- [ ] ship it")
+    monkeypatch.setattr("api.gizmos.tasks_model.format_tasks_digest", lambda widgets: "## Active Tasks\n- [ ] ship it")
     compiled = compile_context("hi", project_path=str(tmp_path), chat_session_id=str(sid))
     assert "ship it" in compiled.envelope
 

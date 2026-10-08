@@ -257,10 +257,8 @@ def read_muse_msp_context(muse_session_uuid: Optional[str]) -> Optional[Dict[str
         return 0
 
     # Live window fill — prefer Muse's own context_anchor / totalTokens.
-    context_tokens = _i(
-        state.get("context_anchor"),
-        tu.get("totalTokens"),
-        tu.get("total_tokens"),
+    context_tokens = _i(state.get("context_anchor")) or _i(
+        tu.get("totalTokens"), tu.get("total_tokens"),
     )
     prompt_tokens = _i(
         usage.get("inputTokens"),
@@ -279,8 +277,9 @@ def read_muse_msp_context(muse_session_uuid: Optional[str]) -> Optional[Dict[str
         usage.get("cache_read_tokens"),
     )
     if context_tokens <= 0 and prompt_tokens > 0:
-        # Fallback: uncached + cached input ≈ one-call occupancy.
-        context_tokens = prompt_tokens + cached_tokens
+        # MSP's promptTokens is counted once under the provider convention.
+        # Muse Spark raw input already includes cache; adding it again inflates fill.
+        context_tokens = _i(tu.get("promptTokens"), tu.get("prompt_tokens")) or prompt_tokens
     model = str(tu.get("modelId") or tu.get("model_id") or "").strip() or None
     if not model:
         # Some projections stash model on current_state.

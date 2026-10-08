@@ -102,6 +102,25 @@ def usage_meta_from_assistant_result(res: Optional[dict]) -> Optional[dict]:
         return None
 
 
+def execution_badge_metadata(agent: str, label: str, session_id, *, model=None, effort=None) -> dict:
+    """Selected harness identity for live presentation, including router overrides."""
+    import re
+    badge = user_badge_metadata('/' + agent, session_id)
+    if model or effort:
+        chips = (badge or {}).get('slash_command', {}).get('chips', [])
+        meta = chips[0].get('meta', '') if chips else ''
+        model_match = re.search(r'\bmodel\s+(\S+)', meta)
+        effort_match = re.search(r'\beffort\s+(\S+)', meta)
+        badge = user_badge_metadata('/' + agent, session_id, identity={
+            'agent': agent,
+            'model': model or (model_match.group(1) if model_match else ''),
+            'effort': effort or (effort_match.group(1) if effort_match else ''),
+        })
+    return (badge or {}).get('slash_command') or {
+        'chips': [{'label': label, 'meta': '/' + agent, 'category': agent}],
+    }
+
+
 def user_badge_metadata(message_text: str, session_id, identity: Optional[dict] = None) -> Optional[dict]:
     """Snapshot the agent badge (model + effort) for a user turn at send time.
 

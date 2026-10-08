@@ -210,6 +210,7 @@ def _usage_from_result(usage: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         ),
         (("context_tokens", "contextTokens"), "context_tokens"),
         (("peak_context_tokens",), "peak_context_tokens"),
+        (("reasoning_tokens", "reasoningTokens"), "reasoning_tokens"),
     ):
         for key in src_keys:
             if u.get(key) is None:
@@ -223,6 +224,16 @@ def _usage_from_result(usage: Optional[Dict[str, Any]]) -> Dict[str, Any]:
             break
     if cost_f is not None and cost_f >= 0:
         payload["cost"] = cost_f
+    for key in ("cost_estimated", "cache_inclusive"):
+        if isinstance(u.get(key), bool):
+            payload[key] = u[key]
+    if u.get("reported_cost") is not None:
+        try:
+            payload["reported_cost"] = float(u["reported_cost"])
+        except (TypeError, ValueError):
+            pass
+    if payload.get("cache_inclusive") is False:
+        payload["total_tokens"] = pt + ct + int(payload.get("cache_read_tokens") or 0) + int(payload.get("cache_write_tokens") or 0)
     return payload
 
 
@@ -666,12 +677,17 @@ def run_agent_web_command(
         register_execution(query_id, label)
         if status_queue:
             try:
+                from api.chat_metadata import execution_badge_metadata
                 status_queue.put(
                     (
                         "query_started",
                         {
                             "query_id": query_id,
                             "report_url": f"/query_log.html?id={query_id}",
+                            "slash_command": execution_badge_metadata(
+                                manifest.id, label, sid, model=model_override,
+                                effort=(execute_kwargs or {}).get("reasoning_effort"),
+                            ),
                         },
                     )
                 )
@@ -854,22 +870,26 @@ def run_agent_web_command(
             except Exception:
                 edit_baseline = None
             def _run_execute(prompt_text: str, resume_id: Optional[str]) -> AgentResult:
-                return asyncio.run(
-                    adapter.execute(
-                        prompt_text,
-                        **_adapter_execute_kwargs(
-                            adapter,
-                            cwd=cwd,
-                            resume=resume_id,
-                            model=model,
-                            status_queue=status_queue,
-                            chat_session_id=sid,
-                            timeout=timeout,
-                            cancel_event=cancel_event,
-                            **(execute_kwargs or {}),
-                        ),
+                from core.agent_cli_env import agent_operation_context
+
+                with agent_operation_context(session_id=sid, agent_id=manifest.id,
+                                             model=model, run_id=query_id, project_path=cwd):
+                    return asyncio.run(
+                        adapter.execute(
+                            prompt_text,
+                            **_adapter_execute_kwargs(
+                                adapter,
+                                cwd=cwd,
+                                resume=resume_id,
+                                model=model,
+                                status_queue=status_queue,
+                                chat_session_id=sid,
+                                timeout=timeout,
+                                cancel_event=cancel_event,
+                                **(execute_kwargs or {}),
+                            ),
+                        )
                     )
-                )
 
             try:
                 result = _run_execute(agent_prompt, resume)
@@ -1045,9 +1065,13 @@ def run_agent_web_command(
                 "cache_write_tokens",
                 "context_tokens",
                 "peak_context_tokens",
+                "reasoning_tokens",
             ):
                 if usage_payload.get(key):
                     tok_payload[key] = int(usage_payload[key])
+            for key in ("cost_estimated", "reported_cost", "cache_inclusive"):
+                if key in usage_payload:
+                    tok_payload[key] = usage_payload[key]
         call_cost = float(usage_payload.get("cost") or 0) if usage_payload.get("cost") is not None else 0.0
         _result_meta = result.meta if isinstance(result.meta, dict) else {}
         if result.model:

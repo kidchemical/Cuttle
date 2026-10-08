@@ -544,11 +544,15 @@ def usage_for_query_report(
         out["cache_read_tokens"] = cr
     if cw > 0:
         out["cache_write_tokens"] = cw
-    if u.get("cost") is not None:
+    for key in ("cost", "estimated_cost_usd", "actual_cost_usd"):
+        if u.get(key) is None:
+            continue
         try:
-            out["cost"] = float(u["cost"])
+            out[key] = float(u[key])
         except (TypeError, ValueError):
             pass
+    if isinstance(u.get("cost_estimated"), bool):
+        out["cost_estimated"] = u["cost_estimated"]
     return out
 
 
@@ -612,16 +616,22 @@ def load_hermes_session_usage(session_id: str) -> Dict[str, Any]:
         out["cache_write_tokens"] = cw
     if reasoning > 0:
         out["reasoning_tokens"] = reasoning
-    cost = row.get("actual_cost_usd")
-    if cost is None:
-        cost = row.get("estimated_cost_usd")
-    if cost is not None:
+    for key in ("estimated_cost_usd", "actual_cost_usd"):
+        cost = row.get(key)
+        if cost is None:
+            continue
         try:
             cost_f = float(cost)
             if cost_f >= 0:
-                out["cost"] = cost_f
+                out[key] = cost_f
+                if key == "actual_cost_usd":
+                    out["cost"] = cost_f
+                    out["cost_estimated"] = False
         except (TypeError, ValueError):
             pass
+    if "cost" not in out and "estimated_cost_usd" in out:
+        out["cost"] = out["estimated_cost_usd"]
+        out["cost_estimated"] = True
     mid = str(row.get("model") or "").strip()
     if mid:
         out["model"] = mid
@@ -697,10 +707,8 @@ def load_hermes_context_occupancy(session_id: str) -> Dict[str, Any]:
                 + str(m["reasoning_content"] or "")
             )
             chars += len(blob)
-        if explicit > 0:
-            used = explicit
-        elif chars > 0:
-            used = max(1, chars // 4)
+        if msgs:
+            used = explicit + (max(1, chars // 4) if chars > 0 else 0)
         else:
             # Fresh / empty transcript — fall back to session billing when small.
             used = billing_in
@@ -769,8 +777,9 @@ def _delta_hermes_usage(
     # fresh session (no prior counters). Otherwise leave cost unset so
     # models.dev can estimate from the delta tokens.
     if not before.get("input_tokens") and not before.get("output_tokens"):
-        if after.get("cost") is not None:
-            out["cost"] = after["cost"]
+        for key in ("cost", "cost_estimated", "estimated_cost_usd", "actual_cost_usd"):
+            if after.get(key) is not None:
+                out[key] = after[key]
     if after.get("model"):
         out["model"] = after["model"]
     return out

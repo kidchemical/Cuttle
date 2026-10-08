@@ -360,3 +360,30 @@ def test_push_failure_exposes_hook_report_and_prefers_hook_summary(tmp_path, mon
     assert 'secret-patterns' in data['error']
     assert data['push_report']['findings'][0]['file'] == 'test.py'
     assert data['push_report']['findings'][0]['commit'] == 'abc'
+
+
+def test_working_branch_tracks_existing_origin_without_resetting_local_commits(tmp_path):
+    import subprocess
+    from api.git_service import use_working_branch, GitError
+    def git(*args):
+        return subprocess.run(['git', '-C', str(tmp_path), *args], check=True, capture_output=True, text=True).stdout.strip()
+    git('init', '-b', 'main')
+    git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '--allow-empty', '-m', 'Base')
+    base = git('rev-parse', 'HEAD')
+    git('update-ref', 'refs/remotes/origin/dev', base)
+    git('config', 'remote.origin.url', 'https://example.invalid/demo.git')
+    git('config', 'remote.origin.fetch', '+refs/heads/*:refs/remotes/origin/*')
+    git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '--allow-empty', '-m', 'Local main work')
+    local = git('rev-parse', 'HEAD')
+    use_working_branch(str(tmp_path), 'dev')
+    assert git('rev-parse', 'HEAD') == base
+    assert git('rev-parse', 'main') == local
+    assert git('rev-parse', '--abbrev-ref', 'dev@{upstream}') == 'origin/dev'
+    # Tracked changes also block switching.
+    (tmp_path / 'tracked').write_text('Initial')
+    git('add', 'tracked')
+    git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'Tracked')
+    (tmp_path / 'tracked').write_text('Pending')
+    with pytest.raises(GitError, match='Commit or stash'):
+        use_working_branch(str(tmp_path), 'main')
+    assert git('branch', '--show-current') == 'dev'

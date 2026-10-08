@@ -1,12 +1,12 @@
 # `web_chat_api.py` dependency map
 
 **Status:** living architecture reference. **Do not treat this file as a license to extract code.**
-**File:** `src/api/web_chat_api.py` (~9,856 lines; 139 `@app.route`
-decorators over 132 unique paths, counted from the AST at 2026-10-01,
-HEAD `4845233c`).
+**File:** `src/api/web_chat_api.py` (~7,800 lines; 99 `@app.route`
+decorators over 92 unique paths, counted from the AST at 2026-10-08,
+HEAD `44c3ca4`).
 **Audience:** agents and humans about to change Flask/chat/settings/workers.
 
-Cuttle’s Flask **app object** lives here. Many product surfaces already have their own modules; this file is still the **composition root** (blueprints, HTML, chat-turn HTTP, process-control 410s).
+Cuttle’s Flask **app object** lives here. Many product surfaces already have their own modules; this file is still the **composition root** (blueprints, HTML, chat-turn HTTP).
 
 When you add a backend feature:
 
@@ -35,9 +35,9 @@ BYO-CLI installer retirement):
 
 | Role | Notes |
 |---|---|
-| Flask `app` factory-in-place | TLS cert helpers, CORS-ish headers, rate limiter, static/HTML routes |
+| Flask `app` factory-in-place | TLS bootstrap (cert owner `api.tls_cert`), CORS-ish headers, rate limiter, static/HTML routes |
 | Chat-turn HTTP ingress | `POST /api/chat`, `process_message_with_bot` (compat), SSE stream, steer/cancel; decisions in `chat_turn` / `chat_coordinator` / `chat_turn_workflow` |
-| Process / LAN / restart HTTP | `/api/flask/restart*`, `/api/status`, LAN settings, process-control 410 stubs |
+| Restart / status HTTP | `/api/flask/restart*`, `/api/status`, `/api/health` |
 | Grab bag of product HTTP | router/agent palettes, per-harness pins, shell panes, sessions, TTS/widget/terminal/mobile registers, usage-live |
 
 **Daemon contract:** `cuttle_daemon` spawns this module as the Flask child on port **8080**. Coordinated restart is `flask_restart` / `/restart` — never `taskkill` the API from an agent it hosts.
@@ -57,12 +57,21 @@ is a logged, nonfatal `try/except`:
 | Device workers mesh | `api.device_workers.routes` (`workers_bp`) | blueprint `/api/workers` |
 | Dashboards | `api.dashboards.routes` | blueprint |
 | Settings | `api.settings_routes` (`settings_bp`, url prefix `/api`) | blueprint — validation/persistence/defaults/authorization owned there; zero `/api/settings` routes remain on the root |
-| Projects | `api.project_routes` (`projects_bp`, url prefix `/api`) | blueprint — transport; logic in `managers.project_manager` |
+| Experimental flags | `api.experimental.routes` (`experimental_bp`, url prefix `/api/experimental`) | blueprint — generic flag toggles |
+| Achievements | `api.achievements.routes` (`achievements_bp`, url prefix `/api/achievements`, plus `achievements_pages_bp` page) | blueprints — first experimental feature |
+| Agent events / Feed | `api.agent_events.routes` (`bp`, no url prefix: `/api/agent-events`, `/agent_feed.html`) | blueprint — owner-only fleet log transport |
+| Gizmos | `api.gizmos.routes` (`gizmos_bp`, url prefix `/api/gizmos`, plus `gizmos_pages_bp` page) | blueprints — experimental live UI objects |
+| Chat VFX | `api.chat_vfx.routes` (`chat_vfx_bp`, url prefix `/api/chat-vfx`) | blueprint — transient confetti/toast events |
+| Projects | `api.project_routes` (`projects_bp`, url prefix `/api`, plus `projects_pages_bp` page) | blueprints — transport; logic in `managers.project_manager` |
 | Action forms | `api.action_form_routes` (`action_forms_bp`, url prefix `/api`) | blueprint — transport; logic in `api.action_forms` / `api.project_actions` |
 | Git | `api.git_routes` (`git_bp`, url prefix `/api`) | blueprint — transport; behavior in `api.git_service` |
-| Claude Code palette pins (`/api/claude/models\|model\|effort`) | `api.agent_harness.agents.claude.routes` (`claude_bp`) | blueprint — owned by the Claude agent slice; catalog in `agents/claude/model_catalog.py` |
-| Chat widgets | `api.chat_widgets.register_chat_widget_routes` | `register_*(app)` |
+| Claude Code palette pins (`/api/claude/models\|model\|effort`) | `api.agent_harness.agents.claude.routes` (`claude_bp`, url prefix `/api/claude`) | blueprint — owned by the Claude agent slice; catalog in `agents/claude/model_catalog.py` |
+| Router editor | `api.agent_router.routes` (`router_editor_bp`, url prefix `/api/router`) | blueprint — decision-only tools |
+| Activity stream | `api.activity_stream` (`activity_bp`, url prefix `/api`) | blueprint — chat activity push stream |
+| Tasks gizmos | `api.gizmos.tasks_routes.tasks_bp` | scoped routes under `/api/gizmos/tasks` |
 | Chat TTS | `api.chat_tts` | `register_*(app)` |
+| Voice narrator (experimental `voice_narrator`) | `api.voice_narrator.routes` (`voice_narrator_bp`) | blueprint `/api/voice-narrator` — line writing + voicing owned by `api.voice_narrator` |
+| Voice transcription (experimental `voice_server_stt`) | `api.voice_stt.routes` (`voice_stt_bp`) | blueprint `/api/voice-stt` — per-phrase OpenAI transcription owned by `api.voice_stt` |
 | Web terminal | `api.web_terminal` | `register_*(app)` |
 | Electron desktop | `api.desktop_electron` | `register_*(app)` |
 | Android APK updates | `api.mobile_android_update` | `register_*(app)` |
@@ -113,7 +122,7 @@ Inbound Discord DM chat (`POST /api/pipeline-trigger-discord`) is **retired** (n
 
 ## HTTP still defined on `app` (by prefix)
 
-Verified snapshot at HEAD: 139 `@app.route` decorators over 132 unique
+Verified snapshot at HEAD: 99 `@app.route` decorators over 92 unique
 paths (AST count). The clusters below are a grouping aid, not a second
 exact inventory — recount from source before relying on completeness. Settings, projects, Git, and action-form HTTP
 are **not** in this table — they live in their blueprints (zero root
@@ -127,14 +136,15 @@ routes each).
 | `/api/shared-media` | `api.shared_media` |
 | `/api/shell` | pane layout (root-owned; agent read via `python -m api.panes_cli`) |
 | `/api/chat` + steer/cancel/pending/live-status | `chat_turn*` / `chat_coordinator` / `chat_delivery` / `chat_run_registry` |
-| `/api/flask/restart*`, `/api/restart`, `/api/status`, `/api/health` | `flask_restart`; health is **not** the daemon liveness probe (`/api/status` is) |
+| `/api/flask/restart*`, `/api/status`, `/api/health` | `flask_restart`; health is **not** the daemon liveness probe (`/api/status` is) |
 | `/api/local-llm/status`, `/api/ollama-models` | user-managed local server status and model discovery for router/completion providers |
 | `/api/pairing` | user/DM pairing (not worker pairing) |
 | `/api/cursor-agent`, `/api/project-commands` | harness catalog / `api.project_commands` |
 | `/api/mobile`, `/api/supervised`, `/api/agent-context`, `/api/agent-defaults` | respective owners |
-| `/api/start-launcher`, `/api/stop-launcher`, `/api/start-webapi`, `/api/stop-webapi`, `/api/start-discord`, `/api/stop-discord` | **410 stubs** via `_legacy_process_control_gone_response` — do not revive |
 | HTML shells (`/`, `/chat_page.html`, Jobs, Dashboards, …) | static; fine to keep in the composition root |
 | Static `/css` `/js` `/output` `/logs` `/sounds` | |
+
+Retired: the legacy `/api/start-*` / `/api/stop-*` process-control endpoints are fully removed — no routes and no stubs remain on the root. Do not revive them.
 
 Worker **HTTP** is not in this table; it is `workers_bp`.
 
