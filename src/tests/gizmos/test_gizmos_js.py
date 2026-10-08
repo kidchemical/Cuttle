@@ -307,13 +307,24 @@ def test_shell_controller_docks_drags_and_removes(tmp_path):
         assert page.locator("#shellGizmoFloatLayer .gizmo--float").count() == 1
         assert page.locator("#shellGizmoDockRail .shell-gizmo").count() == 0
 
-        # Click-off works both in the shell and across the iframe boundary;
-        # clicking a control inside the popover must leave it open.
+        # Clicking a control inside the popover must leave it open.
         page.locator("#shellGizmoFloatLayer .shell-gizmo").click()
         popover = page.locator("#shellGizmoPopover")
         popover.wait_for(state="visible")
         popover.locator('select[data-gizmo-field="show"]').focus()
         assert popover.is_visible()
+
+        # A pane may already own focus when the gizmo opens (for example after
+        # an editor click). In that case clicking the same pane does not cause
+        # a shell window blur; the iframe-document listener must close it.
+        page.frame_locator('iframe').locator('p').click(position={"x": 10, "y": 5})
+        page.locator("#shellGizmoFloatLayer .shell-gizmo").dispatch_event(
+            "pointerdown", {"button": 0, "pointerId": 41, "clientX": 0, "clientY": 0}
+        )
+        page.locator("#shellGizmoFloatLayer .shell-gizmo").dispatch_event(
+            "pointerup", {"button": 0, "pointerId": 41, "clientX": 0, "clientY": 0}
+        )
+        popover.wait_for(state="visible")
         page.frame_locator('iframe').locator('p').click(position={"x": 10, "y": 5})
         popover.wait_for(state="hidden")
         page.locator("#shellGizmoFloatLayer .shell-gizmo").click()
