@@ -170,6 +170,9 @@ function saveDesktopConfig(patch) { __cfg = Object.assign({}, __cfg, patch); ret
 function resetCfg(next) { __cfg = JSON.parse(JSON.stringify(next || {})); }
 let __pyExe = '/fake/python';
 function resolvePythonExe() { return __pyExe; }
+function pythonChildEnv(root, extra) {
+    return Object.assign({}, process.env, { PYTHONPATH: path.join(root, 'src') }, extra || {});
+}
 let __spawnResult = null;
 let __spawnThrows = null;
 let __spawnCalls = [];
@@ -1057,6 +1060,64 @@ check('secret-sent', typeof sent.pairing_secret === 'string' && sent.pairing_sec
 check('secret-matches', polled.pairing_secret === sent.pairing_secret, JSON.stringify(polled));
 if (__failures.length) { console.error(__failures.join('\\n')); process.exit(1); }
 })();
+"""
+    )
+    proc = _run_node(script)
+    assert proc.returncode == 0, (proc.stdout or "") + (proc.stderr or "")
+
+
+def _extract_named(names: tuple) -> str:
+    lines = MAIN_JS.read_text(encoding="utf-8").splitlines(keepends=True)
+    found: dict[str, str] = {}
+    i = 0
+    while i < len(lines):
+        m = re.match(r"^(async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(", lines[i])
+        if m and m.group(2) in names and m.group(2) not in found:
+            body, i = _extract_braced(lines, i)
+            found[m.group(2)] = body
+        else:
+            i += 1
+    assert set(found) == set(names), f"missing: {set(names) - set(found)}"
+    return "\n".join(found[n] for n in names)
+
+
+@node_only
+def test_packaged_python_is_bundled_only(tmp_path):
+    """Packaged builds use resources/python (or the launching daemon's
+    interpreter) and never a repo .venv or system Python."""
+    resources = tmp_path / "resources"
+    rel = ("python.exe",) if sys.platform == "win32" else ("bin", "python3")
+    bundled = resources.joinpath("python", *rel)
+    venv = tmp_path / ".venv" / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python3")
+    daemon_py = tmp_path / "daemon-python"
+    for p in (venv, daemon_py):
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("")
+    script = (
+        "const fs = require('fs'); const path = require('path');\n"
+        "const app = { isPackaged: true };\n"
+        "const spawnSync = () => { throw new Error('must not probe PATH'); };\n"
+        f"Object.defineProperty(process, 'resourcesPath', {{ value: {json.dumps(str(resources))} }});\n"
+        + _extract_named(("_isUsablePythonExe", "bundledPythonExe", "pythonChildEnv", "resolvePythonExe"))
+        + f"""
+const fails = [];
+const check = (n, c, x) => {{ if (!c) fails.push(n + (x ? ' :: ' + x : '')); }};
+const root = {json.dumps(str(tmp_path))};
+delete process.env.CUTTLE_HOSTED_BY_DAEMON;
+check('no-bundle-no-python', resolvePythonExe(root) === null);
+process.env.CUTTLE_HOSTED_BY_DAEMON = '1';
+process.env.CUTTLE_DAEMON_PYTHON = {json.dumps(str(daemon_py))};
+check('daemon-python-when-hosted', resolvePythonExe(root) === {json.dumps(str(daemon_py))});
+fs.mkdirSync(path.dirname({json.dumps(str(bundled))}), {{ recursive: true }});
+fs.writeFileSync({json.dumps(str(bundled))}, '');
+check('bundled-wins', resolvePythonExe(root) === {json.dumps(str(bundled))});
+process.env.PYTHONHOME = '/evil'; process.env.PYTHONPATH = '/evil';
+const env = pythonChildEnv(root, {{}}, {{ srcPath: false }});
+check('child-env-sanitized', !('PYTHONHOME' in env) && !('PYTHONPATH' in env) && env.PYTHONNOUSERSITE === '1'
+    && env.PYTHONDONTWRITEBYTECODE === '1');
+check('child-env-src', pythonChildEnv(root).PYTHONPATH === path.join(root, 'src'));
+if (fails.length) {{ console.error(fails.join('\\n')); process.exit(1); }}
+console.log('ok');
 """
     )
     proc = _run_node(script)
