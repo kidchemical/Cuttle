@@ -7,12 +7,12 @@
 <script src="/js/shared/ui_boot.js?v=20260926safeArea"></script>
 <link rel="stylesheet" href="/css/shared_navigation.css?v=20260926lightBg">
 <link rel="stylesheet" href="/css/landing_page.css?v=20260926lightBg">
-<link rel="stylesheet" href="/css/compact_page.css?v=20260917bgFix2">
-<link rel="stylesheet" href="/css/projects_page.css?v=20261008polish1">
+<link rel="stylesheet" href="/css/compact_page.css?v=20261007frame">
+<link rel="stylesheet" href="/css/projects_page.css?v=20261007frame">
 </head>
 <body class="compact-shell-page" data-page="projects">
-<main class="projects-app">
-<header class="projects-header"><div><h1>Projects</h1><p>Your workspaces, configuration, and activity.</p></div><div class="actions"><button id="refresh" type="button" aria-label="Refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 6M20 4v7h-7"/></svg><span class="desktop-label">Refresh</span></button><button id="add-project" type="button" class="primary" disabled>Add project</button></div></header>
+<main class="projects-app cuttle-page">
+<header class="projects-header compact-page-title has-actions"><div class="compact-page-heading"><h1>Projects</h1><p>Your workspaces, configuration, and activity.</p></div><div class="actions compact-page-actions"><button id="refresh" type="button" aria-label="Refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 6M20 4v7h-7"/></svg><span class="desktop-label">Refresh</span></button><button id="add-project" type="button" class="primary" disabled>Add project</button></div></header>
 <p id="notice" role="status" aria-live="polite">Loading projects…</p>
 <div class="projects-layout">
 <aside class="project-sidebar" aria-label="Project list"><div class="sidebar-heading"><strong>Workspaces</strong><label class="check"><input id="show-archived" type="checkbox"> Show archived</label></div><label class="search-label" for="search"><span>Find a project</span><input id="search" type="search" placeholder="Search projects…"></label><div id="project-list"></div></aside>

@@ -1,6 +1,7 @@
 /* Dashboards hub + Model Benchmarks (compact shell page). */
 
-.dash-page { padding: 16px; max-width: 1180px; margin: 0 auto; overflow: visible; }
+/* Frame (inset, width) comes from .cuttle-page in compact_page.css. */
+.dash-page { overflow: visible; }
 
 .dash-page-bar {
     display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px;
@@ -34,7 +35,7 @@
 }
 .dash-card {
     display: flex; flex-direction: column; gap: 8px; padding: 16px;
-    border-radius: 10px; background: var(--section-bg); border: 1px solid var(--border-color);
+    border-radius: var(--page-card-radius); background: var(--section-bg); border: 1px solid var(--border-color);
     text-decoration: none; color: inherit; cursor: pointer; text-align: left;
     width: 100%; font: inherit;
 }
@@ -351,7 +352,6 @@ body.light-mode .dash-usage-dates input { color-scheme: light; }
     .dash-usage-grid { grid-template-columns: minmax(0, 1fr); }
     .dash-usage-chart { height: 230px; }
     .dash-widget { height: 48vh; min-height: 260px; }
-    .dash-page { padding: 12px 10px 20px; }
     .dash-axis-row { grid-template-columns: minmax(0, 1fr) auto; gap: 6px 10px; }
     .dash-axis-field { grid-column: 1 / -1; }
     .dash-axis-slider { min-width: 0; }

@@ -627,10 +627,6 @@ body.compact-shell-page .settings-scope {
 }
 
 /* Shared Settings rhythm: familiar rows, readable labels, touch-sized controls. */
-body.compact-shell-page .container {
-    max-width: 1000px;
-    margin-inline: auto;
-}
 body.compact-shell-page .settings-tab {
     min-height: 40px;
     font-size: 0.85rem;
@@ -638,7 +634,7 @@ body.compact-shell-page .settings-tab {
 }
 body.compact-shell-page .settings-group {
     padding: 18px;
-    border-radius: 14px;
+    border-radius: var(--page-card-radius);
     margin-bottom: 14px;
 }
 body.compact-shell-page .settings-title {

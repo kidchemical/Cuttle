@@ -93,7 +93,7 @@ body.git-graph-body {
     overflow: hidden !important;
     max-width: none !important;
     margin: 0 !important;
-    padding: 10px 12px 0 !important;
+    padding: var(--page-pad-top) var(--page-pad-x) 0 !important;
     box-sizing: border-box !important;
 }
 
@@ -818,7 +818,7 @@ html.git-graph-root *::-webkit-scrollbar-corner {
 
 @media (max-width: 900px) {
     .git-graph-page {
-        padding: 8px 8px 0 !important;
+        padding: 8px var(--page-pad-x) 0 !important;
     }
     .git-graph-toolbar {
         gap: 8px;

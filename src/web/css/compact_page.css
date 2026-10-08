@@ -1,7 +1,23 @@
 /* Compact in-shell pages (Control Panel, Settings, Tools, Tasks, Skills, Jobs, Dashboards).
    App shell already provides nav — these pages should stay dense and chrome-free. */
 
+/* ── Page frame (backbone) ───────────────────────────────────────
+   One owner for every in-shell page's outer edge: inset, max width,
+   and card surface. Page roots opt in with `.cuttle-page`; page CSS
+   owns what sits inside the frame, never the frame itself (enforced
+   by src/tests/quality/test_page_header_standard.py). Full-height
+   pages (Git) and full-bleed sticky bars (Router) align to the same
+   tokens. Chat keeps its own layout. */
 body.compact-shell-page {
+    --page-max-width: 1180px;
+    --page-pad-top: 10px;
+    --page-pad-x: 12px;
+    --page-pad-bottom: 16px;
+    --page-card-radius: 10px;
+    --page-card-bg: var(--section-bg);
+    --page-card-border: 1px solid var(--border-color);
+    /* Full-bleed bars (Router) inset their content to the frame edge. */
+    --page-bleed-inset: max(var(--page-pad-x), calc((100% - var(--page-max-width)) / 2 + var(--page-pad-x)));
     padding: 0;
     /* Fill the iframe/viewport cell — min-height:100% collapses when <html>
        has no explicit height and the theme gradient then tiles below content. */
@@ -9,10 +25,14 @@ body.compact-shell-page {
     min-height: 100dvh;
 }
 
-body.compact-shell-page .page-content {
-    padding: 10px 12px 16px;
-    max-width: 1180px;
+body.compact-shell-page .cuttle-page {
+    width: 100%;
+    max-width: var(--page-max-width);
     margin: 0 auto;
+    padding: var(--page-pad-top) var(--page-pad-x)
+        max(var(--page-pad-bottom), var(--safe-area-inset-bottom, 0px));
+    box-sizing: border-box;
+    min-width: 0;
 }
 
 body.compact-shell-page .page-section,
@@ -68,6 +88,49 @@ body.compact-shell-page .container {
     max-width: 62ch;
 }
 
+/* ── Page header standard ────────────────────────────────────────
+   Backbone for every in-shell page header. Pages reuse
+   `.compact-page-title` (title + subtitle type) and add
+   `.has-actions` + `.compact-page-actions` when the header carries
+   buttons/controls on the right. Page CSS owns layout and content
+   below the header — never the h1/p type scale. Sticky action bars
+   (router) and eyebrow rows (agent feed) are documented variants:
+   same type tokens, page-owned chrome. Chat keeps its own header. */
+
+.compact-page-title.has-actions {
+    justify-content: space-between;
+    align-items: center;
+}
+
+.compact-page-title .compact-page-heading {
+    min-width: 0;
+}
+
+.compact-page-title .compact-page-heading h1 {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    color: var(--text-primary);
+}
+
+.compact-page-title .compact-page-heading p {
+    margin: 2px 0 0 0;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    line-height: 1.35;
+    max-width: 62ch;
+}
+
+.compact-page-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-left: auto;
+    flex-shrink: 0;
+}
+
 /* Override legacy giant page-header if still present */
 body.compact-shell-page .page-header {
     text-align: left;
@@ -102,7 +165,7 @@ body.compact-shell-page .page-header .page-hint {
 body.compact-shell-page .service-card {
     background: var(--section-bg);
     border: 1px solid var(--border-color);
-    border-radius: 8px;
+    border-radius: var(--page-card-radius);
     padding: 10px 11px;
     margin: 0;
     backdrop-filter: none;
@@ -169,9 +232,9 @@ body.compact-shell-page .info-row {
 
 /* ── Settings compact rows ───────────────────────────────────── */
 body.compact-shell-page .settings-group {
-    background: var(--section-bg);
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
+    background: var(--page-card-bg);
+    border: var(--page-card-border);
+    border-radius: var(--page-card-radius);
     padding: 10px 12px;
     margin-bottom: 8px;
     backdrop-filter: none;
@@ -294,11 +357,6 @@ body.compact-shell-page .multiselect-trigger {
 
 /* ── Jobs denser ─────────────────────────────────────────────── */
 body.compact-shell-page .jobs-page {
-    padding: 10px 12px 16px;
-    max-width: 1180px;
-    min-width: 0;
-    width: 100%;
-    box-sizing: border-box;
     overflow-x: hidden;
 }
 
@@ -352,10 +410,13 @@ body.compact-shell-page .job-card,
 body.compact-shell-page .running-now-card {
     padding: 8px 10px;
     margin-bottom: 5px;
-    border-radius: 7px;
+    border-radius: var(--page-card-radius);
 }
 
 @media (max-width: 640px) {
+    body.compact-shell-page {
+        --page-pad-x: 10px;
+    }
     .compact-tile-grid {
         grid-template-columns: 1fr;
     }

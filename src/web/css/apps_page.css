@@ -1,6 +1,6 @@
 /* Apps launcher — Android-style drawer of Cuttle web apps (compact shell page). */
 
-.apps-page { padding: 16px; max-width: 1180px; margin: 0 auto; }
+/* Frame (inset, width) comes from .cuttle-page in compact_page.css. */
 
 .apps-bar {
     display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 6px;
@@ -105,7 +105,6 @@ body.light-mode .apps-icon {
 .apps-status.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
 @media (max-width: 480px) {
-    .apps-page { padding: 12px; }
     .apps-grid { grid-template-columns: repeat(4, 1fr); gap: 16px 4px; }
     .apps-search { flex-basis: 100%; }
 }

@@ -12,10 +12,8 @@ body.compact-shell-page {
     color: var(--text-primary);
 }
 
+/* Frame (inset, width) comes from .cuttle-page in compact_page.css. */
 .re-page {
-    max-width: 880px;
-    margin: 0 auto;
-    padding: 10px 14px 40px;
     display: flex;
     flex-direction: column;
     gap: 10px;
@@ -29,7 +27,8 @@ body.compact-shell-page {
     gap: 8px 10px;
     flex-wrap: wrap;
     row-gap: 8px;
-    padding: 10px 14px;
+    /* Full-bleed sticky bar; content lines up with the page frame. */
+    padding: 10px var(--page-bleed-inset);
     border-bottom: 1px solid var(--border-color);
     background: var(--section-bg);
     position: sticky;
@@ -47,9 +46,12 @@ body.compact-shell-page {
 
 .re-logo { font-size: 1.05rem; }
 
+/* Sticky action-bar variant of the shared page-header standard
+   (.compact-page-title in compact_page.css): same type tokens, with
+   sticky Save/Reload chrome this tool page needs. */
 .re-header h1 {
     margin: 0;
-    font-size: 1.02rem;
+    font-size: 1.05rem;
     font-weight: 650;
     letter-spacing: -0.01em;
     color: var(--text-primary);
@@ -153,7 +155,7 @@ select.re-input option {
 .re-card {
     background: var(--section-bg);
     border: 1px solid var(--border-color);
-    border-radius: 9px;
+    border-radius: var(--page-card-radius);
     padding: 11px 13px;
 }
 
@@ -556,8 +558,8 @@ select.re-input option {
 .re-toast.error { border-color: var(--error-border); }
 
 @media (max-width: 640px) {
-    .re-header { padding: 8px 10px; }
-    .re-page { padding: 8px 10px 32px; gap: 8px; }
+    .re-header { padding-block: 8px; }
+    .re-page { gap: 8px; }
     .re-label { width: 100%; }
     .re-uc-routing { grid-template-columns: 1fr; }
     .re-input.narrow, .re-input.wide { width: 100%; flex: 1 1 100%; }
@@ -585,7 +587,6 @@ select.re-input option {
 
 /* Lane overview and decision previews share the page's existing theme. */
 [hidden] { display: none !important; }
-.re-page { max-width: 1100px; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .re-settings > summary { cursor: pointer; font-size: .8rem; font-weight: 600; color: var(--text-secondary); }
 .re-settings[open] > summary { margin-bottom: 12px; }
