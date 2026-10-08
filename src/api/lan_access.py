@@ -34,7 +34,6 @@ from api.server_ports import (
 
 _FIREWALL_RULE_HTTPS = "Cuttle LAN HTTPS (LocalSubnet)"
 _FIREWALL_RULE_HTTP = "Cuttle LAN HTTP (LocalSubnet)"
-_FIREWALL_RULE_HTTP_OPEN = "Cuttle LAN HTTP (Open LAN)"
 _FIREWALL_RULE_HTTP_ALT = "Cuttle LAN HTTP alt (8000)"
 # Legacy default snapshots (import compat only). Listener ports are owned by
 # api.server_ports (env-only); use the get_*_port() helpers for live values.
@@ -230,11 +229,12 @@ def cert_needs_regeneration(cert_file: Path, lan_ip: Optional[str]) -> bool:
 
 
 def ensure_windows_lan_firewall_rule(port: Optional[int] = None) -> bool:
-    """Allow inbound TCP from LocalSubnet (same Wi‑Fi/LAN only).
+    """Allow inbound TCP from LocalSubnet on Private networks only.
 
-    Uses Private+Public profiles so home Wi‑Fi still works when Windows marks it Public.
-    RemoteAddress LocalSubnet prevents wide-open internet exposure without router port-forward.
-    ``None`` means the configured primary HTTPS port.
+    Private profile only: if Windows marks home Wi‑Fi as Public, set it to
+    Private in Windows Settings instead of widening the rule. RemoteAddress
+    LocalSubnet prevents wide-open internet exposure without router
+    port-forward. ``None`` means the configured primary HTTPS port.
     """
     if port is None:
         port = get_primary_https_port()
@@ -267,7 +267,7 @@ def ensure_windows_lan_firewall_rule(port: Optional[int] = None) -> bool:
                 "-Command",
                 f"New-NetFirewallRule -DisplayName '{rule_name}' "
                 f"-Direction Inbound -Protocol TCP -LocalPort {port} -Action Allow "
-                f"-Profile Private,Public -RemoteAddress LocalSubnet",
+                f"-Profile Private -RemoteAddress LocalSubnet",
             ],
             capture_output=True,
             text=True,
@@ -283,53 +283,6 @@ def ensure_windows_lan_firewall_rule(port: Optional[int] = None) -> bool:
         return False
 
 
-def ensure_windows_lan_firewall_rule_open(port: int = LAN_HTTP_PORT) -> bool:
-    """Fallback: allow inbound HTTP from any source on LAN port.
-
-    Still not reachable from the public internet without router port-forwarding.
-    Helps when LocalSubnet classification blocks some phones/routers.
-    """
-    if sys.platform != "win32":
-        return False
-    rule_name = _FIREWALL_RULE_HTTP_OPEN
-    try:
-        check = subprocess.run(
-            [
-                "powershell",
-                "-NoProfile",
-                "-Command",
-                f"(Get-NetFirewallRule -DisplayName '{rule_name}' -ErrorAction SilentlyContinue | "
-                f"Where-Object {{ $_.Enabled -eq 'True' }} | Measure-Object).Count",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        if check.returncode == 0 and (check.stdout or "").strip() not in ("", "0"):
-            return True
-        create = subprocess.run(
-            [
-                "powershell",
-                "-NoProfile",
-                "-Command",
-                f"New-NetFirewallRule -DisplayName '{rule_name}' "
-                f"-Direction Inbound -Protocol TCP -LocalPort {port} -Action Allow "
-                f"-Profile Private,Public -RemoteAddress Any",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        if create.returncode != 0:
-            print(f"[LAN] Open firewall rule failed: {(create.stderr or create.stdout or '').strip()}")
-            return False
-        print(f"[LAN] Firewall rule added: {rule_name} (Any, port {port})")
-        return True
-    except Exception as e:
-        print(f"[LAN] Open firewall rule skipped: {e}")
-        return False
-
-
 def ensure_all_lan_firewall_rules() -> bool:
     if sys.platform != "win32":
         # Desktop Linux typically has no Windows-style LAN firewall block.
@@ -337,7 +290,6 @@ def ensure_all_lan_firewall_rules() -> bool:
     ok_https = ensure_windows_lan_firewall_rule(get_primary_https_port())
     ok_phone = ensure_windows_lan_firewall_rule(get_phone_https_port())
     ok_alt = ensure_windows_lan_firewall_rule(get_http_fallback_port())
-    ensure_windows_lan_firewall_rule_open(get_phone_https_port())
     return ok_https and ok_phone and ok_alt
 
 
