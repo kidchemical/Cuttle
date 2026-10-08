@@ -3,6 +3,7 @@
     'use strict';
     function mount(root) {
         if (!root) return;
+        const AUTO_CHECK_KEY = 'cuttleAutoUpdateChecks';
         const status = root.querySelector('[data-release-status]');
         const version = root.querySelector('[data-release-version]');
         const checked = root.querySelector('[data-release-checked]');
@@ -11,7 +12,25 @@
         const title = root.querySelector('[data-release-title]');
         const link = root.querySelector('[data-release-link]');
         const button = root.querySelector('[data-release-check]');
+        const autoToggle = root.querySelector('[data-release-auto-toggle]');
+        const autoCheckbox = root.querySelector('[data-release-auto-check]');
         let identity = '';
+
+        function autoChecksEnabled() {
+            try { return window.localStorage.getItem(AUTO_CHECK_KEY) !== '0'; }
+            catch (_) { return true; }
+        }
+
+        function paintAutoCheck(enabled) {
+            if (autoToggle) autoToggle.classList.toggle('active', enabled);
+            if (autoCheckbox) autoCheckbox.checked = enabled;
+        }
+
+        function showManualOnly() {
+            status.textContent = 'Automatic checks are off. Use Check for updates to check manually.';
+            checked.textContent = 'Manual checks remain available.';
+        }
+
         async function load(force) {
             button.disabled = true;
             status.textContent = 'Checking published releases…';
@@ -48,6 +67,24 @@
             }
         }
         button.addEventListener('click', () => load(true));
+        const autoEnabled = autoChecksEnabled();
+        paintAutoCheck(autoEnabled);
+        if (autoToggle) {
+            autoToggle.addEventListener('click', (event) => {
+                event.preventDefault();
+                const enabled = !autoChecksEnabled();
+                try { window.localStorage.setItem(AUTO_CHECK_KEY, enabled ? '1' : '0'); }
+                catch (_) { /* keep the visual preference for this page */ }
+                paintAutoCheck(enabled);
+                if (enabled) {
+                    load(false);
+                    if (window.showToast) window.showToast('Automatic update checks enabled', 'info');
+                } else {
+                    showManualOnly();
+                    if (window.showToast) window.showToast('Automatic update checks disabled', 'info');
+                }
+            });
+        }
         version.addEventListener('click', async () => {
             if (!identity) return;
             try {
@@ -57,7 +94,8 @@
                 checked.textContent = 'Could not copy. Select the version text to copy it.';
             }
         });
-        load(false);
+        if (autoEnabled) load(false);
+        else showManualOnly();
     }
     window.CuttleSettingsReleases = { mount };
 }());

@@ -8,7 +8,7 @@
     <title>Cuttle</title>
     <link rel="stylesheet" href="/css/ui_boot.css?v=20260927blendTarget">
     <script src="/js/shared/ui_boot.js?v=20260926safeArea"></script>
-    <link rel="stylesheet" href="/css/app_shell.css?v=20261007barRail">
+    <link rel="stylesheet" href="/css/app_shell.css?v=20261008whatsNew">
     <link rel="stylesheet" href="/css/chat_lightbox.css?v=20260922imgCtxMenu">
     <link rel="stylesheet" href="/css/video_background.css?v=20260927blendTarget">
     <link rel="stylesheet" href="/css/auth_modal.css?v=20260926authLogin">
@@ -352,6 +352,19 @@
 
 <div class="shell-zoom-hud" id="shellZoomHud" hidden aria-live="polite" aria-atomic="true">100%</div>
 
+<div class="cuttle-whats-new-modal" id="cuttleWhatsNewModal" hidden>
+    <section class="cuttle-whats-new-card" role="dialog" aria-modal="true" aria-labelledby="cuttleWhatsNewTitle" aria-describedby="cuttleWhatsNewNotes">
+        <button type="button" class="cuttle-whats-new-close" data-whats-new-dismiss aria-label="Close What's new">×</button>
+        <p class="cuttle-whats-new-eyebrow">Welcome back</p>
+        <h2 id="cuttleWhatsNewTitle">What’s new in Cuttle <span data-whats-new-version></span></h2>
+        <div class="cuttle-whats-new-notes" id="cuttleWhatsNewNotes" data-whats-new-notes></div>
+        <div class="cuttle-whats-new-actions">
+            <a href="https://github.com/kidchemical/Cuttle/releases" data-whats-new-link target="_blank" rel="noopener noreferrer">View full release notes</a>
+            <button type="button" class="control-button btn-info" data-whats-new-dismiss>Got it</button>
+        </div>
+    </section>
+</div>
+
 <script src="/js/shared/toast.js?v=20260921voiceMic"></script>
     <script src="/js/shared/completion_notifications.js?v=20261004completion"></script>
 <script src="/js/shared/net_debug.js?v=20260810c"></script>
@@ -370,6 +383,7 @@
 <script src="/js/chat/chat_vfx.js?v=20261003vfx1"></script>
 <script src="/js/achievements/celebrate.js?v=20261003vfx1"></script>
 <script src="/js/achievements/achievements.js?v=20261003ach1"></script>
+<script src="/js/shell/whats_new.js?v=20261008whatsNew"></script>
 <script src="/js/shell/app_shell.js?v=20261008sync"></script>
 <script src="/js/gizmos/gizmos_model.js?v=20261007gizmos2"></script>
 <script src="/js/gizmos/gizmos_shell.js?v=20261007gizmos2"></script>

@@ -280,6 +280,17 @@ def test_scope_badges_say_which_world_a_setting_lives_in():
         assert f'data-scope="{scope}"' in html
 
 
+def test_release_settings_include_default_on_auto_check_toggle():
+    html = _page()
+    assert 'data-release-auto-toggle' in html
+    assert 'data-release-auto-check' in html
+    assert 'cuttleAutoUpdateChecks' in html
+    release_js = (REPO_ROOT / "src" / "web" / "js" / "settings" / "settings_releases.js").read_text(encoding="utf-8")
+    assert "getItem(AUTO_CHECK_KEY) !== '0'" in release_js
+    assert "if (autoEnabled) load(false);" in release_js
+    assert "load(true)" in release_js
+
+
 # ── behavior (node) ───────────────────────────────────────────────────────
 
 HARNESS = r"""

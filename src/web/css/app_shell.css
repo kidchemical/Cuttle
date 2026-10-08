@@ -2611,4 +2611,97 @@ html.cuttle-bg-paused .split-column.pane-drop-target > .pane-drop-overlay {
     color: inherit;
 }
 
+/* First-launch release notes. The shell owns this because it survives pane
+   navigation and is the first surface after a desktop/client relaunch. */
+.cuttle-whats-new-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 10070;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(0, 0, 0, 0.5);
+}
+
+.cuttle-whats-new-modal[hidden] {
+    display: none;
+}
+
+.cuttle-whats-new-card {
+    position: relative;
+    width: min(620px, 100%);
+    max-height: min(78vh, 700px);
+    overflow-y: auto;
+    padding: 28px 30px 24px;
+    border: 1px solid var(--panel-border, rgba(255, 255, 255, 0.14));
+    border-radius: 14px;
+    background: var(--panel-bg, #1b2230);
+    color: var(--text, #e8edf5);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.cuttle-whats-new-close {
+    position: absolute;
+    top: 10px;
+    right: 12px;
+    border: 0;
+    background: transparent;
+    color: var(--text-secondary, #aab4c3);
+    font-size: 1.5rem;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.cuttle-whats-new-close:hover,
+.cuttle-whats-new-close:focus-visible {
+    color: var(--text-primary, #fff);
+}
+
+.cuttle-whats-new-eyebrow {
+    margin: 0 0 6px;
+    color: var(--accent-color, #8aa4ff);
+    font-size: 0.76rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.cuttle-whats-new-card h2 {
+    margin: 0 0 18px;
+    padding-right: 22px;
+    font-size: 1.35rem;
+}
+
+.cuttle-whats-new-notes {
+    max-height: 46vh;
+    overflow-y: auto;
+    padding: 14px 16px;
+    border: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
+    border-radius: 9px;
+    background: var(--section-bg, rgba(255, 255, 255, 0.04));
+    color: var(--text-secondary, #c2cad6);
+    font-size: 0.9rem;
+    line-height: 1.55;
+    white-space: pre-wrap;
+}
+
+.cuttle-whats-new-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 14px;
+    margin-top: 18px;
+}
+
+.cuttle-whats-new-actions a {
+    color: var(--accent-color, #8aa4ff);
+    font-size: 0.84rem;
+}
+
+@media (max-width: 600px) {
+    .cuttle-whats-new-modal { padding: 14px; }
+    .cuttle-whats-new-card { padding: 25px 18px 18px; }
+}
+
 .shell-space-activity.is-input { background: #3b82f6; box-shadow: 0 0 8px #3b82f688; }
