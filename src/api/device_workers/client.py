@@ -3,17 +3,12 @@
 from __future__ import annotations
 
 import json
-import ssl
 import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional
 
-try:
-    import requests
-except ImportError:  # pragma: no cover
-    requests = None  # type: ignore
-
 from api.device_workers.config import coordinator_base_url, worker_id, worker_token
+from api.tls_cert import urlopen as tls_urlopen
 
 
 class DeviceWorkerClient:
@@ -26,14 +21,6 @@ class DeviceWorkerClient:
         self.base_url = (base_url or coordinator_base_url()).rstrip("/")
         self.token = token if token is not None else worker_token()
         self.worker_id = worker_id_value or worker_id()
-
-    def _ssl_context(self) -> Optional[ssl.SSLContext]:
-        if self.base_url.lower().startswith("https://"):
-            ctx = ssl.create_default_context()
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
-            return ctx
-        return None
 
     def _request_urllib(
         self,
@@ -56,9 +43,8 @@ class DeviceWorkerClient:
             headers["Content-Type"] = "application/json"
         req = urllib.request.Request(url, data=data, headers=headers, method=method.upper())
         try:
-            with urllib.request.urlopen(
-                req, timeout=timeout, context=self._ssl_context()
-            ) as resp:
+            # Remote HTTPS requires the desktop app's key pin (api.tls_cert).
+            with tls_urlopen(req, timeout=timeout) as resp:
                 raw = resp.read() or b"{}"
                 parsed = json.loads(raw.decode("utf-8", errors="replace") or "{}")
                 return parsed if isinstance(parsed, dict) else {"data": parsed}
@@ -83,36 +69,7 @@ class DeviceWorkerClient:
     ) -> Dict[str, Any]:
         if not self.base_url:
             raise RuntimeError("coordinator URL not configured")
-        if requests is None:
-            return self._request_urllib(
-                method, path, json_body=json_body, timeout=timeout
-            )
-        url = f"{self.base_url}{path}"
-        headers = {
-            "Accept": "application/json",
-            "User-Agent": "cuttle-device-worker/0.2",
-        }
-        if self.token:
-            headers["Authorization"] = f"Bearer {self.token}"
-        if json_body is not None:
-            headers["Content-Type"] = "application/json"
-        verify = False if self.base_url.lower().startswith("https://") else True
-        r = requests.request(
-            method,
-            url,
-            headers=headers,
-            json=json_body,
-            timeout=timeout,
-            verify=verify,
-        )
-        try:
-            data = r.json() if r.content else {}
-        except Exception:
-            data = {"raw": (r.text or "")[:400]}
-        if not r.ok:
-            err = data.get("error") if isinstance(data, dict) else r.text
-            raise RuntimeError(f"workers API {method} {path} → HTTP {r.status_code}: {err}")
-        return data if isinstance(data, dict) else {"data": data}
+        return self._request_urllib(method, path, json_body=json_body, timeout=timeout)
 
     def register(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         body = dict(payload)

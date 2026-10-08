@@ -226,7 +226,6 @@ def request_via_coordinator(
     # (daemon worker → Flask is cross-process, so HTTP).
     try:
         import json
-        import ssl
         import urllib.error
         import urllib.request
 
@@ -252,12 +251,11 @@ def request_via_coordinator(
             headers={**headers, "Content-Type": "application/json"},
             method="POST",
         )
-        ctx = None
-        if base.lower().startswith("https://"):
-            ctx = ssl.create_default_context()
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
-        with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
+        from api.tls_cert import urlopen as tls_urlopen
+
+        # Loopback keeps the local self-signed exception; a remote coordinator
+        # must present its pinned key (api.tls_cert).
+        with tls_urlopen(req, timeout=15) as resp:
             data = json.loads(resp.read().decode("utf-8") or "{}")
         rid = str((data.get("request") or {}).get("id") or data.get("id") or "").strip()
         if not rid:
@@ -269,7 +267,7 @@ def request_via_coordinator(
                 headers=headers,
                 method="GET",
             )
-            with urllib.request.urlopen(greq, timeout=10, context=ctx) as resp:
+            with tls_urlopen(greq, timeout=10) as resp:
                 body = json.loads(resp.read().decode("utf-8") or "{}")
             row = body.get("request") or body
             st = str(row.get("status") or "")

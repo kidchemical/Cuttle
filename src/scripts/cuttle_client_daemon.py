@@ -19,11 +19,11 @@ from __future__ import annotations
 import json
 import os
 import socket
-import ssl
 import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -84,13 +84,6 @@ def write_status(patch: Dict[str, Any]) -> None:
         os.replace(tmp, path)
 
 
-def _ssl_ctx() -> ssl.SSLContext:
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-    return ctx
-
-
 def http_json(
     method: str,
     base: str,
@@ -109,9 +102,11 @@ def http_json(
         data = json.dumps(body).encode("utf-8")
         headers["Content-Type"] = "application/json"
     req = urllib.request.Request(url, data=data, headers=headers, method=method.upper())
-    ctx = _ssl_ctx() if url.lower().startswith("https://") else None
+    from api.tls_cert import urlopen as tls_urlopen
+
+    # Remote HTTPS: the desktop app's pinned key (PIN_ENV), never unverified.
     try:
-        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+        with tls_urlopen(req, timeout=timeout) as resp:
             raw = resp.read() or b"{}"
             return json.loads(raw.decode("utf-8", errors="replace") or "{}")
     except urllib.error.HTTPError as e:
@@ -262,6 +257,16 @@ def main() -> int:
         print(f"[CLIENT-DAEMON] {exc}")
         return 2
     selected_base = bases[0]
+    # Remote HTTPS trust = the key the desktop app pinned for this host:port.
+    from api.tls_cert import PIN_ENV, desktop_pin
+
+    for base in bases:
+        parts = urllib.parse.urlsplit(base)
+        if parts.scheme == "https" and parts.port:
+            pin = desktop_pin(cfg.get("tlsPins"), host, parts.port)
+            if pin:
+                os.environ[PIN_ENV] = pin
+            break
     http_base = next(
         (b for b in bases if b.startswith("http://") and not b.startswith("https://")),
         "",

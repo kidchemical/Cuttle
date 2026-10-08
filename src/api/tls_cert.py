@@ -6,6 +6,12 @@ desktop Clients pin the certificate's *public key* (trust on first use, see
 existing private key: the SAN changes, the pin does not. Only a missing or
 unreadable key produces a new one (Clients then ask the user to re-trust).
 
+Python clients of a remote Host (client daemon, remote worker loop, SSH
+approval transport) verify the same pin with :func:`urlopen`: loopback keeps
+the local self-signed exception, a remote HTTPS Host must present the pinned
+key, and there is no unverified fallback. (The Electron sidecar carries a
+stdlib-only copy because it runs without this package.)
+
 CLI (run on the Host, compare with the fingerprint a Client shows)::
 
     python -m api.tls_cert fingerprint
@@ -16,9 +22,14 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import http.client
 import ipaddress
 import json
+import os
+import ssl
 import sys
+import urllib.parse
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional, Tuple
@@ -116,6 +127,94 @@ def format_fingerprint(b64: str) -> str:
     """``AB:CD:…`` form shown by the desktop trust prompt."""
     raw = base64.b64decode(b64)
     return ":".join(f"{b:02X}" for b in raw)
+
+
+# --- client-side pin verification ------------------------------------------------
+
+PIN_ENV = "CUTTLE_COORDINATOR_TLS_SPKI_SHA256"
+
+
+class TlsPinError(ssl.SSLError):
+    """Remote HTTPS peer is unpinned or presented a different key."""
+
+
+def peer_spki_sha256(cert_der: bytes) -> str:
+    return spki_sha256(x509.load_der_x509_certificate(cert_der))
+
+
+def is_loopback_url(url: str) -> bool:
+    host = (urllib.parse.urlsplit(url).hostname or "").strip("[]").lower()
+    if host in ("localhost", "::1"):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    """Checks the peer key against the pin before any request byte is sent."""
+
+    expected_spki = ""
+
+    def connect(self) -> None:
+        super().connect()
+        der = self.sock.getpeercert(binary_form=True) or b""
+        try:
+            actual = peer_spki_sha256(der) if der else ""
+        except Exception:
+            actual = ""
+        if not actual or actual != self.expected_spki:
+            self.sock.close()
+            raise TlsPinError("remote Host certificate key does not match its pin")
+
+
+class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
+    def __init__(self, expected_spki: str) -> None:
+        ctx = ssl.create_default_context()
+        # The key pin replaces chain/hostname checks (self-signed LAN Host).
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        super().__init__(context=ctx)
+        self._expected_spki = expected_spki
+
+    def https_open(self, req):
+        conn = type("PinnedConnection", (_PinnedHTTPSConnection,), {"expected_spki": self._expected_spki})
+        return self.do_open(conn, req, context=self._context)
+
+
+def urlopen(req: urllib.request.Request, *, timeout: float, spki_pin: Optional[str] = None):
+    """Open a request to a Cuttle Host.
+
+    Plain HTTP is unchanged. Loopback HTTPS accepts the local self-signed
+    certificate. Remote HTTPS requires ``spki_pin`` (default: the
+    ``CUTTLE_COORDINATOR_TLS_SPKI_SHA256`` env the desktop app provides) and
+    raises :class:`TlsPinError` without it — never an unverified fallback.
+    """
+    url = req.full_url
+    if not url.lower().startswith("https://"):
+        return urllib.request.urlopen(req, timeout=timeout)
+    if is_loopback_url(url):
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return urllib.request.urlopen(req, timeout=timeout, context=ctx)
+    pin = (spki_pin if spki_pin is not None else os.environ.get(PIN_ENV, "")).strip()
+    if not pin:
+        raise TlsPinError(
+            f"remote HTTPS Host {urllib.parse.urlsplit(url).netloc} has no pinned certificate key; "
+            "connect the desktop app to it once to review and trust the key"
+        )
+    return urllib.request.build_opener(_PinnedHTTPSHandler(pin)).open(req, timeout=timeout)
+
+
+def desktop_pin(pins: object, host: str, port: int) -> str:
+    """Pin saved by the desktop app (desktop-config.json ``tlsPins``) for host:port."""
+    if not isinstance(pins, dict):
+        return ""
+    entry = pins.get(f"{(host or '').strip('[]').lower()}:{int(port)}")
+    spki = entry.get("spki") if isinstance(entry, dict) else ""
+    return spki if isinstance(spki, str) else ""
 
 
 def current_fingerprint() -> Optional[dict]:
