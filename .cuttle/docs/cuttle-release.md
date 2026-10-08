@@ -76,12 +76,13 @@ hand — CI never publishes.
 
 Packaged Hosts are self-contained: `electron/bundle-python.js` ships a
 python-build-standalone CPython pinned by SHA-256 in
-`electron/python-runtime.json`, with `src/requirements/requirements.txt` held to
-`electron/python-constraints.txt` (wheels only). They never use system Python or
+`electron/python-runtime.json`, with dependencies resolved from `src/requirements/requirements.txt` and
+hash-locked in `electron/python-requirements.lock` (wheels only, pip
+`--require-hashes`). They never use system Python or
 a repo `.venv`. To move the runtime, update every field of
 `python-runtime.json` from the release `SHA256SUMS`; after changing runtime
 requirements run `node electron/bundle-python.js --lock` and commit the new
-constraints. `electron/tests/packaged-host-e2e.cjs` is the clean-environment
+lock. `electron/tests/packaged-host-e2e.cjs` is the clean-environment
 check CI runs against the installed artifact (local runs need an isolated
 display and must not share ports or a process namespace with a live Host).
 

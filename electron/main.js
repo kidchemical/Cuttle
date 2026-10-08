@@ -2446,6 +2446,9 @@ async function requestHostExit() {
 }
 
 app.on('before-quit', () => {
+    // Chromium can initiate quit directly on SIGTERM before Node's handler runs.
+    // Allow the close event to finish instead of minimizing the window to tray.
+    app.isQuitting = true;
     stopWorkerSidecar();
     if (LAUNCH_MODE === 'host' && spawnedDaemonPid && stopDaemonOnQuit) {
         console.log('Cuttle Host exiting — stopping daemon pid', spawnedDaemonPid);

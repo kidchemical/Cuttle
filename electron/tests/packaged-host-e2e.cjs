@@ -20,7 +20,6 @@
 'use strict';
 
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const http = require('http');
 const https = require('https');
@@ -136,13 +135,15 @@ async function stopElectron(child, isExited) {
     if (isWin) {
         killTree(child.pid);
     } else {
-        try { process.kill(-child.pid, 'SIGTERM'); } catch (_) {}
+        try { process.kill(child.pid, 'SIGTERM'); } catch (_) {}
         for (let i = 0; i < 50 && !isExited(); i++) await sleep(100);
         if (!isExited()) {
+            fail('packaged Electron did not exit within 5 seconds after SIGTERM');
             try { process.kill(-child.pid, 'SIGKILL'); } catch (_) {}
         }
     }
     child.unref();
+    if (!isWin && isExited()) log('packaged Electron exited after SIGTERM');
 }
 
 async function main() {
@@ -150,7 +151,9 @@ async function main() {
     const pyExe = path.join(bundledRoot, ...(isWin ? ['python.exe'] : ['bin', 'python3']));
     if (!fs.existsSync(pyExe)) throw new Error(`bundled Python missing: ${pyExe}`);
 
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cuttle-packaged-e2e-'));
+    const scratch = path.join(__dirname, '..', '..', 'temp');
+    fs.mkdirSync(scratch, { recursive: true });
+    const root = fs.mkdtempSync(path.join(scratch, 'packaged-e2e-'));
     const home = path.join(root, 'home');
     const cuttleHome = path.join(root, 'cuttle-home');
     fs.mkdirSync(home, { recursive: true });
