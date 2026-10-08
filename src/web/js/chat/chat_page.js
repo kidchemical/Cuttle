@@ -2808,10 +2808,9 @@
         (async () => {
             try {
                 while (!cancelled && (Date.now() - startedAt) < maxMs) {
-                    if (currentSessionId != null && sessionIdsEqual(currentSessionId, sid)) {
-                        // User returned — open pane owns delivery / sync.
-                        break;
-                    }
+                    // No "returned home" check before the first await: navigation
+                    // detaches while currentSessionId still names the chat being
+                    // left. Re-opening the chat cancels this watch outright.
                     let data = null;
                     try {
                         const resp = await fetchWithTimeout(
