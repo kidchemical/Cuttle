@@ -185,6 +185,42 @@ def test_settings_validators_owned():
     assert {f["write"] for f in sr.SETTING_FAMILIES if f["write"] != "n/a"} == {"owner"}
 
 
+def test_app_settings_snapshot_is_owner_only(tmp_path, monkeypatch):
+    """GET /api/app-settings: 401 anon, 403 guest/non-owner, 200 owner.
+
+    The aggregate returns the full settings.json snapshot (channel posture,
+    discovery/LAN, device_workers incl. SSH targets, router/provider config,
+    starred project paths), so it must never answer an unauthenticated
+    caller — especially over LAN HTTP.
+    """
+    from api import settings_routes as sr
+    from api import web_chat_api as wca
+
+    assert next(
+        f["read"] for f in sr.SETTING_FAMILIES if f["name"] == "app-settings"
+    ) == "owner"
+
+    _isolated_settings(monkeypatch, tmp_path)
+    anon = wca.app.test_client()
+    assert anon.get("/api/app-settings", environ_base=LAN).status_code == 401
+
+    guest = wca.app.test_client()
+    assert guest.post("/api/auth/guest", json={}).status_code == 200
+    assert guest.get("/api/app-settings", environ_base=LAN).status_code == 403
+
+    # Single-user mode (helper clears OWNER_USER_EMAIL): the first account is
+    # the owner, the second an authenticated non-owner.
+    ctx = _auth_client(tmp_path, monkeypatch)
+    ctx["client"].set_cookie("session_token", ctx["other_token"])
+    assert ctx["client"].get("/api/app-settings", environ_base=LAN).status_code == 403
+
+    ctx["client"].set_cookie("session_token", ctx["token"])
+    res = ctx["client"].get("/api/app-settings", environ_base=LAN)
+    assert res.status_code == 200
+    assert res.get_json()["success"] is True
+    assert "device_workers" in res.get_json()["settings"]
+
+
 def test_retired_graph_settings_routes_are_absent():
     from api import web_chat_api as wca
     assert '/api/settings/sandbox' not in {r.rule for r in wca.app.url_map.iter_rules()}

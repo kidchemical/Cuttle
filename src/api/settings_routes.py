@@ -6,8 +6,9 @@ Ownership contract (do not split across the monolith again):
   ``video_playlists``). Never inline new rules in handlers.
 - Persistence: ``managers.settings_manager``. No other stores.
 - Defaults: ``settings_manager``.
-- Authorization: reads are ``authenticated_required`` (channel security
-  stays owner-only); every write is ``owner_required``,
+- Authorization: reads are ``authenticated_required`` at minimum; sensitive
+  families (storage, lan-access, channels, the app-settings aggregate) are
+  ``owner_required``. Every write is ``owner_required``,
   enforced SOLELY by the route decorator — never repeat an inline
   ``require_owner()`` check inside a handler.
 - To add a setting: add the key + validator below, persist via
@@ -81,7 +82,7 @@ SETTING_FAMILIES = (
      "validator": "validate_agent_adapters_update", "read": "authenticated", "write": "owner"},
     {"name": "app-settings", "routes": ["GET /app-settings"],
      "backend": "settings_manager.get_all_settings() (read-only aggregate)",
-     "validator": "none (read-only)", "read": "open", "write": "n/a"},
+     "validator": "none (read-only)", "read": "owner", "write": "n/a"},
 )
 
 
@@ -644,8 +645,10 @@ def get_video_metadata_setting():
 # --- read-only aggregate -----------------------------------------------------
 
 @settings_bp.route('/app-settings', methods=['GET'])
+@owner_required
 def get_all_app_settings():
-    """Get all application settings"""
+    """Full settings.json snapshot. Owner-only: no caller needs it pre-login
+    (verified: no src/web, electron, apps or test client fetches it)."""
     try:
         from managers.settings_manager import get_settings_manager
         settings_mgr = get_settings_manager()
