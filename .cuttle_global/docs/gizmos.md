@@ -9,6 +9,24 @@ Usage meters and install-wide docks are gated by the `gizmos` experimental
 flag (default off). Tasks are established chat functionality and remain
 available through their scoped Gizmos API/CLI when this flag is off.
 
+## Feature availability and agent guidance
+
+Tasks instructions apply independently of the `gizmos` flag. Global rule text
+is not automatically filtered by experimental flags; an operation pointer is
+not evidence that its feature is enabled. Before using optional gizmos, inspect
+the resolved flags with `python -m api.experimental list`. Respect disabled
+features and the process kill switch; do not enable an experiment just to
+follow its runbook without the user's instruction to enable it.
+
+For future gizmo types, document whether each type is generally available or
+which registry flag owns it. Experimental operational guidance should belong
+to an enablement-scoped feature bundle, including its rules, docs and skills.
+The current context loaders do not yet support these bundles; conditional
+wording above documents current operation, not the intended final architecture.
+Enforce the resolved gate in the feature's service/CLI/HTTP and UI paths;
+instructions alone cannot enforce availability. Shared Gizmos infrastructure
+does not make every type experimental or every type enabled.
+
 The first type is **`usage_meter`**: plan budget left for one agent (Codex,
 Claude Code, Cursor) plus when the tightest window resets, or when a
 blocked account unblocks. It is the same data as `/usage`, normalized.

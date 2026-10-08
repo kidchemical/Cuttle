@@ -6,7 +6,8 @@ throwaway scripts.
 
 - Chat handles / history → `python -m api.chat_cli` (see `chat-history.md`)
 - Tasks gizmos → `python -m api.gizmos tasks` (see `gizmos.md`; create during planning, patch during work, no Tasks markdown tags)
-- Gizmos (shell-docked usage meters, experimental) → `python -m api.gizmos` (see `gizmos.md`)
+- Before reporting work tracked in a Tasks gizmo complete, patch finished items and read back the list; leave unfinished items open with a reason (`gizmos.md`).
+- Gizmos (shell-docked usage meters, experimental; only when enabled) → `python -m api.gizmos` (see `gizmos.md`)
 - Discord reads → `python -m api.discord_cli` (see `discord.md`; posts stay on `discord.post`)
 - Forge issues → the active project's enabled integration runbook/CLI
 - Live panes → `python -m api.panes_cli` (see `chat-history.md`)
