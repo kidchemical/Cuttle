@@ -98,8 +98,12 @@ function extractRuntime(archive, dest) {
     const staging = `${dest}-extract`;
     fs.rmSync(staging, { recursive: true, force: true });
     fs.mkdirSync(staging, { recursive: true });
-    // bsdtar ships with Windows 10+; GNU tar elsewhere. Archive root is python/.
-    run('tar', ['-xzf', archive, '-C', staging]);
+    // Git Bash puts GNU tar first on PATH; it treats D:\... archives as remote
+    // hosts. Select Windows' native bsdtar explicitly so drive paths stay local.
+    const tar = process.platform === 'win32'
+        ? path.win32.join(process.env.SystemRoot || process.env.WINDIR || 'C:\\Windows', 'System32', 'tar.exe')
+        : 'tar';
+    run(tar, ['-xzf', archive, '-C', staging]);
     fs.renameSync(path.join(staging, 'python'), dest);
     fs.rmSync(staging, { recursive: true, force: true });
 }
@@ -217,4 +221,5 @@ async function main() {
     console.log(`Bundled Python ${lock.pythonVersion} for ${key} → ${outDir}`);
 }
 
-main().catch((err) => fail(err && err.stack ? err.stack : String(err)));
+module.exports = { extractRuntime };
+if (require.main === module) main().catch((err) => fail(err && err.stack ? err.stack : String(err)));
