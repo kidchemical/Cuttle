@@ -630,6 +630,84 @@ class AuthDatabase:
         conn.close()
         return True, 'ok'
 
+    def update_username(self, user_id: int, new_username: str) -> tuple:
+        """Rename a user by id. Returns (ok, reason).
+
+        Reasons: 'ok' | 'unchanged' | 'invalid_username' | 'username_taken'
+        | 'user_not_found'. The row id never changes, so sessions, chats and
+        widgets survive the rename. Local synthetic emails (``<name>@local``)
+        follow the rename; real (OAuth) emails are left alone.
+        """
+        uname = (new_username or '').strip().lower()
+        if not re.fullmatch(r'[a-zA-Z0-9_]{3,32}', uname):
+            return False, 'invalid_username'
+        conn = self._get_connection()
+        try:
+            row = conn.execute('SELECT * FROM users WHERE id = ?', (int(user_id),)).fetchone()
+            if not row or not row['is_active']:
+                return False, 'user_not_found'
+            if (row['username'] or '').lower() == uname:
+                return True, 'unchanged'
+            taken = conn.execute(
+                'SELECT id FROM users WHERE lower(username) = ?', (uname,)
+            ).fetchone()
+            if taken:
+                return False, 'username_taken'
+            old_email = (row['email'] or '').lower()
+            old_uname = (row['username'] or '').lower()
+            new_email = row['email']
+            if row['auth_provider'] == 'local' and old_uname and old_email == old_uname + '@local':
+                new_email = uname + '@local'
+            conn.execute(
+                'UPDATE users SET username = ?, email = ? WHERE id = ?',
+                (uname, new_email, int(user_id)),
+            )
+            conn.commit()
+            return True, 'ok'
+        except sqlite3.IntegrityError:
+            conn.rollback()
+            return False, 'username_taken'
+        finally:
+            conn.close()
+
+    def verify_user_password(self, user_id: int, password: str) -> bool:
+        """Check a password against the user's stored hash (no last_login touch)."""
+        conn = self._get_connection()
+        try:
+            row = conn.execute(
+                'SELECT password_hash FROM users WHERE id = ?', (int(user_id),)
+            ).fetchone()
+        finally:
+            conn.close()
+        if not row or not row['password_hash']:
+            return False
+        stored = row['password_hash']
+        if not stored.startswith('$2'):
+            return False
+        bcrypt = _bcrypt_mod()
+        try:
+            return bool(bcrypt.checkpw((password or '').encode(), stored.encode()))
+        except Exception:
+            return False
+
+    def set_password(self, user_id: int, new_password: str) -> tuple:
+        """Replace a user's password hash by id. Returns (ok, reason)."""
+        if not new_password or len(new_password) < 8:
+            return False, 'weak_password'
+        conn = self._get_connection()
+        try:
+            row = conn.execute('SELECT id FROM users WHERE id = ?', (int(user_id),)).fetchone()
+            if not row:
+                return False, 'user_not_found'
+            conn.execute(
+                'UPDATE users SET password_hash = ? WHERE id = ?',
+                (self._hash_password(new_password), int(user_id)),
+            )
+            conn.commit()
+            return True, 'ok'
+        finally:
+            conn.close()
+
     def update_profile_image(self, user_id: int, profile_image: Optional[str]) -> None:
         """Update avatar URL (e.g. after Google sign-in / refresh)."""
         if not profile_image:

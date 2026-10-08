@@ -312,11 +312,16 @@
             <div class="logout-confirm-avatar" id="logoutConfirmAvatar" aria-hidden="true"></div>
             <h2 class="auth-modal-title" id="logoutConfirmTitle">Account</h2>
             <p class="auth-modal-subtitle" id="logoutConfirmSubtitle">Manage your Cuttle account.</p>
+            <span class="logout-confirm-role" id="logoutConfirmRole" hidden></span>
         </div>
         <div class="logout-confirm-actions" id="logoutConfirmActions">
             <a class="logout-confirm-btn logout-confirm-google" id="logoutConfirmLinkGoogle" href="/api/auth/oauth/google?link=1" hidden>Continue with Google</a>
             <button type="button" class="logout-confirm-btn logout-confirm-google" id="logoutConfirmRefreshGoogle" hidden>Refresh Google photo</button>
             <p class="logout-confirm-linked" id="logoutConfirmGoogleStatus" hidden>Google linked</p>
+            <button type="button" class="logout-confirm-btn logout-confirm-cancel" id="logoutConfirmChangeUsername">Change username</button>
+            <button type="button" class="logout-confirm-btn logout-confirm-cancel" id="logoutConfirmChangePassword">Change password</button>
+            <div class="logout-confirm-profile-forms" id="logoutConfirmProfileForms" hidden></div>
+            <p class="logout-confirm-linked" id="logoutConfirmProfileStatus" role="status" hidden></p>
             <button type="button" class="logout-confirm-btn logout-confirm-cancel" id="logoutConfirmSwitchServer" hidden>Switch server</button>
             <button type="button" class="logout-confirm-btn logout-confirm-cancel" id="logoutConfirmCancel">Cancel</button>
             <button type="button" class="logout-confirm-btn logout-confirm-submit" id="logoutConfirmSubmit">Log out</button>

@@ -186,7 +186,16 @@ function _emitAuthChanged(opts) {
 
 function _applyRemoteAuthUser(incoming) {
     const nextId = _userId(incoming);
-    if (nextId === _userId(currentUser)) return; // already in sync
+    if (nextId === _userId(currentUser)) {
+        // Same account, fresh fields (e.g. username changed in the shell
+        // account panel) — adopt them so local labels don't go stale.
+        if (incoming && JSON.stringify(incoming) !== JSON.stringify(currentUser)) {
+            currentUser = incoming;
+            updateUIForAuthenticatedUser();
+            _emitAuthChanged({ localOnly: true });
+        }
+        return;
+    }
 
     _applyingRemoteAuth = true;
 

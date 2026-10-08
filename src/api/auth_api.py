@@ -46,6 +46,21 @@ def _set_session_cookie(response, session_token: str, clear: bool = False):
         )
 
 
+def _user_role(user: dict) -> str:
+    """Display role for the account panel chip: owner, user, or guest.
+
+    There is no admin tier — privileged checks elsewhere use
+    ``http_authz.is_owner_user`` directly, and this mirrors that.
+    """
+    from api.http_authz import is_guest_user, is_owner_user
+
+    if is_guest_user(user):
+        return 'guest'
+    if is_owner_user(user):
+        return 'owner'
+    return 'user'
+
+
 def _user_public(user: dict) -> dict:
     return {
         'id': user['id'],
@@ -54,6 +69,7 @@ def _user_public(user: dict) -> dict:
         'display_name': user.get('display_name'),
         'profile_image': user.get('profile_image'),
         'auth_provider': user.get('auth_provider'),
+        'role': _user_role(user),
         'is_guest': (user.get('auth_provider') or '') == 'guest',
         # Local accounts keep auth_provider=local; provider_user_id means Google (etc.) linked.
         'google_linked': bool(user.get('provider_user_id')) and (
@@ -387,6 +403,96 @@ def get_current_user():
             'success': False,
             'error': 'auth check failed',
         }), 503
+
+# ==================== Self-service profile ====================
+
+@auth_bp.route('/me', methods=['PATCH'])
+@_auth_limiter.limit("10 per minute")
+def update_current_user():
+    """Rename the signed-in user (change username). Id-backed: row id unchanged."""
+    session_token = get_request_session_token()
+    if not session_token:
+        return jsonify({'success': False, 'error': 'Not authenticated'}), 401
+
+    db = get_auth_db()
+    user = db.verify_auth_session(session_token)
+    if not user:
+        return jsonify({'success': False, 'error': 'Invalid session'}), 401
+
+    data = request.get_json(silent=True) or {}
+    if 'username' not in data:
+        return jsonify({'success': False, 'error': 'Nothing to update'}), 400
+    username = (data.get('username') or '').strip()
+    if not _USERNAME_RE.match(username):
+        return jsonify({
+            'success': False,
+            'error': 'Username must be 3–32 characters: letters, numbers, underscore',
+        }), 400
+
+    ok, reason = db.update_username(int(user['id']), username)
+    if not ok:
+        if reason == 'username_taken':
+            return jsonify({'success': False, 'error': 'Username already taken'}), 409
+        if reason == 'invalid_username':
+            return jsonify({
+                'success': False,
+                'error': 'Username must be 3–32 characters: letters, numbers, underscore',
+            }), 400
+        return jsonify({'success': False, 'error': 'User not found'}), 404
+
+    updated = db.get_user_by_id(int(user['id']))
+    return jsonify({'success': True, 'user': _user_public(updated)})
+
+
+@auth_bp.route('/password', methods=['POST'])
+@_auth_limiter.limit("10 per minute")
+def change_current_password():
+    """Change the signed-in user's password.
+
+    When the account already has a password, the current one must be
+    supplied. Password-less accounts (guest, OAuth-only) may set one
+    without it.
+    """
+    session_token = get_request_session_token()
+    if not session_token:
+        return jsonify({'success': False, 'error': 'Not authenticated'}), 401
+
+    db = get_auth_db()
+    user = db.verify_auth_session(session_token)
+    if not user:
+        return jsonify({'success': False, 'error': 'Invalid session'}), 401
+
+    data = request.get_json(silent=True) or {}
+    current_password = data.get('current_password') or ''
+    new_password = data.get('new_password') or ''
+
+    if not new_password or len(new_password) < 8:
+        return jsonify({
+            'success': False,
+            'error': 'New password must be at least 8 characters long',
+        }), 400
+
+    fresh = db.get_user_by_id(int(user['id']))
+    if not fresh:
+        return jsonify({'success': False, 'error': 'User not found'}), 404
+
+    if fresh.get('password_hash'):
+        if not current_password or not db.verify_user_password(int(user['id']), current_password):
+            return jsonify({'success': False, 'error': 'Current password is incorrect'}), 401
+        if current_password == new_password:
+            return jsonify({'success': False, 'error': 'New password must differ from the current one'}), 400
+
+    ok, reason = db.set_password(int(user['id']), new_password)
+    if not ok:
+        if reason == 'weak_password':
+            return jsonify({
+                'success': False,
+                'error': 'New password must be at least 8 characters long',
+            }), 400
+        return jsonify({'success': False, 'error': 'User not found'}), 404
+
+    return jsonify({'success': True, 'message': 'Password updated'})
+
 
 # ==================== OAuth Routes ====================
 
