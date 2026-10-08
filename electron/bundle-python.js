@@ -195,6 +195,12 @@ async function main() {
     fs.writeFileSync(path.join(outDir, 'cuttle-python.json'), JSON.stringify(manifest, null, 2));
     // Smoke: the bundled interpreter imports the daemon's dependencies.
     run(py, ['-I', '-c', 'import flask, cryptography, yaml, psutil, requests, bcrypt, PIL; print("bundled python ok")'], { env });
+    // The packaged install tree is read-only: nothing pip-installs at runtime.
+    run(py, ['-m', 'pip', 'uninstall', ...PIP_QUIET.filter((a) => a !== '--no-cache-dir'), '-y', 'pip'], { env });
+    const stdlib = process.platform === 'win32'
+        ? path.join(outDir, 'Lib')
+        : path.join(outDir, 'lib', `python${lock.pythonVersion.split('.').slice(0, 2).join('.')}`);
+    fs.rmSync(path.join(stdlib, 'ensurepip'), { recursive: true, force: true });
     console.log(`Bundled Python ${lock.pythonVersion} for ${key} → ${outDir}`);
 }
 
