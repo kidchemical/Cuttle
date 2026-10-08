@@ -10,6 +10,7 @@
     const Stars = root.CuttleChatVoiceStars;
     const Narrator = root.CuttleChatVoiceNarrator;
     const Recorder = root.CuttleChatVoiceRecorder;
+    const Waveform = root.CuttleChatVoiceWaveform || null;
 
     /** Give up waiting for in-flight phrase transcriptions after this long. */
     const TRANSCRIBE_WAIT_MS = 15000;
@@ -53,6 +54,11 @@
      * @param {(el: HTMLElement, speech: object) => Promise<'ended'|'stopped'|'blocked'|'error'>} host.play
      * @param {() => void} host.stopSpeech
      * @param {(url: string) => Promise<'ended'|'stopped'|'blocked'|'error'>} host.playClip  narration audio, same channel as replies
+     * @param {() => (number|null)} [host.playbackLevel]  current TTS RMS for the ring, null when unknown
+     * @param {(el: HTMLElement) => (object|null)} [host.usageFor]  agent usage stashed on a chat bubble
+     * @param {(parts: object[]) => (object|null)} [host.sumUsage]  add usage payloads (agent + voice layers)
+     * @param {(usage: object) => string} [host.usageHtml]  same footer markup as normal chat bubbles
+     * @param {() => (object|null)} [host.sessionUsage]  summed usage across the session incl. voice layers
      * @param {() => Promise<Set<string>>} host.experimentalFlags  enabled flag ids (`voice_narrator`, `voice_server_stt`)
      * @param {typeof fetch} host.fetch
      * @param {(message: string, variant?: string, opts?: object) => void} host.toast
@@ -73,6 +79,8 @@
         let deferredReply = null;
         let escapeHandler = null;
         let stars = null;
+        let waveform = null;
+        let micMonitor = null;
         const phrases = Segments.createState();
         let narratorOn = false;
         let narrateTimer = 0;
@@ -147,6 +155,106 @@
             }
         }
 
+        /** RMS for the waveform: live mic while listening, playback while speaking. */
+        function voiceLevel() {
+            try {
+                if (phase === 'listening') {
+                    if (engine === 'server' && recorder && typeof recorder.level === 'function') {
+                        const v = recorder.level();
+                        if (v > 0) return v;
+                    }
+                    if (micMonitor) return micMonitor.level();
+                    return null;
+                }
+                if (phase === 'speaking' && typeof host.playbackLevel === 'function') {
+                    const v = host.playbackLevel();
+                    return v == null ? null : v;
+                }
+            } catch (_) {
+                return null;
+            }
+            return null;
+        }
+
+        /** Analysis-only mic tap for the browser recognizer (best effort). */
+        function startMicMonitor() {
+            if (!Waveform || micMonitor) return;
+            try {
+                micMonitor = Waveform.createMicMonitor();
+                micMonitor.start().catch(() => {
+                    micMonitor = null;
+                });
+            } catch (_) {
+                micMonitor = null;
+            }
+        }
+
+        async function stopMicMonitor() {
+            const m = micMonitor;
+            micMonitor = null;
+            if (m) {
+                try { await m.stop(); } catch (_) {}
+            }
+        }
+
+        /** Combined agent + summarize-LLM + TTS footer, same markup as chat bubbles. */
+        function voiceUsageHtml(messageEl, speech) {
+            if (typeof host.usageHtml !== 'function') return '';
+            let sum = null;
+            try {
+                const parts = [];
+                if (typeof host.usageFor === 'function') {
+                    const agent = host.usageFor(messageEl);
+                    if (agent) parts.push(agent);
+                }
+                if (speech && speech.voiceUsage) parts.push(speech.voiceUsage);
+                sum = typeof host.sumUsage === 'function' ? host.sumUsage(parts) : (parts[0] || null);
+            } catch (_) {
+                sum = null;
+            }
+            if (!sum) return '';
+            try {
+                return host.usageHtml(sum) || '';
+            } catch (_) {
+                return '';
+            }
+        }
+
+        /** Session-total strip; hidden until some usage is known. */
+        function renderSessionUsage() {
+            const box = byId('voiceModeSessionUsage');
+            if (!box) return;
+            let html = '';
+            try {
+                if (typeof host.sessionUsage === 'function' && typeof host.usageHtml === 'function') {
+                    const total = host.sessionUsage();
+                    if (total) html = host.usageHtml(total) || '';
+                }
+            } catch (_) {
+                html = '';
+            }
+            box.textContent = '';
+            if (!html || !html.match(/message-usage/)) {
+                box.hidden = true;
+                return;
+            }
+            box.hidden = false;
+            try {
+                const label = document.createElement('span');
+                label.className = 'voice-mode-session-usage-label';
+                label.textContent = 'Session total';
+                box.appendChild(label);
+                const wrap = document.createElement('span');
+                wrap.innerHTML = html;
+                const node = typeof wrap.querySelector === 'function'
+                    ? wrap.querySelector('.message-usage')
+                    : null;
+                box.appendChild(node || wrap);
+            } catch (_) {
+                box.hidden = true;
+            }
+        }
+
         function renderPhrases() {
             const box = byId('voiceModeSegments');
             if (!box) return;
@@ -194,7 +302,7 @@
             renderPhrases();
         }
 
-        function appendTranscriptLine(role, text) {
+        function appendTranscriptLine(role, text, usageHtml) {
             const box = byId('voiceModeTranscript');
             if (!box) return;
             const line = document.createElement('div');
@@ -207,6 +315,14 @@
             body.textContent = String(text || '').trim();
             line.appendChild(label);
             line.appendChild(body);
+            if (usageHtml && role === 'assistant') {
+                try {
+                    const usage = document.createElement('div');
+                    usage.className = 'voice-mode-line-usage';
+                    usage.innerHTML = usageHtml;
+                    line.appendChild(usage);
+                } catch (_) {}
+            }
             box.appendChild(line);
             box.scrollTop = box.scrollHeight;
         }
@@ -370,6 +486,7 @@
                 return;
             }
             if (!wantListening || !active) return;
+            startMicMonitor();
             beginRecognition(Ctor);
         }
 
@@ -467,6 +584,7 @@
             wantListening = false;
             if (engine === 'server') setPhase('processing', 'Finishing transcription…');
             await stopInput(true);
+            await stopMicMonitor();
             const spoken = Segments.utterance(phrases);
             clearPhrases();
             if (recorder) recorder.resetContext();
@@ -488,6 +606,7 @@
             if (phase !== 'listening' || closing) return;
             wantListening = false;
             await stopInput(true);
+            await stopMicMonitor();
             renderPhrases();
             if (!active) return;
             settlePhase(Segments.isEmpty(phrases)
@@ -583,12 +702,15 @@
             }
             if (token !== speakToken || (!active && !replyPending)) return;
 
+            let usageHtml = '';
             if (active) {
-                appendTranscriptLine('assistant', speech.spoken);
+                usageHtml = voiceUsageHtml(messageEl, speech);
+                appendTranscriptLine('assistant', speech.spoken, usageHtml);
                 setPhase('speaking', 'Speaking…');
             }
             const outcome = await host.play(messageEl, speech);
             replyPending = false;
+            if (active) renderSessionUsage();
             if (outcome === 'error') host.toast('Audio playback failed', 'error');
             if (token !== speakToken || !active) return;
             if (outcome === 'blocked') {
@@ -712,6 +834,18 @@
             const canvas = byId('voiceModeStars');
             if (canvas && !stars) stars = Stars.create(canvas, overlay, () => phase);
             if (stars) stars.start();
+            if (Waveform && !waveform) {
+                waveform = Waveform.create({
+                    bg: byId('voiceModeWaveBg'),
+                    ring: byId('voiceModeWaveRing'),
+                    level: voiceLevel,
+                    phase: () => phase,
+                });
+            }
+            if (waveform) {
+                try { waveform.start(); } catch (_) {}
+            }
+            renderSessionUsage();
             const exitBtn = byId('voiceModeExitBtn');
             if (exitBtn) exitBtn.hidden = false;
             lastSpokenKey = '';
@@ -751,6 +885,7 @@
             active = false;
             wantListening = false;
             stopInput(false);
+            stopMicMonitor();
             speaking = false;
             host.stopSpeech();
             speakToken += 1;
@@ -763,6 +898,9 @@
             setPhase('idle');
             document.body.classList.remove('voice-mode');
             if (stars) stars.stop();
+            if (waveform) {
+                try { waveform.stop(); } catch (_) {}
+            }
             const exitBtn = byId('voiceModeExitBtn');
             if (exitBtn) exitBtn.hidden = true;
             const overlay = overlayEl();

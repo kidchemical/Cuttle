@@ -52,3 +52,42 @@ process.stdout.write(JSON.stringify({
     assert out["explicitWins"] is False
     assert "$0" in out["zero"]
     assert out["empty"] == ""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node unavailable")
+def test_sum_usage_payloads_adds_layers_and_session():
+    script = r"""
+const A = require(process.argv[1]);
+const agent = {prompt_tokens: 10000, completion_tokens: 500, cache_read_tokens: 9000,
+  cache_inclusive: true, cost: 0.05, cost_estimated: false, model: 'gpt-4o'};
+const voice = {prompt_tokens: 600, completion_tokens: 80, cost: 0.0012,
+  cost_estimated: true, model: 'gpt-4o-mini'};
+const perReply = A.sum([agent, voice]);
+const session = A.sum([agent, voice, agent]);
+const escape = s => String(s).replaceAll('&', '&amp;').replaceAll('<', '&lt;');
+process.stdout.write(JSON.stringify({
+  perReply, session,
+  replyHtml: A.render(perReply, escape),
+  sessionHtml: A.render(session, escape),
+  empty: A.sum([]),
+  none: A.sum([null, undefined, {}]),
+}));
+"""
+    result = subprocess.run(["node", "-e", script, str(MODULE)], capture_output=True, text=True, encoding="utf-8", check=True)
+    out = json.loads(result.stdout)
+    reply = out["perReply"]
+    assert reply["prompt_tokens"] == 10600
+    assert reply["completion_tokens"] == 580
+    assert reply["cache_read_tokens"] == 9000
+    assert reply["cost"] == pytest.approx(0.0512)
+    assert reply["cost_estimated"] is True
+    # Inclusive agent cache subtracts on display: 10600 - 9000 = 1600 → 1.6k.
+    assert "↑ 1.6k</span>" in out["replyHtml"]
+    assert "$0.051" in out["replyHtml"]
+    session = out["session"]
+    assert session["prompt_tokens"] == 20600
+    assert session["completion_tokens"] == 1080
+    assert session["cost"] == pytest.approx(0.1012)
+    assert "↑ 2.6k</span>" in out["sessionHtml"]
+    assert out["empty"] is None
+    assert out["none"] is None

@@ -177,6 +177,21 @@ def test_fetch_loaders_run_only_when_their_tab_opens():
         assert owners == [tab], f"{fn} should be lazy-loaded by the '{tab}' tab, got {owners}"
 
 
+def test_voice_tab_handlers_are_defined():
+    """The Voice tab's loader, save, toggles and preview must exist.
+
+    The tab strip registered `loadChatTtsSettings` while the panel's Save
+    button and toggles called functions that were never defined, so the
+    whole tab threw ReferenceError on open and on save.
+    """
+    html = _page()
+    for fn in ("loadChatTtsSettings", "saveChatTtsSettings",
+               "toggleChatTtsEnabled", "toggleChatTtsSummarize",
+               "previewChatTtsVoice"):
+        assert re.search(rf"(?:function\s+{fn}\s*\(|{fn}\s*=\s*function)", html), \
+            f"{fn} is referenced by the Voice tab but never defined"
+
+
 def test_every_lazy_loader_is_registered_and_tab_id_exists():
     html = _page()
     body = _dom_ready_body(html)

@@ -1278,6 +1278,9 @@
         }
         const usage = normalizeUsagePayload(msg.usage, meta) || normalizeUsagePayload(meta.usage, meta);
         if (usage) {
+            try {
+                el._cuttleUsage = usage;
+            } catch (_) {}
             const wrap = el.querySelector('.message-content-wrapper');
             if (wrap) {
                 let footer = wrap.querySelector('.message-footer');
@@ -19208,6 +19211,14 @@
                 : assistantDisplayName(opts));
         const reportUrl = opts.report_url || null;
         const messageFooter = getMessageFooterHtml(role, reportUrl, true, opts.usage, opts.user_feedback);
+        // Stash normalized usage for the voice overlay (per-reply + session totals).
+        try {
+            messageDiv._cuttleUsage = (role === 'assistant' && opts.usage)
+                ? normalizeUsagePayload(opts.usage)
+                : null;
+        } catch (_) {
+            messageDiv._cuttleUsage = null;
+        }
         const ts = resolveMessageTimestamp(opts.timestamp);
         const timeAgo = formatTimeAgo(ts);
         const timeLabel = timeAgo === 'now' ? 'Just now' : 'Sent ' + timeAgo + ' ago';
@@ -19630,6 +19641,7 @@
                 url: messageEl._cuttleTtsUrl,
                 spoken: messageEl._cuttleTtsSpoken || '',
                 summarized: !!messageEl._cuttleTtsSummarized,
+                voiceUsage: messageEl._cuttleVoiceUsage || null,
             };
         }
         const btn = messageEl.querySelector('.message-tts-btn');
@@ -19653,11 +19665,19 @@
         messageEl._cuttleTtsUrl = URL.createObjectURL(blob);
         messageEl._cuttleTtsSpoken = d.spoken_text || text;
         messageEl._cuttleTtsSummarized = !!d.summarized;
+        try {
+            messageEl._cuttleVoiceUsage = (d.usage && typeof d.usage === 'object')
+                ? normalizeUsagePayload(d.usage)
+                : null;
+        } catch (_) {
+            messageEl._cuttleVoiceUsage = null;
+        }
         applyTtsTranscriptLayout(messageEl, messageEl._cuttleTtsSpoken);
         return {
             url: messageEl._cuttleTtsUrl,
             spoken: messageEl._cuttleTtsSpoken,
             summarized: messageEl._cuttleTtsSummarized,
+            voiceUsage: messageEl._cuttleVoiceUsage || null,
         };
     }
 
@@ -19666,11 +19686,49 @@
         return playVoiceAudio(speech.url, btn, !!speech.summarized);
     }
 
+    /** Playback analyser feeding the voice ring; null-safe when unavailable. */
+    let _voiceAudioCtx = null;
+    let _voicePlaybackAnalyser = null;
+    let _voicePlaybackFrame = null;
+
+    function voicePlaybackLevel() {
+        if (!_voicePlaybackAnalyser || !_voicePlaybackFrame) return null;
+        try {
+            _voicePlaybackAnalyser.getFloatTimeDomainData(_voicePlaybackFrame);
+            let sum = 0;
+            for (let i = 0; i < _voicePlaybackFrame.length; i++) {
+                sum += _voicePlaybackFrame[i] * _voicePlaybackFrame[i];
+            }
+            return Math.sqrt(sum / (_voicePlaybackFrame.length || 1));
+        } catch (_) {
+            return null;
+        }
+    }
+
     /** One audio channel for replies, narration and bubble speakers. */
     function playVoiceAudio(url, btn, summarized) {
         stopChatTtsPlayback(btn || null);
         const audio = new Audio(url);
         _chatTtsAudio = audio;
+        try {
+            const Ctx = window.AudioContext || window.webkitAudioContext;
+            if (Ctx) {
+                if (!_voiceAudioCtx) _voiceAudioCtx = new Ctx();
+                if (_voiceAudioCtx && _voiceAudioCtx.state === 'suspended') {
+                    _voiceAudioCtx.resume().catch(() => {});
+                }
+                const src = _voiceAudioCtx.createMediaElementSource(audio);
+                const analyser = _voiceAudioCtx.createAnalyser();
+                analyser.fftSize = 1024;
+                src.connect(analyser);
+                analyser.connect(_voiceAudioCtx.destination);
+                _voicePlaybackAnalyser = analyser;
+                _voicePlaybackFrame = new Float32Array(analyser.fftSize);
+            }
+        } catch (_) {
+            _voicePlaybackAnalyser = null;
+            _voicePlaybackFrame = null;
+        }
         if (btn) {
             _chatTtsActiveBtn = btn;
             btn.classList.remove('is-loading');
@@ -19689,6 +19747,8 @@
                     _chatTtsActiveBtn = null;
                 }
                 if (_chatTtsAudio === audio) _chatTtsAudio = null;
+                _voicePlaybackAnalyser = null;
+                _voicePlaybackFrame = null;
                 resolve(outcome);
             };
             audio.onended = () => finish('ended');
@@ -19713,6 +19773,20 @@
         play: playVoiceSpeech,
         stopSpeech: () => stopChatTtsPlayback(),
         playClip: (url) => playVoiceAudio(url, null, false),
+        playbackLevel: voicePlaybackLevel,
+        usageFor: (el) => (el && el._cuttleUsage) || null,
+        sumUsage: (parts) => CuttleChatUsage.sum(parts),
+        usageHtml: (usage) => getMessageUsageHtml(usage),
+        sessionUsage: () => {
+            const box = document.getElementById('chatMessages');
+            if (!box) return null;
+            const parts = [];
+            box.querySelectorAll(CHAT_RECORD_SELECTOR + '.assistant').forEach((el) => {
+                if (el._cuttleUsage) parts.push(el._cuttleUsage);
+                if (el._cuttleVoiceUsage) parts.push(el._cuttleVoiceUsage);
+            });
+            return CuttleChatUsage.sum(parts);
+        },
         experimentalFlags: fetchEnabledExperimentalFlags,
         fetch: (url, opts) => fetch(url, opts),
         toast: (message, variant, opts) => (window.showToast || function () {})(message, variant, opts),

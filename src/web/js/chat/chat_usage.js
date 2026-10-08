@@ -140,7 +140,50 @@
         return `<div class="message-usage" aria-label="Token usage">${parts.join('<span class="message-usage-sep">·</span>')}</div>`;
     }
 
-    const api = { normalize: normalizeUsagePayload, render: getMessageUsageHtml,
+    // Add normalized payloads (agent turn + voice layers, or a whole
+    // session). Token counts add; cost adds with `estimated` winning when
+    // any layer is estimated. Cache convention survives only when every
+    // layer carrying cached tokens agrees — otherwise null, so the footer
+    // labels input as provider-reported instead of subtracting wrongly.
+    function sumUsagePayloads(list) {
+        const items = (Array.isArray(list) ? list : []).map((u) => normalizeUsagePayload(u)).filter(Boolean);
+        if (!items.length) return null;
+        let pt = 0, ct = 0, cr = 0, cw = 0, cost = 0, estimated = false, hasCost = false;
+        let convention = null, conflict = false;
+        items.forEach((u) => {
+            pt += u.prompt_tokens || 0;
+            ct += u.completion_tokens || 0;
+            cr += u.cache_read_tokens || 0;
+            cw += u.cache_write_tokens || 0;
+            if (u.cost != null) {
+                hasCost = true;
+                cost += u.cost;
+                if (u.cost_estimated) estimated = true;
+            }
+            const hasCache = (u.cache_read_tokens || 0) > 0 || (u.cache_write_tokens || 0) > 0;
+            if (u.cache_inclusive != null && (hasCache || convention == null)) {
+                if (convention == null) convention = u.cache_inclusive;
+                else if (hasCache && convention !== u.cache_inclusive) conflict = true;
+            }
+        });
+        const out = {
+            prompt_tokens: pt,
+            completion_tokens: ct,
+            total_tokens: pt + ct + ((convention === false && !conflict) ? cr + cw : 0),
+            cache_read_tokens: cr,
+            cache_write_tokens: cw,
+            cache_inclusive: conflict ? null : convention,
+            model: '',
+        };
+        if (hasCost) {
+            out.cost = Math.round(cost * 1e6) / 1e6;
+            out.cost_estimated = estimated;
+        }
+        if (!pt && !ct && !hasCost && !cr && !cw) return null;
+        return out;
+    }
+
+    const api = { normalize: normalizeUsagePayload, render: getMessageUsageHtml, sum: sumUsagePayloads,
         formatTokenCount, formatUsageCostUsd };
     if (typeof module === 'object' && module.exports) module.exports = api;
     else root.CuttleChatUsage = api;

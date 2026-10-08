@@ -37,6 +37,17 @@ TTS_VOICES = frozenset(
     }
 )
 
+# List-price audio rates (USD per 1M input characters) used only to estimate
+# the voice layer's share of a turn's cost. tts-1 / tts-1-hd are billed
+# per character; gpt-4o-mini-tts is billed per token ($0.60/1M text in +
+# $12/1M audio out), so its entry is an effective per-character approximation.
+# Every cost derived from this table is flagged cost_estimated.
+TTS_CHAR_RATES_USD_PER_MILLION = {
+    "tts-1": 15.0,
+    "tts-1-hd": 30.0,
+    "gpt-4o-mini-tts": 12.0,
+}
+
 # Cheap chat models for the speak-summary pass (user can switch in Settings).
 SUMMARIZE_MODELS = frozenset(
     {
@@ -176,16 +187,34 @@ def _openai_client():
     return OpenAI(api_key=key)
 
 
-def summarize_for_speech(
+def estimate_tts_cost_usd(model: str, chars: int) -> Optional[float]:
+    """Estimate USD for one speech synthesis from input characters."""
+    try:
+        n = int(chars or 0)
+    except (TypeError, ValueError):
+        return None
+    if n <= 0:
+        return None
+    rate = TTS_CHAR_RATES_USD_PER_MILLION.get(str(model or "").strip())
+    if rate is None:
+        return None
+    return (n / 1_000_000) * float(rate)
+
+
+def summarize_for_speech_with_usage(
     text: str,
     *,
     model: str,
     target_chars: int,
-) -> str:
-    """Ask a cheap chat model for a short speakable summary."""
+) -> Tuple[str, Dict[str, Any]]:
+    """Ask a cheap chat model for a short speakable summary.
+
+    Returns (summary_text, usage) where usage carries the step's token
+    counts plus a models.dev estimated cost when rates are known.
+    """
     cleaned = clean_text_for_speech(text)
     if not cleaned:
-        return ""
+        return "", {}
     client = _openai_client()
     target = max(80, min(2000, int(target_chars or 420)))
     system = (
@@ -213,7 +242,38 @@ def summarize_for_speech(
     out = clean_text_for_speech(out)
     if len(out) > target * 2:
         out = out[: target * 2].rsplit(" ", 1)[0].strip()
-    return out or cleaned[:target]
+    usage: Dict[str, Any] = {"model": str(model)}
+    try:
+        ru = getattr(resp, "usage", None)
+        if ru is not None:
+            pt = int(getattr(ru, "prompt_tokens", 0) or 0)
+            ct = int(getattr(ru, "completion_tokens", 0) or 0)
+            if pt or ct:
+                usage["prompt_tokens"] = pt
+                usage["completion_tokens"] = ct
+                usage["total_tokens"] = int(getattr(ru, "total_tokens", 0) or (pt + ct))
+    except (TypeError, ValueError):
+        pass
+    try:
+        from api.model_pricing import enrich_usage_for_display
+
+        enriched = enrich_usage_for_display(dict(usage), model=str(model))
+        if enriched:
+            usage = enriched
+    except Exception:
+        pass
+    return (out or cleaned[:target]), usage
+
+
+def summarize_for_speech(
+    text: str,
+    *,
+    model: str,
+    target_chars: int,
+) -> str:
+    """Ask a cheap chat model for a short speakable summary (text only)."""
+    spoken, _ = summarize_for_speech_with_usage(text, model=model, target_chars=target_chars)
+    return spoken
 
 
 def synthesize_speech(
@@ -273,6 +333,77 @@ def prepare_spoken_text(
     return spoken, True
 
 
+def prepare_spoken_text_with_usage(
+    text: str,
+    settings: Dict[str, Any],
+    *,
+    force_summarize: Optional[bool] = None,
+    summarize_model: Optional[str] = None,
+) -> Tuple[str, bool, Dict[str, Any]]:
+    """Return (spoken_text, did_summarize, summarize_usage)."""
+    cleaned = clean_text_for_speech(text)
+    max_in = int(settings.get("max_input_chars") or 24000)
+    if len(cleaned) > max_in:
+        cleaned = cleaned[:max_in] + "…"
+
+    do_sum = settings.get("summarize", True) if force_summarize is None else bool(force_summarize)
+    skip_under = int(settings.get("skip_summarize_under_chars") or 380)
+    if not do_sum or len(cleaned) <= skip_under:
+        return cleaned, False, {}
+
+    model = (summarize_model or settings.get("summarize_model") or "gpt-4o-mini").strip()
+    if model not in SUMMARIZE_MODELS:
+        model = "gpt-4o-mini"
+    target = int(settings.get("target_spoken_chars") or 420)
+    spoken, usage = summarize_for_speech_with_usage(cleaned, model=model, target_chars=target)
+    return spoken, True, usage
+
+
+def voice_layer_usage(
+    summarize_usage: Dict[str, Any],
+    *,
+    tts_model: str,
+    tts_chars: int,
+) -> Dict[str, Any]:
+    """Combine the summarize-LLM usage with the TTS audio estimate.
+
+    Token counts come from the summarize step; the TTS step has no tokens,
+    so its list-price estimate folds into ``cost``. Shape matches chat
+    bubble usage so the same footer renderer can display it.
+    """
+    su = dict(summarize_usage or {})
+    try:
+        pt = int(su.get("prompt_tokens") or 0)
+    except (TypeError, ValueError):
+        pt = 0
+    try:
+        ct = int(su.get("completion_tokens") or 0)
+    except (TypeError, ValueError):
+        ct = 0
+    total = pt + ct
+    try:
+        sum_cost = float(su.get("cost") or 0)
+    except (TypeError, ValueError):
+        sum_cost = 0.0
+    tts_cost = estimate_tts_cost_usd(tts_model, tts_chars) or 0.0
+    cost = sum_cost + tts_cost
+    out: Dict[str, Any] = {
+        "prompt_tokens": pt,
+        "completion_tokens": ct,
+        "total_tokens": total,
+        "model": str(su.get("model") or ""),
+        "tts_chars": int(tts_chars or 0),
+        "tts_model": str(tts_model or ""),
+        "tts_cost": round(tts_cost, 6),
+    }
+    if su.get("cost") is not None:
+        out["summarize_cost"] = round(sum_cost, 6)
+    if cost > 0:
+        out["cost"] = round(cost, 6)
+        out["cost_estimated"] = True
+    return out
+
+
 def register_chat_tts_routes(app: Flask) -> None:
     @app.route("/api/settings/chat-tts", methods=["GET"])
     @authenticated_required
@@ -327,7 +458,7 @@ def register_chat_tts_routes(app: Flask) -> None:
                 if smodel not in SUMMARIZE_MODELS:
                     return jsonify({"success": False, "error": f"Invalid summarize_model: {smodel}"}), 400
 
-            spoken, did_summarize = prepare_spoken_text(
+            spoken, did_summarize, sum_usage = prepare_spoken_text_with_usage(
                 str(text),
                 settings,
                 force_summarize=force_sum,
@@ -348,6 +479,9 @@ def register_chat_tts_routes(app: Flask) -> None:
                     "voice": voice,
                     "char_count_in": len(clean_text_for_speech(str(text))),
                     "char_count_spoken": len(spoken),
+                    "usage": voice_layer_usage(
+                        sum_usage, tts_model=tts_model, tts_chars=len(spoken)
+                    ),
                 }
             )
         except RuntimeError as e:

@@ -466,6 +466,48 @@ def test_chat_page_does_not_own_voice_state():
     assert "CuttleChatVoice.create(" in page
 
 
+@node_only
+def test_reply_shows_combined_usage_and_session_total():
+    _node(CONTROLLER_HARNESS + r"""
+(async () => {
+  const summed = [];
+  host.usageFor = (el) => ({ prompt_tokens: 1000, completion_tokens: 100,
+    cost: 0.01, cost_estimated: false });
+  host.sumUsage = (parts) => { summed.push(parts); return { prompt_tokens: 1600,
+    completion_tokens: 150, cost: 0.012, cost_estimated: true }; };
+  host.usageHtml = (u) => '<div class="message-usage">u:' + u.prompt_tokens + '</div>';
+  host.sessionUsage = () => ({ prompt_tokens: 1600, completion_tokens: 150,
+    cost: 0.012, cost_estimated: true });
+  host.speechFor = async () => ({ url: 'blob:x', spoken: 'reply text',
+    voiceUsage: { prompt_tokens: 600, completion_tokens: 50, cost: 0.002, cost_estimated: true } });
+  voice.enter();
+  mic.dispatch('click', ev(mic));
+  await sleep(5);
+  recs[0].onresult({ results: [res('hello there', true)] });
+  mic.dispatch('click', ev(mic));
+  await sleep(5);
+  assert.deepStrictEqual(submitted, ['hello there']);
+  voice.onGenerationEnded({});
+  await sleep(400);
+  assert.strictEqual(played, 1);
+  // Agent + voice layers summed for the reply footer.
+  assert.strictEqual(summed.length, 1);
+  assert.strictEqual(summed[0].length, 2);
+  assert.strictEqual(summed[0][1].prompt_tokens, 600);
+  const lines = document.getElementById('voiceModeTranscript').children;
+  const last = lines[lines.length - 1];
+  const usage = last.children.find((c) => c.classList.contains('voice-mode-line-usage'));
+  assert.ok(usage, 'assistant line carries a usage footer');
+  assert.match(usage.innerHTML, /message-usage/);
+  // Session-total strip appears with the same footer markup.
+  const strip = document.getElementById('voiceModeSessionUsage');
+  assert.strictEqual(strip.hidden, false);
+  assert.strictEqual(strip.children[0].textContent, 'Session total');
+  assert.match(strip.children[1].innerHTML, /message-usage/);
+})().catch((e) => { console.error(e); process.exit(1); });
+""")
+
+
 def test_voice_modules_load_before_page():
     html = CHAT_HTML.read_text(encoding="utf-8")
     order = [
