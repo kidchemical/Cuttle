@@ -174,11 +174,11 @@ def test_working_branch_saves_without_checkout_and_switches_explicitly(page_ctx,
     page.get_by_text('Project saved.', exact=True).wait_for()
     assert ('PUT', '/api/projects/7', {'default_branch':'dev'}) in api.calls
     assert not any(call[1].endswith('/branch') for call in api.calls)
-    assert 'Current branch: main' in page.locator('#tab-content').inner_text()
+    assert page.locator('.repo-details dd').first.inner_text() == 'main'
     page.get_by_role('button', name='Switch / create default branch', exact=True).click()
     page.get_by_text('Switched to branch: dev', exact=True).wait_for()
     assert ('POST', '/api/projects/7/branch', {}) in api.calls
-    assert 'Current branch: dev' in page.locator('#tab-content').inner_text()
+    assert page.locator('.repo-details dd').first.inner_text() == 'dev'
     page.set_viewport_size({'width':390, 'height':844})
     assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
     page.screenshot(path='temp/projects-working-branch.png', full_page=True)
@@ -201,3 +201,33 @@ def test_working_branch_readonly_and_save_error_preserves_draft(page_ctx, static
     assert page.get_by_label('Default working branch', exact=True).input_value() == 'feature/test'
     assert page.get_by_role('button', name='Save default branch', exact=True).is_enabled()
     assert not errors
+
+
+@pytest.mark.parametrize('width,theme', [(320,'dark'), (390,'light'), (768,'midnight'), (1280,'dark')])
+def test_projects_layout_all_tabs_and_dialog_fit_viewport(browser, static_server, width, theme):
+    context = browser.new_context(viewport={'width':width, 'height':844})
+    apply_request_guard(context, static_server)
+    context.add_init_script('localStorage.setItem("theme", ' + json.dumps(theme) + ')')
+    page = context.new_page()
+    api = FakeAPI()
+    # Long real-world values must wrap within panels, including the repository view.
+    api.projects[0]['paths'][1] = '/host/' + 'long-project-folder-' * 10
+    errors = []
+    page.on('pageerror', lambda error: errors.append(str(error)))
+    try:
+        open_page(page, static_server, api)
+        for tab in ['Overview', 'Locations', 'Configuration', 'Activity', 'Repository']:
+            page.get_by_role('button', name=tab, exact=True).click()
+            assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+            assert page.locator('.panel').evaluate_all('(panels) => panels.every(p => {const r = p.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth;})')
+            if width <= 720:
+                assert page.locator('#tab-content input, #tab-content textarea').evaluate_all('(fields) => fields.every(f => parseFloat(getComputedStyle(f).fontSize) >= 16)')
+        page.screenshot(path=f'temp/projects-repository-{width}-{theme}.png', full_page=True)
+        page.get_by_role('button', name='Overview', exact=True).click()
+        page.screenshot(path=f'temp/projects-overview-{width}-{theme}.png', full_page=True)
+        page.get_by_role('button', name='Add project', exact=True).click()
+        assert page.locator('#register-dialog').evaluate('(d) => {const r = d.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight;}')
+        assert page.locator('#register-form [name="path"]').is_visible()
+        assert not errors
+    finally:
+        context.close()
