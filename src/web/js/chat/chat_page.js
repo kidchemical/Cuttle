@@ -2442,6 +2442,13 @@
     // WebViews can race keyboard/IME with refreshes; the live query keeps the
     // hard gate from falling through to a full project-list paint.
     let historySearchLiveQuery = '';
+    // Last displayed search wave, reused only for explicit group reveal/collapse.
+    let repaintHistorySearch = null;
+
+    function repaintHistoryGroups() {
+        if (historySearchQueryActive() && repaintHistorySearch) repaintHistorySearch();
+        else reloadHistoryListKeepingSearch();
+    }
 
     function historySearchQueryActive() {
         if (historyFiltersActive()) return true;
@@ -2498,7 +2505,7 @@
             cur + HISTORY_GROUP_PAGE_SIZE
         );
         historyGroupVisibleCount.set(String(key), next);
-        reloadHistoryListKeepingSearch();
+        repaintHistoryGroups();
     }
 
     function collapseHistoryGroupReveal(event) {
@@ -2510,7 +2517,7 @@
         const key = btn && btn.getAttribute('data-group-key');
         if (!key) return;
         historyGroupVisibleCount.set(String(key), HISTORY_GROUP_PREVIEW_LIMIT);
-        reloadHistoryListKeepingSearch();
+        repaintHistoryGroups();
     }
 
     function toggleHistoryProjectCollapse(event) {
@@ -2533,7 +2540,7 @@
         const currentlyExpanded = !(section && section.classList.contains('is-collapsed'));
         prefs[String(key)] = currentlyExpanded ? 'collapsed' : 'expanded';
         writeHistoryProjectCollapsePrefs(prefs);
-        reloadHistoryListKeepingSearch();
+        repaintHistoryGroups();
     }
 
     function historySubagentGroupOwnedBy(sessionId) {
@@ -16442,18 +16449,22 @@
         const historyContainer = document.getElementById('chatHistory');
         if (!historyContainer) return;
         const prev = document.getElementById('historyArchivedSection');
-        if (prev) prev.remove();
-        if (!archivedSessionsLoaded || !archivedChatSessions.length) return;
         const mod = historyArchiveModule();
         // Without the owner there is nothing to render:
         // refreshArchivedSessions already fail-closes to an empty list
         // then, so this return is unreachable in practice and changes no
         // live behavior.
-        if (!mod) return;
+        if (!mod || !archivedSessionsLoaded || !archivedChatSessions.length) {
+            if (prev) CuttleChatHistoryView.preserveScroll(historyContainer, () => prev.remove());
+            return;
+        }
         // Defensive re-filter: the main list may have refreshed after the
         // Archived fetch resolved (archive toggle, delete, second device).
         const visible = mod.filterArchivedSessions(archivedChatSessions, activeHistorySessionIds, archiveIdExtras);
-        if (!visible.length) return;
+        if (!visible.length) {
+            if (prev) CuttleChatHistoryView.preserveScroll(historyContainer, () => prev.remove());
+            return;
+        }
         const collapsed = isArchiveSectionCollapsed();
         const count = visible.length;
         let itemsHtml = '';
@@ -16473,7 +16484,13 @@
                 keyHandler: 'window.chatPageToggleArchiveSectionKey(event)',
             })
             + '<div class="history-section-body">' + itemsHtml + '</div>';
-        historyContainer.appendChild(section);
+        const source = section.outerHTML;
+        if (prev && prev.__cuttleArchiveHtml === source) return;
+        section.__cuttleArchiveHtml = source;
+        CuttleChatHistoryView.preserveScroll(historyContainer, () => {
+            if (prev) prev.replaceWith(section);
+            else historyContainer.appendChild(section);
+        });
     }
 
     function paintHistoryEntries(entries, renderEntry, opts) {
@@ -16485,15 +16502,14 @@
             const icon = options.emptyIcon || '💬';
             const title = options.emptyTitle || 'No chats yet';
             const text = options.emptyText || 'Start a new conversation';
-            historyContainer.innerHTML = `
+            CuttleChatHistoryView.paint(historyContainer, `
                 ${createHistorySectionHeaderHTML('Your chats')}
                 <div class="empty-state">
                     <div class="empty-state-icon">${icon}</div>
                     <div class="empty-state-title">${escapeHtml(title)}</div>
                     <div class="empty-state-text">${escapeHtml(text)}</div>
                 </div>
-            `;
-            renderArchivedSection();
+            `, renderArchivedSection);
             return;
         }
         const groups = groupSessionsByProject(entries);
@@ -16529,12 +16545,13 @@
             html += `<div class="history-section-body">${renderHistoryGroupBody(group, renderEntry)}</div>`;
             html += '</div>';
         });
-        historyContainer.innerHTML = html;
-        syncHistoryRunningIndicators();
-        syncHistoryUnreadIndicators();
-        applyHistorySubagentExpandState();
-        scheduleSlashChipCompactLabels(historyContainer);
-        renderArchivedSection();
+        CuttleChatHistoryView.paint(historyContainer, html, () => {
+            syncHistoryRunningIndicators();
+            syncHistoryUnreadIndicators();
+            applyHistorySubagentExpandState();
+            scheduleSlashChipCompactLabels(historyContainer);
+            renderArchivedSection();
+        });
     }
 
     function loadChatHistory() {
@@ -17189,6 +17206,15 @@
         searchChats();
     }
 
+    function clearHistorySearch() {
+        const input = document.getElementById('searchInput');
+        if (!input) return;
+        input.value = '';
+        hideHistorySlashPalette();
+        searchChats();
+        input.focus({ preventScroll: true });
+    }
+
     function onHistorySearchKeydown(ev) {
         const el = document.getElementById('historySearchSlashPalette');
         const open = el && !el.hidden && historySlashPaletteItems.length;
@@ -17246,6 +17272,7 @@
     function paintSearchResults(sessions, terminalEntries, renderSession, emptyOpts) {
         const historyContainer = document.getElementById('chatHistory');
         if (!historyContainer) return;
+        repaintHistorySearch = () => paintSearchResults(sessions, terminalEntries, renderSession, emptyOpts);
         const options = Object.assign({ showRefresh: false }, emptyOpts || {});
 
         const toEntry = (session) => {
@@ -17279,14 +17306,14 @@
             const icon = options.emptyIcon || '🔍';
             const title = options.emptyTitle || 'No results found';
             const text = options.emptyText || 'Try a different search term';
-            historyContainer.innerHTML = `
+            CuttleChatHistoryView.paint(historyContainer, `
                 ${createHistorySectionHeaderHTML('Search')}
                 <div class="empty-state">
                     <div class="empty-state-icon">${icon}</div>
                     <div class="empty-state-title">${escapeHtml(title)}</div>
                     <div class="empty-state-text">${escapeHtml(text)}</div>
                 </div>
-            `;
+            `);
             return;
         }
 
@@ -17331,18 +17358,22 @@
         paintTier('__search_titles__', 'Matching titles', titleEntries.concat(termEntries));
         paintTier('__search_content__', 'In messages', contentEntries);
 
-        historyContainer.innerHTML = html;
-        syncHistoryRunningIndicators();
-        syncHistoryUnreadIndicators();
-        applyHistorySubagentExpandState();
-        scheduleSlashChipCompactLabels(historyContainer);
-        renderArchivedSection();
+        CuttleChatHistoryView.paint(historyContainer, html, () => {
+            syncHistoryRunningIndicators();
+            syncHistoryUnreadIndicators();
+            applyHistorySubagentExpandState();
+            scheduleSlashChipCompactLabels(historyContainer);
+            renderArchivedSection();
+        });
     }
 
     function searchChats(opts) {
         closeHistoryItemMenu();
         opts = opts || {};
         const rawFull = (document.getElementById('searchInput') && document.getElementById('searchInput').value) || '';
+        const clear = document.getElementById('historySearchClear');
+        if (clear) clear.hidden = !rawFull;
+        repaintHistorySearch = null;
         const draft = opts.slashDraft || parseHistorySlashDraft(rawFull);
         const composingSlash = !!(draft && String(draft.token || '').startsWith('/'));
         const rawForText = draft ? draft.before : rawFull;
@@ -22576,6 +22607,7 @@
     window.chatPageToggleHistoryMenu = toggleHistoryItemMenu;
     window.searchChats = searchChats;
     window.onHistorySearchInput = onHistorySearchInput;
+    window.clearHistorySearch = clearHistorySearch;
     window.onHistorySearchKeydown = onHistorySearchKeydown;
     window.refreshChatHistoryList = refreshChatHistoryList;
     window.sendMessage = sendMessage;
