@@ -171,3 +171,20 @@ def test_ensure_all_removes_legacy_open_rule(monkeypatch):
     removes = _cmds(commands, "Remove-NetFirewallRule")
     assert any("Cuttle LAN HTTP (Open LAN)" in c[-1] for c in removes), commands
     assert _cmds(commands, "New-NetFirewallRule") == [], commands
+
+
+def test_status_requires_all_three_scoped_rules(monkeypatch):
+    commands = _run_win(monkeypatch, [_ok('1'), _ok('1')] * 3)
+    assert lan_access.windows_firewall_rule_active() is True
+    assert len(commands) == 6
+    assert any(lan_access._FIREWALL_RULE_HTTP_ALT in cmd[-1] for cmd in commands)
+
+
+def test_status_rejects_broad_or_mixed_rules(monkeypatch):
+    _run_win(monkeypatch, [_ok('2'), _ok('1')])
+    assert lan_access.windows_firewall_rule_active() is False
+
+
+def test_status_rejects_missing_or_unreadable_rules(monkeypatch):
+    _run_win(monkeypatch, [_fail(), _ok('1')])
+    assert lan_access.windows_firewall_rule_active() is False

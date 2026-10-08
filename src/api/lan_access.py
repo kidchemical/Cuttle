@@ -252,7 +252,7 @@ def _count_scoped_rules(rule_name: str) -> Optional[int]:
             f"(Get-NetFirewallRule -DisplayName '{rule_name}' -ErrorAction SilentlyContinue | "
             f"Where-Object {{ $_.Enabled -eq 'True' -and $_.Profile -eq 'Private' }} | "
             f"Get-NetFirewallAddressFilter | "
-            f"Where-Object {{ $_.RemoteAddress -eq 'LocalSubnet' }} | Measure-Object).Count",
+            f"Where-Object {{ @($_.RemoteAddress).Count -eq 1 -and $_.RemoteAddress -eq 'LocalSubnet' }} | Measure-Object).Count",
         ],
         capture_output=True,
         text=True,
@@ -355,21 +355,11 @@ def windows_firewall_rule_active() -> bool:
     if sys.platform != "win32":
         return False
     try:
-        names = (_FIREWALL_RULE_HTTPS, _FIREWALL_RULE_HTTP)
+        names = (_FIREWALL_RULE_HTTPS, _FIREWALL_RULE_HTTP, _FIREWALL_RULE_HTTP_ALT)
         for rule_name in names:
-            check = subprocess.run(
-                [
-                    "powershell",
-                    "-NoProfile",
-                    "-Command",
-                    f"(Get-NetFirewallRule -DisplayName '{rule_name}' -ErrorAction SilentlyContinue | "
-                    f"Where-Object {{ $_.Enabled -eq 'True' }} | Measure-Object).Count",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=15,
-            )
-            if check.returncode != 0 or (check.stdout or "").strip() in ("", "0"):
+            total = _count_enabled_rules(rule_name)
+            scoped = _count_scoped_rules(rule_name)
+            if total is None or scoped is None or total == 0 or total != scoped:
                 return False
         return True
     except Exception:
