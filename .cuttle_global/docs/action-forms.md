@@ -56,6 +56,12 @@ Options are **id + label only**. **Omit `action` entirely.**
   `(no answer)` / `(none)` so every question is accounted for.
 - Cancel never resumes the agent.
 
+**Custom answers are built in.** Every Q&A card that resumes the agent
+automatically renders an `Or type your own answer…` input with a Send button,
+so the user is never locked into the listed options. Agents must NOT add their
+own "Other / custom" option — the renderer owns it. Side-effect and watch cards
+never get the custom row. Per-card opt-out: `"allow_custom": false`.
+
 **One Q&A card per reply.** Each `resume` card wakes the agent on its own click,
 so a second card in the same reply is orphaned the moment the first is answered.
 The server (`rewrite_action_forms` → `merge_qa_resume_specs`) folds 2+ Q&A resume

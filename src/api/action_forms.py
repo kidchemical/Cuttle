@@ -220,6 +220,14 @@ def normalize_action_form_spec(
     # Opt-in so side-effect forms (flask.restart, watch, etc) stay silent.
     resume = bool(spec.get("resume") or spec.get("notify_agent") or spec.get("notifyAgent"))
     has_side_effect = bool(submit_action) or any(o.get("action") for o in options)
+    # Q&A cards (no side effect) get a free-text "custom" answer by default so
+    # the user is never locked into the listed options. Opt out per card with
+    # "allow_custom": false. Side-effect / watch cards never get one.
+    allow_custom_raw = spec.get("allow_custom", spec.get("allowCustom", None))
+    if allow_custom_raw is None:
+        allow_custom = not has_side_effect and not spec.get("watch")
+    else:
+        allow_custom = bool(allow_custom_raw)
     default_submit = "Run" if has_side_effect else "Submit"
     out: Dict[str, Any] = {
         "title": title,
@@ -228,6 +236,7 @@ def normalize_action_form_spec(
         "lock": lock,
         "silent": silent,
         "resume": resume,
+        "allow_custom": allow_custom,
         "reusable": reusable,
         "locked": bool(spec.get("locked")),
         "selected": list(spec.get("selected") or []) if isinstance(spec.get("selected"), list) else [],
@@ -542,6 +551,9 @@ def merge_qa_resume_specs(specs: List[Dict[str, Any]]) -> Dict[str, Any]:
             "mode": "form",
             "lock": "form",
             "resume": True,
+            "allow_custom": all(
+                s.get("allow_custom", s.get("allowCustom", True)) for s in specs
+            ),
             "reusable": False,
             "submitLabel": "Submit",
             "options": [],
@@ -856,6 +868,22 @@ def qa_form_answers(spec: Dict[str, Any], fields: Dict[str, Any]) -> List[Tuple[
     return answers
 
 
+def _spec_allows_custom(spec: Dict[str, Any]) -> bool:
+    """Whether a spec accepts a free-text custom answer (Q&A only, opt-out)."""
+    if not isinstance(spec, dict):
+        return False
+    if spec.get("allow_custom") is False or spec.get("allowCustom") is False:
+        return False
+    if spec.get("watch"):
+        return False
+    if isinstance(spec.get("submit"), dict) and spec["submit"].get("action"):
+        return False
+    for o in spec.get("options") or []:
+        if isinstance(o, dict) and o.get("action"):
+            return False
+    return True
+
+
 def build_runs_from_submission(
     spec: Dict[str, Any],
     selection: Dict[str, Any],
@@ -868,9 +896,32 @@ def build_runs_from_submission(
       multi:  { "options": ["a", "b"] }
       form:   { "fields": { "channel": "...", "body": "..." } }
       cancel: { "cancel": true }
+      custom (any Q&A mode): { "custom_text": "my own words" }
     """
     if not isinstance(selection, dict):
         return []
+    custom_text = str(
+        selection.get("custom_text", selection.get("customText", ""))
+    ).strip()
+    if custom_text and _spec_allows_custom(spec):
+        custom_text = custom_text[:2000]
+        project_path = str(spec.get("project_path") or "")
+        fields = (
+            dict(selection.get("fields"))
+            if isinstance(selection.get("fields"), dict)
+            else {}
+        )
+        return [
+            {
+                "action": None,
+                "params": {},
+                "option_id": "custom",
+                "label": "Custom",
+                "project_path": project_path,
+                "fields": fields,
+                "custom_text": custom_text,
+            }
+        ]
     if selection.get("cancel"):
         # Older clients marked every no-action Q&A option as cancel. If the
         # click still carried a real option id, honor that pick instead of
@@ -1549,7 +1600,19 @@ def execute_action_form_submission(
     if runs and not any(r.get("action") for r in runs):
         answer_text = ""
         first_id = str(runs[0].get("option_id") or "cancel")
-        if len(runs) == 1 and first_id.lower() == "cancel":
+        if len(runs) == 1 and first_id == "custom":
+            custom = str(runs[0].get("custom_text") or "").strip()[:2000]
+            selected = ["custom"]
+            label = custom
+            toast = "Sent custom reply."
+            answer_text = custom
+            extra = runs[0].get("fields")
+            if isinstance(extra, dict) and extra:
+                answers = qa_form_answers(spec, extra)
+                real = [(q, a) for q, a in answers if a not in ("(no answer)", "(none)", "(blank)")]
+                if real:
+                    answer_text += "\n[form-answers]\n" + "\n".join(f"- {q}: {a}" for q, a in real)
+        elif len(runs) == 1 and first_id.lower() == "cancel":
             toast = "Cancelled."
             selected = ["cancel"]
             label = first_id

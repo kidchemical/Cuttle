@@ -546,6 +546,21 @@
                 `</div>`;
         }
 
+        // Q&A cards that resume the agent always offer a free-text custom
+        // answer, so the user is never locked into the listed options.
+        // Side-effect / watch cards never get one. Opt out per card with
+        // "allow_custom": false.
+        const customAllowed = isQaForm && !!(spec && spec.resume)
+            && (!spec || spec.allow_custom === undefined || spec.allow_custom === null
+                || (spec.allow_custom !== false && spec.allowCustom !== false));
+        if (customAllowed) {
+            body += `<div class="cuttle-action-form-custom">` +
+                `<input class="form-input" type="text" data-custom-input="1"` +
+                ` placeholder="Or type your own answer…"${controlsDisabled ? ' disabled' : ''}>` +
+                `<button type="button" class="cuttle-button" data-custom-submit="1"${controlsDisabled ? ' disabled' : ''}>Send</button>` +
+                `</div>`;
+        }
+
         const optionLabelFor = (id) => {
             const hit = options.find((o) => String(o.id || '') === String(id));
             return (hit && (hit.label || hit.id)) || id;

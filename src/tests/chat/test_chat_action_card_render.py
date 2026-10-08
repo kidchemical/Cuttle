@@ -156,6 +156,23 @@ out.preview = (() => {
         absent: render({ mode: 'choice', title: 'P', options: [{ id: 'a' }] }, {})
             .includes('cuttle-action-form-preview') };
 })();
+// custom row: Q&A resume cards offer free text; side-effect / opt-out /
+// silent cards do not
+out.custom = (() => {
+    const qaResume = render({ mode: 'choice', title: 'Q', resume: true,
+        options: [{ id: 'a', label: 'A' }] });
+    const qaSilent = render({ mode: 'choice', title: 'Q',
+        options: [{ id: 'a', label: 'A' }] });
+    const side = render({ mode: 'choice', title: 'Run?', resume: true,
+        options: [{ id: 'go', label: 'Go', action: 'git.push' }] });
+    const optedOut = render({ mode: 'choice', title: 'Q', resume: true,
+        allow_custom: false, options: [{ id: 'a', label: 'A' }] });
+    const formResume = render({ mode: 'form', title: 'F', resume: true,
+        fields: [{ id: 't', label: 'T', type: 'text' }] });
+    const has = (h) => h.includes('data-custom-input="1"') && h.includes('data-custom-submit="1"');
+    return { qaResume: has(qaResume), qaSilent: has(qaSilent), side: has(side),
+        optedOut: has(optedOut), formResume: has(formResume) };
+})();
 // owner boundary: no page globals inside the renderer (comments stripped)
 out.boundary = (() => {
     const src = (A.renderActionFormCardHtml.toString()
@@ -293,6 +310,16 @@ def test_preview_passthrough():
 @node_only
 def test_owner_boundary_no_page_globals():
     assert _run_harness()["boundary"] == {"banned": []}
+
+
+@node_only
+def test_custom_row_only_on_qa_resume_cards():
+    out = _run_harness()["custom"]
+    assert out["qaResume"] is True
+    assert out["formResume"] is True
+    assert out["qaSilent"] is False
+    assert out["side"] is False
+    assert out["optedOut"] is False
 
 
 @node_only
