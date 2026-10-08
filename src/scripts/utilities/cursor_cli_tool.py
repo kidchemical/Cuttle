@@ -212,6 +212,34 @@ def _cursor_tool_summary(tool_call: dict) -> str:
     return "tool"
 
 
+def _cursor_native_edits(tool_call: dict) -> list:
+    """Native file changes a completed Cursor tool call reported.
+
+    Cursor's edit results carry ``success: {path, diffString, linesAdded,
+    linesRemoved, beforeFullFileContent, afterFullFileContent}`` (verified in
+    recorded agent-events payloads). Only the unified diff is kept as edit
+    evidence; the full tool payload stays on the tool event.
+    """
+    out = []
+    if not isinstance(tool_call, dict):
+        return out
+    for val in tool_call.values():
+        if not isinstance(val, dict):
+            continue
+        result = val.get("result")
+        success = result.get("success") if isinstance(result, dict) else None
+        if not isinstance(success, dict):
+            continue
+        path = success.get("path") or ((val.get("args") or {}).get("path") if isinstance(val.get("args"), dict) else None)
+        diff = success.get("diffString")
+        if not isinstance(path, str) or not path or not isinstance(diff, str) or not diff.strip():
+            continue
+        before = success.get("beforeFullFileContent")
+        change = "add" if before in (None, "") and success.get("afterFullFileContent") else "modify"
+        out.append({"path": path, "patch": diff, "change": change})
+    return out
+
+
 def _cursor_tool_failed(tool_call: dict) -> bool:
     if not isinstance(tool_call, dict):
         return False
@@ -978,6 +1006,18 @@ def _run_cursor_agent_stream_segment(
             elif sub == "completed":
                 if _cursor_tool_failed(tc):
                     emit(f"tool failed: {summary}")
+                else:
+                    try:
+                        from api.query_events import record_agent_edit
+
+                        call_id = str(evt.get("call_id") or tc.get("toolCallId") or tool_count)
+                        for change in _cursor_native_edits(tc):
+                            record_agent_edit(
+                                f"cursor:{call_id}:edit:{change['path']}", change["path"],
+                                change["patch"], change=change["change"], tool_id=f"cursor:{call_id}",
+                            )
+                    except Exception:
+                        pass
                 try:
                     from api.query_events import enrich_or_record_tool
 

@@ -179,6 +179,12 @@ class EventStore:
         out=dict(row);out.pop('payload');out.pop('payload_ref')
         return {**out,'detail':self.decode(row)}
 
+    def run_edits(self, qid, limit=5000):
+        """Every edit event of one run with its payload merged (for reconciliation)."""
+        with self.connection() as conn:
+            rows=conn.execute("SELECT * FROM events WHERE query_id=? AND kind='edit' ORDER BY seq LIMIT ?",(qid,limit)).fetchall()
+        return [{**self.decode(r),'id':r['id'],'seq':r['seq'],'block_id':r['block_id'],'compacted':r['compacted']} for r in rows]
+
     def run(self, qid):
         with self.connection() as conn:
             row=conn.execute('SELECT * FROM runs WHERE query_id=?',(qid,)).fetchone()
