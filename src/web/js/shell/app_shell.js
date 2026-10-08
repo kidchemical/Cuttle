@@ -640,6 +640,10 @@ const DEFAULT_LAYOUT = {
     layout_version: RAIL_LAYOUT_VERSION,
 };
 
+// Experiment availability does not change the user's saved pin preferences.
+// Declared early: restoreSplitLayout() (below) mounts panes via
+// mountNewLeafFrame(), which re-applies feed visibility per new pane.
+let agentFeedEnabled = false;
 /** Shared rail layout for every blade (not per-bar). */
 let lastUILayout = {
     rail_items: DEFAULT_LAYOUT.rail_items.slice(),
@@ -2978,6 +2982,10 @@ function mountNewLeafFrame(newIdx, frame, mainEl, page) {
     stampComposerDraftScope(frame, newIdx);
     frame.src = withCacheBust(safePage);
     attachFrameLoadListener(newIdx, frame);
+    // Fresh panes clone the boot-time rail template, which bakes in the
+    // pre-flag `display:none` on nav-agent-feed. Re-apply the live flag so a
+    // new split matches column 0 instead of losing the icon.
+    applyAgentFeedAvailability();
 }
 
 /**
@@ -4182,8 +4190,8 @@ function migrateUILayout(saved) {
     return { layout, changed: true };
 }
 
-// Experiment availability does not change the user's saved pin preferences.
-let agentFeedEnabled = false;
+// `agentFeedEnabled` is declared near lastUILayout (above) so pane mounts
+// during restore can re-apply feed visibility without hitting TDZ.
 function applyAgentFeedAvailability() {
     document.querySelectorAll('[data-id="nav-agent-feed"]').forEach(el => {
         el.style.setProperty('display', agentFeedEnabled ? '' : 'none', 'important');
