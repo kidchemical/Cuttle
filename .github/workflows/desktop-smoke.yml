@@ -16,7 +16,9 @@ permissions:
 jobs:
   packaged-host:
     # Release runs the packaged build itself (with uploads).
-    if: ${{ inputs.packaged != false }}
+    # toJSON keeps the comparison type-exact: on push/PR inputs is empty (null),
+    # and null == false under GitHub's loose equality.
+    if: ${{ toJSON(inputs.packaged) != 'false' }}
     uses: ./.github/workflows/packaged-host.yml
     with:
       upload: false
