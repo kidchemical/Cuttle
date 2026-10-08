@@ -223,6 +223,8 @@ class ToolActivityLog:
         self.agent_id = agent_id
         self.emitter = emitter
         self.tools: dict = {}
+        # Tools whose edits the vendor reported natively need no step snapshot.
+        self.native_edit_tools: set = set()
 
     def record(self, tool_id: Any, name: str = "", args: Any = None, *,
                phase: str = "started", result: Any = None, failed: bool = False) -> None:
@@ -242,7 +244,8 @@ class ToolActivityLog:
         summary = name + detail
         record_agent_tool(f"{self.source_id}:{key}", summary, phase=phase,
                           args=args, result=result, failed=failed)
-        if phase == "completed" and self.agent_id not in ("codex", "claude", "opencode"):
+        if (phase == "completed" and self.agent_id not in ("codex", "claude", "opencode")
+                and key not in self.native_edit_tools):
             from api.query_events import current_query_id
             if any(part in name.lower() for part in ("edit", "write", "patch", "bash", "shell", "exec")):
                 try:
@@ -258,6 +261,8 @@ class ToolActivityLog:
 
     def record_edit(self, tool_id: Any, path: str, patch: Any, *, change: Any = 'modify', source: str = 'native') -> None:
         """Preserve vendor edit evidence without interpreting it in the kernel."""
-        from api.query_events import add_event
-        add_event('edit', block_id=f'{self.source_id}:{tool_id}:edit:{path}',
-                  summary=f'Edit {path}', path=path, patch=patch, change=change, source=source)
+        from api.query_events import record_agent_edit
+        if source == 'native':
+            self.native_edit_tools.add(str(tool_id))
+        record_agent_edit(f'{self.source_id}:{tool_id}:edit:{path}', path, patch,
+                          change=change, source=source, tool_id=f'{self.source_id}:{tool_id}')

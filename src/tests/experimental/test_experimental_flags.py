@@ -268,3 +268,11 @@ def test_live_settings_write_is_rejected():
     from managers.settings_manager import SettingsManager
     with pytest.raises(RuntimeError, match='live application settings'):
         SettingsManager().set_setting('experimental_flags', {})
+
+
+def test_flag_labels_are_plain_text():
+    """Experimental tab labels carry no pictographs (🏆 …)."""
+    import re
+
+    emoji = re.compile("[\U0001F300-\U0001FAFF☀-➿]")
+    assert not [f.id for f in flags.all_flags() if emoji.search(f.label)]

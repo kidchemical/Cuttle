@@ -25,7 +25,7 @@ def _no_external(monkeypatch):
 
     fake_complete.reply = "Got it, checking the voice module now."
     monkeypatch.setattr(voice_narrator, "_complete", fake_complete)
-    monkeypatch.setattr("api.chat_tts.synthesize_speech", lambda text, model, voice: b"MP3:" + text.encode())
+    monkeypatch.setattr("api.chat_tts.synthesize_speech", lambda text, **kw: b"MP3:" + text.encode())
     monkeypatch.setattr(
         "api.chat_tts.load_chat_tts_settings",
         lambda: {"enabled": True, "tts_model": "gpt-4o-mini-tts", "voice": "coral"},

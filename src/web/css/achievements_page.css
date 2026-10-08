@@ -1,6 +1,6 @@
- .achievements-page { max-width: 1100px; margin: 0 auto; padding: 24px; }
-.achievements-header { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:16px; }
-.achievements-header h1 { margin:0 0 8px; }
+/* Frame (inset, width) comes from .cuttle-page in compact_page.css. */
+/* Header type comes from the shared backbone (.compact-page-title in
+   compact_page.css). */
 .achievements-controls { display:flex; flex-wrap:wrap; gap:8px; }
 .achievements-controls button, .achievements-controls a { padding:8px 12px; border:1px solid var(--border-color, #444); border-radius:8px; background:var(--panel-hover, transparent); color:inherit; font:inherit; text-decoration:none; cursor:pointer; }
 .achievements-controls button:disabled { opacity:.5; cursor:default; }
@@ -34,7 +34,7 @@
 .achievement-card {
     padding: 12px 10px;
     border: 1px solid var(--border-color);
-    border-radius: 10px;
+    border-radius: var(--page-card-radius);
     background: var(--panel-hover);
     text-align: center;
     opacity: 0.62;

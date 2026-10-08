@@ -187,9 +187,40 @@ def test_voice_tab_handlers_are_defined():
     html = _page()
     for fn in ("loadChatTtsSettings", "saveChatTtsSettings",
                "toggleChatTtsEnabled", "toggleChatTtsSummarize",
-               "previewChatTtsVoice"):
+               "previewChatTtsVoice", "onChatTtsProviderChanged",
+               "fetchChatTtsVoices", "onChatTtsNarratorChanged"):
         assert re.search(rf"(?:function\s+{fn}\s*\(|{fn}\s*=\s*function)", html), \
             f"{fn} is referenced by the Voice tab but never defined"
+
+
+def test_voice_tab_is_provider_driven():
+    """Voices/models come from /api/tts/providers, never hardcoded HTML.
+
+    The voice dropdown must not pin one provider's catalog: provider,
+    model, and voice selects render from the registry, tunables hide per
+    provider, and the narrator model is a free-form input with suggestions.
+    """
+    html = _page()
+    panel = html[html.index('id="panel-voice"'):html.index('id="panel-devices"')]
+    assert 'id="chatTtsProvider"' in panel
+    assert 'id="chatTtsNarratorProvider"' in panel
+    assert 'id="chatTtsNarratorSuggestions"' in panel
+    assert 'id="chatTtsSpeedRow"' in panel
+    assert 'id="chatTtsFetchVoicesBtn"' in panel
+    voice_sel = panel[panel.index('id="chatTtsVoice"'):panel.index("</select>", panel.index('id="chatTtsVoice"'))]
+    assert "<option" not in voice_sel or "Loading" in voice_sel, \
+        "voice options must arrive from the registry, not markup"
+    assert "coral" not in voice_sel
+
+
+def test_inapplicable_voice_rows_really_hide():
+    """Provider tunables hide via `hidden`; the base .setting-item flex
+    rule would otherwise keep inapplicable sliders visible."""
+    css = (REPO_ROOT / "src" / "web" / "css" / "settings_page.css").read_text(
+        encoding="utf-8"
+    )
+    assert "#panel-voice .setting-item[hidden]" in css
+    assert "#chatTtsFetchVoicesBtn[hidden]" in css
 
 
 def test_every_lazy_loader_is_registered_and_tab_id_exists():
@@ -546,3 +577,21 @@ def test_refresh_reruns_loaders_and_init_is_idempotent():
     assert res["refresh"]["afterFirst"] == 1
     assert res["refresh"]["afterRefresh"] == 2
     assert res["doubleInit"] == "providers"
+
+def test_column_controls_are_classed_and_do_not_wrap():
+    """Stacked controls use a class, and never wrap.
+
+    An inline column style lets the narrow `flex: 1 1 160px` input rule
+    turn into a 160px height (Voice selects), and a wrapping column flex
+    sizes each child to its widest content (playlist ran past the card).
+    """
+    html = _page()
+    assert 'style="flex-direction:column' not in html
+    assert 'id="videoPlaylistSelect" class="setting-input" style=' not in html
+    css = (REPO_ROOT / "src/web/css/settings_page.css").read_text(encoding="utf-8")
+    assert re.search(
+        r"\.setting-control--stack,\s*body\.compact-shell-page "
+        r"\.setting-control--column\s*\{\s*flex-wrap:\s*nowrap",
+        css,
+    )
+    assert re.search(r"\.video-row-buttons\s*\{[^}]*flex:\s*0 0 auto", css)

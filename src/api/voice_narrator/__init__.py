@@ -178,5 +178,6 @@ def narrate(payload: Dict[str, Any]) -> Dict[str, Any]:
     settings = load_chat_tts_settings()
     if not settings.get("enabled", True):
         raise RuntimeError("Chat TTS is disabled in Settings")
-    audio = synthesize_speech(text, model=settings["tts_model"], voice=settings["voice"])
+    # Provider, voice, model, and tunables resolve from Settings.
+    audio = synthesize_speech(text)
     return {"text": text, "audio": audio}

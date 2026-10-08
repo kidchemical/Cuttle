@@ -8,12 +8,12 @@
     <script src="/js/shared/ui_boot.js?v=20260926safeArea"></script>
     <link rel="stylesheet" href="css/shared_navigation.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/landing_page.css?v=20260926lightBg">
-    <link rel="stylesheet" href="css/compact_page.css?v=20260814playBtn">
-    <link rel="stylesheet" href="css/settings_page.css?v=20261007noRowBorder">
+    <link rel="stylesheet" href="css/compact_page.css?v=20261007hdr2">
+    <link rel="stylesheet" href="css/settings_page.css?v=20261007hdr2">
 <link rel="stylesheet" href="/css/storage_settings.css?v=20261007">
 </head>
 <body class="compact-shell-page" data-page="settings">
-    <div class="page-content">
+    <div class="page-content cuttle-page">
     <!-- Settings Page -->
     <div class="page-section active">
         <div class="container">
@@ -162,12 +162,12 @@
                     </div>
                     <div class="setting-control setting-control--stack">
                         <div class="video-playlist-toolbar">
-                            <select id="videoPlaylistSelect" class="setting-input" style="flex: 1; min-width: 160px;" onchange="switchVideoPlaylist(this.value)" aria-label="Active playlist"></select>
+                            <select id="videoPlaylistSelect" class="setting-input" onchange="switchVideoPlaylist(this.value)" aria-label="Active playlist"></select>
                             <button class="control-button btn-start" id="videoPlaylistNewBtn" onclick="showNewVideoPlaylistInput()" title="Create a playlist">+ New playlist</button>
                             <button class="control-button btn-stop" id="videoPlaylistDeleteBtn" onclick="deleteVideoPlaylist()" title="Delete this playlist">🗑️ Delete</button>
                         </div>
                         <div id="videoPlaylistNewRow" class="video-playlist-toolbar" style="display: none;">
-                            <input type="text" id="videoPlaylistNewName" class="setting-input" maxlength="40" placeholder="Playlist name" style="flex: 1; min-width: 160px;"
+                            <input type="text" id="videoPlaylistNewName" class="setting-input" maxlength="40" placeholder="Playlist name"
                                    onkeydown="if (event.key === 'Enter') createVideoPlaylist(); else if (event.key === 'Escape') hideNewVideoPlaylistInput();">
                             <button class="control-button btn-start" onclick="createVideoPlaylist()">Create</button>
                             <button class="control-button btn-info" onclick="hideNewVideoPlaylistInput()">Cancel</button>
@@ -380,6 +380,34 @@
                 </div>
 </details>
 
+                <details class="settings-disclosure" id="elevenlabsCredential">
+<summary>ElevenLabs <span class="credential-summary" data-credential-summary="elevenlabs">Checking…</span></summary>
+<div class="setting-item">
+                    <div class="setting-label">
+                        <strong>ElevenLabs API Key</strong><button type="button" class="cuttle-info" data-tooltip="Optional: large voice library, per-voice speed and stability controls. Get a key at elevenlabs.io." aria-label="About ElevenLabs API Key">i</button>
+                    </div>
+                    <div class="setting-control">
+                        <input type="password" id="elevenlabsKey" class="setting-input" placeholder="sk_...">
+                        <button class="control-button btn-info" onclick="testApiKey('elevenlabs')"><span class="emoji">🧪</span> Test</button>
+                        <button class="control-button btn-start" onclick="saveApiKey('elevenlabs')"><span class="emoji">💾</span> Save</button>
+                    </div>
+                </div>
+</details>
+
+                <details class="settings-disclosure" id="googleCredential">
+<summary>Google <span class="credential-summary" data-credential-summary="google">Checking…</span></summary>
+<div class="setting-item">
+                    <div class="setting-label">
+                        <strong>Google AI Studio Key</strong><button type="button" class="cuttle-info" data-tooltip="Optional: Gemini text-to-speech voices. Free tier at aistudio.google.com." aria-label="About Google API Key">i</button>
+                    </div>
+                    <div class="setting-control">
+                        <input type="password" id="googleKey" class="setting-input" placeholder="AIza...">
+                        <button class="control-button btn-info" onclick="testApiKey('google')"><span class="emoji">🧪</span> Test</button>
+                        <button class="control-button btn-start" onclick="saveApiKey('google')"><span class="emoji">💾</span> Save</button>
+                    </div>
+                </div>
+</details>
+
                 <details class="settings-disclosure" id="discordCredential">
 <summary>Discord <span class="credential-summary" data-credential-summary="discord">Checking…</span></summary>
 <div class="setting-item">
@@ -425,60 +453,88 @@
 
                 <div class="setting-item">
                     <div class="setting-label">
-                        <strong>Voice</strong><button type="button" class="cuttle-info" data-tooltip="Choose the voice used to read replies." aria-label="About Voice">i</button>
+                        <strong>Voice provider</strong><button type="button" class="cuttle-info" data-tooltip="Who synthesizes the audio. Each provider brings its own voices, models, and tunables — the controls below follow this choice." aria-label="About Voice provider">i</button>
                     </div>
-                    <div class="setting-control">
-                        <select id="chatTtsVoice" class="setting-input" style="min-width: 160px;">
-                            <option value="coral">coral</option>
-                            <option value="alloy">alloy</option>
-                            <option value="ash">ash</option>
-                            <option value="ballad">ballad</option>
-                            <option value="echo">echo</option>
-                            <option value="fable">fable</option>
-                            <option value="nova">nova</option>
-                            <option value="onyx">onyx</option>
-                            <option value="sage">sage</option>
-                            <option value="shimmer">shimmer</option>
-                            <option value="verse">verse</option>
-                            <option value="marin">marin</option>
-                            <option value="cedar">cedar</option>
+                    <div class="setting-control setting-control--column">
+                        <select id="chatTtsProvider" class="setting-input" onchange="onChatTtsProviderChanged()">
+                            <option value="">Loading providers…</option>
                         </select>
+                        <div class="setting-description" id="chatTtsProviderStatus" role="status">Loading…</div>
                     </div>
                 </div>
-                <details class="settings-disclosure" id="voiceDetails">
-<summary>Advanced voice settings</summary>
-<div class="setting-item">
+                <div class="setting-item">
                     <div class="setting-label">
-                        <strong>TTS model</strong><button type="button" class="cuttle-info" data-tooltip="Choose a speech model. Audio uses your OpenAI API key." aria-label="About TTS model">i</button>
+                        <strong>Model</strong><button type="button" class="cuttle-info" data-tooltip="Speech model for the selected provider." aria-label="About TTS model">i</button>
                     </div>
                     <div class="setting-control">
                         <select id="chatTtsModel" class="setting-input" style="min-width: 220px;">
-                            <option value="gpt-4o-mini-tts">gpt-4o-mini-tts (recommended)</option>
-                            <option value="tts-1">tts-1 (fast / cheap)</option>
-                            <option value="tts-1-hd">tts-1-hd (higher quality)</option>
+                            <option value="">Loading…</option>
                         </select>
+                    </div>
+                </div>
+                <div class="setting-item">
+                    <div class="setting-label">
+                        <strong>Voice</strong><button type="button" class="cuttle-info" data-tooltip="Choose the voice used to read replies. The list belongs to the selected provider." aria-label="About Voice">i</button>
+                    </div>
+                    <div class="setting-control setting-control--column">
+                        <select id="chatTtsVoice" class="setting-input" style="min-width: 160px;">
+                            <option value="">Loading…</option>
+                        </select>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap">
+                            <button type="button" class="control-button btn-info" id="chatTtsFetchVoicesBtn" onclick="fetchChatTtsVoices(event)" hidden>⤓ Fetch my voices</button>
+                        </div>
+                        <input type="text" id="chatTtsCustomVoice" class="setting-input" style="min-width: 160px;" placeholder="Or paste a voice id / name" title="ElevenLabs voice id, or a Google prebuilt voice name">
+                    </div>
+                </div>
+                <div class="setting-item" id="chatTtsSpeedRow" hidden>
+                    <div class="setting-label">
+                        <strong>Speed</strong><button type="button" class="cuttle-info" data-tooltip="Playback pace for the synthesized voice." aria-label="About Speed">i</button>
+                        <span class="setting-description" id="chatTtsSpeedValue">1.00×</span>
+                    </div>
+                    <div class="setting-control">
+                        <input type="range" id="chatTtsSpeed" class="setting-input" min="0.25" max="4" step="0.05" value="1" style="min-width: 160px;" oninput="onChatTtsSpeedInput()">
+                    </div>
+                </div>
+                <div class="setting-item" id="chatTtsStabilityRow" hidden>
+                    <div class="setting-label">
+                        <strong>Stability</strong><button type="button" class="cuttle-info" data-tooltip="ElevenLabs expressiveness: lower is more emotive, higher is steadier." aria-label="About Stability">i</button>
+                        <span class="setting-description" id="chatTtsStabilityValue">0.50</span>
+                    </div>
+                    <div class="setting-control">
+                        <input type="range" id="chatTtsStability" class="setting-input" min="0" max="1" step="0.05" value="0.5" style="min-width: 160px;" oninput="onChatTtsStabilityInput()">
+                    </div>
+                </div>
+                <details class="settings-disclosure" id="voiceDetails">
+<summary>Narrator (summarize before speaking)</summary>
+<div class="setting-item">
+                    <div class="setting-label">
+                        <strong>Narrator provider</strong><button type="button" class="cuttle-info" data-tooltip="Who writes the short spoken blurb before synthesis. Uses your saved key for that provider." aria-label="About Narrator provider">i</button>
+                    </div>
+                    <div class="setting-control setting-control--column">
+                        <select id="chatTtsNarratorProvider" class="setting-input" onchange="onChatTtsNarratorChanged()">
+                            <option value="">Loading…</option>
+                        </select>
+                        <div class="setting-description" id="chatTtsNarratorStatus" role="status"></div>
                     </div>
                 </div>
 <div class="setting-item">
                     <div class="setting-label">
-                        <strong>Summarize model</strong><button type="button" class="cuttle-info" data-tooltip="Cheap chat model that writes the spoken blurb before TTS" aria-label="About Summarize model">i</button>
+                        <strong>Narrator model</strong><button type="button" class="cuttle-info" data-tooltip="Any model id your key can reach. Suggestions come from the provider registry; blank means the provider default." aria-label="About Narrator model">i</button>
                     </div>
                     <div class="setting-control">
-                        <select id="chatTtsSummarizeModel" class="setting-input" style="min-width: 200px;">
-                            <option value="gpt-4o-mini">gpt-4o-mini (recommended)</option>
-                            <option value="gpt-4.1-mini">gpt-4.1-mini</option>
-                            <option value="gpt-4.1-nano">gpt-4.1-nano</option>
-                            <option value="o3-mini">o3-mini</option>
-                            <option value="o4-mini">o4-mini</option>
-                        </select>
+                        <input type="text" id="chatTtsNarratorModel" class="setting-input" list="chatTtsNarratorSuggestions" style="min-width: 200px;" placeholder="Model id (blank = default)">
+                        <datalist id="chatTtsNarratorSuggestions"></datalist>
                     </div>
                 </div>
 </details>
                 <div class="setting-item">
-                    <div class="setting-control" style="gap:8px">
+                    <div class="setting-control" style="gap:8px;flex-wrap:wrap">
                         <button type="button" class="control-button btn-start" onclick="saveChatTtsSettings()"><span class="emoji">💾</span> Save chat voice</button>
-                        <button type="button" class="control-button btn-info" onclick="previewChatTtsVoice(event)" title="Play a short sample with the selected voice and model">🔊 Try voice</button>
+                        <button type="button" class="control-button btn-info" onclick="previewChatTtsVoice(event)" title="Synthesize a sample with the exact provider, model, voice, and tunables shown above (cached for 7 days)">🔊 Try voice</button>
                     </div>
+                </div>
+                <div class="setting-item">
+                    <div class="setting-description" id="chatTtsPreviewStatus" role="status"></div>
                 </div>
             </div>
             </section>
@@ -502,7 +558,7 @@
                         <strong>Connect another device</strong>
                         <div class="setting-description" id="lanAccessStatus">Loading…</div>
                     </div>
-                    <div class="setting-control" style="flex-direction:column;align-items:stretch;gap:6px;max-width:100%">
+                    <div class="setting-control setting-control--column">
                         <code id="lanHttpUrl" style="font-size:12px;word-break:break-all">—</code>
                         <code id="lanHttpsUrl" style="font-size:12px;word-break:break-all">—</code>
                         <button type="button" class="control-button btn-info" onclick="loadLanAccessSettings()">🔄 Refresh</button>
@@ -2043,8 +2099,160 @@
             }
         }
 
+        // Voice tab: provider registry snapshot + saved chat_tts. The
+        // provider owns its voices/models/tunables, so every control below
+        // re-renders from the selected provider (never a hardcoded list).
+        let _ttsProviders = [];
+        let _ttsNarrators = [];
+        let _ttsFetchedVoices = {};
+
+        function _ttsProvider(id) {
+            return (_ttsProviders || []).find((p) => p && p.id === id) || null;
+        }
+
+        function _ttsSetOptions(sel, items, current) {
+            if (!sel) return;
+            sel.textContent = '';
+            (items || []).forEach((it) => {
+                const opt = document.createElement('option');
+                opt.value = it.id;
+                opt.textContent = it.label || it.id;
+                sel.appendChild(opt);
+            });
+            if (current != null && current !== '') {
+                if (!Array.from(sel.options).some((o) => o.value === String(current))) {
+                    const opt = document.createElement('option');
+                    opt.value = String(current);
+                    opt.textContent = String(current);
+                    sel.appendChild(opt);
+                }
+                sel.value = String(current);
+            }
+        }
+
+        function _ttsRefreshTunables() {
+            const pid = (document.getElementById('chatTtsProvider') || {}).value || 'openai';
+            const p = _ttsProvider(pid);
+            const speedRow = document.getElementById('chatTtsSpeedRow');
+            const speed = document.getElementById('chatTtsSpeed');
+            const speedVal = document.getElementById('chatTtsSpeedValue');
+            const stabRow = document.getElementById('chatTtsStabilityRow');
+            if (speedRow) speedRow.hidden = !(p && p.speed_range);
+            if (p && p.speed_range && speed) {
+                speed.min = p.speed_range[0];
+                speed.max = p.speed_range[1];
+                let v = parseFloat(speed.value);
+                if (!isFinite(v)) v = 1;
+                v = Math.max(p.speed_range[0], Math.min(p.speed_range[1], v));
+                speed.value = String(v);
+                if (speedVal) speedVal.textContent = v.toFixed(2) + '×';
+            }
+            if (stabRow) stabRow.hidden = !(p && p.supports_stability);
+            const fetchBtn = document.getElementById('chatTtsFetchVoicesBtn');
+            if (fetchBtn) fetchBtn.hidden = !(p && p.supports_fetch_voices && p.configured);
+        }
+
+        function _ttsRenderVoices(pid, savedVoice) {
+            const sel = document.getElementById('chatTtsVoice');
+            const p = _ttsProvider(pid);
+            const fetched = _ttsFetchedVoices[pid] || [];
+            const items = (fetched.length ? fetched : ((p && p.voices) || []))
+                .map((v) => ({ id: v.id, label: v.label || v.id }));
+            _ttsSetOptions(sel, items, savedVoice || (items[0] && items[0].id) || '');
+            const custom = document.getElementById('chatTtsCustomVoice');
+            if (custom) custom.value = '';
+        }
+
+        function _ttsRenderModels(pid, savedModel) {
+            const p = _ttsProvider(pid);
+            _ttsSetOptions(
+                document.getElementById('chatTtsModel'),
+                ((p && p.models) || []).map((m) => ({ id: m.id, label: m.label || m.id })),
+                savedModel || (p && p.default_model) || ''
+            );
+        }
+
+        function onChatTtsProviderChanged() {
+            const sel = document.getElementById('chatTtsProvider');
+            const pid = (sel && sel.value) || 'openai';
+            const saved = (window._chatTtsSaved || {});
+            const models = saved.models || {};
+            const voices = saved.voices || {};
+            _ttsRenderModels(pid, models[pid]);
+            _ttsRenderVoices(pid, voices[pid]);
+            _ttsRefreshTunables();
+            const p = _ttsProvider(pid);
+            const status = document.getElementById('chatTtsProviderStatus');
+            if (status) {
+                status.textContent = p
+                    ? (p.configured
+                        ? p.label + ' key saved.'
+                        : p.label + ' key missing — add it under Providers → API Keys to use this provider.')
+                    : '';
+            }
+        }
+
+        function onChatTtsSpeedInput() {
+            const speed = document.getElementById('chatTtsSpeed');
+            const val = document.getElementById('chatTtsSpeedValue');
+            if (speed && val) {
+                const v = parseFloat(speed.value);
+                if (isFinite(v)) val.textContent = v.toFixed(2) + '×';
+            }
+        }
+
+        function onChatTtsStabilityInput() {
+            const el = document.getElementById('chatTtsStability');
+            const val = document.getElementById('chatTtsStabilityValue');
+            if (el && val) {
+                const v = parseFloat(el.value);
+                if (isFinite(v)) val.textContent = v.toFixed(2);
+            }
+        }
+
+        function _ttsRenderNarrators(savedProvider, savedModel) {
+            const sel = document.getElementById('chatTtsNarratorProvider');
+            if (sel) {
+                sel.textContent = '';
+                _ttsNarrators.forEach((n) => {
+                    const opt = document.createElement('option');
+                    opt.value = n.id;
+                    opt.textContent = n.label + (n.configured ? '' : ' (no key)');
+                    sel.appendChild(opt);
+                });
+                if (savedProvider) sel.value = savedProvider;
+            }
+            onChatTtsNarratorChanged(savedModel);
+        }
+
+        function onChatTtsNarratorChanged(savedModel) {
+            const sel = document.getElementById('chatTtsNarratorProvider');
+            const pid = (sel && sel.value) || 'openai';
+            const n = (_ttsNarrators || []).find((x) => x && x.id === pid) || null;
+            const list = document.getElementById('chatTtsNarratorSuggestions');
+            if (list) {
+                list.textContent = '';
+                ((n && n.suggested_models) || []).forEach((m) => {
+                    const opt = document.createElement('option');
+                    opt.value = m;
+                    list.appendChild(opt);
+                });
+            }
+            const input = document.getElementById('chatTtsNarratorModel');
+            if (input && savedModel !== undefined) input.value = savedModel || '';
+            const status = document.getElementById('chatTtsNarratorStatus');
+            if (status) {
+                status.textContent = n
+                    ? (n.configured
+                        ? 'Key saved' + (n.effective_model ? ' · default ' + n.effective_model : '') + '.'
+                        : 'No key saved — add it under Providers → API Keys.')
+                    : '';
+            }
+        }
+
         function applyChatTtsToUi(t) {
             const conf = (t && typeof t === 'object') ? t : {};
+            window._chatTtsSaved = conf;
             const enabled = document.getElementById('chatTtsEnabled');
             const enabledToggle = document.getElementById('chatTtsEnabledToggle');
             if (enabled) enabled.checked = conf.enabled !== false;
@@ -2053,27 +2261,54 @@
             const summarizeToggle = document.getElementById('chatTtsSummarizeToggle');
             if (summarize) summarize.checked = conf.summarize !== false;
             if (summarizeToggle) summarizeToggle.classList.toggle('active', conf.summarize !== false);
-            const voice = document.getElementById('chatTtsVoice');
-            if (voice && conf.voice) {
-                const v = String(conf.voice).toLowerCase();
-                if (!Array.from(voice.options).some((o) => o.value === v)) {
-                    const opt = document.createElement('option');
-                    opt.value = v;
-                    opt.textContent = v;
-                    voice.appendChild(opt);
-                }
-                voice.value = v;
+            const provSel = document.getElementById('chatTtsProvider');
+            if (provSel && conf.provider) provSel.value = conf.provider;
+            onChatTtsProviderChanged();
+            const speed = document.getElementById('chatTtsSpeed');
+            if (speed && conf.speed != null) {
+                speed.value = String(conf.speed);
+                onChatTtsSpeedInput();
             }
-            const model = document.getElementById('chatTtsModel');
-            if (model && conf.tts_model) model.value = String(conf.tts_model);
-            const smodel = document.getElementById('chatTtsSummarizeModel');
-            if (smodel && conf.summarize_model) smodel.value = String(conf.summarize_model);
+            const stab = document.getElementById('chatTtsStability');
+            if (stab && conf.stability != null) {
+                stab.value = String(conf.stability);
+                onChatTtsStabilityInput();
+            }
+            // Custom voice box wins over the dropdown when the saved voice
+            // is not in the curated/fetched list.
+            const custom = document.getElementById('chatTtsCustomVoice');
+            const voiceSel = document.getElementById('chatTtsVoice');
+            const savedVoice = ((conf.voices || {})[((provSel && provSel.value) || 'openai')]) || '';
+            if (custom && voiceSel && savedVoice
+                && !Array.from(voiceSel.options).some((o) => o.value === savedVoice)) {
+                custom.value = savedVoice;
+            }
+            const smodels = conf.summarize_models || {};
+            _ttsRenderNarrators(conf.summarize_provider || 'openai',
+                smodels[(document.getElementById('chatTtsNarratorProvider') || {}).value || 'openai'] || '');
         }
 
         async function loadChatTtsSettings() {
             try {
-                const r = await fetch('/api/settings/chat-tts', { cache: 'no-store' });
-                const d = await r.json();
+                const [pr, sr] = await Promise.all([
+                    fetch('/api/tts/providers', { cache: 'no-store' }),
+                    fetch('/api/settings/chat-tts', { cache: 'no-store' }),
+                ]);
+                const pd = await pr.json();
+                if (!pd.success) throw new Error(pd.error || 'Failed to load providers');
+                _ttsProviders = pd.providers || [];
+                _ttsNarrators = pd.summarize_providers || [];
+                const psel = document.getElementById('chatTtsProvider');
+                if (psel) {
+                    psel.textContent = '';
+                    _ttsProviders.forEach((p) => {
+                        const opt = document.createElement('option');
+                        opt.value = p.id;
+                        opt.textContent = p.label + (p.configured ? '' : ' (no key)');
+                        psel.appendChild(opt);
+                    });
+                }
+                const d = await sr.json();
                 if (!d.success) throw new Error(d.error || 'Failed to load');
                 applyChatTtsToUi(d.chat_tts);
             } catch (e) {
@@ -2095,12 +2330,35 @@
             if (enabled !== undefined) out.enabled = enabled;
             const summarize = checked('chatTtsSummarize');
             if (summarize !== undefined) out.summarize = summarize;
-            const voice = val('chatTtsVoice');
-            if (voice) out.voice = String(voice).toLowerCase();
+            const saved = window._chatTtsSaved || {};
+            const pid = val('chatTtsProvider') || saved.provider || 'openai';
+            out.provider = pid;
+            const models = Object.assign({}, saved.models || {});
             const model = val('chatTtsModel');
-            if (model) out.tts_model = model;
-            const smodel = val('chatTtsSummarizeModel');
-            if (smodel) out.summarize_model = smodel;
+            if (model) models[pid] = model;
+            out.models = models;
+            const voices = Object.assign({}, saved.voices || {});
+            const custom = (val('chatTtsCustomVoice') || '').trim();
+            const voice = custom || val('chatTtsVoice');
+            if (voice) voices[pid] = voice;
+            out.voices = voices;
+            const speedEl = document.getElementById('chatTtsSpeed');
+            if (speedEl && !document.getElementById('chatTtsSpeedRow').hidden) {
+                const v = parseFloat(speedEl.value);
+                if (isFinite(v)) out.speed = v;
+            }
+            const stabEl = document.getElementById('chatTtsStability');
+            if (stabEl && !document.getElementById('chatTtsStabilityRow').hidden) {
+                const v = parseFloat(stabEl.value);
+                if (isFinite(v)) out.stability = v;
+            }
+            const sp = val('chatTtsNarratorProvider');
+            if (sp) out.summarize_provider = sp;
+            const smodels = Object.assign({}, saved.summarize_models || {});
+            const sm = (val('chatTtsNarratorModel') || '').trim();
+            if (sp && sm) smodels[sp] = sm;
+            else if (sp && smodels[sp] && !sm) delete smodels[sp];
+            out.summarize_models = smodels;
             return out;
         }
 
@@ -2120,10 +2378,35 @@
             }
         }
 
-        async function previewChatTtsVoice(event) {
+        async function fetchChatTtsVoices(event) {
             const btn = event && event.currentTarget ? event.currentTarget : null;
             try {
                 if (btn) btn.disabled = true;
+                const pid = (document.getElementById('chatTtsProvider') || {}).value || 'elevenlabs';
+                const r = await fetch('/api/tts/voices?provider=' + encodeURIComponent(pid));
+                const d = await r.json();
+                if (!r.ok || !d.success) throw new Error((d && d.error) || ('Fetch failed (' + r.status + ')'));
+                if (d.note) {
+                    (window.showToast || alert)(d.note, 'info');
+                    return;
+                }
+                _ttsFetchedVoices[pid] = d.voices || [];
+                const saved = (window._chatTtsSaved || {}).voices || {};
+                _ttsRenderVoices(pid, saved[pid]);
+                (window.showToast || alert)('Loaded ' + (d.voices || []).length + ' voices', 'info');
+            } catch (e) {
+                (window.showToast || alert)('Could not fetch voices: ' + (e.message || e), 'error');
+            } finally {
+                if (btn) btn.disabled = false;
+            }
+        }
+
+        async function previewChatTtsVoice(event) {
+            const btn = event && event.currentTarget ? event.currentTarget : null;
+            const status = document.getElementById('chatTtsPreviewStatus');
+            try {
+                if (btn) btn.disabled = true;
+                if (status) status.textContent = 'Synthesizing preview…';
                 const ui = readChatTtsFromUi();
                 const r = await fetch('/api/chat/tts', {
                     method: 'POST',
@@ -2131,8 +2414,11 @@
                     body: JSON.stringify({
                         text: 'Hello! This is how I will sound when I read replies aloud.',
                         summarize: false,
-                        tts_model: ui.tts_model,
-                        voice: ui.voice,
+                        provider: ui.provider,
+                        tts_model: (ui.models || {})[ui.provider],
+                        voice: (ui.voices || {})[ui.provider],
+                        speed: ui.speed,
+                        stability: ui.stability,
                     }),
                 });
                 const d = await r.json();
@@ -2144,7 +2430,15 @@
                 for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
                 const url = URL.createObjectURL(new Blob([bytes], { type: d.content_type || 'audio/mpeg' }));
                 await new Audio(url).play();
+                if (status) {
+                    const bits = [];
+                    if (d.cached) bits.push('served from cache (no charge)');
+                    const cost = d.usage && d.usage.tts_cost;
+                    if (cost != null) bits.push('≈$' + Number(cost).toFixed(4) + ' this preview');
+                    status.textContent = 'Preview played' + (bits.length ? ' — ' + bits.join(' · ') : '') + '.';
+                }
             } catch (e) {
+                if (status) status.textContent = '';
                 (window.showToast || alert)('Voice preview failed: ' + (e.message || e), 'error');
             } finally {
                 if (btn) btn.disabled = false;
@@ -2398,6 +2692,12 @@
                     }
                     if (result.api_keys.discord) {
                         document.getElementById('discordKey').placeholder = `${hint(result.api_keys.discord)} saved — Test checks it, paste to replace`;
+                    }
+                    if (result.api_keys.elevenlabs) {
+                        document.getElementById('elevenlabsKey').placeholder = `${hint(result.api_keys.elevenlabs)} saved — Test checks it, paste to replace`;
+                    }
+                    if (result.api_keys.google) {
+                        document.getElementById('googleKey').placeholder = `${hint(result.api_keys.google)} saved — Test checks it, paste to replace`;
                     }
                 }
             } catch (error) {

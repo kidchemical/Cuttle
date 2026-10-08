@@ -8,17 +8,14 @@
     --project-border: color-mix(in srgb, var(--project-text) 12%, transparent);
     --project-subtle: color-mix(in srgb, var(--project-text) 4%, transparent);
 }
-html { background: var(--project-canvas); }
-body[data-page="projects"] { background: var(--project-canvas); color: var(--project-text); font-size: 14px; line-height: 1.5; }
-body[data-page="projects"]::before { display: none; }
-.projects-app { width: 100%; max-width: 1280px; margin: auto; padding: 32px 32px max(32px, var(--safe-area-inset-bottom, 0px)); }
-.projects-header { display: flex; justify-content: space-between; gap: 24px; align-items: center; }
-h1, h2, h3 { font-weight: 650; color: var(--project-text); letter-spacing: -.025em; }
-h1 { margin: 0; font-size: 26px; line-height: 1.25; }
+body[data-page="projects"] { color: var(--project-text); font-size: 14px; line-height: 1.5; }
+/* Frame (inset, width) comes from .cuttle-page in compact_page.css. */
+/* Header type comes from the shared backbone (.compact-page-title in
+   compact_page.css); this page only owns header layout. */
+h2, h3 { font-weight: 650; color: var(--project-text); letter-spacing: -.025em; }
 h2 { margin: 0 0 6px; font-size: 22px; }
 h3 { margin: 0 0 16px; font-size: 15px; letter-spacing: -.01em; }
 p { margin: 0 0 16px; line-height: 1.6; }
-.projects-header p { margin: 5px 0 0; font-size: 13px; color: var(--project-muted); }
 .muted, small { color: var(--project-muted); }
 .muted { font-size: 13px; }
 small { font-size: 12px; }
@@ -70,12 +67,12 @@ fieldset > label { margin-bottom: 18px; }
 .tabs button { flex: none; min-height: 44px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; padding: 9px 0 12px; font-size: 13px; font-weight: 500; color: var(--project-muted); }
 .tabs button:hover { color: var(--project-text); }
 .tabs button[aria-selected="true"] { border-bottom-color: var(--project-accent); color: var(--project-text); }
-.panel { min-width: 0; padding: 22px; background: var(--project-panel); border: 1px solid var(--project-border); border-radius: 10px; margin-bottom: 18px; }
+.panel { min-width: 0; padding: 22px; background: var(--project-panel); border: 1px solid var(--project-border); border-radius: var(--page-card-radius); margin-bottom: 18px; }
 .panel > :last-child { margin-bottom: 0; }
 .panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
 .panel-heading h3 { margin: 0; }
 .metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
-.metric { padding: 16px 18px; background: var(--project-panel); border: 1px solid var(--project-border); border-radius: 10px; }
+.metric { padding: 16px 18px; background: var(--project-panel); border: 1px solid var(--project-border); border-radius: var(--page-card-radius); }
 .metric small { font-size: 12px; }
 .metric strong { display: block; font-size: 26px; font-weight: 600; letter-spacing: -.035em; margin-top: 5px; line-height: 1.2; }
 #metadata-form fieldset { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
@@ -119,18 +116,13 @@ dialog label { margin-bottom: 16px; }
 dialog .actions { justify-content: flex-end; margin-top: 20px; }
 :focus-visible { outline: 2px solid var(--project-accent); outline-offset: 3px; }
 @media (max-width: 900px) {
-    .projects-app { padding: 24px; }
     .projects-layout { grid-template-columns: 210px minmax(0, 1fr); gap: 24px; }
     .tabs { gap: 18px; }
     .detail-header { align-items: flex-start; }
     .detail-header .actions { flex-direction: column; align-items: stretch; }
 }
 @media (max-width: 720px) {
-    .projects-app { padding: 18px 16px max(24px, var(--safe-area-inset-bottom, 0px)); }
-    h1 { font-size: 22px; }
     h2 { font-size: 20px; }
-    .projects-header { gap: 12px; align-items: flex-start; }
-    .projects-header p { max-width: 24ch; font-size: 12px; }
     .projects-header > .actions { flex-wrap: nowrap; gap: 6px; }
     #refresh .desktop-label { display: none; }
     #refresh { padding: 10px; min-width: 44px; }

@@ -7,23 +7,23 @@
     <link rel="stylesheet" href="/css/ui_boot.css?v=20260927blendTarget">
     <script src="/js/shared/ui_boot.js?v=20260926safeArea"></script>
     <link rel="stylesheet" href="/css/shared_navigation.css?v=20260926lightBg">
-    <link rel="stylesheet" href="/css/router_editor.css?v=20261005lanes">
+    <link rel="stylesheet" href="/css/compact_page.css?v=20261007hdr2">
+    <link rel="stylesheet" href="/css/router_editor.css?v=20261007hdr2">
 </head>
 <body class="compact-shell-page">
-    <header class="re-header">
-        <div class="re-header-left">
-            <span class="re-logo">🔀</span>
-            <h1>Cuttle Router</h1>
-            <span class="re-mode-chip" id="mode-chip" title="Routing brain mode">…</span>
-            <span class="re-dirty-chip" id="dirty-chip" hidden>unsaved</span>
-        </div>
-        <div class="re-header-right">
-            <button class="re-btn" id="btn-refresh" title="Reload from settings.json">↻ Reload</button>
-            <button class="re-btn primary" id="btn-save" title="Save config + use cases">💾 Save</button>
-        </div>
-    </header>
-
-    <main class="re-page">
+    <main class="re-page cuttle-page">
+        <header class="compact-page-title has-actions">
+            <div class="compact-page-heading">
+                <h1>Cuttle Router</h1>
+                <p>Picks the harness for each chat turn.</p>
+                <span class="re-mode-chip" id="mode-chip" title="Routing brain mode">…</span>
+                <span class="re-dirty-chip" id="dirty-chip" hidden>unsaved</span>
+            </div>
+            <div class="compact-page-actions">
+                <button class="re-btn" id="btn-refresh" title="Reload from settings.json">↻ Reload</button>
+                <button class="re-btn primary" id="btn-save" title="Save config + use cases">💾 Save</button>
+            </div>
+        </header>
         <section class="re-card" id="try-card">
             <div class="re-card-title"><h2>Try a prompt</h2><span class="re-badge">preview only</span></div>
             <div class="re-preview-input">

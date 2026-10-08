@@ -540,6 +540,10 @@ body.light-mode .chat-session-title-text {
     position: relative;
     top: auto;
     right: auto;
+    /* Inline-level inside a block box: without this the line-box strut
+       drops the hamburger a few px below the directly-fixed corner
+       buttons (voice back-to-chat, new-chat, history). */
+    vertical-align: top;
 }
 
 .chat-chrome-hamburger {
@@ -849,6 +853,39 @@ body.light-mode .chat-session-title-text {
 
 .history-search-wrap .search-input {
     width: 100%;
+    padding-right: 64px;
+    /* iOS zooms smaller inputs, shifting the panel while its keyboard is open. */
+    font-size: 16px;
+}
+
+.history-search-wrap .search-icon {
+    top: 21px;
+    right: 40px;
+    pointer-events: none;
+}
+
+.history-search-clear {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    width: 32px;
+    height: 32px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.history-search-clear[hidden] {
+    display: none;
+}
+
+.history-search-clear:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
 }
 
 .history-search-filter-chips {
@@ -1057,7 +1094,10 @@ body.light-mode .chat-session-title-text {
 
 .chat-history {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
     padding: 0 6px;
 }
 
@@ -7147,6 +7187,17 @@ button.cuttle-button.is-unselected {
     flex-wrap: wrap;
     gap: 8px;
     margin-top: 12px;
+}
+
+.cuttle-action-form-custom {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.cuttle-action-form-custom .form-input {
+    flex: 1;
+    min-width: 0;
 }
 
 .cuttle-action-form-status {

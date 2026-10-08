@@ -93,7 +93,7 @@ body.git-graph-body {
     overflow: hidden !important;
     max-width: none !important;
     margin: 0 !important;
-    padding: 10px 12px 0 !important;
+    padding: var(--page-pad-top) var(--page-pad-x) 0 !important;
     box-sizing: border-box !important;
 }
 
@@ -127,10 +127,12 @@ body.git-graph-body {
     border: 0;
 }
 
+/* Title sits on the shared header line; controls are single-row
+   (inline labels) so they never push the title down. */
 .git-graph-toolbar {
     display: flex;
     flex-wrap: wrap;
-    align-items: flex-end;
+    align-items: flex-start;
     justify-content: space-between;
     gap: 10px 16px;
     margin-bottom: 10px;
@@ -139,31 +141,19 @@ body.git-graph-body {
 
 .git-graph-page .compact-page-title {
     margin-bottom: 0;
-    align-items: baseline;
-}
-
-.git-graph-page .compact-page-subtitle {
-    margin: 0;
-    font-size: 0.68rem;
-    font-weight: 400;
-    color: var(--text-tertiary, #64748b);
-    line-height: 1.2;
-    letter-spacing: 0.01em;
-    max-width: none;
-    opacity: 0.85;
 }
 
 .git-graph-controls {
     display: flex;
     flex-wrap: wrap;
-    align-items: flex-end;
+    align-items: center;
     gap: 10px 12px;
 }
 
 .git-graph-field {
     display: flex;
-    flex-direction: column;
-    gap: 4px;
+    align-items: center;
+    gap: 6px;
     font-size: 11px;
     color: var(--text-secondary, #94a3b8);
 }
@@ -818,10 +808,19 @@ html.git-graph-root *::-webkit-scrollbar-corner {
 
 @media (max-width: 900px) {
     .git-graph-page {
-        padding: 8px 8px 0 !important;
+        padding: var(--page-pad-top) var(--page-pad-x) 0 !important;
     }
     .git-graph-toolbar {
         gap: 8px;
+    }
+    .git-graph-controls {
+        width: 100%;
+    }
+    .git-graph-field {
+        flex: 1 1 100%;
+    }
+    .git-graph-field > span {
+        flex: 0 0 3.5rem;
     }
     .git-graph-field select,
     .git-graph-field input[type="search"],

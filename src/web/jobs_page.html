@@ -8,11 +8,10 @@
     <script src="/js/shared/ui_boot.js?v=20260926safeArea"></script>
     <link rel="stylesheet" href="css/shared_navigation.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/landing_page.css?v=20260926lightBg">
-    <link rel="stylesheet" href="css/compact_page.css?v=20260917bgFix2">
+    <link rel="stylesheet" href="css/compact_page.css?v=20261007hdr2">
     <style>
-        .jobs-page { padding: 16px; max-width: 1100px; margin: 0 auto; }
         .jobs-header { margin-bottom: 12px; }
-        .jobs-header h1 { font-size: 1.25rem; margin-bottom: 4px; }
+        .jobs-header h1 { font-size: 1.05rem; margin-bottom: 4px; }
         .jobs-header p { color: var(--text-secondary); font-size: 0.8rem; line-height: 1.35; margin: 0; }
         .jobs-panel { display: none; }
         .jobs-panel.active { display: block; }
@@ -330,7 +329,6 @@
         .status-indicator { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
         .status-running { background-color: #4ade80; }
         @media (max-width: 768px) {
-            .jobs-page { padding: 10px 8px; max-width: 100%; }
             .job-card { flex-direction: column; }
             .job-actions { align-self: flex-end; }
             .hist-source { margin-left: 0; width: 100%; }
@@ -351,7 +349,7 @@
             document.body.classList.add(t === 'light' ? 'light-mode' : (t === 'midnight' ? 'midnight-mode' : 'dark-mode'));
         })();
     </script>
-    <div class="jobs-page">
+    <div class="jobs-page cuttle-page">
         <div class="compact-page-title jobs-header">
             <h1>Jobs</h1>
             <p>Cuttle Workers on your network and the mesh jobs they run.</p>

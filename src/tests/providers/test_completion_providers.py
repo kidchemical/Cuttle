@@ -59,6 +59,13 @@ def test_registry_exposes_the_three_real_backends():
     assert ids == list(cp.DEFAULT_ORDER)
 
 
+def test_anthropic_suggestions_lead_with_haiku_5_5():
+    """Haiku 5.5 (2026-10-07, claude-haiku-5-5) is the newest cheap model;
+    the narrator picker surfaces registry suggestions, so it shows up."""
+    rows = {r["id"]: r for r in cp.list_providers()}
+    assert rows["anthropic"]["suggested_models"][0] == "claude-haiku-5-5"
+
+
 def test_provider_rows_carry_what_the_ui_needs():
     for row in cp.list_providers():
         for key in (

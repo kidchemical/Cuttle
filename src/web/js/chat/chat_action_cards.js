@@ -566,6 +566,60 @@
                     runSubmission({ cancel: true });
                 }, { signal: life.signal });
             }
+
+            // Free-text custom answer (rendered on Q&A resume cards so the
+            // user is never locked into the listed options). Empty input
+            // does nothing; other picked fields ride along for context.
+            const customInput = card.querySelector('[data-custom-input]');
+            const customBtn = card.querySelector('[data-custom-submit]');
+            if (customInput && customBtn) {
+                const sendCustom = () => {
+                    const text = String(customInput.value || '').trim();
+                    if (!text) {
+                        try { customInput.focus(); } catch (_) {}
+                        return;
+                    }
+                    const fields = {};
+                    card.querySelectorAll('[data-field-id]').forEach((el) => {
+                        const fid = el.getAttribute('data-field-id');
+                        if (!fid) return;
+                        if (el.tagName === 'INPUT' && (el.type || '').toLowerCase() === 'checkbox') {
+                            fields[fid] = !!el.checked;
+                        } else {
+                            fields[fid] = el.value ?? '';
+                        }
+                    });
+                    card.querySelectorAll('[data-radio-group]').forEach((wrap) => {
+                        const fid = wrap.getAttribute('data-radio-group');
+                        if (!fid) return;
+                        const chosen = wrap.querySelector('input[type="radio"]:checked');
+                        fields[fid] = chosen ? chosen.value : '';
+                    });
+                    card.querySelectorAll('[data-checkbox-group]').forEach((wrap) => {
+                        const fid = wrap.getAttribute('data-checkbox-group');
+                        if (!fid) return;
+                        fields[fid] = Array.from(wrap.querySelectorAll('input[type="checkbox"]:checked'))
+                            .map((inp) => inp.value);
+                    });
+                    const modeWrap = card.querySelector('[data-mode="multi"]');
+                    if (modeWrap) {
+                        const opts = [];
+                        modeWrap.querySelectorAll('input[data-action-form-option]:checked').forEach((inp) => {
+                            opts.push(inp.getAttribute('data-action-form-option'));
+                        });
+                        runSubmission({ options: opts, fields, custom_text: text });
+                        return;
+                    }
+                    runSubmission({ fields, custom_text: text });
+                };
+                customBtn.addEventListener('click', sendCustom, { signal: life.signal });
+                customInput.addEventListener('keydown', (ev) => {
+                    if (ev && (ev.key === 'Enter' || ev.keyCode === 13)) {
+                        ev.preventDefault();
+                        sendCustom();
+                    }
+                }, { signal: life.signal });
+            }
         }
         function resumeCard(card, life) {
             if (!isCurrent(card, life)) return true;

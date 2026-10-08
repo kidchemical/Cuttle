@@ -70,6 +70,7 @@
                 <div class="search-container history-search-wrap">
                     <input type="text" class="search-input" id="searchInput" placeholder="Search or /project /agent…" autocomplete="off" spellcheck="false" oninput="window.onHistorySearchInput(event)" onkeydown="window.onHistorySearchKeydown(event)">
                     <span class="search-icon">🔍</span>
+                    <button type="button" class="history-search-clear" id="historySearchClear" hidden aria-label="Clear chat history search" onclick="window.clearHistorySearch()"><span aria-hidden="true">×</span></button>
                     <div class="history-search-filter-chips" id="historySearchFilterChips" hidden></div>
                     <div class="history-search-slash-palette" id="historySearchSlashPalette" hidden role="listbox" aria-label="History filter commands"></div>
                 </div>
@@ -418,7 +419,8 @@
     <script src="/js/git/diff_modal.js?v=20261001sharedDiff"></script>
     <script src="/js/git/git_commit_viewer.js?v=20261001sharedDiff"></script>
     <script src="/js/agent_events/diff.js?v=20261007"></script>
-    <script src="/js/queries/query_log_inspector.js?v=20261007events"></script>
+    <script src="/js/queries/query_changes.js?v=20261008"></script>
+    <script src="/js/queries/query_log_inspector.js?v=20261008lazy"></script>
     <script src="/js/chat/chat_project.js?v=20261001slice1"></script>
     <script src="/js/chat/chat_slash.js?v=20261007nomode"></script>
     <script src="/js/chat/chat_action_forms.js?v=20261004progressGrid"></script>
@@ -442,6 +444,7 @@
     <script src="/js/chat/chat_vfx.js?v=20261003vfx1"></script>
     <script src="/js/chat/chat_subagent_fleet.js?v=20261004fleetLive"></script>
     <script src="/js/chat/chat_history_archive.js?v=20261007archivededupe"></script>
+    <script src="/js/chat/chat_history_view.js?v=20261008scroll1"></script>
     <script src="/js/chat/chat_voice_segments.js?v=20261007voice1"></script>
     <script src="/js/chat/chat_voice_stars.js?v=20261007voice1"></script>
     <script src="/js/chat/chat_voice_narrator.js?v=20261007narrator2"></script>

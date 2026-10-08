@@ -538,3 +538,30 @@ The Feed uses a compact search/type/live toolbar, collapsed optional filters and
 responsive activity rows. Full edit diffs are shown before optional raw payloads.
 These corrections do not close the deferred reconciliation and per-store
 maintenance work listed above.
+
+### Storage + validation delivery (2026-10-08)
+
+- The reconcile/settlement/capture commit (`2ae2f36`) lived only in the
+  `agent-events-next` worktree while the task list already called those items
+  done. It is merged into `dev`; its suites pass there
+  (`agent_events/`, `test_edit_attribution.py`, `test_native_edit_capture.py`).
+- **Storage:** `api.storage.service` now carries a per-store registry with a
+  reset policy (`never` / `typed_confirm` / `allowed`), retention defaults and
+  prune/vacuum support flags. Retention is editable for agent events (full
+  policy), legacy query logs (90 d), router outcomes (90 d) and shared output
+  (7 d TTL); quotas stay agent-events-only. Prune/reset fan out to the owning
+  slice (`query_events.logs_dir`, `agent_router.outcomes`,
+  `cuttle_brain.state.prune`, `shared_media.purge_expired`); chats and device
+  workers refuse destructive ops, the legacy journal resets only, and only
+  agent events vacuums (writer-serialized). The Settings route, the
+  `python -m api.storage` CLI (`prune all` included) and the Settings → Data
+  component all render from the same capabilities. Tests:
+  `src/tests/storage/test_storage_maintenance.py` plus the extended
+  `test_database_controls` browser battery.
+- **Validation:** capture, attribution, retention, inspector/Feed and router
+  outcome suites pass unmodified against the merged tree alongside the new
+  storage coverage.
+- Still deferred: a Flask-scheduled cross-store maintenance pass (agent events
+  already prunes on its writer idle loop; other stores prune on demand from
+  Settings or the CLI), non-Git line snapshots, and the aggregate
+  native-vs-snapshot "unreported changes" verdict.

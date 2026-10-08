@@ -1,8 +1,7 @@
 import argparse
 import json
 import sys
-from .service import list_stores,set_policy
-from api.agent_events.service import operate
+from .service import list_stores,set_policy,operate
 
 
 def main():

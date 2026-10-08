@@ -107,6 +107,7 @@ _REGISTRY: Tuple[CompletionProvider, ...] = (
         model_env='CUTTLE_LLM_ANTHROPIC_MODEL',
         default_model='claude-haiku-4-5-20251001',
         suggested_models=(
+            'claude-haiku-5-5',
             'claude-haiku-4-5-20251001',
             'claude-sonnet-4-20250514',
         ),

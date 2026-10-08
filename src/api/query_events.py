@@ -162,6 +162,20 @@ def record_agent_tool(block_id: str, summary: str, *, phase: str, args: Any = No
         tracker.execution_data["events"][-1].update(payload)
 
 
+def record_agent_edit(block_id: str, path: str, patch: Any, *, change: Any = "modify",
+                      source: str = "native", tool_id: Optional[str] = None,
+                      query_id: Optional[str] = None) -> None:
+    """One file change a harness reported (``native``) or Cuttle observed.
+
+    ``patch`` is the vendor's own shape (unified diff text or structured
+    hunks); adapters never translate it. ``tool_id`` links the change to the
+    tool step that produced it, for reconciliation against turn snapshots.
+    """
+    extra = {"tool_id": tool_id} if tool_id else {}
+    add_event("edit", query_id=query_id, block_id=block_id, summary=f"Edit {path}",
+              path=path, patch=patch, change=change, source=source, **extra)
+
+
 def enrich_or_record_tool(
     summary: str,
     *,

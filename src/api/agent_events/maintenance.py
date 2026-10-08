@@ -16,8 +16,9 @@ def starred_sessions(store):
 def prune(store=None):
     store=store or EventStore(state_dir())
     from api.edit_attribution.journal import reconcile_commits
-    reconcile_commits(store.path)
+    settlement=reconcile_commits(store.path)
     result=store.maintain(policy(),starred=starred_sessions(store))
+    result['settlement']=settlement
     release_refs(store)
     result.update(store.vacuum())
     result['over_quota']=result['bytes']>policy()['quota_mb']*1_000_000

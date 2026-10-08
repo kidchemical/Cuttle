@@ -1127,6 +1127,80 @@ def test_rewrite_merges_multiple_qa_resume_cards(tmp_path: Path):
     )
 
 
+def test_qa_choice_custom_text_resumes_with_raw_words(tmp_path: Path):
+    """A typed custom answer beats the listed options and reaches the agent verbatim."""
+    clear_forms_for_tests()
+    spec = normalize_action_form_spec(
+        {"mode": "choice", "title": "Pick one", "resume": True, "options": [
+            {"id": "a", "label": "Alpha"},
+            {"id": "b", "label": "Beta"},
+        ]},
+        project_path=str(tmp_path),
+    )
+    assert spec and spec.get("allow_custom") is True
+    res = execute_action_form_submission(
+        form_token=encode_form_fallback(spec),
+        selection={"option": "a", "custom_text": "  neither — do gamma  "},
+        session_id="x",
+    )
+    assert res["success"] is True
+    assert res["selected"] == ["custom"]
+    assert res["answer_text"] == "neither — do gamma"
+    assert res["resume"] is True
+    assert res["toast"] == "Sent custom reply."
+
+
+def test_qa_custom_opt_out_and_side_effect_specs_ignore_custom_text(tmp_path: Path):
+    clear_forms_for_tests()
+    opted_out = normalize_action_form_spec(
+        {"mode": "choice", "title": "Pick", "resume": True, "allow_custom": False,
+         "options": [{"id": "a", "label": "Alpha"}]},
+        project_path=str(tmp_path),
+    )
+    assert opted_out and opted_out.get("allow_custom") is False
+    res = execute_action_form_submission(
+        form_token=encode_form_fallback(opted_out),
+        selection={"custom_text": "ignored"},
+        session_id="x",
+    )
+    assert res["success"] is False  # nothing selected: custom refused, no option picked
+
+    side = normalize_action_form_spec(
+        {"mode": "choice", "title": "Run?", "options": [
+            {"id": "go", "label": "Go", "action": "flask.restart", "params": {"mode": "status"}},
+        ]},
+        project_path=str(tmp_path),
+    )
+    assert side and side.get("allow_custom") is False
+    res2 = execute_action_form_submission(
+        form_token=encode_form_fallback(side),
+        selection={"custom_text": "ignored"},
+        session_id="x",
+    )
+    assert res2["success"] is False
+
+
+def test_qa_form_custom_text_carries_other_answers(tmp_path: Path):
+    clear_forms_for_tests()
+    spec = normalize_action_form_spec(
+        {"mode": "form", "resume": True, "fields": [
+            {"id": "fix", "label": "Fix?", "type": "radio",
+             "options": [{"value": "yes", "label": "Yes please"}, {"value": "no", "label": "No"}]},
+        ]},
+        project_path=str(tmp_path),
+    )
+    res = execute_action_form_submission(
+        form_token=encode_form_fallback(spec),
+        selection={"fields": {"fix": "yes"}, "custom_text": "actually do both"},
+        session_id="x",
+    )
+    assert res["success"] is True
+    assert res["selected"] == ["custom"]
+    assert res["answer_text"].startswith("actually do both")
+    assert "- Fix?: Yes please" in res["answer_text"]
+    assert res["resume"] is True
+
+
 def test_rewrite_merge_keeps_side_effect_cards_separate(tmp_path: Path):
     clear_forms_for_tests()
     qa = (

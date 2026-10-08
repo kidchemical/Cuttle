@@ -11,6 +11,7 @@ Contracts pinned here:
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -585,6 +586,47 @@ def test_voice_overlay_markup_and_styles():
     assert "visibility: hidden !important" in css
     stage = css[css.index(".voice-mode-stage {"):]
     assert "max-height: 100%" in stage.split("}")[0], "stage must fit the viewport"
+
+
+def _first_rule_block(css: str, selector: str) -> str:
+    at = css.index(selector + " {")
+    return css[at:css.index("}", at)]
+
+
+def _top_value(block: str) -> str:
+    m = re.search(r"(?<![\w-])top\s*:\s*([^;]+);", block)
+    assert m, "corner rule must declare top"
+    return " ".join(m.group(1).split())
+
+
+def test_voice_mode_corner_buttons_share_one_row():
+    """Hamburger, back-to-chat, new-chat and history buttons share one y.
+
+    The hamburger is an in-flow inline-level button inside the fixed
+    `.chat-chrome-menu` box, so without a top alignment the inline strut
+    drops it a few px below the directly-fixed corner buttons (measured
+    18.75px vs the shared 14px row in voice mode).
+    """
+    page_css = (WEB / "css" / "chat_page.css").read_text(encoding="utf-8")
+    voice_css = VOICE_CSS.read_text(encoding="utf-8")
+    safe_css = (WEB / "css" / "safe_area.css").read_text(encoding="utf-8")
+
+    inner = _first_rule_block(page_css, ".chat-chrome-menu .corner-chat-button")
+    menu = _first_rule_block(page_css, ".chat-chrome-menu")
+    flat = (inner + menu).replace(" ", "")
+    assert ("vertical-align:top" in flat
+            or "display:block" in flat
+            or "display:flex" in flat
+            or "display:grid" in flat), \
+        "hamburger must top-align inside .chat-chrome-menu (or the menu must be flex/grid)"
+
+    base_top = _top_value(_first_rule_block(page_css, ".corner-chat-button"))
+    exit_top = _top_value(_first_rule_block(voice_css, ".voice-mode-exit-btn"))
+    assert exit_top == base_top, f"voice exit top ({exit_top}) != corner row ({base_top})"
+
+    menu_top = _top_value(_first_rule_block(safe_css, "html.is-cuttle-mobile .chat-chrome-menu"))
+    safe_exit_top = _top_value(_first_rule_block(safe_css, "html.is-cuttle-mobile .voice-mode-exit-btn"))
+    assert safe_exit_top == menu_top, "mobile safe-area must move the exit button with the menu"
 
 
 @node_only

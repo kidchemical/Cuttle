@@ -78,6 +78,41 @@ def _reasoning_text(item: Dict[str, Any]) -> str:
     return text
 
 
+_PATCH_LIMIT = 4_000_000
+
+
+def _muse_patch_edits(item: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Native file changes a completed Muse tool call wrote to its tool_patch file.
+
+    ``muse serve`` toolCall items carry ``patchRef {kind: tool_patch,
+    availability, path}``; the file holds ``{"files": [{"path", "hunks":
+    [{oldStart, oldLines, newStart, newLines, lines}]}]}`` (verified against
+    recorded sessions). Only the CLI's own ``*-tool_patch.json`` files under a
+    bounded size are read; anything else yields no evidence.
+    """
+    ref = item.get("patchRef")
+    if not isinstance(ref, dict) or ref.get("kind") != "tool_patch" or ref.get("availability") != "available":
+        return []
+    raw_path = ref.get("path")
+    if not isinstance(raw_path, str) or not raw_path.endswith("-tool_patch.json"):
+        return []
+    from pathlib import Path
+
+    path = Path(raw_path)
+    try:
+        if not path.is_file() or path.is_symlink() or path.stat().st_size > _PATCH_LIMIT:
+            return []
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    files = data.get("files") if isinstance(data, dict) else None
+    out = []
+    for entry in files if isinstance(files, list) else []:
+        if isinstance(entry, dict) and isinstance(entry.get("path"), str) and isinstance(entry.get("hunks"), list):
+            out.append({"path": entry["path"], "patch": entry["hunks"]})
+    return out
+
+
 def _usage_from_turn(usage: Any, prompt_tokens: int) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     if isinstance(usage, dict):
@@ -420,6 +455,9 @@ async def run_muse_turn_serve(
                 except ValueError:
                     pass
             failed = status in ("failed", "error", "cancelled", "denied")
+            if method == "item/completed" and not failed:
+                for change in _muse_patch_edits(item):
+                    tools.record_edit(item.get("itemId"), change["path"], change["patch"])
             tools.record(item.get("itemId"), str(item.get("tool") or item.get("toolName") or kind), args,
                          phase="failed" if failed else ("completed" if method == "item/completed" else "started"),
                          result=json.dumps(item, ensure_ascii=False) if method == "item/completed" else None,

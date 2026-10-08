@@ -2,6 +2,11 @@
     'use strict';
 
     const root = document.getElementById('dashRoot');
+    // Round icon back button (shared .page-icon-btn, same chrome as chat's
+    // corner + / history buttons).
+    const DASH_BACK_BUTTON = '<button type="button" class="page-icon-btn dash-back" id="dashBack" title="All dashboards" aria-label="Back to all dashboards">'
+        + '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">'
+        + '<path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>';
     const AXIS_LABELS = {
         mean_cost_usd: 'Cost / task (USD)',
         mean_duration_seconds: 'Duration (sec)',
@@ -412,7 +417,7 @@
 
         root.innerHTML = `
             <div class="dash-page-bar">
-                <button type="button" class="dash-back" id="dashBack">← All dashboards</button>
+                ${DASH_BACK_BUTTON}
                 <div class="compact-page-title">
                     <h1>Model Benchmarks</h1>
                     <p>${payload.selected_source === 'aggregate'
@@ -2298,7 +2303,7 @@
         const days = Number(payload.selected_days || 0);
         root.innerHTML = `
             <div class="dash-page-bar">
-                <button type="button" class="dash-back" id="dashBack">← All dashboards</button>
+                ${DASH_BACK_BUTTON}
                 <div class="compact-page-title">
                     <h1>My Cuttle Performance</h1>
                     <p>Your own turns — pinned agents and the router — one point per agent, model, and reasoning effort.</p>
@@ -2598,7 +2603,7 @@
         const intervalName = (payload.available_intervals || []).find((i) => i.id === payload.bucket_interval);
         root.innerHTML = `
             <div class="dash-page-bar">
-                <button type="button" class="dash-back" id="dashBack">← All dashboards</button>
+                ${DASH_BACK_BUTTON}
                 <div class="compact-page-title">
                     <h1>Cuttle Usage</h1>
                     <p>Cost, tokens, turns and agent time from your own turns, by model or harness.</p>
@@ -2859,7 +2864,7 @@
         const fillNote = s.with_fill ? `${s.with_fill} turns report window fill · ◆ = compacted` : 'recorded from new turns only';
         root.innerHTML = `
             <div class="dash-page-bar">
-                <button type="button" class="dash-back" id="dashBack">← All dashboards</button>
+                ${DASH_BACK_BUTTON}
                 <div class="compact-page-title">
                     <h1>Context</h1>
                     <p>What Cuttle sends each agent turn, and how full each chat's context window gets.</p>
@@ -3006,7 +3011,7 @@
         const msg = (payload && payload.message) || 'This dashboard is not wired yet.';
         root.innerHTML = `
             <div class="dash-page-bar">
-                <button type="button" class="dash-back" id="dashBack">← All dashboards</button>
+                ${DASH_BACK_BUTTON}
                 <div class="compact-page-title">
                     <h1>${escapeHtml((payload && payload.title) || 'Dashboard')}</h1>
                 </div>
