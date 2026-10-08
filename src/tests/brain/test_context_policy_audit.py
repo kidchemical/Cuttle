@@ -13,6 +13,8 @@ calls.
 
 from __future__ import annotations
 
+from tests.brain.context_support import ack_snapshot, delta_text
+
 import threading
 from pathlib import Path
 
@@ -164,7 +166,7 @@ def test_compile_alone_does_not_acknowledge(fake_stores, tmp_path):
 
     guest = _guest(tmp_path)
     path = str(guest)
-    cd.record_injected_snapshot("S-noack", "cursor", path)
+    ack_snapshot("S-noack", "cursor", path)
     (guest / ".cuttle" / "rules" / "01-a.md").write_text("Rule A v2", encoding="utf-8")
     manifest = SimpleNamespace(id="cursor", env_profile="")
 
@@ -365,7 +367,7 @@ def test_prepare_resume_detects_preparation_edit(fake_stores, tmp_path, monkeypa
     guest = _guest(tmp_path)
     rule = guest / ".cuttle" / "rules" / "01-a.md"
     path = str(guest)
-    cd.record_injected_snapshot("S-rdelta", "cursor", path)
+    ack_snapshot("S-rdelta", "cursor", path)
     before = cd.load_injected_snapshot("S-rdelta", "cursor", path)
     rule.write_text("Rule A v2", encoding="utf-8")
 
@@ -468,7 +470,7 @@ def test_delta_prepare_failure_falls_back_to_full(fake_stores, tmp_path, monkeyp
     """A delta preparation failure sends the briefing, never a bare resume."""
     guest = _guest(tmp_path)
     path = str(guest)
-    cd.record_injected_snapshot("S-prepfail", "cursor", path)
+    ack_snapshot("S-prepfail", "cursor", path)
     (guest / ".cuttle" / "rules" / "01-a.md").write_text("Rule A v2", encoding="utf-8")
     manifest = _manifest()
     adapter = _FakeAdapter(resume_id="cli-1")
@@ -650,13 +652,13 @@ def test_snapshot_keys_isolate_agents_projects_sessions(fake_stores, tmp_path):
     guest_a = _guest(tmp_path, "a")
     guest_b = _guest(tmp_path, "b")
     path_a, path_b = str(guest_a), str(guest_b)
-    cd.record_injected_snapshot("K", "cursor", path_a)
+    ack_snapshot("K", "cursor", path_a)
     (guest_a / ".cuttle" / "rules" / "01-a.md").write_text("changed", encoding="utf-8")
 
-    assert cd.build_resume_delta("K", "cursor", path_a) is not None
-    assert cd.build_resume_delta("K", "codex", path_a) is None
-    assert cd.build_resume_delta("K", "cursor", path_b) is None
-    assert cd.build_resume_delta("K2", "cursor", path_a) is None
+    assert delta_text("K", "cursor", path_a) is not None
+    assert delta_text("K", "codex", path_a) is None
+    assert delta_text("K", "cursor", path_b) is None
+    assert delta_text("K2", "cursor", path_a) is None
 
 
 # --- GLOBAL.ini policy in snapshots/deltas ---
@@ -666,18 +668,18 @@ def test_resume_delta_respects_rules_off(fake_stores, fake_globals, tmp_path):
     """rules=off: a change to a suppressed global rule stays silent."""
     guest = _guest(tmp_path, router_ini="[global]\nrules = off\n")
     path = str(guest)
-    cd.record_injected_snapshot("S-off", "cursor", path)
+    ack_snapshot("S-off", "cursor", path)
     fake_globals["rules"] = [("00-safety.md", SAFETY), ("00-core.md", "GLOBAL CORE v2")]
-    assert cd.build_resume_delta("S-off", "cursor", path) is None
+    assert delta_text("S-off", "cursor", path) is None
 
 
 def test_safety_change_announced_under_rules_off(fake_stores, fake_globals, tmp_path):
     """rules=off retains the safety core in snapshots and deltas."""
     guest = _guest(tmp_path, router_ini="[global]\nrules = off\n")
     path = str(guest)
-    cd.record_injected_snapshot("S-safety", "cursor", path)
+    ack_snapshot("S-safety", "cursor", path)
     fake_globals["rules"] = [("00-safety.md", SAFETY + " amended"), ("00-core.md", "GLOBAL CORE v1")]
-    delta = cd.build_resume_delta("S-safety", "cursor", path)
+    delta = delta_text("S-safety", "cursor", path)
     assert delta is not None and "00-safety.md" in delta
     assert "00-core.md" not in delta
 
@@ -687,18 +689,18 @@ def test_resume_delta_respects_shadow(fake_stores, fake_globals, tmp_path):
     guest = _guest(tmp_path, router_ini="[global]\nrules = shadow\n")
     (guest / ".cuttle" / "rules" / "00-core.md").write_text("GUEST CORE", encoding="utf-8")
     path = str(guest)
-    cd.record_injected_snapshot("S-shadow", "cursor", path)
+    ack_snapshot("S-shadow", "cursor", path)
     fake_globals["rules"] = [("00-safety.md", SAFETY), ("00-core.md", "GLOBAL CORE v2")]
-    assert cd.build_resume_delta("S-shadow", "cursor", path) is None
+    assert delta_text("S-shadow", "cursor", path) is None
 
 
 def test_policy_flip_announces_newly_visible_rules(fake_stores, fake_globals, tmp_path):
     """off→append flip: newly visible global rules are announced as new."""
     guest = _guest(tmp_path, router_ini="[global]\nrules = off\n")
     path = str(guest)
-    cd.record_injected_snapshot("S-flip", "cursor", path)
+    ack_snapshot("S-flip", "cursor", path)
     (guest / ".cuttle" / "GLOBAL.ini").write_text("[global]\nrules = append\n", encoding="utf-8")
-    delta = cd.build_resume_delta("S-flip", "cursor", path)
+    delta = delta_text("S-flip", "cursor", path)
     assert delta is not None and "00-core.md" in delta
 
 
@@ -711,9 +713,9 @@ def test_resume_delta_respects_docs_off(fake_stores, fake_globals, tmp_path, mon
 
     guest = _guest(tmp_path, router_ini="[global]\ndocs = off\n")
     path = str(guest)
-    cd.record_injected_snapshot("S-docsoff", "cursor", path)
+    ack_snapshot("S-docsoff", "cursor", path)
     (global_root / "docs" / "b.md").write_text("# B new", encoding="utf-8")
-    assert cd.build_resume_delta("S-docsoff", "cursor", path) is None
+    assert delta_text("S-docsoff", "cursor", path) is None
 
 
 def test_global_personal_only_doc_announced(fake_stores, fake_globals, tmp_path, monkeypatch):
@@ -725,11 +727,11 @@ def test_global_personal_only_doc_announced(fake_stores, fake_globals, tmp_path,
 
     guest = _guest(tmp_path)
     path = str(guest)
-    cd.record_injected_snapshot("S-gpers", "cursor", path)
+    ack_snapshot("S-gpers", "cursor", path)
     personal_docs = global_root / "personal" / "docs"
     personal_docs.mkdir(parents=True)
     (personal_docs / "local.md").write_text("# local only", encoding="utf-8")
-    delta = cd.build_resume_delta("S-gpers", "cursor", path)
+    delta = delta_text("S-gpers", "cursor", path)
     assert delta is not None and "local.md" in delta
 
 
@@ -737,7 +739,7 @@ def test_prepare_marks_truncated(fake_stores, tmp_path):
     """prepare_resume_delta flags deltas that withhold instructions."""
     guest = _guest(tmp_path)
     path = str(guest)
-    cd.record_injected_snapshot("S-truncflag", "cursor", path)
+    ack_snapshot("S-truncflag", "cursor", path)
     (guest / ".cuttle" / "rules" / "01-a.md").write_text(
         "BIG " + "x" * 5000, encoding="utf-8"
     )
@@ -756,9 +758,9 @@ def test_personal_twin_change_triggers_delta(fake_stores, fake_globals, tmp_path
     personal.mkdir(parents=True)
     (personal / "01-a.md").write_text("local line 1", encoding="utf-8")
     path = str(guest)
-    cd.record_injected_snapshot("S-pers", "cursor", path)
+    ack_snapshot("S-pers", "cursor", path)
     (personal / "01-a.md").write_text("local line 1 + line 2", encoding="utf-8")
-    delta = cd.build_resume_delta("S-pers", "cursor", path)
+    delta = delta_text("S-pers", "cursor", path)
     assert delta is not None and "01-a.md" in delta
 
 
@@ -766,9 +768,9 @@ def test_personal_only_rule_triggers_delta(fake_stores, fake_globals, tmp_path):
     """A personal-only rule file is announced as new."""
     guest = _guest(tmp_path)
     path = str(guest)
-    cd.record_injected_snapshot("S-pers-only", "cursor", path)
+    ack_snapshot("S-pers-only", "cursor", path)
     personal = guest / ".cuttle" / "personal" / "rules"
     personal.mkdir(parents=True)
     (personal / "09-local.md").write_text("local only", encoding="utf-8")
-    delta = cd.build_resume_delta("S-pers-only", "cursor", path)
+    delta = delta_text("S-pers-only", "cursor", path)
     assert delta is not None and "09-local.md" in delta

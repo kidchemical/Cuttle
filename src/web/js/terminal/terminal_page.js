@@ -8,8 +8,6 @@
     const STORAGE_SESSIONS = 'cuttle_terminal_sessions_v1';
     /** Which tabs are currently open + active (localStorage — not sessionStorage). */
     const STORAGE_LAYOUT = 'cuttle_terminal_layout_v1';
-    /** Legacy key (sessionStorage) — migrated once into STORAGE_LAYOUT. */
-    const LEGACY_STORAGE_TABS = 'cuttle_terminal_tabs_v1';
     const LOCALHOST_TERMINAL_URL = (typeof location !== 'undefined' && location.origin)
         ? (location.origin + '/terminal_page.html')
         : 'http://127.0.0.1:8000/terminal_page.html';
@@ -740,17 +738,7 @@
 
     function readLayout() {
         try {
-            let raw = localStorage.getItem(STORAGE_LAYOUT);
-            if (!raw) {
-                // One-time migrate from pre-persistence sessionStorage.
-                raw = sessionStorage.getItem(LEGACY_STORAGE_TABS);
-                if (raw) {
-                    try {
-                        localStorage.setItem(STORAGE_LAYOUT, raw);
-                        sessionStorage.removeItem(LEGACY_STORAGE_TABS);
-                    } catch (_) {}
-                }
-            }
+            const raw = localStorage.getItem(STORAGE_LAYOUT);
             if (!raw) return null;
             const data = JSON.parse(raw);
             if (!data || !Array.isArray(data.tabs)) return null;

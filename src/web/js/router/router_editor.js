@@ -943,16 +943,7 @@ function applyLoaded(data) {
         escalation_target: cfg.escalation_target || { agent: 'cursor', model: 'grok-4.6' },
         fallbacks: (cfg.fallbacks && cfg.fallbacks.ordered) || [],
     };
-    state.useCases = (data.use_cases || []).map((uc) => {
-        // Legacy preferred/escalation/fallbacks → ordered target chain
-        const r = uc.routing || {};
-        if (!Array.isArray(r.targets)) {
-            const chain = [r.preferred, r.escalation, ...(Array.isArray(r.fallbacks) ? r.fallbacks : [])]
-                .filter((t) => t && t.agent);
-            uc.routing = { targets: chain, never_use: Array.isArray(r.never_use) ? r.never_use : [] };
-        }
-        return uc;
-    });
+    state.useCases = data.use_cases || [];
     if (data.rage && typeof data.rage === 'object') {
         state.rage = {
             enabled: data.rage.enabled !== false,

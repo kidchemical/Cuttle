@@ -8,29 +8,10 @@ from __future__ import annotations
 
 from typing import Any, List, Optional
 
-# Must match SLASH_COMMANDS with stickySession in chat_page.js (trailing space).
-# Harness agents append via sticky_prefixes_from_harness() at normalize time.
-_LEGACY_STICKY_PREFIXES = (
-    "/cursor ",
-    "/claude ",
-    "/hermes ",
-    "/codex ",
-    "/muse ",
-    "/opencode ",
-)
-
-
 def _all_sticky_prefixes() -> tuple:
-    merged = list(_LEGACY_STICKY_PREFIXES)
-    try:
-        from api.agent_harness.catalog import sticky_prefixes_from_harness
+    from api.agent_harness.catalog import sticky_prefixes_from_harness
 
-        for p in sticky_prefixes_from_harness():
-            if p not in merged:
-                merged.append(p)
-    except Exception:
-        pass
-    return tuple(merged)
+    return tuple(sticky_prefixes_from_harness())
 
 
 # Public alias used throughout Cuttle (tuple so existing `in` checks keep working).

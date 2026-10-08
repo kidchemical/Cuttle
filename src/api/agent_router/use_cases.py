@@ -141,30 +141,11 @@ def normalize_use_case(raw: Any) -> Tuple[Optional[Dict[str, Any]], Optional[str
 
     # Ordered target chain — first entry runs the task, the rest are tried in
     # order as earlier ones fail (several fallback layers, no fixed tiers).
-    # Legacy preferred/escalation/fallbacks fields flatten into the chain.
-    targets: List[ExecutionTarget] = []
-    if "targets" in route_raw:
-        targets, t_err = _norm_target_list(route_raw.get("targets"))
-        if t_err:
-            return None, f"targets: {t_err}"
-    else:
-        legacy: List[ExecutionTarget] = []
-        for key in ("preferred", "escalation"):
-            t, err = _norm_target(route_raw.get(key))
-            if err:
-                return None, f"{key} target: {err}"
-            if t:
-                legacy.append(t)
-        fbs, fb_err = _norm_target_list(route_raw.get("fallbacks"))
-        if fb_err:
-            return None, f"fallbacks: {fb_err}"
-        legacy.extend(fbs)
-        seen_keys = set()
-        for t in legacy:
-            if t.key() in seen_keys:
-                continue
-            seen_keys.add(t.key())
-            targets.append(t)
+    if any(key in route_raw for key in ("preferred", "escalation", "fallbacks")):
+        return None, "Use routing.targets for the ordered target chain."
+    targets, t_err = _norm_target_list(route_raw.get("targets"))
+    if t_err:
+        return None, f"targets: {t_err}"
 
     try:
         priority = int(raw.get("priority") or 0)

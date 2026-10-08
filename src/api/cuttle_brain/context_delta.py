@@ -228,22 +228,6 @@ def record_snapshot(
         _store().put(key, {"snapshot": snapshot.to_dict()})
 
 
-def record_injected_snapshot(
-    chat_session_id: Any,
-    agent_id: str,
-    project_path: str,
-) -> None:
-    """Capture the current state and acknowledge it immediately.
-
-    Retained for compatibility (tests, debug flows). The kernel delivery
-    path must prefer ``compute_snapshot`` + ``record_snapshot`` so only
-    successfully delivered context is acknowledged.
-    """
-    record_snapshot(
-        chat_session_id, agent_id, project_path, compute_snapshot(project_path)
-    )
-
-
 def clear_injected_snapshot(
     chat_session_id: Any,
     agent_id: Optional[str] = None,
@@ -478,28 +462,6 @@ def prepare_resume_delta(
     return PreparedDelta(
         text=text, snapshot=current, truncated=is_truncated_delta_text(text)
     )
-
-
-def build_resume_delta(
-    chat_session_id: Any,
-    agent_id: str,
-    project_path: str,
-) -> Optional[str]:
-    """Return a compact delta block when context changed since last full inject.
-
-    Retained for compatibility. Preparing without acknowledging is
-    ``prepare_resume_delta``; the kernel delivery path must use that and
-    acknowledge only after successful delivery. An unstable preparation
-    yields no delta here (legacy callers cannot fall back); use
-    ``prepare_resume_delta`` to distinguish it from unchanged context.
-    """
-    try:
-        plan = prepare_resume_delta(chat_session_id, agent_id, project_path)
-    except UnstablePreparationError:
-        return None
-    if plan is None:
-        return None
-    return plan.text
 
 
 def append_user_request(delta_or_body: str, user_prompt: str) -> str:

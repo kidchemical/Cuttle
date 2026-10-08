@@ -68,7 +68,7 @@ is a logged, nonfatal `try/except`:
 | Claude Code palette pins (`/api/claude/models\|model\|effort`) | `api.agent_harness.agents.claude.routes` (`claude_bp`, url prefix `/api/claude`) | blueprint — owned by the Claude agent slice; catalog in `agents/claude/model_catalog.py` |
 | Router editor | `api.agent_router.routes` (`router_editor_bp`, url prefix `/api/router`) | blueprint — decision-only tools |
 | Activity stream | `api.activity_stream` (`activity_bp`, url prefix `/api`) | blueprint — chat activity push stream |
-| Chat widgets | `api.chat_widgets.register_chat_widget_routes` | `register_*(app)` |
+| Tasks gizmos | `api.gizmos.tasks_routes.tasks_bp` | scoped routes under `/api/gizmos/tasks` |
 | Chat TTS | `api.chat_tts` | `register_*(app)` |
 | Voice narrator (experimental `voice_narrator`) | `api.voice_narrator.routes` (`voice_narrator_bp`) | blueprint `/api/voice-narrator` — line writing + voicing owned by `api.voice_narrator` |
 | Voice transcription (experimental `voice_server_stt`) | `api.voice_stt.routes` (`voice_stt_bp`) | blueprint `/api/voice-stt` — per-phrase OpenAI transcription owned by `api.voice_stt` |

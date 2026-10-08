@@ -13,8 +13,8 @@
    `CuttleChatAttachments`; send dispatch stays in
    `CuttleChatComposer`.
 
-   Mirrors the page contract: agent_pins nested reads win over legacy
-   flat keys, the active harness always attaches its current composer
+   Mirrors the page contract: agent_pins supplies session preferences,
+   the active harness always attaches its current composer
    pins (dirty-only for the rest), the Codex pre-send fetch never
    clobbers a dirty pick, and badge effort prefers run data over
    composer pins in muse → hermes → opencode → codex → claude order.
@@ -29,15 +29,12 @@
     'use strict';
 
     /**
-     * Canonical backend pin read: nested `agent_pins[agent][kind]`
-     * wins; blank nested falls back to the legacy flat key
-     * (`<agent>_<kind>`).
+     * Canonical backend pin read: `agent_pins[agent][kind]`.
      */
     function sessionPin(data, agent, kind) {
         const pins = data && data.agent_pins;
         const nested = pins && pins[agent] && pins[agent][kind];
-        if (nested != null && String(nested).trim() !== '') return String(nested).trim();
-        return String((data && data[agent + '_' + kind]) || '').trim();
+        return String(nested == null ? '' : nested).trim();
     }
 
     /**
@@ -335,7 +332,7 @@
             patch.effort = serverEffort;
             if (key) patch.effortKey = key;
         } else if (!p.effortDirty && key && data
-            && ((data.agent_pins && data.agent_pins.claude) || ('claude_effort' in data))) {
+            && data.agent_pins && data.agent_pins.claude) {
             patch.effort = '';
             patch.effortKey = key;
         }

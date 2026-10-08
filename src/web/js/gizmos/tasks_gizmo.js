@@ -396,5 +396,4 @@
     }
 
     global.CuttleTaskGizmos = { create: create };
-    global.CuttleChatWidgets = global.CuttleTaskGizmos; // legacy embed alias
 })(typeof window !== 'undefined' ? window : this);

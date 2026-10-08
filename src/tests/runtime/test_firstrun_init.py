@@ -35,33 +35,13 @@ def test_default_project_uses_repo_root_not_cwd(tmp_path, monkeypatch):
     assert len(projects) == 1 and projects[0]["name"] == "Cuttle"
 
 
-def test_legacy_default_renamed_user_projects_untouched(tmp_path):
+def test_existing_project_names_are_not_rewritten(tmp_path):
     pm = _make_pm(tmp_path)
-    from managers import project_manager as pm_mod
-
-    repo_root = str(Path(pm_mod.__file__).resolve().parents[2])
-    assert pm.get_projects()[0]["name"] == "Cuttle"
-
-    # Simulate an early fresh install that registered "Cuttle Development".
-    pm2_path = tmp_path / "projects2.db"
-    pm2 = pm_mod.ProjectManager(db_path=str(pm2_path))
-    with pm2.get_db_connection() as conn:
+    with pm.get_db_connection() as conn:
         conn.execute("UPDATE projects SET name = 'Cuttle Development'")
-        conn.execute(
-            "INSERT INTO projects (name, type, path, description, tags, is_active)"
-            " VALUES ('My App', 'local', '/tmp/myapp', '', '[\"work\"]', 0)"
-        )
         conn.commit()
-    with pm2.get_db_connection() as conn:
-        conn.execute(
-            "UPDATE projects SET tags = '[\"cuttle\", \"development\", \"main\", \"default\"]'"
-            " WHERE name = 'Cuttle Development'"
-        )
-        conn.execute("UPDATE projects SET path = ? WHERE name = 'Cuttle Development'", (repo_root,))
-        conn.commit()
-    pm2.ensure_default_project()
-    names = sorted(p["name"] for p in pm2.get_projects())
-    assert names == ["Cuttle", "My App"]
+    pm.ensure_default_project()
+    assert [p['name'] for p in pm.get_projects()] == ['Cuttle Development']
 
 
 def _oauth_client(monkeypatch):

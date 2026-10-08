@@ -31,7 +31,7 @@ node_only = pytest.mark.skipif(
 HARNESS = """
 const A = require(process.env.MOD_JS);
 const out = {};
-// sessionPin: nested agent_pins win, legacy flat keys fall back
+// Session preferences use only the canonical agent_pins object
 out.pinNested = A.sessionPin({ agent_pins: { codex: { effort: 'xhigh' } } }, 'codex', 'effort');
 out.pinNestedBlank = A.sessionPin({ agent_pins: { codex: { effort: '  ' } }, codex_effort: 'low' }, 'codex', 'effort');
 out.pinFlat = A.sessionPin({ codex_effort: 'low' }, 'codex', 'effort');
@@ -111,9 +111,9 @@ def _run():
 def test_session_pin_reads():
     res = _run()
     assert res["pinNested"] == "xhigh"
-    # blank nested falls back to the legacy flat key
-    assert res["pinNestedBlank"] == "low"
-    assert res["pinFlat"] == "low"
+    # Flat response keys are obsolete; blanks stay blank
+    assert res["pinNestedBlank"] == ""
+    assert res["pinFlat"] == ""
     assert res["pinMissing"] == ""
     assert res["pinNull"] == ""
     assert res["pinModel"] == "muse-spark-1.2"
@@ -404,8 +404,7 @@ def test_claude_seed_patch():
     assert res["seedFull"] == {
         "model": "opus-4", "modelsKey": "7", "effort": "high", "effortKey": "7"}
     assert res["seedDirty"] == {}
-    assert res["seedFlat"] == {
-        "model": "sonnet", "modelsKey": "7", "effort": "low", "effortKey": "7"}
+    assert res["seedFlat"] == {}
     assert res["seedClear"] == {"effort": "", "effortKey": "7"}
     assert res["seedNoKey"] == {"model": "opus-4"}
 

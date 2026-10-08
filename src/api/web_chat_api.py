@@ -370,13 +370,6 @@ try:
 except Exception as _jev_watch_err:
     print(f"[JEV] regress watcher not started: {_jev_watch_err}")
 
-# Chat widgets (Tasks strip above composer)
-try:
-    from api.chat_widgets import register_chat_widget_routes
-    register_chat_widget_routes(app)
-except Exception as _widgets_err:
-    print(f"[WIDGETS] Failed to register routes: {_widgets_err}")
-
 # Chat bubble TTS (OpenAI summarize-then-speak, on-demand play button)
 try:
     from api.chat_tts import register_chat_tts_routes

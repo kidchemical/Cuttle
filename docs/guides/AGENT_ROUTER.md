@@ -173,9 +173,8 @@ pin → table → brain/learning → defaults).
 
 The first target in the chain runs the task; later entries are tried in order
 when an earlier one cannot run (transport failure walks the remaining chain;
-a task failure stops the turn). The legacy
-`preferred` / `escalation` / `fallbacks` fields are still read and flatten
-into the chain on load.
+a task failure stops the turn). Use-case routing accepts only the ordered
+`targets` list; the obsolete tiered fields are rejected.
 
 A fresh install is seeded with one block per kind of work: *Quick chat*,
 *Ops & chores*, *Writing & docs* (Claude first), *Explain the codebase*,

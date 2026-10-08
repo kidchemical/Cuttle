@@ -1,4 +1,6 @@
 """Skills are discoverable in fresh/resumed context without optional ranking."""
+
+from tests.brain.context_support import ack_snapshot, delta_text
 from api import markdown_skills
 from api.cuttle_brain import context_compiler as cc, context_delta as cd
 
@@ -28,9 +30,9 @@ def test_inventory_uses_owner_precedence_and_policy(tmp_path, monkeypatch):
     assert 'Global description' not in compiled.envelope
     assert 'Private skill body' not in compiled.envelope
     assert 'Hidden' not in compiled.envelope
-    cd.record_injected_snapshot('chat', 'agent', str(project))
+    ack_snapshot('chat', 'agent', str(project))
     put(cuttle, 'new', 'New capability')
-    delta = cd.build_resume_delta('chat', 'agent', str(project))
+    delta = delta_text('chat', 'agent', str(project))
     assert 'New capability' in delta
     (cuttle / 'GLOBAL.ini').write_text('[global]\nskills=off\n', encoding="utf-8")
     inventory = cc.skill_inventory(str(project))

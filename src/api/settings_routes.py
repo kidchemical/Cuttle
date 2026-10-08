@@ -654,7 +654,7 @@ def get_all_app_settings():
         settings_mgr = get_settings_manager()
 
         snapshot = settings_mgr.get_all_settings()
-        # Legacy installs may still hold a shared bearer token until migration.
+        # Never expose retired bearer secrets retained in manually edited settings.
         if isinstance(snapshot.get('device_workers'), dict):
             snapshot['device_workers'].pop('token', None)
         return jsonify({'success': True, 'settings': snapshot})

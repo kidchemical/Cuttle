@@ -475,7 +475,7 @@ def test_browser_profile_allowlist():
             ("GET", "/api/settings/starred-project"),
             ("GET", "/api/settings/starred-slash"),
             ("GET", "/api/projects"),
-            ("GET", "/api/widgets")):
+            ("GET", "/api/gizmos/tasks")):
         assert entry in boot.ALLOW_EXACT, entry
     for prefix in ("/img/", "/sounds/"):
         assert prefix in boot.ALLOW_GET_PREFIXES

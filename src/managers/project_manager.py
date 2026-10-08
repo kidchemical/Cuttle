@@ -20,22 +20,6 @@ from managers.cuttle_scaffold import ensure_cuttle_scaffold
 from managers.project_locations import check_paths, validate_paths, require_project_path
 
 
-def _live_project_path(path: Optional[str]) -> str:
-    """Rewrite cloned Windows paths onto this machine when they exist."""
-    raw = (path or "").strip()
-    if not raw:
-        return raw
-    try:
-        from core.runtime_paths import rewrite_windows_lab_path
-
-        mapped = (rewrite_windows_lab_path(raw) or "").strip()
-        if mapped:
-            return mapped
-    except Exception:
-        pass
-    return raw
-
-
 def _validated_project_changes(kwargs):
     allowed = {'name', 'description', 'tags', 'paths', 'path', 'repo_url', 'archived'}
     if set(kwargs) - allowed:
@@ -148,7 +132,6 @@ class ProjectManager:
             # Check if we already have any projects
             projects = self.get_projects()
             if projects:
-                self._normalize_legacy_default_name(projects)
                 return  # Already have projects, no need to add default
 
             # Repository root from this file's location (robust to cwd).
@@ -173,44 +156,6 @@ class ProjectManager:
         except Exception as e:
             print(f"Warning: Could not create default project: {e}")
 
-    def _normalize_legacy_default_name(self, projects) -> None:
-        """Rename the auto-created fresh-install default to ``Cuttle``.
-
-        Early fresh installs registered the checkout as ``Cuttle
-        Development``. Only the untouched auto-created row is renamed
-        (matching name, default tag, and repo-root path) — user projects
-        and user-selected pins are never modified.
-        """
-        try:
-            repo_root = str(Path(__file__).resolve().parents[2])
-            names = {str(p.get('name') or '') for p in projects}
-            if 'Cuttle' in names:
-                return
-            for p in projects:
-                if str(p.get('name') or '') != 'Cuttle Development':
-                    continue
-                tags = p.get('tags') or []
-                if isinstance(tags, str):
-                    try:
-                        tags = json.loads(tags)
-                    except (ValueError, TypeError):
-                        tags = []
-                if 'default' not in [str(t) for t in tags]:
-                    continue
-                if str(p.get('path') or '') != repo_root:
-                    continue
-                with self.get_db_connection() as conn:
-                    cursor = conn.cursor()
-                    cursor.execute(
-                        'UPDATE projects SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-                        ('Cuttle', p['id']),
-                    )
-                    conn.commit()
-                print(f"✅ Renamed default project to Cuttle ({repo_root})")
-                return
-        except Exception as e:
-            print(f"Warning: Could not normalize default project name: {e}")
-    
     def register_project(self, name, path, description='', tags=None, repo_url=''):
         values = _validated_project_changes({'name': name, 'paths': [path],
                     'description': description, 'tags': tags or [], 'repo_url': repo_url})
@@ -380,11 +325,6 @@ class ProjectManager:
         config = json.loads(row[10]) if row[10] else {}
         stored_path = row[3] or ''
         paths = config.get('paths') or [stored_path]
-        # Preserve legacy lab-path compatibility until the user saves an explicit list.
-        if 'paths' not in config:
-            mapped = _live_project_path(stored_path)
-            if mapped and mapped != stored_path:
-                paths = [mapped, stored_path]
         health = check_paths(paths)
         return {
             'id': row[0], 'name': row[1], 'type': row[2],
