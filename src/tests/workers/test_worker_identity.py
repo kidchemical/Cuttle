@@ -320,3 +320,75 @@ def test_worker_can_poll_only_its_own_approval(client, monkeypatch):
     assert client.get(path, headers=_bearer(a), environ_base=LAN).status_code == 200
     assert client.get(path, headers=_bearer(b), environ_base=LAN).status_code == 403
     assert client.get(path, environ_base=LAN).status_code == 401
+
+
+SHARED = "legacy-shared"
+
+
+def _shared_headers(monkeypatch):
+    monkeypatch.setattr("api.device_workers.auth.worker_token", lambda: SHARED)
+    return {"Authorization": f"Bearer {SHARED}"}
+
+
+def test_shared_override_enroll_new_id_mints_token(client, monkeypatch):
+    h = _shared_headers(monkeypatch)
+    r = client.post(
+        "/api/workers/enroll", json={"worker_id": "w-new"}, headers=h, environ_base=LAN
+    )
+    assert r.status_code == 200
+    assert r.get_json()["token"]
+
+
+def test_shared_override_never_echoes_existing_token(client, monkeypatch):
+    h = _shared_headers(monkeypatch)
+    first = client.post(
+        "/api/workers/enroll", json={"worker_id": "w-new"}, headers=h, environ_base=LAN
+    ).get_json()["token"]
+    again = client.post(
+        "/api/workers/enroll", json={"worker_id": "w-new"}, headers=h, environ_base=LAN
+    )
+    assert again.status_code == 200
+    assert "token" not in again.get_json()
+    rot = client.post(
+        "/api/workers/enroll",
+        json={"worker_id": "w-new", "rotate": True},
+        headers=h,
+        environ_base=LAN,
+    )
+    assert rot.status_code == 200
+    assert rot.get_json()["token"] != first
+
+
+def test_pairing_retry_replaces_same_device_request(client):
+    a = _pair(client, "worker-a", SECRET)
+    b = _pair(client, "worker-a", SECRET2)
+    assert b["request_id"] != a["request_id"]
+    assert _poll(client, a["request_id"]).status_code == 404
+    assert _poll(client, b["request_id"], SECRET2).get_json()["status"] == "pending"
+
+
+def test_pairing_table_bounded(client):
+    for i in range(32):
+        r = client.post(
+            "/api/workers/enroll",
+            json={"worker_id": f"w-{i}", "pairing_secret": SECRET},
+            environ_base=LAN,
+        )
+        assert r.status_code == 202, i
+    r = client.post(
+        "/api/workers/enroll",
+        json={"worker_id": "w-full", "pairing_secret": SECRET},
+        environ_base=LAN,
+    )
+    assert r.status_code == 429
+
+
+def test_terminal_rows_swept_after_ttl(client):
+    from api.device_workers import enroll_approval as enroll_mod
+
+    body = _pair(client, "worker-a")
+    client.post(f"/api/workers/enroll-requests/{body['request_id']}/deny", json={})
+    assert _poll(client, body["request_id"]).get_json()["status"] == "denied"
+    enroll_mod._pending[body["request_id"]]["updated_at"] -= 700
+    assert client.get("/api/workers/enroll-requests").get_json()["pending"] == []
+    assert _poll(client, body["request_id"]).status_code == 404

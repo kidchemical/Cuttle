@@ -203,12 +203,12 @@ def enroll(cfg: Dict[str, Any], bases: list) -> Dict[str, Any]:
     body = {"worker_id": worker_id, "hostname": socket.gethostname()}
     token = str(cfg.get("workerToken") or "")
     headers_tok = token
-    pairing_secret = ""
-    if not token:
-        import secrets
+    import secrets
 
-        pairing_secret = secrets.token_hex(16)
-        body["pairing_secret"] = pairing_secret
+    # Always pair-capable: a stale saved bearer (host DB reset) answers 202,
+    # and the fresh secret lets this client re-pair without manual steps.
+    pairing_secret = secrets.token_hex(16)
+    body["pairing_secret"] = pairing_secret
     last_err = None
     for base in bases:
         try:
@@ -221,9 +221,6 @@ def enroll(cfg: Dict[str, Any], bases: list) -> Dict[str, Any]:
                 timeout=10,
             )
             if data.get("status") == "pending" and data.get("request_id"):
-                if not pairing_secret:
-                    last_err = "host asked for pairing approval; clear workerToken to pair"
-                    continue
                 return _poll_pairing(
                     base,
                     str(data["request_id"]),

@@ -153,7 +153,7 @@ def path_allowed(path: str, prefixes: List[str] | None = None) -> bool:
     return False
 
 
-def execute_job(job: Dict[str, Any]) -> Dict[str, Any]:
+def execute_job(job: Dict[str, Any], auth_token: Optional[str] = None) -> Dict[str, Any]:
     raw_type = str(job.get("type") or "").strip()
     jtype = _normalize_job_type(raw_type)
     if jtype not in {
@@ -184,9 +184,9 @@ def execute_job(job: Dict[str, Any]) -> Dict[str, Any]:
     if jtype == "shell":
         return _shell_recipe(params)
     if jtype == "execute_shell_unsafe":
-        return _execute_shell_unsafe(params)
+        return _execute_shell_unsafe(params, auth_token=auth_token)
     if jtype == "execute_shell_ssh":
-        return _execute_shell_ssh(params)
+        return _execute_shell_ssh(params, auth_token=auth_token)
     if jtype == "cuttle_self_update":
         return _cuttle_self_update(params)
     raise JobExecError(f"unsupported job type: {raw_type or jtype}")
@@ -239,7 +239,9 @@ def _command_allowed(command: str) -> bool:
     return False
 
 
-def _execute_shell_unsafe(params: Dict[str, Any]) -> Dict[str, Any]:
+def _execute_shell_unsafe(
+    params: Dict[str, Any], auth_token: Optional[str] = None
+) -> Dict[str, Any]:
     if not _execute_shell_unsafe_enabled():
         raise JobExecError(
             "execute_shell_unsafe disabled — set device_workers.execute_shell_unsafe_enabled=true "
@@ -257,7 +259,7 @@ def _execute_shell_unsafe(params: Dict[str, Any]) -> Dict[str, Any]:
         target="local",
         command=command,
         job_id=str(params.get("_job_id") or ""),
-        auth_token=str(params.get("_worker_auth_token") or "") or None,
+        auth_token=auth_token,
     )
     cwd = str(params.get("cwd") or "").strip()
     if cwd:
@@ -312,7 +314,9 @@ def _execute_shell_unsafe(params: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _execute_shell_ssh(params: Dict[str, Any]) -> Dict[str, Any]:
+def _execute_shell_ssh(
+    params: Dict[str, Any], auth_token: Optional[str] = None
+) -> Dict[str, Any]:
     """Run a command on this machine via local OpenSSH client to a configured target.
 
     Intended for cases where pull-based recipes are wrong and you already trust SSH
@@ -343,7 +347,7 @@ def _execute_shell_ssh(params: Dict[str, Any]) -> Dict[str, Any]:
         target=target,
         command=command,
         job_id=str(params.get("_job_id") or ""),
-        auth_token=str(params.get("_worker_auth_token") or "") or None,
+        auth_token=auth_token,
     )
 
     argv = ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", "-p", str(ssh_port)]

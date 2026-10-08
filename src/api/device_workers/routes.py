@@ -110,6 +110,10 @@ def enroll_worker():
                 "hostname": enrolled.get("hostname") or hostname,
                 "rotated": True,
             })
+        # Never echo an existing credential: only a freshly minted one leaves here.
+        already = store.is_enrolled(wid)
+        if already and not rotate:
+            return jsonify({"success": True, "worker_id": wid, "rotated": False})
         try:
             enrolled = store.enroll_device(
                 worker_id=wid,
@@ -137,6 +141,8 @@ def enroll_worker():
             remote_addr=(request.remote_addr or ""),
             pairing_secret=str(data.get("pairing_secret") or ""),
         )
+    except enroll_requests.PairingFullError as e:
+        return jsonify({"success": False, "error": str(e)}), 429
     except ValueError as e:
         return jsonify({"success": False, "error": str(e)}), 400
     return jsonify({

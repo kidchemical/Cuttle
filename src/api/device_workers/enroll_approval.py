@@ -27,6 +27,14 @@ _pending: Dict[str, Dict[str, Any]] = {}
 
 TTL_SECONDS = 600.0
 
+# Hard bound on process-lifetime pairing rows.
+MAX_PENDING = 32
+
+
+class PairingFullError(RuntimeError):
+    """Too many pending pairing requests; the worker should retry later."""
+
+
 _HEX_32 = re.compile(r"^[0-9a-fA-F]{32,}$")
 
 
@@ -52,6 +60,18 @@ def create_request(
         raise ValueError("worker_id required")
     if not valid_pairing_secret(pairing_secret or ""):
         raise ValueError("pairing_secret must be >=32 hex chars")
+    addr = (remote_addr or "").strip()
+    _sweep_terminal()
+    with _lock:
+        # A retry from the same device replaces its older pending request.
+        for rid, row in list(_pending.items()):
+            if row.get("status") == "pending" and row.get("worker_id") == wid \
+                    and row.get("remote_addr") == addr:
+                del _pending[rid]
+        if sum(1 for row in _pending.values() if row.get("status") == "pending") >= MAX_PENDING:
+            raise PairingFullError(
+                f"too many pending pairing requests ({MAX_PENDING}); retry later"
+            )
     rid = uuid.uuid4().hex
     now = time.time()
     code = f"{secrets.randbelow(1_000_000):06d}"
@@ -59,7 +79,7 @@ def create_request(
         "id": rid,
         "worker_id": wid,
         "hostname": (hostname or "").strip(),
-        "remote_addr": (remote_addr or "").strip(),
+        "remote_addr": addr,
         "code": code,
         "secret_sha256": _secret_hash(pairing_secret),
         "token": "",
@@ -94,6 +114,26 @@ def _check_secret(row: Dict[str, Any], pairing_secret: str) -> bool:
     return hmac.compare_digest(given, str(row.get("secret_sha256") or ""))
 
 
+def _sweep_terminal(ttl_seconds: float = TTL_SECONDS) -> int:
+    """Delete terminal rows (denied/expired, or approved but never picked up).
+
+    Terminal rows stay queryable for one TTL so workers polling every few
+    seconds still see the verdict; afterwards they are deleted instead of
+    accumulating forever.
+    """
+    now = time.time()
+    doomed = []
+    with _lock:
+        for rid, row in _pending.items():
+            if row.get("status") == "pending":
+                continue
+            if now - float(row.get("updated_at") or 0) >= ttl_seconds:
+                doomed.append(rid)
+        for rid in doomed:
+            _pending.pop(rid, None)
+    return len(doomed)
+
+
 def expire_stale(ttl_seconds: float = TTL_SECONDS) -> int:
     now = time.time()
     n = 0
@@ -116,6 +156,7 @@ def poll(request_id: str, pairing_secret: str) -> Tuple[str, Optional[Dict[str, 
     Wrong secret → ("denied", None); unknown id → ("not_found", None).
     """
     expire_stale()
+    _sweep_terminal()
     rid = (request_id or "").strip()
     with _lock:
         row = _pending.get(rid)
@@ -168,6 +209,7 @@ def attach_token(request_id: str, token: str) -> bool:
 def get_request(request_id: str) -> Optional[Dict[str, Any]]:
     """Public row for the owner UI (any status; never includes secrets)."""
     expire_stale()
+    _sweep_terminal()
     rid = (request_id or "").strip()
     with _lock:
         row = _pending.get(rid)
@@ -176,6 +218,7 @@ def get_request(request_id: str) -> Optional[Dict[str, Any]]:
 
 def list_pending() -> List[Dict[str, Any]]:
     expire_stale()
+    _sweep_terminal()
     with _lock:
         rows = [_public(v) for v in _pending.values() if v.get("status") == "pending"]
     rows.sort(key=lambda r: float(r.get("created_at") or 0))

@@ -1008,13 +1008,12 @@ async function enrollWorkerWithHost() {
     const bases = endpointCandidates().map(endpointUrl);
     const body = { worker_id: workerId, hostname: os.hostname() };
     const headers = {};
-    let pairingSecret = '';
+    // Always pair-capable: a stale saved bearer (host DB reset) answers 202,
+    // and the fresh secret lets this client re-pair without manual steps.
+    const pairingSecret = crypto.randomBytes(16).toString('hex');
+    body.pairing_secret = pairingSecret;
     if (cfg.workerToken) {
         headers.Authorization = `Bearer ${cfg.workerToken}`;
-    } else {
-        // First pairing: client-random secret; the host shows a code to approve.
-        pairingSecret = crypto.randomBytes(16).toString('hex');
-        body.pairing_secret = pairingSecret;
     }
 
     async function tryEnroll(base) {
@@ -1025,9 +1024,6 @@ async function enrollWorkerWithHost() {
             timeoutMs: 8000,
         });
         if (r.status === 202 && r.json && r.json.request_id) {
-            if (!pairingSecret) {
-                throw new Error('Host asked for pairing approval; reconnect without a saved token to pair.');
-            }
             return await pollPairingApproval(base, r.json, pairingSecret);
         }
         if (r.status >= 200 && r.status < 300 && r.json && r.json.success) {

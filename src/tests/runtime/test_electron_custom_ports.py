@@ -1025,3 +1025,39 @@ def test_sidecar_single_ignores_stale_http_fallback(monkeypatch):
         CUTTLE_ENDPOINT_SINGLE="1",
     )
     assert mod.pick_base_urls() == ["https://192.168.1.20:8443"]
+
+
+@node_only
+def test_enroll_stale_saved_token_repairs_via_pairing():
+    script = (
+        NODE_PRELUDE
+        + _extract_main_js()
+        + """
+let bodies = {};
+const origJson = jsonRequest;
+jsonRequest = async (url, opts) => { bodies[url] = opts && opts.body; return origJson(url, opts); };
+(async () => {
+FLASK_HOST = '192.168.1.20'; FLASK_HTTP_PORT = 8001; FLASK_HTTPS_PORT = 8443;
+resetCfg({ workerId: 'w1', workerToken: 'stale-saved',
+    endpoint: { kind: 'single', host: FLASK_HOST, scheme: 'https', port: 8443,
+        companion: { scheme: 'http', host: FLASK_HOST, port: 8001 } } });
+const enrollUrl = 'https://192.168.1.20:8443/api/workers/enroll';
+const pollUrl = 'https://192.168.1.20:8443/api/workers/enroll/r1/poll';
+resetFake();
+__script[enrollUrl] = { status: 202,
+    json: { success: false, status: 'pending', request_id: 'r1', code: '123456' } };
+__script[pollUrl] = { status: 200,
+    json: { success: true, status: 'approved', worker_id: 'w1', token: 'fresh' } };
+const out = await enrollWorkerWithHost();
+check('approved-token', out && out.token === 'fresh', JSON.stringify(out));
+const sent = bodies[enrollUrl] || {};
+const polled = bodies[pollUrl] || {};
+check('secret-sent', typeof sent.pairing_secret === 'string' && sent.pairing_secret.length >= 32,
+    JSON.stringify(sent));
+check('secret-matches', polled.pairing_secret === sent.pairing_secret, JSON.stringify(polled));
+if (__failures.length) { console.error(__failures.join('\\n')); process.exit(1); }
+})();
+"""
+    )
+    proc = _run_node(script)
+    assert proc.returncode == 0, (proc.stdout or "") + (proc.stderr or "")

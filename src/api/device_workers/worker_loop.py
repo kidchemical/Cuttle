@@ -138,8 +138,6 @@ def _run_one(
     params = dict(job.get("params") or {})
     params["_on_progress"] = _on_progress
     params["_job_id"] = str(jid or "")
-    if auth_token:
-        params["_worker_auth_token"] = auth_token
     job_exec = dict(job)
     job_exec["params"] = params
 
@@ -150,7 +148,7 @@ def _run_one(
         )
         pulse.start()
         try:
-            result = executor_mod.execute_job(job_exec)
+            result = executor_mod.execute_job(job_exec, auth_token=auth_token)
         finally:
             stop.set()
             pulse.join(timeout=5)
