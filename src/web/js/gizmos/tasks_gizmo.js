@@ -38,8 +38,6 @@
         var widgets = [];
         var revision = 0;
         var expanded = {};
-        var histories = {};
-        var historyOpen = {};
         var inFlight = false;
         var dirty = false;
         /** Bumps on every refresh start so stale in-flight responses are ignored. */
@@ -143,7 +141,6 @@
                     '<button type="button" class="chat-widget-scope" data-widget-scope data-tooltip="Pin to this chat or whole project">' +
                     scopeLabel +
                     '</button>' +
-                    '<button type="button" class="chat-widget-scope" data-widget-history data-tooltip="Attributed interaction history">History</button>' +
                     '<button type="button" class="chat-widget-archive" data-widget-archive data-tooltip="Archive">✕</button>' +
                     '</div>' +
                     '<div class="chat-widget-body" ' + (isOpen ? '' : 'hidden') + '>' +
@@ -151,7 +148,6 @@
                         ? '<p class="chat-widget-desc">' + esc(desc) + '</p>'
                         : '') +
                     '<ul class="chat-widget-task-list">' + renderTaskItems(items, shared) + '</ul>' +
-                    (historyOpen[w.id] ? renderHistory(histories[w.id]) : '') +
                     '</div></div>'
                 );
             }).join('');
@@ -179,22 +175,6 @@
             });
             el.scrollTop = top;
             el.scrollLeft = left;
-        }
-
-        function renderHistory(events) {
-            if (!events) return '<p class="chat-widget-desc">Loading history…</p>';
-            if (!events.length) return '<p class="chat-widget-desc">No recorded interactions yet.</p>';
-            return '<ol class="chat-widget-task-list" aria-label="Task interaction history">' + events.map(function (event) {
-                var actor = event.actor || {};
-                var sid = String(actor.session_id || '').replace(/^db_session_/, '');
-                var chat = /^\d+$/.test(sid) ? 'CH-' + sid.padStart(6, '0') : sid;
-                var parts = [event.operation, actor.agent_id || actor.source || 'Unknown source'];
-                if (chat) parts.push(chat);
-                if (actor.model) parts.push(actor.model);
-                if (actor.run_id) parts.push(actor.run_id);
-                if (event.created_at) parts.push(String(event.created_at));
-                return '<li class="chat-widget-desc">' + esc(parts.join(' · ')) + '</li>';
-            }).join('') + '</ol>';
         }
 
         function applyData(data, expectedGen, expectedKey) {
@@ -305,25 +285,6 @@
                 if (t.closest('[data-widget-toggle]')) {
                     expanded[wid] = !expanded[wid];
                     render();
-                    return;
-                }
-                if (t.closest('[data-widget-history]')) {
-                    historyOpen[wid] = !historyOpen[wid];
-                    expanded[wid] = true;
-                    if (!historyOpen[wid]) { render(); return; }
-                    histories[wid] = null;
-                    var expectedKey = contextKey();
-                    render();
-                    fetchFn('/api/gizmos/tasks/' + encodeURIComponent(wid) + '/history?limit=20&session_id=' + encodeURIComponent(sessionParam()),
-                        { credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (data) {
-                        if (expectedKey !== contextKey()) return;
-                        histories[wid] = data.success && Array.isArray(data.events) ? data.events : [];
-                        render();
-                    }).catch(function () {
-                        if (expectedKey !== contextKey()) return;
-                        histories[wid] = [];
-                        render();
-                    });
                     return;
                 }
                 if (t.closest('[data-widget-info]')) {

@@ -1,4 +1,4 @@
-"""Browser acceptance for tool-driven Tasks and attributed history, offline."""
+"""Browser acceptance for tool-driven Tasks, offline (history stays API-side)."""
 import json
 from pathlib import Path
 from urllib.parse import urlparse
@@ -8,7 +8,7 @@ from tests.browser_guard import launch_chromium
 SCRIPT = Path(__file__).resolve().parents[2] / 'web/js/gizmos/tasks_gizmo.js'
 
 
-def test_tasks_render_tool_progress_history_and_shared_edits():
+def test_tasks_render_tool_progress_and_shared_edits():
     playwright = pytest.importorskip('playwright.sync_api')
     row = {'id': 'plan', 'type': 'tasks', 'title': 'Tool plan', 'scope': 'session',
            'status': 'active', 'edit_mode': 'shared', 'revision': 1,
@@ -31,11 +31,6 @@ def test_tasks_render_tool_progress_history_and_shared_edits():
                 return route.fulfill(body=SCRIPT.read_text(), content_type='text/javascript')
             if path == '/api/gizmos/tasks':
                 return route.fulfill(json={'success': True, 'gizmos': state['rows'], 'revision': state['revision']})
-            if path.endswith('/history'):
-                return route.fulfill(json={'success': True, 'events': [{
-                    'operation': 'create', 'created_at': '2026-10-07 12:00',
-                    'actor': {'agent_id': 'codex <script>', 'session_id': '7',
-                              'model': 'fixture-model', 'run_id': 'fixture-query'}}]})
             if path.endswith('/items/a'):
                 body = route.request.post_data_json
                 state['patches'].append(body)
@@ -53,11 +48,9 @@ def test_tasks_render_tool_progress_history_and_shared_edits():
         state['revision'] = 2
         page.evaluate('ctrl.onRevision(2)')
         page.wait_for_function("document.getElementById('chatWidgetsStrip').textContent.includes('Progress from tool')")
-        page.locator('[data-widget-history]').click()
-        page.wait_for_function("document.getElementById('chatWidgetsStrip').textContent.includes('fixture-query')")
-        text = page.locator('[aria-label="Task interaction history"]').inner_text()
-        assert 'CH-000007' in text and 'codex <script>' in text and 'fixture-model' in text
-        assert page.locator('[aria-label="Task interaction history"] script').count() == 0
+        # Attributed history stays agent-side (API/CLI); it is not user-facing.
+        assert page.locator('[data-widget-history]').count() == 0
+        page.locator('[data-widget-toggle]').click()
         page.locator('input[type=checkbox]').check()
         page.wait_for_function("document.getElementById('chatWidgetsStrip').hidden")
         assert state['patches'] == [{'done': True, 'session_id': '7'}]
