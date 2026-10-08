@@ -101,6 +101,9 @@ ALLOW_GET_PREFIXES = (
 # title-provider calls).
 import re as _re
 ALLOW_PATCH_SESSION_RE = _re.compile(r"^/api/auth/sessions/\d+$")
+# Attention acknowledgments mutate only the owned private DB; no executor,
+# project action or external service can run through this numeric-only route.
+ALLOW_PUT_SESSION_ATTENTION_RE = _re.compile(r"^/api/auth/sessions/\d+/attention$")
 # POST-only durable system-notice persist (auth_api.post_session_message):
 # exact numeric id + /messages suffix, no child paths. The real endpoint
 # accepts role=system only (400 otherwise); no assistant writes via this
@@ -684,6 +687,8 @@ def install_route_allowlist(app) -> None:
             return None
         if request.method == "PATCH" and ALLOW_PATCH_SESSION_RE.match(
                 request.path):
+            return None
+        if request.method == "PUT" and ALLOW_PUT_SESSION_ATTENTION_RE.match(request.path):
             return None
         if request.method == "POST" and ALLOW_POST_SESSION_MESSAGE_RE.match(
                 request.path):

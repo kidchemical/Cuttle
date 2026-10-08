@@ -1218,6 +1218,7 @@ def get_session_messages(session_id):
         except Exception:
             pass
 
+        followup_state = db.get_followup_state(session_id, user['id']) or {'followups': [], 'revision': 0}
         return jsonify({
             'success': True,
             'messages': messages,
@@ -1229,7 +1230,9 @@ def get_session_messages(session_id):
             'project_id': session.get('project_id'),
             'project_name': session.get('project_name'),
             'project_path': session.get('project_path'),
-            'followups': db.get_followup_queue(session_id, user['id']),
+            'followups': followup_state['followups'],
+            'followup_revision': followup_state['revision'],
+            'attention': db.get_attention(session_id, user['id']),
             'composer_selection': db.get_composer_selection(session_id, user['id']),
             'display_name': session.get('display_name') or '',
             'avatar': session.get('avatar') or '',
@@ -1325,6 +1328,24 @@ def _auth_user_or_error():
     return (db, user), None
 
 
+@auth_bp.route('/sessions/<int:session_id>/attention', methods=['PUT'])
+def session_attention(session_id):
+    pair, err = _auth_user_or_error()
+    if err:
+        return err
+    db, user = pair
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({'success': False, 'error': 'Expected attention object'}), 400
+    try:
+        result = db.mark_attention(session_id, user['id'], data)
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+    if result is None:
+        return jsonify({'success': False, 'error': 'Session not found or access denied'}), 404
+    return jsonify({'success': True, 'attention': result})
+
+
 @auth_bp.route('/sessions/<int:session_id>/composer', methods=['PUT'])
 def session_composer_selection(session_id):
     """Share next-send selection across devices, separately from turn identity."""
@@ -1343,50 +1364,49 @@ def session_composer_selection(session_id):
 
 @auth_bp.route('/sessions/<int:session_id>/followups', methods=['GET', 'PUT', 'POST'])
 def session_followups(session_id):
-    """Shared composer follow-up queue (phone + PC see the same items)."""
+    from api.chat_followups import Conflict
+    pair, err = _auth_user_or_error()
+    if err:
+        return err
+    db, user = pair
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({'success': False, 'error': 'Expected queue object'}), 400
     try:
-        pair, err = _auth_user_or_error()
-        if err:
-            return err
-        db, user = pair
-        session = db.get_chat_session(session_id, user['id'])
-        if not session:
-            return jsonify({'success': False, 'error': 'Session not found or access denied'}), 404
         if request.method == 'GET':
-            items = db.get_followup_queue(session_id, user['id'])
-            return jsonify({'success': True, 'followups': items})
-        data = request.get_json(silent=True) or {}
-        if request.method == 'PUT':
-            items = db.set_followup_queue(session_id, user['id'], data.get('followups') or [])
-            if items is None:
-                return jsonify({'success': False, 'error': 'Session not found or access denied'}), 404
-            return jsonify({'success': True, 'followups': items})
-        item = data.get('followup') or data.get('item') or data
-        items = db.append_followup(session_id, user['id'], item)
-        if items is None:
-            return jsonify({'success': False, 'error': 'Session not found or access denied'}), 404
-        return jsonify({'success': True, 'followups': items})
-    except Exception as e:
-        print(f"Followups error: {e}")
-        return jsonify({'success': False, 'error': 'Failed to update follow-ups'}), 500
+            result = db.get_followup_state(session_id, user['id'])
+        elif request.method == 'PUT':
+            result = db.mutate_followups(session_id, user['id'], 'replace',
+                                        data.get('followups') or [], data.get('revision'))
+        else:
+            result = db.mutate_followups(session_id, user['id'], 'append',
+                                        data.get('followup') or data.get('item') or data)
+    except Conflict as exc:
+        return jsonify({'success': False, 'conflict': True, **exc.state}), 409
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+    if result is None:
+        return jsonify({'success': False, 'error': 'Session not found or access denied'}), 404
+    return jsonify({'success': True, 'followups': result['followups'], 'revision': result['revision']})
 
 
 @auth_bp.route('/sessions/<int:session_id>/followups/take', methods=['POST'])
 def take_session_followups(session_id):
-    """Atomically drain unpaused queue items; paused ones stay for later."""
+    from api.chat_followups import Conflict
+    pair, err = _auth_user_or_error()
+    if err:
+        return err
+    db, user = pair
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({'success': False, 'error': 'Expected queue object'}), 400
     try:
-        pair, err = _auth_user_or_error()
-        if err:
-            return err
-        db, user = pair
-        result = db.take_followup_queue(session_id, user['id'])
-        if result is None:
-            return jsonify({'success': False, 'error': 'Session not found or access denied'}), 404
-        return jsonify({
-            'success': True,
-            'followups': result.get('taken') or [],
-            'remaining': result.get('remaining') or [],
-        })
-    except Exception as e:
-        print(f"Take followups error: {e}")
-        return jsonify({'success': False, 'error': 'Failed to take follow-ups'}), 500
+        result = db.mutate_followups(session_id, user['id'], 'take', expected_revision=data.get('revision'), claim_id=data.get('claim_id'))
+    except Conflict as exc:
+        return jsonify({'success': False, 'conflict': True, **exc.state}), 409
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+    if result is None:
+        return jsonify({'success': False, 'error': 'Session not found or access denied'}), 404
+    return jsonify({'success': True, 'followups': result['taken'],
+                    'remaining': result['followups'], 'revision': result['revision']})

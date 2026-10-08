@@ -1745,6 +1745,8 @@ window.addEventListener('message', function(e) {
         } catch (_) {}
     } else if (e.data.type === 'cuttle-pane-activity') {
         setFocusedColumn(findColumnIndexForSource(e.source));
+    } else if (e.data.type === 'cuttle-activity-refresh') {
+        window.cuttleActivityBroker.refresh();
     } else if (e.data.type === 'cuttle-chat-activity') {
         // Snapshot of the chats this frame owns (immediate). Replaces the
         // frame's previous snapshot; the server poll stays authoritative.
@@ -4730,7 +4732,12 @@ function renderAccountButtons() {
 }
 
 function setShellAuthUser(user) {
+    const previousId = shellAuthUser && shellAuthUser.id;
     shellAuthUser = user || null;
+    if (previousId !== (shellAuthUser && shellAuthUser.id) && window.cuttleActivityBroker) {
+        CuttleSpaces.resetActivity();
+        window.cuttleActivityBroker.refresh();
+    }
     renderAccountButtons();
     // The Account Apps-grid tile carries the profile photo — rebroadcast so
     // an open Apps page swaps the placeholder for the picture on sign in/out.
@@ -5842,13 +5849,12 @@ function allSpaceChatIds() {
     return [...out].filter(Boolean).slice(0, 60);
 }
 
+const shellSessionPrefs = CuttleSessionPrefs.create(localStorage);
+
 function readChatPrefsMap() {
-    try {
-        return JSON.parse(localStorage.getItem('cuttleChatSessionPrefs') || '{}') || {};
-    } catch (_) {
-        return {};
-    }
+    return shellSessionPrefs.map();
 }
+
 
 function readLocalChatSessions() {
     try {
@@ -5890,11 +5896,15 @@ function markFinishedBackgroundChatsUnread(finished) {
             prefs[key] = Object.assign({}, row, { hasUnread: true, unreadIsError: false });
             changed = true;
         });
-        if (changed) localStorage.setItem('cuttleChatSessionPrefs', JSON.stringify(prefs));
+        if (changed) targets.forEach(bare => shellSessionPrefs.update(bare, prefs[bare] || {}));
     } catch (_) {}
 }
 
 async function fetchSpaceSessionsList() {
+    try { return await window.cuttleActivityBroker.sessions(); } catch (_) { return null; }
+}
+
+async function loadActivitySessions() {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 6000);
     try {
@@ -5966,6 +5976,7 @@ async function refreshSpaceActivityFromServer() {
                 rows.push({
                     id: sid,
                     running: !!(s.generating || s.awaiting_action),
+                    attention: s.attention,
                     queue: CuttleSpaces.followupKind(parseSpaceFollowupQueue(
                         s.followup_queue != null ? s.followup_queue : s.followups)),
                 });
@@ -5973,7 +5984,8 @@ async function refreshSpaceActivityFromServer() {
         } else {
             rows = await fetchSpaceLiveStatusRows(ids);
         }
-        markFinishedBackgroundChatsUnread(CuttleSpaces.noteServerSnapshot(rows, startedAt));
+        const finished = CuttleSpaces.noteServerSnapshot(rows, startedAt);
+        if (!rows.some(row => row.attention)) markFinishedBackgroundChatsUnread(finished);
         refreshSpaceActivityLocalState();
     } finally {
         spaceActivityPollInFlight = false;
@@ -5996,6 +6008,34 @@ function parseSpaceFollowupQueue(raw) {
     return [];
 }
 
+const activityBroker = CuttleActivityBroker.create({
+    scope: () => shellAuthUser ? shellAuthUser.id : null,
+    now: () => Date.now(), setTimeout: (fn, ms) => window.setTimeout(fn, ms),
+    clearTimeout: id => window.clearTimeout(id),
+    load: async () => {
+        const rows = await loadActivitySessions();
+        if (!rows) throw new Error('Session snapshot unavailable');
+        return rows;
+    },
+    publish: sessions => {
+        broadcastToFrames({type: 'cuttle-sessions-snapshot', sessions});
+        CuttleSpaces.noteServerSnapshot(sessions.map(s => ({id: s.id,
+            running: !!(s.generating || s.awaiting_action), attention: s.attention,
+            queue: CuttleSpaces.followupKind(parseSpaceFollowupQueue(s.followup_queue))})), Date.now());
+        syncSpaceActivityTabs();
+    },
+    openStream: wake => {
+        if (typeof EventSource === 'undefined') return null;
+        const stream = new EventSource('/api/activity/stream');
+        stream.addEventListener('activity', wake);
+        stream.onopen = wake;
+        return stream;
+    },
+});
+window.cuttleActivityBroker = activityBroker;
+activityBroker.start();
+window.addEventListener('pagehide', () => activityBroker.dispose());
+
 function scheduleSpaceActivityPoll(immediate) {
     const since = Date.now() - spaceActivityLastPollAt;
     if (!immediate && since < 8000) {
@@ -6003,6 +6043,7 @@ function scheduleSpaceActivityPoll(immediate) {
         syncSpaceActivityTabs();
         return;
     }
+    if (immediate) window.cuttleActivityBroker.refresh();
     refreshSpaceActivityFromServer();
 }
 
@@ -6362,7 +6403,8 @@ function setupSpaceTabMenus(host) {
     // refresh dots without waiting for the next heartbeat.
     window.addEventListener('storage', (e) => {
         if (!e || !e.key) return;
-        if (e.key === 'cuttleChatSessionPrefs' || e.key === 'chatSessions') {
+        if (CuttleSessionPrefs.isKey(e.key)) shellSessionPrefs.invalidate();
+        if (CuttleSessionPrefs.isKey(e.key) || e.key === 'chatSessions') {
             scheduleSpaceActivityPoll(false);
         }
     });

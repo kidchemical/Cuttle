@@ -205,7 +205,7 @@
 
     function shouldAdoptComposerSelection(incoming, state) {
         return !!incoming && Array.isArray(incoming.stickyChips)
-            && !(state && state.pending)
+            && !(state && (state.pending || state.unsynced))
             && Number(incoming.revision || 0) >= Number((state && state.revision) || 0);
     }
 

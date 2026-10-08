@@ -128,3 +128,86 @@ def test_background_turn_finish_shows_unread_not_spinner(shadow, browser):
             except Exception:
                 pass
         context.close()
+
+
+def _offline_turn(origin, nonce, token, sid, response):
+    from .test_shadow_chat_stop_resend import _api
+    scenario = _queue(origin, nonce, 'success', response)
+    status, body = _api(origin, token, 'POST', '/api/chat', {
+        'session_id': sid, 'message': '/cursor offline observer test', 'stream': False,
+    })
+    assert status == 200 and body.get('success'), body
+    assert _state(origin, nonce)['completed'].get(scenario) == 1
+
+
+def test_unobserved_reply_recovers_after_reload_and_read_on_another_device(shadow, browser):
+    from .test_shadow_chat_stop_resend import _api
+    _child, manifest = shadow
+    origin, nonce = manifest['origin'], manifest['nonce']
+    token = _register_cookie(origin)
+    tag = next(_counter)
+    sid_a = _new_chat(origin, token, f'recovery-a-{tag}')
+    sid_b = _new_chat(origin, token, f'recovery-b-{tag}')
+    # No browser, watcher, or running-edge poll exists for either completion.
+    _offline_turn(origin, nonce, token, sid_a, 'unobserved reply')
+    _offline_turn(origin, nonce, token, sid_b, 'viewing another chat')
+    context, page, errors, _blocked, _posts = _open_guarded_page(browser, origin, token)
+    other = None
+    try:
+        page.goto(f'{origin}/chat_page.html?chat={sid_b}', wait_until='domcontentloaded')
+        _wait_open(page, sid_b)
+        _pump_until(page, lambda: _row_state(page, sid_a) == {'running': False, 'unread': True},
+                    20000, 'fresh device recovers unobserved reply')
+        page.reload(wait_until='domcontentloaded')
+        _wait_open(page, sid_b)
+        _pump_until(page, lambda: _row_state(page, sid_a) == {'running': False, 'unread': True},
+                    20000, 'reload preserves unread')
+        other, reader, reader_errors, _, _ = _open_guarded_page(browser, origin, token)
+        reader.goto(f'{origin}/chat_page.html?chat={sid_a}', wait_until='domcontentloaded')
+        _wait_open(reader, sid_a)
+        reader.get_by_text('unobserved reply', exact=True).wait_for(timeout=20000)
+        _pump_until(reader, lambda: not _api(origin, token, 'GET',
+                    f'/api/auth/sessions/{sid_a}/messages')[1]['attention']['hasUnread'],
+                    20000, 'actual displayed transcript is acknowledged')
+        # The first device never mounted A; it learns about the read from server snapshots.
+        page.reload(wait_until='domcontentloaded')
+        _wait_open(page, sid_b)
+        _pump_until(page, lambda: _row_state(page, sid_a) == {'running': False, 'unread': False},
+                    20000, 'cross-device read clears old history dot')
+        assert not errors and not reader_errors, (errors, reader_errors)
+    finally:
+        if other:
+            other.close()
+        context.close()
+
+
+def test_question_attention_recovers_without_mount_and_clears_after_remote_answer(shadow, browser):
+    import json
+    _child, manifest = shadow
+    origin, nonce = manifest['origin'], manifest['nonce']
+    token = _register_cookie(origin)
+    tag = next(_counter)
+    sid_a = _new_chat(origin, token, f'question-a-{tag}')
+    sid_b = _new_chat(origin, token, f'question-b-{tag}')
+    card = '<cuttle_action_form>' + json.dumps({'id': 'offline-question', 'mode': 'choice',
+        'resume': True, 'options': [{'id': 'yes', 'label': 'Yes'}]}) + '</cuttle_action_form>'
+    _offline_turn(origin, nonce, token, sid_a, card)
+    _offline_turn(origin, nonce, token, sid_b, 'another chat while a question waits')
+    context, page, errors, _, _ = _open_guarded_page(browser, origin, token)
+    def has_input():
+        return page.evaluate('(sid) => {const row = (' + _ROW_JS + ')(sid);'
+            ' return !!(row && row.classList.contains("has-input") && row.querySelector(".history-input-icon"));}', str(sid_a))
+    try:
+        page.goto(f'{origin}/chat_page.html?chat={sid_b}', wait_until='domcontentloaded')
+        _wait_open(page, sid_b)
+        _pump_until(page, has_input, 20000, 'unmounted question has a blue history dot')
+        _offline_turn(origin, nonce, token, sid_a, 'question answered on another device')
+        # Reload the viewing device, without navigating to/mounting A's card.
+        page.reload(wait_until='domcontentloaded')
+        _wait_open(page, sid_b)
+        _pump_until(page, lambda: not has_input(), 20000, 'remote answer clears blue dot')
+        _pump_until(page, lambda: _row_state(page, sid_a) == {'running': False, 'unread': True},
+                    20000, 'the remote answer leaves an ordinary unread reply')
+        assert not errors, errors
+    finally:
+        context.close()

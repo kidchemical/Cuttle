@@ -34,6 +34,9 @@ def test_input_card_submit_and_remove_update_title_history_and_space():
         page.add_script_tag(content='''
         const prefs = {}; const currentSessionId = '42';
         const getSessionPrefs = sid => prefs[sid] || null;
+        const attentionPrefsFor = getSessionPrefs;
+        const serverAttention = {get:()=>null};
+        const toAuthDbSessionId = String;
         const updateSessionPrefs = (sid, p) => prefs[sid] = {...prefs[sid], ...p};
         const sessionIdsEqual = CuttleChatActivity.sessionIdsEqual;
         const canonicalizeChatSessionId = CuttleChatActivity.canonicalizeChatSessionId;

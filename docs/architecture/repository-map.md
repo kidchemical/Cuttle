@@ -171,6 +171,13 @@ service; Flask serialize/SSE transport stays in the route.
 `api.agent_harness.runners` owns all `run_*_web_command` entries.
 
 **History:** `api.auth_db` SQLite (`<home>/db/`, gitignored). Pairing store for **users** is separate from **worker** enroll.
+`api.chat_attention` owns persisted reply/read watermarks, manual unread and
+latest-question attention in that database. AuthDatabase updates attention in
+the message transaction and auth routes expose revisioned snapshots/read
+acknowledgments. `api.chat_followups` owns shared queue transactions/revisions
+and retryable take receipts; AuthDatabase injects its private connection.
+Activity SSE is a wake signal; snapshots and periodic recovery supply truth.
+
 
 ---
 
@@ -320,7 +327,11 @@ arguments or injected host interfaces):
 |---|---|---|
 | `chat_turn_guard.js` (`CuttleTurnGuard`) | turn/staleness generation tokens (pure) | bump/capture call sites |
 | `chat_stop_state.js` (`CuttleStopState`) | stop/cancel flags + abort classification (pure) | notices, transport abort, dispatch |
-| `chat_followup_queue.js` (`CuttleFollowupQueue`) | follow-up queue state + take/reconcile, composes `chat_activity.js` items (pure) | drain timer, persistence, edit UI |
+| `chat_followup_queue.js` (`CuttleFollowupQueue`) | per-session queue state, revision/edit generation, take/reconcile and conflict rebase (pure) | drain timer, revisioned transport, durable outbox, edit UI |
+| `chat_mutations.js` (`CuttleChatMutations`) | captured session/resource/navigation lifetimes and serialized mutation chains | model/effort/project requests and guarded paint |
+| `chat_attention.js` (`CuttleChatAttention`) | revisioned server attention snapshots, optimistic reads/manual unread, durable retry intent (injected prefs/transport) | history/title/Spaces paint and read acknowledgments |
+| `shared/session_prefs.js` (`CuttleSessionPrefs`) | atomic per-session/per-field device preferences, read-only legacy fallback and tombstones (injected storage) | storage events, drafts and optimistic mutation records |
+| `shared/activity_broker.js` (`CuttleActivityBroker`) | coalesced full-session reads, SSE wake/reconnect and snapshot publication (injected transport/timers) | one shell instance, frame fan-out and existing heartbeat recovery |
 | `chat_subagent_fleet.js` (`CuttleChatSubagentFleet`) | experimental fleet-card markup for child chats (pure; outcome/summary from `api.subagents.fleet`); `ChildStatusSink` persists coalesced, turn-guarded live status in the child SQLite row | mounting, click → open chat, live polling and history hydration |
 | `chat_pending_result.js` (`CuttleChatPendingResult`) | SSE event classification, pending-result waiter, history-recovery match, exactly-once sync classification, stale-heal, send-failure recovery (pure decisions; async flows take transport/paint/clock as `deps`) | fetch/paint/clock, session-adopt guards, timers, busy lock |
 | `chat_stream.js` (`CuttleChatStream`) | SSE byte transport: `readEvents(body, {holdMs, readTimeoutMs, signal?, onEvents})` owns the native reader, one retained read promise across timeout observations, read timers, TextDecoder + LF-double-newline framing + JSON decode, reader cancel on hold detach/abort, and lock release on terminal/eof/error | fetch request, HTTP status/content-type/JSON fallback, event classification, session adoption, DOM paint, sawProgress, final-result mapping, turn/Stop/busy ownership, pending recovery, debug messages |

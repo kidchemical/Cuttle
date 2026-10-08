@@ -163,6 +163,7 @@ class AuthDatabase:
             'ALTER TABLE chat_sessions ADD COLUMN followup_queue TEXT',
             'ALTER TABLE chat_sessions ADD COLUMN composer_selection TEXT',
             'ALTER TABLE chat_sessions ADD COLUMN composer_revision INTEGER DEFAULT 0',
+            'ALTER TABLE chat_sessions ADD COLUMN followup_revision INTEGER DEFAULT 0',
         ):
             try:
                 cursor.execute(col_sql)
@@ -378,6 +379,13 @@ class AuthDatabase:
             'ON users(username) WHERE username IS NOT NULL'
         )
         
+        from api.chat_attention import ensure_schema
+        ensure_schema(conn)
+        conn.execute('''CREATE TABLE IF NOT EXISTS chat_followup_claims (
+            session_id INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+            claim_id TEXT NOT NULL, result TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (session_id, claim_id))''')
         conn.commit()
         conn.close()
     
@@ -772,6 +780,7 @@ class AuthDatabase:
         ''', (user_id, session_name, name_auto))
         
         session_id = cursor.lastrowid
+        conn.execute('INSERT OR IGNORE INTO chat_attention(session_id) VALUES (?)', (session_id,))
         conn.commit()
         conn.close()
         
@@ -1164,10 +1173,13 @@ class AuthDatabase:
             ORDER BY COALESCE(MAX(cm.timestamp), cs.last_activity) DESC
         ''', (user_id, 1 if archived_only else 0))
 
-        rows = cursor.fetchall()
+        rows = [dict(row) for row in cursor.fetchall()]
+        from api.chat_attention import get_many
+        attention = get_many(conn, user_id, [row['id'] for row in rows])
         conn.close()
-
-        return [dict(row) for row in rows]
+        for row in rows:
+            row['attention'] = attention.get(row['id'])
+        return rows
 
     @staticmethod
     def _like_contains(term: str) -> str:
@@ -1429,114 +1441,45 @@ class AuthDatabase:
             'paused': bool(raw.get('paused')),
         }
 
-    def get_followup_queue(self, session_id: int, user_id: int) -> List[Dict[str, Any]]:
+    def get_followup_state(self, session_id: int, user_id: int) -> Optional[Dict]:
+        from api.chat_followups import state
         conn = self._get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            '''
-            SELECT followup_queue FROM chat_sessions
-            WHERE id = ? AND user_id = ? AND is_active = 1
-            ''',
-            (session_id, user_id),
-        )
-        row = cursor.fetchone()
-        conn.close()
-        if not row:
-            return []
-        return self._parse_followup_queue(row['followup_queue'] if 'followup_queue' in row.keys() else None)
-
-    def set_followup_queue(
-        self, session_id: int, user_id: int, items: List[Any]
-    ) -> Optional[List[Dict[str, Any]]]:
-        normalized: List[Dict[str, Any]] = []
-        for item in items or []:
-            norm = self._normalize_followup_item(item)
-            if norm:
-                normalized.append(norm)
-        normalized = normalized[:40]
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            '''
-            UPDATE chat_sessions
-            SET followup_queue = ?, last_activity = CURRENT_TIMESTAMP
-            WHERE id = ? AND user_id = ? AND is_active = 1
-            ''',
-            (json.dumps(normalized), session_id, user_id),
-        )
-        ok = cursor.rowcount > 0
-        conn.commit()
-        conn.close()
-        return normalized if ok else None
-
-    def append_followup(
-        self, session_id: int, user_id: int, item: Any
-    ) -> Optional[List[Dict[str, Any]]]:
-        norm = self._normalize_followup_item(item)
-        if not norm:
-            return self.get_followup_queue(session_id, user_id)
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            '''
-            SELECT followup_queue FROM chat_sessions
-            WHERE id = ? AND user_id = ? AND is_active = 1
-            ''',
-            (session_id, user_id),
-        )
-        row = cursor.fetchone()
-        if not row:
+        try:
+            return state(conn, session_id, user_id, self._parse_followup_queue)
+        finally:
             conn.close()
-            return None
-        items = self._parse_followup_queue(row['followup_queue'] if 'followup_queue' in row.keys() else None)
-        if not any(x.get('id') == norm['id'] for x in items):
-            items.append(norm)
-        items = items[:40]
-        cursor.execute(
-            '''
-            UPDATE chat_sessions
-            SET followup_queue = ?, last_activity = CURRENT_TIMESTAMP
-            WHERE id = ? AND user_id = ? AND is_active = 1
-            ''',
-            (json.dumps(items), session_id, user_id),
-        )
-        conn.commit()
-        conn.close()
-        return items
 
-    def take_followup_queue(self, session_id: int, user_id: int) -> Optional[Dict[str, List[Dict[str, Any]]]]:
-        """
-        Atomically take unpaused follow-ups. Paused items stay in the queue.
-
-        Returns ``{"taken": [...], "remaining": [...]}`` or None if session missing.
-        """
+    def mutate_followups(self, session_id: int, user_id: int, operation: str,
+                        value=None, expected_revision=None, claim_id=None) -> Optional[Dict]:
+        from api.chat_followups import mutate
         conn = self._get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            '''
-            SELECT followup_queue FROM chat_sessions
-            WHERE id = ? AND user_id = ? AND is_active = 1
-            ''',
-            (session_id, user_id),
-        )
-        row = cursor.fetchone()
-        if not row:
+        try:
+            before = conn.total_changes
+            result = mutate(conn, session_id, user_id, operation, value, expected_revision,
+                            self._parse_followup_queue, self._normalize_followup_item, claim_id)
+            if result and conn.total_changes > before:
+                from api.chat_live_status import notify_changed
+                notify_changed()
+            return result
+        finally:
             conn.close()
-            return None
-        items = self._parse_followup_queue(row['followup_queue'] if 'followup_queue' in row.keys() else None)
-        taken = [x for x in items if not x.get('paused')]
-        remaining = [x for x in items if x.get('paused')]
-        cursor.execute(
-            '''
-            UPDATE chat_sessions
-            SET followup_queue = ?, last_activity = CURRENT_TIMESTAMP
-            WHERE id = ? AND user_id = ? AND is_active = 1
-            ''',
-            (json.dumps(remaining), session_id, user_id),
-        )
-        conn.commit()
-        conn.close()
-        return {'taken': taken, 'remaining': remaining}
+
+    def get_followup_queue(self, session_id: int, user_id: int) -> List[Dict]:
+        result = self.get_followup_state(session_id, user_id)
+        return result['followups'] if result else []
+
+    def set_followup_queue(self, session_id: int, user_id: int, items: List,
+                          expected_revision=None) -> Optional[List[Dict]]:
+        result = self.mutate_followups(session_id, user_id, 'replace', items, expected_revision)
+        return result['followups'] if result else None
+
+    def append_followup(self, session_id: int, user_id: int, item) -> Optional[List[Dict]]:
+        result = self.mutate_followups(session_id, user_id, 'append', item)
+        return result['followups'] if result else None
+
+    def take_followup_queue(self, session_id: int, user_id: int) -> Optional[Dict]:
+        result = self.mutate_followups(session_id, user_id, 'take')
+        return {'taken': result['taken'], 'remaining': result['followups']} if result else None
 
     def set_session_project(
         self,
@@ -1634,13 +1577,40 @@ class AuthDatabase:
                     'composer_revision = composer_revision + 1 WHERE id = ?',
                     (json.dumps(selection), chat_session_id),
                 )
+        from api.chat_attention import refresh
+        refresh(conn, chat_session_id)
         conn.commit()
         conn.close()
         
         # Update session activity
         self.update_session_activity(chat_session_id)
-        
+        from api.chat_live_status import notify_changed
+        notify_changed()
         return message_id
+
+    def get_attention(self, session_id: int, user_id: int) -> Optional[Dict]:
+        return self.get_attention_many(user_id, [session_id]).get(session_id)
+
+    def get_attention_many(self, user_id: int, ids: List[int]) -> Dict:
+        from api.chat_attention import get_many
+        conn = self._get_connection()
+        try:
+            return get_many(conn, user_id, ids)
+        finally:
+            conn.close()
+
+    def mark_attention(self, session_id: int, user_id: int, data: Dict) -> Optional[Dict]:
+        from api.chat_attention import mark
+        conn = self._get_connection()
+        try:
+            before = conn.total_changes
+            result = mark(conn, session_id, user_id, data)
+            if result and conn.total_changes > before:
+                from api.chat_live_status import notify_changed
+                notify_changed()
+            return result
+        finally:
+            conn.close()
 
     def get_composer_selection(self, session_id: int, user_id: int) -> Optional[Dict]:
         """Owned shared preference, with a read-only legacy-history fallback."""
@@ -1684,6 +1654,9 @@ class AuthDatabase:
                 (json.dumps(selection), session_id, user_id),
             ).fetchone()
             conn.commit()
+            if row:
+                from api.chat_live_status import notify_changed
+                notify_changed()
             return {**selection, 'revision': row['composer_revision']} if row else None
         finally:
             conn.close()
@@ -1726,7 +1699,11 @@ class AuthDatabase:
                 (chat_session_id, content, json.dumps(payload)))
             conn.execute('UPDATE chat_sessions SET last_activity = CURRENT_TIMESTAMP WHERE id = ?',
                          (chat_session_id,))
+            from api.chat_attention import refresh
+            refresh(conn, chat_session_id)
             conn.commit()
+            from api.chat_live_status import notify_changed
+            notify_changed()
             return int(cursor.lastrowid)
         finally:
             conn.close()
@@ -1769,8 +1746,15 @@ class AuthDatabase:
                 (content, int(message_id)),
             )
         affected = cursor.rowcount
+        from api.chat_attention import refresh
+        session = conn.execute('SELECT chat_session_id FROM chat_messages WHERE id=?', (message_id,)).fetchone()
+        if session:
+            refresh(conn, session[0])
         conn.commit()
         conn.close()
+        if affected:
+            from api.chat_live_status import notify_changed
+            notify_changed()
         return affected > 0
 
     def merge_message_metadata_by_query(
@@ -1815,8 +1799,12 @@ class AuthDatabase:
             'UPDATE chat_messages SET metadata = ? WHERE id = ?',
             (json.dumps(meta), int(message_id)),
         )
+        from api.chat_attention import refresh
+        refresh(conn, chat_session_id)
         conn.commit()
         conn.close()
+        from api.chat_live_status import notify_changed
+        notify_changed()
         return int(message_id)
 
     def find_messages_containing(

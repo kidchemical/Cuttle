@@ -480,6 +480,10 @@ def test_browser_profile_allowlist():
     for prefix in ("/img/", "/sounds/"):
         assert prefix in boot.ALLOW_GET_PREFIXES
     assert boot.ALLOW_PATCH_SESSION_RE.match("/api/auth/sessions/12")
+    assert boot.ALLOW_PUT_SESSION_ATTENTION_RE.match("/api/auth/sessions/12/attention")
+    assert not boot.ALLOW_PUT_SESSION_ATTENTION_RE.match("/api/auth/sessions/12/attention/extra")
+    assert not boot.ALLOW_PUT_SESSION_ATTENTION_RE.match("/api/auth/sessions/abc/attention")
+    assert not boot.ALLOW_PUT_SESSION_ATTENTION_RE.match("/api/auth/sessions/12/composer")
     assert not boot.ALLOW_PATCH_SESSION_RE.match("/api/auth/sessions/12/x")
     assert not boot.ALLOW_PATCH_SESSION_RE.match("/api/auth/sessions/abc")
     for path in ("/api/agents", "/api/cursor-agent/models",

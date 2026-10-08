@@ -16,7 +16,7 @@
 
     /** Live queue: normalized items + persistence/take flags. */
     function createQueueState() {
-        return { items: [], dirty: false, takeInFlight: false };
+        return { items: [], dirty: false, takeInFlight: false, revision: 0, editVersion: 0, base: [] };
     }
 
     /**
@@ -35,6 +35,7 @@
             paused: !!fields.paused,
         };
         state.items.push(item);
+        state.editVersion++;
         return item;
     }
 
@@ -43,6 +44,7 @@
         const item = state.items.find((x) => x.id === id);
         if (!item) return null;
         item.paused = !!paused;
+        state.editVersion++;
         return item;
     }
 
@@ -50,19 +52,21 @@
         if (!id) return false;
         const before = state.items.length;
         state.items = state.items.filter((x) => x.id !== id);
+        state.editVersion++;
         return state.items.length !== before;
     }
 
     function clearAll(state) {
         state.items = [];
+        state.editVersion++;
     }
 
     function markDirty(state) {
         state.dirty = true;
     }
 
-    function markClean(state) {
-        state.dirty = false;
+    function markClean(state, version) {
+        if (version == null || state.editVersion === version) state.dirty = false;
     }
 
     function beginTake(state) {
@@ -78,7 +82,7 @@
      * serverResult: null (no session id → local path), { ok:true,
      * followups, remaining? } (server take), or { ok:false } (failed
      * take). Sets state.items to the remainder, returns the batch.
-     * Mirrors the pre-extraction branches exactly, including the
+     * A failed server claim leaves the queue intact. Preserves the
      * server-remaining-as-is (unnormalized) and empty-queue-noop rules.
      */
     function resolveTake(state, editingId, serverResult, activity) {
@@ -88,7 +92,7 @@
             state.items = Array.isArray(serverResult.remaining)
                 ? serverResult.remaining
                 : state.items.filter((x) => x.paused);
-        } else if (serverResult == null || state.items.length) {
+        } else if (serverResult == null) {
             const take = activity.partitionFollowupForDrain(state.items, editingId);
             batch = take.batch;
             state.items = take.remaining;
@@ -102,15 +106,37 @@
      * local edits, an active queue edit, or an identical list.
      */
     function reconcileServerList(state, list, opts, activity) {
+        if (opts.revision != null && opts.revision < state.revision) return {applied: false, reason: 'stale'};
         if (state.takeInFlight || state.dirty) return { applied: false, reason: 'busy' };
         if (opts.editingId) return { applied: false, reason: 'editing' };
         if (!Array.isArray(list)) return { applied: false, reason: 'invalid' };
+        if (opts.revision != null) state.revision = opts.revision;
+        state.base = JSON.parse(JSON.stringify(list));
         if (activity.followupQueueFingerprint(list)
                 === activity.followupQueueFingerprint(state.items)) {
             return { applied: false, reason: 'same' };
         }
         state.items = list.map((item) => activity.normalizeFollowupItem(item));
         return { applied: true };
+    }
+
+    /** Rebase only this client's edits: preserve remote appends and removals. */
+    function mergeEdits(base, desired, remote) {
+        const original = new Map(base.map(x => [x.id, x]));
+        const wanted = new Map(desired.map(x => [x.id, x]));
+        const result = remote.filter(x => !original.has(x.id) || wanted.has(x.id)).map(x => {
+            const before = original.get(x.id), after = wanted.get(x.id);
+            if (!before || !after) return x;
+            const patch = {};
+            Object.keys(after).forEach(k => {
+                if (JSON.stringify(after[k]) !== JSON.stringify(before[k])) patch[k] = after[k];
+            });
+            return {...x, ...patch};
+        });
+        desired.forEach(x => {
+            if (!original.has(x.id) && !result.some(r => r.id === x.id)) result.push(x);
+        });
+        return result;
     }
 
     const api = {
@@ -125,6 +151,7 @@
         endTake,
         resolveTake,
         reconcileServerList,
+        mergeEdits,
     };
 
     const ns = (root.CuttleFollowupQueue = root.CuttleFollowupQueue || {});
