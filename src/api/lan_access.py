@@ -25,12 +25,7 @@ from typing import Any, Deque, Dict, List, Optional
 # Recent inbound LAN probes (for phone connectivity diagnosis).
 _lan_probes: Deque[Dict[str, Any]] = deque(maxlen=30)
 
-from api.server_ports import (
-    DEFAULT_HTTP_PORT,
-    DEFAULT_HTTPS_PORT,
-    DEFAULT_PHONE_HTTPS_PORT,
-    resolve_with_env_file,
-)
+from api.server_ports import resolve_with_env_file
 
 _FIREWALL_RULE_HTTPS = "Cuttle LAN HTTPS (LocalSubnet)"
 _FIREWALL_RULE_HTTP = "Cuttle LAN HTTP (LocalSubnet)"
@@ -38,12 +33,8 @@ _FIREWALL_RULE_HTTP_ALT = "Cuttle LAN HTTP alt (8000)"
 # Pre-scoping fallback rule names (created once with RemoteAddress Any).
 # Never created anymore — only removed (replace, never extend).
 _LEGACY_OPEN_RULE_DISPLAY_NAMES = ("Cuttle LAN HTTP (Open LAN)",)
-# Legacy default snapshots (import compat only). Listener ports are owned by
-# api.server_ports (env-only); use the get_*_port() helpers for live values.
-LAN_PHONE_HTTPS_PORT = DEFAULT_PHONE_HTTPS_PORT  # HTTPS for phones
-LAN_HTTP_FALLBACK_PORT = DEFAULT_HTTP_PORT  # plain HTTP fallback
-LAN_HTTP_PORT = LAN_PHONE_HTTPS_PORT  # backwards compat
-PRIMARY_HTTPS_PORT = DEFAULT_HTTPS_PORT
+# Listener ports are owned by api.server_ports (env-only);
+# use the get_*_port() helpers below for live values.
 
 
 def get_primary_https_port() -> int:

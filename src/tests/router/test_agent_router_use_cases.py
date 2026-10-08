@@ -52,8 +52,8 @@ def test_fresh_install_seeds_default_table(router_settings):
     assert [uc["id"] for uc in load_use_cases()] == ids
 
 
-def test_old_seed_priorities_are_migrated(router_settings):
-    """First seed run shipped frontier(20) between general(10) and coding(30)."""
+def test_stored_priorities_load_unchanged(router_settings):
+    """Stored blocks load as-is: no seed migration rewrites priorities on load."""
     sm = router_settings
     raw = sm.get_setting("agent_router") or {}
     raw["use_cases"] = [
@@ -75,11 +75,13 @@ def test_old_seed_priorities_are_migrated(router_settings):
 
     loaded = load_use_cases()
     prio = {uc["id"]: uc["priority"] for uc in loaded}
-    assert prio["frontier-coding"] == 30
-    assert prio["coding-model"] == 20
+    assert prio["frontier-coding"] == 20
+    assert prio["coding-model"] == 30
     assert prio["general-chat"] == 10
     assert prio["research"] == 20  # not a seed block — untouched
-    # persisted, and a second load is idempotent
+    # load is read-only: stored priorities were not rewritten, second load stable
+    stored = {uc["id"]: uc["priority"] for uc in sm.get_setting("agent_router")["use_cases"]}
+    assert stored == {"general-chat": 10, "frontier-coding": 20, "coding-model": 30, "research": 20}
     assert load_use_cases() == loaded
 
 

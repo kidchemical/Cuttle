@@ -206,16 +206,6 @@ def opencode_executable() -> Optional[str]:
     )
 
 
-# Back-compat for tests that import the old helper name.
-def _prefer_native_binary(path: str, *, is_windows: Optional[bool] = None) -> str:
-    from pathlib import Path
-
-    from api.agent_harness.win_cli import prefer_native_binary
-
-    extras = (Path(path).parent / "node_modules" / "opencode-ai" / "bin" / "opencode.exe",)
-    return prefer_native_binary(path, extra_candidates=extras, is_windows=is_windows)
-
-
 def _accumulate_opencode_usage(obj: Dict[str, Any], usage: Dict[str, Any]) -> None:
     """Accumulate ``step_finish`` billing totals + last-step context fill.
 

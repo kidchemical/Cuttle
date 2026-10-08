@@ -13702,9 +13702,7 @@
             const bare = String(currentSessionId).replace(/^db_session_/, '');
             if (String(task.parent_session_id) !== bare) return;
         }
-        const state = CS.activityStateFromTask
-            ? CS.activityStateFromTask(task)
-            : CS.activityCardStateFromTask(task);
+        const state = CS.activityStateFromTask(task);
         if (!state) return;
         const box = document.getElementById('chatMessages');
         if (!box) return;

@@ -282,7 +282,9 @@ def test_opencode_transports_long_prompt_losslessly_over_stdin(monkeypatch, tmp_
 
 
 def test_opencode_prefers_packaged_exe_over_npm_cmd_shim(tmp_path):
-    from api.agent_harness.agents.opencode.adapter import _prefer_native_binary
+    from pathlib import Path
+
+    from api.agent_harness.win_cli import prefer_native_binary
 
     shim = tmp_path / "opencode.cmd"
     native = tmp_path / "node_modules" / "opencode-ai" / "bin" / "opencode.exe"
@@ -290,7 +292,9 @@ def test_opencode_prefers_packaged_exe_over_npm_cmd_shim(tmp_path):
     native.parent.mkdir(parents=True)
     native.write_bytes(b"native")
 
-    assert _prefer_native_binary(str(shim), is_windows=True) == str(native)
+    # Same packaged-exe candidates the opencode adapter passes to the shared helper.
+    extras = (Path(str(shim)).parent / "node_modules" / "opencode-ai" / "bin" / "opencode.exe",)
+    assert prefer_native_binary(str(shim), extra_candidates=extras, is_windows=True) == str(native)
 
 
 def test_kernel_resume_round_trip_passes_session_to_second_execute(monkeypatch, tmp_path):

@@ -15,8 +15,8 @@ main bootstrap.
 ## 1. Listener audit
 
 `web_chat_api.py.__main__` starts the primary listener plus same-`app`
-companions; `lan_access` owns the port constants (`LAN_PHONE_HTTPS_PORT`,
-`LAN_HTTP_FALLBACK_PORT`) and LAN bind/CORS/firewall; the daemon owns the
+companions; `api.server_ports` owns the listener port constants and
+`lan_access` owns LAN bind/CORS/firewall; the daemon owns the
 Flask process and its :8080 health check (`FLASK_PORT` in `cuttle_daemon`)
 — it does not own socket setup, and there is one app served through multiple
 listener/server objects, plus no separate daemon-control listener.
@@ -24,7 +24,7 @@ listener/server objects, plus no separate daemon-control listener.
 | Listener | Bind | Owner | Current uses | Necessary |
 |---|---|---|---|---|
 | Primary HTTPS `:8080` | `lan_access.resolve_bind_host` → `127.0.0.1` LAN-off, `0.0.0.0` LAN-on; served by `web_chat_api.__main__` via `app.run` | `web_chat_api.__main__` socket setup | All chat/API traffic; daemon health + internal-base default (`CUTTLE_INTERNAL_API_BASE` → `https://127.0.0.1:8080` in `api/internal_http`) | Yes — primary |
-| Companion HTTP `:8000`, same Flask `app` (**not** a tombstone/redirect) | `0.0.0.0` only when LAN is enabled and a LAN IP is found; otherwise the `127.0.0.1` branch, in `web_chat_api.__main__` | `lan_access` (port constant) + `web_chat_api.__main__` (socket) | CURRENT preferred Electron HTTP origin (`resolveUiBaseUrl` in `electron/main.js`) + mobile cleartext fallback (`httpFallbackBase` in `MainActivity.java`); rationale comment in `electron/main.js` (Chromium TLS/SSE pool wedge) | Not intrinsically — Electron falls back to HTTPS `:8080` when HTTP is down, so the API does not require it. Preserve until the client-compat/TLS-SSE rationale is tested; configure/deprecate only after |
+| Companion HTTP `:8000`, same Flask `app` (**not** a tombstone/redirect) | `0.0.0.0` only when LAN is enabled and a LAN IP is found; otherwise the `127.0.0.1` branch, in `web_chat_api.__main__` | `server_ports` (port) + `lan_access` (bind/CORS) + `web_chat_api.__main__` (socket) | CURRENT preferred Electron HTTP origin (`resolveUiBaseUrl` in `electron/main.js`) + mobile cleartext fallback (`httpFallbackBase` in `MainActivity.java`); rationale comment in `electron/main.js` (Chromium TLS/SSE pool wedge) | Not intrinsically — Electron falls back to HTTPS `:8080` when HTTP is down, so the API does not require it. Preserve until the client-compat/TLS-SSE rationale is tested; configure/deprecate only after |
 | (Optional) Phone TLS `:8888`, same `app` | `0.0.0.0`, only when LAN enabled with a LAN IP (phone-server branch in `web_chat_api.__main__`) | Same as above | Phone portal HTTPS (`lan_phone_portal_url`) | Only with LAN |
 
 No distinct domain, routes, or executor per listener. The daemon's raw TCP
