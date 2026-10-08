@@ -5863,26 +5863,31 @@
     function refreshAgentPreferenceAfterStar(aid) {
         if (aid === 'muse') {
             slashPaletteSupplement.museModelsKey = '';
+            slashPaletteSupplement.museModelsTried = null;
             slashPaletteSupplement.museEffortKey = '';
             loadMuseModelsForPalette(true);
             loadMuseEffortForPalette();
         } else if (aid === 'hermes') {
             slashPaletteSupplement.hermesModelsKey = '';
+            slashPaletteSupplement.hermesModelsTried = null;
             slashPaletteSupplement.hermesEffortKey = '';
             loadHermesModelsForPalette(true);
             loadHermesEffortForPalette();
         } else if (aid === 'opencode') {
             slashPaletteSupplement.opencodeModelsKey = '';
+            slashPaletteSupplement.opencodeModelsTried = null;
             slashPaletteSupplement.opencodeEffortKey = '';
             loadOpenCodeModelsForPalette(true);
             loadOpenCodeEffortForPalette();
         } else if (aid === 'codex') {
             slashPaletteSupplement.codexModelsKey = '';
+            slashPaletteSupplement.codexModelsTried = null;
             slashPaletteSupplement.codexEffortKey = '';
             loadCodexModelsForPalette(true);
             loadCodexEffortForPalette();
         } else if (aid === 'claude') {
             slashPaletteSupplement.claudeModelsKey = '';
+            slashPaletteSupplement.claudeModelsTried = null;
             slashPaletteSupplement.claudeEffortKey = '';
             loadClaudeModelsForPalette(true);
             loadClaudeEffortForPalette();
@@ -6018,6 +6023,7 @@
                 slashPaletteSupplement.museModelsLoading
                 || (slashPaletteSupplement.museModels.length
                     && slashPaletteSupplement.museModelsKey === key)
+                || slashPaletteSupplement.museModelsTried === key
             )
         ) {
             return;
@@ -6071,6 +6077,7 @@
             .finally(() => {
                 if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
                 slashPaletteSupplement.museModelsLoading = false;
+                slashPaletteSupplement.museModelsTried = key; // empty/failed: don't refetch per render
                 renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
                 renderSlashChips('chat', document.getElementById('chatInput'));
                 const welcomeInput = document.getElementById('welcomeChatInput');
@@ -6139,6 +6146,7 @@
             slashPaletteSupplement.hermesModelsLoading
             || (slashPaletteSupplement.hermesModels.length
                 && slashPaletteSupplement.hermesModelsKey === key)
+            || slashPaletteSupplement.hermesModelsTried === key
         ) {
             return;
         }
@@ -6168,6 +6176,7 @@
             .finally(() => {
                 if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
                 slashPaletteSupplement.hermesModelsLoading = false;
+                slashPaletteSupplement.hermesModelsTried = key; // empty/failed: don't refetch per render
                 renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
                 renderSlashChips('chat', document.getElementById('chatInput'));
                 const welcomeInput = document.getElementById('welcomeChatInput');
@@ -6525,18 +6534,23 @@
         S.museModels = [];
         S.museModelsKey = '';
         S.museModelsLoading = false;
+        S.museModelsTried = null;
         S.hermesModels = [];
         S.hermesModelsKey = '';
         S.hermesModelsLoading = false;
+        S.hermesModelsTried = null;
         S.opencodeModels = [];
         S.opencodeModelsKey = '';
         S.opencodeModelsLoading = false;
+        S.opencodeModelsTried = null;
         S.codexModels = [];
         S.codexModelsKey = '';
         S.codexModelsLoading = false;
+        S.codexModelsTried = null;
         S.claudeModels = [];
         S.claudeModelsKey = '';
         S.claudeModelsLoading = false;
+        S.claudeModelsTried = null;
         S.museEffortKey = '';
         S.hermesEffortKey = '';
         S.opencodeEffortKey = '';
@@ -6910,6 +6924,7 @@
                 slashPaletteSupplement.opencodeModelsLoading
                 || (slashPaletteSupplement.opencodeModels.length
                     && slashPaletteSupplement.opencodeModelsKey === key)
+                || slashPaletteSupplement.opencodeModelsTried === key
             )
         ) {
             return;
@@ -6956,6 +6971,7 @@
             .finally(() => {
                 if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
                 slashPaletteSupplement.opencodeModelsLoading = false;
+                slashPaletteSupplement.opencodeModelsTried = key; // empty/failed: don't refetch per render
                 renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
                 renderSlashChips('chat', document.getElementById('chatInput'));
                 const welcomeInput = document.getElementById('welcomeChatInput');
@@ -7227,6 +7243,7 @@
                 slashPaletteSupplement.codexModelsLoading
                 || (slashPaletteSupplement.codexModels.length
                     && slashPaletteSupplement.codexModelsKey === key)
+                || slashPaletteSupplement.codexModelsTried === key
             )
         ) {
             return;
@@ -7275,6 +7292,7 @@
             .finally(() => {
                 if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
                 slashPaletteSupplement.codexModelsLoading = false;
+                slashPaletteSupplement.codexModelsTried = key; // empty/failed: don't refetch per render
                 renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
                 renderSlashChips('chat', document.getElementById('chatInput'));
                 const welcomeInput = document.getElementById('welcomeChatInput');
@@ -7667,6 +7685,7 @@
             loading: slashPaletteSupplement.claudeModelsLoading,
             modelsLength: (slashPaletteSupplement.claudeModels || []).length,
             modelsKey: slashPaletteSupplement.claudeModelsKey,
+            triedKey: slashPaletteSupplement.claudeModelsTried,
             sessionKey: key,
             forceRefresh,
         });
@@ -7709,6 +7728,7 @@
             .finally(() => {
                 if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
                 slashPaletteSupplement.claudeModelsLoading = false;
+                slashPaletteSupplement.claudeModelsTried = key; // empty/failed: don't refetch per render
                 renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
                 renderSlashChips('chat', document.getElementById('chatInput'));
                 const welcomeInput = document.getElementById('welcomeChatInput');

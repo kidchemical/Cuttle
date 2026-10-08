@@ -350,7 +350,8 @@
         const key = p.sessionKey != null ? String(p.sessionKey) : '';
         const forceRefresh = !!p.forceRefresh;
         if (!forceRefresh && (p.loading
-            || (Number(p.modelsLength || 0) > 0 && String(p.modelsKey || '') === key))) {
+            || (Number(p.modelsLength || 0) > 0 && String(p.modelsKey || '') === key)
+            || (p.triedKey != null && String(p.triedKey) === key))) {
             return { fetch: false };
         }
         const params = [];
