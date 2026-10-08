@@ -85,6 +85,34 @@
         return data.error || ((data.notice ? data.notice + ' ' : '') + 'Live · refreshes every minute while visible'
             + (data.updated_at ? ' · updated ' + new Date(data.updated_at * 1000).toLocaleTimeString() : ''));
     }
+    // First badge-active agent wins (page order: muse, codex, hermes,
+    // opencode, then harness chips). Pure list build over injected deps:
+    // `isActive(agent)` reads the composer's sticky chips, `usageTable`
+    // maps agent → /usage entry, `costCommand(agent)` builds /cost.
+    // No DOM here; the page filters by query and renders.
+    const USAGE_CHECK_ORDER = ['muse', 'codex', 'hermes', 'opencode', 'claude', 'deepseek', 'antigravity'];
+    function harnessUsageCommands(parts) {
+        const p = parts || {};
+        const isActive = typeof p.isActive === 'function' ? p.isActive : () => false;
+        const usageTable = (p.usageTable && typeof p.usageTable === 'object') ? p.usageTable : {};
+        const costCommand = typeof p.costCommand === 'function' ? p.costCommand : () => null;
+        const forAgent = (agent) => {
+            const out = [];
+            if (usageTable[agent]) {
+                out.push(Object.assign({}, usageTable[agent]));
+                out.push(Object.assign({}, usageTable[agent], {
+                    prefix: '/usage-live', label: 'Live usage',
+                    hint: 'Usage refreshed every minute while visible (shared across panes)',
+                }));
+            }
+            out.push(costCommand(agent));
+            return out;
+        };
+        for (let i = 0; i < USAGE_CHECK_ORDER.length; i++) {
+            if (isActive(USAGE_CHECK_ORDER[i])) return forAgent(USAGE_CHECK_ORDER[i]);
+        }
+        return [];
+    }
     // Space/pane activation callbacks (one per started frame). The shell
     // wakes these when a hidden tab becomes visible again, because nothing
     // inside the frame reliably fires on that transition.
@@ -301,6 +329,6 @@
         broker.add(source);
         ensureCountdownTicker(host);
     }
-    root.CuttleUsageLive = {render, start, createBroker, tickCountdowns, wake, persistSnapshot};
+    root.CuttleUsageLive = {render, start, createBroker, tickCountdowns, wake, persistSnapshot, harnessUsageCommands};
     if (typeof module !== 'undefined' && module.exports) module.exports = root.CuttleUsageLive;
 })(globalThis);

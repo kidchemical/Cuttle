@@ -5324,29 +5324,14 @@
     }
 
     /** Nested harness one-shots (``/usage`` where supported, ``/cost``) for the active badge. */
+    // Entries owned by chat_usage_live.js — page supplies chip state, domain builds the list.
+    // (Dedicated hasActive*Chip matchers delegate to hasActiveHarnessAgentChip per agent.)
     function harnessUsageSlashCommandsForPalette() {
-        const forAgent = (agent) => {
-            const out = [];
-            const usageTable = CuttleChatSlash.HARNESS_USAGE_SLASH_BY_AGENT;
-            if (usageTable[agent]) {
-                out.push(Object.assign({}, usageTable[agent]));
-                out.push(Object.assign({}, usageTable[agent], {
-                    prefix: '/usage-live', label: 'Live usage',
-                    hint: 'Usage refreshed every minute while visible (shared across panes)',
-                }));
-            }
-            out.push(harnessCostSlashCommand(agent));
-            return out;
-        };
-        if (hasActiveMuseAgentChip()) return forAgent('muse');
-        if (hasActiveCodexAgentChip()) return forAgent('codex');
-        if (hasActiveHermesAgentChip()) return forAgent('hermes');
-        if (hasActiveOpenCodeAgentChip()) return forAgent('opencode');
-        const others = ['claude', 'deepseek', 'antigravity'];
-        for (let i = 0; i < others.length; i++) {
-            if (hasActiveHarnessAgentChip(others[i])) return forAgent(others[i]);
-        }
-        return [];
+        return CuttleUsageLive.harnessUsageCommands({
+            isActive: (agent) => hasActiveHarnessAgentChip(agent),
+            usageTable: CuttleChatSlash.HARNESS_USAGE_SLASH_BY_AGENT,
+            costCommand: harnessCostSlashCommand,
+        });
     }
 
     function readStarredSlashPrefixes() {
@@ -16120,35 +16105,21 @@
      *  polls the server for those, and re-pushing them revived dead spinners.
      *  Idle owned chats are listed in `owned` so the shell clears them. */
     let _chatActivityBroadcastTimer = null;
+    // Snapshot decisions owned by chat_activity.js — page gathers, domain decides.
     function collectChatActivitySnapshot() {
-        const owned = new Map();
-        const own = (sid) => {
-            if (sid == null || sid === '') return;
-            const key = String(canonicalizeChatSessionId(sid));
-            if (key && !owned.has(key)) owned.set(key, sid);
-        };
-        own(currentSessionId);
-        own(generation.localSessionId);
-        formAwaitingSessionIds.forEach(own);
-        const sessions = [];
-        owned.forEach((sid, key) => {
-            const running = sessionShowsHistorySpinner(sid);
-            let activity = '';
-            try {
-                const kind = sessionHistoryAttentionKind(sid, null);
-                if (kind === 'error' || kind === 'unread'
-                    || kind === 'queued' || kind === 'paused') {
-                    activity = kind;
-                }
-            } catch (_) {}
-            const visibleAttention = !!(sessionIdsEqual(sid, currentSessionId) && chatAttentionActive());
-            if (visibleAttention) activity = chatAttentionIsError ? 'error' : 'unread';
-            if ((getSessionPrefs(sid) || {}).awaitingInput) activity = 'input';
-            const localRunning = !!((generation.loading && sessionIdsEqual(generation.localSessionId, sid))
-                || [...formAwaitingSessionIds].some(id => sessionIdsEqual(id, sid)));
-            if (running || activity) sessions.push({ id: key, activity, running, localRunning, visibleAttention });
+        return CuttleChatActivity.collectFrameSnapshot({
+            currentSessionId,
+            localSessionId: generation.localSessionId,
+            awaitingIds: [...formAwaitingSessionIds],
+            canonicalize: canonicalizeChatSessionId,
+            idsEqual: sessionIdsEqual,
+            spinnerFor: sessionShowsHistorySpinner,
+            attentionKindFor: (sid) => sessionHistoryAttentionKind(sid, null),
+            prefsFor: getSessionPrefs,
+            attentionActive: chatAttentionActive(),
+            attentionIsError: chatAttentionIsError,
+            generationLoading: generation.loading,
         });
-        return { sessions, owned: [...owned.keys()] };
     }
     function scheduleChatActivityBroadcast() {
         if (!inAppShell) return;
