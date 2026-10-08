@@ -29,7 +29,36 @@ def test_desktop_manifest_shape():
     if data["artifact"]:
         assert data["downloadPath"] == "/api/desktop/electron/app.asar"
         assert data["artifactSize"] > 0
-        assert data["artifactSha256"] == desk.artifact_sha256(desk.UPDATE_ASAR)
+        assert data["artifactSha256"] == desk.artifact_sha256(desk.update_asar())
+    assert data["updateSource"] == "host"
+
+
+def test_packaged_host_disables_host_built_updates(monkeypatch, tmp_path):
+    """A release-installed Host has no electron/ sources: no hash, no artifact,
+    no download, no pack attempt — Clients update from the release instead."""
+    monkeypatch.setattr(desk, "ELECTRON_DIR", tmp_path / "electron")
+    monkeypatch.setattr(desk, "PACK_SCRIPT", tmp_path / "electron" / "pack-desktop-update.js")
+    monkeypatch.setattr(desk, "_find_node", lambda: (_ for _ in ()).throw(AssertionError("must not pack")))
+    assert desk.has_electron_sources() is False
+    data = desk.desktop_manifest()
+    assert data["ok"] is True
+    assert data["updateSource"] == "release"
+    assert data["hash"] is None and data["artifact"] is False and data["downloadPath"] is None
+    assert desk.ensure_update_asar("anything") is None
+
+    from flask import Flask
+
+    app = Flask(__name__)
+    desk.register_desktop_electron_routes(app)
+    res = app.test_client().get("/api/desktop/electron/app.asar")
+    assert res.status_code == 404
+
+
+def test_update_artifact_lives_in_cuttle_home_cache():
+    from core.runtime_paths import cuttle_home
+
+    assert desk.update_dir().is_relative_to(cuttle_home())
+    assert not desk.update_dir().is_relative_to(REPO)
 
 
 def test_artifact_sha256_is_full_file_digest(tmp_path):

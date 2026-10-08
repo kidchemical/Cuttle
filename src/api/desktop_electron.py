@@ -1,10 +1,18 @@
 """
-Desktop (Electron) client updates.
+Desktop (Electron) client updates built by a source-checkout Host.
 
-The host hashes electron/main.js + preload + connect.html (not package.json —
-electron-builder rewrites that file inside app.asar) and can pack those files
-into dist/update/app.asar so a laptop client can replace its packaged shell
-without a full electron-builder run.
+A Host running from a source checkout hashes the Electron shell files (not
+package.json — electron-builder rewrites that file inside app.asar) and can
+pack them into an app.asar so a LAN Client can replace its packaged shell
+without a full electron-builder run. The packed artifact is a replaceable
+cache in the Cuttle home, never written into the checkout.
+
+A packaged (release-installed) Host has no Electron sources: Host-built
+updates are explicitly unavailable there (``updateSource: "release"``), and
+its Clients update from the GitHub release like the Host itself.
+
+Clients accept an artifact only over the Host's pinned HTTPS identity
+(electron/tls-trust.js); the SHA-256 here is integrity, not authenticity.
 """
 
 from __future__ import annotations
@@ -19,6 +27,8 @@ from typing import Any, Dict, Optional
 
 from flask import Flask, jsonify, send_file
 
+from core.runtime_paths import runtime_cache_path
+
 # src/api/desktop_electron.py → repo root
 _API_DIR = Path(__file__).resolve().parent
 _SRC_DIR = _API_DIR.parent
@@ -30,10 +40,28 @@ HASH_FILES = (
     "connect.html", "main.js", "preload.js", "tls-trust.js", "external-link-policy.js",
     "device-worker/cuttle_device_worker.py",
 )
-UPDATE_DIR = ELECTRON_DIR / "dist" / "update"
-UPDATE_ASAR = UPDATE_DIR / "app.asar"
-UPDATE_MANIFEST = UPDATE_DIR / "manifest.json"
 PACK_SCRIPT = ELECTRON_DIR / "pack-desktop-update.js"
+RELEASE_ONLY_REASON = (
+    "This Host was installed from a release package and cannot build desktop "
+    "updates; update each Client from the GitHub release."
+)
+
+
+def update_dir() -> Path:
+    return runtime_cache_path("desktop_update")
+
+
+def update_asar() -> Path:
+    return update_dir() / "app.asar"
+
+
+def _update_manifest_path() -> Path:
+    return update_dir() / "manifest.json"
+
+
+def has_electron_sources() -> bool:
+    """True only on a source checkout (packaged Hosts ship no electron/ tree)."""
+    return all((ELECTRON_DIR / name).is_file() for name in ("main.js", "package.json")) and PACK_SCRIPT.is_file()
 
 
 def desktop_source_hash() -> str:
@@ -49,10 +77,11 @@ def desktop_source_hash() -> str:
 
 
 def _read_manifest() -> Optional[Dict[str, Any]]:
-    if not UPDATE_MANIFEST.is_file():
+    path = _update_manifest_path()
+    if not path.is_file():
         return None
     try:
-        data = json.loads(UPDATE_MANIFEST.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else None
     except Exception:
         return None
@@ -72,17 +101,20 @@ def _find_node() -> Optional[list]:
 
 
 def ensure_update_asar(current_hash: str) -> Optional[Path]:
-    """Pack dist/update/app.asar if missing or stale. Returns path if usable."""
+    """Pack the cached app.asar if missing or stale. Returns it only when it
+    matches ``current_hash`` (a stale artifact is never offered)."""
+    if not has_electron_sources():
+        return None
+    asar = update_asar()
     manifest = _read_manifest()
-    if UPDATE_ASAR.is_file() and manifest and manifest.get("hash") == current_hash:
-        return UPDATE_ASAR
-    if not PACK_SCRIPT.is_file():
-        return UPDATE_ASAR if UPDATE_ASAR.is_file() else None
+    if asar.is_file() and manifest and manifest.get("hash") == current_hash:
+        return asar
     cmd_base = _find_node()
     if not cmd_base:
-        return UPDATE_ASAR if UPDATE_ASAR.is_file() else None
+        return None
     env = os.environ.copy()
     env["ELECTRON_RUN_AS_NODE"] = "1"
+    env["CUTTLE_DESKTOP_UPDATE_DIR"] = str(update_dir())
     try:
         proc = subprocess.run(
             cmd_base + [str(PACK_SCRIPT)],
@@ -99,9 +131,9 @@ def ensure_update_asar(current_hash: str) -> Optional[Path]:
     except Exception as exc:
         print(f"[DESKTOP] pack-desktop-update failed: {exc}")
     manifest = _read_manifest()
-    if UPDATE_ASAR.is_file() and manifest and manifest.get("hash") == current_hash:
-        return UPDATE_ASAR
-    return UPDATE_ASAR if UPDATE_ASAR.is_file() else None
+    if asar.is_file() and manifest and manifest.get("hash") == current_hash:
+        return asar
+    return None
 
 
 _artifact_digest_cache: Dict[tuple, str] = {}
@@ -135,6 +167,19 @@ def _package_version() -> str:
 
 
 def desktop_manifest() -> Dict[str, Any]:
+    if not has_electron_sources():
+        return {
+            "ok": True,
+            "service": "cuttle-desktop",
+            "updateSource": "release",
+            "hash": None,
+            "packageVersion": None,
+            "artifact": False,
+            "artifactSize": None,
+            "artifactSha256": None,
+            "downloadPath": None,
+            "reason": RELEASE_ONLY_REASON,
+        }
     source_hash = desktop_source_hash()
     asar_path = ensure_update_asar(source_hash)
     packed = _read_manifest() or {}
@@ -146,6 +191,7 @@ def desktop_manifest() -> Dict[str, Any]:
     return {
         "ok": True,
         "service": "cuttle-desktop",
+        "updateSource": "host",
         "hash": source_hash,
         # Live electron/package.json wins — packed manifest can lag (or get
         # poisoned if package.json was briefly rewritten during a bad pack).
@@ -168,6 +214,8 @@ def register_desktop_electron_routes(app: Flask) -> None:
 
     @app.route("/api/desktop/electron/app.asar", methods=["GET"])
     def api_desktop_electron_asar():
+        if not has_electron_sources():
+            return jsonify({"ok": False, "error": RELEASE_ONLY_REASON}), 404
         source_hash = desktop_source_hash()
         asar_path = ensure_update_asar(source_hash)
         packed = _read_manifest() or {}
