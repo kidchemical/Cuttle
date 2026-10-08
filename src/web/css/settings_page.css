@@ -98,11 +98,36 @@
     margin-top: 10px;
 }
 
+/* Provider-inapplicable Voice rows hide via the `hidden` attribute, but the
+   base .setting-item rule in landing_page.css sets display:flex, which beats
+   the UA [hidden] style. Scoped to the Voice tab so nothing else changes. */
+#panel-voice .setting-item[hidden] {
+    display: none;
+}
+
+#chatTtsFetchVoicesBtn[hidden] {
+    display: none;
+}
+
+/* Stacked controls beside the label (Voice selects + status lines). */
+.setting-control--column {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    min-width: 0;
+    max-width: 100%;
+}
+
 .video-playlist-toolbar {
     display: flex;
     gap: 8px;
     align-items: center;
     flex-wrap: wrap;
+}
+
+.video-playlist-toolbar > .setting-input {
+    flex: 1 1 160px;
 }
 
 /* Tall enough that a normal playlist (5–8 clips) shows without a scrollbar;
@@ -207,6 +232,8 @@
     display: flex;
     gap: 6px;
     align-items: center;
+    /* The URL field yields width, never the buttons (they clipped). */
+    flex: 0 0 auto;
 }
 
 /* Play and remove must be the same width — `.control-button` carries a
@@ -723,6 +750,12 @@ body.compact-shell-page .setting-control input.setting-input {
 body.compact-shell-page .toggle-switch {
     flex: 0 0 50px;
 }
+/* Column controls must not wrap: a wrapping column flex sizes each line
+   to its widest child, so the playlist toolbar/list ran past the card. */
+body.compact-shell-page .setting-control--stack,
+body.compact-shell-page .setting-control--column {
+    flex-wrap: nowrap;
+}
 @media (max-width: 640px) {
     body.compact-shell-page .setting-item {
         flex-wrap: wrap;
@@ -738,6 +771,18 @@ body.compact-shell-page .toggle-switch {
     body.compact-shell-page .setting-control .setting-input {
         min-width: 0 !important;
         flex: 1 1 160px;
+    }
+    /* In a column that basis is a height — selects came out 160px tall. */
+    body.compact-shell-page .setting-control--stack > .setting-input,
+    body.compact-shell-page .setting-control--column > .setting-input {
+        flex: 0 0 auto;
+    }
+    body.compact-shell-page .setting-control--column {
+        width: 100%;
+    }
+    /* Playlist picker / name field get their own line; buttons wrap below. */
+    body.compact-shell-page .video-playlist-toolbar > .setting-input {
+        flex: 1 1 100%;
     }
     body.compact-shell-page .settings-group {
         padding: 14px;

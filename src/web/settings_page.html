@@ -8,8 +8,8 @@
     <script src="/js/shared/ui_boot.js?v=20260926safeArea"></script>
     <link rel="stylesheet" href="css/shared_navigation.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/landing_page.css?v=20260926lightBg">
-    <link rel="stylesheet" href="css/compact_page.css?v=20261007frame">
-    <link rel="stylesheet" href="css/settings_page.css?v=20261007frame">
+    <link rel="stylesheet" href="css/compact_page.css?v=20261007hdr2">
+    <link rel="stylesheet" href="css/settings_page.css?v=20261007hdr2">
 <link rel="stylesheet" href="/css/storage_settings.css?v=20261007">
 </head>
 <body class="compact-shell-page" data-page="settings">
@@ -162,12 +162,12 @@
                     </div>
                     <div class="setting-control setting-control--stack">
                         <div class="video-playlist-toolbar">
-                            <select id="videoPlaylistSelect" class="setting-input" style="flex: 1; min-width: 160px;" onchange="switchVideoPlaylist(this.value)" aria-label="Active playlist"></select>
+                            <select id="videoPlaylistSelect" class="setting-input" onchange="switchVideoPlaylist(this.value)" aria-label="Active playlist"></select>
                             <button class="control-button btn-start" id="videoPlaylistNewBtn" onclick="showNewVideoPlaylistInput()" title="Create a playlist">+ New playlist</button>
                             <button class="control-button btn-stop" id="videoPlaylistDeleteBtn" onclick="deleteVideoPlaylist()" title="Delete this playlist">🗑️ Delete</button>
                         </div>
                         <div id="videoPlaylistNewRow" class="video-playlist-toolbar" style="display: none;">
-                            <input type="text" id="videoPlaylistNewName" class="setting-input" maxlength="40" placeholder="Playlist name" style="flex: 1; min-width: 160px;"
+                            <input type="text" id="videoPlaylistNewName" class="setting-input" maxlength="40" placeholder="Playlist name"
                                    onkeydown="if (event.key === 'Enter') createVideoPlaylist(); else if (event.key === 'Escape') hideNewVideoPlaylistInput();">
                             <button class="control-button btn-start" onclick="createVideoPlaylist()">Create</button>
                             <button class="control-button btn-info" onclick="hideNewVideoPlaylistInput()">Cancel</button>
@@ -455,7 +455,7 @@
                     <div class="setting-label">
                         <strong>Voice provider</strong><button type="button" class="cuttle-info" data-tooltip="Who synthesizes the audio. Each provider brings its own voices, models, and tunables — the controls below follow this choice." aria-label="About Voice provider">i</button>
                     </div>
-                    <div class="setting-control" style="flex-direction:column;align-items:stretch;gap:6px;max-width:100%">
+                    <div class="setting-control setting-control--column">
                         <select id="chatTtsProvider" class="setting-input" onchange="onChatTtsProviderChanged()">
                             <option value="">Loading providers…</option>
                         </select>
@@ -476,7 +476,7 @@
                     <div class="setting-label">
                         <strong>Voice</strong><button type="button" class="cuttle-info" data-tooltip="Choose the voice used to read replies. The list belongs to the selected provider." aria-label="About Voice">i</button>
                     </div>
-                    <div class="setting-control" style="flex-direction:column;align-items:stretch;gap:6px;max-width:100%">
+                    <div class="setting-control setting-control--column">
                         <select id="chatTtsVoice" class="setting-input" style="min-width: 160px;">
                             <option value="">Loading…</option>
                         </select>
@@ -510,7 +510,7 @@
                     <div class="setting-label">
                         <strong>Narrator provider</strong><button type="button" class="cuttle-info" data-tooltip="Who writes the short spoken blurb before synthesis. Uses your saved key for that provider." aria-label="About Narrator provider">i</button>
                     </div>
-                    <div class="setting-control" style="flex-direction:column;align-items:stretch;gap:6px;max-width:100%">
+                    <div class="setting-control setting-control--column">
                         <select id="chatTtsNarratorProvider" class="setting-input" onchange="onChatTtsNarratorChanged()">
                             <option value="">Loading…</option>
                         </select>
@@ -558,7 +558,7 @@
                         <strong>Connect another device</strong>
                         <div class="setting-description" id="lanAccessStatus">Loading…</div>
                     </div>
-                    <div class="setting-control" style="flex-direction:column;align-items:stretch;gap:6px;max-width:100%">
+                    <div class="setting-control setting-control--column">
                         <code id="lanHttpUrl" style="font-size:12px;word-break:break-all">—</code>
                         <code id="lanHttpsUrl" style="font-size:12px;word-break:break-all">—</code>
                         <button type="button" class="control-button btn-info" onclick="loadLanAccessSettings()">🔄 Refresh</button>

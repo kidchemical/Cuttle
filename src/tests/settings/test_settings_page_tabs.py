@@ -213,6 +213,16 @@ def test_voice_tab_is_provider_driven():
     assert "coral" not in voice_sel
 
 
+def test_inapplicable_voice_rows_really_hide():
+    """Provider tunables hide via `hidden`; the base .setting-item flex
+    rule would otherwise keep inapplicable sliders visible."""
+    css = (REPO_ROOT / "src" / "web" / "css" / "settings_page.css").read_text(
+        encoding="utf-8"
+    )
+    assert "#panel-voice .setting-item[hidden]" in css
+    assert "#chatTtsFetchVoicesBtn[hidden]" in css
+
+
 def test_every_lazy_loader_is_registered_and_tab_id_exists():
     html = _page()
     body = _dom_ready_body(html)
@@ -567,3 +577,21 @@ def test_refresh_reruns_loaders_and_init_is_idempotent():
     assert res["refresh"]["afterFirst"] == 1
     assert res["refresh"]["afterRefresh"] == 2
     assert res["doubleInit"] == "providers"
+
+def test_column_controls_are_classed_and_do_not_wrap():
+    """Stacked controls use a class, and never wrap.
+
+    An inline column style lets the narrow `flex: 1 1 160px` input rule
+    turn into a 160px height (Voice selects), and a wrapping column flex
+    sizes each child to its widest content (playlist ran past the card).
+    """
+    html = _page()
+    assert 'style="flex-direction:column' not in html
+    assert 'id="videoPlaylistSelect" class="setting-input" style=' not in html
+    css = (REPO_ROOT / "src/web/css/settings_page.css").read_text(encoding="utf-8")
+    assert re.search(
+        r"\.setting-control--stack,\s*body\.compact-shell-page "
+        r"\.setting-control--column\s*\{\s*flex-wrap:\s*nowrap",
+        css,
+    )
+    assert re.search(r"\.video-row-buttons\s*\{[^}]*flex:\s*0 0 auto", css)
