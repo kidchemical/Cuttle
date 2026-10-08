@@ -55,7 +55,7 @@ const listen = server => new Promise(resolve => server.listen(0, '127.0.0.1', re
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(predicate, description) {
   for (let n = 0; n < 100; n++) { if (await predicate()) return; await delay(100); }
-  throw new Error('Timed out: ' + description);
+  throw new Error('Timed out: ' + (typeof description === 'function' ? description() : description));
 }
 const watchdog = setTimeout(() => { console.error('SMOKE_TIMEOUT'); app.exit(1); }, 45000);
 (async () => {
@@ -91,7 +91,8 @@ const watchdog = setTimeout(() => { console.error('SMOKE_TIMEOUT'); app.exit(1);
   const popout = BrowserWindow.getAllWindows().find(w => w !== main);
   await until(() => /gizmo_popout\.html/.test(popout.webContents.getURL()), 'popout navigation');
   assert.match(popout.webContents.getURL(), /gizmo_popout\.html/);
-  await until(() => popout.isVisible() && popout.isAlwaysOnTop(), 'visible always-on-top popout');
+  await until(() => popout.isVisible() && popout.isAlwaysOnTop(),
+    () => 'visible always-on-top popout ' + JSON.stringify({ visible: popout.isVisible(), onTop: popout.isAlwaysOnTop() }));
   await main.webContents.executeJavaScript('window.electron.gizmos.syncPopouts([])');
   await until(() => BrowserWindow.getAllWindows().length === 1, 'popout close');
   // External links must not open Electron windows (they go to the OS browser).

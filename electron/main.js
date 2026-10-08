@@ -2120,6 +2120,8 @@ function openGizmoPopout(id, title) {
         } catch (_) { event.preventDefault(); }
     });
     win.once('ready-to-show', () => { if (!win.isDestroyed()) win.showInactive(); });
+    // X11 WMs can drop the pre-map "above" hint; re-assert once mapped.
+    win.once('show', () => { try { if (!win.isDestroyed()) win.setAlwaysOnTop(true, 'floating'); } catch (_) {} });
     win.on('move', () => saveGizmoPopoutBounds(id, win));
     win.on('resize', () => saveGizmoPopoutBounds(id, win));
     win.on('closed', () => {
