@@ -7535,40 +7535,33 @@
 
     /** anyChat: load even without a /claude chip (user typed "claude" in the palette). */
     function loadClaudeModelsForPalette(anyChat, opts) {
-        if (!anyChat && !hasActiveHarnessAgentChip('claude')) return;
         const key = currentSessionId != null ? String(currentSessionId) : '';
         const forceRefresh = !!(opts && opts.refresh);
-        if (
-            !forceRefresh
-            && (
-                slashPaletteSupplement.claudeModelsLoading
-                || (slashPaletteSupplement.claudeModels.length
-                    && slashPaletteSupplement.claudeModelsKey === key)
-            )
-        ) {
-            return;
-        }
+        const gate = CuttleChatAgentModel.claudeModelsFetchForPalette({
+            anyChat,
+            hasClaudeChip: hasActiveHarnessAgentChip('claude'),
+            loading: slashPaletteSupplement.claudeModelsLoading,
+            modelsLength: (slashPaletteSupplement.claudeModels || []).length,
+            modelsKey: slashPaletteSupplement.claudeModelsKey,
+            sessionKey: key,
+            forceRefresh,
+        });
+        if (!gate.fetch) return;
         slashPaletteSupplement.claudeModelsLoading = true;
-        const params = new URLSearchParams();
-        if (key) params.set('session', key);
-        if (forceRefresh) params.set('refresh', '1');
-        const qs = params.toString();
-        const url = qs ? '/api/claude/models?' + qs : '/api/claude/models';
-        fetch(url, { cache: 'no-store' })
+        fetch(gate.url, { cache: 'no-store' })
             .then((r) => r.json())
             .then((j) => {
-                slashPaletteSupplement.claudeModels =
-                    j && j.success && Array.isArray(j.models) ? j.models : [];
-                if (!slashPaletteSupplement.claudeModelDirty) {
-                    slashPaletteSupplement.claudeModel = (j && j.preferredModel) || '';
+                const applied = CuttleChatAgentModel.applyClaudeModelsResponse(j, {
+                    modelDirty: slashPaletteSupplement.claudeModelDirty,
+                });
+                slashPaletteSupplement.claudeModels = applied.models;
+                if (applied.model !== null) {
+                    slashPaletteSupplement.claudeModel = applied.model;
                 }
                 slashPaletteSupplement.claudeModelsKey = key;
-                slashPaletteSupplement.claudeModelsSource =
-                    (j && j.source) || '';
-                slashPaletteSupplement.claudeModelsCount =
-                    (j && (j.count != null ? j.count : slashPaletteSupplement.claudeModels.length)) || 0;
-                slashPaletteSupplement.claudeCommonEfforts =
-                    j && Array.isArray(j.commonEfforts) ? j.commonEfforts : [];
+                slashPaletteSupplement.claudeModelsSource = applied.source;
+                slashPaletteSupplement.claudeModelsCount = applied.count;
+                slashPaletteSupplement.claudeCommonEfforts = applied.commonEfforts;
                 renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
                 renderSlashChips('chat', document.getElementById('chatInput'));
                 repaintClaudeUserBadges();
@@ -7576,7 +7569,7 @@
                 refreshHistoryAgentChips();
                 if (forceRefresh && window.showToast) {
                     const n = slashPaletteSupplement.claudeModelsCount || 0;
-                    const err = j && j.error ? String(j.error) : '';
+                    const err = applied.error;
                     window.showToast(
                         err && !n
                             ? ('Claude Code models refresh failed: ' + err)
@@ -7604,17 +7597,16 @@
     function persistClaudeModelSelection(modelId) {
         const id = String(modelId || '').trim();
         if (!id) return;
-        if (id.toLowerCase() === 'refresh' || id.toLowerCase() === '__refresh__') {
+        if (CuttleChatAgentModel.isClaudeModelRefreshPick(id)) {
             slashPaletteSupplement.claudeModelsKey = '';
             slashPaletteSupplement.claudeModels = [];
             loadClaudeModelsForPalette(true, { refresh: true });
             return;
         }
         slashPaletteSupplement.claudeModel = id;
-        slashPaletteSupplement.claudeModels = (slashPaletteSupplement.claudeModels || []).map((m) => ({
-            ...m,
-            current: String(m && m.id) === id,
-        }));
+        slashPaletteSupplement.claudeModels =
+            CuttleChatAgentModel.markClaudeCurrentModel(
+                slashPaletteSupplement.claudeModels, id);
         const sid = currentSessionId != null ? String(currentSessionId) : '';
         if (!sid) {
             slashPaletteSupplement.claudeModelDirty = true;
@@ -7647,11 +7639,7 @@
         if (!f) return [];
         loadClaudeModelsForPalette(true);
         const models = slashPaletteSupplement.claudeModels || [];
-        let modelFilter = f
-            .replace(/^claude\s+/, '')
-            .replace(/^models?\b\s*/, '')
-            .trim();
-        if (modelFilter === 'claude') modelFilter = '';
+        const modelFilter = CuttleChatAgentModel.claudeModelFilterForPalette(f);
         const preferred = String(slashPaletteSupplement.claudeModel || '').toLowerCase();
         // Stage as nested cmd chip — no instant run (same as Codex). Composes as
         // `/claude /model refresh` after the sticky agent prefix.
@@ -7685,30 +7673,7 @@
             return items;
         }
         const mapped = models
-            .map((m) => {
-                const id = String((m && m.id) || '').trim();
-                if (!id) return null;
-                const label = String((m && m.label) || id).trim() || id;
-                const current = id.toLowerCase() === preferred;
-                const fav = !!(m && (m.favorite === true || m.favorite === '1' || m.favorite === 1));
-                const modelEfforts = Array.isArray(m && m.efforts) ? m.efforts : [];
-                const effortHint = modelEfforts.length
-                    ? 'Supported efforts: ' + modelEfforts.join(', ')
-                    : 'No effort levels for this model';
-                return {
-                    category: 'claude-model',
-                    prefix: '/claude model ' + id,
-                    label: (fav ? '★ ' : '') + label + (current ? ' (current)' : ''),
-                    hint: [
-                        (m && m.description) || ('Set Claude Code model to ' + id),
-                        effortHint,
-                    ].filter(Boolean).join(' · '),
-                    meta: id,
-                    keywords: 'claude model ' + id + ' ' + label + ' ' + id.replace(/[-_/]+/g, ' '),
-                    modelId: id,
-                    claudeModel: true,
-                };
-            })
+            .map((m) => CuttleChatAgentModel.buildClaudeModelRow(m, preferred))
             .filter(Boolean)
             .filter((item) => (modelFilter ? slashPaletteItemMatches(item, modelFilter) : true));
         const MAX = 40;
@@ -7734,41 +7699,33 @@
 
     function seedClaudeSupplementFromSessionData(data, sessionId) {
         if (!data || typeof data !== 'object') return;
-        const key = sessionId != null ? String(sessionId) : '';
-        const serverModel = sessionPin(data, 'claude', 'model');
-        if (serverModel && !slashPaletteSupplement.claudeModelDirty) {
-            slashPaletteSupplement.claudeModel = serverModel;
-            if (key) slashPaletteSupplement.claudeModelsKey = key;
-        }
-        const serverEffort = sessionPin(data, 'claude', 'effort').toLowerCase();
-        if (serverEffort && !slashPaletteSupplement.claudeEffortDirty) {
-            slashPaletteSupplement.claudeEffort = serverEffort;
-            if (key) slashPaletteSupplement.claudeEffortKey = key;
-        } else if (!slashPaletteSupplement.claudeEffortDirty && key && data && ((data.agent_pins && data.agent_pins.claude) || ('claude_effort' in data))) {
-            slashPaletteSupplement.claudeEffort = '';
-            slashPaletteSupplement.claudeEffortKey = key;
-        }
+        const patch = CuttleChatAgentModel.claudeSeedPatchFromSessionData(data, {
+            modelDirty: slashPaletteSupplement.claudeModelDirty,
+            effortDirty: slashPaletteSupplement.claudeEffortDirty,
+            sessionKey: sessionId != null ? String(sessionId) : '',
+        });
+        if (patch.model !== undefined) slashPaletteSupplement.claudeModel = patch.model;
+        if (patch.modelsKey !== undefined) slashPaletteSupplement.claudeModelsKey = patch.modelsKey;
+        if (patch.effort !== undefined) slashPaletteSupplement.claudeEffort = patch.effort;
+        if (patch.effortKey !== undefined) slashPaletteSupplement.claudeEffortKey = patch.effortKey;
     }
 
     function loadClaudeEffortForPalette() {
-        if (!hasActiveHarnessAgentChip('claude')) return;
         const key = currentSessionId != null ? String(currentSessionId) : '';
-        if (
-            slashPaletteSupplement.claudeEffortLoading
-            || (slashPaletteSupplement.claudeEffortKey === key && key)
-        ) {
-            return;
-        }
+        const gate = CuttleChatAgentModel.claudeEffortFetchForPalette({
+            hasClaudeChip: hasActiveHarnessAgentChip('claude'),
+            loading: slashPaletteSupplement.claudeEffortLoading,
+            effortKey: slashPaletteSupplement.claudeEffortKey,
+            sessionKey: key,
+        });
+        if (!gate.fetch) return;
         slashPaletteSupplement.claudeEffortLoading = true;
-        const url = key
-            ? '/api/claude/effort?session=' + encodeURIComponent(key)
-            : '/api/claude/effort';
-        fetch(url, { cache: 'no-store' })
+        fetch(gate.url, { cache: 'no-store' })
             .then((r) => r.json())
             .then((j) => {
                 if (slashPaletteSupplement.claudeEffortDirty) return;
                 slashPaletteSupplement.claudeEffort =
-                    (j && j.preferredEffort) || '';
+                    CuttleChatAgentModel.applyClaudeEffortResponse(j);
                 slashPaletteSupplement.claudeEffortKey = key;
                 renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
                 renderSlashChips('chat', document.getElementById('chatInput'));
@@ -7819,23 +7776,14 @@
         const f = (filterLower || '').toLowerCase().trim();
         if (!f) return [];
         loadClaudeEffortForPalette();
-        let effortFilter = f
-            .replace(/^claude\s+/, '')
-            .replace(/^efforts?\b\s*/, '')
-            .trim();
-        if (effortFilter === 'effort') effortFilter = '';
+        const effortFilter = CuttleChatAgentModel.claudeEffortFilterForPalette(f);
         const preferred = String(slashPaletteSupplement.claudeEffort || '').toLowerCase();
         const selectedModel = String(slashPaletteSupplement.claudeModel || '').toLowerCase();
-        const selectedRow = selectedModel
-            ? (slashPaletteSupplement.claudeModels || []).find((m) =>
-                String(m && m.id || '').toLowerCase() === selectedModel
-            )
-            : null;
-        const levels = selectedRow && Array.isArray(selectedRow.efforts)
-            ? selectedRow.efforts
-            : selectedModel
-                ? []
-                : (slashPaletteSupplement.claudeCommonEfforts || []);
+        const levels = CuttleChatAgentModel.claudeEffortLevelsForModel({
+            selectedModel,
+            models: slashPaletteSupplement.claudeModels,
+            commonEfforts: slashPaletteSupplement.claudeCommonEfforts,
+        });
         if (!levels.length) {
             return [{
                 category: 'claude-effort',
@@ -7854,16 +7802,9 @@
             }];
         }
         const items = levels
-            .map((id) => ({
-                category: 'claude-effort',
-                prefix: '/claude effort ' + id,
-                label: 'Effort ' + id + (id.toLowerCase() === preferred ? ' (current)' : ''),
-                hint: 'Set Claude Code effort (--effort) to ' + id
-                    + (selectedModel ? ' for ' + selectedModel : ' (CLI default model)'),
-                meta: id,
-                keywords: 'claude effort ' + id,
-                modelId: id,
-                claudeEffort: true,
+            .map((id) => CuttleChatAgentModel.buildClaudeEffortRow(id, {
+                preferredLower: preferred,
+                selectedModel,
             }))
             .filter((item) => (effortFilter ? slashPaletteItemMatches(item, effortFilter) : true));
         if (!items.length && effortFilter) {
@@ -10829,22 +10770,13 @@
     }
 
     function prettyClaudeModelLabel(model) {
-        const raw = String(model || '').trim();
-        if (!raw) return 'Claude Code';
-        const known = (slashPaletteSupplement.claudeModels || []).find(
-            (m) => m && String(m.id).toLowerCase() === raw.toLowerCase()
-        );
-        if (known && known.label) return String(known.label);
-        const leaf = raw.includes('/') ? raw.split('/').pop() : raw;
-        return String(leaf || raw).replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+        return CuttleChatAgentModel.prettyClaudeModelLabel(
+            model, slashPaletteSupplement.claudeModels);
     }
 
     function claudeModelLabel(model) {
-        const raw = String(model || '').trim();
-        const known = (slashPaletteSupplement.claudeModels || []).find(
-            (m) => m && String(m.id).toLowerCase() === raw.toLowerCase()
-        );
-        return (known && known.label) || raw || 'default';
+        return CuttleChatAgentModel.claudeModelLabel(
+            model, slashPaletteSupplement.claudeModels);
     }
 
     function repaintClaudeUserBadges() {

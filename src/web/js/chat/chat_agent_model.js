@@ -18,6 +18,12 @@
    pins (dirty-only for the rest), the Codex pre-send fetch never
    clobbers a dirty pick, and badge effort prefers run data over
    composer pins in muse → hermes → opencode → codex → claude order.
+   Also owns the Claude Code model/effort palette decisions (filter
+   normalization, row mapping, effort levels, seed patch, fetch gates,
+   response normalization, labels) as pure functions over explicit
+   inputs; the page keeps supplement state, fetch/POST transport,
+   palette/badge DOM, and orchestration, and calls into
+   `CuttleChatAgentModel.*`.
    ================================================================ */
 (function (root) {
     'use strict';
@@ -206,6 +212,225 @@
             && Number(incoming.revision || 0) >= Number((state && state.revision) || 0);
     }
 
+    /**
+     * Claude Code palette filter normalization. Strips the agent + section
+     * prefixes the composer already matched (`claude model opus` → `opus`),
+     * so the remainder filters rows. Pure string decisions; the page still
+     * applies them via its matcher and ranker.
+     */
+    function claudeModelFilterForPalette(filterLower) {
+        let modelFilter = String(filterLower || '').toLowerCase().trim()
+            .replace(/^claude\s+/, '')
+            .replace(/^models?\b\s*/, '')
+            .trim();
+        if (modelFilter === 'claude') modelFilter = '';
+        return modelFilter;
+    }
+
+    function claudeEffortFilterForPalette(filterLower) {
+        let effortFilter = String(filterLower || '').toLowerCase().trim()
+            .replace(/^claude\s+/, '')
+            .replace(/^efforts?\b\s*/, '')
+            .trim();
+        if (effortFilter === 'effort') effortFilter = '';
+        return effortFilter;
+    }
+
+    /**
+     * Map one Claude catalog row to its palette item (null when the row
+     * has no id). `preferredLower` is the current pick, lower-cased.
+     */
+    function buildClaudeModelRow(model, preferredLower) {
+        const m = model || {};
+        const id = String((m && m.id) || '').trim();
+        if (!id) return null;
+        const label = String((m && m.label) || id).trim() || id;
+        const current = id.toLowerCase() === String(preferredLower || '');
+        const fav = !!(m && (m.favorite === true || m.favorite === '1' || m.favorite === 1));
+        const modelEfforts = Array.isArray(m && m.efforts) ? m.efforts : [];
+        const effortHint = modelEfforts.length
+            ? 'Supported efforts: ' + modelEfforts.join(', ')
+            : 'No effort levels for this model';
+        return {
+            category: 'claude-model',
+            prefix: '/claude model ' + id,
+            label: (fav ? '★ ' : '') + label + (current ? ' (current)' : ''),
+            hint: [
+                (m && m.description) || ('Set Claude Code model to ' + id),
+                effortHint,
+            ].filter(Boolean).join(' · '),
+            meta: id,
+            keywords: 'claude model ' + id + ' ' + label + ' ' + id.replace(/[-_/]+/g, ' '),
+            modelId: id,
+            claudeModel: true,
+        };
+    }
+
+    /** Refresh-pick detection for the model palette (`refresh` alias). */
+    function isClaudeModelRefreshPick(id) {
+        const v = String(id || '').trim().toLowerCase();
+        return v === 'refresh' || v === '__refresh__';
+    }
+
+    /** Flag the picked row current across the cached catalog. Pure map. */
+    function markClaudeCurrentModel(models, id) {
+        const pick = String(id || '');
+        return (models || []).map((m) => ({
+            ...m,
+            current: String(m && m.id) === pick,
+        }));
+    }
+
+    /**
+     * Effective effort levels for the effort palette: the selected model's
+     * per-model levels when a model is picked (possibly none, meaning the
+     * model takes no --effort), else the catalog-wide common levels.
+     */
+    function claudeEffortLevelsForModel(parts) {
+        const p = parts || {};
+        const selectedModel = String(p.selectedModel || '').toLowerCase();
+        const models = Array.isArray(p.models) ? p.models : [];
+        const selectedRow = selectedModel
+            ? models.find((m) => String(m && m.id || '').toLowerCase() === selectedModel)
+            : null;
+        if (selectedRow && Array.isArray(selectedRow.efforts)) return selectedRow.efforts;
+        if (selectedModel) return [];
+        return Array.isArray(p.commonEfforts) ? p.commonEfforts : [];
+    }
+
+    /** Map one effort level to its palette item. */
+    function buildClaudeEffortRow(id, parts) {
+        const p = parts || {};
+        const preferred = String(p.preferredLower || '');
+        const selectedModel = String(p.selectedModel || '');
+        return {
+            category: 'claude-effort',
+            prefix: '/claude effort ' + id,
+            label: 'Effort ' + id + (String(id).toLowerCase() === preferred ? ' (current)' : ''),
+            hint: 'Set Claude Code effort (--effort) to ' + id
+                + (selectedModel ? ' for ' + selectedModel : ' (CLI default model)'),
+            meta: id,
+            keywords: 'claude effort ' + id,
+            modelId: id,
+            claudeEffort: true,
+        };
+    }
+
+    /**
+     * Seed patch from canonical session data. Returns explicit values with
+     * `undefined` meaning "leave the page's current value alone", so dirty
+     * picks and key scoping stay exactly as the page applied them.
+     */
+    function claudeSeedPatchFromSessionData(data, parts) {
+        const p = parts || {};
+        const patch = {};
+        const key = p.sessionKey != null ? String(p.sessionKey) : '';
+        const serverModel = sessionPin(data, 'claude', 'model');
+        if (serverModel && !p.modelDirty) {
+            patch.model = serverModel;
+            if (key) patch.modelsKey = key;
+        }
+        const serverEffort = sessionPin(data, 'claude', 'effort').toLowerCase();
+        if (serverEffort && !p.effortDirty) {
+            patch.effort = serverEffort;
+            if (key) patch.effortKey = key;
+        } else if (!p.effortDirty && key && data
+            && ((data.agent_pins && data.agent_pins.claude) || ('claude_effort' in data))) {
+            patch.effort = '';
+            patch.effortKey = key;
+        }
+        return patch;
+    }
+
+    /**
+     * Fetch gate for the Claude model catalog. Mirrors
+     * codexEffortFetchForSend: returns { fetch } or { fetch: true, url }.
+     * The page performs the fetch and applies applyClaudeModelsResponse.
+     */
+    function claudeModelsFetchForPalette(parts) {
+        const p = parts || {};
+        if (!p.anyChat && !p.hasClaudeChip) return { fetch: false };
+        const key = p.sessionKey != null ? String(p.sessionKey) : '';
+        const forceRefresh = !!p.forceRefresh;
+        if (!forceRefresh && (p.loading
+            || (Number(p.modelsLength || 0) > 0 && String(p.modelsKey || '') === key))) {
+            return { fetch: false };
+        }
+        const params = [];
+        if (key) params.push('session=' + encodeURIComponent(key));
+        if (forceRefresh) params.push('refresh=1');
+        return {
+            fetch: true,
+            url: params.length ? '/api/claude/models?' + params.join('&') : '/api/claude/models',
+        };
+    }
+
+    /**
+     * Normalize a Claude models response. `model` is null when the page
+     * must keep its current pick (dirty); blank means the server named no
+     * preferred model.
+     */
+    function applyClaudeModelsResponse(json, parts) {
+        const j = json || {};
+        const models = j && j.success && Array.isArray(j.models) ? j.models : [];
+        return {
+            models,
+            model: parts && parts.modelDirty ? null : ((j && j.preferredModel) || ''),
+            source: (j && j.source) || '',
+            count: (j && (j.count != null ? j.count : models.length)) || 0,
+            commonEfforts: j && Array.isArray(j.commonEfforts) ? j.commonEfforts : [],
+            error: j && j.error ? String(j.error) : '',
+        };
+    }
+
+    /**
+     * Fetch gate for the Claude effort default. Returns { fetch } or
+     * { fetch: true, url }; the page re-checks dirty after the await.
+     */
+    function claudeEffortFetchForPalette(parts) {
+        const p = parts || {};
+        if (!p.hasClaudeChip) return { fetch: false };
+        const key = p.sessionKey != null ? String(p.sessionKey) : '';
+        if (p.loading || (String(p.effortKey || '') === key && key)) return { fetch: false };
+        return {
+            fetch: true,
+            url: key
+                ? '/api/claude/effort?session=' + encodeURIComponent(key)
+                : '/api/claude/effort',
+        };
+    }
+
+    /** Normalize a Claude effort response to its preferred-effort string. */
+    function applyClaudeEffortResponse(json) {
+        return String((json && json.preferredEffort) || '');
+    }
+
+    /**
+     * Pretty/short Claude model labels. The catalog is injected (the page
+     * passes its cached rows); unknown ids fall back to a title-cased leaf.
+     */
+    function findClaudeCatalogLabel(models, raw) {
+        const list = Array.isArray(models) ? models : [];
+        const known = list.find(
+            (m) => m && String(m.id).toLowerCase() === String(raw).toLowerCase()
+        );
+        return (known && known.label) || '';
+    }
+
+    function prettyClaudeModelLabel(model, models) {
+        const raw = String(model || '').trim();
+        if (!raw) return 'Claude Code';
+        const known = findClaudeCatalogLabel(models, raw);
+        if (known) return String(known);
+        const leaf = raw.includes('/') ? raw.split('/').pop() : raw;
+        return String(leaf || raw).replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+    }
+
+    function claudeModelLabel(model, models) {
+        const raw = String(model || '').trim();
+        return findClaudeCatalogLabel(models, raw) || raw || 'default';
+    }
+
     const api = {
         turnSlashFromMessages,
         shouldAdoptComposerSelection,
@@ -218,6 +443,20 @@
         buildAgentPinsForRequest,
         codexEffortFetchForSend,
         resolveAgentEffortForBadge,
+        claudeModelFilterForPalette,
+        claudeEffortFilterForPalette,
+        buildClaudeModelRow,
+        isClaudeModelRefreshPick,
+        markClaudeCurrentModel,
+        claudeEffortLevelsForModel,
+        buildClaudeEffortRow,
+        claudeSeedPatchFromSessionData,
+        claudeModelsFetchForPalette,
+        applyClaudeModelsResponse,
+        claudeEffortFetchForPalette,
+        applyClaudeEffortResponse,
+        prettyClaudeModelLabel,
+        claudeModelLabel,
     };
 
     const ns = (root.CuttleChatAgentModel = root.CuttleChatAgentModel || {});
