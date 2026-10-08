@@ -48,8 +48,8 @@ sandbox; containment is the opt-in gate plus the rules below.
   Anything else (e.g. `slash: "/"`, `Evil Agent/`) is skipped **without
   importing** `adapter.py`. Unknown `capabilities_inject` / `env_profile` /
   `activity` values fall back to defaults instead of failing.
-- **Load-once (mtime-keyed).** Each external `adapter.py` executes once per
-  process; editing `adapter.py` or a top-level sibling `.py` reloads it on
+- **Load-once (source-keyed).** Each external `adapter.py` executes once per
+  process; editing the manifest or any Python source (including nested helpers) reloads it on
   the next discovery (no restart). Cache cleared by `reload_catalog()`.
   Top-level code must still be idempotent.
 - **Sibling imports: relative only.** Each drop-in loads as its own
@@ -465,3 +465,49 @@ must never override guest CLI authentication. Preserve native configuration path
 and let the CLI read its own login/configuration. Do not load Cuttle `<home>/.env`
 in adapters or embed its credentials in argv. Catalog `credential_env` must not
 request Cuttle API keys for guest CLIs.
+
+## Resource declarations and drop-in provenance
+
+A manifest may declare expected access. These fields are informational: opting
+into a drop-in trusts Python code, which is not sandboxed by Cuttle.
+
+```yaml
+permissions:
+  filesystem: workspace  # none | workspace | unrestricted
+  network: outbound     # none | outbound | unrestricted
+  subprocess: true
+provenance:
+  source_url: https://github.com/example/adapter
+  revision: COMMIT_OR_TAG
+  sha256:
+    adapter.py: REPLACE_WITH_64_LOWERCASE_HEX_DIGEST
+    helper.py: REPLACE_WITH_64_LOWERCASE_HEX_DIGEST
+```
+
+Omitted access fields are unspecified, not denied. Digest declarations are
+optional; when present they must cover every Python source under the adapter
+folder, including nested helpers. Cuttle verifies declared local files before
+import and on every discovery, even when the adapter is cached. Paths must stay
+inside that folder. Settings → Agents shows the declarations and verification
+state. Source URLs/revisions are author assertions; hashes verify local artifact
+integrity, not publisher identity or safety. Use a trusted distribution channel
+and review the code before opting in. Dependencies imported outside that folder
+are not covered. CLI installation remains user-managed (BYO-CLI).
+
+## OpenCode headless startup recovery
+
+OpenCode runs with `--auto`, preserving its configured permission rules. Its
+headless process can emit no stdout while waiting for permission, a provider,
+or startup. Cuttle stops that initial silence after 120 seconds and reports the
+possible causes in status/query logs and the reply. Set a positive finite
+`CUTTLE_OPENCODE_STARTUP_TIMEOUT` (seconds) for slow environments; invalid values
+use 120. Normal activity/idle limits apply after the first stdout line.
+
+Check OpenCode provider authentication and permissions, especially access beyond
+the workspace (`external_directory`), interactively in the same working directory.
+Approve or change only the access you intend, then retry in Cuttle. Cuttle does
+not grant additional permissions, silently discard the saved resume, or rerun a
+failed turn. The watchdog does not identify a silent permission prompt with
+certainty; it bounds and explains the stall. Vendor behavior:
+[permissions](https://opencode.ai/docs/permissions/),
+[CLI configuration](https://opencode.ai/docs/cli/).

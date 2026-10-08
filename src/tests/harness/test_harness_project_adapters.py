@@ -49,6 +49,37 @@ def _write_agent(
     return agent_dir
 
 
+def test_permissions_and_verified_provenance(project_agents, clean_import_state):
+    import hashlib
+    proj, root = project_agents
+    directory = _write_agent(root, "declared")
+    digest = hashlib.sha256((directory / "adapter.py").read_bytes()).hexdigest()
+    manifest = directory / "manifest.yaml"
+    manifest.write_text(manifest.read_text() + (
+        "permissions:\n  filesystem: workspace\n  network: outbound\n  subprocess: true\n"
+        "provenance:\n  source_url: https://example.test/adapter\n  revision: abc123\n"
+        f"  sha256:\n    adapter.py: {digest}\n"))
+    agent = get_agent("declared", project_path=str(proj))[0]
+    assert agent.permissions["filesystem"] == "workspace"
+    assert agent.provenance["verified"]
+    assert agent.to_public_dict()["permission_enforcement"] == "trusted_code"
+    # Cached imports do not bypass digest verification, even if mtimes match.
+    path = directory / "adapter.py"
+    stat = path.stat()
+    path.write_text(path.read_text().replace("True", "False"))
+    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    assert get_agent("declared", project_path=str(proj)) is None
+
+
+def test_bad_declarations_never_import(project_agents, clean_import_state):
+    proj, root = project_agents
+    marker = proj / "should-not-exist"
+    _write_agent(root, "invalid", manifest_extra="permissions:\n  subprocess: allow\n",
+                 adapter_src=f"from pathlib import Path\nPath({str(marker)!r}).touch()\n")
+    assert get_agent("invalid", project_path=str(proj)) is None
+    assert not marker.exists()
+
+
 @pytest.fixture
 def project_agents(tmp_path, monkeypatch):
     """A temp ``{project}/.cuttle/agents`` root with opt-in enabled."""
@@ -691,3 +722,51 @@ def test_personal_instance_pack_is_discovered(tmp_path, monkeypatch, clean_impor
         assert any(row["path"] == str(personal) for row in catalog.discovery_roots())
     finally:
         reload_catalog()
+
+
+@pytest.mark.parametrize('kind', ['missing-helper', 'escape', 'bad-url', 'bad-permissions'])
+def test_declarations_reject_unverified_sources_before_import(tmp_path, kind):
+    import hashlib
+    from api.agent_harness.declarations import permissions, provenance
+    root = tmp_path / 'adapter'
+    root.mkdir()
+    (root / 'adapter.py').write_text('print("unused")')
+    hashes = {'adapter.py': hashlib.sha256((root / 'adapter.py').read_bytes()).hexdigest()}
+    raw = {'sha256': hashes}
+    if kind == 'missing-helper':
+        (root / 'nested').mkdir()
+        (root / 'nested' / 'helper.py').write_text('X=1')
+    elif kind == 'escape':
+        hashes['../escape.py'] = '0' * 64
+    elif kind == 'bad-url':
+        raw['source_url'] = 'https://user:secret@example.com/code'
+    elif kind == 'bad-permissions':
+        with pytest.raises(ValueError):
+            permissions({'network': []})
+        return
+    with pytest.raises(ValueError):
+        provenance(raw, root)
+
+
+def test_nested_source_digest_beats_timestamp_valid_bytecode(project_agents, clean_import_state):
+    import hashlib
+    import py_compile
+    proj, root = project_agents
+    directory = _write_agent(root, 'fresh-source', adapter_src='from .sub.helper import VALUE\nclass Adapter:\n    def available(self):\n        return VALUE\n')
+    sub = directory / 'sub'
+    sub.mkdir()
+    helper = sub / 'helper.py'
+    helper.write_text('VALUE = 111\n')
+    py_compile.compile(str(helper), doraise=True)
+    stamp = helper.stat().st_mtime_ns
+    def manifest():
+        hashes = {p.relative_to(directory).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+                  for p in directory.rglob('*.py')}
+        import yaml
+        (directory / 'manifest.yaml').write_text(yaml.safe_dump({'label':'Fresh', 'provenance':{'sha256':hashes}}))
+    manifest()
+    assert get_agent('fresh-source', project_path=str(proj))[1].available() == 111
+    helper.write_text('VALUE = 222\n')
+    os.utime(helper, ns=(stamp, stamp))
+    manifest()
+    assert get_agent('fresh-source', project_path=str(proj))[1].available() == 222

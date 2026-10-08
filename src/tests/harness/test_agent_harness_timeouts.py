@@ -155,6 +155,33 @@ def test_opencode_silent_run_hits_idle_timeout(monkeypatch, tmp_path):
     assert "idle" in result.error and "activity timeout" in result.error
 
 
+def test_opencode_startup_stall_is_bounded_and_reported(monkeypatch, tmp_path):
+    import queue
+    from api.agent_harness.agents.opencode import adapter as oc
+    proc = _Proc([])
+    proc.stdout = _Reader([], hang_after=0)
+    _patch_spawn(monkeypatch, oc, proc)
+    monkeypatch.setenv("CUTTLE_OPENCODE_STARTUP_TIMEOUT", "0.05")
+    status = queue.Queue()
+    result = asyncio.run(oc.Adapter().execute(
+        "task", cwd=str(tmp_path), resume="existing-session", model=None,
+        timeout=3600, status_queue=status))
+    assert not result.success
+    assert "startup stalled" in result.error
+    assert "external_directory" in result.error
+    assert any("startup stalled" in str(item) for item in list(status.queue))
+
+
+def test_opencode_startup_watchdog_does_not_limit_productive_run(monkeypatch, tmp_path):
+    from api.agent_harness.agents.opencode import adapter as oc
+    proc = _Proc([b'{"text":"one"}\n', b'{"text":"two"}\n'], out_delay=0.08)
+    _patch_spawn(monkeypatch, oc, proc)
+    monkeypatch.setenv("CUTTLE_OPENCODE_STARTUP_TIMEOUT", "0.1")
+    result = asyncio.run(oc.Adapter().execute(
+        "task", cwd=str(tmp_path), resume=None, model=None, timeout=5))
+    assert result.success and "two" in result.output
+
+
 def test_opencode_active_run_survives_past_idle_budget(monkeypatch, tmp_path):
     from api.agent_harness.agents.opencode import adapter as oc
 
@@ -242,3 +269,15 @@ def test_opencode_stderr_activity_counts_as_progress(monkeypatch, tmp_path):
         oc.Adapter().execute("task", cwd=str(tmp_path), resume=None, model=None, timeout=0.25)
     )
     assert result.success is True
+
+
+def test_opencode_stderr_chatter_cannot_hide_startup_stall(monkeypatch, tmp_path):
+    from api.agent_harness.agents.opencode import adapter as oc
+    proc = _Proc([])
+    proc.stdout = _Reader([], hang_after=0)
+    proc.stderr = _Reader([b'waiting for permission\n'] * 100, delay=0.01)
+    _patch_spawn(monkeypatch, oc, proc)
+    monkeypatch.setenv('CUTTLE_OPENCODE_STARTUP_TIMEOUT', '0.05')
+    result = asyncio.run(oc.Adapter().execute('task', cwd=str(tmp_path), resume=None,
+                                            model=None, timeout=3600))
+    assert not result.success and 'startup stalled' in result.error

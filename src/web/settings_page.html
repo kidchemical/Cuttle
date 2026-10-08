@@ -1149,6 +1149,24 @@
                 meta.textContent = bits.join(' · ');
                 detail.appendChild(meta);
 
+                if (agent.source && agent.source !== 'bundled') {
+                    const access = document.createElement('div');
+                    access.className = 'agent-card-hint';
+                    const permissions = agent.permissions || {};
+                    access.textContent = 'Declared access: files ' + (permissions.filesystem || 'unspecified')
+                        + '; network ' + (permissions.network || 'unspecified') + '; subprocess '
+                        + (permissions.subprocess == null ? 'unspecified' : permissions.subprocess ? 'yes' : 'no')
+                        + '. Trusted Python code; these declarations do not enforce a sandbox.';
+                    detail.appendChild(access);
+                    const provenance = document.createElement('div');
+                    provenance.className = 'agent-card-hint';
+                    const origin = agent.provenance || {};
+                    provenance.textContent = (origin.verified ? 'Declared SHA-256 files verified.' : 'No verified file digests.')
+                        + (origin.source_url ? ' Source: ' + origin.source_url : '')
+                        + (origin.revision ? ' Revision: ' + origin.revision : '');
+                    detail.appendChild(provenance);
+                }
+
                 // Only show the actionable line — a ready agent needs no prose.
                 if (!agent.available && agent.install_hint) {
                     const hint = document.createElement('div');

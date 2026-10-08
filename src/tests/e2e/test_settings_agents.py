@@ -130,3 +130,22 @@ def test_removed_default_and_load_failure_preserve_saved_state(browser, static_s
         assert world.saves == []
     finally:
         page.close()
+
+
+def test_dropin_declarations_render_as_text_on_phone(browser, static_server, monkeypatch):
+    monkeypatch.setitem(AGENTS[1], 'source', 'project')
+    monkeypatch.setitem(AGENTS[1], 'permissions', {'filesystem':'workspace','network':'outbound','subprocess':True})
+    monkeypatch.setitem(AGENTS[1], 'provenance', {'verified':True,'source_url':'https://example.com/source',
+        'revision':'<img src=x onerror=alert(1)>'})
+    page = open_settings(browser, static_server, AgentWorld(), width=390)
+    try:
+        page.locator('.agent-card[data-agent-id="missing"] .agent-card-head').click()
+        detail = page.locator('#agent-detail-missing')
+        expect(detail).to_contain_text('Declared access: files workspace; network outbound; subprocess yes')
+        expect(detail).to_contain_text('Trusted Python code')
+        expect(detail).to_contain_text('Declared SHA-256 files verified.')
+        expect(detail).to_contain_text('<img src=x onerror=alert(1)>')
+        assert detail.locator('img[src=x]').count() == 0
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+    finally:
+        page.close()
