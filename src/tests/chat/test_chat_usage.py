@@ -30,7 +30,7 @@ process.stdout.write(JSON.stringify({
   empty: A.render(null, escape),
 }));
 """
-    result = subprocess.run(["node", "-e", script, str(MODULE)], capture_output=True, text=True, check=True)
+    result = subprocess.run(["node", "-e", script, str(MODULE)], capture_output=True, text=True, encoding="utf-8", check=True)
     out = json.loads(result.stdout)
     # Compact footer: arrows + numbers only, no text labels (mobile layout).
     # Input shows non-cached tokens only; cache is the separate span.

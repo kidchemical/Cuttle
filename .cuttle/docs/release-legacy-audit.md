@@ -45,3 +45,24 @@ still have owners; removing an obsolete interface must not discard that data.
 
 The retained readers have no requirement to keep an old Cuttle binary, route or
 shared-auth scheme working. No retired integration is restored by this audit.
+
+## PR composition-root growth review
+
+PR #20 adds 301 net lines to `src/web/js/shell/app_shell.js` relative to
+`origin/main` at `39abb15`. The reviewed diff implements pane parking/restoration:
+DOM classes and live iframe titles, saved collapsed state, splitter/divider
+restore affordances, and pointer gesture sizing around parked panes. It does not
+add backend, harness, or independent Spaces domain decisions.
+
+The existing shell owns the pane tree, `columnState`, layout persistence and
+splitter effects. `docs/architecture/repository-map.md` explicitly records that
+boundary as retained after the E1/E2 review. The new parking behavior stays with
+that owner so parking preserves live iframe identity, existing event teardown,
+and the saved layout. A separate controller extraction is not part of this
+release fix. This is a scoped justification for the accumulated pane changes,
+recorded by the commit trailer required by the PR growth guard; the guard and
+8,200-line shell ceiling remain enforced for subsequent work.
+
+The real browser layout suite covers parking/reloading, click and drag restore,
+vertical/horizontal layouts, divider selection, cancellation and live iframe
+preservation.

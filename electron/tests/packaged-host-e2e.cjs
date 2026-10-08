@@ -166,9 +166,10 @@ async function main() {
     ].join('\n'));
 
     // Clean environment: no inherited Python configuration, no user venv on
-    // PATH, private HOME/profile dirs and Cuttle home.
+    // PATH, private HOME/profile dirs and Cuttle home. Preserve XAUTHORITY:
+    // xvfb-run stores its display cookie outside the private HOME.
     const env = {};
-    for (const key of ['DISPLAY', 'WAYLAND_DISPLAY', 'XDG_RUNTIME_DIR', 'SystemRoot', 'SYSTEMROOT', 'windir',
+    for (const key of ['DISPLAY', 'XAUTHORITY', 'WAYLAND_DISPLAY', 'XDG_RUNTIME_DIR', 'SystemRoot', 'SYSTEMROOT', 'windir',
         'ComSpec', 'PATHEXT', 'TEMP', 'TMP', 'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE']) {
         if (process.env[key]) env[key] = process.env[key];
     }
