@@ -155,7 +155,7 @@ def test_account_panel_offers_username_and_password_change():
     assert "logoutConfirmChangePassword" in html
     assert 'id="logoutConfirmRole"' in html
 
-    js = (Path(__file__).resolve().parents[3] / "src" / "web" / "js" / "shell" / "app_shell.js").read_text(
+    js = (Path(__file__).resolve().parents[3] / "src" / "web" / "js" / "shell" / "account_panel.js").read_text(
         encoding="utf-8"
     )
     assert "/api/auth/me" in js

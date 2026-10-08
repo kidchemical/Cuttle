@@ -174,9 +174,12 @@ def test_opencode_startup_stall_is_bounded_and_reported(monkeypatch, tmp_path):
 
 def test_opencode_startup_watchdog_does_not_limit_productive_run(monkeypatch, tmp_path):
     from api.agent_harness.agents.opencode import adapter as oc
-    proc = _Proc([b'{"text":"one"}\n', b'{"text":"two"}\n'], out_delay=0.08)
+    # First line lands well inside the startup budget (Windows timers tick
+    # ~15ms); the whole run (~0.6s) still outlasts that budget.
+    lines = [b'{"text":"one"}\n'] + [b'{"text":"tick"}\n'] * 10 + [b'{"text":"two"}\n']
+    proc = _Proc(lines, out_delay=0.05)
     _patch_spawn(monkeypatch, oc, proc)
-    monkeypatch.setenv("CUTTLE_OPENCODE_STARTUP_TIMEOUT", "0.1")
+    monkeypatch.setenv("CUTTLE_OPENCODE_STARTUP_TIMEOUT", "0.4")
     result = asyncio.run(oc.Adapter().execute(
         "task", cwd=str(tmp_path), resume=None, model=None, timeout=5))
     assert result.success and "two" in result.output

@@ -174,7 +174,7 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
     // Prompts queued before the first server id belong to that turn, not the next draft.
     const draftQueue = Q.createQueueState(); draftQueue.items=[{id:'early',content:'queued before id'}];
     let persistedDraft;
-    const adoptHost = context({followupQueue:draftQueue,followupQueues:new Map([['new',draftQueue]]),
+    const adoptHost = context({followupQueue:draftQueue,followupQueues:Q.createRegistry(()=>null),
         editingFollowupId:null,canonicalizeChatSessionId:A.canonicalizeChatSessionId,
         CuttleFollowupQueue:Q,getSessionPrefs:()=>null,isAuthMode:()=>true,toAuthDbSessionId:String,
         persistFollowupPut:(sid,state)=>{persistedDraft={sid,state};}});

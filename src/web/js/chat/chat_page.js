@@ -821,24 +821,9 @@
     // chat_followup_queue.js (composes chat_activity.js item decisions).
     // followupDrainTimer stays here: raw timer handle for the scheduler.
     let followupQueue = CuttleFollowupQueue.createQueueState();
-    const followupQueues = new Map();
+    const followupQueues = CuttleFollowupQueue.createRegistry((key) => getSessionPrefs(key)?.[followupWriteField]);
     function adoptFollowupQueue(sessionId, opts = {}) {
-        const key = String(canonicalizeChatSessionId(sessionId) || 'new');
-        if (opts.transfer) {
-            // The first response assigns an id to the same draft/turn. Keep
-            // prompts queued before that response, and free the draft scope.
-            followupQueues.forEach((state, oldKey) => {
-                if (state === followupQueue && oldKey !== key) followupQueues.delete(oldKey);
-            });
-            followupQueues.set(key, followupQueue);
-        }
-        if (!followupQueues.has(key)) {
-            const state = CuttleFollowupQueue.createQueueState();
-            const saved = getSessionPrefs(key)?.[followupWriteField];
-            if (saved) { state.items = saved.items; state.base = saved.base; state.revision = saved.revision; state.dirty = true; }
-            followupQueues.set(key, state);
-        }
-        followupQueue = followupQueues.get(key);
+        followupQueue = followupQueues.adopt(String(canonicalizeChatSessionId(sessionId) || 'new'), followupQueue, !!opts.transfer);
         editingFollowupId = null;
         if (opts.transfer && followupQueue.items.length && isAuthMode()) {
             persistFollowupPut(toAuthDbSessionId(sessionId), followupQueue);
@@ -878,18 +863,7 @@
         return 'new';
     })();
     const newComposerPrefsId = 'draft:' + newComposerDraftId;
-    // Queue retry intents belong to one consumer. Other panes can display the
-    // same chat and must not erase its failed edits or lost claim response.
-    const followupOwnerId = (() => {
-        const storageKey = 'cuttle.followupOwner.' + newComposerDraftId;
-        try {
-            const saved = sessionStorage.getItem(storageKey);
-            if (saved) return saved;
-            const id = Date.now() + ':' + Math.random().toString(36).slice(2);
-            sessionStorage.setItem(storageKey, id);
-            return id;
-        } catch (_) { return Date.now() + ':' + Math.random().toString(36).slice(2); }
-    })();
+    const followupOwnerId = CuttleFollowupQueue.ownerId(() => sessionStorage, newComposerDraftId);
     const followupWriteField = 'followupWrite:' + followupOwnerId;
     const followupClaimField = 'followupClaim:' + followupOwnerId;
 

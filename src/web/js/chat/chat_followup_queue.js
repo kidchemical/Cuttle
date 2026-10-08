@@ -154,6 +154,55 @@
         mergeEdits,
     };
 
+    /**
+     * Per-chat queue states. `transfer` re-keys the current (draft) queue to
+     * the id the first response assigned, keeping prompts queued before it.
+     */
+    function createRegistry(restore) {
+        const states = new Map();
+        return {
+            adopt(key, current, transfer) {
+                if (transfer) {
+                    states.forEach((state, oldKey) => {
+                        if (state === current && oldKey !== key) states.delete(oldKey);
+                    });
+                    states.set(key, current);
+                }
+                if (!states.has(key)) {
+                    const state = createQueueState();
+                    const saved = restore(key);
+                    if (saved) {
+                        state.items = saved.items;
+                        state.base = saved.base;
+                        state.revision = saved.revision;
+                        state.dirty = true;
+                    }
+                    states.set(key, state);
+                }
+                return states.get(key);
+            },
+        };
+    }
+
+    /**
+     * Queue retry intents belong to one consumer per tab. Other panes can
+     * display the same chat and must not erase its failed edits or lost claim.
+     */
+    function ownerId(getStorage, draftId) {
+        const fresh = () => Date.now() + ':' + Math.random().toString(36).slice(2);
+        const key = 'cuttle.followupOwner.' + draftId;
+        try {
+            const storage = getStorage();
+            const saved = storage.getItem(key);
+            if (saved) return saved;
+            const id = fresh();
+            storage.setItem(key, id);
+            return id;
+        } catch (_) { return fresh(); }
+    }
+    api.createRegistry = createRegistry;
+    api.ownerId = ownerId;
+
     const ns = (root.CuttleFollowupQueue = root.CuttleFollowupQueue || {});
     Object.assign(ns, api);
     if (typeof module !== 'undefined' && module.exports) {
