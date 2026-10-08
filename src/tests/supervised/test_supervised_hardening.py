@@ -380,11 +380,12 @@ def test_raw_artifact_viewer_enforces_ownership(supervised_env, monkeypatch):
 def test_js_activity_card_not_pending_queue(supervised_env):
     js = (REPO_ROOT / "src/web/js/chat/chat_page.js").read_text(encoding="utf-8")
     html = (REPO_ROOT / "src/web/chat_page.html").read_text(encoding="utf-8")
+    helper = Path("src/web/js/chat/supervised_control.js").read_text(encoding="utf-8")
     assert "upsertSupervisedActivityCard" in js
     assert "dispatchSupervisedControlMessage" in js
-    assert "supervised-activity-card" in js or "buildActivityCardHtml" in Path(
-        "src/web/js/chat/supervised_control.js"
-    ).read_text(encoding="utf-8")
+    assert "buildActivityDisclosureHtml" in helper
+    assert "buildActivityCardHtml" not in helper
+    assert "activityCardStateFromTask" not in helper
     assert "followupQueue" in html
     assert "Pending-prompt queue only" in html or "never used for supervised" in html
     # Control lane forces non-stream
@@ -412,10 +413,10 @@ assert.strictEqual(m.shouldPersistControlExchange({{idempotent:true}}), false);
 assert.strictEqual(m.shouldPersistControlExchange({{response:'ok'}}), true);
 const seen = new Set(['cr_1']);
 assert.strictEqual(m.shouldAppendControlAssistantBubble({{control_request_id:'cr_1',idempotent:true}}, seen), false);
-const st = m.activityCardStateFromTask({{task_id:'st_1',phase:'worker_running',pending_followup_count:1}});
+const st = m.activityStateFromTask({{task_id:'st_1',phase:'worker_running',pending_followup_count:1}});
 assert.ok(st);
-const html = m.buildActivityCardHtml(st);
-assert.ok(html.includes('supervised-activity-card'));
+const html = m.buildActivityDisclosureHtml(st);
+assert.ok(html.includes('supervised-activity-disclosure'));
 assert.ok(html.includes('data-supervised-action'));
 console.log('ok');
 """,

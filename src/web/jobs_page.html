@@ -364,6 +364,8 @@
             </div>
             <h2 class="jobs-section-title">Workers</h2>
             <div id="devicesList"></div>
+            <h2 class="jobs-section-title" style="margin-top:1.25rem;">Pending pairing</h2>
+            <div id="pairingList"></div>
             <h2 class="jobs-section-title" style="margin-top:1.25rem;">Mesh jobs</h2>
             <div id="meshJobsList"></div>
         </section>
@@ -1138,14 +1140,91 @@
             }
         }
 
+        let pendingPairing = [];
+
+        async function loadPairing() {
+            const el = document.getElementById('pairingList');
+            try {
+                const r = await fetch('/api/workers/enroll-requests', { cache: 'no-store', credentials: 'include' });
+                const data = r.ok ? await r.json() : {};
+                pendingPairing = (data && data.pending) || [];
+                renderPairing();
+            } catch (e) {
+                if (el && initialLoad) el.innerHTML = '<div class="jobs-empty">Could not load pairing requests.</div>';
+            }
+        }
+
+        function renderPairing() {
+            const el = document.getElementById('pairingList');
+            if (!el) return;
+            if (!pendingPairing.length) {
+                const empty = '<div class="jobs-empty">No devices waiting for approval. New Client connects appear here with a pairing code.</div>';
+                if (el.innerHTML !== empty) el.innerHTML = empty;
+                return;
+            }
+            const rows = pendingPairing.map(function (q) {
+                const age = Math.max(0, Math.floor(Number(q.age_seconds) || 0));
+                const ageTxt = age < 60 ? age + 's ago' : Math.floor(age / 60) + 'm ago';
+                const rid = escapeHtml(String(q.id || ''));
+                return '<tr>' +
+                    '<td><strong style="font-size:1.2em; letter-spacing:.1em;">' + escapeHtml(String(q.code || '')) + '</strong></td>' +
+                    '<td>' + escapeHtml(String(q.worker_id || '')) + '</td>' +
+                    '<td>' + escapeHtml(String(q.hostname || '')) + '</td>' +
+                    '<td>' + escapeHtml(String(q.remote_addr || '')) + '</td>' +
+                    '<td>' + escapeHtml(ageTxt) + '</td>' +
+                    '<td class="device-actions-cell">' +
+                    '<button type="button" class="hist-btn" data-pairing-approve="' + rid + '">Approve</button> ' +
+                    '<button type="button" class="hist-btn" data-pairing-deny="' + rid + '">Deny</button>' +
+                    '</td></tr>';
+            }).join('');
+            el.innerHTML = wrapJobsTable(
+                '<table class="hist-table"><thead><tr>' +
+                '<th>Code</th><th>Worker</th><th>Hostname</th><th>IP</th><th>Waiting</th><th aria-label="Actions"></th>' +
+                '</tr></thead><tbody>' + rows + '</tbody></table>'
+            );
+        }
+
+        async function decidePairing(requestId, approve) {
+            try {
+                const r = await fetch('/api/workers/enroll-requests/' + encodeURIComponent(requestId) +
+                    (approve ? '/approve' : '/deny'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: '{}',
+                });
+                const data = await r.json().catch(function () { return {}; });
+                if (!r.ok || !data.success) throw new Error(data.error || ('HTTP ' + r.status));
+                if (window.showToast) window.showToast(approve ? 'Device approved' : 'Pairing denied', 'success');
+                await loadPairing();
+                await loadDevices();
+            } catch (e) {
+                if (window.showToast) window.showToast(String(e.message || e), 'error');
+            }
+        }
+
         async function loadAll() {
             await loadDevices();
+            await loadPairing();
             initialLoad = false;
         }
 
 
         const btnPing = document.getElementById('btnPingWorker');
         if (btnPing) btnPing.addEventListener('click', pingLocalWorker);
+
+        const pairingEl = document.getElementById('pairingList');
+        if (pairingEl) {
+            pairingEl.addEventListener('click', function (ev) {
+                const okBtn = ev.target && ev.target.closest && ev.target.closest('[data-pairing-approve]');
+                const noBtn = ev.target && ev.target.closest && ev.target.closest('[data-pairing-deny]');
+                const btn = okBtn || noBtn;
+                if (!btn || btn.disabled) return;
+                ev.preventDefault();
+                const rid = btn.getAttribute('data-pairing-approve') || btn.getAttribute('data-pairing-deny');
+                if (okBtn && !window.confirm('Approve this device? A fresh worker credential is issued on approval.')) return;
+                decidePairing(rid, !!okBtn);
+            });
+        }
 
         const devicesListEl = document.getElementById('devicesList');
         if (devicesListEl) {

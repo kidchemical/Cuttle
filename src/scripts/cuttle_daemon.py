@@ -366,6 +366,9 @@ def open_cuttle_ui(extra_args: Optional[List[str]] = None, browser_path: str = "
     env = os.environ.copy()
     # Electron must not spawn a second cuttle_daemon.py (blank console).
     env["CUTTLE_HOSTED_BY_DAEMON"] = "1"
+    # A packaged window without its own bundled runtime uses this daemon's
+    # interpreter (never a guessed system Python).
+    env["CUTTLE_DAEMON_PYTHON"] = sys.executable
     # Packaged Cuttle.exe bakes package.json into app.asar at build time. Stamp the
     # live checkout version so titlebar / worker ads match mesh bumps.
     live_ver = _electron_package_version()

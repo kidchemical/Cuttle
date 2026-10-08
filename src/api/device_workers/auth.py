@@ -1,4 +1,4 @@
-"""Auth for device-worker coordinator APIs — auto-enroll, no manual token."""
+"""Auth for device-worker coordinator APIs — host-approved pairing, no manual token."""
 
 from __future__ import annotations
 
@@ -52,16 +52,17 @@ def resolve_worker_identity(request: Request) -> Tuple[bool, Optional[str], Opti
     Returns (ok, bound_worker_id, error_message).
 
     Accepts (any one):
-    - Loopback (host local worker) — unbound
-    - Optional shared env/settings token (override only) — unbound
-    - Per-device token from auto-enroll (Electron Client enroll) — bound to the
-      worker it was issued to; that caller may only act as that worker.
+    - Optional shared env/settings token (legacy override) — unbound.
+      Kept for existing installs that set CUTTLE_DEVICE_WORKERS_TOKEN;
+      prefer per-device tokens from host-approved pairing.
+    - Per-device token from host-approved pairing — bound to the worker it
+      was issued to; that caller may only act as that worker.
+
+    There is no loopback exemption: the host's own local worker loop
+    authenticates with its own per-device token (see
+    ``DeviceWorkerStore.ensure_local_worker_token``).
     """
     provided = extract_bearer(request)
-    remote = (request.remote_addr or "").strip()
-
-    if is_loopback(remote):
-        return True, None, None
 
     if provided:
         expected = worker_token()
@@ -90,28 +91,33 @@ def authorize_enroll_request(request: Request) -> Tuple[bool, Optional[str], boo
     """
     Returns (ok, error_message, may_reissue).
 
-    Enroll is allowed when the caller can already talk to this Flask as a Client:
-    loopback, private LAN with lan_access_enabled, or an existing valid worker bearer.
+    Only a currently valid bearer enrolls directly here. Callers without one
+    must go through host-approved pairing (see ``pairing_eligible``);
+    loopback alone authorizes nothing.
 
-    ``may_reissue`` is True only for loopback / the shared override token. A
+    ``may_reissue`` is True only for the legacy shared override token. A
     device bearer may re-enroll only as its own worker (checked by the route);
-    an unauthenticated LAN caller may only enroll a worker id that has no token
-    yet — it never receives (or rotates) another device's token.
+    Callers without a valid bearer file a pairing request instead — no credential
+    is minted or returned until the host owner approves.
     """
-    remote = (request.remote_addr or "").strip()
-    if is_loopback(remote):
-        return True, None, True
-
     if extract_bearer(request):
         ok, bound, _err = resolve_worker_identity(request)
         if ok:
             return True, None, bound is None
-        # A stale saved token (host DB reset) enrolls like a bare LAN caller.
+    return False, "worker credential required (pair via host approval)", False
 
+
+def pairing_eligible(request: Request) -> Tuple[bool, Optional[str]]:
+    """May this peer file a pairing request (no credential minted yet)?
+
+    Loopback, or private LAN with lan_access_enabled. A stale saved
+    credential (host DB reset) pairs like a bare LAN caller.
+    """
+    remote = (request.remote_addr or "").strip()
+    if is_loopback(remote):
+        return True, None
     if not is_private_lan(remote):
-        return False, "enroll only from LAN or loopback", False
-
+        return False, "enroll only from LAN or loopback"
     if not lan_access_enabled():
-        return False, "LAN access disabled — enable discovery.lan_access_enabled", False
-
-    return True, None, False
+        return False, "LAN access disabled — enable discovery.lan_access_enabled"
+    return True, None

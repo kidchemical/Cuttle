@@ -28,7 +28,7 @@ The router answers two questions, in this order, and keeps them separate:
 | Lane | Meaning | Example |
 |---|---|---|
 | `basic_ask` (chat) | conversation, quick general question | "hello", "what's 2+2?" |
-| `explain` | question about this codebase / chats / logs; read, don't change | "how does the router pick fallbacks?", "look at CH-000989" |
+| `explain` | question about this codebase / chats / logs; read, don't change | "how does the router pick fallbacks?", "summarize yesterday's thread" |
 | `coding` | implement or change code | "add a clear-cache button to settings" |
 | `debugging` | something is broken; find the cause and fix it | "why did this hang for 13s?", "the host keeps crashing" |
 | `architecture` | design, plans, cross-cutting restructure | "re-imagine the router classification" |

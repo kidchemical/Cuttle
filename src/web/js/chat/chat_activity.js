@@ -1,8 +1,9 @@
 /* ================================================================
    Cuttle Chat — activity / unread / follow-up queue domain
    (chat_activity.js). Owner: chat activity, unread/seen, attention,
-   chirp eligibility, follow-up queue interpretation, and session-id
-   normalization as pure decisions over explicit inputs: no document,
+   chirp eligibility, follow-up queue interpretation, session-id
+   normalization, and the per-frame Spaces snapshot as pure decisions
+   over explicit inputs: no document,
    no window, no localStorage, no fetch, no timers here. Loaded before
    chat_page.js; the page owns DOM badges, sounds, toast rendering,
    fetch/poll loops, persistence IO, streaming orchestration, and
@@ -492,6 +493,70 @@
     }
 
     /**
+     * Per-frame activity snapshot for the shell (Spaces dots). Pure: the
+     * page gathers owned ids plus small resolvers and this returns
+     * `{ sessions, owned }` with no DOM, storage, timers, or messaging.
+     * Only chats this frame owns are listed — the open chat, its local
+     * turn, and pending action forms. History rows for other chats can
+     * hold stale running classes, so re-pushing them revived dead
+     * spinners; the shell polls the server for those instead. Idle owned
+     * chats are listed in `owned` so the shell clears them.
+     *
+     * `parts`: { currentSessionId, localSessionId, awaitingIds,
+     *   canonicalize(sid), idsEqual(a, b), spinnerFor(sid),
+     *   attentionKindFor(sid), prefsFor(sid), attentionActive,
+     *   attentionIsError, generationLoading }.
+     */
+    function collectFrameSnapshot(parts) {
+        const p = parts || {};
+        const canonicalize = typeof p.canonicalize === 'function'
+            ? p.canonicalize
+            : (sid) => sid;
+        const idsEqual = typeof p.idsEqual === 'function'
+            ? p.idsEqual
+            : (a, b) => a != null && b != null && String(a) === String(b);
+        const spinnerFor = typeof p.spinnerFor === 'function' ? p.spinnerFor : () => false;
+        const attentionKindFor = typeof p.attentionKindFor === 'function'
+            ? p.attentionKindFor
+            : () => '';
+        const prefsFor = typeof p.prefsFor === 'function' ? p.prefsFor : () => null;
+        const owned = new Map();
+        const own = (sid) => {
+            if (sid == null || sid === '') return;
+            const key = String(canonicalize(sid));
+            if (key && !owned.has(key)) owned.set(key, sid);
+        };
+        own(p.currentSessionId);
+        own(p.localSessionId);
+        (Array.isArray(p.awaitingIds) ? p.awaitingIds : []).forEach(own);
+        const currentId = p.currentSessionId;
+        const attentionActive = !!p.attentionActive;
+        const attentionIsError = !!p.attentionIsError;
+        const generationLoading = !!p.generationLoading;
+        const localId = p.localSessionId;
+        const awaitingIds = Array.isArray(p.awaitingIds) ? p.awaitingIds : [];
+        const sessions = [];
+        owned.forEach((sid, key) => {
+            const running = !!spinnerFor(sid);
+            let activity = '';
+            try {
+                const kind = attentionKindFor(sid);
+                if (kind === 'error' || kind === 'unread'
+                    || kind === 'queued' || kind === 'paused') {
+                    activity = kind;
+                }
+            } catch (_) {}
+            const visibleAttention = !!(idsEqual(sid, currentId) && attentionActive);
+            if (visibleAttention) activity = attentionIsError ? 'error' : 'unread';
+            if ((prefsFor(sid) || {}).awaitingInput) activity = 'input';
+            const localRunning = !!((generationLoading && idsEqual(localId, sid))
+                || awaitingIds.some((id) => idsEqual(id, sid)));
+            if (running || activity) sessions.push({ id: key, activity, running, localRunning, visibleAttention });
+        });
+        return { sessions, owned: [...owned.keys()] };
+    }
+
+    /**
      * History-row class → activity kind for the shell broadcast snapshot
      * (Spaces activity indicators consume the posted array, not the DOM).
      */
@@ -537,6 +602,7 @@
         liveStatusLooksActive,
         liveStatusPredatesReply,
         activityClassToKind,
+        collectFrameSnapshot,
     };
 
     const ns = (root.CuttleChatActivity = root.CuttleChatActivity || {});

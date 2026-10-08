@@ -5327,29 +5327,14 @@
     }
 
     /** Nested harness one-shots (``/usage`` where supported, ``/cost``) for the active badge. */
+    // Entries owned by chat_usage_live.js — page supplies chip state, domain builds the list.
+    // (Dedicated hasActive*Chip matchers delegate to hasActiveHarnessAgentChip per agent.)
     function harnessUsageSlashCommandsForPalette() {
-        const forAgent = (agent) => {
-            const out = [];
-            const usageTable = CuttleChatSlash.HARNESS_USAGE_SLASH_BY_AGENT;
-            if (usageTable[agent]) {
-                out.push(Object.assign({}, usageTable[agent]));
-                out.push(Object.assign({}, usageTable[agent], {
-                    prefix: '/usage-live', label: 'Live usage',
-                    hint: 'Usage refreshed every minute while visible (shared across panes)',
-                }));
-            }
-            out.push(harnessCostSlashCommand(agent));
-            return out;
-        };
-        if (hasActiveMuseAgentChip()) return forAgent('muse');
-        if (hasActiveCodexAgentChip()) return forAgent('codex');
-        if (hasActiveHermesAgentChip()) return forAgent('hermes');
-        if (hasActiveOpenCodeAgentChip()) return forAgent('opencode');
-        const others = ['claude', 'deepseek', 'antigravity'];
-        for (let i = 0; i < others.length; i++) {
-            if (hasActiveHarnessAgentChip(others[i])) return forAgent(others[i]);
-        }
-        return [];
+        return CuttleUsageLive.harnessUsageCommands({
+            isActive: (agent) => hasActiveHarnessAgentChip(agent),
+            usageTable: CuttleChatSlash.HARNESS_USAGE_SLASH_BY_AGENT,
+            costCommand: harnessCostSlashCommand,
+        });
     }
 
     function readStarredSlashPrefixes() {
@@ -7538,40 +7523,33 @@
 
     /** anyChat: load even without a /claude chip (user typed "claude" in the palette). */
     function loadClaudeModelsForPalette(anyChat, opts) {
-        if (!anyChat && !hasActiveHarnessAgentChip('claude')) return;
         const key = currentSessionId != null ? String(currentSessionId) : '';
         const forceRefresh = !!(opts && opts.refresh);
-        if (
-            !forceRefresh
-            && (
-                slashPaletteSupplement.claudeModelsLoading
-                || (slashPaletteSupplement.claudeModels.length
-                    && slashPaletteSupplement.claudeModelsKey === key)
-            )
-        ) {
-            return;
-        }
+        const gate = CuttleChatAgentModel.claudeModelsFetchForPalette({
+            anyChat,
+            hasClaudeChip: hasActiveHarnessAgentChip('claude'),
+            loading: slashPaletteSupplement.claudeModelsLoading,
+            modelsLength: (slashPaletteSupplement.claudeModels || []).length,
+            modelsKey: slashPaletteSupplement.claudeModelsKey,
+            sessionKey: key,
+            forceRefresh,
+        });
+        if (!gate.fetch) return;
         slashPaletteSupplement.claudeModelsLoading = true;
-        const params = new URLSearchParams();
-        if (key) params.set('session', key);
-        if (forceRefresh) params.set('refresh', '1');
-        const qs = params.toString();
-        const url = qs ? '/api/claude/models?' + qs : '/api/claude/models';
-        fetch(url, { cache: 'no-store' })
+        fetch(gate.url, { cache: 'no-store' })
             .then((r) => r.json())
             .then((j) => {
-                slashPaletteSupplement.claudeModels =
-                    j && j.success && Array.isArray(j.models) ? j.models : [];
-                if (!slashPaletteSupplement.claudeModelDirty) {
-                    slashPaletteSupplement.claudeModel = (j && j.preferredModel) || '';
+                const applied = CuttleChatAgentModel.applyClaudeModelsResponse(j, {
+                    modelDirty: slashPaletteSupplement.claudeModelDirty,
+                });
+                slashPaletteSupplement.claudeModels = applied.models;
+                if (applied.model !== null) {
+                    slashPaletteSupplement.claudeModel = applied.model;
                 }
                 slashPaletteSupplement.claudeModelsKey = key;
-                slashPaletteSupplement.claudeModelsSource =
-                    (j && j.source) || '';
-                slashPaletteSupplement.claudeModelsCount =
-                    (j && (j.count != null ? j.count : slashPaletteSupplement.claudeModels.length)) || 0;
-                slashPaletteSupplement.claudeCommonEfforts =
-                    j && Array.isArray(j.commonEfforts) ? j.commonEfforts : [];
+                slashPaletteSupplement.claudeModelsSource = applied.source;
+                slashPaletteSupplement.claudeModelsCount = applied.count;
+                slashPaletteSupplement.claudeCommonEfforts = applied.commonEfforts;
                 renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
                 renderSlashChips('chat', document.getElementById('chatInput'));
                 repaintClaudeUserBadges();
@@ -7579,7 +7557,7 @@
                 refreshHistoryAgentChips();
                 if (forceRefresh && window.showToast) {
                     const n = slashPaletteSupplement.claudeModelsCount || 0;
-                    const err = j && j.error ? String(j.error) : '';
+                    const err = applied.error;
                     window.showToast(
                         err && !n
                             ? ('Claude Code models refresh failed: ' + err)
@@ -7607,17 +7585,16 @@
     function persistClaudeModelSelection(modelId) {
         const id = String(modelId || '').trim();
         if (!id) return;
-        if (id.toLowerCase() === 'refresh' || id.toLowerCase() === '__refresh__') {
+        if (CuttleChatAgentModel.isClaudeModelRefreshPick(id)) {
             slashPaletteSupplement.claudeModelsKey = '';
             slashPaletteSupplement.claudeModels = [];
             loadClaudeModelsForPalette(true, { refresh: true });
             return;
         }
         slashPaletteSupplement.claudeModel = id;
-        slashPaletteSupplement.claudeModels = (slashPaletteSupplement.claudeModels || []).map((m) => ({
-            ...m,
-            current: String(m && m.id) === id,
-        }));
+        slashPaletteSupplement.claudeModels =
+            CuttleChatAgentModel.markClaudeCurrentModel(
+                slashPaletteSupplement.claudeModels, id);
         const sid = currentSessionId != null ? String(currentSessionId) : '';
         if (!sid) {
             slashPaletteSupplement.claudeModelDirty = true;
@@ -7650,11 +7627,7 @@
         if (!f) return [];
         loadClaudeModelsForPalette(true);
         const models = slashPaletteSupplement.claudeModels || [];
-        let modelFilter = f
-            .replace(/^claude\s+/, '')
-            .replace(/^models?\b\s*/, '')
-            .trim();
-        if (modelFilter === 'claude') modelFilter = '';
+        const modelFilter = CuttleChatAgentModel.claudeModelFilterForPalette(f);
         const preferred = String(slashPaletteSupplement.claudeModel || '').toLowerCase();
         // Stage as nested cmd chip — no instant run (same as Codex). Composes as
         // `/claude /model refresh` after the sticky agent prefix.
@@ -7688,30 +7661,7 @@
             return items;
         }
         const mapped = models
-            .map((m) => {
-                const id = String((m && m.id) || '').trim();
-                if (!id) return null;
-                const label = String((m && m.label) || id).trim() || id;
-                const current = id.toLowerCase() === preferred;
-                const fav = !!(m && (m.favorite === true || m.favorite === '1' || m.favorite === 1));
-                const modelEfforts = Array.isArray(m && m.efforts) ? m.efforts : [];
-                const effortHint = modelEfforts.length
-                    ? 'Supported efforts: ' + modelEfforts.join(', ')
-                    : 'No effort levels for this model';
-                return {
-                    category: 'claude-model',
-                    prefix: '/claude model ' + id,
-                    label: (fav ? '★ ' : '') + label + (current ? ' (current)' : ''),
-                    hint: [
-                        (m && m.description) || ('Set Claude Code model to ' + id),
-                        effortHint,
-                    ].filter(Boolean).join(' · '),
-                    meta: id,
-                    keywords: 'claude model ' + id + ' ' + label + ' ' + id.replace(/[-_/]+/g, ' '),
-                    modelId: id,
-                    claudeModel: true,
-                };
-            })
+            .map((m) => CuttleChatAgentModel.buildClaudeModelRow(m, preferred))
             .filter(Boolean)
             .filter((item) => (modelFilter ? slashPaletteItemMatches(item, modelFilter) : true));
         const MAX = 40;
@@ -7737,41 +7687,33 @@
 
     function seedClaudeSupplementFromSessionData(data, sessionId) {
         if (!data || typeof data !== 'object') return;
-        const key = sessionId != null ? String(sessionId) : '';
-        const serverModel = sessionPin(data, 'claude', 'model');
-        if (serverModel && !slashPaletteSupplement.claudeModelDirty) {
-            slashPaletteSupplement.claudeModel = serverModel;
-            if (key) slashPaletteSupplement.claudeModelsKey = key;
-        }
-        const serverEffort = sessionPin(data, 'claude', 'effort').toLowerCase();
-        if (serverEffort && !slashPaletteSupplement.claudeEffortDirty) {
-            slashPaletteSupplement.claudeEffort = serverEffort;
-            if (key) slashPaletteSupplement.claudeEffortKey = key;
-        } else if (!slashPaletteSupplement.claudeEffortDirty && key && data && ((data.agent_pins && data.agent_pins.claude) || ('claude_effort' in data))) {
-            slashPaletteSupplement.claudeEffort = '';
-            slashPaletteSupplement.claudeEffortKey = key;
-        }
+        const patch = CuttleChatAgentModel.claudeSeedPatchFromSessionData(data, {
+            modelDirty: slashPaletteSupplement.claudeModelDirty,
+            effortDirty: slashPaletteSupplement.claudeEffortDirty,
+            sessionKey: sessionId != null ? String(sessionId) : '',
+        });
+        if (patch.model !== undefined) slashPaletteSupplement.claudeModel = patch.model;
+        if (patch.modelsKey !== undefined) slashPaletteSupplement.claudeModelsKey = patch.modelsKey;
+        if (patch.effort !== undefined) slashPaletteSupplement.claudeEffort = patch.effort;
+        if (patch.effortKey !== undefined) slashPaletteSupplement.claudeEffortKey = patch.effortKey;
     }
 
     function loadClaudeEffortForPalette() {
-        if (!hasActiveHarnessAgentChip('claude')) return;
         const key = currentSessionId != null ? String(currentSessionId) : '';
-        if (
-            slashPaletteSupplement.claudeEffortLoading
-            || (slashPaletteSupplement.claudeEffortKey === key && key)
-        ) {
-            return;
-        }
+        const gate = CuttleChatAgentModel.claudeEffortFetchForPalette({
+            hasClaudeChip: hasActiveHarnessAgentChip('claude'),
+            loading: slashPaletteSupplement.claudeEffortLoading,
+            effortKey: slashPaletteSupplement.claudeEffortKey,
+            sessionKey: key,
+        });
+        if (!gate.fetch) return;
         slashPaletteSupplement.claudeEffortLoading = true;
-        const url = key
-            ? '/api/claude/effort?session=' + encodeURIComponent(key)
-            : '/api/claude/effort';
-        fetch(url, { cache: 'no-store' })
+        fetch(gate.url, { cache: 'no-store' })
             .then((r) => r.json())
             .then((j) => {
                 if (slashPaletteSupplement.claudeEffortDirty) return;
                 slashPaletteSupplement.claudeEffort =
-                    (j && j.preferredEffort) || '';
+                    CuttleChatAgentModel.applyClaudeEffortResponse(j);
                 slashPaletteSupplement.claudeEffortKey = key;
                 renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
                 renderSlashChips('chat', document.getElementById('chatInput'));
@@ -7822,23 +7764,14 @@
         const f = (filterLower || '').toLowerCase().trim();
         if (!f) return [];
         loadClaudeEffortForPalette();
-        let effortFilter = f
-            .replace(/^claude\s+/, '')
-            .replace(/^efforts?\b\s*/, '')
-            .trim();
-        if (effortFilter === 'effort') effortFilter = '';
+        const effortFilter = CuttleChatAgentModel.claudeEffortFilterForPalette(f);
         const preferred = String(slashPaletteSupplement.claudeEffort || '').toLowerCase();
         const selectedModel = String(slashPaletteSupplement.claudeModel || '').toLowerCase();
-        const selectedRow = selectedModel
-            ? (slashPaletteSupplement.claudeModels || []).find((m) =>
-                String(m && m.id || '').toLowerCase() === selectedModel
-            )
-            : null;
-        const levels = selectedRow && Array.isArray(selectedRow.efforts)
-            ? selectedRow.efforts
-            : selectedModel
-                ? []
-                : (slashPaletteSupplement.claudeCommonEfforts || []);
+        const levels = CuttleChatAgentModel.claudeEffortLevelsForModel({
+            selectedModel,
+            models: slashPaletteSupplement.claudeModels,
+            commonEfforts: slashPaletteSupplement.claudeCommonEfforts,
+        });
         if (!levels.length) {
             return [{
                 category: 'claude-effort',
@@ -7857,16 +7790,9 @@
             }];
         }
         const items = levels
-            .map((id) => ({
-                category: 'claude-effort',
-                prefix: '/claude effort ' + id,
-                label: 'Effort ' + id + (id.toLowerCase() === preferred ? ' (current)' : ''),
-                hint: 'Set Claude Code effort (--effort) to ' + id
-                    + (selectedModel ? ' for ' + selectedModel : ' (CLI default model)'),
-                meta: id,
-                keywords: 'claude effort ' + id,
-                modelId: id,
-                claudeEffort: true,
+            .map((id) => CuttleChatAgentModel.buildClaudeEffortRow(id, {
+                preferredLower: preferred,
+                selectedModel,
             }))
             .filter((item) => (effortFilter ? slashPaletteItemMatches(item, effortFilter) : true));
         if (!items.length && effortFilter) {
@@ -10832,22 +10758,13 @@
     }
 
     function prettyClaudeModelLabel(model) {
-        const raw = String(model || '').trim();
-        if (!raw) return 'Claude Code';
-        const known = (slashPaletteSupplement.claudeModels || []).find(
-            (m) => m && String(m.id).toLowerCase() === raw.toLowerCase()
-        );
-        if (known && known.label) return String(known.label);
-        const leaf = raw.includes('/') ? raw.split('/').pop() : raw;
-        return String(leaf || raw).replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+        return CuttleChatAgentModel.prettyClaudeModelLabel(
+            model, slashPaletteSupplement.claudeModels);
     }
 
     function claudeModelLabel(model) {
-        const raw = String(model || '').trim();
-        const known = (slashPaletteSupplement.claudeModels || []).find(
-            (m) => m && String(m.id).toLowerCase() === raw.toLowerCase()
-        );
-        return (known && known.label) || raw || 'default';
+        return CuttleChatAgentModel.claudeModelLabel(
+            model, slashPaletteSupplement.claudeModels);
     }
 
     function repaintClaudeUserBadges() {
@@ -13788,9 +13705,7 @@
             const bare = String(currentSessionId).replace(/^db_session_/, '');
             if (String(task.parent_session_id) !== bare) return;
         }
-        const state = CS.activityStateFromTask
-            ? CS.activityStateFromTask(task)
-            : CS.activityCardStateFromTask(task);
+        const state = CS.activityStateFromTask(task);
         if (!state) return;
         const box = document.getElementById('chatMessages');
         if (!box) return;
@@ -15293,28 +15208,26 @@
 
     // Sessions this tab knows are archived (populated from ?archived=only).
     // Drives the Archive/Unarchive menu label; the server list is the source
-    // of truth after every archive toggle.
+    // of truth after every archive toggle. Mark decisions live in
+    // CuttleChatHistoryArchive over this tab-lifetime Set.
     const archivedChatSessionIds = new Set();
 
     function markChatSessionArchived(sessionId) {
-        if (sessionId == null || sessionId === '') return;
-        archivedChatSessionIds.add(String(canonicalizeChatSessionId(sessionId)));
-        const authSid = toAuthDbSessionId(sessionId);
-        if (authSid != null) archivedChatSessionIds.add(String(authSid));
+        const mod = historyArchiveModule();
+        if (!mod) return;
+        mod.markArchivedIds(archivedChatSessionIds, sessionId, archiveIdExtras(sessionId));
     }
 
     function unmarkChatSessionArchived(sessionId) {
-        if (sessionId == null || sessionId === '') return;
-        archivedChatSessionIds.delete(String(canonicalizeChatSessionId(sessionId)));
-        const authSid = toAuthDbSessionId(sessionId);
-        if (authSid != null) archivedChatSessionIds.delete(String(authSid));
+        const mod = historyArchiveModule();
+        if (!mod) return;
+        mod.unmarkArchivedIds(archivedChatSessionIds, sessionId, archiveIdExtras(sessionId));
     }
 
     function isChatSessionArchived(sessionId) {
-        if (sessionId == null || sessionId === '') return false;
-        if (archivedChatSessionIds.has(String(canonicalizeChatSessionId(sessionId)))) return true;
-        const authSid = toAuthDbSessionId(sessionId);
-        return authSid != null && archivedChatSessionIds.has(String(authSid));
+        const mod = historyArchiveModule();
+        if (!mod) return false;
+        return mod.isArchivedId(archivedChatSessionIds, sessionId, archiveIdExtras(sessionId));
     }
 
     async function toggleArchiveChatSession(sessionId, event) {
@@ -16189,35 +16102,21 @@
      *  polls the server for those, and re-pushing them revived dead spinners.
      *  Idle owned chats are listed in `owned` so the shell clears them. */
     let _chatActivityBroadcastTimer = null;
+    // Snapshot decisions owned by chat_activity.js — page gathers, domain decides.
     function collectChatActivitySnapshot() {
-        const owned = new Map();
-        const own = (sid) => {
-            if (sid == null || sid === '') return;
-            const key = String(canonicalizeChatSessionId(sid));
-            if (key && !owned.has(key)) owned.set(key, sid);
-        };
-        own(currentSessionId);
-        own(generation.localSessionId);
-        formAwaitingSessionIds.forEach(own);
-        const sessions = [];
-        owned.forEach((sid, key) => {
-            const running = sessionShowsHistorySpinner(sid);
-            let activity = '';
-            try {
-                const kind = sessionHistoryAttentionKind(sid, null);
-                if (kind === 'error' || kind === 'unread'
-                    || kind === 'queued' || kind === 'paused') {
-                    activity = kind;
-                }
-            } catch (_) {}
-            const visibleAttention = !!(sessionIdsEqual(sid, currentSessionId) && chatAttentionActive());
-            if (visibleAttention) activity = chatAttentionIsError ? 'error' : 'unread';
-            if ((getSessionPrefs(sid) || {}).awaitingInput) activity = 'input';
-            const localRunning = !!((generation.loading && sessionIdsEqual(generation.localSessionId, sid))
-                || [...formAwaitingSessionIds].some(id => sessionIdsEqual(id, sid)));
-            if (running || activity) sessions.push({ id: key, activity, running, localRunning, visibleAttention });
+        return CuttleChatActivity.collectFrameSnapshot({
+            currentSessionId,
+            localSessionId: generation.localSessionId,
+            awaitingIds: [...formAwaitingSessionIds],
+            canonicalize: canonicalizeChatSessionId,
+            idsEqual: sessionIdsEqual,
+            spinnerFor: sessionShowsHistorySpinner,
+            attentionKindFor: (sid) => sessionHistoryAttentionKind(sid, null),
+            prefsFor: getSessionPrefs,
+            attentionActive: chatAttentionActive(),
+            attentionIsError: chatAttentionIsError,
+            generationLoading: generation.loading,
         });
-        return { sessions, owned: [...owned.keys()] };
     }
     function scheduleChatActivityBroadcast() {
         if (!inAppShell) return;
@@ -16433,12 +16332,20 @@
             .forEach((marked) => unmarkChatSessionArchived(marked));
     }
 
-    function isArchiveSectionCollapsed() {
+    // Safe storage handle for the owner (node harnesses eval page slices
+    // with no localStorage global; browsers always have it).
+    function pageArchiveStorage() {
         try {
-            return localStorage.getItem('cuttleArchiveSectionCollapsed') !== '0';
+            return (typeof localStorage !== 'undefined') ? localStorage : null;
         } catch (_) {
-            return true;
+            return null;
         }
+    }
+
+    function isArchiveSectionCollapsed() {
+        const mod = historyArchiveModule();
+        if (!mod) return true;
+        return mod.isArchiveSectionCollapsed(pageArchiveStorage());
     }
 
     function toggleArchiveSection(event) {
@@ -16446,9 +16353,8 @@
             event.stopPropagation();
             event.preventDefault();
         }
-        try {
-            localStorage.setItem('cuttleArchiveSectionCollapsed', isArchiveSectionCollapsed() ? '0' : '1');
-        } catch (_) {}
+        const mod = historyArchiveModule();
+        if (mod) mod.storeArchiveSectionCollapsed(pageArchiveStorage(), !isArchiveSectionCollapsed());
         renderArchivedSection();
     }
 
@@ -16502,11 +16408,14 @@
         if (prev) prev.remove();
         if (!archivedSessionsLoaded || !archivedChatSessions.length) return;
         const mod = historyArchiveModule();
+        // Without the owner there is nothing to render:
+        // refreshArchivedSessions already fail-closes to an empty list
+        // then, so this return is unreachable in practice and changes no
+        // live behavior.
+        if (!mod) return;
         // Defensive re-filter: the main list may have refreshed after the
         // Archived fetch resolved (archive toggle, delete, second device).
-        const visible = mod
-            ? mod.filterArchivedSessions(archivedChatSessions, activeHistorySessionIds, archiveIdExtras)
-            : archivedChatSessions;
+        const visible = mod.filterArchivedSessions(archivedChatSessions, activeHistorySessionIds, archiveIdExtras);
         if (!visible.length) return;
         const collapsed = isArchiveSectionCollapsed();
         const count = visible.length;
@@ -16514,25 +16423,18 @@
         visible.forEach((s) => {
             itemsHtml += createAuthHistoryItemHTML(s, {});
         });
+        // Header template + section class live in CuttleChatHistoryArchive;
+        // the page keeps container/row-DOM wiring (it owns the row renderer
+        // and the window-facing toggle names passed in below).
         const section = document.createElement('div');
-        section.className = 'history-section history-archived-section' + (collapsed ? ' is-collapsed' : '');
+        section.className = mod.archivedSectionClassName(collapsed);
         section.id = 'historyArchivedSection';
-        section.innerHTML =
-            '<div class="history-section-header is-collapsible" role="button" tabindex="0"'
-            + ' aria-expanded="' + (collapsed ? 'false' : 'true') + '"'
-            + ' aria-label="Archived chats"'
-            + ' onclick="window.chatPageToggleArchiveSection(event)"'
-            + ' onkeydown="window.chatPageToggleArchiveSectionKey(event)">'
-            + '<span class="history-section-chevron" aria-hidden="true">'
-            + '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">'
-            + '<polyline points="6 9 12 15 18 9"/>'
-            + '</svg>'
-            + '</span>'
-            + '<div class="history-section-title">Archived'
-            + '<span class="history-section-count" title="' + count + ' archived chat' + (count === 1 ? '' : 's') + '">' + count + '</span>'
-            + '</div>'
-            + '<div class="history-section-actions"></div>'
-            + '</div>'
+        section.innerHTML = mod.archivedSectionHeaderHTML({
+                collapsed,
+                count,
+                toggleHandler: 'window.chatPageToggleArchiveSection(event)',
+                keyHandler: 'window.chatPageToggleArchiveSectionKey(event)',
+            })
             + '<div class="history-section-body">' + itemsHtml + '</div>';
         historyContainer.appendChild(section);
     }

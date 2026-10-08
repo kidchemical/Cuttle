@@ -45,6 +45,81 @@
         return idKeys(id, extra).some((k) => activeSet.has(k));
     }
 
+    // Archived-mark state decisions over an explicit tab-lifetime Set (the
+    // page owns the Set; `extra` is the page's id-form adapter — raw plus
+    // frame-canonical plus auth-db numeric forms — so every form of one
+    // session marks, unmarks, and compares equal).
+    function markArchivedIds(markedSet, id, extra) {
+        if (!markedSet || id == null || id === '') return;
+        idKeys(id, extra).forEach((k) => markedSet.add(k));
+    }
+
+    function unmarkArchivedIds(markedSet, id, extra) {
+        if (!markedSet || id == null || id === '') return;
+        idKeys(id, extra).forEach((k) => markedSet.delete(k));
+    }
+
+    function isArchivedId(markedSet, id, extra) {
+        return isActiveId(markedSet, id, extra);
+    }
+
+    // Collapsed-state decisions for the Archived section. `storage` is the
+    // page's storage object (localStorage in browsers, a stub in tests) —
+    // the module never touches a page global directly. Defaults to
+    // collapsed on any failure; writes swallow errors.
+    var ARCHIVE_SECTION_COLLAPSE_KEY = 'cuttleArchiveSectionCollapsed';
+
+    function isArchiveSectionCollapsed(storage) {
+        try {
+            if (!storage || typeof storage.getItem !== 'function') return true;
+            return storage.getItem(ARCHIVE_SECTION_COLLAPSE_KEY) !== '0';
+        } catch (_) {
+            return true;
+        }
+    }
+
+    // Stores the NEW collapsed state (`true` → collapsed): '0' reads back
+    // as expanded, anything else as collapsed. Callers pass the flipped
+    // current state, mirroring the page's original inline toggle.
+    function storeArchiveSectionCollapsed(storage, collapsed) {
+        try {
+            if (storage && typeof storage.setItem === 'function') {
+                storage.setItem(ARCHIVE_SECTION_COLLAPSE_KEY, collapsed ? '1' : '0');
+            }
+        } catch (_) {}
+    }
+
+    // Section markup as pure strings over explicit inputs. The row items
+    // stay with the page (it owns `createAuthHistoryItemHTML`); the header
+    // template lives here so the Archived section reads as one owner piece.
+    // `toggleHandler` / `keyHandler` arrive as attribute strings from the
+    // page (it owns the window-facing toggle names).
+    function archivedSectionClassName(collapsed) {
+        return 'history-section history-archived-section' + (collapsed ? ' is-collapsed' : '');
+    }
+
+    function archivedSectionHeaderHTML(opts) {
+        const o = opts || {};
+        const collapsed = !!o.collapsed;
+        const count = Number(o.count) || 0;
+        const toggleAttr = o.toggleHandler ? ' onclick="' + o.toggleHandler + '"' : '';
+        const keyAttr = o.keyHandler ? ' onkeydown="' + o.keyHandler + '"' : '';
+        return '<div class="history-section-header is-collapsible" role="button" tabindex="0"'
+            + ' aria-expanded="' + (collapsed ? 'false' : 'true') + '"'
+            + ' aria-label="Archived chats"'
+            + toggleAttr + keyAttr + '>'
+            + '<span class="history-section-chevron" aria-hidden="true">'
+            + '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">'
+            + '<polyline points="6 9 12 15 18 9"/>'
+            + '</svg>'
+            + '</span>'
+            + '<div class="history-section-title">Archived'
+            + '<span class="history-section-count" title="' + count + ' archived chat' + (count === 1 ? '' : 's') + '">' + count + '</span>'
+            + '</div>'
+            + '<div class="history-section-actions"></div>'
+            + '</div>';
+    }
+
     // Drop `?archived=only` rows the main list already shows. A backend
     // without `?archived=` support returns the full list here — filtering
     // yields an empty Archived section instead of a duplicate panel.
@@ -77,6 +152,13 @@
         isActiveId,
         filterArchivedSessions,
         staleArchivedMarks,
+        markArchivedIds,
+        unmarkArchivedIds,
+        isArchivedId,
+        isArchiveSectionCollapsed,
+        storeArchiveSectionCollapsed,
+        archivedSectionClassName,
+        archivedSectionHeaderHTML,
     };
 
     const ns = (root.CuttleChatHistoryArchive = root.CuttleChatHistoryArchive || {});

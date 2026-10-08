@@ -48,11 +48,14 @@ def test_chat_pushes_activity_snapshot_to_shell():
     assert "CuttleSpaces.notePushSnapshot(" in shell
     # Frames push only the chats they own (stale history-row spinners for
     # other chats used to re-arm space tabs after the poll cleared them).
+    # Snapshot decisions live in chat_activity.js (CuttleChatActivity); the
+    # owned-only contract is covered behaviorally in
+    # test_chat_activity.py::test_collect_frame_snapshot.
     snap = chat.split("function collectChatActivitySnapshot()", 1)[1].split(
         "function scheduleChatActivityBroadcast()", 1
     )[0]
     assert ".chat-history-item" not in snap
-    assert "owned:" in snap
+    assert "CuttleChatActivity.collectFrameSnapshot(" in snap
 
 
 def test_background_finish_marks_unread_and_queue_strings_parse():

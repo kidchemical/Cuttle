@@ -29,3 +29,7 @@ Thumbs.db
 # Electron CDP repro user-data dirs (Chromium cache/profile junk)
 .cdp-repro*/
 
+
+# Bundled Python runtime for packaged Hosts (bundle-python.js)
+python-bundle/
+python-bundle-extract/

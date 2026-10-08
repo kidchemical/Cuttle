@@ -63,7 +63,7 @@ def device_workers_enabled() -> bool:
 
 
 def worker_token() -> str:
-    """Optional shared bearer override (legacy). Prefer auto-enroll per device."""
+    """Optional shared bearer override (legacy). Prefer host-approved pairing per device."""
     explicit = _env("CUTTLE_DEVICE_WORKERS_TOKEN")
     if explicit:
         return explicit

@@ -218,9 +218,8 @@ def default_use_cases() -> List[Dict[str, Any]]:
     The classifier/brain decides the kind of work; this table decides which
     harness is best at it. Targets use agent defaults (empty model) except
     Cursor, so a fresh install never names a model it may not have.
-    Priorities only order overlapping blocks (smaller = matched first);
-    ``general-chat`` / ``coding-model`` / ``frontier-coding`` keep their
-    original priorities so the seed migration below still recognizes them.
+    Priorities only order overlapping blocks (smaller = matched first),
+    in complexity order: general (10) → everyday coding (20) → deep work (30).
     """
     auto = ("cursor", "auto")
     grok = ("cursor", "grok-4.6")
@@ -248,27 +247,6 @@ def default_use_cases() -> List[Dict[str, Any]]:
     ]
 
 
-# First seed run shipped complexity-inverted priorities (frontier=20,
-# coding=30). Migrate untouched seed blocks to the complexity ordering.
-_OLD_SEED_PRIORITIES = {"general-chat": 10, "frontier-coding": 20, "coding-model": 30}
-_NEW_SEED_PRIORITIES = {"general-chat": 10, "coding-model": 20, "frontier-coding": 30}
-
-
-def _migrate_seed_priorities(use_cases: List[Dict[str, Any]]) -> bool:
-    """Update old seed priorities in place. True if anything changed."""
-    changed = False
-    for uc in use_cases:
-        uc_id = uc.get("id")
-        if (
-            uc_id in _OLD_SEED_PRIORITIES
-            and uc.get("priority") == _OLD_SEED_PRIORITIES[uc_id]
-            and _NEW_SEED_PRIORITIES[uc_id] != uc["priority"]
-        ):
-            uc["priority"] = _NEW_SEED_PRIORITIES[uc_id]
-            changed = True
-    return changed
-
-
 # ── load / save ──────────────────────────────────────────────────────────────
 
 def load_use_cases(*, seed: bool = True) -> List[Dict[str, Any]]:
@@ -280,19 +258,12 @@ def load_use_cases(*, seed: bool = True) -> List[Dict[str, Any]]:
     if not isinstance(raw, list):
         return []
     out: List[Dict[str, Any]] = []
-    dirty = False
     for item in raw:
         uc, err = normalize_use_case(item)
         if err or not uc:
             print(f"[AGENT-ROUTER] event=use_case_skipped error={err!r}", flush=True)
             continue
-        if _migrate_seed_priorities([uc]):
-            dirty = True
         out.append(uc)
-    if dirty:
-        raw2 = _agent_router_raw()
-        raw2[SUBKEY] = out
-        _write_agent_router(raw2)
     return out
 
 

@@ -25,6 +25,7 @@ _personal/
 !.cuttle/scripts/git-hooks/scanner-exceptions.json
 !electron/package.json
 !electron/package-lock.json
+!electron/python-runtime.json
 !apps/mobile/**/*.json
 !src/pipelines/*.json
 !src/api/agent_router/suites/*.json

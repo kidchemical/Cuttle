@@ -1041,6 +1041,18 @@ class DeviceWorkerStore:
             finally:
                 conn.close()
 
+    def ensure_local_worker_token(self, worker_id: str, *, hostname: str = "") -> str:
+        """Token for the host's own local worker loop (in-process, no HTTP).
+
+        Reuses the existing enrolled token or mints one. The daemon calls
+        this at startup so the local loop authenticates as exactly its own
+        worker id instead of relying on loopback trust.
+        """
+        wid = (worker_id or "").strip()
+        if not wid:
+            raise ValueError("worker_id required")
+        return str(self.enroll_device(worker_id=wid, hostname=hostname)["token"] or "")
+
     def is_enrolled(self, worker_id: str) -> bool:
         wid = (worker_id or "").strip()
         if not wid:
