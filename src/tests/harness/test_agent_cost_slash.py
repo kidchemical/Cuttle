@@ -43,6 +43,7 @@ HARNESS_IDS = ("cursor", "codex", "muse", "claude", "deepseek", "antigravity", "
 WEB = Path(__file__).resolve().parents[2] / "web"
 CHAT_JS = WEB / "js" / "chat/chat_page.js"
 SLASH_JS = WEB / "js" / "chat/chat_slash.js"
+USAGE_LIVE_JS = WEB / "js" / "chat/chat_usage_live.js"
 CHAT_CSS = WEB / "css" / "chat_page.css"
 
 node_only = pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
@@ -947,10 +948,12 @@ def test_pricing_renderer_highlights_active_row(tmp_path):
 @node_only
 def test_palette_offers_cost_for_every_harness_badge(tmp_path):
     # Registry tables + pure decision layer live in chat_slash.js (Phase 3
-    # Slice 2); chip-gated assembly stays in chat_page.js.
+    # Slice 2); usage-chip assembly is CuttleUsageLive.harnessUsageCommands;
+    # the chip gates stay in chat_page.js.
     src = CHAT_JS.read_text(encoding="utf-8")
     slash_src = SLASH_JS.read_text(encoding="utf-8")
     slash_mod = str(SLASH_JS).replace("\\", "\\\\")
+    usage_mod = str(USAGE_LIVE_JS).replace("\\", "\\\\")
     parts = [
         _extract_js_const(slash_src, "HARNESS_USAGE_SLASH_BY_AGENT"),
         _extract_js_const(slash_src, "HARNESS_COST_AGENT_LABELS"),
@@ -967,6 +970,7 @@ def test_palette_offers_cost_for_every_harness_badge(tmp_path):
     ]
     script = (
         f"const CuttleChatSlash = require({slash_mod!r});\n"
+        f"const CuttleUsageLive = require({usage_mod!r});\n"
         "let slashCtx = {chat: {chips: []}, welcome: {chips: []}};\n"
         "const { isStickyAgentChip, isStickyMuseAgentChip, isStickyCodexAgentChip, "
         "isStickyHermesAgentChip, isStickyOpenCodeAgentChip, harnessCostSlashCommand, "
