@@ -278,7 +278,7 @@ Success criteria for the benchmark: correct frames, sensible scheduling (idle GP
 
 ## Security (non-negotiable before broad remote exec)
 
-- Worker ↔ coordinator auth (auto-enroll on LAN + per-device bearer); TLS on LAN where practical.
+- Worker ↔ coordinator auth (host-approved pairing + per-device bearer bound to the worker id); remote HTTPS pinned by public key.
 - Allowlisted job types and path roots; no open-ended remote shell for untrusted sessions.
 - Phase 1 items (CORS, owner checks, rate limits) remain higher priority than exposing a mesh.
 - Client devices: worker opt-in or clearly labeled default; easy disable (`workerMode: false`).

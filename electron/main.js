@@ -1086,7 +1086,7 @@ async function startWorkerSidecar() {
         });
         console.log('Device worker enrolled with host as', workerId);
     } catch (err) {
-        console.error('Device worker auto-enroll failed:', err.message || err);
+        console.error('Device worker pairing failed:', err.message || err);
         if (!workerToken) {
             console.error('No enrolled token — sidecar not started. Reconnect Client to retry.');
             return;

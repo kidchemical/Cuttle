@@ -35,7 +35,7 @@ BYO-CLI installer retirement):
 
 | Role | Notes |
 |---|---|
-| Flask `app` factory-in-place | TLS cert helpers, CORS-ish headers, rate limiter, static/HTML routes |
+| Flask `app` factory-in-place | TLS bootstrap (cert owner `api.tls_cert`), CORS-ish headers, rate limiter, static/HTML routes |
 | Chat-turn HTTP ingress | `POST /api/chat`, `process_message_with_bot` (compat), SSE stream, steer/cancel; decisions in `chat_turn` / `chat_coordinator` / `chat_turn_workflow` |
 | Restart / status HTTP | `/api/flask/restart*`, `/api/status`, `/api/health` |
 | Grab bag of product HTTP | router/agent palettes, per-harness pins, shell panes, sessions, TTS/widget/terminal/mobile registers, usage-live |

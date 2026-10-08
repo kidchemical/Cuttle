@@ -17,9 +17,9 @@ start_cuttle.sh | src/scripts/cuttle_daemon.py
   → Flask restart: daemon reads the restart request file from the per-user instance state dir (not agent taskkill)
 ```
 
-**Electron Host:** `.cuttle/scripts/launch-cuttle-host.sh` → `electron/main.js` `--mode=host` (Chromium sandbox via `electron-sandbox.sh`). Host talks to local Flask.
+**Electron Host:** `.cuttle/scripts/launch-cuttle-host.sh` → `electron/main.js` `--mode=host` (Chromium sandbox via `electron-sandbox.sh`). Host talks to local Flask. A **packaged** Host runs its daemon on the bundled Python runtime (`resources/python`, built by `electron/bundle-python.js` from the pinned `electron/python-runtime.json` + `python-constraints.txt`); it never uses system Python or a repo `.venv`. Clean-environment check: `electron/tests/packaged-host-e2e.cjs` (CI `packaged-host.yml`).
 
-**Electron Client:** LAN thin client; enrolls as a **device worker** (`electron/device-worker/cuttle_device_worker.py` + `src/scripts/cuttle_device_worker.py`).
+**Electron Client:** LAN thin client; pairs as a **device worker** after host approval (`electron/device-worker/cuttle_device_worker.py` + `src/scripts/cuttle_device_worker.py`). Remote HTTPS trust is owned by `electron/tls-trust.js`: loopback keeps the self-signed exception, a remote Host is trusted only by its pinned public key (trust on first use; `python -m api.tls_cert fingerprint` on the Host). Desktop `app.asar` updates come only over that pinned identity; packaged Hosts report `updateSource: "release"` and build none (`api.desktop_electron`).
 
 **Android:** `apps/mobile` Capacitor shell; `apps/android_companion` / `apps/android_bt_voice` are additional native surfaces.
 
@@ -39,7 +39,7 @@ batch-watch writes invoke it; `AuthDatabase.add_message_once` owns atomic chat
 delivery receipts. Runbook: [render-result-attachments.md](../../.cuttle/docs/render-result-attachments.md).
 
 `src/api/web_chat_api.py` owns the `Flask app`, HTML routes, chat-turn HTTP,
-TLS helpers, and **registers**. Only the `try/except`
+TLS bootstrap (certificate owner: `api.tls_cert`), and **registers**. Only the `try/except`
 rows below are nonfatal (failure logged, boot continues); `auth_bp` and
 `usage_live_bp` register unconditionally (a failure there is fatal):
 
@@ -254,7 +254,7 @@ Trust posture: opted-in project code is trusted unsandboxed, no sandbox claims.
 
 ## Workers mesh
 
-Coordinator HTTP: `/api/workers/*` (`device_workers`). Store: gitignored SQLite via `CUTTLE_DEVICE_WORKERS_DB` / default path. Enroll is LAN/RFC1918 + setting (see GitHub #1). Runtime claim/complete still loopback-friendly.
+Coordinator HTTP: `/api/workers/*` (`device_workers`). Store: gitignored SQLite via `CUTTLE_DEVICE_WORKERS_DB` / default path. First enrollment is **host-approved pairing** (`device_workers.enroll_approval`): an eligible peer (loopback, or LAN with `discovery.lan_access_enabled`) gets HTTP 202 with a code, the owner approves in Jobs → Devices, and the worker collects its token once with its pairing secret. LAN IP alone never mints a credential, and re-enroll never echoes an existing one. Runtime routes require a token bound to the server-side worker id — there is no loopback exemption; the daemon's local loop gets its own token in-process (`ensure_local_worker_token`). The shared `CUTTLE_DEVICE_WORKERS_TOKEN` override remains as legacy.
 
 ---
 
