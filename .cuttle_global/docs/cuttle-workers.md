@@ -211,20 +211,6 @@ PYTHONPATH=src .venv/bin/python -m api.device_workers.cli batch-watch --batch-id
 3. Card `watch.url` must point at that status file (`/output/<id>-status.json`).
 Details / schema → `action-forms.md` (Multi-bar progress).
 
-### Frame grid (Progress grid producer)
-
-`batch-watch` emits the generic watch `grid` (`action-forms.md` → Progress grid)
-with `unit: "frame"`, one group per worker, and `marked` = gap-fill. It needs
-the `progress_grid` experimental flag. Worker bars include advertised Blender GPU labels.
-
-Local output inventory takes precedence over shard success (`verified`). With
-inaccessible output the grid is `reported`; successful shard spans provide
-completion evidence. Reclaimed or overlapping chunks without clear producer
-evidence show completed frames with no group. `running` cells mean a worker is
-active on the containing chunk, not proof that Blender is processing that frame.
-Terminal snapshots retain the grid. Teardown of this producer:
-`build_batch_frame_grid` and its guarded call in `device_workers.platform`.
-
 ### Benchmark: update a Client from host
 
 1. Client: client daemon + Electron Client → online in `workers.list`.
@@ -272,16 +258,3 @@ Self-update refuses a dirty/untracked checkout, detached HEAD, missing upstream,
 and local/diverged commits before stopping processes. Ignored personal files stay
 in place; incoming tracked-file collisions are refused. Save/reconcile local work
 explicitly before retrying. It does not stash, hard-reset or clean your checkout.
-
-## Automatic render result attachments
-
-For batches that should publish their result to the originating chat, register
-the batch once with `python -m api.device_workers.render_results register
---batch-id ID --session CH-... --output-dir /absolute/host-visible/frames` after
-submitting shards. The experimental `render_result_attachments` flag gates
-delivery. The server attaches verified completed frames without an agent reply;
-add `--video-path PATH --encode-job-id ID` once the encode job exists for a
-separate video attachment after successful encoding. After copying remote output
-to the host, run `python -m api.device_workers.render_results reconcile
---batch-id ID`; watch writes also retry. Do not manually repost the same output.
-Details and authenticated HTTP API: [render-result-attachments.md](../../.cuttle/docs/render-result-attachments.md).

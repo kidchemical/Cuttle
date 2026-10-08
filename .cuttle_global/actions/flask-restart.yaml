@@ -8,6 +8,10 @@ description: >-
   The chat session id is passed automatically so the ack/completion lands in
   the chat that clicked the button.
 type: shell
+replay:
+  default: once
+  modes:
+    status: reusable
 run: powershell -NoProfile -ExecutionPolicy Bypass -File .cuttle_global\scripts\restart-flask.ps1
 run_posix: .venv/bin/python .cuttle_global/scripts/restart-flask.py
 workdir: .

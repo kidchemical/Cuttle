@@ -105,10 +105,13 @@ Experimental settings, while its functionality remains gated.
 
 ## Adding a new experimental feature
 
-Planned agent-context ownership and migration:
-[feature-owned context bundles](experimental-context-bundles.md). Feature
-operational guidance should follow resolved enablement; loader support is still
-proposed, so a shipped file's presence currently does not imply context gating.
+Agent-context ownership and migration:
+[feature-owned context bundles](experimental-context-bundles.md). Register
+`FlagSpec(context_bundle=True)` and ship operational rules/docs/skills/recipes
+under `.cuttle_global/features/<flag-id>/`. The shared resolver exposes these
+resources only when the existing flag resolver enables the feature. Personal
+deltas belong under `<home>/personal/features/<flag-id>/`. Core guidance remains
+independent; packaged source presence does not imply operational availability.
 
 1. Add one row in `src/api/experimental/features.py`, normally default-off.
 2. Gate behavior with `api.experimental.is_enabled("your_flag")`.

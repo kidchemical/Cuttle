@@ -22,7 +22,7 @@ from api.experimental.flags import FlagSpec, register_flag
 register_flag(FlagSpec(
     id="render_result_attachments", label="Render result attachments",
     description="Automatically save verified render previews and encoded videos to the originating chat for registered batches.",
-    default=False, category="power", risk="low", since="0.0.0", needs_restart=False,
+    default=False, category="power", risk="low", since="0.0.0", needs_restart=False, context_bundle=True,
 ))
 
 register_flag(FlagSpec(
@@ -47,7 +47,7 @@ register_flag(FlagSpec(
     id="progress_grid",
     label="Progress grid",
     description="Show a cell-per-item progress grid (frames, files, tests, shards…) on watch cards whose status includes one, coloured by who did each item.",
-    default=False, category="ui", risk="low", since="0.0.0", needs_restart=False,
+    default=False, category="ui", risk="low", since="0.0.0", needs_restart=False, context_bundle=True,
 ))
 
 register_flag(FlagSpec(
@@ -77,7 +77,7 @@ register_flag(FlagSpec(
 register_flag(FlagSpec(
     id="gizmos", label="Gizmos",
     description="Live UI objects outside chat bubbles: pin usage meters (Codex, Claude, Cursor) to the title bar or blade bar, float them over every Space, or pop them out as always-on-top desktop windows. Manage them in Apps → Gizmos.",
-    default=False, category="ui", risk="low", since="0.0.0", needs_restart=False,
+    default=False, category="ui", risk="low", since="0.0.0", needs_restart=False, context_bundle=True,
 ))
 
 # Achievements: default OFF. Experimental features are opt-in by design; a

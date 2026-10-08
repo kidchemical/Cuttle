@@ -4,6 +4,7 @@ description: >-
   List LAN device workers (online status, capabilities). Agent-agnostic mesh verb.
   Optional params: online_only=true
 type: shell
+replay: reusable
 run: powershell -NoProfile -ExecutionPolicy Bypass -File .cuttle_global\scripts\workers-cli.ps1 list
 run_posix: .venv/bin/python -m api.device_workers.cli list
 workdir: .

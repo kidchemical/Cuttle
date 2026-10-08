@@ -93,7 +93,7 @@ def _resolved_skills(project_path: Optional[str] = None) -> List[Tuple[Dict[str,
             if raw is None:
                 continue
             sid = child.name
-            key = sid.lower()
+            key = f"{source}/{sid}".lower() if source.startswith("feature/") else sid.lower()
             if key in seen:
                 continue
             seen.add(key)

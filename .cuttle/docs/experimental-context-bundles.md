@@ -1,6 +1,7 @@
 # Feature-owned context bundles
 
-Status: proposed design; runtime discovery and context gating are not implemented.
+Status: implemented; feature registry association, shared catalog gating and resume withdrawal are covered by regression tests.
+Tracking: [GitHub issue #22](https://github.com/kidchemical/Cuttle/issues/22).
 
 Experimental features ship their agent guidance with the feature. Resolved
 enablement determines whether that guidance is available to a chat. Conditional
@@ -9,7 +10,7 @@ be absent from the effective context catalog.
 
 ## Ownership and layout
 
-Proposed shared layout, extending the existing Cuttle config tree:
+Shared layout, extending the existing Cuttle config tree:
 
 ```text
 .cuttle_global/features/<feature-id>/
@@ -95,7 +96,7 @@ mid-turn behavior remains governed by runtime gates. Do not promise to rewrite
 an already-running vendor agent's prompt. Ordinary flag changes should require
 no Flask restart; adding loader code follows the existing reload procedure.
 
-## Implementation sequence
+## Implementation and validation
 
 1. Add the shared bundle resolver and registry association with validated roots,
    feature-qualified identities and captured availability.
@@ -115,6 +116,26 @@ effective catalog with optional judging disabled and enabled, and across
 multiple independent features. Disabled feature text must not appear anywhere
 in the prepared operational envelope or ranker candidates.
 
-Current seams: `api.experimental.flags`, `api.cuttle_brain.context_compiler`,
+`FlagSpec(context_bundle=True)` associates a registered flag with its same-id
+bundle. Capture resolved flags once per full compile/resume preparation. Content
+hashes cover enabled resources and script dependencies; receipt preparation
+compares snapshots before acknowledgment and falls back when state changes.
+`GLOBAL.ini rules=shadow` can shadow a feature rule by its basename. Recipe
+collisions involving a bundle are rejected, including command aliases. Personal
+Markdown appends and structured units replace within the same feature identity.
+
+Migrated operational guidance: Gizmos usage meters/shell docks, Progress Grid
+and render-result attachments. Tasks remains core. Other experiments currently
+have no shipped operational bundle; add one when they need agent guidance. No
+feature services are started by discovery. Maintainers can still read raw tracked
+source when developing a disabled feature; the catalog gates agent operations.
+Existing personal deltas on core runbooks remain user-authored core guidance;
+move optional workflow deltas into `personal/features/<id>/` to scope them.
+
+Coverage: `src/tests/experimental/test_context_bundles.py`, Brain receipt/delta
+suites, recipe/skill suites and architecture boundaries. New loader code requires
+one Flask reload; subsequent enablement changes need no restart.
+
+Owning seams: `api.experimental.flags`, `api.cuttle_brain.context_compiler`,
 `context_delta`, `api.markdown_skills`, `api.jev.rank`, `api.project_commands`,
 `api.project_actions`, and `api.cuttle_ui_capabilities`.

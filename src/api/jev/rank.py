@@ -52,6 +52,8 @@ def _doc_summaries(project_path: Optional[str], inventory: Dict[str, List[str]])
     except Exception:
         global_config = None
     out: List[Dict[str, str]] = []
+    from api.experimental.context_bundles import markdown
+    global_names.extend(name for name, _ in markdown("docs", project_path))
     seen = set()
     # Project-first ownership at candidate selection (not just body
     # resolution): project names lead, then remaining global names, under
@@ -96,6 +98,12 @@ def _skill_summaries(project_path: Optional[str] = None) -> List[Dict[str, str]]
 
 
 def _read_doc_body(name: str, project_path: Optional[str]) -> str:
+    if name.startswith("feature/"):
+        from api.experimental.context_bundles import read_doc
+        return read_doc(name, project_path)
+    # Catalog lookup is never an arbitrary path read.
+    if Path(name).name != name:
+        return ""
     from api.cuttle_brain.context_compiler import _cuttle_dirs, _cuttle_global_config
     from api.cuttle_brain.personal_overlay import read_cuttle_file_merged
     from api.cuttle_brain.global_layers import load_global_layers, global_doc_enabled
@@ -133,6 +141,10 @@ def _read_skill_body(ref: str, project_path: Optional[str] = None) -> str:
     return str(got.get("body_markdown") or "")
 
 
+from api.experimental.context_bundles import capture_call
+
+
+@capture_call
 def rank_context(
     user_prompt: str,
     *,

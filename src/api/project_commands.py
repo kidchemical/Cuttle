@@ -161,6 +161,10 @@ def _parse_command_file(path: Path, project_path: str) -> Optional[Dict[str, Any
     }
 
 
+from api.experimental.context_bundles import capture_call
+
+
+@capture_call
 def list_project_commands(project_path: str) -> List[Dict[str, Any]]:
     """Return palette-ready command dicts for a project path (may be empty)."""
     if not project_path:
@@ -170,26 +174,47 @@ def list_project_commands(project_path: str) -> List[Dict[str, Any]]:
     sources = dict(scoped_unit_dirs(project_path, "commands", GLOBAL_COMMANDS_DIR.parent))
     seen: set = set()
     out: List[Dict[str, Any]] = []
+    owners = {}
+    ambiguous = set()
     for commands_dir in _commands_dirs_for_project(project_path):
         try:
             files = sorted(commands_dir.glob("*.md"), key=lambda p: p.name.lower())
         except OSError:
             continue
         for path in files:
+            if path.is_symlink():
+                continue
             if path.name.upper() == "README.MD":
                 continue
             cmd = _parse_command_file(path, project_path)
             if not cmd:
                 continue
             key = cmd["name"]
+            source = sources[commands_dir]
+            feature = source.removeprefix("feature/") if source.startswith("feature/") else None
             if key in seen:
+                if owners[key] != feature and (feature or owners[key]):
+                    ambiguous.add(key)
                 continue
             seen.add(key)
+            owners[key] = feature
             if cmd["disabled"]:
                 continue
             cmd["source"] = sources[commands_dir]
+            if feature:
+                cmd["feature_id"] = feature
             cmd["ref"] = f"{cmd['source']}/{key}"
             out.append(cmd)
+    out = [c for c in out if c["name"] not in ambiguous]
+    identities = {}
+    for cmd in out:
+        for name in [cmd["name"], *cmd.get("aliases", [])]:
+            identities.setdefault(name, []).append(cmd)
+    ambiguous_commands = set()
+    for matches in identities.values():
+        if len(matches) > 1 and any(c.get("feature_id") for c in matches):
+            ambiguous_commands.update(c["ref"] for c in matches)
+    out = [c for c in out if c["ref"] not in ambiguous_commands]
     out.sort(key=lambda c: (c.get("title") or c.get("name") or "").lower())
     return out
 
@@ -210,6 +235,9 @@ def find_project_command(project_path: str, name: str) -> Optional[Dict[str, Any
 
 def build_agent_prompt(cmd: Dict[str, Any], user_args: str = "") -> str:
     """Expand a project command into the prompt sent to the agent."""
+    from api.experimental.context_bundles import executable_available
+    if not executable_available(cmd, cmd.get("project_path")):
+        raise ValueError("Feature command is unavailable")
     title = cmd.get("title") or cmd.get("name")
     name = cmd.get("name")
     body = (cmd.get("body") or "").strip()
@@ -291,6 +319,9 @@ def run_project_command_shell(
     registry so Stop / ``/api/chat-cancel`` kills it (and any ``watch:`` job).
     """
     recipe = cmd.get("run")
+    from api.experimental.context_bundles import executable_available
+    if not executable_available(cmd, cmd.get("project_path")):
+        return {"success": False, "error": "Feature command is unavailable."}
     if not recipe:
         return {"success": False, "error": "Command has no run: recipe"}
     cwd = resolve_run_cwd(cmd)
