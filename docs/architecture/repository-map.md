@@ -194,6 +194,7 @@ with its page as transport/DOM composition. Runbook:
 | Kernel | `src/api/agent_harness/kernel.py` |
 | Router | `src/api/agent_router/` |
 | CLI wrappers | `src/scripts/utilities/*_cli_tool.py` |
+| Muse follow-up receipts | `src/api/agent_harness/steer_delivery.py` — turn-local acceptance/echo reconciliation; `muse_serve_turn.py` owns MSP transport, late-send rejection and receipt event recognition. Unconfirmed input gets a visible resend notice, never an automatic rerun. Tests: `test_muse_steer_delivery.py`. |
 | Codex thread writer ownership | `src/api/agent_harness/codex_thread_ownership.py` — process-local leases shared by app-server turns, exec/resume, context probes, and compaction; `test_codex_thread_ownership.py` + `test_codex_ownership_handoff.py`; process teardown stays in `scripts.utilities.agent_process` |
 | Project commands/actions | `{project}/.cuttle/` + global `.cuttle_global/` |
 | Brain / context compile | `src/api/cuttle_brain/` |

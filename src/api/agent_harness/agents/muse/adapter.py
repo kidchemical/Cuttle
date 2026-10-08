@@ -493,6 +493,8 @@ class Adapter:
         meta = badge_meta("muse", mid, model_source, effort, effort_source)
         if raw.get("steered"):
             meta["steered"] = int(raw["steered"])
+        if raw.get("undelivered_steers"):
+            meta["undelivered_steers"] = list(raw["undelivered_steers"])
         # On interrupt, muse_cli_tool already packs partial text + digest into
         # output — prefer that for the chat bubble over the short error alone.
         if ok:

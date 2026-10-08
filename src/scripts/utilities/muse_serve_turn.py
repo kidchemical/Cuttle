@@ -1,8 +1,8 @@
 """Muse Code turns on ``muse serve`` (MSP over stdio) so follow-ups can steer.
 
 Same result dict as ``MuseCliTool.execute_prompt`` (``muse exec --json``),
-plus ``steered``. Returns ``{"fallback": True, …}`` when the host could not
-start a turn (resume id unknown to this host, spawn error),
+plus ``steered`` and ``undelivered_steers``. Returns ``{"fallback": True, …}``
+when the host could not start a turn (resume id unknown to this host, spawn error),
 so the adapter reruns the prompt on ``exec``.
 """
 
@@ -155,6 +155,7 @@ async def run_muse_turn_serve(
     meta_provider = not prov or prov.lower() == "meta"
 
     from api.agent_harness import steer as steer_registry
+    from api.agent_harness.steer_delivery import SteerDelivery, undelivered_notice
     from api.agent_harness.activity import ActivityEmitter, TextActivityLog, ToolActivityLog, text_preview
 
     argv = [muse_bin, "serve", "--trust-workspace"]
@@ -180,6 +181,8 @@ async def run_muse_turn_serve(
     text_log = TextActivityLog("muse")
     tools = ToolActivityLog("muse", activity)
     text_kinds: Dict[Any, str] = {}
+    delivery = SteerDelivery()
+    accepting_steers = True
     activity.emit("Resuming Muse Code…" if rid else "Starting Muse Code…", force=True)
     st: Dict[str, Any] = {
         "session_id": None,
@@ -190,7 +193,6 @@ async def run_muse_turn_serve(
         "prompt_tokens": 0,
         "setup_error": None,
         "steer_token": None,
-        "steered": 0,
         "tool_count": 0,
         "writing": {},
     }
@@ -202,6 +204,8 @@ async def run_muse_turn_serve(
     reap_handle: List[Optional[asyncio.TimerHandle]] = [None]
 
     def _finish_connection() -> None:
+        nonlocal accepting_steers
+        accepting_steers = False
         if st["steer_token"] is not None:
             steer_registry.unregister(chat_session_id, st["steer_token"])
             st["steer_token"] = None
@@ -221,17 +225,26 @@ async def run_muse_turn_serve(
 
     def _steer_send(text: str) -> "concurrent.futures.Future":
         out: "concurrent.futures.Future" = concurrent.futures.Future()
+        receipt = None
 
         def _done(_result: Optional[Dict[str, Any]], error: Optional[Dict[str, Any]]) -> None:
             if out.done():
                 return
-            if error is not None:
+            accepted = receipt is not None and delivery.acknowledge(receipt, succeeded=error is None)
+            if not accepted:
                 out.set_result((False, rpc_error_text(error)))
             else:
-                st["steered"] += 1
+                if not receipt.received:
+                    activity.emit(f"steer queued: {_first_line(text, 100)} (waiting for Muse Code receipt)", force=True)
                 out.set_result((True, None))
 
         def _params() -> Dict[str, Any]:
+            nonlocal receipt
+            # This factory runs on the event loop, after the Flask thread's
+            # callback was scheduled. Completion may have happened meanwhile.
+            if not accepting_steers or st["terminal"] is not None:
+                raise RuntimeError("turn is no longer active")
+            receipt = delivery.begin(text)
             params: Dict[str, Any] = {
                 "commandId": command_id(),
                 "sessionId": st["session_id"],
@@ -370,10 +383,10 @@ async def run_muse_turn_serve(
         if kind in ("agentMessage", "reasoning"):
             text_kinds[item.get("itemId")] = "writing" if kind == "agentMessage" else "thinking"
         if kind == "userMessage":
-            if method == "item/completed" and item.get("steered"):
-                activity.emit(
-                    f"steer received: {_first_line(item.get('text') or '', 100)}", force=True
-                )
+            if method == "item/completed" and item.get("steered") and accepting_steers:
+                text = str(item.get("text") or "")
+                if delivery.receive(text, item.get("itemId")):
+                    activity.emit(f"steer received: {_first_line(text, 100)}", force=True)
             return
         if kind == "agentMessage":
             if method == "item/started":
@@ -489,6 +502,9 @@ async def run_muse_turn_serve(
         if st["setup_error"] is None:
             st["setup_error"] = f"muse serve failed: {exc}"
     finally:
+        # EOF, cancellation and transport failures must also resolve pending
+        # steer Futures so callers can fall back to their follow-up queue.
+        _finish_connection()
         text_log.flush()
         stop_hb.set()
         if hb_task is not None:
@@ -496,9 +512,6 @@ async def run_muse_turn_serve(
                 await asyncio.wait_for(hb_task, timeout=1.0)
             except Exception:
                 hb_task.cancel()
-        if st["steer_token"] is not None:
-            steer_registry.unregister(chat_session_id, st["steer_token"])
-            st["steer_token"] = None
         if reap_handle[0] is not None:
             reap_handle[0].cancel()
         if run is None and proc.returncode is None:
@@ -506,17 +519,21 @@ async def run_muse_turn_serve(
 
     session_id = st["session_id"]
     # exec shows only the terminal text; a steered turn can answer in several messages.
-    if st["steered"]:
+    if delivery.accepted_count:
         display = "\n\n".join(messages).strip()
     else:
         display = messages[-1] if messages else ""
     if not display and st["writing"]:
         display = "\n\n".join(v for v in st["writing"].values() if v).strip()
+    undelivered = delivery.undelivered
+    if undelivered:
+        display = f"{display}\n\n{undelivered_notice('Muse Code', undelivered)}".strip()
     stderr = (run.stderr if run is not None else b"").decode("utf-8", errors="replace").strip()
     base: Dict[str, Any] = {
         "usage": _usage_from_turn(st["turn_usage"], st["prompt_tokens"]),
         "muse_session_id": session_id,
-        "steered": st["steered"],
+        "steered": delivery.received_count,
+        "undelivered_steers": undelivered,
         "transport": "serve",
         "stderr": stderr[:4000],
     }
