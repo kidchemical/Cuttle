@@ -12,7 +12,6 @@ body[data-page="projects"] { color: var(--project-text); font-size: 14px; line-h
 /* Frame (inset, width) comes from .cuttle-page in compact_page.css. */
 /* Header type comes from the shared backbone (.compact-page-title in
    compact_page.css); this page only owns header layout. */
-.projects-header { display: flex; justify-content: space-between; gap: 24px; align-items: center; }
 h2, h3 { font-weight: 650; color: var(--project-text); letter-spacing: -.025em; }
 h2 { margin: 0 0 6px; font-size: 22px; }
 h3 { margin: 0 0 16px; font-size: 15px; letter-spacing: -.01em; }
@@ -124,7 +123,6 @@ dialog .actions { justify-content: flex-end; margin-top: 20px; }
 }
 @media (max-width: 720px) {
     h2 { font-size: 20px; }
-    .projects-header { gap: 12px; align-items: flex-start; }
     .projects-header > .actions { flex-wrap: nowrap; gap: 6px; }
     #refresh .desktop-label { display: none; }
     #refresh { padding: 10px; min-width: 44px; }

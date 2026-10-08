@@ -4,11 +4,11 @@
 .dash-page { overflow: visible; }
 
 .dash-page-bar {
-    display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px;
+    display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
     overflow: visible; position: relative; z-index: 20;
 }
 .dash-page-bar .compact-page-title { flex: 1; margin: 0; }
-.dash-page-bar .dash-back { margin: 4px 0 0; }
+.dash-page-bar .dash-back { flex-shrink: 0; }
 
 .dash-meta {
     display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center;
@@ -76,10 +76,6 @@
     background: var(--section-bg); color: var(--text-primary); font-size: 12px;
 }
 .dash-source-picker p { flex-basis: 100%; margin: 0; font-size: 11px; line-height: 1.4; color: var(--text-tertiary); }
-.dash-back {
-    background: none; border: none; color: var(--accent-color); cursor: pointer;
-    font-size: 13px; padding: 0;
-}
 
 .dash-hamburger {
     width: 36px; height: 36px; border-radius: 8px; border: 1px solid var(--border-color);

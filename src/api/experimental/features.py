@@ -85,7 +85,7 @@ register_flag(FlagSpec(
 register_flag(
     FlagSpec(
         id="achievements",
-        label="🏆 Achievements",
+        label="Achievements",
         description=(
             "Unlock Steam-style achievements as you use Cuttle — long turns, huge "
             "prompts, midnight runs, harness marathons. Each unlock plays a toast, "

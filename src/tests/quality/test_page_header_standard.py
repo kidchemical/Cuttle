@@ -3,8 +3,9 @@
 `src/web/css/compact_page.css` owns the title/subtitle type scale
 (`.compact-page-title`, 1.05rem/0.78rem). Product shell pages reuse it;
 page CSS owns layout and content below the header, never the header
-type scale. Documented variants (router sticky bar, feed eyebrow) keep
-the same tokens with page-owned chrome. Chat keeps its own header.
+type scale. There are no header variants: no full-bleed banners, eyebrow
+rows, or title icons; title and subtitle share one line (wrapping only
+when narrow). Chat keeps its own header.
 
 The same backbone owns the page frame: every shell page root carries
 `.cuttle-page` (inset + max width from `--page-*` tokens), and page CSS
@@ -39,9 +40,11 @@ PAGES = [
 FRAME_EXEMPT = {'git_graph_page.html'}
 FRAME_PROPS = re.compile(r'(?<![\w-])(padding|margin|max-width)\s*:')
 
-# Header classes that satisfy the standard: the backbone itself plus
-# documented variants (same type tokens, page-owned chrome).
-STANDARD_HEADERS = ('compact-page-title', 're-header', 'feed-header')
+# The only header class that satisfies the standard.
+STANDARD_HEADERS = ('compact-page-title',)
+
+# Pictographs in a page title (🏆, 🔀, …) — titles are plain text.
+EMOJI = re.compile('[\U0001F300-\U0001FAFF\u2600-\u27BF]')
 
 # Shared stylesheets that are not page-owned: theme/legacy/component
 # layers never set product header type.
@@ -213,3 +216,44 @@ def test_no_page_redefines_its_frame():
                     if FRAME_PROPS.search(body):
                         offenders.append((page, root, body.strip()[:80]))
     assert not offenders, f'page CSS re-declares the shared frame: {offenders}'
+
+
+def _page_titles(page):
+    text = _parse(page)[2]
+    sources = [text]
+    parser = _Links()
+    parser.feed(text)
+    for src in parser.scripts:
+        path = WEB / src.lstrip('/')
+        if src.startswith('/js/dashboards/') and path.is_file():
+            sources.append(path.read_text(encoding='utf-8'))
+    for source in sources:
+        yield from re.findall(r'<h1[^>]*>(.*?)</h1>', source, re.S)
+
+
+def test_page_titles_are_plain_text():
+    offenders = [
+        (page, title)
+        for page in PAGES
+        for title in _page_titles(page)
+        if EMOJI.search(title)
+    ]
+    assert not offenders, f'icons in page titles: {offenders}'
+
+
+def test_no_banner_or_eyebrow_header_chrome():
+    offenders = []
+    for page in PAGES:
+        text = _parse(page)[2]
+        for marker in ('re-header', 'feed-eyebrow', 're-logo'):
+            if marker in text:
+                offenders.append((page, marker))
+    assert not offenders, f'page-owned header chrome: {offenders}'
+
+
+def test_dashboards_back_is_the_round_icon_button():
+    js = (WEB / 'js/dashboards/dashboards_page.js').read_text(encoding='utf-8')
+    assert 'All dashboards</button>' not in js
+    assert 'class="page-icon-btn dash-back"' in js
+    backbone = (WEB / 'css' / 'compact_page.css').read_text(encoding='utf-8')
+    assert re.search(r'\.page-icon-btn\s*\{[^}]*border-radius:\s*50%', backbone)

@@ -1,5 +1,4 @@
 /* Frame (inset, width) comes from .cuttle-page in compact_page.css. */
-.achievements-header { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:16px; }
 /* Header type comes from the shared backbone (.compact-page-title in
    compact_page.css). */
 .achievements-controls { display:flex; flex-wrap:wrap; gap:8px; }

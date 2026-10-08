@@ -80,7 +80,8 @@ body.compact-shell-page .container {
 }
 
 .compact-page-title p,
-.compact-page-title .subtitle {
+.compact-page-title .subtitle,
+.compact-page-title .compact-page-subtitle {
     margin: 0;
     font-size: 0.78rem;
     color: var(--text-secondary);
@@ -97,29 +98,22 @@ body.compact-shell-page .container {
    (router) and eyebrow rows (agent feed) are documented variants:
    same type tokens, page-owned chrome. Chat keeps its own header. */
 
+/* Actions top-align with the title so taller buttons never push the
+   title down (every page's title sits at the same y). */
 .compact-page-title.has-actions {
     justify-content: space-between;
-    align-items: center;
+    align-items: flex-start;
+    gap: 8px 16px;
 }
 
+/* Title + subtitle share one baseline row (wrapping only when narrow),
+   with or without the heading wrapper — same as Jobs and Settings. */
 .compact-page-title .compact-page-heading {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 6px 10px;
     min-width: 0;
-}
-
-.compact-page-title .compact-page-heading h1 {
-    margin: 0;
-    font-size: 1.05rem;
-    font-weight: 650;
-    letter-spacing: -0.01em;
-    color: var(--text-primary);
-}
-
-.compact-page-title .compact-page-heading p {
-    margin: 2px 0 0 0;
-    font-size: 0.78rem;
-    color: var(--text-secondary);
-    line-height: 1.35;
-    max-width: 62ch;
 }
 
 .compact-page-actions {
@@ -129,6 +123,35 @@ body.compact-shell-page .container {
     flex-wrap: wrap;
     margin-left: auto;
     flex-shrink: 0;
+}
+
+/* Round icon button (back, refresh, …) — same chrome as the chat's
+   corner + / history buttons, minus their fixed positioning. */
+.page-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    flex-shrink: 0;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    border-radius: 50%;
+    cursor: pointer;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.18);
+    transition: background 0.2s, border-color 0.2s, color 0.2s, transform 0.08s;
+}
+
+.page-icon-btn:hover {
+    background: var(--bg-hover);
+    border-color: var(--accent-color);
+    color: var(--text-primary);
+}
+
+.page-icon-btn:active {
+    transform: translateY(1px);
 }
 
 /* Override legacy giant page-header if still present */
@@ -362,17 +385,6 @@ body.compact-shell-page .jobs-page {
 
 body.compact-shell-page .jobs-header {
     margin-bottom: 10px;
-}
-
-body.compact-shell-page .jobs-header h1 {
-    font-size: 1.05rem;
-    margin: 0 0 3px 0;
-}
-
-body.compact-shell-page .jobs-header p {
-    font-size: 0.74rem;
-    line-height: 1.35;
-    max-width: 72ch;
 }
 
 body.compact-shell-page .job-stats {
