@@ -4,9 +4,15 @@
 
     var pollTimer = null;
     var currentId = '';
-    var pageAfter = 0;
-    var pageStack = [];
-    var pageSeq = 0;
+    // Lazy-load accumulation: first chunk starts at firstAfter (0, or the
+    // seq deep-link cursor); later chunks append after the newest loaded row.
+    var firstAfter = 0;
+    var logEvents = [];
+    var logHasMore = false;
+    var logNextAfter = 0;
+    var logLoading = false;
+    var targetSeq = 0;
+    var pendingSeqScroll = 0;
     var lastTab = 'timeline';
     var lastStamp = '';
     var openKeys = Object.create(null);
@@ -41,6 +47,44 @@
 
     function eventKey(i) {
         return currentId + ':' + i;
+    }
+
+    function rowId(ev) {
+        if (!ev) return 0;
+        return Number(ev.detail_id != null ? ev.detail_id : ev.id) || 0;
+    }
+
+    // Pure append-merge for lazy loading: rows with a known id replace the
+    // loaded row in place (revision/text refresh), unknown ids append in
+    // order. Earlier rows never shift, so per-index open state stays valid.
+    function mergeLogRows(existing, rows) {
+        var out = (existing || []).slice();
+        var indexById = Object.create(null);
+        out.forEach(function (ev, i) {
+            var id = rowId(ev);
+            if (id && !(id in indexById)) indexById[id] = i;
+        });
+        (rows || []).forEach(function (row) {
+            var id = rowId(row);
+            if (id && (id in indexById)) out[indexById[id]] = row;
+            else {
+                if (id) indexById[id] = out.length;
+                out.push(row);
+            }
+        });
+        return out;
+    }
+
+    // Pure scroll predicate: load the next chunk when the reader nears the
+    // bottom while older steps remain, a load is not already in flight, and
+    // the payload came from the cursor-paged event store (the legacy
+    // full-payload fallback has nothing more to fetch).
+    function shouldLazyLoadMore(metrics, state) {
+        var m = metrics || {};
+        var s = state || {};
+        if (!s.eventStore || !s.hasMore || s.loading) return false;
+        var remaining = (m.scrollHeight || 0) - (m.scrollTop || 0) - (m.clientHeight || 0);
+        return remaining < 400;
     }
 
     function oneLiner(ev) {
@@ -344,7 +388,13 @@
                 '<div class="query-log-event-body"></div>' +
                 '</details>';
         }).join('');
-        if (data.event_store) html += '<div class="query-log-pages"><button type="button" data-log-page="previous"' + (pageStack.length ? '' : ' disabled') + '>Previous steps</button><button type="button" data-log-page="next"' + (data.has_more ? '' : ' disabled') + '>Next steps</button></div>';
+        if (data.event_store && data.has_more) {
+            html += '<div class="query-log-more" data-log-more>' +
+                (data.loading_more
+                    ? '<span class="query-log-spinner" aria-hidden="true"></span><span>Loading more steps…</span>'
+                    : '<button type="button" data-log-more-btn>Load more steps (' + events.length + ' shown)</button>') +
+                '</div>';
+        }
         if (isLive(data)) {
             html += '<div class="query-log-live" aria-live="polite"><span class="query-log-spinner" aria-hidden="true"></span><span>Live…</span></div>';
         }
@@ -409,14 +459,36 @@
         return '<pre class="query-log-json"><code class="language-json">' + jsonToHighlightedHtml(data) + '</code></pre>';
     }
 
+    // Re-render the scrollable body while holding the reader's place: content
+    // appended below must not yank the viewport, and a live turn pinned to
+    // the bottom stays pinned.
+    function paintTimelineInto(body, data, events, prefixHtml) {
+        var atBottom = (body.scrollHeight - body.scrollTop - body.clientHeight) < 140;
+        var prevTop = body.scrollTop;
+        var prevHeight = body.scrollHeight;
+        body.innerHTML = (prefixHtml || '') + renderTimeline(Object.assign({}, data, { events: events }));
+        bindTimeline(body, events);
+        if (atBottom && isLive(data)) {
+            var liveEl = body.querySelector('.query-log-live');
+            if (liveEl && liveEl.scrollIntoView) liveEl.scrollIntoView({ block: 'nearest' });
+            else body.scrollTop = body.scrollHeight;
+        } else {
+            body.scrollTop = prevTop + (body.scrollHeight - prevHeight);
+        }
+        bindLazyLoad(body);
+        maybeSeqScroll(body, events);
+    }
+
     function renderBody(data) {
         var body = document.getElementById('queryLogBody');
         if (!body) return;
         body.classList.toggle('query-log-body--json', lastTab === 'json');
         if (lastTab === 'changes') {
-            var changes = Object.assign({}, data, {events: (data.events || []).filter(function(e) {return e.kind === 'edit';})});
-            body.innerHTML = '<p>Edits on this page of steps. Use Next steps to inspect later changes.</p>' + renderTimeline(changes);
-            bindTimeline(body, changes.events);
+            var edits = (data.events || []).filter(function (e) { return e.kind === 'edit'; });
+            var note = data.event_store && data.has_more
+                ? '<p>Edits across ' + data.events.length + ' loaded steps. Scroll down to load more.</p>'
+                : '<p>Edits across ' + data.events.length + ' steps.</p>';
+            paintTimelineInto(body, data, edits, note);
         } else if (lastTab === 'known') body.innerHTML = renderKnown(data);
         else if (lastTab === 'sent') body.innerHTML = renderSent(data);
         else if (lastTab === 'json') {
@@ -431,44 +503,106 @@
                 });
             }
         } else {
-            var nearBottom = (body.scrollHeight - body.scrollTop - body.clientHeight) < 140;
-            body.innerHTML = renderTimeline(data);
-            bindTimeline(body, data.events || []);
-            if (nearBottom && isLive(data)) {
-                var liveEl = body.querySelector('.query-log-live');
-                if (liveEl && liveEl.scrollIntoView) liveEl.scrollIntoView({ block: 'nearest' });
-                else body.scrollTop = body.scrollHeight;
-            }
+            paintTimelineInto(body, data, data.events || []);
         }
-            body.querySelectorAll('[data-log-page]').forEach(function(button) {
-                button.addEventListener('click', function() {
-                    if (button.dataset.logPage === 'next') {pageStack.push(pageAfter); pageAfter = data.next_cursor;}
-                    else pageAfter = pageStack.pop() || 0;
-                    pageSeq = 0; lastStamp = ''; tick();
-                });
-            });
+    }
 
+    // One scroll listener per body element: near the bottom, fetch the next
+    // chunk and append it. The sentinel's button is the fallback path.
+    function bindLazyScroll(body) {
+        if (!body || body._lazyBound) return;
+        body._lazyBound = true;
+        body.addEventListener('scroll', function () {
+            if (!currentId) return;
+            if (lastTab !== 'timeline' && lastTab !== 'changes') return;
+            var payload = ensureDom()._payload;
+            if (!payload || !payload.event_store) return;
+            if (shouldLazyLoadMore(body, { eventStore: true, hasMore: logHasMore, loading: logLoading })) {
+                loadMoreSteps();
+            }
+        });
+    }
+
+    function bindLazyLoad(body) {
+        bindLazyScroll(body);
+        if (!body) return;
+        body.querySelectorAll('[data-log-more-btn]').forEach(function (button) {
+            button.addEventListener('click', function () {
+                loadMoreSteps();
+            });
+        });
+    }
+
+    // After a seq deep-link (Agent Feed "Open step in query log"), advance
+    // through chunks until the step is loaded, then bring it into view.
+    function maybeSeqScroll(body, events) {
+        if (!pendingSeqScroll || !body) return;
+        var found = null;
+        body.querySelectorAll('.query-log-event').forEach(function (node) {
+            if (found) return;
+            var i = Number(node.getAttribute('data-i'));
+            var ev = (events || [])[i];
+            if (ev && Number(ev.seq) === pendingSeqScroll) found = node;
+        });
+        if (found) {
+            pendingSeqScroll = 0;
+            if (found.scrollIntoView) found.scrollIntoView({ block: 'center' });
+        } else if (logHasMore && !logLoading) {
+            loadMoreSteps();
+        } else if (!logHasMore) {
+            pendingSeqScroll = 0;
+        }
+    }
+
+    // Merge one server chunk into the accumulated view. Event-store chunks
+    // are cursor-paged headers; the legacy fallback is a full payload.
+    function ingestChunk(data) {
+        if (data && data.event_store) {
+            logEvents = mergeLogRows(logEvents, data.events || []);
+            logHasMore = !!data.has_more;
+            logNextAfter = Number(data.next_cursor) || 0;
+        } else {
+            logEvents = (data && data.events) || [];
+            logHasMore = false;
+            logNextAfter = 0;
+        }
+        var overlay = ensureDom();
+        overlay._payload = Object.assign({}, data, {
+            events: logEvents,
+            has_more: logHasMore,
+            next_cursor: logNextAfter,
+            loading_more: logLoading,
+        });
+        return overlay._payload;
     }
 
     function paint(data, force) {
         var overlay = ensureDom();
-        overlay._payload = data;
-        var stamp = payloadStamp(data);
-        var h = data.harness || {};
-        var live = data.executing ? 'live' : (data.success === false ? 'failed' : 'done');
+        var view = ingestChunk(data);
+        var stamp = payloadStamp(view);
+        var h = view.harness || {};
+        var live = view.executing ? 'live' : (view.success === false ? 'failed' : 'done');
         document.getElementById('queryLogTitle').textContent =
-            (h.label || h.agent_id || 'Query') + ' · ' + (data.query_id || '');
+            (h.label || h.agent_id || 'Query') + ' · ' + (view.query_id || '');
         document.getElementById('queryLogMeta').textContent =
             live + (h.cwd ? ' · ' + h.cwd : '') +
-            (data.total_tokens ? ' · ' + data.total_tokens + ' tok' : '') +
-            (data.total_execution_time ? ' · ' + Number(data.total_execution_time).toFixed(1) + 's' : '');
+            (view.total_tokens ? ' · ' + view.total_tokens + ' tok' : '') +
+            (view.total_execution_time ? ' · ' + Number(view.total_execution_time).toFixed(1) + 's' : '');
         if (!force && stamp === lastStamp) return;
         lastStamp = stamp;
-        renderBody(data);
+        renderBody(view);
     }
 
-    function fetchLog(qid) {
-        var suffix = '?after=' + pageAfter + (pageSeq ? '&seq=' + pageSeq : '');
+    function rerender() {
+        var overlay = ensureDom();
+        if (!overlay._payload) return;
+        overlay._payload.loading_more = logLoading;
+        lastStamp = '';
+        paint(overlay._payload, true);
+    }
+
+    function fetchLog(qid, after, withSeq) {
+        var suffix = '?after=' + after + (withSeq && targetSeq ? '&seq=' + targetSeq : '');
         return fetch('/api/agent-events/runs/' + encodeURIComponent(qid) + '/log' + suffix, {credentials: 'include', cache: 'no-store'})
             .then(function(r) {
                 if (r.status === 404) return fetch('/api/query-log/' + encodeURIComponent(qid), {credentials: 'include', cache: 'no-store'});
@@ -476,35 +610,71 @@
             }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); });
     }
 
+    function stopPolling() {
+        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    }
+
+    function handleChunkResponse(res) {
+        if (!res.ok) {
+            logLoading = false;
+            var body = document.getElementById('queryLogBody');
+            if (body && !(ensureDom()._payload)) {
+                body.innerHTML = '<p class="query-log-empty">' + esc(res.j && res.j.error || 'Log not found') + '</p>';
+            }
+            return;
+        }
+        logLoading = false;
+        paint(res.j, false);
+        if (!res.j.executing || hasFinishEvent({ events: logEvents })) {
+            stopPolling();
+        }
+    }
+
+    // Live poll: re-fetch the tail overlap (last few rows refresh in place,
+    // e.g. thinking text and tool phases) plus anything newer, and append.
     function tick() {
-        if (!currentId) return;
+        if (!currentId || logLoading) return;
         var overlay = document.getElementById('queryLogOverlay');
         if ((overlay && overlay.hidden) || !['timeline','changes'].includes(lastTab)) return;
-        fetchLog(currentId).then(function (res) {
-            if (!res.ok) {
-                var body = document.getElementById('queryLogBody');
-                if (body && !(ensureDom()._payload)) {
-                    body.innerHTML = '<p class="query-log-empty">' + esc(res.j && res.j.error || 'Log not found') + '</p>';
-                }
-                return;
-            }
-            paint(res.j, false);
-            if (!res.j.executing || hasFinishEvent(res.j)) {
-                if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-            }
-        }).catch(function () {});
+        if (!logEvents.length) {
+            logLoading = true;
+            fetchLog(currentId, firstAfter, true).then(handleChunkResponse).catch(function () { logLoading = false; });
+            return;
+        }
+        var keep = Math.min(logEvents.length, 9);
+        var anchor = logEvents.length > keep ? rowId(logEvents[logEvents.length - keep - 1]) : firstAfter;
+        logLoading = true;
+        fetchLog(currentId, anchor, false).then(handleChunkResponse).catch(function () { logLoading = false; });
+    }
+
+    // Scroll/button path: fetch the next chunk after the newest loaded row.
+    function loadMoreSteps() {
+        if (!currentId || logLoading || !logHasMore) return;
+        logLoading = true;
+        rerender();
+        fetchLog(currentId, logNextAfter, false).then(handleChunkResponse).catch(function () {
+            logLoading = false;
+            rerender();
+        });
     }
 
     function openInspector(queryId) {
         var qid = String(queryId || '').trim();
         if (!qid) return;
-        pageAfter = 0; pageStack = []; pageSeq = Number(new URLSearchParams(location.search).get('seq')) || 0;
+        firstAfter = 0; logEvents = []; logHasMore = false; logNextAfter = 0; logLoading = false;
+        targetSeq = Number(new URLSearchParams(location.search).get('seq')) || 0;
+        pendingSeqScroll = targetSeq;
         currentId = qid;
         lastStamp = '';
         var overlay = ensureDom();
+        overlay._payload = null;
         overlay.hidden = false;
         var body = document.getElementById('queryLogBody');
-        if (body) body.innerHTML = '<p class="query-log-empty">Loading…</p>';
+        if (body) {
+            body.innerHTML = '<p class="query-log-empty">Loading…</p>';
+            bindLazyScroll(body);
+            body.scrollTop = 0;
+        }
         if (pollTimer) clearInterval(pollTimer);
         tick();
         pollTimer = setInterval(tick, 1000);
@@ -555,6 +725,8 @@
         isLive: isLive,
         renderTimeline: renderTimeline,
         resolveQueryLogClick: resolveQueryLogClick,
+        mergeLogRows: mergeLogRows,
+        shouldLazyLoadMore: shouldLazyLoadMore,
     };
 
     document.addEventListener('click', function (e) {

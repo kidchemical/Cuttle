@@ -386,7 +386,27 @@ body.query-log-standalone .query-log-sheet {
 .message-query-log-link.is-pending:hover {
     opacity: 0.55;
 }
-.query-log-pages {display:flex;gap:10px;margin:16px 0;}
+.query-log-more {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin: 16px 0;
+    font-size: 0.75rem;
+    color: var(--text-secondary, #b0b0c0);
+}
+.query-log-more button {
+    background: var(--bg-tertiary, #0f3460);
+    color: var(--text-primary, #fff);
+    border: 1px solid var(--border-color, #2a2a3e);
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 0.75rem;
+    cursor: pointer;
+}
+.query-log-more button:hover {
+    border-color: var(--accent-color, #667eea);
+}
 .cuttle-diff {width:100%;font:12px/1.5 monospace;border-collapse:collapse;table-layout:auto;}
 .cuttle-diff td {white-space:pre-wrap;overflow-wrap:anywhere;padding:0 5px;vertical-align:top;}
 .cuttle-diff td:first-child {width:38px;color:var(--text-secondary);}

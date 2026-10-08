@@ -4,7 +4,9 @@ Behavioral characterization of src/web/js/queries/query_log_inspector.js under n
 Covers the pure timeline helpers: native-API tool classification (a tool *ran*
 a Cuttle agent-ops CLI — a search pattern or echo that merely mentions one
 stays yellow), relative-time formatting up to years, per-step durations, finish
-detection, and the live predicate. DOM paint/poll machinery stays on the page.
+detection, and the live predicate, plus lazy-load chunk merging, the scroll
+predicate, and the sentinel (no page buttons). DOM paint/poll machinery stays
+on the page.
 """
 
 from __future__ import annotations
@@ -95,6 +97,26 @@ out.clickDataId = F.resolveQueryLogClick({
 });
 out.clickLegacyReport = F.resolveQueryLogClick({ href: '/query_report_98765432.html' });
 out.clickNoHref = F.resolveQueryLogClick({});
+// Lazy-load merge: known ids replace in place (revision refresh), new ids
+// append in order, earlier rows never shift.
+const first = [{ id: 11, detail_id: 11, seq: 1, rev: 1 }, { id: 12, detail_id: 12, seq: 2, rev: 1 }];
+const chunk = [{ id: 12, detail_id: 12, seq: 2, rev: 2 }, { id: 13, detail_id: 13, seq: 3, rev: 1 }];
+out.merged = F.mergeLogRows(first, chunk);
+out.mergedEmpty = F.mergeLogRows(null, null);
+// Scroll predicate: near-bottom + more + store + idle loads; anything else holds.
+const nearBottom = { scrollTop: 900, scrollHeight: 1000, clientHeight: 300 };
+const top = { scrollTop: 0, scrollHeight: 1000, clientHeight: 300 };
+out.lazyGo = F.shouldLazyLoadMore(nearBottom, { eventStore: true, hasMore: true, loading: false });
+out.lazyTop = F.shouldLazyLoadMore(top, { eventStore: true, hasMore: true, loading: false });
+out.lazyBusy = F.shouldLazyLoadMore(nearBottom, { eventStore: true, hasMore: true, loading: true });
+out.lazyDone = F.shouldLazyLoadMore(nearBottom, { eventStore: true, hasMore: false, loading: false });
+out.lazyLegacy = F.shouldLazyLoadMore(nearBottom, { eventStore: false, hasMore: true, loading: false });
+// Sentinel: paged store payloads render a lazy-load marker, never page buttons.
+const paged = { executing: false, event_store: true, has_more: true, events: [{ kind: 'status', t: 1, text: 'hi' }] };
+out.pagedRows = F.renderTimeline(paged);
+out.pagedLoading = F.renderTimeline(Object.assign({}, paged, { loading_more: true }));
+const lastPage = { executing: false, event_store: true, has_more: false, events: [{ kind: 'status', t: 1, text: 'hi' }] };
+out.lastRows = F.renderTimeline(lastPage);
 process.stdout.write(JSON.stringify(out));
 """
 
@@ -204,6 +226,37 @@ def test_query_log_click_never_navigates_the_chat_panel():
     assert res["clickDataId"]["queryId"] == "deadbeef"
     assert res["clickLegacyReport"]["queryId"] == "98765432"
     assert res["clickNoHref"]["action"] == "ignore"
+
+
+@node_only
+def test_lazy_load_merge_appends_new_and_refreshes_revised():
+    res = _run()
+    merged = res["merged"]
+    assert [r["detail_id"] for r in merged] == [11, 12, 13]
+    assert merged[0]["rev"] == 1
+    assert merged[1]["rev"] == 2
+    assert res["mergedEmpty"] == []
+
+
+@node_only
+def test_lazy_load_scroll_predicate():
+    res = _run()
+    assert res["lazyGo"] is True
+    assert res["lazyTop"] is False
+    assert res["lazyBusy"] is False
+    assert res["lazyDone"] is False
+    assert res["lazyLegacy"] is False
+
+
+@node_only
+def test_timeline_renders_lazy_sentinel_not_page_buttons():
+    res = _run()
+    assert "data-log-page" not in res["pagedRows"]
+    assert "data-log-more" in res["pagedRows"]
+    assert "Load more steps (1 shown)" in res["pagedRows"]
+    assert "Loading more steps" in res["pagedLoading"]
+    assert "data-log-more" not in res["lastRows"]
+    assert "data-log-more" not in res["rows"]
 
 
 @node_only
