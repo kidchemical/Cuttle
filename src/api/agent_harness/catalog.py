@@ -14,7 +14,7 @@ with ``build_adapter()``. Unknown CLIs never require a Cuttle core fork.
 Trust: project drop-ins (``{project}/.cuttle/agents/``) execute third-party
 ``adapter.py`` ONLY on explicit opt-in (``CUTTLE_ALLOW_PROJECT_ADAPTERS`` /
 ``agent_harness.allow_project_adapters``). Manifest identity is validated
-before import; each external adapter loads once (mtime-keyed) as a
+before import; each external adapter loads once (source-keyed) as a
 uniquely-namespaced package with no ``sys.path`` mutation. Only relative
 sibling imports (``from . import helper``) resolve into the drop-in, loaded
 on demand; nothing else in the directory executes, and bare absolute imports
@@ -25,6 +25,7 @@ are never aliased or satisfied from the drop-in. See ADDING_AN_AGENT.md
 from __future__ import annotations
 
 import importlib
+import importlib.abc
 import importlib.machinery
 import importlib.util
 import os
@@ -56,12 +57,12 @@ _CANONICAL_ID_RE = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
 _CANONICAL_SLASH_RE = re.compile(r"/[a-z0-9]+(-[a-z0-9]+)*")
 
 # External (non-bundled) adapter loads, keyed by resolved agent dir.
-# Value: (source-mtimes, entry or None for a failed load). _discover()
+# Value: (source fingerprints, entry or None for a failed load). _discover()
 # re-scans project roots on every call (no project_path cache), so without
 # this each turn would re-execute adapter.py top-level code.
 _EXTERNAL_ADAPTER_CACHE: Dict[str, Tuple[Tuple[int, ...], Optional[_AgentEntry]]] = {}
 
-# Serializes HARNESS drop-in loads only (mtime check, package setup,
+# Serializes HARNESS drop-in loads only (source check, package setup,
 # adapter exec). It makes no claim about unrelated Python imports happening
 # on other threads.
 _EXTERNAL_LOAD_LOCK = threading.Lock()
@@ -111,6 +112,7 @@ def _manifest_from_dict(
     source: str,
     agent_dir: Optional[Path] = None,
 ) -> AgentManifest:
+    from api.agent_harness.declarations import permissions, provenance
     mid = str(data.get("id") or fallback_id).strip()
     models_raw = data.get("models") or []
     if isinstance(models_raw, str):
@@ -176,6 +178,8 @@ def _manifest_from_dict(
     # boring for drop-ins that set something odd.
     icon = icon_raw[:8]
     return AgentManifest(
+        permissions=permissions(data.get("permissions")),
+        provenance=provenance(data.get("provenance"), agent_dir),
         id=mid,
         label=str(data.get("label") or mid).strip(),
         icon=icon,
@@ -228,21 +232,25 @@ def _import_bundled_adapter(agent_id: str) -> AgentAdapter:
     return cls()
 
 
-def _exec_module_fresh(spec, mod) -> None:
-    """exec_module() that cannot reuse a stale ``__pycache__`` entry.
+class _FreshSourceLoader(importlib.machinery.SourceFileLoader):
+    def get_code(self, fullname):
+        # A timestamp/size-valid pyc can contain different source than the
+        # verified digest. Compile bytes directly without mutating the folder.
+        path = self.get_filename(fullname)
+        return self.source_to_code(self.get_data(path), path)
 
-    pyc validation is (mtime-seconds, size): a hot-edit written within the
-    same second with the same byte size would otherwise re-execute old code
-    even though our mtime-ns cache correctly detected the change. Removing
-    the cached pyc forces a recompile from source (which exec then rewrites).
-    """
-    assert spec.loader is not None
-    try:
-        if spec.origin:
-            os.unlink(importlib.util.cache_from_source(spec.origin))
-    except (OSError, ValueError):
-        pass
-    spec.loader.exec_module(mod)
+
+class _ExternalSourceFinder(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if not fullname.startswith(_EXT_PKG_PREFIX) or path is None:
+            return None
+        spec = importlib.machinery.PathFinder.find_spec(fullname, path)
+        if spec and isinstance(spec.loader, importlib.machinery.SourceFileLoader):
+            spec.loader = _FreshSourceLoader(fullname, spec.origin)
+        return spec
+
+
+_EXTERNAL_SOURCE_FINDER = _ExternalSourceFinder()
 
 
 def _purge_external_modules(pkg_name: str) -> None:
@@ -259,19 +267,22 @@ def _purge_external_modules(pkg_name: str) -> None:
             pass
 
 
-def _source_mtimes(agent_dir: Path) -> Tuple[int, ...]:
-    """mtimes of everything one drop-in load executes (adapter + top-level
-    sibling .py). Editing any of them invalidates the load-once cache."""
+def _source_fingerprints(agent_dir: Path) -> Tuple[int, ...]:
+    """Source fingerprints for nested helpers and manifest metadata too."""
     stamps: List[int] = []
     try:
-        entries = sorted(agent_dir.iterdir())
+        entries = sorted(agent_dir.rglob("*.py")) + [agent_dir / "manifest.yaml"]
     except OSError:
         return (-1,)
     for child in entries:
-        if child.suffix != ".py" or not child.is_file():
+        if not child.is_file():
             continue
         try:
-            stamps.append(child.stat().st_mtime_ns)
+            # Content catches preserved-mtime edits, including updated declared
+            # hashes paired with new code. Do not return a stale cached object.
+            import hashlib
+            source = child.relative_to(agent_dir).as_posix().encode() + b"\0" + child.read_bytes()
+            stamps.append(int.from_bytes(hashlib.sha256(source).digest(), "big"))
         except OSError:
             stamps.append(-1)
     return tuple(stamps) or (-1,)
@@ -308,13 +319,16 @@ def _import_external_adapter(agent_dir: Path, agent_id: str) -> AgentAdapter:
         pkg.__path__ = [agent_dir_str]
         sys.modules[pkg_name] = pkg
     spec = importlib.util.spec_from_file_location(
-        f"{pkg_name}.adapter", adapter_path
+        f"{pkg_name}.adapter", adapter_path,
+        loader=_FreshSourceLoader(f"{pkg_name}.adapter", str(adapter_path)),
     )
     if spec is None or spec.loader is None:
         raise ImportError(f"Cannot load adapter from {adapter_path}")
     mod = importlib.util.module_from_spec(spec)
     sys.modules[f"{pkg_name}.adapter"] = mod
-    _exec_module_fresh(spec, mod)
+    if _EXTERNAL_SOURCE_FINDER not in sys.meta_path:
+        sys.meta_path.insert(0, _EXTERNAL_SOURCE_FINDER)
+    spec.loader.exec_module(mod)
     factory = getattr(mod, "build_adapter", None)
     if callable(factory):
         return factory()
@@ -329,16 +343,23 @@ def _import_external_adapter(agent_dir: Path, agent_id: str) -> AgentAdapter:
 def _load_external_entry(
     agent_dir: Path, agent_id: str, raw: Dict[str, Any], source: str
 ) -> Optional[_AgentEntry]:
-    """Locked load-once wrapper: mtime-keyed cache, failures cached quiet."""
+    """Locked load-once wrapper: source-keyed cache, failures cached quiet."""
     try:
         cache_key = str(agent_dir.resolve())
     except OSError:
         cache_key = str(agent_dir)
-    want = _source_mtimes(agent_dir)
+    want = _source_fingerprints(agent_dir)
     with _EXTERNAL_LOAD_LOCK:
+        try:
+            raw["id"] = agent_id
+            manifest = _manifest_from_dict(
+                raw, fallback_id=agent_id, source=source, agent_dir=agent_dir)
+        except Exception as exc:
+            print(f"[agent_harness] skip {agent_dir}: {exc}", flush=True)
+            return None
         hit = _EXTERNAL_ADAPTER_CACHE.get(cache_key)
         if hit is not None and hit[0] == want:
-            return hit[1]
+            return (manifest, hit[1][1], agent_dir) if hit[1] is not None else None
         # Stale sources: purge namespaced modules so the re-exec below (and
         # its relative `from . import ...` lookups) cannot reuse edited code.
         if hit is not None:
@@ -346,10 +367,6 @@ def _load_external_entry(
                 f"{_EXT_PKG_PREFIX}{agent_id}_{abs(hash(cache_key))}"
             )
         try:
-            raw["id"] = agent_id  # folder name is canonical
-            manifest = _manifest_from_dict(
-                raw, fallback_id=agent_id, source=source, agent_dir=agent_dir
-            )
             adapter = _import_external_adapter(agent_dir, agent_id)
         except Exception as exc:
             _purge_external_modules(

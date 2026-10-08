@@ -367,7 +367,7 @@
             event.preventDefault();
         }
         if (sessionId == null || sessionId === '') return;
-        markChatSessionUnread(sessionId);
+        markChatSessionUnread(sessionId, {manual: true});
         if (currentSessionId != null && sessionIdsEqual(currentSessionId, sessionId)) {
             _manualUnreadHoldId = String(sessionId);
             // Title green dot until click/type; prefs flag survives leave → reopen.
@@ -820,7 +820,16 @@
     // Follow-up queue contents + persistence/take flags, owned by
     // chat_followup_queue.js (composes chat_activity.js item decisions).
     // followupDrainTimer stays here: raw timer handle for the scheduler.
-    const followupQueue = CuttleFollowupQueue.createQueueState();
+    let followupQueue = CuttleFollowupQueue.createQueueState();
+    const followupQueues = CuttleFollowupQueue.createRegistry((key) => getSessionPrefs(key)?.[followupWriteField]);
+    function adoptFollowupQueue(sessionId, opts = {}) {
+        followupQueue = followupQueues.adopt(String(canonicalizeChatSessionId(sessionId) || 'new'), followupQueue, !!opts.transfer);
+        editingFollowupId = null;
+        if (opts.transfer && followupQueue.items.length && isAuthMode()) {
+            persistFollowupPut(toAuthDbSessionId(sessionId), followupQueue);
+        }
+    }
+
     let followupDrainTimer = null;
     /** Uploaded file refs awaiting the next send: {filename, path, mime, size?} */
     let pendingAttachments = [];
@@ -854,6 +863,10 @@
         return 'new';
     })();
     const newComposerPrefsId = 'draft:' + newComposerDraftId;
+    const followupOwnerId = CuttleFollowupQueue.ownerId(() => sessionStorage, newComposerDraftId);
+    const followupWriteField = 'followupWrite:' + followupOwnerId;
+    const followupClaimField = 'followupClaim:' + followupOwnerId;
+
     const COMPOSER_DRAFT_MAX = 50000;
     let composerDraftControlsReady = false;
     function _draftKey(sid) {
@@ -1737,77 +1750,68 @@
         });
     }
 
-    const SESSION_PREFS_STORAGE_KEY = 'cuttleChatSessionPrefs';
+    const sessionPrefsStore = CuttleSessionPrefs.create(localStorage);
+    const sessionMutations = CuttleChatMutations.create();
+    const serverAttention = CuttleChatAttention.create({
+        prefs: sessionPrefsStore,
+        id: () => Date.now() + ':' + Math.random().toString(36).slice(2),
+        request: async (sid, data) => {
+            const response = await fetch('/api/auth/sessions/' + sid + '/attention', {
+                method: 'PUT', credentials: 'include', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(data),
+            });
+            if (!response.ok) throw new Error('Attention sync HTTP ' + response.status);
+            return response.json();
+        },
+        changed: () => { syncHistoryUnreadIndicators(); scheduleChatActivityBroadcast(); },
+    });
+
+    function attentionPrefsFor(sessionId, sessionObj) {
+        const key = toAuthDbSessionId(sessionId);
+        const obj = sessionObj || (isAuthMode() ? findAuthServerSession(sessionId) : null);
+        if (obj && obj.attention) serverAttention.accept(key, obj.attention);
+        return serverAttention.get(key) || getSessionPrefs(sessionId);
+    }
+
+    function acceptSessionAttention(sessionId, snapshot) {
+        if (!snapshot) return;
+        serverAttention.accept(toAuthDbSessionId(sessionId), snapshot);
+        syncHistoryUnreadIndicators();
+    }
+
     /** Global default sticky slash agents (e.g. /cursor) applied to new chats. */
     const STARRED_SLASH_STORAGE_KEY = 'cuttleStarredSlashCommands';
     const STARRED_PROJECT_STORAGE_KEY = 'cuttleStarredProject';
 
-    /** Per-chat prefs: project + sticky slash agent (e.g. /cursor). */
-    // Memoized session-prefs map. History paints read prefs ~3× per chat,
-    // and every read re-parsed the whole map from localStorage — O(chats²)
-    // JSON parsing per paint (seconds on phones at 660 chats). Invalidated
-    // on every same-frame write and on cross-frame `storage` events (shell
-    // and chat iframe share localStorage).
-    let sessionPrefsMapCache = null;
-    let sessionPrefsMapCached = false;
+    /** Device preferences stay owned/cached by CuttleSessionPrefs. */
     function invalidateSessionPrefsMapCache() {
-        sessionPrefsMapCache = null;
-        sessionPrefsMapCached = false;
+        sessionPrefsStore.invalidate();
     }
 
     function readSessionPrefsMap() {
-        if (sessionPrefsMapCached) return sessionPrefsMapCache;
-        let out = {};
-        try {
-            const raw = localStorage.getItem(SESSION_PREFS_STORAGE_KEY);
-            const o = raw ? JSON.parse(raw) : {};
-            out = o && typeof o === 'object' && !Array.isArray(o) ? o : {};
-        } catch (_) {
-            out = {};
-        }
-        sessionPrefsMapCache = out;
-        sessionPrefsMapCached = true;
-        return out;
-    }
-
-    function writeSessionPrefsMap(map) {
-        try {
-            localStorage.setItem(SESSION_PREFS_STORAGE_KEY, JSON.stringify(map || {}));
-        } catch (_) {}
-        invalidateSessionPrefsMapCache();
+        return sessionPrefsStore.map();
     }
 
     // Guarded: node test harnesses eval page slices with a minimal window
     // stub (no addEventListener); browsers always take this branch.
     if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
         window.addEventListener('storage', (event) => {
-            if (event && event.key === SESSION_PREFS_STORAGE_KEY) {
+            if (event && CuttleSessionPrefs.isKey(event.key)) {
                 invalidateSessionPrefsMapCache();
             }
         });
     }
 
     function getSessionPrefs(sessionId) {
-        if (sessionId == null || sessionId === '') return null;
-        const map = readSessionPrefsMap();
-        const p = map[String(sessionId)];
-        return p && typeof p === 'object' ? p : null;
+        return sessionPrefsStore.get(sessionId);
     }
 
     function updateSessionPrefs(sessionId, patch) {
-        if (sessionId == null || sessionId === '') return;
-        const map = readSessionPrefsMap();
-        const key = String(sessionId);
-        const prev = map[key] && typeof map[key] === 'object' ? map[key] : {};
-        map[key] = Object.assign({}, prev, patch || {});
-        writeSessionPrefsMap(map);
+        sessionPrefsStore.update(sessionId, patch);
     }
 
     function clearSessionPrefs(sessionId) {
-        if (sessionId == null || sessionId === '') return;
-        const map = readSessionPrefsMap();
-        delete map[String(sessionId)];
-        writeSessionPrefsMap(map);
+        sessionPrefsStore.remove(sessionId);
     }
 
     function migrateSessionPrefs(oldId, newId) {
@@ -1849,22 +1853,25 @@
         ) {
             merged.lastReadAt = prev.lastReadAt;
         }
-        map[String(newId)] = merged;
-        delete map[String(oldId)];
-        writeSessionPrefsMap(map);
+        updateSessionPrefs(newId, merged);
+        clearSessionPrefs(oldId);
     }
 
     function markChatSessionUnread(sessionId, opts) {
         if (sessionId == null || sessionId === '') return;
         const isError = !!(opts && opts.isError);
-        updateSessionPrefs(sessionId, { hasUnread: true, unreadIsError: isError });
+        if (isAuthMode() && /^\d+$/.test(String(toAuthDbSessionId(sessionId)))) {
+            if (opts && opts.manual) serverAttention.mark(toAuthDbSessionId(sessionId), {unread: true});
+            else if (inAppShell) window.parent.postMessage({type: 'cuttle-activity-refresh'}, '*');
+            else refreshChatHistoryList();
+        } else updateSessionPrefs(sessionId, { hasUnread: true, unreadIsError: isError });
         try { scheduleChatActivityBroadcast(); } catch (_) {}
     }
 
     // Another pane (or the shell, for chats that finish in a background
     // space) changed unread flags — repaint this pane's history dots.
     window.addEventListener('storage', (e) => {
-        if (!e || e.key !== SESSION_PREFS_STORAGE_KEY) return;
+        if (!e || !CuttleSessionPrefs.isKey(e.key)) return;
         try { syncHistoryUnreadIndicators(); } catch (_) {}
     });
 
@@ -1875,6 +1882,12 @@
         if (sessionId == null || sessionId === '') return;
         if (CuttleChatActivity.manualHoldBlocksRead({ holdId: _manualUnreadHoldId, sessionId })) {
             return;
+        }
+        if (isAuthMode() && /^\d+$/.test(String(toAuthDbSessionId(sessionId)))) {
+            // A hidden page or a response for a previous chat hasn't been viewed.
+            if (!sessionIdsEqual(currentSessionId, sessionId) || pageIsBackgrounded()) return;
+            const through = lastSeenServerMessageId;
+            serverAttention.mark(toAuthDbSessionId(sessionId), {through_id: through});
         }
         updateSessionPrefs(sessionId, {
             hasUnread: false,
@@ -1897,13 +1910,13 @@
     // Owned by chat_activity.js — DOM/state gather, domain decides.
     function sessionPrefsHasUnreadFlag(sessionId) {
         if (sessionId == null || sessionId === '') return false;
-        return CuttleChatActivity.prefsHasUnreadFlag(getSessionPrefs(sessionId));
+        return CuttleChatActivity.prefsHasUnreadFlag(attentionPrefsFor(sessionId));
     }
 
     // Owned by chat_activity.js — DOM/state gather, domain decides.
     function sessionPrefsUnreadIsError(sessionId) {
         if (sessionId == null || sessionId === '') return false;
-        return CuttleChatActivity.prefsUnreadIsError(getSessionPrefs(sessionId));
+        return CuttleChatActivity.prefsUnreadIsError(attentionPrefsFor(sessionId));
     }
 
     /**
@@ -2000,7 +2013,7 @@
         const wrap = document.getElementById('chatSessionTitle');
         if (!unreadIcon && !queuedIcon && !pausedIcon) return;
         const titleVisible = !!(wrap && !wrap.hidden);
-        const showInput = !!(titleVisible && currentSessionId != null && (getSessionPrefs(currentSessionId) || {}).awaitingInput);
+        const showInput = !!(titleVisible && currentSessionId != null && (attentionPrefsFor(currentSessionId) || {}).awaitingInput);
         const inputIcon = document.getElementById('chatSessionInputIcon');
         if (inputIcon) inputIcon.hidden = !showInput;
         const showUnread = !!(titleVisible && !showInput && chatAttentionActive());
@@ -2084,7 +2097,7 @@
             sessionId,
             currentSessionId,
             backgrounded: pageIsBackgrounded(),
-            prefs: getSessionPrefs(sessionId),
+            prefs: attentionPrefsFor(sessionId, sessionObj),
             sessionObj,
         });
     }
@@ -2142,7 +2155,7 @@
             sessionId,
             currentSessionId,
             backgrounded: pageIsBackgrounded(),
-            prefs: getSessionPrefs(sessionId),
+            prefs: attentionPrefsFor(sessionId, sessionObj),
             sessionObj,
         });
     }
@@ -2158,7 +2171,7 @@
             sessionId,
             currentSessionId,
             backgrounded: pageIsBackgrounded(),
-            prefs: getSessionPrefs(sessionId),
+            prefs: attentionPrefsFor(sessionId, sessionObj),
             sessionObj,
             queue: followupQueueForSession(sessionId, sessionObj),
         });
@@ -2798,6 +2811,10 @@
     function watchDetachedSessionForCompletion(sessionId) {
         if (sessionId == null || sessionId === '') return;
         const sid = String(canonicalizeChatSessionId(sessionId));
+        if (inAppShell && window.parent.cuttleActivityBroker) {
+            window.parent.cuttleActivityBroker.refresh();
+            return;
+        }
         cancelDetachedSessionCompletionWatch(sid);
         let cancelled = false;
         _detachedCompletionWatchers[sid] = () => { cancelled = true; };
@@ -5846,26 +5863,31 @@
     function refreshAgentPreferenceAfterStar(aid) {
         if (aid === 'muse') {
             slashPaletteSupplement.museModelsKey = '';
+            slashPaletteSupplement.museModelsTried = null;
             slashPaletteSupplement.museEffortKey = '';
             loadMuseModelsForPalette(true);
             loadMuseEffortForPalette();
         } else if (aid === 'hermes') {
             slashPaletteSupplement.hermesModelsKey = '';
+            slashPaletteSupplement.hermesModelsTried = null;
             slashPaletteSupplement.hermesEffortKey = '';
             loadHermesModelsForPalette(true);
             loadHermesEffortForPalette();
         } else if (aid === 'opencode') {
             slashPaletteSupplement.opencodeModelsKey = '';
+            slashPaletteSupplement.opencodeModelsTried = null;
             slashPaletteSupplement.opencodeEffortKey = '';
             loadOpenCodeModelsForPalette(true);
             loadOpenCodeEffortForPalette();
         } else if (aid === 'codex') {
             slashPaletteSupplement.codexModelsKey = '';
+            slashPaletteSupplement.codexModelsTried = null;
             slashPaletteSupplement.codexEffortKey = '';
             loadCodexModelsForPalette(true);
             loadCodexEffortForPalette();
         } else if (aid === 'claude') {
             slashPaletteSupplement.claudeModelsKey = '';
+            slashPaletteSupplement.claudeModelsTried = null;
             slashPaletteSupplement.claudeEffortKey = '';
             loadClaudeModelsForPalette(true);
             loadClaudeEffortForPalette();
@@ -5941,9 +5963,11 @@
         const url = qs.toString()
             ? '/api/cursor-agent/models?' + qs.toString()
             : '/api/cursor-agent/models';
+        const mutationToken = sessionMutations.capture(currentSessionId, 'cursor:model:read', _loadSessionSeq);
         fetch(url, { cache: 'no-store' })
             .then((r) => r.json())
             .then((j) => {
+                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
                 slashPaletteSupplement.cursorModels =
                     j && j.success && Array.isArray(j.models) ? j.models : [];
                 slashPaletteSupplement.preferredModel =
@@ -5965,12 +5989,14 @@
                 }
             })
             .catch(() => {
+                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
                 slashPaletteSupplement.cursorModels = [];
                 if (forceRefresh && window.showToast) {
                     window.showToast('Cursor models refresh failed', 'error');
                 }
             })
             .finally(() => {
+                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
                 slashPaletteSupplement.cursorModelsLoaded = true;
                 slashPaletteSupplement.cursorModelsLoading = false;
                 renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
@@ -5997,6 +6023,7 @@
                 slashPaletteSupplement.museModelsLoading
                 || (slashPaletteSupplement.museModels.length
                     && slashPaletteSupplement.museModelsKey === key)
+                || slashPaletteSupplement.museModelsTried === key
             )
         ) {
             return;
@@ -6008,9 +6035,11 @@
         if (forceRefresh) params.set('refresh', '1');
         const qs = params.toString();
         const url = qs ? '/api/muse/models?' + qs : '/api/muse/models';
+        const mutationToken = sessionMutations.capture(currentSessionId, 'muse:model:read', _loadSessionSeq);
         fetch(url, { cache: 'no-store' })
             .then((r) => r.json())
             .then((j) => {
+                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
                 slashPaletteSupplement.museModels =
                     j && j.success && Array.isArray(j.models) ? j.models : [];
                 slashPaletteSupplement.museModel =
@@ -6040,12 +6069,15 @@
                 }
             })
             .catch(() => {
+                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
                 if (forceRefresh && window.showToast) {
                     window.showToast('Muse models refresh failed', 'error');
                 }
             })
             .finally(() => {
+                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
                 slashPaletteSupplement.museModelsLoading = false;
+                slashPaletteSupplement.museModelsTried = key; // empty/failed: don't refetch per render
                 renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
                 renderSlashChips('chat', document.getElementById('chatInput'));
                 const welcomeInput = document.getElementById('welcomeChatInput');
@@ -6063,6 +6095,7 @@
     function persistMuseModelSelection(modelId) {
         const id = String(modelId || '').trim();
         if (!id) return;
+        slashPaletteSupplement.museModelsLoading = false;
         if (id.toLowerCase() === 'refresh' || id.toLowerCase() === '__refresh__') {
             slashPaletteSupplement.museModelsKey = '';
             slashPaletteSupplement.museModels = [];
@@ -6084,13 +6117,15 @@
             return;
         }
         slashPaletteSupplement.museModelDirty = true;
-        fetch('/api/muse/model', {
+        const mutationToken = sessionMutations.capture(currentSessionId, 'muse:model', _loadSessionSeq);
+        sessionMutationFetch('/api/muse/model', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ session: sid, model: id }),
         })
             .then((r) => r.json())
             .then((j) => {
+                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
                 if (j && j.success) {
                     slashPaletteSupplement.museModel = id;
                     slashPaletteSupplement.museModelDirty = false;
@@ -6111,19 +6146,23 @@
             slashPaletteSupplement.hermesModelsLoading
             || (slashPaletteSupplement.hermesModels.length
                 && slashPaletteSupplement.hermesModelsKey === key)
+            || slashPaletteSupplement.hermesModelsTried === key
         ) {
             return;
         }
+        const modelsGeneration = beginSupplementFetch('hermesModelsGen');
         slashPaletteSupplement.hermesModelsLoading = true;
         const url = key
             ? '/api/hermes/models?session=' + encodeURIComponent(key)
             : '/api/hermes/models';
+        const mutationToken = sessionMutations.capture(currentSessionId, 'hermes:model:read', _loadSessionSeq);
         fetch(url, { cache: 'no-store' })
             .then((r) => r.json())
             .then((j) => {
+                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
                 slashPaletteSupplement.hermesModels =
                     j && j.success && Array.isArray(j.models) ? j.models : [];
-                if (!slashPaletteSupplement.hermesModelDirty) {
+                if (!slashPaletteSupplement.hermesModelDirty && isCurrentSupplementFetch('hermesModelsGen', modelsGeneration)) {
                     slashPaletteSupplement.hermesModel = (j && j.preferredModel) || '';
                 }
                 slashPaletteSupplement.hermesModelsKey = key;
@@ -6135,7 +6174,9 @@
             })
             .catch(() => {})
             .finally(() => {
+                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
                 slashPaletteSupplement.hermesModelsLoading = false;
+                slashPaletteSupplement.hermesModelsTried = key; // empty/failed: don't refetch per render
                 renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
                 renderSlashChips('chat', document.getElementById('chatInput'));
                 const welcomeInput = document.getElementById('welcomeChatInput');
@@ -6153,6 +6194,8 @@
     function persistHermesModelSelection(modelId) {
         const id = String(modelId || '').trim();
         if (!id) return;
+        slashPaletteSupplement.hermesModelsLoading = false;
+        beginSupplementFetch('hermesModelsGen');
         slashPaletteSupplement.hermesModel = id;
         slashPaletteSupplement.hermesModels = (slashPaletteSupplement.hermesModels || []).map((m) => ({
             ...m,
@@ -6165,13 +6208,15 @@
             return;
         }
         slashPaletteSupplement.hermesModelDirty = true;
-        fetch('/api/hermes/model', {
+        const mutationToken = sessionMutations.capture(currentSessionId, 'hermes:model', _loadSessionSeq);
+        sessionMutationFetch('/api/hermes/model', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ session: sid, model: id }),
         })
             .then((r) => r.json())
             .then((j) => {
+                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
                 if (j && j.success) {
                     slashPaletteSupplement.hermesModel = id;
                     slashPaletteSupplement.hermesModelDirty = false;
@@ -6460,6 +6505,11 @@
      * before first paint. Keys are marked so the palette loaders treat the
      * values as fresh and only top up the models list.
      */
+    function sessionMutationFetch(url, options) {
+        const sid = JSON.parse(options.body || '{}').session || currentSessionId;
+        return sessionMutations.enqueue(String(sid) + ':' + url, () => fetch(url, options));
+    }
+
     function beginSupplementFetch(field) {
         const S = slashPaletteSupplement;
         S[field] = (S[field] || 0) + 1;
@@ -6484,18 +6534,23 @@
         S.museModels = [];
         S.museModelsKey = '';
         S.museModelsLoading = false;
+        S.museModelsTried = null;
         S.hermesModels = [];
         S.hermesModelsKey = '';
         S.hermesModelsLoading = false;
+        S.hermesModelsTried = null;
         S.opencodeModels = [];
         S.opencodeModelsKey = '';
         S.opencodeModelsLoading = false;
+        S.opencodeModelsTried = null;
         S.codexModels = [];
         S.codexModelsKey = '';
         S.codexModelsLoading = false;
+        S.codexModelsTried = null;
         S.claudeModels = [];
         S.claudeModelsKey = '';
         S.claudeModelsLoading = false;
+        S.claudeModelsTried = null;
         S.museEffortKey = '';
         S.hermesEffortKey = '';
         S.opencodeEffortKey = '';
@@ -6599,6 +6654,7 @@
 
     /** Hydrate this chat's pinned Muse reasoning effort (badge-gated like models). */
     function loadMuseEffortForPalette() {
+        if (slashPaletteSupplement.museEffortDirty) return;
         if (!hasActiveMuseAgentChip()) return;
         const key = currentSessionId != null ? String(currentSessionId) : '';
         if (
@@ -6607,14 +6663,17 @@
         ) {
             return;
         }
+        const effortGeneration = beginSupplementFetch('museEffortGen');
         slashPaletteSupplement.museEffortLoading = true;
         const url = key
             ? '/api/muse/effort?session=' + encodeURIComponent(key)
             : '/api/muse/effort';
+        const mutationToken = sessionMutations.capture(currentSessionId, 'muse:effort:read', _loadSessionSeq);
         fetch(url, { cache: 'no-store' })
             .then((r) => r.json())
             .then((j) => {
-                if (slashPaletteSupplement.museEffortDirty) return;
+                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
+                if (slashPaletteSupplement.museEffortDirty || !isCurrentSupplementFetch('museEffortGen', effortGeneration)) return;
                 slashPaletteSupplement.museEffort =
                     (j && j.preferredEffort) || '';
                 slashPaletteSupplement.museEffortKey = key;
@@ -6626,6 +6685,7 @@
             })
             .catch(() => {})
             .finally(() => {
+                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
                 slashPaletteSupplement.museEffortLoading = false;
             });
     }
@@ -6634,6 +6694,8 @@
     function persistMuseEffortSelection(effort) {
         const id = String(effort || '').trim().toLowerCase();
         if (!id) return;
+        slashPaletteSupplement.museEffortLoading = false;
+        beginSupplementFetch('museEffortGen');
         slashPaletteSupplement.museEffort = id;
         const sid = currentSessionId != null ? String(currentSessionId) : '';
         if (!sid) {
@@ -6643,13 +6705,15 @@
         }
         slashPaletteSupplement.museEffortKey = sid;
         slashPaletteSupplement.museEffortDirty = true;
-        fetch('/api/muse/effort', {
+        const mutationToken = sessionMutations.capture(currentSessionId, 'muse:effort', _loadSessionSeq);
+        sessionMutationFetch('/api/muse/effort', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ session: sid, effort: id }),
         })
             .then((r) => r.json())
             .then((j) => {
+                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
                 if (j && j.success) {
                     slashPaletteSupplement.museEffortKey = sid;
                     slashPaletteSupplement.museEffortDirty = false;
@@ -6751,6 +6815,7 @@
     }
 
     function loadHermesEffortForPalette() {
+        if (slashPaletteSupplement.hermesEffortDirty) return;
         if (!hasActiveHermesAgentChip()) return;
         const key = currentSessionId != null ? String(currentSessionId) : '';
         if (
@@ -6759,15 +6824,18 @@
         ) {
             return;
         }
+        const effortGeneration = beginSupplementFetch('hermesEffortGen');
         slashPaletteSupplement.hermesEffortLoading = true;
         const url = key
             ? '/api/hermes/effort?session=' + encodeURIComponent(key)
             : '/api/hermes/effort';
+        const mutationToken = sessionMutations.capture(currentSessionId, 'hermes:effort:read', _loadSessionSeq);
         fetch(url, { cache: 'no-store' })
             .then((r) => r.json())
             .then((j) => {
+                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
                 // Don't clobber a palette pick that hasn't finished POSTing yet.
-                if (slashPaletteSupplement.hermesEffortDirty) return;
+                if (slashPaletteSupplement.hermesEffortDirty || !isCurrentSupplementFetch('hermesEffortGen', effortGeneration)) return;
                 slashPaletteSupplement.hermesEffort =
                     (j && j.preferredEffort) || '';
                 slashPaletteSupplement.hermesEffortKey = key;
@@ -6779,6 +6847,7 @@
             })
             .catch(() => {})
             .finally(() => {
+                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
                 slashPaletteSupplement.hermesEffortLoading = false;
             });
     }
@@ -6786,6 +6855,8 @@
     function persistHermesEffortSelection(effort) {
         const id = String(effort || '').trim().toLowerCase();
         if (!id) return;
+        slashPaletteSupplement.hermesEffortLoading = false;
+        beginSupplementFetch('hermesEffortGen');
         slashPaletteSupplement.hermesEffort = id;
         const sid = currentSessionId != null ? String(currentSessionId) : '';
         if (!sid) {
@@ -6796,13 +6867,15 @@
         // Optimistic key so a concurrent GET cannot wipe the pick before POST lands.
         slashPaletteSupplement.hermesEffortKey = sid;
         slashPaletteSupplement.hermesEffortDirty = true;
-        fetch('/api/hermes/effort', {
+        const mutationToken = sessionMutations.capture(currentSessionId, 'hermes:effort', _loadSessionSeq);
+        sessionMutationFetch('/api/hermes/effort', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ session: sid, effort: id }),
         })
             .then((r) => r.json())
             .then((j) => {
+                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
                 if (j && j.success) {
                     slashPaletteSupplement.hermesEffortKey = sid;
                     slashPaletteSupplement.hermesEffortDirty = false;
@@ -6851,22 +6924,26 @@
                 slashPaletteSupplement.opencodeModelsLoading
                 || (slashPaletteSupplement.opencodeModels.length
                     && slashPaletteSupplement.opencodeModelsKey === key)
+                || slashPaletteSupplement.opencodeModelsTried === key
             )
         ) {
             return;
         }
+        const modelsGeneration = beginSupplementFetch('opencodeModelsGen');
         slashPaletteSupplement.opencodeModelsLoading = true;
         const params = new URLSearchParams();
         if (key) params.set('session', key);
         if (forceRefresh) params.set('refresh', '1');
         const qs = params.toString();
         const url = qs ? '/api/opencode/models?' + qs : '/api/opencode/models';
+        const mutationToken = sessionMutations.capture(currentSessionId, 'opencode:model:read', _loadSessionSeq);
         fetch(url, { cache: 'no-store' })
             .then((r) => r.json())
             .then((j) => {
+                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
                 slashPaletteSupplement.opencodeModels =
                     j && j.success && Array.isArray(j.models) ? j.models : [];
-                if (!slashPaletteSupplement.opencodeModelDirty) {
+                if (!slashPaletteSupplement.opencodeModelDirty && isCurrentSupplementFetch('opencodeModelsGen', modelsGeneration)) {
                     slashPaletteSupplement.opencodeModel = (j && j.preferredModel) || '';
                 }
                 slashPaletteSupplement.opencodeModelsKey = key;
@@ -6892,7 +6969,9 @@
             })
             .catch(() => {})
             .finally(() => {
+                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
                 slashPaletteSupplement.opencodeModelsLoading = false;
+                slashPaletteSupplement.opencodeModelsTried = key; // empty/failed: don't refetch per render
                 renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
                 renderSlashChips('chat', document.getElementById('chatInput'));
                 const welcomeInput = document.getElementById('welcomeChatInput');
@@ -6909,6 +6988,8 @@
     function persistOpenCodeModelSelection(modelId) {
         const id = String(modelId || '').trim();
         if (!id) return;
+        slashPaletteSupplement.opencodeModelsLoading = false;
+        beginSupplementFetch('opencodeModelsGen');
         if (id.toLowerCase() === 'refresh' || id.toLowerCase() === '__refresh__') {
             slashPaletteSupplement.opencodeModelsKey = '';
             slashPaletteSupplement.opencodeModels = [];
@@ -6927,13 +7008,15 @@
             return;
         }
         slashPaletteSupplement.opencodeModelDirty = true;
-        fetch('/api/opencode/model', {
+        const mutationToken = sessionMutations.capture(currentSessionId, 'opencode:model', _loadSessionSeq);
+        sessionMutationFetch('/api/opencode/model', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ session: sid, model: id }),
         })
             .then((r) => r.json())
             .then((j) => {
+                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
                 if (j && j.success) {
                     slashPaletteSupplement.opencodeModel = id;
                     slashPaletteSupplement.opencodeModelDirty = false;
@@ -7054,6 +7137,7 @@
     }
 
     function loadOpenCodeEffortForPalette() {
+        if (slashPaletteSupplement.opencodeEffortDirty) return;
         if (!hasActiveOpenCodeAgentChip()) return;
         const key = currentSessionId != null ? String(currentSessionId) : '';
         if (
@@ -7062,15 +7146,18 @@
         ) {
             return;
         }
+        const effortGeneration = beginSupplementFetch('opencodeEffortGen');
         slashPaletteSupplement.opencodeEffortLoading = true;
         const url = key
             ? '/api/opencode/effort?session=' + encodeURIComponent(key)
             : '/api/opencode/effort';
+        const mutationToken = sessionMutations.capture(currentSessionId, 'opencode:effort:read', _loadSessionSeq);
         fetch(url, { cache: 'no-store' })
             .then((r) => r.json())
             .then((j) => {
+                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
                 // Don't clobber a palette pick that hasn't finished POSTing yet.
-                if (slashPaletteSupplement.opencodeEffortDirty) return;
+                if (slashPaletteSupplement.opencodeEffortDirty || !isCurrentSupplementFetch('opencodeEffortGen', effortGeneration)) return;
                 slashPaletteSupplement.opencodeEffort =
                     (j && j.preferredEffort) || '';
                 slashPaletteSupplement.opencodeEffortKey = key;
@@ -7082,6 +7169,7 @@
             })
             .catch(() => {})
             .finally(() => {
+                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
                 slashPaletteSupplement.opencodeEffortLoading = false;
             });
     }
@@ -7089,6 +7177,8 @@
     function persistOpenCodeEffortSelection(effort) {
         const id = String(effort || '').trim().toLowerCase();
         if (!id) return;
+        slashPaletteSupplement.opencodeEffortLoading = false;
+        beginSupplementFetch('opencodeEffortGen');
         slashPaletteSupplement.opencodeEffort = id;
         const sid = currentSessionId != null ? String(currentSessionId) : '';
         if (!sid) {
@@ -7099,13 +7189,15 @@
         // Optimistic key so a concurrent GET cannot wipe the pick before POST lands.
         slashPaletteSupplement.opencodeEffortKey = sid;
         slashPaletteSupplement.opencodeEffortDirty = true;
-        fetch('/api/opencode/effort', {
+        const mutationToken = sessionMutations.capture(currentSessionId, 'opencode:effort', _loadSessionSeq);
+        sessionMutationFetch('/api/opencode/effort', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ session: sid, effort: id }),
         })
             .then((r) => r.json())
             .then((j) => {
+                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
                 if (j && j.success) {
                     slashPaletteSupplement.opencodeEffortKey = sid;
                     slashPaletteSupplement.opencodeEffortDirty = false;
@@ -7151,22 +7243,26 @@
                 slashPaletteSupplement.codexModelsLoading
                 || (slashPaletteSupplement.codexModels.length
                     && slashPaletteSupplement.codexModelsKey === key)
+                || slashPaletteSupplement.codexModelsTried === key
             )
         ) {
             return;
         }
+        const modelsGeneration = beginSupplementFetch('codexModelsGen');
         slashPaletteSupplement.codexModelsLoading = true;
         const params = new URLSearchParams();
         if (key) params.set('session', key);
         if (forceRefresh) params.set('refresh', '1');
         const qs = params.toString();
         const url = qs ? '/api/codex/models?' + qs : '/api/codex/models';
+        const mutationToken = sessionMutations.capture(currentSessionId, 'codex:model:read', _loadSessionSeq);
         fetch(url, { cache: 'no-store' })
             .then((r) => r.json())
             .then((j) => {
+                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
                 slashPaletteSupplement.codexModels =
                     j && j.success && Array.isArray(j.models) ? j.models : [];
-                if (!slashPaletteSupplement.codexModelDirty) {
+                if (!slashPaletteSupplement.codexModelDirty && isCurrentSupplementFetch('codexModelsGen', modelsGeneration)) {
                     slashPaletteSupplement.codexModel = (j && j.preferredModel) || '';
                 }
                 slashPaletteSupplement.codexModelsKey = key;
@@ -7194,7 +7290,9 @@
             })
             .catch(() => {})
             .finally(() => {
+                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
                 slashPaletteSupplement.codexModelsLoading = false;
+                slashPaletteSupplement.codexModelsTried = key; // empty/failed: don't refetch per render
                 renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
                 renderSlashChips('chat', document.getElementById('chatInput'));
                 const welcomeInput = document.getElementById('welcomeChatInput');
@@ -7211,6 +7309,8 @@
     function persistCodexModelSelection(modelId) {
         const id = String(modelId || '').trim();
         if (!id) return;
+        slashPaletteSupplement.codexModelsLoading = false;
+        beginSupplementFetch('codexModelsGen');
         if (id.toLowerCase() === 'refresh' || id.toLowerCase() === '__refresh__') {
             slashPaletteSupplement.codexModelsKey = '';
             slashPaletteSupplement.codexModels = [];
@@ -7229,13 +7329,15 @@
             return;
         }
         slashPaletteSupplement.codexModelDirty = true;
-        fetch('/api/codex/model', {
+        const mutationToken = sessionMutations.capture(currentSessionId, 'codex:model', _loadSessionSeq);
+        sessionMutationFetch('/api/codex/model', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ session: sid, model: id }),
         })
             .then((r) => r.json())
             .then((j) => {
+                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
                 if (j && j.success) {
                     slashPaletteSupplement.codexModel = id;
                     slashPaletteSupplement.codexModelDirty = false;
@@ -7358,6 +7460,7 @@
     }
 
     function loadCodexEffortForPalette() {
+        if (slashPaletteSupplement.codexEffortDirty) return;
         if (!hasActiveCodexAgentChip()) return;
         const key = currentSessionId != null ? String(currentSessionId) : '';
         if (
@@ -7366,14 +7469,17 @@
         ) {
             return;
         }
+        const effortGeneration = beginSupplementFetch('codexEffortGen');
         slashPaletteSupplement.codexEffortLoading = true;
         const url = key
             ? '/api/codex/effort?session=' + encodeURIComponent(key)
             : '/api/codex/effort';
+        const mutationToken = sessionMutations.capture(currentSessionId, 'codex:effort:read', _loadSessionSeq);
         fetch(url, { cache: 'no-store' })
             .then((r) => r.json())
             .then((j) => {
-                if (slashPaletteSupplement.codexEffortDirty) return;
+                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
+                if (slashPaletteSupplement.codexEffortDirty || !isCurrentSupplementFetch('codexEffortGen', effortGeneration)) return;
                 slashPaletteSupplement.codexEffort =
                     (j && j.preferredEffort) || '';
                 slashPaletteSupplement.codexEffortKey = key;
@@ -7385,6 +7491,7 @@
             })
             .catch(() => {})
             .finally(() => {
+                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
                 slashPaletteSupplement.codexEffortLoading = false;
             });
     }
@@ -7466,6 +7573,8 @@
     function persistCodexEffortSelection(effort) {
         const id = String(effort || '').trim().toLowerCase();
         if (!id) return;
+        slashPaletteSupplement.codexEffortLoading = false;
+        beginSupplementFetch('codexEffortGen');
         slashPaletteSupplement.codexEffort = id;
         const sid = currentSessionId != null ? String(currentSessionId) : '';
         if (!sid) {
@@ -7475,7 +7584,8 @@
         }
         slashPaletteSupplement.codexEffortKey = sid;
         slashPaletteSupplement.codexEffortDirty = true;
-        fetch('/api/codex/effort', {
+        const mutationToken = sessionMutations.capture(currentSessionId, 'codex:effort', _loadSessionSeq);
+        sessionMutationFetch('/api/codex/effort', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -7486,6 +7596,7 @@
         })
             .then((r) => r.json())
             .then((j) => {
+                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
                 if (j && j.success) {
                     slashPaletteSupplement.codexEffortKey = sid;
                     slashPaletteSupplement.codexEffortDirty = false;
@@ -7574,16 +7685,20 @@
             loading: slashPaletteSupplement.claudeModelsLoading,
             modelsLength: (slashPaletteSupplement.claudeModels || []).length,
             modelsKey: slashPaletteSupplement.claudeModelsKey,
+            triedKey: slashPaletteSupplement.claudeModelsTried,
             sessionKey: key,
             forceRefresh,
         });
         if (!gate.fetch) return;
+        const modelsGeneration = beginSupplementFetch('claudeModelsGen');
         slashPaletteSupplement.claudeModelsLoading = true;
+        const mutationToken = sessionMutations.capture(currentSessionId, 'claude:model:read', _loadSessionSeq);
         fetch(gate.url, { cache: 'no-store' })
             .then((r) => r.json())
             .then((j) => {
+                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
                 const applied = CuttleChatAgentModel.applyClaudeModelsResponse(j, {
-                    modelDirty: slashPaletteSupplement.claudeModelDirty,
+                    modelDirty: slashPaletteSupplement.claudeModelDirty || !isCurrentSupplementFetch('claudeModelsGen', modelsGeneration),
                 });
                 slashPaletteSupplement.claudeModels = applied.models;
                 if (applied.model !== null) {
@@ -7611,7 +7726,9 @@
             })
             .catch(() => {})
             .finally(() => {
+                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
                 slashPaletteSupplement.claudeModelsLoading = false;
+                slashPaletteSupplement.claudeModelsTried = key; // empty/failed: don't refetch per render
                 renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
                 renderSlashChips('chat', document.getElementById('chatInput'));
                 const welcomeInput = document.getElementById('welcomeChatInput');
@@ -7628,6 +7745,8 @@
     function persistClaudeModelSelection(modelId) {
         const id = String(modelId || '').trim();
         if (!id) return;
+        slashPaletteSupplement.claudeModelsLoading = false;
+        beginSupplementFetch('claudeModelsGen');
         if (CuttleChatAgentModel.isClaudeModelRefreshPick(id)) {
             slashPaletteSupplement.claudeModelsKey = '';
             slashPaletteSupplement.claudeModels = [];
@@ -7645,13 +7764,15 @@
             return;
         }
         slashPaletteSupplement.claudeModelDirty = true;
-        fetch('/api/claude/model', {
+        const mutationToken = sessionMutations.capture(currentSessionId, 'claude:model', _loadSessionSeq);
+        sessionMutationFetch('/api/claude/model', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ session: sid, model: id }),
         })
             .then((r) => r.json())
             .then((j) => {
+                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
                 if (j && j.success) {
                     slashPaletteSupplement.claudeModel = id;
                     slashPaletteSupplement.claudeModelDirty = false;
@@ -7742,6 +7863,7 @@
     }
 
     function loadClaudeEffortForPalette() {
+        if (slashPaletteSupplement.claudeEffortDirty) return;
         const key = currentSessionId != null ? String(currentSessionId) : '';
         const gate = CuttleChatAgentModel.claudeEffortFetchForPalette({
             hasClaudeChip: hasActiveHarnessAgentChip('claude'),
@@ -7750,11 +7872,14 @@
             sessionKey: key,
         });
         if (!gate.fetch) return;
+        const effortGeneration = beginSupplementFetch('claudeEffortGen');
         slashPaletteSupplement.claudeEffortLoading = true;
+        const mutationToken = sessionMutations.capture(currentSessionId, 'claude:effort:read', _loadSessionSeq);
         fetch(gate.url, { cache: 'no-store' })
             .then((r) => r.json())
             .then((j) => {
-                if (slashPaletteSupplement.claudeEffortDirty) return;
+                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
+                if (slashPaletteSupplement.claudeEffortDirty || !isCurrentSupplementFetch('claudeEffortGen', effortGeneration)) return;
                 slashPaletteSupplement.claudeEffort =
                     CuttleChatAgentModel.applyClaudeEffortResponse(j);
                 slashPaletteSupplement.claudeEffortKey = key;
@@ -7766,6 +7891,7 @@
             })
             .catch(() => {})
             .finally(() => {
+                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
                 slashPaletteSupplement.claudeEffortLoading = false;
             });
     }
@@ -7773,6 +7899,8 @@
     function persistClaudeEffortSelection(effort) {
         const id = String(effort || '').trim().toLowerCase();
         if (!id) return;
+        slashPaletteSupplement.claudeEffortLoading = false;
+        beginSupplementFetch('claudeEffortGen');
         slashPaletteSupplement.claudeEffort = id;
         const sid = currentSessionId != null ? String(currentSessionId) : '';
         if (!sid) {
@@ -7782,7 +7910,8 @@
         }
         slashPaletteSupplement.claudeEffortKey = sid;
         slashPaletteSupplement.claudeEffortDirty = true;
-        fetch('/api/claude/effort', {
+        const mutationToken = sessionMutations.capture(currentSessionId, 'claude:effort', _loadSessionSeq);
+        sessionMutationFetch('/api/claude/effort', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -7793,6 +7922,7 @@
         })
             .then((r) => r.json())
             .then((j) => {
+                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
                 if (j && j.success) {
                     slashPaletteSupplement.claudeEffortKey = sid;
                     slashPaletteSupplement.claudeEffortDirty = false;
@@ -9401,6 +9531,11 @@
 
     function hydrateAgentSelectionFromSessionData(data, sessionId) {
         const incoming = data && data.composer_selection;
+        const unsynced = getSessionPrefs(sessionId)?.composerWrite;
+        if (unsynced) {
+            publishSharedComposerSelection(unsynced.selection, sessionId, unsynced.id);
+            return;
+        }
         const state = sharedComposerState.get(String(canonicalizeChatSessionId(sessionId)));
         // Reject stale/pending-write snapshots BEFORE seeding model/effort as
         // well as the chip. Otherwise a delayed GET could undo an accepted pick.
@@ -9435,11 +9570,15 @@
         restoreSessionStickySlash(sessionId, []);
     }
 
-    function publishSharedComposerSelection(selection) {
-        const sid = toAuthDbSessionId(currentSessionId);
+    function publishSharedComposerSelection(selection, sessionId = currentSessionId, retryId = null) {
+        const sid = toAuthDbSessionId(sessionId);
         if (!isAuthMode() || !sid || !/^\d+$/.test(sid)) return;
-        const key = String(canonicalizeChatSessionId(currentSessionId));
+        const key = String(canonicalizeChatSessionId(sessionId));
         const state = sharedComposerState.get(key) || { revision: 0 };
+        if (retryId && state.pending) return;
+        const writeId = retryId || Date.now() + ':' + Math.random().toString(36).slice(2);
+        if (!retryId) updateSessionPrefs(sessionId, {composerWrite: {selection, id: writeId}});
+        state.unsynced = true;
         state.pending = (state.pending || 0) + 1;
         sharedComposerState.set(key, state);
         // Serialize local writes so a slow earlier choice cannot win later.
@@ -9452,6 +9591,10 @@
             const result = await response.json();
             if (result.success && result.composer_selection) {
                 state.revision = Math.max(state.revision, Number(result.composer_selection.revision || 0));
+                if (getSessionPrefs(sessionId)?.composerWrite?.id === writeId) {
+                    updateSessionPrefs(sessionId, {composerWrite: null});
+                    state.unsynced = false;
+                }
             }
         }).catch((error) => {
             console.warn('[Cuttle Chat] composer selection sync failed:', error);
@@ -9502,7 +9645,7 @@
         if (opts.localOnly) return;
         if (isAuthMode() && bare) {
             // Durable server copy — survives Electron cache clears and other devices.
-            fetch(`/api/auth/sessions/${encodeURIComponent(bare)}`, {
+            sessionMutations.enqueue(String(bare) + 'project', () => fetch(`/api/auth/sessions/${encodeURIComponent(bare)}`, {
                 method: 'PATCH',
                 credentials: 'include',
                 headers: { 'Content-Type': 'application/json' },
@@ -9511,7 +9654,7 @@
                     project_name: payload.projectName,
                     project_path: payload.projectPath,
                 }),
-            }).catch((e) => console.warn('[Cuttle Chat] persist session project failed:', e));
+            })).catch((e) => console.warn('[Cuttle Chat] persist session project failed:', e));
         }
     }
 
@@ -12221,6 +12364,7 @@
         // unsaved) snaps to the Cuttle default.
         releaseManualUnreadHoldIfLeaving(null);
         currentSessionId = null;
+        adoptFollowupQueue(currentSessionId);
         applyHistorySubagentExpandState();
         applySessionIdentity(null);
         currentProject = null;
@@ -12384,6 +12528,7 @@
         updateMessageNav();
         releaseManualUnreadHoldIfLeaving(null);
         currentSessionId = null;
+        adoptFollowupQueue(currentSessionId);
         applySessionIdentity(null);
         updateChatIdBadge(null);
         if (window.CuttleAuth && window.CuttleAuth.setCurrentChatSession) {
@@ -12567,6 +12712,7 @@
             // Opening this chat — stop any background completion poll for it.
             cancelDetachedSessionCompletionWatch(sessionId);
             currentSessionId = sessionId;
+            adoptFollowupQueue(currentSessionId);
             // Opened chat defaults to idle until the one-shot live-status (below)
             // confirms generating. Stale runningSessionIds / hub cache from a
             // prior visit used to flash the purple title + history spinner for
@@ -12707,7 +12853,8 @@
                     updateMessageNav();
                     // Server follow-ups travel with /messages — apply on open so a
                     // stuck queue (e.g. CH-000441) drains without waiting for sync.
-                    applyServerFollowups(data.followups);
+                    applyServerFollowups(data.followups, data.followup_revision);
+                    acceptSessionAttention(sessionId, data.attention);
                     // Transcript is on screen — drop the restore veil before the
                     // live-status round trip, which nobody needs to wait behind.
                     clearChatRestoreVeil();
@@ -12822,6 +12969,7 @@
         const switchingAway = prevSessionId != null
             && !sessionIdsEqual(prevSessionId, sessionId);
         currentSessionId = sessionId;
+        adoptFollowupQueue(currentSessionId);
         if (switchingAway) {
             hubLiveStatusCache = null;
             setHistorySessionRunning(sessionId, false);
@@ -13060,6 +13208,7 @@
         }
         releaseManualUnreadHoldIfLeaving(sessionId);
         currentSessionId = sessionId;
+        adoptFollowupQueue(currentSessionId, {transfer: prev == null || !/^\d+$/.test(String(toAuthDbSessionId(prev)))});
         updateChatIdBadge(sessionId);
         localStorage.setItem('lastChatSessionId', String(sessionId));
         if (window.CuttleAuth && window.CuttleAuth.setCurrentChatSession) {
@@ -14673,7 +14822,8 @@
                 return;
             }
             if (!syncStillCurrent()) return;
-            applyServerFollowups(data.followups);
+            applyServerFollowups(data.followups, data.followup_revision);
+            acceptSessionAttention(currentSessionId, data.attention);
             // Keep badges truthful on incremental syncs too (same seeding as open).
             hydrateAgentSelectionFromSessionData(data, currentSessionId);
             applySessionIdentity(data);
@@ -14865,6 +15015,7 @@
             // Create new session (CH-XXXXXX for anonymous local chats)
             clearSessionPrefs(newComposerPrefsId);
             currentSessionId = generateLocalChatId();
+            adoptFollowupQueue(currentSessionId);
             localStorage.setItem('lastChatSessionId', currentSessionId);
             updateChatIdBadge(currentSessionId);
         }
@@ -16066,10 +16217,10 @@
             }
         });
         next.forEach((id) => formAwaitingSessionIds.add(id));
-        if (currentSessionId != null) {
+        if (currentSessionId != null && !serverAttention.get(toAuthDbSessionId(currentSessionId))) {
             const awaitingInput = actionCardsController().awaitingInputSessionIds()
                 .some(sid => sessionIdsEqual(sid, currentSessionId));
-            if (!!(getSessionPrefs(currentSessionId) || {}).awaitingInput !== awaitingInput) {
+            if (!!(attentionPrefsFor(currentSessionId) || {}).awaitingInput !== awaitingInput) {
                 updateSessionPrefs(currentSessionId, { awaitingInput });
             }
         }
@@ -16155,7 +16306,7 @@
             idsEqual: sessionIdsEqual,
             spinnerFor: sessionShowsHistorySpinner,
             attentionKindFor: (sid) => sessionHistoryAttentionKind(sid, null),
-            prefsFor: getSessionPrefs,
+            prefsFor: attentionPrefsFor,
             attentionActive: chatAttentionActive(),
             attentionIsError: chatAttentionIsError,
             generationLoading: generation.loading,
@@ -16246,9 +16397,20 @@
     function applyGeneratingFlagsFromSessions(serverSessions) {
         const currentWasRunning = currentSessionId != null
             && [...runningSessionIds].some((rid) => sessionIdsEqual(rid, currentSessionId));
+        // Only mounted work in the open chat may supplement server execution.
+        // Entries left behind by another chat must yield to an idle snapshot.
+        const localPending = new Set();
+        document.querySelectorAll('.cuttle-action-form.is-pending').forEach(card => {
+            const sid = formAwaitingSessionIdFromCard(card);
+            if (sessionIdsEqual(sid, currentSessionId)) localPending.add(String(canonicalizeChatSessionId(sid)));
+        });
         const still = new Set();
         (serverSessions || []).forEach((s) => {
             if (!s || s.id == null) return;
+            if (!s.awaiting_action && !localPending.has(String(canonicalizeChatSessionId(s.id)))) {
+                _mutateSessionIdSet(formAwaitingSessionIds, s.id, false);
+            }
+            if (s.attention) serverAttention.accept(toAuthDbSessionId(s.id), s.attention);
             // After a chat switch, the open chat stays idle until one-shot
             // live-status confirms. sessions.generating can lag and used to
             // flash the purple title/history spinner for a few seconds.
@@ -17790,55 +17952,74 @@
         }
     }
 
-    function applyServerFollowups(list) {
+    function applyServerFollowups(list, revision) {
         // Don't clobber an in-progress take, unsynced edits, a queue edit,
         // or an identical list (owned reconcile decision).
+        if (followupQueue.dirty && !followupQueue.takeInFlight) {
+            persistFollowupPut();
+            return;
+        }
         const r = CuttleFollowupQueue.reconcileServerList(followupQueue, list,
-            { editingId: editingFollowupId }, CuttleChatActivity);
-        if (!r.applied) return;
+            { editingId: editingFollowupId, revision }, CuttleChatActivity);
+        if (!r.applied && r.reason !== 'same') return;
         patchLiveSessionFollowupQueue(currentSessionId, followupQueue.items);
         renderFollowupQueue();
-        if (followupQueue.items.some((x) => !x.paused) && !isSessionGenerating() && !editingFollowupId) {
+        if ((followupQueue.items.some((x) => !x.paused) || getSessionPrefs(currentSessionId)?.[followupClaimField]) && !isSessionGenerating() && !editingFollowupId) {
             scheduleFollowupDrain(250);
         }
         try { scheduleChatActivityBroadcast(); } catch (_) {}
     }
 
-    async function persistFollowupAppend(item) {
-        const sid = followupAuthSid();
-        if (!sid || !item) return;
-        CuttleFollowupQueue.markDirty(followupQueue);
-        try {
-            const resp = await fetch(`/api/auth/sessions/${encodeURIComponent(sid)}/followups`, {
-                method: 'POST',
-                credentials: 'include',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ followup: item }),
-            });
-            const data = await resp.json().catch(() => null);
-            if (data && data.success && Array.isArray(data.followups)) {
-                CuttleFollowupQueue.markClean(followupQueue);
-                applyServerFollowups(data.followups);
-            }
-        } catch (_) {}
-        CuttleFollowupQueue.markClean(followupQueue);
+    function rememberUnsyncedQueue(sid, state) {
+        updateSessionPrefs(sid, {[followupWriteField]: state.dirty ? {
+            items: state.items, base: state.base, revision: state.revision,
+        } : null});
     }
 
-    async function persistFollowupPut() {
-        const sid = followupAuthSid();
-        if (!sid) return;
-        CuttleFollowupQueue.markDirty(followupQueue);
-        try {
-            const resp = await fetch(`/api/auth/sessions/${encodeURIComponent(sid)}/followups`, {
-                method: 'PUT',
-                credentials: 'include',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ followups: followupQueue.items }),
-            });
-            const data = await resp.json().catch(() => null);
-            if (data && data.success) CuttleFollowupQueue.markClean(followupQueue);
-        } catch (_) {}
-        CuttleFollowupQueue.markClean(followupQueue);
+    async function persistFollowupAppend(item) {
+        // Rebased revisioned PUT also handles appends. Keeping one mutation path
+        // means a failed append retains its intent and cannot be dropped by a GET.
+        return persistFollowupPut();
+    }
+
+    async function persistFollowupPut(sid = followupAuthSid(), state = followupQueue) {
+        if (!sid) return true;
+        CuttleFollowupQueue.markDirty(state);
+        rememberUnsyncedQueue(sid, state);
+        if (state.write) return state.write;
+        const write = sessionMutations.enqueue(sid + ':followups', async () => {
+            for (let attempt = 0; attempt < 4; attempt++) {
+                const version = state.editVersion;
+                let desired = JSON.parse(JSON.stringify(state.items));
+                const base = JSON.parse(JSON.stringify(state.base));
+                const response = await fetch('/api/auth/sessions/' + sid + '/followups', {
+                    method: 'PUT', credentials: 'include', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({followups: desired, revision: state.revision}),
+                });
+                const data = await response.json();
+                if (response.status === 409 && data.conflict) {
+                    state.revision = data.revision;
+                    state.items = CuttleFollowupQueue.mergeEdits(base, state.items, data.followups);
+                    state.base = data.followups;
+                    rememberUnsyncedQueue(sid, state);
+                    continue;
+                }
+                if (!response.ok || !data.success) throw new Error(data.error || 'Queue sync failed');
+                state.revision = data.revision;
+                state.base = data.followups || desired;
+                CuttleFollowupQueue.markClean(state, version);
+                rememberUnsyncedQueue(sid, state);
+                patchLiveSessionFollowupQueue(sid, state.base);
+                if (!state.dirty) {
+                    state.items = state.base;
+                    if (followupQueue === state && sessionIdsEqual(currentSessionId, sid)) renderFollowupQueue();
+                    return true;
+                }
+            }
+            return false;
+        }).catch(() => false).finally(() => { state.write = null; });
+        state.write = write;
+        return write;
     }
 
     function enqueueFollowup(message, opts = {}) {
@@ -17959,36 +18140,57 @@
         if (isSessionGenerating()) return;
         // Re-check after heal — edit may have started while we were waiting.
         if (editingFollowupId) return;
+        const origin = currentSessionId;
+        const state = followupQueue;
+        if (state.takeInFlight) return;
         let batch = [];
         const sid = followupAuthSid();
         if (sid) {
-            CuttleFollowupQueue.beginTake(followupQueue);
+            if (state.dirty && !await persistFollowupPut()) return;
+            if (editingFollowupId || !sessionIdsEqual(currentSessionId, origin) || followupQueue !== state) return;
+            const claimId = getSessionPrefs(sid)?.[followupClaimField] || ('queue-' + Date.now() + '-' + Math.random().toString(36).slice(2));
+            updateSessionPrefs(sid, {[followupClaimField]: claimId});
+            const takeVersion = state.editVersion;
+            CuttleFollowupQueue.beginTake(state);
             try {
-                if (followupQueue.items.length) await persistFollowupPut();
-                // Edit may have started during the PUT round-trip.
-                if (editingFollowupId) {
-                    CuttleFollowupQueue.endTake(followupQueue);
+                const response = await fetch('/api/auth/sessions/' + sid + '/followups/take', {
+                    method: 'POST', credentials: 'include', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({revision: state.revision, claim_id: claimId}),
+                });
+                const data = await response.json();
+                if (response.status === 409) {
+                    updateSessionPrefs(sid, {[followupClaimField]: null});
+                    state.revision = data.revision;
+                    state.items = state.editVersion !== takeVersion
+                        ? CuttleFollowupQueue.mergeEdits(state.base, state.items, data.followups || [])
+                        : data.followups || [];
+                    state.base = data.followups || [];
+                    rememberUnsyncedQueue(sid, state);
                     return;
                 }
-                const resp = await fetch(`/api/auth/sessions/${encodeURIComponent(sid)}/followups/take`, {
-                    method: 'POST',
-                    credentials: 'include',
-                });
-                const data = await resp.json().catch(() => null);
-                // Owned take/reconcile decision (server take, fallback,
-                // empty-queue noop); transport + errors stay here.
-                batch = CuttleFollowupQueue.resolveTake(followupQueue, editingFollowupId,
-                    (data && data.success)
-                        ? { ok: true, followups: data.followups, remaining: data.remaining }
-                        : { ok: false },
-                    CuttleChatActivity);
-            } catch (_) {
-                batch = CuttleFollowupQueue.resolveTake(followupQueue, editingFollowupId,
-                    { ok: false }, CuttleChatActivity);
-            }
-            CuttleFollowupQueue.endTake(followupQueue);
+                if (!response.ok || !data.success) return;
+                const editedDuringTake = state.editVersion !== takeVersion;
+                const editedItems = state.items;
+                state.revision = data.revision;
+                state.items = data.remaining || [];
+                state.base = state.items.slice();
+                batch = data.followups || [];
+                if (editedDuringTake || editingFollowupId || !sessionIdsEqual(currentSessionId, origin) || followupQueue !== state) {
+                    // Restore to the captured chat when navigation or editing
+                    // races the claim; retain the write if the network fails.
+                    state.items = editedDuringTake ? editedItems : [...batch, ...state.items];
+                    state.editVersion++;
+                    state.dirty = true;
+                    rememberUnsyncedQueue(sid, state);
+                    updateSessionPrefs(sid, {[followupClaimField]: null});
+                    await persistFollowupPut(sid, state);
+                    return;
+                }
+                updateSessionPrefs(sid, {[followupClaimField]: null});
+            } catch (_) { return; }
+            finally { CuttleFollowupQueue.endTake(state); }
         } else {
-            batch = CuttleFollowupQueue.resolveTake(followupQueue, editingFollowupId, null, CuttleChatActivity);
+            batch = CuttleFollowupQueue.resolveTake(state, editingFollowupId, null, CuttleChatActivity);
         }
         // Keep editing state if the edited item remained in the queue.
         if (editingFollowupId && !followupQueue.items.some((x) => x.id === editingFollowupId)) {
@@ -22397,6 +22599,12 @@
                 }
                 if (e.data.type === 'cuttle-flask-restart-linked') {
                     try { actionCardsController().handleExternalRestart(e.data); } catch (_) {}
+                    return;
+                }
+                if (e.data.type === 'cuttle-sessions-snapshot') {
+                    if (window.CuttleAuth && window.CuttleAuth.adoptSessions) window.CuttleAuth.adoptSessions(e.data.sessions);
+                    applyGeneratingFlagsFromSessions(e.data.sessions || []);
+                    syncHistoryUnreadIndicators();
                     return;
                 }
                 if (e.data.type === 'cuttle-open-panes') {

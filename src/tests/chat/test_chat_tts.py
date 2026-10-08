@@ -102,6 +102,29 @@ def test_resolve_speech_settings_applies_overrides():
         resolve_speech_settings(settings, {"provider": "nope"})
 
 
+def test_resolve_speech_settings_none_overrides_fall_back_to_settings():
+    # The /api/chat/tts chat path sends every override key, defaulting to
+    # None — a saved speed must survive that shape (preview sends explicit
+    # values, which is why only chats ignored the setting).
+    settings = normalize_chat_tts_settings({"speed": 2.0, "stability": 0.7})
+    chat_shape = {
+        "provider": None, "tts_model": None, "voice": None,
+        "speed": None, "stability": None,
+    }
+    r = resolve_speech_settings(settings, chat_shape)
+    assert r["speed"] == pytest.approx(2.0)
+    assert r["stability"] is None  # openai has no stability knob
+    eleven = normalize_chat_tts_settings(
+        {"provider": "elevenlabs", "speed": 1.1, "stability": 0.7}
+    )
+    re_ = resolve_speech_settings(eleven, dict(chat_shape, provider=None))
+    assert re_["speed"] == pytest.approx(1.1)
+    assert re_["stability"] == pytest.approx(0.7)
+    # An explicit override still wins over Settings.
+    explicit = resolve_speech_settings(settings, {"speed": 1.5})
+    assert explicit["speed"] == pytest.approx(1.5)
+
+
 def test_clean_strips_cuttle_chrome_and_markdown():
     raw = (
         "Hello **world**\n"

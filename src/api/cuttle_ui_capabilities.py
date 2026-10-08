@@ -66,6 +66,10 @@ def cuttle_ui_capabilities_block(*, project_path: Optional[str] = None) -> str:
     )
 
     text = CUTTLE_UI_CAPABILITIES_TEXT
+    from api.experimental.context_bundles import markdown
+    docs = [ref for ref, _ in markdown("docs", project_path)]
+    if docs:
+        text += "\nEnabled feature runbooks (effective refs): " + ", ".join(docs) + "."
     if load_global_layers(project_path).docs:
         enabled = sorted(doc for doc, integration in INTEGRATION_DOCS.items()
                          if integration_guidance_enabled(integration, project_path))

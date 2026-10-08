@@ -53,7 +53,18 @@
                         <div data-release-notes></div>
                         <a data-release-link target="_blank" rel="noopener noreferrer">View release on GitHub</a>
                     </details>
-
+                </div>
+                <div class="setting-item">
+                    <div class="setting-label">
+                        <strong>Check for updates automatically</strong><button type="button" class="cuttle-info" data-tooltip="Check for a newer published Cuttle release when this Updates section opens. This never installs or restarts anything." aria-label="About Check for updates automatically">i</button>
+                        <div class="setting-description">Checks published releases automatically and enables first-launch release notes. You can always check manually.</div>
+                    </div>
+                    <div class="setting-control">
+                        <label class="toggle-switch active" data-release-auto-toggle>
+                            <input type="checkbox" data-release-auto-check checked style="display: none;">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
                 </div>
             </div>
 
@@ -689,7 +700,7 @@
     <script src="/js/media/background_effect_blend.js"></script>
     <script src="/js/shared/toast.js"></script>
     <script src="/js/shared/completion_notifications.js?v=20261004completion"></script>
-    <script src="/js/settings/settings_releases.js?v=20261004releases"></script>
+    <script src="/js/settings/settings_releases.js?v=20261008releasePrefs"></script>
     <script src="/js/settings/settings_storage.js?v=20261007"></script>
     <script src="/js/settings/settings_page_tabs.js?v=20261001tabs"></script>
     <script src="/js/settings/settings_page_accessibility.js?v=20261007"></script>
@@ -1137,6 +1148,24 @@
                 if (agent.requires_cloud === false) bits.push('can run locally');
                 meta.textContent = bits.join(' · ');
                 detail.appendChild(meta);
+
+                if (agent.source && agent.source !== 'bundled') {
+                    const access = document.createElement('div');
+                    access.className = 'agent-card-hint';
+                    const permissions = agent.permissions || {};
+                    access.textContent = 'Declared access: files ' + (permissions.filesystem || 'unspecified')
+                        + '; network ' + (permissions.network || 'unspecified') + '; subprocess '
+                        + (permissions.subprocess == null ? 'unspecified' : permissions.subprocess ? 'yes' : 'no')
+                        + '. Trusted Python code; these declarations do not enforce a sandbox.';
+                    detail.appendChild(access);
+                    const provenance = document.createElement('div');
+                    provenance.className = 'agent-card-hint';
+                    const origin = agent.provenance || {};
+                    provenance.textContent = (origin.verified ? 'Declared SHA-256 files verified.' : 'No verified file digests.')
+                        + (origin.source_url ? ' Source: ' + origin.source_url : '')
+                        + (origin.revision ? ' Revision: ' + origin.revision : '');
+                    detail.appendChild(provenance);
+                }
 
                 // Only show the actionable line — a ready agent needs no prose.
                 if (!agent.available && agent.install_hint) {
@@ -2520,6 +2549,7 @@
                     const n = parseInt(localStorage.getItem('cuttleBackgroundEffectBlend'), 10);
                     return isNaN(n) ? 100 : Math.max(0, Math.min(100, n));
                 })(),
+                autoUpdateChecks: localStorage.getItem('cuttleAutoUpdateChecks') !== '0',
                 notificationsEnabled: document.getElementById('notificationsEnabled').checked
             };
             
@@ -2590,6 +2620,9 @@
                             if (window.parent !== window) {
                                 window.parent.postMessage({ type: 'cuttle-bg-effect-blend', value: Math.max(0, Math.min(100, parseInt(settings.backgroundEffectBlend, 10) || 100)) }, '*');
                             }
+                        }
+                        if (settings.autoUpdateChecks !== undefined) {
+                            localStorage.setItem('cuttleAutoUpdateChecks', settings.autoUpdateChecks ? '1' : '0');
                         }
                         showNotification('📤 Settings imported! Reloading page...');
                         setTimeout(() => location.reload(), 1500);

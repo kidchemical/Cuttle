@@ -128,6 +128,7 @@ window.CuttleAuth = {
     getUser: () => currentUser,
     getCurrentChatSession: () => currentChatSession,
     getSessions: () => chatSessions,
+    adoptSessions: sessions => { chatSessions = sessions || []; },
     isAuthenticated: () => !!currentUser,
     setCurrentChatSession: (id) => { currentChatSession = id; },
     loadChatSessions: () => loadChatSessions(),
@@ -185,7 +186,16 @@ function _emitAuthChanged(opts) {
 
 function _applyRemoteAuthUser(incoming) {
     const nextId = _userId(incoming);
-    if (nextId === _userId(currentUser)) return; // already in sync
+    if (nextId === _userId(currentUser)) {
+        // Same account, fresh fields (e.g. username changed in the shell
+        // account panel) — adopt them so local labels don't go stale.
+        if (incoming && JSON.stringify(incoming) !== JSON.stringify(currentUser)) {
+            currentUser = incoming;
+            updateUIForAuthenticatedUser();
+            _emitAuthChanged({ localOnly: true });
+        }
+        return;
+    }
 
     _applyingRemoteAuth = true;
 
@@ -969,13 +979,13 @@ async function handleLogout(opts = {}) {
  */
 async function loadChatSessions() {
     if (!_pageNeedsChatSessions()) return;
+    const requestingUserId = currentUser ? currentUser.id : null;
     try {
-        const response = await fetch('/api/auth/sessions', {
-            credentials: 'include'
-        });
+        const broker = window.parent !== window && window.parent.cuttleActivityBroker;
+        const data = broker ? {success: true, sessions: await broker.sessions(false, requestingUserId)}
+            : await (await fetch('/api/auth/sessions', {credentials: 'include'})).json();
 
-        const data = await response.json();
-
+        if ((currentUser ? currentUser.id : null) !== requestingUserId) return;
         if (data.success) {
             chatSessions = data.sessions || [];
 

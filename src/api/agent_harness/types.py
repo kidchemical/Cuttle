@@ -89,6 +89,8 @@ class AgentManifest:
     schema_version: int = 1
     # Discovery provenance: bundled | user | project
     source: str = "bundled"
+    permissions: Dict[str, Any] = field(default_factory=dict)
+    provenance: Dict[str, Any] = field(default_factory=dict)
 
     def slash_prefix(self) -> str:
         s = (self.slash or f"/{self.id}").strip()
@@ -102,6 +104,9 @@ class AgentManifest:
         install = self.install_hint or self.missing_cli_hint
         hint = self.hint or self.notes
         out: Dict[str, Any] = {
+            "permissions": dict(self.permissions),
+            "provenance": dict(self.provenance),
+            "permission_enforcement": "trusted_code",
             "id": self.id,
             "label": self.label,
             "slash": self.slash_prefix().rstrip(),

@@ -640,6 +640,10 @@ const DEFAULT_LAYOUT = {
     layout_version: RAIL_LAYOUT_VERSION,
 };
 
+// Experiment availability does not change the user's saved pin preferences.
+// Declared early: restoreSplitLayout() (below) mounts panes via
+// mountNewLeafFrame(), which re-applies feed visibility per new pane.
+let agentFeedEnabled = false;
 /** Shared rail layout for every blade (not per-bar). */
 let lastUILayout = {
     rail_items: DEFAULT_LAYOUT.rail_items.slice(),
@@ -1745,6 +1749,8 @@ window.addEventListener('message', function(e) {
         } catch (_) {}
     } else if (e.data.type === 'cuttle-pane-activity') {
         setFocusedColumn(findColumnIndexForSource(e.source));
+    } else if (e.data.type === 'cuttle-activity-refresh') {
+        window.cuttleActivityBroker.refresh();
     } else if (e.data.type === 'cuttle-chat-activity') {
         // Snapshot of the chats this frame owns (immediate). Replaces the
         // frame's previous snapshot; the server poll stays authoritative.
@@ -2976,6 +2982,10 @@ function mountNewLeafFrame(newIdx, frame, mainEl, page) {
     stampComposerDraftScope(frame, newIdx);
     frame.src = withCacheBust(safePage);
     attachFrameLoadListener(newIdx, frame);
+    // Fresh panes clone the boot-time rail template, which bakes in the
+    // pre-flag `display:none` on nav-agent-feed. Re-apply the live flag so a
+    // new split matches column 0 instead of losing the icon.
+    applyAgentFeedAvailability();
 }
 
 /**
@@ -4180,8 +4190,8 @@ function migrateUILayout(saved) {
     return { layout, changed: true };
 }
 
-// Experiment availability does not change the user's saved pin preferences.
-let agentFeedEnabled = false;
+// `agentFeedEnabled` is declared near lastUILayout (above) so pane mounts
+// during restore can re-apply feed visibility without hitting TDZ.
 function applyAgentFeedAvailability() {
     document.querySelectorAll('[data-id="nav-agent-feed"]').forEach(el => {
         el.style.setProperty('display', agentFeedEnabled ? '' : 'none', 'important');
@@ -4730,7 +4740,12 @@ function renderAccountButtons() {
 }
 
 function setShellAuthUser(user) {
+    const previousId = shellAuthUser && shellAuthUser.id;
     shellAuthUser = user || null;
+    if (previousId !== (shellAuthUser && shellAuthUser.id) && window.cuttleActivityBroker) {
+        CuttleSpaces.resetActivity();
+        window.cuttleActivityBroker.refresh();
+    }
     renderAccountButtons();
     // The Account Apps-grid tile carries the profile photo — rebroadcast so
     // an open Apps page swaps the placeholder for the picture on sign in/out.
@@ -4764,137 +4779,17 @@ function openSignInForColumn(_colIdx) {
     navigate(0, '/chat_page.html?signin=1');
 }
 
-function getLogoutConfirmModal() {
-    return document.getElementById('logoutConfirmModal');
-}
-
-function closeLogoutConfirmModal() {
-    const modal = getLogoutConfirmModal();
-    if (!modal) return;
-    modal.classList.remove('active');
-    const submit = document.getElementById('logoutConfirmSubmit');
-    if (submit) {
-        submit.disabled = false;
-        submit.textContent = 'Log out';
-    }
-}
-
-function openLogoutConfirmModal() {
-    if (!shellAuthUser) return;
-    const modal = getLogoutConfirmModal();
-    if (!modal) return;
-    cuttleSyncMobileServerRows();
-
-    const name = accountDisplayName(shellAuthUser);
-    const title = document.getElementById('logoutConfirmTitle');
-    if (title) title.textContent = name || 'Account';
-
-    const provider = shellAuthUser.auth_provider || 'local';
-    const isGuest = !!(shellAuthUser.is_guest || provider === 'guest');
-    const isLocal = provider === 'local';
-    const isGoogle = provider === 'google';
-    const linked = !!(shellAuthUser.google_linked || shellAuthUser.provider_user_id);
-    const canLinkGoogle = window.CuttleAuth && window.CuttleAuth.userCanLinkGoogle
-        ? window.CuttleAuth.userCanLinkGoogle(shellAuthUser)
-        : ((isLocal || isGuest) && !linked);
-    const canManageGoogle = isLocal || isGuest || isGoogle;
-
-    const subtitle = document.getElementById('logoutConfirmSubtitle');
-    if (subtitle) {
-        const uname = shellAuthUser.username ? `@${shellAuthUser.username}` : '';
-        if (isGuest && !linked) {
-            subtitle.textContent = uname
-                ? `${uname} — sign in with Google to keep this account, or log out.`
-                : 'Sign in with Google to keep this account, or log out.';
-        } else {
-            subtitle.textContent = uname
-                ? `${uname} — connect Google for your avatar, or log out.`
-                : 'Connect Google for your avatar, or log out.';
-        }
-    }
-
-    const avatar = document.getElementById('logoutConfirmAvatar');
-    if (avatar) {
-        avatar.innerHTML = accountAvatarInnerHtml(shellAuthUser);
-    }
-
-    const linkBtn = document.getElementById('logoutConfirmLinkGoogle');
-    const refreshBtn = document.getElementById('logoutConfirmRefreshGoogle');
-    const statusEl = document.getElementById('logoutConfirmGoogleStatus');
-
-    if (linkBtn) {
-        linkBtn.hidden = !canLinkGoogle;
-        linkBtn.textContent = isGuest ? 'Continue with Google' : 'Connect Google';
-        linkBtn.href = '/api/auth/oauth/google?link=1';
-    }
-    if (refreshBtn) {
-        refreshBtn.hidden = !(canManageGoogle && linked && !isGuest);
-    }
-    if (statusEl) {
-        statusEl.hidden = !(canManageGoogle && linked);
-        statusEl.textContent = linked ? 'Google linked — avatar syncs to this account.' : '';
-    }
-
-    modal.classList.add('active');
-    const cancel = document.getElementById('logoutConfirmCancel');
-    if (cancel) cancel.focus();
-}
-
-async function performShellLogout() {
-    const submit = document.getElementById('logoutConfirmSubmit');
-    if (submit) {
-        submit.disabled = true;
-        submit.textContent = 'Logging out…';
-    }
-    try {
-        if (typeof handleLogout === 'function') {
-            await handleLogout({ skipRedirect: true });
-            setShellAuthUser(null);
-            return;
-        }
-        try {
-            await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
-        } catch (_) {}
-        setShellAuthUser(null);
-        document.querySelectorAll('.split-column .shell-main iframe').forEach(fr => {
-            try {
-                fr.contentWindow?.postMessage({ type: 'cuttle-auth-changed', user: null }, '*');
-            } catch (_) {}
-        });
-    } finally {
-        closeLogoutConfirmModal();
-    }
-}
-
-function setupLogoutConfirmModal() {
-    const modal = getLogoutConfirmModal();
-    if (!modal || modal.dataset.bound === '1') return;
-    modal.dataset.bound = '1';
-
-    const closeBtn = document.getElementById('logoutConfirmClose');
-    const cancelBtn = document.getElementById('logoutConfirmCancel');
-    const submitBtn = document.getElementById('logoutConfirmSubmit');
-    const refreshBtn = document.getElementById('logoutConfirmRefreshGoogle');
-
-    if (closeBtn) closeBtn.addEventListener('click', closeLogoutConfirmModal);
-    if (cancelBtn) cancelBtn.addEventListener('click', closeLogoutConfirmModal);
-    if (submitBtn) submitBtn.addEventListener('click', performShellLogout);
-    if (refreshBtn) {
-        refreshBtn.addEventListener('click', () => {
-            window.location.href = '/api/auth/oauth/google?link=1';
-        });
-    }
-
-    modal.addEventListener('click', (e) => {
-        if (e.target === modal) closeLogoutConfirmModal();
-    });
-
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && modal.classList.contains('active')) {
-            closeLogoutConfirmModal();
-        }
-    });
-}
+// Account panel DOM, sign-out and profile forms: js/shell/account_panel.js.
+const accountPanel = CuttleAccountPanel.create({
+    getUser: () => shellAuthUser,
+    setUser: setShellAuthUser,
+    displayName: accountDisplayName,
+    avatarHtml: accountAvatarInnerHtml,
+    syncServerRows: () => cuttleSyncMobileServerRows(),
+});
+function closeLogoutConfirmModal() { accountPanel.close(); }
+function openLogoutConfirmModal() { accountPanel.open(); }
+function setupLogoutConfirmModal() { accountPanel.setup(); }
 
 async function handleAccountClick(_colIdx) {
     if (!shellAuthUser) {
@@ -5842,13 +5737,12 @@ function allSpaceChatIds() {
     return [...out].filter(Boolean).slice(0, 60);
 }
 
+const shellSessionPrefs = CuttleSessionPrefs.create(localStorage);
+
 function readChatPrefsMap() {
-    try {
-        return JSON.parse(localStorage.getItem('cuttleChatSessionPrefs') || '{}') || {};
-    } catch (_) {
-        return {};
-    }
+    return shellSessionPrefs.map();
 }
+
 
 function readLocalChatSessions() {
     try {
@@ -5890,11 +5784,15 @@ function markFinishedBackgroundChatsUnread(finished) {
             prefs[key] = Object.assign({}, row, { hasUnread: true, unreadIsError: false });
             changed = true;
         });
-        if (changed) localStorage.setItem('cuttleChatSessionPrefs', JSON.stringify(prefs));
+        if (changed) targets.forEach(bare => shellSessionPrefs.update(bare, prefs[bare] || {}));
     } catch (_) {}
 }
 
 async function fetchSpaceSessionsList() {
+    try { return await window.cuttleActivityBroker.sessions(); } catch (_) { return null; }
+}
+
+async function loadActivitySessions() {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 6000);
     try {
@@ -5966,6 +5864,7 @@ async function refreshSpaceActivityFromServer() {
                 rows.push({
                     id: sid,
                     running: !!(s.generating || s.awaiting_action),
+                    attention: s.attention,
                     queue: CuttleSpaces.followupKind(parseSpaceFollowupQueue(
                         s.followup_queue != null ? s.followup_queue : s.followups)),
                 });
@@ -5973,7 +5872,8 @@ async function refreshSpaceActivityFromServer() {
         } else {
             rows = await fetchSpaceLiveStatusRows(ids);
         }
-        markFinishedBackgroundChatsUnread(CuttleSpaces.noteServerSnapshot(rows, startedAt));
+        const finished = CuttleSpaces.noteServerSnapshot(rows, startedAt);
+        if (!rows.some(row => row.attention)) markFinishedBackgroundChatsUnread(finished);
         refreshSpaceActivityLocalState();
     } finally {
         spaceActivityPollInFlight = false;
@@ -5996,6 +5896,34 @@ function parseSpaceFollowupQueue(raw) {
     return [];
 }
 
+const activityBroker = CuttleActivityBroker.create({
+    scope: () => shellAuthUser ? shellAuthUser.id : null,
+    now: () => Date.now(), setTimeout: (fn, ms) => window.setTimeout(fn, ms),
+    clearTimeout: id => window.clearTimeout(id),
+    load: async () => {
+        const rows = await loadActivitySessions();
+        if (!rows) throw new Error('Session snapshot unavailable');
+        return rows;
+    },
+    publish: sessions => {
+        broadcastToFrames({type: 'cuttle-sessions-snapshot', sessions});
+        CuttleSpaces.noteServerSnapshot(sessions.map(s => ({id: s.id,
+            running: !!(s.generating || s.awaiting_action), attention: s.attention,
+            queue: CuttleSpaces.followupKind(parseSpaceFollowupQueue(s.followup_queue))})), Date.now());
+        syncSpaceActivityTabs();
+    },
+    openStream: wake => {
+        if (typeof EventSource === 'undefined') return null;
+        const stream = new EventSource('/api/activity/stream');
+        stream.addEventListener('activity', wake);
+        stream.onopen = wake;
+        return stream;
+    },
+});
+window.cuttleActivityBroker = activityBroker;
+activityBroker.start();
+window.addEventListener('pagehide', () => activityBroker.dispose());
+
 function scheduleSpaceActivityPoll(immediate) {
     const since = Date.now() - spaceActivityLastPollAt;
     if (!immediate && since < 8000) {
@@ -6003,6 +5931,7 @@ function scheduleSpaceActivityPoll(immediate) {
         syncSpaceActivityTabs();
         return;
     }
+    if (immediate) window.cuttleActivityBroker.refresh();
     refreshSpaceActivityFromServer();
 }
 
@@ -6362,7 +6291,8 @@ function setupSpaceTabMenus(host) {
     // refresh dots without waiting for the next heartbeat.
     window.addEventListener('storage', (e) => {
         if (!e || !e.key) return;
-        if (e.key === 'cuttleChatSessionPrefs' || e.key === 'chatSessions') {
+        if (CuttleSessionPrefs.isKey(e.key)) shellSessionPrefs.invalidate();
+        if (CuttleSessionPrefs.isKey(e.key) || e.key === 'chatSessions') {
             scheduleSpaceActivityPoll(false);
         }
     });

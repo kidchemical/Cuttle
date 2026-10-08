@@ -37,6 +37,7 @@
     const _sources = new Map();
     /** bare -> { running, queue, at } — `at` is the poll start time. */
     const _server = new Map();
+    const _attention = new Map();
     /** bare -> '' | 'input' | 'unread' | 'error' (a row exists ⇒ prefs decide). */
     let _prefs = new Map();
     /** bare -> 'queued' | 'paused' (local mode). */
@@ -45,6 +46,7 @@
     function resetActivity() {
         _sources.clear();
         _server.clear();
+        _attention.clear();
         _prefs = new Map();
         _local = new Map();
     }
@@ -130,6 +132,10 @@
             if (!r) return;
             const bare = bareSid(r.id);
             if (!bare) return;
+            if (r.attention) {
+                const prevAttention = _attention.get(bare);
+                if (!prevAttention || r.attention.revision >= prevAttention.revision) _attention.set(bare, r.attention);
+            }
             const prev = _server.get(bare) || null;
             const running = !!r.running;
             const queue = r.queue == null ? (prev ? prev.queue : '') : cleanKind(r.queue);
@@ -216,7 +222,9 @@
             running = !(ownedAt > srv.at && !ownedRunning);
         }
 
-        let activity = _prefs.has(bare) ? _prefs.get(bare) : ownedUnread;
+        const attention = _attention.get(bare);
+        let activity = attention ? (attention.awaitingInput ? 'input' : attention.hasUnread ? (attention.unreadIsError ? 'error' : 'unread') : '')
+            : _prefs.has(bare) ? _prefs.get(bare) : ownedUnread;
         if (visibleAttention && activity !== 'input') activity = visibleAttention;
         if (!activity) {
             if (ownedAt && (!srv || ownedAt >= srv.at)) activity = ownedQueue;

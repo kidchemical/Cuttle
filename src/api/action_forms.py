@@ -747,6 +747,7 @@ def _run_one(
     action_name: Optional[str],
     params: Dict[str, Any],
     session_id: Optional[str] = None,
+    receipt_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     if not action_name:
         return {"success": True, "response": "Cancelled.", "skipped": True}
@@ -756,6 +757,8 @@ def _run_one(
         project_path=project_path,
         params=params or {},
         session_id=session_id,
+        receipt_id=receipt_id,
+        persistent_receipt=True,
     )
     return execute_inline_action(token, session_id=session_id)
 
@@ -1676,6 +1679,16 @@ def execute_action_form_submission(
             if not is_owner_user(user):
                 res = {"success": False, "response": "Owner privileges required."}
             else:
+                from api.action_replay import claim, duplicate_result, key, release_rejected
+                restart_mode = str(run_params.get("mode") or "graceful").strip().lower()
+                # Shared controller generations coalesce copies across chats.
+                receipt_key = key(f"form:{form_id}:{restart_mode}", action, "", "" if _is_flask_restart_form_id(form_id) else session_id)
+                if restart_mode != "status" and not claim(receipt_key):
+                    res = duplicate_result()
+                    all_ok = False
+                    results.append({**res, "action": action})
+                    toasts.append(res["response"])
+                    continue
                 restart = request_restart(
                     mode=str(run_params.get("mode") or "graceful").strip().lower(),
                     session_id=session_id,
@@ -1683,6 +1696,8 @@ def execute_action_form_submission(
                     force_confirm=str(run_params.get("mode") or "").strip().lower() == "force",
                     chat_notify=False,
                 )
+                if restart.get("state") == "rejected" and not restart.get("success") and restart_mode != "status":
+                    release_rejected(receipt_key)
                 res = {**restart, "response": restart.get("response") or restart.get("error") or restart.get("state") or "Restart requested."}
                 if restart.get('success') and restart.get('restart_id') and run_params.get('mode') != 'status':
                     restart_result = {key: restart.get(key) for key in ('restart_id', 'state', 'mode', 'active_work')}
@@ -1708,10 +1723,11 @@ def execute_action_form_submission(
                 toasts.append(f"Unknown action `{action}`")
                 continue
             res = _run_one(
-                resolved_path or run_project,
+                run_project,
                 str(action),
                 run_params,
                 session_id=session_id,
+                receipt_id=f"form:{form_id}",
             )
         ok = bool(res.get("success"))
         all_ok = all_ok and ok

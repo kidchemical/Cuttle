@@ -47,6 +47,8 @@ def personal_root(cuttle_root: Path) -> Path:
         from core.runtime_paths import personal_dir
 
         return personal_dir()
+    if root.parent.name == "features" and root.parent.parent.name == GLOBAL_CONFIG_DIRNAME:
+        return personal_root(root.parent.parent) / "features" / root.name
     return root / PERSONAL_DIRNAME
 
 
@@ -273,6 +275,8 @@ def scoped_unit_dirs(
                 out.extend(((config / "personal" / category, scope + "-personal"), (config / category, scope)))
     if include_global:
         out.extend(((personal_root(global_root) / category, "global-personal"), (global_root / category, "global")))
+        from api.experimental.context_bundles import unit_dirs
+        out.extend(unit_dirs(category, project_path, global_root))
     return out
 
 

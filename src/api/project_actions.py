@@ -124,6 +124,12 @@ def _actions_dirs_for_project(
             break
         _add(parent)
         cur = parent
+    if include_global:
+        from api.cuttle_brain.context_compiler import _cuttle_global_config
+        from api.experimental.context_bundles import unit_dirs
+        config = _cuttle_global_config()
+        if config:
+            out.extend((folder, config.parent) for folder, _ in unit_dirs("actions", project_path, config))
     return out
 
 
@@ -163,6 +169,11 @@ def _parse_action_file(path: Path, project_path: str) -> Optional[Dict[str, Any]
     repos = meta.get("repos") if isinstance(meta.get("repos"), dict) else {}
     repos = {str(k): str(v) for k, v in repos.items()}
     guild_id = str(meta.get("guild_id") or meta.get("guild") or "").strip() or None
+    from api.action_replay import policy
+    try:
+        policy(meta.get("replay"), {})
+    except (ValueError, TypeError):
+        return None
     return {
         "name": name,
         "type": action_type,
@@ -177,9 +188,14 @@ def _parse_action_file(path: Path, project_path: str) -> Optional[Dict[str, Any]
         "path": str(path),
         "project_path": str(Path(project_path).resolve()),
         "raw": meta,
+        "replay": meta.get("replay"),
     }
 
 
+from api.experimental.context_bundles import capture_call
+
+
+@capture_call
 def list_project_actions(
     project_path: str, *, include_global: bool = True, _include_disabled: bool = False
 ) -> List[Dict[str, Any]]:
@@ -187,6 +203,9 @@ def list_project_actions(
         return []
     seen: set = set()
     out: List[Dict[str, Any]] = []
+    from api.experimental.context_bundles import feature_for_path
+    owners = {}
+    ambiguous = set()
     for actions_dir, owner_root in _actions_dirs_for_project(
         project_path, include_global=include_global
     ):
@@ -195,18 +214,27 @@ def list_project_actions(
         except OSError:
             continue
         for path in files:
+            if path.is_symlink():
+                continue
             if path.suffix.lower() not in (".yaml", ".yml"):
                 continue
             action = _parse_action_file(path, str(owner_root))
             if not action:
                 continue
             key = action["name"]
+            feature = feature_for_path(path)
             if key in seen:
+                if owners[key] != feature and (feature or owners[key]):
+                    ambiguous.add(key)
                 continue
             seen.add(key)
+            owners[key] = feature
             if action["raw"].get("disabled") is True and not _include_disabled:
                 continue
-            if actions_dir == personal_dir() / "actions":
+            if feature:
+                scope = f"feature/{feature}"
+                action["feature_id"] = feature
+            elif actions_dir == personal_dir() / "actions":
                 scope = "global-personal"
             else:
                 parts = actions_dir.relative_to(owner_root).parts
@@ -216,8 +244,10 @@ def list_project_actions(
                 if "personal" in parts:
                     scope += "-personal"
             action["source"] = scope
+            action["context_project_path"] = project_path
             action["ref"] = f"{scope}/{key}"
             out.append(action)
+    out = [a for a in out if a["name"] not in ambiguous]
     out.sort(key=lambda a: (a.get("title") or a.get("name") or "").lower())
     return out
 
@@ -273,6 +303,13 @@ def find_project_action_resolved(
     def _add_candidate(action: Optional[Dict[str, Any]], path: str) -> None:
         if not action:
             return
+        if action.get("feature_id") and primary:
+            # Never recover a hidden/tombstoned/ambiguous feature action from
+            # another project's catalog. Retain the caller's policy at dispatch.
+            visible = find_project_action(primary, want, include_global=include_global)
+            if not visible or visible.get("feature_id") != action["feature_id"]:
+                return
+            action = {**action, "context_project_path": primary}
         key = str(action.get("project_path") or path or "").strip().lower()
         if not key or key in seen_paths:
             return
@@ -552,6 +589,7 @@ def rewrite_cuttle_confirms(
             project_path=project_path or "",
             params=params,
             session_id=str(session_id),
+            receipt_id=action_id,
         )
         return (
             f'<cuttle_confirm_pending id="{action_id}" '
@@ -740,6 +778,8 @@ def encode_inline_action_payload(
     params: Dict[str, Any],
     session_id: Optional[str] = None,
     ttl_seconds: int = _PENDING_TTL_SEC,
+    receipt_id: Optional[str] = None,
+    persistent_receipt: bool = False,
 ) -> str:
     """Signed confirm token: ``inline.<base64url(json+hmac+exp)>``."""
     now = int(time.time())
@@ -749,6 +789,8 @@ def encode_inline_action_payload(
         "params": dict(params or {}),
         "iat": now,
         "exp": now + max(60, int(ttl_seconds or _PENDING_TTL_SEC)),
+        "receipt_id": receipt_id or uuid.uuid4().hex,
+        "persistent_receipt": bool(persistent_receipt),
     }
     if session_id:
         body["session_id"] = str(session_id)
@@ -798,6 +840,9 @@ def decode_inline_action_payload(token: str) -> Optional[Dict[str, Any]]:
     }
     if data.get("session_id"):
         out["session_id"] = str(data.get("session_id"))
+    out["receipt_id"] = str(data.get("receipt_id") or hashlib.sha256(t.encode()).hexdigest())
+    out["exp"] = data.get("exp", 0)
+    out["persistent_receipt"] = bool(data.get("persistent_receipt"))
     return out
 
 
@@ -805,6 +850,7 @@ def execute_inline_action(
     token: str,
     *,
     session_id: Optional[str] = None,
+    cancel: bool = False,
 ) -> Dict[str, Any]:
     """Run a self-contained confirm payload (no pending registry)."""
     parsed = decode_inline_action_payload(token)
@@ -856,6 +902,14 @@ def execute_inline_action(
         action = dict(action)
         action["project_path"] = resolved_path
     action_type = str(action.get("type") or "").strip().lower()
+    from api.action_replay import claim, duplicate_result, key, policy
+    if cancel or policy(action.get("replay"), params) == "once":
+        receipt_key = key(parsed["receipt_id"], action_name, project_path, bound or session_id)
+        expiry = 0 if parsed.get("persistent_receipt") else int(parsed.get("exp") or 0)
+        if not claim(receipt_key, expiry):
+            return duplicate_result()
+    if cancel:
+        return {"success": True, "response": "Cancelled — action was not run.", "type": "project_action"}
     if action_type in ("discord.post", "discord_post", "discord"):
         result = _execute_discord_post(action, params)
     elif action_type in ("shell", "run", "script") or action.get("run") or action.get("run_posix"):
@@ -883,6 +937,9 @@ def execute_inline_action(
 
 
 def _execute_discord_post(action: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
+    from api.experimental.context_bundles import executable_available
+    if not executable_available(action, action.get("project_path")):
+        return {"success": False, "error": "Feature action is unavailable."}
     from api.discord_ops.post import execute_discord_post
 
     return execute_discord_post(action, params)
@@ -1002,6 +1059,9 @@ def _execute_shell(
     *,
     session_id: Optional[str] = None,
 ) -> Dict[str, Any]:
+    from api.experimental.context_bundles import executable_available
+    if not executable_available(action, action.get("project_path")):
+        return {"success": False, "error": "Feature action is unavailable."}
     recipe = resolve_action_run(action)
     if not recipe:
         return {"success": False, "error": f"Action `{action.get('name')}` has no run: recipe"}
@@ -1093,60 +1153,13 @@ def execute_pending_action(
             "type": "project_action",
         }
 
-    project_path = rec.get("project_path") or ""
-    action_name = rec.get("action") or ""
-    params = rec.get("params") or {}
-    channel_hint = str(params.get("channel") or params.get("channel_id") or "").strip() or None
-    repo_hint = str(params.get("repo") or params.get("repository") or "").strip() or None
-    action, resolved_path = find_project_action_resolved(
-        project_path, action_name, channel=channel_hint, repo=repo_hint
+    token = encode_inline_action_payload(
+        action_name=rec["action"], project_path=rec.get("project_path") or "",
+        params=rec.get("params") or {}, session_id=rec.get("session_id"),
+        receipt_id=action_id,
+        ttl_seconds=max(60, int(rec["expires_at"] - time.time())),
     )
-    if not action:
-        # Builtin discord.post can still run if channels were embedded in params
-        # but we require a project action file for allowlisting.
-        return {
-            "success": False,
-            "response": (
-                f"Unknown project action `{action_name}`. "
-                f"Add it under `.cuttle/actions/` for this project."
-            ),
-            "type": "project_action",
-        }
-    if resolved_path:
-        action = dict(action)
-        action["project_path"] = resolved_path
-
-    effective_session = str(session_id or rec.get("session_id") or "")
-    action_type = str(action.get("type") or "").strip().lower()
-    if action_type in ("discord.post", "discord_post", "discord"):
-        result = _execute_discord_post(action, params)
-    elif action_type in ("shell", "run", "script"):
-        result = _execute_shell(action, params, session_id=effective_session)
-    else:
-        # Default: if run: is set, treat as shell; else unknown.
-        if action.get("run") or action.get("run_posix"):
-            result = _execute_shell(action, params, session_id=effective_session)
-        else:
-            return {
-                "success": False,
-                "response": f"Unsupported action type `{action_type or '(none)'}` for `{action_name}`.",
-                "type": "project_action",
-            }
-
-    if result.get("success"):
-        return {
-            "success": True,
-            "response": result.get("response") or "Done.",
-            "type": "project_action",
-            "action": action_name,
-            "url": result.get("url"),
-        }
-    return {
-        "success": False,
-        "response": f"**Action failed** (`{action_name}`)\n\n{result.get('error') or 'Unknown error'}",
-        "type": "project_action",
-        "action": action_name,
-    }
+    return execute_inline_action(token, session_id=session_id or rec.get("session_id"))
 
 
 def cancel_pending_action(action_id: str, *, session_id: Optional[str] = None) -> Dict[str, Any]:
@@ -1163,6 +1176,9 @@ def cancel_pending_action(action_id: str, *, session_id: Optional[str] = None) -
             "response": "That confirmation belongs to a different chat session.",
             "type": "project_action",
         }
+    from api.action_replay import claim, key, duplicate_result
+    if not claim(key(action_id, rec["action"], rec.get("project_path") or "", rec.get("session_id")), int(rec["expires_at"])):
+        return duplicate_result()
     pop_pending_action(action_id)
     label = rec.get("confirm_label") or rec.get("action") or "action"
     return {
@@ -1223,13 +1239,7 @@ def handle_project_action_button(
         return None
     kind, token = parsed
     if token.lower().startswith("inline."):
-        if kind == "cancel":
-            return {
-                "success": True,
-                "response": "Cancelled — action was not run.",
-                "type": "project_action",
-            }
-        return execute_inline_action(token, session_id=session_id)
+        return execute_inline_action(token, session_id=session_id, cancel=kind == "cancel")
 
     rec = get_pending_action(token)
     if rec:
@@ -1239,13 +1249,7 @@ def handle_project_action_button(
 
     hist = load_confirm_inline_from_history(session_id, token)
     if hist:
-        if kind == "cancel":
-            return {
-                "success": True,
-                "response": "Cancelled — action was not run.",
-                "type": "project_action",
-            }
-        return execute_inline_action(hist, session_id=session_id)
+        return execute_inline_action(hist, session_id=session_id, cancel=kind == "cancel")
 
     if kind == "cancel":
         return cancel_pending_action(token, session_id=session_id)

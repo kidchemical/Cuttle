@@ -46,6 +46,21 @@ def _set_session_cookie(response, session_token: str, clear: bool = False):
         )
 
 
+def _user_role(user: dict) -> str:
+    """Display role for the account panel chip: owner, user, or guest.
+
+    There is no admin tier — privileged checks elsewhere use
+    ``http_authz.is_owner_user`` directly, and this mirrors that.
+    """
+    from api.http_authz import is_guest_user, is_owner_user
+
+    if is_guest_user(user):
+        return 'guest'
+    if is_owner_user(user):
+        return 'owner'
+    return 'user'
+
+
 def _user_public(user: dict) -> dict:
     return {
         'id': user['id'],
@@ -54,6 +69,7 @@ def _user_public(user: dict) -> dict:
         'display_name': user.get('display_name'),
         'profile_image': user.get('profile_image'),
         'auth_provider': user.get('auth_provider'),
+        'role': _user_role(user),
         'is_guest': (user.get('auth_provider') or '') == 'guest',
         # Local accounts keep auth_provider=local; provider_user_id means Google (etc.) linked.
         'google_linked': bool(user.get('provider_user_id')) and (
@@ -387,6 +403,96 @@ def get_current_user():
             'success': False,
             'error': 'auth check failed',
         }), 503
+
+# ==================== Self-service profile ====================
+
+@auth_bp.route('/me', methods=['PATCH'])
+@_auth_limiter.limit("10 per minute")
+def update_current_user():
+    """Rename the signed-in user (change username). Id-backed: row id unchanged."""
+    session_token = get_request_session_token()
+    if not session_token:
+        return jsonify({'success': False, 'error': 'Not authenticated'}), 401
+
+    db = get_auth_db()
+    user = db.verify_auth_session(session_token)
+    if not user:
+        return jsonify({'success': False, 'error': 'Invalid session'}), 401
+
+    data = request.get_json(silent=True) or {}
+    if 'username' not in data:
+        return jsonify({'success': False, 'error': 'Nothing to update'}), 400
+    username = (data.get('username') or '').strip()
+    if not _USERNAME_RE.match(username):
+        return jsonify({
+            'success': False,
+            'error': 'Username must be 3–32 characters: letters, numbers, underscore',
+        }), 400
+
+    ok, reason = db.update_username(int(user['id']), username)
+    if not ok:
+        if reason == 'username_taken':
+            return jsonify({'success': False, 'error': 'Username already taken'}), 409
+        if reason == 'invalid_username':
+            return jsonify({
+                'success': False,
+                'error': 'Username must be 3–32 characters: letters, numbers, underscore',
+            }), 400
+        return jsonify({'success': False, 'error': 'User not found'}), 404
+
+    updated = db.get_user_by_id(int(user['id']))
+    return jsonify({'success': True, 'user': _user_public(updated)})
+
+
+@auth_bp.route('/password', methods=['POST'])
+@_auth_limiter.limit("10 per minute")
+def change_current_password():
+    """Change the signed-in user's password.
+
+    When the account already has a password, the current one must be
+    supplied. Password-less accounts (guest, OAuth-only) may set one
+    without it.
+    """
+    session_token = get_request_session_token()
+    if not session_token:
+        return jsonify({'success': False, 'error': 'Not authenticated'}), 401
+
+    db = get_auth_db()
+    user = db.verify_auth_session(session_token)
+    if not user:
+        return jsonify({'success': False, 'error': 'Invalid session'}), 401
+
+    data = request.get_json(silent=True) or {}
+    current_password = data.get('current_password') or ''
+    new_password = data.get('new_password') or ''
+
+    if not new_password or len(new_password) < 8:
+        return jsonify({
+            'success': False,
+            'error': 'New password must be at least 8 characters long',
+        }), 400
+
+    fresh = db.get_user_by_id(int(user['id']))
+    if not fresh:
+        return jsonify({'success': False, 'error': 'User not found'}), 404
+
+    if fresh.get('password_hash'):
+        if not current_password or not db.verify_user_password(int(user['id']), current_password):
+            return jsonify({'success': False, 'error': 'Current password is incorrect'}), 401
+        if current_password == new_password:
+            return jsonify({'success': False, 'error': 'New password must differ from the current one'}), 400
+
+    ok, reason = db.set_password(int(user['id']), new_password)
+    if not ok:
+        if reason == 'weak_password':
+            return jsonify({
+                'success': False,
+                'error': 'New password must be at least 8 characters long',
+            }), 400
+        return jsonify({'success': False, 'error': 'User not found'}), 404
+
+    return jsonify({'success': True, 'message': 'Password updated'})
+
 
 # ==================== OAuth Routes ====================
 
@@ -1218,6 +1324,7 @@ def get_session_messages(session_id):
         except Exception:
             pass
 
+        followup_state = db.get_followup_state(session_id, user['id']) or {'followups': [], 'revision': 0}
         return jsonify({
             'success': True,
             'messages': messages,
@@ -1229,7 +1336,9 @@ def get_session_messages(session_id):
             'project_id': session.get('project_id'),
             'project_name': session.get('project_name'),
             'project_path': session.get('project_path'),
-            'followups': db.get_followup_queue(session_id, user['id']),
+            'followups': followup_state['followups'],
+            'followup_revision': followup_state['revision'],
+            'attention': db.get_attention(session_id, user['id']),
             'composer_selection': db.get_composer_selection(session_id, user['id']),
             'display_name': session.get('display_name') or '',
             'avatar': session.get('avatar') or '',
@@ -1325,6 +1434,24 @@ def _auth_user_or_error():
     return (db, user), None
 
 
+@auth_bp.route('/sessions/<int:session_id>/attention', methods=['PUT'])
+def session_attention(session_id):
+    pair, err = _auth_user_or_error()
+    if err:
+        return err
+    db, user = pair
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({'success': False, 'error': 'Expected attention object'}), 400
+    try:
+        result = db.mark_attention(session_id, user['id'], data)
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+    if result is None:
+        return jsonify({'success': False, 'error': 'Session not found or access denied'}), 404
+    return jsonify({'success': True, 'attention': result})
+
+
 @auth_bp.route('/sessions/<int:session_id>/composer', methods=['PUT'])
 def session_composer_selection(session_id):
     """Share next-send selection across devices, separately from turn identity."""
@@ -1343,50 +1470,49 @@ def session_composer_selection(session_id):
 
 @auth_bp.route('/sessions/<int:session_id>/followups', methods=['GET', 'PUT', 'POST'])
 def session_followups(session_id):
-    """Shared composer follow-up queue (phone + PC see the same items)."""
+    from api.chat_followups import Conflict
+    pair, err = _auth_user_or_error()
+    if err:
+        return err
+    db, user = pair
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({'success': False, 'error': 'Expected queue object'}), 400
     try:
-        pair, err = _auth_user_or_error()
-        if err:
-            return err
-        db, user = pair
-        session = db.get_chat_session(session_id, user['id'])
-        if not session:
-            return jsonify({'success': False, 'error': 'Session not found or access denied'}), 404
         if request.method == 'GET':
-            items = db.get_followup_queue(session_id, user['id'])
-            return jsonify({'success': True, 'followups': items})
-        data = request.get_json(silent=True) or {}
-        if request.method == 'PUT':
-            items = db.set_followup_queue(session_id, user['id'], data.get('followups') or [])
-            if items is None:
-                return jsonify({'success': False, 'error': 'Session not found or access denied'}), 404
-            return jsonify({'success': True, 'followups': items})
-        item = data.get('followup') or data.get('item') or data
-        items = db.append_followup(session_id, user['id'], item)
-        if items is None:
-            return jsonify({'success': False, 'error': 'Session not found or access denied'}), 404
-        return jsonify({'success': True, 'followups': items})
-    except Exception as e:
-        print(f"Followups error: {e}")
-        return jsonify({'success': False, 'error': 'Failed to update follow-ups'}), 500
+            result = db.get_followup_state(session_id, user['id'])
+        elif request.method == 'PUT':
+            result = db.mutate_followups(session_id, user['id'], 'replace',
+                                        data.get('followups') or [], data.get('revision'))
+        else:
+            result = db.mutate_followups(session_id, user['id'], 'append',
+                                        data.get('followup') or data.get('item') or data)
+    except Conflict as exc:
+        return jsonify({'success': False, 'conflict': True, **exc.state}), 409
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+    if result is None:
+        return jsonify({'success': False, 'error': 'Session not found or access denied'}), 404
+    return jsonify({'success': True, 'followups': result['followups'], 'revision': result['revision']})
 
 
 @auth_bp.route('/sessions/<int:session_id>/followups/take', methods=['POST'])
 def take_session_followups(session_id):
-    """Atomically drain unpaused queue items; paused ones stay for later."""
+    from api.chat_followups import Conflict
+    pair, err = _auth_user_or_error()
+    if err:
+        return err
+    db, user = pair
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({'success': False, 'error': 'Expected queue object'}), 400
     try:
-        pair, err = _auth_user_or_error()
-        if err:
-            return err
-        db, user = pair
-        result = db.take_followup_queue(session_id, user['id'])
-        if result is None:
-            return jsonify({'success': False, 'error': 'Session not found or access denied'}), 404
-        return jsonify({
-            'success': True,
-            'followups': result.get('taken') or [],
-            'remaining': result.get('remaining') or [],
-        })
-    except Exception as e:
-        print(f"Take followups error: {e}")
-        return jsonify({'success': False, 'error': 'Failed to take follow-ups'}), 500
+        result = db.mutate_followups(session_id, user['id'], 'take', expected_revision=data.get('revision'), claim_id=data.get('claim_id'))
+    except Conflict as exc:
+        return jsonify({'success': False, 'conflict': True, **exc.state}), 409
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+    if result is None:
+        return jsonify({'success': False, 'error': 'Session not found or access denied'}), 404
+    return jsonify({'success': True, 'followups': result['taken'],
+                    'remaining': result['followups'], 'revision': result['revision']})

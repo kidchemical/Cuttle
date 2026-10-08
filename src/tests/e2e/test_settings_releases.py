@@ -64,4 +64,15 @@ def test_release_panel_refresh_notes_and_offline(tmp_path):
         page.locator('[data-release-check]').click()
         page.wait_for_function("document.querySelector('[data-release-status]').textContent.includes('saved release notes')")
         assert 'saved result' in page.locator('[data-release-checked]').inner_text()
+
+        # Automatic checks are device-local, on by default, and manual checks
+        # still work after opting out.
+        page.locator('[data-release-auto-toggle]').click()
+        assert page.locator('[data-release-auto-check]').is_checked() is False
+        page.reload()
+        page.wait_for_function("document.querySelector('[data-release-status]').textContent.includes('Automatic checks are off')")
+        assert len(checks) == 4
+        page.locator('[data-release-check]').click()
+        page.wait_for_function("!document.querySelector('[data-release-check]').disabled")
+        assert len(checks) == 5 and checks[-1].endswith('?force=1')
         browser.close()

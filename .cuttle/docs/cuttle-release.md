@@ -43,8 +43,17 @@ explicitly and retry; there is no automatic stash, hard reset, or clean.
 Settings → General → **Cuttle updates** shows the server checkout's existing
 SemVer and Git revision (click to copy for a bug report), a **Check for updates**
 button, last successful check time, and expandable latest published release
-notes with a GitHub link. This is a general-use enhancement to the established
-update surface, so it ships without an experimental toggle.
+notes with a GitHub link. **Check for updates automatically** is enabled by
+default as a device-local preference; disabling it skips the automatic check
+when this section opens, while the manual button remains available. This is a
+general-use enhancement to the established update surface, so it ships without
+an experimental toggle.
+
+When the shell starts on a new published SemVer, it compares the running
+version with the latest release and shows a dismissible **What's new in
+vX.Y.Z** panel once per device. The panel reuses the published notes and marks
+that version seen after dismissal. It follows the automatic-check preference;
+Git-only updates without a new SemVer do not invent release notes.
 
 `api.releases` owns read-only GitHub release discovery; Settings exposes
 `GET /api/settings/releases` (authenticated; `?force=1` refreshes). It uses the

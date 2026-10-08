@@ -26,6 +26,7 @@ node_only = pytest.mark.skipif(
 HARNESS = """
 (async () => {
 const Q = require(process.env.MOD_FQ);
+const followupWriteField='followupWrite',followupClaimField='followupClaim';
 const A = require(process.env.MOD_ACT);
 const out = {};
 const clock = (() => { let t = 1000, r = 0.123456789; return {
@@ -124,8 +125,8 @@ def test_resolve_take_branches():
     assert res["takeServerState"] == [1, "R"]
     assert res["takeServerNoRemaining"] == [{"content": "A"}]
     assert res["takeServerNoRemainingState"] == ["b"]
-    assert res["takeFailed"] == [{"content": "a", "id": "q0"}]
-    assert res["takeFailedState"] == ["b"]
+    assert res["takeFailed"] == []
+    assert res["takeFailedState"] == ["a", "b"]
     assert res["takeFailedEmpty"] == [[], 0]
     assert res["takeLocal"] == [{"content": "a", "id": "q0"}]
     assert res["takeLocalState"] == ["e"]
@@ -181,157 +182,89 @@ const fnBody = (name) => {
   }
   throw new Error('unbalanced ' + name);
 };
-// ---- live page-scope state: post-rewire the page holds ONE queue object
-// (real module here, so the adapter suite is true page+module integration)
 globalThis.CuttleFollowupQueue = require(process.env.MOD_FQ);
-const followupQueue = CuttleFollowupQueue.createQueueState();
-let followupDrainTimer = null;
-let editingFollowupId = null;
-let editingFollowupWasPaused = false;
-let currentSessionId = 's1';
-let generating = false;
-let authSid = 's1';
-// ---- fake timers: manual fire ----
-let timerSeq = 0;
-const timers = new Map();
-const realSetTimeout = setTimeout;
-globalThis.setTimeout = (fn, ms) => { const id = ++timerSeq; timers.set(id, { fn, ms }); return id; };
-globalThis.clearTimeout = (id) => { timers.delete(id); };
-const fireTimers = async () => {
-  const due = [...timers.entries()];
-  timers.clear();
-  for (const [, t] of due) await t.fn();
-};
-// ---- scripted fetch ----
-let fetchScript = [];
-let fetchCalls = [];
-globalThis.fetch = async (url, opts) => {
-  fetchCalls.push([url, opts && opts.method, opts && opts.body]);
-  const next = fetchScript.shift();
-  if (next instanceof Error) throw next;
-  if (typeof next === 'function') return next(url, opts);
-  return { json: async () => next };
-};
-const okAppend = (item) => ({ success: true, followups: [item] });
-// ---- DOM/effect stubs (leaves outside queue ownership) ----
-const fx = [];
 globalThis.CuttleChatActivity = require(process.env.MOD_ACT_JS);
-globalThis.document = { getElementById: (id) => {
-  if (id === 'chatArea') return { style: { display: 'flex' } };
-  return { style: {} }; } };
-function renderFollowupQueue() { fx.push(['render', followupQueue.items.length]); }
+const Mutations = require(require('path').join(require('path').dirname(process.env.MOD_FQ),'chat_mutations.js'));
+const sessionMutations = Mutations.create();
+const followupWriteField='followupWrite',followupClaimField='followupClaim';
+let followupQueue = CuttleFollowupQueue.createQueueState();
+let followupDrainTimer = null, editingFollowupId = null, editingFollowupWasPaused = false;
+let currentSessionId = 's1', generating = false, authSid = 's1';
+let queueServer=[], revision=0, fail=false, editDuringWrite=false, writes=0;
+const prefs = {};
+function updateSessionPrefs(sid,p) { prefs[sid]={...prefs[sid],...p}; }
+function getSessionPrefs(sid) { return prefs[sid] || null; }
+function sessionIdsEqual(a,b) {return String(a)===String(b);}
+const timers=new Map(); let nextTimer=0;
+const realSetTimeout=setTimeout;
+globalThis.setTimeout=(fn,ms)=>{const id=++nextTimer;timers.set(id,{fn,ms});return id;};
+globalThis.clearTimeout=id=>timers.delete(id);
+const fireTimers=async()=>{const due=[...timers.values()];timers.clear();for(const t of due)await t.fn();};
+const sent=[];
+globalThis.fetch=async(url,opts)=>{
+ if(fail)throw Error('offline');
+ const body=JSON.parse(opts.body || '{}');
+ if(editDuringWrite && opts.method==='PUT')editingFollowupId='e9';
+ if(body.revision!==revision)return {ok:false,status:409,json:async()=>({success:false,conflict:true,followups:queueServer,revision})};
+ if(url.endsWith('/take')) {
+   const taken=queueServer.filter(x=>!x.paused);queueServer=queueServer.filter(x=>x.paused);revision++;
+   return {ok:true,status:200,json:async()=>({success:true,followups:taken,remaining:queueServer,revision})};
+ }
+ writes++;queueServer=body.followups;revision++;
+ return {ok:true,status:200,json:async()=>({success:true,followups:queueServer,revision})};
+};
+function renderFollowupQueue() {}
 function patchLiveSessionFollowupQueue() {}
-function isSessionGenerating() { return generating; }
-function healStaleGeneratingState() { fx.push(['heal']); }
+function isSessionGenerating() {return generating;}
+function healStaleGeneratingState() {}
 function scheduleChatActivityBroadcast() {}
-function followupAuthSid() { return authSid; }
-function getStickySlashCommandFromMessage() { return null; }
-function formatMessageWithAttachments(text) { return String(text || ''); }
-async function processMessage(msg, opts) { fx.push(['send', msg, (opts && opts.attachments) || []]); }
-function addMessageToUI(text, role, o) { fx.push(['bubble', text, role]); }
+function followupAuthSid() {return authSid;}
+function getStickySlashCommandFromMessage() {return null;}
+function formatMessageWithAttachments(text) {return text;}
+async function processMessage(message) {sent.push(['send',message,[]]);}
+function addMessageToUI() {}
 function autoScrollChatToBottom() {}
-function saveChatSession(text, role, o) { fx.push(['save', text, role]); }
-function recordPromptHistory(text) { fx.push(['history', text]); }
-// ---- the REAL page bodies under test ----
-eval(fnBody('combineFollowupBatch'));
-eval(fnBody('followupQueueFingerprint'));
-eval(fnBody('enqueueFollowup'));
-eval(fnBody('toggleFollowupPaused'));
-eval(fnBody('removeFollowup'));
-eval(fnBody('clearFollowupQueue'));
-eval(fnBody('scheduleFollowupDrain'));
-eval(fnBody('drainNextFollowup'));
-eval(fnBody('applyServerFollowups'));
-eval(fnBody('persistFollowupAppend'));
-eval(fnBody('persistFollowupPut'));
-const out = {};
-const flush = () => new Promise((r) => realSetTimeout(r, 0));
-// 1. enqueue two (one with attachments): items, render x2, POST x2, no drain timer
-// server echoes the canonical list; each POST reconciles + schedules a drain
-fetchScript = [{ success: true, followups: [{ id: 'f1', content: 'first' }] },
-  { success: true, followups: [{ id: 'f1', content: 'first' }, { id: 'f2', content: 'second' }] }];
-enqueueFollowup('first', { attachments: [{ f: 'a.png' }], rawMessage: '/cursor first' });
-enqueueFollowup('second', {});
-await flush();
-out.enqueue = { n: followupQueue.items.length, timers: timers.size,
-  posts: fetchCalls.filter((c) => c[1] === 'POST').length };
-// 2. schedule gate: editing blocks, else one timer; re-schedule replaces
-editingFollowupId = 'x';
-const timersBeforeEdit = timers.size;
-scheduleFollowupDrain(120);
-const blockedTimers = timers.size - timersBeforeEdit;
-editingFollowupId = null;
-scheduleFollowupDrain(120); scheduleFollowupDrain(120);
-out.schedule = { blockedTimers, timers: timers.size };
-// 3. drain with server take success (remaining kept as-is)
-followupQueue.items = []; timers.clear();
-fetchScript = [{ success: true,
-  followups: [{ content: 'A' }], remaining: [{ content: 'R', paused: true }] }];
-scheduleFollowupDrain(0);
-await fireTimers(); await flush();
-out.drainTake = { sent: fx.filter((e) => e[0] === 'send'), n: followupQueue.items.length,
-  paused: followupQueue.items.map((x) => x.paused) };
-// 4. drain with take failure -> local partition fallback
-followupQueue.items = [{ id: 'p1', content: 'one', paused: false }, { id: 'p2', content: 'two', paused: true }];
-fetchScript = [new Error('down'), new Error('down')];
-scheduleFollowupDrain(0);
-await fireTimers(); await flush();
-out.drainFail = { sent: fx.filter((e) => e[0] === 'send').slice(-1), n: followupQueue.items.length };
-// 5. drain with no session id -> local partition, no fetch
-authSid = null;
-followupQueue.items = [{ id: 'q1', content: 'qq', paused: false }];
-const callsBefore = fetchCalls.length;
-scheduleFollowupDrain(0);
-await fireTimers(); await flush();
-out.drainLocal = { sent: fx.filter((e) => e[0] === 'send').slice(-1),
-  extraFetch: fetchCalls.length - callsBefore, n: followupQueue.items.length };
-authSid = 's1';
-// 6. edit starts mid-PUT -> drain exits, no batch, take flag cleared
-followupQueue.items = [{ id: 'e9', content: 'editme', paused: false }];
-fetchScript = [async () => { editingFollowupId = 'e9'; return { json: async () => ({ success: true, followups: [] }) }; }];
-scheduleFollowupDrain(0);
-await fireTimers(); await flush();
-out.editRace = { sent: fx.filter((e) => e[0] === 'send').length, takeInFlight: followupQueue.takeInFlight,
-  n: followupQueue.items.length };
-editingFollowupId = null;
-// 7. pause excludes from batch; resume reschedules when idle
-followupQueue.items = [{ id: 'w1', content: 'w', paused: false }];
-toggleFollowupPaused('w1');
-const pausedBatch = followupQueue.items[0].paused;
-fetchScript = [{ success: true, followups: [] }];
-toggleFollowupPaused('w1');
-out.pause = { paused: pausedBatch, timersAfterResume: timers.size };
-await fireTimers(); await flush();
-// 8. remove + clear
-followupQueue.items = [{ id: 'd1', content: 'd', paused: false }, { id: 'd2', content: 'e', paused: false }];
-fetchScript = [{ success: true }, { success: true }];
-const putsBefore = fetchCalls.filter((c) => c[1] === 'PUT').length;
-removeFollowup('d1');
-clearFollowupQueue();
-await flush();
-out.removeClear = { n: followupQueue.items.length,
-  puts: fetchCalls.filter((c) => c[1] === 'PUT').length - putsBefore };
-// 9. applyServerFollowups guards then apply
-followupQueue.takeInFlight = true;
-applyServerFollowups([{ content: 'x' }]);
-const guardedTake = followupQueue.items.length;
-followupQueue.takeInFlight = false; followupQueue.dirty = true;
-applyServerFollowups([{ content: 'x' }]);
-const guardedDirty = followupQueue.items.length;
-followupQueue.dirty = false; editingFollowupId = 'e';
-applyServerFollowups([{ content: 'x' }]);
-const guardedEdit = followupQueue.items.length;
-editingFollowupId = null;
-applyServerFollowups('nope');
-const guardedInvalid = followupQueue.items.length;
-followupQueue.items = [{ id: 's1', content: 'same', paused: false }];
-applyServerFollowups([{ id: 's1', content: 'same', paused: false }]);
-const guardedSame = followupQueue.items.length;
-applyServerFollowups([{ content: '  spaced  ', paused: true }]);
-out.applyGuards = { guardedTake, guardedDirty, guardedEdit, guardedInvalid, guardedSame,
-  applied: followupQueue.items.map((x) => [x.content, x.paused]) };
+function saveChatSession() {}
+function recordPromptHistory() {}
+const document={getElementById:()=>({style:{display:'flex'}})};
+for(const name of ['combineFollowupBatch','followupQueueFingerprint','rememberUnsyncedQueue',
+ 'enqueueFollowup','toggleFollowupPaused','removeFollowup','clearFollowupQueue','scheduleFollowupDrain',
+ 'drainNextFollowup','applyServerFollowups','persistFollowupAppend','persistFollowupPut'])eval(fnBody(name));
+const flush=()=>new Promise(r=>realSetTimeout(r,0));
+const reset=(items=[])=>{
+ followupQueue=CuttleFollowupQueue.createQueueState();
+ followupQueue.items=JSON.parse(JSON.stringify(items));followupQueue.base=JSON.parse(JSON.stringify(items));
+ queueServer=JSON.parse(JSON.stringify(items));revision=0;timers.clear();sent.length=0;
+ editingFollowupId=null;fail=false;authSid='s1';writes=0;
+};
+const out={};
+reset();enqueueFollowup('first');enqueueFollowup('second');await flush();
+out.enqueue={n:followupQueue.items.length,puts:writes};
+editingFollowupId='x';scheduleFollowupDrain();const blockedTimers=timers.size;
+editingFollowupId=null;scheduleFollowupDrain();scheduleFollowupDrain();
+out.schedule={blockedTimers,timers:timers.size};
+reset([{id:'a',content:'A'},{id:'r',content:'R',paused:true}]);await drainNextFollowup();
+out.drainTake={sent:sent.slice(),n:followupQueue.items.length,paused:followupQueue.items.map(x=>x.paused)};
+reset([{id:'p1',content:'one'},{id:'p2',content:'two',paused:true}]);fail=true;await drainNextFollowup();
+out.drainFail={sent:sent.slice(),n:followupQueue.items.length};
+reset([{id:'q1',content:'qq'}]);authSid=null;await drainNextFollowup();
+out.drainLocal={sent:sent.slice(),extraFetch:writes,n:followupQueue.items.length};
+reset([{id:'e9',content:'editme'}]);followupQueue.dirty=true;editDuringWrite=true;await drainNextFollowup();editDuringWrite=false;
+out.editRace={sent:sent.length,takeInFlight:followupQueue.takeInFlight,n:followupQueue.items.length};
+reset([{id:'w1',content:'w'}]);toggleFollowupPaused('w1');const paused=followupQueue.items[0].paused;
+toggleFollowupPaused('w1');await flush();out.pause={paused,timersAfterResume:timers.size};
+reset([{id:'d1',content:'d'},{id:'d2',content:'e'}]);removeFollowup('d1');clearFollowupQueue();await flush();
+out.removeClear={n:followupQueue.items.length,puts:writes};
+reset();followupQueue.takeInFlight=true;applyServerFollowups([{content:'x'}]);const guardedTake=followupQueue.items.length;
+followupQueue.takeInFlight=false;followupQueue.dirty=true;fail=true;applyServerFollowups([{content:'x'}]);const guardedDirty=followupQueue.items.length;await flush();
+followupQueue.dirty=false;editingFollowupId='e';applyServerFollowups([{content:'x'}]);const guardedEdit=followupQueue.items.length;
+editingFollowupId=null;applyServerFollowups('nope');const guardedInvalid=followupQueue.items.length;
+followupQueue.items=[{id:'same',content:'same'}];applyServerFollowups([{id:'same',content:'same'}]);const guardedSame=followupQueue.items.length;
+applyServerFollowups([{content:'  spaced  ',paused:true}]);
+out.applyGuards={guardedTake,guardedDirty,guardedEdit,guardedInvalid,guardedSame,applied:followupQueue.items.map(x=>[x.content,x.paused])};
 process.stdout.write(JSON.stringify(out));
-})().catch((e) => { console.error('HARNESS-ERROR', e); process.exit(2); });
+})().catch(e=>{console.error(e);process.exitCode=2;});
+
 """
 
 
@@ -351,7 +284,7 @@ def _run_adapter():
 @node_only
 def test_queue_adapter_enqueue_and_schedule():
     res = _run_adapter()
-    assert res["enqueue"] == {"n": 2, "timers": 1, "posts": 2}
+    assert res["enqueue"] == {"n": 2, "puts": 1}
     assert res["schedule"] == {"blockedTimers": 0, "timers": 1}
 
 
@@ -362,19 +295,19 @@ def test_queue_adapter_drain_take_paths():
     assert take["sent"] == [["send", "A", []]]
     assert take["n"] == 1 and take["paused"] == [True]
     fail = res["drainFail"]
-    assert fail["sent"] == [["send", "one", []]]
-    assert fail["n"] == 1
+    assert fail["sent"] == []
+    assert fail["n"] == 2
     local = res["drainLocal"]
     assert local["sent"] == [["send", "qq", []]]
     assert local["extraFetch"] == 0 and local["n"] == 0
-    assert res["editRace"] == {"sent": 3, "takeInFlight": False, "n": 1}
+    assert res["editRace"] == {"sent": 0, "takeInFlight": False, "n": 1}
 
 
 @node_only
 def test_queue_adapter_pause_remove_clear_apply():
     res = _run_adapter()
     assert res["pause"] == {"paused": True, "timersAfterResume": 1}
-    assert res["removeClear"] == {"n": 0, "puts": 2}
+    assert res["removeClear"] == {"n": 0, "puts": 1}
     guards = res["applyGuards"]
     assert guards["guardedTake"] == 0
     assert guards["guardedDirty"] == 0

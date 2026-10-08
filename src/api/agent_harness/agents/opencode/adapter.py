@@ -787,6 +787,14 @@ class Adapter:
         pending_questions = QuestionBridge()
         activity_state: Dict[str, Any] = {"tool_count": 0}
         started_at = time.monotonic()
+        # A headless permission dialog may emit neither stdout nor stderr.
+        # Bound initial silence separately from long productive turn budgets.
+        try:
+            startup_budget = float(os.getenv("CUTTLE_OPENCODE_STARTUP_TIMEOUT", "120"))
+            if not 0 < startup_budget < float("inf"):
+                startup_budget = 120.0
+        except (TypeError, ValueError):
+            startup_budget = 120.0
         last_emit = [started_at]
         last_activity = ["starting"]
         from api.agent_harness.activity import TextActivityLog, ToolActivityLog, ActivityEmitter
@@ -890,12 +898,24 @@ class Adapter:
                             output="[CANCELLED] OpenCode run was cancelled.",
                             model=mid,
                         )
+                    if not out_buf and time.monotonic() - started_at >= startup_budget:
+                        timed_out = (
+                            f"startup stalled: no stdout for {startup_budget:g}s. "
+                            "A headless permission request, provider connection or CLI startup may be blocked. "
+                            "Check OpenCode permissions (especially external_directory) and provider access, "
+                            "then retry; Cuttle has not approved any additional access."
+                        )
+                        put_status(status_queue, f"OpenCode {timed_out}")
+                        await kill_process_tree(proc)
+                        break
                     expiry = deadline.check()
                     if expiry:
                         timed_out = expiry
                         await kill_process_tree(proc)
                         break
                     poll = deadline.next_wake(poll=1.0)
+                    if not out_buf:
+                        poll = min(poll, max(0.001, startup_budget - (time.monotonic() - started_at)))
                     try:
                         line = await asyncio.wait_for(proc.stdout.readline(), timeout=poll)
                     except asyncio.TimeoutError:

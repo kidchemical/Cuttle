@@ -8,7 +8,7 @@
     <title>Cuttle</title>
     <link rel="stylesheet" href="/css/ui_boot.css?v=20260927blendTarget">
     <script src="/js/shared/ui_boot.js?v=20260926safeArea"></script>
-    <link rel="stylesheet" href="/css/app_shell.css?v=20261007barRail">
+    <link rel="stylesheet" href="/css/app_shell.css?v=20261008whatsNew">
     <link rel="stylesheet" href="/css/chat_lightbox.css?v=20260922imgCtxMenu">
     <link rel="stylesheet" href="/css/video_background.css?v=20260927blendTarget">
     <link rel="stylesheet" href="/css/auth_modal.css?v=20260926authLogin">
@@ -312,11 +312,16 @@
             <div class="logout-confirm-avatar" id="logoutConfirmAvatar" aria-hidden="true"></div>
             <h2 class="auth-modal-title" id="logoutConfirmTitle">Account</h2>
             <p class="auth-modal-subtitle" id="logoutConfirmSubtitle">Manage your Cuttle account.</p>
+            <span class="logout-confirm-role" id="logoutConfirmRole" hidden></span>
         </div>
         <div class="logout-confirm-actions" id="logoutConfirmActions">
             <a class="logout-confirm-btn logout-confirm-google" id="logoutConfirmLinkGoogle" href="/api/auth/oauth/google?link=1" hidden>Continue with Google</a>
             <button type="button" class="logout-confirm-btn logout-confirm-google" id="logoutConfirmRefreshGoogle" hidden>Refresh Google photo</button>
             <p class="logout-confirm-linked" id="logoutConfirmGoogleStatus" hidden>Google linked</p>
+            <button type="button" class="logout-confirm-btn logout-confirm-cancel" id="logoutConfirmChangeUsername">Change username</button>
+            <button type="button" class="logout-confirm-btn logout-confirm-cancel" id="logoutConfirmChangePassword">Change password</button>
+            <div class="logout-confirm-profile-forms" id="logoutConfirmProfileForms" hidden></div>
+            <p class="logout-confirm-linked" id="logoutConfirmProfileStatus" role="status" hidden></p>
             <button type="button" class="logout-confirm-btn logout-confirm-cancel" id="logoutConfirmSwitchServer" hidden>Switch server</button>
             <button type="button" class="logout-confirm-btn logout-confirm-cancel" id="logoutConfirmCancel">Cancel</button>
             <button type="button" class="logout-confirm-btn logout-confirm-submit" id="logoutConfirmSubmit">Log out</button>
@@ -347,24 +352,41 @@
 
 <div class="shell-zoom-hud" id="shellZoomHud" hidden aria-live="polite" aria-atomic="true">100%</div>
 
+<div class="cuttle-whats-new-modal" id="cuttleWhatsNewModal" hidden>
+    <section class="cuttle-whats-new-card" role="dialog" aria-modal="true" aria-labelledby="cuttleWhatsNewTitle" aria-describedby="cuttleWhatsNewNotes">
+        <button type="button" class="cuttle-whats-new-close" data-whats-new-dismiss aria-label="Close What's new">×</button>
+        <p class="cuttle-whats-new-eyebrow">Welcome back</p>
+        <h2 id="cuttleWhatsNewTitle">What’s new in Cuttle <span data-whats-new-version></span></h2>
+        <div class="cuttle-whats-new-notes" id="cuttleWhatsNewNotes" data-whats-new-notes></div>
+        <div class="cuttle-whats-new-actions">
+            <a href="https://github.com/kidchemical/Cuttle/releases" data-whats-new-link target="_blank" rel="noopener noreferrer">View full release notes</a>
+            <button type="button" class="control-button btn-info" data-whats-new-dismiss>Got it</button>
+        </div>
+    </section>
+</div>
+
 <script src="/js/shared/toast.js?v=20260921voiceMic"></script>
     <script src="/js/shared/completion_notifications.js?v=20261004completion"></script>
 <script src="/js/shared/net_debug.js?v=20260810c"></script>
 <script src="/js/media/youtube_id.js"></script>
 <script src="/js/media/video_background.js?v=20260927blendTarget"></script>
-<script src="/js/shared/auth.js?v=20260926authLogin"></script>
+<script src="/js/shared/auth.js?v=20261008sync"></script>
 <script src="/js/shell/desktop_update_policy.js?v=20260819role"></script>
 <script src="/js/chat/chat_find.js?v=20260819find"></script>
 <script src="/js/spaces/spaces_state.js?v=20260930spaces1"></script>
 <script src="/js/spaces/spaces_groups.js?v=20260930spaces1"></script>
 <script src="/js/spaces/spaces_order.js?v=20260930spaces1"></script>
 <script src="/js/spaces/spaces_drop.js?v=20260930spaces1"></script>
-<script src="/js/spaces/spaces_activity.js?v=20261005activity"></script>
+    <script src="/js/shared/session_prefs.js?v=20261008sync"></script>
+<script src="/js/shared/activity_broker.js?v=20261008sync"></script>
+<script src="/js/spaces/spaces_activity.js?v=20261008sync"></script>
 <script src="/js/chat/chat_vfx.js?v=20261003vfx1"></script>
 <script src="/js/achievements/celebrate.js?v=20261003vfx1"></script>
 <script src="/js/achievements/achievements.js?v=20261003ach1"></script>
-<script src="/js/shell/app_shell.js?v=20261007oneAtATime"></script>
+<script src="/js/shell/whats_new.js?v=20261008whatsNew"></script>
+<script src="/js/shell/account_panel.js?v=20261008acct"></script>
+<script src="/js/shell/app_shell.js?v=20261008acct"></script>
 <script src="/js/gizmos/gizmos_model.js?v=20261007gizmos2"></script>
-<script src="/js/gizmos/gizmos_shell.js?v=20261007gizmos2"></script>
+<script src="/js/gizmos/gizmos_shell.js?v=20261007gizmos3"></script>
 </body>
 </html>

@@ -49,7 +49,7 @@ _CHANGED = threading.Condition()
 _VERSION = 0
 
 
-def _notify_changed() -> None:
+def notify_changed() -> None:
     global _VERSION
     with _CHANGED:
         _VERSION += 1
@@ -128,7 +128,7 @@ def set_live_status(
         }
         for k in keys:
             _STORE[k] = entry
-    _notify_changed()
+    notify_changed()
 
 
 def _clear_keys_locked(keys: List[str], *, turn: Optional[int] = None) -> None:
@@ -158,7 +158,7 @@ def clear_live_status(session_id: Any, *, turn: Optional[int] = None) -> None:
         return
     with _LOCK:
         _clear_keys_locked(keys, turn=turn)
-    _notify_changed()
+    notify_changed()
 
 
 def get_live_status(session_id: Any) -> Dict[str, Any]:

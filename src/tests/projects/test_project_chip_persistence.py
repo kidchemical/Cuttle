@@ -21,6 +21,8 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 CHAT_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_page.js"
 CHAT_PROJECT_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_project.js"
 CHAT_ACTIVITY_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_activity.js"
+SESSION_PREFS_JS = REPO_ROOT / "src" / "web" / "js" / "shared/session_prefs.js"
+CHAT_MUTATIONS_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_mutations.js"
 
 node_only = pytest.mark.skipif(
     shutil.which("node") is None, reason="node not available"
@@ -63,7 +65,7 @@ def _run_project_chip_js(script: str) -> dict:
     )
     prefs_map = _extract(
         src,
-        "    const SESSION_PREFS_STORAGE_KEY = 'cuttleChatSessionPrefs';",
+        "    /** Device preferences stay owned/cached by CuttleSessionPrefs. */",
         "    function clearSessionPrefs(sessionId) {",
     )
     session_lookup = _extract(
@@ -95,12 +97,15 @@ def _run_project_chip_js(script: str) -> dict:
 
     harness = f"""
 const CuttleChatProject = require({json.dumps(mod_path)});
+const CuttleSessionPrefs = require({json.dumps(str(SESSION_PREFS_JS))});
 const localStore = {{}};
 const localStorage = {{
     getItem: (k) => (Object.prototype.hasOwnProperty.call(localStore, k) ? localStore[k] : null),
     setItem: (k, v) => {{ localStore[k] = String(v); }},
     removeItem: (k) => {{ delete localStore[k]; }},
 }};
+const sessionPrefsStore = CuttleSessionPrefs.create(localStorage);
+const sessionMutations = require({json.dumps(str(CHAT_MUTATIONS_JS))}).create();
 const window = {{
     CuttleAuth: {{
         isAuthenticated: () => true,

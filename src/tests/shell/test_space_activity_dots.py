@@ -34,7 +34,8 @@ def test_space_activity_covers_inactive_spaces():
     src = SHELL_JS.read_text(encoding="utf-8")
     # Inactive spaces parse their stored layout tree; terminals are excluded.
     assert "flattenLayoutLeaves(space.root" in src
-    assert "cuttleChatSessionPrefs" in src
+    assert "CuttleSessionPrefs.create(localStorage)" in src
+    assert "shellSessionPrefs.map()" in src
     assert "/api/auth/sessions" in src
     assert "/api/chat-live-status-batch" in src
 
@@ -60,7 +61,8 @@ def test_chat_pushes_activity_snapshot_to_shell():
 
 def test_background_finish_marks_unread_and_queue_strings_parse():
     shell = SHELL_JS.read_text(encoding="utf-8")
-    assert "markFinishedBackgroundChatsUnread(CuttleSpaces.noteServerSnapshot(" in shell
+    assert "const finished = CuttleSpaces.noteServerSnapshot(" in shell
+    assert "if (!rows.some(row => row.attention))" in shell
     # followup_queue is a TEXT column — the sessions list returns a JSON string.
     assert "parseSpaceFollowupQueue(" in shell
 

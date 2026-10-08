@@ -43,7 +43,7 @@ def test_create_new_chat_reables_welcome_composer():
     assert "function setWelcomeComposerEnabled(enabled)" in src
     load = src.split("async function loadChatSession(sessionId, opts = {})", 1)[1]
     load = load.split("\n    async function ", 1)[0]
-    assert "applyServerFollowups(data.followups)" in load
+    assert "applyServerFollowups(data.followups, data.followup_revision)" in load
     assert "detachLocalGenerationForNavigation()" in load
 
 

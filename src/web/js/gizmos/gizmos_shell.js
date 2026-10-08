@@ -447,6 +447,48 @@
             if (el) el.hidden = true;
         }
 
+        // Pane content lives in iframes, so pointer events inside a pane never
+        // bubble to this shell document. Bind the closer to each same-origin
+        // frame document as well; the frame element is reused across
+        // navigation, while split panes can add new frame elements at runtime.
+        const boundFrameElements = new WeakSet();
+        const boundFrameDocuments = new WeakSet();
+        function closePopoverFromFrame() {
+            if (state.popoverId) closePopover();
+        }
+        function bindFrameDocument(frame) {
+            if (!frame) return;
+            try {
+                const frameDoc = frame.contentDocument || frame.contentWindow?.document;
+                if (!frameDoc || boundFrameDocuments.has(frameDoc)) return;
+                boundFrameDocuments.add(frameDoc);
+                frameDoc.addEventListener('pointerdown', closePopoverFromFrame, true);
+                // Older embedded WebViews may expose touch/mouse without the
+                // Pointer Events path used by current Chromium.
+                frameDoc.addEventListener('touchstart', closePopoverFromFrame, true);
+                frameDoc.addEventListener('mousedown', closePopoverFromFrame, true);
+            } catch (_) {
+                // Cross-origin frames cannot be inspected. The shell-level
+                // focus/blur handlers below remain available for those.
+            }
+        }
+        function bindFrameDismissListeners(frame) {
+            if (!frame || String(frame.tagName).toLowerCase() !== 'iframe') return;
+            if (!boundFrameElements.has(frame)) {
+                boundFrameElements.add(frame);
+                frame.addEventListener('load', () => bindFrameDocument(frame), true);
+            }
+            bindFrameDocument(frame);
+        }
+        function bindAllFrameDismissListeners() {
+            doc.querySelectorAll('iframe').forEach(bindFrameDismissListeners);
+        }
+        bindAllFrameDismissListeners();
+        if (typeof root.MutationObserver === 'function' && doc.body) {
+            const frameObserver = new root.MutationObserver(() => bindAllFrameDismissListeners());
+            frameObserver.observe(doc.body, { childList: true, subtree: true });
+        }
+
         function agentOptions() {
             const t = state.types.find(x => x.id === 'usage_meter');
             return (t && t.options && Array.isArray(t.options.agents)) ? t.options.agents : [];
@@ -555,6 +597,10 @@
         // Clicking into a chat pane (or any iframe) never reaches the shell
         // document's pointerdown handler above, so the panel would stay open.
         // Focus moving into embedded content means the user clicked off it.
+        doc.addEventListener('focusin', ev => {
+            const frame = ev.target && ev.target.closest && ev.target.closest('iframe');
+            if (frame) closePopoverFromFrame();
+        }, true);
         root.addEventListener('blur', () => { if (state.popoverId) closePopover(); });
         root.addEventListener('resize', () => { closePopover(); if (state.enabled) render(); });
         doc.addEventListener('visibilitychange', () => { if (!doc.hidden && state.enabled) { render(); refreshDue(false); } });

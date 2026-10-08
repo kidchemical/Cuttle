@@ -7,6 +7,10 @@ description: >-
   e.g. a release tag; never --tags); path (project cwd, optional).
   Never force-pushes.
 type: shell
+replay:
+  default: once
+  modes:
+    status: reusable
 run: powershell -NoProfile -ExecutionPolicy Bypass -File .cuttle_global\scripts\git-push.ps1
 run_posix: .venv/bin/python .cuttle_global/scripts/git-push.py
 workdir: .

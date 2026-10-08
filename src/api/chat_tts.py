@@ -396,8 +396,14 @@ def resolve_speech_settings(
     merged_voices = dict(settings.get("voices") or {})
     if str(ov.get("voice") or "").strip():
         merged_voices[provider] = str(ov.get("voice")).strip()
-    speed = ov.get("speed", settings.get("speed", 1.0))
-    stability = ov.get("stability", settings.get("stability", 0.5))
+    # An explicit None means "no override" (the /api/chat/tts chat path
+    # always sends every key, defaulting to None) — fall back to Settings.
+    speed = ov.get("speed")
+    if speed is None:
+        speed = settings.get("speed", 1.0)
+    stability = ov.get("stability")
+    if stability is None:
+        stability = settings.get("stability", 0.5)
     return {
         "provider": provider,
         "model": providers.normalize_model(provider, merged_models.get(provider)),

@@ -49,6 +49,7 @@ class FlagSpec:
         "risk",
         "since",
         "needs_restart",
+        "context_bundle",
     )
 
     def __init__(
@@ -62,6 +63,7 @@ class FlagSpec:
         risk: str = "low",
         since: str = "",
         needs_restart: bool = False,
+        context_bundle: bool = False,
     ) -> None:
         self.id = str(id or "").strip().lower()
         self.label = str(label or "")
@@ -71,6 +73,7 @@ class FlagSpec:
         self.risk = risk if risk in FLAG_RISKS else "low"
         self.since = str(since or "")
         self.needs_restart = bool(needs_restart)
+        self.context_bundle = bool(context_bundle)
 
     def to_dict(self, enabled: Optional[bool] = None) -> Dict[str, Any]:
         return {
@@ -82,6 +85,7 @@ class FlagSpec:
             "risk": self.risk,
             "since": self.since,
             "needs_restart": self.needs_restart,
+            "context_bundle": self.context_bundle,
             "enabled": self.default if enabled is None else bool(enabled),
         }
 
@@ -166,7 +170,10 @@ def is_enabled(flag_id: Any) -> bool:
 
 def enabled_flags() -> Dict[str, bool]:
     """Every registered flag id → resolved value (for bulk client delivery)."""
-    return {spec.id: is_enabled(spec.id) for spec in FLAG_SPECS.values()}
+    disabled = kill_switch_active()
+    stored = {} if disabled else _stored_flags()
+    return {spec.id: False if disabled else stored.get(spec.id) if isinstance(stored.get(spec.id), bool) else spec.default
+            for spec in FLAG_SPECS.values()}
 
 
 def flags_payload() -> Dict[str, Any]:

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -113,6 +113,7 @@ class ContextSnapshot:
     project_actions: Tuple[str, ...]
     project_commands: Tuple[str, ...]
     skills: Tuple[str, ...] = ()
+    features: Dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -124,6 +125,7 @@ class ContextSnapshot:
             "project_actions": list(self.project_actions),
             "project_commands": list(self.project_commands),
             "skills": list(self.skills),
+            "features": dict(self.features),
         }
 
     @classmethod
@@ -137,9 +139,14 @@ class ContextSnapshot:
             project_actions=tuple(raw.get("project_actions") or ()),
             project_commands=tuple(raw.get("project_commands") or ()),
             skills=tuple(raw.get("skills") or ()),
+            features=dict(raw.get("features") or {}),
         )
 
 
+from api.experimental.context_bundles import capture_call
+
+
+@capture_call
 def compute_snapshot(project_path: Optional[str]) -> ContextSnapshot:
     """Capture the exact context state the fresh envelope would send.
 
@@ -163,6 +170,8 @@ def compute_snapshot(project_path: Optional[str]) -> ContextSnapshot:
             docs_dir = global_config / "docs"
             if docs_dir.is_dir():
                 global_docs = list_merged_names(docs_dir, ("*.md",), limit=40)
+    from api.experimental.context_bundles import markdown, snapshot
+    global_docs.extend(n for n, _ in markdown("docs", project_path))
     return ContextSnapshot(
         schema_version=CONTEXT_SCHEMA_VERSION,
         global_rules=_rules_map(visible_global),
@@ -170,8 +179,9 @@ def compute_snapshot(project_path: Optional[str]) -> ContextSnapshot:
         global_docs=tuple(global_docs),
         project_docs=tuple(sorted(inv.get("docs") or [])),
         project_actions=tuple(sorted(inv.get("actions") or [])),
-        project_commands=tuple(sorted(Path(n).stem for n in (inv.get("commands") or []))),
+        project_commands=tuple(sorted(n if n.startswith("feature/") else Path(n).stem for n in (inv.get("commands") or []))),
         skills=tuple(skill_inventory(project_path)),
+        features=snapshot(project_path),
     )
 
 
@@ -330,6 +340,18 @@ def build_delta_text(
     project_path: Optional[str],
 ) -> Optional[str]:
     parts: List[str] = ["## Context delta (since your session briefing)"]
+    if previous.features != current.features:
+        parts.append("### Feature context availability")
+        for ref in sorted(set(previous.features) | set(current.features)):
+            before, after = previous.features.get(ref), current.features.get(ref)
+            if before == after:
+                continue
+            if after == "disabled" or after is None:
+                parts.append(f"- Withdraw `{ref}` and its prior guidance; it is unavailable. Do not invoke its resources.")
+            elif after == "enabled":
+                parts.append(f"- Enabled: `{ref}`; use its effective resource catalog.")
+            else:
+                parts.append(f"- Updated feature resource: `{ref}`; read its current effective definition before use.")
 
     if previous.schema_version != current.schema_version:
         parts.append(
@@ -450,11 +472,13 @@ def prepare_resume_delta(
     previous = load_injected_snapshot(chat_session_id, agent_id, project_path)
     if previous is None:
         return None
-    current = compute_snapshot(project_path)
-    delta = build_delta_text(previous, current, project_path)
-    if not delta:
-        return None
-    text = wrap_delta_block(delta)
+    from api.experimental.context_bundles import captured
+    with captured():
+        current = compute_snapshot(project_path)
+        delta = build_delta_text(previous, current, project_path)
+        if not delta:
+            return None
+        text = wrap_delta_block(delta)
     if compute_snapshot(project_path) != current:
         raise UnstablePreparationError(
             "context changed during delta preparation; falling back to full"

@@ -205,7 +205,7 @@
 
     function shouldAdoptComposerSelection(incoming, state) {
         return !!incoming && Array.isArray(incoming.stickyChips)
-            && !(state && state.pending)
+            && !(state && (state.pending || state.unsynced))
             && Number(incoming.revision || 0) >= Number((state && state.revision) || 0);
     }
 
@@ -350,7 +350,8 @@
         const key = p.sessionKey != null ? String(p.sessionKey) : '';
         const forceRefresh = !!p.forceRefresh;
         if (!forceRefresh && (p.loading
-            || (Number(p.modelsLength || 0) > 0 && String(p.modelsKey || '') === key))) {
+            || (Number(p.modelsLength || 0) > 0 && String(p.modelsKey || '') === key)
+            || (p.triedKey != null && String(p.triedKey) === key))) {
             return { fetch: false };
         }
         const params = [];

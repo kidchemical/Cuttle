@@ -223,36 +223,6 @@ Single-machine jobs may keep a lone top-level `percent`.
   (writes overall + per-worker `bars` from `batch-status`).
 - Manual: `python -m api.job_watch write … --bars-json "[…]"` or `write_status(..., bars=[...])`.
 
-### Progress grid (experimental, any job)
-
-Use it when a job has many discrete items and seeing *which* items are done
-matters: frames, files in a migration, tests in a suite, pages crawled, shards.
-Not useful for one long opaque step — keep a bar there. Gate:
-Settings → Experimental → **Progress grid** (`progress_grid`); off drops the
-grid from new status files and bars keep working.
-
-```json
-"grid": {
-  "unit": "test", "title": "Test suite", "marked_label": "retried",
-  "total": 3, "groups": ["shard-1", "shard-2"],
-  "cells": [
-    {"key": "test_login", "state": "completed", "group": "shard-1"},
-    {"key": "test_logout", "state": "running", "group": "shard-2", "marked": true},
-    {"key": "test_admin", "state": "failed", "note": "AssertionError"}
-  ]
-}
-```
-
-- `key`: int or short string, unique. `state`: `pending` / `running` /
-  `completed` / `failed` / `missing` / `cancelled` / `skipped`.
-- `group` (optional) gets a stable colour; matching `bars[].id` share it.
-- `marked` draws an outline; `marked_label` says what it means.
-- `inventory` (optional): `verified` (host checked output) or `reported`
-  (producer's claim). Omit when neither applies.
-- First 2,048 cells render; `total` drives the "N more" note.
-- Write: `python -m api.job_watch write … --grid-json '{…}'` or `write_status(..., grid={…})`.
-- Mesh frame batches emit one automatically → `cuttle-workers.md`.
-
 ## Flask restart (Cuttle chat)
 
 Authenticated HTTP restart-card submissions call `api.flask_restart.request_restart`
@@ -336,3 +306,30 @@ back to the card directly. Progress must not depend on rereading a global status
 file. A persisted “Flask restart acknowledged” message is an acceptance receipt,
 not a completion lock; it must not be replayed as a green finished result on a
 later card in the same generation.
+
+## Action replay policy
+
+Resolved allowlisted YAML recipes own replay policy. Mutating shell and service
+recipes default to `once`; read-only recipes can declare `replay: reusable`.
+A mixed recipe may use:
+
+```yaml
+replay:
+  default: once
+  modes:
+    status: reusable
+```
+
+A card's `reusable`/`lock` affects presentation; it cannot override recipe policy.
+One-shot dispatch claims are atomic and durable in the auth database. Pending
+confirms and their signed fallback tokens share a receipt, so restarting Flask
+or concurrent clicks cannot dispatch the same confirmation twice. Form receipts
+also survive regeneration of synthetic tokens. Native restart controls claim
+mutating selections; Status remains reusable and an explicit pre-dispatch
+rejection permits another attempt.
+
+A receipt guarantees at most one dispatch, not exactly-once external effects.
+Ambiguous failures keep the receipt; request a fresh card/token to retry. Cancel
+claims the same receipt as Confirm. Fresh confirmations get distinct identities.
+Legacy signed tokens without a receipt use their token digest. Form receipts
+persist; expiring inline-token receipts can be reclaimed after token expiry.

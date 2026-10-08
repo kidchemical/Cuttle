@@ -4,6 +4,7 @@ description: >-
   Block until job_ids finish (comma-separated) or timeout.
   Params: job_ids, timeout (seconds), poll.
 type: shell
+replay: reusable
 run: powershell -NoProfile -ExecutionPolicy Bypass -File .cuttle_global\scripts\workers-cli.ps1 wait
 run_posix: .venv/bin/python -m api.device_workers.cli wait
 workdir: .

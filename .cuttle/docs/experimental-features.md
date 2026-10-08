@@ -105,6 +105,14 @@ Experimental settings, while its functionality remains gated.
 
 ## Adding a new experimental feature
 
+Agent-context ownership and migration:
+[feature-owned context bundles](experimental-context-bundles.md). Register
+`FlagSpec(context_bundle=True)` and ship operational rules/docs/skills/recipes
+under `.cuttle_global/features/<flag-id>/`. The shared resolver exposes these
+resources only when the existing flag resolver enables the feature. Personal
+deltas belong under `<home>/personal/features/<flag-id>/`. Core guidance remains
+independent; packaged source presence does not imply operational availability.
+
 1. Add one row in `src/api/experimental/features.py`, normally default-off.
 2. Gate behavior with `api.experimental.is_enabled("your_flag")`.
 3. Put feature UI in its own appropriate surface, following the design practice
@@ -130,6 +138,8 @@ right-click it for details and actions. In the desktop app, "Desktop window"
 pops it out as an always-on-top window that stays up while Cuttle sits in the
 tray. Agent verbs and REST: [gizmos.md](../../.cuttle_global/docs/gizmos.md).
 Turning the flag off hides every gizmo and closes pop-outs; rows are kept.
+This applies to the experimental shell gizmos; established composer Tasks
+remain available independently of this flag.
 
 ## Voice narrator
 

@@ -149,7 +149,8 @@ def _apply_router_to_global_rules(
         return safety
     if mode == "shadow":
         shadowed = {n.lower() for n in project_names}
-        return safety + [(n, t) for n, t in policy if n.lower() not in shadowed]
+        return safety + [(n, t) for n, t in policy if n.lower() not in shadowed and
+                         not (n.startswith("feature/") and Path(n).name.lower() in shadowed)]
     return all_global
 
 
@@ -178,7 +179,8 @@ def load_global_rules() -> List[tuple[str, str]]:
     config = _cuttle_global_config()
     if not config:
         return []
-    return _read_md_files(config / "rules", limit=None)
+    from api.experimental.context_bundles import markdown
+    return _read_md_files(config / "rules", limit=None) + markdown("rules", global_root=config)
 
 
 def load_project_rules(project_path: Optional[str]) -> List[tuple[str, str]]:
@@ -208,6 +210,9 @@ def project_inventory(project_path: Optional[str]) -> Dict[str, List[str]]:
             for name in _list_names(cuttle / sub, patterns):
                 if name not in inv[key]:
                     inv[key].append(name)
+    from api.experimental.context_bundles import inventory
+    for category, refs in inventory(project_path).items():
+        inv[category].extend(refs)
     return inv
 
 
@@ -311,6 +316,8 @@ def _runtime_block(
         from api.cuttle_brain.global_layers import global_doc_enabled
         global_docs = [name for name in _list_names(global_config / "docs", ("*.md",))
                        if global_doc_enabled(name, project_path)]
+        from api.experimental.context_bundles import markdown
+        global_docs.extend(name for name, _ in markdown("docs", project_path, global_config))
         deltas = [name for name in _delta_names(global_config / "docs", ("*.md",)) if name in global_docs]
     else:
         global_docs = []
@@ -337,7 +344,7 @@ def _runtime_block(
         if rules:
             parts.append(f"- rules: {', '.join(rules)}")
         if cmd:
-            parts.append(f"- commands: {', '.join(f'/{Path(n).stem}' for n in cmd)}")
+            parts.append("- commands: " + ", ".join(n if n.startswith("feature/") else f"/{Path(n).stem}" for n in cmd))
         if docs:
             proj_deltas: List[str] = []
             for cuttle_dir in _cuttle_dirs(project_path) if project_path else []:
@@ -354,7 +361,7 @@ def _runtime_block(
             parts.append("- Available Cuttle skills (open the matching SKILL.md when relevant):")
             parts.extend(f"  - {skill}" for skill in skills)
         if actions:
-            parts.append(f"- actions: {', '.join(Path(n).stem for n in actions)}")
+            parts.append("- actions: " + ", ".join(n if n.startswith("feature/") else Path(n).stem for n in actions))
     else:
         parts.append(
             "No project `.cuttle/` inventory found at this cwd "
@@ -393,6 +400,10 @@ def _runtime_block(
     return "\n".join(parts).strip()
 
 
+from api.experimental.context_bundles import capture_call
+
+
+@capture_call
 def compile_context(
     user_prompt: str,
     *,

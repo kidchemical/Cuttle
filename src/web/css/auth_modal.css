@@ -696,4 +696,48 @@ html.auth-required .app-shell {
     text-align: center;
 }
 
+.logout-confirm-profile-forms {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.logout-confirm-profile-forms .auth-form {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.logout-confirm-role {
+    display: inline-block;
+    margin-top: 8px;
+    padding: 3px 12px;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    color: #cbd5e1;
+}
+
+.logout-confirm-role.is-owner {
+    background: rgba(251, 191, 36, 0.12);
+    border-color: rgba(251, 191, 36, 0.4);
+    color: #fcd34d;
+}
+
+.logout-confirm-role.is-guest {
+    color: #94a3b8;
+}
+
+.logout-confirm-profile-error {
+    color: #fca5a5;
+}
+
+.logout-confirm-profile-ok {
+    color: #86efac;
+}
+
 
