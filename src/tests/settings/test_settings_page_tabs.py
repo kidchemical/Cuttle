@@ -187,9 +187,30 @@ def test_voice_tab_handlers_are_defined():
     html = _page()
     for fn in ("loadChatTtsSettings", "saveChatTtsSettings",
                "toggleChatTtsEnabled", "toggleChatTtsSummarize",
-               "previewChatTtsVoice"):
+               "previewChatTtsVoice", "onChatTtsProviderChanged",
+               "fetchChatTtsVoices", "onChatTtsNarratorChanged"):
         assert re.search(rf"(?:function\s+{fn}\s*\(|{fn}\s*=\s*function)", html), \
             f"{fn} is referenced by the Voice tab but never defined"
+
+
+def test_voice_tab_is_provider_driven():
+    """Voices/models come from /api/tts/providers, never hardcoded HTML.
+
+    The voice dropdown must not pin one provider's catalog: provider,
+    model, and voice selects render from the registry, tunables hide per
+    provider, and the narrator model is a free-form input with suggestions.
+    """
+    html = _page()
+    panel = html[html.index('id="panel-voice"'):html.index('id="panel-devices"')]
+    assert 'id="chatTtsProvider"' in panel
+    assert 'id="chatTtsNarratorProvider"' in panel
+    assert 'id="chatTtsNarratorSuggestions"' in panel
+    assert 'id="chatTtsSpeedRow"' in panel
+    assert 'id="chatTtsFetchVoicesBtn"' in panel
+    voice_sel = panel[panel.index('id="chatTtsVoice"'):panel.index("</select>", panel.index('id="chatTtsVoice"'))]
+    assert "<option" not in voice_sel or "Loading" in voice_sel, \
+        "voice options must arrive from the registry, not markup"
+    assert "coral" not in voice_sel
 
 
 def test_every_lazy_loader_is_registered_and_tab_id_exists():

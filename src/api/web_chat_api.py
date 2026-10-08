@@ -2508,6 +2508,8 @@ def test_api_key():
             'openai': ('OPENAI_API_KEY', 'API_KEY'),
             'anthropic': ('ANTHROPIC_API_KEY',),
             'discord': ('DISCORD_BOT_TOKEN', 'DISCORD_TOKEN'),
+            'elevenlabs': ('ELEVENLABS_API_KEY',),
+            'google': ('GEMINI_API_KEY', 'GOOGLE_API_KEY'),
         }
         if not api_key and api_type in saved_names:
             api_key = _read_env_credential(saved_names[api_type])
@@ -2531,6 +2533,10 @@ def test_api_key():
             return test_anthropic_key(api_key)
         elif api_type == 'discord':
             return test_discord_key(api_key)
+        elif api_type in ('elevenlabs', 'google'):
+            from api.tts_providers import check_key
+            ok, message = check_key(api_type, api_key)
+            return jsonify({'success': ok, 'message': message})
         else:
             return jsonify({
                 'success': False,
@@ -2766,6 +2772,8 @@ def save_api_key():
             'openai': 'OPENAI_API_KEY',
             'anthropic': 'ANTHROPIC_API_KEY',
             'discord': 'DISCORD_BOT_TOKEN',
+            'elevenlabs': 'ELEVENLABS_API_KEY',
+            'google': 'GEMINI_API_KEY',
         }
         if api_type not in _key_names:
             return jsonify({
@@ -2896,11 +2904,15 @@ def load_api_keys():
         # Runtime precedence accepts the legacy name; the settings UI
         # converges saves onto DISCORD_BOT_TOKEN (see save_api_key).
         discord_val = _read_env_credential(('DISCORD_BOT_TOKEN', 'DISCORD_TOKEN'))
+        elevenlabs_val = _read_env_credential('ELEVENLABS_API_KEY')
+        google_val = _read_env_credential(('GEMINI_API_KEY', 'GOOGLE_API_KEY'))
 
         hints = {
             'openai': _mask_credential_for_display(openai_val),
             'anthropic': _mask_credential_for_display(anthropic_val),
             'discord': _mask_credential_for_display(discord_val),
+            'elevenlabs': _mask_credential_for_display(elevenlabs_val),
+            'google': _mask_credential_for_display(google_val),
         }
         return jsonify({
             'success': True,
@@ -2909,6 +2921,8 @@ def load_api_keys():
                 'openai': bool(openai_val),
                 'anthropic': bool(anthropic_val),
                 'discord': bool(discord_val),
+                'elevenlabs': bool(elevenlabs_val),
+                'google': bool(google_val),
             },
         })
 

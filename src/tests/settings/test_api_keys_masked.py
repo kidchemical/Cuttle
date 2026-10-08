@@ -158,3 +158,57 @@ def test_test_endpoint_uses_saved_key_when_input_empty(tmp_path, monkeypatch):
     res = client.post("/api/test-api-key", json={"api_type": "anthropic"})
     assert res.status_code == 400
     assert "No key saved" in res.get_json()["message"]
+
+
+def test_voice_provider_keys_round_trip(tmp_path, monkeypatch):
+    from api import web_chat_api as wca
+
+    client = _owner_client(tmp_path, monkeypatch)
+    for api_type, env_name, secret in (
+        ("elevenlabs", "ELEVENLABS_API_KEY", "e" * 32),
+        ("google", "GEMINI_API_KEY", "AIza" + "g" * 35),
+    ):
+        monkeypatch.delenv(env_name, raising=False)
+        res = client.post(
+            "/api/save-api-key", json={"api_type": api_type, "api_key": secret}
+        )
+        assert res.status_code == 200, res.get_json()
+        text = (tmp_path / "home" / ".env").read_text(encoding="utf-8")
+        assert f"{env_name}=" in text
+        assert secret not in res.get_data(as_text=True)
+
+    body = client.get("/api/load-api-keys").get_json()
+    assert body["configured"]["elevenlabs"] is True
+    assert body["configured"]["google"] is True
+    assert body["api_keys"]["elevenlabs"].startswith("eeee")
+    assert body["api_keys"]["google"].startswith("AIza")
+
+
+def test_voice_key_test_dispatch_and_format(tmp_path, monkeypatch):
+    from api import tts_providers
+
+    client = _owner_client(tmp_path, monkeypatch)
+    seen = {}
+    real_check = tts_providers.check_key
+
+    def fake_check(provider_id, key):
+        seen[provider_id] = key
+        return True, "ok"
+
+    monkeypatch.setattr(tts_providers, "check_key", fake_check)
+    res = client.post(
+        "/api/test-api-key", json={"api_type": "elevenlabs", "api_key": "e" * 32}
+    )
+    assert res.status_code == 200
+    assert seen["elevenlabs"] == "e" * 32
+    res = client.post(
+        "/api/test-api-key", json={"api_type": "google", "api_key": "AIza" + "g" * 35}
+    )
+    assert res.status_code == 200
+    assert seen["google"] == "AIza" + "g" * 35
+    # Too short to be real → rejected without a provider call.
+    monkeypatch.setattr(tts_providers, "check_key", real_check)
+    res = client.post("/api/test-api-key", json={"api_type": "elevenlabs", "api_key": "short"})
+    assert res.status_code == 200
+    assert res.get_json()["success"] is False
+    assert seen.get("elevenlabs") == "e" * 32
