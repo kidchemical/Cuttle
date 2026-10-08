@@ -58,6 +58,21 @@ def run(qid):
     return (jsonify(found),200) if found else (jsonify(error='Run not found'),404)
 
 
+@bp.get('/api/agent-events/runs/<qid>/changes')
+@owner_required
+def run_changes(qid):
+    """Run-wide Changes: every file the turn changed, reconciled with reports."""
+    from .reconcile import reconcile
+    db=store()
+    found=db.run(qid)
+    if not found:
+        return jsonify(error='Run not found'),404
+    edits=db.run_edits(qid)
+    model=reconcile(edits,found.get('agent_id'))
+    model.update(query_id=qid,status=found['status'],compacted=any(e.get('compacted') for e in edits))
+    return jsonify(model)
+
+
 @bp.get('/api/agent-events/stream')
 @owner_required
 def stream():

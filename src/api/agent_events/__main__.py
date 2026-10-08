@@ -7,7 +7,7 @@ from .store import EventStore,state_dir
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('verb',choices=['stats','get','search','diff','tail'])
+    parser.add_argument('verb',choices=['stats','get','search','diff','changes','tail'])
     parser.add_argument('value',nargs='?')
     parser.add_argument('--after',type=int,default=0)
     parser.add_argument('--limit',type=int,default=100)
@@ -34,6 +34,9 @@ def main():
             out=store.stats()
         elif args.verb=='get':
             out={'run':store.run(args.value),'events':store.events(args.value,after=args.after,limit=args.limit,full=True)}
+        elif args.verb=='changes':
+            from .reconcile import reconcile
+            out=reconcile(store.run_edits(args.value),(store.run(args.value) or {}).get('agent_id'))
         elif args.verb=='diff':
             out=store.events(args.value,kind='edit',after=args.after,limit=args.limit,full=True)
         else:

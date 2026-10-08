@@ -413,3 +413,57 @@ body.query-log-standalone .query-log-sheet {
 .diff-add {background:rgba(46,160,67,.16);}
 .diff-delete {background:rgba(248,81,73,.16);}
 .diff-header {color:var(--text-secondary);}
+
+/* Run-wide Changes (CuttleQueryChanges): verdict, then one row per file. */
+.query-changes { display: flex; flex-direction: column; gap: 6px; }
+.query-changes-verdict {
+    margin: 0;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color, #2a2a4a);
+    color: var(--text-primary, #f8fafc);
+}
+.query-changes-verdict--consistent { border-color: rgba(74, 222, 128, 0.55); }
+.query-changes-verdict--unreported { border-color: rgba(251, 191, 36, 0.7); }
+.query-changes-verdict--ambiguous { border-color: rgba(148, 163, 184, 0.6); }
+.query-changes-meta { margin: 0 0 4px; color: var(--text-tertiary, #808090); font-size: 0.8rem; }
+.query-changes-file {
+    border: 1px solid var(--border-color, #2a2a4a);
+    border-radius: 8px;
+    padding: 4px 8px;
+}
+.query-changes-file > summary {
+    cursor: pointer;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    list-style: none;
+}
+.query-changes-file > summary::-webkit-details-marker { display: none; }
+.query-changes-path {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.8rem;
+    overflow-wrap: anywhere;
+    color: var(--text-primary, #f8fafc);
+    margin-right: auto;
+}
+.query-changes-add { color: #4ade80; font-variant-numeric: tabular-nums; font-size: 0.78rem; }
+.query-changes-del { color: #f87171; font-variant-numeric: tabular-nums; font-size: 0.78rem; margin-left: 4px; }
+.query-changes-file .query-log-pill { margin-left: 0; }
+.query-changes-pill--warn { background: rgba(251, 191, 36, 0.18); border: 1px solid rgba(251, 191, 36, 0.6); }
+.query-changes-pill--ok { background: rgba(74, 222, 128, 0.14); border: 1px solid rgba(74, 222, 128, 0.45); }
+.query-changes-pill--muted { opacity: 0.75; }
+.query-changes-step {
+    font-size: 0.68rem;
+    padding: 1px 6px;
+    border-radius: 999px;
+    border: 1px solid var(--border-color, #2a2a4a);
+    background: transparent;
+    color: var(--accent-color, #7c9cff);
+    cursor: pointer;
+}
+.query-changes-diff { margin-top: 6px; overflow-x: auto; }
+.query-changes-outside { margin: 0; font-size: 0.8rem; color: var(--text-secondary, #b0b0c0); }
+.light-mode .query-changes-add { color: #15803d; }
+.light-mode .query-changes-del { color: #b91c1c; }

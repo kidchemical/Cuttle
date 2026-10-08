@@ -483,7 +483,22 @@
         var body = document.getElementById('queryLogBody');
         if (!body) return;
         body.classList.toggle('query-log-body--json', lastTab === 'json');
-        if (lastTab === 'changes') {
+        if (lastTab === 'changes' && data.event_store && window.CuttleQueryChanges && currentId) {
+            // Run-wide, reconciled Changes (owner: CuttleQueryChanges).
+            window.CuttleQueryChanges.mount(body, currentId, {
+                esc: esc,
+                fetchJson: function (url) {
+                    return fetch(url, { credentials: 'include', cache: 'no-store' }).then(function (r) {
+                        return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || 'Changes unavailable'); return j; });
+                    });
+                },
+                renderDiff: function (host, patch) {
+                    if (window.CuttleEventDiff) window.CuttleEventDiff.render(host, patch);
+                    else host.textContent = String(patch);
+                },
+                openStep: openStep,
+            });
+        } else if (lastTab === 'changes') {
             var edits = (data.events || []).filter(function (e) { return e.kind === 'edit'; });
             var note = data.event_store && data.has_more
                 ? '<p>Edits across ' + data.events.length + ' loaded steps. Scroll down to load more.</p>'
@@ -645,6 +660,14 @@
         var anchor = logEvents.length > keep ? rowId(logEvents[logEvents.length - keep - 1]) : firstAfter;
         logLoading = true;
         fetchLog(currentId, anchor, false).then(handleChunkResponse).catch(function () { logLoading = false; });
+    }
+
+    // Changes → one step: switch to the timeline and bring that seq into view.
+    function openStep(seq) {
+        if (!seq) return;
+        pendingSeqScroll = seq;
+        var btn = ensureDom().querySelector('[data-tab="timeline"]');
+        if (btn) btn.click();
     }
 
     // Scroll/button path: fetch the next chunk after the newest loaded row.
