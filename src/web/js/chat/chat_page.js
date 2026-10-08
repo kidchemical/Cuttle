@@ -1712,18 +1712,23 @@
         }
     }
 
-    /** Composer controls tagged data-experimental-flag stay hidden unless their flag is on. */
-    async function syncExperimentalComposerControls() {
-        const controls = document.querySelectorAll('[data-experimental-flag]');
-        if (!controls.length) return;
-        let enabled = new Set();
+    /** Ids of enabled experimental flags (empty when the kill switch is on or the fetch fails). */
+    async function fetchEnabledExperimentalFlags() {
         try {
             const r = await fetch('/api/experimental/flags', { credentials: 'include', cache: 'no-store' });
             const d = await r.json();
             if (r.ok && d && d.success && !d.kill_switch) {
-                enabled = new Set((d.flags || []).filter(f => f.enabled).map(f => f.id));
+                return new Set((d.flags || []).filter(f => f.enabled).map(f => f.id));
             }
         } catch (_) {}
+        return new Set();
+    }
+
+    /** Composer controls tagged data-experimental-flag stay hidden unless their flag is on. */
+    async function syncExperimentalComposerControls() {
+        const controls = document.querySelectorAll('[data-experimental-flag]');
+        if (!controls.length) return;
+        const enabled = await fetchEnabledExperimentalFlags();
         controls.forEach((el) => {
             el.hidden = !enabled.has(el.getAttribute('data-experimental-flag'));
         });
@@ -2909,9 +2914,7 @@
                     .then(() => syncSessionMessagesFromServer())
                     .catch(() => {});
             }
-            if (voiceModeActive) {
-                onVoiceModeGenerationEnded({ isError });
-            }
+            chatVoice.onGenerationEnded({ isError });
             return;
         }
         markChatSessionUnread(sid, { isError });
@@ -16131,9 +16134,7 @@
         if (begun.markRunning) {
             setHistorySessionRunning(begun.markRunning, true);
         }
-        if (voiceModeActive && voiceModePhase !== 'speaking') {
-            setVoiceModePhase('processing', 'Thinking…');
-        }
+        chatVoice.onGenerationStarted();
         // Do NOT poll live-status here. The chat SSE (or collectPendingResult after
         // we detach) already owns status updates. Extra GETs compete for Chromium's
         // ~6 HTTP/1.1 sockets per host and are the main Electron lockup cause.
@@ -19642,132 +19643,12 @@
         }
     }
 
-    // ── Voice mode (same chat session; Web Speech STT + auto TTS) ──────────
-    let voiceModeActive = false;
-    /** @type {'idle'|'listening'|'processing'|'speaking'} */
-    let voiceModePhase = 'idle';
-    let _voiceRecognition = null;
-    let _voiceFinalTranscript = '';
-    let _voiceInterimTranscript = '';
-    let _voiceLastSpokenKey = '';
-    let _voiceEscapeHandler = null;
-    let _voiceSpeakToken = 0;
-    let _voiceListeningClosing = false;
-    let _voiceWantListening = false;
-    let _voiceSilenceTimer = null;
-    let _voiceCommittedTranscript = '';
-    let _voiceSessionTranscript = '';
-    /** Pause before auto-send after recognition ends. Override: localStorage cuttleVoiceSilenceMs */
-    const VOICE_SILENCE_SEND_DEFAULT_MS = 2800;
-
-    function voiceSilenceSendMs() {
-        try {
-            const n = parseInt(localStorage.getItem('cuttleVoiceSilenceMs') || '', 10);
-            if (Number.isFinite(n) && n >= 800 && n <= 15000) return n;
-        } catch (_) {}
-        return VOICE_SILENCE_SEND_DEFAULT_MS;
-    }
-
-    function clearVoiceSilenceTimer() {
-        if (_voiceSilenceTimer) {
-            clearTimeout(_voiceSilenceTimer);
-            _voiceSilenceTimer = null;
-        }
-    }
-
-    function scheduleVoiceSilenceSend() {
-        clearVoiceSilenceTimer();
-        const ms = voiceSilenceSendMs();
-        setVoiceModeStatus('Paused — keep talking, or tap mic to send');
-        _voiceSilenceTimer = setTimeout(() => {
-            _voiceSilenceTimer = null;
-            if (voiceModeActive && voiceModePhase === 'listening' && _voiceWantListening) {
-                finishVoiceListeningAndSend();
-            }
-        }, ms);
-    }
-
-    function voiceCurrentUtterance() {
-        const interim = String(_voiceInterimTranscript || '').replace(/\s+/g, ' ').trim();
-        let base = mergeCumulativeSpeech(_voiceCommittedTranscript, _voiceSessionTranscript);
-        if (interim) {
-            if (!base || interim.startsWith(base)) return interim;
-            return mergeCumulativeSpeech(base, interim);
-        }
-        return base;
-    }
-
-    function voiceSpeechRecognitionCtor() {
-        return window.SpeechRecognition || window.webkitSpeechRecognition || null;
-    }
-
-    function voiceOverlayEl() {
-        return document.getElementById('voiceModeOverlay');
-    }
-
-    function setVoiceModePhase(phase, statusText) {
-        voiceModePhase = phase || 'idle';
-        const overlay = voiceOverlayEl();
-        if (overlay) {
-            overlay.classList.toggle('is-listening', voiceModePhase === 'listening');
-            overlay.classList.toggle('is-processing', voiceModePhase === 'processing');
-            overlay.classList.toggle('is-speaking', voiceModePhase === 'speaking');
-        }
-        const mic = document.getElementById('voiceModeMicBtn');
-        if (mic) {
-            const busy = voiceModePhase === 'processing' || voiceModePhase === 'speaking';
-            mic.disabled = busy;
-            mic.setAttribute('aria-pressed', voiceModePhase === 'listening' ? 'true' : 'false');
-            if (voiceModePhase === 'listening') {
-                mic.title = 'Tap to send';
-                mic.setAttribute('aria-label', 'Tap to send');
-            } else if (busy) {
-                mic.title = voiceModePhase === 'speaking' ? 'Speaking…' : 'Working…';
-                mic.setAttribute('aria-label', mic.title);
-            } else {
-                mic.title = 'Tap to talk';
-                mic.setAttribute('aria-label', 'Tap to talk');
-            }
-        }
-        if (statusText != null) setVoiceModeStatus(statusText);
-        else if (voiceModePhase === 'idle') setVoiceModeStatus('Tap the mic to talk');
-        else if (voiceModePhase === 'listening') setVoiceModeStatus('Listening… tap mic when done');
-        else if (voiceModePhase === 'processing') setVoiceModeStatus('Thinking…');
-        else if (voiceModePhase === 'speaking') setVoiceModeStatus('Speaking…');
-    }
-
-    function setVoiceModeStatus(text) {
-        const el = document.getElementById('voiceModeStatus');
-        if (el) el.textContent = String(text || '');
-    }
-
-    function setVoiceModeInterim(text) {
-        const el = document.getElementById('voiceModeInterim');
-        if (!el) return;
-        const t = String(text || '').trim();
-        if (!t) {
-            el.hidden = true;
-            el.textContent = '';
-            return;
-        }
-        el.hidden = false;
-        el.textContent = t;
-    }
-
-    function appendVoiceTranscriptLine(role, text) {
-        const box = document.getElementById('voiceModeTranscript');
-        if (!box) return;
-        const line = document.createElement('div');
-        line.className = 'voice-mode-line is-' + (role === 'user' ? 'user' : 'assistant');
-        const label = document.createElement('span');
-        label.className = 'voice-mode-line-label';
-        label.textContent = role === 'user' ? 'You' : 'Cuttle';
-        const body = document.createElement('div');
-        body.textContent = String(text || '').trim();
-        line.appendChild(label);
-        line.appendChild(body);
-        box.appendChild(line);
-        box.scrollTop = box.scrollHeight;
+    // ── Voice mode: owned by chat_voice.js; the page supplies chat send + TTS ──
+    function lastAssistantMessageEl() {
+        const box = document.getElementById('chatMessages');
+        if (!box) return null;
+        const list = box.querySelectorAll(CHAT_RECORD_SELECTOR + '.assistant');
+        return list.length ? list[list.length - 1] : null;
     }
 
     function composeVoiceOutbound(spokenText) {
@@ -19785,544 +19666,122 @@
         }
     }
 
-    function stopVoiceRecognition() {
-        const rec = _voiceRecognition;
-        _voiceRecognition = null;
-        if (!rec) return;
-        try {
-            rec.onresult = null;
-            rec.onerror = null;
-            rec.onend = null;
-            rec.stop();
-        } catch (_) {
-            try { rec.abort(); } catch (_2) {}
-        }
-    }
-
-    function enterVoiceMode(event) {
-        if (event) {
-            event.preventDefault();
-            event.stopPropagation();
-        }
-        closeAllSessionMenus();
-        if (voiceModeActive) return;
-        const overlay = voiceOverlayEl();
-        if (!overlay) {
-            (window.showToast || function () {})('Voice mode UI missing — hard-refresh', 'error');
-            return;
-        }
-        voiceModeActive = true;
-        document.body.classList.add('voice-mode');
-        overlay.hidden = false;
-        overlay.setAttribute('aria-hidden', 'false');
-        const exitBtn = document.getElementById('voiceModeExitBtn');
-        if (exitBtn) exitBtn.hidden = false;
-        _voiceLastSpokenKey = '';
-        setVoiceModeInterim('');
-        if (isSessionGenerating()) {
-            setVoiceModePhase('processing', 'Working…');
-        } else {
-            setVoiceModePhase('idle');
-        }
-        if (!_voiceEscapeHandler) {
-            _voiceEscapeHandler = function (e) {
-                if (e.key === 'Escape' && voiceModeActive) {
-                    e.preventDefault();
-                    exitVoiceMode();
-                }
-            };
-            document.addEventListener('keydown', _voiceEscapeHandler);
-        }
-    }
-
-    function exitVoiceMode(event) {
-        if (event) {
-            event.preventDefault();
-            event.stopPropagation();
-        }
-        if (!voiceModeActive) return;
-        voiceModeActive = false;
-        _voiceWantListening = false;
-        clearVoiceSilenceTimer();
-        stopVoiceRecognition();
-        stopChatTtsPlayback();
-        _voiceSpeakToken += 1;
-        setVoiceModeInterim('');
-        setVoiceModePhase('idle');
-        document.body.classList.remove('voice-mode');
-        const exitBtn = document.getElementById('voiceModeExitBtn');
-        if (exitBtn) exitBtn.hidden = true;
-        const overlay = voiceOverlayEl();
-        if (overlay) {
-            overlay.hidden = true;
-            overlay.setAttribute('aria-hidden', 'true');
-            overlay.classList.remove('is-listening', 'is-processing', 'is-speaking');
-        }
-        if (_voiceEscapeHandler) {
-            document.removeEventListener('keydown', _voiceEscapeHandler);
-            _voiceEscapeHandler = null;
-        }
-    }
-
-    function toggleVoiceListening() {
-        if (!voiceModeActive) return;
-        if (voiceModePhase === 'processing' || voiceModePhase === 'speaking') return;
-        if (voiceModePhase === 'listening') {
-            finishVoiceListeningAndSend();
-            return;
-        }
-        startVoiceListening();
-    }
-
-    function promptVoiceMicPermission(message) {
-        setVoiceModeStatus(message || 'Microphone permission needed — tap toast or mic');
-        (window.showToast || function () {})(
-            (message || 'Microphone permission needed') + ' — tap to allow',
-            'error',
-            { actionId: 'voice-mic-retry' }
-        );
-        try {
-            if (window.cuttleMobile && typeof window.cuttleMobile.requestMicrophone === 'function') {
-                window.cuttleMobile.requestMicrophone();
-            }
-        } catch (_) {}
-    }
-
-    /**
-     * Ask for mic access before SpeechRecognition.
-     * Android WebView only shows the system dialog when RECORD_AUDIO is in the
-     * APK manifest + getUserMedia / native requestMicrophone runs.
-     */
-    async function ensureVoiceMicrophoneAccess() {
-        try {
-            if (window.cuttleMobile && typeof window.cuttleMobile.requestMicrophone === 'function') {
-                window.cuttleMobile.requestMicrophone();
-            }
-        } catch (_) {}
-        if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
-            return { ok: true };
-        }
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            try {
-                stream.getTracks().forEach((t) => t.stop());
-            } catch (_) {}
-            return { ok: true };
-        } catch (err) {
-            const name = String((err && err.name) || '');
-            const msg = String((err && err.message) || err || '');
-            LOG_ERR('Voice getUserMedia failed', name, msg);
-            return { ok: false, name, message: msg };
-        }
-    }
-
-    /**
-     * Android/Chrome continuous STT often re-emits the full phrase as each
-     * "final" (not a delta). Blind append → "hello hello how hello how are you".
-     */
-    function mergeCumulativeSpeech(prev, next) {
-        const a = String(prev || '').replace(/\s+/g, ' ').trim();
-        const b = String(next || '').replace(/\s+/g, ' ').trim();
-        if (!b) return a;
-        if (!a) return b;
-        if (b === a) return a;
-        if (b.startsWith(a)) return b;
-        if (a.startsWith(b)) return a;
-        const aWords = a.split(/\s+/).filter(Boolean);
-        for (let k = Math.min(aWords.length, 12); k >= 1; k--) {
-            const tail = aWords.slice(-k).join(' ');
-            if (b.startsWith(tail)) {
-                const head = aWords.slice(0, -k).join(' ');
-                return (head ? head + ' ' + b : b).replace(/\s+/g, ' ').trim();
-            }
-        }
-        return (a + ' ' + b).replace(/\s+/g, ' ').trim();
-    }
-
-    async function startVoiceListening() {
-        const Ctor = voiceSpeechRecognitionCtor();
-        if (!Ctor) {
-            (window.showToast || function () {})(
-                'Voice input needs Chrome or Edge (Web Speech API)',
-                'error'
-            );
-            setVoiceModeStatus('Speech recognition not available in this browser');
-            return;
-        }
-        if (isSessionGenerating()) {
-            setVoiceModePhase('processing', 'Wait for the current reply…');
-            return;
-        }
-        stopChatTtsPlayback();
-        clearVoiceSilenceTimer();
-        _voiceWantListening = true;
-        _voiceListeningClosing = false;
-        _voiceCommittedTranscript = '';
-        _voiceSessionTranscript = '';
-        _voiceFinalTranscript = '';
-        _voiceInterimTranscript = '';
-        setVoiceModeInterim('');
-        setVoiceModePhase('idle', 'Checking microphone…');
-
-        const mic = await ensureVoiceMicrophoneAccess();
-        if (!mic.ok) {
-            _voiceWantListening = false;
-            promptVoiceMicPermission('Allow microphone access for voice mode');
-            setVoiceModePhase('idle');
-            return;
-        }
-        if (!_voiceWantListening || !voiceModeActive) return;
-        beginVoiceRecognitionSession(Ctor);
-    }
-
-    function beginVoiceRecognitionSession(Ctor) {
-        if (!Ctor) Ctor = voiceSpeechRecognitionCtor();
-        if (!Ctor || !_voiceWantListening || !voiceModeActive) return;
-        if (voiceModePhase === 'processing' || voiceModePhase === 'speaking') return;
-
-        stopVoiceRecognition();
-        const rec = new Ctor();
-        _voiceRecognition = rec;
-        // Mobile WebView continuous mode stacks cumulative finals; one-shot + restart is reliable.
-        const mobileShell = !!(window.isCuttleMobile || (window.cuttleMobile && window.cuttleMobile.isNative));
-        rec.continuous = !mobileShell;
-        rec.interimResults = true;
-        rec.lang = (navigator.language || 'en-US');
-        rec.maxAlternatives = 1;
-        _voiceSessionTranscript = '';
-        _voiceInterimTranscript = '';
-
-        rec.onresult = function (event) {
-            clearVoiceSilenceTimer();
-            let rebuilt = '';
-            let interim = '';
-            for (let i = 0; i < event.results.length; i++) {
-                const r = event.results[i];
-                const t = String((r[0] && r[0].transcript) || '').replace(/\s+/g, ' ').trim();
-                if (!t) continue;
-                if (r.isFinal) rebuilt = mergeCumulativeSpeech(rebuilt, t);
-                else interim = interim ? (interim + ' ' + t) : t;
-            }
-            _voiceSessionTranscript = rebuilt;
-            _voiceInterimTranscript = interim;
-            _voiceFinalTranscript = voiceCurrentUtterance();
-            setVoiceModeInterim(_voiceFinalTranscript);
-            if (voiceModePhase === 'listening') {
-                setVoiceModeStatus('Listening… tap mic when done');
-            }
-        };
-        rec.onerror = function (event) {
-            const err = (event && event.error) || 'error';
-            if (err === 'aborted') return;
-            if (err === 'no-speech') {
-                // Pause — silence timer / restart handles it via onend.
-                return;
-            }
-            LOG_ERR('Voice recognition error', err);
-            if (err === 'not-allowed' || err === 'service-not-allowed') {
-                _voiceWantListening = false;
-                clearVoiceSilenceTimer();
-                promptVoiceMicPermission('Allow microphone access for voice mode');
-                stopVoiceRecognition();
-                if (voiceModeActive) setVoiceModePhase('idle');
-                return;
-            }
-            setVoiceModeStatus('Could not hear that — try again');
-        };
-        rec.onend = function () {
-            if (_voiceRecognition !== rec) return;
-            _voiceRecognition = null;
-            if (!_voiceWantListening || !voiceModeActive || voiceModePhase !== 'listening') {
-                return;
-            }
-            // Commit this segment, wait before auto-send, restart STT so pauses don't cut off.
-            if (_voiceSessionTranscript) {
-                _voiceCommittedTranscript = mergeCumulativeSpeech(
-                    _voiceCommittedTranscript,
-                    _voiceSessionTranscript
-                );
-                _voiceSessionTranscript = '';
-            }
-            _voiceInterimTranscript = '';
-            _voiceFinalTranscript = _voiceCommittedTranscript;
-            if (_voiceFinalTranscript) setVoiceModeInterim(_voiceFinalTranscript);
-            scheduleVoiceSilenceSend();
-            setTimeout(() => {
-                if (
-                    _voiceWantListening
-                    && voiceModeActive
-                    && voiceModePhase === 'listening'
-                    && !_voiceRecognition
-                ) {
-                    beginVoiceRecognitionSession(Ctor);
-                }
-            }, 120);
-        };
-        try {
-            rec.start();
-            setVoiceModePhase('listening');
-        } catch (e) {
-            LOG_ERR('Voice recognition start failed', e);
-            _voiceRecognition = null;
-            if (!_voiceCommittedTranscript && !_voiceSessionTranscript) {
-                _voiceWantListening = false;
-                setVoiceModePhase('idle', 'Could not start microphone');
-                promptVoiceMicPermission(String(e.message || e));
-            }
-        }
-    }
-
-    function onVoiceMicToastAction() {
-        if (!voiceModeActive) return;
-        if (voiceModePhase === 'processing' || voiceModePhase === 'speaking') return;
-        try {
-            if (window.cuttleMobile && typeof window.cuttleMobile.openAppSettings === 'function') {
-                ensureVoiceMicrophoneAccess().then((mic) => {
-                    if (mic && mic.ok) {
-                        startVoiceListening();
-                        return;
-                    }
-                    try { window.cuttleMobile.openAppSettings(); } catch (_) {}
-                    setVoiceModeStatus('Enable Microphone for Cuttle in Android Settings');
-                });
-                return;
-            }
-        } catch (_) {}
-        startVoiceListening();
-    }
-
-    if (!window.__cuttleVoiceToastWired) {
-        window.__cuttleVoiceToastWired = true;
-        window.addEventListener('cuttle-toast-action', function (e) {
-            const id = e && e.detail && e.detail.actionId;
-            if (id === 'voice-mic-retry') onVoiceMicToastAction();
-        });
-        window.addEventListener('message', function (e) {
-            if (e && e.data && e.data.type === 'cuttle-toast-action'
-                && e.data.actionId === 'voice-mic-retry') {
-                onVoiceMicToastAction();
-            }
-        });
-    }
-
-    function finishVoiceListeningAndSend() {
-        if (_voiceListeningClosing) return;
-        _voiceListeningClosing = true;
-        _voiceWantListening = false;
-        clearVoiceSilenceTimer();
-        stopVoiceRecognition();
-        const spoken = voiceCurrentUtterance().replace(/\s+/g, ' ').trim();
-        setVoiceModeInterim('');
-        _voiceFinalTranscript = '';
-        _voiceInterimTranscript = '';
-        _voiceCommittedTranscript = '';
-        _voiceSessionTranscript = '';
-        _voiceListeningClosing = false;
-        if (!spoken) {
-            setVoiceModePhase('idle', 'Nothing heard — tap mic to try again');
-            return;
-        }
-        sendVoiceUtterance(spoken);
-    }
-
-    async function sendVoiceUtterance(spokenText) {
-        const message = composeVoiceOutbound(spokenText);
-        if (!message || !isSendableComposerMessage(message, [])) {
-            setVoiceModePhase('idle', 'Nothing to send');
-            return;
-        }
-        if (isSessionGenerating() && !isImmediateControlLaneMessage(message)) {
-            appendVoiceTranscriptLine('user', spokenText);
-            if (await trySteerRunningTurn(message, [])) {
-                setVoiceModePhase('processing', 'Added to the running reply…');
-                return;
-            }
-            // Queue like the composer would.
-            enqueueFollowup(message, { rawMessage: spokenText });
-            setVoiceModePhase('processing', 'Queued — waiting for current reply…');
-            return;
-        }
-
-        appendVoiceTranscriptLine('user', String(spokenText).trim());
-        setVoiceModePhase('processing', 'Thinking…');
-
-        if (document.getElementById('chatArea') && document.getElementById('chatArea').style.display === 'none') {
+    async function submitVoiceTurn(message, spokenText) {
+        const chatArea = document.getElementById('chatArea');
+        if (chatArea && chatArea.style.display === 'none') {
             const welcome = document.getElementById('welcomeScreen');
             if (welcome) welcome.style.display = 'none';
-            document.getElementById('chatArea').style.display = 'flex';
+            chatArea.style.display = 'flex';
             if (typeof window.__cuttlePinChatLayout === 'function') window.__cuttlePinChatLayout();
         }
-
         dismissOpenInteractiveCards('Ignored');
-        const userTs = Date.now();
-        addMessageToUI(message, 'user', { timestamp: userTs });
+        addMessageToUI(message, 'user', { timestamp: Date.now() });
         saveChatSession(message, 'user');
         recordPromptHistory(spokenText || message);
         applyStickySlashAfterComposerSend(message);
-
         const controlLane = isImmediateControlLaneMessage(message);
         if (!controlLane) {
             beginLocalGeneration();
             inFlightUserMessage = message;
         }
-        try {
-            await processMessage(message, { controlLane });
-        } catch (e) {
-            LOG_ERR('Voice send failed', e);
-            if (voiceModeActive) {
-                setVoiceModePhase('idle', 'Send failed — tap mic to retry');
-            }
-        }
+        await processMessage(message, { controlLane });
     }
 
-    function lastAssistantMessageEl() {
-        const box = document.getElementById('chatMessages');
-        if (!box) return null;
-        const list = box.querySelectorAll(CHAT_RECORD_SELECTOR + '.assistant');
-        return list.length ? list[list.length - 1] : null;
-    }
-
-    function voiceMessageSpeakKey(messageEl) {
-        if (!messageEl) return '';
-        if (messageEl.dataset && messageEl.dataset.messageId) {
-            return 'id:' + messageEl.dataset.messageId;
+    /** Cached per bubble, shared with the bubble's speaker button. */
+    async function voiceSpeechForMessage(messageEl) {
+        if (messageEl._cuttleTtsUrl) {
+            return {
+                url: messageEl._cuttleTtsUrl,
+                spoken: messageEl._cuttleTtsSpoken || '',
+                summarized: !!messageEl._cuttleTtsSummarized,
+            };
         }
-        const raw = String(messageEl.dataset.rawContent || '').trim();
-        return raw ? ('raw:' + raw.slice(0, 120)) : '';
-    }
-
-    async function maybeAutoSpeakVoiceReply(opts) {
-        if (!voiceModeActive) return;
-        if (opts && opts.isError) {
-            setVoiceModePhase('idle', 'Reply failed — tap mic to try again');
-            return;
-        }
-        const messageEl = lastAssistantMessageEl();
-        if (!messageEl) return;
-        const key = voiceMessageSpeakKey(messageEl);
-        if (key && key === _voiceLastSpokenKey) return;
-        if (key) _voiceLastSpokenKey = key;
-
         const btn = messageEl.querySelector('.message-tts-btn');
         const text = btn
             ? getMessageSpeakText(btn)
             : String(messageEl.dataset.rawContent || '').trim();
-        if (!text) {
-            setVoiceModePhase('idle');
-            return;
+        if (!text) return null;
+        const r = await fetch('/api/chat/tts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: text }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok || !d.success || !d.audio_base64) {
+            throw new Error((d && d.error) || ('TTS failed (' + r.status + ')'));
         }
+        const bin = atob(d.audio_base64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        const blob = new Blob([bytes], { type: d.content_type || 'audio/mpeg' });
+        messageEl._cuttleTtsUrl = URL.createObjectURL(blob);
+        messageEl._cuttleTtsSpoken = d.spoken_text || text;
+        messageEl._cuttleTtsSummarized = !!d.summarized;
+        applyTtsTranscriptLayout(messageEl, messageEl._cuttleTtsSpoken);
+        return {
+            url: messageEl._cuttleTtsUrl,
+            spoken: messageEl._cuttleTtsSpoken,
+            summarized: messageEl._cuttleTtsSummarized,
+        };
+    }
 
-        const token = ++_voiceSpeakToken;
-        setVoiceModePhase('speaking', 'Preparing speech…');
+    function playVoiceSpeech(messageEl, speech) {
+        const btn = messageEl.querySelector('.message-tts-btn');
+        return playVoiceAudio(speech.url, btn, !!speech.summarized);
+    }
 
-        try {
-            let url = messageEl._cuttleTtsUrl;
-            let spoken = messageEl._cuttleTtsSpoken || '';
-            let summarized = !!messageEl._cuttleTtsSummarized;
-            if (!url) {
-                const r = await fetch('/api/chat/tts', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ text: text }),
-                });
-                const d = await r.json().catch(() => ({}));
-                if (!r.ok || !d.success || !d.audio_base64) {
-                    throw new Error((d && d.error) || ('TTS failed (' + r.status + ')'));
-                }
-                const bin = atob(d.audio_base64);
-                const bytes = new Uint8Array(bin.length);
-                for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-                const blob = new Blob([bytes], { type: d.content_type || 'audio/mpeg' });
-                url = URL.createObjectURL(blob);
-                spoken = d.spoken_text || text;
-                summarized = !!d.summarized;
-                messageEl._cuttleTtsUrl = url;
-                messageEl._cuttleTtsSpoken = spoken;
-                messageEl._cuttleTtsSummarized = summarized;
-                applyTtsTranscriptLayout(messageEl, spoken);
-            }
-            if (token !== _voiceSpeakToken || !voiceModeActive) return;
-
-            appendVoiceTranscriptLine('assistant', spoken || text);
-            setVoiceModePhase('speaking', 'Speaking…');
-
-            stopChatTtsPlayback(btn || null);
-            const audio = new Audio(url);
-            _chatTtsAudio = audio;
-            if (btn) {
-                _chatTtsActiveBtn = btn;
-                btn.classList.remove('is-loading');
-                btn.classList.add('is-playing');
-                btn.disabled = false;
-                btn.innerHTML = TTS_STOP_ICON;
-                btn.title = summarized ? 'Playing summary — click to stop' : 'Stop';
-            }
-            const finish = function () {
+    /** One audio channel for replies, narration and bubble speakers. */
+    function playVoiceAudio(url, btn, summarized) {
+        stopChatTtsPlayback(btn || null);
+        const audio = new Audio(url);
+        _chatTtsAudio = audio;
+        if (btn) {
+            _chatTtsActiveBtn = btn;
+            btn.classList.remove('is-loading');
+            btn.classList.add('is-playing');
+            btn.disabled = false;
+            btn.innerHTML = TTS_STOP_ICON;
+            btn.title = summarized ? 'Playing summary — click to stop' : 'Stop';
+        }
+        return new Promise((resolve) => {
+            let settled = false;
+            const finish = (outcome) => {
+                if (settled) return;
+                settled = true;
                 if (btn && _chatTtsActiveBtn === btn) {
                     _resetTtsButton(btn);
                     _chatTtsActiveBtn = null;
                 }
-                _chatTtsAudio = null;
-                if (token === _voiceSpeakToken && voiceModeActive) {
-                    setVoiceModePhase('idle', 'Tap the mic to talk');
-                }
+                if (_chatTtsAudio === audio) _chatTtsAudio = null;
+                resolve(outcome);
             };
-            audio.onended = finish;
-            audio.onerror = function () {
-                finish();
-                (window.showToast || function () {})('Audio playback failed', 'error');
-            };
-            try {
-                await audio.play();
-            } catch (err) {
-                finish();
-                setVoiceModeStatus('Tap to enable sound, then use the mic');
-                (window.showToast || function () {})(
-                    'Browser blocked autoplay — tap the mic once, then try again',
-                    'error'
-                );
-            }
-        } catch (e) {
-            LOG_ERR('Voice TTS failed', e);
-            if (token === _voiceSpeakToken && voiceModeActive) {
-                appendVoiceTranscriptLine('assistant', text.slice(0, 600));
-                setVoiceModePhase('idle', 'Could not speak — transcript shown');
-            }
-            (window.showToast || function () {})(String(e.message || e), 'error');
-        }
+            audio.onended = () => finish('ended');
+            audio.onerror = () => finish('error');
+            // stopChatTtsPlayback pauses and drops onended; settle so the caller never hangs.
+            audio.addEventListener('pause', () => finish(audio.ended ? 'ended' : 'stopped'));
+            audio.play().catch(() => finish('blocked'));
+        });
     }
 
-    function onVoiceModeGenerationEnded(opts) {
-        if (!voiceModeActive) return;
-        const trySpeak = (attempt) => {
-            if (!voiceModeActive) return;
-            const el = lastAssistantMessageEl();
-            if (!el && attempt < 6) {
-                setTimeout(() => trySpeak(attempt + 1), 180);
-                return;
-            }
-            maybeAutoSpeakVoiceReply(opts || {});
-        };
-        setTimeout(() => trySpeak(0), 100);
-    }
-
-    function wireVoiceModeControls() {
-        const mic = document.getElementById('voiceModeMicBtn');
-        if (mic && !mic._cuttleVoiceWired) {
-            mic._cuttleVoiceWired = true;
-            mic.addEventListener('click', function (e) {
-                e.preventDefault();
-                toggleVoiceListening();
-            });
-        }
-        const exitBtn = document.getElementById('voiceModeExitBtn');
-        if (exitBtn && !exitBtn._cuttleVoiceWired) {
-            exitBtn._cuttleVoiceWired = true;
-            exitBtn.addEventListener('click', exitVoiceMode);
-        }
-    }
-
-    wireVoiceModeControls();
+    const chatVoice = CuttleChatVoice.create({
+        closeMenus: closeAllSessionMenus,
+        isGenerating: isSessionGenerating,
+        compose: composeVoiceOutbound,
+        isSendable: (message) => isSendableComposerMessage(message, []),
+        isControlLane: isImmediateControlLaneMessage,
+        steer: (message) => trySteerRunningTurn(message, []),
+        enqueue: (message, spoken) => enqueueFollowup(message, { rawMessage: spoken }),
+        submit: submitVoiceTurn,
+        lastAssistantMessage: lastAssistantMessageEl,
+        speechFor: voiceSpeechForMessage,
+        play: playVoiceSpeech,
+        stopSpeech: () => stopChatTtsPlayback(),
+        playClip: (url) => playVoiceAudio(url, null, false),
+        narratorEnabled: () => fetchEnabledExperimentalFlags().then((on) => on.has('voice_narrator')),
+        fetch: (url, opts) => fetch(url, opts),
+        toast: (message, variant, opts) => (window.showToast || function () {})(message, variant, opts),
+        logError: LOG_ERR,
+    });
 
     function formatTokenCount(n) {
         return CuttleChatUsage.formatTokenCount(n);
@@ -21813,9 +21272,7 @@
 
     function updateTypingStatus(statusText) {
         const next = statusText || 'Connecting...';
-        if (voiceModeActive && voiceModePhase === 'processing') {
-            setVoiceModeStatus(next);
-        }
+        chatVoice.onAgentStatus(next);
         const indicator = document.getElementById('typing-indicator');
         const el = indicator ? indicator.querySelector('.typing-status') : document.getElementById('typing-status');
         if (el) {
@@ -23167,8 +22624,8 @@
     window.chatPageSpeakMessage = function(btn) {
         return speakMessageFromButton(btn);
     };
-    window.chatPageEnterVoiceMode = enterVoiceMode;
-    window.chatPageExitVoiceMode = exitVoiceMode;
+    window.chatPageEnterVoiceMode = chatVoice.enter;
+    window.chatPageExitVoiceMode = chatVoice.exit;
     window.chatPageCopyMessage = async function(btn) {
         const ok = await copyMessageToClipboard(btn);
         if (ok) {

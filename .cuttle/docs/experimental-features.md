@@ -131,6 +131,21 @@ pops it out as an always-on-top window that stays up while Cuttle sits in the
 tray. Agent verbs and REST: [gizmos.md](../../.cuttle_global/docs/gizmos.md).
 Turning the flag off hides every gizmo and closes pop-outs; rows are kept.
 
+## Voice narrator
+
+Flag `voice_narrator`. Enhances voice mode in place (no App or settings tab).
+After a voice send, Cuttle speaks a one-line acknowledgment, then at most one
+short progress line every 15 s (8 per turn) paraphrasing the live status lines.
+The sticky agent or Cuttle Router still runs the turn; the narrator never answers
+or decides anything. A reply, a mic tap, or leaving voice mode before a turn
+starts silences it. Lines come from `api.llm_complete` (gpt-4o-mini by default)
+voiced with the Settings → chat speech voice; `POST /api/voice-narrator/narrate`
+answers `{disabled: true}` while the flag is off. Owner `src/api/voice_narrator/`,
+client `src/web/js/chat/chat_voice_narrator.js`; tests
+`src/tests/chat/test_voice_narrator.py`, `test_chat_voice_overlay.py`.
+Teardown: drop the flag row, the package, its blueprint registration, the
+narrator script and the `narrate*` calls in `chat_voice.js`.
+
 ## Adding an achievement
 
 1. Add the row to `_ACHIEVEMENTS` in `src/api/achievements/catalog.py`.

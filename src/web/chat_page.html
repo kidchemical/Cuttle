@@ -15,7 +15,8 @@
     <noscript><link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet"></noscript>
     <link rel="stylesheet" href="css/shared_navigation.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/auth_modal.css?v=20260926authLogin">
-    <link rel="stylesheet" href="css/chat_page.css?v=20261007composer860">
+    <link rel="stylesheet" href="css/chat_page.css?v=20261007voice1">
+    <link rel="stylesheet" href="css/chat_voice.css?v=20261007narrator1">
     <link rel="stylesheet" href="/css/query_log_inspector.css?v=20260927qlJson">
     <link rel="stylesheet" href="/css/chat_lightbox.css?v=20260922imgCtxMenu">
     <link rel="stylesheet" href="/css/pending_changes.css?v=20260920multiRepo">
@@ -127,6 +128,7 @@
 
             <!-- Voice mode: full-stage orbit + mic; same session as the open chat -->
             <div class="voice-mode-overlay" id="voiceModeOverlay" hidden aria-hidden="true">
+                <canvas class="voice-mode-stars" id="voiceModeStars" aria-hidden="true"></canvas>
                 <div class="voice-mode-stage">
                     <div class="voice-mode-orbit-wrap" id="voiceModeOrbitWrap" aria-hidden="true">
                         <div class="typing-orbit voice-mode-orbit">
@@ -140,7 +142,7 @@
                         </div>
                     </div>
                     <div class="voice-mode-status" id="voiceModeStatus" aria-live="polite" role="status">Tap the mic to talk</div>
-                    <div class="voice-mode-interim" id="voiceModeInterim" hidden aria-live="polite"></div>
+                    <div class="voice-mode-segments" id="voiceModeSegments" hidden aria-live="polite" aria-label="Phrases to send"></div>
                     <div class="voice-mode-transcript" id="voiceModeTranscript" aria-label="Voice transcript"></div>
                     <button type="button" class="voice-mode-mic-btn" id="voiceModeMicBtn" title="Tap to talk" aria-label="Tap to talk" aria-pressed="false">
                         <svg class="voice-mic-icon" width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -150,7 +152,8 @@
                             <line x1="8" y1="23" x2="16" y2="23" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
                         </svg>
                     </button>
-                    <p class="voice-mode-hint" id="voiceModeHint">Same chat — replies stay in history</p>
+                    <button type="button" class="voice-mode-watch-btn" id="voiceModeWatchBtn" hidden title="Back to chat — reply still speaks aloud">Watch agent work</button>
+                    <p class="voice-mode-hint" id="voiceModeHint">Tap to talk, tap again to send · or hold and release · × drops a phrase</p>
                 </div>
             </div>
             
@@ -436,7 +439,11 @@
     <script src="/js/chat/chat_vfx.js?v=20261003vfx1"></script>
     <script src="/js/chat/chat_subagent_fleet.js?v=20261004fleetLive"></script>
     <script src="/js/chat/chat_history_archive.js?v=20261007archivededupe"></script>
-    <script src="/js/chat/chat_page.js?v=20261007usage1"></script>
+    <script src="/js/chat/chat_voice_segments.js?v=20261007voice1"></script>
+    <script src="/js/chat/chat_voice_stars.js?v=20261007voice1"></script>
+    <script src="/js/chat/chat_voice_narrator.js?v=20261007narrator1"></script>
+    <script src="/js/chat/chat_voice.js?v=20261007narrator1"></script>
+    <script src="/js/chat/chat_page.js?v=20261007narrator1"></script>
     <!-- highlight.js / Vega: load after boot so offline WAN never blocks the chat UI -->
     <script src="/js/shared/optional_cdn.js?v=20260815vegaReady"></script>
 </body>

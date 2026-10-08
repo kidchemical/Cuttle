@@ -63,6 +63,12 @@ register_flag(FlagSpec(
 ))
 
 register_flag(FlagSpec(
+    id="voice_narrator", label="Voice narrator",
+    description="In voice mode, Cuttle speaks a quick acknowledgment as soon as you send, then short spoken updates on what the agent is doing until the reply is ready. Uses gpt-4o-mini plus your chat speech voice (OpenAI key required).",
+    default=False, category="chat", risk="low", since="0.0.0", needs_restart=False,
+))
+
+register_flag(FlagSpec(
     id="gizmos", label="Gizmos",
     description="Live UI objects outside chat bubbles: pin usage meters (Codex, Claude, Cursor) to the title bar or blade bar, float them over every Space, or pop them out as always-on-top desktop windows. Manage them in Apps → Gizmos.",
     default=False, category="ui", risk="low", since="0.0.0", needs_restart=False,

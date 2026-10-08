@@ -63,6 +63,7 @@ is a logged, nonfatal `try/except`:
 | Claude Code palette pins (`/api/claude/models\|model\|effort`) | `api.agent_harness.agents.claude.routes` (`claude_bp`) | blueprint — owned by the Claude agent slice; catalog in `agents/claude/model_catalog.py` |
 | Chat widgets | `api.chat_widgets.register_chat_widget_routes` | `register_*(app)` |
 | Chat TTS | `api.chat_tts` | `register_*(app)` |
+| Voice narrator (experimental `voice_narrator`) | `api.voice_narrator.routes` (`voice_narrator_bp`) | blueprint `/api/voice-narrator` — line writing + voicing owned by `api.voice_narrator` |
 | Web terminal | `api.web_terminal` | `register_*(app)` |
 | Electron desktop | `api.desktop_electron` | `register_*(app)` |
 | Android APK updates | `api.mobile_android_update` | `register_*(app)` |

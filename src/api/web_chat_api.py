@@ -382,6 +382,12 @@ try:
 except Exception as _vfx_err:
     print(f"[CHAT VFX] Failed to register routes: {_vfx_err}")
 
+try:
+    from api.voice_narrator.routes import voice_narrator_bp
+    app.register_blueprint(voice_narrator_bp)
+except Exception as _narrator_err:
+    print(f"[VOICE NARRATOR] Failed to register routes: {_narrator_err}")
+
 # Projects (transport owned by api.project_routes; logic in managers.project_manager)
 try:
     from api.project_routes import projects_bp, projects_pages_bp
