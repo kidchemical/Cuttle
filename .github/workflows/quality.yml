@@ -39,6 +39,9 @@ jobs:
       # directory inside the repo as part of it. pytest creates --basetemp but
       # not its parents; runner.temp always exists.
       - name: Unit and ownership suites (Node available)
+        # On PRs the composition-root growth guard compares against the target branch.
+        env:
+          CUTTLE_GROWTH_BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || '' }}
         run: ${{ matrix.python }} -m pytest src/tests/ --basetemp="${{ runner.temp }}/pytest"
   browser:
     runs-on: ubuntu-latest
