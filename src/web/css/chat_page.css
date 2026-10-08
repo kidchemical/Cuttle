@@ -540,6 +540,10 @@ body.light-mode .chat-session-title-text {
     position: relative;
     top: auto;
     right: auto;
+    /* Inline-level inside a block box: without this the line-box strut
+       drops the hamburger a few px below the directly-fixed corner
+       buttons (voice back-to-chat, new-chat, history). */
+    vertical-align: top;
 }
 
 .chat-chrome-hamburger {
