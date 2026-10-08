@@ -65,11 +65,23 @@ def test_ack_prompt_names_agent_and_mode(_no_external):
     assert "Cursor's turn that is already running" in prompt
 
 
-def test_progress_skip_and_empty_events_say_nothing(_no_external):
-    assert voice_narrator.progress_line("/cursor x", []) is None
-    assert _no_external.calls == [], "no status lines → no model call"
+def test_ack_promises_to_keep_user_posted(_no_external):
+    voice_narrator.ack_line("/cursor make the mic stay on")
+    assert "keep them posted" in _no_external.calls[-1]["system"]
+
+
+def test_progress_skip_says_nothing(_no_external):
     _no_external.reply = "SKIP"
     assert voice_narrator.progress_line("/cursor x", ["Editing chat_voice.js"]) is None
+
+
+def test_quiet_agent_gets_still_working_heartbeat(_no_external):
+    _no_external.reply = "Still on it."
+    line = voice_narrator.progress_line("/cursor fix the mic", [], ["On it."], elapsed_sec=40)
+    assert line == "Still on it."
+    call = _no_external.calls[-1]
+    assert "still working" in call["system"]
+    assert "about 40 seconds" in call["user"] and "- On it." in call["user"]
 
 
 def test_progress_prompt_carries_events_and_said(_no_external):

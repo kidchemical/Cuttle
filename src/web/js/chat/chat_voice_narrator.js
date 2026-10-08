@@ -7,9 +7,11 @@
     'use strict';
 
     /** Let the acknowledgment breathe before the first progress line. */
-    const FIRST_PROGRESS_MS = 8000;
-    const MIN_GAP_MS = 15000;
-    const MAX_LINES_PER_TURN = 8;
+    const FIRST_PROGRESS_MS = 6000;
+    const MIN_GAP_MS = 10000;
+    /** Quiet this long with no new status → a "still working" line. */
+    const HEARTBEAT_MS = 25000;
+    const MAX_LINES_PER_TURN = 12;
     const MAX_PENDING_EVENTS = 12;
 
     const GENERIC_STATUS = /^(connecting|still connecting|thinking|working|queued|waiting|starting|running)\b[.…\s]*$/i;
@@ -26,7 +28,7 @@
     function createPlan() {
         return {
             turn: 0, open: false, message: '', events: [], lastEvent: '',
-            said: [], lastAt: 0, inflight: false, speaking: false,
+            said: [], lastAt: 0, startedAt: 0, inflight: false, speaking: false,
         };
     }
 
@@ -38,6 +40,7 @@
         plan.events = [];
         plan.lastEvent = '';
         plan.said = [];
+        plan.startedAt = now;
         plan.lastAt = now - MIN_GAP_MS + FIRST_PROGRESS_MS;
         plan.inflight = false;
         plan.speaking = false;
@@ -66,11 +69,15 @@
         return true;
     }
 
-    /** ms until a progress line may be requested; null when nothing is pending. */
+    /**
+     * ms until the next line may be requested: a progress line once new status
+     * is pending, otherwise a heartbeat after a quiet stretch. null = not now.
+     */
     function dueIn(plan, now) {
-        if (!plan.open || !plan.events.length || plan.inflight || plan.speaking) return null;
+        if (!plan.open || plan.inflight || plan.speaking) return null;
         if (plan.said.length >= MAX_LINES_PER_TURN) return null;
-        return Math.max(0, plan.lastAt + MIN_GAP_MS - now);
+        const gap = plan.events.length ? MIN_GAP_MS : HEARTBEAT_MS;
+        return Math.max(0, plan.lastAt + gap - now);
     }
 
     /** Claim the pending events as one progress request (or null if not due). */
@@ -81,6 +88,7 @@
             message: plan.message,
             events: plan.events.slice(),
             said: plan.said.slice(),
+            elapsed_sec: Math.round((now - plan.startedAt) / 1000),
         };
         plan.events = [];
         plan.inflight = true;
@@ -132,6 +140,7 @@
     const api = {
         FIRST_PROGRESS_MS: FIRST_PROGRESS_MS,
         MIN_GAP_MS: MIN_GAP_MS,
+        HEARTBEAT_MS: HEARTBEAT_MS,
         MAX_LINES_PER_TURN: MAX_LINES_PER_TURN,
         isMeaningfulStatus: isMeaningfulStatus,
         createPlan: createPlan,

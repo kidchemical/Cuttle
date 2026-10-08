@@ -485,6 +485,7 @@ const strip = {
     hidden: true,
     innerHTML: '',
     __cuttleWidgetsBound: false,
+    querySelectorAll() { return []; },
     addEventListener() {},
 };
 const root = {
@@ -571,6 +572,7 @@ const strip = {
     hidden: true,
     innerHTML: '',
     __cuttleWidgetsBound: false,
+    querySelectorAll() { return []; },
     addEventListener() {},
 };
 const root = {
@@ -866,6 +868,7 @@ const strip = {
     hidden: true,
     innerHTML: '',
     __cuttleWidgetsBound: false,
+    querySelectorAll() { return []; },
     addEventListener() {},
 };
 const root = {

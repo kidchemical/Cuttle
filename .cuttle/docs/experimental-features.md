@@ -134,8 +134,10 @@ Turning the flag off hides every gizmo and closes pop-outs; rows are kept.
 ## Voice narrator
 
 Flag `voice_narrator`. Enhances voice mode in place (no App or settings tab).
-After a voice send, Cuttle speaks a one-line acknowledgment, then at most one
-short progress line every 15 s (8 per turn) paraphrasing the live status lines.
+After a voice send, Cuttle speaks a one-line acknowledgment that the agent is on
+it, then progress lines paraphrasing the live status lines: the first after
+about 6 s, then at most one every 10 s, with a "still working" heartbeat every
+25 s while the agent is quiet (12 lines per turn).
 The sticky agent or Cuttle Router still runs the turn; the narrator never answers
 or decides anything. A reply, a mic tap, or leaving voice mode before a turn
 starts silences it. Lines come from `api.llm_complete` (gpt-4o-mini by default)
@@ -145,6 +147,20 @@ client `src/web/js/chat/chat_voice_narrator.js`; tests
 `src/tests/chat/test_voice_narrator.py`, `test_chat_voice_overlay.py`.
 Teardown: drop the flag row, the package, its blueprint registration, the
 narrator script and the `narrate*` calls in `chat_voice.js`.
+
+## Voice server transcription
+
+Flag `voice_server_stt`. Voice mode records with the microphone instead of the
+browser speech recognizer, so Android stops chiming at every pause. A local
+energy detector cuts a phrase at each pause (about 0.9 s) and uploads it to
+`POST /api/voice-stt/transcribe` (OpenAI `gpt-4o-mini-transcribe`, falling back
+to `whisper-1`; needs `OPENAI_API_KEY`). Each phrase becomes its own removable
+bubble, in spoken order. Silence is never uploaded. The route answers
+`{disabled: true}` while the flag is off. Owner `src/api/voice_stt/`, client
+`src/web/js/chat/chat_voice_recorder.js`; tests `src/tests/chat/test_voice_stt.py`,
+`test_chat_voice_overlay.py`. Teardown: drop the flag row, the package, its
+blueprint registration, the recorder script and the `engine === 'server'`
+branches in `chat_voice.js`.
 
 ## Adding an achievement
 

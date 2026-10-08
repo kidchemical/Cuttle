@@ -69,6 +69,12 @@ register_flag(FlagSpec(
 ))
 
 register_flag(FlagSpec(
+    id="voice_server_stt", label="Voice: server transcription",
+    description="Voice mode records continuously and transcribes each phrase on the server (OpenAI) instead of the browser speech recognizer. Removes the Android chime between pauses and works in browsers without Web Speech; phrases appear about a second after you stop talking.",
+    default=False, category="chat", risk="low", since="0.0.0", needs_restart=False,
+))
+
+register_flag(FlagSpec(
     id="gizmos", label="Gizmos",
     description="Live UI objects outside chat bubbles: pin usage meters (Codex, Claude, Cursor) to the title bar or blade bar, float them over every Space, or pop them out as always-on-top desktop windows. Manage them in Apps → Gizmos.",
     default=False, category="ui", risk="low", since="0.0.0", needs_restart=False,

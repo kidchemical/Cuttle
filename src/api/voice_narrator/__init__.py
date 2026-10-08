@@ -38,25 +38,35 @@ _AGENT_NAMES = {
 
 _ACK_SYSTEM = (
     "You are the voice of Cuttle, a hands-free assistant that hands the user's "
-    "request to a coding agent. Reply with ONE short, natural spoken "
-    "acknowledgment (at most 15 words) showing you understood what they asked. "
+    "request to a coding agent. Reply with ONE or two short, natural spoken "
+    "sentences (at most 25 words) that show you understood what they asked, "
+    "say the agent is working on it, and that you'll keep them posted as it goes. "
     "Never answer the request, never claim results, never promise specifics. "
     "Plain speech only: no markdown, code, URLs or file paths."
 )
 
 _ACK_MODE_HINT = {
-    "new": "{agent} is starting on it now.",
+    "new": "{agent} is starting on it now and will take a little while.",
     "steer": "Their words were passed into {agent}'s turn that is already running.",
     "queue": "It will run after {agent} finishes the current task.",
 }
+
+_HEARTBEAT_SYSTEM = (
+    "You are the voice of Cuttle, narrating while a coding agent works for the "
+    "user. There is no new status to report. Say ONE brief, natural line (at "
+    "most 12 words) that it is still working on their request. Vary the wording "
+    "from earlier lines; never invent progress or results. Plain speech only."
+)
 
 _PROGRESS_SYSTEM = (
     "You narrate, out loud, what a coding agent is doing for the user. Given the "
     "user's request, the agent's newest status lines and what you already said, "
     "reply with ONE short spoken sentence (at most 18 words) about the newest "
-    "progress. Only describe what the status lines show; never invent results "
-    "or guess outcomes. Do not repeat earlier lines. Say file names, not paths; "
-    "no code or markdown. If nothing new is worth saying, reply exactly SKIP."
+    "progress. Status lines look like 'tool 3: Read chat_page.js' (an action), "
+    "'thinking: …' (its reasoning) or 'writing: …' (it is composing the answer). "
+    "Only describe what the status lines show; never invent results or guess "
+    "outcomes. Do not repeat earlier lines. Say file names, not paths; no code "
+    "or markdown. If nothing new is worth saying, reply exactly SKIP."
 )
 
 
@@ -116,11 +126,29 @@ def ack_line(message: str, *, mode: str = "new") -> Optional[str]:
     return _finish(_complete(user, _ACK_SYSTEM))
 
 
-def progress_line(message: str, events: Iterable[str], said: Iterable[str] = ()) -> Optional[str]:
-    """One spoken progress update from live status lines, or None (nothing new)."""
+def heartbeat_line(message: str, said: Iterable[str] = (), elapsed_sec: Any = None) -> Optional[str]:
+    """One "still working" line when the agent has been quiet for a while."""
+    earlier = _clean_list(list(said), MAX_SAID, MAX_LINE_CHARS)
+    try:
+        elapsed = max(0, int(elapsed_sec))
+    except (TypeError, ValueError):
+        elapsed = 0
+    user = "\n".join([
+        f"User asked: {_clip(strip_slash(message), MAX_UTTERANCE_CHARS)}",
+        f"Agent: {agent_label(message)}",
+        f"Working for about {elapsed} seconds." if elapsed else "Still working.",
+        *(["Already said:"] + [f"- {s}" for s in earlier] if earlier else []),
+    ])
+    return _finish(_complete(user, _HEARTBEAT_SYSTEM))
+
+
+def progress_line(
+    message: str, events: Iterable[str], said: Iterable[str] = (), elapsed_sec: Any = None
+) -> Optional[str]:
+    """One spoken progress update from live status lines; a heartbeat when there are none."""
     status = _clean_list(list(events), MAX_EVENTS, MAX_EVENT_CHARS)
     if not status:
-        return None
+        return heartbeat_line(message, said, elapsed_sec)
     earlier = _clean_list(list(said), MAX_SAID, MAX_LINE_CHARS)
     user = "\n".join([
         f"User asked: {_clip(strip_slash(message), MAX_UTTERANCE_CHARS)}",
@@ -151,7 +179,12 @@ def narrate(payload: Dict[str, Any]) -> Dict[str, Any]:
             raise ValueError(f"mode must be one of {', '.join(ACK_MODES)}")
         text = ack_line(message, mode=mode)
     else:
-        text = progress_line(message, payload.get("events") or [], payload.get("said") or [])
+        text = progress_line(
+            message,
+            payload.get("events") or [],
+            payload.get("said") or [],
+            payload.get("elapsed_sec"),
+        )
     if not text:
         return {"text": None, "audio": None}
 

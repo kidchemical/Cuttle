@@ -55,25 +55,85 @@ def test_live_status_refreshes_existing_card_without_duplicate_bubble(browser, s
     world._append('assistant', 'Review in progress.')
     world.history[-1]['metadata'] = {'subagents': [
         _card(1, 'running', 'Reading files', live_status_at='2026-10-05 03:00:00')]}
+    fleet_row = world.history[-1]
+    for i in range(6):
+        world._append('assistant', f'Later reply {i}.\n\n' + 'More transcript text.\n\n' * 8)
     page, frame, errors = _open_card_chat(browser, static_server, world)
     try:
+        page.set_viewport_size({'width': 1024, 'height': 768})
         card = frame.locator('.subagent-fleet-card').last
         card.get_by_text('Reading files', exact=True).wait_for()
         card.focus()
+        card.evaluate('''el => {
+            window.originalFleetCard = el;
+            window.fleetFocusCalls = 0;
+            const focus = HTMLElement.prototype.focus;
+            HTMLElement.prototype.focus = function (...args) {
+                if (this.matches('.subagent-fleet-card')) window.fleetFocusCalls++;
+                return focus.apply(this, args);
+            };
+        }''')
+        scroll_top = frame.locator('#chatMessages').evaluate('''el => {
+            el.scrollTop = el.scrollHeight - el.clientHeight - 200;
+            return el.scrollTop;
+        }''')
+        assert scroll_top > 500
         assert 'Updated:' in card.get_attribute('data-tooltip')
-        world.history[-1]['metadata'] = {'subagents': [
+        fleet_row['metadata'] = {'subagents': [
             _card(1, 'running', 'Running tests <script>alert(1)</script>',
                   live_status_at='2026-10-05 03:00:01')]}
         frame.locator('html').evaluate("() => window.dispatchEvent(new Event('focus'))")
         card.get_by_text('Running tests <script>alert(1)</script>', exact=True).wait_for(timeout=20000)
         assert card.evaluate('(el) => document.activeElement === el')
+        assert card.evaluate('(el) => el === window.originalFleetCard')
+        assert frame.locator('html').evaluate('() => window.fleetFocusCalls') == 0
+        assert abs(frame.locator('#chatMessages').evaluate('(el) => el.scrollTop') - scroll_top) <= 1
         assert frame.locator('.subagent-fleet-card').count() == 1
         assert frame.locator('.subagent-fleet-card script').count() == 0
-        world.history[-1]['metadata'] = {'subagents': [_card(1, 'done', 'Tests passed')]}
+        fleet_row['metadata'] = {'subagents': [_card(1, 'done', 'Tests passed')]}
         frame.locator('html').evaluate("() => window.dispatchEvent(new Event('focus'))")
         frame.locator('.subagent-fleet-card.is-done').get_by_text('Tests passed', exact=True).wait_for(timeout=20000)
         assert frame.locator('.subagent-fleet-card').count() == 1
         assert 'Updated:' not in card.get_attribute('data-tooltip')
+        assert card.evaluate('(el) => el === window.originalFleetCard')
+        assert frame.locator('html').evaluate('() => window.fleetFocusCalls') == 0
+        assert abs(frame.locator('#chatMessages').evaluate('(el) => el.scrollTop') - scroll_top) <= 1
+        assert not errors
+    finally:
+        page.close()
+
+
+def test_unchanged_fleet_poll_keeps_cards_after_tooltip_enhancement(browser, static_server):
+    world = CardWorld([])
+    world._append('assistant', 'Finished review.')
+    world.history[-1]['metadata'] = {'subagents': [_card(1, 'done', 'Tests passed')]}
+    page, frame, errors = _open_card_chat(browser, static_server, world)
+    try:
+        page.set_viewport_size({'width': 1024, 'height': 768})
+        card = frame.locator('.subagent-fleet-card')
+        card.wait_for()
+        card.evaluate('''el => {
+            window.originalFleetCard = el;
+            // ui_boot promotes native titles to custom tooltips on interaction.
+            const icon = el.querySelector('.subagent-fleet-outcome');
+            icon.setAttribute('data-tooltip', 'Done');
+            icon.removeAttribute('title');
+            window.messagesFetched = 0;
+            const fetch = window.fetch;
+            window.fetch = function (url, ...args) {
+                return fetch.call(this, url, ...args).then(response => {
+                    if (String(url).includes('/messages')) window.messagesFetched++;
+                    return response;
+                });
+            };
+        }''')
+        frame.locator('html').evaluate("() => window.dispatchEvent(new Event('focus'))")
+        frame.locator('html').evaluate('''() => new Promise(resolve => {
+            const timer = setInterval(() => {
+                if (window.messagesFetched) { clearInterval(timer); resolve(); }
+            }, 20);
+        })''')
+        assert card.evaluate('(el) => el === window.originalFleetCard')
         assert not errors
     finally:
         page.close()

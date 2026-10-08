@@ -3960,20 +3960,54 @@
             if (existing) existing.remove();
             return;
         }
+        // Tooltips promote title attributes after mounting. Comparing outerHTML
+        // to our source then replaces unchanged cards on every history poll.
+        if (existing && existing.__cuttleLaunchersHtml === html) return;
+        const template = document.createElement('template');
+        template.innerHTML = html;
+        const next = template.content.firstElementChild;
         if (existing) {
-            if (existing.outerHTML === html) return;
-            const focused = document.activeElement && existing.contains(document.activeElement)
-                ? document.activeElement.getAttribute('data-chat-handle') : '';
-            existing.outerHTML = html;
-            if (focused) {
-                const replacement = wrap.querySelector('.subagent-launchers [data-chat-handle="' + CSS.escape(focused) + '"]');
-                if (replacement) replacement.focus({ preventScroll: true });
-            }
+            // Keep the group and its buttons mounted. Re-focusing replacement
+            // buttons can scroll an iPad iframe back to a fleet above the reader.
+            existing.className = next.className;
+            existing.setAttribute('aria-label', next.getAttribute('aria-label'));
+            const cards = new Map(Array.from(existing.children).map((el) => [el.getAttribute('data-chat-handle'), el]));
+            const kept = new Set();
+            let cursor = existing.firstElementChild;
+            Array.from(next.children).forEach((wanted) => {
+                const handle = wanted.getAttribute('data-chat-handle');
+                const card = handle && cards.get(handle);
+                const node = card || wanted;
+                const source = wanted.outerHTML;
+                if (card && card.__cuttleLauncherHtml !== source) {
+                    Array.from(card.attributes).forEach((attr) => {
+                        if (!wanted.hasAttribute(attr.name)) card.removeAttribute(attr.name);
+                    });
+                    Array.from(wanted.attributes).forEach((attr) => {
+                        if (card.getAttribute(attr.name) !== attr.value) card.setAttribute(attr.name, attr.value);
+                    });
+                    if (card.__cuttleLauncherBodyHtml !== wanted.innerHTML) card.innerHTML = wanted.innerHTML;
+                }
+                node.__cuttleLauncherHtml = source;
+                node.__cuttleLauncherBodyHtml = wanted.innerHTML;
+                kept.add(node);
+                if (node !== cursor) existing.insertBefore(node, cursor);
+                cursor = node.nextElementSibling;
+            });
+            Array.from(existing.children).forEach((el) => {
+                if (!kept.has(el)) el.remove();
+            });
+            existing.__cuttleLaunchersHtml = html;
             return;
         }
+        next.__cuttleLaunchersHtml = html;
+        Array.from(next.children).forEach((el) => {
+            el.__cuttleLauncherHtml = el.outerHTML;
+            el.__cuttleLauncherBodyHtml = el.innerHTML;
+        });
         const footer = wrap.querySelector('.message-footer');
-        if (footer) footer.insertAdjacentHTML('beforebegin', html);
-        else wrap.insertAdjacentHTML('beforeend', html);
+        if (footer) wrap.insertBefore(next, footer);
+        else wrap.appendChild(next);
     }
 
     function mountMessageLaunchers(messageEl, role, opts) {
@@ -19679,7 +19713,7 @@
         play: playVoiceSpeech,
         stopSpeech: () => stopChatTtsPlayback(),
         playClip: (url) => playVoiceAudio(url, null, false),
-        narratorEnabled: () => fetchEnabledExperimentalFlags().then((on) => on.has('voice_narrator')),
+        experimentalFlags: fetchEnabledExperimentalFlags,
         fetch: (url, opts) => fetch(url, opts),
         toast: (message, variant, opts) => (window.showToast || function () {})(message, variant, opts),
         logError: LOG_ERR,

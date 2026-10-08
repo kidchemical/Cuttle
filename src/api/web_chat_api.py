@@ -313,6 +313,12 @@ try:
 except Exception as _narrator_err:
     print(f"[VOICE NARRATOR] Failed to register routes: {_narrator_err}")
 
+try:
+    from api.voice_stt.routes import voice_stt_bp
+    app.register_blueprint(voice_stt_bp)
+except Exception as _voice_stt_err:
+    print(f"[VOICE STT] Failed to register routes: {_voice_stt_err}")
+
 # Projects (transport owned by api.project_routes; logic in managers.project_manager)
 try:
     from api.project_routes import projects_bp, projects_pages_bp

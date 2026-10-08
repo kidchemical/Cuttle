@@ -45,6 +45,7 @@
         /** Bumps on every refresh start so stale in-flight responses are ignored. */
         var fetchGen = 0;
         var lastFetchedKey = '';
+        var lastRenderedHtml = '';
 
         function ensureStrip() {
             if (!strip) strip = $('chatWidgetsStrip');
@@ -102,11 +103,12 @@
             });
             if (!tasks.length) {
                 el.hidden = true;
-                el.innerHTML = '';
+                if (lastRenderedHtml) el.innerHTML = '';
+                lastRenderedHtml = '';
                 return;
             }
             el.hidden = false;
-            el.innerHTML = tasks.map(function (w) {
+            var html = tasks.map(function (w) {
                 var payload = w.payload || {};
                 var items = payload.items || [];
                 var counts = countTasks(items);
@@ -153,6 +155,30 @@
                     '</div></div>'
                 );
             }).join('');
+            // A status poll may fetch the same lists again. Leave their DOM
+            // alone so scrolling (including touch momentum) is undisturbed.
+            if (html === lastRenderedHtml) return;
+            var positions = new Map();
+            el.querySelectorAll('[data-widget-id]').forEach(function (card) {
+                var body = card.querySelector('.chat-widget-body');
+                if (body) positions.set(card.getAttribute('data-widget-id'), {
+                    top: body.scrollTop, left: body.scrollLeft,
+                });
+            });
+            var top = el.scrollTop;
+            var left = el.scrollLeft;
+            el.innerHTML = html;
+            lastRenderedHtml = html;
+            el.querySelectorAll('[data-widget-id]').forEach(function (card) {
+                var position = positions.get(card.getAttribute('data-widget-id'));
+                var body = card.querySelector('.chat-widget-body');
+                if (position && body) {
+                    body.scrollTop = position.top;
+                    body.scrollLeft = position.left;
+                }
+            });
+            el.scrollTop = top;
+            el.scrollLeft = left;
         }
 
         function renderHistory(events) {

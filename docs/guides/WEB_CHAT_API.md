@@ -71,6 +71,7 @@ is a logged, nonfatal `try/except`:
 | Chat widgets | `api.chat_widgets.register_chat_widget_routes` | `register_*(app)` |
 | Chat TTS | `api.chat_tts` | `register_*(app)` |
 | Voice narrator (experimental `voice_narrator`) | `api.voice_narrator.routes` (`voice_narrator_bp`) | blueprint `/api/voice-narrator` — line writing + voicing owned by `api.voice_narrator` |
+| Voice transcription (experimental `voice_server_stt`) | `api.voice_stt.routes` (`voice_stt_bp`) | blueprint `/api/voice-stt` — per-phrase OpenAI transcription owned by `api.voice_stt` |
 | Web terminal | `api.web_terminal` | `register_*(app)` |
 | Electron desktop | `api.desktop_electron` | `register_*(app)` |
 | Android APK updates | `api.mobile_android_update` | `register_*(app)` |

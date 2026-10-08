@@ -22,6 +22,7 @@ CHAT_JS = WEB / "js" / "chat"
 SEGMENTS_JS = CHAT_JS / "chat_voice_segments.js"
 STARS_JS = CHAT_JS / "chat_voice_stars.js"
 NARRATOR_JS = CHAT_JS / "chat_voice_narrator.js"
+RECORDER_JS = CHAT_JS / "chat_voice_recorder.js"
 VOICE_JS = CHAT_JS / "chat_voice.js"
 PAGE_JS = CHAT_JS / "chat_page.js"
 CHAT_HTML = WEB / "chat_page.html"
@@ -32,7 +33,7 @@ node_only = pytest.mark.skipif(shutil.which("node") is None, reason="node not av
 
 def _node(script: str) -> None:
     proc = subprocess.run(
-        ["node", "-e", script, str(SEGMENTS_JS), str(STARS_JS), str(NARRATOR_JS), str(VOICE_JS)],
+        ["node", "-e", script, str(SEGMENTS_JS), str(STARS_JS), str(NARRATOR_JS), str(VOICE_JS), str(RECORDER_JS)],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -112,7 +113,11 @@ globalThis.document = {
   getElementById: (id) => (id === 'voiceModeStars' ? null : (els[id] = els[id] || new El(id))),
   createElement: () => new El(),
   body: new El('body'),
-  addEventListener() {}, removeEventListener() {},
+  hidden: false,
+  listeners: {},
+  addEventListener(t, f) { (this.listeners[t] = this.listeners[t] || []).push(f); },
+  removeEventListener() {},
+  dispatch(t) { (this.listeners[t] || []).forEach((f) => f({})); },
 };
 globalThis.addEventListener = () => {};
 const recs = [];
@@ -120,6 +125,7 @@ globalThis.SpeechRecognition = class { constructor() { recs.push(this); } start(
 require(process.argv[1]);
 require(process.argv[2]);
 const N = require(process.argv[3]);
+const R = require(process.argv[5]);
 const V = require(process.argv[4]);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const res = (t, f) => ({ isFinal: f, 0: { transcript: t } });
@@ -127,7 +133,7 @@ const ev = (target) => ({ target, preventDefault() {}, stopPropagation() {} });
 const submitted = [];
 let played = 0;
 let stops = 0;
-let narratorOn = false;
+let flagsOn = [];
 const clips = [];
 const narrateCalls = [];
 let narrateReply = () => ({ success: true, text: null });
@@ -142,7 +148,7 @@ const host = {
   play: async () => { played += 1; return 'ended'; },
   stopSpeech() { stops += 1; }, toast() {}, logError() {},
   playClip: async (url) => { clips.push(url); return 'ended'; },
-  narratorEnabled: async () => narratorOn,
+  experimentalFlags: async () => new Set(flagsOn),
   fetch: async (url, opts) => { const body = JSON.parse(opts.body); narrateCalls.push(body);
     return { ok: true, json: async () => (narrateReply(body)) }; },
 };
@@ -158,7 +164,7 @@ def test_tap_listens_through_pauses_and_sends_only_on_second_tap():
 (async () => {
   voice.enter();
   mic.dispatch('click', ev(mic));
-  await sleep(0);
+  await sleep(5);
   assert.strictEqual(recs.length, 1);
   assert.ok(recs[0].started);
   recs[0].onresult({ results: [res('hello there', true)] });
@@ -178,7 +184,7 @@ def test_tap_listens_through_pauses_and_sends_only_on_second_tap():
   box.dispatch('click', ev(removeBtn));
   assert.strictEqual(box.children.length, 2);
   mic.dispatch('click', ev(mic));
-  await sleep(0);
+  await sleep(5);
   assert.deepStrictEqual(submitted, ['hello there send this']);
   assert.ok(recs[1].stopped);
   assert.strictEqual(box.hidden, true);
@@ -193,10 +199,10 @@ def test_pending_reply_still_speaks_after_leaving_overlay_mid_run():
 (async () => {
   voice.enter();
   mic.dispatch('click', ev(mic));
-  await sleep(0);
+  await sleep(5);
   recs[0].onresult({ results: [res('do the thing', true)] });
   mic.dispatch('click', ev(mic));
-  await sleep(0);
+  await sleep(5);
   assert.deepStrictEqual(submitted, ['do the thing']);
   voice.exit();
   assert.strictEqual(voice.isActive(), false);
@@ -218,6 +224,8 @@ const N = require(process.argv[3]);
 const p = N.createPlan();
 assert.strictEqual(N.noteStatus(p, 'Editing a.py'), false, 'no open turn');
 const t = N.beginTurn(p, '/cursor x', 0);
+assert.strictEqual(N.dueIn(p, 0), N.FIRST_PROGRESS_MS - N.MIN_GAP_MS + N.HEARTBEAT_MS,
+  'quiet turn still gets a heartbeat');
 assert.ok(!N.noteStatus(p, 'Connecting...'));
 assert.ok(!N.noteStatus(p, 'Thinking…'));
 assert.ok(N.noteStatus(p, 'Editing a.py'));
@@ -242,6 +250,86 @@ assert.strictEqual(N.dueIn(p, 1e9), null);
 
 
 @node_only
+def test_vad_cuts_phrases_at_pauses_and_ignores_blips():
+    _node(r"""
+const assert = require('assert');
+const R = require(process.argv[5]);
+const v = R.createVad();
+const f = R.VAD_DEFAULTS.frameMs;
+const run = (rms, ms) => { const out = []; for (let t = 0; t < ms; t += f) { const e = R.vadStep(v, rms); if (e) out.push(e); } return out; };
+assert.deepStrictEqual(run(0.001, 500), []);
+assert.deepStrictEqual(run(0.2, 100), [], 'a 100 ms click is not speech');
+assert.deepStrictEqual(run(0.001, 300), []);
+assert.deepStrictEqual(run(0.2, 600), ['speech_start']);
+assert.deepStrictEqual(run(0.001, 500), [], 'short pause keeps the phrase open');
+assert.deepStrictEqual(run(0.2, 300), []);
+assert.deepStrictEqual(run(0.001, R.VAD_DEFAULTS.endSilenceMs), ['phrase_end']);
+assert.deepStrictEqual(run(0.001, R.VAD_DEFAULTS.maxIdleMs), ['idle_rotate']);
+assert.ok(Math.abs(R.rmsOf(new Float32Array([0.5, -0.5])) - 0.5) < 1e-9);
+""")
+
+
+@node_only
+def test_screen_lock_keeps_phrases_and_retap_appends():
+    _node(CONTROLLER_HARNESS + r"""
+(async () => {
+  voice.enter();
+  mic.dispatch('click', ev(mic));
+  await sleep(5);
+  recs[0].onresult({ results: [res('keep me', true), res('and th', false)] });
+  document.hidden = true;
+  document.dispatch('visibilitychange');
+  await sleep(5);
+  assert.ok(recs[0].stopped, 'mic stops when the screen locks');
+  assert.strictEqual(box.children.length, 2, 'phrases kept, interim committed');
+  assert.match(document.getElementById('voiceModeStatus').textContent, /phrases are kept/);
+  document.hidden = false;
+  mic.dispatch('click', ev(mic));
+  await sleep(5);
+  assert.strictEqual(recs.length, 2);
+  assert.strictEqual(box.children.length, 2, 're-tapping the mic does not wipe phrases');
+  recs[1].onresult({ results: [res('and more', true)] });
+  mic.dispatch('click', ev(mic));
+  await sleep(5);
+  assert.deepStrictEqual(submitted, ['keep me and th and more']);
+})().catch((e) => { console.error(e); process.exit(1); });
+""")
+
+
+@node_only
+def test_server_engine_records_without_speech_recognizer():
+    _node(CONTROLLER_HARNESS + r"""
+(async () => {
+  let h = null, starts = 0, flushes = 0, tail = '';
+  R.isSupported = () => true;
+  R.create = (hostArg) => { h = hostArg; return {
+    start: async () => { starts += 1; },
+    stop: async (o) => { if (o && o.flush) { flushes += 1; if (tail) h.onPhraseText(tail); } },
+    resetContext() {}, isRunning: () => false, pending: () => 0,
+  }; };
+  flagsOn = ['voice_server_stt'];
+  voice.enter();
+  mic.dispatch('click', ev(mic));
+  await sleep(5);
+  assert.strictEqual(starts, 1);
+  assert.strictEqual(recs.length, 0, 'no browser speech recognizer → no Android chime');
+  h.onSpeech(true);
+  assert.strictEqual(box.children[box.children.length - 1].textContent, 'Listening…');
+  h.onPhraseText('first part');
+  h.onSpeech(false);
+  h.onPending(1);
+  assert.strictEqual(box.children[box.children.length - 1].textContent, 'Transcribing…');
+  h.onPending(0);
+  tail = 'second part';
+  mic.dispatch('click', ev(mic));
+  await sleep(5);
+  assert.strictEqual(flushes, 1, 'send flushes the phrase in progress');
+  assert.deepStrictEqual(submitted, ['first part second part']);
+})().catch((e) => { console.error(e); process.exit(1); });
+""")
+
+
+@node_only
 def test_narrator_acks_then_narrates_and_stops_at_reply():
     _node(CONTROLLER_HARNESS + r"""
 (async () => {
@@ -249,14 +337,14 @@ def test_narrator_acks_then_narrates_and_stops_at_reply():
   globalThis.setTimeout = (f, ms) => realSetTimeout(f, Math.min(ms || 0, 5));
   let clock = 1000000;
   Date.now = () => clock;
-  narratorOn = true;
+  flagsOn = ['voice_narrator'];
   const audio = Buffer.from('mp3').toString('base64');
   narrateReply = (b) => ({ success: true, audio_base64: audio,
     text: b.kind === 'ack' ? 'On it.' : 'Editing the voice file.' });
   voice.enter();
   await sleep(0);
   mic.dispatch('click', ev(mic));
-  await sleep(0);
+  await sleep(5);
   recs[0].onresult({ results: [res('fix the mic', true)] });
   mic.dispatch('click', ev(mic));
   await sleep(30);
@@ -274,11 +362,17 @@ def test_narrator_acks_then_narrates_and_stops_at_reply():
   assert.deepStrictEqual(narrateCalls[1].events, ['Editing chat_voice.js']);
   assert.deepStrictEqual(narrateCalls[1].said, ['On it.']);
   assert.strictEqual(clips.length, 2);
+  // Agent goes quiet: a "still working" heartbeat, not silence.
+  clock += N.HEARTBEAT_MS;
+  await sleep(30);
+  assert.strictEqual(narrateCalls[2].kind, 'progress');
+  assert.deepStrictEqual(narrateCalls[2].events, []);
+  assert.ok(narrateCalls[2].elapsed_sec >= 35);
   voice.onAgentStatus('Running tests');
   clock += N.MIN_GAP_MS;
   voice.onGenerationEnded({ isError: false });
   await sleep(60);
-  assert.strictEqual(narrateCalls.length, 2, 'reply ended the turn: no late narration');
+  assert.strictEqual(narrateCalls.length, 3, 'reply ended the turn: no late narration');
   assert.strictEqual(played, 1, 'final reply still spoken');
 })().catch((e) => { console.error(e); process.exit(1); });
 """)
@@ -297,6 +391,7 @@ def test_voice_modules_load_before_page():
         html.find('src="/js/chat/chat_voice_segments.js'),
         html.find('src="/js/chat/chat_voice_stars.js'),
         html.find('src="/js/chat/chat_voice_narrator.js'),
+        html.find('src="/js/chat/chat_voice_recorder.js'),
         html.find('src="/js/chat/chat_voice.js'),
         html.find('src="/js/chat/chat_page.js'),
     ]

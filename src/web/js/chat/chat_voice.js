@@ -9,6 +9,10 @@
     const Segments = root.CuttleChatVoiceSegments;
     const Stars = root.CuttleChatVoiceStars;
     const Narrator = root.CuttleChatVoiceNarrator;
+    const Recorder = root.CuttleChatVoiceRecorder;
+
+    /** Give up waiting for in-flight phrase transcriptions after this long. */
+    const TRANSCRIBE_WAIT_MS = 15000;
 
     /** Hold this long before a press becomes hold-to-talk (shorter presses stay taps). */
     const HOLD_MS = 280;
@@ -49,7 +53,7 @@
      * @param {(el: HTMLElement, speech: object) => Promise<'ended'|'stopped'|'blocked'|'error'>} host.play
      * @param {() => void} host.stopSpeech
      * @param {(url: string) => Promise<'ended'|'stopped'|'blocked'|'error'>} host.playClip  narration audio, same channel as replies
-     * @param {() => Promise<boolean>} host.narratorEnabled  experimental `voice_narrator`
+     * @param {() => Promise<Set<string>>} host.experimentalFlags  enabled flag ids (`voice_narrator`, `voice_server_stt`)
      * @param {typeof fetch} host.fetch
      * @param {(message: string, variant?: string, opts?: object) => void} host.toast
      * @param {(...args: any[]) => void} host.logError
@@ -71,6 +75,13 @@
         let narratorOn = false;
         let narrateTimer = 0;
         const narration = Narrator.createPlan();
+        /** 'webspeech' (browser recognizer) or 'server' (record + /api/voice-stt). */
+        let engine = 'webspeech';
+        let recorder = null;
+        let speaking = false;
+        let transcribing = 0;
+        /** Engine + narrator flags resolve on enter; listening waits for them. */
+        let flagsReady = Promise.resolve();
 
         let holdTimer = 0;
         let holdDown = false;
@@ -134,13 +145,15 @@
                 row.appendChild(remove);
                 box.appendChild(row);
             });
-            if (phrases.live) {
+            const indicator = phrases.live
+                || (speaking ? 'Listening…' : (transcribing ? 'Transcribing…' : ''));
+            if (indicator) {
                 const live = document.createElement('div');
                 live.className = 'voice-mode-segment is-live';
-                live.textContent = phrases.live;
+                live.textContent = indicator;
                 box.appendChild(live);
             }
-            box.hidden = Segments.isEmpty(phrases);
+            box.hidden = Segments.isEmpty(phrases) && !indicator;
             box.scrollTop = box.scrollHeight;
         }
 
@@ -187,6 +200,49 @@
             } catch (_) {
                 try { rec.abort(); } catch (_2) {}
             }
+        }
+
+        /**
+         * Stop whichever engine is listening. `flush` keeps the words in
+         * progress as a phrase; resolves once their text has landed.
+         */
+        async function stopInput(flush) {
+            if (engine === 'server') {
+                if (!recorder) return;
+                let timeout = 0;
+                await Promise.race([
+                    recorder.stop({ flush: flush }),
+                    new Promise((r) => { timeout = setTimeout(r, TRANSCRIBE_WAIT_MS); }),
+                ]);
+                clearTimeout(timeout);
+                return;
+            }
+            if (flush) Segments.endSession(phrases);
+            stopRecognition();
+        }
+
+        function serverRecorder() {
+            if (recorder) return recorder;
+            recorder = Recorder.create({
+                fetch: host.fetch,
+                onSpeech: (on) => {
+                    speaking = on;
+                    renderPhrases();
+                },
+                onPhraseText: (text) => {
+                    Segments.commit(phrases, text);
+                    renderPhrases();
+                },
+                onPending: (n) => {
+                    transcribing = n;
+                    renderPhrases();
+                },
+                onError: (message) => {
+                    host.logError('Voice transcription failed', message);
+                    if (active && phase === 'listening') setStatus('Could not transcribe that — keep talking or retry');
+                },
+            });
+            return recorder;
         }
 
         // ── Microphone permission ───────────────────────────────────────
@@ -249,9 +305,12 @@
         }
 
         // ── Listening ───────────────────────────────────────────────────
+        /** Unsent phrases survive a pause, a screen lock and a re-tap; only send/exit clears them. */
         async function startListening() {
-            const Ctor = speechRecognitionCtor();
-            if (!Ctor) {
+            await flagsReady;
+            if (!active) return;
+            const Ctor = engine === 'server' ? null : speechRecognitionCtor();
+            if (engine !== 'server' && !Ctor) {
                 host.toast('Voice input needs Chrome or Edge (Web Speech API)', 'error');
                 setStatus('Speech recognition not available in this browser');
                 return;
@@ -263,8 +322,25 @@
             host.stopSpeech();
             wantListening = true;
             closing = false;
-            clearPhrases();
             setPhase('idle', 'Checking microphone…');
+
+            if (engine === 'server') {
+                try {
+                    await serverRecorder().start();
+                } catch (e) {
+                    host.logError('Voice recording failed to start', e);
+                    wantListening = false;
+                    promptMicPermission('Allow microphone access for voice mode');
+                    setPhase('idle');
+                    return;
+                }
+                if (!wantListening || !active) {
+                    recorder.stop({ flush: false });
+                    return;
+                }
+                setPhase('listening');
+                return;
+            }
 
             const mic = await ensureMicAccess();
             if (!mic.ok) {
@@ -328,6 +404,10 @@
                 // The recognizer ends on pauses; keep the phrase and listen again.
                 Segments.endSession(phrases);
                 renderPhrases();
+                if (document.hidden) {
+                    pauseListening();
+                    return;
+                }
                 restartSoon(Ctor, 120);
             };
             try {
@@ -336,29 +416,52 @@
             } catch (e) {
                 host.logError('Voice recognition start failed', e);
                 recognition = null;
-                if (Segments.isEmpty(phrases)) {
+                if (phase !== 'listening') {
                     wantListening = false;
-                    setPhase('idle', 'Could not start microphone');
+                    setPhase('idle', 'Could not start microphone — tap mic to retry');
                     promptMicPermission(String((e && e.message) || e));
+                    return;
+                }
+                if (document.hidden) {
+                    pauseListening();
                     return;
                 }
                 restartSoon(Ctor, 500);
             }
         }
 
-        function finishListeningAndSend() {
+        async function finishListeningAndSend() {
             if (closing) return;
             closing = true;
             wantListening = false;
-            stopRecognition();
+            if (engine === 'server') setPhase('processing', 'Finishing transcription…');
+            await stopInput(true);
             const spoken = Segments.utterance(phrases);
             clearPhrases();
+            if (recorder) recorder.resetContext();
             closing = false;
+            if (!active) return;
             if (!spoken) {
                 setPhase('idle', 'Nothing to send — tap mic to talk');
                 return;
             }
             send(spoken);
+        }
+
+        /** Screen off / app backgrounded: stop the mic but keep every phrase. */
+        async function pauseListening() {
+            if (phase !== 'listening' || closing) return;
+            wantListening = false;
+            await stopInput(true);
+            renderPhrases();
+            if (!active) return;
+            setPhase('idle', Segments.isEmpty(phrases)
+                ? 'Paused — tap mic to talk'
+                : 'Paused — tap mic to keep talking; your phrases are kept');
+        }
+
+        function onVisibilityChange() {
+            if (document.hidden && active && phase === 'listening') pauseListening();
         }
 
         function toggleListening() {
@@ -509,6 +612,7 @@
             const turn = narration.turn;
             const result = await Narrator.request(host.fetch, { kind: 'ack', message: message, mode: mode });
             await playNarration(result, turn);
+            scheduleProgress();
         }
 
         function scheduleProgress() {
@@ -574,7 +678,11 @@
             replyPending = false;
             endNarration();
             narratorOn = false;
-            host.narratorEnabled().then((on) => { narratorOn = !!on && active; }, () => {});
+            flagsReady = host.experimentalFlags().then((on) => {
+                if (!active) return;
+                narratorOn = on.has('voice_narrator');
+                engine = on.has('voice_server_stt') && Recorder.isSupported() ? 'server' : 'webspeech';
+            }, () => {});
             clearPhrases();
             if (host.isGenerating()) setPhase('processing', 'Working…');
             else setPhase('idle');
@@ -598,7 +706,8 @@
             const wasRunning = phase === 'processing';
             active = false;
             wantListening = false;
-            stopRecognition();
+            stopInput(false);
+            speaking = false;
             host.stopSpeech();
             speakToken += 1;
             if (!wasRunning) {
@@ -682,6 +791,7 @@
             }
             const segments = byId('voiceModeSegments');
             if (segments) segments.addEventListener('click', onPhraseClick);
+            document.addEventListener('visibilitychange', onVisibilityChange);
             const exitBtn = byId('voiceModeExitBtn');
             if (exitBtn) exitBtn.addEventListener('click', exit);
             const watchBtn = byId('voiceModeWatchBtn');
