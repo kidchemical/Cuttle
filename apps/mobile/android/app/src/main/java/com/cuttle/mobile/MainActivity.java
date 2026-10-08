@@ -34,6 +34,7 @@ import com.cuttle.mobile.notify.NotifyPrefs;
 import com.cuttle.mobile.notify.CuttleApi;
 import com.cuttle.mobile.notify.NetworkUtil;
 import com.cuttle.mobile.notify.ShellUpdate;
+import com.cuttle.mobile.voice.NativeMic;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.BridgeWebViewClient;
 import org.json.JSONObject;
@@ -62,6 +63,7 @@ public class MainActivity extends BridgeActivity {
     private static final String OFFLINE_URL = "https://localhost/index.html?offline=1";
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final NativeMic nativeMic = new NativeMic();
     private boolean shellReady = false;
     private boolean forceSetupOnce = false;
     private String pendingOpenChat;
@@ -141,6 +143,12 @@ public class MainActivity extends BridgeActivity {
         } catch (Exception ignored) {}
         NotifyController.setAppInForeground(false);
         super.onPause();
+    }
+
+    @Override
+    public void onDestroy() {
+        nativeMic.stop();
+        super.onDestroy();
     }
 
     @Override
@@ -369,6 +377,10 @@ public class MainActivity extends BridgeActivity {
                 + "  setSessionCookie:function(u,t){try{CuttleShellNative.setSessionCookie(u||'',t||'')}catch(e){}},"
                 + "  requestMicrophone:function(){try{CuttleShellNative.requestMicrophone()}catch(e){}},"
                 + "  openAppSettings:function(){try{CuttleShellNative.openAppSettings()}catch(e){}},"
+                + "  micStart:function(){try{return CuttleShellNative.micStart()}catch(e){return 'error:'+e}},"
+                + "  micLevels:function(){try{return CuttleShellNative.micLevels()}catch(e){return ''}},"
+                + "  micCut:function(k){try{return CuttleShellNative.micCut(!!k)}catch(e){return ''}},"
+                + "  micStop:function(){try{CuttleShellNative.micStop()}catch(e){}},"
                 + "  getSafeAreaInsets:function(){try{return JSON.parse(CuttleShellNative.getSafeAreaInsets())}catch(e){return null}}"
                 + "});"
                 + "try{"
@@ -939,6 +951,31 @@ public class MainActivity extends BridgeActivity {
         @JavascriptInterface
         public void requestMicrophone() {
             mainHandler.post(() -> maybeRequestMicrophonePermission(true));
+        }
+
+        /** Voice-mode recording (see NativeMic): "ok", "denied" (prompts) or "error:…". */
+        @JavascriptInterface
+        public String micStart() {
+            String result = nativeMic.start(MainActivity.this);
+            if ("denied".equals(result)) {
+                mainHandler.post(() -> maybeRequestMicrophonePermission(true));
+            }
+            return result;
+        }
+
+        @JavascriptInterface
+        public String micLevels() {
+            return nativeMic.levels();
+        }
+
+        @JavascriptInterface
+        public String micCut(boolean keep) {
+            return nativeMic.cut(keep);
+        }
+
+        @JavascriptInterface
+        public void micStop() {
+            nativeMic.stop();
         }
 
         /** Open app details so the user can enable Microphone after a deny. */

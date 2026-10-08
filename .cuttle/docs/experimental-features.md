@@ -152,16 +152,23 @@ narrator script and the `narrate*` calls in `chat_voice.js`.
 ## Voice server transcription
 
 Flag `voice_server_stt`. Voice mode records with the microphone instead of the
-browser speech recognizer, so Android stops chiming at every pause. A local
+browser speech recognizer, so Android stops chiming at every pause. Browsers
+only allow mic recording on a secure origin, so the audio source is: the Cuttle
+Android app's native recorder (`NativeMic`, works over LAN HTTP, no setup), else
+the browser (HTTPS or localhost only), else the old recognizer — the voice hint
+names which one is live. Rule of thumb: in Cuttle apps voice just works; in a
+plain browser it needs HTTPS. Nobody installs certificates for voice. A local
 energy detector cuts a phrase at each pause (about 0.9 s) and uploads it to
 `POST /api/voice-stt/transcribe` (OpenAI `gpt-4o-mini-transcribe`, falling back
 to `whisper-1`; needs `OPENAI_API_KEY`). Each phrase becomes its own removable
 bubble, in spoken order. Silence is never uploaded. The route answers
 `{disabled: true}` while the flag is off. Owner `src/api/voice_stt/`, client
-`src/web/js/chat/chat_voice_recorder.js`; tests `src/tests/chat/test_voice_stt.py`,
-`test_chat_voice_overlay.py`. Teardown: drop the flag row, the package, its
-blueprint registration, the recorder script and the `engine === 'server'`
-branches in `chat_voice.js`.
+`src/web/js/chat/chat_voice_recorder.js`, Android
+`apps/mobile/.../voice/NativeMic.java` + `PcmClip.java` (bridge `cuttleMobile.mic*`);
+tests `src/tests/chat/test_voice_stt.py`, `test_chat_voice_overlay.py`,
+`PcmClipTest.java`. Teardown: drop the flag row, the package, its blueprint
+registration, the recorder script and the `engine === 'server'` branches in
+`chat_voice.js` (the native bridge is inert without them).
 
 ## Adding an achievement
 

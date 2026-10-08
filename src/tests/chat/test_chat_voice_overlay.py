@@ -270,6 +270,53 @@ assert.ok(Math.abs(R.rmsOf(new Float32Array([0.5, -0.5])) - 0.5) < 1e-9);
 
 
 @node_only
+def test_native_app_mic_records_over_http_without_browser_apis():
+    _node(r"""
+const assert = require('assert');
+globalThis.isSecureContext = false;
+const calls = [];
+let queued = [];
+const wav = Buffer.alloc(44 + 32000);  // 1 s of 16 kHz mono 16-bit
+globalThis.parent = { cuttleMobile: {
+  micStart: () => { calls.push('start'); return 'ok'; },
+  micLevels: () => { const out = queued.join(','); queued = []; return out; },
+  micCut: (keep) => { calls.push('cut:' + keep); return keep ? wav.toString('base64') : ''; },
+  micStop: () => { calls.push('stop'); },
+} };
+const R = require(process.argv[5]);
+assert.deepStrictEqual(R.missingSupport(), [], 'app mic needs no secure page');
+assert.strictEqual(R.sourceKind(), 'native');
+const uploads = [], texts = [], speech = [];
+const rec = R.create({
+  fetch: async (url, opts) => {
+    const audio = opts.body.get('audio');
+    uploads.push({ url, type: audio.type, name: audio.name, size: audio.size, ms: opts.body.get('duration_ms') });
+    return { ok: true, json: async () => ({ success: true, text: 'hello there' }) };
+  },
+  onSpeech: (on) => speech.push(on), onPhraseText: (t) => texts.push(t),
+  onPending() {}, onError: (m) => { throw new Error(m); },
+});
+(async () => {
+  await rec.start();
+  queued = Array(6).fill(0.2).concat(Array(20).fill(0.001));
+  await new Promise((r) => setTimeout(r, 120));
+  await rec.stop({ flush: true });
+  assert.deepStrictEqual(speech.slice(0, 2), [true, false]);
+  assert.deepStrictEqual(texts, ['hello there']);
+  assert.strictEqual(uploads.length, 1, 'silence after the phrase is not uploaded');
+  assert.deepStrictEqual(uploads[0], { url: '/api/voice-stt/transcribe', type: 'audio/wav',
+    name: 'phrase.wav', size: wav.length, ms: '1000' });
+  assert.deepStrictEqual(calls, ['start', 'cut:true', 'cut:false', 'stop']);
+
+  globalThis.parent.cuttleMobile.micStart = () => 'denied';
+  await assert.rejects(rec.start(), (e) => e.name === 'NotAllowedError');
+  globalThis.parent.cuttleMobile.micStart = () => 'error:microphone busy';
+  await assert.rejects(rec.start(), (e) => e.name === 'NativeMicError' && /microphone busy/.test(e.message));
+})().catch((e) => { console.error(e); process.exit(1); });
+""")
+
+
+@node_only
 def test_screen_lock_keeps_phrases_and_retap_appends():
     _node(CONTROLLER_HARNESS + r"""
 (async () => {
@@ -538,3 +585,14 @@ def test_voice_overlay_markup_and_styles():
     assert "visibility: hidden !important" in css
     stage = css[css.index(".voice-mode-stage {"):]
     assert "max-height: 100%" in stage.split("}")[0], "stage must fit the viewport"
+
+
+@node_only
+def test_recorder_level_starts_at_zero():
+    _node(r"""
+const assert = require('assert');
+const R = require(process.argv[5]);
+const rec = R.create({ fetch: async () => ({}), onSpeech() {}, onPhraseText() {}, onPending() {}, onError() {} });
+assert.strictEqual(typeof rec.level, 'function');
+assert.strictEqual(rec.level(), 0, 'idle recorder reports no level');
+""")

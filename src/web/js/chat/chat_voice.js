@@ -145,7 +145,8 @@
             const hint = byId('voiceModeHint');
             if (hint) {
                 if (!hint.dataset.base) hint.dataset.base = hint.textContent;
-                const label = engine === 'server' ? 'Server transcription'
+                const label = engine === 'server'
+                    ? (Recorder.sourceKind() === 'native' ? 'Server transcription (app mic)' : 'Server transcription')
                     : (wantServer ? 'Browser speech — server transcription needs ' + missing.join(', ') : '');
                 hint.textContent = label ? hint.dataset.base + ' · ' + label : hint.dataset.base;
             }
@@ -466,6 +467,10 @@
                 } catch (e) {
                     host.logError('Voice recording failed to start', e);
                     wantListening = false;
+                    if (e && e.name === 'NativeMicError') {
+                        settlePhase(e.message + ' — tap mic to retry');
+                        return;
+                    }
                     promptMicPermission('Allow microphone access for voice mode');
                     settlePhase();
                     return;
