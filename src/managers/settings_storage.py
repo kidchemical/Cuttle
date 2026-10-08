@@ -153,7 +153,7 @@ class SettingsStorage:
             if key == "device_workers" and path == self.machine and isinstance(document[key], dict):
                 workers = dict(document[key])
                 if workers.pop("token", ""):
-                    raise ValueError("Shared worker tokens belong in <home>/.env or the secrets directory")
+                    raise ValueError("Shared worker tokens are unsupported; pair each device through Host approval")
                 document[key] = workers
             if path == self.server:
                 document["schema_version"] = SCHEMA_VERSION

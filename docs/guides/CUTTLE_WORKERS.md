@@ -62,7 +62,7 @@ POST /api/workers/jobs
 |---|---|
 | `device_workers.enabled` / `CUTTLE_DEVICE_WORKERS_ENABLED` | Master gate |
 | *(no manual token)* | Electron **Client** calls `POST /api/workers/enroll` on connect with a client-random `pairing_secret`; the owner approves the 6-digit code in **Jobs → Devices → Pending pairing**, then the host mints a per-device bearer (delivered once on poll; Electron saves it in `desktop-config.json`). Same trust boundary as LAN Client UI (`discovery.lan_access_enabled`) plus an owner approve step. The bearer is bound to that worker id: runtime calls can only act as that worker. Re-enroll with the saved bearer returns no bearer (never echoed; a fresh one only with `rotate: true`). A lost bearer means remove the device in **Jobs → Devices** and pair again. There is no loopback exemption: the host local worker loop authenticates with its own per-device bearer. |
-| `CUTTLE_DEVICE_WORKERS_TOKEN` | Optional **override only** (legacy); not required for Client workers |
+| `CUTTLE_DEVICE_WORKER_TOKEN` | Per-device credential supplied by the enrolling Client launcher; Host authentication only accepts device-bound tokens |
 | `CUTTLE_DEVICE_WORKERS_COORDINATOR_URL` | Sidecar → host Flask (Electron sets this from the Client host you already chose) |
 | `device_workers.allowed_path_prefixes` | Extra UNC/local roots for `file_copy` |
 | Electron `desktop-config.json` `workerMode` | Client sidecar on/off (default on) |

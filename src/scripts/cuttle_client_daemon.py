@@ -297,7 +297,7 @@ def main() -> int:
     os.environ["CUTTLE_DEVICE_WORKERS_ENABLED"] = "1"
     os.environ["CUTTLE_DEVICE_WORKERS_COORDINATOR_URL"] = selected_base
     os.environ["CUTTLE_DEVICE_WORKERS_COORDINATOR_URL_HTTP"] = http_base
-    os.environ["CUTTLE_DEVICE_WORKERS_TOKEN"] = token
+    os.environ["CUTTLE_DEVICE_WORKER_TOKEN"] = token
     os.environ["CUTTLE_DEVICE_WORKER_ID"] = worker_id
     os.environ["CUTTLE_CLIENT_DAEMON"] = "1"
     os.environ["CUTTLE_REPO_ROOT"] = str(PROJECT_ROOT)

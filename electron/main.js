@@ -1146,7 +1146,7 @@ async function startWorkerSidecar() {
         CUTTLE_ENDPOINT_SINGLE: isSingleEndpointPolicy() ? '1' : '0',
         // Remote HTTPS coordinator key pin (sidecar refuses remote HTTPS without it).
         CUTTLE_COORDINATOR_TLS_SPKI_SHA256: coordinatorPin,
-        CUTTLE_DEVICE_WORKERS_TOKEN: String(workerToken),
+        CUTTLE_DEVICE_WORKER_TOKEN: String(workerToken),
         CUTTLE_DEVICE_WORKER_ID: String(workerId || os.hostname()),
         CUTTLE_DEVICE_WORKER_LOG: logPath,
         CUTTLE_PACKAGE_VERSION: desktopVersion,

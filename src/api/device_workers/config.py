@@ -63,15 +63,8 @@ def device_workers_enabled() -> bool:
 
 
 def worker_token() -> str:
-    """Optional shared bearer override (legacy). Prefer host-approved pairing per device."""
-    explicit = _env("CUTTLE_DEVICE_WORKERS_TOKEN")
-    if explicit:
-        return explicit
-    from core.runtime_paths import secrets_dir
-    from managers.settings_storage import read_json
-    stored = read_json(secrets_dir() / "worker_shared_token.json").get("token")
-    # Existing installs remain compatible until the guarded cold-start split.
-    return str(stored or _settings_block().get("token") or "").strip()
+    """This client's device-bound credential, supplied by its enrolling launcher."""
+    return _env("CUTTLE_DEVICE_WORKER_TOKEN")
 
 
 def coordinator_base_url() -> str:
@@ -166,7 +159,6 @@ def default_settings() -> Dict[str, Any]:
         "auto_mesh": False,
         # Dangerous: free-form local shell on the worker (prefer recipes / cuttle_self_update).
         "execute_shell_unsafe_enabled": False,
-        "execute_shell_enabled": False,  # legacy alias of execute_shell_unsafe_enabled
         # Optional SSH transport for shell (not used for enroll/claim/self-update).
         "execute_shell_ssh_enabled": False,
         "ssh_host": "",

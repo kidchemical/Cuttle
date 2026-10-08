@@ -6,7 +6,6 @@ from flask import Blueprint, jsonify, request
 
 from api.device_workers import enroll_approval as enroll_requests
 from api.device_workers.auth import (
-    authorize_enroll_request,
     authorize_worker_request,
     extract_bearer,
     pairing_eligible,
@@ -68,8 +67,6 @@ def enroll_worker():
     - Valid device bearer: re-enroll as its own worker only. The existing
       credential is never echoed back; a fresh one is returned only with
       ``rotate: true``.
-    - Legacy shared override bearer (CUTTLE_DEVICE_WORKERS_TOKEN): may enroll
-      or rotate any worker id.
     - Anyone else eligible (bare LAN with lan_access_enabled, loopback, or a
       stale saved credential): files a pairing request — HTTP 202, no
       credential. The worker polls ``POST /enroll/<id>/poll`` with its
@@ -77,7 +74,7 @@ def enroll_worker():
     """
     if not device_workers_enabled():
         return jsonify({"success": False, "error": "device workers disabled"}), 503
-    ok, err, may_reissue = authorize_enroll_request(request)
+    ok, bound, err = resolve_worker_identity(request)
 
     data = request.get_json(silent=True) or {}
     wid = str(data.get("worker_id") or "").strip()
@@ -88,38 +85,16 @@ def enroll_worker():
     store = get_store()
 
     if ok:
-        if not may_reissue:
-            _ok, bound, _err = resolve_worker_identity(request)
-            if bound and bound != wid:
-                return jsonify({"success": False, "error": "worker credential is bound to another worker"}), 403
-            if not rotate:
-                return jsonify({"success": True, "worker_id": wid, "rotated": False})
-            try:
-                enrolled = store.enroll_device(
-                    worker_id=wid,
-                    hostname=hostname,
-                    remote_addr=(request.remote_addr or ""),
-                    rotate=True,
-                )
-            except ValueError as e:
-                return jsonify({"success": False, "error": str(e)}), 400
-            return jsonify({
-                "success": True,
-                "worker_id": enrolled["worker_id"],
-                "token": enrolled["token"],
-                "hostname": enrolled.get("hostname") or hostname,
-                "rotated": True,
-            })
-        # Never echo an existing credential: only a freshly minted one leaves here.
-        already = store.is_enrolled(wid)
-        if already and not rotate:
+        if bound != wid:
+            return jsonify({"success": False, "error": "worker credential is bound to another worker"}), 403
+        if not rotate:
             return jsonify({"success": True, "worker_id": wid, "rotated": False})
         try:
             enrolled = store.enroll_device(
                 worker_id=wid,
                 hostname=hostname,
                 remote_addr=(request.remote_addr or ""),
-                rotate=rotate,
+                rotate=True,
             )
         except ValueError as e:
             return jsonify({"success": False, "error": str(e)}), 400
@@ -128,7 +103,7 @@ def enroll_worker():
             "worker_id": enrolled["worker_id"],
             "token": enrolled["token"],
             "hostname": enrolled.get("hostname") or hostname,
-            "rotated": enrolled.get("rotated"),
+            "rotated": True,
         })
 
     eligible, elig_err = pairing_eligible(request)

@@ -254,7 +254,7 @@ Trust posture: opted-in project code is trusted unsandboxed, no sandbox claims.
 
 ## Workers mesh
 
-Coordinator HTTP: `/api/workers/*` (`device_workers`). Store: gitignored SQLite via `CUTTLE_DEVICE_WORKERS_DB` / default path. First enrollment is **host-approved pairing** (`device_workers.enroll_approval`): an eligible peer (loopback, or LAN with `discovery.lan_access_enabled`) gets HTTP 202 with a code, the owner approves in Jobs → Devices, and the worker collects its token once with its pairing secret. LAN IP alone never mints a credential, and re-enroll never echoes an existing one. Runtime routes require a token bound to the server-side worker id — there is no loopback exemption; the daemon's local loop gets its own token in-process (`ensure_local_worker_token`). The shared `CUTTLE_DEVICE_WORKERS_TOKEN` override remains as legacy.
+Coordinator HTTP: `/api/workers/*` (`device_workers`). Store: gitignored SQLite via `CUTTLE_DEVICE_WORKERS_DB` / default path. First enrollment is **host-approved pairing** (`device_workers.enroll_approval`): an eligible peer (loopback, or LAN with `discovery.lan_access_enabled`) gets HTTP 202 with a code, the owner approves in Jobs → Devices, and the worker collects its token once with its pairing secret. LAN IP alone never mints a credential, and re-enroll never echoes an existing one. Runtime routes require a token bound to the server-side worker id — there is no loopback exemption; the daemon's local loop gets its own token in-process (`ensure_local_worker_token`). Shared worker secrets are unsupported; every runtime credential is device-bound.
 
 ---
 

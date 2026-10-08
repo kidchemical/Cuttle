@@ -213,7 +213,9 @@ silently replaced with defaults. Settings read-modify-write routes use the locke
 update interface; callers replacing an entire key intentionally own its value.
 
 The legacy action HMAC key moves to `<home>/secrets/` without rotation;
-a shared worker token, when present in legacy JSON, is extracted there as well.
+shared worker tokens are unsupported; workers pair through Host approval and
+receive device-bound credentials. Old shared env/settings/secret-file values
+authorize nothing.
 API credentials remain in `<home>/.env`. Auth and worker databases still hold
 sensitive session/enrollment material; see `docs/architecture/cuttle-home.md`.
 

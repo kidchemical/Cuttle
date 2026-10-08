@@ -8,7 +8,7 @@ when a full Cuttle tree + venv are available.
 
 Env:
   CUTTLE_DEVICE_WORKERS_COORDINATOR_URL  e.g. https://cuttle.local:8080
-  CUTTLE_DEVICE_WORKERS_TOKEN            optional shared bearer
+  CUTTLE_DEVICE_WORKER_TOKEN            device-bound bearer from host-approved pairing
   CUTTLE_DEVICE_WORKER_ID                optional stable id (default: hostname)
   CUTTLE_DEVICE_WORKER_LOG               optional log path
 """

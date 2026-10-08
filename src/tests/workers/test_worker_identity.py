@@ -26,7 +26,6 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr("api.device_workers.routes.get_store", lambda: store)
     monkeypatch.setattr("api.device_workers.store.get_store", lambda: store)
     monkeypatch.setattr("api.device_workers.auth.lan_access_enabled", lambda: True)
-    monkeypatch.setattr("api.device_workers.auth.worker_token", lambda: "")
     # Owner gate: tests act as the host owner for approve/deny/list.
     monkeypatch.setattr(
         "api.device_workers.routes._ui_operator_or_401", lambda: None
@@ -322,41 +321,28 @@ def test_worker_can_poll_only_its_own_approval(client, monkeypatch):
     assert client.get(path, environ_base=LAN).status_code == 401
 
 
-SHARED = "legacy-shared"
+@pytest.mark.parametrize("source", ["environment", "settings", "secret-file"])
+def test_retired_shared_token_cannot_authenticate_or_enroll(client, monkeypatch, tmp_path, source):
+    from api.device_workers import config
+    from core.runtime_paths import secrets_dir
+    import json
 
-
-def _shared_headers(monkeypatch):
-    monkeypatch.setattr("api.device_workers.auth.worker_token", lambda: SHARED)
-    return {"Authorization": f"Bearer {SHARED}"}
-
-
-def test_shared_override_enroll_new_id_mints_token(client, monkeypatch):
-    h = _shared_headers(monkeypatch)
-    r = client.post(
-        "/api/workers/enroll", json={"worker_id": "w-new"}, headers=h, environ_base=LAN
-    )
-    assert r.status_code == 200
-    assert r.get_json()["token"]
-
-
-def test_shared_override_never_echoes_existing_token(client, monkeypatch):
-    h = _shared_headers(monkeypatch)
-    first = client.post(
-        "/api/workers/enroll", json={"worker_id": "w-new"}, headers=h, environ_base=LAN
-    ).get_json()["token"]
-    again = client.post(
-        "/api/workers/enroll", json={"worker_id": "w-new"}, headers=h, environ_base=LAN
-    )
-    assert again.status_code == 200
-    assert "token" not in again.get_json()
-    rot = client.post(
-        "/api/workers/enroll",
-        json={"worker_id": "w-new", "rotate": True},
-        headers=h,
-        environ_base=LAN,
-    )
-    assert rot.status_code == 200
-    assert rot.get_json()["token"] != first
+    shared = "retired-shared"
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path))
+    if source == "environment":
+        monkeypatch.setenv("CUTTLE_DEVICE_WORKERS_TOKEN", shared)
+    elif source == "settings":
+        monkeypatch.setattr(config, "_settings_block", lambda: {"token": shared})
+    else:
+        path = secrets_dir() / "worker_shared_token.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"token": shared}))
+    assert config.worker_token() == ""
+    headers = _bearer(shared)
+    assert client.post("/api/workers/jobs/claim", json={}, headers=headers, environ_base=LAN).status_code == 401
+    pending = client.post("/api/workers/enroll", json={"worker_id": "worker-a", "pairing_secret": SECRET}, headers=headers, environ_base=LAN)
+    assert pending.status_code == 202
+    assert "token" not in pending.get_json()
 
 
 def test_pairing_retry_replaces_same_device_request(client):

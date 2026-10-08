@@ -900,7 +900,7 @@ def _run_client_daemon_main(monkeypatch, tmp_path, cfg):
     monkeypatch.setenv("USERPROFILE", str(tmp_path))  # Path.home() on Windows
     # main() exports worker settings into os.environ; restore them afterwards.
     for name in ("CUTTLE_DEVICE_WORKERS_ENABLED", "CUTTLE_DEVICE_WORKERS_COORDINATOR_URL",
-                 "CUTTLE_DEVICE_WORKERS_COORDINATOR_URL_HTTP", "CUTTLE_DEVICE_WORKERS_TOKEN",
+                 "CUTTLE_DEVICE_WORKERS_COORDINATOR_URL_HTTP", "CUTTLE_DEVICE_WORKER_TOKEN",
                  "CUTTLE_DEVICE_WORKER_ID", "CUTTLE_CLIENT_DAEMON", "CUTTLE_REPO_ROOT",
                  "CUTTLE_DEVICE_WORKER_LOG"):
         monkeypatch.setenv(name, "")
