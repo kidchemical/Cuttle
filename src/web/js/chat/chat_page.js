@@ -15207,28 +15207,26 @@
 
     // Sessions this tab knows are archived (populated from ?archived=only).
     // Drives the Archive/Unarchive menu label; the server list is the source
-    // of truth after every archive toggle.
+    // of truth after every archive toggle. Mark decisions live in
+    // CuttleChatHistoryArchive over this tab-lifetime Set.
     const archivedChatSessionIds = new Set();
 
     function markChatSessionArchived(sessionId) {
-        if (sessionId == null || sessionId === '') return;
-        archivedChatSessionIds.add(String(canonicalizeChatSessionId(sessionId)));
-        const authSid = toAuthDbSessionId(sessionId);
-        if (authSid != null) archivedChatSessionIds.add(String(authSid));
+        const mod = historyArchiveModule();
+        if (!mod) return;
+        mod.markArchivedIds(archivedChatSessionIds, sessionId, archiveIdExtras(sessionId));
     }
 
     function unmarkChatSessionArchived(sessionId) {
-        if (sessionId == null || sessionId === '') return;
-        archivedChatSessionIds.delete(String(canonicalizeChatSessionId(sessionId)));
-        const authSid = toAuthDbSessionId(sessionId);
-        if (authSid != null) archivedChatSessionIds.delete(String(authSid));
+        const mod = historyArchiveModule();
+        if (!mod) return;
+        mod.unmarkArchivedIds(archivedChatSessionIds, sessionId, archiveIdExtras(sessionId));
     }
 
     function isChatSessionArchived(sessionId) {
-        if (sessionId == null || sessionId === '') return false;
-        if (archivedChatSessionIds.has(String(canonicalizeChatSessionId(sessionId)))) return true;
-        const authSid = toAuthDbSessionId(sessionId);
-        return authSid != null && archivedChatSessionIds.has(String(authSid));
+        const mod = historyArchiveModule();
+        if (!mod) return false;
+        return mod.isArchivedId(archivedChatSessionIds, sessionId, archiveIdExtras(sessionId));
     }
 
     async function toggleArchiveChatSession(sessionId, event) {
@@ -16335,12 +16333,20 @@
             .forEach((marked) => unmarkChatSessionArchived(marked));
     }
 
-    function isArchiveSectionCollapsed() {
+    // Safe storage handle for the owner (node harnesses eval page slices
+    // with no localStorage global; browsers always have it).
+    function pageArchiveStorage() {
         try {
-            return localStorage.getItem('cuttleArchiveSectionCollapsed') !== '0';
+            return (typeof localStorage !== 'undefined') ? localStorage : null;
         } catch (_) {
-            return true;
+            return null;
         }
+    }
+
+    function isArchiveSectionCollapsed() {
+        const mod = historyArchiveModule();
+        if (!mod) return true;
+        return mod.isArchiveSectionCollapsed(pageArchiveStorage());
     }
 
     function toggleArchiveSection(event) {
@@ -16348,9 +16354,14 @@
             event.stopPropagation();
             event.preventDefault();
         }
-        try {
-            localStorage.setItem('cuttleArchiveSectionCollapsed', isArchiveSectionCollapsed() ? '0' : '1');
-        } catch (_) {}
+        const mod = historyArchiveModule();
+        if (mod) {
+            mod.storeArchiveSectionCollapsed(pageArchiveStorage(), !isArchiveSectionCollapsed());
+        } else {
+            try {
+                localStorage.setItem('cuttleArchiveSectionCollapsed', isArchiveSectionCollapsed() ? '0' : '1');
+            } catch (_) {}
+        }
         renderArchivedSection();
     }
 
@@ -16404,11 +16415,14 @@
         if (prev) prev.remove();
         if (!archivedSessionsLoaded || !archivedChatSessions.length) return;
         const mod = historyArchiveModule();
+        // Without the owner there is nothing to render:
+        // refreshArchivedSessions already fail-closes to an empty list
+        // then, so this return is unreachable in practice and changes no
+        // live behavior.
+        if (!mod) return;
         // Defensive re-filter: the main list may have refreshed after the
         // Archived fetch resolved (archive toggle, delete, second device).
-        const visible = mod
-            ? mod.filterArchivedSessions(archivedChatSessions, activeHistorySessionIds, archiveIdExtras)
-            : archivedChatSessions;
+        const visible = mod.filterArchivedSessions(archivedChatSessions, activeHistorySessionIds, archiveIdExtras);
         if (!visible.length) return;
         const collapsed = isArchiveSectionCollapsed();
         const count = visible.length;
@@ -16416,25 +16430,18 @@
         visible.forEach((s) => {
             itemsHtml += createAuthHistoryItemHTML(s, {});
         });
+        // Header template + section class live in CuttleChatHistoryArchive;
+        // the page keeps container/row-DOM wiring (it owns the row renderer
+        // and the window-facing toggle names passed in below).
         const section = document.createElement('div');
-        section.className = 'history-section history-archived-section' + (collapsed ? ' is-collapsed' : '');
+        section.className = mod.archivedSectionClassName(collapsed);
         section.id = 'historyArchivedSection';
-        section.innerHTML =
-            '<div class="history-section-header is-collapsible" role="button" tabindex="0"'
-            + ' aria-expanded="' + (collapsed ? 'false' : 'true') + '"'
-            + ' aria-label="Archived chats"'
-            + ' onclick="window.chatPageToggleArchiveSection(event)"'
-            + ' onkeydown="window.chatPageToggleArchiveSectionKey(event)">'
-            + '<span class="history-section-chevron" aria-hidden="true">'
-            + '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">'
-            + '<polyline points="6 9 12 15 18 9"/>'
-            + '</svg>'
-            + '</span>'
-            + '<div class="history-section-title">Archived'
-            + '<span class="history-section-count" title="' + count + ' archived chat' + (count === 1 ? '' : 's') + '">' + count + '</span>'
-            + '</div>'
-            + '<div class="history-section-actions"></div>'
-            + '</div>'
+        section.innerHTML = mod.archivedSectionHeaderHTML({
+                collapsed,
+                count,
+                toggleHandler: 'window.chatPageToggleArchiveSection(event)',
+                keyHandler: 'window.chatPageToggleArchiveSectionKey(event)',
+            })
             + '<div class="history-section-body">' + itemsHtml + '</div>';
         historyContainer.appendChild(section);
     }

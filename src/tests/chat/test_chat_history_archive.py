@@ -7,6 +7,12 @@ chat into the Archived section (double fetch + double DOM, seconds on phones)
 and marked every session archived. These tests pin the disjointness: archived
 rows the main list already shows are dropped, stale marks are pruned, and
 malformed rows never render.
+
+The module also owns the archived-mark decisions (mark/unmark/query over the
+page's tab-lifetime Set with every id form at once), the section
+collapsed-state decisions over injected storage, and the section header
+markup as pure strings; the page keeps fetch transport, row rendering, and
+container DOM wiring.
 """
 
 from __future__ import annotations
@@ -65,10 +71,83 @@ out.forms = (() => {
         auth: A.isActiveId(active, 'other', 4200), miss: A.isActiveId(active, 43, 4300),
         keys: A.idKeys(42, ['canon-42', 4200]).sort() };
 })();
+// archived-mark decisions over an explicit Set: every id form marks,
+// unmarks, and compares equal; null/empty inputs are no-ops
+out.marks = (() => {
+    const set = new Set();
+    const extras = (id) => [`c${id}`, `a${id}`];
+    A.markArchivedIds(set, 7, extras(7));
+    const afterMark = { raw: A.isArchivedId(set, 7, null),
+        canon: A.isArchivedId(set, 'c7', null),
+        auth: A.isArchivedId(set, 'other', 'a7'),
+        miss: A.isArchivedId(set, 8, extras(8)) };
+    A.unmarkArchivedIds(set, 'c7', extras('c7'));
+    const afterUnmark = { gone: A.isArchivedId(set, 'c7', null),
+        siblingKept: A.isArchivedId(set, 7, null), size: set.size };
+    A.markArchivedIds(set, null, null);
+    A.markArchivedIds(set, '', null);
+    A.markArchivedIds(null, 9, null);
+    A.unmarkArchivedIds(set, '', null);
+    A.unmarkArchivedIds(null, 7, null);
+    return { afterMark, afterUnmark, sizeAfterGuards: set.size,
+        nullSet: A.isArchivedId(null, 7, null) };
+})();
+// collapse decisions over injected storage: fail closed to collapsed,
+// writes flip the flag, throwing storage never throws
+out.collapse = (() => {
+    const seen = [];
+    const memStore = (initial) => {
+        let v = (initial === undefined) ? null : initial;
+        return { getItem: () => v,
+            setItem: (k, val) => { seen.push([k, String(val)]); v = String(val); } };
+    };
+    const s = memStore();
+    const blank = A.isArchiveSectionCollapsed(s);
+    A.storeArchiveSectionCollapsed(s, false);
+    const expanded = A.isArchiveSectionCollapsed(s);
+    A.storeArchiveSectionCollapsed(s, true);
+    const collapsed = A.isArchiveSectionCollapsed(s);
+    A.storeArchiveSectionCollapsed(null, false);
+    const bad = { getItem: () => { throw new Error('x'); },
+        setItem: () => { throw new Error('x'); } };
+    A.storeArchiveSectionCollapsed(bad, false);
+    return { noStorage: A.isArchiveSectionCollapsed(null),
+        noGetItem: A.isArchiveSectionCollapsed({}),
+        blank, expanded, collapsed,
+        keys: seen.map((kv) => kv[0]), values: seen.map((kv) => kv[1]),
+        throwing: A.isArchiveSectionCollapsed(bad) };
+})();
+// section markup: collapsed/expanded framing, count pluralization, the
+// page's injected toggle handlers, owner stays free of page globals
+out.header = (() => {
+    const handlers = { toggleHandler: 'window.chatPageToggleArchiveSection(event)',
+        keyHandler: 'window.chatPageToggleArchiveSectionKey(event)' };
+    const three = A.archivedSectionHeaderHTML(
+        Object.assign({ collapsed: true, count: 3 }, handlers));
+    const one = A.archivedSectionHeaderHTML(
+        Object.assign({ collapsed: false, count: 1 }, handlers));
+    const bare = A.archivedSectionHeaderHTML({ collapsed: true, count: 0 });
+    return {
+        collapsedClass: A.archivedSectionClassName(true),
+        expandedClass: A.archivedSectionClassName(false),
+        cAria: three.includes('aria-expanded="false"'),
+        cCount: three.includes('>3</span>') && three.includes('3 archived chats'),
+        cHandlers: three.includes('onclick="window.chatPageToggleArchiveSection(event)"')
+            && three.includes('onkeydown="window.chatPageToggleArchiveSectionKey(event)"'),
+        cChrome: three.includes('history-section-chevron')
+            && three.includes('history-section-actions'),
+        eAria: one.includes('aria-expanded="true"'),
+        eSingle: one.includes('1 archived chat"') && !one.includes('1 archived chats'),
+        bareNoHandlers: !bare.includes('onclick=') && !bare.includes('onkeydown='),
+    };
+})();
 // owner boundary: no page globals inside the pure module (comments stripped)
 out.boundary = (() => {
     const src = [A.activeSessionIdSet, A.filterArchivedSessions,
-        A.staleArchivedMarks, A.isActiveId, A.idKeys]
+        A.staleArchivedMarks, A.isActiveId, A.idKeys,
+        A.markArchivedIds, A.unmarkArchivedIds, A.isArchivedId,
+        A.isArchiveSectionCollapsed, A.storeArchiveSectionCollapsed,
+        A.archivedSectionClassName, A.archivedSectionHeaderHTML]
         .map((f) => f.toString()).join('\\n')
         .replace(/\\/\\*[\\s\\S]*?\\*\\//g, '').replace(/\\/\\/.*/g, '');
     const banned = ['document', 'window', 'fetch(', 'localStorage'];
@@ -138,6 +217,47 @@ def test_dual_id_forms_compare_equal():
 @node_only
 def test_archive_module_has_no_page_globals():
     assert _run_harness()["boundary"]["banned"] == []
+
+
+@node_only
+def test_archived_marks_cover_every_id_form():
+    out = _run_harness()["marks"]
+    assert out["afterMark"] == {"raw": True, "canon": True, "auth": True,
+                                "miss": False}
+    # unmarking one form drops only that form; siblings stay marked
+    assert out["afterUnmark"] == {"gone": False, "siblingKept": True,
+                                  "size": 2}
+    # null/empty guards never throw and never grow the set
+    assert out["sizeAfterGuards"] == 2
+    assert out["nullSet"] is False
+
+
+@node_only
+def test_archive_section_collapse_roundtrip():
+    out = _run_harness()["collapse"]
+    assert out["noStorage"] is True
+    assert out["noGetItem"] is True
+    assert out["blank"] is True
+    assert out["expanded"] is False
+    assert out["collapsed"] is True
+    assert out["keys"] == ["cuttleArchiveSectionCollapsed"] * 2
+    assert out["values"] == ["0", "1"]
+    assert out["throwing"] is True
+
+
+@node_only
+def test_archived_section_header_markup():
+    out = _run_harness()["header"]
+    assert out["collapsedClass"] == \
+        "history-section history-archived-section is-collapsed"
+    assert out["expandedClass"] == "history-section history-archived-section"
+    assert out["cAria"] is True
+    assert out["cCount"] is True
+    assert out["cHandlers"] is True
+    assert out["cChrome"] is True
+    assert out["eAria"] is True
+    assert out["eSingle"] is True
+    assert out["bareNoHandlers"] is True
 
 
 def test_archive_script_tag_versioned_and_ordered():
