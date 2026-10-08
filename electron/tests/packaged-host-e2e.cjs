@@ -123,12 +123,26 @@ function bundledProcesses() {
     return out;
 }
 
-function killTree(pid) {
+function killTree(pid, signal = 'SIGTERM') {
     if (!pid) return;
     try {
         if (isWin) spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true });
-        else process.kill(pid, 'SIGTERM');
+        else process.kill(pid, signal);
     } catch (_) {}
+}
+
+/** Stop the Electron we launched (its own process group on POSIX). */
+async function stopElectron(child, isExited) {
+    if (isWin) {
+        killTree(child.pid);
+    } else {
+        try { process.kill(-child.pid, 'SIGTERM'); } catch (_) {}
+        for (let i = 0; i < 50 && !isExited(); i++) await sleep(100);
+        if (!isExited()) {
+            try { process.kill(-child.pid, 'SIGKILL'); } catch (_) {}
+        }
+    }
+    child.unref();
 }
 
 async function main() {
@@ -180,7 +194,10 @@ async function main() {
     log(`launching ${exePath()} ${args.join(' ')}`);
     const logFile = path.join(root, 'electron.log');
     const logFd = fs.openSync(logFile, 'a');
-    const child = spawn(exePath(), args, { env, stdio: ['ignore', logFd, logFd], windowsHide: true });
+    // POSIX: own process group, so teardown reaches Electron's helpers too.
+    const child = spawn(exePath(), args, {
+        env, stdio: ['ignore', logFd, logFd], windowsHide: true, detached: !isWin,
+    });
     let exited = null;
     child.on('exit', (code, signal) => { exited = { code, signal }; });
 
@@ -214,10 +231,11 @@ async function main() {
     } catch (err) {
         fail(err && err.message ? err.message : String(err));
     } finally {
-        killTree(child.pid);
-        await sleep(1500);
+        await stopElectron(child, () => !!exited);
+        await sleep(1000);
         for (const p of bundledProcesses()) killTree(p.pid);
-        await sleep(500);
+        await sleep(1500);
+        for (const p of bundledProcesses()) killTree(p.pid, 'SIGKILL');
         fs.closeSync(logFd);
         if (process.exitCode) {
             log('--- electron log (tail) ---');
