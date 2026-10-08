@@ -64,3 +64,41 @@ When publishing a release, write the GitHub Release body before considering the
 release complete. Include user-visible additions, fixes, and any migration or
 restart instructions; avoid a raw commit-log dump. Tags alone have no release
 notes and do not appear in this feed. Keep the version bump at release time.
+
+## Packaged artifacts and release CI
+
+Pushing a `vX.Y.Z` tag that matches `electron/package.json` runs
+`.github/workflows/release.yml`: Quality, Desktop smoke and the packaged Host
+build (`packaged-host.yml`) must all pass, then a **draft** GitHub Release is
+created with the Linux AppImage, Windows NSIS installer and portable exe plus a
+combined `SHA256SUMS`. Review the draft, write the notes, then publish it by
+hand — CI never publishes.
+
+Packaged Hosts are self-contained: `electron/bundle-python.js` ships a
+python-build-standalone CPython pinned by SHA-256 in
+`electron/python-runtime.json`, with `src/requirements/requirements.txt` held to
+`electron/python-constraints.txt` (wheels only). They never use system Python or
+a repo `.venv`. To move the runtime, update every field of
+`python-runtime.json` from the release `SHA256SUMS`; after changing runtime
+requirements run `node electron/bundle-python.js --lock` and commit the new
+constraints. `electron/tests/packaged-host-e2e.cjs` is the clean-environment
+check CI runs against the installed artifact (local runs need an isolated
+display and must not share ports or a process namespace with a live Host).
+
+**Merge gate.** Mark these checks as required on `main` (repository settings →
+branch protection): `Quality / python (ubuntu-latest)`, `Quality / python
+(windows-latest)`, `Quality / browser`, `Quality / android`,
+`Desktop smoke / desktop (ubuntu-latest)`, `Desktop smoke / desktop
+(windows-latest)` and both `Desktop smoke / packaged-host / packaged-host`
+matrix jobs. Desktop smoke has no path filter so required checks never wait on
+a skipped workflow.
+
+**Windows signing.** Set repository secrets `WIN_CSC_LINK` (base64 `.pfx` or
+URL) and `WIN_CSC_KEY_PASSWORD`; electron-builder then Authenticode-signs the
+Windows artifacts. Without them the artifacts are unsigned and the checksums
+are the only verification — say so in the release notes.
+
+**Desktop updates.** Packaged Hosts report `updateSource: "release"` and do not
+build Client updates; update every device from the release. Source-checkout
+Hosts may still build an `app.asar` for their Clients, which accept it only over
+the Host's pinned HTTPS identity. Linux Clients never swap in place.
