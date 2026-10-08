@@ -57,7 +57,7 @@
             $('tab-content').innerHTML = `<p class="muted">Configuration inventory by source. Personal replacements and appended rule/document overrides use Cuttle’s existing resolution rules. Shared-layer participation is controlled by the project’s GLOBAL.ini. File editing is available through project files.</p>${(overview?.configuration || []).map(layer => `<section class="panel"><h3>${esc(layer.label)}</h3><code class="path-text">${esc(layer.path)}</code>${layer.files.length ? `<ul class="config-files">${layer.files.map(file => `<li><code>${esc(file)}</code></li>`).join('')}</ul>` : `<p class="muted">${layer.present ? 'No configuration files.' : 'Layer unavailable or not initialized.'}</p>`}</section>`).join('')}`;
         } else if (tab === 'activity') renderFeed();
         else if (tab === 'repository') {
-            $('tab-content').innerHTML = `<section class="panel"><h3>Repository</h3>${repo?.available ? `<p>Current branch: <strong>${esc(repo.branch)}</strong></p><p>Origin: <code>${esc(repo.remote || 'No origin configured')}</code></p><p>Root: <code>${esc(repo.root)}</code></p><p>${repo.branch_count} local branches</p><ul class="config-files">${repo.branches.map(branch => `<li><code>${esc(branch)}</code></li>`).join('')}</ul><button data-action="git">Open Git for worktree and commits</button>` : `<p class="muted">${esc(repo?.error || 'No Git repository available at the selected location.')}</p>`}</section>${overview?.changes?.length ? `<section class="panel"><h3>Recent configuration changes</h3>${overview.changes.map(change => `<p>${esc(date(change.timestamp))} · ${esc(change.action)}</p>`).join('')}</section>` : ''}`;
+            $('tab-content').innerHTML = `<section class="panel"><h3>Repository</h3>${repo?.available ? `<p>Current branch: <strong>${esc(repo.branch)}</strong></p><p>Origin: <code>${esc(repo.remote || 'No origin configured')}</code></p><p>Root: <code>${esc(repo.root)}</code></p><form id="branch-form"><fieldset ${!canEdit || busy ? 'disabled' : ''} style="border:0;padding:0;margin:0"><label>Default working branch<input name="default_branch" list="local-branches" value="${esc(p.default_branch || '')}" maxlength="240" placeholder="Leave empty to use the current branch"></label><datalist id="local-branches">${repo.branches.map(branch => `<option value="${esc(branch)}"></option>`).join('')}</datalist><p class="muted">Agents use this branch for new work. Saving does not switch the checkout or change GitHub’s default branch. Use a working branch such as dev and a pull request to integrate into protected main.</p><button type="submit" class="primary">Save default branch</button></fieldset></form><p>Saved working branch: <strong>${esc(p.default_branch || 'Use current branch')}</strong></p><button data-action="use-default-branch" ${!canEdit || busy || !p.default_branch ? 'disabled' : ''}>Switch / create default branch</button><p class="muted">Switching affects this shared checkout and requires pending changes to be committed or stashed. A new branch starts at the current commit, or tracks origin if it already exists there.</p><p>${repo.branch_count} local branches</p><ul class="config-files">${repo.branches.map(branch => `<li><code>${esc(branch)}</code></li>`).join('')}</ul><button data-action="git">Open Git for worktree and commits</button>` : `<p class="muted">${esc(repo?.error || 'No Git repository available at the selected location.')}</p>`}</section>${overview?.changes?.length ? `<section class="panel"><h3>Recent configuration changes</h3>${overview.changes.map(change => `<p>${esc(date(change.timestamp))} · ${esc(change.action)}</p>`).join('')}</section>` : ''}`;
         }
     }
     function renderPaths() {
@@ -85,15 +85,18 @@
     });
     $('detail').addEventListener('input', event => {
         if (event.target.dataset.path !== undefined) { paths[Number(event.target.dataset.path)] = event.target.value; event.target.nextElementSibling.textContent = `${Number(event.target.dataset.path)+1}. Not tested`; dirty = true; $('path-save-state').textContent = 'Unsaved changes'; }
-        if (event.target.closest('#metadata-form')) dirty = true;
+        if (event.target.closest('#metadata-form, #branch-form')) dirty = true;
     });
     $('detail').addEventListener('submit', async event => {
-        if (event.target.id !== 'metadata-form') return;
+        if (!['metadata-form', 'branch-form'].includes(event.target.id)) return;
         event.preventDefault(); if (busy) return; busy = true;
         const form = new FormData(event.target);
         const fields = event.target.querySelector('fieldset'); fields.disabled = true;
         let saved = false;
-        try { await save({name:form.get('name'), description:form.get('description'), tags:tags(form.get('tags')), repo_url:form.get('repo_url')}); saved = true; }
+        try {
+            const values = event.target.id === 'branch-form' ? {default_branch:form.get('default_branch')} : {name:form.get('name'), description:form.get('description'), tags:tags(form.get('tags')), repo_url:form.get('repo_url')};
+            await save(values); saved = true;
+        }
         catch (error) { notice(error.message, true); }
         finally { busy = false; if (saved) renderDetail(); else fields.disabled = !canEdit; }
     });
@@ -108,9 +111,11 @@
         if (action === 'add-path') { paths.push(''); dirty = true; renderPaths(); $('paths').querySelector('.path-row:last-child input').focus(); return; }
         if (action === 'git') { try { localStorage.setItem('cuttleGitGraphProject', selected.resolved_path); } catch (_) {} navigate('/git_graph_page.html?project_id=' + selected.id); return; }
         if (action === 'remove') { removing = {...selected}; $('remove-description').textContent = `Unregister “${removing.name}” from Cuttle?`; $('confirm-name').value = ''; $('confirm-remove').disabled = true; $('remove-error').textContent = ''; $('remove-dialog').showModal(); return; }
+        if (action === 'use-default-branch' && dirty) { notice('Save or discard the branch preference before switching.', true); return; }
         busy = true; target.disabled = true;
         try {
             if (action === 'test-paths') { checks = (await api('/api/projects/paths/check', {paths})).data.path_checks; renderPaths(); notice('Paths checked on the Cuttle host.'); }
+            if (action === 'use-default-branch') { const result = await api(`/api/projects/${selected.id}/branch`, {}); await load(selected.id); notice(result.data.message); }
             if (action === 'save-paths') await save({paths});
             if (action === 'archive') await save({archived:!selected.archived});
             if (action === 'chat') { const response = await api(`/api/projects/${selected.id}/chat`, {}); navigate(`/chat_page.html?chat=${response.session_id}`); }

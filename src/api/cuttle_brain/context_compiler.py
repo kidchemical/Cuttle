@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -291,6 +292,12 @@ def _runtime_block(
     active_root = _project_root(project_path) if project_path else None
     if active_root is not None:
         parts.append(f"Active project root: `{active_root}`")
+        from managers.project_manager import project_manager
+        working_branch = project_manager.default_branch_for_path(str(active_root))
+        if working_branch:
+            parts.append(f"Default working branch: {json.dumps(working_branch)}. "
+                         "Use this branch for new work. Do not change the remote default branch. "
+                         "Switch explicitly when safe; preserve pending changes.")
     cmd = inventory.get("commands") or []
     docs = inventory.get("docs") or []
     actions = inventory.get("actions") or []

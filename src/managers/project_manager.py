@@ -21,7 +21,7 @@ from managers.project_locations import check_paths, validate_paths, require_proj
 
 
 def _validated_project_changes(kwargs):
-    allowed = {'name', 'description', 'tags', 'paths', 'path', 'repo_url', 'archived'}
+    allowed = {'name', 'description', 'tags', 'paths', 'path', 'repo_url', 'archived', 'default_branch'}
     if set(kwargs) - allowed:
         raise ValueError('Unsupported project setting.')
     values = dict(kwargs)
@@ -45,6 +45,9 @@ def _validated_project_changes(kwargs):
         raise ValueError('Tags must be a list of up to 32 short strings.')
     if 'archived' in values and not isinstance(values['archived'], bool):
         raise ValueError('Archived must be true or false.')
+    if 'default_branch' in values:
+        from core.git_refs import validate_branch_name
+        values['default_branch'] = validate_branch_name(values['default_branch'], allow_empty=True)
     if 'repo_url' in values:
         url = values['repo_url'].strip()
         if url and not (url.startswith(('https://', 'http://', 'ssh://', 'git@'))):
@@ -361,7 +364,8 @@ class ProjectManager:
             'description': row[4], 'tags': json.loads(row[5]) if row[5] else [],
             'created_at': row[6], 'updated_at': row[7], 'last_accessed': row[8],
             'is_active': bool(row[9]), 'config': config,
-            'archived': bool(config.get('archived', False)), **health,
+            'archived': bool(config.get('archived', False)),
+            'default_branch': config.get('default_branch', ''), **health,
         }
 
     def get_projects(self, include_archived=False) -> List[Dict[str, Any]]:
@@ -373,6 +377,14 @@ class ProjectManager:
             """).fetchall()
         projects = [self._project_record(row) for row in rows]
         return projects if include_archived else [p for p in projects if not p['archived']]
+
+    def default_branch_for_path(self, path):
+        """Return the active location's preference; never use another project's default."""
+        target = os.path.normcase(os.path.realpath(path))
+        for project in self.get_projects():
+            if project['available'] and os.path.normcase(os.path.realpath(project['resolved_path'])) == target:
+                return project['default_branch']
+        return ''
 
     def get_project(self, project_id: int) -> Optional[Dict[str, Any]]:
         with self.get_db_connection() as conn:
@@ -440,7 +452,7 @@ class ProjectManager:
             config = json.loads(row[0]) if row[0] else {}
             fields, args = [], []
             for key, value in values.items():
-                if key in ('paths', 'repo_url', 'archived'):
+                if key in ('paths', 'repo_url', 'archived', 'default_branch'):
                     config[key] = value
                     if key == 'paths':
                         fields.append('path = ?')

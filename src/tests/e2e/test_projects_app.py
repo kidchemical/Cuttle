@@ -21,6 +21,7 @@ class FakeAPI:
         self.calls = []
         self.can_edit = can_edit
         self.invalid_metadata = False
+        self.branch = "main"
 
     def handle(self, route):
         req = route.request
@@ -33,7 +34,11 @@ class FakeAPI:
         elif path == '/api/projects': response['data'] = self.projects
         elif path.endswith('/overview'):
             project = next(p for p in self.projects if p['id'] == int(path.split('/')[3]))
-            response['data'] = {'project':project, 'repository':{'available':True,'branch':'main','branch_count':2,'branches':['main','dev'],'root':'/host/demo','remote':'https://git.example/demo'}, 'configuration':[{'label':'Project','path':'/host/demo/.cuttle','present':True,'files':['rules/00-core.md','GLOBAL.ini']}], 'changes':[]}
+            response['data'] = {'project':project, 'repository':{'available':True,'branch':self.branch,'branch_count':2,'branches':['main','dev'],'root':'/host/demo','remote':'https://git.example/demo'}, 'configuration':[{'label':'Project','path':'/host/demo/.cuttle','present':True,'files':['rules/00-core.md','GLOBAL.ini']}], 'changes':[]}
+        elif path.endswith('/branch'):
+            project = next(p for p in self.projects if p['id'] == int(path.split('/')[3]))
+            self.branch = project['default_branch']
+            response['data'] = {'message': 'Switched to branch: ' + self.branch}
         elif path.endswith('/activity'):
             response['data'] = {'stats':{'chats':2,'messages':8,'last_activity':'2026-10-04 18:00:00'}, 'messages':[{'id':4,'session_id':984,'session_name':'Build chat','role':'user','content':'Literal <script>window.pwned=true</script> text','timestamp':'2026-10-04 18:00:00'}], 'next_before_id':None}
         elif path.startswith('/api/projects/') and req.method == 'PUT':
@@ -157,4 +162,42 @@ def test_readonly_and_validation_preserves_draft(page_ctx, static_server):
     page.get_by_text('Project saved.', exact=True).wait_for()
     assert api.projects[0]['name'] == 'Existing project'
     assert page.get_by_role('button', name='Save details', exact=True).is_enabled()
+    assert not errors
+
+
+def test_working_branch_saves_without_checkout_and_switches_explicitly(page_ctx, static_server):
+    page, _, errors = page_ctx
+    api = FakeAPI(); open_page(page, static_server, api)
+    page.get_by_role('button', name='Repository', exact=True).click()
+    page.get_by_label('Default working branch', exact=True).fill('dev')
+    page.get_by_role('button', name='Save default branch', exact=True).click()
+    page.get_by_text('Project saved.', exact=True).wait_for()
+    assert ('PUT', '/api/projects/7', {'default_branch':'dev'}) in api.calls
+    assert not any(call[1].endswith('/branch') for call in api.calls)
+    assert 'Current branch: main' in page.locator('#tab-content').inner_text()
+    page.get_by_role('button', name='Switch / create default branch', exact=True).click()
+    page.get_by_text('Switched to branch: dev', exact=True).wait_for()
+    assert ('POST', '/api/projects/7/branch', {}) in api.calls
+    assert 'Current branch: dev' in page.locator('#tab-content').inner_text()
+    page.set_viewport_size({'width':390, 'height':844})
+    assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+    page.screenshot(path='temp/projects-working-branch.png', full_page=True)
+    assert not errors
+
+
+def test_working_branch_readonly_and_save_error_preserves_draft(page_ctx, static_server):
+    page, _, errors = page_ctx
+    api = FakeAPI(can_edit=False); open_page(page, static_server, api)
+    page.get_by_role('button', name='Repository', exact=True).click()
+    assert page.get_by_label('Default working branch', exact=True).is_disabled()
+    assert page.get_by_role('button', name='Switch / create default branch', exact=True).is_disabled()
+    api.can_edit=True
+    page.reload(); page.locator('#metadata-form').wait_for()
+    page.get_by_role('button', name='Repository', exact=True).click()
+    api.invalid_metadata=True
+    page.get_by_label('Default working branch', exact=True).fill('feature/test')
+    page.get_by_role('button', name='Save default branch', exact=True).click()
+    page.get_by_text('Duplicate project name', exact=True).wait_for()
+    assert page.get_by_label('Default working branch', exact=True).input_value() == 'feature/test'
+    assert page.get_by_role('button', name='Save default branch', exact=True).is_enabled()
     assert not errors
