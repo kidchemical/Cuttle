@@ -1,0 +1,99 @@
+name: Packaged Host
+# Build the packaged desktop Host with its bundled Python runtime, install the
+# artifact on a clean runner, start it, and require /api/health + the UI.
+# Called by Desktop smoke (PR/main gate) and Release (tag artifacts).
+on:
+  workflow_call:
+    inputs:
+      upload:
+        description: Upload installers + per-platform checksums as workflow artifacts
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  packaged-host:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+          - os: windows-latest
+            platform: windows
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: electron
+        shell: bash
+    env:
+      CUTTLE_PYTHON_CACHE: ${{ github.workspace }}/.python-cache
+      # Authenticode signing is used when these secrets exist (see
+      # .cuttle/docs/cuttle-release.md); otherwise artifacts are unsigned.
+      CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: electron/package-lock.json
+      - run: npm ci
+      - run: node node_modules/electron/install.js
+      - name: Bundle pinned Python runtime + dependencies
+        run: node bundle-python.js
+      - name: Build Linux AppImage
+        if: matrix.platform == 'linux'
+        run: npx electron-builder --linux AppImage --publish never
+      - name: Build Windows installer + portable
+        if: matrix.platform == 'windows'
+        run: npx electron-builder --win nsis portable --publish never
+      - name: Install artifact (Linux AppImage → extracted tree)
+        if: matrix.platform == 'linux'
+        run: |
+          image="$(ls dist/*.AppImage | head -n1)"
+          chmod +x "$image"
+          dest="$RUNNER_TEMP/cuttle-install"
+          mkdir -p "$dest"
+          (cd "$dest" && "$GITHUB_WORKSPACE/electron/$image" --appimage-extract >/dev/null)
+          echo "CUTTLE_E2E_APP=$dest/squashfs-root" >> "$GITHUB_ENV"
+      - name: Install artifact (Windows NSIS, silent, per-user)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem dist\*.exe | Where-Object { $_.Name -notmatch 'portable' } | Select-Object -First 1
+          $dest = Join-Path $env:RUNNER_TEMP 'CuttleInstall'
+          Start-Process -FilePath $installer.FullName -ArgumentList '/S', "/D=$dest" -Wait
+          if (-not (Test-Path (Join-Path $dest 'Cuttle.exe'))) { throw "installer did not produce $dest\Cuttle.exe" }
+          "CUTTLE_E2E_APP=$dest" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Install isolated display (Linux)
+        if: matrix.platform == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb
+      - name: Packaged Host E2E (Linux)
+        if: matrix.platform == 'linux'
+        # Only this test process disables Chromium's sandbox under Xvfb; the
+        # packaged app's own sandbox policy is unchanged.
+        env:
+          CUTTLE_E2E_ELECTRON_ARGS: --no-sandbox --ozone-platform=x11
+        run: xvfb-run -a node tests/packaged-host-e2e.cjs --app "$CUTTLE_E2E_APP"
+      - name: Packaged Host E2E (Windows)
+        if: matrix.platform == 'windows'
+        run: node tests/packaged-host-e2e.cjs --app "$CUTTLE_E2E_APP"
+      - name: Checksums
+        if: inputs.upload
+        run: |
+          cd dist
+          shopt -s nullglob
+          files=( *.AppImage *.exe )
+          sha256sum "${files[@]}" > "SHA256SUMS-${{ matrix.platform }}.txt"
+          cat "SHA256SUMS-${{ matrix.platform }}.txt"
+      - uses: actions/upload-artifact@v7
+        if: inputs.upload
+        with:
+          name: cuttle-${{ matrix.platform }}
+          if-no-files-found: error
+          path: |
+            electron/dist/*.AppImage
+            electron/dist/*.exe
+            electron/dist/SHA256SUMS-*.txt
