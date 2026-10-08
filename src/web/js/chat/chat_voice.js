@@ -124,6 +124,21 @@
             else if (phase === 'speaking') setStatus('Speaking…');
         }
 
+        /** A silent fallback to the chiming browser recognizer is undiagnosable on a phone. */
+        function showEngine(wantServer, missing) {
+            const hint = byId('voiceModeHint');
+            if (hint) {
+                if (!hint.dataset.base) hint.dataset.base = hint.textContent;
+                const label = engine === 'server' ? 'Server transcription'
+                    : (wantServer ? 'Browser speech — server transcription needs ' + missing.join(', ') : '');
+                hint.textContent = label ? hint.dataset.base + ' · ' + label : hint.dataset.base;
+            }
+            if (wantServer && missing.length) {
+                host.logError('Voice server transcription unavailable; missing', missing);
+                host.toast('Server transcription unavailable here (needs ' + missing.join(', ') + ')', 'error');
+            }
+        }
+
         function renderPhrases() {
             const box = byId('voiceModeSegments');
             if (!box) return;
@@ -681,7 +696,10 @@
             flagsReady = host.experimentalFlags().then((on) => {
                 if (!active) return;
                 narratorOn = on.has('voice_narrator');
-                engine = on.has('voice_server_stt') && Recorder.isSupported() ? 'server' : 'webspeech';
+                const wantServer = on.has('voice_server_stt');
+                const missing = wantServer ? Recorder.missingSupport() : [];
+                engine = wantServer && !missing.length ? 'server' : 'webspeech';
+                showEngine(wantServer, missing);
             }, () => {});
             clearPhrases();
             if (host.isGenerating()) setPhase('processing', 'Working…');

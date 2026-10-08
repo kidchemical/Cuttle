@@ -80,10 +80,19 @@
         return Math.sqrt(sum / (buf.length || 1));
     }
 
+    /** Browser features this engine lacks here (empty = usable). */
+    function missingSupport() {
+        const missing = [];
+        if (root.isSecureContext === false) missing.push('secure (https) page');
+        const md = root.navigator && root.navigator.mediaDevices;
+        if (!md || typeof md.getUserMedia !== 'function') missing.push('getUserMedia');
+        if (!root.MediaRecorder) missing.push('MediaRecorder');
+        if (!(root.AudioContext || root.webkitAudioContext)) missing.push('AudioContext');
+        return missing;
+    }
+
     function isSupported() {
-        return !!(root.MediaRecorder && root.navigator && root.navigator.mediaDevices
-            && typeof root.navigator.mediaDevices.getUserMedia === 'function'
-            && (root.AudioContext || root.webkitAudioContext));
+        return missingSupport().length === 0;
     }
 
     function pickMime() {
@@ -251,6 +260,7 @@
         vadStep: vadStep,
         rmsOf: rmsOf,
         isSupported: isSupported,
+        missingSupport: missingSupport,
         create: create,
     };
     root.CuttleChatVoiceRecorder = api;

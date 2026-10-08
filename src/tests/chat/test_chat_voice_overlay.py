@@ -301,7 +301,7 @@ def test_server_engine_records_without_speech_recognizer():
     _node(CONTROLLER_HARNESS + r"""
 (async () => {
   let h = null, starts = 0, flushes = 0, tail = '';
-  R.isSupported = () => true;
+  R.missingSupport = () => [];
   R.create = (hostArg) => { h = hostArg; return {
     start: async () => { starts += 1; },
     stop: async (o) => { if (o && o.flush) { flushes += 1; if (tail) h.onPhraseText(tail); } },
@@ -325,6 +325,27 @@ def test_server_engine_records_without_speech_recognizer():
   await sleep(5);
   assert.strictEqual(flushes, 1, 'send flushes the phrase in progress');
   assert.deepStrictEqual(submitted, ['first part second part']);
+  assert.match(document.getElementById('voiceModeHint').textContent, /Server transcription$/);
+})().catch((e) => { console.error(e); process.exit(1); });
+""")
+
+
+@node_only
+def test_server_engine_fallback_names_the_missing_feature():
+    _node(CONTROLLER_HARNESS + r"""
+(async () => {
+  const toasts = [];
+  host.toast = (m) => toasts.push(m);
+  R.missingSupport = () => ['MediaRecorder'];
+  document.getElementById('voiceModeHint').textContent = 'Tap to talk';
+  flagsOn = ['voice_server_stt'];
+  voice.enter();
+  mic.dispatch('click', ev(mic));
+  await sleep(5);
+  assert.strictEqual(recs.length, 1, 'falls back to the browser recognizer');
+  assert.strictEqual(document.getElementById('voiceModeHint').textContent,
+    'Tap to talk · Browser speech — server transcription needs MediaRecorder');
+  assert.deepStrictEqual(toasts, ['Server transcription unavailable here (needs MediaRecorder)']);
 })().catch((e) => { console.error(e); process.exit(1); });
 """)
 
