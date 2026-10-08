@@ -16355,13 +16355,7 @@
             event.preventDefault();
         }
         const mod = historyArchiveModule();
-        if (mod) {
-            mod.storeArchiveSectionCollapsed(pageArchiveStorage(), !isArchiveSectionCollapsed());
-        } else {
-            try {
-                localStorage.setItem('cuttleArchiveSectionCollapsed', isArchiveSectionCollapsed() ? '0' : '1');
-            } catch (_) {}
-        }
+        if (mod) mod.storeArchiveSectionCollapsed(pageArchiveStorage(), !isArchiveSectionCollapsed());
         renderArchivedSection();
     }
 
