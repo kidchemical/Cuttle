@@ -419,6 +419,10 @@ card render/effects, config path, and stream fixes have since moved to
 their owners, while pane layout and page-side sync/transport effects
 remain where they were. Nothing here is a proposed interface.
 
+The monolith refactor that follows records its own measured starting point
+in [`monolith-baseline.md`](monolith-baseline.md). Its per-slice destinations
+and gates are in [`monolith-refactor-plan.md`](monolith-refactor-plan.md).
+
 | Task | Regions / symbols | Mutable state + interfaces touched | Tests |
 |---|---|---|---|
 | Action-card render | page `formatMessage` + `actionFormBlocks` placeholder array + narrow `renderActionFormCard` adapter (pre-rendered preview, explicit session/esc in; all in `chat_page.js`); card HTML/render planning `CuttleChatActionForms.renderActionFormCardHtml` (`chat_action_forms.js`, pure no-DOM); page `activateEnhancements` (non-card helpers only) + narrow adapters (`dismissOpenInteractiveCards`, `runningWatchJobIds`, `formAwaitingSessionIdFromCard`, cross-pane listener) delegating to the card-effects controller; card mount/submission/dismissal, lock/progress DOM, watch/restart loops, choice storage, adoption and linked-restart recovery in `CuttleChatActionCards.mountCards` (`chat_action_cards.js`, one instance per chat root, explicit host capabilities); backend `rewrite_action_forms`, `merge_qa_resume_specs` (`action_forms.py`), `prepare_assistant_text_for_actions` (`project_actions.py`) | card lock/selection attrs, watch timers, HMAC-signed persisted specs, one-writer answer bubble (`sendMessage` only) | `test_chat_action_forms.py`, `test_action_forms.py`, `test_action_form_routes.py`, `test_chat_action_card_render.py` (Node render battery, 16), `test_chat_action_cards.py` (Node controller contract, 3), `e2e/test_chat_action_card_render.py` (isolated browser, 3), `e2e/test_chat_action_cards_controller.py` (isolated browser, 7), `e2e/test_chat_action_card_effects.py` (23 lifecycle/submission/delivery cases) |
