@@ -88,7 +88,7 @@ def complete(
                 user=user, system=system, model=model_id,
                 max_tokens=max_tokens, temperature=temperature, timeout=timeout,
                 json_object=json_object, effort=resolve_effort(n, model_id, effort),
-            ))
+            ), usage_task=f"llm:{task}" if task else "llm")
         except Exception as exc:
             # Report failure metadata without logging credentials, prompts or
             # provider response bodies. Callers may then fall back honestly.

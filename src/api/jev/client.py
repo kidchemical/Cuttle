@@ -51,6 +51,7 @@ class JevClient:
         questions: QuestionMap,
         *,
         model: Optional[str] = None,
+        task: str = "jev",
     ) -> SystemOneResult:
         if not questions:
             raise JevError("questions required", retryable=False)
@@ -64,7 +65,8 @@ class JevClient:
         model_id = (model or self.model).strip() or self.model
         try:
             data = decide("typesafe", DecisionRequest(state, questions, model_id,
-                          self.api_key, self.base_url, self.timeout_s))
+                          self.api_key, self.base_url, self.timeout_s),
+                          usage_task=task or "jev")
         except ProviderError as exc:
             raise JevError(str(exc), retryable=exc.retryable, status=exc.status) from exc
         answers_raw = data.get("answers") if isinstance(data.get("answers"), dict) else {}
@@ -98,6 +100,7 @@ class FakeJevClient(JevClient):
         questions: QuestionMap,
         *,
         model: Optional[str] = None,
+        task: str = "jev",
     ) -> SystemOneResult:
         payload = self.canned
         if self.handler is not None:

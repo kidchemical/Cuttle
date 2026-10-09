@@ -120,7 +120,7 @@ def decide_routing(
     }
     try:
         c = client or get_client()
-        result = c.system_one(state, questions)
+        result = c.system_one(state, questions, task="jev:route")
     except JevError as e:
         raise ProviderError(str(e), retryable=e.retryable) from e
     except Exception as e:

@@ -258,6 +258,13 @@ try:
 except Exception as _workers_err:
     print(f"[DEVICE_WORKERS] Failed to register routes: {_workers_err}")
 
+# Unified Jobs surface (read model + control in api.jobs; bootstrap only here)
+try:
+    from api.jobs.routes import jobs_bp
+    app.register_blueprint(jobs_bp)
+except Exception as _jobs_err:
+    print(f"[JOBS] Failed to register routes: {_jobs_err}")
+
 try:
     from api.dashboards.routes import dashboards_bp
     app.register_blueprint(dashboards_bp)
@@ -1560,10 +1567,10 @@ def api_status():
 @app.route('/api/executing-jobs', methods=['GET'])
 @owner_required
 def api_executing_jobs():
-    """Return list of pipeline runs currently executing (not merely listening). Used by Jobs panel."""
+    """Compat: live in-flight jobs for the shell badge. Owned by api.jobs."""
     try:
-        from api.active_executions import get_executing_jobs
-        jobs = get_executing_jobs()
+        from api.jobs.ledger import inflight
+        jobs = inflight()
         return jsonify({
             'executing_jobs': jobs
         })

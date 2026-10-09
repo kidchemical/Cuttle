@@ -18,7 +18,7 @@ def isolated(monkeypatch, tmp_path):
     stored = {}
     monkeypatch.setattr(bg, '_settings', lambda: NS(get_setting=lambda k: stored.get(k),
         set_setting=lambda k,v: (stored.__setitem__(k,v) or True)))
-    monkeypatch.setattr(bg.providers, 'generate_text', lambda *a: pytest.fail('Unexpected external API execution'))
+    monkeypatch.setattr(bg.providers, 'generate_text', lambda *a, **k: pytest.fail('Unexpected external API execution'))
     monkeypatch.setattr(bg.catalog, 'get_agent', lambda *a: pytest.fail('Unexpected CLI execution'))
     return stored
 
@@ -41,7 +41,7 @@ def test_unconfigured_has_no_hidden_chain(isolated):
 
 def test_api_fallback_and_task_temperature(monkeypatch, isolated):
     requests = []
-    def fake(pid, request):
+    def fake(pid, request, **_kw):
         requests.append((pid, request))
         return None if pid == 'openai' else TextResult('hello')
     monkeypatch.setattr(bg.providers, 'generate_text', fake)
@@ -70,7 +70,7 @@ def test_cancellation_is_terminal(monkeypatch):
 
 def test_bad_json_falls_back(monkeypatch):
     monkeypatch.setattr(bg.providers, 'cached_capabilities', lambda *a: {'json_object':True})
-    monkeypatch.setattr(bg.providers, 'generate_text', lambda pid,r: TextResult('[]' if pid == 'openai' else '{"ok":true}'))
+    monkeypatch.setattr(bg.providers, 'generate_text', lambda pid, r, **_kw: TextResult('[]' if pid == 'openai' else '{"ok":true}'))
     chain = [{'kind':'api','target':'openai'}, {'kind':'api','target':'local'}]
     assert bg.generate('router', TextRequest('json', json_object=True), chain=chain).text == '{"ok":true}'
 
@@ -183,7 +183,7 @@ def test_router_override_precedes_jev_and_local_but_off_stays_off(monkeypatch, i
 def test_anthropic_json_text_is_validated_without_json_mode(monkeypatch):
     captured = []
     monkeypatch.setattr(bg.providers,'cached_capabilities',lambda *a: {'json_object':False})
-    monkeypatch.setattr(bg.providers,'generate_text',lambda pid,r: (captured.append(r) or TextResult('{"ok":true}')))
+    monkeypatch.setattr(bg.providers,'generate_text',lambda pid, r, **_kw: (captured.append(r) or TextResult('{"ok":true}')))
     result = bg.generate('router', TextRequest('choose',json_object=True), chain=[{'kind':'api','target':'anthropic','model':'fake'}])
     assert result.text == '{"ok":true}'
     assert captured[0].json_object is False and 'JSON object' in captured[0].system
@@ -210,7 +210,7 @@ def test_task_callers_use_configured_cli_without_api_hops(monkeypatch, isolated)
 
 def test_cancel_during_api_request_discards_result_and_stops_fallback(monkeypatch):
     event = threading.Event()
-    def fake(pid, request):
+    def fake(pid, request, **_kw):
         assert pid == 'openai'; event.set(); return TextResult('cancelled result')
     monkeypatch.setattr(bg.providers,'generate_text',fake)
     with pytest.raises(HelperCancelled):

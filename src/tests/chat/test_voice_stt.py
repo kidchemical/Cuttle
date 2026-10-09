@@ -32,7 +32,7 @@ class _FakeTranscriptions:
 def fake(monkeypatch):
     monkeypatch.delenv("CUTTLE_EXPERIMENTAL", raising=False)
     tr = _FakeTranscriptions()
-    def transport(provider, request):
+    def transport(provider, request, **_kw):
         assert provider == "openai"
         kwargs = dict(model=request.model, file=(request.filename, request.audio, request.mime))
         if request.prompt:

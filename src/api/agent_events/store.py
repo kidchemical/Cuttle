@@ -197,6 +197,29 @@ class EventStore:
                 FROM runs WHERE status='running' ORDER BY started_at''').fetchall()
         return [dict(r) for r in rows]
 
+    def recent_runs(self, limit=200, status=None):
+        """Recent run records with decoded metadata, newest first (Jobs ledger source)."""
+        with self.connection() as conn:
+            if status:
+                rows = conn.execute(
+                    'SELECT * FROM runs WHERE status=? ORDER BY started_at DESC LIMIT ?',
+                    (status, min(max(int(limit), 1), 500)),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    'SELECT * FROM runs ORDER BY started_at DESC LIMIT ?',
+                    (min(max(int(limit), 1), 500),),
+                ).fetchall()
+        out = []
+        for row in rows:
+            item = dict(row)
+            try:
+                item['metadata'] = json.loads(item['metadata'])
+            except (ValueError, TypeError):
+                item['metadata'] = {}
+            out.append(item)
+        return out
+
     def stats(self):
         with self.connection() as conn:
             count=conn.execute('SELECT COUNT(*),MIN(ts),MAX(ts) FROM events').fetchone()

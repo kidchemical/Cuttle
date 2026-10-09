@@ -216,9 +216,15 @@ def synthesize(provider_id, text, *, voice=None, model=None, speed=None, stabili
     text = str(text or "").strip()
     if not text:
         raise ValueError("Nothing to speak")
-    result = synthesize_speech(provider_id, SpeechRequest(text, normalize_model(provider_id, model),
-                              normalize_voice(provider_id, voice, normalize_model(provider_id, model)), clamp_speed(provider_id, speed),
-                              clamp_stability(provider_id, stability)))
+    model_id = normalize_model(provider_id, model)
+    try:
+        tts_cost = estimate_cost_usd(provider_id, model_id, chars=len(text))
+    except Exception:
+        tts_cost = None
+    result = synthesize_speech(provider_id, SpeechRequest(text, model_id,
+                              normalize_voice(provider_id, voice, model_id), clamp_speed(provider_id, speed),
+                              clamp_stability(provider_id, stability)),
+                              usage_task="tts", usage_cost=tts_cost)
     return result.audio, result.mime, result.usage
 
 

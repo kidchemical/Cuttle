@@ -222,7 +222,7 @@ def test_llm_complete_reads_the_registry(monkeypatch):
 
     seen = {}
 
-    def _fake_provider(provider, request):
+    def _fake_provider(provider, request, **_kw):
         seen["model"] = request.model
         return "ok"
 
@@ -239,7 +239,7 @@ def test_llm_complete_order_comes_from_the_registry(monkeypatch, store):
     tried = []
 
     monkeypatch.setattr(llm_complete, "_complete_provider",
-                        lambda provider, request: tried.append(provider))
+                        lambda provider, request, **_kw: tried.append(provider))
 
     cp.set_preferred_provider("anthropic")
     llm_complete.complete(user="hi")
@@ -252,7 +252,7 @@ def test_llm_complete_explicit_local_provider_stays_local_only(monkeypatch):
 
     tried = []
     monkeypatch.setattr(llm_complete, "_complete_provider",
-                        lambda provider, request: tried.append(provider))
+                        lambda provider, request, **_kw: tried.append(provider))
     llm_complete.complete(user="hi", providers=("local",))
     assert tried == ["local"]
 

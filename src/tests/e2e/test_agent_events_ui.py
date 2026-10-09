@@ -126,6 +126,9 @@ def test_feed_active_strip_and_finish_states(browser,static_server):
         expect(page.locator('.feed-active-text')).to_contain_text('is active')
         assert page.locator('.feed-active-row .typing-orbit--feed').count()==1
         assert page.locator('.feed-active-dots i').count()==3
+        active_row=page.locator('.feed-active-row').first
+        assert active_row.get_attribute('href').endswith('session_id=1066')
+        expect(active_row.locator('.feed-active-chat')).to_have_text('CH-001066')
         expect(page.locator('.feed-step[data-state=ok]')).to_have_count(1)
         expect(page.locator('.feed-step[data-state=error]')).to_have_count(1)
         assert page.locator('.feed-step[data-state=ok] .feed-title').inner_text()=='Finished'

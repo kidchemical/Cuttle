@@ -5,11 +5,20 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
 from flask import Flask
 
 from api.agent_router.outcomes import all_outcomes, record_turn
 from api.dashboards import usage
 from api.dashboards.routes import dashboards_bp
+from api.model_providers import usage as provider_usage
+
+
+@pytest.fixture(autouse=True)
+def _empty_provider_ledger(tmp_path, monkeypatch):
+    # Service-layer tests in this process record real ledger rows into the
+    # shared test home; keep outcome-only assertions hermetic by default.
+    monkeypatch.setenv("CUTTLE_PROVIDER_CALLS_DB", str(tmp_path / "provider_calls.db"))
 
 NOW = datetime(2026, 9, 26, 18, 0, tzinfo=timezone.utc).timestamp()
 DAY = 86400.0
@@ -265,3 +274,59 @@ def test_one_and_three_day_ranges(tmp_path: Path):
     assert (three["start"], three["end"]) == ("2026-09-24", "2026-09-26")
     assert len(three["buckets"]) == 3
     assert three["stats"]["turns"] == 3
+
+
+def _seed_provider_calls(db: Path) -> None:
+    provider_usage.record_call(
+        provider="typesafe", operation="structured_decision", model="jev-latest",
+        task="jev:label", success=True, failure_kind="none", latency_ms=400.0,
+        usage={"input_tokens": 50, "output_tokens": 5, "total_tokens": 55},
+        recorded_at=NOW, db_path=db,
+    )
+    provider_usage.record_call(
+        provider="openai", operation="text_generation", model="gpt-4o-mini",
+        task="background:titles", success=True, failure_kind="none", latency_ms=900.0,
+        usage={"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120},
+        cost=0.002, recorded_at=NOW, db_path=db,
+    )
+
+
+def test_api_calls_merge_into_usage_groups(tmp_path: Path, monkeypatch):
+    from api import model_pricing
+
+    monkeypatch.setattr(model_pricing, "estimate_cost_usd", lambda *a, **kw: None)
+    db = tmp_path / "outcomes.db"
+    _seed(db)
+    pdb = tmp_path / "provider_calls.db"
+    _seed_provider_calls(pdb)
+    out = usage.cuttle_usage(
+        range_id="1d", group_by="harness", tz_offset_minutes=0,
+        db_path=db, provider_db_path=pdb, now=NOW,
+    )
+    by_key = {g["key"]: g for g in out["groups"]}
+    assert {"codex", "typesafe", "openai"} <= set(by_key)
+    jev = by_key["typesafe"]["totals"]
+    assert jev["turns"] == 1
+    assert jev["total_tokens"] == 55
+    assert jev["agent_hours"] == 0.0  # provider latency never counts as agent time
+    assert by_key["openai"]["totals"]["cost_usd"] == 0.002
+    assert out["totals"]["turns"] == 3  # 1 outcome turn + 2 API calls
+
+
+def test_api_source_filter_isolates_provider_calls(tmp_path: Path, monkeypatch):
+    from api import model_pricing
+
+    monkeypatch.setattr(model_pricing, "estimate_cost_usd", lambda *a, **kw: None)
+    db = tmp_path / "outcomes.db"
+    _seed(db)
+    pdb = tmp_path / "provider_calls.db"
+    _seed_provider_calls(pdb)
+    kw = {"range_id": "1d", "tz_offset_minutes": 0, "db_path": db,
+          "provider_db_path": pdb, "now": NOW}
+    api_only = usage.cuttle_usage(source_id="api", group_by="model", **kw)
+    assert {g["label"] for g in api_only["groups"]} == {"jev-latest", "gpt-4o-mini"}
+    assert api_only["totals"]["turns"] == 2
+    router = usage.cuttle_usage(source_id="router", group_by="model", **kw)
+    assert "jev-latest" not in {g["label"] for g in router["groups"]}
+    pinned = usage.cuttle_usage(source_id="pinned", group_by="model", **kw)
+    assert "jev-latest" not in {g["label"] for g in pinned["groups"]}

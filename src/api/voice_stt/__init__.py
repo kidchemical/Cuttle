@@ -86,7 +86,8 @@ def transcribe(
     for model in (DEFAULT_MODEL, FALLBACK_MODEL):
         try:
             result = provider_transcribe("openai", TranscriptionRequest(audio, model,
-                        filename=f"phrase.{file_extension(mime)}", mime=mime or "audio/webm", **kwargs))
+                        filename=f"phrase.{file_extension(mime)}", mime=mime or "audio/webm", **kwargs),
+                        usage_task="stt")
         except Exception as exc:  # model unavailable on this key → try the fallback
             last_error = exc
             continue

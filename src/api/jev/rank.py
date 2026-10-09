@@ -186,7 +186,7 @@ def rank_context(
     }
     try:
         c = client or get_client(timeout_s=8.0)
-        result = c.system_one(state, questions)
+        result = c.system_one(state, questions, task="jev:rank")
     except (JevError, Exception) as e:
         return {"items": [], "meta": {"error": str(e)[:200], "skipped": True}}
 
@@ -301,7 +301,7 @@ def rank_skill_refs(
     }
     try:
         c = client or get_client(timeout_s=8.0)
-        result = c.system_one({"user_request": (user_prompt or "")[:1500]}, questions)
+        result = c.system_one({"user_request": (user_prompt or "")[:1500]}, questions, task="jev:rank")
     except Exception:
         return summaries[:max_skills]
     if float(result.get("needs_a_skill").noul or 0.0) < T.NEEDS_EXTRA_CONTEXT_NOUL:

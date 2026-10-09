@@ -177,7 +177,7 @@ def generate(task: str, request: TextRequest, *, chain=None, cancel_event=None) 
                     # JSON text. Validate the returned object before accepting it.
                     hop = replace(hop, json_object=False,
                                   system=hop.system + '\nReturn exactly one valid JSON object without Markdown fences.')
-                result = providers.generate_text(pid, hop)
+                result = providers.generate_text(pid, hop, usage_task=f"background:{task}")
             else:
                 if request.images: raise ValueError("CLI background helpers accept text only")
                 entry = catalog.get_agent(pid)

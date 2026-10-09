@@ -119,7 +119,8 @@
         const fragment=document.createDocumentFragment();
         const title=node('h2','Active now');title.className='feed-active-title';fragment.append(title);
         for(const run of activeRuns) {
-            const row=document.createElement('div');row.className='feed-active-row';
+            const row=document.createElement(run.chat_session_id?'a':'div');row.className='feed-active-row';
+            if(run.chat_session_id) row.href='/chat_page.html?session_id='+encodeURIComponent(run.chat_session_id);
             const orbit=document.createElement('span');orbit.className='typing-orbit typing-orbit--feed';orbit.setAttribute('aria-hidden','true');
             orbit.innerHTML='<span class="typing-orbit-ring"></span><span class="typing-orbit-ring typing-orbit-ring--inner"></span><span class="typing-orbit-core"></span><span class="typing-orbit-sat typing-orbit-sat--1"></span><span class="typing-orbit-sat typing-orbit-sat--2"></span><span class="typing-orbit-sat typing-orbit-sat--3"></span><span class="typing-orbit-beam"></span>';
             const chip=node('span',run.agent_id||'Agent');chip.className='feed-active-agent';
@@ -128,6 +129,10 @@
             dots.append(node('i',''),node('i',''),node('i',''));
             text.append(dots);
             row.append(orbit,chip,text);
+            if(run.chat_session_id) {
+                const chat=node('span','CH-'+String(run.chat_session_id).padStart(6,'0'));chat.className='feed-active-chat';
+                row.append(chat);
+            }
             fragment.append(row);
         }
         activeEl.replaceChildren(fragment);

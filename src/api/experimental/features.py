@@ -104,3 +104,9 @@ register_flag(FlagSpec(
     description="Observe agent tool calls, edits and CLI-exposed thinking across chats. Uses the shared event store.",
     default=False, category="agents", risk="low", since="0.0.0", needs_restart=False,
 ))
+
+register_flag(FlagSpec(
+    id="jobs_surface", label="Jobs surface",
+    description="Unified Jobs page: every execution Cuttle handles — local agent turns, background helpers and mesh jobs — as one ledger with running-now, recent history, cancel/rerun control and telemetry.",
+    default=False, category="ui", risk="low", since="0.0.0", needs_restart=False,
+))

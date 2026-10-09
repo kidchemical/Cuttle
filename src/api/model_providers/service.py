@@ -6,7 +6,7 @@ import threading
 import time
 from typing import Any
 
-from . import cache, capabilities, models_dev
+from . import cache, capabilities, models_dev, usage as provider_usage
 from .catalog import get_adapter, get_provider, manifests
 from .types import TextRequest, TextResult, SpeechRequest, SpeechResult, TranscriptionRequest
 
@@ -118,9 +118,34 @@ def cached_capabilities(provider_id: str, model_id: str) -> dict[str, Any]:
     return capabilities.resolve(manifest, model_id, metadata=meta, live=live)
 
 
-def complete_text(provider_id: str, request: TextRequest) -> str | None:
+def _record_call(provider_id: str, operation: str, model: str, task: str,
+                 session_id, start: float, *, result=None, error: bool = False,
+                 cost: float | None = None) -> None:
+    """Ledger write for one adapter invocation. Never raises, never retries."""
+    try:
+        usage = {}
+        if isinstance(result, dict):
+            raw = result.get("usage")
+            usage = dict(raw) if isinstance(raw, dict) else {}
+        elif result is not None:
+            raw = getattr(result, "usage", None)
+            usage = dict(raw) if isinstance(raw, dict) else {}
+        provider_usage.record_call(
+            provider=provider_id, operation=operation, model=model, task=task,
+            session_id=session_id, success=not error and result is not None,
+            failure_kind="none" if (not error and result is not None) else ("transport" if error else "error"),
+            latency_ms=(time.time() - start) * 1000.0,
+            usage=usage or None,
+            cost=cost,
+        )
+    except Exception:
+        pass
+
+
+def complete_text(provider_id: str, request: TextRequest, *, usage_task: str = "",
+                  session_id=None) -> str | None:
     """Text-only facade over the canonical operation/result contract."""
-    result = generate_text(provider_id, request)
+    result = generate_text(provider_id, request, usage_task=usage_task, session_id=session_id)
     return result.text if result else None
 
 
@@ -144,7 +169,8 @@ def validate_temperature(provider_id, model, temperature, effort=None):
     return temperature
 
 
-def generate_text(provider_id: str, request: TextRequest) -> TextResult | None:
+def generate_text(provider_id: str, request: TextRequest, *, usage_task: str = "",
+                  session_id=None) -> TextResult | None:
     manifest = get_provider(provider_id)
     if manifest is None or not manifest.configured() or "text_generation" not in manifest.operations:
         return None
@@ -156,7 +182,16 @@ def generate_text(provider_id: str, request: TextRequest) -> TextResult | None:
     validate_effort(provider_id, request.model, request.effort)
     if request.images and caps.get("input_modalities") and "image" not in caps["input_modalities"]:
         raise ValueError("This model does not support image input")
-    return get_adapter(provider_id).generate_text(manifest, request, caps)
+    start = time.time()
+    try:
+        result = get_adapter(provider_id).generate_text(manifest, request, caps)
+    except Exception:
+        _record_call(provider_id, "text_generation", request.model, usage_task,
+                     session_id, start, error=True)
+        raise
+    _record_call(provider_id, "text_generation", request.model, usage_task,
+                 session_id, start, result=result)
+    return result
 
 
 def _operation(provider_id, operation, model):
@@ -171,19 +206,39 @@ def _operation(provider_id, operation, model):
     return manifest, get_adapter(provider_id), caps
 
 
-def synthesize_speech(provider_id: str, request: SpeechRequest) -> SpeechResult:
+def synthesize_speech(provider_id: str, request: SpeechRequest, *, usage_task: str = "",
+                      session_id=None, usage_cost: float | None = None) -> SpeechResult:
     manifest, adapter, caps = _operation(provider_id, "speech_generation", request.model)
     # Built-in model voice restrictions are checked without remote catalog reads.
     if not manifest.speech.get("fetch_voices"):
         voices = adapter.list_voices(manifest, request.model)
         if voices and request.voice not in {v["id"] for v in voices}:
             raise ValueError("Voice is not supported by the selected model")
-    return adapter.synthesize_speech(manifest, request, caps)
+    start = time.time()
+    try:
+        result = adapter.synthesize_speech(manifest, request, caps)
+    except Exception:
+        _record_call(provider_id, "speech_generation", request.model, usage_task,
+                     session_id, start, error=True)
+        raise
+    _record_call(provider_id, "speech_generation", request.model, usage_task,
+                 session_id, start, result=result, cost=usage_cost)
+    return result
 
 
-def transcribe(provider_id: str, request: TranscriptionRequest) -> str:
+def transcribe(provider_id: str, request: TranscriptionRequest, *, usage_task: str = "",
+               session_id=None) -> str:
     manifest, adapter, _ = _operation(provider_id, "audio_transcription", request.model)
-    return adapter.transcribe(manifest, request)
+    start = time.time()
+    try:
+        text = adapter.transcribe(manifest, request)
+    except Exception:
+        _record_call(provider_id, "audio_transcription", request.model, usage_task,
+                     session_id, start, error=True)
+        raise
+    _record_call(provider_id, "audio_transcription", request.model, usage_task,
+                 session_id, start, result={"usage": {}})
+    return text
 
 
 def check_key(provider_id: str, key: str):
@@ -235,8 +290,17 @@ def discover_voices(provider_id: str, *, model: str = "", refresh: bool = False)
                     message=saved.get("error") or (None if manifest.configured() else "Add a provider API key to list account voices."))
 
 
-def decide(provider_id, request):
+def decide(provider_id, request, *, usage_task: str = "jev", session_id=None):
     manifest = get_provider(provider_id)
     if manifest is None or 'structured_decision' not in manifest.operations:
         raise ValueError('Unsupported decision provider')
-    return get_adapter(provider_id).decide(manifest, request)
+    start = time.time()
+    try:
+        data = get_adapter(provider_id).decide(manifest, request)
+    except Exception:
+        _record_call(provider_id, "structured_decision", getattr(request, "model", ""),
+                     usage_task, session_id, start, error=True)
+        raise
+    _record_call(provider_id, "structured_decision", getattr(request, "model", ""),
+                 usage_task, session_id, start, result=data if isinstance(data, dict) else {"usage": {}})
+    return data

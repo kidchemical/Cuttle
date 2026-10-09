@@ -122,7 +122,8 @@ def _describe_image(provider, model, *, data=None, url=None, mime="image/png", f
         data, mime = _normalize_image_bytes(data, mime)
     result = generate_text(provider, TextRequest(VISION_PROMPT.format(filename=filename),
                                                model=model, max_tokens=1024,
-                                               images=(ImageInput(data, mime, url if data is None else None),)))
+                                               images=(ImageInput(data, mime, url if data is None else None),)),
+                           usage_task="vision")
     if result is None:
         raise RuntimeError("Vision provider API key missing or model unsupported")
     return result.text.strip()

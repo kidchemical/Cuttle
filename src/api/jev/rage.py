@@ -60,7 +60,7 @@ def investigate_attempts(
 
     try:
         c = client or get_client(timeout_s=20.0)
-        result = c.system_one(state, questions)
+        result = c.system_one(state, questions, task="jev:rage")
     except JevError:
         raise
     except Exception as e:

@@ -284,7 +284,7 @@ def summarize_for_speech_with_usage(
     from api.model_providers.types import TextRequest
     from api.background_helpers import has_selection, generate
     request = TextRequest(snippet, system=system, model=model_id, max_tokens=280, effort=effort)
-    result = generate("narration", request) if has_selection("narration") else generate_text(pid, request)
+    result = generate("narration", request) if has_selection("narration") else generate_text(pid, request, usage_task="tts:narration")
     if result is None or not result.text.strip():
         raise RuntimeError("Narrator provider returned no text")
     text_out = result.text

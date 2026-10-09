@@ -35,6 +35,7 @@ SOURCES = [
     {"id": "all", "name": "All turns"},
     {"id": "pinned", "name": "Pinned agents"},
     {"id": "router", "name": "Agent router"},
+    {"id": "api", "name": "API calls"},
 ]
 METRICS = [
     {"id": "cost_usd", "label": "API-equivalent cost (estimate)", "unit": "usd"},
@@ -217,6 +218,65 @@ def _empty_totals() -> Dict[str, float]:
     return {m["id"]: 0.0 for m in METRICS}
 
 
+def _provider_call_rows(
+    since_ts: Optional[float],
+    db_path: Optional[Path] = None,
+) -> List[Dict[str, Any]]:
+    """Map provider-ledger calls onto outcome-shaped rows.
+
+    Cost is the recorded value when the domain owner estimated one (TTS),
+    else a models.dev estimate from the call's tokens; calls without public
+    rates (Jev, speech, transcription) stay count-only. Any failure resolves
+    to ``[]`` so the dashboard never breaks on ledger trouble.
+    """
+    try:
+        from api.model_providers import usage as provider_usage
+    except Exception:
+        return []
+    try:
+        calls = provider_usage.all_calls(since=since_ts, db_path=db_path)
+    except Exception:
+        return []
+    rows: List[Dict[str, Any]] = []
+    for call in calls:
+        provider = str(call.get("provider") or "api").strip().lower() or "api"
+        model = str(call.get("model") or "").strip()
+        prompt = call.get("prompt_tokens")
+        completion = call.get("completion_tokens")
+        total = call.get("total_tokens")
+        cost = call.get("cost")
+        if cost is None and (prompt or completion or total):
+            try:
+                from api.model_pricing import estimate_cost_usd
+
+                key = f"{provider}/{model}" if model else provider
+                cost = estimate_cost_usd(key, int(prompt or 0), int(completion or 0))
+            except Exception:
+                cost = None
+        rows.append({
+            "recorded_at": call.get("recorded_at"),
+            "decision_id": f"api-call-{call.get('id')}",
+            "attempt_index": 0,
+            "session_id": call.get("session_id"),
+            "target_agent": provider,
+            "target_model": model,
+            "source": "api",
+            "task": str(call.get("task") or ""),
+            "operation": str(call.get("operation") or ""),
+            "success": call.get("success"),
+            "failure_kind": call.get("failure_kind") or "none",
+            "latency_ms": None,
+            "query_id": None,
+            "prompt_tokens": prompt,
+            "completion_tokens": completion,
+            "total_tokens": total,
+            "cached_tokens": None,
+            "cost": cost,
+            "reasoning_effort": None,
+        })
+    return rows
+
+
 def cuttle_usage(
     *,
     range_id: str = "30d",
@@ -228,6 +288,7 @@ def cuttle_usage(
     tz_offset_minutes: Optional[int] = None,
     db_path: Optional[Path] = None,
     auth_db_path: Optional[Path] = None,
+    provider_db_path: Optional[Path] = None,
     now: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Stacked-column series per time bucket; ``start``/``end`` (YYYY-MM-DD) override ``range_id``."""
@@ -280,10 +341,16 @@ def cuttle_usage(
 
     until = _ts(end_day + timedelta(days=1))
     rows = [r for r in rows if r.get("recorded_at") is not None and float(r["recorded_at"]) < until]
+    rows = rows + [
+        r for r in _provider_call_rows(_ts(start_day) if start_day else None, provider_db_path)
+        if r.get("recorded_at") is not None and float(r["recorded_at"]) < until
+    ]
     if source_id == "pinned":
         rows = [r for r in rows if r.get("source") == "pinned"]
     elif source_id == "router":
-        rows = [r for r in rows if r.get("source") != "pinned"]
+        rows = [r for r in rows if r.get("source") not in ("pinned", "api")]
+    elif source_id == "api":
+        rows = [r for r in rows if r.get("source") == "api"]
 
     if start_day is None:
         stamps = [float(r["recorded_at"]) for r in rows]
@@ -360,9 +427,12 @@ def cuttle_usage(
             "groups": len(groups),
         },
         "message": (
-            "Every recorded attempt (pinned agents, router, fallbacks, cancelled turns). "
+            "Every recorded attempt (pinned agents, router, fallbacks, cancelled turns) "
+            "plus direct API calls (background helpers, titles, router brain, vision, "
+            "TTS/STT, Jev judgments) counted as turns under their provider. "
             "Cost is the harness-reported price when it reports one (OpenCode), otherwise a "
             "models.dev estimate from the turn's tokens (Muse, Codex; Cursor subscription "
-            "turns when a concrete model is pinned — Auto has no public rate)."
+            "turns when a concrete model is pinned — Auto has no public rate). "
+            "API calls without public rates (Jev, speech) track counts and tokens only."
         ),
     }

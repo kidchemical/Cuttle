@@ -7684,7 +7684,7 @@ async function pollJobsBadge() {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
     try {
-        const rJobs = await fetch('/api/executing-jobs', { cache: 'no-store', signal: controller.signal });
+        const rJobs = await fetch('/api/jobs/in-flight', { cache: 'no-store', signal: controller.signal });
         if (rJobs.ok) {
             const dJobs = await rJobs.json();
             const executing = dJobs.executing_jobs || [];

@@ -262,9 +262,9 @@ def test_background_and_narration_resolve_separate_model_efforts(monkeypatch):
         def set_setting(self,key,value): self.values[key]=value; return True
     monkeypatch.setattr(cp,'_settings',lambda:Settings())
     calls=[]
-    monkeypatch.setattr(llm_complete,'_complete_provider',lambda p,r:calls.append(r) or 'text')
+    monkeypatch.setattr(llm_complete,'_complete_provider',lambda p, r, **_kw:calls.append(r) or 'text')
     assert llm_complete.complete(user='hello',providers=['anthropic'])=='text' and calls[-1].effort=='high'
-    monkeypatch.setattr(service,'generate_text',lambda p,r:calls.append(r) or TextResult('Summary'))
+    monkeypatch.setattr(service,'generate_text',lambda p, r, **_kw:calls.append(r) or TextResult('Summary'))
     settings=chat_tts.normalize_chat_tts_settings({'summarize_provider':'anthropic','summarize_models':{'anthropic':'claude-haiku-5-5'},
                'summarize_efforts':{'anthropic':{'claude-haiku-5-5':'max'}}})
     chat_tts.prepare_spoken_text_with_usage('word '*100,settings)
