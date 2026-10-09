@@ -21,7 +21,8 @@ from api import tts_providers as providers
 
 # Narrator (speak-summary) backends. The model id itself is free-form — any
 # model the user's key can reach — with registry suggestions in the UI.
-SUMMARIZE_PROVIDERS = ("openai", "anthropic")
+from api.completion_providers import DEFAULT_ORDER
+SUMMARIZE_PROVIDERS = DEFAULT_ORDER
 
 DEFAULT_CHAT_TTS: Dict[str, Any] = {
     "enabled": True,
@@ -33,6 +34,7 @@ DEFAULT_CHAT_TTS: Dict[str, Any] = {
     "summarize": True,
     "summarize_provider": "openai",
     "summarize_models": {},
+    "summarize_efforts": {},
     "target_spoken_chars": 420,
     "skip_summarize_under_chars": 380,
     "max_input_chars": 24000,
@@ -65,7 +67,8 @@ _MULTI_NL_RE = re.compile(r"\n{3,}")
 
 
 def default_chat_tts_settings() -> Dict[str, Any]:
-    return dict(DEFAULT_CHAT_TTS)
+    import copy
+    return copy.deepcopy(DEFAULT_CHAT_TTS)
 
 
 def _str_map(raw: Any) -> Dict[str, str]:
@@ -82,7 +85,7 @@ def effective_tts_model(settings: Dict[str, Any], provider: str) -> str:
 
 def effective_tts_voice(settings: Dict[str, Any], provider: str) -> str:
     return providers.normalize_voice(
-        provider, (settings.get("voices") or {}).get(provider)
+        provider, (settings.get("voices") or {}).get(provider), effective_tts_model(settings, provider)
     )
 
 
@@ -143,6 +146,12 @@ def normalize_chat_tts_settings(raw: Any) -> Dict[str, Any]:
         out["summarize_models"] = {
             k: v for k, v in smodels.items() if k in SUMMARIZE_PROVIDERS
         }
+    efforts = raw.get("summarize_efforts") or {}
+    if isinstance(efforts, dict):
+        out["summarize_efforts"] = {pid: {mid: e for mid, e in rows.items()
+                                        if isinstance(mid, str) and isinstance(e, str)}
+                                  for pid, rows in efforts.items()
+                                  if pid in SUMMARIZE_PROVIDERS and isinstance(rows, dict)}
     legacy_smodel = str(raw.get("summarize_model") or "").strip()
     if legacy_smodel and "openai" not in out["summarize_models"]:
         out["summarize_models"] = {**out["summarize_models"], "openai": legacy_smodel}
@@ -179,7 +188,12 @@ def save_chat_tts_settings(partial: Dict[str, Any]) -> Dict[str, Any]:
     else:
         merged = current
     normalized = normalize_chat_tts_settings(merged)
-    sm.set_setting("chat_tts", normalized)
+    from api.model_providers.service import validate_effort
+    for pid, rows in normalized.get("summarize_efforts", {}).items():
+        for mid, effort in rows.items():
+            validate_effort(pid, mid, effort)
+    if not sm.set_setting("chat_tts", normalized):
+        raise RuntimeError("Failed to save chat voice settings")
     return normalized
 
 
@@ -199,32 +213,6 @@ def clean_text_for_speech(text: str) -> str:
     s = _MULTI_NL_RE.sub("\n\n", s)
     s = re.sub(r"[ \t]{2,}", " ", s)
     return s.strip()
-
-
-def _openai_client():
-    import os
-
-    key = (os.environ.get("OPENAI_API_KEY") or os.environ.get("API_KEY") or "").strip()
-    if not key:
-        raise RuntimeError("OPENAI_API_KEY is not set")
-    try:
-        from openai import OpenAI
-    except ImportError as e:
-        raise RuntimeError("openai package not installed") from e
-    return OpenAI(api_key=key)
-
-
-def _anthropic_client():
-    import os
-
-    key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
-    if not key:
-        raise RuntimeError("ANTHROPIC_API_KEY is not set")
-    try:
-        from anthropic import Anthropic
-    except ImportError as e:
-        raise RuntimeError("anthropic package not installed") from e
-    return Anthropic(api_key=key)
 
 
 def estimate_tts_cost_usd(
@@ -264,76 +252,13 @@ def _enrich_usage(usage: Dict[str, Any], model: str) -> Dict[str, Any]:
     return usage
 
 
-def _summarize_via_openai(
-    snippet: str, system: str, model: str
-) -> Tuple[str, Dict[str, Any]]:
-    client = _openai_client()
-    create_kw: Dict[str, Any] = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": snippet},
-        ],
-    }
-    # Reasoning mini models reject temperature / max_tokens.
-    if str(model).startswith(("o1", "o3", "o4")):
-        create_kw["max_completion_tokens"] = 280
-    else:
-        create_kw["temperature"] = 0.3
-        create_kw["max_tokens"] = 280
-    resp = client.chat.completions.create(**create_kw)
-    text = (resp.choices[0].message.content or "").strip()
-    usage: Dict[str, Any] = {"model": str(model)}
-    try:
-        ru = getattr(resp, "usage", None)
-        if ru is not None:
-            pt = int(getattr(ru, "prompt_tokens", 0) or 0)
-            ct = int(getattr(ru, "completion_tokens", 0) or 0)
-            if pt or ct:
-                usage["prompt_tokens"] = pt
-                usage["completion_tokens"] = ct
-                usage["total_tokens"] = int(getattr(ru, "total_tokens", 0) or (pt + ct))
-    except (TypeError, ValueError):
-        pass
-    return text, _enrich_usage(usage, model)
-
-
-def _summarize_via_anthropic(
-    snippet: str, system: str, model: str
-) -> Tuple[str, Dict[str, Any]]:
-    client = _anthropic_client()
-    resp = client.messages.create(
-        model=model,
-        max_tokens=280,
-        temperature=0.3,
-        system=system,
-        messages=[{"role": "user", "content": snippet}],
-    )
-    text = "".join(
-        getattr(b, "text", "") for b in (resp.content or [])
-        if getattr(b, "type", "") == "text"
-    ).strip()
-    usage: Dict[str, Any] = {"model": str(model)}
-    try:
-        ru = getattr(resp, "usage", None)
-        if ru is not None:
-            pt = int(getattr(ru, "input_tokens", 0) or 0)
-            ct = int(getattr(ru, "output_tokens", 0) or 0)
-            if pt or ct:
-                usage["prompt_tokens"] = pt
-                usage["completion_tokens"] = ct
-                usage["total_tokens"] = pt + ct
-    except (TypeError, ValueError):
-        pass
-    return text, _enrich_usage(usage, model)
-
-
 def summarize_for_speech_with_usage(
     text: str,
     *,
     provider: str = "openai",
     model: str = "",
     target_chars: int,
+    effort: Optional[str] = None,
 ) -> Tuple[str, Dict[str, Any]]:
     """Ask the narrator model for a short speakable summary.
 
@@ -355,10 +280,15 @@ def summarize_for_speech_with_usage(
     system = _summarize_system(target)
     # Cap prompt size — full agent replies can be huge.
     snippet = cleaned if len(cleaned) <= 12000 else cleaned[:12000] + "…"
-    if pid == "anthropic":
-        text_out, usage = _summarize_via_anthropic(snippet, system, model_id)
-    else:
-        text_out, usage = _summarize_via_openai(snippet, system, model_id)
+    from api.model_providers.service import generate_text
+    from api.model_providers.types import TextRequest
+    from api.background_helpers import has_selection, generate
+    request = TextRequest(snippet, system=system, model=model_id, max_tokens=280, effort=effort)
+    result = generate("narration", request) if has_selection("narration") else generate_text(pid, request)
+    if result is None or not result.text.strip():
+        raise RuntimeError("Narrator provider returned no text")
+    text_out = result.text
+    usage = result.usage if result.usage.get("execution") == "cli" else _enrich_usage(result.usage, result.usage.get("model") or model_id)
     out = clean_text_for_speech(text_out)
     if len(out) > target * 2:
         out = out[: target * 2].rsplit(" ", 1)[0].strip()
@@ -407,7 +337,7 @@ def resolve_speech_settings(
     return {
         "provider": provider,
         "model": providers.normalize_model(provider, merged_models.get(provider)),
-        "voice": providers.normalize_voice(provider, merged_voices.get(provider)),
+        "voice": providers.normalize_voice(provider, merged_voices.get(provider), providers.normalize_model(provider, merged_models.get(provider))),
         "speed": providers.clamp_speed(provider, speed),
         "stability": providers.clamp_stability(provider, stability),
     }
@@ -525,10 +455,11 @@ def prepare_spoken_text_with_usage(
     target = int(settings.get("target_spoken_chars") or 420)
     try:
         spoken, usage = summarize_for_speech_with_usage(
-            cleaned, provider=provider, model=model, target_chars=target
+            cleaned, provider=provider, model=model, target_chars=target,
+            effort=(settings.get("summarize_efforts") or {}).get(provider, {}).get(model) or None
         )
     except Exception as exc:
-        print(f"[CHAT_TTS] narrator ({provider}/{model}) failed, speaking full text: {exc}")
+        print(f"[CHAT_TTS] narrator ({provider}/{model}) failed, speaking full text: {type(exc).__name__}")
         return cleaned, False, {}
     return spoken, True, usage
 
@@ -606,6 +537,8 @@ def register_chat_tts_routes(app: Flask) -> None:
             partial = data.get("chat_tts") if isinstance(data.get("chat_tts"), dict) else data
             saved = save_chat_tts_settings(partial)
             return jsonify({"success": True, "chat_tts": saved})
+        except ValueError as e:
+            return jsonify({"success": False, "error": str(e)}), 400
         except Exception as e:
             return jsonify({"success": False, "error": str(e)}), 500
 
@@ -614,26 +547,13 @@ def register_chat_tts_routes(app: Flask) -> None:
     def list_tts_providers_api():
         """Registry snapshot for the Voice tab (models, voices, key state)."""
         try:
-            from api.completion_providers import list_providers as list_llm
+            from api.completion_providers import describe
 
-            llm = {p["id"]: p for p in list_llm() if p["id"] in SUMMARIZE_PROVIDERS}
-            suggestions = {
-                pid: llm.get(pid, {}).get("suggested_models", []) for pid in SUMMARIZE_PROVIDERS
-            }
+            llm = {p["id"]: p for p in describe()["providers"]}
             return jsonify({
                 "success": True,
                 "providers": providers.list_providers(),
-                "summarize_providers": [
-                    {
-                        "id": pid,
-                        "label": llm.get(pid, {}).get("label", pid.title()),
-                        "credential_present": llm.get(pid, {}).get("credential_present", False),
-                        "configured": llm.get(pid, {}).get("configured", False),
-                        "suggested_models": suggestions[pid],
-                        "effective_model": llm.get(pid, {}).get("effective_model", ""),
-                    }
-                    for pid in SUMMARIZE_PROVIDERS
-                ],
+                "summarize_providers": [llm[pid] for pid in SUMMARIZE_PROVIDERS],
             })
         except Exception as e:
             return jsonify({"success": False, "error": str(e)}), 500
@@ -646,17 +566,16 @@ def register_chat_tts_routes(app: Flask) -> None:
             pid = str(request.args.get("provider") or "").strip().lower()
             if pid not in providers.PROVIDER_IDS:
                 return jsonify({"success": False, "error": f"Unknown TTS provider: {pid}"}), 400
-            voices = providers.fetch_provider_voices(pid)
-            if voices is None:
-                return jsonify({
-                    "success": True, "provider": pid, "voices": [],
-                    "note": "This provider has a fixed voice catalog — see the curated list.",
-                })
-            return jsonify({"success": True, "provider": pid, "voices": voices})
+            from api.model_providers.service import discover_voices
+            return jsonify({"success": True, **discover_voices(pid,
+                           model=request.args.get("model") or "",
+                           refresh=request.args.get("refresh") == "1")})
         except RuntimeError as e:
-            return jsonify({"success": False, "error": str(e)}), 503
+            from api.model_providers.cache import public_error
+            return jsonify({"success": False, "error": public_error(e, "Voice discovery")}), 503
         except Exception as e:
-            return jsonify({"success": False, "error": str(e)}), 500
+            from api.model_providers.cache import public_error
+            return jsonify({"success": False, "error": public_error(e, "Voice request")}), 500
 
     @app.route("/api/chat/tts", methods=["POST"])
     @authenticated_required
@@ -770,6 +689,8 @@ def register_chat_tts_routes(app: Flask) -> None:
                 }
             )
         except RuntimeError as e:
-            return jsonify({"success": False, "error": str(e)}), 503
+            from api.model_providers.cache import public_error
+            return jsonify({"success": False, "error": public_error(e, "Speech synthesis")}), 503
         except Exception as e:
-            return jsonify({"success": False, "error": str(e)}), 500
+            from api.model_providers.cache import public_error
+            return jsonify({"success": False, "error": public_error(e, "Voice request")}), 500

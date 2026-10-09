@@ -511,3 +511,42 @@ failed turn. The watchdog does not identify a silent permission prompt with
 certainty; it bounds and explains the stall. Vendor behavior:
 [permissions](https://opencode.ai/docs/permissions/),
 [CLI configuration](https://opencode.ai/docs/cli/).
+
+## Optional restricted background text
+
+A connector can opt into Settings → Agents → Background helpers with a
+`background_text` manifest mapping and three synchronous methods:
+
+```yaml
+background_text:
+  auth_modes: [subscription, cli_default]
+  temperature: false
+  tools: false
+```
+
+- `helper_models(refresh=False)` returns the connector's existing CLI model
+  catalog (`models`, optional `default_efforts`, `source`, `error`). Refresh is
+  metadata-only and must never submit a content prompt.
+- `helper_capabilities(model="")` reads cached/native manifest facts without
+  launching a CLI. Return verified `reasoning_efforts` and parameter support.
+- `generate_helper(HelperRequest)` returns `HelperResult(text, model, usage)`.
+  Enforce the declared login choice, tools disabled, isolated instructions,
+  no chat resume/context compilation, cancellation, and a bounded deadline.
+
+`api.background_helpers` owns task selection and explicit fallback chains;
+`api.agent_harness.helper` owns the isolated runtime working directory,
+bounded JSON output, process cleanup and active execution registration.
+Do not invoke `execute()` or the chat dispatcher from a background helper.
+Adapters are trusted code, as with existing harness connectors; these restrictions
+are connector contracts, not a general operating-system sandbox for Python.
+Claude and Codex implement this initially. Other CLIs remain absent from the
+helper picker until they implement the restricted contract.
+
+For Codex, the app-server must return `thread.environments: []` before a turn
+can start. Older versions that cannot confirm it fail before inference. Native
+MCP entries, hooks, plugins, code execution and workspace tools are disabled.
+For Claude, tools/MCP/skills/hooks/project discovery are disabled and native
+subscription authentication is checked via `claude auth status`. `--bare`
+cannot serve this role because it also skips OAuth/keychain authentication.
+Prompts use stdin or a UTF-8 system prompt file; Windows shell shims require a
+native binary, avoiding multiline argv truncation.

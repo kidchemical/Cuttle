@@ -1,29 +1,7 @@
-"""Text-to-speech provider registry (TTS side of the Voice tab).
+"""Speech settings compatibility facade and cost estimates.
 
-One row per provider — id, label, credential env names, models, curated
-voices, tunable options, and transport — so adding a provider is a data
-edit plus one small adapter, never a fork of the chat-voice stack. This
-mirrors :mod:`api.completion_providers` (cheap LLM completions) on purpose:
-Settings renders both pickers from a server registry instead of hardcoding
-provider knowledge in HTML.
-
-Providers:
-
-* ``openai`` — ``/v1/audio/speech``. Fixed voice catalog, speed 0.25–4.0,
-  no pitch. Billed per character.
-* ``elevenlabs`` — ``/v1/text-to-speech/{voice_id}``. Voice ids are opaque;
-  the curated list covers the well-known library voices and
-  :func:`fetch_provider_voices` pulls the user's full library with their
-  key. Speed 0.7–1.2 plus a stability (expressiveness) slider; no pitch.
-  Billed per character, rate depends on the model.
-* ``google`` — Gemini ``generateContent`` with ``speechConfig``. Fixed
-  prebuilt voice catalog (no list endpoint — ``fetch_provider_voices``
-  returns None). No speed or pitch knobs. Token-billed; the response
-  carries real token usage, so cost is computed, not guessed.
-
-Credential availability comes from the environment (``<home>/.env`` via the
-daemon); providers without a key report ``configured: False`` instead of
-raising at call time.
+Provider declarations and every transport live in api.model_providers.
+This facade preserves established chat_tts preferences and normalization APIs.
 """
 
 from __future__ import annotations
@@ -102,85 +80,20 @@ class TtsProvider:
             "voices": [{"id": v, "label": lab} for v, lab in self.voices],
             "speed_range": list(self.speed_range) if self.speed_range else None,
             "supports_stability": self.supports_stability,
-            "supports_fetch_voices": self.id == "elevenlabs",
+            "supports_fetch_voices": next(p for p in manifests() if p.id == self.id).speech.get("fetch_voices", False),
         }
 
 
-_REGISTRY: Tuple[TtsProvider, ...] = (
-    TtsProvider(
-        "openai",
-        "OpenAI",
-        credential_env=("OPENAI_API_KEY", "API_KEY"),
-        models=(
-            ("gpt-4o-mini-tts", "gpt-4o-mini-tts (recommended)"),
-            ("tts-1", "tts-1 (fast / cheap)"),
-            ("tts-1-hd", "tts-1-hd (higher quality)"),
-        ),
-        default_model="gpt-4o-mini-tts",
-        voices=(
-            ("coral", "coral"),
-            ("alloy", "alloy"),
-            ("ash", "ash"),
-            ("ballad", "ballad"),
-            ("echo", "echo"),
-            ("fable", "fable"),
-            ("nova", "nova"),
-            ("onyx", "onyx"),
-            ("sage", "sage"),
-            ("shimmer", "shimmer"),
-            ("verse", "verse"),
-            ("marin", "marin"),
-            ("cedar", "cedar"),
-        ),
-        speed_range=(0.25, 4.0),
-    ),
-    TtsProvider(
-        "elevenlabs",
-        "ElevenLabs",
-        credential_env=("ELEVENLABS_API_KEY",),
-        models=(
-            ("eleven_flash_v2_5", "Flash v2.5 (fast, cheap)"),
-            ("eleven_turbo_v2_5", "Turbo v2.5 (balanced)"),
-            ("eleven_multilingual_v2", "Multilingual v2 (29 languages)"),
-            ("eleven_v3", "Eleven v3 (most expressive, 70+ languages)"),
-        ),
-        default_model="eleven_flash_v2_5",
-        voices=(
-            ("21m00Tcm4TlvDq8ikWAM", "Rachel"),
-            ("AZnzlk1XvdvUeBnXmlld", "Domi"),
-            ("EXAVITQu4vr4xnSDxMaL", "Bella"),
-            ("ErXwobaYiN019PkySvjV", "Antoni"),
-            ("MF3mGyEYCl7XYWbNzoO", "Elli"),
-            ("TxGEqnHWrfWFTfGW9XjX", "Josh"),
-            ("VR6AewLTigWG4xSOOjQ", "Arnold"),
-            ("pNInz6obpgDQGcFmaJgB", "Adam"),
-            ("yoZ06aMxZJJJzPt9qdAB", "Sam"),
-        ),
-        speed_range=(0.7, 1.2),
-        supports_stability=True,
-    ),
-    TtsProvider(
-        "google",
-        "Google",
-        credential_env=("GEMINI_API_KEY", "GOOGLE_API_KEY"),
-        models=(
-            ("gemini-2.5-flash-preview-tts", "Flash TTS (fast, cheap)"),
-            ("gemini-2.5-pro-preview-tts", "Pro TTS (higher quality)"),
-        ),
-        default_model="gemini-2.5-flash-preview-tts",
-        voices=(
-            ("Kore", "Kore"),
-            ("Charon", "Charon"),
-            ("Fenrir", "Fenrir"),
-            ("Aoede", "Aoede"),
-            ("Puck", "Puck"),
-            ("Zephyr", "Zephyr"),
-            ("Leda", "Leda"),
-            ("Orus", "Orus"),
-            ("Callirrhoe", "Callirrhoe"),
-            ("Autonoe", "Autonoe"),
-        ),
-    ),
+from api.model_providers.catalog import manifests
+
+_REGISTRY: Tuple[TtsProvider, ...] = tuple(
+    TtsProvider(p.id, p.label, credential_env=p.credential_env,
+                models=tuple((m['id'], m.get('label') or m['id']) for m in p.speech.get('models', [])),
+                default_model=p.speech['default_model'],
+                voices=tuple((v['id'], v.get('label') or v['id']) for v in p.speech.get('voices', [])),
+                speed_range=tuple(p.speech['speed_range']) if p.speech.get('speed_range') else None,
+                supports_stability=p.speech.get('supports_stability', False))
+    for p in manifests() if 'speech_generation' in p.operations
 )
 
 _BY_ID: Dict[str, TtsProvider] = {p.id: p for p in _REGISTRY}
@@ -207,7 +120,7 @@ def normalize_model(provider_id: str, model: Optional[str]) -> str:
     return provider.default_model
 
 
-def normalize_voice(provider_id: str, voice: Optional[str]) -> str:
+def normalize_voice(provider_id: str, voice: Optional[str], model: Optional[str] = None) -> str:
     """Curated voice id, a custom id (ElevenLabs voice_id / Google name),
     else the provider's first curated voice."""
     provider = get_provider(provider_id)
@@ -216,21 +129,12 @@ def normalize_voice(provider_id: str, voice: Optional[str]) -> str:
     v = str(voice or "").strip()
     if v:
         return v
+    from api.model_providers.catalog import get_provider as manifest_for, get_adapter
+    manifest = manifest_for(provider_id)
+    if manifest and not manifest.speech.get("fetch_voices"):
+        voices = get_adapter(provider_id).list_voices(manifest, model or provider.default_model)
+        return voices[0]["id"] if voices else ""
     return provider.voices[0][0] if provider.voices else ""
-
-
-def _credential(provider_id: str) -> str:
-    provider = get_provider(provider_id)
-    if provider is None:
-        raise ValueError(f"Unknown TTS provider: {provider_id}")
-    for name in provider.credential_env:
-        key = (os.environ.get(name) or "").strip()
-        if key:
-            return key
-    raise RuntimeError(
-        f"{provider.label} API key is not set "
-        f"({' / '.join(provider.credential_env)})"
-    )
 
 
 def clamp_speed(provider_id: str, speed: Any) -> Optional[float]:
@@ -303,236 +207,26 @@ def estimate_cost_usd(
     return None
 
 
-def _synthesize_openai(
-    text: str, *, voice: str, model: str, speed: Optional[float]
-) -> Tuple[bytes, str, Dict[str, Any]]:
-    from openai import OpenAI
 
-    key = _credential("openai")
-    # Hard caps from OpenAI docs (chars for tts-1*; tokens≈chars for mini-tts).
-    limit = 2000 if model == "gpt-4o-mini-tts" else 4096
-    if len(text) > limit:
-        text = text[:limit].rsplit(" ", 1)[0].strip() or text[:limit]
-    client = OpenAI(api_key=key)
-    kwargs: Dict[str, Any] = {
-        "model": model,
-        "voice": voice,
-        "input": text,
-        "response_format": "mp3",
-    }
-    if speed is not None:
-        kwargs["speed"] = speed
-    response = client.audio.speech.create(**kwargs)
-    data = getattr(response, "content", None)
-    if data is None and hasattr(response, "read"):
-        data = response.read()
-    if not data:
-        raise RuntimeError("TTS returned empty audio")
-    return bytes(data), "audio/mpeg", {}
-
-
-def _synthesize_elevenlabs(
-    text: str, *, voice: str, model: str, speed: Optional[float],
-    stability: Optional[float],
-) -> Tuple[bytes, str, Dict[str, Any]]:
-    import requests
-
-    key = _credential("elevenlabs")
-    if len(text) > 5000:
-        text = text[:5000].rsplit(" ", 1)[0].strip() or text[:5000]
-    body: Dict[str, Any] = {"text": text, "model_id": model}
-    voice_settings: Dict[str, Any] = {}
-    if speed is not None:
-        voice_settings["speed"] = speed
-    if stability is not None:
-        voice_settings["stability"] = stability
-    if voice_settings:
-        body["voice_settings"] = voice_settings
-    r = requests.post(
-        f"https://api.elevenlabs.io/v1/text-to-speech/{voice}",
-        headers={"xi-api-key": key, "Content-Type": "application/json"},
-        params={"output_format": "mp3_44100_128"},
-        json=body,
-        timeout=60,
-    )
-    if r.status_code == 401:
-        raise RuntimeError("ElevenLabs rejected the API key (401)")
-    if r.status_code == 422:
-        raise RuntimeError(f"ElevenLabs rejected the request (422): {r.text[:200]}")
-    r.raise_for_status()
-    if not r.content:
-        raise RuntimeError("TTS returned empty audio")
-    return bytes(r.content), "audio/mpeg", {}
-
-
-def _synthesize_google(
-    text: str, *, voice: str, model: str
-) -> Tuple[bytes, str, Dict[str, Any]]:
-    import base64
-    import requests
-
-    provider = get_provider("google")
-    assert provider is not None
-    key = ""
-    for name in provider.credential_env:
-        key = (os.environ.get(name) or "").strip()
-        if key:
-            break
-    if not key:
-        raise RuntimeError(
-            "Google API key is not set (GEMINI_API_KEY / GOOGLE_API_KEY)"
-        )
-    if len(text) > 8000:
-        text = text[:8000].rsplit(" ", 1)[0].strip() or text[:8000]
-    r = requests.post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-        params={"key": key},
-        json={
-            "contents": [{"parts": [{"text": text}]}],
-            "generationConfig": {
-                "responseModalities": ["AUDIO"],
-                "speechConfig": {
-                    "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}
-                },
-            },
-        },
-        timeout=60,
-    )
-    if r.status_code in (400, 401, 403):
-        raise RuntimeError(f"Google TTS failed ({r.status_code}): {r.text[:200]}")
-    r.raise_for_status()
-    payload = r.json()
-    audio_b64 = ""
-    mime = "audio/wav"
-    try:
-        for cand in payload.get("candidates", []):
-            for part in (cand.get("content", {}) or {}).get("parts", []):
-                inline = part.get("inlineData") or {}
-                if inline.get("data"):
-                    audio_b64 = inline["data"]
-                    mime = str(inline.get("mimeType") or mime).split(";")[0]
-                    break
-    except (AttributeError, TypeError):
-        pass
-    if not audio_b64:
-        raise RuntimeError(f"Google TTS returned no audio: {str(payload)[:200]}")
-    use = payload.get("usageMetadata", {}) or {}
-    extra = {
-        "input_tokens": int(use.get("promptTokenCount") or 0),
-        "output_tokens": int(use.get("candidatesTokenCount") or 0),
-    }
-    return base64.b64decode(audio_b64), mime, extra
-
-
-def synthesize(
-    provider_id: str,
-    text: str,
-    *,
-    voice: Optional[str] = None,
-    model: Optional[str] = None,
-    speed: Any = None,
-    stability: Any = None,
-) -> Tuple[bytes, str, Dict[str, Any]]:
-    """Return (audio bytes, content type, extra usage hints).
-
-    Raises ValueError for empty text, RuntimeError for credential or
-    provider failures. Extra carries provider-native usage the caller
-    folds into cost (Google token counts; {} elsewhere).
-    """
-    provider = get_provider(provider_id)
-    if provider is None:
+def synthesize(provider_id, text, *, voice=None, model=None, speed=None, stability=None):
+    from api.model_providers.service import synthesize_speech
+    from api.model_providers.types import SpeechRequest
+    if get_provider(provider_id) is None:
         raise ValueError(f"Unknown TTS provider: {provider_id}")
-    spoken = str(text or "").strip()
-    if not spoken:
+    text = str(text or "").strip()
+    if not text:
         raise ValueError("Nothing to speak")
-    pid = provider.id
-    voice_id = normalize_voice(pid, voice)
-    model_id = normalize_model(pid, model)
-    if pid == "openai":
-        return _synthesize_openai(
-            spoken, voice=voice_id, model=model_id,
-            speed=clamp_speed(pid, speed),
-        )
-    if pid == "elevenlabs":
-        return _synthesize_elevenlabs(
-            spoken, voice=voice_id, model=model_id,
-            speed=clamp_speed(pid, speed),
-            stability=clamp_stability(pid, stability),
-        )
-    if pid == "google":
-        return _synthesize_google(spoken, voice=voice_id, model=model_id)
-    raise ValueError(f"Unknown TTS provider: {provider_id}")
+    result = synthesize_speech(provider_id, SpeechRequest(text, normalize_model(provider_id, model),
+                              normalize_voice(provider_id, voice, normalize_model(provider_id, model)), clamp_speed(provider_id, speed),
+                              clamp_stability(provider_id, stability)))
+    return result.audio, result.mime, result.usage
 
 
-def fetch_provider_voices(provider_id: str) -> Optional[List[Dict[str, str]]]:
-    """The user's own voice library via their stored key.
-
-    Returns None when the provider has no list endpoint (Google's
-    prebuilt catalog is fixed — the curated list is the whole menu).
-    """
-    pid = str(provider_id or "").strip().lower()
-    if pid != "elevenlabs":
-        return None
-    import requests
-
-    key = _credential("elevenlabs")
-    r = requests.get(
-        "https://api.elevenlabs.io/v1/voices",
-        headers={"xi-api-key": key},
-        timeout=30,
-    )
-    if r.status_code == 401:
-        raise RuntimeError("ElevenLabs rejected the API key (401)")
-    r.raise_for_status()
-    out = []
-    for v in (r.json().get("voices", []) or []):
-        vid = str(v.get("voice_id") or "").strip()
-        name = str(v.get("name") or vid).strip()
-        if vid:
-            out.append({"id": vid, "label": name})
-    return out
+def fetch_provider_voices(provider_id):
+    from api.model_providers.service import discover_voices
+    return discover_voices(provider_id, refresh=True)['voices']
 
 
-def check_key(provider_id: str, api_key: str) -> Tuple[bool, str]:
-    """Validate a pasted key with one cheap authenticated read (no synthesis).
-
-    Backs Settings → Providers "Test"; returns ``(ok, message)`` so the
-    route stays a thin transport.
-    """
-    import requests
-
-    pid = str(provider_id or "").strip().lower()
-    if pid == "elevenlabs":
-        if not api_key or len(api_key) < 20:
-            return False, "Invalid key format. ElevenLabs keys are long hex strings"
-        try:
-            r = requests.get(
-                "https://api.elevenlabs.io/v1/user",
-                headers={"xi-api-key": api_key},
-                timeout=10,
-            )
-        except Exception as e:
-            return False, f"ElevenLabs API error: {e}"
-        if r.status_code == 200:
-            sub = r.json().get("subscription", {}) or {}
-            return True, f"Valid ElevenLabs key (plan: {sub.get('tier', 'unknown')})"
-        if r.status_code == 401:
-            return False, "Invalid ElevenLabs API key"
-        return False, f"ElevenLabs API error: HTTP {r.status_code}"
-    if pid == "google":
-        if not api_key or len(api_key) < 20:
-            return False, 'Invalid key format. Google AI Studio keys start with "AIza"'
-        try:
-            r = requests.get(
-                "https://generativelanguage.googleapis.com/v1beta/models",
-                params={"key": api_key, "pageSize": 1},
-                timeout=10,
-            )
-        except Exception as e:
-            return False, f"Google API error: {e}"
-        if r.status_code == 200:
-            return True, "Valid Google API key"
-        if r.status_code in (400, 401, 403):
-            return False, "Invalid Google API key"
-        return False, f"Google API error: HTTP {r.status_code}"
-    return False, f"Unknown TTS provider: {provider_id}"
+def check_key(provider_id, api_key):
+    from api.model_providers.service import check_key as probe
+    return probe(provider_id, api_key)

@@ -214,6 +214,14 @@ def enhance_prompt(
     from api.completion_providers import resolve_order
     by_id = {"openai": _via_openai, "anthropic": _via_anthropic, "local": _via_local}
     providers = tuple((name, by_id[name]) for name in resolve_order())
+    from api.background_helpers import has_selection
+    if has_selection("enhance"):
+        def background(prompt):
+            from api.llm_complete import complete
+            return clean_enhanced(complete(user=prompt, system=_SYSTEM, max_tokens=900,
+                temperature=.4, timeout=90, task="enhance") or "") or None
+        providers = (("background", background),)
+
 
     last_error = ""
     for name, provider in providers:
@@ -245,5 +253,5 @@ def enhance_prompt(
         "ok": False,
         "prompt": original,
         "source": "",
-        "error": last_error or "No enhancement provider available (set OPENAI_API_KEY)",
+        "error": last_error or "No enhancement executor available; check Background helpers and CLI login or API credentials",
     }

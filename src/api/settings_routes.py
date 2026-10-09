@@ -66,10 +66,16 @@ SETTING_FAMILIES = (
      "backend": "api.video_metadata (YouTube oEmbed proxy, in-process cache)",
      "validator": "resolve_video_metadata (no writes; read-only lookup)",
      "read": "authenticated", "write": "n/a"},
+    {"name": "background-helpers", "routes": ["GET/POST /settings/background-helpers", "GET /settings/background-helpers/<kind>/<target>/models"],
+     "backend": "api.background_helpers + agent_harness / model_providers",
+     "validator": "api.background_helpers.validate", "read": "authenticated (models: owner)", "write": "owner"},
     {"name": "completion-providers", "routes": ["GET/POST /settings/completion-providers"],
-     "backend": "api.completion_providers (provider registry + settings keys)",
+     "backend": "api.completion_providers (preferences over api.model_providers)",
      "validator": "set_preferred_provider / set_provider_model",
      "read": "authenticated", "write": "owner"},
+    {"name": "completion-provider-models", "routes": ["GET /settings/completion-providers/<provider_id>/models", "GET /settings/model-providers/<provider_id>/models"],
+     "backend": "api.model_providers.service (account model catalogs)",
+     "validator": "get_provider", "read": "owner", "write": "n/a"},
     {"name": "github-app", "routes": ["GET/POST/DELETE /settings/github-app", "POST /settings/github-app/test"],
      "backend": "api.github_app + settings-manager key 'github_app' (+ server-local key file)",
      "validator": "validate_github_app_update", "read": "authenticated", "write": "owner"},
@@ -123,6 +129,8 @@ def validate_completion_providers_update(data: dict) -> tuple[bool, str, dict]:
     """
     from api.completion_providers import get_provider
 
+    if not isinstance(data, dict):
+        return False, 'Body must be a JSON object', {}
     patch: dict = {}
     if 'provider' in data:
         wanted = str(data.get('provider') or '').strip().lower()
@@ -134,19 +142,28 @@ def validate_completion_providers_update(data: dict) -> tuple[bool, str, dict]:
             patch['provider'] = wanted
 
     models = data.get('models')
+    if 'models' in data and not isinstance(models, dict):
+        return False, 'models must be an object', {}
     if isinstance(models, dict):
         clean: dict = {}
         for key, value in models.items():
             provider_id = str(key or '').strip().lower()
-            model_id = str(value or '').strip()
+            if not isinstance(value, str):
+                return False, 'Model ids must be strings', {}
+            model_id = value.strip()
             if get_provider(provider_id) is None:
                 return False, f'Unknown completion provider: {provider_id}', {}
-            if model_id:
-                clean[provider_id] = model_id
+            clean[provider_id] = model_id
         patch['models'] = clean
 
+    if 'efforts' in data:
+        from api.completion_providers import validate_efforts
+        try:
+            patch['efforts'] = validate_efforts(data['efforts'])
+        except ValueError as exc:
+            return False, str(exc), {}
     if not patch:
-        return False, 'provider or models required', {}
+        return False, 'provider, models or efforts required', {}
     return True, '', patch
 
 
@@ -491,6 +508,39 @@ def update_agent_adapters_setting():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+# --- background text execution (API / restricted installed CLI) -----------
+@settings_bp.route('/settings/background-helpers', methods=['GET'])
+@authenticated_required
+def get_background_helpers():
+    from api.background_helpers import describe
+    return jsonify(success=True, **describe())
+
+
+@settings_bp.route('/settings/background-helpers', methods=['POST'])
+@owner_required
+def set_background_helpers():
+    from api.background_helpers import save, describe
+    try:
+        if not save(request.get_json()):
+            return jsonify(success=False, error="Unable to save background helpers"), 500
+        return jsonify(success=True, **describe())
+    except ValueError as exc:
+        return jsonify(success=False, error=str(exc)), 400
+
+
+@settings_bp.route('/settings/background-helpers/<kind>/<target>/models', methods=['GET'])
+@owner_required
+def background_helper_models(kind, target):
+    from api.background_helpers import discover
+    from api.model_providers.cache import public_error
+    try:
+        return jsonify(success=True, **discover(kind, target, request.args.get('refresh') == '1'))
+    except ValueError as exc:
+        return jsonify(success=False, error=str(exc)), 400
+    except Exception as exc:
+        return jsonify(success=False, error=public_error(exc, "Background model discovery")), 502
+
+
 # --- completion providers (backend: api.completion_providers) --------------
 
 @settings_bp.route('/settings/completion-providers', methods=['GET'])
@@ -507,6 +557,42 @@ def get_completion_providers_setting():
         return jsonify({'success': True, **describe()})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@settings_bp.route('/settings/completion-providers/<provider_id>/models', methods=['GET'])
+@owner_required
+def get_completion_provider_models(provider_id):
+    """Explicit discovery; the general settings read never calls remote APIs."""
+    from api.completion_providers import get_provider
+    from api.model_providers.service import discover_models
+    from api.model_providers.cache import public_error
+
+    if get_provider(provider_id) is None:
+        return jsonify({'success': False, 'error': 'Unknown model provider'}), 404
+    try:
+        return jsonify({'success': True, **discover_models(
+            provider_id, refresh=request.args.get('refresh') == '1')})
+    except Exception as exc:
+        return jsonify({'success': False, 'error': public_error(exc, 'Model discovery')}), 502
+
+
+@settings_bp.route('/settings/model-providers/<provider_id>/models', methods=['GET'])
+@owner_required
+def get_model_provider_models(provider_id):
+    from api.model_providers.catalog import get_provider
+    from api.model_providers.service import discover_models
+    from api.model_providers.cache import public_error
+    manifest = get_provider(provider_id)
+    if manifest is None:
+        return jsonify({'success': False, 'error': 'Unknown model provider'}), 404
+    operation = request.args.get('operation') or 'text_generation'
+    if operation not in manifest.operations:
+        return jsonify({'success': False, 'error': 'Unsupported provider operation'}), 400
+    try:
+        return jsonify({'success': True, **discover_models(provider_id, operation=operation,
+                       refresh=request.args.get('refresh') == '1')})
+    except Exception as exc:
+        return jsonify({'success': False, 'error': public_error(exc, 'Model discovery')}), 502
 
 
 @settings_bp.route('/settings/completion-providers', methods=['POST'])
@@ -529,10 +615,19 @@ def update_completion_providers_setting():
         if not ok:
             return jsonify({'success': False, 'message': error}), 400
 
+        if 'efforts' in patch:
+            from api.completion_providers import set_efforts
+            try:
+                if not set_efforts(patch['efforts']):
+                    return jsonify({'success': False, 'error': 'Failed to save efforts'}), 500
+            except ValueError as exc:
+                return jsonify({'success': False, 'error': str(exc)}), 400
         if 'provider' in patch:
-            set_preferred_provider(patch['provider'])
+            if not set_preferred_provider(patch['provider']):
+                return jsonify({'success': False, 'error': 'Failed to save provider'}), 500
         for provider_id, model_id in (patch.get('models') or {}).items():
-            set_provider_model(provider_id, model_id)
+            if not set_provider_model(provider_id, model_id):
+                return jsonify({'success': False, 'error': 'Failed to save model'}), 500
         return jsonify({'success': True, **describe()})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500

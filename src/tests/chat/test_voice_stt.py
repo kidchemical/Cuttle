@@ -32,7 +32,15 @@ class _FakeTranscriptions:
 def fake(monkeypatch):
     monkeypatch.delenv("CUTTLE_EXPERIMENTAL", raising=False)
     tr = _FakeTranscriptions()
-    monkeypatch.setattr(voice_stt, "_client", lambda: SimpleNamespace(audio=SimpleNamespace(transcriptions=tr)))
+    def transport(provider, request):
+        assert provider == "openai"
+        kwargs = dict(model=request.model, file=(request.filename, request.audio, request.mime))
+        if request.prompt:
+            kwargs['prompt'] = request.prompt
+        if request.language:
+            kwargs['language'] = request.language
+        return tr.create(**kwargs).text
+    monkeypatch.setattr("api.model_providers.service.transcribe", transport)
     return tr
 
 

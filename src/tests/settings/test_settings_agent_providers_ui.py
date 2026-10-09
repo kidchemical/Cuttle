@@ -51,7 +51,8 @@ def test_settings_page_hardcodes_no_completion_provider_id():
 
 def test_agent_list_is_rendered_from_the_catalog_endpoint():
     html = _page()
-    assert "getJson('/api/agents')" in html
+    # Settings asks for live models so its dropdowns match the chat palette.
+    assert "getJson('/api/agents?live_models=1')" in html
     assert "function renderAgentCliList" in html
     assert "function renderAgentDropInRoots" in html
 
@@ -71,7 +72,9 @@ def test_agent_config_writes_through_owned_routes_without_agent_ids():
 
 def test_completion_providers_come_from_the_registry_endpoint():
     html = _page()
-    assert "/api/settings/completion-providers" in html
+    assert "/api/settings/background-helpers" in html
+    assert 'id="backgroundTask"' in html
+    assert 'id="backgroundChain"' in html
     assert "function loadCompletionProviders" in html
     # Both verbs: the write is the whole point of the replacement control.
     assert "method: 'POST'" in html

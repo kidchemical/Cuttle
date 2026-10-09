@@ -1,8 +1,8 @@
 """Cheap text completions for Cuttle-owned jobs.
 
 Use this for chat titles, commit subjects, prompt enhance, and the router
-brain. Guest agent CLIs do the actual work. TTS, vision, and Jev keep their
-own clients.
+brain. Guest agent CLIs do the actual work. All direct model transports live in api.model_providers; domain callers retain
+their own prompts and fallback policies.
 
 Provider and model resolution is owned by
 :mod:`api.completion_providers` — this module only speaks to whichever
@@ -13,127 +13,39 @@ default.
 
 from __future__ import annotations
 
-import os
 import re
 import logging
 from typing import Optional, Sequence
 
-from api.completion_providers import resolve_model, resolve_order
+from api.completion_providers import get_provider, resolve_model, resolve_order, resolve_effort
+from api.model_providers.service import complete_text as _complete_provider
+from api.model_providers.types import TextRequest
 
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 # Kept as module-level names for callers/tests that import them; the values
 # now come from the provider registry rather than being hardcoded here.
-DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
-DEFAULT_ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
+DEFAULT_OPENAI_MODEL = get_provider("openai").default_model
+DEFAULT_ANTHROPIC_MODEL = get_provider("anthropic").default_model
 
 
 def _clean(text: str) -> str:
     return _THINK_RE.sub("", text or "").strip()
 
 
-def _messages(user: str, system: str) -> list:
-    msgs = []
-    if (system or "").strip():
-        msgs.append({"role": "system", "content": system.strip()})
-    msgs.append({"role": "user", "content": user})
-    return msgs
+def _via_openai(user, *, system, model, max_tokens, temperature, timeout, json_object):
+    """Compatibility entry; vendor behavior belongs to the provider adapter."""
+    return _complete_provider("openai", TextRequest(user, system, model, max_tokens,
+                                                   temperature, timeout, json_object))
 
 
-def _via_openai(
-    user: str,
-    *,
-    system: str,
-    model: str,
-    max_tokens: int,
-    temperature: float,
-    timeout: float,
-    json_object: bool,
-) -> Optional[str]:
-    api_key = os.getenv("OPENAI_API_KEY") or os.getenv("API_KEY")
-    if not api_key:
-        return None
-    from openai import OpenAI
-
-    kwargs = {
-        "model": model,
-        "messages": _messages(user, system),
-        "temperature": float(temperature),
-        "max_tokens": int(max_tokens),
-    }
-    if json_object:
-        kwargs["response_format"] = {"type": "json_object"}
-    client = OpenAI(api_key=api_key, timeout=float(timeout))
-    resp = client.chat.completions.create(**kwargs)
-    if not resp.choices:
-        return None
-    return resp.choices[0].message.content or ""
+def _via_anthropic(user, *, system, model, max_tokens, temperature):
+    return _complete_provider("anthropic", TextRequest(user, system, model, max_tokens, temperature))
 
 
-def _via_anthropic(
-    user: str,
-    *,
-    system: str,
-    model: str,
-    max_tokens: int,
-    temperature: float,
-) -> Optional[str]:
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        return None
-    from anthropic import Anthropic
-
-    kwargs = {
-        "model": model,
-        "max_tokens": int(max_tokens),
-        "temperature": float(temperature),
-        "messages": [{"role": "user", "content": user}],
-    }
-    if (system or "").strip():
-        kwargs["system"] = system.strip()
-    client = Anthropic(api_key=api_key)
-    resp = client.messages.create(**kwargs)
-    return "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
-
-
-def _via_local(
-    user: str,
-    *,
-    system: str,
-    max_tokens: int,
-    temperature: float,
-    timeout: float,
-    model: Optional[str] = None,
-) -> Optional[str]:
-    from openai import OpenAI
-    from core.local_llm import (
-        get_local_api_key,
-        get_local_base_url,
-        local_reachable,
-        resolve_local_model,
-    )
-
-    if not local_reachable(timeout=1.5):
-        return None
-    client = OpenAI(
-        base_url=get_local_base_url(),
-        api_key=get_local_api_key(),
-        timeout=float(timeout),
-    )
-    # An empty registry model hands the decision to resolve_local_model, which
-    # knows the llama.cpp-vs-Ollama difference and the loaded model.
-    resolved = model or resolve_local_model(None)
-    if not resolved:
-        resolved = resolve_local_model(None)
-    resp = client.chat.completions.create(
-        model=resolved,
-        messages=_messages(user, system),
-        temperature=float(temperature),
-        max_tokens=int(max_tokens),
-    )
-    if not resp.choices:
-        return None
-    return resp.choices[0].message.content or ""
+def _via_local(user, *, system, max_tokens, temperature, timeout, model=None):
+    return _complete_provider("local", TextRequest(user, system, model or "", max_tokens,
+                                                  temperature, timeout))
 
 
 def complete(
@@ -148,6 +60,9 @@ def complete(
     json_object: bool = False,
     providers: Optional[Sequence[str]] = None,
     local_model: Optional[str] = None,
+    effort: Optional[str] = None,
+    task: Optional[str] = None,
+    cancel_event=None,
 ) -> Optional[str]:
     """Return cleaned completion text, or None if every provider failed.
 
@@ -155,44 +70,25 @@ def complete(
     OpenAI → Anthropic → local. Pass ``providers`` to pin an exact chain
     (wrappers in titler/commit/enhance do this so tests can stub a hop).
     """
+    if task or providers is None:
+        from api.background_helpers import has_selection, generate
+        if has_selection(task or "background"):
+            result = generate(task or "background", TextRequest(user=user, system=system, max_tokens=max_tokens,
+                temperature=temperature, timeout=timeout, json_object=json_object, effort=effort),
+                cancel_event=cancel_event)
+            return _clean(result.text) if result else None
     if providers is None:
         providers = resolve_order()
-    oai = resolve_model("openai", openai_model)
-    ant = resolve_model("anthropic", anthropic_model)
+    explicit_models = {"openai": openai_model, "anthropic": anthropic_model, "local": local_model}
     for name in providers:
         n = str(name).strip().lower()
         try:
-            if n == "openai":
-                text = _via_openai(
-                    user,
-                    system=system,
-                    model=oai,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    timeout=timeout,
-                    json_object=json_object,
-                )
-            elif n == "anthropic":
-                if json_object:
-                    continue
-                text = _via_anthropic(
-                    user,
-                    system=system,
-                    model=ant,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                )
-            elif n == "local":
-                text = _via_local(
-                    user,
-                    system=system,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    timeout=max(timeout, 90.0),
-                    model=resolve_model("local", local_model) or None,
-                )
-            else:
-                continue
+            model_id = resolve_model(n, explicit_models.get(n))
+            text = _complete_provider(n, TextRequest(
+                user=user, system=system, model=model_id,
+                max_tokens=max_tokens, temperature=temperature, timeout=timeout,
+                json_object=json_object, effort=resolve_effort(n, model_id, effort),
+            ))
         except Exception as exc:
             # Report failure metadata without logging credentials, prompts or
             # provider response bodies. Callers may then fall back honestly.

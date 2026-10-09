@@ -57,3 +57,8 @@ executable_names:
   - codex
 auto_install: false
 notes: Bundled harness connector wrapping scripts.utilities.codex_cli_tool.
+
+background_text:
+  auth_modes: [subscription, cli_default]
+  temperature: false
+  tools: false

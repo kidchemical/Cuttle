@@ -28,6 +28,7 @@ RESERVED_SLASH_NAMES = frozenset({
     "opencode", "antigravity", "deepseek",
     "cmd", "commands", "skill", "skills",
     "model", "plan", "ask", "agent", "clear", "sandbox", "about",
+    "branch",
 })
 
 GLOBAL_COMMANDS_DIR = Path(__file__).resolve().parents[2] / ".cuttle_global" / "commands"

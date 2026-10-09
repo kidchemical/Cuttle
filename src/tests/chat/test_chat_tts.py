@@ -260,7 +260,9 @@ def test_summarize_openai_reports_step_tokens():
     fake_resp.usage = fake_usage
     fake_client = MagicMock()
     fake_client.chat.completions.create.return_value = fake_resp
-    with patch("api.chat_tts._openai_client", return_value=fake_client), patch(
+    from api.model_providers.types import TextResult
+    with patch("api.model_providers.service.generate_text", return_value=TextResult("Short spoken summary.",
+               {"model": "gpt-4o-mini", "prompt_tokens": 500, "completion_tokens": 60, "total_tokens": 560})), patch(
         "api.model_pricing.enrich_usage_for_display", side_effect=lambda u, model=None: u
     ):
         spoken, usage = summarize_for_speech_with_usage(
@@ -281,7 +283,9 @@ def test_summarize_anthropic_reports_step_tokens():
     fake_resp.usage = MagicMock(input_tokens=400, output_tokens=50)
     fake_client = MagicMock()
     fake_client.messages.create.return_value = fake_resp
-    with patch("api.chat_tts._anthropic_client", return_value=fake_client), patch(
+    from api.model_providers.types import TextResult
+    with patch("api.model_providers.service.generate_text", return_value=TextResult("Short spoken summary.",
+               {"model": "claude-haiku-4-5-20251001", "prompt_tokens": 400, "completion_tokens": 50, "total_tokens": 450})), patch(
         "api.model_pricing.enrich_usage_for_display", side_effect=lambda u, model=None: u
     ):
         spoken, usage = summarize_for_speech_with_usage(

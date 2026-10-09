@@ -621,8 +621,11 @@ def test_kernel_answers_cost_without_cli_turn(prompt, pricing_cache, no_pins, mo
     # guard here — /cost answers from the manifest without touching a CLI.
     # The no-shell-out pin lives in test_agent_harness.py.
     monkeypatch.setattr(
-        "api.agent_cost._load_catalog",
-        lambda m, refresh: ([{"id": x, "label": x} for x in m.models], "manifest"),
+        "api.agent_cost.load_agent_catalog",
+        lambda aid, fallback_models, refresh: (
+            [{"id": x, "label": x} for x in fallback_models],
+            "manifest",
+        ),
     )
     out = kernel.run_agent_web_command("codex", prompt, 5, project_path=str(tmp_path))
     assert out["type"] == "codex_command"

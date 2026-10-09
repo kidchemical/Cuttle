@@ -222,12 +222,11 @@ def test_llm_complete_reads_the_registry(monkeypatch):
 
     seen = {}
 
-    def _fake_openai(user, *, system, model, max_tokens, temperature,
-                     timeout, json_object):
-        seen["model"] = model
+    def _fake_provider(provider, request):
+        seen["model"] = request.model
         return "ok"
 
-    monkeypatch.setattr(llm_complete, "_via_openai", _fake_openai)
+    monkeypatch.setattr(llm_complete, "_complete_provider", _fake_provider)
 
     # No settings store in this test: registry falls back to provider default.
     assert llm_complete.complete(user="hi", providers=("openai",)) == "ok"
@@ -239,15 +238,8 @@ def test_llm_complete_order_comes_from_the_registry(monkeypatch, store):
 
     tried = []
 
-    def _fake(name):
-        def _call(*_a, **_k):
-            tried.append(name)
-            return None
-        return _call
-
-    monkeypatch.setattr(llm_complete, "_via_openai", _fake("openai"))
-    monkeypatch.setattr(llm_complete, "_via_anthropic", _fake("anthropic"))
-    monkeypatch.setattr(llm_complete, "_via_local", _fake("local"))
+    monkeypatch.setattr(llm_complete, "_complete_provider",
+                        lambda provider, request: tried.append(provider))
 
     cp.set_preferred_provider("anthropic")
     llm_complete.complete(user="hi")
@@ -259,12 +251,8 @@ def test_llm_complete_explicit_local_provider_stays_local_only(monkeypatch):
     from api import llm_complete
 
     tried = []
-    monkeypatch.setattr(
-        llm_complete, "_via_local", lambda *a, **k: tried.append("local") or None
-    )
-    monkeypatch.setattr(
-        llm_complete, "_via_openai", lambda *a, **k: tried.append("openai") or None
-    )
+    monkeypatch.setattr(llm_complete, "_complete_provider",
+                        lambda provider, request: tried.append(provider))
     llm_complete.complete(user="hi", providers=("local",))
     assert tried == ["local"]
 
@@ -296,7 +284,7 @@ def test_route_normalizes_auto_and_rejects_an_empty_body():
     assert message
 
 
-def test_route_keeps_models_free_form_and_drops_blanks():
+def test_route_keeps_models_free_form_and_preserves_clears():
     from api import settings_routes
 
     ok, _m, patch = settings_routes.validate_completion_providers_update(
@@ -309,7 +297,7 @@ def test_route_keeps_models_free_form_and_drops_blanks():
         {"models": {"openai": "gpt-5.2", "anthropic": "  "}}
     )
     assert ok is True
-    assert patch == {"models": {"openai": "gpt-5.2"}}
+    assert patch == {"models": {"openai": "gpt-5.2", "anthropic": ""}}
 
 
 def test_route_requires_authentication(monkeypatch):
@@ -378,3 +366,39 @@ def test_route_is_registered_in_the_settings_family_registry():
 
     names = {row["name"] for row in settings_routes.SETTING_FAMILIES}
     assert "completion-providers" in names
+
+def test_model_discovery_is_owner_only_and_saves_can_clear(tmp_path, monkeypatch, store):
+    from api import auth_db as auth_db_mod, web_chat_api as wca
+    calls = []
+    monkeypatch.setattr('api.model_providers.service.discover_models',
+                        lambda provider, **kw: calls.append((provider, kw)) or {'models': [], 'source': 'provider_api'})
+    db = auth_db_mod.AuthDatabase(tmp_path / 'models-auth.db')
+    monkeypatch.setattr(auth_db_mod, '_db_instance', db)
+    monkeypatch.setattr('api.auth_db.get_auth_db', lambda: db)
+    monkeypatch.setattr(wca, 'get_auth_db', lambda: db)
+    monkeypatch.setenv('OWNER_USER_EMAIL', 'owner@local')
+    owner = db.create_user('owner@local', 'Owner', 'local', password='x')
+    client = wca.app.test_client()
+    path = '/api/settings/completion-providers/openai/models'
+    assert client.get(path).status_code in (401, 403)
+    assert client.post('/api/auth/guest', json={}).status_code == 200
+    assert client.get(path).status_code == 403
+    assert calls == []
+    client.set_cookie('session_token', db.create_auth_session(owner))
+    assert client.get(path + '?refresh=1').status_code == 200
+    assert calls == [('openai', {'refresh': True})]
+    assert client.get('/api/settings/completion-providers/unknown/models').status_code == 404
+    cp.set_provider_model('openai', 'saved')
+    assert client.post('/api/settings/completion-providers', json={'models': {'openai': ''}}).status_code == 200
+    assert cp.describe()['providers'][0]['saved_model'] == ''
+    assert cp.resolve_model('openai') == cp.get_provider('openai').default_model
+
+
+def test_model_save_reports_persistence_failure(monkeypatch):
+    from api import settings_routes
+    from flask import Flask
+    monkeypatch.setattr(cp, 'set_provider_model', lambda *a: False)
+    app = Flask(__name__)
+    with app.test_request_context(json={'models': {'openai': 'new'}}):
+        response, code = settings_routes.update_completion_providers_setting.__wrapped__()
+    assert code == 500 and response.get_json()['success'] is False

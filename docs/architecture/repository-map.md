@@ -283,6 +283,24 @@ locked atomic persistence. `<home>/config/settings.json` owns server preferences
 `schema_version: 1` marks the storage schema, independently of the release SemVer.
 No `/api/settings` routes live on the Flask root.
 
+**Direct model APIs:** `api.model_providers` owns validated provider manifests,
+account-scoped discovery, shared raw models.dev metadata, capability provenance,
+and operation-specific adapters under `<provider>/`. It executes typed
+text/vision, speech, transcription, and structured Jev decisions; future
+image/video generation contracts extend this owner. `api.background_helpers` owns global/task executor preferences, explicit fallback
+chains, deadlines and CLI concurrency. It selects API adapters or restricted
+agent helper contracts, never the chat dispatcher. `api.completion_providers`
+preserves legacy API preferences/resolution; `api.llm_complete` owns cleaned
+text and delegates configured background tasks to the shared execution owner. Discovery runs through owner-only settings routes; completion
+calls never refresh remote catalogs. `api.model_pricing` derives pricing/context
+indexes from the shared metadata feed. The model picker controller is
+`web/js/settings/settings_background_helpers.js`; Voice orchestration is
+`settings_voice_providers.js`, sharing `settings_model_picker.js`. Background and
+narrator effort preferences are stored per provider/model. `tts_providers` is a
+settings compatibility/cost facade, with no vendor transport. Contract:
+`src/api/model_providers/ADDING_A_PROVIDER.md`; agent CLI:
+`.cuttle/docs/model-providers.md`.
+
 **Local model preference:** retired with the old `RuntimeConfig`
 (`bot_config.json` / `runtime_config.json`). `core.local_llm.resolve_local_model`
 reads `OLLAMA_MODEL`, then Settings `completion_models.local` (owned by

@@ -91,7 +91,7 @@ def strip_slash(message: str) -> str:
 def _complete(user: str, system: str) -> Optional[str]:
     from api.llm_complete import complete
 
-    return complete(user=user, system=system, max_tokens=60, temperature=0.4, timeout=8.0)
+    return complete(user=user, system=system, max_tokens=60, temperature=0.4, timeout=8.0, task="progress")
 
 
 def _finish(raw: Optional[str]) -> Optional[str]:

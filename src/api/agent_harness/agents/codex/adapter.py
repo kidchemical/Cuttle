@@ -49,6 +49,8 @@ def _handle_codex_model_slash(
             return None
 
     if arg.lower() in ("refresh", "reload", "sync"):
+        from api.model_catalog_delta import record_and_diff, render_delta
+
         result = refresh_codex_catalog()
         count = int(result.get("count") or 0)
         err = result.get("error")
@@ -65,11 +67,13 @@ def _handle_codex_model_slash(
             note = f" (CLI catalog unavailable — {err}; showing soft-known list)"
         elif source.startswith("cli"):
             note = " from `codex debug models`"
+        delta = record_and_diff("codex", result.get("models") or [])
         return AgentResult(
             success=True,
             output=(
                 f"**Codex:** Refreshed model catalog{note} — "
                 f"{count} models available in the `/` palette.\n\n"
+                f"{render_delta(delta)}\n\n"
                 "Filter in chat (with a Codex badge): type `sol`, `luna`, "
                 "`5.6`, … then pick a row. "
                 "Each model row includes its supported effort levels. "
@@ -81,6 +85,8 @@ def _handle_codex_model_slash(
                 "agent_model": active_model,
                 "codex_catalog_count": count,
                 "codex_catalog_source": source,
+                "codex_catalog_added": [r["id"] for r in delta.get("added") or []],
+                "codex_catalog_removed": [r["id"] for r in delta.get("removed") or []],
             },
         )
 
@@ -343,6 +349,18 @@ class Adapter:
             cli_default="",
         )
         return _handle_codex_model_slash(prompt, chat_session_id, active or "")
+
+    def helper_models(self, *, refresh=False):
+        from .helper import models
+        return models(refresh)
+
+    def helper_capabilities(self, model=""):
+        from .model_catalog import cached_helper_capabilities
+        return cached_helper_capabilities(model)
+
+    def generate_helper(self, request):
+        from .helper import generate
+        return generate(request)
 
     async def execute(
         self,

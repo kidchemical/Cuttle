@@ -224,7 +224,8 @@ function isJevModel(m) { return /^jev/i.test(m || '') || /typesafe/i.test(m || '
 function brainName() {
     const c = state.config || {};
     if (c.mode === 'api') return isJevModel(c.api_model) ? 'Jev' : `OpenAI ${c.api_model || ''}`.trim();
-    if (c.mode === 'local' || c.mode === 'agent') return 'classifier only';
+    if (c.mode === 'agent') return `CLI ${c.agent_id || ''}`.trim();
+    if (c.mode === 'local') return 'classifier only';
     return c.mode || 'off';
 }
 
@@ -240,10 +241,12 @@ function renderBrainHint() {
         brain = 'ambiguous turns go to Jev (TypeSafe System One, via your TypeSafe or OpenRouter key). OpenAI is not called.';
     } else if (c.mode === 'api') {
         brain = `ambiguous turns go to OpenAI ${c.api_model} (needs OPENAI_API_KEY). Jev is not called.`;
+    } else if (c.mode === 'agent') {
+        brain = `ambiguous turns use restricted ${c.agent_id} CLI text requests and its saved login. A configured Background helpers chain takes precedence.`;
     } else {
         brain = `the ${c.mode} brain is not built yet, so every turn routes on the classifier alone.`;
     }
-    $('#brain-hint').textContent = c.mode === 'off' ? brain : cls + brain;
+    $('#brain-hint').textContent = c.mode === 'off' ? brain : cls + brain + ' Agents → Background helpers can override the routing brain execution chain.';
 }
 
 function renderFallbacks() {
@@ -960,7 +963,7 @@ function applyLoaded(data) {
     if (Array.isArray(data.accounts) && data.accounts.length) state.accounts = data.accounts;
     state.dirty = false;
     $('#dirty-chip').hidden = true;
-    $('#try-config-hint').textContent = 'Uses saved settings. Typing uses the local classifier; Ask brain may use API tokens.';
+    $('#try-config-hint').textContent = 'Uses saved settings. Typing uses the local classifier; Ask brain uses the configured backend and its allowance.';
     renderCore();
     renderBudget();
     renderUseCases();
@@ -971,7 +974,7 @@ function applyLoaded(data) {
 async function loadAll() {
     try {
         const [opts, cfg] = await Promise.all([
-            api('/api/agent-router/options'),
+            api('/api/agent-router/options?live=1'),
             api('/api/router/config'),
         ]);
         state.options = opts;

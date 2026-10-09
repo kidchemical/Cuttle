@@ -442,6 +442,65 @@
         }
     }
 
+    // Branch shown on the segmented project chip (star | name | branch).
+    let _projectBranchCache = { path: '', branch: '', at: 0 };
+    let _projectBranchFetchInFlight = false;
+
+    /** Cached branch for the current project, '' when unknown. */
+    function currentProjectBranch() {
+        const path = currentProjectPathKey();
+        if (!path || _projectBranchCache.path !== path) return '';
+        return _projectBranchCache.branch || '';
+    }
+
+    /** Refresh the project chip branch (cached ~15s). Re-renders when it changes. */
+    async function refreshProjectBranch(force) {
+        const path = currentProjectPathKey();
+        if (!path) {
+            _projectBranchCache = { path: '', branch: '', at: 0 };
+            return;
+        }
+        const now = Date.now();
+        if (
+            !force
+            && _projectBranchCache.path === path
+            && (now - _projectBranchCache.at) < 15000
+        ) {
+            return;
+        }
+        if (_projectBranchFetchInFlight) return;
+        _projectBranchFetchInFlight = true;
+        const prev = _projectBranchCache.path === path ? _projectBranchCache.branch : '';
+        try {
+            const qs = new URLSearchParams();
+            qs.set('path', path);
+            const resp = await fetch('/api/git/repos?' + qs.toString(), {
+                credentials: 'include',
+                cache: 'no-store',
+            });
+            const data = await resp.json().catch(() => null);
+            const repos = (data && data.success && Array.isArray(data.repos))
+                ? data.repos
+                : [];
+            const branches = repos
+                .map((r) => String((r && r.branch) || '').trim())
+                .filter(Boolean);
+            let branch = '';
+            if (branches.length) {
+                const distinct = branches.filter((b, i) => branches.indexOf(b) === i);
+                branch = distinct[0] + (distinct.length > 1 ? ' +' + (distinct.length - 1) : '');
+            }
+            _projectBranchCache = { path, branch, at: Date.now() };
+            if (branch !== prev) {
+                try { renderProjectChips(); } catch (_) {}
+            }
+        } catch (_) {
+            if (_projectBranchCache.path === path) _projectBranchCache.at = Date.now();
+        } finally {
+            _projectBranchFetchInFlight = false;
+        }
+    }
+
     async function pushCurrentChatProject(event, repoRoot) {
         if (event) {
             event.preventDefault();
@@ -8289,25 +8348,51 @@
         const safe = escapeHtmlInline(proj.name || 'Project');
         const pathBit = proj.path || proj.name || '';
         const starred = isProjectStarred(proj);
+        const showBranch = !!opts.composer && !opts.header;
+        const branch = showBranch ? currentProjectBranch() : '';
+        const branchBit = branch ? ' · branch ' + branch : '';
         const tip = escapeHtmlInline(
             (opts.composer
                 ? (starred
                     ? 'Starred default project (type /project or /cd to change): '
                     : 'Working project (type /project or /cd to change): ')
-                : 'Project used for this message: ') + pathBit
+                : 'Project used for this message: ') + pathBit + branchBit
         ).replace(/"/g, '&quot;');
         const headerClass = opts.header ? ' slash-command-chip--header' : '';
         const starredClass = starred ? ' slash-command-chip--starred' : '';
         const starIcon = starred
             ? '<span class="slash-chip-star" aria-hidden="true">★</span>'
             : '';
+        const branchSeg = branch
+            ? '<span class="slash-chip-seg slash-chip-seg--branch" title="' +
+              escapeHtmlInline(branch).replace(/"/g, '&quot;') +
+              '">' +
+              escapeHtmlInline(branch) +
+              '</span>'
+            : '';
+        const projectIcon =
+            '<span class="slash-chip-icon" aria-hidden="true">\uD83D\uDCC1</span>';
+        // Composer chip is segmented (★ | 📁 name | branch); the header/history
+        // variant stays flat so message meta keeps its compact layout.
+        const labelHtml = opts.composer
+            ? '<span class="slash-chip-seg slash-chip-seg--project">' +
+              projectIcon +
+              '<span class="slash-chip-label">' + safe + '</span>' +
+              '</span>' +
+              branchSeg
+            : projectIcon +
+              '<span class="slash-chip-label">' + safe + '</span>';
+        const segmentedClass = opts.composer
+            ? ' slash-command-chip--segmented'
+            : '';
         return (
             '<span class="slash-command-chip slash-command-chip--project' +
+            segmentedClass +
             headerClass +
             starredClass +
             '" role="img" aria-label="' +
             escapeHtmlInline(
-                (starred ? 'Starred project: ' : 'Project: ') + (proj.name || pathBit)
+                (starred ? 'Starred project: ' : 'Project: ') + (proj.name || pathBit) + branchBit
             ).replace(/"/g, '&quot;') +
             '" title="' +
             tip +
@@ -8317,10 +8402,7 @@
             tip +
             '">' +
             starIcon +
-            '<span class="slash-chip-icon" aria-hidden="true">\uD83D\uDCC1</span>' +
-            '<span class="slash-chip-label">' +
-            safe +
-            '</span>' +
+            labelHtml +
             '</span>'
         );
     }
@@ -11559,6 +11641,7 @@
     }
 
     function renderProjectChips() {
+        refreshProjectBranch();
         renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
         renderSlashChips('chat', document.getElementById('chatInput'));
     }
@@ -18732,6 +18815,11 @@
             }
 
             responseData = data;
+
+            // /branch may have moved the working branch — refresh the project chip.
+            if (data && String(data.native_command || '') === '/branch') {
+                try { refreshProjectBranch(true); } catch (_) {}
+            }
 
             // Typed completion metadata may request a Flask restart. Generate
             // the native inline form here; agents never need proprietary tags.

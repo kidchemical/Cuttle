@@ -22,8 +22,9 @@ from __future__ import annotations
 import json
 import re
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
+from api.agent_harness.agent_models import load_agent_catalog
 from api.agent_harness.types import AgentManifest
 
 _COST_SLASH_RE = re.compile(r"^/(cost|costs|pricing|prices)\b(.*)$", re.IGNORECASE | re.DOTALL)
@@ -237,79 +238,8 @@ def resolve_active_model(
 # ---------------------------------------------------------------------------
 # Model catalogs (live CLI / API where the harness has one)
 # ---------------------------------------------------------------------------
-
-
-def _rows_from_ids(ids: List[str]) -> List[Dict[str, Any]]:
-    return [{"id": m, "label": m} for m in ids if str(m or "").strip()]
-
-
-def _cursor_catalog(refresh: bool) -> Tuple[List[Dict[str, Any]], str]:
-    from api.cursor_agent_commands import list_cursor_agent_models, refresh_cursor_agent_models
-
-    models = (
-        refresh_cursor_agent_models().get("models") if refresh else list_cursor_agent_models()
-    ) or []
-    return [dict(m) for m in models if isinstance(m, dict)], "`agent models`"
-
-
-def _codex_catalog(refresh: bool) -> Tuple[List[Dict[str, Any]], str]:
-    from api.agent_harness.agents.codex.model_catalog import list_codex_catalog_models
-
-    result = list_codex_catalog_models(refresh=refresh)
-    return list(result.get("models") or []), "`codex debug models`"
-
-
-def _claude_catalog(refresh: bool) -> Tuple[List[Dict[str, Any]], str]:
-    from api.agent_harness.agents.claude.model_catalog import list_claude_catalog_models
-
-    result = list_claude_catalog_models(refresh=refresh)
-    return list(result.get("models") or []), "Claude Code CLI"
-
-
-def _muse_catalog(refresh: bool) -> Tuple[List[Dict[str, Any]], str]:
-    from scripts.utilities.muse_cli_tool import list_muse_catalog_models
-
-    result = list_muse_catalog_models(refresh=refresh)
-    return list(result.get("models") or []), "Meta Model API"
-
-
-def _hermes_catalog(refresh: bool) -> Tuple[List[Dict[str, Any]], str]:
-    from scripts.utilities.hermes_cli_tool import list_hermes_known_models
-
-    return [dict(m) for m in list_hermes_known_models()], "Hermes config + curated list"
-
-
-def _opencode_catalog(refresh: bool) -> Tuple[List[Dict[str, Any]], str]:
-    from api.agent_harness.agents.opencode.model_catalog import list_opencode_catalog_models
-
-    result = list_opencode_catalog_models(refresh=refresh)
-    return list(result.get("models") or []), "`opencode models --verbose`"
-
-
-_CATALOG_LOADERS: Dict[str, Callable[[bool], Tuple[List[Dict[str, Any]], str]]] = {
-    "cursor": _cursor_catalog,
-    "codex": _codex_catalog,
-    "claude": _claude_catalog,
-    "muse": _muse_catalog,
-    "hermes": _hermes_catalog,
-    "opencode": _opencode_catalog,
-}
-
-
-def _load_catalog(manifest: AgentManifest, refresh: bool) -> Tuple[List[Dict[str, Any]], str]:
-    loader = _CATALOG_LOADERS.get(manifest.id)
-    rows: List[Dict[str, Any]] = []
-    source = ""
-    if loader is not None:
-        try:
-            rows, source = loader(refresh)
-        except Exception as exc:
-            print(f"[agent_cost] {manifest.id} catalog failed: {exc}", flush=True)
-            rows = []
-    if not rows:
-        rows = _rows_from_ids(list(manifest.models or []))
-        source = "manifest"
-    return rows, source
+# Owned by api.agent_harness.agent_models so /cost, Settings and the Router
+# editor all read the same live catalog (manifest is the offline fallback).
 
 
 # ---------------------------------------------------------------------------
@@ -566,7 +496,9 @@ def build_cost_table(
             refresh_models_dev_pricing(force=True)
         except Exception as exc:
             print(f"[agent_cost] models.dev refresh failed: {exc}", flush=True)
-    catalog, catalog_source = _load_catalog(manifest, opts["refresh"])
+    catalog, catalog_source = load_agent_catalog(
+        manifest.id, list(manifest.models or []), opts["refresh"]
+    )
 
     active_id = (active.get("model") or "").strip()
     active_effort = (active.get("effort") or "").strip() or _id_effort(active_id)

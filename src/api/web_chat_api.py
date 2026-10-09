@@ -730,6 +730,30 @@ def process_message_with_bot(
         except Exception as _rs_err:
             print(f"[PIPELINE] /restart handler failed: {_rs_err}", flush=True)
 
+        # Native /branch control command — must win over sticky agent prefixes.
+        try:
+            from api.branch_slash import handle_branch_slash, parse_branch_slash
+
+            if parse_branch_slash(message_content) is not None:
+                try:
+                    _branch_proj = _resolve_request_project_path({'session_id': session_id})
+                except Exception:
+                    _branch_proj = None
+                _br = dict(
+                    handle_branch_slash(
+                        message_content,
+                        session_id=session_id,
+                        project_path=_branch_proj,
+                    )
+                    or {}
+                )
+                _br.setdefault("native_command", "/branch")
+                if status_queue is None:
+                    _emit_chat_complete_mobile(session_id, _br)
+                return _br
+        except Exception as _bs_err:
+            print(f"[PIPELINE] /branch handler failed: {_bs_err}", flush=True)
+
         # Explicit agent CLIs must not fall through to a missing graph.
         # Bundled agents go through the harness only.
         # Selection + execution owned by the shared application entry
@@ -2551,135 +2575,17 @@ def test_api_key():
         }), 500
 
 def test_openai_key(api_key):
-    """Test OpenAI API key"""
-    try:
-        print("[OPENAI_TEST] Starting test")
-        
-        try:
-            import openai
-            from openai import OpenAI
-        except ImportError as e:
-            print(f"[OPENAI_TEST] Import error: {e}")
-            return jsonify({
-                'success': False,
-                'message': 'OpenAI package not installed. Run: pip install openai'
-            })
-        
-        # Validate API key format first
-        if not api_key.startswith('sk-'):
-            print("[OPENAI_TEST] Invalid format")
-            return jsonify({
-                'success': False,
-                'message': 'Invalid API key format. OpenAI keys should start with "sk-"'
-            })
-        
-        print(f"[OPENAI_TEST] Creating client...")
-        client = OpenAI(api_key=api_key)
-        
-        print(f"[OPENAI_TEST] Making API call...")
-        # Test with a simple completion
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content": "Hi"}],
-            max_tokens=1,
-            timeout=10
-        )
-        
-        print(f"[OPENAI_TEST] Success! Model: {response.model}")
-        return jsonify({
-            'success': True,
-            'message': f'Valid OpenAI key (Model: {response.model})'
-        })
-        
-    except openai.AuthenticationError as e:
-        print(f"[OPENAI_TEST] Auth error: {e}")
-        return jsonify({
-            'success': False,
-            'message': 'Invalid API key or insufficient permissions'
-        })
-    except openai.RateLimitError as e:
-        print(f"[OPENAI_TEST] Rate limit: {e}")
-        return jsonify({
-            'success': False,
-            'message': 'Rate limit exceeded. Please try again later'
-        })
-    except openai.APITimeoutError as e:
-        print(f"[OPENAI_TEST] Timeout: {e}")
-        return jsonify({
-            'success': False,
-            'message': 'Request timed out. Please check your connection'
-        })
-    except Exception as e:
-        print(f"[OPENAI_TEST] General error: {e}")
-        return jsonify({
-            'success': False,
-            'message': f'OpenAI API error: {str(e)}'
-        })
+    """Authenticated metadata read through the provider adapter; no generation."""
+    from api.model_providers.service import check_key
+    ok, message = check_key("openai", api_key)
+    return jsonify({'success': ok, 'message': message})
+
 
 def test_anthropic_key(api_key):
-    """Test Anthropic API key"""
-    try:
-        print("[ANTHROPIC_TEST] Starting test")
-        
-        try:
-            import anthropic
-            from anthropic import Anthropic
-        except ImportError as e:
-            print(f"[ANTHROPIC_TEST] Import error: {e}")
-            return jsonify({
-                'success': False,
-                'message': 'Anthropic package not installed. Run: pip install anthropic'
-            })
-        
-        # Validate API key format first
-        if not api_key.startswith('sk-ant-'):
-            print("[ANTHROPIC_TEST] Invalid format")
-            return jsonify({
-                'success': False,
-                'message': 'Invalid API key format. Anthropic keys should start with "sk-ant-"'
-            })
-        
-        print(f"[ANTHROPIC_TEST] Creating client...")
-        client = Anthropic(api_key=api_key)
-        
-        print(f"[ANTHROPIC_TEST] Making API call...")
-        # Test with a simple message
-        response = client.messages.create(
-            model="claude-3-haiku-20240307",
-            max_tokens=1,
-            messages=[{"role": "user", "content": "Hi"}]
-        )
-        
-        print(f"[ANTHROPIC_TEST] Success! Model: {response.model}")
-        return jsonify({
-            'success': True,
-            'message': f'Valid Anthropic key (Model: {response.model})'
-        })
-        
-    except Exception as e:
-        error_msg = str(e)
-        print(f"[ANTHROPIC_TEST] Error: {error_msg}")
-        
-        if "authentication" in error_msg.lower() or "unauthorized" in error_msg.lower():
-            return jsonify({
-                'success': False,
-                'message': 'Invalid API key or insufficient permissions'
-            })
-        elif "rate" in error_msg.lower() or "limit" in error_msg.lower():
-            return jsonify({
-                'success': False,
-                'message': 'Rate limit exceeded. Please try again later'
-            })
-        elif "timeout" in error_msg.lower():
-            return jsonify({
-                'success': False,
-                'message': 'Request timed out. Please check your connection'
-            })
-        else:
-            return jsonify({
-                'success': False,
-                'message': f'Anthropic API error: {error_msg}'
-            })
+    from api.model_providers.service import check_key
+    ok, message = check_key("anthropic", api_key)
+    return jsonify({'success': ok, 'message': message})
+
 
 def test_discord_key(token):
     """Test Discord bot token"""
@@ -4073,6 +3979,64 @@ def chat_endpoint():
                 return jsonify(_rr)
         except Exception as _rs_err:
             print(f"[CHAT] /restart handler failed: {_rs_err}", flush=True)
+
+        # Native /branch control command — same contract as /restart: handled
+        # before sticky/starred prefixing, the router, and agent dispatch.
+        try:
+            from api.branch_slash import handle_branch_slash, parse_branch_slash
+            from api.flask_restart import strip_sticky_agent_prefix as _strip_branch
+
+            if parse_branch_slash(message_content) is not None:
+                message_content = _strip_branch(message_content)
+                _branch_path_err = None
+                try:
+                    _branch_proj = _resolve_request_project_path(data)
+                except Exception as _bpe:
+                    _branch_proj = None
+                    _branch_path_err = str(_bpe) or 'Cannot resolve the chat project'
+                if _branch_path_err:
+                    _br = {
+                        "success": False,
+                        "type": "git_branch",
+                        "native_command": "/branch",
+                        "response": f"Cannot switch branch: {_branch_path_err}",
+                    }
+                else:
+                    _br = dict(
+                        handle_branch_slash(
+                            message_content,
+                            session_id=chat_session_id,
+                            project_path=_branch_proj,
+                        )
+                        or {}
+                    )
+                _br["session_id"] = chat_session_id
+                _br.setdefault("native_command", "/branch")
+                if chat_session_id is not None and _br.get("response"):
+                    try:
+                        _persist_auth_user_message(chat_session_id, message_content, metadata=None)
+                        saver = _make_auth_assistant_saver(chat_session_id)
+                        if saver:
+                            saver(_br)
+                    except Exception as _bpe:
+                        print(f"[CHAT] branch slash persist: {_bpe}", flush=True)
+                if wants_stream:
+                    def _branch_stream():
+                        yield _sse_session_event(chat_session_id)
+                        yield f"data: {json.dumps({'type': 'response', **_br}, ensure_ascii=False, default=str)}\n\n"
+                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                    return Response(
+                        stream_with_context(_branch_stream()),
+                        mimetype="text/event-stream",
+                        headers={
+                            "Cache-Control": "no-cache",
+                            "X-Accel-Buffering": "no",
+                            "Connection": "keep-alive",
+                        },
+                    )
+                return jsonify(_br)
+        except Exception as _bs_err:
+            print(f"[CHAT] /branch handler failed: {_bs_err}", flush=True)
 
         # Supervised control lane — status/cancel/followup/coordinator config.
         # Must run even while a child worker is active; never waits on chat busy
@@ -6535,10 +6499,46 @@ def get_agents_catalog_api():
             or ''
         ).strip() or None
         agents = public_catalog(project_path)
+        # Settings asks for `?live_models=1` so its dropdowns read the same live
+        # CLI/API catalog as the chat palette instead of the manifest snapshot.
+        # The chat page's plain `/api/agents` stays cheap (no CLI calls).
+        live = (request.args.get('live_models') or '').strip().lower() in (
+            '1', 'true', 'yes', 'live',
+        )
+        if live:
+            try:
+                from api.agent_harness.agent_models import (
+                    catalog_model_efforts,
+                    catalog_model_ids,
+                    list_agent_models_bulk,
+                )
+
+                available_ids = [a.get('id') for a in agents if a.get('available')]
+                fallbacks = {
+                    a.get('id'): list(a.get('models') or []) for a in agents if a.get('id')
+                }
+                live_models = list_agent_models_bulk(available_ids, fallbacks=fallbacks)
+                by_id = {a.get('id'): a for a in agents}
+                for aid, res in live_models.items():
+                    row = by_id.get(aid)
+                    if not row:
+                        continue
+                    model_ids = catalog_model_ids(res.get('models'))
+                    if model_ids:
+                        row['models'] = model_ids
+                        row['models_source'] = res.get('source') or 'manifest'
+                    efforts = catalog_model_efforts(res.get('models'))
+                    if efforts:
+                        merged = dict(row.get('model_efforts') or {})
+                        merged.update(efforts)
+                        row['model_efforts'] = merged
+            except Exception as exc:  # noqa: BLE001 — keep the manifest snapshot
+                print(f"[api/agents] live model enrichment failed: {exc}", flush=True)
         return jsonify({
             'success': True,
             'agents': agents,
             'count': len(agents),
+            'live_models': live,
             'roots': discovery_roots(project_path),
         })
     except Exception as e:
@@ -6744,9 +6744,12 @@ def clear_chat_warnings_api():
 @app.route('/api/agent-router/options', methods=['GET'])
 @owner_required
 def get_agent_router_options_api():
-    """Modes, models and agents for the Router editor page (no CLI calls).
+    """Modes, models and agents for the Router editor page.
 
-    Owner-only: the payload includes the live ``current`` provider config
+    ``?live=1`` (the Router page's call) unions each agent's live CLI/API
+    catalog — the same store the chat palette uses — so target model dropdowns
+    match what is actually available. Plain calls stay static/cheap and spawn no
+    CLI. Owner-only: the payload includes the live ``current`` provider config
     (endpoints, targets, fallbacks), same sensitivity class as
     ``GET /api/router/config``.
     """
@@ -6761,7 +6764,7 @@ def get_agent_router_options_api():
         from scripts.utilities.muse_cli_tool import MUSE_KNOWN_MODELS
 
         cfg = load_router_config()
-        agent_models = {
+        static_models = {
             'cursor': sorted(CURSOR_KNOWN_MODELS),
             'codex': ['gpt-5-codex', 'gpt-5', 'o4-mini'],
             'claude': ['sonnet', 'opus', 'haiku'],
@@ -6769,13 +6772,16 @@ def get_agent_router_options_api():
             'muse': [m['id'] for m in MUSE_KNOWN_MODELS],
             'hermes': ['default'],
         }
+        agent_models = dict(static_models)
         agent_efforts = {}
+        manifests = []
         try:
             from api.agent_harness.catalog import list_agent_manifests
 
             # Union (not override) — manifest lists are often shorter than the
             # static known-model sets (e.g. Cursor's manifest lists 4 of 12).
-            for m in list_agent_manifests():
+            manifests = list(list_agent_manifests())
+            for m in manifests:
                 merged = set(agent_models.get(m.id, [])) | set(m.models or [])
                 agent_models[m.id] = sorted(merged)
                 # Effort picker per target: Cursor bakes effort into the model id.
@@ -6786,6 +6792,39 @@ def get_agent_router_options_api():
                 }
         except Exception:
             pass
+        # The Router page opts in (`?live=1`) to the same live CLI/API catalog
+        # the chat palette and Settings read, so its model dropdowns no longer
+        # drift from what is actually available. Plain calls stay static/cheap
+        # (auth probes, tests) and skip every CLI.
+        live = (request.args.get('live') or '').strip().lower() in (
+            '1', 'true', 'yes', 'live',
+        )
+        if live:
+            try:
+                from api.agent_harness.agent_models import (
+                    catalog_model_efforts,
+                    catalog_model_ids,
+                    list_agent_models_bulk,
+                )
+
+                fallbacks = {m.id: list(m.models or []) for m in manifests}
+                for aid, ids in static_models.items():
+                    fallbacks.setdefault(aid, list(ids))
+                live_catalogs = list_agent_models_bulk(
+                    list(agent_models.keys()), fallbacks=fallbacks
+                )
+                for aid, res in live_catalogs.items():
+                    model_ids = catalog_model_ids(res.get('models'))
+                    if model_ids:
+                        agent_models[aid] = model_ids
+                    efforts = catalog_model_efforts(res.get('models'))
+                    if efforts:
+                        slot = agent_efforts.setdefault(
+                            aid, {'supported': True, 'levels': [], 'model_levels': {}}
+                        )
+                        slot.setdefault('model_levels', {}).update(efforts)
+            except Exception as exc:  # noqa: BLE001 — keep the static/manifest sets
+                print(f"[api/agent-router/options] live model enrichment failed: {exc}", flush=True)
         return jsonify({
             'success': True,
             'modes': sorted(VALID_MODES),

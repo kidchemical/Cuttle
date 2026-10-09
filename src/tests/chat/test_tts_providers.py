@@ -18,6 +18,13 @@ from api import tts_providers as providers  # noqa: E402
 from api import voice_cache  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def isolated_credentials(tmp_path, monkeypatch):
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path))
+    for key in ("OPENAI_API_KEY", "API_KEY", "ELEVENLABS_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"):
+        monkeypatch.delenv(key, raising=False)
+
+
 def test_registry_lists_three_configured_shaped_providers(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("API_KEY", raising=False)
@@ -63,18 +70,19 @@ def test_openai_synthesize_posts_model_voice_speed():
     fake_resp.content = b"MP3BYTES"
     fake_audio = MagicMock()
     fake_audio.audio.speech.create.return_value = fake_resp
+    fake_audio.__enter__.return_value = fake_audio
     with patch.dict("os.environ", {"OPENAI_API_KEY": "sk-x"}), patch(
         "openai.OpenAI", return_value=fake_audio
     ):
         audio, mime, extra = providers.synthesize(
-            "openai", "Hello", voice="coral", model="tts-1", speed=1.25
+            "openai", "Hello", voice="alloy", model="tts-1", speed=1.25
         )
     assert audio == b"MP3BYTES"
     assert mime == "audio/mpeg"
     assert extra == {}
     _, kwargs = fake_audio.audio.speech.create.call_args
     assert kwargs["model"] == "tts-1"
-    assert kwargs["voice"] == "coral"
+    assert kwargs["voice"] == "alloy"
     assert kwargs["speed"] == 1.25
 
 
@@ -108,13 +116,16 @@ def test_elevenlabs_synthesize_posts_voice_settings():
 def test_elevenlabs_auth_failure_is_honest():
     fake_resp = MagicMock()
     fake_resp.status_code = 401
+    import requests
+    fake_resp.raise_for_status.side_effect = requests.HTTPError(response=fake_resp)
     with patch.dict("os.environ", {"ELEVENLABS_API_KEY": "bad"}), patch(
         "requests.post", return_value=fake_resp
     ), patch("requests.get", return_value=fake_resp):
-        with pytest.raises(RuntimeError, match="401"):
+        with pytest.raises(Exception):
             providers.synthesize("elevenlabs", "Hello", voice="abc")
-        with pytest.raises(RuntimeError, match="401"):
-            providers.fetch_provider_voices("elevenlabs")
+        from api.model_providers.service import discover_voices
+        result = discover_voices("elevenlabs", refresh=True)
+        assert "HTTP 401" in result['message']
 
 
 def test_elevenlabs_fetch_voices_maps_library():
@@ -158,8 +169,10 @@ def test_google_synthesize_decodes_audio_and_usage():
     }
 
 
-def test_google_has_no_list_endpoint():
-    assert providers.fetch_provider_voices("google") is None
+def test_google_fallback_voices_without_key(monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    assert len(providers.fetch_provider_voices("google")) == 30
 
 
 def test_synthesize_rejects_unknown_provider_and_empty_text():

@@ -1,0 +1,11 @@
+schema_version: 1
+id: typesafe
+label: TypeSafe / Jev
+priority: 60
+operations: [structured_decision]
+credential_env: [TYPESAFE_API_KEY, OPENROUTER_API_KEY]
+default_model: jev-latest
+models:
+  - id: jev-latest
+    capabilities:
+      operations: [structured_decision]

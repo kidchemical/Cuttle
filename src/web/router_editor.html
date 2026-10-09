@@ -32,7 +32,7 @@
                 <button class="re-btn" id="btn-try-brain" disabled title="Consult the configured routing brain; may use API tokens">Ask brain</button>
             </div>
             <div id="try-result" class="re-preview-result" role="status" aria-live="polite">Type to see the lane and target. No agent runs.</div>
-            <p class="re-footnote" id="try-config-hint">Uses saved settings. Typing uses the local classifier; Ask brain may use API tokens.</p>
+            <p class="re-footnote" id="try-config-hint">Uses saved settings. Typing uses the local classifier; Ask brain uses the configured backend and its allowance.</p>
         </section>
 
         <section class="re-card" id="flow-card">
@@ -71,7 +71,7 @@
                     <option value="off">off — router disabled</option>
                     <option value="api">hosted brain</option>
                     <option value="local">local — classifier only (local brain not built yet)</option>
-                    <option value="agent">agent — classifier only (agent brain not built yet)</option>
+                    <option value="agent">agent — restricted CLI routing brain</option>
                 </select>
                 <select id="router-api-model" class="re-input narrow" data-provider="api" hidden></select>
                 <input id="router-local-endpoint" class="re-input wide" data-provider="local"
@@ -79,7 +79,7 @@
                 <input id="router-local-model" class="re-input narrow" data-provider="local"
                        placeholder="local model id" hidden>
                 <input id="router-agent-id" class="re-input narrow" data-provider="agent"
-                       placeholder="agent id (cursor)" hidden>
+                       placeholder="agent id (claude or codex)" hidden>
                 <input id="router-agent-model" class="re-input narrow" data-provider="agent"
                        placeholder="agent model (auto)" hidden>
             </div>
@@ -207,6 +207,6 @@
     <div class="re-toast" id="re-toast" hidden></div>
 
     <script src="/js/shared/toast.js"></script>
-    <script src="/js/router/router_editor.js?v=20261005lanes"></script>
+    <script src="/js/router/router_editor.js?v=20261009helpers"></script>
 </body>
 </html>

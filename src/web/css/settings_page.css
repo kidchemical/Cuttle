@@ -447,7 +447,10 @@
 
 .provider-picker select.setting-input {
     min-width: 220px;
+    max-width: 100%;
 }
+
+.provider-picker [hidden] { display: none; }
 
 .provider-chip {
     display: inline-flex;
@@ -772,6 +775,9 @@ body.compact-shell-page .setting-control--column {
         min-width: 0 !important;
         flex: 1 1 160px;
     }
+    body.compact-shell-page .provider-picker > .setting-input {
+        flex: 1 1 100%;
+    }
     /* In a column that basis is a height — selects came out 160px tall. */
     body.compact-shell-page .setting-control--stack > .setting-input,
     body.compact-shell-page .setting-control--column > .setting-input {
@@ -805,3 +811,12 @@ body.compact-shell-page button.cuttle-info {
     margin-left: 6px;
     vertical-align: middle;
 }
+#chatTtsModel, #chatTtsNarratorModel, #chatTtsCustomModel, #chatTtsNarratorCustomModel,
+#completionEffortSelect, #chatTtsNarratorEffort {
+    max-width: 100%; min-width: 0;
+}
+#chatTtsCustomModel[hidden], #chatTtsNarratorCustomModel[hidden] { display: none !important; }
+
+.background-executor { padding: 12px; margin: 8px 0; border: 1px solid var(--border-color, #555); border-radius: 8px; }
+.background-executor .provider-picker { margin-bottom: 8px; }
+.background-executor input[type="number"] { width: 125px; }

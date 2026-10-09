@@ -46,6 +46,21 @@ type: discord.post       # or shell
 # run: python .cuttle/scripts/do_thing.py
 ```
 
+## Native `/branch` (project git branch)
+
+A global native control command (registered in
+`src/web/js/chat/chat_slash.js`, intercepted in `api/web_chat_api.py` and
+handled by `api/branch_slash.py`; git behavior stays in `api/git_service.py`).
+It never becomes a model turn.
+
+- `/branch` — show the current branch of the chat's project.
+- `/branch list` — list branches with the current one marked.
+- `/branch <name>` — switch the working branch (owner-only; refuses a dirty
+  worktree, tracks a remote branch when needed).
+
+The composer project chip is segmented: star status | project name | branch
+(branch read from `GET /api/git/repos?path=…`).
+
 ## Live usage reports
 
 With a Cursor, Codex, Muse, Hermes, or OpenCode agent badge selected, `/usage`

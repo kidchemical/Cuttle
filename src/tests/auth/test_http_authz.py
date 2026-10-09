@@ -883,6 +883,20 @@ def test_agent_router_options_requires_owner(tmp_path, monkeypatch):
     assert "jev-latest" in data["api_models"]
     assert data["agent_models"]["jev"] == ["jev-latest"]
 
+    # `?live=1` (the Router page's call) unions each agent's live catalog.
+    from api.agent_harness import agent_models as am
+
+    monkeypatch.setattr(
+        am,
+        "list_agent_models_bulk",
+        lambda ids, fallbacks=None, refresh=False: {
+            "opencode": {"models": [{"id": "openrouter/deepseek/v9"}], "source": "cli"},
+        },
+    )
+    live = ctx["client"].get("/api/agent-router/options?live=1", environ_base=LAN)
+    assert live.status_code == 200, live.get_json()
+    assert live.get_json()["agent_models"]["opencode"] == ["openrouter/deepseek/v9"]
+
 
 def test_worker_bearer_cannot_read_router_options(tmp_path, monkeypatch):
     from api import web_chat_api as wca

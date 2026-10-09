@@ -17,8 +17,8 @@ owns no setting's storage; each panel's loader stays in
 |---|---|
 | General | 1 General + 8 Notifications |
 | Appearance | 2 Appearance (theme, animations, wallpaper) |
-| Agents | 4 AI Configuration, plus the agent-CLI catalog and drop-in roots |
-| Providers | Cheap completions + 3 API Keys |
+| Agents | AI configuration, agent CLI catalog/drop-in roots, Background helpers |
+| Providers | API credentials |
 | Chat voice | 5 Chat voice (TTS) |
 | Devices | 6 Phone / LAN access + 7 Desktop app |
 | Data | 9 Data Management |
@@ -221,3 +221,44 @@ sensitive session/enrollment material; see `docs/architecture/cuttle-home.md`.
 
 Tests: `test_settings_storage.py`, settings/routes, runtime migration, auth,
 worker, GitHub App and architecture-boundary suites.
+
+
+## Shipped: live background model catalogs
+
+Background helpers now use provider folders/manifests under `api.model_providers`.
+The native model select reads account model APIs plus supplemental models.dev
+capabilities, has explicit refresh/custom-ID/default choices, and preserves saved
+choices on discovery/save failures. Owner-only discovery is separate from the
+general settings read. Provider pins still preserve the fallback chain, and
+environment overrides retain precedence. Details: `model-providers.md`; adapter
+contract: `src/api/model_providers/ADDING_A_PROVIDER.md`.
+
+
+## Shipped: shared model operations and Voice catalogs
+
+Background and Narrator now offer named effort choices per model. Voice models
+use live account discovery filtered for speech; voice discovery follows the
+selected model and preserves saved/custom IDs during failures. Direct narration,
+vision, transcription, speech, and Jev transports moved into provider adapters.
+API key tests are read-only metadata requests. Details: `model-providers.md`.
+
+
+## Shipped: background execution choices and temperature
+
+Background helpers moved to **Agents**. The catalog-driven editor configures a
+global execution chain and optional overrides for titles, commits, enhancement,
+reply/progress narration and router decisions. API credentials stay in Providers;
+audio synthesis stays in Voice. A configured narration chain hides the legacy
+narrator API controls and links Voice to the background editor.
+
+`api.background_helpers` owns `background_helpers` settings; old
+`completion_provider` / `completion_models` / effort preferences stay intact and
+remain effective when no new chain is configured. New chains are exclusive and
+ordered; CLI selection is an explicit opt-in. Temperature is blank for task
+default or numeric within the model's advertised range. Thinking/effort
+conditions disable unsupported settings. Claude and Codex expose restricted
+text helper methods on their existing agent adapters.
+
+Owner docs: [model-providers.md](model-providers.md). This extends the established
+helper workflow through an explicit backend choice, so no separate experimental
+rollout switch is added. No backend changes until the owner saves a chain.

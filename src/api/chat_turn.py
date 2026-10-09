@@ -68,7 +68,7 @@ def normalize_chat_post(data: Optional[dict]) -> TurnRequest:
 class TurnSelection:
     """Agent-selection decision. ``kind`` selects the workflow arm."""
 
-    kind: str  # restart | harness | harness_empty_prompt | router
+    kind: str  # restart | branch | harness | harness_empty_prompt | router
     agent_id: Optional[str] = None
     prompt: Optional[str] = None
     block_message: Optional[str] = None
@@ -79,10 +79,13 @@ def classify_selection(
     *,
     match_harness: Callable[[str], Optional[Tuple[str, str]]],
     is_restart: Callable[[str], bool],
+    is_branch: Optional[Callable[[str], bool]] = None,
 ) -> TurnSelection:
     """Decide the turn arm. Native control wins over harness matches."""
     if is_restart(message):
         return TurnSelection(kind='restart')
+    if is_branch and is_branch(message):
+        return TurnSelection(kind='branch')
     matched = match_harness(message)
     if matched:
         agent_id, prompt = matched

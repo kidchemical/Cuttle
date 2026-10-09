@@ -261,3 +261,12 @@ def list_claude_palette_models(
     if limit is not None and limit > 0:
         models = models[: int(limit)]
     return {**result, "models": models, "returned": len(models)}
+
+
+def cached_helper_capabilities(model=""):
+    """Background validation reads the last catalog without spawning a CLI."""
+    rows = _CATALOG_CACHE[1] if _CATALOG_CACHE is not None else CLAUDE_KNOWN_MODELS
+    levels = next((r.get("efforts") or [] for r in rows if r.get("id") == model), None)
+    if not model:
+        levels = _CATALOG_CACHE[2] if _CATALOG_CACHE is not None else _DECLARED_DEFAULT_EFFORTS
+    return {"reasoning_efforts": list(levels or []), "temperature": False}

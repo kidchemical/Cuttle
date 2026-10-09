@@ -4644,6 +4644,41 @@ pre.has-code-copy:hover .code-copy-btn,
     font-weight: 600;
 }
 
+/* Segmented project chip: ★ | 📁 name | branch */
+.slash-command-chip--project.slash-command-chip--segmented {
+    padding: 0;
+    gap: 0;
+    overflow: hidden;
+    max-width: min(100%, 18rem);
+}
+
+.slash-command-chip--project .slash-chip-seg--project {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: color-mix(in srgb, currentColor 16%, transparent);
+    font-weight: 600;
+}
+
+.slash-command-chip--project .slash-chip-seg--branch {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    background: color-mix(in srgb, currentColor 5%, transparent);
+    font-weight: 600;
+    opacity: 0.92;
+}
+
+.light-mode .slash-command-chip--project .slash-chip-seg--project {
+    background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.light-mode .slash-command-chip--project .slash-chip-seg--branch {
+    background: color-mix(in srgb, currentColor 4%, transparent);
+}
+
 .slash-chips-inline {
     display: inline-flex;
     flex-wrap: wrap;

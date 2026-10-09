@@ -56,6 +56,8 @@ def _handle_claude_model_slash(
             return None
 
     if arg.lower() in ("refresh", "reload", "sync"):
+        from api.model_catalog_delta import record_and_diff, render_delta
+
         result = refresh_claude_catalog()
         count = int(result.get("count") or 0)
         err = result.get("error")
@@ -72,11 +74,13 @@ def _handle_claude_model_slash(
             if err and source == "static_fallback"
             else " from the Claude Code CLI"
         )
+        delta = record_and_diff("claude", result.get("models") or [])
         return AgentResult(
             success=True,
             output=(
                 f"**Claude Code:** Refreshed model catalog{note} — "
                 f"{count} models available in the `/` palette.\n\n"
+                f"{render_delta(delta)}\n\n"
                 "Filter in chat (with a Claude badge): type `opus`, `sonnet`, "
                 "`fable`, … then pick a row. "
                 "Each model row includes its supported effort levels. "
@@ -88,6 +92,8 @@ def _handle_claude_model_slash(
                 "agent_model": active_model,
                 "claude_catalog_count": count,
                 "claude_catalog_source": source,
+                "claude_catalog_added": [r["id"] for r in delta.get("added") or []],
+                "claude_catalog_removed": [r["id"] for r in delta.get("removed") or []],
             },
         )
 
@@ -328,6 +334,18 @@ class Adapter:
         if effort_result is not None:
             return effort_result
         return _handle_claude_model_slash(prompt, chat_session_id, active or "")
+
+    def helper_models(self, *, refresh=False):
+        from .helper import models
+        return models(refresh)
+
+    def helper_capabilities(self, model=""):
+        from .model_catalog import cached_helper_capabilities
+        return cached_helper_capabilities(model)
+
+    def generate_helper(self, request):
+        from .helper import generate
+        return generate(request)
 
     async def execute(
         self,

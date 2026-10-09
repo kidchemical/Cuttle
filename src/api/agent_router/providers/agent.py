@@ -1,22 +1,13 @@
-"""Agent-CLI router provider (schema-ready; avoids recursive routing)."""
-
-from __future__ import annotations
-
-from api.agent_router.providers.base import ProviderError
-from api.agent_router.types import RouterConfig, RoutingContext, RoutingDecision
+"""Restricted agent CLI routing brain; never re-enters chat dispatch."""
+from api.agent_router.providers.background import decide_background
+from api.background_helpers import has_selection
 
 
 class AgentCliRouterProvider:
-    name = "agent"
+    name = 'agent'
 
-    def decide(
-        self,
-        context: RoutingContext,
-        config: RouterConfig,
-    ) -> RoutingDecision:
-        # Must never call back into the chat dispatcher (would re-enter the router).
-        raise ProviderError(
-            "Agent router mode is configured but not fully implemented yet. "
-            "Use `/router mode api` or `/router mode off`.",
-            retryable=False,
-        )
+    def decide(self, context, config):
+        chain = None if has_selection('router') else [{'kind':'cli','target':config.provider.agent_id,
+            'model':config.provider.agent_model if config.provider.agent_model != 'auto' else '',
+            'auth':'subscription'}]
+        return decide_background(context, config, chain=chain)

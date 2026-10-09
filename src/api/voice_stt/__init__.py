@@ -56,15 +56,6 @@ def clean_transcript(text: str, *, duration_ms: Optional[int] = None) -> str:
     return out
 
 
-def _client():
-    key = (os.environ.get("OPENAI_API_KEY") or "").strip()
-    if not key:
-        raise RuntimeError("OPENAI_API_KEY is not set")
-    from openai import OpenAI
-
-    return OpenAI(api_key=key, timeout=30.0)
-
-
 def transcribe(
     audio: bytes,
     *,
@@ -82,8 +73,9 @@ def transcribe(
         raise ValueError("audio is empty")
     if len(audio) > MAX_AUDIO_BYTES:
         raise ValueError("audio clip is too large")
-    client = _client()
-    kwargs = {"file": (f"phrase.{file_extension(mime)}", audio, mime or "audio/webm")}
+    from api.model_providers.service import transcribe as provider_transcribe
+    from api.model_providers.types import TranscriptionRequest
+    kwargs = {}
     hint = re.sub(r"\s+", " ", str(prompt or "")).strip()[-MAX_PROMPT_CHARS:]
     if hint:
         kwargs["prompt"] = hint
@@ -93,9 +85,10 @@ def transcribe(
     last_error: Optional[Exception] = None
     for model in (DEFAULT_MODEL, FALLBACK_MODEL):
         try:
-            result = client.audio.transcriptions.create(model=model, **kwargs)
+            result = provider_transcribe("openai", TranscriptionRequest(audio, model,
+                        filename=f"phrase.{file_extension(mime)}", mime=mime or "audio/webm", **kwargs))
         except Exception as exc:  # model unavailable on this key → try the fallback
             last_error = exc
             continue
-        return clean_transcript(getattr(result, "text", "") or "", duration_ms=duration_ms)
+        return clean_transcript(result or "", duration_ms=duration_ms)
     raise RuntimeError(f"transcription failed: {type(last_error).__name__}")

@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="css/shared_navigation.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/landing_page.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/compact_page.css?v=20261007hdr2">
-    <link rel="stylesheet" href="css/settings_page.css?v=20261007hdr2">
+    <link rel="stylesheet" href="css/settings_page.css?v=20261009models">
 <link rel="stylesheet" href="/css/storage_settings.css?v=20261007">
 </head>
 <body class="compact-shell-page" data-page="settings">
@@ -237,6 +237,21 @@
             </section>
 
             <section class="settings-panel" id="panel-agents" role="tabpanel" aria-labelledby="tab-agents" tabindex="0" hidden>
+            <div class="settings-group" id="backgroundHelpersSettings">
+                <h3 class="settings-title">🧠 Background helpers <span class="settings-scope" data-scope="server">All devices</span></h3>
+                <p class="setting-description">Choose how Cuttle generates titles, commit suggestions, enhanced prompts, narration, and routing decisions. CLI helpers use your existing CLI login and allowance.</p>
+                <div class="setting-control setting-control--stack">
+                    <label>Configure <select id="backgroundTask" class="setting-input" aria-label="Background task"><option value="">Global default</option></select></label>
+                    <label><input id="backgroundOverride" type="checkbox"> Use a dedicated execution chain</label>
+                    <div id="backgroundInheritance" class="setting-description"></div>
+                    <div id="backgroundChain"></div>
+                    <div class="provider-picker">
+                        <button id="backgroundAdd" type="button" class="control-button" disabled>Add fallback</button>
+                        <button type="button" class="control-button btn-start" onclick="saveCompletionProviders()">💾 Save background helpers</button>
+                    </div>
+                    <div id="backgroundStatus" class="setting-description" role="status"></div>
+                </div>
+            </div>
             <div class="settings-group">
                 <h3 class="settings-title">Default agent <span class="settings-scope" data-scope="server">This server</span></h3>
                 <label class="agent-default-picker" for="defaultAgentSelect">
@@ -339,27 +354,6 @@
             </section>
 
             <section class="settings-panel" id="panel-providers" role="tabpanel" aria-labelledby="tab-providers" tabindex="0" hidden>
-            <div class="settings-group">
-                <h3 class="settings-title"><span class="emoji">🧠</span> Background helpers <span class="settings-scope" data-scope="server" title="Stored in settings.json and read by api.llm_complete on every call.">This server</span><button type="button" class="cuttle-info" data-tooltip="Generate chat titles, commit suggestions, and enhanced prompts." aria-label="About 🧠 Background helpers">i</button></h3>
-
-                <div class="setting-item setting-item--stack">
-                    <div class="setting-label">
-                        <strong>Provider &amp; model</strong><button type="button" class="cuttle-info" data-tooltip="Automatic uses your configured providers. Pick one to use it exclusively." aria-label="About Provider &amp; model">i</button>
-                    </div>
-                    <div class="setting-control setting-control--stack">
-                        <div class="provider-picker">
-                            <select id="completionProviderSelect" class="setting-input" onchange="onCompletionProviderChanged()">
-                                <option value="">Auto — try each configured provider</option>
-                            </select>
-                            <input type="text" id="completionModelInput" class="setting-input" list="completionModelSuggestions" placeholder="Model id (blank = default)">
-                            <datalist id="completionModelSuggestions"></datalist>
-                            <button class="control-button btn-start" onclick="saveCompletionProviders()"><span class="emoji">💾</span> Save</button>
-                        </div>
-                        <div id="completionProviderStatus" class="provider-status"></div>
-                    </div>
-                </div>
-            </div>
-
             <div class="settings-group">
                 <h3 class="settings-title"><span class="emoji">🔑</span> API Keys <span class="settings-scope" data-scope="server" title="Used by this server's optional direct API features.">This server</span><button type="button" class="cuttle-info" data-tooltip="Optional credentials for Cuttle’s direct API features. CLI agents use their own login and configuration; these keys are never passed to them." aria-label="About 🔑 API Keys">i</button></h3>
 
@@ -477,10 +471,11 @@
                     <div class="setting-label">
                         <strong>Model</strong><button type="button" class="cuttle-info" data-tooltip="Speech model for the selected provider." aria-label="About TTS model">i</button>
                     </div>
-                    <div class="setting-control">
-                        <select id="chatTtsModel" class="setting-input" style="min-width: 220px;">
-                            <option value="">Loading…</option>
-                        </select>
+                    <div class="setting-control setting-control--column">
+                        <select id="chatTtsModel" class="setting-input"><option value="">Loading…</option></select>
+                        <input id="chatTtsCustomModel" class="setting-input" aria-label="Custom speech model ID" placeholder="Custom model ID" hidden>
+                        <button type="button" class="control-button btn-info" onclick="refreshChatTtsModels()">Refresh models</button>
+                        <div id="chatTtsModelStatus" class="setting-description" role="status"></div>
                     </div>
                 </div>
                 <div class="setting-item">
@@ -532,12 +527,15 @@
                     <div class="setting-label">
                         <strong>Narrator model</strong><button type="button" class="cuttle-info" data-tooltip="Any model id your key can reach. Suggestions come from the provider registry; blank means the provider default." aria-label="About Narrator model">i</button>
                     </div>
-                    <div class="setting-control">
-                        <input type="text" id="chatTtsNarratorModel" class="setting-input" list="chatTtsNarratorSuggestions" style="min-width: 200px;" placeholder="Model id (blank = default)">
-                        <datalist id="chatTtsNarratorSuggestions"></datalist>
+                    <div class="setting-control setting-control--column">
+                        <select id="chatTtsNarratorModel" class="setting-input" aria-label="Narrator model"><option value="">Provider default</option></select>
+                        <input id="chatTtsNarratorCustomModel" class="setting-input" aria-label="Custom narrator model ID" placeholder="Custom model ID" hidden>
+                        <button type="button" class="control-button btn-info" onclick="refreshNarratorModels()">Refresh models</button>
+                        <label>Reasoning effort <select id="chatTtsNarratorEffort" class="setting-input" aria-label="Narrator reasoning effort"><option value="">Automatic</option></select></label>
                     </div>
                 </div>
 </details>
+                <p id="chatTtsBackgroundNotice" class="setting-description" hidden>Reply narration uses the configured background execution chain. Its model, effort, and temperature are in <a href="/settings_page.html?tab=agents#backgroundHelpersSettings">Agents → Background helpers</a>. The narrator API choices below apply when no background chain is configured.</p>
                 <div class="setting-item">
                     <div class="setting-control" style="gap:8px;flex-wrap:wrap">
                         <button type="button" class="control-button btn-start" onclick="saveChatTtsSettings()"><span class="emoji">💾</span> Save chat voice</button>
@@ -702,6 +700,9 @@
     <script src="/js/shared/completion_notifications.js?v=20261004completion"></script>
     <script src="/js/settings/settings_releases.js?v=20261008releasePrefs"></script>
     <script src="/js/settings/settings_storage.js?v=20261007"></script>
+    <script src="/js/settings/settings_model_picker.js?v=20261009a"></script>
+    <script src="/js/settings/settings_background_helpers.js?v=20261009b"></script>
+    <script src="/js/settings/settings_voice_providers.js?v=20261009b"></script>
     <script src="/js/settings/settings_page_tabs.js?v=20261001tabs"></script>
     <script src="/js/settings/settings_page_accessibility.js?v=20261007"></script>
     <script src="/js/media/video_background.js?v=20260927blendTarget"></script>
@@ -842,123 +843,18 @@
             (window.showToast || alert)('Agent name saved successfully!', 'success');
         }
 
-        // Cheap-completion providers come from the server registry so this page
-        // never reimplements resolution order (api.completion_providers owns it).
-        let _completionProviders = [];
-
-        function renderCompletionProviders(payload) {
-            _completionProviders = (payload && payload.providers) || [];
-            const sel = document.getElementById('completionProviderSelect');
-            const input = document.getElementById('completionModelInput');
-            const list = document.getElementById('completionModelSuggestions');
-            if (!sel) return;
-            const pinned = (payload && payload.pinned_provider) || '';
-            sel.innerHTML = '<option value="">Auto — try each configured provider</option>';
-            _completionProviders.forEach(p => {
-                const opt = document.createElement('option');
-                opt.value = p.id;
-                opt.textContent = p.label + (p.configured ? '' : ' (not configured)');
-                if (p.id === pinned) opt.selected = true;
-                sel.appendChild(opt);
+        // Catalog and picker behavior live in the settings slice.
+        let _completionPicker;
+        function completionPicker() {
+            if (!_completionPicker) _completionPicker = CuttleBackgroundHelpers.create({
+                document, fetch: window.fetch.bind(window),
+                notify: (message, kind) => (window.showToast || alert)(message, kind),
+                endpoint: '/api/settings/background-helpers'
             });
-            if (list) {
-                list.innerHTML = '';
-                const current = _completionProviders.find(p => p.id === sel.value);
-                const models = (current && current.suggested_models) || [];
-                models.forEach(name => {
-                    const opt = document.createElement('option');
-                    opt.value = name;
-                    list.appendChild(opt);
-                });
-            }
-            paintCompletionStatus(payload);
-            if (input && !input.dataset.touched) {
-                const row = _completionProviders.find(p => p.id === sel.value);
-                input.value = (row && row.effective_model) || '';
-            }
+            return _completionPicker;
         }
-
-        function paintCompletionStatus(payload) {
-            const box = document.getElementById('completionProviderStatus');
-            if (!box) return;
-            const providers = (payload && payload.providers) || _completionProviders;
-            const order = (payload && payload.order) || [];
-            if (!providers.length) {
-                box.textContent = 'No completion providers registered.';
-                return;
-            }
-            box.innerHTML = '';
-            providers.forEach(p => {
-                const chip = document.createElement('span');
-                const ok = !!p.configured;
-                chip.className = 'provider-chip' + (ok ? '' : ' is-unset') + (p.pinned ? ' is-pinned' : '');
-                const src = p.model_from && p.model_from !== 'default'
-                    ? ' · ' + p.model_from + ': ' + (p.effective_model || p.default_model || 'provider default')
-                    : '';
-                chip.textContent = p.label + (ok ? '' : ' — no ' + ((p.credential_env || [])[0] || 'credential')) + src;
-                if (ok && order.indexOf(p.id) === 0 && order.length > 1) chip.title = 'Tried first';
-                box.appendChild(chip);
-            });
-        }
-
-        function loadCompletionProviders() {
-            return fetch('/api/settings/completion-providers')
-                .then(r => (r.ok ? r.json() : null))
-                .then(data => { if (data && data.success) renderCompletionProviders(data); })
-                .catch(() => {});
-        }
-
-        function onCompletionProviderChanged() {
-            const sel = document.getElementById('completionProviderSelect');
-            const input = document.getElementById('completionModelInput');
-            const list = document.getElementById('completionModelSuggestions');
-            const row = _completionProviders.find(p => p.id === sel.value);
-            if (list) {
-                list.innerHTML = '';
-                ((row && row.suggested_models) || []).forEach(name => {
-                    const opt = document.createElement('option');
-                    opt.value = name;
-                    list.appendChild(opt);
-                });
-            }
-            if (input) {
-                // Switching provider must not carry the previous provider's
-                // model id across.
-                input.value = (row && row.effective_model) || '';
-                input.dataset.touched = '';
-            }
-        }
-
-        async function saveCompletionProviders() {
-            const sel = document.getElementById('completionProviderSelect');
-            const input = document.getElementById('completionModelInput');
-            const providerId = sel ? sel.value : '';
-            const model = input ? input.value.trim() : '';
-            if (input) delete input.dataset.touched;
-            const body = { provider: providerId, models: {} };
-            if (providerId && model) body.models[providerId] = model;
-            try {
-                const r = await fetch('/api/settings/completion-providers', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(body)
-                });
-                const d = await r.json();
-                if (!r.ok || !d.success) {
-                    (window.showToast || alert)(d.message || d.error || 'Save failed', 'error');
-                    return;
-                }
-                renderCompletionProviders(d);
-                (window.showToast || alert)(
-                    providerId
-                        ? 'Cheap completions pinned to ' + providerId + (model ? ' / ' + model : '')
-                        : 'Cheap completions will try every configured provider.',
-                    'success'
-                );
-            } catch (e) {
-                (window.showToast || alert)('Error: ' + (e.message || e), 'error');
-            }
-        }
+        function loadCompletionProviders() { return completionPicker().load(); }
+        function saveCompletionProviders() { return completionPicker().save(); }
 
         // ── Agent CLI catalog (from GET /api/agents) ──────────────────────
         // Detection, install hints, and credential state all come from the
@@ -1423,7 +1319,7 @@
 
         function loadAgentCatalog() {
             const getJson = url => fetch(url).then(r => (r.ok ? r.json() : null)).catch(() => null);
-            return Promise.all([getJson('/api/agents'), getJson('/api/settings/agent-adapters'), getJson('/api/settings/starred-slash')])
+            return Promise.all([getJson('/api/agents?live_models=1'), getJson('/api/settings/agent-adapters'), getJson('/api/settings/starred-slash')])
                 .then(([data, cfg, star]) => {
                     renderDefaultAgentPicker(data, star);
                     adapterConfig = cfg && cfg.success ? cfg : null;
@@ -2131,303 +2027,26 @@
         // Voice tab: provider registry snapshot + saved chat_tts. The
         // provider owns its voices/models/tunables, so every control below
         // re-renders from the selected provider (never a hardcoded list).
-        let _ttsProviders = [];
-        let _ttsNarrators = [];
-        let _ttsFetchedVoices = {};
-
-        function _ttsProvider(id) {
-            return (_ttsProviders || []).find((p) => p && p.id === id) || null;
+        let _voiceProvidersController;
+        function voiceProvidersController() {
+            return _voiceProvidersController ||= CuttleVoiceProviders.create({document, fetch: window.fetch.bind(window),
+                notify: (message, kind) => (window.showToast || alert)(message, kind),
+                onSaved: data => { window._chatTtsSaved = data; }});
         }
-
-        function _ttsSetOptions(sel, items, current) {
-            if (!sel) return;
-            sel.textContent = '';
-            (items || []).forEach((it) => {
-                const opt = document.createElement('option');
-                opt.value = it.id;
-                opt.textContent = it.label || it.id;
-                sel.appendChild(opt);
-            });
-            if (current != null && current !== '') {
-                if (!Array.from(sel.options).some((o) => o.value === String(current))) {
-                    const opt = document.createElement('option');
-                    opt.value = String(current);
-                    opt.textContent = String(current);
-                    sel.appendChild(opt);
-                }
-                sel.value = String(current);
-            }
-        }
-
-        function _ttsRefreshTunables() {
-            const pid = (document.getElementById('chatTtsProvider') || {}).value || 'openai';
-            const p = _ttsProvider(pid);
-            const speedRow = document.getElementById('chatTtsSpeedRow');
-            const speed = document.getElementById('chatTtsSpeed');
-            const speedVal = document.getElementById('chatTtsSpeedValue');
-            const stabRow = document.getElementById('chatTtsStabilityRow');
-            if (speedRow) speedRow.hidden = !(p && p.speed_range);
-            if (p && p.speed_range && speed) {
-                speed.min = p.speed_range[0];
-                speed.max = p.speed_range[1];
-                let v = parseFloat(speed.value);
-                if (!isFinite(v)) v = 1;
-                v = Math.max(p.speed_range[0], Math.min(p.speed_range[1], v));
-                speed.value = String(v);
-                if (speedVal) speedVal.textContent = v.toFixed(2) + '×';
-            }
-            if (stabRow) stabRow.hidden = !(p && p.supports_stability);
-            const fetchBtn = document.getElementById('chatTtsFetchVoicesBtn');
-            if (fetchBtn) fetchBtn.hidden = !(p && p.supports_fetch_voices && p.configured);
-        }
-
-        function _ttsRenderVoices(pid, savedVoice) {
-            const sel = document.getElementById('chatTtsVoice');
-            const p = _ttsProvider(pid);
-            const fetched = _ttsFetchedVoices[pid] || [];
-            const items = (fetched.length ? fetched : ((p && p.voices) || []))
-                .map((v) => ({ id: v.id, label: v.label || v.id }));
-            _ttsSetOptions(sel, items, savedVoice || (items[0] && items[0].id) || '');
-            const custom = document.getElementById('chatTtsCustomVoice');
-            if (custom) custom.value = '';
-        }
-
-        function _ttsRenderModels(pid, savedModel) {
-            const p = _ttsProvider(pid);
-            _ttsSetOptions(
-                document.getElementById('chatTtsModel'),
-                ((p && p.models) || []).map((m) => ({ id: m.id, label: m.label || m.id })),
-                savedModel || (p && p.default_model) || ''
-            );
-        }
-
-        function onChatTtsProviderChanged() {
-            const sel = document.getElementById('chatTtsProvider');
-            const pid = (sel && sel.value) || 'openai';
-            const saved = (window._chatTtsSaved || {});
-            const models = saved.models || {};
-            const voices = saved.voices || {};
-            _ttsRenderModels(pid, models[pid]);
-            _ttsRenderVoices(pid, voices[pid]);
-            _ttsRefreshTunables();
-            const p = _ttsProvider(pid);
-            const status = document.getElementById('chatTtsProviderStatus');
-            if (status) {
-                status.textContent = p
-                    ? (p.configured
-                        ? p.label + ' key saved.'
-                        : p.label + ' key missing — add it under Providers → API Keys to use this provider.')
-                    : '';
-            }
-        }
-
+        function loadChatTtsSettings() { return voiceProvidersController().load(); }
+        function applyChatTtsToUi(conf) { return voiceProvidersController().apply(conf); }
+        function readChatTtsFromUi() { return voiceProvidersController().read(); }
+        function saveChatTtsSettings() { return voiceProvidersController().save(); }
+        function onChatTtsProviderChanged() { return voiceProvidersController().changeProvider(); }
+        function onChatTtsNarratorChanged() { return voiceProvidersController().changeNarrator(); }
+        function fetchChatTtsVoices() { return voiceProvidersController().voices(true); }
+        function refreshChatTtsModels() { return voiceProvidersController().refreshSpeech(); }
+        function refreshNarratorModels() { return voiceProvidersController().refreshNarrator(); }
         function onChatTtsSpeedInput() {
-            const speed = document.getElementById('chatTtsSpeed');
-            const val = document.getElementById('chatTtsSpeedValue');
-            if (speed && val) {
-                const v = parseFloat(speed.value);
-                if (isFinite(v)) val.textContent = v.toFixed(2) + '×';
-            }
+            document.getElementById('chatTtsSpeedValue').textContent = Number(document.getElementById('chatTtsSpeed').value).toFixed(2) + '×';
         }
-
         function onChatTtsStabilityInput() {
-            const el = document.getElementById('chatTtsStability');
-            const val = document.getElementById('chatTtsStabilityValue');
-            if (el && val) {
-                const v = parseFloat(el.value);
-                if (isFinite(v)) val.textContent = v.toFixed(2);
-            }
-        }
-
-        function _ttsRenderNarrators(savedProvider, savedModel) {
-            const sel = document.getElementById('chatTtsNarratorProvider');
-            if (sel) {
-                sel.textContent = '';
-                _ttsNarrators.forEach((n) => {
-                    const opt = document.createElement('option');
-                    opt.value = n.id;
-                    opt.textContent = n.label + (n.configured ? '' : ' (no key)');
-                    sel.appendChild(opt);
-                });
-                if (savedProvider) sel.value = savedProvider;
-            }
-            onChatTtsNarratorChanged(savedModel);
-        }
-
-        function onChatTtsNarratorChanged(savedModel) {
-            const sel = document.getElementById('chatTtsNarratorProvider');
-            const pid = (sel && sel.value) || 'openai';
-            const n = (_ttsNarrators || []).find((x) => x && x.id === pid) || null;
-            const list = document.getElementById('chatTtsNarratorSuggestions');
-            if (list) {
-                list.textContent = '';
-                ((n && n.suggested_models) || []).forEach((m) => {
-                    const opt = document.createElement('option');
-                    opt.value = m;
-                    list.appendChild(opt);
-                });
-            }
-            const input = document.getElementById('chatTtsNarratorModel');
-            if (input && savedModel !== undefined) input.value = savedModel || '';
-            const status = document.getElementById('chatTtsNarratorStatus');
-            if (status) {
-                status.textContent = n
-                    ? (n.configured
-                        ? 'Key saved' + (n.effective_model ? ' · default ' + n.effective_model : '') + '.'
-                        : 'No key saved — add it under Providers → API Keys.')
-                    : '';
-            }
-        }
-
-        function applyChatTtsToUi(t) {
-            const conf = (t && typeof t === 'object') ? t : {};
-            window._chatTtsSaved = conf;
-            const enabled = document.getElementById('chatTtsEnabled');
-            const enabledToggle = document.getElementById('chatTtsEnabledToggle');
-            if (enabled) enabled.checked = conf.enabled !== false;
-            if (enabledToggle) enabledToggle.classList.toggle('active', conf.enabled !== false);
-            const summarize = document.getElementById('chatTtsSummarize');
-            const summarizeToggle = document.getElementById('chatTtsSummarizeToggle');
-            if (summarize) summarize.checked = conf.summarize !== false;
-            if (summarizeToggle) summarizeToggle.classList.toggle('active', conf.summarize !== false);
-            const provSel = document.getElementById('chatTtsProvider');
-            if (provSel && conf.provider) provSel.value = conf.provider;
-            onChatTtsProviderChanged();
-            const speed = document.getElementById('chatTtsSpeed');
-            if (speed && conf.speed != null) {
-                speed.value = String(conf.speed);
-                onChatTtsSpeedInput();
-            }
-            const stab = document.getElementById('chatTtsStability');
-            if (stab && conf.stability != null) {
-                stab.value = String(conf.stability);
-                onChatTtsStabilityInput();
-            }
-            // Custom voice box wins over the dropdown when the saved voice
-            // is not in the curated/fetched list.
-            const custom = document.getElementById('chatTtsCustomVoice');
-            const voiceSel = document.getElementById('chatTtsVoice');
-            const savedVoice = ((conf.voices || {})[((provSel && provSel.value) || 'openai')]) || '';
-            if (custom && voiceSel && savedVoice
-                && !Array.from(voiceSel.options).some((o) => o.value === savedVoice)) {
-                custom.value = savedVoice;
-            }
-            const smodels = conf.summarize_models || {};
-            _ttsRenderNarrators(conf.summarize_provider || 'openai',
-                smodels[(document.getElementById('chatTtsNarratorProvider') || {}).value || 'openai'] || '');
-        }
-
-        async function loadChatTtsSettings() {
-            try {
-                const [pr, sr] = await Promise.all([
-                    fetch('/api/tts/providers', { cache: 'no-store' }),
-                    fetch('/api/settings/chat-tts', { cache: 'no-store' }),
-                ]);
-                const pd = await pr.json();
-                if (!pd.success) throw new Error(pd.error || 'Failed to load providers');
-                _ttsProviders = pd.providers || [];
-                _ttsNarrators = pd.summarize_providers || [];
-                const psel = document.getElementById('chatTtsProvider');
-                if (psel) {
-                    psel.textContent = '';
-                    _ttsProviders.forEach((p) => {
-                        const opt = document.createElement('option');
-                        opt.value = p.id;
-                        opt.textContent = p.label + (p.configured ? '' : ' (no key)');
-                        psel.appendChild(opt);
-                    });
-                }
-                const d = await sr.json();
-                if (!d.success) throw new Error(d.error || 'Failed to load');
-                applyChatTtsToUi(d.chat_tts);
-            } catch (e) {
-                (window.showToast || alert)('Could not load chat voice settings: ' + (e.message || e), 'error');
-            }
-        }
-
-        function readChatTtsFromUi() {
-            const val = (id) => {
-                const el = document.getElementById(id);
-                return el ? el.value : undefined;
-            };
-            const checked = (id) => {
-                const el = document.getElementById(id);
-                return el ? !!el.checked : undefined;
-            };
-            const out = {};
-            const enabled = checked('chatTtsEnabled');
-            if (enabled !== undefined) out.enabled = enabled;
-            const summarize = checked('chatTtsSummarize');
-            if (summarize !== undefined) out.summarize = summarize;
-            const saved = window._chatTtsSaved || {};
-            const pid = val('chatTtsProvider') || saved.provider || 'openai';
-            out.provider = pid;
-            const models = Object.assign({}, saved.models || {});
-            const model = val('chatTtsModel');
-            if (model) models[pid] = model;
-            out.models = models;
-            const voices = Object.assign({}, saved.voices || {});
-            const custom = (val('chatTtsCustomVoice') || '').trim();
-            const voice = custom || val('chatTtsVoice');
-            if (voice) voices[pid] = voice;
-            out.voices = voices;
-            const speedEl = document.getElementById('chatTtsSpeed');
-            if (speedEl && !document.getElementById('chatTtsSpeedRow').hidden) {
-                const v = parseFloat(speedEl.value);
-                if (isFinite(v)) out.speed = v;
-            }
-            const stabEl = document.getElementById('chatTtsStability');
-            if (stabEl && !document.getElementById('chatTtsStabilityRow').hidden) {
-                const v = parseFloat(stabEl.value);
-                if (isFinite(v)) out.stability = v;
-            }
-            const sp = val('chatTtsNarratorProvider');
-            if (sp) out.summarize_provider = sp;
-            const smodels = Object.assign({}, saved.summarize_models || {});
-            const sm = (val('chatTtsNarratorModel') || '').trim();
-            if (sp && sm) smodels[sp] = sm;
-            else if (sp && smodels[sp] && !sm) delete smodels[sp];
-            out.summarize_models = smodels;
-            return out;
-        }
-
-        async function saveChatTtsSettings() {
-            try {
-                const r = await fetch('/api/settings/chat-tts', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(readChatTtsFromUi()),
-                });
-                const d = await r.json();
-                if (!d.success) throw new Error(d.error || 'Save failed');
-                applyChatTtsToUi(d.chat_tts);
-                (window.showToast || alert)('Chat voice saved', 'info');
-            } catch (e) {
-                (window.showToast || alert)('Failed to save chat voice: ' + (e.message || e), 'error');
-            }
-        }
-
-        async function fetchChatTtsVoices(event) {
-            const btn = event && event.currentTarget ? event.currentTarget : null;
-            try {
-                if (btn) btn.disabled = true;
-                const pid = (document.getElementById('chatTtsProvider') || {}).value || 'elevenlabs';
-                const r = await fetch('/api/tts/voices?provider=' + encodeURIComponent(pid));
-                const d = await r.json();
-                if (!r.ok || !d.success) throw new Error((d && d.error) || ('Fetch failed (' + r.status + ')'));
-                if (d.note) {
-                    (window.showToast || alert)(d.note, 'info');
-                    return;
-                }
-                _ttsFetchedVoices[pid] = d.voices || [];
-                const saved = (window._chatTtsSaved || {}).voices || {};
-                _ttsRenderVoices(pid, saved[pid]);
-                (window.showToast || alert)('Loaded ' + (d.voices || []).length + ' voices', 'info');
-            } catch (e) {
-                (window.showToast || alert)('Could not fetch voices: ' + (e.message || e), 'error');
-            } finally {
-                if (btn) btn.disabled = false;
-            }
+            document.getElementById('chatTtsStabilityValue').textContent = Number(document.getElementById('chatTtsStability').value).toFixed(2);
         }
 
         async function previewChatTtsVoice(event) {
@@ -2937,10 +2556,10 @@
                 });
                 tabs.register('agents', function () {
                     loadAgentCatalog();
+                    loadCompletionProviders();
                     loadGitAutoCommitSetting();
                 });
                 tabs.register('providers', function () {
-                    loadCompletionProviders();
                     loadApiKeys();
                 });
                 tabs.register('voice', function () { loadChatTtsSettings(); });

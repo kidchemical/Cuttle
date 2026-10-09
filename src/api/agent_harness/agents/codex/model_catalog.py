@@ -303,3 +303,12 @@ def list_codex_palette_models(
         "count": int(result.get("count") or total),
         "returned": len(models),
     }
+
+
+def cached_helper_capabilities(model=""):
+    """Background validation reads the last catalog without spawning a CLI."""
+    rows = _CATALOG_CACHE[1] if _CATALOG_CACHE is not None else CODEX_KNOWN_MODELS
+    levels = next((r.get("efforts") or [] for r in rows if r.get("id") == model), None)
+    if not model:
+        levels = sorted(set.intersection(*(set(r.get("efforts") or []) for r in rows))) if rows else []
+    return {"reasoning_efforts": list(levels or []), "temperature": False}

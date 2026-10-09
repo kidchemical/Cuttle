@@ -1,0 +1,58 @@
+schema_version: 1
+id: anthropic
+label: Anthropic
+priority: 20
+credential_env:
+- ANTHROPIC_API_KEY
+model_env: CUTTLE_LLM_ANTHROPIC_MODEL
+models_dev_provider: anthropic
+default_model: claude-haiku-4-5-20251001
+operations:
+- text_generation
+defaults:
+  temperature_range: [0, 1]
+  temperature_disabled_while_thinking: true
+  operations:
+  - text_generation
+  transport: messages
+  token_parameter: max_tokens
+  temperature: false
+  json_object: false
+model_rules:
+- match:
+  - claude-*
+  capabilities:
+    temperature: false
+- match:
+  - claude-2*
+  - claude-3*
+  - claude-sonnet-4
+  - claude-opus-4
+  - claude-sonnet-4-2025*
+  - claude-opus-4-2025*
+  - claude-*-4-1*
+  - claude-*-4-5*
+  - claude-opus-4-6*
+  capabilities:
+    temperature: true
+- match:
+  - claude-haiku-5-5*
+  capabilities:
+    reasoning: true
+    reasoning_efforts:
+    - low
+    - medium
+    - high
+    - xhigh
+    - max
+    thinking_types:
+      disabled: true
+      adaptive: true
+- match:
+  - claude-haiku-4-5*
+  capabilities:
+    reasoning_efforts: []
+models:
+- id: claude-haiku-5-5
+- id: claude-haiku-4-5-20251001
+- id: claude-sonnet-4-20250514

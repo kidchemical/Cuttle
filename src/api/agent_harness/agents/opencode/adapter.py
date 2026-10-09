@@ -450,6 +450,7 @@ def _handle_opencode_model_slash(
         return None
     if arg.lower() in ("refresh", "reload", "sync"):
         from api.agent_harness.agents.opencode.model_catalog import refresh_opencode_catalog
+        from api.model_catalog_delta import record_and_diff, render_delta
 
         result = refresh_opencode_catalog()
         count = int(result.get("count") or 0)
@@ -470,12 +471,14 @@ def _handle_opencode_model_slash(
             )
         elif result.get("pricing_error"):
             pricing_note = f" Pricing refresh skipped: {result.get('pricing_error')}."
+        delta = record_and_diff("opencode", result.get("models") or [])
         return AgentResult(
             success=True,
             output=(
                 f"**OpenCode:** Refreshed model catalog from models.dev — "
                 f"{count} models available in the `/` palette.{note}"
                 f"{pricing_note}\n\n"
+                f"{render_delta(delta)}\n\n"
                 "Filter in chat (with an OpenCode badge): type `deepseek`, "
                 "`glm`, `openrouter`, … then pick a row. "
                 "Or pin directly: `/opencode model openrouter/deepseek/deepseek-v4.1-flash`."
@@ -485,6 +488,8 @@ def _handle_opencode_model_slash(
                 "agent_model": active_model,
                 "opencode_catalog_count": count,
                 "opencode_catalog_source": result.get("source"),
+                "opencode_catalog_added": [r["id"] for r in delta.get("added") or []],
+                "opencode_catalog_removed": [r["id"] for r in delta.get("removed") or []],
             },
         )
     if not arg or arg.lower() in ("list", "ls", "?"):

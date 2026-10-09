@@ -97,7 +97,8 @@ class OpenAIApiRouterProvider:
         config: RouterConfig,
     ) -> RoutingDecision:
         api_key = (os.environ.get("OPENAI_API_KEY") or "").strip()
-        if not api_key:
+        from api.background_helpers import has_selection
+        if not api_key and not has_selection("router"):
             raise ProviderError("OPENAI_API_KEY not set", retryable=False)
 
         prompts = build_routing_prompt(context, config)
@@ -116,6 +117,7 @@ class OpenAIApiRouterProvider:
                     timeout=30.0,
                     json_object=True,
                     providers=("openai",),
+                    task="router",
                 )
                 payload = _extract_json(content or "")
                 if not payload:

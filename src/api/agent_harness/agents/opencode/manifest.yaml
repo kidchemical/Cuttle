@@ -14,6 +14,12 @@ models:
   - openai/gpt-4o
   - openai/gpt-4.1-mini
   - anthropic/claude-sonnet-4
+supports_model_pin: true
+# OpenCode maps effort to CLI ``--variant``. Must match
+# ``OPENCODE_REASONING_EFFORTS`` (the adapter's curated set); Settings and the
+# Router dropdowns read this list, and the chat palette offers the same levels.
+supports_effort: true
+efforts: [none, minimal, low, medium, high, xhigh, max]
 # /cost: first-class — `opencode models --verbose` reports per-model cost.
 pricing_source: cli
 # Optional CLI bug overrides only. Per-model ``supports_variant`` is baked from

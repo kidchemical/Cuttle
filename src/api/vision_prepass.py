@@ -106,97 +106,34 @@ def _normalize_image_bytes(data: bytes, mime: str) -> tuple:
 
 
 def _short_error(exc: Exception) -> str:
-    text = " ".join(str(exc).split())
-    return text[:240] or exc.__class__.__name__
+    from api.model_providers.cache import public_error
+    # Preserve actionable, known categories without echoing provider bodies.
+    if "credit balance is too low" in str(exc).lower():
+        return "credit balance is too low"
+    return public_error(exc, "Vision request")
 
 
-def _describe_image_claude(
-    *,
-    data: Optional[bytes] = None,
-    url: Optional[str] = None,
-    mime: str = "image/png",
-    filename: str = "image",
-) -> str:
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY not set")
-
-    from anthropic import Anthropic
-
-    if data is None and _is_remote_url(url):
-        source: Dict[str, Any] = {"type": "url", "url": url}
-    else:
-        if not data:
-            raise ValueError("image data required")
+def _describe_image(provider, model, *, data=None, url=None, mime="image/png", filename="image"):
+    from api.model_providers.service import generate_text
+    from api.model_providers.types import TextRequest, ImageInput
+    if data is None and not _is_remote_url(url):
+        raise ValueError("image data required")
+    if data is not None:
         data, mime = _normalize_image_bytes(data, mime)
-        source = {
-            "type": "base64",
-            "media_type": mime,
-            "data": base64.standard_b64encode(data).decode("ascii"),
-        }
-
-    client = Anthropic(api_key=api_key)
-    resp = client.messages.create(
-        model=VISION_MODEL,
-        max_tokens=1024,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image", "source": source},
-                    {"type": "text", "text": VISION_PROMPT.format(filename=filename)},
-                ],
-            }
-        ],
-    )
-    parts = []
-    for block in resp.content:
-        text = getattr(block, "text", None)
-        if text:
-            parts.append(text)
-    return "\n".join(parts).strip()
+    result = generate_text(provider, TextRequest(VISION_PROMPT.format(filename=filename),
+                                               model=model, max_tokens=1024,
+                                               images=(ImageInput(data, mime, url if data is None else None),)))
+    if result is None:
+        raise RuntimeError("Vision provider API key missing or model unsupported")
+    return result.text.strip()
 
 
-def _describe_image_openai(
-    *,
-    data: Optional[bytes] = None,
-    url: Optional[str] = None,
-    mime: str = "image/png",
-    filename: str = "image",
-) -> str:
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise RuntimeError("OPENAI_API_KEY not set")
+def _describe_image_claude(**kwargs):
+    return _describe_image("anthropic", VISION_MODEL, **kwargs)
 
-    from openai import OpenAI
 
-    if data is None and _is_remote_url(url):
-        image_url = url
-    else:
-        if not data:
-            raise ValueError("image data required")
-        data, mime = _normalize_image_bytes(data, mime)
-        b64 = base64.standard_b64encode(data).decode("ascii")
-        image_url = f"data:{mime};base64,{b64}"
-
-    client = OpenAI(api_key=api_key)
-    resp = client.chat.completions.create(
-        model=OPENAI_VISION_MODEL,
-        max_tokens=1024,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": VISION_PROMPT.format(filename=filename)},
-                    {"type": "image_url", "image_url": {"url": image_url}},
-                ],
-            }
-        ],
-    )
-    choices = getattr(resp, "choices", None) or []
-    if not choices:
-        return ""
-    return (choices[0].message.content or "").strip()
+def _describe_image_openai(**kwargs):
+    return _describe_image("openai", OPENAI_VISION_MODEL, **kwargs)
 
 
 VISION_PROVIDERS = (

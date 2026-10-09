@@ -36,6 +36,8 @@ def _handle_muse_model_slash(
     ):
         return None
     if arg.lower() in ("refresh", "reload", "sync"):
+        from api.model_catalog_delta import record_and_diff, render_delta
+
         result = refresh_muse_catalog()
         count = int(result.get("count") or 0)
         err = result.get("error")
@@ -54,11 +56,13 @@ def _handle_muse_model_slash(
             )
         elif source.startswith("meta_api"):
             note = " from Meta Model API"
+        delta = record_and_diff("muse", result.get("models") or [])
         return AgentResult(
             success=True,
             output=(
                 f"**Muse Code:** Refreshed model catalog{note} — "
                 f"{count} models available in the `/` palette.\n\n"
+                f"{render_delta(delta)}\n\n"
                 "Filter in chat (with a Muse badge): type `spark`, `1.3`, "
                 "`contributor`, … then pick a row. "
                 "Or pin directly: `/muse model muse-spark-1.3`."
@@ -68,6 +72,8 @@ def _handle_muse_model_slash(
                 "agent_model": active_model,
                 "muse_catalog_count": count,
                 "muse_catalog_source": source,
+                "muse_catalog_added": [r["id"] for r in delta.get("added") or []],
+                "muse_catalog_removed": [r["id"] for r in delta.get("removed") or []],
             },
         )
     if not arg or arg.lower() in ("list", "ls", "?"):
