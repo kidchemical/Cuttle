@@ -88,6 +88,13 @@ CREATE TABLE IF NOT EXISTS enrollment_requests (
 """
 
 
+def new_device_token() -> str:
+    """Generate a bearer for immediate enrollment or staged pairing."""
+    import secrets
+
+    return secrets.token_urlsafe(32)
+
+
 def database_path() -> Path:
     override = os.getenv("CUTTLE_DEVICE_WORKERS_DB", "").strip()
     return Path(override).expanduser() if override else DEFAULT_DB_PATH
@@ -408,7 +415,7 @@ class DeviceWorkerStore:
         *,
         revoke_enroll: bool = True,
     ) -> Dict[str, Any]:
-        """Drop a worker registry row (and optionally its enroll token).
+        """Drop a worker registry row (and optionally its token and pairing requests).
 
         Does not cancel in-flight jobs. A live Client that reconnects will
         re-register / re-enroll on the next cycle.
@@ -416,33 +423,29 @@ class DeviceWorkerStore:
         wid = (worker_id or "").strip()
         if not wid:
             raise ValueError("worker_id required")
-        with _lock:
-            conn = _connect(self.db_path)
-            try:
-                existing = conn.execute(
-                    "SELECT worker_id FROM workers WHERE worker_id = ?", (wid,)
-                ).fetchone()
-                enrolled = conn.execute(
-                    "SELECT worker_id FROM enrolled_devices WHERE worker_id = ?",
-                    (wid,),
-                ).fetchone()
-                if existing:
-                    conn.execute("DELETE FROM workers WHERE worker_id = ?", (wid,))
-                revoked = False
-                if revoke_enroll and enrolled:
-                    conn.execute(
-                        "DELETE FROM enrolled_devices WHERE worker_id = ?", (wid,)
-                    )
-                    revoked = True
-                conn.commit()
-                return {
-                    "worker_id": wid,
-                    "removed": bool(existing),
-                    "enroll_revoked": revoked,
-                    "found": bool(existing or enrolled),
-                }
-            finally:
-                conn.close()
+        with self.enrollment_transaction() as conn:
+            existing = conn.execute(
+                "SELECT worker_id FROM workers WHERE worker_id = ?", (wid,)
+            ).fetchone()
+            enrolled = conn.execute(
+                "SELECT worker_id FROM enrolled_devices WHERE worker_id = ?", (wid,)
+            ).fetchone()
+            if existing:
+                conn.execute("DELETE FROM workers WHERE worker_id = ?", (wid,))
+            revoked = False
+            cancelled = 0
+            if revoke_enroll:
+                conn.execute("DELETE FROM enrolled_devices WHERE worker_id = ?", (wid,))
+                revoked = bool(enrolled)
+                cancelled = conn.execute(
+                    "DELETE FROM enrollment_requests WHERE worker_id = ?", (wid,)
+                ).rowcount
+            return {
+                "worker_id": wid,
+                "removed": bool(existing),
+                "enroll_revoked": revoked,
+                "found": bool(existing or enrolled or cancelled),
+            }
 
     def submit_job(
         self,
@@ -1027,10 +1030,14 @@ class DeviceWorkerStore:
     def _enroll_device(
         self, conn: sqlite3.Connection, *, worker_id: str,
         hostname: str = "", remote_addr: str = "", rotate: bool = False,
+        issued_token: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Write a credential inside the caller's enrollment transaction."""
-        import secrets
+        """Write a credential inside the caller's enrollment transaction.
 
+        Pairing pickup supplies its previously staged token. Replacing an
+        active credential also invalidates other approved handoffs for the
+        worker, so a later pickup cannot resurrect a superseded credential.
+        """
         wid = (worker_id or "").strip()
         if not wid:
             raise ValueError("worker_id required")
@@ -1048,7 +1055,9 @@ class DeviceWorkerStore:
                 (hostname or "", now, remote_addr or "", wid),
             )
         else:
-            token = secrets.token_urlsafe(32)
+            token = issued_token if issued_token is not None else new_device_token()
+            if not token:
+                raise ValueError("worker token required")
             enrolled_at = now
             conn.execute(
                 """
@@ -1063,6 +1072,11 @@ class DeviceWorkerStore:
                     remote_addr = excluded.remote_addr
                 """,
                 (wid, token, hostname or "", enrolled_at, now, remote_addr or ""),
+            )
+        if rotate:
+            conn.execute(
+                "DELETE FROM enrollment_requests WHERE worker_id = ? "
+                "AND status = 'approved' AND token != ?", (wid, token),
             )
         return {
             "worker_id": wid, "token": token, "hostname": hostname or "",

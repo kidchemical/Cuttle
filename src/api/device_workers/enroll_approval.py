@@ -1,8 +1,9 @@
 """Host-approved pairing with durable, one-time credential handoff.
 
 Pairing rows live in the worker SQLite database in the Cuttle home. Approval
-mints/rotates the credential and saves it for pickup in the same transaction;
-neither a failed approval nor a Flask restart can strand the handoff.
+stages a fresh credential without replacing the working one. Secret-authenticated
+pickup activates it and consumes the handoff in one transaction; abandoned
+approvals leave the previous credential usable, including across Flask restarts.
 Only a hash of the client-random pairing secret is stored. Owner/UI responses
 never include that hash or the token. The worker polls with its secret and
 collects the approved token once, within the existing ten-minute pickup TTL.
@@ -18,7 +19,7 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
-from api.device_workers.store import get_store
+from api.device_workers.store import get_store, new_device_token
 
 TTL_SECONDS = 600.0
 MAX_PENDING = 32
@@ -120,9 +121,15 @@ def expire_stale(ttl_seconds: float = TTL_SECONDS) -> int:
 
 
 def poll(request_id: str, pairing_secret: str) -> Tuple[str, Optional[Dict[str, Any]]]:
-    """Poll with the pairing secret; delete the row on first token delivery."""
+    """Activate the staged credential and consume its handoff atomically.
+
+    Activation happens only after authenticating the pairing secret. A failed
+    transaction preserves both the previous credential and the retryable row.
+    This is server-side pickup, not acknowledgment of network delivery.
+    """
     rid = (request_id or "").strip()
-    with get_store().enrollment_transaction() as conn:
+    store = get_store()
+    with store.enrollment_transaction() as conn:
         _maintain(conn)
         row = conn.execute(
             "SELECT * FROM enrollment_requests WHERE id = ?", (rid,)
@@ -135,6 +142,10 @@ def poll(request_id: str, pairing_secret: str) -> Tuple[str, Optional[Dict[str, 
             return "denied", None
         status = row["status"]
         if status == "approved":
+            store._enroll_device(
+                conn, worker_id=row["worker_id"], hostname=row["hostname"],
+                remote_addr=row["remote_addr"], rotate=True, issued_token=row["token"],
+            )
             payload = {"worker_id": row["worker_id"], "token": row["token"]}
             conn.execute("DELETE FROM enrollment_requests WHERE id = ?", (rid,))
             return "approved", payload
@@ -142,11 +153,10 @@ def poll(request_id: str, pairing_secret: str) -> Tuple[str, Optional[Dict[str, 
 
 
 def decide(request_id: str, decision: str) -> Optional[Dict[str, Any]]:
-    """Owner decision; credential rotation and approval commit atomically.
+    """Persist owner approval and its staged token without changing access.
 
-    Repeated decisions return the existing verdict without rotating again.
-    Errors roll back both writes, leaving the pending request retryable and
-    any previous worker credential valid.
+    Repeated decisions return the existing verdict without minting again.
+    The previous credential remains valid until authenticated pickup.
     """
     rid = (request_id or "").strip()
     dec = (decision or "").strip().lower()
@@ -166,13 +176,7 @@ def decide(request_id: str, decision: str) -> Optional[Dict[str, Any]]:
             return None
         if row["status"] != "pending":
             return _public(row)
-        token = ""
-        if dec == "approved":
-            enrolled = store._enroll_device(
-                conn, worker_id=row["worker_id"], hostname=row["hostname"],
-                remote_addr=row["remote_addr"], rotate=True,
-            )
-            token = enrolled["token"]
+        token = new_device_token() if dec == "approved" else ""
         now = time.time()
         conn.execute(
             "UPDATE enrollment_requests SET status = ?, token = ?, updated_at = ?, decided_at = ? "

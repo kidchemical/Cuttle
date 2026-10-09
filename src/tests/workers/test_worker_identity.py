@@ -136,7 +136,7 @@ def test_deny_blocks_poll(client):
     assert _poll(client, body["request_id"]).get_json()["status"] == "denied"
 
 
-def test_approve_rotates_existing_token(client):
+def test_pickup_rotates_existing_token(client):
     first = _pair_token(client, "worker-a")
     body = _pair(client, "worker-a", SECRET2)
     _approve(client, body["request_id"])
@@ -389,14 +389,11 @@ def test_approval_failure_rolls_back_and_retry_succeeds(client, monkeypatch, pre
     store = store_mod.get_store()
     old = store.enroll_device(worker_id="worker-a")["token"] if previously_enrolled else None
     rid = _pair(client, "worker-a")["request_id"]
-    original = store._enroll_device
-
-    def fail_after_write(*args, **kwargs):
-        original(*args, **kwargs)
-        raise ValueError("credential write failed")
+    def fail_mint():
+        raise ValueError("credential generation failed")
 
     with monkeypatch.context() as patch:
-        patch.setattr(store, "_enroll_device", fail_after_write)
+        patch.setattr("api.device_workers.enroll_approval.new_device_token", fail_mint)
         response = client.post(f"/api/workers/enroll-requests/{rid}/approve", json={})
         assert response.status_code == 400
     assert _poll(client, rid).get_json()["status"] == "pending"
@@ -415,7 +412,7 @@ def test_approval_failure_rolls_back_and_retry_succeeds(client, monkeypatch, pre
         assert store.lookup_enrolled_token(old) is None
 
 
-def test_failed_approval_publication_rolls_back_rotation(client):
+def test_failed_approval_publication_preserves_existing_credential(client):
     from api.device_workers import store as store_mod
 
     store = store_mod.get_store()
@@ -464,7 +461,7 @@ assert pairing.list_pending()[0]['id'] == sys.argv[1]
 print(json.dumps(pairing.decide(sys.argv[1], 'approve')))
 ''')
     assert approved["status"] == "approved"
-    assert store.lookup_enrolled_token(old) is None
+    assert store.lookup_enrolled_token(old) == "worker-a"
     assert _poll(client, rid, SECRET2).get_json()["status"] == "denied"
     result = child('''
 import json, sys
@@ -475,6 +472,7 @@ print(json.dumps(pairing.poll(sys.argv[1], sys.argv[2])))
     token = result[1]["token"]
     assert token and token != old
     assert store.lookup_enrolled_token(token) == "worker-a"
+    assert store.lookup_enrolled_token(old) is None
     assert _poll(client, rid).status_code == 404
 
 
@@ -505,7 +503,8 @@ def test_concurrent_approval_and_pickup_are_serialized(client, monkeypatch):
     with ThreadPoolExecutor(max_workers=2) as pool:
         futures = [pool.submit(approve) for _ in range(2)]
         assert all(f.result(timeout=10)["status"] == "approved" for f in futures)
-        assert len(issued) == 1
+        assert issued == []
+        assert not store.is_enrolled("worker-a")
 
         def poll():
             barrier.wait(timeout=5)
@@ -515,6 +514,7 @@ def test_concurrent_approval_and_pickup_are_serialized(client, monkeypatch):
         results = [f.result(timeout=10) for f in futures]
     assert sorted(status for status, _ in results) == ["approved", "not_found"]
     payload = next(payload for status, payload in results if status == "approved")
+    assert len(issued) == 1
     assert payload["token"] == issued[0]
 
 
@@ -531,9 +531,114 @@ def test_owner_cannot_approve_expired_request(client, monkeypatch):
 
 def test_uncollected_approval_expires(client, monkeypatch):
     from api.device_workers import enroll_approval as pairing
+    from api.device_workers import store as store_mod
 
+    old = _pair_token(client, "worker-a")
     rid = _pair(client, "worker-a")["request_id"]
     _approve(client, rid)
     now = pairing.time.time()
     monkeypatch.setattr(pairing.time, "time", lambda: now + 700)
     assert _poll(client, rid).status_code == 404
+    assert store_mod.get_store().lookup_enrolled_token(old) == "worker-a"
+    claim = client.post("/api/workers/jobs/claim", json={}, headers=_bearer(old), environ_base=LAN)
+    assert claim.status_code == 200
+
+
+
+def test_approved_replacement_does_not_change_access_until_pickup(client):
+    from api.device_workers import store as store_mod
+
+    store = store_mod.get_store()
+    old = _pair_token(client, "worker-a")
+    rid = _pair(client, "worker-a", SECRET2)["request_id"]
+    _approve(client, rid)
+    _approve(client, rid)
+    assert store.lookup_enrolled_token(old) == "worker-a"
+    claim = client.post("/api/workers/jobs/claim", json={}, headers=_bearer(old), environ_base=LAN)
+    assert claim.status_code == 200
+    assert _poll(client, rid, SECRET).get_json()["status"] == "denied"
+    assert store.lookup_enrolled_token(old) == "worker-a"
+    with store.enrollment_transaction() as conn:
+        staged = conn.execute("SELECT token FROM enrollment_requests WHERE id = ?", (rid,)).fetchone()[0]
+    assert staged and store.lookup_enrolled_token(staged) is None
+    token = _poll(client, rid, SECRET2).get_json()["token"]
+    assert token == staged
+    assert store.lookup_enrolled_token(old) is None
+    assert store.lookup_enrolled_token(token) == "worker-a"
+
+
+@pytest.mark.parametrize("previously_enrolled", [False, True])
+def test_failed_pickup_rolls_back_activation_and_preserves_handoff(client, previously_enrolled):
+    from api.device_workers import enroll_approval as pairing
+    from api.device_workers import store as store_mod
+
+    store = store_mod.get_store()
+    old = _pair_token(client, "worker-a") if previously_enrolled else None
+    rid = _pair(client, "worker-a")["request_id"]
+    _approve(client, rid)
+    with store.enrollment_transaction() as conn:
+        staged = conn.execute("SELECT token FROM enrollment_requests WHERE id = ?", (rid,)).fetchone()[0]
+        conn.execute("""
+            CREATE TRIGGER fail_pairing_pickup BEFORE DELETE ON enrollment_requests
+            BEGIN SELECT RAISE(ABORT, 'simulated pickup persistence failure'); END
+        """)
+    assert _poll(client, rid).status_code == 500
+    assert pairing.get_request(rid)["status"] == "approved"
+    assert store.lookup_enrolled_token(staged) is None
+    if old:
+        assert store.lookup_enrolled_token(old) == "worker-a"
+    else:
+        assert not store.is_enrolled("worker-a")
+    with store.enrollment_transaction() as conn:
+        conn.execute("DROP TRIGGER fail_pairing_pickup")
+    assert _poll(client, rid).get_json()["token"] == staged
+    assert store.lookup_enrolled_token(staged) == "worker-a"
+    if old:
+        assert store.lookup_enrolled_token(old) is None
+    assert _poll(client, rid).status_code == 404
+
+
+@pytest.mark.parametrize("status", ["pending", "approved"])
+def test_removal_revokes_outstanding_pairings(client, status):
+    from api.device_workers import store as store_mod
+
+    store = store_mod.get_store()
+    old = _pair_token(client, "worker-a")
+    rid = _pair(client, "worker-a")["request_id"]
+    if status == "approved":
+        _approve(client, rid)
+    assert store.remove_worker("worker-a")["enroll_revoked"] is True
+    assert store.lookup_enrolled_token(old) is None
+    assert _poll(client, rid).status_code == 404
+    assert not store.is_enrolled("worker-a")
+
+
+def test_explicit_rotation_invalidates_approved_handoff(client):
+    from api.device_workers import store as store_mod
+
+    store = store_mod.get_store()
+    old = _pair_token(client, "worker-a")
+    rid = _pair(client, "worker-a")["request_id"]
+    _approve(client, rid)
+    result = client.post("/api/workers/enroll", json={"worker_id": "worker-a", "rotate": True},
+                         headers=_bearer(old), environ_base=LAN)
+    assert result.status_code == 200
+    fresh = result.get_json()["token"]
+    assert _poll(client, rid).status_code == 404
+    assert store.lookup_enrolled_token(fresh) == "worker-a"
+    assert store.lookup_enrolled_token(old) is None
+
+
+def test_first_pickup_invalidates_other_approved_handoffs(client):
+    from api.device_workers import store as store_mod
+
+    store = store_mod.get_store()
+    old = _pair_token(client, "worker-a")
+    first = _pair(client, "worker-a")["request_id"]
+    _approve(client, first)
+    second = _pair(client, "worker-a", SECRET2)["request_id"]
+    _approve(client, second)
+    token = _poll(client, second, SECRET2).get_json()["token"]
+    assert _poll(client, first).status_code == 404
+    assert store.lookup_enrolled_token(token) == "worker-a"
+    assert store.lookup_enrolled_token(old) is None
