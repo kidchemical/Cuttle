@@ -108,5 +108,9 @@ register_flag(FlagSpec(
 register_flag(FlagSpec(
     id="jobs_surface", label="Jobs surface",
     description="Unified Jobs page: every execution Cuttle handles — local agent turns, background helpers and mesh jobs — as one ledger with running-now, recent history, cancel/rerun control and telemetry.",
-    default=False, category="ui", risk="low", since="0.0.0", needs_restart=False,
+    # Owner-requested restoration/upgrade of the existing Jobs page (a register
+    # on an already-shipped surface over data Cuttle already tracks), not a new
+    # opt-in capability, so it ships on by default. Reversible via Settings →
+    # Experimental or the CUTTLE_EXPERIMENTAL kill switch.
+    default=True, category="ui", risk="low", since="0.0.0", needs_restart=False,
 ))
