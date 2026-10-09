@@ -69,10 +69,10 @@ function renderRunningJobs() {
 function renderJobs() {
     const el = document.getElementById('recentJobsList');
     if (!el) return;
-    setHtmlIfChanged(el, window.CuttleJobsLedger.renderTable(recentJobs, {
+    window.CuttleScroll.setHtml(el, window.CuttleJobsLedger.renderTable(recentJobs, {
         capped: true,
         empty: 'No executions recorded yet.',
-    }));
+    }), { selector: '.jobs-table-scroll' });
 }
 
 async function cancelUnifiedJob(kind, jobId) {

@@ -797,11 +797,11 @@ function renderPairing() {
             '<button type="button" class="hist-btn" data-pairing-deny="' + rid + '">Deny</button>' +
             '</td></tr>';
     }).join('');
-    el.innerHTML = wrapJobsTable(
+    setJobsTableHtml(el, wrapJobsTable(
         '<table class="hist-table"><thead><tr>' +
         '<th>Code</th><th>Worker</th><th>Hostname</th><th>IP</th><th>Waiting</th><th aria-label="Actions"></th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table>'
-    );
+    ));
 }
 
 async function decidePairing(requestId, approve) {
