@@ -9,6 +9,7 @@ import re
 import json
 import secrets
 import requests
+from datetime import datetime, timedelta
 from urllib.parse import urlencode
 from flask import Blueprint, request, jsonify, redirect, make_response
 from api.auth_db import get_auth_db
@@ -1360,6 +1361,144 @@ def get_session_messages(session_id):
             'success': False,
             'error': 'Failed to get messages'
         }), 500
+
+
+_EXPORT_AGENT_NAMES = {
+    'codex': 'Codex',
+    'cursor': 'Cursor',
+    'claude': 'Claude Code',
+    'muse': 'Muse Code',
+    'deepseek': 'DeepSeek',
+    'opencode': 'OpenCode',
+    'hermes': 'Hermes',
+}
+
+
+def _export_ts_local_hhmm(value, offset_min):
+    """UTC SQLite timestamp → device-local HH:MM (offset_min = minutes east of UTC)."""
+    if not value:
+        return ''
+    s = str(value).strip()
+    dt = None
+    if re.match(r'^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}', s):
+        try:
+            dt = datetime.strptime(s[:19].replace('T', ' '), '%Y-%m-%d %H:%M:%S')
+        except ValueError:
+            dt = None
+    elif re.match(r'^\d+(\.\d+)?$', s):
+        try:
+            n = float(s)
+            if n > 0:
+                if n < 1e12:
+                    n = n * 1000
+                dt = datetime.utcfromtimestamp(n / 1000)
+        except (OverflowError, OSError, ValueError):
+            dt = None
+    if dt is None:
+        return ''
+    try:
+        return (dt + timedelta(minutes=int(offset_min or 0)).strftime('%H:%M'))
+    except Exception:
+        return ''
+
+
+def _export_msg_author(message):
+    """Mirror the client author resolution: speaker → routing badge → slash chip → 'Cuttle'."""
+    if not isinstance(message, dict):
+        return 'Cuttle'
+    role = str(message.get('role') or '').strip()
+    meta = message.get('metadata')
+    if not isinstance(meta, dict):
+        meta = {}
+    speaker = str(meta.get('speaker') or message.get('speaker') or '').strip()
+    if speaker:
+        return speaker
+    if role != 'assistant':
+        return 'You'
+    badge = meta.get('routing_badge') or message.get('routing_badge') or {}
+    if isinstance(badge, dict) and badge.get('agent'):
+        agent = str(badge.get('agent'))
+        return _EXPORT_AGENT_NAMES.get(agent, agent)
+    sc = meta.get('slash_command') or message.get('slash_command')
+    if isinstance(sc, dict) and isinstance(sc.get('chips'), list) and sc['chips']:
+        first = sc['chips'][0] or {}
+        m = re.match(r'^/([a-z][\w-]*)', str(first.get('meta') or ''))
+        if m:
+            a = m.group(1)
+            return _EXPORT_AGENT_NAMES.get(a, a)
+        label = str(first.get('label') or '').strip()
+        if label:
+            return re.split(r'\s*[-—–]\s*', label, 1)[0].strip()
+    return 'Cuttle'
+
+
+def _export_strip_agent_chrome(content):
+    """Mirror `stripLegacyAgentChrome` so exported bodies match the on-screen bubbles."""
+    s = str(content or '')
+    s = re.sub(r'^\*\*Cursor Agent\*\*[^\n]*:\s*\n+', '', s, flags=re.IGNORECASE)
+    s = re.sub(r'\n*---\s*\n\*Cursor run ·[\s\S]*$', '', s, flags=re.IGNORECASE)
+    s = re.sub(r'^✅\s*\*\*[^*\n]{1,48}:\*\*\s*\n+', '', s)
+    return s.rstrip()
+
+
+def _build_export_markdown(session, messages, offset_min):
+    title = str(session.get('session_name') or '' ).strip() or 'Chat transcript'
+    lines = [f'# {title}', '',]
+    sid = int(session.get('id') or 0)
+    display_id = 'CH-%06d' % sid
+    now_local = datetime.now() + timedelta(minutes=int(offset_min or 0))
+    lines.append(f'Chat: {display_id} · Exported {now_local.strftime("%Y-%m-%d %H:%M")}')
+    lines.extend(['', '---', '',])
+    for msg in messages or []:
+        if not isinstance(msg, dict) or str(msg.get('role') or '' ).strip() == 'system':
+            continue
+        body = str(msg.get('content') or '')
+        if str(msg.get('role') or '' ).strip() == 'assistant':
+            body = _export_strip_agent_chrome(body)
+        body = body.strip()
+        if not body:
+            continue
+        author = _export_msg_author(msg)
+        stamp = _export_ts_local_hhmm(msg.get('timestamp'), offset_min)
+        prefix = (stamp + ' — ' if stamp else '')
+        lines.append(f'**{prefix}{author}**')
+        lines.append('')
+        lines.extend(body.splitlines())
+        lines.append('')
+    text = '\n'.join(lines)
+    return re.sub(r'\n{3,}', '\n\n', text .strip() + '\n')
+
+
+@auth_bp.route('/sessions/<int:session_id>/export', methods=['GET'])
+def export_session_markdown(session_id):
+    """Download the chat transcript as a .md attachment rendered with the device's local wall clock."""
+    try:
+        session_token = get_request_session_token()
+        if not session_token:
+            return jsonify({'success': False, 'error': 'Not authenticated'}), 401
+        db = get_auth_db()
+        user = db.verify_auth_session(session_token)
+        if not user:
+            return jsonify({'success': False, 'error': 'Invalid session'}), 401
+        session = db.get_chat_session(session_id, user['id'])
+        if not session:
+            return jsonify({'success': False, 'error': 'Session not found or access denied'}), 404
+        try:
+            offset_min = int(request.args.get('tz') or 0)
+        except (TypeError, ValueError):
+            offset_min = 0
+        messages = db.get_messages(session_id)
+        md = _build_export_markdown(session, messages, offset_min);
+        now_local = datetime.now() + timedelta(minutes=offset_min)
+        display_id = 'ch-%06d' % session_id
+        filename = 'cuttle-chat-%s-%s.md' % (display_id, now_local.strftime('%Y%m%d'))
+        response = make_response(md)
+        response.headers['Content-Type'] = 'text/markdown; charset=utf-8'
+        response.headers['Content-Disposition'] = 'attachment; filename="%s"' % filename
+        return response
+    except Exception as e:
+        print(f"Export session error: {e}")
+        return jsonify({'success': False, 'error': 'Failed to export session'}), 500
 
 
 @auth_bp.route('/sessions/<int:session_id>/messages', methods=['POST'])

@@ -139,14 +139,17 @@ def test_mobile_poll_returns_queued_event(monkeypatch):
 
 
 @pytest.mark.parametrize("configured", [None, "", "   "])
-def test_mobile_token_fails_closed_without_secret(monkeypatch, configured):
+def test_mobile_token_uses_bundled_dev_default_without_secret(monkeypatch, configured):
     if configured is None:
         monkeypatch.delenv("CUTTLE_MOBILE_TOKEN", raising=False)
     else:
         monkeypatch.setenv("CUTTLE_MOBILE_TOKEN", configured)
-    assert mc.get_mobile_token() == ""
-    for token in (None, "", "dev-local-token", "arbitrary"):
-        assert mc.verify_mobile_token(token) is False
+    expected = mc.get_mobile_token()
+    assert expected == mc.DEFAULT_DEV_TOKEN == "dev-local-token"
+    # The app's stock default connects; empty and arbitrary secrets never do.
+    assert mc.verify_mobile_token("dev-local-token") is True
+    assert mc.verify_mobile_token("") is False
+    assert mc.verify_mobile_token("arbitrary") is False
 
 
 def test_mobile_token_accepts_only_configured_secret(monkeypatch):
@@ -157,7 +160,7 @@ def test_mobile_token_accepts_only_configured_secret(monkeypatch):
 
 
 @pytest.mark.parametrize("path", ["events", "poll", "reply"])
-def test_mobile_routes_reject_legacy_default_without_config(monkeypatch, path):
+def test_mobile_routes_accept_bundled_default_without_config(monkeypatch, path):
     from api import web_chat_api as wca
 
     # Import first: the bootstrap may load environment defaults.
@@ -168,13 +171,27 @@ def test_mobile_routes_reject_legacy_default_without_config(monkeypatch, path):
         response = client.post("/api/mobile/reply", json={
             "token": "dev-local-token", "interaction_id": iid, "answer": "Yes",
         })
-        assert mc._interactions[iid]["answered"] is False
+        assert response.status_code == 200
+        assert mc.wait_for_interaction_answer(iid, timeout_s=1) == "Yes"
     else:
         response = client.get(f"/api/mobile/{path}", query_string={
-            "device_id": "untrusted-phone", "token": "dev-local-token", "timeout": "0",
+            "device_id": "default-phone", "token": "dev-local-token", "timeout": "0",
         })
+        assert response.status_code == 200
+    # An arbitrary secret is still rejected when no server token is set.
+    if path == "reply":
+        iid = mc.create_interaction(question="Test?", timeout_s=30)
+        rejected = client.post("/api/mobile/reply", json={
+            "token": "arbitrary-secret", "interaction_id": iid, "answer": "Yes",
+        })
+        assert rejected.status_code == 401
+        assert mc._interactions[iid]["answered"] is False
+    else:
+        rejected = client.get(f"/api/mobile/{path}", query_string={
+            "device_id": "untrusted-phone", "token": "arbitrary-secret", "timeout": "0",
+        })
+        assert rejected.status_code == 401
         assert "untrusted-phone" not in mc._device_queues
-    assert response.status_code == 401
 
 
 def test_mobile_reply_with_configured_secret(monkeypatch):

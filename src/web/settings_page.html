@@ -239,14 +239,15 @@
             <section class="settings-panel" id="panel-agents" role="tabpanel" aria-labelledby="tab-agents" tabindex="0" hidden>
             <div class="settings-group" id="backgroundHelpersSettings">
                 <h3 class="settings-title">🧠 Background helpers <span class="settings-scope" data-scope="server">All devices</span></h3>
-                <p class="setting-description">Choose how Cuttle generates titles, commit suggestions, enhanced prompts, narration, and routing decisions. CLI helpers use your existing CLI login and allowance.</p>
+                <p class="setting-description">Choose how Cuttle generates titles, commit suggestions, enhanced prompts, narration, and routing decisions. Each task follows the Default chain unless you give it its own. CLI helpers use your existing CLI login and allowance.</p>
                 <div class="setting-control setting-control--stack">
-                    <label>Configure <select id="backgroundTask" class="setting-input" aria-label="Background task"><option value="">Global default</option></select></label>
-                    <label><input id="backgroundOverride" type="checkbox"> Use a dedicated execution chain</label>
+                    <label>Configure <select id="backgroundTask" class="setting-input" aria-label="Background task"></select></label>
+                    <label id="backgroundOverrideRow" hidden><input id="backgroundOverride" type="checkbox"> Use a chain for this task</label>
                     <div id="backgroundInheritance" class="setting-description"></div>
                     <div id="backgroundChain"></div>
                     <div class="provider-picker">
                         <button id="backgroundAdd" type="button" class="control-button" disabled>Add fallback</button>
+                        <button id="backgroundReset" type="button" class="control-button" hidden>Reset to Default</button>
                         <button type="button" class="control-button btn-start" onclick="saveCompletionProviders()">💾 Save background helpers</button>
                     </div>
                     <div id="backgroundStatus" class="setting-description" role="status"></div>

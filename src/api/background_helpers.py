@@ -12,7 +12,7 @@ import math
 import threading
 import time
 
-from api.completion_providers import describe as api_description, resolve_model, resolve_effort, resolve_order
+from api.completion_providers import describe as api_description, resolve_model, resolve_effort
 from api.model_providers import service as providers
 from api.model_providers.types import TextRequest, TextResult
 from api.agent_harness import catalog
@@ -144,10 +144,16 @@ def save(raw):
 
 
 def execution_chain(task):
+    """Explicit config only: this task's chain, else the user's Default chain.
+
+    There is deliberately **no** third source. Unconfigured background helpers
+    fall back to the per-feature completion-provider path at the call sites
+    (they gate on :func:`has_selection`), not to an invisible chain here.
+    """
     prefs = preferences()
-    if task in (prefs.get('tasks') or {}): return prefs['tasks'][task]
-    if prefs.get('chain'): return prefs['chain']
-    return [dict(kind='api', target=pid) for pid in resolve_order()]
+    if task in (prefs.get('tasks') or {}):
+        return prefs['tasks'][task]
+    return prefs.get('chain') or []
 
 
 def generate(task: str, request: TextRequest, *, chain=None, cancel_event=None) -> TextResult | None:

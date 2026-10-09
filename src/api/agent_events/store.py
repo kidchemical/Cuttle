@@ -190,6 +190,13 @@ class EventStore:
             row=conn.execute('SELECT * FROM runs WHERE query_id=?',(qid,)).fetchone()
         return {**dict(row),'metadata':json.loads(row['metadata'])} if row else None
 
+    def active_runs(self):
+        """Runs still executing (status='running'), oldest first, for the live strip."""
+        with self.connection() as conn:
+            rows=conn.execute('''SELECT query_id,agent_id,model,chat_session_id,project_root,started_at
+                FROM runs WHERE status='running' ORDER BY started_at''').fetchall()
+        return [dict(r) for r in rows]
+
     def stats(self):
         with self.connection() as conn:
             count=conn.execute('SELECT COUNT(*),MIN(ts),MAX(ts) FROM events').fetchone()

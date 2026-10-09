@@ -35,6 +35,32 @@ except ImportError as e:
     project_manager = None
 
 
+def _resolve_optional_repo_cwd(path, project_id):
+    """Resolve a Git cwd from an optional ``path``/``project_id`` against the
+    registered-projects allowlist, falling back to the active project.
+
+    Returns ``(cwd, error)``. ``path``/``project_id`` are used by per-chat
+    surfaces (the composer project/branch modal) whose project is not the
+    global active project.
+    """
+    from api.git_service import resolve_repo_cwd
+
+    if path or project_id is not None:
+        try:
+            from scripts.utilities.git_pending_changes import resolve_allowed_project_cwd
+        except ImportError:
+            from utilities.git_pending_changes import resolve_allowed_project_cwd  # type: ignore
+        projects = project_manager.get_projects() if project_manager else []
+        current = project_manager.get_current_project() if project_manager else None
+        cwd, _proj, err = resolve_allowed_project_cwd(path, project_id, projects, current)
+        if err or not cwd:
+            return None, err or "No project"
+        return cwd, None
+
+    current_project = project_manager.get_current_project() if project_manager else None
+    return resolve_repo_cwd(current_project), None
+
+
 @git_bp.route('/git/status', methods=['GET'])
 @authenticated_required
 def git_status():
@@ -976,12 +1002,25 @@ def git_commit_file_diff(commit_hash):
 @git_bp.route('/git/branches', methods=['GET'])
 @authenticated_required
 def git_branches():
-    """Get Git branches"""
-    try:
-        from api.git_service import GitError, list_branches, resolve_repo_cwd
+    """Get Git branches
 
-        current_project = project_manager.get_current_project()
-        cwd = resolve_repo_cwd(current_project)
+    Query: ``path=…`` and/or ``project_id=…`` (optional; per-chat project).
+    """
+    try:
+        from api.git_service import GitError, list_branches
+
+        path = (request.args.get('path') or '').strip() or None
+        pid_raw = request.args.get('project_id')
+        project_id = None
+        if pid_raw not in (None, ''):
+            try:
+                project_id = int(pid_raw)
+            except (TypeError, ValueError):
+                return jsonify({'success': False, 'error': 'Invalid project_id'}), 400
+
+        cwd, cwd_err = _resolve_optional_repo_cwd(path, project_id)
+        if cwd_err:
+            return jsonify({'success': False, 'error': cwd_err}), 400
 
         out = list_branches(cwd)
 
@@ -1279,9 +1318,13 @@ def git_push():
 @git_bp.route('/git/branch', methods=['POST'])
 @owner_required
 def git_branch():
-    """Create, switch, or delete branches"""
+    """Create, switch, or delete branches
+
+    Body: ``action``, ``branch``, optional ``path``/``project_id`` (per-chat
+    project resolution).
+    """
     try:
-        from api.git_service import GitError, branch_operation, resolve_repo_cwd
+        from api.git_service import GitError, branch_operation
 
         data = request.get_json()
         if not data or 'action' not in data or 'branch' not in data:
@@ -1290,8 +1333,19 @@ def git_branch():
                 'error': 'Action and branch name are required'
             }), 400
 
-        current_project = project_manager.get_current_project()
-        cwd = resolve_repo_cwd(current_project)
+        path = (data.get('path') or '').strip() or None
+        project_id = data.get('project_id')
+        if project_id is not None and str(project_id).strip() == '':
+            project_id = None
+        if project_id is not None:
+            try:
+                project_id = int(project_id)
+            except (TypeError, ValueError):
+                return jsonify({'success': False, 'error': 'Invalid project_id'}), 400
+
+        cwd, cwd_err = _resolve_optional_repo_cwd(path, project_id)
+        if cwd_err:
+            return jsonify({'success': False, 'error': cwd_err}), 400
         action = data['action']
         branch = data['branch']
 

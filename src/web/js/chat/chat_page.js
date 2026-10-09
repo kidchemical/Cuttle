@@ -443,62 +443,14 @@
     }
 
     // Branch shown on the segmented project chip (star | name | branch).
-    let _projectBranchCache = { path: '', branch: '', at: 0 };
-    let _projectBranchFetchInFlight = false;
-
-    /** Cached branch for the current project, '' when unknown. */
+    // Cache + fetch live in chat_chip_config.js (branchFor / refreshBranch).
     function currentProjectBranch() {
-        const path = currentProjectPathKey();
-        if (!path || _projectBranchCache.path !== path) return '';
-        return _projectBranchCache.branch || '';
+        return CuttleChipConfig.branchFor(currentProjectPathKey());
     }
 
     /** Refresh the project chip branch (cached ~15s). Re-renders when it changes. */
-    async function refreshProjectBranch(force) {
-        const path = currentProjectPathKey();
-        if (!path) {
-            _projectBranchCache = { path: '', branch: '', at: 0 };
-            return;
-        }
-        const now = Date.now();
-        if (
-            !force
-            && _projectBranchCache.path === path
-            && (now - _projectBranchCache.at) < 15000
-        ) {
-            return;
-        }
-        if (_projectBranchFetchInFlight) return;
-        _projectBranchFetchInFlight = true;
-        const prev = _projectBranchCache.path === path ? _projectBranchCache.branch : '';
-        try {
-            const qs = new URLSearchParams();
-            qs.set('path', path);
-            const resp = await fetch('/api/git/repos?' + qs.toString(), {
-                credentials: 'include',
-                cache: 'no-store',
-            });
-            const data = await resp.json().catch(() => null);
-            const repos = (data && data.success && Array.isArray(data.repos))
-                ? data.repos
-                : [];
-            const branches = repos
-                .map((r) => String((r && r.branch) || '').trim())
-                .filter(Boolean);
-            let branch = '';
-            if (branches.length) {
-                const distinct = branches.filter((b, i) => branches.indexOf(b) === i);
-                branch = distinct[0] + (distinct.length > 1 ? ' +' + (distinct.length - 1) : '');
-            }
-            _projectBranchCache = { path, branch, at: Date.now() };
-            if (branch !== prev) {
-                try { renderProjectChips(); } catch (_) {}
-            }
-        } catch (_) {
-            if (_projectBranchCache.path === path) _projectBranchCache.at = Date.now();
-        } finally {
-            _projectBranchFetchInFlight = false;
-        }
+    function refreshProjectBranch(force) {
+        return CuttleChipConfig.refreshBranch(currentProjectPathKey(), renderProjectChips, force);
     }
 
     async function pushCurrentChatProject(event, repoRoot) {
@@ -8390,7 +8342,7 @@
             segmentedClass +
             headerClass +
             starredClass +
-            '" role="img" aria-label="' +
+            '" role="img" aria-haspopup="true" aria-expanded="false" tabindex="0" aria-label="' +
             escapeHtmlInline(
                 (starred ? 'Starred project: ' : 'Project: ') + (proj.name || pathBit) + branchBit
             ).replace(/"/g, '&quot;') +
@@ -8649,6 +8601,9 @@
                     : 'Selected item: ' + displayLabel;
                 const safeAria = escapeHtmlInline(aria).replace(/"/g, '&quot;');
                 const realIdx = chips.indexOf(chip);
+                const chipMenuAttrs = composerChipAgentId(chip)
+                    ? ' aria-haspopup="true" aria-expanded="false" tabindex="0"'
+                    : '';
                 // Segmented: per-segment titles only — no chip-wide tip dump.
                 const chipTitleAttr = labelInner.segmented
                     ? ''
@@ -8665,6 +8620,7 @@
                     '" role="group" aria-label="' +
                     safeAria +
                     '"' +
+                    chipMenuAttrs +
                     chipTitleAttr +
                     ' data-chip-index="' +
                     realIdx +
@@ -8723,8 +8679,77 @@
                 }
             });
         });
+        chipConfigControl.bindRow(row, {
+            chips: slashCtx[key].chips,
+            composerChipAgentId,
+        });
         scheduleSlashChipCompactLabels(row);
         scheduleAgentContextGaugeRefresh(60);
+    }
+
+    // ── Chip click menus ────────────────────────────────────────────────────
+    // Clicking the project chip opens a working-project picker; clicking an
+    // agent chip opens an agent/model/effort picker. Anchored, body-appended
+    // popover (mirrors the context-gauge popover pattern).
+    // Agent model/effort catalog + setters for the chip config modal. The
+    // page owns supplement state and IO; chat_chip_config.js renders them.
+    function agentMenuSpec(id) {
+        const S = slashPaletteSupplement;
+        const models = {
+            cursor: { build: () => buildCursorModelPaletteItems('model'), load: () => loadCursorAgentModelsForPalette(true), set: (v) => { S.preferredModel = v; beginSupplementFetch('cursorModelsGen'); }, current: () => String(S.preferredModel || 'auto').toLowerCase() },
+            muse: { build: () => buildMuseModelPaletteItems('model'), load: () => loadMuseModelsForPalette(true), set: persistMuseModelSelection, current: () => String(S.museModel || '').toLowerCase() },
+            hermes: { build: () => buildHermesModelPaletteItems('model'), load: () => loadHermesModelsForPalette(true), set: persistHermesModelSelection, current: () => String(S.hermesModel || '').toLowerCase() },
+            opencode: { build: () => buildOpenCodeModelPaletteItems('model'), load: () => loadOpenCodeModelsForPalette(true), set: persistOpenCodeModelSelection, current: () => String(S.opencodeModel || '').toLowerCase() },
+            codex: { build: () => buildCodexModelPaletteItems('model'), load: () => loadCodexModelsForPalette(true), set: persistCodexModelSelection, current: () => String(S.codexModel || '').toLowerCase() },
+            claude: { build: () => buildClaudeModelPaletteItems('model'), load: () => loadClaudeModelsForPalette(true), set: persistClaudeModelSelection, current: () => String(S.claudeModel || '').toLowerCase() },
+        }[id];
+        const efforts = {
+            muse: { build: () => buildMuseEffortPaletteItems('effort'), load: () => loadMuseEffortForPalette(), set: persistMuseEffortSelection, current: () => String(S.museEffort || '').toLowerCase(), repaint: repaintMuseUserBadges },
+            hermes: { build: () => buildHermesEffortPaletteItems('effort'), load: () => loadHermesEffortForPalette(), set: persistHermesEffortSelection, current: () => String(S.hermesEffort || '').toLowerCase(), repaint: repaintHermesUserBadges },
+            opencode: { build: () => buildOpenCodeEffortPaletteItems('effort'), load: () => loadOpenCodeEffortForPalette(), set: persistOpenCodeEffortSelection, current: () => String(S.opencodeEffort || '').toLowerCase(), repaint: repaintOpenCodeUserBadges },
+            codex: { build: () => buildCodexEffortPaletteItems('effort'), load: () => loadCodexEffortForPalette(), set: persistCodexEffortSelection, current: () => String(S.codexEffort || '').toLowerCase(), repaint: repaintCodexUserBadges },
+            claude: { build: () => buildClaudeEffortPaletteItems('effort'), load: () => loadClaudeEffortForPalette(), set: persistClaudeEffortSelection, current: () => String(S.claudeEffort || '').toLowerCase(), repaint: repaintClaudeUserBadges },
+        }[id];
+        if (!models && !efforts) return null;
+        return { models: models || null, efforts: efforts || null };
+    }
+
+    // Chip config modal — DOM/IO owned by chat_chip_config.js; the page
+    // supplies state, palette catalogs/setters, and chip rendering.
+    const chipConfigControl = CuttleChipConfig.create({
+        escapeHtml: escapeHtmlInline,
+        getProjects: () => projects,
+        getCurrentProject: () => currentProject,
+        isProjectStarred, findProjectById, setChatProject,
+        getAgentEntries: () => CuttleChipConfig.stickyAgentEntries(
+            CuttleChatSlash.SLASH_COMMANDS, composerChipAgentId),
+        getAgentSpec: (id) => agentMenuSpec(String(id || '').toLowerCase()),
+        applyAgent: (entry) => applyStickyAgentCommand(entry),
+        rerenderChips: () => { renderSlashChips('welcome', document.getElementById('welcomeChatInput')); renderSlashChips('chat', document.getElementById('chatInput')); },
+        refreshBranch: () => refreshProjectBranch(true),
+        showToast: (msg, kind) => (window.showToast || function () {})(msg, kind),
+    });
+
+    function applyStickyAgentCommand(entry) {
+        const chip = {
+            prefix: entry.prefix,
+            label: entry.label,
+            category: entry.category || 'command',
+        };
+        ['welcome', 'chat'].forEach((k) => {
+            const ctx = slashCtx[k];
+            if (!ctx) return;
+            ctx.chips = (ctx.chips || []).filter((c) => {
+                const m = CuttleChatSlash.SLASH_COMMANDS.find((s) => s.prefix === c.prefix);
+                if (m && m.stickySession) return false;
+                return !isOrphanedCompanionChip(c, chip);
+            });
+            ctx.chips.push(chip);
+        });
+        markStickyAgentCleared(false);
+        persistStickySlashForCurrentSession(true);
+        renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
+        renderSlashChips('chat', document.getElementById('chatInput'));
     }
 
     function renderSlashMenu(key, textarea) {
@@ -15147,6 +15172,7 @@
             copy: '<svg class="chat-id-badge-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="18" cy="5" r="3" stroke="currentColor" stroke-width="2"/><circle cx="6" cy="12" r="3" stroke="currentColor" stroke-width="2"/><circle cx="18" cy="19" r="3" stroke="currentColor" stroke-width="2"/><line x1="8.6" y1="10.5" x2="15.4" y2="6.6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="8.6" y1="13.5" x2="15.4" y2="17.4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><svg class="chat-id-badge-check" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20 6 9 17l-5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
             pencil: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>',
             trash: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>',
+            download: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
             archive: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><line x1="10" y1="12" x2="14" y2="12"/></svg>',
             unarchive: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><polyline points="12 12 12 16"/><polyline points="9.5 13.5 12 11 14.5 13.5"/></svg>',
             starOutline: '<svg class="chat-star-menu-icon chat-star-menu-icon--outline" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3.5l2.6 5.3 5.9.9-4.2 4.1 1 5.8L12 16.8 6.7 19.6l1-5.8-4.2-4.1 5.9-.9L12 3.5z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>',
@@ -15188,6 +15214,16 @@
                 + icons.copy
                 + '<span class="chat-chrome-menu-item-label">' + escapeHtmlInline(copyLabel) + '</span>'
                 + '<span class="chat-id-badge-label" hidden>' + escapeHtmlInline(displayId) + '</span>'
+                + '</button>'
+            );
+        }
+        if (hasSession) {
+            parts.push(
+                '<button type="button" class="chat-chrome-menu-item" role="menuitem"'
+                + ' title="Export transcript (Markdown)" aria-label="Export transcript (Markdown)"'
+                + ' onclick="window.chatPageExportSession(\'' + sid + '\', event)">'
+                + icons.download
+                + '<span class="chat-chrome-menu-item-label">Export</span>'
                 + '</button>'
             );
         }
@@ -15282,6 +15318,127 @@
     function closeAllSessionMenus() {
         closeHistoryItemMenu();
         closeChatChromeMenu();
+    }
+
+    function exportHHMM(ts) {
+        if (!ts) return '';
+        const d = new Date(ts);
+        if (Number.isNaN(d.getTime())) return '';
+        const hh = String(d.getHours()).padStart(2, '0');
+        const mm = String(d.getMinutes()).padStart(2, '0');
+        return hh + ':' + mm;
+    }
+
+    function exportAgentDisplayName(agent) {
+        const name = String(agent || '');
+        return ({ codex: 'Codex', cursor: 'Cursor', claude: 'Claude Code', muse: 'Muse Code', deepseek: 'DeepSeek', opencode: 'OpenCode', hermes: 'Hermes' })[name] || name;
+    }
+
+    /** Author label for one exported row: subagent speaker → routing badge → slash chip → UI fallback. */
+    function exportMessageAuthor(role, opts) {
+        const speaker = opts && opts.speaker && String(opts.speaker).trim();
+        if (speaker) return speaker;
+        if (role === 'user') return 'You';
+        const badge = opts && opts.routing_badge;
+        if (badge && badge.agent) return exportAgentDisplayName(badge.agent);
+        const sc = normalizeSlashCommandStored(opts && opts.slash_command);
+        if (sc && sc.chips && sc.chips.length) {
+            const meta = String((sc.chips[0] && sc.chips[0].meta) || '');
+            const m = meta.match(/^\/([a-z][\w-]*)/);
+            if (m) return exportAgentDisplayName(m[1]);
+            const label = String((sc.chips[0] && sc.chips[0].label) || '').split(/\s*[—-]\s*/)[0].trim();
+            if (label) return label;
+        }
+        return assistantDisplayName({});
+    }
+
+function buildTranscriptMarkdown(sessionId, messages, isAuth) {
+        const title = String(getChatSessionDisplayTitle(sessionId).trim() || 'Chat transcript');
+        const lines = [];
+        const displayId = formatChatDisplayId(sessionId) || String(sessionId);
+        const at = new Date();
+        lines.push('# ' + title);
+        lines.push('Chat: ' + displayId + ' · Exported ' + at.toISOString().slice(0, 16).replace('T', ' ') + ' UTC');
+        lines.push('---');
+        lines.push('');
+        messages.filter((m) => m && m.role !== 'system').forEach((m) => {
+            const role = String(m.role || 'user');
+            const opts = authMessageOptsFromServer(m);
+            const contentRaw = String(m.content ?? '');
+            const body = role === 'assistant' ? stripLegacyAgentChrome(contentRaw) : contentRaw;
+            if (!body) return;
+            const ts = opts.timestamp > 0 ? Number(opts.timestamp) : 0;
+            const author = exportMessageAuthor(role, opts);
+            const stamp = exportHHMM(ts);
+            lines.push('**' + (stamp ? stamp + ' — ' : '') + author + '**');
+            lines.push('');
+            body.trim().split(/\r\n|\r|\n/).forEach((line) => lines.push(line));
+            lines.push('');
+        });
+        return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n';
+    }
+
+function downloadTranscriptMarkdown(text, sessionId) {
+        const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const displayId = formatChatDisplayId(sessionId) || 'chat';
+        const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+        const filename = 'cuttle-chat-' + String(displayId).replace(/[^A-Za-z0-9_-]/g, '').toLowerCase() + '-' + stamp + '.md';
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.rel = 'noopener';
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        try { a.remove(); } catch (_) {}
+        setTimeout(function () { try { URL.revokeObjectURL(url); } catch (_) {} }, 4000);
+        return filename;
+    }
+
+    async function exportChatSession(sessionId, event) {
+        if (event) {
+            event.stopPropagation();
+            event.preventDefault();
+        }
+        if (sessionId == null || sessionId === '') return;
+        closeAllSessionMenus();
+        if (isAuthMode()) {
+            const authSid = toAuthDbSessionId(sessionId);
+            if (authSid == null || authSid === '') return;
+            const tz = -new Date().getTimezoneOffset();
+            const displayId = formatChatDisplayId(authSid) || String(authSid);
+            const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+            const safeId = String(displayId).replace(/[^A-Za-z0-9_-]/g, '').toLowerCase();
+            const filename = 'cuttle-chat-' + safeId + '-' + stamp + '.md';
+            const a = document.createElement('a');
+            a.href = '/api/auth/sessions/' + encodeURIComponent(authSid) + '/export?tz=' + tz;
+            a.download = filename;
+            a.rel = 'noopener';
+            a.style.display = 'none';
+            document.body.appendChild(a);
+            a.click();
+            try { a.remove(); } catch (_) {}
+            (window.showToast || function () {})('Exported ' + filename, 'success');
+            return;
+        }
+        let messages = null;
+        try {
+            const sessions = JSON.parse(localStorage.getItem('chatSessions') || '{}');
+            const s = sessions[sessionId] || sessions[String(sessionId)];
+            if (s && Array.isArray(s.messages)) messages = s.messages;
+        } catch (_) {}
+        if (!messages || !messages.some((m) => m && m.role !== 'system')) {
+            (window.showToast || function () {})('Nothing to export yet', 'error');
+            return;
+        }
+        const md = buildTranscriptMarkdown(sessionId, messages, false);
+        try {
+            const filename = downloadTranscriptMarkdown(md, sessionId);
+            (window.showToast || function () {})('Exported ' + filename, 'success');
+        } catch (e) {
+            (window.showToast || function () {})('Export failed: ' + String((e && e.message) || e), 'error');
+        }
     }
 
     function historyStarredIconHTML() {
@@ -22782,6 +22939,8 @@
     window.chatPageToggleCurrentStarFromMenu = toggleCurrentChatStarFromMenu;
     window.chatPageMarkUnreadSession = markSessionUnreadManual;
     window.chatPageMarkCurrentUnreadFromMenu = markCurrentSessionUnreadFromMenu;
+
+    window.chatPageExportSession = exportChatSession;
     window.chatPageGitPush = pushCurrentChatProject;
 
     async function openGitPushSubmenu(triggerBtn) {

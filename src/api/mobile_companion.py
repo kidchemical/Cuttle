@@ -91,14 +91,22 @@ def _now() -> float:
     return time.time()
 
 
+# Bundled development default — the same default the mobile app ships
+# (android NotifyPrefs.DEFAULT_TOKEN), so a phone with the stock app connects
+# on a trusted LAN with zero configuration. Configure an explicit
+# CUTTLE_MOBILE_TOKEN to lock mobile access down to that secret only.
+DEFAULT_DEV_TOKEN = "dev-local-token"
+
+
 def get_mobile_token() -> str:
     """
     Shared secret token required by the phone to connect and reply.
-    Set CUTTLE_MOBILE_TOKEN in environment (or <home>/.env loaded by daemon).
-    An unset or blank secret disables companion token authentication.
+    Set CUTTLE_MOBILE_TOKEN in environment (or <home>/.env loaded by daemon)
+    to a private secret. When it is unset or blank, the bundled development
+    default (``dev-local-token``) is used so the app's own default works.
     """
     token = (os.environ.get("CUTTLE_MOBILE_TOKEN") or "").strip()
-    return token
+    return token or DEFAULT_DEV_TOKEN
 
 
 def verify_mobile_token(token: Optional[str]) -> bool:

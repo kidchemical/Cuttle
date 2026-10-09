@@ -32,6 +32,7 @@
     let apps = [];
     let received = false;
     let statusTimer = null;
+    let chatUnreadCount = 0;
 
     function hueFor(id) {
         if (APP_HUES[id] != null) return APP_HUES[id];
@@ -49,6 +50,15 @@
         status.classList.add('show');
         clearTimeout(statusTimer);
         statusTimer = setTimeout(() => status.classList.remove('show'), 1800);
+    }
+
+    /** Green unread-count badge on the Chat tile (mirrors the rail message badge). */
+    function applyChatBadge() {
+        if (!grid || typeof grid.querySelector !== 'function') return;
+        const el = grid.querySelector('.apps-tile[data-id="nav-chat"] .apps-badge');
+        if (!el) return;
+        el.textContent = chatUnreadCount > 0 ? String(chatUnreadCount) : '0';
+        el.hidden = chatUnreadCount <= 0;
     }
 
     function openApp(app) {
@@ -137,6 +147,15 @@
             pin.innerHTML = PIN_SVG;
             icon.appendChild(pin);
         }
+        // Chat tile mirrors the rail message badge: unread replies awaiting attention.
+        if (app.id === 'nav-chat') {
+            const badge = document.createElement('span');
+            badge.className = 'apps-badge';
+            badge.setAttribute('aria-hidden', 'true');
+            badge.hidden = true;
+            badge.textContent = '0';
+            icon.appendChild(badge);
+        }
         const label = document.createElement('span');
         label.className = 'apps-label';
         label.textContent = app.label;
@@ -217,16 +236,25 @@
         } else {
             empty.hidden = true;
         }
+        applyChatBadge();
     }
 
     window.addEventListener('message', (e) => {
         if (!inShell || e.source !== window.parent) return;
         const d = e.data;
-        if (!d || d.type !== 'cuttle-apps' || !Array.isArray(d.apps)) return;
-        apps = d.apps.filter(a => a && typeof a.id === 'string'
-            && (typeof a.page === 'string' || typeof a.action === 'string'));
-        received = true;
-        render();
+        if (!d) return;
+        if (d.type === 'cuttle-apps' && Array.isArray(d.apps)) {
+            apps = d.apps.filter(a => a && typeof a.id === 'string'
+                && (typeof a.page === 'string' || typeof a.action === 'string'));
+            received = true;
+            render();
+            return;
+        }
+        if (d.type === 'cuttle-chat-unread') {
+            chatUnreadCount = Math.max(0, parseInt(d.count, 10) || 0);
+            applyChatBadge();
+            return;
+        }
     });
 
     search.addEventListener('input', render);
@@ -247,4 +275,5 @@
 
     render();
     post({ type: 'cuttle-apps-request' });
+    if (inShell) post({ type: 'cuttle-chat-unread-request' });
 })();

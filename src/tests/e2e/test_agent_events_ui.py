@@ -103,6 +103,37 @@ def test_feed_and_full_detail(browser,static_server):
     finally:page.close()
 
 
+def test_feed_active_strip_and_finish_states(browser,static_server):
+    page=browser.new_page(viewport={'width':1100,'height':900})
+    errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
+    ok={'id':1,'query_id':'q1','seq':1,'kind':'finish','ts':1,'rev':1,'summary':'finish','failed':0,'agent_id':'codex'}
+    fail={'id':2,'query_id':'q2','seq':1,'kind':'finish','ts':2,'rev':1,'summary':'finish','failed':1,'agent_id':'cursor'}
+    def handle(route):
+        url=route.request.url
+        if '/active' in url:
+            body={'runs':[{'query_id':'q1','agent_id':'codex','model':'cheap','chat_session_id':'1066','project_root':'/p','started_at':1}]}
+        elif '/stream' in url:
+            route.fulfill(content_type='text/event-stream',body=': offline test\n\n');return
+        else:
+            body={'events':[ok,fail],'next_cursor':2,'stream_cursor':2}
+        route.fulfill(content_type='application/json',body=json.dumps(body))
+    page.route('**/api/agent-events**',handle)
+    try:
+        page.goto(static_server+'/agent_feed.html')
+        expect(page.locator('#feedActive')).to_be_visible()
+        expect(page.locator('.feed-active-row')).to_have_count(1)
+        expect(page.locator('.feed-active-agent')).to_have_text('codex')
+        expect(page.locator('.feed-active-text')).to_contain_text('is active')
+        assert page.locator('.feed-active-row .typing-orbit--feed').count()==1
+        assert page.locator('.feed-active-dots i').count()==3
+        expect(page.locator('.feed-step[data-state=ok]')).to_have_count(1)
+        expect(page.locator('.feed-step[data-state=error]')).to_have_count(1)
+        assert page.locator('.feed-step[data-state=ok] .feed-title').inner_text()=='Finished'
+        assert page.locator('.feed-step[data-state=error] .feed-title').inner_text()=='Failed'
+        assert not errors
+    finally:page.close()
+
+
 def test_database_controls(browser,static_server):
     page=browser.new_page(viewport={'width':900,'height':800})
     errors=[];page.on('pageerror',lambda e:errors.append(str(e)))

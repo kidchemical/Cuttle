@@ -200,3 +200,37 @@ def test_order_and_activity_modules_parse():
     for name in ("spaces_order.js", "spaces_activity.js"):
         proc = sp.run(["node", "--check", str(SPACES_DIR / name)], capture_output=True, text=True, encoding="utf-8")
         assert proc.returncode == 0, name + ": " + proc.stderr
+
+
+UNREAD_COUNT = """
+const A = require(process.env.SPACES_DIR + '/spaces_activity.js');
+const out = {};
+A.resetActivity();
+A.setUnreadPrefs({ 1: { hasUnread: true }, 'CH-000002': { hasUnread: true, unreadIsError: true }, 3: { hasUnread: false } });
+A.noteServerSnapshot([{ id: '4', running: true }], 1000);
+out.unread = A.countUnreadSessions([]);
+out.visibleExcluded = A.countUnreadSessions(['1', 'db_session_2']);
+A.resetActivity();
+A.noteServerSnapshot([{ id: '9', running: false, attention: { hasUnread: true, unreadIsError: false, revision: 1 } }], 1000);
+out.serverAttention = A.countUnreadSessions([]);
+A.resetActivity();
+A.noteServerSnapshot([{ id: '7', running: true }], 1000);
+out.runningOnly = A.countUnreadSessions([]);
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+@node_only
+def test_count_unread_sessions():
+    import os
+    proc = subprocess.run(
+        ["node", "-e", UNREAD_COUNT],
+        capture_output=True, text=True, encoding="utf-8", timeout=30,
+        env={"PATH": os.environ["PATH"], "SPACES_DIR": str(SPACES_DIR)},
+    )
+    assert proc.returncode == 0, proc.stderr
+    res = json.loads(proc.stdout)
+    assert res["unread"] == 2          # ids 1 (unread) + 2 (error), not running 4
+    assert res["visibleExcluded"] == 0  # 1 and 2 are visible right now
+    assert res["serverAttention"] == 1  # server attention counts too
+    assert res["runningOnly"] == 0      # busy chats are not awaiting attention

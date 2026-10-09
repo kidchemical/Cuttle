@@ -1,4 +1,8 @@
-/* Background text selection; execution and capability validation belong to the server. */
+/* Background text selection; execution and capability validation belong to the server.
+
+   Two explicit layers, no hidden chain:
+   - the Default chain (the "Default — all tasks" profile) every task follows;
+   - a per-task chain that overrides the Default until you Reset to Default. */
 (function (root) {
     'use strict';
     function create({document: doc, fetch, notify, endpoint}) {
@@ -8,27 +12,63 @@
         let legacy = {};
         const option = (select, value, label) => { const n = doc.createElement('option'); n.value = value; n.textContent = label; select.appendChild(n); };
         const node = (tag, text) => { const n = doc.createElement(tag); if (text) n.textContent = text; return n; };
-        function chain() { return profile ? (preferences.tasks[profile] || []) : preferences.chain; }
-        function setChain(value) { if (profile) { if (value.length) preferences.tasks[profile] = value; else delete preferences.tasks[profile]; } else preferences.chain = value; }
+        const isDefaultProfile = () => !profile;
+        const taskOverride = () => (profile && Array.isArray(preferences.tasks[profile])) ? preferences.tasks[profile] : [];
+        // Editor is live for the Default profile, or for a task with a custom chain.
+        const editorActive = () => isDefaultProfile() || !!el('backgroundOverride').checked;
+        function chain() { return isDefaultProfile() ? preferences.chain : taskOverride(); }
+        function setChain(value) {
+            if (isDefaultProfile()) preferences.chain = value;
+            else if (value.length) preferences.tasks[profile] = value;
+            else delete preferences.tasks[profile];
+        }
         function remember() {
-            if (!el('backgroundOverride').checked) return;
+            if (!editorActive()) return;
             setChain(states.map(s => s.value()));
+        }
+        function summarize(list) {
+            if (!list || !list.length) return 'the Providers settings (no Default chain set)';
+            return list.map(t => (t.kind === 'cli' ? 'CLI · ' : t.kind === 'local' ? 'Local · ' : 'API · ') + t.target + (t.model ? ' (' + t.model + ')' : '')).join(' → ');
         }
         function switchProfile() { remember(); profile = el('backgroundTask').value; render(); }
         function render() {
             generation++;
             states.length = 0;
-            const active = chain().length > 0;
-            el('backgroundOverride').checked = active;
+            const taskMode = !isDefaultProfile();
+            const overrideRow = el('backgroundOverrideRow');
+            if (overrideRow) overrideRow.hidden = !taskMode;
+            if (taskMode) el('backgroundOverride').checked = taskOverride().length > 0;
+            const hasOverride = taskMode && el('backgroundOverride').checked;
+            const active = editorActive();
+
             el('backgroundChain').replaceChildren();
             el('backgroundAdd').disabled = !active;
-            el('backgroundInheritance').textContent = profile ? 'Unchecked: inherit the global background default. An explicit chain tries only its listed targets.' : 'Unchecked: keep existing API provider preferences and task defaults. An explicit chain tries only its listed targets.';
-            chain().forEach((saved, index) => paintRow(saved, index));
-            el('backgroundStatus').textContent = active ? 'Targets run in this order. Only listed fallbacks may be used.' :
-                'Existing API order: ' + (legacy.order || []).map(id => {
-                    const t = targets.find(t => t.key === 'api:' + id);
-                    return t ? t.label + (t.effective_model ? ' (' + t.effective_model + ')' : '') : id;
-                }).join(' → ');
+            const reset = el('backgroundReset');
+            if (reset) reset.hidden = !hasOverride;
+
+            if (!taskMode) {
+                el('backgroundInheritance').textContent =
+                    'Default chain — every task follows this unless it sets its own.';
+            } else if (hasOverride) {
+                el('backgroundInheritance').textContent =
+                    'This task uses its own chain. Reset to Default to follow the Default again.';
+            } else {
+                el('backgroundInheritance').textContent =
+                    'This task follows the Default: ' + summarize(preferences.chain) + '.';
+            }
+
+            if (active) chain().forEach((saved, index) => paintRow(saved, index));
+            if (!taskMode) {
+                el('backgroundStatus').textContent = preferences.chain.length
+                    ? 'Targets run in this order. Only listed fallbacks may be used.'
+                    : 'No Default chain yet. Leave it empty to use the Providers settings (API order: '
+                        + ((legacy.order || []).join(' → ') || 'none')
+                        + '), or add a target to set a default for every task.';
+            } else if (hasOverride) {
+                el('backgroundStatus').textContent = 'Targets run in this order. Only listed fallbacks may be used.';
+            } else {
+                el('backgroundStatus').textContent = '';
+            }
             updateVoiceNotice();
         }
         function updateVoiceNotice() {
@@ -132,7 +172,8 @@
                 rows = ((t && t.suggested_models) || []).map(id => ({id})); defaultEfforts = [];
                 draft.effort = ''; temperature.value = ''; auth.replaceChildren();
                 if (t && t.kind === 'cli') (t.auth_modes || []).forEach(mode => option(auth, mode, mode === 'subscription' ? 'Subscription login' : 'CLI saved login (may use API billing)'));
-                auth.hidden = !(t && t.kind === 'cli'); auth.parentElement.hidden = auth.hidden;
+                auth.hidden = !(t && t.kind === 'cli');
+                auth.parentElement.hidden = auth.hidden;
                 auth.value = 'subscription'; paint(''); discover(false);
             }
             target.addEventListener('change', chooseTarget);
@@ -142,20 +183,38 @@
             remove.addEventListener('click', () => { remember(); const value = chain().slice(); value.splice(index, 1); setChain(value); render(); });
             up.addEventListener('click', () => { remember(); const value = chain().slice(); [value[index-1], value[index]] = [value[index],value[index-1]]; setChain(value); render(); });
             const t = current();
-            auth.hidden = !(t && t.kind === 'cli'); auth.parentElement.hidden = auth.hidden;
+            auth.hidden = !(t && t.kind === 'cli');
+            auth.parentElement.hidden = auth.hidden;
             if (t && t.kind === 'cli') (t.auth_modes || []).forEach(mode => option(auth, mode, mode === 'subscription' ? 'Subscription login' : 'CLI saved login (may use API billing)'));
             auth.value = saved.auth || 'subscription'; temperature.value = saved.temperature == null ? '' : saved.temperature;
             rows = ((t && t.suggested_models) || []).map(id => ({id})); paint(saved.model || ''); discover(false);
         }
         function defaultTarget() { const t = targets.find(t => t.configured) || targets[0]; return {kind: t.kind === 'cli' ? 'cli' : 'api', target: t.target, model: '', effort: '', temperature: null, auth: t.kind === 'cli' ? 'subscription' : ''}; }
         el('backgroundTask').addEventListener('change', switchProfile);
-        el('backgroundOverride').addEventListener('change', () => { setChain(el('backgroundOverride').checked ? [defaultTarget()] : []); render(); });
+        el('backgroundOverride').addEventListener('change', () => {
+            if (isDefaultProfile()) return;
+            if (el('backgroundOverride').checked) {
+                // New override starts from the Default (or one empty target) so
+                // switching it on is useful immediately.
+                setChain(preferences.chain.length ? preferences.chain.map(s => ({...s})) : [defaultTarget()]);
+            } else {
+                setChain([]);
+            }
+            render();
+        });
+        const resetBtn = el('backgroundReset');
+        if (resetBtn) resetBtn.addEventListener('click', () => {
+            if (isDefaultProfile()) return;
+            delete preferences.tasks[profile];
+            render();
+        });
         el('backgroundAdd').addEventListener('click', () => { remember(); if (chain().length >= 8) { notify('At most eight fallback targets.', 'error'); return; } setChain([...chain(), defaultTarget()]); render(); });
         function accept(data) {
             targets = data.targets || []; tasks = data.tasks || {}; preferences = data.preferences || {}; legacy = data.legacy || {};
             preferences.chain ||= []; preferences.tasks ||= {};
-            el('backgroundTask').replaceChildren(); option(el('backgroundTask'), '', 'Global default');
+            el('backgroundTask').replaceChildren(); option(el('backgroundTask'), '', 'Default — all tasks');
             Object.entries(tasks).forEach(([id, label]) => option(el('backgroundTask'), id, label)); el('backgroundTask').value = profile;
+            profile = el('backgroundTask').value;
             render();
         }
         async function load() {

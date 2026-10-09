@@ -7,7 +7,7 @@ from .store import EventStore,state_dir
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('verb',choices=['stats','get','search','diff','changes','tail'])
+    parser.add_argument('verb',choices=['stats','get','search','diff','changes','tail','active'])
     parser.add_argument('value',nargs='?')
     parser.add_argument('--after',type=int,default=0)
     parser.add_argument('--limit',type=int,default=100)
@@ -30,7 +30,9 @@ def main():
                     print(json.dumps(store.event(row['id']),ensure_ascii=False,default=str),flush=True)
                 if args.once:return 0
                 time.sleep(1)
-        if args.verb=='stats':
+        if args.verb=='active':
+            out={'runs':store.active_runs()}
+        elif args.verb=='stats':
             out=store.stats()
         elif args.verb=='get':
             out={'run':store.run(args.value),'events':store.events(args.value,after=args.after,limit=args.limit,full=True)}

@@ -160,3 +160,58 @@ def catalog_model_efforts(rows: Any) -> Dict[str, List[str]]:
         if mid and isinstance(levels, (list, tuple)) and levels:
             out[mid] = [str(level).strip().lower() for level in levels if str(level).strip()]
     return out
+
+
+def enrich_agent_catalog(agents: List[Dict[str, Any]], *, refresh: bool = False) -> List[Dict[str, Any]]:
+    """Overwrite each available agent's ``models`` with its live catalog (Settings).
+
+    ``GET /api/agents?live_models=1`` calls this so per-agent dropdowns match the
+    chat palette instead of the manifest snapshot. Manifest ``models`` stay as
+    the fallback the store returns when the harness has no live list.
+    """
+    available_ids = [a.get("id") for a in agents if a.get("available")]
+    fallbacks = {a.get("id"): list(a.get("models") or []) for a in agents if a.get("id")}
+    live = list_agent_models_bulk(available_ids, fallbacks=fallbacks, refresh=refresh)
+    by_id = {a.get("id"): a for a in agents}
+    for aid, res in live.items():
+        row = by_id.get(aid)
+        if not row:
+            continue
+        model_ids = catalog_model_ids(res.get("models"))
+        if model_ids:
+            row["models"] = model_ids
+            row["models_source"] = res.get("source") or "manifest"
+        efforts = catalog_model_efforts(res.get("models"))
+        if efforts:
+            merged = dict(row.get("model_efforts") or {})
+            merged.update(efforts)
+            row["model_efforts"] = merged
+    return agents
+
+
+def enrich_router_models(
+    agent_models: Dict[str, List[str]],
+    agent_efforts: Dict[str, Dict[str, Any]],
+    fallbacks: Dict[str, List[str]],
+    *,
+    refresh: bool = False,
+) -> None:
+    """Replace each router agent's model list with its live catalog, in place.
+
+    ``GET /api/agent-router/options?live=1`` calls this so the Router editor's
+    target pickers offer what is actually available, not the static sets.
+    """
+    merged_fallbacks = {k: list(v) for k, v in (fallbacks or {}).items()}
+    live = list_agent_models_bulk(
+        list(agent_models.keys()), fallbacks=merged_fallbacks, refresh=refresh
+    )
+    for aid, res in live.items():
+        model_ids = catalog_model_ids(res.get("models"))
+        if model_ids:
+            agent_models[aid] = model_ids
+        efforts = catalog_model_efforts(res.get("models"))
+        if efforts:
+            slot = agent_efforts.setdefault(
+                aid, {"supported": True, "levels": [], "model_levels": {}}
+            )
+            slot.setdefault("model_levels", {}).update(efforts)

@@ -173,6 +173,42 @@
         _local = next;
     }
 
+    /** Union of every session id this module has ever been told about. */
+    function allKnownIds() {
+        const ids = new Set();
+        const add = (id) => {
+            const b = bareSid(id);
+            if (b) ids.add(b);
+        };
+        _attention.forEach((_, k) => add(k));
+        _prefs.forEach((_, k) => add(k));
+        _server.forEach((_, k) => add(k));
+        _local.forEach((_, k) => add(k));
+        _sources.forEach((src) => src.entries.forEach((_, bare) => ids.add(bare)));
+        return ids;
+    }
+
+    /**
+     * Number of chats awaiting attention across every known session —
+     * replies with an unread/error dot, excluding chats visible right now.
+     * Drives the shell's Chat badge (message icon) and the Apps page tile.
+     */
+    function countUnreadSessions(visibleIds) {
+        const visible = new Set();
+        (Array.isArray(visibleIds) ? visibleIds : []).forEach((s) => {
+            const b = bareSid(s);
+            if (b) visible.add(b);
+        });
+        let count = 0;
+        allKnownIds().forEach((bare) => {
+            if (visible.has(bare)) return;
+            const hit = lookupSessionActivity(bare);
+            if (!hit) return;
+            if (hit.activity === 'unread' || hit.activity === 'error') count += 1;
+        });
+        return count;
+    }
+
     /** Effective { activity, running } for one chat, or null when idle. */
     function lookupSessionActivity(sid, now) {
         const bare = bareSid(sid);
@@ -312,6 +348,7 @@
         lookupSessionActivity,
         followupKind,
         selectSpaceActivity,
+        countUnreadSessions,
     };
 
     const ns = (root.CuttleSpaces = root.CuttleSpaces || {});

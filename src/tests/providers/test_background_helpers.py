@@ -32,6 +32,13 @@ def test_global_and_task_chain_inheritance(isolated):
     assert bg.has_selection('narration')
 
 
+def test_unconfigured_has_no_hidden_chain(isolated):
+    """No third source: unset config yields no executor, not the provider order."""
+    isolated[bg.SETTINGS_KEY] = {}
+    assert bg.execution_chain('titles') == []
+    assert not bg.has_selection('titles')
+
+
 def test_api_fallback_and_task_temperature(monkeypatch, isolated):
     requests = []
     def fake(pid, request):

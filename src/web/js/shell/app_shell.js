@@ -4274,6 +4274,8 @@ window.addEventListener('message', (e) => {
     } else if (d.type === 'cuttle-apps-pin' && typeof d.id === 'string') {
         if (d.pinned) showRailItem(d.id);
         else hideRailItem(d.id);
+    } else if (d.type === 'cuttle-chat-unread-request') {
+        try { e.source?.postMessage({ type: 'cuttle-chat-unread', count: chatUnreadCount() }, '*'); } catch (_) {}
     } else if (d.type === 'cuttle-rail-action' && typeof d.id === 'string') {
         // Apps-grid tiles for footer utilities (Account, Notifications,
         // Workspace) carry no page. Activate the rail button so the same
@@ -4999,6 +5001,25 @@ function updateNotificationsBadge() {
     });
 }
 
+/** Chats with replies awaiting attention (unread/error dots), minus visible panes. */
+function chatUnreadCount() {
+    try {
+        return CuttleSpaces.countUnreadSessions(visibleActiveSpaceChatIds());
+    } catch (_) {
+        return 0;
+    }
+}
+
+/** Green count badge on the Chat (message) rail button, mirrored to the Apps page. */
+function updateChatUnreadBadge() {
+    const count = chatUnreadCount();
+    document.querySelectorAll('.rail-badge-chat').forEach(badge => {
+        badge.textContent = count > 0 ? String(count) : '0';
+        badge.style.display = count > 0 ? '' : 'none';
+    });
+    broadcastToFrames({ type: 'cuttle-chat-unread', count });
+}
+
 (function setupNotificationsPopover() {
     const back = document.getElementById('notificationsPopoverBackdrop');
     const clearBtn = document.getElementById('notificationsClearBtn');
@@ -5719,6 +5740,7 @@ function syncSpaceActivityTabs() {
         }
     });
     spaceActivitySig = sigParts.join('|');
+    updateChatUnreadBadge();
 }
 
 function allSpaceChatIds() {
@@ -5768,24 +5790,61 @@ function refreshSpaceActivityLocalState() {
 }
 
 /** A chat in a background space finished with no frame watching it — flag
- *  it unread (same prefs row the history panel reads) so its tab goes green. */
+ *  it unread (same prefs row the history panel reads) so its tab goes green.
+ *  Returns the bare ids that were newly marked (already-unread/visible chats
+ *  are skipped) so callers can raise a notification for exactly those. */
 function markFinishedBackgroundChatsUnread(finished) {
-    if (!finished || !finished.length) return;
+    if (!finished || !finished.length) return [];
     const visible = new Set([...visibleActiveSpaceChatIds()].map((s) => CuttleSpaces.bareSid(s)));
     const targets = finished.filter((bare) => bare && !visible.has(bare));
-    if (!targets.length) return;
+    if (!targets.length) return [];
+    const marked = [];
     try {
         const prefs = readChatPrefsMap();
-        let changed = false;
         targets.forEach((bare) => {
             const key = Object.keys(prefs).find((k) => CuttleSpaces.bareSid(k) === bare) || bare;
             const row = prefs[key] && typeof prefs[key] === 'object' ? prefs[key] : {};
             if (row.hasUnread) return;
             prefs[key] = Object.assign({}, row, { hasUnread: true, unreadIsError: false });
-            changed = true;
+            marked.push(bare);
         });
-        if (changed) targets.forEach(bare => shellSessionPrefs.update(bare, prefs[bare] || {}));
+        if (marked.length) marked.forEach(bare => shellSessionPrefs.update(bare, prefs[bare] || {}));
     } catch (_) {}
+    return marked;
+}
+
+/** Human-readable label for a bare chat id (CH-000123 for numeric ids). */
+function formatBareChatLabel(bare) {
+    const raw = String(bare == null ? '' : bare);
+    if (/^\d+$/.test(raw)) return 'CH-' + String(parseInt(raw, 10)).padStart(6, '0');
+    return raw || 'chat';
+}
+
+/**
+ * A background chat finished (server saw running → idle). Mark it unread and
+ * raise a "Reply ready" notification in Cuttle's notification panel so chat
+ * completions no-frame-was-watching still surface. Idempotent per completion
+ * (the transition fires once), and skipped entirely when server-attention rows
+ * are present (those already carry hasUnread from the server).
+ */
+function reconcileFinishedBackgroundChats(finished, sessions) {
+    if (!finished || !finished.length) return;
+    const titleByBare = new Map();
+    (Array.isArray(sessions) ? sessions : []).forEach((s) => {
+        if (s && s.id != null && s.title) titleByBare.set(CuttleSpaces.bareSid(s.id), String(s.title));
+    });
+    let marked = [];
+    try {
+        marked = markFinishedBackgroundChatsUnread(finished);
+    } catch (_) {}
+    if (marked.length) refreshSpaceActivityLocalState();
+    marked.forEach((bare) => {
+        const label = titleByBare.get(bare) || formatBareChatLabel(bare);
+        try {
+            (window.showToast || function () {})('Reply ready — ' + label,
+                'success', { unread: true, sessionId: bare, kind: 'chat-response' });
+        } catch (_) {}
+    });
 }
 
 async function fetchSpaceSessionsList() {
@@ -5873,7 +5932,7 @@ async function refreshSpaceActivityFromServer() {
             rows = await fetchSpaceLiveStatusRows(ids);
         }
         const finished = CuttleSpaces.noteServerSnapshot(rows, startedAt);
-        if (!rows.some(row => row.attention)) markFinishedBackgroundChatsUnread(finished);
+        if (!rows.some(row => row.attention)) reconcileFinishedBackgroundChats(finished, sessions);
         refreshSpaceActivityLocalState();
     } finally {
         spaceActivityPollInFlight = false;
@@ -5907,9 +5966,11 @@ const activityBroker = CuttleActivityBroker.create({
     },
     publish: sessions => {
         broadcastToFrames({type: 'cuttle-sessions-snapshot', sessions});
-        CuttleSpaces.noteServerSnapshot(sessions.map(s => ({id: s.id,
+        const rows = sessions.map(s => ({id: s.id,
             running: !!(s.generating || s.awaiting_action), attention: s.attention,
-            queue: CuttleSpaces.followupKind(parseSpaceFollowupQueue(s.followup_queue))})), Date.now());
+            queue: CuttleSpaces.followupKind(parseSpaceFollowupQueue(s.followup_queue))}));
+        const finished = CuttleSpaces.noteServerSnapshot(rows, Date.now());
+        if (!rows.some(r => r.attention)) reconcileFinishedBackgroundChats(finished, sessions);
         syncSpaceActivityTabs();
     },
     openStream: wake => {

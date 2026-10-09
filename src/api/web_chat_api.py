@@ -6507,31 +6507,9 @@ def get_agents_catalog_api():
         )
         if live:
             try:
-                from api.agent_harness.agent_models import (
-                    catalog_model_efforts,
-                    catalog_model_ids,
-                    list_agent_models_bulk,
-                )
+                from api.agent_harness.agent_models import enrich_agent_catalog
 
-                available_ids = [a.get('id') for a in agents if a.get('available')]
-                fallbacks = {
-                    a.get('id'): list(a.get('models') or []) for a in agents if a.get('id')
-                }
-                live_models = list_agent_models_bulk(available_ids, fallbacks=fallbacks)
-                by_id = {a.get('id'): a for a in agents}
-                for aid, res in live_models.items():
-                    row = by_id.get(aid)
-                    if not row:
-                        continue
-                    model_ids = catalog_model_ids(res.get('models'))
-                    if model_ids:
-                        row['models'] = model_ids
-                        row['models_source'] = res.get('source') or 'manifest'
-                    efforts = catalog_model_efforts(res.get('models'))
-                    if efforts:
-                        merged = dict(row.get('model_efforts') or {})
-                        merged.update(efforts)
-                        row['model_efforts'] = merged
+                enrich_agent_catalog(agents)
             except Exception as exc:  # noqa: BLE001 — keep the manifest snapshot
                 print(f"[api/agents] live model enrichment failed: {exc}", flush=True)
         return jsonify({
@@ -6801,28 +6779,12 @@ def get_agent_router_options_api():
         )
         if live:
             try:
-                from api.agent_harness.agent_models import (
-                    catalog_model_efforts,
-                    catalog_model_ids,
-                    list_agent_models_bulk,
-                )
+                from api.agent_harness.agent_models import enrich_router_models
 
                 fallbacks = {m.id: list(m.models or []) for m in manifests}
                 for aid, ids in static_models.items():
                     fallbacks.setdefault(aid, list(ids))
-                live_catalogs = list_agent_models_bulk(
-                    list(agent_models.keys()), fallbacks=fallbacks
-                )
-                for aid, res in live_catalogs.items():
-                    model_ids = catalog_model_ids(res.get('models'))
-                    if model_ids:
-                        agent_models[aid] = model_ids
-                    efforts = catalog_model_efforts(res.get('models'))
-                    if efforts:
-                        slot = agent_efforts.setdefault(
-                            aid, {'supported': True, 'levels': [], 'model_levels': {}}
-                        )
-                        slot.setdefault('model_levels', {}).update(efforts)
+                enrich_router_models(agent_models, agent_efforts, fallbacks)
             except Exception as exc:  # noqa: BLE001 — keep the static/manifest sets
                 print(f"[api/agent-router/options] live model enrichment failed: {exc}", flush=True)
         return jsonify({

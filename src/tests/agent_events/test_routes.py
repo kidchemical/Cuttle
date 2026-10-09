@@ -59,3 +59,13 @@ def test_feed_page_requires_experiment_but_inspector_remains_available(client,mo
     assert client.get('/api/agent-events').status_code==200
     monkeypatch.setattr(api.experimental,'is_enabled',lambda flag:True)
     assert client.get('/agent_feed.html').status_code==200
+
+
+def test_active_runs_lists_only_running_agents(client):
+    store=EventStore(state_dir())
+    store.write_batch([('run','live',{'harness':{'agent_id':'codex','model':'cheap','cwd':'/p','chat_session_id':'1066'}}),
+                       ('run','done',{'harness':{'agent_id':'cursor','model':'auto'},'finished_at':1,'success':True})])
+    payload=client.get('/api/agent-events/active').get_json()
+    assert [r['query_id'] for r in payload['runs']]==['live']
+    assert payload['runs'][0]['agent_id']=='codex'
+    assert payload['runs'][0]['chat_session_id']=='1066'

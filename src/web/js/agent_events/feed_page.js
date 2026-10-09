@@ -2,7 +2,9 @@
     'use strict';
     const rowsEl=document.getElementById('feedRows'),status=document.getElementById('feedStatus');
     const form=document.getElementById('feedFilters'),followButton=document.getElementById('feedFollow');
+    const activeEl=document.getElementById('feedActive');
     let rows=[],filters={},following=true,pending=[],before=0,source,streamCursor=0;
+    let activeRuns=[],activeTimer=0;
     const expanded=new Map();
     const motion=window.matchMedia('(prefers-reduced-motion: reduce)');
     const animations=new Set();
@@ -48,9 +50,16 @@
             if(existing && existing.dataset.rev===String(row.rev)) {fragment.append(existing);continue;}
             const details=document.createElement('details');details.className='feed-step';details.dataset.id=row.id;details.dataset.kind=row.kind;
             details.dataset.rev=row.rev;details.dataset.motionKey='step:'+row.id;
+            const isFinish=row.kind==='finish';
+            if(isFinish) details.dataset.state=row.failed?'error':'ok';
             const summary=node('summary','');
             const icons={edit:'±',tool:'⌘',thinking:'◌',writing:'≡','run.start':'▶','run.resume':'↻',finish:'✓',status:'·'};
-            for(const [cls,text] of [['feed-icon',icons[row.kind]||'·'],['feed-kind',row.kind.replace('run.','')],['feed-title',row.summary||'Agent activity'],['feed-time',new Date(row.ts*1000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})]]) {
+            let icon=icons[row.kind]||'·',title=row.summary||'Agent activity';
+            if(isFinish) {
+                icon=row.failed?'✕':'✓';
+                if(!row.summary||row.summary==='finish') title=row.failed?'Failed':'Finished';
+            }
+            for(const [cls,text] of [['feed-icon',icon],['feed-kind',row.kind.replace('run.','')],['feed-title',title],['feed-time',new Date(row.ts*1000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})]]) {
                 const part=node('span',text);part.className=cls;summary.append(part);
             }
             details.append(summary);
@@ -103,6 +112,35 @@
             }
         }
     }
+    function renderActive() {
+        if(!activeEl) return;
+        activeEl.hidden=!activeRuns.length;
+        if(!activeRuns.length) return;
+        const fragment=document.createDocumentFragment();
+        const title=node('h2','Active now');title.className='feed-active-title';fragment.append(title);
+        for(const run of activeRuns) {
+            const row=document.createElement('div');row.className='feed-active-row';
+            const orbit=document.createElement('span');orbit.className='typing-orbit typing-orbit--feed';orbit.setAttribute('aria-hidden','true');
+            orbit.innerHTML='<span class="typing-orbit-ring"></span><span class="typing-orbit-ring typing-orbit-ring--inner"></span><span class="typing-orbit-core"></span><span class="typing-orbit-sat typing-orbit-sat--1"></span><span class="typing-orbit-sat typing-orbit-sat--2"></span><span class="typing-orbit-sat typing-orbit-sat--3"></span><span class="typing-orbit-beam"></span>';
+            const chip=node('span',run.agent_id||'Agent');chip.className='feed-active-agent';
+            const text=node('span','is active');text.className='feed-active-text';
+            const dots=document.createElement('span');dots.className='feed-active-dots';dots.setAttribute('aria-hidden','true');
+            dots.append(node('i',''),node('i',''),node('i',''));
+            text.append(dots);
+            row.append(orbit,chip,text);
+            fragment.append(row);
+        }
+        activeEl.replaceChildren(fragment);
+    }
+    async function loadActive() {
+        try {
+            const response=await fetch('/api/agent-events/active',{credentials:'include',cache:'no-store'});
+            if(!response.ok) return;
+            const data=await response.json();
+            activeRuns=data.runs||[];
+            renderActive();
+        } catch(_) {}
+    }
     function applyIncoming(incoming) {
         if(!following) {pending=CuttleAgentFeed.merge(pending,incoming);followButton.textContent=pending.length+' updated steps · Resume live';return;}
         rows=CuttleAgentFeed.merge(rows,incoming).slice(0,1000);
@@ -124,7 +162,7 @@
         history.replaceState(null,'','?'+new URLSearchParams(filters));
     }
     form.addEventListener('submit',async(event)=>{event.preventDefault();readFilters();rows=[];before=0;form.querySelector('.feed-advanced').open=false;await load().then(connectStream).catch(error=>status.textContent=error.message);});
-    function resume() {following=true;followButton.setAttribute('aria-pressed','true');followButton.textContent='Following live';applyIncoming(pending);pending=[];}
+    function resume() {following=true;followButton.setAttribute('aria-pressed','true');followButton.textContent='Following live';applyIncoming(pending);pending=[];loadActive();}
     followButton.addEventListener('click',()=>{if(following){following=false;followButton.textContent='Paused · Resume live';followButton.setAttribute('aria-pressed','false');}else resume();});
     form.querySelector('[name=kind]').addEventListener('change',()=>form.requestSubmit());
     document.getElementById('feedOlder').addEventListener('click',async()=>{following=false;followButton.setAttribute('aria-pressed','false');followButton.textContent='Resume live';rows=[];await load().catch(error=>status.textContent=error.message);});
@@ -137,9 +175,12 @@
         source.onerror=()=>{status.textContent='Reconnecting…';};
         source.onopen=()=>{status.textContent='Live · latest activity first';};
     }
+    loadActive();
+    activeTimer=setInterval(()=>{if(following) loadActive();},5000);
     load().then(connectStream).catch(error=>status.textContent=error.message);
     window.addEventListener('pagehide',()=>{
         if(source)source.close();
+        if(activeTimer)clearInterval(activeTimer);
         if(renderFrame)cancelAnimationFrame(renderFrame);
         animations.forEach(animation=>animation.cancel());animations.clear();
     });
