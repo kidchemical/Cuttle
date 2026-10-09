@@ -694,13 +694,6 @@
         window.addEventListener('pagehide', event => { if (!event.persisted) vfxController.dispose(); });
     }
 
-    /** Distance from the bottom that still counts as following the conversation. */
-    const AUTOSCROLL_STICK_PX = 120;
-    /** Sticky follow: measured on user scroll, not after we insert a tall bubble. */
-    let chatPinnedToBottom = true;
-    let _ignoreChatScrollPinUntil = 0;
-    /** Blocks autoScroll-to-bottom while a CH-…-N deep-link jump settles. */
-    let _suppressAutoScrollUntil = 0;
     /**
      * In-session attention (title unread + jump glow). Separate from history
      * hasUnread: stays until the user scrolls to the new content and/or clicks
@@ -713,10 +706,6 @@
     /** Once true for this open session, new bottom-pinned replies won't re-nag the title. */
     let chatViewportActivated = true;
     let _suppressChatAttention = 0;
-    /** Right-side message nav (numbered circles) — same sticky-follow behavior, don't steal hover/scroll. */
-    let messageNavPinnedToBottom = true;
-    let _ignoreNavScrollPinUntil = 0;
-    const NAV_AUTOSCROLL_STICK_PX = 24;
     // Busy-generation lock { loading, localSessionId, seq }, owned by
     // chat_generation.js. Exactly one instance; all transitions go through
     // CuttleChatGeneration (token-scoped release) — never direct writes.
@@ -1280,7 +1269,7 @@
                 contentEl.innerHTML = formatMessage(display);
                 try { activateEnhancements(el); } catch (_) {}
             }
-            autoScrollChatToBottom();
+            transcriptNav.autoScrollChatToBottom();
         }
         const statusHeader = el.querySelector('.message-header-row');
         if (statusHeader) {
@@ -1978,7 +1967,7 @@
         if (_suppressChatAttention > 0) return;
         applyChatAttention(CuttleChatActivity.attentionAfterFinalized(snapshotChatAttention(), {
             isError: !!(opts && opts.isError),
-            scrolledAway: !chatPinnedToBottom || isChatScrolledUp(140),
+            scrolledAway: !transcriptNav.isFollowingLatest() || transcriptNav.isChatScrolledUp(140),
         }));
         syncChatAttentionIndicators();
     }
@@ -1986,7 +1975,7 @@
     // Owned by chat_activity.js — DOM/state gather, domain decides.
     function clearChatUnseenBelow() {
         if (!chatUnseenBelow) {
-            updateJumpToBottomVisibility();
+            transcriptNav.updateJumpToBottomVisibility();
             return;
         }
         applyChatAttention(CuttleChatActivity.attentionAfterClearUnseen(snapshotChatAttention()));
@@ -2065,7 +2054,7 @@
     }
 
     function syncChatAttentionIndicators() {
-        updateJumpToBottomVisibility();
+        transcriptNav.updateJumpToBottomVisibility();
         updateSessionTitleUnreadDot();
         try { scheduleChatActivityBroadcast(); } catch (_) {}
     }
@@ -3639,7 +3628,7 @@
         const parsed = parseChatHandleToken(raw);
         if (!parsed) return false;
         if (parsed.messageIndex) {
-            queueMessageJump(parsed.messageIndex);
+            transcriptNav.queueMessageJump(parsed.messageIndex);
             try {
                 const url = new URL(window.location.href);
                 url.searchParams.set('msg', String(parsed.messageIndex));
@@ -3648,7 +3637,7 @@
         }
         if (sessionIdsEqual(currentSessionId, parsed.sessionId)) {
             if (parsed.messageIndex) {
-                consumePendingMessageJump();
+                transcriptNav.consumePendingMessageJump();
             }
             return true;
         }
@@ -10511,7 +10500,7 @@
                     const content = existing.querySelector('.system-message');
                     if (content) content.textContent = message;
                     existing.dataset.rawContent = String(message ?? '');
-                    if (!opts.skipScroll) autoScrollChatToBottom();
+                    if (!opts.skipScroll) transcriptNav.autoScrollChatToBottom();
                     // Already durable — do not POST a duplicate row on text tweak.
                     if (opts.persist && !existing.dataset.messageId) {
                         durablePersistSystemMessage(existing, message, opts);
@@ -10541,7 +10530,7 @@
         } else {
             messagesContainer.appendChild(messageDiv);
         }
-        if (!opts.skipScroll) autoScrollChatToBottom();
+        if (!opts.skipScroll) transcriptNav.autoScrollChatToBottom();
 
         // Sticky notices (e.g. Stopped generating) stay until the next send.
         // ``persist`` also means durable: write to the auth chat log so refresh /
@@ -10986,8 +10975,7 @@
         // Drop prior session's lazy-history offset — otherwise new-chat numbers
         // keep starting at older_visible_count+1 from the chat we left.
         resetChatHistoryWindow();
-        messageNavPinnedToBottom = true;
-        updateMessageNav();
+        transcriptNav.resetNav();
 
         document.getElementById('welcomeScreen').style.display = 'flex';
         document.getElementById('chatArea').style.display = 'none';
@@ -11087,7 +11075,7 @@
         // Send the message through the main chat flow
         const userTs = Date.now();
         addMessageToUI(displayMessage, 'user', { timestamp: userTs, attachments });
-        autoScrollChatToBottom(true);
+        transcriptNav.autoScrollChatToBottom(true);
         saveChatSession(displayMessage, 'user', { attachments });
         recordPromptHistory(message || displayMessage);
 
@@ -11161,8 +11149,7 @@
         const chatMessages = document.getElementById('chatMessages');
         if (chatMessages) chatMessages.innerHTML = '';
         resetChatHistoryWindow();
-        messageNavPinnedToBottom = true;
-        updateMessageNav();
+        transcriptNav.resetNav();
         releaseManualUnreadHoldIfLeaving(null);
         currentSessionId = null;
         adoptFollowupQueue(currentSessionId);
@@ -11487,7 +11474,7 @@
                     } finally {
                         endSuppressChatAttention();
                     }
-                    updateMessageNav();
+                    transcriptNav.updateMessageNav();
                     // Server follow-ups travel with /messages — apply on open so a
                     // stuck queue (e.g. CH-000441) drains without waiting for sync.
                     applyServerFollowups(data.followups, data.followup_revision);
@@ -11557,23 +11544,7 @@
             applyHistorySubagentExpandState();
             syncHistoryUnreadIndicators();
             syncChatAttentionIndicators();
-            if (pendingMessageJump) consumePendingMessageJump();
-            else {
-                chatPinnedToBottom = true;
-                _ignoreChatScrollPinUntil = Date.now() + 300;
-                autoScrollChatToBottom(true);
-                messageNavPinnedToBottom = true;
-                _ignoreNavScrollPinUntil = Date.now() + 300;
-                autoScrollMessageNavToBottom(true);
-                requestAnimationFrame(() => {
-                    autoScrollChatToBottom(true);
-                    autoScrollMessageNavToBottom(true);
-                });
-                setTimeout(() => {
-                    autoScrollChatToBottom(true);
-                    autoScrollMessageNavToBottom(true);
-                }, 250);
-            }
+            transcriptNav.settleAfterLoad();
             setupChatHistoryLazyLoad();
             // Re-apply after messages/sessions settle (server project beats stale empty local path).
             reconcileChatProject();
@@ -11663,7 +11634,7 @@
             } finally {
                 endSuppressChatAttention();
             }
-            updateMessageNav();
+            transcriptNav.updateMessageNav();
             reconcileCuttleButtonLocks(session.messages);
         }
         
@@ -11684,23 +11655,7 @@
         syncChatAttentionIndicators();
         
         // Scroll to bottom (or deep-linked message) - default stays pinned to bottom
-        if (pendingMessageJump) consumePendingMessageJump();
-        else {
-            chatPinnedToBottom = true;
-            _ignoreChatScrollPinUntil = Date.now() + 300;
-            autoScrollChatToBottom(true);
-            messageNavPinnedToBottom = true;
-            _ignoreNavScrollPinUntil = Date.now() + 300;
-            autoScrollMessageNavToBottom(true);
-            requestAnimationFrame(() => {
-                autoScrollChatToBottom(true);
-                autoScrollMessageNavToBottom(true);
-            });
-            setTimeout(() => {
-                autoScrollChatToBottom(true);
-                autoScrollMessageNavToBottom(true);
-            }, 250);
-        }
+        transcriptNav.settleAfterLoad();
     }
     
     // The server auto-names sessions (fallback + background LLM title) shortly
@@ -12114,11 +12069,11 @@
             }
 
             applyChatHistoryPageMeta(pageMeta || {}, msgs);
-            updateMessageNav();
+            transcriptNav.updateMessageNav();
 
             const newHeight = box.scrollHeight;
             box.scrollTop = prevTop + (newHeight - prevHeight);
-            _ignoreChatScrollPinUntil = Date.now() + 200;
+            transcriptNav.holdScrollPin(200);
             return true;
         } catch (e) {
             console.warn('[Cuttle Chat] load older messages failed:', e);
@@ -12136,7 +12091,7 @@
         box.addEventListener('scroll', () => {
             if (!isAuthMode() || currentSessionId == null) return;
             if (!chatHistoryHasMore || chatHistoryLoadingOlder) return;
-            if (Date.now() < _ignoreChatScrollPinUntil) return;
+            if (transcriptNav.isScrollPinHeld()) return;
             if (box.scrollTop > 72) return;
             loadOlderChatMessages();
         }, { passive: true });
@@ -12400,7 +12355,7 @@
         `;
         messagesContainer.appendChild(typingDiv);
         scheduleSlashChipCompactLabels(typingDiv);
-        autoScrollChatToBottom();
+        transcriptNav.autoScrollChatToBottom();
         try { subagentLaunchers.paintLive(); } catch (_) {}
     }
 
@@ -12741,7 +12696,7 @@
             if (!isImmediateControlLaneMessage(outbound)) return;
             const userTs = Date.now();
             addMessageToUI(outbound, 'user', { timestamp: userTs });
-            autoScrollChatToBottom(true);
+            transcriptNav.autoScrollChatToBottom(true);
             await processMessage(outbound, { controlLane: true });
         } finally {
             if (onceKey) dispatchSupervisedControlMessage._inflight.delete(onceKey);
@@ -13625,7 +13580,7 @@
                 reconcileCuttleButtonLocks(data.messages);
             }
 
-            if (addedAny) autoScrollChatToBottom();
+            if (addedAny) transcriptNav.autoScrollChatToBottom();
         } catch (e) {
             console.warn('[Cuttle Chat] message sync failed:', e);
         } finally {
@@ -16707,7 +16662,7 @@
                 steered: true,
                 steered_agent: data.agent,
             });
-            autoScrollChatToBottom(true);
+            transcriptNav.autoScrollChatToBottom(true);
             saveChatSession(text, 'user');
         }
         recordPromptHistory(text);
@@ -16847,7 +16802,7 @@
             if (typeof window.__cuttlePinChatLayout === 'function') window.__cuttlePinChatLayout();
         }
         addMessageToUI(displayMessage, 'user', { timestamp: Date.now(), attachments: atts });
-        autoScrollChatToBottom(true);
+        transcriptNav.autoScrollChatToBottom(true);
         saveChatSession(displayMessage, 'user', { attachments: atts });
         recordPromptHistory(message);
         await processMessage(message, { attachments: atts });
@@ -17667,7 +17622,7 @@
                             usage: normalizeUsagePayload(data.usage) || undefined,
                         });
                     }
-                    autoScrollChatToBottom();
+                    transcriptNav.autoScrollChatToBottom();
                 }
                 if (!controlLane) {
                 saveChatSession(data.response, 'assistant', {
@@ -17921,7 +17876,7 @@
             // Add user message to UI
             const userTs = Date.now();
             addMessageToUI(displayMessage, 'user', { timestamp: userTs, attachments });
-            autoScrollChatToBottom(true);
+            transcriptNav.autoScrollChatToBottom(true);
 
             // Save to session
             saveChatSession(displayMessage, 'user', { attachments });
@@ -18181,12 +18136,12 @@
         } catch (_) {}
         try { subagentLaunchers.mountForMessage(messageDiv, role, opts); } catch (_) {}
         scheduleSlashChipCompactLabels(messageDiv);
-        if (!opts.skipNav) updateMessageNav();
+        if (!opts.skipNav) transcriptNav.updateMessageNav();
         if (!opts.skipScroll) {
-            autoScrollChatToBottom();
-            if (role === 'assistant' && chatPinnedToBottom) {
+            transcriptNav.autoScrollChatToBottom();
+            if (role === 'assistant' && transcriptNav.isFollowingLatest()) {
                 // Late layout (code blocks, images) can grow the bubble after paint.
-                requestAnimationFrame(() => autoScrollChatToBottom(true));
+                requestAnimationFrame(() => transcriptNav.autoScrollChatToBottom(true));
             }
         }
         return messageDiv;
@@ -18850,60 +18805,25 @@
         scheduleAgentContextGaugeRefresh(200);
     }
 
-    /** Compact share id: CH-000102-9 (chat display id + 1-based bubble index). */
-    function formatMessageRef(sessionId, messageIndex) {
-        const chatId = formatChatDisplayId(sessionId);
-        const idx = Number(messageIndex);
-        if (!chatId || !Number.isFinite(idx) || idx < 1) return null;
-        return chatId + '-' + Math.floor(idx);
-    }
+    // Transcript navigation: follow-latest scroll, nav rail + pins, jumps,
+    // ?msg= deep links and message refs (chat_transcript_nav.js).
+    const transcriptNav = CuttleChatTranscriptNav.create({
+        win: window,
+        storage: localStorage,
+        escapeHtmlInline,
+        recordSelector: CHAT_RECORD_SELECTOR,
+        currentSessionId: () => currentSessionId,
+        formatChatDisplayId,
+        olderVisibleCount: () => chatHistoryOlderVisibleCount,
+        hasOlderMessages: () => chatHistoryHasMore,
+        loadOlderMessages: loadOlderChatMessages,
+        unseenBelow: () => chatUnseenBelow,
+        attentionIsError: () => chatAttentionIsError,
+        clearUnseenBelow: clearChatUnseenBelow,
+        activateViewport: activateChatViewport,
+        copyText: copyTextToClipboard,
+    });
 
-    function parseMessageRef(raw) {
-        const s = String(raw || '').trim();
-        const m = s.match(/^(CH-[A-Z0-9]+)-(\d+)$/i);
-        if (!m) return null;
-        const idx = parseInt(m[2], 10);
-        if (!Number.isFinite(idx) || idx < 1) return null;
-        return { chatId: m[1].toUpperCase(), messageIndex: idx };
-    }
-
-    function getMessageRefForButton(btn) {
-        const messageEl = btn && btn.closest ? btn.closest('.message') : null;
-        if (!messageEl || messageEl.dataset.stopped === 'true') return null;
-        let idx = parseInt(messageEl.dataset.messageIndex || '', 10);
-        if (!Number.isFinite(idx) || idx < 1) {
-            const box = document.getElementById('chatMessages');
-            const list = box
-                ? Array.from(box.querySelectorAll(CHAT_RECORD_SELECTOR + ':not(.system)'))
-                : [];
-            idx = list.indexOf(messageEl) + 1;
-            if (idx > 0) messageEl.dataset.messageIndex = String(idx);
-        }
-        return formatMessageRef(currentSessionId, idx);
-    }
-
-    function buildMessageShareUrl(ref) {
-        if (!ref) return '';
-        try {
-            const url = new URL(window.location.href);
-            const parsed = parseMessageRef(ref);
-            if (!parsed) return '';
-            url.searchParams.set('chat', parsed.chatId);
-            url.searchParams.set('msg', String(parsed.messageIndex));
-            url.searchParams.delete('session');
-            return url.pathname + url.search + url.hash;
-        } catch (_) {
-            return '';
-        }
-    }
-
-    async function copyMessageRefToClipboard(btn) {
-        const ref = getMessageRefForButton(btn);
-        if (!ref) return { ok: false, ref: null };
-        const ok = await copyTextToClipboard(ref);
-        return { ok, ref };
-    }
-    
     function formatTimeAgo(ts) {
         if (!ts || ts <= 0) return 'now';
         const diff = Date.now() - ts;
@@ -19030,454 +18950,6 @@
         return Promise.resolve(copyTextFallback(text));
     }
     
-    const MESSAGE_PINS_STORAGE_KEY = 'chat_message_pins_v1';
-    const MESSAGE_NAV_PIN_SVG =
-        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" '
-        + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
-        + '<path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.13-1.87V5a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v3.89a2 2 0 0 1-1.13 1.87L12 13z"/>'
-        + '<path d="M7 5h10"/>'
-        + '</svg>';
-
-    function readPinnedMessageKeys() {
-        try {
-            const sid = currentSessionId != null ? String(currentSessionId) : '';
-            if (!sid) return new Set();
-            const raw = localStorage.getItem(MESSAGE_PINS_STORAGE_KEY);
-            const map = raw ? JSON.parse(raw) : {};
-            const list = Array.isArray(map[sid]) ? map[sid] : [];
-            return new Set(list.map(String));
-        } catch (_) {
-            return new Set();
-        }
-    }
-
-    function writePinnedMessageKeys(keySet) {
-        try {
-            const sid = currentSessionId != null ? String(currentSessionId) : '';
-            if (!sid) return;
-            const raw = localStorage.getItem(MESSAGE_PINS_STORAGE_KEY);
-            const map = raw ? JSON.parse(raw) : {};
-            map[sid] = Array.from(keySet);
-            localStorage.setItem(MESSAGE_PINS_STORAGE_KEY, JSON.stringify(map));
-        } catch (_) {}
-    }
-
-    function getMessagePinKey(el, idx) {
-        if (!el) return 'idx:' + idx;
-        if (el.dataset.messageId) return 'id:' + el.dataset.messageId;
-        const role = el.classList.contains('user') ? 'u' : 'a';
-        const tsEl = el.querySelector('[data-ts]');
-        const ts = tsEl && tsEl.dataset.ts ? String(tsEl.dataset.ts) : '';
-        const text = ((el.querySelector('.message-content') || {}).textContent || '')
-            .replace(/\s+/g, ' ')
-            .trim()
-            .slice(0, 80);
-        if (ts || text) return 'fp:' + role + ':' + ts + ':' + text;
-        return 'idx:' + idx;
-    }
-
-    function updateMessageNav() {
-        const nav = document.getElementById('messageNav');
-        const messagesContainer = document.getElementById('chatMessages');
-        if (!nav || !messagesContainer) return;
-
-        const messages = Array.from(messagesContainer.querySelectorAll(CHAT_RECORD_SELECTOR + ':not(.system)'));
-        if (messages.length === 0) {
-            nav.innerHTML = '';
-            nav.style.display = 'none';
-            updateJumpToBottomVisibility();
-            return;
-        }
-
-        const pinnedKeys = readPinnedMessageKeys();
-        const indexBase = Math.max(0, Number(chatHistoryOlderVisibleCount) || 0);
-        const items = messages.map((el, i) => {
-            const idx = indexBase + i + 1;
-            const pinKey = getMessagePinKey(el, idx);
-            el.dataset.messageIndex = String(idx);
-            el.dataset.pinKey = pinKey;
-            const pinned = pinnedKeys.has(pinKey);
-            el.classList.toggle('is-pinned-message', pinned);
-            const ref = formatMessageRef(currentSessionId, idx);
-            if (ref) {
-                el.querySelectorAll('.message-share-ref-btn').forEach((btn) => {
-                    btn.title = 'Copy message ref (' + ref + ')';
-                    btn.setAttribute('aria-label', 'Copy message reference ' + ref);
-                });
-            }
-            return { idx, pinKey, pinned };
-        });
-
-        const pinnedItems = items.filter((it) => it.pinned);
-        const restItems = items.filter((it) => !it.pinned);
-
-        const renderItem = (it) => (
-            `<button type="button" class="message-nav-item${it.pinned ? ' is-pinned' : ''}" `
-            + `data-index="${it.idx}" data-pin-key="${escapeHtmlInline(it.pinKey)}" `
-            + `title="Jump to message ${it.idx}">`
-            + `<span class="message-nav-pin" data-pin-toggle="1" title="${it.pinned ? 'Unpin' : 'Pin for quick jump'}" `
-            + `aria-label="${it.pinned ? 'Unpin message' : 'Pin message'}">${MESSAGE_NAV_PIN_SVG}</span>`
-            + `<span class="message-nav-num">${it.idx}</span>`
-            + `</button>`
-        );
-
-        let html = pinnedItems.map(renderItem).join('');
-        if (pinnedItems.length && restItems.length) {
-            html += '<div class="message-nav-sep" aria-hidden="true"></div>';
-        }
-        html += restItems.map(renderItem).join('');
-
-        nav.style.display = 'flex';
-        const wasPinned = messageNavPinnedToBottom;
-        // Preserve scroll position across rebuild — innerHTML resets scrollTop to 0.
-        const prevTop = nav.scrollTop;
-        const prevHeight = nav.scrollHeight;
-        nav.innerHTML = html;
-        setupMessageNavScrollSync();
-        setupMessageNavClicks();
-        updateJumpToBottomVisibility();
-        // Default to bottom on first paint; otherwise follow only when on standby
-        // (not scrolled up, not hovered/focused).
-        if (wasPinned && !isMessageNavInteracting()) {
-            autoScrollMessageNavToBottom(true);
-        } else if (!wasPinned) {
-            // Restore where user was if we shouldn't auto-follow.
-            try {
-                // If content grew, keep same visual offset; otherwise restore absolute top.
-                const newHeight = nav.scrollHeight;
-                nav.scrollTop = prevTop + (newHeight - prevHeight);
-            } catch (_) {}
-        }
-    }
-
-    let _messageNavClickSetup = false;
-    function setupMessageNavClicks() {
-        const nav = document.getElementById('messageNav');
-        if (!nav || _messageNavClickSetup) return;
-        _messageNavClickSetup = true;
-        nav.addEventListener('click', (e) => {
-            const pinBtn = e.target && e.target.closest
-                ? e.target.closest('[data-pin-toggle]')
-                : null;
-            if (pinBtn) {
-                e.preventDefault();
-                e.stopPropagation();
-                const item = pinBtn.closest('.message-nav-item');
-                if (!item) return;
-                toggleMessagePin(item.dataset.pinKey);
-                return;
-            }
-            const item = e.target && e.target.closest
-                ? e.target.closest('.message-nav-item')
-                : null;
-            if (!item) return;
-            e.preventDefault();
-            jumpToMessage(parseInt(item.dataset.index, 10));
-        });
-    }
-
-    function toggleMessagePin(pinKey) {
-        if (!pinKey) return;
-        const keys = readPinnedMessageKeys();
-        if (keys.has(pinKey)) keys.delete(pinKey);
-        else keys.add(pinKey);
-        writePinnedMessageKeys(keys);
-        updateMessageNav();
-    }
-
-    let _messageNavScrollSetup = false;
-    function setupMessageNavScrollSync() {
-        const messagesContainer = document.getElementById('chatMessages');
-        if (!messagesContainer || _messageNavScrollSetup) return;
-        _messageNavScrollSetup = true;
-
-        const checkActive = () => {
-            syncChatPinnedFromScroll();
-            syncMessageNavPinnedFromScroll();
-            const messages = Array.from(messagesContainer.querySelectorAll(CHAT_RECORD_SELECTOR + ':not(.system)'));
-            const navItems = document.querySelectorAll('.message-nav-item');
-            if (navItems.length) {
-                const rect = messagesContainer.getBoundingClientRect();
-                const containerMid = rect.top + rect.height * 0.4;
-                let activeIdx = null;
-                messages.forEach((el) => {
-                    const r = el.getBoundingClientRect();
-                    if (r.top <= containerMid) {
-                        const idx = parseInt(el.dataset.messageIndex, 10);
-                        if (Number.isFinite(idx)) activeIdx = idx;
-                    }
-                });
-                navItems.forEach((btn) => {
-                    btn.classList.toggle(
-                        'active',
-                        activeIdx != null && parseInt(btn.dataset.index, 10) === activeIdx
-                    );
-                });
-            }
-            updateJumpToBottomVisibility();
-        };
-        messagesContainer.addEventListener('scroll', checkActive, { passive: true });
-        // Also track nav's own scroll/hover so we don't steal interaction
-        const nav = document.getElementById('messageNav');
-        if (nav) {
-            nav.addEventListener('scroll', syncMessageNavPinnedFromScroll, { passive: true });
-            nav.addEventListener('mouseenter', syncMessageNavPinnedFromScroll, { passive: true });
-            nav.addEventListener('wheel', syncMessageNavPinnedFromScroll, { passive: true });
-            nav.addEventListener('touchstart', syncMessageNavPinnedFromScroll, { passive: true });
-        }
-        checkActive();
-    }
-
-    function isChatScrolledUp(thresholdPx) {
-        const box = document.getElementById('chatMessages');
-        if (!box) return false;
-        const gap = box.scrollHeight - box.scrollTop - box.clientHeight;
-        return gap > (thresholdPx == null ? 140 : thresholdPx);
-    }
-
-    function syncChatPinnedFromScroll() {
-        if (Date.now() < _ignoreChatScrollPinUntil) return;
-        chatPinnedToBottom = !isChatScrolledUp(AUTOSCROLL_STICK_PX);
-        if (chatPinnedToBottom) {
-            // Reached the latest content — clear jump glow only (title may still need ack).
-            clearChatUnseenBelow();
-        }
-    }
-
-    function isMessageNavScrolledUp(thresholdPx) {
-        const nav = document.getElementById('messageNav');
-        if (!nav) return false;
-        // Hidden or not scrollable → treat as pinned
-        if (nav.style.display === 'none' || nav.scrollHeight <= nav.clientHeight + 4) return false;
-        const gap = nav.scrollHeight - nav.scrollTop - nav.clientHeight;
-        return gap > (thresholdPx == null ? NAV_AUTOSCROLL_STICK_PX : thresholdPx);
-    }
-
-    function isMessageNavInteracting() {
-        const nav = document.getElementById('messageNav');
-        if (!nav) return false;
-        try {
-            if (nav.matches(':hover')) return true;
-            if (nav.matches(':focus-within')) return true;
-            // Any child focused (keyboard nav)
-            if (document.activeElement && nav.contains(document.activeElement)) return true;
-        } catch (_) {}
-        return false;
-    }
-
-    function syncMessageNavPinnedFromScroll() {
-        if (Date.now() < _ignoreNavScrollPinUntil) return;
-        // If user is actively hovering/interacting, don't flip pinned just yet —
-        // wait until they leave / scroll to bottom.
-        if (isMessageNavInteracting() && isMessageNavScrolledUp(4)) {
-            messageNavPinnedToBottom = false;
-            return;
-        }
-        messageNavPinnedToBottom = !isMessageNavScrolledUp(NAV_AUTOSCROLL_STICK_PX);
-    }
-
-    function autoScrollMessageNavToBottom(force) {
-        const nav = document.getElementById('messageNav');
-        if (!nav) return;
-        if (nav.style.display === 'none') return;
-        if (!force && !messageNavPinnedToBottom) return;
-        if (!force && isMessageNavInteracting()) return;
-        if (!force && isMessageNavScrolledUp(NAV_AUTOSCROLL_STICK_PX)) return;
-        _ignoreNavScrollPinUntil = Date.now() + 150;
-        nav.scrollTop = nav.scrollHeight;
-        messageNavPinnedToBottom = true;
-        requestAnimationFrame(() => {
-            nav.scrollTop = nav.scrollHeight;
-            messageNavPinnedToBottom = true;
-        });
-    }
-
-    /**
-     * Follow new content only while the reader is parked at the bottom. Pin is
-     * remembered from the last user scroll — measuring gap *after* inserting a
-     * tall reply always looks like they scrolled away. Pass true for their own
-     * actions (send, open chat, jump-to-bottom).
-     */
-    function autoScrollChatToBottom(force) {
-        const box = document.getElementById('chatMessages');
-        if (!box) return;
-        // Message-ref jumps (CH-000430-99) must win over late bottom scrolls.
-        if (Date.now() < _suppressAutoScrollUntil) {
-            updateJumpToBottomVisibility();
-            return;
-        }
-        if (!force && !chatPinnedToBottom) {
-            updateJumpToBottomVisibility();
-            return;
-        }
-        _ignoreChatScrollPinUntil = Date.now() + 150;
-        box.scrollTop = box.scrollHeight;
-        chatPinnedToBottom = true;
-        clearChatUnseenBelow();
-        requestAnimationFrame(() => {
-            if (Date.now() < _suppressAutoScrollUntil) {
-                updateJumpToBottomVisibility();
-                return;
-            }
-            box.scrollTop = box.scrollHeight;
-            chatPinnedToBottom = true;
-            clearChatUnseenBelow();
-            updateJumpToBottomVisibility();
-        });
-    }
-
-    function updateJumpToBottomVisibility() {
-        const btn = document.getElementById('chatJumpBottom');
-        const box = document.getElementById('chatMessages');
-        if (!btn || !box) return;
-        const area = document.getElementById('chatArea');
-        const chatVisible = area && area.style.display !== 'none';
-        const show = chatVisible && box.scrollHeight > box.clientHeight + 40 && isChatScrolledUp(140);
-        btn.hidden = !show;
-        btn.classList.toggle('is-visible', show);
-        // Glow only when a finalized reply landed while scrolled up (not mere ack / scroll).
-        const hasUnseen = show && chatUnseenBelow;
-        btn.classList.toggle('has-unseen', hasUnseen);
-        btn.classList.toggle('has-unseen-error', hasUnseen && chatAttentionIsError);
-        btn.title = hasUnseen
-            ? (chatAttentionIsError ? 'Error — jump to latest' : 'New messages — jump to latest')
-            : 'Jump to latest';
-        btn.setAttribute(
-            'aria-label',
-            hasUnseen
-                ? (chatAttentionIsError ? 'Error — jump to latest' : 'New messages — jump to latest')
-                : 'Jump to latest messages'
-        );
-    }
-
-    function jumpToBottom(smooth) {
-        const box = document.getElementById('chatMessages');
-        if (!box) return;
-        _suppressAutoScrollUntil = 0;
-        chatPinnedToBottom = true;
-        _ignoreChatScrollPinUntil = Date.now() + 400;
-        clearChatUnseenBelow();
-        activateChatViewport();
-        box.scrollTo({
-            top: box.scrollHeight,
-            behavior: smooth === false ? 'auto' : 'smooth',
-        });
-        requestAnimationFrame(() => {
-            chatPinnedToBottom = true;
-            clearChatUnseenBelow();
-            updateJumpToBottomVisibility();
-        });
-    }
-
-    function jumpToMessage(index, opts) {
-        const messagesContainer = document.getElementById('chatMessages');
-        const el = messagesContainer?.querySelector(`.message[data-message-index="${index}"]`);
-        if (!el) return false;
-        chatPinnedToBottom = false;
-        _suppressAutoScrollUntil = Date.now() + 600;
-        _ignoreChatScrollPinUntil = Date.now() + 600;
-        const instant = !!(opts && opts.instant);
-        // Scroll the chat box itself — scrollIntoView can move outer shell/iframe
-        // ancestors and loses to pending autoScroll rAFs after session load.
-        try {
-            const boxRect = messagesContainer.getBoundingClientRect();
-            const elRect = el.getBoundingClientRect();
-            const delta = (elRect.top + elRect.height / 2) - (boxRect.top + boxRect.height / 2);
-            messagesContainer.scrollTo({
-                top: Math.max(0, messagesContainer.scrollTop + delta),
-                behavior: instant ? 'auto' : 'smooth',
-            });
-        } catch (_) {
-            try {
-                el.scrollIntoView({
-                    behavior: instant ? 'auto' : 'smooth',
-                    block: 'center',
-                });
-            } catch (__) {}
-        }
-        if (!(opts && opts.skipFlash)) {
-            el.classList.remove('message-ref-flash');
-            // Restart CSS animation if the same bubble is targeted twice.
-            void el.offsetWidth;
-            el.classList.add('message-ref-flash');
-            setTimeout(() => {
-                try { el.classList.remove('message-ref-flash'); } catch (_) {}
-            }, 2200);
-        }
-        updateJumpToBottomVisibility();
-        return true;
-    }
-
-    /** Pending ?msg=N (or CH-xxx-N) jump after the transcript finishes painting. */
-    let pendingMessageJump = null;
-
-    function queueMessageJump(messageIndex) {
-        const idx = parseInt(messageIndex, 10);
-        if (!Number.isFinite(idx) || idx < 1) {
-            pendingMessageJump = null;
-            return;
-        }
-        pendingMessageJump = idx;
-        // Hold bottom-stick while the session paints so load-time scrolls can't win.
-        _suppressAutoScrollUntil = Date.now() + 1200;
-    }
-
-    function consumePendingMessageJump() {
-        const idx = pendingMessageJump;
-        if (!idx) return;
-        pendingMessageJump = null;
-        _suppressAutoScrollUntil = Date.now() + 1200;
-        // Indices are assigned in updateMessageNav — call after messages are in the DOM.
-        // Older bubbles may still be behind the lazy window; load pages until found.
-        (async () => {
-            const settle = (found) => {
-                if (!found) {
-                    _clearMsgQueryParam();
-                    return;
-                }
-                // Re-assert after layout/rAF so late autoScroll or image layout
-                // cannot yank the viewport back to the bottom.
-                requestAnimationFrame(() => {
-                    jumpToMessage(idx, { instant: true, skipFlash: true });
-                    requestAnimationFrame(() => {
-                        jumpToMessage(idx, { instant: true, skipFlash: true });
-                    });
-                });
-                setTimeout(() => jumpToMessage(idx, { instant: true, skipFlash: true }), 80);
-                setTimeout(() => jumpToMessage(idx, { instant: true, skipFlash: true }), 280);
-                _clearMsgQueryParam();
-            };
-
-            updateMessageNav();
-            if (jumpToMessage(idx, { instant: true })) {
-                settle(true);
-                return;
-            }
-            let guard = 40;
-            while (chatHistoryHasMore && guard-- > 0) {
-                const loaded = await loadOlderChatMessages();
-                updateMessageNav();
-                if (jumpToMessage(idx, { instant: true })) {
-                    settle(true);
-                    return;
-                }
-                if (!loaded) break;
-            }
-            updateMessageNav();
-            settle(!!jumpToMessage(idx, { instant: true }));
-        })();
-    }
-
-    function _clearMsgQueryParam() {
-        try {
-            const url = new URL(window.location.href);
-            if (url.searchParams.has('msg')) {
-                url.searchParams.delete('msg');
-                history.replaceState(null, '', url.pathname + url.search + url.hash);
-            }
-        } catch (_) {}
-    }
-    
     function addTypingIndicator(slashMeta) {
         const messagesContainer = document.getElementById('chatMessages');
         if (!messagesContainer) return;
@@ -19523,8 +18995,8 @@
         
         messagesContainer.appendChild(typingDiv);
         scheduleSlashChipCompactLabels(typingDiv);
-        updateMessageNav();
-        autoScrollChatToBottom();
+        transcriptNav.updateMessageNav();
+        transcriptNav.autoScrollChatToBottom();
         try { subagentLaunchers.paintLive(); } catch (_) {}
         armConnectingWatchdog();
         // Keep tool/status text moving even when the SSE body stalls (Electron HTTPS).
@@ -19772,7 +19244,7 @@
             el.textContent = next;
             el.style.display = 'block';
             el.style.visibility = 'visible';
-            autoScrollChatToBottom();
+            transcriptNav.autoScrollChatToBottom();
         } else {
             clearConnectingWatchdog();
         }
@@ -19828,7 +19300,7 @@
         const indicator = document.getElementById('typing-indicator');
         if (indicator) {
             indicator.remove();
-            autoScrollChatToBottom();
+            transcriptNav.autoScrollChatToBottom();
         }
     }
     
@@ -20594,13 +20066,13 @@
         const urlParams = new URLSearchParams(window.location.search);
         const sessionParam = urlParams.get('chat') || urlParams.get('session');
         const msgParam = urlParams.get('msg');
-        if (msgParam) queueMessageJump(msgParam);
+        if (msgParam) transcriptNav.queueMessageJump(msgParam);
         // Also accept compact refs in hash: #CH-000102-9 or #msg-9
         try {
             const hash = String(window.location.hash || '').replace(/^#/, '');
-            const fromHash = parseMessageRef(hash);
+            const fromHash = transcriptNav.parseMessageRef(hash);
             if (fromHash) {
-                queueMessageJump(fromHash.messageIndex);
+                transcriptNav.queueMessageJump(fromHash.messageIndex);
                 if (!sessionParam) {
                     // If only a hash ref was given, still open that chat.
                     waitForAuthReady().then(function () {
@@ -20609,7 +20081,7 @@
                 }
             } else {
                 const mOnly = hash.match(/^msg-?(\d+)$/i);
-                if (mOnly) queueMessageJump(mOnly[1]);
+                if (mOnly) transcriptNav.queueMessageJump(mOnly[1]);
             }
         } catch (_) {}
 
@@ -20882,12 +20354,12 @@
         if (jumpBottomBtn) {
             jumpBottomBtn.addEventListener('click', (e) => {
                 e.preventDefault();
-                jumpToBottom(true);
+                transcriptNav.jumpToBottom(true);
             });
         }
-        setupMessageNavScrollSync();
+        transcriptNav.setupMessageNavScrollSync();
         setupChatAttentionListeners();
-        updateJumpToBottomVisibility();
+        transcriptNav.updateJumpToBottomVisibility();
         updateSessionTitleUnreadDot();
         try { initContextGaugeControls(); } catch (e) { LOG_ERR('context gauge init', e); }
 
@@ -21064,10 +20536,10 @@
     window.sendMessage = sendMessage;
     window.handleInputKeyDown = handleInputKeyDown;
     window.autoResizeTextarea = autoResizeTextarea;
-    window.chatPageJumpToMessage = jumpToMessage;
-    window.chatPageJumpToBottom = jumpToBottom;
+    window.chatPageJumpToMessage = transcriptNav.jumpToMessage;
+    window.chatPageJumpToBottom = transcriptNav.jumpToBottom;
     window.chatPageCopyMessageRef = async function(btn) {
-        const { ok, ref } = await copyMessageRefToClipboard(btn);
+        const { ok, ref } = await transcriptNav.copyMessageRefToClipboard(btn);
         if (ok && ref) {
             btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>';
             btn.title = 'Copied ' + ref;
@@ -21280,12 +20752,12 @@
     try {
         window._e2eChat = {
             addMessageToUI,
-            updateMessageNav,
-            autoScrollMessageNavToBottom,
-            autoScrollChatToBottom,
-            isMessageNavScrolledUp,
-            isMessageNavInteracting,
-            syncMessageNavPinnedFromScroll,
+            updateMessageNav: transcriptNav.updateMessageNav,
+            autoScrollMessageNavToBottom: transcriptNav.autoScrollMessageNavToBottom,
+            autoScrollChatToBottom: transcriptNav.autoScrollChatToBottom,
+            isMessageNavScrolledUp: transcriptNav.isMessageNavScrolledUp,
+            isMessageNavInteracting: transcriptNav.isMessageNavInteracting,
+            syncMessageNavPinnedFromScroll: transcriptNav.syncMessageNavPinnedFromScroll,
             getNav: () => document.getElementById('messageNav'),
             getChat: () => document.getElementById('chatMessages'),
             getSlashCtx: () => slashCtx,

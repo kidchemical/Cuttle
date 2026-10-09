@@ -223,7 +223,7 @@ function getStickySlashCommandFromMessage() {return null;}
 function formatMessageWithAttachments(text) {return text;}
 async function processMessage(message) {sent.push(['send',message,[]]);}
 function addMessageToUI() {}
-function autoScrollChatToBottom() {}
+const transcriptNav={autoScrollChatToBottom(){}};
 function saveChatSession() {}
 function recordPromptHistory() {}
 const document={getElementById:()=>({style:{display:'flex'}})};

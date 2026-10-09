@@ -67,6 +67,21 @@ Each slice follows these five steps, in order:
    - **Quality gates:** `test_architecture_boundaries.py`,
      `test_composition_root_growth.py`, `test_frontend_assets.py`,
      `test_chat_page_js_syntax.py`.
+   - **Run the gate on the commit, not the working tree.** A suite reads
+     source files as it goes, so editing during a run mixes states. Gate
+     each slice commit in a throwaway worktree:
+     `git worktree add --detach temp/worktrees/<name>/Cuttle <rev>`.
+     - The checkout directory must be named `Cuttle`; two path-rewrite
+       tests expect it.
+     - Symlink `.venv` into it, because the restart-script test looks for
+       it.
+     - Run pytest with the main checkout's interpreter by its real path,
+       not through the symlink. The shadow-instance read guard otherwise
+       denies the venv prefix and 35 shadow tests fail to boot.
+   - Run gates one at a time. `test_atomic_claim_across_connections` is
+     load-sensitive when two suites run at once.
+   - Browser checks assert `not errors` (page errors). That catches a page
+     reference to a function that moved, which `node --check` cannot.
 5. **Smoke-test the real UI.** The user hard-refreshes for JS slices, or
    restarts Flask through the action form for Python slices, and exercises
    the slice's listed journeys. No paid or live vendor runs unless the user
@@ -158,9 +173,15 @@ The cleanest first extraction.
 - Verify with e2e `test_subagent_fleet_cards.py`.
 
 **1D — Transcript navigation** (564 lines, out 14 / in 40).
-- **Destination:** new `chat_transcript_nav.js`, covering message nav rail,
-  pins, scroll-pin state, jump-to-message, message refs, and copy/share.
-- **The page keeps:** `chatPinnedToBottom` reads through the owner.
+- **Destination:** new `chat_transcript_nav.js`, covering follow-latest
+  scroll state, the message nav rail and pins, jump-to-bottom,
+  jump-to-message, `?msg=` deep links and message refs.
+- **Revised in 1D:** message copy/speak text and the clipboard fallback are
+  message *actions*, not navigation. They stay in the page for 1B.
+- **The page keeps:** a narrow API instead of shared variables
+  (`isFollowingLatest`, `holdScrollPin`, `settleAfterLoad`, `resetNav`).
+  The two identical "settle at bottom after load" blocks are now one owner
+  method.
 - **Verify:**
   - Characterize pin storage and ref parsing.
   - e2e `test_verify_nav_history.py`, `test_chat_history_scroll.py`.
