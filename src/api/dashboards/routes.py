@@ -68,4 +68,10 @@ def get_dashboard(dash_id: str):
             range_id=(request.args.get("range") or "30d").strip().lower(),
             tz_offset_minutes=tz_offset,
         ))
+    if dash_id == "cuttle-jobs":
+        try:
+            hours = int(request.args.get("hours") or 24)
+        except ValueError:
+            hours = 24
+        return jsonify(service.cuttle_jobs(hours=hours))
     return jsonify({"success": True, **meta})

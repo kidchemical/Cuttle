@@ -175,46 +175,26 @@ window.CuttleJobsLedger = (function () {
         return rows;
     }
 
-    /** Telemetry pane. */
-    function renderStats(stats, opts) {
-        opts = opts || {};
+    /** Compact one-line summary (detail telemetry lives in the Dashboards page). */
+    function renderSummary(stats) {
         stats = stats || {};
         const runs = stats.runs || {};
-        const mesh = stats.mesh || {};
         const dur = stats.duration || {};
-        function card(label, value, sub) {
-            return '<div class="jobs-stat">' +
-                '<div class="jobs-stat-value">' + esc(value == null ? '—' : value) + '</div>' +
-                '<div class="jobs-stat-label">' + esc(label) + (sub ? '<div class="jobs-stat-sub">' + esc(sub) + '</div>' : '') + '</div>' +
-                '</div>';
+        const bits = [];
+        bits.push('<span><strong>' + esc(runs.running || 0) + '</strong> running</span>');
+        if (runs.total != null) {
+            bits.push('<span>' + esc(runs.succeeded || 0) + ' ok / ' + esc(runs.failed || 0) + ' failed</span>');
         }
-        const byAgent = (stats.by_agent || []).slice(0, 6).map(function (b) {
-            return '<div class="jobs-stat">' +
-                '<div class="jobs-stat-value">' + esc(b.count) + '</div>' +
-                '<div class="jobs-stat-label">' + esc(b.agent) +
-                '<div class="jobs-stat-sub">avg ' + esc(b.avg_duration_s != null ? fmtDuration(b.avg_duration_s) : '—') +
-                (b.total_cost ? ' · ' + fmtCost(b.total_cost) : '') + '</div></div></div>';
-        }).join('');
-        let html =
-            '<div class="jobs-stats-grid">' +
-            card('Runs', runs.total, (runs.window_hours ? 'last ' + runs.window_hours + 'h' : '')) +
-            card('Running', runs.running || 0) +
-            card('Success', (runs.success_rate != null ? Math.round(runs.success_rate * 100) + '%' : '—'), runs.succeeded + ' ok / ' + (runs.failed || 0) + ' failed') +
-            card('Cost', (runs.cost ? fmtCost(runs.cost) : '—')) +
-            card('Mesh active', mesh.active || 0, mesh.succeeded + ' done') +
-            card('Duration avg', dur.avg_s != null ? fmtDuration(dur.avg_s) : '—', 'p95 ' + (dur.p95_s != null ? fmtDuration(dur.p95_s) : '—')) +
-            '</div>';
-        if (byAgent) {
-            html += '<h3 class="jobs-section-title" style="margin-top:14px;">By agent</h3><div class="jobs-stats-grid">' + byAgent + '</div>';
-        }
-        return html;
+        if (dur.avg_s != null) bits.push('<span>avg ' + esc(fmtDuration(dur.avg_s)) + '</span>');
+        if (runs.cost) bits.push('<span>' + esc(fmtCost(runs.cost)) + '</span>');
+        return '<div class="jobs-summary">' + bits.join('<span class="jobs-summary-sep">·</span>') + '</div>';
     }
 
     return {
         display: display,
         renderRunning: renderRunning,
         renderTable: renderTable,
-        renderStats: renderStats,
+        renderSummary: renderSummary,
         fmtDuration: fmtDuration,
         fmtAgo: fmtAgo,
         fmtCost: fmtCost,

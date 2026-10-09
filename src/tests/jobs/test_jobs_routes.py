@@ -25,7 +25,9 @@ def test_unauthenticated_401():
     assert res.status_code == 401
 
 
-def test_gated_off(client):
+def test_gated_off(client, monkeypatch):
+    # jobs_surface now defaults on; force it off to exercise the gate.
+    monkeypatch.setattr("api.experimental.is_enabled", lambda flag: False)
     assert client.get("/api/jobs").status_code == 403
     assert client.get("/api/jobs/stats").status_code == 403
     # In-flight powers the shell badge and stays available regardless of the flag.

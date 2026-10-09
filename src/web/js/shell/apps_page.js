@@ -13,6 +13,7 @@
         'nav-editor': 268,
         'nav-git': 22,
         'nav-jobs': 186,
+        'nav-mesh': 168,
         'nav-dashboards': 236,
         'nav-settings': 150,
         'nav-account': 262,
@@ -104,7 +105,7 @@
             return b;
         };
         const first = addItem('Open', () => openApp(app));
-        if (inShell && app.pinnable !== false && app.page) {
+        if (inShell && app.pinnable !== false) {
             addItem(app.pinned ? 'Remove from blade bar' : 'Add to blade bar', () => setPinned(app, !app.pinned));
         }
 

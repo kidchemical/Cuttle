@@ -33,6 +33,13 @@ DASHBOARDS: List[Dict[str, Any]] = [
         "status": "live",
         "href": "/dashboards_page.html?d=cuttle-context",
     },
+    {
+        "id": "cuttle-jobs",
+        "title": "Jobs & Executions",
+        "blurb": "Every execution Cuttle handles — agent turns and mesh jobs — with runs, success rate, cost, durations and per-agent breakdown.",
+        "status": "live",
+        "href": "/dashboards_page.html?d=cuttle-jobs",
+    },
 ]
 
 

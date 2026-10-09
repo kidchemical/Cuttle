@@ -1603,6 +1603,12 @@ html.cuttle-anim .split-column.pane-drop-target > .pane-drop-overlay {
     background: var(--rail-bg);
 }
 
+/* Unpinned footer utility (e.g. Workspace): stays in the DOM so the Apps grid
+   can re-pin it, but is removed from the blade bar. */
+.rail-footer .rail-item[hidden] {
+    display: none !important;
+}
+
 /* Short / tight cells: keep +/×, grip, and footer controls; shrink chrome a bit */
 .split-column.rail-compact .rail-logo {
     height: 40px;

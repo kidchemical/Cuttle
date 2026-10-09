@@ -24,6 +24,7 @@
     const PERF_DEFAULT_AXES = { x: 'mean_duration_seconds', y: 'score', z: 'mean_cost_usd' };
     const USAGE_ID = 'cuttle-usage';
     const CONTEXT_ID = 'cuttle-context';
+    const JOBS_ID = 'cuttle-jobs';
     const USAGE_COLORS = ['#636efa', '#ef553b', '#00cc96', '#ab63fa', '#ffa15a', '#19d3f3', '#ff6692', '#b6e880', '#ff97ff', '#fecb52'];
     const USAGE_FORMATS = {
         usd: { tick: '$,.2f', hover: '$,.2f' },
@@ -3027,6 +3028,69 @@
     }
     function escapeAttr(s) { return escapeHtml(s); }
 
+    function renderCuttleJobs() {
+        const s = payload || {};
+        const runs = s.runs || {};
+        const mesh = s.mesh || {};
+        const dur = s.duration || {};
+        const pct = (n) => (n == null ? '—' : Math.round(n * 100) + '%');
+        const stat = (label, value, sub) => `<div class="dash-stat-card">
+            <div class="dash-stat-value">${escapeHtml(value == null ? '—' : String(value))}</div>
+            <div class="dash-stat-label">${escapeHtml(label)}${sub ? ' · ' + escapeHtml(sub) : ''}</div></div>`;
+        const cards = [
+            stat('Runs', runs.total, `last ${s.window_hours || 24}h`),
+            stat('Running', runs.running || 0),
+            stat('Success', pct(runs.success_rate), `${runs.succeeded || 0} ok / ${runs.failed || 0} failed`),
+            stat('Cancelled', runs.cancelled || 0),
+            stat('Cost', runs.cost != null ? fmtMoney(runs.cost) : '—'),
+            stat('Duration avg', dur.avg_s != null ? fmtDur(dur.avg_s) : '—'),
+            stat('p95', dur.p95_s != null ? fmtDur(dur.p95_s) : '—'),
+            stat('Longest', dur.longest_s != null ? fmtDur(dur.longest_s) : '—'),
+        ].join('');
+        const meshCards = [
+            stat('Mesh total', mesh.total || 0),
+            stat('Mesh active', mesh.active || 0),
+            stat('Mesh done', mesh.succeeded || 0, `${mesh.failed || 0} failed`),
+        ].join('');
+        const agentRows = (s.by_agent || []).map((a) => `<tr>
+            <td>${escapeHtml(a.agent)}</td>
+            <td>${escapeHtml(String(a.count))}</td>
+            <td>${a.avg_duration_s != null ? fmtDur(a.avg_duration_s) : '—'}</td>
+            <td>${a.total_cost ? fmtMoney(a.total_cost) : '—'}</td>
+            <td>${a.tokens ? Number(a.tokens).toLocaleString() : '—'}</td>
+        </tr>`).join('');
+        const typeRows = (s.by_type || []).map((t) => `<tr>
+            <td>${escapeHtml(t.type)}</td><td>${escapeHtml(String(t.count))}</td>
+        </tr>`).join('');
+        root.innerHTML = `
+            <div class="dash-page-bar">
+                <button type="button" class="dash-back" data-open="">← Dashboards</button>
+                <div class="compact-page-title">
+                    <h1>Jobs &amp; Executions</h1>
+                    <p>Every execution Cuttle handles — agent turns and mesh jobs — over the last ${escapeHtml(String(s.window_hours || 24))} hours.</p>
+                </div>
+            </div>
+            <h3 class="dash-section-title">Agent runs</h3>
+            <div class="dash-stats">${cards}</div>
+            <h3 class="dash-section-title">Mesh</h3>
+            <div class="dash-stats">${meshCards}</div>
+            <div style="margin:4px 0 14px;">
+                <h3 class="dash-section-title">By agent</h3>
+                <div class="jobs-table-scroll"><table class="hist-table"><thead><tr>
+                    <th>Agent</th><th>Runs</th><th>Avg duration</th><th>Cost</th><th>Tokens</th>
+                </tr></thead><tbody>${agentRows || '<tr><td colspan="5">No runs in this window.</td></tr>'}</tbody></table></div>
+            </div>
+            <div>
+                <h3 class="dash-section-title">Mesh jobs by type</h3>
+                <div class="jobs-table-scroll"><table class="hist-table"><thead><tr>
+                    <th>Type</th><th>Count</th>
+                </tr></thead><tbody>${typeRows || '<tr><td colspan="2">No mesh jobs in this window.</td></tr>'}</tbody></table></div>
+            </div>`;
+        root.querySelectorAll('[data-open]').forEach((btn) => {
+            btn.addEventListener('click', () => navigateTo(btn.getAttribute('data-open')));
+        });
+    }
+
     async function loadHub() {
         catalog = (await fetchJson('/api/dashboards')).dashboards || [];
         renderHub();
@@ -3054,6 +3118,7 @@
             if (urlParams.get('range')) params.set('range', urlParams.get('range'));
             params.set('tz', String(new Date().getTimezoneOffset()));
         }
+        if (id === JOBS_ID && urlParams.get('hours')) params.set('hours', urlParams.get('hours'));
         const q = params.toString() ? '?' + params.toString() : '';
         payload = await fetchJson('/api/dashboards/' + encodeURIComponent(id) + q);
         dashMark('fetch-done');
@@ -3061,6 +3126,7 @@
         else if (id === 'cuttle-performance') renderCuttlePerformance();
         else if (id === USAGE_ID) renderCuttleUsage();
         else if (id === CONTEXT_ID) renderCuttleContext();
+        else if (id === JOBS_ID) renderCuttleJobs();
         else renderSoon();
     }
 

@@ -104,7 +104,7 @@ def validate_channel_update(data: dict) -> tuple[bool, str]:
 def validate_ui_layout_update(data: dict) -> dict:
     """Merge rail keys; drop retired side-panel keys. Returns the patch."""
     patch: dict = {}
-    for key in ('rail_items', 'rail_footer', 'rail_hidden'):
+    for key in ('rail_items', 'rail_footer', 'rail_hidden', 'rail_footer_hidden'):
         if key in data and data[key] is not None:
             patch[key] = [str(x) for x in data[key]]
     if isinstance(data.get('layout_version'), int):

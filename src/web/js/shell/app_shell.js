@@ -615,6 +615,7 @@ const CANONICAL_RAIL_ITEM_ORDER = [
     'nav-editor',
     'nav-git',
     'nav-jobs',
+    'nav-mesh',
     'nav-dashboards',
     'nav-achievements',
     'nav-agent-feed',
@@ -628,15 +629,19 @@ const CANONICAL_RAIL_ITEM_ORDER = [
 const CANONICAL_RAIL_FOOTER_ORDER = ['nav-account', 'nav-notifications', 'nav-workspace', 'nav-settings', 'panelToggle'];
 // The Apps launcher is the way back to every stashed app, so it can never be removed.
 const RAIL_LOCKED_IDS = new Set(['nav-apps']);
+// Footer utilities that the user may hide (unpin) from the blade bar. They are
+// not page apps, but the Apps grid still lists them so they can be re-pinned.
+const HIDEABLE_FOOTER_IDS = new Set(['nav-workspace']);
 // Cuttle web apps that live in the Apps grid (not the blade bar) until the user pins them.
-const DEFAULT_RAIL_HIDDEN = ['nav-achievements', 'nav-gizmos', 'nav-projects', 'nav-agent-feed'];
+const DEFAULT_RAIL_HIDDEN = ['nav-achievements', 'nav-gizmos', 'nav-projects', 'nav-agent-feed', 'nav-mesh'];
 // Bump when defaults change; saved layouts below this version get DEFAULT_RAIL_HIDDEN merged in once.
-const RAIL_LAYOUT_VERSION = 8;
+const RAIL_LAYOUT_VERSION = 9;
 
 const DEFAULT_LAYOUT = {
     rail_items: CANONICAL_RAIL_ITEM_ORDER.filter(id => !DEFAULT_RAIL_HIDDEN.includes(id)),
     rail_footer: CANONICAL_RAIL_FOOTER_ORDER.slice(),
     rail_hidden: DEFAULT_RAIL_HIDDEN.slice(),
+    rail_footer_hidden: [],
     layout_version: RAIL_LAYOUT_VERSION,
 };
 
@@ -649,6 +654,7 @@ let lastUILayout = {
     rail_items: DEFAULT_LAYOUT.rail_items.slice(),
     rail_footer: CANONICAL_RAIL_FOOTER_ORDER.slice(),
     rail_hidden: DEFAULT_RAIL_HIDDEN.slice(),
+    rail_footer_hidden: [],
     layout_version: RAIL_LAYOUT_VERSION,
 };
 let railEditing = false;
@@ -4023,6 +4029,9 @@ function getLayoutFromDOM(colEl) {
             .filter(id => CANONICAL_RAIL_ITEM_ORDER.includes(id)),
         rail_hidden: hidden,
         rail_footer: Array.from(footer?.querySelectorAll('.rail-item[data-id], .rail-panel-toggle[data-id]') || []).map(e => e.dataset.id),
+        rail_footer_hidden: Array.from(footer?.querySelectorAll('.rail-item[data-id]') || [])
+            .filter(e => HIDEABLE_FOOTER_IDS.has(e.dataset.id) && e.hidden)
+            .map(e => e.dataset.id),
     };
 }
 
@@ -4120,9 +4129,16 @@ function applyLayoutToColumn(colEl, layout) {
     if (addSlot && rail) rail.appendChild(addSlot);
 
     const footerOrder = normalizeRailFooterOrder(layout.rail_footer);
+    const footerHidden = new Set(
+        (Array.isArray(layout?.rail_footer_hidden) ? layout.rail_footer_hidden : [])
+            .filter(id => HIDEABLE_FOOTER_IDS.has(id)),
+    );
     footerOrder.forEach(id => {
         const el = byId.get(id);
-        if (el && footer) footer.appendChild(el);
+        if (el && footer) {
+            footer.appendChild(el);
+            if (el.classList.contains('rail-item')) el.hidden = footerHidden.has(id);
+        }
     });
 }
 
@@ -4139,6 +4155,7 @@ function commitUILayout(layout) {
         rail_items: Array.isArray(layout?.rail_items) ? layout.rail_items.slice() : CANONICAL_RAIL_ITEM_ORDER.slice(),
         rail_footer: Array.isArray(layout?.rail_footer) ? layout.rail_footer.slice() : CANONICAL_RAIL_FOOTER_ORDER.slice(),
         rail_hidden: Array.isArray(layout?.rail_hidden) ? layout.rail_hidden.slice() : [],
+        rail_footer_hidden: Array.isArray(layout?.rail_footer_hidden) ? layout.rail_footer_hidden.slice() : [],
         layout_version: RAIL_LAYOUT_VERSION,
     };
     applyLayoutToAllColumns(lastUILayout);
@@ -4173,11 +4190,15 @@ function readCachedUILayout() {
 function migrateUILayout(saved) {
     const layout = { ...DEFAULT_LAYOUT, ...saved };
     if (!Array.isArray(saved.rail_hidden)) delete layout.rail_hidden;
+    layout.rail_footer_hidden = Array.isArray(saved.rail_footer_hidden)
+        ? saved.rail_footer_hidden.filter(id => HIDEABLE_FOOTER_IDS.has(id))
+        : [];
     if ((Number(saved.layout_version) || 0) >= RAIL_LAYOUT_VERSION) return { layout, changed: false };
     const hidden = new Set(Array.isArray(saved.rail_hidden) ? saved.rail_hidden : []);
     // Existing v4 user pins remain intact; only the new App starts stashed.
     const version = Number(saved.layout_version) || 0;
-    const additions = version >= 7 ? ['nav-agent-feed'] : version >= 6 ? ['nav-gizmos', 'nav-agent-feed']
+    const additions = version >= 8 ? ['nav-mesh']
+        : version >= 7 ? ['nav-agent-feed'] : version >= 6 ? ['nav-gizmos', 'nav-agent-feed']
         : version >= 5 ? ['nav-projects', 'nav-gizmos', 'nav-agent-feed']
         : version >= 4 ? ['nav-achievements', 'nav-projects', 'nav-gizmos', 'nav-agent-feed']
         : DEFAULT_RAIL_HIDDEN;
@@ -4251,8 +4272,8 @@ function getAppsList() {
             id,
             label: el.dataset.tooltip || id.replace(/^nav-/, ''),
             icon: iconHtml,
-            pinned: true,
-            pinnable: false,
+            pinned: !el.hidden,
+            pinnable: HIDEABLE_FOOTER_IDS.has(id),
         };
         if (el.dataset.page) entry.page = el.dataset.page;
         else entry.action = id;
@@ -4364,6 +4385,12 @@ function ensureRailEditChrome(colEl) {
 }
 
 function hideRailItem(id) {
+    if (HIDEABLE_FOOTER_IDS.has(id)) {
+        const layout = getLayoutFromDOM(getColumnEl(0));
+        if (!layout.rail_footer_hidden.includes(id)) layout.rail_footer_hidden.push(id);
+        commitUILayout(layout);
+        return;
+    }
     if (!CANONICAL_RAIL_ITEM_ORDER.includes(id) || RAIL_LOCKED_IDS.has(id)) return;
     const layout = getLayoutFromDOM(getColumnEl(0));
     layout.rail_items = layout.rail_items.filter(x => x !== id);
@@ -4372,6 +4399,12 @@ function hideRailItem(id) {
 }
 
 function showRailItem(id) {
+    if (HIDEABLE_FOOTER_IDS.has(id)) {
+        const layout = getLayoutFromDOM(getColumnEl(0));
+        layout.rail_footer_hidden = layout.rail_footer_hidden.filter(x => x !== id);
+        commitUILayout(layout);
+        return;
+    }
     if (!CANONICAL_RAIL_ITEM_ORDER.includes(id)) return;
     const layout = getLayoutFromDOM(getColumnEl(0));
     layout.rail_hidden = layout.rail_hidden.filter(x => x !== id);

@@ -1520,8 +1520,14 @@ def serve_router_editor():
 
 @app.route('/jobs_page.html')
 def serve_jobs_page():
-    """Serve the device workers and mesh jobs page"""
+    """Serve the unified executions ledger (agent turns + mesh jobs)."""
     return send_from_directory(project_root / 'web', 'jobs_page.html')
+
+
+@app.route('/mesh_page.html')
+def serve_mesh_page():
+    """Serve the device mesh admin (workers, pairing, mesh job queue)."""
+    return send_from_directory(project_root / 'web', 'mesh_page.html')
 
 
 @app.route('/dashboards_page.html')
@@ -1563,19 +1569,6 @@ def api_status():
         'status': 'ok',
         'flask': True,
     })
-
-@app.route('/api/executing-jobs', methods=['GET'])
-@owner_required
-def api_executing_jobs():
-    """Compat: live in-flight jobs for the shell badge. Owned by api.jobs."""
-    try:
-        from api.jobs.ledger import inflight
-        jobs = inflight()
-        return jsonify({
-            'executing_jobs': jobs
-        })
-    except ImportError:
-        return jsonify({'executing_jobs': []})
 
 
 @app.route('/api/chat-cancel', methods=['POST'])

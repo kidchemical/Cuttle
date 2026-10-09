@@ -13,20 +13,15 @@
         .jobs-header { margin-bottom: 12px; }
         .jobs-header h1 { font-size: 1.05rem; margin-bottom: 4px; }
         .jobs-header p { color: var(--text-secondary); font-size: 0.8rem; line-height: 1.35; margin: 0; }
-        .jobs-panel { display: none; }
-        .jobs-panel.active { display: block; }
         .jobs-section-title { font-size: 0.95rem; font-weight: 600; margin: 0 0 10px 0; color: var(--text-primary); }
-        .jobs-filter { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; align-items: center; }
-        .jobs-filter button, .hist-filter button {
-            padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border-color);
-            background: var(--section-bg); color: var(--text-primary); cursor: pointer;
-            font-size: 12px;
+        .jobs-summary {
+            display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+            font-size: 12px; color: var(--text-secondary);
+            padding: 8px 12px; margin: 0 0 14px; border-radius: 8px;
+            background: var(--section-bg); border: 1px solid var(--border-color);
         }
-        .jobs-filter button:hover, .hist-filter button:hover { background: var(--panel-hover); }
-        .jobs-filter button.active, .hist-filter button.active {
-            background: var(--accent-color); border-color: var(--accent-color); color: var(--text-inverse, #fff);
-        }
-        .hist-source { font-size: 11px; color: var(--text-tertiary); margin-left: auto; }
+        .jobs-summary strong { color: var(--text-primary); }
+        .jobs-summary-sep { color: var(--text-tertiary); }
         .job-type-badge, .status-pill {
             font-size: 10px; padding: 2px 6px; border-radius: 4px; text-transform: uppercase;
             flex-shrink: 0; font-weight: 600; letter-spacing: 0.02em;
@@ -34,9 +29,6 @@
         .status-pill.queued { background: rgba(250, 204, 21, 0.18); color: #facc15; }
         .status-pill.claimed { background: rgba(56, 189, 248, 0.18); color: #38bdf8; }
         .status-pill.running { background: rgba(56, 189, 248, 0.18); color: #38bdf8; }
-        .status-pill.processing { background: rgba(56, 189, 248, 0.18); color: #38bdf8; }
-        .status-pill.pending { background: rgba(250, 204, 21, 0.18); color: #facc15; }
-        .status-pill.completed,
         .status-pill.succeeded { background: rgba(74, 222, 128, 0.18); color: #4ade80; }
         .status-pill.cancelled { background: rgba(148, 163, 184, 0.25); color: #94a3b8; }
         .status-pill.failed { background: rgba(248, 113, 113, 0.18); color: #f87171; }
@@ -69,10 +61,9 @@
             background: var(--section-bg);
         }
         .jobs-table-scroll--capped {
-            max-height: min(42vh, 420px);
+            max-height: min(48vh, 460px);
             overflow-y: auto;
             overscroll-behavior: contain;
-            /* never force full panel width — match uncapped workers table */
             width: fit-content;
             max-width: 100%;
         }
@@ -83,55 +74,6 @@
             width: max-content;
             max-width: 100%;
             vertical-align: top;
-        }
-        .jobs-table-pager {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 10px;
-            flex-wrap: wrap;
-            margin-top: 8px;
-            box-sizing: border-box;
-            font-size: 11px;
-            color: var(--text-secondary);
-        }
-        .jobs-table-pager-meta {
-            color: var(--text-tertiary);
-        }
-        .jobs-table-pager-actions {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-        .jobs-pager-btn {
-            padding: 4px 10px;
-            border-radius: 6px;
-            border: 1px solid var(--border-color);
-            background: var(--section-bg);
-            color: var(--text-primary);
-            cursor: pointer;
-            font-size: 12px;
-            font-family: inherit;
-            line-height: 1.2;
-        }
-        .jobs-pager-btn:hover:not(:disabled) {
-            background: var(--panel-hover);
-        }
-        .jobs-pager-btn:disabled {
-            opacity: 0.4;
-            cursor: not-allowed;
-        }
-        .jobs-pager-page {
-            min-width: 4.5em;
-            text-align: center;
-            color: var(--text-tertiary);
-            font-variant-numeric: tabular-nums;
-        }
-        #devicesList,
-        #meshJobsList,
-        .jobs-panel {
-            min-width: 0;
-            max-width: 100%;
         }
         .jobs-table-scroll .hist-table {
             margin: 0;
@@ -148,12 +90,10 @@
         .jobs-table-scroll .hist-table td.jobs-cell-wrap {
             white-space: normal;
             min-width: 140px;
-            max-width: 280px;
+            max-width: 320px;
             word-break: break-word;
         }
-        .jobs-table-scroll .hist-table tr:last-child td {
-            border-bottom: none;
-        }
+        .jobs-table-scroll .hist-table tr:last-child td { border-bottom: none; }
         .jobs-table-scroll .hist-table thead th {
             position: sticky;
             top: 0;
@@ -165,109 +105,28 @@
             position: sticky;
             right: 0;
             z-index: 2;
-            width: 44px;
-            min-width: 44px;
-            max-width: 44px;
+            width: 1%;
+            white-space: nowrap;
             text-align: right;
-            padding-left: 6px;
+            padding-left: 8px;
             padding-right: 8px;
             background: var(--section-bg);
             box-shadow: -8px 0 10px -8px rgba(0, 0, 0, 0.45);
         }
-        .jobs-table-scroll .hist-table thead th.device-actions-cell {
-            z-index: 3;
-        }
-        .jobs-table-scroll .hist-table tr.device-row-you td.device-actions-cell {
-            background: color-mix(in srgb, rgba(63, 185, 80, 0.06) 100%, var(--section-bg));
-        }
-        .jobs-table-scroll .hist-table tr:hover td.device-actions-cell {
-            background: var(--panel-hover, rgba(255,255,255,0.04));
-        }
-        .jobs-table-scroll .hist-table tr.device-row-you:hover td.device-actions-cell {
-            background: color-mix(in srgb, rgba(63, 185, 80, 0.1) 100%, var(--section-bg));
-        }
-        .hist-table tr.clickable { cursor: pointer; }
-        .hist-table tr.clickable:hover td { background: var(--panel-hover, rgba(255,255,255,0.04)); }
-        .device-role {
-            display: inline-block; font-size: 10px; font-weight: 650; letter-spacing: 0.03em;
-            text-transform: uppercase; padding: 2px 6px; border-radius: 4px;
-            background: rgba(148, 163, 184, 0.2); color: var(--text-secondary, #94a3b8);
-            margin-right: 4px;
-        }
-        .device-role-host {
-            background: rgba(56, 189, 248, 0.2); color: #38bdf8;
-        }
-        .device-role-you {
-            background: rgba(63, 185, 80, 0.22); color: #3fb950;
-        }
-        .device-role-stale {
-            background: rgba(210, 153, 34, 0.22); color: #d29922;
-        }
-        .device-row-you td { background: rgba(63, 185, 80, 0.06); }
-        .device-slot-cell {
-            width: 2.25rem;
-            text-align: center;
-            font-variant-numeric: tabular-nums;
-            opacity: 0.75;
-            font-weight: 600;
-        }
-        .device-actions-cell {
-            width: 44px; text-align: right; white-space: nowrap;
-        }
-        .device-menu-btn {
-            display: inline-flex; align-items: center; justify-content: center;
-            width: 28px; height: 26px; padding: 0;
-            border: 1px solid rgba(148, 163, 184, 0.22);
+        .jobs-table-scroll .hist-table thead th.device-actions-cell { z-index: 3; }
+        .jobs-pager-btn {
+            padding: 3px 9px;
             border-radius: 6px;
-            background: transparent;
-            color: var(--text-secondary, #94a3b8);
-            cursor: pointer; font: inherit; line-height: 1;
+            border: 1px solid var(--border-color);
+            background: var(--section-bg);
+            color: var(--text-primary);
+            cursor: pointer;
+            font-size: 11px;
+            font-family: inherit;
+            line-height: 1.2;
         }
-        .device-menu-btn:hover,
-        .device-menu-btn[aria-expanded="true"] {
-            background: rgba(148, 163, 184, 0.14);
-            border-color: rgba(148, 163, 184, 0.4);
-            color: var(--text-primary, #e2e8f0);
-        }
-        .device-menu-btn .device-hamburger {
-            display: flex; flex-direction: column; gap: 2.5px; width: 12px;
-        }
-        .device-menu-btn .device-hamburger span {
-            display: block; height: 1.5px; border-radius: 1px; background: currentColor;
-        }
-        .device-row-menu {
-            position: fixed;
-            min-width: 160px;
-            padding: 4px;
-            border: 1px solid var(--border-color, #334155);
-            border-radius: 8px;
-            background: var(--bg-secondary, #1e293b);
-            box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
-            display: flex; flex-direction: column; gap: 1px;
-            z-index: 80;
-        }
-        .device-row-menu[hidden] { display: none !important; }
-        .device-row-menu button {
-            display: block; width: 100%; text-align: left;
-            padding: 8px 10px; border: none; border-radius: 6px;
-            background: transparent; color: var(--text-primary, #e2e8f0);
-            font: inherit; font-size: 12px; cursor: pointer;
-        }
-        .device-row-menu button:hover:not(:disabled) {
-            background: rgba(148, 163, 184, 0.14);
-        }
-        .device-row-menu button:disabled {
-            opacity: 0.4; cursor: not-allowed;
-        }
-        .device-row-menu button.danger { color: #f87171; }
-        .device-row-menu button.danger:hover:not(:disabled) {
-            background: rgba(248, 113, 113, 0.12);
-        }
-        .hist-error {
-            color: #f87171; font-size: 11px; margin-top: 3px;
-            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px;
-        }
-        .hist-pr { color: var(--accent-color); text-decoration: none; font-size: 11px; }
+        .jobs-pager-btn:hover:not(:disabled) { background: var(--panel-hover); }
+        .hist-pr { color: var(--accent-color); text-decoration: none; }
         .hist-pr:hover { text-decoration: underline; }
         .job-card {
             display: flex; align-items: flex-start; gap: 10px;
@@ -275,102 +134,24 @@
             background: var(--section-bg); border: 1px solid var(--border-color);
         }
         .job-card.running { border-left: 3px solid var(--success-border); }
-        .job-card.clickable { cursor: pointer; }
-        .job-card.clickable:hover { background: var(--panel-hover, rgba(255,255,255,0.06)); }
         .job-main { flex: 1; min-width: 0; }
         .job-row-top {
             display: flex; align-items: center; justify-content: space-between; gap: 10px;
-            margin-bottom: 6px; min-height: 30px; flex-wrap: wrap;
+            margin-bottom: 6px; min-height: 26px; flex-wrap: wrap;
         }
         .job-title-compact {
             font-weight: 600; font-size: 14px;
             display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1;
         }
         .job-title-compact .job-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .job-type-badge.work { background: rgba(59, 130, 246, 0.3); color: #60a5fa; }
-        .job-type-badge.think { background: rgba(168, 85, 247, 0.3); color: #c084fc; }
-        .job-type-badge.play { background: rgba(34, 197, 94, 0.3); color: #4ade80; }
-        .job-type-badge.pipeline { background: rgba(100, 116, 139, 0.3); color: #94a3b8; }
-        .job-desc {
-            font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; line-height: 1.4;
-            overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-        }
         .job-meta { display: flex; flex-wrap: wrap; gap: 10px 12px; font-size: 11px; color: var(--text-secondary); line-height: 1.25; }
         .job-meta span { display: inline-flex; align-items: center; gap: 4px; }
-        .job-actions {
-            display: flex; align-items: center; gap: 8px; flex-shrink: 0;
-            overflow: visible; min-height: 28px;
-        }
-        .job-btn {
-            padding: 6px 10px; border-radius: 6px; font-size: 12px; cursor: pointer; border: none;
-        }
-        .job-btn-run-now { background: var(--accent-color); color: var(--text-inverse, #fff); font-weight: 600; }
-        .job-btn-edit { background: var(--border-color); color: var(--text-primary); }
-        .job-toggle-wrap { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; }
-        .job-toggle-wrap .job-toggle-label { font-size: 11px; color: var(--text-secondary); white-space: nowrap; }
-        .job-switch {
-            position: relative; display: inline-block; width: 36px; height: 22px;
-            flex-shrink: 0; vertical-align: middle; overflow: visible; box-sizing: border-box;
-        }
-        .job-switch input { opacity: 0; width: 0; height: 0; position: absolute; margin: 0; }
-        .job-switch-slider {
-            position: absolute; cursor: pointer; inset: 0;
-            background: var(--border-color); border-radius: 11px; transition: background 0.2s;
-        }
-        .job-switch-slider::before {
-            content: ''; position: absolute; width: 16px; height: 16px; left: 3px; top: 50%;
-            margin-top: -8px; background: #fff; border-radius: 50%; transition: transform 0.2s;
-            box-shadow: 0 1px 2px rgba(0,0,0,0.2);
-        }
-        .job-switch input:checked + .job-switch-slider { background: var(--success-border); }
-        .job-switch input:checked + .job-switch-slider::before { transform: translateX(14px); }
-        .schedule-enabler { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; flex-wrap: wrap; }
-        .schedule-countdown { color: var(--text-tertiary); font-size: 10px; margin-left: 4px; }
-        .status-indicator { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+        .job-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; min-height: 28px; }
+        .status-indicator { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
         .status-running { background-color: #4ade80; }
-
-        /* Telemetry pane */
-        .jobs-stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-            gap: 10px;
-            margin-top: 4px;
-        }
-        .jobs-stat {
-            background: var(--section-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-            padding: 10px 12px;
-        }
-        .jobs-stat-value {
-            font-size: 1.35rem;
-            font-weight: 700;
-            color: var(--text-primary);
-            font-variant-numeric: tabular-nums;
-        }
-        .jobs-stat-label {
-            font-size: 10px;
-            text-transform: uppercase;
-            letter-spacing: 0.04em;
-            color: var(--text-secondary);
-            margin-top: 2px;
-        }
-        .jobs-stat-sub {
-            text-transform: none;
-            font-size: 11px;
-            color: var(--text-tertiary);
-            margin-top: 1px;
-            letter-spacing: 0;
-        }
         @media (max-width: 768px) {
             .job-card { flex-direction: column; }
             .job-actions { align-self: flex-end; }
-            .hist-source { margin-left: 0; width: 100%; }
-            .jobs-table-scroll {
-                margin-left: -2px;
-                margin-right: -2px;
-                max-width: calc(100% + 4px);
-            }
         }
     </style>
 </head>
@@ -386,44 +167,26 @@
     <div class="jobs-page cuttle-page">
         <div class="compact-page-title jobs-header">
             <h1>Jobs</h1>
-            <p>Every execution Cuttle handles — agent turns, background helpers and mesh jobs — plus the device workers that run them.</p>
+            <p>Every execution Cuttle handles — agent turns, background helpers and mesh jobs.</p>
         </div>
 
-        <section class="jobs-panel active" id="panel-devices" aria-label="Jobs and device workers">
-            <section id="runningJobsSection" aria-label="Running now">
-                <h2 class="jobs-section-title">Running now</h2>
-                <div id="runningJobsList"></div>
-            </section>
+        <div id="jobsSummary"></div>
 
-            <section id="recentJobsSection" aria-label="Recent executions" style="margin-top:1.25rem;">
-                <h2 class="jobs-section-title">Recent executions</h2>
-                <div id="recentJobsList"></div>
-            </section>
-
-            <section id="jobsStatsSection" aria-label="Telemetry" style="margin-top:1.25rem;">
-                <h2 class="jobs-section-title">Telemetry · last 24h</h2>
-                <div id="jobsStatsBox"></div>
-            </section>
-
-            <div class="jobs-filter hist-filter" style="margin-bottom:12px;margin-top:1.25rem;">
-                <button type="button" class="hist-btn" id="btnPingWorker">Ping local worker</button>
-                <span class="hist-source" id="devicesStatus"></span>
-            </div>
-            <h2 class="jobs-section-title">Workers</h2>
-            <div id="devicesList"></div>
-            <h2 class="jobs-section-title" style="margin-top:1.25rem;">Pending pairing</h2>
-            <div id="pairingList"></div>
-            <h2 class="jobs-section-title" style="margin-top:1.25rem;">Mesh jobs</h2>
-            <div id="meshJobsList"></div>
+        <section id="runningJobsSection" aria-label="Running now">
+            <h2 class="jobs-section-title">Running now</h2>
+            <div id="runningJobsList"></div>
         </section>
 
+        <section id="recentJobsSection" aria-label="Recent executions" style="margin-top:1.5rem;">
+            <h2 class="jobs-section-title">Recent executions</h2>
+            <div id="recentJobsList"></div>
+        </section>
     </div>
     <script src="/js/shared/shared_navigation.js"></script>
     <script src="/js/media/background_effect_blend.js"></script>
     <script src="/js/media/video_background.js"></script>
     <script src="/js/shared/toast.js"></script>
-    <script src="/js/shared/cron_countdown.js"></script>
-    <script src="/js/jobs/jobs_ledger.js?v=20261009jobsSurface"></script>
-    <script src="/js/jobs/jobs_page.js?v=20261009jobsSurface"></script>
+    <script src="/js/jobs/jobs_ledger.js?v=20261009jobsSplit"></script>
+    <script src="/js/jobs/jobs_page.js?v=20261009jobsSplit"></script>
 </body>
 </html>
