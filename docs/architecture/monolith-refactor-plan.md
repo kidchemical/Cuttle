@@ -437,16 +437,23 @@ move to `agents/cursor/`.
 - **Deferred items:** revisit `formatMessage` decomposition, the terminal
   session list, and anything recorded as "kept".
 
-## 5. Decisions for review
+## 5. Decisions
 
-1. **Module names.** Should Phase 1A use `chat_media.js` (repo convention) or
-   the master plan's `chat_media_controller.js`? The plan above assumes
-   `chat_media.js`.
-2. **Bubble TTS owner.** Should it be a new `chat_tts.js` (playback shared by
-   bubbles and voice), or should playback be folded into `chat_voice.js`? The
-   plan assumes `chat_tts.js` so voice mode stays separate from bubble DOM.
-3. **Reopened decisions.** 3C (sync timers) and 5A (pane tree) proceed only
-   with evidence of benefit; otherwise they are recorded as "kept".
+Decided at the Phase 0 review (2026-10-09):
+
+1. **Module names follow repo convention** (`chat_<domain>.js`, `Cuttle*`
+   namespace), so 1A is `chat_media.js`. The implementing agent picks names
+   case by case, favoring what a newcomer would search for.
+2. **Bubble TTS gets its own owner, `chat_tts.js`.** Playback is shared by
+   bubble speaker buttons and voice mode; voice mode stays in `chat_voice.js`.
+   The guiding preference: components independent and obvious to future
+   agents and humans.
+3. **Reopened decisions (3C sync timers, 5A pane tree) may proceed** when the
+   evidence shows a performance or readability/ownership benefit. Performance
+   comes first, readability and layout close behind. Record "kept" otherwise.
+
+Open:
+
 4. **Browser suites in CI.** The CI browser job runs 3 of 36 e2e files. Phase 7
    could widen it to the suites named here.
 5. **Shell navigation coverage.** `test_app_shell_navigation.py` (14 cases)
