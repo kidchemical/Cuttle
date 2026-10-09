@@ -160,7 +160,7 @@ def enroll_requests_list():
 
 @workers_bp.route("/enroll-requests/<request_id>/approve", methods=["POST"])
 def enroll_request_approve(request_id: str):
-    """Owner approves pairing: mint a NEW credential (old one revoked)."""
+    """Owner approves pairing: stage a new credential for authenticated pickup."""
     denied = _ui_operator_or_401()
     if denied:
         return denied
