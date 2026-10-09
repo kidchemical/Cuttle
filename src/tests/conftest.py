@@ -461,6 +461,15 @@ def _isolated_router_outcomes(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolated_worker_store(tmp_path, monkeypatch):
+    """Durable worker pairing tests must never mutate live credentials."""
+    from api.device_workers import store
+
+    monkeypatch.setenv("CUTTLE_DEVICE_WORKERS_DB", str(tmp_path / "device_workers.db"))
+    monkeypatch.setattr(store, "_store", None)
+
+
+@pytest.fixture(autouse=True)
 def _isolated_pairing_store(tmp_path, monkeypatch):
     """Chat admission tests must never use or write live approved identities."""
     from api import pairing_manager

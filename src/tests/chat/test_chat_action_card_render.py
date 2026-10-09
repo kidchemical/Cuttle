@@ -26,12 +26,12 @@ node_only = pytest.mark.skipif(
 
 HARNESS = """
 const A = require(process.env.MOD_JS);
-const esc = (s) => String(s ?? '')
+const escapeForRender = (s) => String(s ?? '')
     .replace(/&/g, '&amp;').replace(/</g, '&lt;')
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const render = (spec, extra) => A.renderActionFormCardHtml(Object.assign(
     { spec, formId: '', fallback: '', lockedAttr: '', selectedAttr: '',
-      contentPreviewHtml: '', esc }, extra || {}));
+      contentPreviewHtml: '', esc: escapeForRender }, extra || {}));
 const out = {};
 const count = (html, re) => (html.match(new RegExp(re, 'g')) || []).length;
 
@@ -70,7 +70,10 @@ out.form = (() => {
         { id: 'ch', type: 'checkbox', value: true, line: 'Line' }] });
     return { inputs: count(html, '<input'), textareas: count(html, '<textarea'),
         selects: count(html, '<select'), required: count(html, 'required'),
-        submit: html.includes('data-action-form-submit="1"') };
+        submit: html.includes('data-action-form-submit="1"'),
+        // one Other… option + one custom box per choice-like question
+        // (select, radio, checkboxes); plain text/checkbox/textarea have none
+        otherOpts: count(html, '__other__'), otherBoxes: count(html, 'data-field-custom') };
 })();
 // malformed inputs render without throwing (string options stay a
 // preserved TypeError, covered separately)
@@ -157,7 +160,8 @@ out.preview = (() => {
             .includes('cuttle-action-form-preview') };
 })();
 // custom row: Q&A resume cards offer free text; side-effect / opt-out /
-// silent cards do not
+// silent cards do not. `form` cards give each question its own box instead,
+// so one card-wide row there would answer the wrong question.
 out.custom = (() => {
     const qaResume = render({ mode: 'choice', title: 'Q', resume: true,
         options: [{ id: 'a', label: 'A' }] });
@@ -169,9 +173,12 @@ out.custom = (() => {
         allow_custom: false, options: [{ id: 'a', label: 'A' }] });
     const formResume = render({ mode: 'form', title: 'F', resume: true,
         fields: [{ id: 't', label: 'T', type: 'text' }] });
+    const multiResume = render({ mode: 'multi', title: 'M', resume: true,
+        options: [{ id: 'a', label: 'A' }] });
     const has = (h) => h.includes('data-custom-input="1"') && h.includes('data-custom-submit="1"');
     return { qaResume: has(qaResume), qaSilent: has(qaSilent), side: has(side),
-        optedOut: has(optedOut), formResume: has(formResume) };
+        optedOut: has(optedOut), formResume: has(formResume),
+        multiResume: has(multiResume) };
 })();
 // owner boundary: no page globals inside the renderer (comments stripped)
 out.boundary = (() => {
@@ -223,7 +230,11 @@ def test_multi_selected_locked():
 @node_only
 def test_form_field_types():
     out = _run_harness()["form"]
-    assert out["inputs"] == 4  # text + radio + checkboxes + checkbox
+    # text + checkbox + select Other… + radio (option + Other…) +
+    # checkboxes (option + Other…) + 3 custom boxes
+    assert out["inputs"] == 9
+    assert out["otherOpts"] == 3
+    assert out["otherBoxes"] == 3
     assert out["textareas"] == 1
     assert out["selects"] == 1
     assert out["required"] >= 1
@@ -316,7 +327,8 @@ def test_owner_boundary_no_page_globals():
 def test_custom_row_only_on_qa_resume_cards():
     out = _run_harness()["custom"]
     assert out["qaResume"] is True
-    assert out["formResume"] is True
+    assert out["multiResume"] is True
+    assert out["formResume"] is False
     assert out["qaSilent"] is False
     assert out["side"] is False
     assert out["optedOut"] is False
@@ -339,10 +351,10 @@ const grid = {total: 240, inventory:'verified', workers:['tower', '<img src=x>']
     {frame:2, state:'rendering',worker:'<img src=x>', gap_fill:true},
     {frame:3, state:'missing'}]};
 const tests = A.renderWatchGridHtml({unit:'test', title:'Suite', marked_label:'flaky', cells:[
-    {key:'test_login', state:'completed', group:'shard-1'}, {key:'test_logout', state:'failed', marked:true, note:'AssertionError'}]}, esc);
+    {key:'test_login', state:'completed', group:'shard-1'}, {key:'test_logout', state:'failed', marked:true, note:'AssertionError'}]}, escapeForRender);
 const html = render({mode:'choice', watch:{id:'b',url:'/output/b.json',
     snapshot:{state:'done', grid}}, options:[]});
-const bounded = A.renderWatchGridHtml({cells:Array.from({length:3000}, (_,i)=>({frame:i,state:'pending'}))}, esc);
+const bounded = A.renderWatchGridHtml({cells:Array.from({length:3000}, (_,i)=>({frame:i,state:'pending'}))}, escapeForRender);
 console.log(JSON.stringify({html, tests, count:(bounded.match(/class="watch-cell /g)||[]).length,
     colour:A.watchGroupColour('tower'), same:A.watchGroupColour('tower')}));
 """

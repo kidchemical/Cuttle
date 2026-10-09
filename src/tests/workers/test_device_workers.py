@@ -456,11 +456,6 @@ def test_enroll_from_lan(worker_db, monkeypatch):
     from api.device_workers import enroll_approval as enroll_mod
 
     enroll_mod.decide(pending["request_id"], "approve")
-    store = worker_db
-    enrolled = store.enroll_device(
-        worker_id="worker-a", hostname="WORKER-A", rotate=store.is_enrolled("worker-a")
-    )
-    enroll_mod.attach_token(pending["request_id"], enrolled["token"])
     data = client.post(
         f"/api/workers/enroll/{pending['request_id']}/poll",
         json={"pairing_secret": "ab" * 32},

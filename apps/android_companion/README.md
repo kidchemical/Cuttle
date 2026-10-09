@@ -9,8 +9,8 @@ It is a prototype, separate from the main [mobile app](../mobile/README.md).
 
 Set a random `CUTTLE_MOBILE_TOKEN` in the Host's `<home>/.env` and apply it through
 the daemon-owned restart path. Enter that exact token in the app: an empty field
-is not valid. The backend's development fallback is `dev-local-token`; do not
-use that shared fallback on a remotely reachable installation.
+is not valid. An unset or blank Host token disables these companion routes
+(HTTP 401); there is no development fallback.
 
 Cuttle uses HTTPS :8080, HTTP :8000, and optional phone HTTPS :8888. This app's
 stock OkHttp clients verify TLS normally. The Host's default self-signed HTTPS

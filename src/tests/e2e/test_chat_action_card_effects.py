@@ -447,6 +447,51 @@ def test_qa_submit_posts_once_and_writes_one_answer(browser, static_server):
         page.close()
 
 
+def test_per_question_custom_inputs_toggle_and_submit(browser, static_server):
+    spec = {"mode": "form", "title": "Custom answers", "resume": True,
+            "fields": [
+                {"id": "radio", "type": "radio", "options": ["Yes", "No"]},
+                {"id": "select", "type": "select", "options": ["Fast", "Slow"]},
+                {"id": "checks", "type": "checkboxes", "options": ["One", "Two"]},
+            ]}
+    world = EffectsWorld([])
+    _seed_card_history(world, "<cuttle_action_form>" + json.dumps(spec)
+                       + "</cuttle_action_form>")
+    page, frame, errors = _open(browser, static_server, world)
+    try:
+        from playwright.sync_api import expect
+        card = _wait_history_card(frame)
+        radio = card.locator('[data-field-custom="radio"]')
+        expect(radio).to_be_hidden()
+        card.locator('[data-radio-group="radio"] input[value="__other__"]').check()
+        expect(radio).to_be_visible()
+        radio.fill("Discard this custom answer")
+        card.locator('[data-radio-group="radio"] input[value="Yes"]').check()
+        expect(radio).to_be_hidden()
+        expect(radio).to_have_value("")
+        card.locator('[data-radio-group="radio"] input[value="__other__"]').check()
+        radio.fill("My radio answer")
+        card.locator('[data-field-id="select"]').select_option("__other__")
+        select = card.locator('[data-field-custom="select"]')
+        expect(select).to_be_visible()
+        select.fill("My select answer")
+        card.locator('[data-checkbox-group="checks"] input[value="One"]').check()
+        card.locator('[data-checkbox-group="checks"] input[value="__other__"]').check()
+        checks = card.locator('[data-field-custom="checks"]')
+        expect(checks).to_be_visible()
+        checks.fill("My extra answer")
+        card.locator('[data-action-form-submit]').click()
+        expect(card).to_have_attribute("data-locked", "1")
+        assert len(world.run_posts) == 1
+        assert world.run_posts[0]["selection"]["fields"] == {
+            "radio": "My radio answer", "select": "My select answer",
+            "checks": ["One", "My extra answer"],
+        }
+        assert not errors
+    finally:
+        page.close()
+
+
 def test_cancel_option_locks_without_resume(browser, static_server):
     world = EffectsWorld([CARD_CHOICE, "noted"])
     world.run_reply = {"success": True, "toast": "Cancelled.",

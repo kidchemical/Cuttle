@@ -7196,11 +7196,32 @@ button.cuttle-button.is-unselected {
 }
 
 .cuttle-action-form-custom .form-input {
-    flex: 1;
+    /* basis 0, not auto: `.form-input` sets width:100%, which as an `auto`
+       basis makes the input claim the whole row and collapse next to the
+       (non-shrinking) button. */
+    flex: 1 1 0;
+    width: auto;
     min-width: 0;
 }
 
+/* `button.cuttle-button` is width:100% for stacked option buttons; inside
+   the custom-answer row that basis crushed the input to zero width. */
+.cuttle-action-form-custom button.cuttle-button {
+    flex: 0 0 auto;
+    width: auto;
+    padding: 10px 18px;
+}
+.form-other {
+    margin: 8px 0 0;
+}
+
+.radio-item--other span,
+.check-item--other span {
+    color: var(--text-secondary);
+}
+
 .cuttle-action-form-status {
+
     margin-top: 10px;
     font-size: 0.85em;
     color: var(--text-secondary);

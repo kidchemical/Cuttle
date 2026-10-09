@@ -153,12 +153,13 @@ def test_approve_rotates_existing_token(client):
     assert claim.status_code == 401
 
 
-def test_poll_expired(client):
+def test_poll_expired(client, monkeypatch):
     from api.device_workers import enroll_approval as enroll_mod
 
     body = _pair(client, "worker-a")
     rid = body["request_id"]
-    enroll_mod._pending[rid]["created_at"] -= 700
+    now = enroll_mod.time.time()
+    monkeypatch.setattr(enroll_mod.time, "time", lambda: now + 700)
     assert _poll(client, rid).get_json()["status"] == "expired"
 
 
@@ -369,12 +370,170 @@ def test_pairing_table_bounded(client):
     assert r.status_code == 429
 
 
-def test_terminal_rows_swept_after_ttl(client):
+def test_terminal_rows_swept_after_ttl(client, monkeypatch):
     from api.device_workers import enroll_approval as enroll_mod
 
     body = _pair(client, "worker-a")
     client.post(f"/api/workers/enroll-requests/{body['request_id']}/deny", json={})
     assert _poll(client, body["request_id"]).get_json()["status"] == "denied"
-    enroll_mod._pending[body["request_id"]]["updated_at"] -= 700
+    now = enroll_mod.time.time()
+    monkeypatch.setattr(enroll_mod.time, "time", lambda: now + 700)
     assert client.get("/api/workers/enroll-requests").get_json()["pending"] == []
     assert _poll(client, body["request_id"]).status_code == 404
+
+
+@pytest.mark.parametrize("previously_enrolled", [False, True])
+def test_approval_failure_rolls_back_and_retry_succeeds(client, monkeypatch, previously_enrolled):
+    from api.device_workers import store as store_mod
+
+    store = store_mod.get_store()
+    old = store.enroll_device(worker_id="worker-a")["token"] if previously_enrolled else None
+    rid = _pair(client, "worker-a")["request_id"]
+    original = store._enroll_device
+
+    def fail_after_write(*args, **kwargs):
+        original(*args, **kwargs)
+        raise ValueError("credential write failed")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(store, "_enroll_device", fail_after_write)
+        response = client.post(f"/api/workers/enroll-requests/{rid}/approve", json={})
+        assert response.status_code == 400
+    assert _poll(client, rid).get_json()["status"] == "pending"
+    if old:
+        assert store.lookup_enrolled_token(old) == "worker-a"
+    else:
+        assert not store.is_enrolled("worker-a")
+    first = _approve(client, rid)
+    second = _approve(client, rid)
+    assert first["request"]["status"] == second["request"]["status"] == "approved"
+    assert "token" not in first["request"] and "secret_sha256" not in first["request"]
+    token = _poll(client, rid).get_json()["token"]
+    assert token and token != old
+    assert store.lookup_enrolled_token(token) == "worker-a"
+    if old:
+        assert store.lookup_enrolled_token(old) is None
+
+
+def test_failed_approval_publication_rolls_back_rotation(client):
+    from api.device_workers import store as store_mod
+
+    store = store_mod.get_store()
+    old = store.enroll_device(worker_id="worker-a")["token"]
+    rid = _pair(client, "worker-a")["request_id"]
+    with store.enrollment_transaction() as conn:
+        conn.execute("""
+            CREATE TRIGGER fail_pairing_approval BEFORE UPDATE ON enrollment_requests
+            WHEN NEW.status = 'approved'
+            BEGIN SELECT RAISE(ABORT, 'simulated persistence failure'); END
+        """)
+    response = client.post(f"/api/workers/enroll-requests/{rid}/approve", json={})
+    assert response.status_code == 500
+    assert _poll(client, rid).get_json()["status"] == "pending"
+    assert store.lookup_enrolled_token(old) == "worker-a"
+    with store.enrollment_transaction() as conn:
+        conn.execute("DROP TRIGGER fail_pairing_approval")
+    _approve(client, rid)
+    assert _poll(client, rid).get_json()["token"] != old
+
+
+def test_pairing_and_rotated_token_survive_fresh_processes(client):
+    import json
+    import os
+    import subprocess
+    import sys
+
+    from api.device_workers import store as store_mod
+
+    store = store_mod.get_store()
+    old = store.enroll_device(worker_id="worker-a")["token"]
+    rid = _pair(client, "worker-a")["request_id"]
+    env = {**os.environ, "PYTHONPATH": "src"}
+
+    def child(code):
+        result = subprocess.run(
+            [sys.executable, "-c", code, rid, SECRET],
+            env=env, capture_output=True, text=True, check=True, timeout=15,
+        )
+        return json.loads(result.stdout)
+
+    approved = child('''
+import json, sys
+from api.device_workers import enroll_approval as pairing
+assert pairing.list_pending()[0]['id'] == sys.argv[1]
+print(json.dumps(pairing.decide(sys.argv[1], 'approve')))
+''')
+    assert approved["status"] == "approved"
+    assert store.lookup_enrolled_token(old) is None
+    assert _poll(client, rid, SECRET2).get_json()["status"] == "denied"
+    result = child('''
+import json, sys
+from api.device_workers import enroll_approval as pairing
+print(json.dumps(pairing.poll(sys.argv[1], sys.argv[2])))
+''')
+    assert result[0] == "approved"
+    token = result[1]["token"]
+    assert token and token != old
+    assert store.lookup_enrolled_token(token) == "worker-a"
+    assert _poll(client, rid).status_code == 404
+
+
+def test_concurrent_approval_and_pickup_are_serialized(client, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+
+    from api.device_workers import enroll_approval as pairing
+    from api.device_workers import store as store_mod
+
+    store = store_mod.get_store()
+    rid = _pair(client, "worker-a")["request_id"]
+    original = store._enroll_device
+    issued = []
+
+    def record(*args, **kwargs):
+        row = original(*args, **kwargs)
+        issued.append(row["token"])
+        return row
+
+    monkeypatch.setattr(store, "_enroll_device", record)
+    barrier = threading.Barrier(2)
+
+    def approve():
+        barrier.wait(timeout=5)
+        return pairing.decide(rid, "approve")
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(approve) for _ in range(2)]
+        assert all(f.result(timeout=10)["status"] == "approved" for f in futures)
+        assert len(issued) == 1
+
+        def poll():
+            barrier.wait(timeout=5)
+            return pairing.poll(rid, SECRET)
+
+        futures = [pool.submit(poll) for _ in range(2)]
+        results = [f.result(timeout=10) for f in futures]
+    assert sorted(status for status, _ in results) == ["approved", "not_found"]
+    payload = next(payload for status, payload in results if status == "approved")
+    assert payload["token"] == issued[0]
+
+
+def test_owner_cannot_approve_expired_request(client, monkeypatch):
+    from api.device_workers import enroll_approval as pairing
+    from api.device_workers import store as store_mod
+
+    rid = _pair(client, "worker-a")["request_id"]
+    now = pairing.time.time()
+    monkeypatch.setattr(pairing.time, "time", lambda: now + 700)
+    assert _approve(client, rid)["request"]["status"] == "expired"
+    assert not store_mod.get_store().is_enrolled("worker-a")
+
+
+def test_uncollected_approval_expires(client, monkeypatch):
+    from api.device_workers import enroll_approval as pairing
+
+    rid = _pair(client, "worker-a")["request_id"]
+    _approve(client, rid)
+    now = pairing.time.time()
+    monkeypatch.setattr(pairing.time, "time", lambda: now + 700)
+    assert _poll(client, rid).status_code == 404
