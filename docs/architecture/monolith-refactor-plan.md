@@ -80,7 +80,7 @@ Phase 0 exit gate ("every planned extraction has a destination owner") holds.
 | Domain | Lines | Coupling out/in | Destination | Phase |
 |---|---:|---|---|---|
 | Transcript nav: pins, scroll, jump, copy, share | 564 | 14 / 40 | new `chat_transcript_nav.js` (`CuttleChatTranscriptNav`) | 1D |
-| Subagent launchers/orbs | 196 | 4 / 8 | existing `chat_subagent_fleet.js` | 1E |
+| Subagent launchers/orbs | 196 | 4 / 8 | new `chat_subagent_launchers.js` over the pure `chat_subagent_fleet.js` | 1E |
 | Composer state: drafts, attachments, prompt history, enhance | 751 | 32 / 48 | existing `chat_composer.js`, `chat_attachments.js`, `chat_prompt_history.js` (finish half-done delegation) | 2D |
 | Context gauge | 402 | 6 / 3 | new `chat_context_gauge.js` (`CuttleChatContextGauge`) | 2E |
 | Chat project binding: cwd, pending changes, git push menu | 1,014 | 19 / 48 | existing `chat_project.js`; git push menu → existing `git/git_push_report.js` family | 3E |
@@ -151,7 +151,10 @@ The cleanest first extraction.
   - Journeys: speaker button, voice mode reply playback, stop on navigation.
 
 **1E — Subagent launchers and orbs** (196 lines, out 4 / in 8).
-- Moves into existing `chat_subagent_fleet.js`.
+- **Destination (revised in 1E):** new controller `chat_subagent_launchers.js`.
+  `chat_subagent_fleet.js` is a documented pure markup module (no DOM), and
+  the launchers mount DOM and hold the live list. So they follow the
+  pure-module-plus-controller pattern and call the fleet module for cards.
 - Verify with e2e `test_subagent_fleet_cards.py`.
 
 **1D — Transcript navigation** (564 lines, out 14 / in 40).

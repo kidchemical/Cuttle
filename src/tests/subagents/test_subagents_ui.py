@@ -1,8 +1,9 @@
-"""Node checks for sub-agent launcher HTML + history nesting helpers."""
+"""Sub-agent launchers (chat_subagent_launchers.js) + history nesting helpers."""
 
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -16,6 +17,8 @@ node_only = pytest.mark.skipif(
 CHAT_JS = Path(__file__).resolve().parents[2] / "web" / "js" / "chat/chat_page.js"
 ACTIVITY_JS = Path(__file__).resolve().parents[2] / "web" / "js" / "chat/chat_activity.js"
 FLEET_JS = Path(__file__).resolve().parents[2] / "web" / "js" / "chat/chat_subagent_fleet.js"
+LAUNCHERS_JS = Path(__file__).resolve().parents[2] / "web" / "js" / "chat/chat_subagent_launchers.js"
+MEDIA_JS = Path(__file__).resolve().parents[2] / "web" / "js" / "chat/chat_media.js"
 CHAT_CSS = Path(__file__).resolve().parents[2] / "web" / "css" / "chat_page.css"
 _HELPERS = (
     "toAuthDbSessionId",
@@ -23,9 +26,6 @@ _HELPERS = (
     "formatChatDisplayId",
     "escapeHtmlInline",
     "parseChatHandleToken",
-    "normalizeSubagentList",
-    "renderSubagentLaunchersHtml",
-    "parentRefsFromOpts",
     "historyEntryParentId",
     "historyLookupNestedEntry",
     "nestHistoryEntries",
@@ -55,6 +55,13 @@ def _extract_function(src: str, name: str) -> str:
 _DRIVER = r"""
 %s
 const assert = require('assert');
+// Launchers come from their owner; the page supplies handle parsing + escaping.
+const launchers = require(process.env.LAUNCHERS_JS).create({
+  win: { document: {} }, escapeHtmlInline, parseChatHandleToken,
+  avatarHtml: () => '', chipCategoryClass: () => '' });
+const normalizeSubagentList = launchers.normalizeList;
+const renderSubagentLaunchersHtml = launchers.renderHtml;
+const parentRefsFromOpts = launchers.parentRefs;
 
 const list = normalizeSubagentList([
   { handle: 'CH-000540', label: 'Chef A', agent: 'cursor', generating: true },
@@ -134,25 +141,18 @@ def test_subagent_ui_helpers():
         text=True,
         encoding="utf-8",
         errors="replace",
+        env={**os.environ, "LAUNCHERS_JS": str(LAUNCHERS_JS)},
     )
     assert proc.returncode == 0, proc.stderr or proc.stdout
 
 
+# Page-owned deps the launcher controller receives; the controller is the owner.
 _ORB_HELPERS = (
     "escapeHtmlInline",
     "formatChatDisplayId",
     "parseChatHandleToken",
-    "normalizeSubagentList",
     "slashCommandChipCategoryClass",
-    "fleetAgentChipHtml",
-    "renderSubagentLaunchersHtml",
-    "mountSubagentLaunchers",
     "profileAvatarInnerHtml",
-    "rememberSubagentOrbList",
-    "paintSubagentOrbs",
-    "syncSubagentOrbs",
-    "clearSubagentOrbs",
-    "mountLiveSubagentBadges",
 )
 
 def test_subagent_live_orbs_and_badges():
@@ -175,8 +175,13 @@ def test_subagent_live_orbs_and_badges():
                              '<div class="message-footer"></div></div></div>')
             page.add_script_tag(content=ACTIVITY_JS.read_text(encoding="utf-8"))
             page.add_script_tag(content=FLEET_JS.read_text(encoding="utf-8"))
-            page.add_script_tag(content="let _subagentOrbList = [];\n" + blob)
-            page.evaluate("rows => syncSubagentOrbs(rows)", [first])
+            page.add_script_tag(content=MEDIA_JS.read_text(encoding="utf-8"))
+            page.add_script_tag(content=LAUNCHERS_JS.read_text(encoding="utf-8"))
+            page.add_script_tag(content=blob + "\nwindow.launchers = CuttleChatSubagentLaunchers.create({"
+                                "win: window, escapeHtmlInline, parseChatHandleToken,"
+                                " avatarHtml: profileAvatarInnerHtml,"
+                                " chipCategoryClass: slashCommandChipCategoryClass});")
+            page.evaluate("rows => launchers.syncLive(rows)", [first])
             group = page.locator(".subagent-launchers")
             assert group.count() == 1
             assert page.locator(".subagent-launchers + .message-footer").count() == 1
@@ -186,13 +191,13 @@ def test_subagent_live_orbs_and_badges():
             assert "Chef A" in group.inner_text()
             page.evaluate("window.initialGroup = document.querySelector('.subagent-launchers');"
                           "window.initialCard = initialGroup.firstElementChild;")
-            page.evaluate("rows => syncSubagentOrbs(rows)", [first, second])
+            page.evaluate("rows => launchers.syncLive(rows)", [first, second])
             assert group.count() == 1
             assert group.locator('[data-chat-handle="CH-000541"]').count() == 1
             assert group.evaluate("el => el === window.initialGroup")
             assert group.locator('[data-chat-handle="CH-000540"]').evaluate(
                 "el => el === window.initialCard")
-            page.evaluate("clearSubagentOrbs()")
+            page.evaluate("launchers.clearLive()")
             assert group.count() == 0
         finally:
             browser.close()
@@ -201,12 +206,14 @@ def test_subagent_live_orbs_and_badges():
 _FLEET_CHIP_HELPERS = (
     "escapeHtmlInline",
     "slashCommandChipCategoryClass",
-    "fleetAgentChipHtml",
 )
 
 _FLEET_CHIP_DRIVER = r"""
 %s
 const assert = require('assert');
+const fleetAgentChipHtml = require(process.env.LAUNCHERS_JS).create({
+  win: { document: {} }, escapeHtmlInline, parseChatHandleToken: () => null,
+  avatarHtml: () => '', chipCategoryClass: slashCommandChipCategoryClass }).agentChipHtml;
 globalThis.CuttleChatSlash = { SLASH_COMMANDS: [
   { prefix: '/cursor', label: 'Cursor Agent' },
   { prefix: '/muse', label: 'Muse Code' },
@@ -235,6 +242,7 @@ def test_fleet_agent_chip_uses_shared_slash_chip():
         text=True,
         encoding="utf-8",
         errors="replace",
+        env={**os.environ, "LAUNCHERS_JS": str(LAUNCHERS_JS)},
     )
     assert proc.returncode == 0, proc.stderr or proc.stdout
 
@@ -256,19 +264,23 @@ def test_subagent_markup_present():
     js = CHAT_JS.read_text(encoding="utf-8")
     css = CHAT_CSS.read_text(encoding="utf-8")
     fleet_js = FLEET_JS.read_text(encoding="utf-8")
-    assert "typing-subagent-orbs" not in js
-    assert "typing-subagent-orb" not in js
-    assert "typingOrbitMiniHtml" not in js
+    launchers_js = LAUNCHERS_JS.read_text(encoding="utf-8")
+    for src in (js, launchers_js):
+        assert "typing-subagent-orbs" not in src
+        assert "typing-subagent-orb" not in src
+        assert "typingOrbitMiniHtml" not in src
+        assert "typing-subagent-label" not in src
     assert "typing-orbit--fleet" in fleet_js
-    assert "syncSubagentOrbs" in js
-    assert "paintSubagentOrbs" in js
-    assert "clearSubagentOrbs" in js
-    assert "mountLiveSubagentBadges" in js
-    assert "typing-subagent-label" not in js
+    # Launchers + live badges are owned by the controller; the page delegates.
+    assert "subagentLaunchers.syncLive(" in js
+    assert "subagentLaunchers.paintLive()" in js
+    assert "subagentLaunchers.clearLive()" in js
+    assert "subagentLaunchers.mountForMessage(" in js
+    assert "function mountLiveSubagentBadges(" in launchers_js
+    assert "function parentRefsFromOpts(" in launchers_js
+    assert "function mountSubagentLaunchers(" in launchers_js
     assert "is-parent-speaker" in js
-    assert "parentRefsFromOpts" in js
     assert "applySessionIdentity" in js
-    assert "mountSubagentLaunchers" in js
     assert "toggleHistorySubagentGroup" in js
     assert "history-subagent-group" in js
     assert "history-subagent-toggle" in js
