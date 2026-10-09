@@ -95,15 +95,17 @@ def get_mobile_token() -> str:
     """
     Shared secret token required by the phone to connect and reply.
     Set CUTTLE_MOBILE_TOKEN in environment (or <home>/.env loaded by daemon).
+    An unset or blank secret disables companion token authentication.
     """
     token = (os.environ.get("CUTTLE_MOBILE_TOKEN") or "").strip()
-    return token if token else "dev-local-token"
+    return token
 
 
 def verify_mobile_token(token: Optional[str]) -> bool:
-    if not token:
+    expected = get_mobile_token()
+    if not expected or not token:
         return False
-    return secrets.compare_digest(str(token), get_mobile_token())
+    return secrets.compare_digest(str(token), expected)
 
 
 @dataclass(frozen=True)

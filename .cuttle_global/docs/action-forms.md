@@ -62,6 +62,13 @@ so the user is never locked into the listed options. Agents must NOT add their
 own "Other / custom" option — the renderer owns it. Side-effect and watch cards
 never get the custom row. Per-card opt-out: `"allow_custom": false`.
 
+**Multi-question cards answer per question.** A `form` card (2+ questions) does
+not get the card-wide row; every `radio` / `checkboxes` / `select` question
+carries its own trailing `Other…` option, and picking it reveals that
+question's `Or type your own answer…` box. Typed text replaces the answer for
+that question only (checkboxes append to the picked list); `plaintext` /
+`textarea` / `checkbox` questions are already free-text.
+
 **One Q&A card per reply.** Each `resume` card wakes the agent on its own click,
 so a second card in the same reply is orphaned the moment the first is answered.
 The server (`rewrite_action_forms` → `merge_qa_resume_specs`) folds 2+ Q&A resume

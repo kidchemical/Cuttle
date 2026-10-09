@@ -342,6 +342,20 @@
         }).join('');
     }
 
+    // Sentinel option value for a question's own free-text answer. Picked
+    // from the option list, it reveals the per-question input rendered by
+    // `otherInputHtml`; the controller swaps the sentinel for the typed
+    // text when it collects fields.
+    const OTHER_VALUE = '__other__';
+
+    /** Per-question custom answer box (radio / checkboxes / select). */
+    function otherInputHtml(escapedFid, dis) {
+        // Field ids are escaped by the renderer, whose esc is injected.
+        return `<div class="form-other" data-other-wrap="${escapedFid}" hidden>` +
+            `<input class="form-input" type="text" data-field-custom="${escapedFid}"` +
+            ` placeholder="Or type your own answer…"${dis || ''}></div>`;
+    }
+
     /**
      * Card HTML + render planning (moved from the page, plan C1).
      * Pure: same explicit inputs in, same markup out. `parts` carries
@@ -484,13 +498,14 @@
                 if (type === 'select') {
                     const opts = Array.isArray(f.options) ? f.options : [];
                     return `<div class="form-field"><label class="form-label">${label}${req}</label>` +
-                        `<select class="form-select" data-field-id="${fid}" ${f.required ? 'required' : ''}${dis}>` +
+                        `<select class="form-select" data-field-id="${fid}" data-other-toggle="${fid}" ${f.required ? 'required' : ''}${dis}>` +
                         opts.map((o) => {
                             const ov = esc(o.value ?? o.id ?? o);
                             const ol = esc(o.label ?? o.name ?? o.value ?? o);
                             return `<option value="${ov}">${ol}</option>`;
                         }).join('') +
-                        `</select>${help}</div>`;
+                        `<option value="${OTHER_VALUE}">Other…</option>` +
+                        `</select>${otherInputHtml(fid, dis)}${help}</div>`;
                 }
                 if (type === 'radio') {
                     const opts = Array.isArray(f.options) ? f.options : [];
@@ -504,7 +519,8 @@
                             const checked = String(current) === String(o.value ?? o.id ?? o) ? ' checked' : '';
                             return `<label class="radio-item"><input type="radio" name="${group}" value="${ov}"${checked}${dis}><span>${ol}</span></label>`;
                         }).join('') +
-                        `</div>${help}</div>`;
+                        `<label class="radio-item radio-item--other"><input type="radio" name="${group}" value="${OTHER_VALUE}" data-other-toggle="${fid}"${dis}><span>Other…</span></label>` +
+                        `</div>${otherInputHtml(fid, dis)}${help}</div>`;
                 }
                 if (type === 'checkboxes') {
                     const opts = Array.isArray(f.options) ? f.options : [];
@@ -518,8 +534,10 @@
                             const checked = current.indexOf(raw) >= 0 ? ' checked' : '';
                             return `<label class="check-item"><input type="checkbox" value="${ov}"${checked}${dis}><span>${ol}</span></label>`;
                         }).join('') +
-                        `</div>${help}</div>`;
+                        `<label class="check-item check-item--other"><input type="checkbox" value="${OTHER_VALUE}" data-other-toggle="${fid}"${dis}><span>Other…</span></label>` +
+                        `</div>${otherInputHtml(fid, dis)}${help}</div>`;
                 }
+
                 if (type === 'checkbox' || type === 'toggle') {
                     const checked = !!(f.value === true || f.value === 'true' || f.value === 1 || f.value === '1');
                     const rawLine = String(f.line || f.body || '');
@@ -548,9 +566,12 @@
 
         // Q&A cards that resume the agent always offer a free-text custom
         // answer, so the user is never locked into the listed options.
+        // Single-question modes only (choice/multi): a `form` card asks
+        // several questions at once and gives each one its own custom box,
+        // so one card-wide row there would answer the wrong question.
         // Side-effect / watch cards never get one. Opt out per card with
         // "allow_custom": false.
-        const customAllowed = isQaForm && !!(spec && spec.resume)
+        const customAllowed = isQaForm && mode !== 'form' && !!(spec && spec.resume)
             && (!spec || spec.allow_custom === undefined || spec.allow_custom === null
                 || (spec.allow_custom !== false && spec.allowCustom !== false));
         if (customAllowed) {
@@ -626,6 +647,7 @@
         renderActionFormCardHtml,
         renderWatchBarsHtml,
         renderWatchGridHtml,
+        OTHER_VALUE,
         watchGroupColour,
         isExplicitActionFormCancelOption,
         actionFormHasSideEffect,

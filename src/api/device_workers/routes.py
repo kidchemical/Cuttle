@@ -164,24 +164,13 @@ def enroll_request_approve(request_id: str):
     denied = _ui_operator_or_401()
     if denied:
         return denied
-    existing = enroll_requests.get_request(request_id)
-    if not existing:
-        return jsonify({"success": False, "error": "not found"}), 404
-    if existing.get("status") != "pending":
-        return jsonify({"success": True, "request": existing})
-    row = enroll_requests.decide(request_id, "approve")
-    store = get_store()
     try:
-        enrolled = store.enroll_device(
-            worker_id=str(existing.get("worker_id") or ""),
-            hostname=str(existing.get("hostname") or ""),
-            remote_addr=str(existing.get("remote_addr") or ""),
-            rotate=store.is_enrolled(str(existing.get("worker_id") or "")),
-        )
+        row = enroll_requests.decide(request_id, "approve")
     except ValueError as e:
         return jsonify({"success": False, "error": str(e)}), 400
-    enroll_requests.attach_token(request_id, str(enrolled.get("token") or ""))
-    return jsonify({"success": True, "request": enroll_requests.get_request(request_id)})
+    if not row:
+        return jsonify({"success": False, "error": "not found"}), 404
+    return jsonify({"success": True, "request": row})
 
 
 @workers_bp.route("/enroll-requests/<request_id>/deny", methods=["POST"])

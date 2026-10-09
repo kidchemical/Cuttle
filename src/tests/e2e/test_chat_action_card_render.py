@@ -72,6 +72,7 @@ class CardWorld:
         ]
         self.next_id = 2
         self.replies = list(replies)
+        self.live = {"active": False, "generating": False, "status": None}
 
     def _append(self, role, content):
         row = {"id": self.next_id, "role": role, "content": content,
@@ -101,9 +102,7 @@ class CardWorld:
             return
         if path == "/api/chat-live-status":
             route.fulfill(status=200, content_type="application/json",
-                          body=json.dumps({"active": False,
-                                           "generating": False,
-                                           "status": None}))
+                          body=json.dumps({"success": True, **self.live}))
             return
         if path == "/api/auth/sessions":
             route.fulfill(status=200, content_type="application/json",
@@ -113,6 +112,60 @@ class CardWorld:
                                              "session_name": "Cards"}]}))
             return
         IsolatedAPI().handle(route)
+
+
+def test_question_card_history_keeps_later_reply_and_message_index(browser, static_server):
+    spec = {"mode": "form", "title": "Three questions", "resume": True,
+            "locked": True, "fields": [
+                {"id": "radio", "type": "radio", "options": ["Yes", "No"]},
+                {"id": "select", "type": "select", "options": ["Fast", "Slow"]},
+                {"id": "checks", "type": "checkboxes", "options": ["One", "Two"]},
+            ]}
+    world = CardWorld([])
+    world._append("assistant", "<cuttle_action_form>" + json.dumps(spec)
+                  + "</cuttle_action_form>")
+    world._append("user", "My answers")
+    world._append("assistant", "Saved final reply after the questions")
+    page, frame, errors = _open_card_chat(browser, static_server, world)
+    try:
+        from playwright.sync_api import expect
+        expect(frame.locator("#chatMessages .message")).to_have_count(4)
+        expect(frame.locator("#chatMessages .message.assistant").last).to_contain_text(
+            "Saved final reply after the questions")
+        expect(frame.locator(".message-nav-item")).to_have_count(4)
+        expect(frame.locator("[data-field-custom]")).to_have_count(3)
+        page.reload(wait_until="domcontentloaded")
+        expect(frame.locator("#chatMessages .message")).to_have_count(4)
+        expect(frame.locator(".message-nav-item")).to_have_count(4)
+        assert not errors
+    finally:
+        page.close()
+
+
+def test_working_bubble_recovers_after_saved_question_card(browser, static_server):
+    spec = {"mode": "form", "locked": True, "fields": [
+        {"id": "answer", "type": "radio", "options": ["Yes", "No"]}]}
+    world = CardWorld([])
+    world._append("assistant", "<cuttle_action_form>" + json.dumps(spec)
+                  + "</cuttle_action_form>")
+    world._append("user", "Keep working")
+    world.live = {"active": True, "generating": True, "status": "Agent is working"}
+    page, frame, errors = _open_card_chat(browser, static_server, world)
+    try:
+        from playwright.sync_api import expect
+        expect(frame.locator("#typing-indicator-remote")).to_be_visible()
+        expect(frame.locator("#typing-indicator-remote")).to_contain_text("Agent is working")
+        world._append("assistant", "Recovered completed reply")
+        world.live = {"active": False, "generating": False, "status": None}
+        # Use the production focus recovery hook to fetch the saved reply.
+        frame.locator("html").evaluate("() => window.dispatchEvent(new Event('focus'))")
+        expect(frame.locator("#chatMessages .message.assistant").last).to_contain_text(
+            "Recovered completed reply", timeout=15000)
+        expect(frame.locator("#typing-indicator-remote")).to_have_count(0)
+        expect(frame.locator(".message-nav-item")).to_have_count(4)
+        assert not errors
+    finally:
+        page.close()
 
 
 def _open_card_chat(browser, static_server, world):

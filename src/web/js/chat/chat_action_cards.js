@@ -40,6 +40,87 @@
 (function (root) {
     'use strict';
 
+    const OTHER_VALUE = '__other__';
+
+    /** Reveal/hide a question's custom box from its Other… control. */
+    function syncOtherInput(card, fid, on) {
+        const wrap = card.querySelector(`[data-other-wrap="${fid}"]`);
+        if (!wrap) return;
+        wrap.hidden = !on;
+        if (!on) {
+            const input = wrap.querySelector('[data-field-custom]');
+            if (input) input.value = '';
+        }
+    }
+
+    /** Wire every Other… control on the card (radio, checkbox, select). */
+    function bindOtherInputs(card, signal) {
+        card.querySelectorAll('[data-other-toggle]').forEach((ctl) => {
+            const fid = ctl.getAttribute('data-other-toggle');
+            if (!fid) return;
+            const isSelect = ctl.tagName === 'SELECT';
+            const handler = () => {
+                const on = isSelect
+                    ? String(ctl.value || '') === OTHER_VALUE
+                    : !!ctl.checked;
+                syncOtherInput(card, fid, on);
+            };
+            // A radio's change event only fires on the newly selected option.
+            // Observe the group so choosing a listed answer hides Other again.
+            const target = !isSelect && ctl.type === 'radio'
+                ? ctl.closest('[data-radio-group]') : ctl;
+            (target || ctl).addEventListener('change', handler, { signal });
+            handler();
+        });
+    }
+
+    /**
+     * Field answers for a `form` card, with each question's typed custom
+     * answer replacing the Other… sentinel it was picked with.
+     */
+    function collectFormFields(card) {
+        const fields = {};
+        card.querySelectorAll('[data-field-id]').forEach((el) => {
+            const fid = el.getAttribute('data-field-id');
+            if (!fid) return;
+            if (el.tagName === 'INPUT' && (el.type || '').toLowerCase() === 'checkbox') {
+                fields[fid] = !!el.checked;
+            } else {
+                fields[fid] = el.value ?? '';
+            }
+        });
+        card.querySelectorAll('[data-radio-group]').forEach((wrap) => {
+            const fid = wrap.getAttribute('data-radio-group');
+            if (!fid) return;
+            const chosen = wrap.querySelector('input[type="radio"]:checked');
+            fields[fid] = chosen ? chosen.value : '';
+        });
+        card.querySelectorAll('[data-checkbox-group]').forEach((wrap) => {
+            const fid = wrap.getAttribute('data-checkbox-group');
+            if (!fid) return;
+            fields[fid] = Array.from(wrap.querySelectorAll('input[type="checkbox"]:checked'))
+                .map((inp) => inp.value);
+        });
+        card.querySelectorAll('[data-field-custom]').forEach((el) => {
+            const fid = el.getAttribute('data-field-custom');
+            const text = String(el.value || '').trim();
+            if (!fid) return;
+            const wrap = el.closest('[data-other-wrap]');
+            const group = wrap && wrap.previousElementSibling;
+            const multi = !!(group && group.hasAttribute('data-checkbox-group'));
+            if (multi) {
+                const picked = (Array.isArray(fields[fid]) ? fields[fid] : [])
+                    .filter((v) => String(v) !== OTHER_VALUE);
+                if (text && picked.indexOf(text) < 0) picked.push(text);
+                fields[fid] = picked;
+                return;
+            }
+            if (text) fields[fid] = text;
+            else if (String(fields[fid] ?? '') === OTHER_VALUE) fields[fid] = '';
+        });
+        return fields;
+    }
+
 
     function mountCards(chatRoot, host) {
         if (!chatRoot || typeof chatRoot.querySelectorAll !== 'function'
@@ -515,28 +596,7 @@
                         return;
                     }
                     // form mode — collect fields
-                    const fields = {};
-                    card.querySelectorAll('[data-field-id]').forEach((el) => {
-                        const fid = el.getAttribute('data-field-id');
-                        if (!fid) return;
-                        if (el.tagName === 'INPUT' && (el.type || '').toLowerCase() === 'checkbox') {
-                            fields[fid] = !!el.checked;
-                        } else {
-                            fields[fid] = el.value ?? '';
-                        }
-                    });
-                    card.querySelectorAll('[data-radio-group]').forEach((wrap) => {
-                        const fid = wrap.getAttribute('data-radio-group');
-                        if (!fid) return;
-                        const chosen = wrap.querySelector('input[type="radio"]:checked');
-                        fields[fid] = chosen ? chosen.value : '';
-                    });
-                    card.querySelectorAll('[data-checkbox-group]').forEach((wrap) => {
-                        const fid = wrap.getAttribute('data-checkbox-group');
-                        if (!fid) return;
-                        fields[fid] = Array.from(wrap.querySelectorAll('input[type="checkbox"]:checked'))
-                            .map((inp) => inp.value);
-                    });
+                    const fields = collectFormFields(card);
                     let cardSpec = {};
                     try { cardSpec = JSON.parse(card.getAttribute('data-spec') || '{}') || {}; } catch (_) {}
                     if (!CuttleChatActionForms.actionFormHasSideEffect(cardSpec)) {
@@ -560,6 +620,10 @@
                 }, { signal: life.signal });
             }
 
+            // Per-question custom answers (form cards): each Other… option
+            // reveals the box for its own question.
+            bindOtherInputs(card, life.signal);
+
             const cancelBtn = card.querySelector('[data-action-form-cancel="1"]:not([data-action-form-option])');
             if (cancelBtn) {
                 cancelBtn.addEventListener('click', () => {
@@ -579,28 +643,7 @@
                         try { customInput.focus(); } catch (_) {}
                         return;
                     }
-                    const fields = {};
-                    card.querySelectorAll('[data-field-id]').forEach((el) => {
-                        const fid = el.getAttribute('data-field-id');
-                        if (!fid) return;
-                        if (el.tagName === 'INPUT' && (el.type || '').toLowerCase() === 'checkbox') {
-                            fields[fid] = !!el.checked;
-                        } else {
-                            fields[fid] = el.value ?? '';
-                        }
-                    });
-                    card.querySelectorAll('[data-radio-group]').forEach((wrap) => {
-                        const fid = wrap.getAttribute('data-radio-group');
-                        if (!fid) return;
-                        const chosen = wrap.querySelector('input[type="radio"]:checked');
-                        fields[fid] = chosen ? chosen.value : '';
-                    });
-                    card.querySelectorAll('[data-checkbox-group]').forEach((wrap) => {
-                        const fid = wrap.getAttribute('data-checkbox-group');
-                        if (!fid) return;
-                        fields[fid] = Array.from(wrap.querySelectorAll('input[type="checkbox"]:checked'))
-                            .map((inp) => inp.value);
-                    });
+                    const fields = collectFormFields(card);
                     const modeWrap = card.querySelector('[data-mode="multi"]');
                     if (modeWrap) {
                         const opts = [];

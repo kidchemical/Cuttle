@@ -8,6 +8,7 @@ import sqlite3
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -68,6 +69,22 @@ CREATE TABLE IF NOT EXISTS enrolled_devices (
     remote_addr TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_dw_enrolled_token ON enrolled_devices(token);
+
+CREATE TABLE IF NOT EXISTS enrollment_requests (
+    id TEXT PRIMARY KEY,
+    worker_id TEXT NOT NULL,
+    hostname TEXT NOT NULL DEFAULT '',
+    remote_addr TEXT NOT NULL DEFAULT '',
+    code TEXT NOT NULL,
+    secret_sha256 TEXT NOT NULL,
+    token TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL CHECK(status IN ('pending', 'approved', 'denied', 'expired')),
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL,
+    decided_at REAL,
+    CHECK(status != 'approved' OR token != '')
+);
+
 """
 
 
@@ -989,57 +1006,68 @@ class DeviceWorkerStore:
         rotate: bool = False,
     ) -> Dict[str, Any]:
         """Issue (or reuse) a per-device bearer token — no manual .env setup."""
+        with self.enrollment_transaction() as conn:
+            return self._enroll_device(
+                conn, worker_id=worker_id, hostname=hostname,
+                remote_addr=remote_addr, rotate=rotate,
+            )
+
+    @contextmanager
+    def enrollment_transaction(self):
+        """Serialize pairing and credential changes, with rollback on failure."""
+        with _lock:
+            conn = _connect(self.db_path)
+            try:
+                with conn:
+                    conn.execute("BEGIN IMMEDIATE")
+                    yield conn
+            finally:
+                conn.close()
+
+    def _enroll_device(
+        self, conn: sqlite3.Connection, *, worker_id: str,
+        hostname: str = "", remote_addr: str = "", rotate: bool = False,
+    ) -> Dict[str, Any]:
+        """Write a credential inside the caller's enrollment transaction."""
         import secrets
 
         wid = (worker_id or "").strip()
         if not wid:
             raise ValueError("worker_id required")
         now = time.time()
-        with _lock:
-            conn = _connect(self.db_path)
-            try:
-                row = conn.execute(
-                    "SELECT token, enrolled_at FROM enrolled_devices WHERE worker_id = ?",
-                    (wid,),
-                ).fetchone()
-                if row and not rotate:
-                    token = row["token"]
-                    enrolled_at = float(row["enrolled_at"])
-                    conn.execute(
-                        """
-                        UPDATE enrolled_devices SET
-                            hostname = ?, last_used = ?, remote_addr = ?
-                        WHERE worker_id = ?
-                        """,
-                        (hostname or "", now, remote_addr or "", wid),
-                    )
-                else:
-                    token = secrets.token_urlsafe(32)
-                    enrolled_at = now
-                    conn.execute(
-                        """
-                        INSERT INTO enrolled_devices (
-                            worker_id, token, hostname, enrolled_at, last_used, remote_addr
-                        ) VALUES (?, ?, ?, ?, ?, ?)
-                        ON CONFLICT(worker_id) DO UPDATE SET
-                            token = excluded.token,
-                            hostname = excluded.hostname,
-                            enrolled_at = excluded.enrolled_at,
-                            last_used = excluded.last_used,
-                            remote_addr = excluded.remote_addr
-                        """,
-                        (wid, token, hostname or "", enrolled_at, now, remote_addr or ""),
-                    )
-                conn.commit()
-                return {
-                    "worker_id": wid,
-                    "token": token,
-                    "hostname": hostname or "",
-                    "enrolled_at": enrolled_at,
-                    "rotated": bool(rotate or not row),
-                }
-            finally:
-                conn.close()
+        row = conn.execute(
+            "SELECT token, enrolled_at FROM enrolled_devices WHERE worker_id = ?",
+            (wid,),
+        ).fetchone()
+        if row and not rotate:
+            token = row["token"]
+            enrolled_at = float(row["enrolled_at"])
+            conn.execute(
+                "UPDATE enrolled_devices SET hostname = ?, last_used = ?, remote_addr = ? "
+                "WHERE worker_id = ?",
+                (hostname or "", now, remote_addr or "", wid),
+            )
+        else:
+            token = secrets.token_urlsafe(32)
+            enrolled_at = now
+            conn.execute(
+                """
+                INSERT INTO enrolled_devices (
+                    worker_id, token, hostname, enrolled_at, last_used, remote_addr
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(worker_id) DO UPDATE SET
+                    token = excluded.token,
+                    hostname = excluded.hostname,
+                    enrolled_at = excluded.enrolled_at,
+                    last_used = excluded.last_used,
+                    remote_addr = excluded.remote_addr
+                """,
+                (wid, token, hostname or "", enrolled_at, now, remote_addr or ""),
+            )
+        return {
+            "worker_id": wid, "token": token, "hostname": hostname or "",
+            "enrolled_at": enrolled_at, "rotated": bool(rotate or not row),
+        }
 
     def ensure_local_worker_token(self, worker_id: str, *, hostname: str = "") -> str:
         """Token for the host's own local worker loop (in-process, no HTTP).

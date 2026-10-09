@@ -120,9 +120,10 @@ def test_generate_chat_stream_emits_chat_complete():
     assert "hello from cursor" in data["response"]
 
 
-def test_mobile_poll_returns_queued_event():
+def test_mobile_poll_returns_queued_event(monkeypatch):
     from api import web_chat_api as wca
 
+    monkeypatch.setenv("CUTTLE_MOBILE_TOKEN", "configured-test-secret")
     token = mc.get_mobile_token()
     client = wca.app.test_client()
     empty = client.get(f"/api/mobile/poll?device_id=poll-phone&token={token}&timeout=0")
@@ -135,3 +136,55 @@ def test_mobile_poll_returns_queued_event():
     assert events and events[0]["type"] == "chat_complete"
     assert events[0]["response"] == "poll-hi"
 
+
+
+@pytest.mark.parametrize("configured", [None, "", "   "])
+def test_mobile_token_fails_closed_without_secret(monkeypatch, configured):
+    if configured is None:
+        monkeypatch.delenv("CUTTLE_MOBILE_TOKEN", raising=False)
+    else:
+        monkeypatch.setenv("CUTTLE_MOBILE_TOKEN", configured)
+    assert mc.get_mobile_token() == ""
+    for token in (None, "", "dev-local-token", "arbitrary"):
+        assert mc.verify_mobile_token(token) is False
+
+
+def test_mobile_token_accepts_only_configured_secret(monkeypatch):
+    monkeypatch.setenv("CUTTLE_MOBILE_TOKEN", " configured-test-secret ")
+    assert mc.verify_mobile_token("configured-test-secret") is True
+    assert mc.verify_mobile_token("dev-local-token") is False
+    assert mc.verify_mobile_token("wrong") is False
+
+
+@pytest.mark.parametrize("path", ["events", "poll", "reply"])
+def test_mobile_routes_reject_legacy_default_without_config(monkeypatch, path):
+    from api import web_chat_api as wca
+
+    # Import first: the bootstrap may load environment defaults.
+    monkeypatch.setenv("CUTTLE_MOBILE_TOKEN", "")
+    client = wca.app.test_client()
+    if path == "reply":
+        iid = mc.create_interaction(question="Test?", timeout_s=30)
+        response = client.post("/api/mobile/reply", json={
+            "token": "dev-local-token", "interaction_id": iid, "answer": "Yes",
+        })
+        assert mc._interactions[iid]["answered"] is False
+    else:
+        response = client.get(f"/api/mobile/{path}", query_string={
+            "device_id": "untrusted-phone", "token": "dev-local-token", "timeout": "0",
+        })
+        assert "untrusted-phone" not in mc._device_queues
+    assert response.status_code == 401
+
+
+def test_mobile_reply_with_configured_secret(monkeypatch):
+    from api import web_chat_api as wca
+
+    monkeypatch.setenv("CUTTLE_MOBILE_TOKEN", "configured-test-secret")
+    iid = mc.create_interaction(question="Test?", timeout_s=30)
+    response = wca.app.test_client().post("/api/mobile/reply", json={
+        "token": "configured-test-secret", "interaction_id": iid, "answer": "Yes",
+    })
+    assert response.status_code == 200
+    assert response.get_json()["success"] is True
+    assert mc.wait_for_interaction_answer(iid, timeout_s=1) == "Yes"
