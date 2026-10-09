@@ -323,5 +323,11 @@ def test_workspace_is_unpinnable_footer_utility():
         body = body[:body.index("\n}")]
         assert "HIDEABLE_FOOTER_IDS.has(id)" in body
     assert "rail_footer_hidden" in shell
+    # Hold-to-edit: footer hideable utilities get a remove badge like rail apps.
+    chrome = shell[shell.index("function ensureRailEditChrome"):]
+    chrome = chrome[:chrome.index("\n}\n")]
+    assert ".rail-footer .rail-item[data-id]" in chrome
+    assert "rail-item-removable" in chrome
     css = (REPO / "src/web/css/app_shell.css").read_text(encoding="utf-8")
     assert ".rail-footer .rail-item[hidden]" in css
+    assert ".rail-footer .rail-item-removable .rail-item-remove" in css

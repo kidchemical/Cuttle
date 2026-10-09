@@ -1852,6 +1852,15 @@ body.light-mode .rail-logo-clickable[data-tooltip]::after {
     display: flex;
 }
 
+/* Hideable footer utilities (Workspace) get the same iOS-style remove badge. */
+.icon-rail.rail-editing .rail-footer .rail-item-removable .rail-item-remove {
+    display: flex;
+}
+
+.icon-rail.rail-editing .rail-footer .rail-item-removable {
+    animation: rail-jiggle 0.45s ease-in-out infinite;
+}
+
 .icon-rail.rail-editing .rail-items .rail-item:hover::after {
     opacity: 0;
 }
@@ -1904,7 +1913,8 @@ body.light-mode .rail-logo-clickable[data-tooltip]::after {
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .icon-rail.rail-editing .rail-items .rail-item {
+    .icon-rail.rail-editing .rail-items .rail-item,
+    .icon-rail.rail-editing .rail-footer .rail-item-removable {
         animation: none;
     }
 }
