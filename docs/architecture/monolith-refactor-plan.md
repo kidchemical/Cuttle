@@ -472,6 +472,7 @@ a fix.
 | 1A | With the image menu open over the lightbox, one Escape closes both. The menu's capture-phase dismiss listener clears the menu before the lightbox keydown handler checks for it. Pinned by `test_chat_media_lightbox.py`. |
 | 1A | The lightbox element's own listeners (click, pointer, wheel, contextmenu) live on an element in the host body and close over the frame that built it. They are not signal-bound, so an unloaded chat frame stays reachable until another pane rebuilds the lightbox (`ensureCuttleLightbox` removes stale ones). Host window/document listeners are correctly torn down. |
 | 1A | `parseMdImageDest` had no callers anywhere; it was dropped instead of moved. |
+| 1C | Two near-duplicate `/api/chat/tts` request paths: `speakMessageFromButton` (bubble button) and `voiceSpeechForMessage` (voice mode). Both now live in `chat_tts.js`; they differ in their spoken-text fallback and voice-usage capture, so they were moved as-is rather than merged. |
 
 ## Appendix A: Tests that slice monolith functions by name
 
