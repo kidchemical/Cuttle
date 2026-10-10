@@ -2,11 +2,13 @@
    Cuttle Chat — composer / send-planning domain (chat_composer.js).
    Owner: send eligibility, keyboard-submit interpretation, sticky
    resolution after send, control-lane text classification, the
-   send-dispatch plan, chip composition, and the sticky/shared-composer
+   send-dispatch plan, chip composition, the sticky/shared-composer
    selection decisions (what to persist after send, what to restore on a
    chat switch, and how a server `composer_selection` snapshot merges
-   into session prefs) as pure decisions over explicit inputs: no
-   document, no window, no localStorage, no fetch here. Loaded before
+   into session prefs), the saved-draft key/save/restore decisions, and
+   the prompt-enhance (wand) click/request/response decisions as pure
+   decisions over explicit inputs: no document, no window, no
+   localStorage, no fetch here. Loaded before
    chat_page.js; the page owns textarea DOM, focus/caret, event
    wiring, draft persistence, fetch/SSE initiation, streaming,
    history persistence, and message rendering, and calls into
@@ -277,6 +279,114 @@
     }
 
     /**
+     * Draft storage key. `sid` names the chat; a missing / `new` id falls
+     * back to the shell-scoped `newDraftId` (the page supplies it once).
+     */
+    function composerDraftKey(sid, newDraftId) {
+        const scoped = newDraftId != null && newDraftId !== '' ? newDraftId : 'new';
+        const key = sid != null && sid !== '' && sid !== 'new' ? String(sid) : scoped;
+        return `cuttle.composerDraft.${key}`;
+    }
+
+    /**
+     * Save plan for the composer text: a whitespace-only draft is removed,
+     * otherwise it is clipped to `max`. Returns { remove: true } or
+     * { remove: false, text }. The page owns localStorage IO.
+     */
+    function composerDraftSavePlan(text, max) {
+        const t = String(text ?? '');
+        if (!t.trim()) return { remove: true };
+        const cap = Number(max) > 0 ? Number(max) : t.length;
+        return { remove: false, text: t.length > cap ? t.slice(0, cap) : t };
+    }
+
+    /**
+     * Whether a saved draft is the shell-scoped `new` draft that should be
+     * claimed from the legacy shared `cuttle.composerDraft.new` key on its
+     * first restore. The page performs the storage move.
+     */
+    function composerDraftLegacyClaim(parts) {
+        const p = parts || {};
+        return p.stored == null && p.keySid === 'new' && p.newDraftId !== 'new';
+    }
+
+    /**
+     * Restore decision for a saved draft. Soft restore (force falsy) never
+     * clobbers text the user already typed this tick, and treats an
+     * already-equal value as a no-op. Returns
+     * { apply, unchanged, clearOther }.
+     */
+    function composerDraftRestoreDecision(parts) {
+        const p = parts || {};
+        const current = String(p.currentValue ?? '');
+        const text = String(p.text ?? '');
+        if (!p.force && current.trim() && !text) return { apply: false, unchanged: false };
+        if (!p.force && current === text) return { apply: false, unchanged: true };
+        return { apply: true, unchanged: false, clearOther: true };
+    }
+
+    // --- Prompt enhance (wand) -------------------------------------------------
+
+    /** Per-composer undo snapshots: { original, enhanced } or null. */
+    function createEnhanceState() {
+        return { chat: null, welcome: null };
+    }
+
+    /**
+     * Wand click decision. `parts` = { state, currentValue, inFlight }.
+     * Returns { action: 'busy' | 'revert' | 'empty' | 'request' }; `revert`
+     * carries { text }, `request` carries { prompt }. The page owns DOM,
+     * fetch and toasts.
+     */
+    function enhanceClickPlan(parts) {
+        const p = parts || {};
+        if (p.inFlight) return { action: 'busy' };
+        const current = String(p.currentValue ?? '');
+        const state = p.state || null;
+        if (state && current === state.enhanced) {
+            return { action: 'revert', text: String(state.original ?? '') };
+        }
+        const prompt = current.trim();
+        if (!prompt) return { action: 'empty' };
+        return { action: 'request', prompt };
+    }
+
+    /** Request body for `POST /api/prompt/enhance`. */
+    function enhanceRequestPayload(parts) {
+        const p = parts || {};
+        return {
+            prompt: String(p.prompt || ''),
+            project: String(p.projectName || ''),
+            context: Array.isArray(p.context) ? p.context : [],
+        };
+    }
+
+    /**
+     * Response decision. `parts` = { ok, status, data, originalPrompt }.
+     * Returns { action: 'error'|'no-change'|'apply', error?, enhanced?,
+     * source? }.
+     */
+    function enhanceResponsePlan(parts) {
+        const p = parts || {};
+        const data = p.data;
+        if (!p.ok || !data || !data.success) {
+            const err = (data && data.error) || `Enhance failed (HTTP ${p.status})`;
+            return { action: 'error', error: err };
+        }
+        const enhanced = String(data.prompt || '').trim();
+        const originalPrompt = String(p.originalPrompt || '');
+        if (!enhanced || data.unchanged || enhanced === originalPrompt) {
+            return { action: 'no-change' };
+        }
+        return { action: 'apply', enhanced, source: data.source || '' };
+    }
+
+    /** Editing after a rewrite invalidates the undo target. */
+    function enhanceInputInvalidated(state, currentValue) {
+        return !!(state && currentValue !== state.enhanced);
+    }
+
+    /**
      * Session-prefs patch adopted from a server `composer_selection`
      * snapshot. The saved draft merges through draftWithSharedAgent so a
      * sticky chip already staged locally is not duplicated.
@@ -303,6 +413,15 @@
         stickySessionSelection,
         stickyChipsToRestore,
         composerDraftRestorePlan,
+        composerDraftKey,
+        composerDraftSavePlan,
+        composerDraftLegacyClaim,
+        composerDraftRestoreDecision,
+        createEnhanceState,
+        enhanceClickPlan,
+        enhanceRequestPayload,
+        enhanceResponsePlan,
+        enhanceInputInvalidated,
         sharedSelectionPrefsPatch,
     };
 

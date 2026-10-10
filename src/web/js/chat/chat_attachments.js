@@ -1,8 +1,9 @@
 /* ================================================================
    Cuttle Chat — attachments frontend domain (chat_attachments.js).
    Owner: attachment classification, normalization, history-note
-   parsing, upload-result interpretation, and outbound note
-   formatting as pure decisions over explicit inputs: no document,
+   parsing, upload-result interpretation, outbound note formatting, and
+   the pure pending-list transitions (append, remove, take-clear) as
+   pure decisions over explicit inputs: no document,
    no window, no localStorage, no fetch here. Loaded before
    chat_page.js; the page owns pending-attachment state, persistence
    IO, chip rendering, upload transport, message HTML rendering, and
@@ -123,6 +124,18 @@
     }
 
     /**
+     * Take (copy) the pending list and clear it, for a send that consumes
+     * the staged rows. Returns { taken, remaining } — the page applies
+     * `remaining` back to its state and persists the clear.
+     */
+    function takePendingAttachments(list) {
+        return {
+            taken: Array.isArray(list) ? list.slice() : [],
+            remaining: [],
+        };
+    }
+
+    /**
      * Message-HTML branch for one item: thumbnail button (image + URL),
      * file link (URL only), or plain span (no URL — e.g. legacy rows).
      * The page still builds the HTML (escaping + download URLs live in
@@ -160,6 +173,7 @@
         requestAttachmentPayload,
         addAttachmentsToPending,
         removeAttachmentAt,
+        takePendingAttachments,
         messageAttachmentKind,
         uploadResultPlan,
     };

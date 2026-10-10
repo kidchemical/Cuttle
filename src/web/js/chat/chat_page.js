@@ -872,9 +872,9 @@
 
     const COMPOSER_DRAFT_MAX = 50000;
     let composerDraftControlsReady = false;
+    // Owned by chat_composer.js — shell-scoped `new` draft id in, key out.
     function _draftKey(sid) {
-        const key = sid != null && sid !== '' && sid !== 'new' ? sid : newComposerDraftId;
-        return `cuttle.composerDraft.${key}`;
+        return CuttleChatComposer.composerDraftKey(sid, newComposerDraftId);
     }
     function _activeComposerTextarea() {
         const welcome = document.getElementById('welcomeScreen');
@@ -921,15 +921,15 @@
         const keySid = sid != null && sid !== '' ? sid : (currentSessionId || 'new');
         saveComposerDraftControls(keySid, composerKey);
         try {
-            const text = _readComposerDraftText();
-            if (!text.trim()) {
-                localStorage.removeItem(_draftKey(keySid));
+            // Owned by chat_composer.js — whitespace/empty + clip decision.
+            const plan = CuttleChatComposer.composerDraftSavePlan(
+                _readComposerDraftText(), COMPOSER_DRAFT_MAX);
+            const key = _draftKey(keySid);
+            if (plan.remove) {
+                localStorage.removeItem(key);
                 return;
             }
-            const clipped = text.length > COMPOSER_DRAFT_MAX
-                ? text.slice(0, COMPOSER_DRAFT_MAX)
-                : text;
-            localStorage.setItem(_draftKey(keySid), clipped);
+            localStorage.setItem(key, plan.text);
         } catch (_) {}
     }
     function clearComposerDraft(sid) {
@@ -949,7 +949,10 @@
             const key = _draftKey(keySid);
             let stored = localStorage.getItem(key);
             // Claim the legacy shared welcome draft once on its first restore.
-            if (stored == null && keySid === 'new' && newComposerDraftId !== 'new') {
+            // Owned by chat_composer.js — claim predicate.
+            if (CuttleChatComposer.composerDraftLegacyClaim({
+                stored, keySid, newDraftId: newComposerDraftId,
+            })) {
                 stored = localStorage.getItem('cuttle.composerDraft.new');
                 if (stored != null) {
                     localStorage.setItem(key, stored);
@@ -967,17 +970,24 @@
         // Soft restore (boot race): don't clobber text the user already typed
         // this tick when the stored draft is empty. Session switch / New Chat
         // pass force:true so an empty destination clears leftover text.
-        if (!force && String(el.value || '').trim() && !text) return;
-        if (!force && String(el.value || '') === text) {
-            if (welcomeOn) autoResizeWelcomeTextarea();
-            else autoResizeTextarea();
+        // Owned by chat_composer.js — restore decision.
+        const decision = CuttleChatComposer.composerDraftRestoreDecision({
+            force, currentValue: el.value, text,
+        });
+        if (!decision.apply) {
+            if (decision.unchanged) {
+                if (welcomeOn) autoResizeWelcomeTextarea();
+                else autoResizeTextarea();
+            }
             return;
         }
         el.value = text;
         // Clear the inactive composer so prior-session text cannot leak when
         // the splash and bottom dock swap.
-        const other = welcomeOn ? chatEl : welcomeEl;
-        if (other && other !== el) other.value = '';
+        if (decision.clearOther) {
+            const other = welcomeOn ? chatEl : welcomeEl;
+            if (other && other !== el) other.value = '';
+        }
         try {
             if (welcomeOn) autoResizeWelcomeTextarea();
             else autoResizeTextarea();
@@ -1464,9 +1474,10 @@
     }
 
     function takePendingAttachments() {
-        const copy = pendingAttachments.slice();
+        // Owned by chat_attachments.js — copy-then-clear decision.
+        const plan = CuttleChatAttachments.takePendingAttachments(pendingAttachments);
         clearPendingAttachments();
-        return copy;
+        return plan.taken;
     }
 
     // Owned by chat_attachments.js — thin adapter.
@@ -1617,7 +1628,7 @@
     }
 
     /** Wand button state per composer: lets a second click undo the rewrite. */
-    const enhanceState = { chat: null, welcome: null };
+    const enhanceState = CuttleChatComposer.createEnhanceState();
     let enhanceInFlight = false;
 
     function recentMessagesForEnhance(limit = 4) {
@@ -1638,13 +1649,17 @@
     }
 
     async function enhanceComposerPrompt(key, btn, textarea) {
-        if (enhanceInFlight) return;
         const toast = window.showToast || function () {};
-        const state = enhanceState[key];
-        const current = textarea.value || '';
+        // Owned by chat_composer.js — click decision (busy / revert / empty / request).
+        const click = CuttleChatComposer.enhanceClickPlan({
+            state: enhanceState[key],
+            currentValue: textarea.value,
+            inFlight: enhanceInFlight,
+        });
+        if (click.action === 'busy') return;
 
-        if (state && current === state.enhanced) {
-            textarea.value = state.original;
+        if (click.action === 'revert') {
+            textarea.value = click.text;
             enhanceState[key] = null;
             btn.classList.remove('is-enhanced');
             btn.title = 'Enhance prompt (rewrite with AI)';
@@ -1655,13 +1670,14 @@
             return;
         }
 
-        const prompt = current.trim();
-        if (!prompt) {
+        if (click.action === 'empty') {
             toast('Type a prompt first', 'info');
             textarea.focus();
             return;
         }
 
+        const current = textarea.value || '';
+        const prompt = click.prompt;
         enhanceInFlight = true;
         btn.classList.add('is-busy');
         btn.disabled = true;
@@ -1670,11 +1686,11 @@
                 method: 'POST',
                 credentials: 'include',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
+                body: JSON.stringify(CuttleChatComposer.enhanceRequestPayload({
                     prompt,
-                    project: (currentProject && currentProject.name) || '',
+                    projectName: (currentProject && currentProject.name) || '',
                     context: recentMessagesForEnhance(),
-                }),
+                })),
             });
             let data = null;
             try {
@@ -1682,16 +1698,22 @@
             } catch (_) {
                 data = null;
             }
-            if (!resp.ok || !data || !data.success) {
-                const err = (data && data.error) || `Enhance failed (HTTP ${resp.status})`;
-                toast(err, 'error');
+            // Owned by chat_composer.js — response decision (error / no-change / apply).
+            const plan = CuttleChatComposer.enhanceResponsePlan({
+                ok: resp.ok,
+                status: resp.status,
+                data,
+                originalPrompt: prompt,
+            });
+            if (plan.action === 'error') {
+                toast(plan.error, 'error');
                 return;
             }
-            const enhanced = String(data.prompt || '').trim();
-            if (!enhanced || data.unchanged || enhanced === prompt) {
+            if (plan.action === 'no-change') {
                 toast('Prompt already looks clear', 'info');
                 return;
             }
+            const enhanced = plan.enhanced;
             enhanceState[key] = { original: current, enhanced };
             textarea.value = enhanced;
             btn.classList.add('is-enhanced');
@@ -1699,7 +1721,7 @@
             if (key === 'chat') autoResizeTextarea(); else autoResizeWelcomeTextarea();
             textarea.focus();
             textarea.setSelectionRange(enhanced.length, enhanced.length);
-            toast(`Prompt enhanced${data.source ? ' (' + data.source + ')' : ''} — click the wand to undo`, 'success');
+            toast(`Prompt enhanced${plan.source ? ' (' + plan.source + ')' : ''} — click the wand to undo`, 'success');
         } catch (e) {
             toast(`Enhance failed: ${e && e.message ? e.message : e}`, 'error');
         } finally {
@@ -1724,8 +1746,8 @@
             });
             // Editing after a rewrite means the undo target is stale.
             textarea.addEventListener('input', () => {
-                const state = enhanceState[key];
-                if (state && textarea.value !== state.enhanced) {
+                // Owned by chat_composer.js — undo staleness decision.
+                if (CuttleChatComposer.enhanceInputInvalidated(enhanceState[key], textarea.value)) {
                     enhanceState[key] = null;
                     btn.classList.remove('is-enhanced');
                     btn.title = 'Enhance prompt (rewrite with AI)';

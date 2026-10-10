@@ -202,6 +202,7 @@ const fs = require('fs');
 const SRC = fs.readFileSync(process.env.CHAT_PAGE_JS, 'utf-8');
 const span = (s, e) => SRC.slice(SRC.indexOf(s), SRC.indexOf(e, SRC.indexOf(s)));
 const CuttleChatComposer = require(process.env.MOD_JS);
+const CuttleChatAttachments = require(process.env.MOD_ATT);
 
 async function scenario(cfg) {
   const calls = { take: 0, dismiss: 0, steer: 0, enqueue: 0,
@@ -276,6 +277,7 @@ def _run_send_scenarios():
         ["node", "-e", SEND_HARNESS],
         capture_output=True, text=True, encoding="utf-8", timeout=30,
         env={"PATH": os.environ["PATH"], "MOD_JS": str(MOD_JS),
+             "MOD_ATT": str(REPO_ROOT / "src" / "web" / "js" / "chat/chat_attachments.js"),
              "CHAT_PAGE_JS": str(CHAT_PAGE_JS),
              "MOD_FQ": str(REPO_ROOT / "src" / "web" / "js" / "chat/chat_followup_queue.js")},
     )
