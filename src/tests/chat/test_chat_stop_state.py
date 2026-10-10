@@ -166,7 +166,8 @@ globalThis.CuttleStopState = require(process.env.MOD_SS);
 const stopState = CuttleStopState.createStopState();
 globalThis.CuttleChatGeneration = require(process.env.MOD_GEN);
 const generation = CuttleChatGeneration.createGenerationState();
-let currentSessionId = 's1';
+const CuttleChatSession = require(process.env.MOD_SESSION);
+const session = CuttleChatSession.create(); session.adopt('s1');
 let inFlightUserMessage = null;
 let activeRequestController = null;
 let activeEventSource = null;
@@ -202,7 +203,7 @@ function isProjectShellTurn() { return false; }
 async function requestServerCancelCurrentRun(o) { fx.push(['cancel', o.cancelJobs, o.jobIds]); return {}; }
 function syncComposerStopWithWatch() {}
 function scheduleFollowupDrain(ms) { fx.push(['drain', ms]); }
-function authSessionIdForRequest() { return currentSessionId; }
+function authSessionIdForRequest() { return session.current(); }
 // ---- the REAL page bodies under test (9A-rewired: needs the guard) ----
 globalThis.CuttleTurnGuard = require(process.env.MOD_TG);
 let turnGeneration = CuttleTurnGuard.createGeneration();
@@ -270,6 +271,7 @@ def _run_adapter():
         capture_output=True, text=True, encoding="utf-8", timeout=60,
         env={"PATH": os.environ["PATH"], "CHAT_PAGE_JS": str(CHAT_PAGE_JS),
              "MOD_TG": str(REPO_ROOT / "src" / "web" / "js" / "chat/chat_turn_guard.js"),
+             "MOD_SESSION": str(REPO_ROOT / "src" / "web" / "js" / "chat/chat_session.js"),
              "MOD_SS": str(MOD_SS),
              "MOD_GEN": str(MOD_GEN),
              "MOD_FQ": str(REPO_ROOT / "src" / "web" / "js" / "chat/chat_followup_queue.js")},

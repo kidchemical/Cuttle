@@ -21,6 +21,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 CHAT_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_page.js"
 CHAT_PROJECT_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_project.js"
 CHAT_ACTIVITY_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_activity.js"
+CHAT_SESSION_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_session.js"
 SESSION_PREFS_JS = REPO_ROOT / "src" / "web" / "js" / "shared/session_prefs.js"
 CHAT_MUTATIONS_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_mutations.js"
 
@@ -122,7 +123,10 @@ let authSessions = [
     }},
 ];
 let projects = {json.dumps([CUTTLE, EP])};
-let currentSessionId = 204;
+// Session identity is owned by chat_session.js (the page reads session.current()).
+const CuttleChatSession = require({json.dumps(str(CHAT_SESSION_JS))});
+const session = CuttleChatSession.create();
+session.adopt(204);
 let currentProject = {json.dumps(CUTTLE)};
 let lastHydratedSessionProject = {{
     id: '204',

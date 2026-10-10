@@ -26,13 +26,13 @@ def test_input_card_submit_and_remove_update_title_history_and_space():
           <div id="chatMessages"><div class="cuttle-action-form" data-session-id="42" data-locked="0">
           <button data-action-form-submit="1">Submit</button></div></div>''')
         page.add_style_tag(path=str(WEB / 'css/chat_page.css'))
-        for asset in ['js/chat/chat_activity.js', 'js/chat/chat_action_forms.js', 'js/chat/chat_action_cards.js', 'js/spaces/spaces_activity.js']:
+        for asset in ['js/chat/chat_session.js', 'js/chat/chat_activity.js', 'js/chat/chat_action_forms.js', 'js/chat/chat_action_cards.js', 'js/spaces/spaces_activity.js']:
             page.add_script_tag(path=str(WEB / asset))
         page.evaluate('''() => { document.getElementById('chatMessages').innerHTML =
           CuttleChatActionForms.renderActionFormCardHtml({spec:{session_id:'42', mode:'choice',
             options:[{id:'yes',label:'Yes'}]}, formId:'question', esc:String}); }''')
         page.add_script_tag(content='''
-        const prefs = {}; const currentSessionId = '42';
+        const prefs = {}; const session = CuttleChatSession.create(); session.adopt('42');
         const getSessionPrefs = sid => prefs[sid] || null;
         const attentionPrefsFor = getSessionPrefs;
         const serverAttention = {get:()=>null};

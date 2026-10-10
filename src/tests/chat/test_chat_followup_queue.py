@@ -189,7 +189,9 @@ const sessionMutations = Mutations.create();
 const followupWriteField='followupWrite',followupClaimField='followupClaim';
 let followupQueue = CuttleFollowupQueue.createQueueState();
 let followupDrainTimer = null, editingFollowupId = null, editingFollowupWasPaused = false;
-let currentSessionId = 's1', generating = false, authSid = 's1';
+const CuttleChatSession = require(process.env.MOD_SESSION);
+const session = CuttleChatSession.create(); session.adopt('s1');
+let generating = false, authSid = 's1';
 let queueServer=[], revision=0, fail=false, editDuringWrite=false, writes=0;
 const prefs = {};
 function updateSessionPrefs(sid,p) { prefs[sid]={...prefs[sid],...p}; }
@@ -275,6 +277,7 @@ def _run_adapter():
         capture_output=True, text=True, encoding="utf-8", timeout=60,
         env={"PATH": os.environ["PATH"], "CHAT_PAGE_JS": str(CHAT_PAGE_JS),
              "MOD_ACT_JS": str(MOD_ACT_JS),
+             "MOD_SESSION": str(REPO_ROOT / "src" / "web" / "js" / "chat/chat_session.js"),
              "MOD_FQ": str(MOD_FQ)},
     )
     assert proc.returncode == 0, proc.stderr or proc.stdout

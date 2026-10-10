@@ -216,7 +216,8 @@ async function scenario(cfg) {
   cfg.queued.forEach((content) => CuttleFollowupQueue.enqueue(followupQueue,
     { content }, { now: () => 1, rand: () => 0.5 }));
   let sendDispatchGuard = false;
-  let currentSessionId = 'CH-duptest';
+  const CuttleChatSession = require(process.env.MOD_SESSION);
+  const session = CuttleChatSession.create(); session.adopt('CH-duptest');
   const input = { id: 'chatInput', value: cfg.composerText };
   const document = { getElementById: (id) => (id === 'chatInput' ? input : null) };
   const window = {};
@@ -279,6 +280,7 @@ def _run_send_scenarios():
         env={"PATH": os.environ["PATH"], "MOD_JS": str(MOD_JS),
              "MOD_ATT": str(REPO_ROOT / "src" / "web" / "js" / "chat/chat_attachments.js"),
              "CHAT_PAGE_JS": str(CHAT_PAGE_JS),
+             "MOD_SESSION": str(REPO_ROOT / "src" / "web" / "js" / "chat/chat_session.js"),
              "MOD_FQ": str(REPO_ROOT / "src" / "web" / "js" / "chat/chat_followup_queue.js")},
     )
     assert proc.returncode == 0, proc.stderr or proc.stdout

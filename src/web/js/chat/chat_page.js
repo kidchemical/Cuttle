@@ -347,8 +347,8 @@
     }
 
     function toggleCurrentChatStar(event) {
-        if (currentSessionId == null || currentSessionId === '') return;
-        return toggleStarChatSession(currentSessionId, event);
+        if (session.current() == null || session.current() === '') return;
+        return toggleStarChatSession(session.current(), event);
     }
 
     async function toggleCurrentChatStarFromMenu(event) {
@@ -368,7 +368,7 @@
         }
         if (sessionId == null || sessionId === '') return;
         markChatSessionUnread(sessionId, {manual: true});
-        if (currentSessionId != null && sessionIdsEqual(currentSessionId, sessionId)) {
+        if (session.current() != null && sessionIdsEqual(session.current(), sessionId)) {
             _manualUnreadHoldId = String(sessionId);
             // Title green dot until click/type; prefs flag survives leave → reopen.
             chatNeedsAck = true;
@@ -384,8 +384,8 @@
     }
 
     function markCurrentSessionUnreadFromMenu(event) {
-        if (currentSessionId == null || currentSessionId === '') return;
-        return markSessionUnreadManual(currentSessionId, event);
+        if (session.current() == null || session.current() === '') return;
+        return markSessionUnreadManual(session.current(), event);
     }
 
     let _gitPushInFlight = false;
@@ -690,14 +690,18 @@
     }
 
     async function copyChatIdBadge() {
-        return copyChatSessionId(currentSessionId, null);
+        return copyChatSessionId(session.current(), null);
     }
 
     // State Management
-    let currentSessionId = null;
+    // Session identity and its navigation sequence are owned by
+    // chat_session.js (CuttleChatSession) — the only writer. Reads go through
+    // session.current(); every identity change goes through
+    // session.open/adopt/create. See chat_session.js.
+    const session = CuttleChatSession.create();
     if (window.CuttleChatVfx) {
         const vfxController = window.CuttleChatVfx.create({
-            getSessionId: () => currentSessionId,
+            getSessionId: () => session.current(),
             fetch: window.fetch.bind(window), now: Date.now,
             setTimeout: window.setTimeout.bind(window), clearTimeout: window.clearTimeout.bind(window),
             confetti: window.CuttleChatVfx.confetti,
@@ -747,7 +751,7 @@
 
     const chatWidgetsCtrl = (window.CuttleTaskGizmos && typeof window.CuttleTaskGizmos.create === 'function')
         ? window.CuttleTaskGizmos.create({
-            getSessionId: function () { return currentSessionId; },
+            getSessionId: function () { return session.current(); },
             getProjectPath: function () {
                 return (currentProject && currentProject.path) ? String(currentProject.path) : '';
             },
@@ -787,7 +791,7 @@
     // Message-sync claim lifetime, owned by CuttleChatGeneration (D2b):
     // one page-held state; claim, current-token test, and token-scoped
     // finish all go through the owner. Navigation fencing still uses the
-    // existing _loadSessionSeq captured per sync below.
+    // existing navigation sequence captured per sync below.
     const messageSync = CuttleChatGeneration.createSyncState();
     // Stop/cancel lifecycle flags { userStopped, abortSuppressed,
     // waitingSuppressed }, owned by chat_stop_state.js. One instance;
@@ -839,14 +843,14 @@
     function _pendingKey(sid) { return `cuttle.pendingAttachments.${sid || 'anon'}`; }
     function _savePendingAttachments() {
         try {
-            if (!currentSessionId) return;
-            localStorage.setItem(_pendingKey(currentSessionId), JSON.stringify(pendingAttachments));
+            if (!session.current()) return;
+            localStorage.setItem(_pendingKey(session.current()), JSON.stringify(pendingAttachments));
         } catch {}
     }
     function _restorePendingAttachments() {
         try {
-            if (!currentSessionId) return;
-            const raw = localStorage.getItem(_pendingKey(currentSessionId));
+            if (!session.current()) return;
+            const raw = localStorage.getItem(_pendingKey(session.current()));
             if (raw) pendingAttachments = JSON.parse(raw) || [];
         } catch {}
         renderAttachmentChips();
@@ -918,7 +922,7 @@
     }
 
     function saveComposerDraft(sid, composerKey) {
-        const keySid = sid != null && sid !== '' ? sid : (currentSessionId || 'new');
+        const keySid = sid != null && sid !== '' ? sid : (session.current() || 'new');
         saveComposerDraftControls(keySid, composerKey);
         try {
             // Owned by chat_composer.js — whitespace/empty + clip decision.
@@ -933,13 +937,13 @@
         } catch (_) {}
     }
     function clearComposerDraft(sid) {
-        const keySid = sid != null && sid !== '' ? sid : (currentSessionId || 'new');
+        const keySid = sid != null && sid !== '' ? sid : (session.current() || 'new');
         try { localStorage.removeItem(_draftKey(keySid)); } catch (_) {}
         updateSessionPrefs(keySid === 'new' ? newComposerPrefsId : keySid, { composerDraft: null });
     }
     function restoreComposerDraft(sid, opts = {}) {
         const force = !!(opts && opts.force);
-        const keySid = sid != null && sid !== '' ? sid : (currentSessionId || 'new');
+        const keySid = sid != null && sid !== '' ? sid : (session.current() || 'new');
         restoreComposerDraftControls(keySid);
         composerDraftControlsReady = true;
         renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
@@ -1019,8 +1023,8 @@
     function isSessionGenerating() {
         if (isLoadingThisSession()) return true;
         if (document.getElementById('typing-indicator-remote')) return true;
-        if (currentSessionId == null) return false;
-        return [...runningSessionIds].some((rid) => sessionIdsEqual(rid, currentSessionId));
+        if (session.current() == null) return false;
+        return [...runningSessionIds].some((rid) => sessionIdsEqual(rid, session.current()));
     }
 
     /** Welcome splash composer — processMessage disables it for first-turn-only. */
@@ -1364,8 +1368,8 @@
             hasTrackedTurn: !!inFlightUserMessage,
             replyOnScreen: turnAlreadyShowsAssistantReply(),
             hasRemoteWait: !!document.getElementById('typing-indicator-remote'),
-            sessionRunning: currentSessionId != null
-                && [...runningSessionIds].some((rid) => sessionIdsEqual(rid, currentSessionId)),
+            sessionRunning: session.current() != null
+                && [...runningSessionIds].some((rid) => sessionIdsEqual(rid, session.current())),
             queueLength: followupQueue.items.length,
         });
         if (decision.kind === 'finish') {
@@ -1374,7 +1378,7 @@
         }
         if (decision.kind === 'clear-remote') {
             removeRemoteWaitingIndicator();
-            if (currentSessionId) setHistorySessionRunning(currentSessionId, false);
+            if (session.current()) setHistorySessionRunning(session.current(), false);
             const stopButton = document.getElementById('stopButton');
             if (stopButton) {
                 stopButton.disabled = true;
@@ -1467,7 +1471,7 @@
     }
 
     function clearPendingAttachments() {
-        const sid = currentSessionId;
+        const sid = session.current();
         pendingAttachments = [];
         if (sid) _clearPersistedPending(sid);
         renderAttachmentChips();
@@ -1510,7 +1514,7 @@
     function inferAttachmentsFromContent(content) {
         return CuttleChatAttachments.inferAttachmentsFromContent({
             content,
-            sessionId: currentSessionId,
+            sessionId: session.current(),
         });
     }
 
@@ -1576,7 +1580,7 @@
         const files = Array.from(fileList || []).filter(Boolean);
         if (!files.length) return;
         const form = new FormData();
-        form.append('session_id', authSessionIdForRequest() || currentSessionId || 'anon');
+        form.append('session_id', authSessionIdForRequest() || session.current() || 'anon');
         for (const f of files) form.append('files', f, f.name);
         const resp = await fetch('/api/upload', {
             method: 'POST',
@@ -1913,7 +1917,7 @@
         }
         if (isAuthMode() && /^\d+$/.test(String(toAuthDbSessionId(sessionId)))) {
             // A hidden page or a response for a previous chat hasn't been viewed.
-            if (!sessionIdsEqual(currentSessionId, sessionId) || pageIsBackgrounded()) return;
+            if (!sessionIdsEqual(session.current(), sessionId) || pageIsBackgrounded()) return;
             const through = lastSeenServerMessageId;
             serverAttention.mark(toAuthDbSessionId(sessionId), {through_id: through});
         }
@@ -1929,7 +1933,7 @@
     function releaseManualUnreadHoldIfLeaving(nextSessionId) {
         _manualUnreadHoldId = CuttleChatActivity.releaseManualHold({
             holdId: _manualUnreadHoldId,
-            currentSessionId,
+            currentSessionId: session.current(),
             nextSessionId,
         });
     }
@@ -2041,7 +2045,7 @@
         const wrap = document.getElementById('chatSessionTitle');
         if (!unreadIcon && !queuedIcon && !pausedIcon) return;
         const titleVisible = !!(wrap && !wrap.hidden);
-        const showInput = !!(titleVisible && currentSessionId != null && (attentionPrefsFor(currentSessionId) || {}).awaitingInput);
+        const showInput = !!(titleVisible && session.current() != null && (attentionPrefsFor(session.current()) || {}).awaitingInput);
         const inputIcon = document.getElementById('chatSessionInputIcon');
         if (inputIcon) inputIcon.hidden = !showInput;
         const showUnread = !!(titleVisible && !showInput && chatAttentionActive());
@@ -2052,16 +2056,16 @@
             titleVisible
             && !showInput
             && !showUnread
-            && currentSessionId != null
-            && sessionHasActiveFollowup(currentSessionId, null)
+            && session.current() != null
+            && sessionHasActiveFollowup(session.current(), null)
         );
         const showPaused = !!(
             titleVisible
             && !showInput
             && !showUnread
             && !showQueued
-            && currentSessionId != null
-            && sessionHasPausedFollowup(currentSessionId, null)
+            && session.current() != null
+            && sessionHasPausedFollowup(session.current(), null)
         );
         if (unreadIcon) {
             unreadIcon.hidden = !showUnread;
@@ -2086,8 +2090,8 @@
         const running = !!(
             wrap
             && !wrap.hidden
-            && currentSessionId != null
-            && sessionShowsHistorySpinner(currentSessionId)
+            && session.current() != null
+            && sessionShowsHistorySpinner(session.current())
         );
         icon.hidden = !running;
         if (wrap) wrap.classList.toggle('is-running', running);
@@ -2123,7 +2127,7 @@
     function sessionHasUnread(sessionId, sessionObj) {
         return CuttleChatActivity.sessionHasUnread({
             sessionId,
-            currentSessionId,
+            currentSessionId: session.current(),
             backgrounded: pageIsBackgrounded(),
             prefs: attentionPrefsFor(sessionId, sessionObj),
             sessionObj,
@@ -2138,7 +2142,7 @@
     /** Resolve followup_queue for a session (open chat uses live followupQueue.items). */
     function followupQueueForSession(sessionId, sessionObj) {
         if (sessionId == null || sessionId === '') return [];
-        if (currentSessionId != null && sessionIdsEqual(currentSessionId, sessionId)) {
+        if (session.current() != null && sessionIdsEqual(session.current(), sessionId)) {
             return followupQueue.items.slice();
         }
         let obj = sessionObj;
@@ -2181,7 +2185,7 @@
     function sessionHasUnreadError(sessionId, sessionObj) {
         return CuttleChatActivity.sessionHasUnreadError({
             sessionId,
-            currentSessionId,
+            currentSessionId: session.current(),
             backgrounded: pageIsBackgrounded(),
             prefs: attentionPrefsFor(sessionId, sessionObj),
             sessionObj,
@@ -2197,7 +2201,7 @@
     function sessionHistoryAttentionKind(sessionId, sessionObj) {
         return CuttleChatActivity.sessionHistoryAttentionKind({
             sessionId,
-            currentSessionId,
+            currentSessionId: session.current(),
             backgrounded: pageIsBackgrounded(),
             prefs: attentionPrefsFor(sessionId, sessionObj),
             sessionObj,
@@ -2390,8 +2394,8 @@
     }
 
     function historyGroupContainsCurrent(group) {
-        if (currentSessionId == null || !group || !group.entries) return false;
-        return group.entries.some((entry) => sessionIdsEqual(entry.sessionId, currentSessionId));
+        if (session.current() == null || !group || !group.entries) return false;
+        return group.entries.some((entry) => sessionIdsEqual(entry.sessionId, session.current()));
     }
 
     /** Default expand latest project (+ open/unread/queue); honor localStorage overrides. */
@@ -2434,7 +2438,7 @@
         const nested = nestHistoryEntries(group.entries);
         const total = nested.roots.length;
         const visibleLimit = getHistoryGroupVisibleLimit(key, total);
-        const visible = visibleHistoryRoots(nested, visibleLimit, { currentSessionId: currentSessionId });
+        const visible = visibleHistoryRoots(nested, visibleLimit, { currentSessionId: session.current() });
         const searchActive = historySearchQueryActive();
         const prefs = readHistorySubagentExpandPrefs();
 
@@ -2444,12 +2448,12 @@
             const expanded = kids.length
                 ? isHistorySubagentGroupExpanded(pid, nested, {
                     searchActive: searchActive,
-                    currentSessionId: currentSessionId,
+                    currentSessionId: session.current(),
                     prefs: prefs,
                 })
                 : false;
-            const force = !!(kids.length && currentSessionId != null
-                && historySessionAncestorIds(currentSessionId, nested).some((id) => sessionIdsEqual(id, pid)));
+            const force = !!(kids.length && session.current() != null
+                && historySessionAncestorIds(session.current(), nested).some((id) => sessionIdsEqual(id, pid)));
             const itemHtml = renderEntry(entry, {
                 subagentChildCount: kids.length,
                 subagentExpanded: expanded,
@@ -2597,10 +2601,10 @@
     }
 
     function historySubagentGroupContainsCurrent(group) {
-        if (!group || currentSessionId == null) return false;
+        if (!group || session.current() == null) return false;
         const kids = group.querySelectorAll('.history-subagent-children .chat-history-item');
         for (let i = 0; i < kids.length; i++) {
-            if (sessionIdsEqual(kids[i].dataset.sessionId, currentSessionId)) return true;
+            if (sessionIdsEqual(kids[i].dataset.sessionId, session.current())) return true;
         }
         return false;
     }
@@ -2790,8 +2794,8 @@
     /** True when the open transcript is this session (not a backgrounded turn). */
     function isViewingSession(sessionId) {
         return sessionId != null
-            && currentSessionId != null
-            && sessionIdsEqual(currentSessionId, sessionId);
+            && session.current() != null
+            && sessionIdsEqual(session.current(), sessionId);
     }
 
     /**
@@ -2868,7 +2872,7 @@
                         data = null;
                     }
                     if (cancelled) break;
-                    if (currentSessionId != null && sessionIdsEqual(currentSessionId, sid)) break;
+                    if (session.current() != null && sessionIdsEqual(session.current(), sid)) break;
 
                     // Owned by chat_generation.js — one poll-step decision;
                     // the page owns transport, sleeps, chirp, and flag paint.
@@ -2929,7 +2933,7 @@
         const now = Date.now();
         const plan = CuttleChatActivity.responseReadyPlan({
             sessionId: sid,
-            currentSessionId,
+            currentSessionId: session.current(),
             backgrounded: pageIsBackgrounded(),
             lastChirpAt: _chirpedReadyAtBySession[sid] || 0,
             nowMs: now,
@@ -3026,8 +3030,8 @@
             } catch (_) {}
             return localOpenPanes;
         }
-        if (currentSessionId != null && currentSessionId !== '') {
-            return [{ sessionId: String(currentSessionId), pane: 1, kind: 'chat', focused: true }];
+        if (session.current() != null && session.current() !== '') {
+            return [{ sessionId: String(session.current()), pane: 1, kind: 'chat', focused: true }];
         }
         return [];
     }
@@ -3355,14 +3359,14 @@
     }
 
     function persistPromptHistoryForCurrentSession() {
-        if (!currentSessionId) return;
+        if (!session.current()) return;
         const map = readPromptHistoryMap();
-        map[currentSessionId] = promptHistoryState.list.slice();
+        map[session.current()] = promptHistoryState.list.slice();
         writePromptHistoryMap(map);
     }
 
     function recordPromptHistory(composedMessage) {
-        if (!currentSessionId) return;
+        if (!session.current()) return;
         if (CuttlePromptHistory.appendRecord(promptHistoryState, composedMessage)) {
             persistPromptHistoryForCurrentSession();
         }
@@ -3675,7 +3679,7 @@
                 history.replaceState(null, '', url.pathname + url.search + url.hash);
             } catch (_) {}
         }
-        if (sessionIdsEqual(currentSessionId, parsed.sessionId)) {
+        if (sessionIdsEqual(session.current(), parsed.sessionId)) {
             if (parsed.messageIndex) {
                 transcriptNav.consumePendingMessageJump();
             }
@@ -4102,7 +4106,7 @@
                 const local = readStarredSlashPrefixes();
                 if (server.length) {
                     writeStarredSlashPrefixes(server, { localOnly: true });
-                    if (!currentSessionId && !getSessionPrefs(newComposerPrefsId)) applyStarredSlashChips();
+                    if (!session.current() && !getSessionPrefs(newComposerPrefsId)) applyStarredSlashChips();
                     else {
                         renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
                         renderSlashChips('chat', document.getElementById('chatInput'));
@@ -4130,7 +4134,7 @@
         const next = wasStarred ? [] : [prefix];
         writeStarredSlashPrefixes(next);
         // On the welcome / new-chat composer, mirror the default immediately.
-        if (!currentSessionId) {
+        if (!session.current()) {
             applyStarredSlashChips();
         } else {
             // Keep session sticky chips; refresh so ★ on the badge updates.
@@ -4212,7 +4216,7 @@
                 const local = readStarredProject();
                 if (server && (server.path || server.id != null || server.name)) {
                     writeStarredProject(server, { localOnly: true });
-                    if (!currentSessionId) {
+                    if (!session.current()) {
                         reconcileChatProject();
                     } else {
                         renderProjectChips();
@@ -4251,7 +4255,7 @@
         const wasStarred = isProjectStarred(record);
         // Exclusive: star replaces any previous star; unstar clears.
         writeStarredProject(wasStarred ? null : record);
-        if (!currentSessionId) {
+        if (!session.current()) {
             // New / welcome chat: apply the new default immediately.
             if (!wasStarred) {
                 const live = findProjectById(record.id)
@@ -4294,7 +4298,7 @@
      */
     const agentControls = CuttleChatAgentControls.create({
         state: slashPaletteSupplement,
-        getSessionId: () => currentSessionId,
+        getSessionId: () => session.current(),
         getProjectPath: () => (currentProject && currentProject.path ? String(currentProject.path) : ''),
         hasActiveCursor: () => hasActiveCursorAgentChip(),
         hasActiveMuse: () => hasActiveMuseAgentChip(),
@@ -4305,8 +4309,8 @@
         hasCursorModelChip: () => slashCtx.chat.chips.concat(slashCtx.welcome.chips).some((c) => c.category === 'cursor-model'),
         beginFetch: (field) => beginSupplementFetch(field),
         isCurrentFetch: (field, gen) => isCurrentSupplementFetch(field, gen),
-        captureMutation: (sid, label) => sessionMutations.capture(sid, label, _loadSessionSeq),
-        isMutationCurrent: (tok) => sessionMutations.current(tok, currentSessionId, _loadSessionSeq),
+        captureMutation: (sid, label) => sessionMutations.capture(sid, label, session.navSeq()),
+        isMutationCurrent: (tok) => sessionMutations.current(tok, session.current(), session.navSeq()),
         sessionMutationFetch: (url, opts) => sessionMutationFetch(url, opts),
         renderSlashChips: () => {
             renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
@@ -4330,7 +4334,7 @@
 
     function cursorAgentSessionOptionsKey() {
         const path = currentProject && currentProject.path ? String(currentProject.path) : '';
-        const sid = currentSessionId != null ? String(currentSessionId) : '';
+        const sid = session.current() != null ? String(session.current()) : '';
         return path + '\x1f' + sid;
     }
 
@@ -4532,7 +4536,7 @@
      * values as fresh and only top up the models list.
      */
     function sessionMutationFetch(url, options) {
-        const sid = JSON.parse(options.body || '{}').session || currentSessionId;
+        const sid = JSON.parse(options.body || '{}').session || session.current();
         return sessionMutations.enqueue(String(sid) + ':' + url, () => fetch(url, options));
     }
 
@@ -4786,7 +4790,7 @@
         hasActiveCursorAgentChip,
         loadCursorAgentModelsForPalette,
         applySlashSelection,
-        saveDraft: () => saveComposerDraft(currentSessionId || 'new'),
+        saveDraft: () => saveComposerDraft(session.current() || 'new'),
         findProjectById,
         setChatProject,
         autoResizeTextarea,
@@ -5007,7 +5011,7 @@
         if (!row) return;
         const _idPrev = slashPaletteSupplement.sessionIdentity;
         const _idPath = (currentProject && currentProject.path) ? String(currentProject.path) : '';
-        const _idNextSid = String(currentSessionId != null ? currentSessionId : '');
+        const _idNextSid = String(session.current() != null ? session.current() : '');
         const _idNext = _idNextSid + '|' + _idPath; // (duplicate path suffix, inert) + '' + _idPath;
         if (_idPrev !== _idNext) {
             slashPaletteSupplement.sessionIdentity = _idNext;
@@ -5211,7 +5215,7 @@
                 renderSlashChips(key, textarea);
                 renderSlashChips(other, document.getElementById(other === 'chat' ? 'chatInput' : 'welcomeChatInput'));
                 persistStickySlashForCurrentSession(true);
-                saveComposerDraftControls(currentSessionId || 'new', key);
+                saveComposerDraftControls(session.current() || 'new', key);
                 if (textarea) {
                     try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
                 }
@@ -5311,7 +5315,7 @@
     function applySlashSelection(textarea, key, idx) {
         slashPalette.applySelection(textarea, key, idx);
         try {
-            saveComposerDraft(currentSessionId || 'new', key);
+            saveComposerDraft(session.current() || 'new', key);
         } catch (_) {}
     }
     function syncSlashMenuFromInput(textarea) {
@@ -5441,7 +5445,7 @@
     }
 
     function persistStickySlashForCurrentSession(publishShared = false) {
-        const prefsId = currentSessionId || newComposerPrefsId;
+        const prefsId = session.current() || newComposerPrefsId;
         const chips = (slashCtx.chat.chips && slashCtx.chat.chips.length)
             ? slashCtx.chat.chips
             : (slashCtx.welcome.chips || []);
@@ -5465,14 +5469,14 @@
 
     function isStickyAgentCleared() {
         if (stickyAgentClearedPending) return true;
-        const prefs = currentSessionId ? getSessionPrefs(currentSessionId) : null;
+        const prefs = session.current() ? getSessionPrefs(session.current()) : null;
         return !!(prefs && prefs.stickyCleared);
     }
 
     function markStickyAgentCleared(cleared) {
         stickyAgentClearedPending = !!cleared;
-        if (currentSessionId) {
-            updateSessionPrefs(currentSessionId, { stickyCleared: !!cleared });
+        if (session.current()) {
+            updateSessionPrefs(session.current(), { stickyCleared: !!cleared });
         }
     }
 
@@ -5516,7 +5520,7 @@
         if (isLoadingThisSession() && !(liveStatus && liveStatus.active && liveStatus.slash_command)) return;
         const meta = CuttleChatAgentModel.turnSlashFromMessages(messages, liveStatus);
         if (meta !== undefined) {
-            turnBadgeBySession.set(String(canonicalizeChatSessionId(currentSessionId) || ''), meta);
+            turnBadgeBySession.set(String(canonicalizeChatSessionId(session.current()) || ''), meta);
         }
     }
 
@@ -5559,7 +5563,7 @@
         restoreSessionStickySlash(sessionId, []);
     }
 
-    function publishSharedComposerSelection(selection, sessionId = currentSessionId, retryId = null) {
+    function publishSharedComposerSelection(selection, sessionId = session.current(), retryId = null) {
         const sid = toAuthDbSessionId(sessionId);
         if (!isAuthMode() || !sid || !/^\d+$/.test(sid)) return;
         const key = String(canonicalizeChatSessionId(sessionId));
@@ -5613,8 +5617,8 @@
 
     function persistProjectForCurrentSession(opts) {
         opts = opts || {};
-        if (!currentSessionId) return;
-        const bare = toAuthDbSessionId(currentSessionId);
+        if (!session.current()) return;
+        const bare = toAuthDbSessionId(session.current());
         const payload = {
             projectId: currentProject ? currentProject.id : null,
             projectPath: currentProject ? currentProject.path : '',
@@ -5624,10 +5628,10 @@
         };
         // Keep hydrate/list caches aligned so a later reconcile cannot resurrect
         // the previous project (CH-000204: EP chip → Cuttle on send).
-        rememberSessionProject(currentSessionId, currentProject);
+        rememberSessionProject(session.current(), currentProject);
         // Write under both display and bare keys so reopen / history grouping stay in sync.
-        updateSessionPrefs(currentSessionId, payload);
-        if (bare && String(bare) !== String(currentSessionId)) {
+        updateSessionPrefs(session.current(), payload);
+        if (bare && String(bare) !== String(session.current())) {
             updateSessionPrefs(bare, payload);
         }
         if (opts.localOnly) return;
@@ -5976,13 +5980,13 @@
 
     /** True when sessionId refers to the currently open chat (live pins apply). */
     function isCurrentHistorySession(sessionId) {
-        if (sessionId == null || sessionId === '' || currentSessionId == null || currentSessionId === '') {
+        if (sessionId == null || sessionId === '' || session.current() == null || session.current() === '') {
             return false;
         }
-        if (String(sessionId) === String(currentSessionId)) return true;
+        if (String(sessionId) === String(session.current())) return true;
         try {
             const a = toAuthDbSessionId(sessionId);
-            const b = toAuthDbSessionId(currentSessionId);
+            const b = toAuthDbSessionId(session.current());
             return !!(a && b && String(a) === String(b));
         } catch (_) {
             return false;
@@ -6323,7 +6327,7 @@
 
     /** Frozen turn identity, also used when recreating typing UI after navigation. */
     function currentTypingSlashMeta() {
-        return turnBadgeBySession.get(String(canonicalizeChatSessionId(currentSessionId) || '')) || null;
+        return turnBadgeBySession.get(String(canonicalizeChatSessionId(session.current()) || '')) || null;
     }
 
     function syncPreferredModelFromResponse(data) {
@@ -7157,14 +7161,14 @@
         // A different project starts fresh (Local); the chip can rebind a worktree.
         if (prevProjectId !== nextProjectId) { currentCheckoutUid = ''; currentCheckoutPath = ''; }
         reportProjectToShell(effectiveGitPath());
-        if (currentSessionId) {
-            rememberSessionProject(currentSessionId, proj);
+        if (session.current()) {
+            rememberSessionProject(session.current(), proj);
             try {
                 const sessions = JSON.parse(localStorage.getItem('chatSessions') || '{}');
-                if (sessions[currentSessionId]) {
-                    sessions[currentSessionId].projectId = proj ? proj.id : null;
-                    sessions[currentSessionId].projectPath = proj ? proj.path : '';
-                    sessions[currentSessionId].projectName = proj ? proj.name : '';
+                if (sessions[session.current()]) {
+                    sessions[session.current()].projectId = proj ? proj.id : null;
+                    sessions[session.current()].projectPath = proj ? proj.path : '';
+                    sessions[session.current()].projectName = proj ? proj.name : '';
                     localStorage.setItem('chatSessions', JSON.stringify(sessions));
                 }
             } catch (_) {}
@@ -7190,13 +7194,13 @@
         const uid = checkout && checkout.checkout_uid ? String(checkout.checkout_uid) : '';
         currentCheckoutUid = uid;
         currentCheckoutPath = checkout && checkout.path ? String(checkout.path) : '';
-        if (currentSessionId) {
+        if (session.current()) {
             persistProjectForCurrentSession();
             try {
                 const sessions = JSON.parse(localStorage.getItem('chatSessions') || '{}');
-                if (sessions[currentSessionId]) {
-                    sessions[currentSessionId].checkoutUid = uid || null;
-                    sessions[currentSessionId].checkoutPath = currentCheckoutPath || null;
+                if (sessions[session.current()]) {
+                    sessions[session.current()].checkoutUid = uid || null;
+                    sessions[session.current()].checkoutPath = currentCheckoutPath || null;
                     localStorage.setItem('chatSessions', JSON.stringify(sessions));
                 }
             } catch (_) {}
@@ -7253,7 +7257,7 @@
                     worktree: currentCheckoutUid ? (currentProjectBranch() || true) : '',
                 });
             },
-            getSessionId: function () { return currentSessionId; },
+            getSessionId: function () { return session.current(); },
             getPrompts: function () {
                 try {
                     if (typeof getComposerPromptHistory === 'function') {
@@ -7303,21 +7307,21 @@
         let serverProj = null;
         let mergedPrefs = null;
         let stored = null;
-        if (currentSessionId) {
-            serverProj = projectFieldsFromServerSession(findAuthServerSession(currentSessionId));
-            const prefs = getSessionPrefs(currentSessionId);
-            const barePrefs = getSessionPrefs(toAuthDbSessionId(currentSessionId));
+        if (session.current()) {
+            serverProj = projectFieldsFromServerSession(findAuthServerSession(session.current()));
+            const prefs = getSessionPrefs(session.current());
+            const barePrefs = getSessionPrefs(toAuthDbSessionId(session.current()));
             mergedPrefs = Object.assign({}, barePrefs || {}, prefs || {});
             try {
                 const sessions = JSON.parse(localStorage.getItem('chatSessions') || '{}');
-                stored = sessions[currentSessionId] || null;
+                stored = sessions[session.current()] || null;
             } catch (_) {
                 stored = null;
             }
         }
         const decided = CuttleChatProject.resolveChatProject({
             projects,
-            currentSessionId,
+            currentSessionId: session.current(),
             currentProject,
             serverFields: serverProj,
             prefs: mergedPrefs,
@@ -7331,7 +7335,7 @@
         // Restore the chat's bound worktree checkout (server row, then prefs).
         // An unsaved new chat has no session row yet: keep the in-memory pick
         // instead of clearing it, or the chip snaps back to the primary branch.
-        if (currentSessionId) {
+        if (session.current()) {
             const storedCheckout = (serverProj && serverProj.checkoutUid)
                 || (mergedPrefs && mergedPrefs.checkoutUid)
                 || (stored && stored.checkoutUid) || '';
@@ -7341,13 +7345,13 @@
         }
         // Stamp the default onto prefs so history grouping matches the cwd chip
         // (auth sessions do not store project_id on the server).
-        if (currentSessionId && currentProject && !hadStored
-            && !sessionHasStoredProject(currentSessionId, null)
-            && authSessionListHas(currentSessionId)
-            && !projectFieldsFromServerSession(findAuthServerSession(currentSessionId))) {
+        if (session.current() && currentProject && !hadStored
+            && !sessionHasStoredProject(session.current(), null)
+            && authSessionListHas(session.current())
+            && !projectFieldsFromServerSession(findAuthServerSession(session.current()))) {
             persistProjectForCurrentSession();
-        } else if (currentSessionId && currentProject && hadStored) {
-            const prefs = getSessionPrefs(currentSessionId);
+        } else if (session.current() && currentProject && hadStored) {
+            const prefs = getSessionPrefs(session.current());
             const prefsStale = !prefs
                 || (currentProject.id != null && String(prefs.projectId) !== String(currentProject.id))
                 || (currentProject.path && String(prefs.projectPath || '') !== String(currentProject.path));
@@ -7363,7 +7367,7 @@
     /** Project to send with /api/chat — always prefers a real filesystem path. */
     function resolveOutboundProject() {
         const keepWelcomePick =
-            !currentSessionId
+            !session.current()
             && currentProject
             && (currentProject.path || currentProject.id != null || currentProject.name);
         // Don't re-read empty session storage on first send — that overwrites
@@ -7375,7 +7379,7 @@
         // Stale localStorage often keeps name "Escape Purgatory" with path Cuttle.
         const rebound = CuttleChatProject.rebindProjectToRegistry(currentProject, projects);
         currentProject = rebound.proj;
-        if (rebound.changed && currentSessionId) persistProjectForCurrentSession();
+        if (rebound.changed && session.current()) persistProjectForCurrentSession();
         return currentProject;
     }
 
@@ -7496,9 +7500,9 @@
     /** Write a system notice into chat_messages so it survives refresh / devices. */
     function durablePersistSystemMessage(el, message, opts) {
         opts = opts || {};
-        if (!el || !isAuthMode() || currentSessionId == null) return;
+        if (!el || !isAuthMode() || session.current() == null) return;
         if (el.dataset.persistInFlight === '1' || el.dataset.messageId) return;
-        const bare = toAuthDbSessionId(currentSessionId);
+        const bare = toAuthDbSessionId(session.current());
         if (!bare || !/^\d+$/.test(String(bare))) return;
         el.dataset.persistInFlight = '1';
         const body = {
@@ -7735,12 +7739,12 @@
     function authSessionIdForRequest() {
         // chat_page's currentSessionId is authoritative while on this page
         // (null = new chat / welcome — never fall back to auth's "latest").
-        return currentSessionId;
+        return session.current();
     }
 
     async function ensureAuthChatSession() {
         // Sessions are created on first message by /api/chat — never pre-create empties.
-        return currentSessionId;
+        return session.current();
     }
 
     function createHistorySectionHeaderHTML(title, opts) {
@@ -7857,16 +7861,16 @@
                 // Prefer re-applying search/filters — a full list paint races with
                 // typing (open refresh, generating poll, title refresh timers).
                 reloadHistoryListKeepingSearch();
-                if (currentSessionId) updateChatSessionTitle(currentSessionId);
+                if (session.current()) updateChatSessionTitle(session.current());
                 done();
             }).catch(function () {
                 reloadHistoryListKeepingSearch();
-                if (currentSessionId) updateChatSessionTitle(currentSessionId);
+                if (session.current()) updateChatSessionTitle(session.current());
                 done();
             });
         }
         reloadHistoryListKeepingSearch();
-        if (currentSessionId) updateChatSessionTitle(currentSessionId);
+        if (session.current()) updateChatSessionTitle(session.current());
         done();
         return Promise.resolve();
     }
@@ -7900,7 +7904,7 @@
     }
 
     async function createNewChat() {
-        if (currentSessionId != null) saveComposerDraft(currentSessionId);
+        if (session.current() != null) saveComposerDraft(session.current());
         applyStarredSlashChips();
         chatRestoreAbandoned = true;
         clearChatRestoreVeil();
@@ -7930,8 +7934,8 @@
         // screen inherits that session's project, then the first send (still
         // unsaved) snaps to the Cuttle default.
         releaseManualUnreadHoldIfLeaving(null);
-        currentSessionId = null;
-        adoptFollowupQueue(currentSessionId);
+        session.create(null);
+        adoptFollowupQueue(session.current());
         applyHistorySubagentExpandState();
         applySessionIdentity(null);
         currentProject = null;
@@ -8093,8 +8097,8 @@
         resetChatHistoryWindow();
         transcriptNav.resetNav();
         releaseManualUnreadHoldIfLeaving(null);
-        currentSessionId = null;
-        adoptFollowupQueue(currentSessionId);
+        session.create(null);
+        adoptFollowupQueue(session.current());
         applySessionIdentity(null);
         updateChatIdBadge(null);
         if (window.CuttleAuth && window.CuttleAuth.setCurrentChatSession) {
@@ -8184,19 +8188,18 @@
         }
     }
 
-    let _loadSessionSeq = 0;
-
+    // The session navigation sequence (_loadSessionSeq) is owned by
+    // chat_session.js: session.open() advances it, session.navSeq() reads it.
     async function loadChatSession(sessionId, opts = {}) {
         // Persist unsent text from the chat we're leaving (survives refresh).
-        if (currentSessionId != null && !sessionIdsEqual(currentSessionId, sessionId)) {
-            saveComposerDraft(currentSessionId);
-        } else if (currentSessionId == null) {
+        if (session.current() != null && !sessionIdsEqual(session.current(), sessionId)) {
+            saveComposerDraft(session.current());
+        } else if (session.current() == null) {
             saveComposerDraft('new');
         }
         clearAllSlashChips();
         CuttleStopState.clearWaitingSuppression(stopState);
         sessionId = canonicalizeChatSessionId(sessionId);
-        const loadSeq = ++_loadSessionSeq;
         // Close immediately on tap — don't wait for message fetch (felt stuck open on mobile).
         closeChatHistoryPanel();
 
@@ -8217,17 +8220,17 @@
         if (isAuthMode() || opts.assumeAuth) {
             // Invalidate the per-session model cache before updating currentSessionId so
             // any render or send that follows picks up the correct model for the new session.
-            if (currentSessionId !== sessionId) {
+            if (session.current() !== sessionId) {
                 agentControls.invalidateProviderCacheForSessionSwitch();
             }
             releaseManualUnreadHoldIfLeaving(sessionId);
-            const prevSessionId = currentSessionId;
+            const prevSessionId = session.current();
             const switchingAway = prevSessionId != null
                 && !sessionIdsEqual(prevSessionId, sessionId);
             // Opening this chat — stop any background completion poll for it.
             cancelDetachedSessionCompletionWatch(sessionId);
-            currentSessionId = sessionId;
-            adoptFollowupQueue(currentSessionId);
+            const loadSeq = session.open(sessionId);
+            adoptFollowupQueue(session.current());
             // Opened chat defaults to idle until the one-shot live-status (below)
             // confirms generating. Stale runningSessionIds / hub cache from a
             // prior visit used to flash the purple title + history spinner for
@@ -8314,7 +8317,7 @@
                     data = await response.json();
                 }
                 // A newer loadChatSession started while we were fetching — drop this result.
-                if (loadSeq !== _loadSessionSeq) return;
+                if (loadSeq !== session.navSeq()) return;
                 if (data.success && Array.isArray(data.messages)) {
                     loadedMessages = windowChatHistoryMessages(data);
                     annotateMessageProjects(loadedMessages);
@@ -8379,7 +8382,7 @@
                     // the working bubble reopens without the agent badge.
                     restoreSessionStickySlash(sessionId, loadedMessages);
                     const liveStatus = await fetchChatLiveStatus(sessionId);
-                    if (loadSeq !== _loadSessionSeq) return;
+                    if (loadSeq !== session.navSeq()) return;
                     deferOpenChatGeneratingFromSessions = false;
                     updateRemoteWaitingFromMessages(loadedMessages, liveStatus);
                     healStaleGeneratingState();
@@ -8393,16 +8396,16 @@
                     refreshTypingIndicatorHeaderBadges();
                 }
             } catch (e) {
-                if (loadSeq !== _loadSessionSeq) return;
+                if (loadSeq !== session.navSeq()) return;
                 deferOpenChatGeneratingFromSessions = false;
                 console.error('Failed to load auth session messages:', e);
             }
 
             clearChatRestoreVeil();
-            if (loadSeq !== _loadSessionSeq) return;
+                    if (loadSeq !== session.navSeq()) return;
 
             try { await sessionsRefresh; } catch (_) {}
-            if (loadSeq !== _loadSessionSeq) return;
+                    if (loadSeq !== session.navSeq()) return;
             // One-shot generating flags for *other* chats (history rows). The open
             // chat stays idle until fetchChatLiveStatus above confirms — do not
             // wait for HISTORY_GENERATING_POLL_MS / shell heartbeat.
@@ -8464,11 +8467,11 @@
         }
         
         releaseManualUnreadHoldIfLeaving(sessionId);
-        const prevSessionId = currentSessionId;
+        const prevSessionId = session.current();
         const switchingAway = prevSessionId != null
             && !sessionIdsEqual(prevSessionId, sessionId);
-        currentSessionId = sessionId;
-        adoptFollowupQueue(currentSessionId);
+        session.open(sessionId);
+        adoptFollowupQueue(session.current());
         if (switchingAway) {
             hubLiveStatusCache = null;
             setHistorySessionRunning(sessionId, false);
@@ -8590,7 +8593,7 @@
 
     async function applyHubLiveStatusPayload(live, sessionId) {
         if (!live || sessionId == null) return;
-        if (currentSessionId == null || !sessionIdsEqual(currentSessionId, sessionId)) return;
+        if (session.current() == null || !sessionIdsEqual(session.current(), sessionId)) return;
         hubLiveStatusCache = { sessionId: String(sessionId), live, at: Date.now() };
         shellHubSeen = true;
         // Batch live-status is the Electron strip's revision pulse — forward it.
@@ -8625,7 +8628,7 @@
             } catch (_) {}
             await syncSessionMessagesFromServer();
             if (isLoadingThisSession() && !stopState.userStopped) {
-                const recovered = await recoverChatResultFromServer(currentSessionId);
+                const recovered = await recoverChatResultFromServer(session.current());
                 if (recovered && String(recovered.response || '').trim()) {
                     if (consumeCancelledAgentReply(recovered.response)) {
                         finishLocalStreamFromServerSync();
@@ -8637,7 +8640,7 @@
                             routing_badge: recovered.routing_badge || undefined,
                             usage: normalizeUsagePayload(recovered.usage) || undefined,
                         });
-                        notifyAssistantResponseReady(currentSessionId, { fromSync: true });
+                        notifyAssistantResponseReady(session.current(), { fromSync: true });
                         finishLocalStreamFromServerSync();
                     } else {
                         finishLocalStreamFromServerSync();
@@ -8661,7 +8664,7 @@
     function adoptChatSessionId(sessionId) {
         if (sessionId == null || sessionId === '') return;
         sessionId = canonicalizeChatSessionId(sessionId);
-        const prev = currentSessionId;
+        const prev = session.current();
         if (prev && !sessionIdsEqual(sessionId, prev)) {
             const prevBare = toAuthDbSessionId(prev);
             const nextBare = toAuthDbSessionId(sessionId);
@@ -8685,13 +8688,13 @@
             turnBadgeBySession.set(String(sessionId), turnBadgeBySession.get(previousBadgeKey));
             turnBadgeBySession.delete(previousBadgeKey);
         }
-        const wasNew = currentSessionId == null || !sessionIdsEqual(currentSessionId, sessionId);
+        const wasNew = session.current() == null || !sessionIdsEqual(session.current(), sessionId);
         if (window.CuttleCompletionNotifications && generation.loading) {
             window.CuttleCompletionNotifications.broker().adopt(prev || completionNotificationPendingId, sessionId);
         }
         releaseManualUnreadHoldIfLeaving(sessionId);
-        currentSessionId = sessionId;
-        adoptFollowupQueue(currentSessionId, {transfer: prev == null || !/^\d+$/.test(String(toAuthDbSessionId(prev)))});
+        session.adopt(sessionId);
+        adoptFollowupQueue(session.current(), {transfer: prev == null || !/^\d+$/.test(String(toAuthDbSessionId(prev)))});
         updateChatIdBadge(sessionId);
         localStorage.setItem('lastChatSessionId', String(sessionId));
         if (window.CuttleAuth && window.CuttleAuth.setCurrentChatSession) {
@@ -8830,7 +8833,7 @@
      * bubble the user was looking at stays put.
      */
     async function loadOlderChatMessages() {
-        if (!isAuthMode() || currentSessionId == null) return false;
+        if (!isAuthMode() || session.current() == null) return false;
         if (!chatHistoryHasMore || chatHistoryLoadingOlder) return false;
 
         const box = document.getElementById('chatMessages');
@@ -8857,9 +8860,9 @@
                     chatHistoryHasMore = false;
                     return false;
                 }
-                const authSid = toAuthDbSessionId(currentSessionId);
+                const authSid = toAuthDbSessionId(session.current());
                 if (!authSid) return false;
-                const sessionAtStart = String(currentSessionId);
+                const sessionAtStart = String(session.current());
                 const resp = await fetchWithTimeout(
                     sessionMessagesUrl(authSid, {
                         limit: CHAT_HISTORY_PAGE_SIZE,
@@ -8870,7 +8873,7 @@
                 );
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                 const data = await resp.json();
-                if (String(currentSessionId) !== sessionAtStart) return false;
+                if (String(session.current()) !== sessionAtStart) return false;
                 if (!data.success || !Array.isArray(data.messages)) {
                     chatHistoryHasMore = false;
                     return false;
@@ -8941,7 +8944,7 @@
         if (!box || _chatHistoryLazyScrollWired) return;
         _chatHistoryLazyScrollWired = true;
         box.addEventListener('scroll', () => {
-            if (!isAuthMode() || currentSessionId == null) return;
+            if (!isAuthMode() || session.current() == null) return;
             if (!chatHistoryHasMore || chatHistoryLoadingOlder) return;
             if (transcriptNav.isScrollPinHeld()) return;
             if (box.scrollTop > 72) return;
@@ -8950,7 +8953,7 @@
     }
 
     function scheduleNextMessageSync() {
-        if (!isAuthMode() || currentSessionId == null) return;
+        if (!isAuthMode() || session.current() == null) return;
         if (messageSyncTimer) {
             clearTimeout(messageSyncTimer);
             messageSyncTimer = null;
@@ -8960,7 +8963,7 @@
             try {
                 await syncSessionMessagesFromServer();
             } finally {
-                if (isAuthMode() && currentSessionId != null) {
+                if (isAuthMode() && session.current() != null) {
                     scheduleNextMessageSync();
                 }
             }
@@ -8968,7 +8971,7 @@
     }
 
     function startMessageSync() {
-        if (!isAuthMode() || currentSessionId == null) return;
+        if (!isAuthMode() || session.current() == null) return;
         if (messageSyncTimer) return;
         scheduleNextMessageSync();
     }
@@ -9334,11 +9337,11 @@
         if (!CS || !task || !task.task_id) return;
         if (
             task.parent_session_id != null
-            && currentSessionId != null
-            && String(task.parent_session_id) !== String(currentSessionId)
-            && String(task.parent_session_id) !== String(toAuthDbSessionId(currentSessionId))
+            && session.current() != null
+            && String(task.parent_session_id) !== String(session.current())
+            && String(task.parent_session_id) !== String(toAuthDbSessionId(session.current()))
         ) {
-            const bare = String(currentSessionId).replace(/^db_session_/, '');
+            const bare = String(session.current()).replace(/^db_session_/, '');
             if (String(task.parent_session_id) !== bare) return;
         }
         const state = CS.activityStateFromTask(task);
@@ -9518,7 +9521,7 @@
                 method: 'POST',
                 credentials: 'include',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action, ...params, session_id: currentSessionId }),
+                body: JSON.stringify({ action, ...params, session_id: session.current() }),
             });
             const body = await response.json();
             if (!response.ok || body.success === false) throw new Error(body.error || `HTTP ${response.status}`);
@@ -9580,8 +9583,8 @@
         if (!el) return;
         if (
             sessionId != null
-            && currentSessionId != null
-            && !sessionIdsEqual(sessionId, currentSessionId)
+            && session.current() != null
+            && !sessionIdsEqual(sessionId, session.current())
         ) {
             return;
         }
@@ -9635,18 +9638,18 @@
         rememberTurnBadge(messages, liveStatus);
         refreshTypingIndicatorHeaderBadges();
         noteWidgetsRevision(liveStatus);
-        updateSupervisedTaskIndicator(liveStatus, currentSessionId);
+        updateSupervisedTaskIndicator(liveStatus, session.current());
         // Local stream owns this chat's turn — keep/restore the typing bubble
         // (it is wiped when switching chats or after a hard refresh race).
         if (
             generation.loading
             && generation.localSessionId != null
-            && currentSessionId != null
-            && sessionIdsEqual(generation.localSessionId, currentSessionId)
+            && session.current() != null
+            && sessionIdsEqual(generation.localSessionId, session.current())
         ) {
             const statusLabel = (liveStatus && liveStatus.status) || undefined;
             ensureLocalTypingIndicator(statusLabel);
-            setHistorySessionRunning(currentSessionId, true);
+            setHistorySessionRunning(session.current(), true);
             try { subagentLaunchers.syncLive(liveStatus && liveStatus.subagents); } catch (_) {}
             return;
         }
@@ -9654,8 +9657,8 @@
         if (generation.loading) {
             removeRemoteWaitingIndicator();
             const liveActiveOther = remoteLiveStatusLooksActive(liveStatus);
-            if (currentSessionId && liveActiveOther) {
-                setHistorySessionRunning(currentSessionId, true);
+            if (session.current() && liveActiveOther) {
+                setHistorySessionRunning(session.current(), true);
                 const statusLabel = (liveStatus && liveStatus.status) || 'Waiting for reply…';
                 addRemoteWaitingIndicator(statusLabel);
                 updateRemoteWaitingStatus(statusLabel, liveStatus && liveStatus.report_url);
@@ -9674,7 +9677,7 @@
             || transcriptEndsWithGenerationStop(messages)
         ) {
             removeRemoteWaitingIndicator();
-            if (currentSessionId) setHistorySessionRunning(currentSessionId, false);
+            if (session.current()) setHistorySessionRunning(session.current(), false);
             return;
         }
         // live-status is fetched in parallel with messages; a reply can already be
@@ -9685,12 +9688,12 @@
             && !turnAlreadyShowsAssistantReply();
         const statusLabel = (liveStatus && liveStatus.status) || 'Waiting for reply…';
         const wasGeneratingUi = !!document.getElementById('typing-indicator-remote')
-            || (currentSessionId != null
-                && [...runningSessionIds].some((rid) => sessionIdsEqual(rid, currentSessionId)));
+            || (session.current() != null
+                && [...runningSessionIds].some((rid) => sessionIdsEqual(rid, session.current())));
         // Only show remote waiting when the server says a run is still active —
         // not merely because the last stored message is from the user (e.g. after Stop).
-        if (currentSessionId) {
-            setHistorySessionRunning(currentSessionId, liveActive);
+        if (session.current()) {
+            setHistorySessionRunning(session.current(), liveActive);
         }
         if (liveActive) {
             addRemoteWaitingIndicator(statusLabel);
@@ -9864,7 +9867,7 @@
                     // processMessage(text, { controlLane: true }).
                     sendControlCommand: (text) => processMessage(String(text), { controlLane: true }),
                     context: () => ({
-                        sessionId: currentSessionId,
+                        sessionId: session.current(),
                         projectPath: (currentProject && currentProject.path)
                             ? String(currentProject.path)
                             : undefined,
@@ -10201,7 +10204,7 @@
     }
 
     async function syncSessionMessagesFromServer() {
-        if (!isAuthMode() || currentSessionId == null) return;
+        if (!isAuthMode() || session.current() == null) return;
         // Background / minimized: skip churn; visibilitychange triggers a sync on return.
         if (pageIsBackgrounded()) return;
         const chatArea = document.getElementById('chatArea');
@@ -10220,20 +10223,20 @@
         if (!syncClaim) return;
 
         const syncSeq = syncClaim.token;
-        const sessionAtStart = String(currentSessionId);
+        const sessionAtStart = String(session.current());
         // Capture the existing navigation sequence for A->B->A fencing
         // (no second generation).
-        const navAtStart = _loadSessionSeq;
+        const navAtStart = session.navSeq();
         // True only while this request is still the current one: it owns
         // the claim, no navigation happened since, and the session still
         // matches. Required before ANY body-derived effect, including the
         // malformed active-status branch below.
         const syncStillCurrent = () =>
             CuttleChatGeneration.isSyncCurrent(messageSync, syncSeq)
-            && _loadSessionSeq === navAtStart
-            && String(currentSessionId) === sessionAtStart;
+            && session.navSeq() === navAtStart
+            && String(session.current()) === sessionAtStart;
         try {
-            const authSid = toAuthDbSessionId(currentSessionId);
+            const authSid = toAuthDbSessionId(session.current());
             let msgResp;
             let liveStatus = null;
             const useHubStatus = inAppShell && shellHubSeen;
@@ -10243,14 +10246,14 @@
                     { credentials: 'include', cache: 'no-store' },
                     8000
                 );
-                if (useHubStatus) liveStatus = getCachedHubLiveStatus(currentSessionId);
+                if (useHubStatus) liveStatus = getCachedHubLiveStatus(session.current());
             } else {
                 const pair = await Promise.all([
                     fetchWithTimeout(sessionMessagesUrl(authSid, { limit: CHAT_HISTORY_PAGE_SIZE }), {
                         credentials: 'include',
                         cache: 'no-store',
                     }, 8000),
-                    fetchChatLiveStatus(currentSessionId),
+                    fetchChatLiveStatus(session.current()),
                 ]);
                 msgResp = pair[0];
                 liveStatus = pair[1];
@@ -10267,13 +10270,13 @@
             }
             if (!syncStillCurrent()) return;
             applyServerFollowups(data.followups, data.followup_revision);
-            acceptSessionAttention(currentSessionId, data.attention);
+            acceptSessionAttention(session.current(), data.attention);
             // Keep badges truthful on incremental syncs too (same seeding as open).
-            hydrateAgentSelectionFromSessionData(data, currentSessionId);
+            hydrateAgentSelectionFromSessionData(data, session.current());
             applySessionIdentity(data);
             if (data.session_name) {
-                rememberChatSessionTitle(currentSessionId, data.session_name);
-                updateChatSessionTitle(currentSessionId);
+                rememberChatSessionTitle(session.current(), data.session_name);
+                updateChatSessionTitle(session.current());
             }
 
             let appendedAssistant = false;
@@ -10420,7 +10423,7 @@
                         || lastAsst.querySelector('.slash-command-chip--error')
                     )
                 );
-                notifyAssistantResponseReady(currentSessionId, {
+                notifyAssistantResponseReady(session.current(), {
                     fromSync: true,
                     isError: errFromUi,
                 });
@@ -10447,28 +10450,28 @@
     function saveChatSession(message, role, opts = {}) {
         // Authenticated chats are persisted server-side in /api/chat
         if (isAuthMode()) {
-            if (currentSessionId != null) {
-                localStorage.setItem('lastChatSessionId', String(currentSessionId));
+            if (session.current() != null) {
+                localStorage.setItem('lastChatSessionId', String(session.current()));
             }
             localStorage.setItem('autoResumeSession', 'true');
             if (role === 'assistant') scheduleHistoryTitleRefresh();
             return;
         }
 
-        if (!currentSessionId) {
+        if (!session.current()) {
             // Create new session (CH-XXXXXX for anonymous local chats)
             clearSessionPrefs(newComposerPrefsId);
-            currentSessionId = generateLocalChatId();
-            adoptFollowupQueue(currentSessionId);
-            localStorage.setItem('lastChatSessionId', currentSessionId);
-            updateChatIdBadge(currentSessionId);
+            session.create(generateLocalChatId());
+            adoptFollowupQueue(session.current());
+            localStorage.setItem('lastChatSessionId', session.current());
+            updateChatIdBadge(session.current());
         }
         
         const sessions = JSON.parse(localStorage.getItem('chatSessions') || '{}');
         
-        if (!sessions[currentSessionId]) {
-            sessions[currentSessionId] = {
-                id: currentSessionId,
+        if (!sessions[session.current()]) {
+            sessions[session.current()] = {
+                id: session.current(),
                 title: message.substring(0, 50) + (message.length > 50 ? '...' : ''),
                 created: Date.now(),
                 updated: Date.now(),
@@ -10488,9 +10491,9 @@
         if (opts.routing_badge) msg.routing_badge = opts.routing_badge;
         const atts = normalizeAttachmentList(opts.attachments);
         if (atts.length) msg.attachments = atts;
-        sessions[currentSessionId].messages.push(msg);
+        sessions[session.current()].messages.push(msg);
         
-        sessions[currentSessionId].updated = Date.now();
+        sessions[session.current()].updated = Date.now();
         
         localStorage.setItem('chatSessions', JSON.stringify(sessions));
         
@@ -10909,7 +10912,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
             map[id].starred = next;
             writeTerminalSessionRegistry(map);
             reloadHistoryListKeepingSearch();
-            if (sessionIdsEqual(sessionId, currentSessionId)) updateChatSessionStarButton(currentSessionId);
+            if (sessionIdsEqual(sessionId, session.current())) updateChatSessionStarButton(session.current());
             return;
         }
 
@@ -10939,7 +10942,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 return;
             }
             reloadHistoryListKeepingSearch();
-            if (sessionIdsEqual(sessionId, currentSessionId)) updateChatSessionStarButton(currentSessionId);
+            if (sessionIdsEqual(sessionId, session.current())) updateChatSessionStarButton(session.current());
             return;
         }
 
@@ -10954,7 +10957,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
             return;
         }
         reloadHistoryListKeepingSearch();
-        if (sessionIdsEqual(sessionId, currentSessionId)) updateChatSessionStarButton(currentSessionId);
+        if (sessionIdsEqual(sessionId, session.current())) updateChatSessionStarButton(session.current());
     }
 
     // Sessions this tab deleted. A /api/auth/sessions fetch that was already in
@@ -11225,7 +11228,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
         }
 
         // If this chat is actively generating, abort the local stream immediately.
-        if (sessionIdsEqual(currentSessionId, sessionId) && generation.loading) {
+        if (sessionIdsEqual(session.current(), sessionId) && generation.loading) {
             try {
                 if (activeRequestController) activeRequestController.abort();
             } catch (_) {}
@@ -11263,7 +11266,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 return;
             }
 
-            if (sessionIdsEqual(currentSessionId, sessionId)) {
+            if (sessionIdsEqual(session.current(), sessionId)) {
                 await createNewChat();
             }
             clearSessionPrefs(sessionId);
@@ -11282,7 +11285,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
         writePromptHistoryMap(phMap);
         clearSessionPrefs(sessionId);
 
-        if (currentSessionId === sessionId) {
+        if (session.current() === sessionId) {
             createNewChat();
         }
 
@@ -11719,7 +11722,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
             closeHistoryRenameModal();
             // refreshChatHistoryList already re-applies search/filters when active.
             await refreshChatHistoryList();
-            if (currentSessionId != null && sessionIdsEqual(currentSessionId, sid)) {
+            if (session.current() != null && sessionIdsEqual(session.current(), sid)) {
                 updateChatSessionTitle(sid);
             }
         } catch (err) {
@@ -11793,11 +11796,11 @@ function downloadTranscriptMarkdown(text, sessionId) {
             }
         });
         next.forEach((id) => formAwaitingSessionIds.add(id));
-        if (currentSessionId != null && !serverAttention.get(toAuthDbSessionId(currentSessionId))) {
+        if (session.current() != null && !serverAttention.get(toAuthDbSessionId(session.current()))) {
             const awaitingInput = actionCardsController().awaitingInputSessionIds()
-                .some(sid => sessionIdsEqual(sid, currentSessionId));
-            if (!!(attentionPrefsFor(currentSessionId) || {}).awaitingInput !== awaitingInput) {
-                updateSessionPrefs(currentSessionId, { awaitingInput });
+                .some(sid => sessionIdsEqual(sid, session.current()));
+            if (!!(attentionPrefsFor(session.current()) || {}).awaitingInput !== awaitingInput) {
+                updateSessionPrefs(session.current(), { awaitingInput });
             }
         }
         syncHistoryUnreadIndicators();
@@ -11810,7 +11813,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
     // own end calls can prove they still own the lock.
     function beginLocalGeneration() {
         const begun = CuttleChatGeneration.beginGeneration(generation, {
-            currentSessionId: currentSessionId,
+            currentSessionId: session.current(),
             requestSessionId: authSessionIdForRequest(),
         });
         CuttleStopState.clearAbortSuppression(stopState);
@@ -11875,7 +11878,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
     // Snapshot decisions owned by chat_activity.js — page gathers, domain decides.
     function collectChatActivitySnapshot() {
         return CuttleChatActivity.collectFrameSnapshot({
-            currentSessionId,
+            currentSessionId: session.current(),
             localSessionId: generation.localSessionId,
             awaitingIds: [...formAwaitingSessionIds],
             canonicalize: canonicalizeChatSessionId,
@@ -11971,14 +11974,14 @@ function downloadTranscriptMarkdown(text, sessionId) {
     }
 
     function applyGeneratingFlagsFromSessions(serverSessions) {
-        const currentWasRunning = currentSessionId != null
-            && [...runningSessionIds].some((rid) => sessionIdsEqual(rid, currentSessionId));
+        const currentWasRunning = session.current() != null
+            && [...runningSessionIds].some((rid) => sessionIdsEqual(rid, session.current()));
         // Only mounted work in the open chat may supplement server execution.
         // Entries left behind by another chat must yield to an idle snapshot.
         const localPending = new Set();
         document.querySelectorAll('.cuttle-action-form.is-pending').forEach(card => {
             const sid = formAwaitingSessionIdFromCard(card);
-            if (sessionIdsEqual(sid, currentSessionId)) localPending.add(String(canonicalizeChatSessionId(sid)));
+            if (sessionIdsEqual(sid, session.current())) localPending.add(String(canonicalizeChatSessionId(sid)));
         });
         const still = new Set();
         (serverSessions || []).forEach((s) => {
@@ -11994,8 +11997,8 @@ function downloadTranscriptMarkdown(text, sessionId) {
             // open chat prefer live-status but allow a sessions fallback when
             // live-status was null (unfocused hub miss) and we didn't just switch.
             if (
-                currentSessionId != null
-                && sessionIdsEqual(s.id, currentSessionId)
+                session.current() != null
+                && sessionIdsEqual(s.id, session.current())
             ) {
                 if (s.awaiting_action) {
                     still.add(String(canonicalizeChatSessionId(s.id)));
@@ -12050,8 +12053,8 @@ function downloadTranscriptMarkdown(text, sessionId) {
             // the open chat — live-status owns that window.
             if (
                 deferOpenChatGeneratingFromSessions
-                && currentSessionId != null
-                && sessionIdsEqual(id, currentSessionId)
+                && session.current() != null
+                && sessionIdsEqual(id, session.current())
             ) {
                 return;
             }
@@ -12059,8 +12062,8 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 setHistorySessionRunning(id, false);
             }
         });
-        const currentStillRunning = currentSessionId != null
-            && [...runningSessionIds].some((rid) => sessionIdsEqual(rid, currentSessionId));
+        const currentStillRunning = session.current() != null
+            && [...runningSessionIds].some((rid) => sessionIdsEqual(rid, session.current()));
         if (
             currentWasRunning
             && !currentStillRunning
@@ -12151,8 +12154,8 @@ function downloadTranscriptMarkdown(text, sessionId) {
             archivedChatSessions = [];
             archivedSessionsLoaded = true;
             renderArchivedSection();
-            if (typeof currentSessionId !== 'undefined' && currentSessionId != null && currentSessionId !== '')
-                updateChatSessionTitle(currentSessionId);
+            if (session.current() != null && session.current() !== '')
+                updateChatSessionTitle(session.current());
             return;
         }
         try {
@@ -12178,8 +12181,8 @@ function downloadTranscriptMarkdown(text, sessionId) {
         renderArchivedSection();
         // Archived marks arrive after the title renders on page load (and
         // change on archive toggle) — re-sync the title-bar badge.
-        if (typeof currentSessionId !== 'undefined' && currentSessionId != null && currentSessionId !== '')
-            updateChatSessionTitle(currentSessionId);
+        if (session.current() != null && session.current() !== '')
+            updateChatSessionTitle(session.current());
     }
 
     function renderArchivedSection() {
@@ -12351,7 +12354,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
     function createAuthHistoryItemHTML(s, extraOpts) {
         const sid = s.id;
         const title = s.session_name || (`Chat ${sid}`);
-        const active = sessionIdsEqual(currentSessionId, sid) ? ' active' : '';
+        const active = sessionIdsEqual(session.current(), sid) ? ' active' : '';
         const running = sessionShowsHistorySpinner(sid);
         const runningClass = running ? ' is-running' : '';
         const attention = sessionHistoryAttentionKind(sid, s);
@@ -12441,7 +12444,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
     }
     
     function createHistoryItemHTML(session) {
-        const isActive = currentSessionId === session.id;
+        const isActive = session.current() === session.id;
         const running = sessionShowsHistorySpinner(session.id);
         const attention = sessionHistoryAttentionKind(session.id, session);
         const starred = !!session.starred;
@@ -13352,7 +13355,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
     function renderFollowupQueue() {
         const root = document.getElementById('followupQueue');
         if (!root) return;
-        patchLiveSessionFollowupQueue(currentSessionId, followupQueue.items);
+        patchLiveSessionFollowupQueue(session.current(), followupQueue.items);
         if (!followupQueue.items.length) {
             editingFollowupId = null;
             root.hidden = true;
@@ -13386,7 +13389,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
             const parsed = parseStoredSlashCommandMessage(raw);
             let preview;
             if (parsed && parsed.chips.length) {
-                const chips = normalizeAgentSlashChips(parsed.chips, currentSessionId);
+                const chips = normalizeAgentSlashChips(parsed.chips, session.current());
                 const chipsHtml = chips
                     .map((c) => slashCommandChipHistoryHtml(c.label, c.meta, c.category))
                     .join('');
@@ -13524,8 +13527,8 @@ function downloadTranscriptMarkdown(text, sessionId) {
     }
 
     function followupAuthSid() {
-        if (!isAuthMode() || currentSessionId == null) return null;
-        return toAuthDbSessionId(currentSessionId);
+        if (!isAuthMode() || session.current() == null) return null;
+        return toAuthDbSessionId(session.current());
     }
 
     // Owned by chat_activity.js — thin adapter.
@@ -13555,9 +13558,9 @@ function downloadTranscriptMarkdown(text, sessionId) {
         const r = CuttleFollowupQueue.reconcileServerList(followupQueue, list,
             { editingId: editingFollowupId, revision }, CuttleChatActivity);
         if (!r.applied && r.reason !== 'same') return;
-        patchLiveSessionFollowupQueue(currentSessionId, followupQueue.items);
+        patchLiveSessionFollowupQueue(session.current(), followupQueue.items);
         renderFollowupQueue();
-        if ((followupQueue.items.some((x) => !x.paused) || getSessionPrefs(currentSessionId)?.[followupClaimField]) && !isSessionGenerating() && !editingFollowupId) {
+        if ((followupQueue.items.some((x) => !x.paused) || getSessionPrefs(session.current())?.[followupClaimField]) && !isSessionGenerating() && !editingFollowupId) {
             scheduleFollowupDrain(250);
         }
         try { scheduleChatActivityBroadcast(); } catch (_) {}
@@ -13605,7 +13608,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 patchLiveSessionFollowupQueue(sid, state.base);
                 if (!state.dirty) {
                     state.items = state.base;
-                    if (followupQueue === state && sessionIdsEqual(currentSessionId, sid)) renderFollowupQueue();
+                    if (followupQueue === state && sessionIdsEqual(session.current(), sid)) renderFollowupQueue();
                     return true;
                 }
             }
@@ -13636,7 +13639,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
      * resolves false (caller queues) when nothing steerable is running.
      */
     async function trySteerRunningTurn(message, attachments) {
-        const sid = currentSessionId;
+        const sid = session.current();
         const text = String(message || '').trim();
         if (sid == null || sid === '' || !text) return false;
         if (Array.isArray(attachments) && attachments.length) return false;
@@ -13657,7 +13660,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
             steeringText = '';
         }
         if (!data || !data.steered) return false;
-        if (sessionIdsEqual(currentSessionId, sid)) {
+        if (sessionIdsEqual(session.current(), sid)) {
             addMessageToUI(text, 'user', {
                 timestamp: Date.now(),
                 steered: true,
@@ -13733,14 +13736,14 @@ function downloadTranscriptMarkdown(text, sessionId) {
         if (isSessionGenerating()) return;
         // Re-check after heal — edit may have started while we were waiting.
         if (editingFollowupId) return;
-        const origin = currentSessionId;
+        const origin = session.current();
         const state = followupQueue;
         if (state.takeInFlight) return;
         let batch = [];
         const sid = followupAuthSid();
         if (sid) {
             if (state.dirty && !await persistFollowupPut()) return;
-            if (editingFollowupId || !sessionIdsEqual(currentSessionId, origin) || followupQueue !== state) return;
+            if (editingFollowupId || !sessionIdsEqual(session.current(), origin) || followupQueue !== state) return;
             const claimId = getSessionPrefs(sid)?.[followupClaimField] || ('queue-' + Date.now() + '-' + Math.random().toString(36).slice(2));
             updateSessionPrefs(sid, {[followupClaimField]: claimId});
             const takeVersion = state.editVersion;
@@ -13768,7 +13771,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 state.items = data.remaining || [];
                 state.base = state.items.slice();
                 batch = data.followups || [];
-                if (editedDuringTake || editingFollowupId || !sessionIdsEqual(currentSessionId, origin) || followupQueue !== state) {
+                if (editedDuringTake || editingFollowupId || !sessionIdsEqual(session.current(), origin) || followupQueue !== state) {
                     // Restore to the captured chat when navigation or editing
                     // races the claim; retain the write if the network fails.
                     state.items = editedDuringTake ? editedItems : [...batch, ...state.items];
@@ -13810,7 +13813,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
     }
 
     async function requestServerCancelCurrentRun(opts = {}) {
-        const sid = currentSessionId;
+        const sid = session.current();
         if (sid == null || sid === '') return null;
         const body = { session_id: sid };
         if (opts.cancelJobs) body.cancel_jobs = true;
@@ -13894,7 +13897,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
         const announce = opts.announce !== false;
         const inflight = inFlightUserMessage;
         if (typeof window !== 'undefined' && window.CuttleCompletionNotifications) {
-            window.CuttleCompletionNotifications.broker().cancel(currentSessionId || completionNotificationPendingId).catch(() => {});
+            window.CuttleCompletionNotifications.broker().cancel(session.current() || completionNotificationPendingId).catch(() => {});
         }
         const watchIds = runningWatchJobIds();
         const cancelJobs = (!inflight && watchIds.length > 0) || isProjectShellTurn(inflight);
@@ -13919,7 +13922,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
         removeRemoteWaitingIndicator();
         // Force: Stop owns the turn outright (the re-send claims a new token).
         endLocalGeneration();
-        if (currentSessionId) setHistorySessionRunning(currentSessionId, false);
+        if (session.current()) setHistorySessionRunning(session.current(), false);
         activeRequestController = null;
         const chatInput = document.getElementById('chatInput');
         const sendButton = document.getElementById('sendButton');
@@ -13956,7 +13959,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
         const prevInFlight = inFlightUserMessage;
         const prevController = activeRequestController;
         if (!controlLane) {
-            if (window.CuttleCompletionNotifications) window.CuttleCompletionNotifications.broker().begin(currentSessionId || completionNotificationPendingId);
+            if (window.CuttleCompletionNotifications) window.CuttleCompletionNotifications.broker().begin(session.current() || completionNotificationPendingId);
             CuttleStopState.beginSend(stopState);
             inFlightUserMessage = message;
             turnGenToken = beginLocalGeneration();
@@ -13985,13 +13988,13 @@ function downloadTranscriptMarkdown(text, sessionId) {
         const pendingSlash = replySlash
             ? pendingSlashForTypingIndicator(replySlash, stickyCmd)
             : null;
-        turnBadgeBySession.set(String(canonicalizeChatSessionId(currentSessionId) || ''), pendingSlash);
+        turnBadgeBySession.set(String(canonicalizeChatSessionId(session.current()) || ''), pendingSlash);
         addTypingIndicator(pendingSlash);
 
         let skipFollowupDrain = false;
         let controlController = null;
         // Declared outside try so catch/finally can still gate paints after a switch.
-        let boundSessionId = canonicalizeChatSessionId(currentSessionId);
+        let boundSessionId = canonicalizeChatSessionId(session.current());
         // Snapshot nav generation at send time. New Chat / history switch bumps
         // turnGeneration; zombie status/adopt must not touch the new UI.
         const turnNavGen = CuttleTurnGuard.capture(turnGeneration);
@@ -14004,7 +14007,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
         // the freshness/binding truth table lives in CuttleTurnGuard.
         const canPaintTurnHere = () => CuttleTurnGuard.canPaintHere(turnNavGen, turnSessionId(), {
             gen: turnGeneration.gen,
-            currentSessionId,
+            currentSessionId: session.current(),
             isViewing: (id) => isViewingSession(id),
         });
         try {
@@ -14025,7 +14028,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
             boundSessionId = canonicalizeChatSessionId(
                 requestBody.session_id != null && requestBody.session_id !== ''
                     ? requestBody.session_id
-                    : currentSessionId
+                    : session.current()
             );
             const agentOverride = stickyAgentOverrideForRequest(message);
             if (agentOverride) requestBody.sticky_agent = agentOverride;
@@ -14142,8 +14145,8 @@ function downloadTranscriptMarkdown(text, sessionId) {
                                         if (
                                             !CuttleTurnGuard.isStale(turnNavGen, turnGeneration)
                                             && (
-                                                currentSessionId == null
-                                                || sessionIdsEqual(currentSessionId, sid)
+                                                session.current() == null
+                                                || sessionIdsEqual(session.current(), sid)
                                                 || (boundSessionId != null && isViewingSession(boundSessionId))
                                             )
                                         ) {
@@ -14403,8 +14406,8 @@ function downloadTranscriptMarkdown(text, sessionId) {
                     // If we are somehow still on that session's pane (id drift /
                     // focus race), chirp alone left an empty transcript until refresh.
                     if (
-                        currentSessionId != null
-                        && sessionIdsEqual(currentSessionId, readySid)
+                        session.current() != null
+                        && sessionIdsEqual(session.current(), readySid)
                         && openTranscriptMissingThisTurnReply()
                         && readyBody
                     ) {
@@ -14456,7 +14459,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 });
                 startMessageSync();
                 // Re-attach waiting UI for the still-running first prompt.
-                const sid = currentSessionId != null ? currentSessionId : data.session_id;
+                const sid = session.current() != null ? session.current() : data.session_id;
                 Promise.resolve(fetchChatLiveStatus(sid)).then((live) => {
                     updateRemoteWaitingFromMessages([], live || {
                         active: true,
@@ -14476,7 +14479,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 // attach the real reply when the worker finishes.
                 if (data.session_id) adoptChatSessionId(data.session_id);
                 startMessageSync();
-                const sid = currentSessionId != null ? currentSessionId : data.session_id;
+                const sid = session.current() != null ? session.current() : data.session_id;
                 Promise.resolve(fetchChatLiveStatus(sid)).then((live) => {
                     if (liveStatusLooksActive(live) || (live && live.generating)) {
                         updateRemoteWaitingFromMessages([], live);
@@ -14598,7 +14601,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                         }
                         if (data.session_id) adoptChatSessionId(data.session_id);
                         removeRemoteWaitingIndicator();
-                        notifyAssistantResponseReady(currentSessionId || generation.localSessionId, {
+                        notifyAssistantResponseReady(session.current() || generation.localSessionId, {
                             isError: !!assistantFailed,
                         });
                         startMessageSync();
@@ -14651,7 +14654,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 // Reply is on screen — drop any remote-waiting UI a parallel
                 // sync may have armed from a stale live-status snapshot.
                 removeRemoteWaitingIndicator();
-                notifyAssistantResponseReady(currentSessionId || generation.localSessionId, {
+                notifyAssistantResponseReady(session.current() || generation.localSessionId, {
                     isError: !!assistantFailed,
                 });
                 startMessageSync();
@@ -14684,7 +14687,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                     if (data.session_id) {
                         adoptChatSessionId(data.session_id);
                     }
-                    notifyAssistantResponseReady(currentSessionId || generation.localSessionId, {
+                    notifyAssistantResponseReady(session.current() || generation.localSessionId, {
                         isError: true,
                     });
                     startMessageSync();
@@ -14728,7 +14731,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                         slash_command_failed: !!stickyCmd,
                     });
                     notifyAssistantResponseReady(
-                        currentSessionId || generation.localSessionId || turnSessionId(),
+                        session.current() || generation.localSessionId || turnSessionId(),
                         { isError: true }
                     );
                 } else {
@@ -14803,7 +14806,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
         const clearComposer = () => {
             if (overrideText != null) return;
             input.value = '';
-            clearComposerDraft(currentSessionId);
+            clearComposerDraft(session.current());
         };
 
         if (!isSendableComposerMessage(message, attachments)) {
@@ -15385,7 +15388,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
         escapeHtml,
         normalizeUsage: normalizeUsagePayload,
         getSlashCtx: () => slashCtx,
-        getSessionId: () => currentSessionId,
+        getSessionId: () => session.current(),
         getProjectPath: () => (currentProject && currentProject.path) ? String(currentProject.path) : '',
         toast: (message, variant) => (window.showToast || function () {})(message, variant),
     });
@@ -15397,7 +15400,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
         storage: localStorage,
         escapeHtmlInline,
         recordSelector: CHAT_RECORD_SELECTOR,
-        currentSessionId: () => currentSessionId,
+        currentSessionId: () => session.current(),
         formatChatDisplayId,
         olderVisibleCount: () => chatHistoryOlderVisibleCount,
         hasOlderMessages: () => chatHistoryHasMore,
@@ -15608,7 +15611,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
         // App shell batches live-status for all panes — don't open a per-pane
         // poll that competes for the shared HTTPS connection pool.
         if (inAppShell) {
-            reportSessionToShell(currentSessionId);
+            reportSessionToShell(session.current());
             return;
         }
         // SSE can stall on Electron/HTTPS while the agent keeps updating live-status.
@@ -15616,12 +15619,12 @@ function downloadTranscriptMarkdown(text, sessionId) {
         let lastStatus = '';
         let stagnantTicks = 0;
         streamStatusPollTimer = setInterval(async () => {
-            if (!isLoadingThisSession() || currentSessionId == null) {
+            if (!isLoadingThisSession() || session.current() == null) {
                 clearStreamStatusPoll();
                 return;
             }
             if (pageIsBackgrounded()) return;
-            const live = await fetchChatLiveStatus(currentSessionId);
+            const live = await fetchChatLiveStatus(session.current());
             if (!live) return;
             if (live.status) {
                 if (live.status === lastStatus) stagnantTicks += 1;
@@ -15641,12 +15644,12 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 try {
                     window.CuttleNetDebug && window.CuttleNetDebug.event(
                         'status-poll-idle',
-                        'recovering session=' + currentSessionId
+                        'recovering session=' + session.current()
                     );
                 } catch (_) {}
                 await syncSessionMessagesFromServer();
                 if (isLoadingThisSession()) {
-                    const recovered = await recoverChatResultFromServer(currentSessionId);
+                    const recovered = await recoverChatResultFromServer(session.current());
                     if (recovered && String(recovered.response || '').trim()) {
                         if (consumeCancelledAgentReply(recovered.response)) {
                             finishLocalStreamFromServerSync();
@@ -15658,7 +15661,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                                 routing_badge: recovered.routing_badge || undefined,
                                 usage: normalizeUsagePayload(recovered.usage) || undefined,
                             });
-                            notifyAssistantResponseReady(currentSessionId, { fromSync: true });
+                            notifyAssistantResponseReady(session.current(), { fromSync: true });
                             finishLocalStreamFromServerSync();
                         } else {
                             finishLocalStreamFromServerSync();
@@ -15744,8 +15747,8 @@ function downloadTranscriptMarkdown(text, sessionId) {
             if (text !== 'Connecting...' && text.indexOf('Still connecting') < 0) return;
 
             // Prefer live generation status over a health probe (SSE may be stalled).
-            if (currentSessionId != null) {
-                const live = await fetchChatLiveStatus(currentSessionId);
+            if (session.current() != null) {
+                const live = await fetchChatLiveStatus(session.current());
                 if (live && (live.active || live.generating) && live.status) {
                     updateTypingStatus(live.status);
                     if (live.report_url) updateTypingIndicatorQueryLink(live.report_url);
@@ -16037,8 +16040,8 @@ function downloadTranscriptMarkdown(text, sessionId) {
             if (!spec.project_path && currentProject && currentProject.path) {
                 spec.project_path = String(currentProject.path);
             }
-            if (!spec.session_id && currentSessionId != null && currentSessionId !== '') {
-                spec.session_id = String(currentSessionId);
+            if (!spec.session_id && session.current() != null && session.current() !== '') {
+                spec.session_id = String(session.current());
             }
             // Do not bake a huge inline. token into data-fallback — data-spec is
             // enough; tokenForCard rebuilds from data-spec when the pending id is gone.
@@ -16507,8 +16510,8 @@ function downloadTranscriptMarkdown(text, sessionId) {
             // Only settle the deep link before a chat is open. Auth refreshes
             // fire repeatedly; once the user is reading a chat, re-reading the
             // URL could yank them into a different one mid-click.
-            if (currentSessionId != null) {
-                if (String(currentSessionId) === String(wanted) && !messageSyncTimer) {
+            if (session.current() != null) {
+                if (String(session.current()) === String(wanted) && !messageSyncTimer) {
                     startMessageSync();
                 }
                 return;
@@ -16611,7 +16614,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 CuttlePromptHistory.resetBrowse(promptHistoryState);
                 syncSlashMenuFromInput(welcomeInput);
                 // Frame removal need not fire unload; save before a fast space switch.
-                saveComposerDraft(currentSessionId || 'new');
+                saveComposerDraft(session.current() || 'new');
             });
             wireComposerEmoticons(welcomeInput);
             LOG('DOMContentLoaded: welcome input keydown listener attached');
@@ -16625,7 +16628,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 CuttlePromptHistory.resetBrowse(promptHistoryState);
                 syncSlashMenuFromInput(chatInput);
                 // Frame removal need not fire unload; save before a fast space switch.
-                saveComposerDraft(currentSessionId || 'new');
+                saveComposerDraft(session.current() || 'new');
             });
             wireComposerEmoticons(chatInput);
             chatInput.style.height = 'auto';
@@ -16636,7 +16639,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
 
         // Flush drafts on refresh / Electron restart / pane unload.
         const flushComposerDraft = () => {
-            try { saveComposerDraft(currentSessionId || 'new'); } catch (_) {}
+            try { saveComposerDraft(session.current() || 'new'); } catch (_) {}
         };
         window.addEventListener('pagehide', flushComposerDraft);
         window.addEventListener('beforeunload', flushComposerDraft);
@@ -16747,8 +16750,8 @@ function downloadTranscriptMarkdown(text, sessionId) {
             }
             // After sleep / Flask restart, stale running flags can trap follow-ups.
             healStaleGeneratingState();
-            if (currentSessionId != null) {
-                markChatSessionRead(currentSessionId);
+            if (session.current() != null) {
+                markChatSessionRead(session.current());
                 syncHistoryUnreadIndicators();
             }
             syncSessionMessagesFromServer();
@@ -16777,7 +16780,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                     const changed = next !== shellPaneFocused;
                     shellPaneFocused = next;
                     if (messageSyncTimer) scheduleNextMessageSync();
-                    if (changed && shellPaneFocused && currentSessionId != null) {
+                    if (changed && shellPaneFocused && session.current() != null) {
                         syncSessionMessagesFromServer();
                     }
                     // Hidden panes stop usage-live polling while away; rescan
@@ -16791,8 +16794,8 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 }
                 if (e.data.type === 'cuttle-live-status') {
                     const sid = e.data.sessionId;
-                    if (sid == null || currentSessionId == null) return;
-                    if (!sessionIdsEqual(sid, currentSessionId)) return;
+                    if (sid == null || session.current() == null) return;
+                    if (!sessionIdsEqual(sid, session.current())) return;
                     applyHubLiveStatusPayload(e.data.status || null, sid);
                     return;
                 }
@@ -16821,7 +16824,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
             document.addEventListener('pointerdown', function () {
                 notifyShellPaneActivity();
             }, true);
-            if (currentSessionId != null) reportSessionToShell(currentSessionId);
+            if (session.current() != null) reportSessionToShell(session.current());
             // Ask shell to re-broadcast focus (in case we loaded after click).
             try {
                 window.parent.postMessage({ type: 'cuttle-pane-activity' }, '*');
@@ -17045,7 +17048,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
     window.chatPageTurnFeedback = async function(btn) {
         const qid = btn && btn.getAttribute('data-query-id');
         const value = btn && btn.getAttribute('data-feedback');
-        if (!qid || !value || currentSessionId == null) return;
+        if (!qid || !value || session.current() == null) return;
         const group = btn.closest('.message-footer-icons');
         const buttons = group ? Array.from(group.querySelectorAll('.message-feedback-btn')) : [btn];
         const active = buttons.find((b) => b.classList.contains('is-on'));
@@ -17062,7 +17065,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 method: 'POST',
                 credentials: 'include',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ session_id: currentSessionId, query_id: qid, feedback: next }),
+                body: JSON.stringify({ session_id: session.current(), query_id: qid, feedback: next }),
             });
             const data = await resp.json().catch(() => ({}));
             if (!resp.ok || !data.success) throw new Error((data && data.error) || ('HTTP ' + resp.status));
@@ -17189,7 +17192,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
     function fillChatChromeMenu() {
         const dropdown = document.getElementById('chatChromeMenuDropdown');
         if (!dropdown) return;
-        const sid = currentSessionId;
+        const sid = session.current();
         const hasSession = sid != null && sid !== '';
         dropdown.innerHTML = buildSessionMenuHTML(hasSession ? sid : null, {
             includeRename: hasSession,
