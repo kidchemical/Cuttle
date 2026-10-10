@@ -4308,6 +4308,7 @@
         isCurrentFetch: (field, gen) => isCurrentSupplementFetch(field, gen),
         captureMutation: (sid, label) => sessionMutations.capture(sid, label, _loadSessionSeq),
         isMutationCurrent: (tok) => sessionMutations.current(tok, currentSessionId, _loadSessionSeq),
+        sessionMutationFetch: (url, opts) => sessionMutationFetch(url, opts),
         renderSlashChips: () => {
             renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
             renderSlashChips('chat', document.getElementById('chatInput'));
@@ -4583,49 +4584,7 @@
 
     /** Persist the chat's Muse model pick (palette click — no message sent). */
     function persistMuseModelSelection(modelId) {
-        const id = String(modelId || '').trim();
-        if (!id) return;
-        slashPaletteSupplement.museModelsLoading = false;
-        if (id.toLowerCase() === 'refresh' || id.toLowerCase() === '__refresh__') {
-            slashPaletteSupplement.museModelsKey = '';
-            slashPaletteSupplement.museModels = [];
-            agentControls.loadMuseModelsForPalette(true, { refresh: true });
-            return;
-        }
-        slashPaletteSupplement.museModel = id;
-        beginSupplementFetch('museModelsGen');
-        slashPaletteSupplement.museModels = (slashPaletteSupplement.museModels || []).map((m) => ({
-            ...m,
-            current: String(m && m.id) === id,
-        }));
-        const sid = currentSessionId != null ? String(currentSessionId) : '';
-        if (!sid) {
-            // New chat with no id yet — mark dirty so the pick (not the
-            // default) is persisted once the session exists.
-            slashPaletteSupplement.museModelDirty = true;
-            slashPaletteSupplement.museModelsKey = '';
-            return;
-        }
-        slashPaletteSupplement.museModelDirty = true;
-        const mutationToken = sessionMutations.capture(currentSessionId, 'muse:model', _loadSessionSeq);
-        sessionMutationFetch('/api/muse/model', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session: sid, model: id }),
-        })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (j && j.success) {
-                    slashPaletteSupplement.museModel = id;
-                    slashPaletteSupplement.museModelDirty = false;
-                    slashPaletteSupplement.museModelsKey = sid;
-                    repaintMuseUserBadges();
-                    persistStickySlashForCurrentSession();
-                    refreshHistoryAgentChips();
-                }
-            })
-            .catch(() => {});
+        return agentControls.persistMuseModelSelection(modelId);
     }
 
     /** anyChat: load even without a /hermes chip (user typed "hermes" in the palette). */
@@ -4635,41 +4594,7 @@
 
     /** Persist the chat's Hermes model pick (palette click — no message sent). */
     function persistHermesModelSelection(modelId) {
-        const id = String(modelId || '').trim();
-        if (!id) return;
-        slashPaletteSupplement.hermesModelsLoading = false;
-        beginSupplementFetch('hermesModelsGen');
-        slashPaletteSupplement.hermesModel = id;
-        slashPaletteSupplement.hermesModels = (slashPaletteSupplement.hermesModels || []).map((m) => ({
-            ...m,
-            current: String(m && m.id) === id,
-        }));
-        const sid = currentSessionId != null ? String(currentSessionId) : '';
-        if (!sid) {
-            slashPaletteSupplement.hermesModelDirty = true;
-            slashPaletteSupplement.hermesModelsKey = '';
-            return;
-        }
-        slashPaletteSupplement.hermesModelDirty = true;
-        const mutationToken = sessionMutations.capture(currentSessionId, 'hermes:model', _loadSessionSeq);
-        sessionMutationFetch('/api/hermes/model', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session: sid, model: id }),
-        })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (j && j.success) {
-                    slashPaletteSupplement.hermesModel = id;
-                    slashPaletteSupplement.hermesModelDirty = false;
-                    slashPaletteSupplement.hermesModelsKey = sid;
-                    repaintHermesUserBadges();
-                    persistStickySlashForCurrentSession();
-                    refreshHistoryAgentChips();
-                }
-            })
-            .catch(() => {});
+        return agentControls.persistHermesModelSelection(modelId);
     }
 
     function loadSlashPaletteSupplement() {
@@ -4824,92 +4749,7 @@
      * caches and in-flight fetches via the generation counters.
      */
     function resetAgentSupplementForIdentity(prev, next) {
-        const S = slashPaletteSupplement;
-        S.cursorModelsKey = '';
-        S.cursorModelsLoaded = false;
-        S.museModels = [];
-        S.museModelsKey = '';
-        S.museModelsLoading = false;
-        S.museModelsTried = null;
-        S.hermesModels = [];
-        S.hermesModelsKey = '';
-        S.hermesModelsLoading = false;
-        S.hermesModelsTried = null;
-        S.opencodeModels = [];
-        S.opencodeModelsKey = '';
-        S.opencodeModelsLoading = false;
-        S.opencodeModelsTried = null;
-        S.codexModels = [];
-        S.codexModelsKey = '';
-        S.codexModelsLoading = false;
-        S.codexModelsTried = null;
-        S.claudeModels = [];
-        S.claudeModelsKey = '';
-        S.claudeModelsLoading = false;
-        S.claudeModelsTried = null;
-        S.museEffortKey = '';
-        S.hermesEffortKey = '';
-        S.opencodeEffortKey = '';
-        S.codexEffortKey = '';
-        S.claudeEffortKey = '';
-        S.cursorModelsGen = (S.cursorModelsGen || 0) + 1;
-        S.museModelsGen = (S.museModelsGen || 0) + 1;
-        S.hermesModelsGen = (S.hermesModelsGen || 0) + 1;
-        S.opencodeModelsGen = (S.opencodeModelsGen || 0) + 1;
-        S.codexModelsGen = (S.codexModelsGen || 0) + 1;
-        S.claudeModelsGen = (S.claudeModelsGen || 0) + 1;
-        if (prev && next) {
-            S.preferredModel = 'auto';
-            S.lastReportedModel = null;
-            S.museModel = '';
-            S.museEffort = '';
-            S.museModelDirty = false;
-            S.museEffortDirty = false;
-            S.museEffortLoading = false;
-            S.hermesModel = '';
-            S.hermesEffort = '';
-            S.hermesModelDirty = false;
-            S.hermesEffortDirty = false;
-            S.hermesEffortLoading = false;
-            S.opencodeModel = '';
-            S.opencodeEffort = '';
-            S.opencodeModelDirty = false;
-            S.opencodeEffortDirty = false;
-            S.opencodeEffortLoading = false;
-            S.codexModel = '';
-            S.codexEffort = '';
-            S.codexModelDirty = false;
-            S.codexEffortDirty = false;
-            S.codexEffortLoading = false;
-            S.claudeModel = '';
-            S.claudeEffort = '';
-            S.claudeModelDirty = false;
-            S.claudeEffortDirty = false;
-            S.claudeEffortLoading = false;
-        } else if (!next) {
-            S.preferredModel = 'auto';
-            S.lastReportedModel = null;
-            S.museModel = '';
-            S.museEffort = '';
-            S.museModelDirty = false;
-            S.museEffortDirty = false;
-            S.hermesModel = '';
-            S.hermesEffort = '';
-            S.hermesModelDirty = false;
-            S.hermesEffortDirty = false;
-            S.opencodeModel = '';
-            S.opencodeEffort = '';
-            S.opencodeModelDirty = false;
-            S.opencodeEffortDirty = false;
-            S.codexModel = '';
-            S.codexEffort = '';
-            S.codexModelDirty = false;
-            S.codexEffortDirty = false;
-            S.claudeModel = '';
-            S.claudeEffort = '';
-            S.claudeModelDirty = false;
-            S.claudeEffortDirty = false;
-        }
+        return agentControls.resetAgentSupplementForIdentity(prev, next);
     }
 
     /** True when chip is a palette-added model/effort companion of another agent. */
@@ -4930,22 +4770,7 @@
     }
 
     function seedMuseSupplementFromSessionData(data, sessionId) {
-        if (!data || typeof data !== 'object') return;
-        const key = sessionId != null ? String(sessionId) : '';
-        const serverModel = sessionPin(data, 'muse', 'model');
-        if (serverModel && !slashPaletteSupplement.museModelDirty) {
-            slashPaletteSupplement.museModel = serverModel;
-            if (key) slashPaletteSupplement.museModelsKey = key;
-        }
-        const serverEffort = sessionPin(data, 'muse', 'effort').toLowerCase();
-        if (serverEffort && !slashPaletteSupplement.museEffortDirty) {
-            slashPaletteSupplement.museEffort = serverEffort;
-            if (key) slashPaletteSupplement.museEffortKey = key;
-        } else if (!slashPaletteSupplement.museEffortDirty && key && data && ((data.agent_pins && data.agent_pins.muse) || ('muse_effort' in data))) {
-            // Explicitly unpinned — don't inherit another chat's effort.
-            slashPaletteSupplement.museEffort = '';
-            slashPaletteSupplement.museEffortKey = key;
-        }
+        return agentControls.seedMuseSupplementFromSessionData(data, sessionId);
     }
 
     /** Hydrate this chat's pinned Muse reasoning effort (badge-gated like models). */
@@ -4955,34 +4780,7 @@
 
     /** Persist the chat's Muse reasoning-effort pick (palette click — no message sent). */
     function persistMuseEffortSelection(effort) {
-        const id = String(effort || '').trim().toLowerCase();
-        if (!id) return;
-        slashPaletteSupplement.museEffortLoading = false;
-        beginSupplementFetch('museEffortGen');
-        slashPaletteSupplement.museEffort = id;
-        const sid = currentSessionId != null ? String(currentSessionId) : '';
-        if (!sid) {
-            slashPaletteSupplement.museEffortDirty = true;
-            slashPaletteSupplement.museEffortKey = '';
-            return;
-        }
-        slashPaletteSupplement.museEffortKey = sid;
-        slashPaletteSupplement.museEffortDirty = true;
-        const mutationToken = sessionMutations.capture(currentSessionId, 'muse:effort', _loadSessionSeq);
-        sessionMutationFetch('/api/muse/effort', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session: sid, effort: id }),
-        })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (j && j.success) {
-                    slashPaletteSupplement.museEffortKey = sid;
-                    slashPaletteSupplement.museEffortDirty = false;
-                }
-            })
-            .catch(() => {});
+        return agentControls.persistMuseEffortSelection(effort);
     }
 
     /**
@@ -5003,21 +4801,7 @@
 
     /** Seed Hermes supplement from a session payload (messages response). */
     function seedHermesSupplementFromSessionData(data, sessionId) {
-        if (!data || typeof data !== 'object') return;
-        const key = sessionId != null ? String(sessionId) : '';
-        const serverModel = sessionPin(data, 'hermes', 'model');
-        if (serverModel && !slashPaletteSupplement.hermesModelDirty) {
-            slashPaletteSupplement.hermesModel = serverModel;
-            if (key) slashPaletteSupplement.hermesModelsKey = key;
-        }
-        const serverEffort = sessionPin(data, 'hermes', 'effort').toLowerCase();
-        if (serverEffort && !slashPaletteSupplement.hermesEffortDirty) {
-            slashPaletteSupplement.hermesEffort = serverEffort;
-            if (key) slashPaletteSupplement.hermesEffortKey = key;
-        } else if (!slashPaletteSupplement.hermesEffortDirty && key && data && ((data.agent_pins && data.agent_pins.hermes) || ('hermes_effort' in data))) {
-            slashPaletteSupplement.hermesEffort = '';
-            slashPaletteSupplement.hermesEffortKey = key;
-        }
+        return agentControls.seedHermesSupplementFromSessionData(data, sessionId);
     }
 
     function loadHermesEffortForPalette() {
@@ -5025,35 +4809,7 @@
     }
 
     function persistHermesEffortSelection(effort) {
-        const id = String(effort || '').trim().toLowerCase();
-        if (!id) return;
-        slashPaletteSupplement.hermesEffortLoading = false;
-        beginSupplementFetch('hermesEffortGen');
-        slashPaletteSupplement.hermesEffort = id;
-        const sid = currentSessionId != null ? String(currentSessionId) : '';
-        if (!sid) {
-            slashPaletteSupplement.hermesEffortDirty = true;
-            slashPaletteSupplement.hermesEffortKey = '';
-            return;
-        }
-        // Optimistic key so a concurrent GET cannot wipe the pick before POST lands.
-        slashPaletteSupplement.hermesEffortKey = sid;
-        slashPaletteSupplement.hermesEffortDirty = true;
-        const mutationToken = sessionMutations.capture(currentSessionId, 'hermes:effort', _loadSessionSeq);
-        sessionMutationFetch('/api/hermes/effort', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session: sid, effort: id }),
-        })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (j && j.success) {
-                    slashPaletteSupplement.hermesEffortKey = sid;
-                    slashPaletteSupplement.hermesEffortDirty = false;
-                }
-            })
-            .catch(() => {});
+        return agentControls.persistHermesEffortSelection(effort);
     }
 
     /**
@@ -5069,47 +4825,7 @@
     }
 
     function persistOpenCodeModelSelection(modelId) {
-        const id = String(modelId || '').trim();
-        if (!id) return;
-        slashPaletteSupplement.opencodeModelsLoading = false;
-        beginSupplementFetch('opencodeModelsGen');
-        if (id.toLowerCase() === 'refresh' || id.toLowerCase() === '__refresh__') {
-            slashPaletteSupplement.opencodeModelsKey = '';
-            slashPaletteSupplement.opencodeModels = [];
-            agentControls.loadOpenCodeModelsForPalette(true, { refresh: true });
-            return;
-        }
-        slashPaletteSupplement.opencodeModel = id;
-        slashPaletteSupplement.opencodeModels = (slashPaletteSupplement.opencodeModels || []).map((m) => ({
-            ...m,
-            current: String(m && m.id) === id,
-        }));
-        const sid = currentSessionId != null ? String(currentSessionId) : '';
-        if (!sid) {
-            slashPaletteSupplement.opencodeModelDirty = true;
-            slashPaletteSupplement.opencodeModelsKey = '';
-            return;
-        }
-        slashPaletteSupplement.opencodeModelDirty = true;
-        const mutationToken = sessionMutations.capture(currentSessionId, 'opencode:model', _loadSessionSeq);
-        sessionMutationFetch('/api/opencode/model', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session: sid, model: id }),
-        })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (j && j.success) {
-                    slashPaletteSupplement.opencodeModel = id;
-                    slashPaletteSupplement.opencodeModelDirty = false;
-                    slashPaletteSupplement.opencodeModelsKey = sid;
-                    repaintOpenCodeUserBadges();
-                    persistStickySlashForCurrentSession();
-                    refreshHistoryAgentChips();
-                }
-            })
-            .catch(() => {});
+        return agentControls.persistOpenCodeModelSelection(modelId);
     }
 
     function buildOpenCodeModelPaletteItems(filterLower, opts) {
@@ -5117,21 +4833,7 @@
     }
 
     function seedOpenCodeSupplementFromSessionData(data, sessionId) {
-        if (!data || typeof data !== 'object') return;
-        const key = sessionId != null ? String(sessionId) : '';
-        const serverModel = sessionPin(data, 'opencode', 'model');
-        if (serverModel && !slashPaletteSupplement.opencodeModelDirty) {
-            slashPaletteSupplement.opencodeModel = serverModel;
-            if (key) slashPaletteSupplement.opencodeModelsKey = key;
-        }
-        const serverEffort = sessionPin(data, 'opencode', 'effort').toLowerCase();
-        if (serverEffort && !slashPaletteSupplement.opencodeEffortDirty) {
-            slashPaletteSupplement.opencodeEffort = serverEffort;
-            if (key) slashPaletteSupplement.opencodeEffortKey = key;
-        } else if (!slashPaletteSupplement.opencodeEffortDirty && key && data && ((data.agent_pins && data.agent_pins.opencode) || ('opencode_effort' in data))) {
-            slashPaletteSupplement.opencodeEffort = '';
-            slashPaletteSupplement.opencodeEffortKey = key;
-        }
+        return agentControls.seedOpenCodeSupplementFromSessionData(data, sessionId);
     }
 
     function loadOpenCodeEffortForPalette() {
@@ -5139,35 +4841,7 @@
     }
 
     function persistOpenCodeEffortSelection(effort) {
-        const id = String(effort || '').trim().toLowerCase();
-        if (!id) return;
-        slashPaletteSupplement.opencodeEffortLoading = false;
-        beginSupplementFetch('opencodeEffortGen');
-        slashPaletteSupplement.opencodeEffort = id;
-        const sid = currentSessionId != null ? String(currentSessionId) : '';
-        if (!sid) {
-            slashPaletteSupplement.opencodeEffortDirty = true;
-            slashPaletteSupplement.opencodeEffortKey = '';
-            return;
-        }
-        // Optimistic key so a concurrent GET cannot wipe the pick before POST lands.
-        slashPaletteSupplement.opencodeEffortKey = sid;
-        slashPaletteSupplement.opencodeEffortDirty = true;
-        const mutationToken = sessionMutations.capture(currentSessionId, 'opencode:effort', _loadSessionSeq);
-        sessionMutationFetch('/api/opencode/effort', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session: sid, effort: id }),
-        })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (j && j.success) {
-                    slashPaletteSupplement.opencodeEffortKey = sid;
-                    slashPaletteSupplement.opencodeEffortDirty = false;
-                }
-            })
-            .catch(() => {});
+        return agentControls.persistOpenCodeEffortSelection(effort);
     }
 
     function buildOpenCodeEffortPaletteItems(filterLower) {
@@ -5180,47 +4854,7 @@
     }
 
     function persistCodexModelSelection(modelId) {
-        const id = String(modelId || '').trim();
-        if (!id) return;
-        slashPaletteSupplement.codexModelsLoading = false;
-        beginSupplementFetch('codexModelsGen');
-        if (id.toLowerCase() === 'refresh' || id.toLowerCase() === '__refresh__') {
-            slashPaletteSupplement.codexModelsKey = '';
-            slashPaletteSupplement.codexModels = [];
-            agentControls.loadCodexModelsForPalette(true, { refresh: true });
-            return;
-        }
-        slashPaletteSupplement.codexModel = id;
-        slashPaletteSupplement.codexModels = (slashPaletteSupplement.codexModels || []).map((m) => ({
-            ...m,
-            current: String(m && m.id) === id,
-        }));
-        const sid = currentSessionId != null ? String(currentSessionId) : '';
-        if (!sid) {
-            slashPaletteSupplement.codexModelDirty = true;
-            slashPaletteSupplement.codexModelsKey = '';
-            return;
-        }
-        slashPaletteSupplement.codexModelDirty = true;
-        const mutationToken = sessionMutations.capture(currentSessionId, 'codex:model', _loadSessionSeq);
-        sessionMutationFetch('/api/codex/model', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session: sid, model: id }),
-        })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (j && j.success) {
-                    slashPaletteSupplement.codexModel = id;
-                    slashPaletteSupplement.codexModelDirty = false;
-                    slashPaletteSupplement.codexModelsKey = sid;
-                    repaintCodexUserBadges();
-                    persistStickySlashForCurrentSession();
-                    refreshHistoryAgentChips();
-                }
-            })
-            .catch(() => {});
+        return agentControls.persistCodexModelSelection(modelId);
     }
 
     function buildCodexModelPaletteItems(filterLower, opts) {
@@ -5228,21 +4862,7 @@
     }
 
     function seedCodexSupplementFromSessionData(data, sessionId) {
-        if (!data || typeof data !== 'object') return;
-        const key = sessionId != null ? String(sessionId) : '';
-        const serverModel = sessionPin(data, 'codex', 'model');
-        if (serverModel && !slashPaletteSupplement.codexModelDirty) {
-            slashPaletteSupplement.codexModel = serverModel;
-            if (key) slashPaletteSupplement.codexModelsKey = key;
-        }
-        const serverEffort = sessionPin(data, 'codex', 'effort').toLowerCase();
-        if (serverEffort && !slashPaletteSupplement.codexEffortDirty) {
-            slashPaletteSupplement.codexEffort = serverEffort;
-            if (key) slashPaletteSupplement.codexEffortKey = key;
-        } else if (!slashPaletteSupplement.codexEffortDirty && key && data && ((data.agent_pins && data.agent_pins.codex) || ('codex_effort' in data))) {
-            slashPaletteSupplement.codexEffort = '';
-            slashPaletteSupplement.codexEffortKey = key;
-        }
+        return agentControls.seedCodexSupplementFromSessionData(data, sessionId);
     }
 
     function loadCodexEffortForPalette() {
@@ -5259,24 +4879,7 @@
      * right before the badge snapshot, then flush the corrupted value on adopt.
      */
     async function ensureCodexEffortForSend(message) {
-        const gate = CuttleChatAgentModel.codexEffortFetchForSend({
-            messageText: message,
-            hasCodexChip: hasActiveCodexAgentChip(),
-            codexEffortDirty: slashPaletteSupplement.codexEffortDirty,
-            sessionKey: currentSessionId != null ? String(currentSessionId) : '',
-            effortKey: slashPaletteSupplement.codexEffortKey,
-        });
-        if (!gate.fetch) return;
-        const key = currentSessionId != null ? String(currentSessionId) : '';
-        try {
-            const response = await fetch(gate.url, { cache: 'no-store' });
-            const result = await response.json();
-            if (!result || !result.success) return;
-            // A palette click may have set dirty while this fetch was in flight.
-            if (slashPaletteSupplement.codexEffortDirty) return;
-            slashPaletteSupplement.codexEffort = String(result.preferredEffort || '');
-            slashPaletteSupplement.codexEffortKey = key;
-        } catch (_) {}
+        return agentControls.ensureCodexEffortForSend(message);
     }
 
     /**
@@ -5324,38 +4927,7 @@
     }
 
     function persistCodexEffortSelection(effort) {
-        const id = String(effort || '').trim().toLowerCase();
-        if (!id) return;
-        slashPaletteSupplement.codexEffortLoading = false;
-        beginSupplementFetch('codexEffortGen');
-        slashPaletteSupplement.codexEffort = id;
-        const sid = currentSessionId != null ? String(currentSessionId) : '';
-        if (!sid) {
-            slashPaletteSupplement.codexEffortDirty = true;
-            slashPaletteSupplement.codexEffortKey = '';
-            return;
-        }
-        slashPaletteSupplement.codexEffortKey = sid;
-        slashPaletteSupplement.codexEffortDirty = true;
-        const mutationToken = sessionMutations.capture(currentSessionId, 'codex:effort', _loadSessionSeq);
-        sessionMutationFetch('/api/codex/effort', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                session: sid,
-                effort: id,
-                model: slashPaletteSupplement.codexModel || '',
-            }),
-        })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (j && j.success) {
-                    slashPaletteSupplement.codexEffortKey = sid;
-                    slashPaletteSupplement.codexEffortDirty = false;
-                }
-            })
-            .catch(() => {});
+        return agentControls.persistCodexEffortSelection(effort);
     }
 
     function buildCodexEffortPaletteItems(filterLower) {
@@ -5368,46 +4940,7 @@
     }
 
     function persistClaudeModelSelection(modelId) {
-        const id = String(modelId || '').trim();
-        if (!id) return;
-        slashPaletteSupplement.claudeModelsLoading = false;
-        beginSupplementFetch('claudeModelsGen');
-        if (CuttleChatAgentModel.isClaudeModelRefreshPick(id)) {
-            slashPaletteSupplement.claudeModelsKey = '';
-            slashPaletteSupplement.claudeModels = [];
-            agentControls.loadClaudeModelsForPalette(true, { refresh: true });
-            return;
-        }
-        slashPaletteSupplement.claudeModel = id;
-        slashPaletteSupplement.claudeModels =
-            CuttleChatAgentModel.markClaudeCurrentModel(
-                slashPaletteSupplement.claudeModels, id);
-        const sid = currentSessionId != null ? String(currentSessionId) : '';
-        if (!sid) {
-            slashPaletteSupplement.claudeModelDirty = true;
-            slashPaletteSupplement.claudeModelsKey = '';
-            return;
-        }
-        slashPaletteSupplement.claudeModelDirty = true;
-        const mutationToken = sessionMutations.capture(currentSessionId, 'claude:model', _loadSessionSeq);
-        sessionMutationFetch('/api/claude/model', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session: sid, model: id }),
-        })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (j && j.success) {
-                    slashPaletteSupplement.claudeModel = id;
-                    slashPaletteSupplement.claudeModelDirty = false;
-                    slashPaletteSupplement.claudeModelsKey = sid;
-                    repaintClaudeUserBadges();
-                    persistStickySlashForCurrentSession();
-                    refreshHistoryAgentChips();
-                }
-            })
-            .catch(() => {});
+        return agentControls.persistClaudeModelSelection(modelId);
     }
 
     function buildClaudeModelPaletteItems(filterLower, opts) {
@@ -5415,16 +4948,7 @@
     }
 
     function seedClaudeSupplementFromSessionData(data, sessionId) {
-        if (!data || typeof data !== 'object') return;
-        const patch = CuttleChatAgentModel.claudeSeedPatchFromSessionData(data, {
-            modelDirty: slashPaletteSupplement.claudeModelDirty,
-            effortDirty: slashPaletteSupplement.claudeEffortDirty,
-            sessionKey: sessionId != null ? String(sessionId) : '',
-        });
-        if (patch.model !== undefined) slashPaletteSupplement.claudeModel = patch.model;
-        if (patch.modelsKey !== undefined) slashPaletteSupplement.claudeModelsKey = patch.modelsKey;
-        if (patch.effort !== undefined) slashPaletteSupplement.claudeEffort = patch.effort;
-        if (patch.effortKey !== undefined) slashPaletteSupplement.claudeEffortKey = patch.effortKey;
+        return agentControls.seedClaudeSupplementFromSessionData(data, sessionId);
     }
 
     function loadClaudeEffortForPalette() {
@@ -5432,38 +4956,7 @@
     }
 
     function persistClaudeEffortSelection(effort) {
-        const id = String(effort || '').trim().toLowerCase();
-        if (!id) return;
-        slashPaletteSupplement.claudeEffortLoading = false;
-        beginSupplementFetch('claudeEffortGen');
-        slashPaletteSupplement.claudeEffort = id;
-        const sid = currentSessionId != null ? String(currentSessionId) : '';
-        if (!sid) {
-            slashPaletteSupplement.claudeEffortDirty = true;
-            slashPaletteSupplement.claudeEffortKey = '';
-            return;
-        }
-        slashPaletteSupplement.claudeEffortKey = sid;
-        slashPaletteSupplement.claudeEffortDirty = true;
-        const mutationToken = sessionMutations.capture(currentSessionId, 'claude:effort', _loadSessionSeq);
-        sessionMutationFetch('/api/claude/effort', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                session: sid,
-                effort: id,
-                model: slashPaletteSupplement.claudeModel || '',
-            }),
-        })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (j && j.success) {
-                    slashPaletteSupplement.claudeEffortKey = sid;
-                    slashPaletteSupplement.claudeEffortDirty = false;
-                }
-            })
-            .catch(() => {});
+        return agentControls.persistClaudeEffortSelection(effort);
     }
 
     function buildClaudeEffortPaletteItems(filterLower) {
@@ -10828,46 +10321,7 @@
         // Persist a Muse model/effort picked while the chat had no id yet. Only
         // dirty picks persist here — persisting the in-memory default would
         // clobber the stored pin (e.g. Contributor reset to plain Spark 1.3).
-        if (slashPaletteSupplement.museModelDirty) {
-            slashPaletteSupplement.museModelDirty = false;
-            persistMuseModelSelection(slashPaletteSupplement.museModel);
-        }
-        if (slashPaletteSupplement.museEffortDirty) {
-            slashPaletteSupplement.museEffortDirty = false;
-            persistMuseEffortSelection(slashPaletteSupplement.museEffort);
-        }
-        if (slashPaletteSupplement.hermesModelDirty) {
-            slashPaletteSupplement.hermesModelDirty = false;
-            persistHermesModelSelection(slashPaletteSupplement.hermesModel);
-        }
-        if (slashPaletteSupplement.hermesEffortDirty) {
-            slashPaletteSupplement.hermesEffortDirty = false;
-            persistHermesEffortSelection(slashPaletteSupplement.hermesEffort);
-        }
-        if (slashPaletteSupplement.opencodeModelDirty) {
-            slashPaletteSupplement.opencodeModelDirty = false;
-            persistOpenCodeModelSelection(slashPaletteSupplement.opencodeModel);
-        }
-        if (slashPaletteSupplement.opencodeEffortDirty) {
-            slashPaletteSupplement.opencodeEffortDirty = false;
-            persistOpenCodeEffortSelection(slashPaletteSupplement.opencodeEffort);
-        }
-        if (slashPaletteSupplement.codexModelDirty) {
-            slashPaletteSupplement.codexModelDirty = false;
-            persistCodexModelSelection(slashPaletteSupplement.codexModel);
-        }
-        if (slashPaletteSupplement.codexEffortDirty) {
-            slashPaletteSupplement.codexEffortDirty = false;
-            persistCodexEffortSelection(slashPaletteSupplement.codexEffort);
-        }
-        if (slashPaletteSupplement.claudeModelDirty) {
-            slashPaletteSupplement.claudeModelDirty = false;
-            persistClaudeModelSelection(slashPaletteSupplement.claudeModel);
-        }
-        if (slashPaletteSupplement.claudeEffortDirty) {
-            slashPaletteSupplement.claudeEffortDirty = false;
-            persistClaudeEffortSelection(slashPaletteSupplement.claudeEffort);
-        }
+        agentControls.flushDirtyAgentSelectionsOnAdopt();
         // Owned by chat_generation.js — rebind the local lock to the newly
         // bound session while loading; idle means no lock to move.
         const rebound = CuttleChatGeneration.rebindGeneration(generation, sessionId);

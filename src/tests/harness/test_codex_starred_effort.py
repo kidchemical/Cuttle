@@ -163,15 +163,24 @@ def test_codex_execution_override_beats_session_and_starred(tmp_path, monkeypatc
 
 
 def test_ensure_codex_effort_for_send_respects_dirty_pick():
-    """Codex-only pre-send fetch must not clobber a dirty palette pick."""
+    """Codex-only pre-send fetch must not clobber a dirty palette pick.
+
+    Slice 2A moved the gate body onto the ``CuttleChatAgentControls`` owner;
+    the page keeps a thin ``ensureCodexEffortForSend`` delegate and still
+    awaits it before the user-badge snapshot.
+    """
+    controls_js = Path(__file__).resolve().parents[2] / "web" / "js" / "chat/chat_agent_controls.js"
+    controls = controls_js.read_text(encoding="utf-8")
+
+    helper_start = controls.index("async function ensureCodexEffortForSend(message)")
+    helper_end = controls.index("function persistCodexEffortSelection", helper_start)
+    helper = controls[helper_start:helper_end]
+    assert "codexEffortDirty" in helper
+    assert helper.index("codexEffortDirty") < helper.index("await doFetch")
+
     chat_js = Path(__file__).resolve().parents[2] / "web" / "js" / "chat/chat_page.js"
     source = chat_js.read_text(encoding="utf-8")
-
-    helper_start = source.index("async function ensureCodexEffortForSend(message)")
-    helper_end = source.index("function persistCodexEffortSelection", helper_start)
-    helper = source[helper_start:helper_end]
-    assert "codexEffortDirty" in helper
-    assert helper.index("codexEffortDirty") < helper.index("await fetch")
+    assert "function ensureCodexEffortForSend(message)" in source
 
     welcome_start = source.index("async function sendWelcomeMessage()")
     welcome_end = source.index("function handleWelcomeInputKeyDown", welcome_start)

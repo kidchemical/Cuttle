@@ -206,15 +206,12 @@ def test_page_delegates_agent_model_decisions_to_owned_module():
         "CuttleChatAgentModel.starredAgentEffort",
         "CuttleChatAgentModel.isAgentDefaultStarred",
         "CuttleChatAgentModel.buildAgentPinsForRequest",
-        "CuttleChatAgentModel.codexEffortFetchForSend",
-        "CuttleChatAgentModel.isClaudeModelRefreshPick",
-        "CuttleChatAgentModel.markClaudeCurrentModel",
-        "CuttleChatAgentModel.claudeSeedPatchFromSessionData",
         "CuttleChatAgentModel.prettyClaudeModelLabel",
         "CuttleChatAgentModel.claudeModelLabel",
     ):
         assert owned in src, f"page must delegate to {owned}"
-    # Provider loaders/builders now live on the controller owner.
+    # Provider loaders/builders plus persistence/seed/gate decisions now live
+    # on the controller owner (Slice 2A stages 1–2).
     for owned in (
         "CuttleChatAgentModel.claudeModelsFetchForPalette",
         "CuttleChatAgentModel.applyClaudeModelsResponse",
@@ -225,6 +222,10 @@ def test_page_delegates_agent_model_decisions_to_owned_module():
         "CuttleChatAgentModel.claudeEffortFilterForPalette",
         "CuttleChatAgentModel.claudeEffortLevelsForModel",
         "CuttleChatAgentModel.buildClaudeEffortRow",
+        "CuttleChatAgentModel.codexEffortFetchForSend",
+        "CuttleChatAgentModel.isClaudeModelRefreshPick",
+        "CuttleChatAgentModel.markClaudeCurrentModel",
+        "CuttleChatAgentModel.claudeSeedPatchFromSessionData",
     ):
         assert owned in controls, f"controller must own {owned}"
     assert "CuttleChatAgentModel.resolveAgentEffortForBadge" in src

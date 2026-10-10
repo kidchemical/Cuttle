@@ -6,9 +6,9 @@
    maps, agent capabilities) plus the six provider model/effort
    palette loaders and palette-item builders. Sits over the pure
    `chat_agent_model.js`; the page keeps project-command/harness-agent
-   supplement state, persistence setters, session seeding/reset the
-   Codex send gate and the label/repaint/badge families, and calls into
-   `CuttleChatAgentControls.*`.
+   supplement state, the label/repaint/badge families, and calls into
+   `CuttleChatAgentControls.*` for persistence setters, session
+   seeding/reset, the Codex send gate and adoption flush.
 
    No DOM, no page globals: every capability is injected through
    `create(deps)`. Transport is but thin fetch wrappers so provider
@@ -129,6 +129,7 @@
      *   hasCursorModelChip()   any cursor-model chip in either composer
      *   supportsEffort(id)     agent capability gate for effort rows
      *   fetch(url, opts)       transport (defaults to the ambient fetch)
+     *   sessionMutationFetch(url, opts)  session-mutation-ordered transport
      *   beginFetch(field)      increment a generation counter in state
      *   isCurrentFetch(f,g)    generation still current
      *   captureMutation(sid,label) session-mutation token
@@ -160,6 +161,11 @@
         const isCurrentFetch = (field, gen) => (d.isCurrentFetch ? d.isCurrentFetch(field, gen) : true);
         const supportsEffort = (id) => (d.supportsEffort ? d.supportsEffort(id) : true);
         const doFetch = (url, opts) => (typeof d.fetch === 'function' ? d.fetch(url, opts) : fetch(url, opts));
+        const doSessionMutationFetch = (url, opts) => (
+            typeof d.sessionMutationFetch === 'function'
+                ? d.sessionMutationFetch(url, opts)
+                : doFetch(url, opts)
+        );
 
         /** Commit hook shared by every loader: repaint chips + focused menu. */
         function finishProviderUi() {
@@ -1214,6 +1220,655 @@
             return items;
         }
 
+        // ── Muse selection persistence ────────────────────────────────────
+        /** Persist the chat's Muse model pick (palette click — no message sent). */
+        function persistMuseModelSelection(modelId) {
+            const id = String(modelId || '').trim();
+            if (!id) return;
+            state.museModelsLoading = false;
+            if (id.toLowerCase() === 'refresh' || id.toLowerCase() === '__refresh__') {
+                state.museModelsKey = '';
+                state.museModels = [];
+                loadMuseModelsForPalette(true, { refresh: true });
+                return;
+            }
+            state.museModel = id;
+            beginFetch('museModelsGen');
+            state.museModels = (state.museModels || []).map((m) => ({
+                ...m,
+                current: String(m && m.id) === id,
+            }));
+            const sid = sessionKey();
+            if (!sid) {
+                // New chat with no id yet — mark dirty so the pick (not the
+                // default) is persisted once the session exists.
+                state.museModelDirty = true;
+                state.museModelsKey = '';
+                return;
+            }
+            state.museModelDirty = true;
+            const mutationToken = captureMutation('muse:model');
+            doSessionMutationFetch('/api/muse/model', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session: sid, model: id }),
+            })
+                .then((r) => r.json())
+                .then((j) => {
+                    if (!isMutationCurrent(mutationToken)) return;
+                    if (j && j.success) {
+                        state.museModel = id;
+                        state.museModelDirty = false;
+                        state.museModelsKey = sid;
+                        repaint('muse');
+                        persistSticky();
+                        refreshHistoryChips();
+                    }
+                })
+                .catch(() => {});
+        }
+
+        function seedMuseSupplementFromSessionData(data, sessionId) {
+            if (!data || typeof data !== 'object') return;
+            const key = sessionId != null ? String(sessionId) : '';
+            const serverModel = root.CuttleChatAgentModel.sessionPin(data, 'muse', 'model');
+            if (serverModel && !state.museModelDirty) {
+                state.museModel = serverModel;
+                if (key) state.museModelsKey = key;
+            }
+            const serverEffort = root.CuttleChatAgentModel.sessionPin(data, 'muse', 'effort').toLowerCase();
+            if (serverEffort && !state.museEffortDirty) {
+                state.museEffort = serverEffort;
+                if (key) state.museEffortKey = key;
+            } else if (!state.museEffortDirty && key && data && ((data.agent_pins && data.agent_pins.muse) || ('muse_effort' in data))) {
+                // Explicitly unpinned — don't inherit another chat's effort.
+                state.museEffort = '';
+                state.museEffortKey = key;
+            }
+        }
+
+        /** Persist the chat's Muse reasoning-effort pick (palette click — no message sent). */
+        function persistMuseEffortSelection(effort) {
+            const id = String(effort || '').trim().toLowerCase();
+            if (!id) return;
+            state.museEffortLoading = false;
+            beginFetch('museEffortGen');
+            state.museEffort = id;
+            const sid = sessionKey();
+            if (!sid) {
+                state.museEffortDirty = true;
+                state.museEffortKey = '';
+                return;
+            }
+            state.museEffortKey = sid;
+            state.museEffortDirty = true;
+            const mutationToken = captureMutation('muse:effort');
+            doSessionMutationFetch('/api/muse/effort', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session: sid, effort: id }),
+            })
+                .then((r) => r.json())
+                .then((j) => {
+                    if (!isMutationCurrent(mutationToken)) return;
+                    if (j && j.success) {
+                        state.museEffortKey = sid;
+                        state.museEffortDirty = false;
+                    }
+                })
+                .catch(() => {});
+        }
+
+        // ── Hermes selection persistence ──────────────────────────────────
+        /** Persist the chat's Hermes model pick (palette click — no message sent). */
+        function persistHermesModelSelection(modelId) {
+            const id = String(modelId || '').trim();
+            if (!id) return;
+            state.hermesModelsLoading = false;
+            beginFetch('hermesModelsGen');
+            state.hermesModel = id;
+            state.hermesModels = (state.hermesModels || []).map((m) => ({
+                ...m,
+                current: String(m && m.id) === id,
+            }));
+            const sid = sessionKey();
+            if (!sid) {
+                state.hermesModelDirty = true;
+                state.hermesModelsKey = '';
+                return;
+            }
+            state.hermesModelDirty = true;
+            const mutationToken = captureMutation('hermes:model');
+            doSessionMutationFetch('/api/hermes/model', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session: sid, model: id }),
+            })
+                .then((r) => r.json())
+                .then((j) => {
+                    if (!isMutationCurrent(mutationToken)) return;
+                    if (j && j.success) {
+                        state.hermesModel = id;
+                        state.hermesModelDirty = false;
+                        state.hermesModelsKey = sid;
+                        repaint('hermes');
+                        persistSticky();
+                        refreshHistoryChips();
+                    }
+                })
+                .catch(() => {});
+        }
+
+        function seedHermesSupplementFromSessionData(data, sessionId) {
+            if (!data || typeof data !== 'object') return;
+            const key = sessionId != null ? String(sessionId) : '';
+            const serverModel = root.CuttleChatAgentModel.sessionPin(data, 'hermes', 'model');
+            if (serverModel && !state.hermesModelDirty) {
+                state.hermesModel = serverModel;
+                if (key) state.hermesModelsKey = key;
+            }
+            const serverEffort = root.CuttleChatAgentModel.sessionPin(data, 'hermes', 'effort').toLowerCase();
+            if (serverEffort && !state.hermesEffortDirty) {
+                state.hermesEffort = serverEffort;
+                if (key) state.hermesEffortKey = key;
+            } else if (!state.hermesEffortDirty && key && data && ((data.agent_pins && data.agent_pins.hermes) || ('hermes_effort' in data))) {
+                state.hermesEffort = '';
+                state.hermesEffortKey = key;
+            }
+        }
+
+        function persistHermesEffortSelection(effort) {
+            const id = String(effort || '').trim().toLowerCase();
+            if (!id) return;
+            state.hermesEffortLoading = false;
+            beginFetch('hermesEffortGen');
+            state.hermesEffort = id;
+            const sid = sessionKey();
+            if (!sid) {
+                state.hermesEffortDirty = true;
+                state.hermesEffortKey = '';
+                return;
+            }
+            // Optimistic key so a concurrent GET cannot wipe the pick before POST lands.
+            state.hermesEffortKey = sid;
+            state.hermesEffortDirty = true;
+            const mutationToken = captureMutation('hermes:effort');
+            doSessionMutationFetch('/api/hermes/effort', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session: sid, effort: id }),
+            })
+                .then((r) => r.json())
+                .then((j) => {
+                    if (!isMutationCurrent(mutationToken)) return;
+                    if (j && j.success) {
+                        state.hermesEffortKey = sid;
+                        state.hermesEffortDirty = false;
+                    }
+                })
+                .catch(() => {});
+        }
+
+        // ── OpenCode selection persistence ────────────────────────────────
+        function persistOpenCodeModelSelection(modelId) {
+            const id = String(modelId || '').trim();
+            if (!id) return;
+            state.opencodeModelsLoading = false;
+            beginFetch('opencodeModelsGen');
+            if (id.toLowerCase() === 'refresh' || id.toLowerCase() === '__refresh__') {
+                state.opencodeModelsKey = '';
+                state.opencodeModels = [];
+                loadOpenCodeModelsForPalette(true, { refresh: true });
+                return;
+            }
+            state.opencodeModel = id;
+            state.opencodeModels = (state.opencodeModels || []).map((m) => ({
+                ...m,
+                current: String(m && m.id) === id,
+            }));
+            const sid = sessionKey();
+            if (!sid) {
+                state.opencodeModelDirty = true;
+                state.opencodeModelsKey = '';
+                return;
+            }
+            state.opencodeModelDirty = true;
+            const mutationToken = captureMutation('opencode:model');
+            doSessionMutationFetch('/api/opencode/model', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session: sid, model: id }),
+            })
+                .then((r) => r.json())
+                .then((j) => {
+                    if (!isMutationCurrent(mutationToken)) return;
+                    if (j && j.success) {
+                        state.opencodeModel = id;
+                        state.opencodeModelDirty = false;
+                        state.opencodeModelsKey = sid;
+                        repaint('opencode');
+                        persistSticky();
+                        refreshHistoryChips();
+                    }
+                })
+                .catch(() => {});
+        }
+
+        function seedOpenCodeSupplementFromSessionData(data, sessionId) {
+            if (!data || typeof data !== 'object') return;
+            const key = sessionId != null ? String(sessionId) : '';
+            const serverModel = root.CuttleChatAgentModel.sessionPin(data, 'opencode', 'model');
+            if (serverModel && !state.opencodeModelDirty) {
+                state.opencodeModel = serverModel;
+                if (key) state.opencodeModelsKey = key;
+            }
+            const serverEffort = root.CuttleChatAgentModel.sessionPin(data, 'opencode', 'effort').toLowerCase();
+            if (serverEffort && !state.opencodeEffortDirty) {
+                state.opencodeEffort = serverEffort;
+                if (key) state.opencodeEffortKey = key;
+            } else if (!state.opencodeEffortDirty && key && data && ((data.agent_pins && data.agent_pins.opencode) || ('opencode_effort' in data))) {
+                state.opencodeEffort = '';
+                state.opencodeEffortKey = key;
+            }
+        }
+
+        function persistOpenCodeEffortSelection(effort) {
+            const id = String(effort || '').trim().toLowerCase();
+            if (!id) return;
+            state.opencodeEffortLoading = false;
+            beginFetch('opencodeEffortGen');
+            state.opencodeEffort = id;
+            const sid = sessionKey();
+            if (!sid) {
+                state.opencodeEffortDirty = true;
+                state.opencodeEffortKey = '';
+                return;
+            }
+            // Optimistic key so a concurrent GET cannot wipe the pick before POST lands.
+            state.opencodeEffortKey = sid;
+            state.opencodeEffortDirty = true;
+            const mutationToken = captureMutation('opencode:effort');
+            doSessionMutationFetch('/api/opencode/effort', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session: sid, effort: id }),
+            })
+                .then((r) => r.json())
+                .then((j) => {
+                    if (!isMutationCurrent(mutationToken)) return;
+                    if (j && j.success) {
+                        state.opencodeEffortKey = sid;
+                        state.opencodeEffortDirty = false;
+                    }
+                })
+                .catch(() => {});
+        }
+
+        // ── Codex selection persistence ───────────────────────────────────
+        function persistCodexModelSelection(modelId) {
+            const id = String(modelId || '').trim();
+            if (!id) return;
+            state.codexModelsLoading = false;
+            beginFetch('codexModelsGen');
+            if (id.toLowerCase() === 'refresh' || id.toLowerCase() === '__refresh__') {
+                state.codexModelsKey = '';
+                state.codexModels = [];
+                loadCodexModelsForPalette(true, { refresh: true });
+                return;
+            }
+            state.codexModel = id;
+            state.codexModels = (state.codexModels || []).map((m) => ({
+                ...m,
+                current: String(m && m.id) === id,
+            }));
+            const sid = sessionKey();
+            if (!sid) {
+                state.codexModelDirty = true;
+                state.codexModelsKey = '';
+                return;
+            }
+            state.codexModelDirty = true;
+            const mutationToken = captureMutation('codex:model');
+            doSessionMutationFetch('/api/codex/model', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session: sid, model: id }),
+            })
+                .then((r) => r.json())
+                .then((j) => {
+                    if (!isMutationCurrent(mutationToken)) return;
+                    if (j && j.success) {
+                        state.codexModel = id;
+                        state.codexModelDirty = false;
+                        state.codexModelsKey = sid;
+                        repaint('codex');
+                        persistSticky();
+                        refreshHistoryChips();
+                    }
+                })
+                .catch(() => {});
+        }
+
+        function seedCodexSupplementFromSessionData(data, sessionId) {
+            if (!data || typeof data !== 'object') return;
+            const key = sessionId != null ? String(sessionId) : '';
+            const serverModel = root.CuttleChatAgentModel.sessionPin(data, 'codex', 'model');
+            if (serverModel && !state.codexModelDirty) {
+                state.codexModel = serverModel;
+                if (key) state.codexModelsKey = key;
+            }
+            const serverEffort = root.CuttleChatAgentModel.sessionPin(data, 'codex', 'effort').toLowerCase();
+            if (serverEffort && !state.codexEffortDirty) {
+                state.codexEffort = serverEffort;
+                if (key) state.codexEffortKey = key;
+            } else if (!state.codexEffortDirty && key && data && ((data.agent_pins && data.agent_pins.codex) || ('codex_effort' in data))) {
+                state.codexEffort = '';
+                state.codexEffortKey = key;
+            }
+        }
+
+        /**
+         * Resolve Codex's effective effort before snapshotting a first-turn user
+         * badge. The palette fetch is intentionally async; a fast Send must not
+         * persist a bare Codex chip while the starred default is still loading.
+         *
+         * Never clobber a user pick that has not been persisted yet (new chat /
+         * no session id). That used to overwrite `xhigh` with the starred `low`
+         * right before the badge snapshot, then flush the corrupted value on adopt.
+         */
+        async function ensureCodexEffortForSend(message) {
+            const gate = root.CuttleChatAgentModel.codexEffortFetchForSend({
+                messageText: message,
+                hasCodexChip: d.hasActiveCodex && d.hasActiveCodex(),
+                codexEffortDirty: state.codexEffortDirty,
+                sessionKey: sessionKey(),
+                effortKey: state.codexEffortKey,
+            });
+            if (!gate.fetch) return;
+            const key = sessionKey();
+            try {
+                const response = await doFetch(gate.url, { cache: 'no-store' });
+                const result = await response.json();
+                if (!result || !result.success) return;
+                // A palette click may have set dirty while this fetch was in flight.
+                if (state.codexEffortDirty) return;
+                state.codexEffort = String(result.preferredEffort || '');
+                state.codexEffortKey = key;
+            } catch (_) {}
+        }
+
+        function persistCodexEffortSelection(effort) {
+            const id = String(effort || '').trim().toLowerCase();
+            if (!id) return;
+            state.codexEffortLoading = false;
+            beginFetch('codexEffortGen');
+            state.codexEffort = id;
+            const sid = sessionKey();
+            if (!sid) {
+                state.codexEffortDirty = true;
+                state.codexEffortKey = '';
+                return;
+            }
+            state.codexEffortKey = sid;
+            state.codexEffortDirty = true;
+            const mutationToken = captureMutation('codex:effort');
+            doSessionMutationFetch('/api/codex/effort', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    session: sid,
+                    effort: id,
+                    model: state.codexModel || '',
+                }),
+            })
+                .then((r) => r.json())
+                .then((j) => {
+                    if (!isMutationCurrent(mutationToken)) return;
+                    if (j && j.success) {
+                        state.codexEffortKey = sid;
+                        state.codexEffortDirty = false;
+                    }
+                })
+                .catch(() => {});
+        }
+
+        // ── Claude selection persistence ──────────────────────────────────
+        function persistClaudeModelSelection(modelId) {
+            const id = String(modelId || '').trim();
+            if (!id) return;
+            state.claudeModelsLoading = false;
+            beginFetch('claudeModelsGen');
+            if (root.CuttleChatAgentModel.isClaudeModelRefreshPick(id)) {
+                state.claudeModelsKey = '';
+                state.claudeModels = [];
+                loadClaudeModelsForPalette(true, { refresh: true });
+                return;
+            }
+            state.claudeModel = id;
+            state.claudeModels =
+                root.CuttleChatAgentModel.markClaudeCurrentModel(
+                    state.claudeModels, id);
+            const sid = sessionKey();
+            if (!sid) {
+                state.claudeModelDirty = true;
+                state.claudeModelsKey = '';
+                return;
+            }
+            state.claudeModelDirty = true;
+            const mutationToken = captureMutation('claude:model');
+            doSessionMutationFetch('/api/claude/model', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session: sid, model: id }),
+            })
+                .then((r) => r.json())
+                .then((j) => {
+                    if (!isMutationCurrent(mutationToken)) return;
+                    if (j && j.success) {
+                        state.claudeModel = id;
+                        state.claudeModelDirty = false;
+                        state.claudeModelsKey = sid;
+                        repaint('claude');
+                        persistSticky();
+                        refreshHistoryChips();
+                    }
+                })
+                .catch(() => {});
+        }
+
+        function seedClaudeSupplementFromSessionData(data, sessionId) {
+            if (!data || typeof data !== 'object') return;
+            const patch = root.CuttleChatAgentModel.claudeSeedPatchFromSessionData(data, {
+                modelDirty: state.claudeModelDirty,
+                effortDirty: state.claudeEffortDirty,
+                sessionKey: sessionId != null ? String(sessionId) : '',
+            });
+            if (patch.model !== undefined) state.claudeModel = patch.model;
+            if (patch.modelsKey !== undefined) state.claudeModelsKey = patch.modelsKey;
+            if (patch.effort !== undefined) state.claudeEffort = patch.effort;
+            if (patch.effortKey !== undefined) state.claudeEffortKey = patch.effortKey;
+        }
+
+        function persistClaudeEffortSelection(effort) {
+            const id = String(effort || '').trim().toLowerCase();
+            if (!id) return;
+            state.claudeEffortLoading = false;
+            beginFetch('claudeEffortGen');
+            state.claudeEffort = id;
+            const sid = sessionKey();
+            if (!sid) {
+                state.claudeEffortDirty = true;
+                state.claudeEffortKey = '';
+                return;
+            }
+            state.claudeEffortKey = sid;
+            state.claudeEffortDirty = true;
+            const mutationToken = captureMutation('claude:effort');
+            doSessionMutationFetch('/api/claude/effort', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    session: sid,
+                    effort: id,
+                    model: state.claudeModel || '',
+                }),
+            })
+                .then((r) => r.json())
+                .then((j) => {
+                    if (!isMutationCurrent(mutationToken)) return;
+                    if (j && j.success) {
+                        state.claudeEffortKey = sid;
+                        state.claudeEffortDirty = false;
+                    }
+                })
+                .catch(() => {});
+        }
+
+        /**
+         * Neutralize cached agent preferences when the session identity changes.
+         * prev/next are '' for the unsent composer: '' → id keeps dirty user
+         * picks (same unsent chat gaining an id); anything else fully resets so a
+         * new chat never inherits the previous chat's model. Always invalidates
+         * caches and in-flight fetches via the generation counters.
+         */
+        function resetAgentSupplementForIdentity(prev, next) {
+            const S = state;
+            S.cursorModelsKey = '';
+            S.cursorModelsLoaded = false;
+            S.museModels = [];
+            S.museModelsKey = '';
+            S.museModelsLoading = false;
+            S.museModelsTried = null;
+            S.hermesModels = [];
+            S.hermesModelsKey = '';
+            S.hermesModelsLoading = false;
+            S.hermesModelsTried = null;
+            S.opencodeModels = [];
+            S.opencodeModelsKey = '';
+            S.opencodeModelsLoading = false;
+            S.opencodeModelsTried = null;
+            S.codexModels = [];
+            S.codexModelsKey = '';
+            S.codexModelsLoading = false;
+            S.codexModelsTried = null;
+            S.claudeModels = [];
+            S.claudeModelsKey = '';
+            S.claudeModelsLoading = false;
+            S.claudeModelsTried = null;
+            S.museEffortKey = '';
+            S.hermesEffortKey = '';
+            S.opencodeEffortKey = '';
+            S.codexEffortKey = '';
+            S.claudeEffortKey = '';
+            S.cursorModelsGen = (S.cursorModelsGen || 0) + 1;
+            S.museModelsGen = (S.museModelsGen || 0) + 1;
+            S.hermesModelsGen = (S.hermesModelsGen || 0) + 1;
+            S.opencodeModelsGen = (S.opencodeModelsGen || 0) + 1;
+            S.codexModelsGen = (S.codexModelsGen || 0) + 1;
+            S.claudeModelsGen = (S.claudeModelsGen || 0) + 1;
+            if (prev && next) {
+                S.preferredModel = 'auto';
+                S.lastReportedModel = null;
+                S.museModel = '';
+                S.museEffort = '';
+                S.museModelDirty = false;
+                S.museEffortDirty = false;
+                S.museEffortLoading = false;
+                S.hermesModel = '';
+                S.hermesEffort = '';
+                S.hermesModelDirty = false;
+                S.hermesEffortDirty = false;
+                S.hermesEffortLoading = false;
+                S.opencodeModel = '';
+                S.opencodeEffort = '';
+                S.opencodeModelDirty = false;
+                S.opencodeEffortDirty = false;
+                S.opencodeEffortLoading = false;
+                S.codexModel = '';
+                S.codexEffort = '';
+                S.codexModelDirty = false;
+                S.codexEffortDirty = false;
+                S.codexEffortLoading = false;
+                S.claudeModel = '';
+                S.claudeEffort = '';
+                S.claudeModelDirty = false;
+                S.claudeEffortDirty = false;
+                S.claudeEffortLoading = false;
+            } else if (!next) {
+                S.preferredModel = 'auto';
+                S.lastReportedModel = null;
+                S.museModel = '';
+                S.museEffort = '';
+                S.museModelDirty = false;
+                S.museEffortDirty = false;
+                S.hermesModel = '';
+                S.hermesEffort = '';
+                S.hermesModelDirty = false;
+                S.hermesEffortDirty = false;
+                S.opencodeModel = '';
+                S.opencodeEffort = '';
+                S.opencodeModelDirty = false;
+                S.opencodeEffortDirty = false;
+                S.codexModel = '';
+                S.codexEffort = '';
+                S.codexModelDirty = false;
+                S.codexEffortDirty = false;
+                S.claudeModel = '';
+                S.claudeEffort = '';
+                S.claudeModelDirty = false;
+                S.claudeEffortDirty = false;
+            }
+        }
+
+        /**
+         * Persist a model/effort picked while the chat had no id yet, once the
+         * server assigns one. Only dirty picks persist here — persisting the
+         * in-memory default would clobber the stored pin (e.g. Contributor
+         * reset to plain Spark 1.3).
+         */
+        function flushDirtyAgentSelectionsOnAdopt() {
+            if (state.museModelDirty) {
+                state.museModelDirty = false;
+                persistMuseModelSelection(state.museModel);
+            }
+            if (state.museEffortDirty) {
+                state.museEffortDirty = false;
+                persistMuseEffortSelection(state.museEffort);
+            }
+            if (state.hermesModelDirty) {
+                state.hermesModelDirty = false;
+                persistHermesModelSelection(state.hermesModel);
+            }
+            if (state.hermesEffortDirty) {
+                state.hermesEffortDirty = false;
+                persistHermesEffortSelection(state.hermesEffort);
+            }
+            if (state.opencodeModelDirty) {
+                state.opencodeModelDirty = false;
+                persistOpenCodeModelSelection(state.opencodeModel);
+            }
+            if (state.opencodeEffortDirty) {
+                state.opencodeEffortDirty = false;
+                persistOpenCodeEffortSelection(state.opencodeEffort);
+            }
+            if (state.codexModelDirty) {
+                state.codexModelDirty = false;
+                persistCodexModelSelection(state.codexModel);
+            }
+            if (state.codexEffortDirty) {
+                state.codexEffortDirty = false;
+                persistCodexEffortSelection(state.codexEffort);
+            }
+            if (state.claudeModelDirty) {
+                state.claudeModelDirty = false;
+                persistClaudeModelSelection(state.claudeModel);
+            }
+            if (state.claudeEffortDirty) {
+                state.claudeEffortDirty = false;
+                persistClaudeEffortSelection(state.claudeEffort);
+            }
+        }
+
         return {
             state: state,
             loadCursorAgentModelsForPalette: loadCursorAgentModelsForPalette,
@@ -1238,6 +1893,24 @@
             buildCodexEffortPaletteItems: buildCodexEffortPaletteItems,
             buildClaudeModelPaletteItems: buildClaudeModelPaletteItems,
             buildClaudeEffortPaletteItems: buildClaudeEffortPaletteItems,
+            persistMuseModelSelection: persistMuseModelSelection,
+            persistMuseEffortSelection: persistMuseEffortSelection,
+            persistHermesModelSelection: persistHermesModelSelection,
+            persistHermesEffortSelection: persistHermesEffortSelection,
+            persistOpenCodeModelSelection: persistOpenCodeModelSelection,
+            persistOpenCodeEffortSelection: persistOpenCodeEffortSelection,
+            persistCodexModelSelection: persistCodexModelSelection,
+            persistCodexEffortSelection: persistCodexEffortSelection,
+            persistClaudeModelSelection: persistClaudeModelSelection,
+            persistClaudeEffortSelection: persistClaudeEffortSelection,
+            seedMuseSupplementFromSessionData: seedMuseSupplementFromSessionData,
+            seedHermesSupplementFromSessionData: seedHermesSupplementFromSessionData,
+            seedOpenCodeSupplementFromSessionData: seedOpenCodeSupplementFromSessionData,
+            seedCodexSupplementFromSessionData: seedCodexSupplementFromSessionData,
+            seedClaudeSupplementFromSessionData: seedClaudeSupplementFromSessionData,
+            ensureCodexEffortForSend: ensureCodexEffortForSend,
+            resetAgentSupplementForIdentity: resetAgentSupplementForIdentity,
+            flushDirtyAgentSelectionsOnAdopt: flushDirtyAgentSelectionsOnAdopt,
         };
     }
 

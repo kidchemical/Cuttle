@@ -51,10 +51,16 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
     const deferred = new Promise(r => resolve = r);
     const supplement = {museModels:[]};
     const model = context({currentSessionId:'101', _loadSessionSeq:1, sessionMutations:T.create(),
-        slashPaletteSupplement:supplement, beginSupplementFetch(){}, sessionMutationFetch:()=>deferred,
-        repaintMuseUserBadges(){},persistStickySlashForCurrentSession(){},refreshHistoryAgentChips(){}});
-    run(model, fn('persistMuseModelSelection'));
-    run(model, "persistMuseModelSelection('model-A')");
+        CuttleChatAgentControls: asset('chat/chat_agent_controls.js'),
+        slashPaletteSupplement:supplement, sessionMutationFetch:()=>deferred,
+        document:{getElementById:()=>null}, window:{}});
+    run(model, "var agentControls = CuttleChatAgentControls.create({state:slashPaletteSupplement,"
+        + "getSessionId:()=>currentSessionId,beginFetch:()=>0,isCurrentFetch:()=>true,"
+        + "captureMutation:(sid,label)=>sessionMutations.capture(sid,label,_loadSessionSeq),"
+        + "isMutationCurrent:(t)=>sessionMutations.current(t,currentSessionId,_loadSessionSeq),"
+        + "sessionMutationFetch:(u,o)=>sessionMutationFetch(u,o),"
+        + "fetch:()=>{throw new Error('unexpected fetch')}});");
+    run(model, "agentControls.persistMuseModelSelection('model-A')");
     model.currentSessionId='202'; model._loadSessionSeq=2;
     supplement.museModel='model-B'; supplement.museModelDirty=true;
     resolve({json:async()=>({success:true})});
@@ -126,6 +132,7 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
         +'isCurrentFetch:(f,g)=>isCurrentSupplementFetch(f,g),'
         +'captureMutation:(sid,label)=>sessionMutations.capture(sid,label,_loadSessionSeq),'
         +'isMutationCurrent:(t)=>sessionMutations.current(t,currentSessionId,_loadSessionSeq),'
+        +'sessionMutationFetch:(u,o)=>sessionMutationFetch(u,o),'
         +'renderSlashChips:()=>{},syncActiveSlashMenu:()=>{},repaintUserBadges:()=>{},'
         +'persistStickySlashForCurrentSession:()=>{},refreshHistoryAgentChips:()=>{},'
         +'fetch:(u,o)=>fetch(u,o),toast:()=>{}});');
