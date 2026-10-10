@@ -4,7 +4,7 @@ Behavioral characterization of src/web/js/chat/chat_activate.js under node
 (Phase 3 Slice 8D). The module owns container-scoped DOM activation
 for rendered assistant content: Vega chart embeds and code-copy
 buttons. Render planning (placeholder HTML) stays in
-`CuttleChatMessages`; orchestration (`activateEnhancements`: hljs,
+`CuttleChatMarkdown`; orchestration (`activateEnhancements`: hljs,
 terminal/button execution wiring) stays in the page, which calls in
 here with explicit dependencies.
 
@@ -30,7 +30,7 @@ node_only = pytest.mark.skipif(
 
 HARNESS = """
 (async () => {
-globalThis.CuttleChatMessages = require(process.env.MOD_MESSAGES_JS);
+globalThis.CuttleChatMarkdown = require(process.env.MOD_MD);
 const A = require(process.env.MOD_JS);
 const out = {};
 const mkEl = () => {
@@ -156,7 +156,7 @@ process.stdout.write(JSON.stringify(out));
 """
 
 
-CHAT_MESSAGES_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_messages.js"
+CHAT_MARKDOWN_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_markdown.js"
 
 
 def _run():
@@ -165,7 +165,7 @@ def _run():
         ["node", "-e", HARNESS],
         capture_output=True, text=True, encoding="utf-8", timeout=30,
         env={"PATH": os.environ["PATH"], "MOD_JS": str(MOD_JS),
-             "MOD_MESSAGES_JS": str(CHAT_MESSAGES_JS)},
+             "MOD_MD": str(CHAT_MARKDOWN_JS)},
     )
     assert proc.returncode == 0, proc.stderr or proc.stdout
     return json.loads(proc.stdout)

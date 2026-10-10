@@ -675,8 +675,8 @@ def test_frontend_wires_pricing_renderer_and_styles():
     mod = (CHAT_JS.parent / "chat_messages.js").read_text(encoding="utf-8")
     css = CHAT_CSS.read_text(encoding="utf-8")
     # Pricing planning lives in the owned Messages module (Phase 3 Slice 8C);
-    # the page stays wired through the structured-block planning calls, and
-    # the pricing HTML leaf stays in the page for the renderer tests below.
+    # the pricing HTML leaf is owned by chat_messages.js (Slice 1B) and the
+    # page keeps a thin delegating adapter.
     assert "extractTailStructuredBlocks" in js
     assert "restoreStructuredBlocks(" in js
     # Slice 8D redacts code/link from the bulk pass and restores them after
@@ -687,7 +687,8 @@ def test_frontend_wires_pricing_renderer_and_styles():
     assert "structuredBlocks.link.length" in js
     assert "<cuttle_pricing>" in mod
     assert "{{CUTTLE_PRICING_" in mod
-    assert "function renderCuttlePricingHtml(" in js
+    assert "function renderCuttlePricingHtml(" in mod
+    assert "CuttleChatMessages.renderCuttlePricingHtml" in js
     assert "tr.is-active" in css and ".cuttle-pricing-badge" in css
 
 
@@ -875,12 +876,14 @@ def test_task_column_on_every_priced_row(pricing_cache, no_pins, monkeypatch):
 @node_only
 def test_pricing_renderer_highlights_active_row(tmp_path):
     src = CHAT_JS.read_text(encoding="utf-8")
+    mod_src = (CHAT_JS.parent / "chat_messages.js").read_text(encoding="utf-8")
     md_src = (CHAT_JS.parent / "chat_markdown.js").read_text(encoding="utf-8")
     # Inline markdown moved to chat_markdown.js (Slice 8E); the pricing
-    # renderer executes against the real owned module function.
-    helpers = "\n".join(
-        _extract_js(src, n)
-        for n in ("escapeHtmlInline", "fmtPricingRate", "fmtPricingContext", "renderCuttlePricingHtml")
+    # renderer is owned by chat_messages.js (Slice 1B) and executes against
+    # the real owned module function.
+    helpers = _extract_js(src, "escapeHtmlInline") + "\n" + "\n".join(
+        _extract_js(mod_src, n)
+        for n in ("fmtPricingRate", "fmtPricingContext", "renderCuttlePricingHtml")
     ) + "\n" + _extract_js(md_src, "formatInlineMarkdown")
     md_mod = str(CHAT_JS.parent / "chat_markdown.js").replace("\\", "\\\\")
     helpers = f"globalThis.CuttleChatMarkdown = require({md_mod!r});\n" + helpers
@@ -898,8 +901,8 @@ def test_pricing_renderer_highlights_active_row(tmp_path):
     out = _run_node(
         tmp_path,
         helpers
-        + "\nconst html = renderCuttlePricingHtml(" + json.dumps(body) + ");\n"
-        + "console.log(JSON.stringify({html, empty: renderCuttlePricingHtml('not json')}));\n",
+        + "\nconst html = renderCuttlePricingHtml(" + json.dumps(body) + ", { escapeHtmlInline });\n"
+        + "console.log(JSON.stringify({html, empty: renderCuttlePricingHtml('not json', { escapeHtmlInline })}));\n",
     )
     res = json.loads(out.strip().splitlines()[-1])
     html = res["html"]
@@ -920,7 +923,7 @@ def test_pricing_renderer_highlights_active_row(tmp_path):
     no_task = _run_node(
         tmp_path,
         helpers
-        + "\nconsole.log(renderCuttlePricingHtml(JSON.stringify({rows:[{model:'a',input:1,output:2}]})));\n",
+        + "\nconsole.log(renderCuttlePricingHtml(JSON.stringify({rows:[{model:'a',input:1,output:2}]}), { escapeHtmlInline }));\n",
     )
     assert "≈ / task" not in no_task
 
@@ -936,7 +939,7 @@ def test_pricing_renderer_highlights_active_row(tmp_path):
     )
     bench_html = _run_node(
         tmp_path,
-        helpers + "\nconsole.log(renderCuttlePricingHtml(" + json.dumps(bench_body) + "));\n",
+        helpers + "\nconsole.log(renderCuttlePricingHtml(" + json.dumps(bench_body) + ", { escapeHtmlInline }));\n",
     )
     bhead = bench_html.split("</thead>", 1)[0]
     assert bhead.index("Output") < bhead.index("$ / task") < bhead.index("Solved") < bhead.index("≈ / task")

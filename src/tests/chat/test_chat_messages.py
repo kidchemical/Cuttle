@@ -370,6 +370,7 @@ const fs = require('fs');
 const SRC = fs.readFileSync(process.env.CHAT_PAGE_JS, 'utf-8');
 const span = (s, e) => SRC.slice(SRC.indexOf(s), SRC.indexOf(e, SRC.indexOf(s)));
 const A = require(process.env.MOD_JS);
+globalThis.CuttleChatMarkdown = require(process.env.MOD_MD);
 eval(span('    function escapeHtmlInline(s) {',
           '    function windowsPathToFileUrl(path) {'));
 eval(span('    function clamp(n, min, max) {',
@@ -404,8 +405,8 @@ out.mediaImg = T('<media src="pic.png" title="P"></media>');
 out.mediaNoSrc = T('<media type="image" title="P"></media>');
 out.vegaTag = T('<vega>{"mark": "point"}</vega>');
 out.vegaFence = T('```vega\\n{"mark": "x"}\\n```');
-out.vegaEmpty = A.buildVegaWrapHtml('   ', deps);
-out.vegaXss = A.buildVegaWrapHtml('{"a": "</div><script>}', deps);
+out.vegaEmpty = CuttleChatMarkdown.buildVegaWrapHtml('   ', deps);
+out.vegaXss = CuttleChatMarkdown.buildVegaWrapHtml('{"a": "</div><script>}', deps);
 out.empty = E('');
 out.nullText = T(null);
 const combined = {};
@@ -416,8 +417,8 @@ out.restored = A.restoreStructuredBlocks(
   out.think.text + ' ' + out.tool.text + ' ' + out.tail.text, combined);
 out.restoreUnknown = A.restoreStructuredBlocks('keep {{CUTTLE_NOPE_0}} here', {});
 out.restoreEmpty = A.restoreStructuredBlocks('plain', { think: [], tool: [] });
-out.copyClean = A.cleanCodeCopyText
-  ? A.cleanCodeCopyText('a\\u200Bb\\u00A0c\\r\\n\\n')
+out.copyClean = CuttleChatMarkdown.cleanCodeCopyText
+  ? CuttleChatMarkdown.cleanCodeCopyText('a\\u200Bb\\u00A0c\\r\\n\\n')
   : 'module-has-no-cleanCodeCopyText';
 // Post-paint activation lives in chat_activate.js (test_chat_activate.py
 // executes it); planning coverage here stops at the wrap HTML above.
@@ -431,7 +432,8 @@ def _run_structured():
         ["node", "-e", STRUCTURED_HARNESS],
         capture_output=True, text=True, encoding="utf-8", timeout=30,
         env={"PATH": os.environ["PATH"], "MOD_JS": str(MOD_JS),
-             "CHAT_PAGE_JS": str(CHAT_PAGE_JS), "CHAT_MEDIA_JS": str(CHAT_MEDIA_JS)},
+             "CHAT_PAGE_JS": str(CHAT_PAGE_JS), "CHAT_MEDIA_JS": str(CHAT_MEDIA_JS),
+             "MOD_MD": str(MOD_MD)},
     )
     assert proc.returncode == 0, proc.stderr or proc.stdout
     return json.loads(proc.stdout)
@@ -773,9 +775,11 @@ def test_page_delegates_message_history_decisions_to_owned_module():
         ("function transcriptEndsWithAssistant(messages)",
          "CuttleChatMessages.transcriptEndsWithAssistant"),
         ("function buildVegaWrapHtml(rawSpec)",
-         "CuttleChatMessages.buildVegaWrapHtml"),
+         "CuttleChatMarkdown.buildVegaWrapHtml"),
         ("function cleanCodeCopyText(raw)",
-         "CuttleChatMessages.cleanCodeCopyText"),
+         "CuttleChatMarkdown.cleanCodeCopyText"),
+        ("function renderCuttlePricingHtml(rawBody)",
+         "CuttleChatMessages.renderCuttlePricingHtml"),
     ):
         assert adapter in src, f"page adapter {adapter} must stay (same signature)"
         assert owned in src, f"page must delegate to {owned}"
