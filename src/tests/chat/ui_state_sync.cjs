@@ -51,10 +51,16 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
     const deferred = new Promise(r => resolve = r);
     const supplement = {museModels:[]};
     const model = context({currentSessionId:'101', _loadSessionSeq:1, sessionMutations:T.create(),
-        slashPaletteSupplement:supplement, beginSupplementFetch(){}, sessionMutationFetch:()=>deferred,
-        repaintMuseUserBadges(){},persistStickySlashForCurrentSession(){},refreshHistoryAgentChips(){}});
-    run(model, fn('persistMuseModelSelection'));
-    run(model, "persistMuseModelSelection('model-A')");
+        CuttleChatAgentControls: asset('chat/chat_agent_controls.js'),
+        slashPaletteSupplement:supplement, sessionMutationFetch:()=>deferred,
+        document:{getElementById:()=>null}, window:{}});
+    run(model, "var agentControls = CuttleChatAgentControls.create({state:slashPaletteSupplement,"
+        + "getSessionId:()=>currentSessionId,beginFetch:()=>0,isCurrentFetch:()=>true,"
+        + "captureMutation:(sid,label)=>sessionMutations.capture(sid,label,_loadSessionSeq),"
+        + "isMutationCurrent:(t)=>sessionMutations.current(t,currentSessionId,_loadSessionSeq),"
+        + "sessionMutationFetch:(u,o)=>sessionMutationFetch(u,o),"
+        + "fetch:()=>{throw new Error('unexpected fetch')}});");
+    run(model, "agentControls.persistMuseModelSelection('model-A')");
     model.currentSessionId='202'; model._loadSessionSeq=2;
     supplement.museModel='model-B'; supplement.museModelDirty=true;
     resolve({json:async()=>({success:true})});
@@ -113,10 +119,23 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
     const pins = {museModels:[]};
     const pinHost = context({currentSessionId:'101', _loadSessionSeq:1, sessionMutations:T.create(),
         slashPaletteSupplement:pins, URLSearchParams, document:{getElementById:()=>null}, window:{},
+        CuttleChatAgentControls: asset('chat/chat_agent_controls.js'),
         hasActiveMuseAgentChip:()=>true, fetch:()=>catalog,
         sessionMutationFetch:async()=>({json:async()=>({success:true,preferredModel:'new-pin'})}),
         renderSlashChips(){},repaintMuseUserBadges(){},persistStickySlashForCurrentSession(){},refreshHistoryAgentChips(){}});
-    run(pinHost, fn('beginSupplementFetch')+'\n'+fn('isCurrentSupplementFetch')+'\n'+fn('loadMuseModelsForPalette')+'\n'+fn('persistMuseModelSelection'));
+    // Slice 2A: the real Muse loader now lives on the CuttleChatAgentControls
+    // owner; wire a controller so the page delegate drives the same logic.
+    run(pinHost, fn('beginSupplementFetch')+'\n'+fn('isCurrentSupplementFetch')+'\n'+fn('loadMuseModelsForPalette')+'\n'+fn('persistMuseModelSelection')
+        +'\nvar agentControls = CuttleChatAgentControls.create({state:slashPaletteSupplement,'
+        +'getSessionId:()=>currentSessionId,getProjectPath:()=>\'\','
+        +'hasActiveMuse:()=>true,beginFetch:(f)=>beginSupplementFetch(f),'
+        +'isCurrentFetch:(f,g)=>isCurrentSupplementFetch(f,g),'
+        +'captureMutation:(sid,label)=>sessionMutations.capture(sid,label,_loadSessionSeq),'
+        +'isMutationCurrent:(t)=>sessionMutations.current(t,currentSessionId,_loadSessionSeq),'
+        +'sessionMutationFetch:(u,o)=>sessionMutationFetch(u,o),'
+        +'renderSlashChips:()=>{},syncActiveSlashMenu:()=>{},repaintUserBadges:()=>{},'
+        +'persistStickySlashForCurrentSession:()=>{},refreshHistoryAgentChips:()=>{},'
+        +'fetch:(u,o)=>fetch(u,o),toast:()=>{}});');
     run(pinHost,'loadMuseModelsForPalette(true);persistMuseModelSelection("new-pin")');
     await tick(); await tick();
     assert(!pins.museModelDirty);

@@ -872,9 +872,9 @@
 
     const COMPOSER_DRAFT_MAX = 50000;
     let composerDraftControlsReady = false;
+    // Owned by chat_composer.js — shell-scoped `new` draft id in, key out.
     function _draftKey(sid) {
-        const key = sid != null && sid !== '' && sid !== 'new' ? sid : newComposerDraftId;
-        return `cuttle.composerDraft.${key}`;
+        return CuttleChatComposer.composerDraftKey(sid, newComposerDraftId);
     }
     function _activeComposerTextarea() {
         const welcome = document.getElementById('welcomeScreen');
@@ -900,14 +900,17 @@
 
     function restoreComposerDraftControls(sid) {
         const prefs = getSessionPrefs(sid === 'new' ? newComposerPrefsId : sid);
-        const draft = prefs && prefs.composerDraft;
-        if (!draft) return;
-        const chips = CuttleChatComposer.draftChips(draft.chips);
-        Object.assign(slashPaletteSupplement, CuttleChatAgentModel.draftSupplementPatch(draft.pins));
-        const cursorModel = chips.find((c) => c.category === 'cursor-model');
-        if (cursorModel) {
-            slashPaletteSupplement.preferredModel = cursorModel.modelId
-                || cursorModel.prefix.replace(/^\/model\s+/i, '').trim();
+        // Owned by chat_composer.js — prefs snapshot in, chips/pins out.
+        const plan = CuttleChatComposer.composerDraftRestorePlan(
+            prefs && prefs.composerDraft,
+            { draftChips: CuttleChatComposer.draftChips }
+        );
+        if (!plan) return;
+        const chips = plan.chips;
+        Object.assign(slashPaletteSupplement, CuttleChatAgentModel.draftSupplementPatch(plan.pins));
+        if (plan.cursorModel) {
+            slashPaletteSupplement.preferredModel = plan.cursorModel.modelId
+                || plan.cursorModel.prefix.replace(/^\/model\s+/i, '').trim();
             beginSupplementFetch('cursorModelsGen');
         }
         slashCtx.welcome.chips = chips.slice();
@@ -918,15 +921,15 @@
         const keySid = sid != null && sid !== '' ? sid : (currentSessionId || 'new');
         saveComposerDraftControls(keySid, composerKey);
         try {
-            const text = _readComposerDraftText();
-            if (!text.trim()) {
-                localStorage.removeItem(_draftKey(keySid));
+            // Owned by chat_composer.js — whitespace/empty + clip decision.
+            const plan = CuttleChatComposer.composerDraftSavePlan(
+                _readComposerDraftText(), COMPOSER_DRAFT_MAX);
+            const key = _draftKey(keySid);
+            if (plan.remove) {
+                localStorage.removeItem(key);
                 return;
             }
-            const clipped = text.length > COMPOSER_DRAFT_MAX
-                ? text.slice(0, COMPOSER_DRAFT_MAX)
-                : text;
-            localStorage.setItem(_draftKey(keySid), clipped);
+            localStorage.setItem(key, plan.text);
         } catch (_) {}
     }
     function clearComposerDraft(sid) {
@@ -946,7 +949,10 @@
             const key = _draftKey(keySid);
             let stored = localStorage.getItem(key);
             // Claim the legacy shared welcome draft once on its first restore.
-            if (stored == null && keySid === 'new' && newComposerDraftId !== 'new') {
+            // Owned by chat_composer.js — claim predicate.
+            if (CuttleChatComposer.composerDraftLegacyClaim({
+                stored, keySid, newDraftId: newComposerDraftId,
+            })) {
                 stored = localStorage.getItem('cuttle.composerDraft.new');
                 if (stored != null) {
                     localStorage.setItem(key, stored);
@@ -964,17 +970,24 @@
         // Soft restore (boot race): don't clobber text the user already typed
         // this tick when the stored draft is empty. Session switch / New Chat
         // pass force:true so an empty destination clears leftover text.
-        if (!force && String(el.value || '').trim() && !text) return;
-        if (!force && String(el.value || '') === text) {
-            if (welcomeOn) autoResizeWelcomeTextarea();
-            else autoResizeTextarea();
+        // Owned by chat_composer.js — restore decision.
+        const decision = CuttleChatComposer.composerDraftRestoreDecision({
+            force, currentValue: el.value, text,
+        });
+        if (!decision.apply) {
+            if (decision.unchanged) {
+                if (welcomeOn) autoResizeWelcomeTextarea();
+                else autoResizeTextarea();
+            }
             return;
         }
         el.value = text;
         // Clear the inactive composer so prior-session text cannot leak when
         // the splash and bottom dock swap.
-        const other = welcomeOn ? chatEl : welcomeEl;
-        if (other && other !== el) other.value = '';
+        if (decision.clearOther) {
+            const other = welcomeOn ? chatEl : welcomeEl;
+            if (other && other !== el) other.value = '';
+        }
         try {
             if (welcomeOn) autoResizeWelcomeTextarea();
             else autoResizeTextarea();
@@ -1322,7 +1335,7 @@
                 if (chipMeta && Array.isArray(chipMeta.chips) && chipMeta.chips[0]) {
                     agentHint = chipMeta.chips[0].prefix || chipMeta.chips[0].meta || '';
                 }
-                noteUsageForContextGauge(usage, agentHint || stickyContextGaugeAgentId());
+                contextGauge.noteUsage(usage, agentHint || contextGauge.stickyAgentId());
             } catch (_) {}
         }
         if (meta.subagents) {
@@ -1461,9 +1474,10 @@
     }
 
     function takePendingAttachments() {
-        const copy = pendingAttachments.slice();
+        // Owned by chat_attachments.js — copy-then-clear decision.
+        const plan = CuttleChatAttachments.takePendingAttachments(pendingAttachments);
         clearPendingAttachments();
-        return copy;
+        return plan.taken;
     }
 
     // Owned by chat_attachments.js — thin adapter.
@@ -1614,7 +1628,7 @@
     }
 
     /** Wand button state per composer: lets a second click undo the rewrite. */
-    const enhanceState = { chat: null, welcome: null };
+    const enhanceState = CuttleChatComposer.createEnhanceState();
     let enhanceInFlight = false;
 
     function recentMessagesForEnhance(limit = 4) {
@@ -1635,13 +1649,17 @@
     }
 
     async function enhanceComposerPrompt(key, btn, textarea) {
-        if (enhanceInFlight) return;
         const toast = window.showToast || function () {};
-        const state = enhanceState[key];
-        const current = textarea.value || '';
+        // Owned by chat_composer.js — click decision (busy / revert / empty / request).
+        const click = CuttleChatComposer.enhanceClickPlan({
+            state: enhanceState[key],
+            currentValue: textarea.value,
+            inFlight: enhanceInFlight,
+        });
+        if (click.action === 'busy') return;
 
-        if (state && current === state.enhanced) {
-            textarea.value = state.original;
+        if (click.action === 'revert') {
+            textarea.value = click.text;
             enhanceState[key] = null;
             btn.classList.remove('is-enhanced');
             btn.title = 'Enhance prompt (rewrite with AI)';
@@ -1652,13 +1670,14 @@
             return;
         }
 
-        const prompt = current.trim();
-        if (!prompt) {
+        if (click.action === 'empty') {
             toast('Type a prompt first', 'info');
             textarea.focus();
             return;
         }
 
+        const current = textarea.value || '';
+        const prompt = click.prompt;
         enhanceInFlight = true;
         btn.classList.add('is-busy');
         btn.disabled = true;
@@ -1667,11 +1686,11 @@
                 method: 'POST',
                 credentials: 'include',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
+                body: JSON.stringify(CuttleChatComposer.enhanceRequestPayload({
                     prompt,
-                    project: (currentProject && currentProject.name) || '',
+                    projectName: (currentProject && currentProject.name) || '',
                     context: recentMessagesForEnhance(),
-                }),
+                })),
             });
             let data = null;
             try {
@@ -1679,16 +1698,22 @@
             } catch (_) {
                 data = null;
             }
-            if (!resp.ok || !data || !data.success) {
-                const err = (data && data.error) || `Enhance failed (HTTP ${resp.status})`;
-                toast(err, 'error');
+            // Owned by chat_composer.js — response decision (error / no-change / apply).
+            const plan = CuttleChatComposer.enhanceResponsePlan({
+                ok: resp.ok,
+                status: resp.status,
+                data,
+                originalPrompt: prompt,
+            });
+            if (plan.action === 'error') {
+                toast(plan.error, 'error');
                 return;
             }
-            const enhanced = String(data.prompt || '').trim();
-            if (!enhanced || data.unchanged || enhanced === prompt) {
+            if (plan.action === 'no-change') {
                 toast('Prompt already looks clear', 'info');
                 return;
             }
+            const enhanced = plan.enhanced;
             enhanceState[key] = { original: current, enhanced };
             textarea.value = enhanced;
             btn.classList.add('is-enhanced');
@@ -1696,7 +1721,7 @@
             if (key === 'chat') autoResizeTextarea(); else autoResizeWelcomeTextarea();
             textarea.focus();
             textarea.setSelectionRange(enhanced.length, enhanced.length);
-            toast(`Prompt enhanced${data.source ? ' (' + data.source + ')' : ''} — click the wand to undo`, 'success');
+            toast(`Prompt enhanced${plan.source ? ' (' + plan.source + ')' : ''} — click the wand to undo`, 'success');
         } catch (e) {
             toast(`Enhance failed: ${e && e.message ? e.message : e}`, 'error');
         } finally {
@@ -1721,8 +1746,8 @@
             });
             // Editing after a rewrite means the undo target is stale.
             textarea.addEventListener('input', () => {
-                const state = enhanceState[key];
-                if (state && textarea.value !== state.enhanced) {
+                // Owned by chat_composer.js — undo staleness decision.
+                if (CuttleChatComposer.enhanceInputInvalidated(enhanceState[key], textarea.value)) {
                     enhanceState[key] = null;
                     btn.classList.remove('is-enhanced');
                     btn.title = 'Enhance prompt (rewrite with AI)';
@@ -4246,93 +4271,62 @@
         return !wasStarred;
     }
 
-    const slashPaletteSupplement = {
-        cursorModels: [],
-        preferredModel: 'auto',
-        lastReportedModel: null,
-        projectCommands: [],
-        projectCommandsPath: '',
-        loading: false,
-        loaded: false,
-        cursorModelsLoading: false,
-        cursorModelsLoaded: false,
-        cursorModelsKey: '',
-        cursorModelsCount: 0,
-        museModels: [],
-        museModel: '',
-        museModelsLoading: false,
-        museModelsKey: '',
-        museModelsCount: 0,
-        museModelsSource: '',
-        museModelDirty: false,
-        museEffortDirty: false,
-        museEffort: '',
-        museEffortLoading: false,
-        museEffortKey: '',
-        hermesModels: [],
-        hermesModel: '',
-        hermesModelsLoading: false,
-        hermesModelsKey: '',
-        hermesModelDirty: false,
-        hermesEffortDirty: false,
-        hermesEffort: '',
-        hermesEffortLoading: false,
-        hermesEffortKey: '',
-        opencodeModels: [],
-        opencodeModel: '',
-        opencodeModelsLoading: false,
-        opencodeModelsKey: '',
-        opencodeModelsSource: '',
-        opencodeModelsCount: 0,
-        opencodeModelDirty: false,
-        opencodeEffortDirty: false,
-        opencodeEffort: '',
-        opencodeEffortLoading: false,
-        opencodeEffortKey: '',
-        codexModels: [],
-        codexModel: '',
-        codexModelsLoading: false,
-        codexModelsKey: '',
-        codexModelsSource: '',
-        codexModelsCount: 0,
-        codexCommonEfforts: [],
-        codexModelDirty: false,
-        codexEffortDirty: false,
-        codexEffort: '',
-        codexEffortLoading: false,
-        codexEffortKey: '',
-        claudeModels: [],
-        claudeModel: '',
-        claudeModelsLoading: false,
-        claudeModelsKey: '',
-        claudeModelsSource: '',
-        claudeModelsCount: 0,
-        claudeCommonEfforts: [],
-        claudeModelDirty: false,
-        claudeEffortDirty: false,
-        claudeEffort: '',
-        claudeEffortLoading: false,
-        claudeEffortKey: '',
-        projectCommandsLoading: false,
-        harnessAgents: [],
-        harnessAgentsPath: '',
-        harnessAgentsLoading: false,
-        harnessAgentsLoaded: false,
-        starredAgentModels: {},
-        starredAgentEfforts: {},
-        agentCapabilities: null,
-        agentCapabilitiesLoading: false,
-        cursorStarredLoaded: false,
-        starredDefaultsLoading: false,
-        starredDefaultsLoaded: false,
-        sessionIdentity: null,
-        cursorModelsGen: 0,
-        museModelsGen: 0,
-        hermesModelsGen: 0,
-        opencodeModelsGen: 0,
-        codexModelsGen: 0,
-        claudeModelsGen: 0,
-    };
+    const slashPaletteSupplement = Object.assign(
+        CuttleChatAgentControls.createProviderState(),
+        {
+            projectCommands: [],
+            projectCommandsPath: '',
+            loading: false,
+            loaded: false,
+            projectCommandsLoading: false,
+            harnessAgents: [],
+            harnessAgentsPath: '',
+            harnessAgentsLoading: false,
+            harnessAgentsLoaded: false,
+        }
+    );
+
+    /**
+     * Model/effort control owner. Owns the provider state above and the
+     * six provider model/effort loaders + palette-item builders; the page
+     * keeps thin wrappers plus project-command/harness-agent supplement
+     * state, persistence setters, seeding/reset and badge helpers.
+     */
+    const agentControls = CuttleChatAgentControls.create({
+        state: slashPaletteSupplement,
+        getSessionId: () => currentSessionId,
+        getProjectPath: () => (currentProject && currentProject.path ? String(currentProject.path) : ''),
+        hasActiveCursor: () => hasActiveCursorAgentChip(),
+        hasActiveMuse: () => hasActiveMuseAgentChip(),
+        hasActiveHermes: () => hasActiveHermesAgentChip(),
+        hasActiveOpenCode: () => hasActiveOpenCodeAgentChip(),
+        hasActiveCodex: () => hasActiveCodexAgentChip(),
+        hasActiveHarness: (id) => hasActiveHarnessAgentChip(id),
+        hasCursorModelChip: () => slashCtx.chat.chips.concat(slashCtx.welcome.chips).some((c) => c.category === 'cursor-model'),
+        beginFetch: (field) => beginSupplementFetch(field),
+        isCurrentFetch: (field, gen) => isCurrentSupplementFetch(field, gen),
+        captureMutation: (sid, label) => sessionMutations.capture(sid, label, _loadSessionSeq),
+        isMutationCurrent: (tok) => sessionMutations.current(tok, currentSessionId, _loadSessionSeq),
+        sessionMutationFetch: (url, opts) => sessionMutationFetch(url, opts),
+        renderSlashChips: () => {
+            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
+            renderSlashChips('chat', document.getElementById('chatInput'));
+        },
+        syncActiveSlashMenu: () => {
+            const welcomeInput = document.getElementById('welcomeChatInput');
+            const chatInput = document.getElementById('chatInput');
+            if (welcomeInput && document.activeElement === welcomeInput) syncSlashMenuFromInput(welcomeInput);
+            if (chatInput && document.activeElement === chatInput) syncSlashMenuFromInput(chatInput);
+        },
+        syncSlashInput: (textarea) => syncSlashMenuFromInput(textarea),
+        // DOM rendering stays in the page; the controller only decides which
+        // user-bubble badge labels to repaint.
+        paintAgentUserBadges: (matchLabelRe, nextLabel) => repaintAgentUserBadges(matchLabelRe, nextLabel),
+        persistStickySlashForCurrentSession: () => persistStickySlashForCurrentSession(),
+        refreshHistoryAgentChips: () => refreshHistoryAgentChips(),
+        fetch: (url, opts) => fetch(url, opts),
+        toast: (msg, type) => (window.showToast ? window.showToast(msg, type) : undefined),
+    });
 
     function cursorAgentSessionOptionsKey() {
         const path = currentProject && currentProject.path ? String(currentProject.path) : '';
@@ -4366,96 +4360,36 @@
     };
 
     function loadAgentCapabilities() {
-        if (slashPaletteSupplement.agentCapabilities || slashPaletteSupplement.agentCapabilitiesLoading) return;
-        slashPaletteSupplement.agentCapabilitiesLoading = true;
-        fetch('/api/agents', { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                const map = {};
-                if (j && j.success && Array.isArray(j.agents)) {
-                    j.agents.forEach((a) => {
-                        if (!a || !a.id) return;
-                        map[String(a.id).toLowerCase()] = {
-                            supports_model_pin: a.supports_model_pin !== false,
-                            supports_effort: a.supports_effort !== false,
-                        };
-                    });
-                }
-                slashPaletteSupplement.agentCapabilities = map;
-            })
-            .catch(() => { slashPaletteSupplement.agentCapabilities = {}; })
-            .finally(() => { slashPaletteSupplement.agentCapabilitiesLoading = false; });
+        return agentControls.loadAgentCapabilities();
     }
 
     function agentSupportsModelPin(agentId) {
-        const caps = slashPaletteSupplement.agentCapabilities;
-        if (!caps) return true;
-        const c = caps[String(agentId || '').toLowerCase()];
-        if (!c) return true;
-        return c.supports_model_pin !== false;
+        return agentControls.agentSupportsModelPin(agentId);
     }
 
     function agentSupportsEffort(agentId) {
-        const caps = slashPaletteSupplement.agentCapabilities;
-        if (!caps) return true;
-        const c = caps[String(agentId || '').toLowerCase()];
-        if (!c) return true;
-        return c.supports_effort !== false;
+        return agentControls.agentSupportsEffort(agentId);
     }
 
     function starredAgentModel(agentId) {
-        return CuttleChatAgentModel.starredAgentModel(
-            slashPaletteSupplement.starredAgentModels, agentId);
+        return agentControls.starredAgentModel(agentId);
     }
 
     function starredAgentEffort(agentId) {
-        return CuttleChatAgentModel.starredAgentEffort(
-            slashPaletteSupplement.starredAgentEfforts, agentId);
+        return agentControls.starredAgentEffort(agentId);
     }
 
     /** True when this model/effort row is the agent's global starred default. */
-    
     function isAgentDefaultStarred(spec, cmd) {
-        if (!spec) return false;
-        const star = spec.kind === 'effort' ? starredAgentEffort(spec.agent) : starredAgentModel(spec.agent);
-        return CuttleChatAgentModel.isAgentDefaultStarred(spec, cmd, star);
+        return agentControls.isAgentDefaultStarred(spec, cmd);
     }
 
-    /** Starred muse/hermes/opencode/codex/claude defaults (cursor has its own loader above). */
     function loadAllStarredDefaults() {
-        if (slashPaletteSupplement.starredDefaultsLoaded || slashPaletteSupplement.starredDefaultsLoading) return;
-        slashPaletteSupplement.starredDefaultsLoading = true;
-        const agents = ['muse', 'hermes', 'opencode', 'codex', 'claude'];
-        Promise.all(agents.map((a) =>
-            fetch('/api/agent-defaults/' + a, { cache: 'no-store' })
-                .then((r) => r.json())
-                .catch(() => null)
-        ))
-            .then((rows) => {
-                (rows || []).forEach((j, i) => {
-                    if (!j || !j.success) return;
-                    const aid = agents[i];
-                    slashPaletteSupplement.starredAgentModels[aid] = String(j.starredModel || '');
-                    slashPaletteSupplement.starredAgentEfforts[aid] = String(j.starredEffort || '');
-                    slashPaletteSupplement.starredDefaultsLoaded = true;
-                });
-            })
-            .catch(() => {})
-            .finally(() => { slashPaletteSupplement.starredDefaultsLoading = false; });
+        return agentControls.loadAllStarredDefaults();
     }
 
-/** Cursor has no models endpoint — its star lives behind /api/agent-defaults. */
     function loadCursorStarredDefault() {
-        if (slashPaletteSupplement.cursorStarredLoaded) return;
-        slashPaletteSupplement.cursorStarredLoaded = true;
-        fetch('/api/agent-defaults/cursor', { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                if (j && j.success) {
-                    slashPaletteSupplement.starredAgentModels.cursor = String(j.starredModel || '');
-                }
-            })
-            .catch(() => {});
+        return agentControls.loadCursorStarredDefault();
     }
 
     /**
@@ -4463,112 +4397,17 @@
      * Clicking the filled star clears it back to the CLI default.
      */
     function toggleStarredAgentDefault(agentId, kind, value, textarea, key) {
-        const aid = String(agentId || '').toLowerCase();
-        const val = String(value || '').trim();
-        if (!aid || !val) return;
-        const isEffort = kind === 'effort';
-        const current = isEffort ? starredAgentEffort(aid) : starredAgentModel(aid);
-        const next = (current && current.toLowerCase() === val.toLowerCase()) ? '' : val;
-        const body = {};
-        body[isEffort ? 'starred_effort' : 'starred_model'] = next;
-        fetch('/api/agent-defaults/' + encodeURIComponent(aid), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
-        })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!j || !j.success) throw new Error((j && j.error) || 'star failed');
-                if (isEffort) slashPaletteSupplement.starredAgentEfforts[aid] = next;
-                else slashPaletteSupplement.starredAgentModels[aid] = next;
-                refreshAgentPreferenceAfterStar(aid);
-                (window.showToast || function () {})(
-                    next
-                        ? 'Starred ' + aid + ' ' + kind + ': ' + next
-                        : 'Cleared starred ' + aid + ' ' + kind + ' (CLI default wins)',
-                    'success'
-                );
-                syncSlashMenuFromInput(textarea);
-            })
-            .catch((e) => {
-                (window.showToast || function () {})(
-                    'Could not star ' + aid + ' ' + kind + ': ' + String((e && e.message) || e),
-                    'error'
-                );
-            });
+        return agentControls.toggleStarredAgentDefault(agentId, kind, value, textarea, key);
     }
 
     /** Re-resolve the effective preference after a star change. */
     function refreshAgentPreferenceAfterStar(aid) {
-        if (aid === 'muse') {
-            slashPaletteSupplement.museModelsKey = '';
-            slashPaletteSupplement.museModelsTried = null;
-            slashPaletteSupplement.museEffortKey = '';
-            loadMuseModelsForPalette(true);
-            loadMuseEffortForPalette();
-        } else if (aid === 'hermes') {
-            slashPaletteSupplement.hermesModelsKey = '';
-            slashPaletteSupplement.hermesModelsTried = null;
-            slashPaletteSupplement.hermesEffortKey = '';
-            loadHermesModelsForPalette(true);
-            loadHermesEffortForPalette();
-        } else if (aid === 'opencode') {
-            slashPaletteSupplement.opencodeModelsKey = '';
-            slashPaletteSupplement.opencodeModelsTried = null;
-            slashPaletteSupplement.opencodeEffortKey = '';
-            loadOpenCodeModelsForPalette(true);
-            loadOpenCodeEffortForPalette();
-        } else if (aid === 'codex') {
-            slashPaletteSupplement.codexModelsKey = '';
-            slashPaletteSupplement.codexModelsTried = null;
-            slashPaletteSupplement.codexEffortKey = '';
-            loadCodexModelsForPalette(true);
-            loadCodexEffortForPalette();
-        } else if (aid === 'claude') {
-            slashPaletteSupplement.claudeModelsKey = '';
-            slashPaletteSupplement.claudeModelsTried = null;
-            slashPaletteSupplement.claudeEffortKey = '';
-            loadClaudeModelsForPalette(true);
-            loadClaudeEffortForPalette();
-        } else if (aid === 'cursor') {
-            slashPaletteSupplement.cursorModelsLoaded = false;
-            loadCursorAgentModelsForPalette(true);
-        }
-        }
+        return agentControls.refreshAgentPreferenceAfterStar(aid);
+    }
 
     /** When the user sends ``/model refresh``, reload the active agent's catalog. */
     function maybeRefreshModelsCatalogFromOutbound(message) {
-        const t = String(message || '');
-        if (!/\/model\s+refresh\b/i.test(t)) return;
-        const low = t.toLowerCase();
-        if (/\b\/muse\b/.test(low) || hasActiveMuseAgentChip()) {
-            slashPaletteSupplement.museModelsKey = '';
-            slashPaletteSupplement.museModels = [];
-            loadMuseModelsForPalette(true, { refresh: true });
-            return;
-        }
-        if (/\b\/codex\b/.test(low) || hasActiveCodexAgentChip()) {
-            slashPaletteSupplement.codexModelsKey = '';
-            slashPaletteSupplement.codexModels = [];
-            loadCodexModelsForPalette(true, { refresh: true });
-            return;
-        }
-        if (/\b\/claude\b/.test(low) || hasActiveHarnessAgentChip('claude')) {
-            slashPaletteSupplement.claudeModelsKey = '';
-            slashPaletteSupplement.claudeModels = [];
-            loadClaudeModelsForPalette(true, { refresh: true });
-            return;
-        }
-        if (/\b\/opencode\b/.test(low) || hasActiveOpenCodeAgentChip()) {
-            slashPaletteSupplement.opencodeModelsKey = '';
-            slashPaletteSupplement.opencodeModels = [];
-            loadOpenCodeModelsForPalette(true, { refresh: true });
-            return;
-        }
-        slashPaletteSupplement.cursorModelsKey = '';
-        slashPaletteSupplement.cursorModelsLoaded = false;
-        slashPaletteSupplement.cursorModels = [];
-        loadCursorAgentModelsForPalette(true, { refresh: true });
+        return agentControls.maybeRefreshModelsCatalogFromOutbound(message);
     }
 
     function maybeRefreshCursorModelsCatalogFromOutbound(message) {
@@ -4576,296 +4415,27 @@
     }
 
     function loadCursorAgentModelsForPalette(force, opts) {
-        // A forced load (session open) hydrates the session's preferred model from
-        // the server even with no chip yet — /model is no longer kept in the
-        // transcript, so history can't supply it and the chip would show "Auto".
-        const forceRefresh = !!(opts && opts.refresh);
-        if (!force && !forceRefresh && !hasActiveCursorAgentChip()) return;
-        const key = cursorAgentSessionOptionsKey();
-        if (
-            !force &&
-            !forceRefresh &&
-            (slashPaletteSupplement.cursorModelsLoading ||
-                (slashPaletteSupplement.cursorModelsLoaded &&
-                    slashPaletteSupplement.cursorModelsKey === key))
-        ) {
-            return;
-        }
-        const _cursorModelsGen = beginSupplementFetch('cursorModelsGen');
-        slashPaletteSupplement.cursorModelsLoading = true;
-        const qs = new URLSearchParams();
-        if (currentProject && currentProject.path) qs.set('path', String(currentProject.path));
-        if (currentSessionId != null && currentSessionId !== '') {
-            qs.set('session', String(currentSessionId));
-        }
-        if (forceRefresh) qs.set('refresh', '1');
-        const url = qs.toString()
-            ? '/api/cursor-agent/models?' + qs.toString()
-            : '/api/cursor-agent/models';
-        const mutationToken = sessionMutations.capture(currentSessionId, 'cursor:model:read', _loadSessionSeq);
-        fetch(url, { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.cursorModels =
-                    j && j.success && Array.isArray(j.models) ? j.models : [];
-                slashPaletteSupplement.preferredModel =
-                    (!slashCtx.chat.chips.concat(slashCtx.welcome.chips).some((c) => c.category === 'cursor-model') && isCurrentSupplementFetch('cursorModelsGen', _cursorModelsGen) && j && j.success ? j.preferredModel : null) || slashPaletteSupplement.preferredModel || 'auto';
-                slashPaletteSupplement.lastReportedModel =
-                    (j && j.lastReportedModel) || null;
-                slashPaletteSupplement.cursorModelsKey = key;
-                slashPaletteSupplement.cursorModelsCount =
-                    (j && (j.count != null ? j.count : slashPaletteSupplement.cursorModels.length)) || 0;
-                if (forceRefresh && window.showToast) {
-                    const n = slashPaletteSupplement.cursorModelsCount || 0;
-                    const err = j && j.error ? String(j.error) : '';
-                    window.showToast(
-                        err && !n
-                            ? ('Cursor models refresh failed: ' + err)
-                            : ('Cursor models refreshed (' + n + ')'),
-                        err && !n ? 'error' : 'success'
-                    );
-                }
-            })
-            .catch(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.cursorModels = [];
-                if (forceRefresh && window.showToast) {
-                    window.showToast('Cursor models refresh failed', 'error');
-                }
-            })
-            .finally(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.cursorModelsLoaded = true;
-                slashPaletteSupplement.cursorModelsLoading = false;
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                const welcomeInput = document.getElementById('welcomeChatInput');
-                const chatInput = document.getElementById('chatInput');
-                if (welcomeInput && document.activeElement === welcomeInput) {
-                    syncSlashMenuFromInput(welcomeInput);
-                }
-                if (chatInput && document.activeElement === chatInput) {
-                    syncSlashMenuFromInput(chatInput);
-                }
-            });
+        return agentControls.loadCursorAgentModelsForPalette(force, opts);
     }
 
     /** anyChat: load even without a /muse chip (user typed "muse" in the palette). */
     function loadMuseModelsForPalette(anyChat, opts) {
-        if (!anyChat && !hasActiveMuseAgentChip()) return;
-        const key = currentSessionId != null ? String(currentSessionId) : '';
-        const forceRefresh = !!(opts && opts.refresh);
-        if (
-            !forceRefresh
-            && (
-                slashPaletteSupplement.museModelsLoading
-                || (slashPaletteSupplement.museModels.length
-                    && slashPaletteSupplement.museModelsKey === key)
-                || slashPaletteSupplement.museModelsTried === key
-            )
-        ) {
-            return;
-        }
-        const _museModelsGen = beginSupplementFetch('museModelsGen');
-        slashPaletteSupplement.museModelsLoading = true;
-        const params = new URLSearchParams();
-        if (key) params.set('session', key);
-        if (forceRefresh) params.set('refresh', '1');
-        const qs = params.toString();
-        const url = qs ? '/api/muse/models?' + qs : '/api/muse/models';
-        const mutationToken = sessionMutations.capture(currentSessionId, 'muse:model:read', _loadSessionSeq);
-        fetch(url, { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.museModels =
-                    j && j.success && Array.isArray(j.models) ? j.models : [];
-                slashPaletteSupplement.museModel =
-                    (!slashPaletteSupplement.museModelDirty && isCurrentSupplementFetch('museModelsGen', _museModelsGen) && j && j.success ? (j.preferredModel || j.defaultModel) : null) || slashPaletteSupplement.museModel || '';
-                slashPaletteSupplement.museModelsKey = key;
-                slashPaletteSupplement.museModelsCount =
-                    (j && (j.count != null ? j.count : slashPaletteSupplement.museModels.length)) || 0;
-                slashPaletteSupplement.museModelsSource = (j && j.source) || '';
-                // Badges may have rendered with defaults while this was in
-                // flight — repaint composer and history with the real pin.
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                repaintMuseUserBadges();
-                persistStickySlashForCurrentSession();
-                refreshHistoryAgentChips();
-                if (forceRefresh && window.showToast) {
-                    const n = slashPaletteSupplement.museModelsCount || 0;
-                    const err = j && j.error ? String(j.error) : '';
-                    const src = slashPaletteSupplement.museModelsSource || '';
-                    window.showToast(
-                        err && !n
-                            ? ('Muse models refresh failed: ' + err)
-                            : ('Muse models refreshed (' + n
-                                + (src ? ', ' + src : '') + ')'),
-                        err && !n ? 'error' : 'success'
-                    );
-                }
-            })
-            .catch(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (forceRefresh && window.showToast) {
-                    window.showToast('Muse models refresh failed', 'error');
-                }
-            })
-            .finally(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.museModelsLoading = false;
-                slashPaletteSupplement.museModelsTried = key; // empty/failed: don't refetch per render
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                const welcomeInput = document.getElementById('welcomeChatInput');
-                const chatInput = document.getElementById('chatInput');
-                if (welcomeInput && document.activeElement === welcomeInput) {
-                    syncSlashMenuFromInput(welcomeInput);
-                }
-                if (chatInput && document.activeElement === chatInput) {
-                    syncSlashMenuFromInput(chatInput);
-                }
-            });
+        return agentControls.loadMuseModelsForPalette(anyChat, opts);
     }
 
     /** Persist the chat's Muse model pick (palette click — no message sent). */
     function persistMuseModelSelection(modelId) {
-        const id = String(modelId || '').trim();
-        if (!id) return;
-        slashPaletteSupplement.museModelsLoading = false;
-        if (id.toLowerCase() === 'refresh' || id.toLowerCase() === '__refresh__') {
-            slashPaletteSupplement.museModelsKey = '';
-            slashPaletteSupplement.museModels = [];
-            loadMuseModelsForPalette(true, { refresh: true });
-            return;
-        }
-        slashPaletteSupplement.museModel = id;
-        beginSupplementFetch('museModelsGen');
-        slashPaletteSupplement.museModels = (slashPaletteSupplement.museModels || []).map((m) => ({
-            ...m,
-            current: String(m && m.id) === id,
-        }));
-        const sid = currentSessionId != null ? String(currentSessionId) : '';
-        if (!sid) {
-            // New chat with no id yet — mark dirty so the pick (not the
-            // default) is persisted once the session exists.
-            slashPaletteSupplement.museModelDirty = true;
-            slashPaletteSupplement.museModelsKey = '';
-            return;
-        }
-        slashPaletteSupplement.museModelDirty = true;
-        const mutationToken = sessionMutations.capture(currentSessionId, 'muse:model', _loadSessionSeq);
-        sessionMutationFetch('/api/muse/model', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session: sid, model: id }),
-        })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (j && j.success) {
-                    slashPaletteSupplement.museModel = id;
-                    slashPaletteSupplement.museModelDirty = false;
-                    slashPaletteSupplement.museModelsKey = sid;
-                    repaintMuseUserBadges();
-                    persistStickySlashForCurrentSession();
-                    refreshHistoryAgentChips();
-                }
-            })
-            .catch(() => {});
+        return agentControls.persistMuseModelSelection(modelId);
     }
 
     /** anyChat: load even without a /hermes chip (user typed "hermes" in the palette). */
     function loadHermesModelsForPalette(anyChat) {
-        if (!anyChat && !hasActiveHermesAgentChip()) return;
-        const key = currentSessionId != null ? String(currentSessionId) : '';
-        if (
-            slashPaletteSupplement.hermesModelsLoading
-            || (slashPaletteSupplement.hermesModels.length
-                && slashPaletteSupplement.hermesModelsKey === key)
-            || slashPaletteSupplement.hermesModelsTried === key
-        ) {
-            return;
-        }
-        const modelsGeneration = beginSupplementFetch('hermesModelsGen');
-        slashPaletteSupplement.hermesModelsLoading = true;
-        const url = key
-            ? '/api/hermes/models?session=' + encodeURIComponent(key)
-            : '/api/hermes/models';
-        const mutationToken = sessionMutations.capture(currentSessionId, 'hermes:model:read', _loadSessionSeq);
-        fetch(url, { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.hermesModels =
-                    j && j.success && Array.isArray(j.models) ? j.models : [];
-                if (!slashPaletteSupplement.hermesModelDirty && isCurrentSupplementFetch('hermesModelsGen', modelsGeneration)) {
-                    slashPaletteSupplement.hermesModel = (j && j.preferredModel) || '';
-                }
-                slashPaletteSupplement.hermesModelsKey = key;
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                repaintHermesUserBadges();
-                persistStickySlashForCurrentSession();
-                refreshHistoryAgentChips();
-            })
-            .catch(() => {})
-            .finally(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.hermesModelsLoading = false;
-                slashPaletteSupplement.hermesModelsTried = key; // empty/failed: don't refetch per render
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                const welcomeInput = document.getElementById('welcomeChatInput');
-                const chatInput = document.getElementById('chatInput');
-                if (welcomeInput && document.activeElement === welcomeInput) {
-                    syncSlashMenuFromInput(welcomeInput);
-                }
-                if (chatInput && document.activeElement === chatInput) {
-                    syncSlashMenuFromInput(chatInput);
-                }
-            });
+        return agentControls.loadHermesModelsForPalette(anyChat);
     }
 
     /** Persist the chat's Hermes model pick (palette click — no message sent). */
     function persistHermesModelSelection(modelId) {
-        const id = String(modelId || '').trim();
-        if (!id) return;
-        slashPaletteSupplement.hermesModelsLoading = false;
-        beginSupplementFetch('hermesModelsGen');
-        slashPaletteSupplement.hermesModel = id;
-        slashPaletteSupplement.hermesModels = (slashPaletteSupplement.hermesModels || []).map((m) => ({
-            ...m,
-            current: String(m && m.id) === id,
-        }));
-        const sid = currentSessionId != null ? String(currentSessionId) : '';
-        if (!sid) {
-            slashPaletteSupplement.hermesModelDirty = true;
-            slashPaletteSupplement.hermesModelsKey = '';
-            return;
-        }
-        slashPaletteSupplement.hermesModelDirty = true;
-        const mutationToken = sessionMutations.capture(currentSessionId, 'hermes:model', _loadSessionSeq);
-        sessionMutationFetch('/api/hermes/model', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session: sid, model: id }),
-        })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (j && j.success) {
-                    slashPaletteSupplement.hermesModel = id;
-                    slashPaletteSupplement.hermesModelDirty = false;
-                    slashPaletteSupplement.hermesModelsKey = sid;
-                    repaintHermesUserBadges();
-                    persistStickySlashForCurrentSession();
-                    refreshHistoryAgentChips();
-                }
-            })
-            .catch(() => {});
+        return agentControls.persistHermesModelSelection(modelId);
     }
 
     function loadSlashPaletteSupplement() {
@@ -4930,45 +4500,9 @@
             });
     }
 
-    function slashPaletteCategoryLabel(cat) {
-        return CuttleChatSlash.slashPaletteCategoryLabel(cat);
-    }
-
-    /** Normalize palette categories into filter-badge buckets. */
-    function slashPaletteTypeBucket(cat) {
-        return CuttleChatSlash.slashPaletteTypeBucket(cat);
-    }
-
-    const SLASH_PALETTE_TYPE_ORDER = [
-        'command',
-        'project-cmd',
-        'project',
-        'skill',
-        'cursor',
-        'muse',
-        'hermes',
-        'opencode',
-        'codex',
-        'claude',
-    ];
-    const SLASH_PALETTE_TYPE_FILTER_KEY = 'cuttleSlashPaletteTypeFilter';
-    let slashPaletteTypeFilter = 'all';
-    try {
-        const saved = sessionStorage.getItem(SLASH_PALETTE_TYPE_FILTER_KEY);
-        if (saved) slashPaletteTypeFilter = saved;
-    } catch (_) {}
-
-    function setSlashPaletteTypeFilter(next) {
-        const v = next || 'all';
-        slashPaletteTypeFilter = v;
-        try {
-            sessionStorage.setItem(SLASH_PALETTE_TYPE_FILTER_KEY, v);
-        } catch (_) {}
-    }
-
-    function slashPaletteTypeBadgeLabel(bucket) {
-        return CuttleChatSlash.slashPaletteTypeBadgeLabel(bucket);
-    }
+    // Palette category/bucket/type-filter state and the menu lifecycle live in
+    // chat_slash_palette.js (CuttleChatSlashPalette); the page keeps the
+    // project-command builders below for chip/history consumers.
 
     function buildProjectPaletteItems() {
         return CuttleChatSlash.buildProjectPaletteItems(projects);
@@ -4980,87 +4514,7 @@
     }
 
     function buildCursorModelPaletteItems(filterLower) {
-        if (!hasActiveCursorAgentChip()) return [];
-        const f = (filterLower || '').toLowerCase().trim();
-        // Avoid flooding the empty `/` menu — only surface models when the user
-        // is filtering (e.g. `/mod`, `/sonnet`, `/1m`, `/model sonnet 4.6`).
-        if (!f) return [];
-        // `/model` or `/model ` → list all; `/model sonnet 1m` → filter by remainder.
-        let modelFilter = f;
-        if (modelFilter === 'model') {
-            modelFilter = '';
-        } else if (modelFilter.startsWith('model ')) {
-            modelFilter = modelFilter.slice(6).trim();
-        }
-        const showAllForModel = !modelFilter;
-        loadCursorAgentModelsForPalette(false);
-        // Session preferred model (Cuttle chat), not Cursor CLI's global "(current)".
-        const preferred = String(slashPaletteSupplement.preferredModel || 'auto')
-            .trim()
-            .toLowerCase() || 'auto';
-        // Stage as a normal nested command chip (same as /usage) — do not
-        // instantly refresh on palette pick (CH-000482).
-        const refreshItem = {
-            category: 'cursor-cmd',
-            prefix: '/model refresh',
-            label: 'Refresh Cursor models',
-            hint: 'Re-run agent models and reload the slash palette catalog',
-            meta: 'refresh',
-            keywords: 'cursor model refresh reload sync catalog agent models',
-        };
-        const items = [];
-        if (
-            !modelFilter
-            || slashPaletteItemMatches(refreshItem, modelFilter)
-        ) {
-            items.push(refreshItem);
-        }
-        const models = slashPaletteSupplement.cursorModels || [];
-        if (slashPaletteSupplement.cursorModelsLoading && !models.length) {
-            items.push({
-                category: 'cursor-model',
-                prefix: '/model',
-                label: 'Loading Cursor models…',
-                hint: 'Fetching agent models catalog',
-                meta: '',
-                keywords: 'cursor model loading',
-                modelId: '',
-                disabled: true,
-            });
-            return items;
-        }
-        const mapped = models
-            .map((m) => {
-                const id = String(m.id || '').trim();
-                if (!id) return null;
-                const label = String(m.label || id).trim() || id;
-                const current = id.toLowerCase() === preferred;
-                // Extra searchable bits: compact id/label + context tokens (1m, 200k).
-                const contextBits = (label.match(/\b\d+\s*[km]\b/gi) || []).join(' ');
-                return {
-                    category: 'cursor-model',
-                    prefix: '/model ' + id,
-                    label: label + (current ? ' (current)' : ''),
-                    hint: 'Set Cursor Agent model to ' + id,
-                    meta: id,
-                    keywords:
-                        'cursor model ' +
-                        id +
-                        ' ' +
-                        label +
-                        ' ' +
-                        id.replace(/[-_]+/g, ' ') +
-                        ' ' +
-                        contextBits,
-                    modelId: id,
-                };
-            })
-            .filter(Boolean)
-            .filter((item) => {
-                if (showAllForModel) return true;
-                return slashPaletteItemMatches(item, modelFilter);
-            });
-        return items.concat(mapped);
+        return agentControls.buildCursorModelPaletteItems(filterLower);
     }
 
     /**
@@ -5069,75 +4523,8 @@
      * the next message, so it works while `/muse` is sticky.
      */
     function buildMuseModelPaletteItems(filterLower) {
-        // Gated on the Muse badge like Cursor's `/model` is on its chip: badge
-        // commands only appear when that harness is applied to this chat.
-        if (!hasActiveMuseAgentChip()) return [];
-        const f = (filterLower || '').toLowerCase().trim();
-        if (!f) return [];
-        loadMuseModelsForPalette(true);
-        const models = slashPaletteSupplement.museModels || [];
-        let modelFilter = f
-            .replace(/^muse\s+/, '')
-            .replace(/^models?\b\s*/, '')
-            .trim();
-        if (modelFilter === 'muse') modelFilter = '';
-        const preferred = String(slashPaletteSupplement.museModel || '').toLowerCase();
-        // Stage as a nested cmd chip (same as Cursor /model refresh) — do not
-        // instantly refresh on palette pick (CH-000482). Prefix is `/model refresh`
-        // so compose with sticky `/muse ` yields `/muse /model refresh` (adapter
-        // peels the agent token and matches `model refresh`).
-        const refreshItem = {
-            category: 'muse-cmd',
-            prefix: '/model refresh',
-            label: 'Refresh Muse models',
-            hint: 'Re-fetch Muse Spark ids from Meta Model API and reload the slash palette',
-            meta: 'refresh',
-            keywords: 'muse model refresh reload sync catalog meta api spark',
-        };
-        const items = [];
-        if (
-            !modelFilter
-            || slashPaletteItemMatches(refreshItem, modelFilter)
-        ) {
-            items.push(refreshItem);
-        }
-        if (slashPaletteSupplement.museModelsLoading && !models.length) {
-            items.push({
-                category: 'muse-model',
-                prefix: '/muse model',
-                label: 'Loading Muse models…',
-                hint: 'Fetching Muse Spark catalog',
-                meta: '',
-                keywords: 'muse model loading',
-                modelId: '',
-                museModel: true,
-                disabled: true,
-            });
-            return items;
-        }
-        const mapped = models
-            .map((m) => {
-                const id = String((m && m.id) || '').trim();
-                if (!id) return null;
-                const label = String((m && m.label) || id).trim() || id;
-                const current = id.toLowerCase() === preferred;
-                return {
-                    category: 'muse-model',
-                    prefix: '/muse model ' + id,
-                    label: label + (current ? ' (current)' : ''),
-                    hint: (m && m.description) || ('Set Muse Code model to ' + id),
-                    meta: id,
-                    keywords: 'muse model spark ' + id + ' ' + label + ' ' + id.replace(/[-_]+/g, ' '),
-                    modelId: id,
-                    museModel: true,
-                };
-            })
-            .filter(Boolean)
-            .filter((item) => (modelFilter ? slashPaletteItemMatches(item, modelFilter) : true));
-        return items.concat(mapped);
+        return agentControls.buildMuseModelPaletteItems(filterLower);
     }
-
-    const MUSE_EFFORT_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
 
     /**
      * Seed the Muse supplement from a session payload (messages response)
@@ -5160,6 +4547,16 @@
     }
 
     /**
+     * Palette pick of a Cursor model id: record the preference and invalidate
+     * any in-flight models fetch. The palette controller owns the selection
+     * logic; this keeps the preferred-model state page-owned.
+     */
+    function onCursorModelPick(mid) {
+        slashPaletteSupplement.preferredModel = mid;
+        beginSupplementFetch('cursorModelsGen');
+    }
+
+    /**
      * Neutralize cached agent preferences when the session identity changes.
      * prev/next are '' for the unsent composer: '' → id keeps dirty user
      * picks (same unsent chat gaining an id); anything else fully resets so a
@@ -5167,92 +4564,7 @@
      * caches and in-flight fetches via the generation counters.
      */
     function resetAgentSupplementForIdentity(prev, next) {
-        const S = slashPaletteSupplement;
-        S.cursorModelsKey = '';
-        S.cursorModelsLoaded = false;
-        S.museModels = [];
-        S.museModelsKey = '';
-        S.museModelsLoading = false;
-        S.museModelsTried = null;
-        S.hermesModels = [];
-        S.hermesModelsKey = '';
-        S.hermesModelsLoading = false;
-        S.hermesModelsTried = null;
-        S.opencodeModels = [];
-        S.opencodeModelsKey = '';
-        S.opencodeModelsLoading = false;
-        S.opencodeModelsTried = null;
-        S.codexModels = [];
-        S.codexModelsKey = '';
-        S.codexModelsLoading = false;
-        S.codexModelsTried = null;
-        S.claudeModels = [];
-        S.claudeModelsKey = '';
-        S.claudeModelsLoading = false;
-        S.claudeModelsTried = null;
-        S.museEffortKey = '';
-        S.hermesEffortKey = '';
-        S.opencodeEffortKey = '';
-        S.codexEffortKey = '';
-        S.claudeEffortKey = '';
-        S.cursorModelsGen = (S.cursorModelsGen || 0) + 1;
-        S.museModelsGen = (S.museModelsGen || 0) + 1;
-        S.hermesModelsGen = (S.hermesModelsGen || 0) + 1;
-        S.opencodeModelsGen = (S.opencodeModelsGen || 0) + 1;
-        S.codexModelsGen = (S.codexModelsGen || 0) + 1;
-        S.claudeModelsGen = (S.claudeModelsGen || 0) + 1;
-        if (prev && next) {
-            S.preferredModel = 'auto';
-            S.lastReportedModel = null;
-            S.museModel = '';
-            S.museEffort = '';
-            S.museModelDirty = false;
-            S.museEffortDirty = false;
-            S.museEffortLoading = false;
-            S.hermesModel = '';
-            S.hermesEffort = '';
-            S.hermesModelDirty = false;
-            S.hermesEffortDirty = false;
-            S.hermesEffortLoading = false;
-            S.opencodeModel = '';
-            S.opencodeEffort = '';
-            S.opencodeModelDirty = false;
-            S.opencodeEffortDirty = false;
-            S.opencodeEffortLoading = false;
-            S.codexModel = '';
-            S.codexEffort = '';
-            S.codexModelDirty = false;
-            S.codexEffortDirty = false;
-            S.codexEffortLoading = false;
-            S.claudeModel = '';
-            S.claudeEffort = '';
-            S.claudeModelDirty = false;
-            S.claudeEffortDirty = false;
-            S.claudeEffortLoading = false;
-        } else if (!next) {
-            S.preferredModel = 'auto';
-            S.lastReportedModel = null;
-            S.museModel = '';
-            S.museEffort = '';
-            S.museModelDirty = false;
-            S.museEffortDirty = false;
-            S.hermesModel = '';
-            S.hermesEffort = '';
-            S.hermesModelDirty = false;
-            S.hermesEffortDirty = false;
-            S.opencodeModel = '';
-            S.opencodeEffort = '';
-            S.opencodeModelDirty = false;
-            S.opencodeEffortDirty = false;
-            S.codexModel = '';
-            S.codexEffort = '';
-            S.codexModelDirty = false;
-            S.codexEffortDirty = false;
-            S.claudeModel = '';
-            S.claudeEffort = '';
-            S.claudeModelDirty = false;
-            S.claudeEffortDirty = false;
-        }
+        return agentControls.resetAgentSupplementForIdentity(prev, next);
     }
 
     /** True when chip is a palette-added model/effort companion of another agent. */
@@ -5273,92 +4585,17 @@
     }
 
     function seedMuseSupplementFromSessionData(data, sessionId) {
-        if (!data || typeof data !== 'object') return;
-        const key = sessionId != null ? String(sessionId) : '';
-        const serverModel = sessionPin(data, 'muse', 'model');
-        if (serverModel && !slashPaletteSupplement.museModelDirty) {
-            slashPaletteSupplement.museModel = serverModel;
-            if (key) slashPaletteSupplement.museModelsKey = key;
-        }
-        const serverEffort = sessionPin(data, 'muse', 'effort').toLowerCase();
-        if (serverEffort && !slashPaletteSupplement.museEffortDirty) {
-            slashPaletteSupplement.museEffort = serverEffort;
-            if (key) slashPaletteSupplement.museEffortKey = key;
-        } else if (!slashPaletteSupplement.museEffortDirty && key && data && ((data.agent_pins && data.agent_pins.muse) || ('muse_effort' in data))) {
-            // Explicitly unpinned — don't inherit another chat's effort.
-            slashPaletteSupplement.museEffort = '';
-            slashPaletteSupplement.museEffortKey = key;
-        }
+        return agentControls.seedMuseSupplementFromSessionData(data, sessionId);
     }
 
     /** Hydrate this chat's pinned Muse reasoning effort (badge-gated like models). */
     function loadMuseEffortForPalette() {
-        if (slashPaletteSupplement.museEffortDirty) return;
-        if (!hasActiveMuseAgentChip()) return;
-        const key = currentSessionId != null ? String(currentSessionId) : '';
-        if (
-            slashPaletteSupplement.museEffortLoading
-            || (slashPaletteSupplement.museEffortKey === key && key)
-        ) {
-            return;
-        }
-        const effortGeneration = beginSupplementFetch('museEffortGen');
-        slashPaletteSupplement.museEffortLoading = true;
-        const url = key
-            ? '/api/muse/effort?session=' + encodeURIComponent(key)
-            : '/api/muse/effort';
-        const mutationToken = sessionMutations.capture(currentSessionId, 'muse:effort:read', _loadSessionSeq);
-        fetch(url, { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (slashPaletteSupplement.museEffortDirty || !isCurrentSupplementFetch('museEffortGen', effortGeneration)) return;
-                slashPaletteSupplement.museEffort =
-                    (j && j.preferredEffort) || '';
-                slashPaletteSupplement.museEffortKey = key;
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                repaintMuseUserBadges();
-                persistStickySlashForCurrentSession();
-                refreshHistoryAgentChips();
-            })
-            .catch(() => {})
-            .finally(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.museEffortLoading = false;
-            });
+        return agentControls.loadMuseEffortForPalette();
     }
 
     /** Persist the chat's Muse reasoning-effort pick (palette click — no message sent). */
     function persistMuseEffortSelection(effort) {
-        const id = String(effort || '').trim().toLowerCase();
-        if (!id) return;
-        slashPaletteSupplement.museEffortLoading = false;
-        beginSupplementFetch('museEffortGen');
-        slashPaletteSupplement.museEffort = id;
-        const sid = currentSessionId != null ? String(currentSessionId) : '';
-        if (!sid) {
-            slashPaletteSupplement.museEffortDirty = true;
-            slashPaletteSupplement.museEffortKey = '';
-            return;
-        }
-        slashPaletteSupplement.museEffortKey = sid;
-        slashPaletteSupplement.museEffortDirty = true;
-        const mutationToken = sessionMutations.capture(currentSessionId, 'muse:effort', _loadSessionSeq);
-        sessionMutationFetch('/api/muse/effort', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session: sid, effort: id }),
-        })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (j && j.success) {
-                    slashPaletteSupplement.museEffortKey = sid;
-                    slashPaletteSupplement.museEffortDirty = false;
-                }
-            })
-            .catch(() => {});
+        return agentControls.persistMuseEffortSelection(effort);
     }
 
     /**
@@ -5366,32 +4603,7 @@
      * appear while the Muse chip is applied to this chat.
      */
     function buildMuseEffortPaletteItems(filterLower) {
-        if (!agentSupportsEffort('muse')) return [];
-        if (!hasActiveMuseAgentChip()) return [];
-        const f = (filterLower || '').toLowerCase().trim();
-        if (!f) return [];
-        // Listed alongside `/muse model …` whenever the Muse badge is on (e.g.
-        // bare `/muse`); plain `/mod` still means model — effort entries carry
-        // no "model" token in label, hint, keywords, or prefix.
-        loadMuseEffortForPalette();
-        let effortFilter = f
-            .replace(/^muse\s+/, '')
-            .replace(/^efforts?\b\s*/, '')
-            .trim();
-        if (effortFilter === 'effort') effortFilter = '';
-        const preferred = String(slashPaletteSupplement.museEffort || '').toLowerCase();
-        return MUSE_EFFORT_LEVELS
-            .map((id) => ({
-                category: 'muse-effort',
-                prefix: '/muse effort ' + id,
-                label: 'Effort ' + id + (id.toLowerCase() === preferred ? ' (current)' : ''),
-                hint: 'Set Muse Code reasoning effort to ' + id,
-                meta: id,
-                keywords: 'muse effort reasoning ' + id,
-                modelId: id,
-                museEffort: true,
-            }))
-            .filter((item) => (effortFilter ? slashPaletteItemMatches(item, effortFilter) : true));
+        return agentControls.buildMuseEffortPaletteItems(filterLower);
     }
 
     /**
@@ -5399,741 +4611,77 @@
      * setting change (POST + chip relabel), not a composed chip.
      */
     function buildHermesModelPaletteItems(filterLower) {
-        if (!hasActiveHermesAgentChip()) return [];
-        const f = (filterLower || '').toLowerCase().trim();
-        if (!f) return [];
-        loadHermesModelsForPalette(true);
-        const models = slashPaletteSupplement.hermesModels || [];
-        if (!models.length) return [];
-        let modelFilter = f
-            .replace(/^hermes\s+/, '')
-            .replace(/^models?\b\s*/, '')
-            .trim();
-        if (modelFilter === 'hermes') modelFilter = '';
-        const preferred = String(slashPaletteSupplement.hermesModel || '').toLowerCase();
-        return models
-            .map((m) => {
-                const id = String((m && m.id) || '').trim();
-                if (!id) return null;
-                const label = String((m && m.label) || id).trim() || id;
-                const current = id.toLowerCase() === preferred;
-                return {
-                    category: 'hermes-model',
-                    prefix: '/hermes model ' + id,
-                    label: label + (current ? ' (current)' : ''),
-                    hint: (m && m.description) || ('Set Hermes model to ' + id),
-                    meta: id,
-                    keywords: 'hermes model glm qwen ' + id + ' ' + label + ' ' + id.replace(/[-_]+/g, ' '),
-                    modelId: id,
-                    hermesModel: true,
-                };
-            })
-            .filter(Boolean)
-            .filter((item) => (modelFilter ? slashPaletteItemMatches(item, modelFilter) : true));
+        return agentControls.buildHermesModelPaletteItems(filterLower);
     }
-
-    const HERMES_EFFORT_LEVELS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'];
 
     /** Seed Hermes supplement from a session payload (messages response). */
     function seedHermesSupplementFromSessionData(data, sessionId) {
-        if (!data || typeof data !== 'object') return;
-        const key = sessionId != null ? String(sessionId) : '';
-        const serverModel = sessionPin(data, 'hermes', 'model');
-        if (serverModel && !slashPaletteSupplement.hermesModelDirty) {
-            slashPaletteSupplement.hermesModel = serverModel;
-            if (key) slashPaletteSupplement.hermesModelsKey = key;
-        }
-        const serverEffort = sessionPin(data, 'hermes', 'effort').toLowerCase();
-        if (serverEffort && !slashPaletteSupplement.hermesEffortDirty) {
-            slashPaletteSupplement.hermesEffort = serverEffort;
-            if (key) slashPaletteSupplement.hermesEffortKey = key;
-        } else if (!slashPaletteSupplement.hermesEffortDirty && key && data && ((data.agent_pins && data.agent_pins.hermes) || ('hermes_effort' in data))) {
-            slashPaletteSupplement.hermesEffort = '';
-            slashPaletteSupplement.hermesEffortKey = key;
-        }
+        return agentControls.seedHermesSupplementFromSessionData(data, sessionId);
     }
 
     function loadHermesEffortForPalette() {
-        if (slashPaletteSupplement.hermesEffortDirty) return;
-        if (!hasActiveHermesAgentChip()) return;
-        const key = currentSessionId != null ? String(currentSessionId) : '';
-        if (
-            slashPaletteSupplement.hermesEffortLoading
-            || (slashPaletteSupplement.hermesEffortKey === key && key)
-        ) {
-            return;
-        }
-        const effortGeneration = beginSupplementFetch('hermesEffortGen');
-        slashPaletteSupplement.hermesEffortLoading = true;
-        const url = key
-            ? '/api/hermes/effort?session=' + encodeURIComponent(key)
-            : '/api/hermes/effort';
-        const mutationToken = sessionMutations.capture(currentSessionId, 'hermes:effort:read', _loadSessionSeq);
-        fetch(url, { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                // Don't clobber a palette pick that hasn't finished POSTing yet.
-                if (slashPaletteSupplement.hermesEffortDirty || !isCurrentSupplementFetch('hermesEffortGen', effortGeneration)) return;
-                slashPaletteSupplement.hermesEffort =
-                    (j && j.preferredEffort) || '';
-                slashPaletteSupplement.hermesEffortKey = key;
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                repaintHermesUserBadges();
-                persistStickySlashForCurrentSession();
-                refreshHistoryAgentChips();
-            })
-            .catch(() => {})
-            .finally(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.hermesEffortLoading = false;
-            });
+        return agentControls.loadHermesEffortForPalette();
     }
 
     function persistHermesEffortSelection(effort) {
-        const id = String(effort || '').trim().toLowerCase();
-        if (!id) return;
-        slashPaletteSupplement.hermesEffortLoading = false;
-        beginSupplementFetch('hermesEffortGen');
-        slashPaletteSupplement.hermesEffort = id;
-        const sid = currentSessionId != null ? String(currentSessionId) : '';
-        if (!sid) {
-            slashPaletteSupplement.hermesEffortDirty = true;
-            slashPaletteSupplement.hermesEffortKey = '';
-            return;
-        }
-        // Optimistic key so a concurrent GET cannot wipe the pick before POST lands.
-        slashPaletteSupplement.hermesEffortKey = sid;
-        slashPaletteSupplement.hermesEffortDirty = true;
-        const mutationToken = sessionMutations.capture(currentSessionId, 'hermes:effort', _loadSessionSeq);
-        sessionMutationFetch('/api/hermes/effort', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session: sid, effort: id }),
-        })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (j && j.success) {
-                    slashPaletteSupplement.hermesEffortKey = sid;
-                    slashPaletteSupplement.hermesEffortDirty = false;
-                }
-            })
-            .catch(() => {});
+        return agentControls.persistHermesEffortSelection(effort);
     }
 
     /**
      * `/hermes effort <level>` entries. Badge-gated like `/hermes model`.
      */
     function buildHermesEffortPaletteItems(filterLower) {
-        if (!agentSupportsEffort('hermes')) return [];
-        if (!hasActiveHermesAgentChip()) return [];
-        const f = (filterLower || '').toLowerCase().trim();
-        if (!f) return [];
-        loadHermesEffortForPalette();
-        let effortFilter = f
-            .replace(/^hermes\s+/, '')
-            .replace(/^efforts?\b\s*/, '')
-            .trim();
-        if (effortFilter === 'effort') effortFilter = '';
-        const preferred = String(slashPaletteSupplement.hermesEffort || '').toLowerCase();
-        return HERMES_EFFORT_LEVELS
-            .map((id) => ({
-                category: 'hermes-effort',
-                prefix: '/hermes effort ' + id,
-                label: 'Effort ' + id + (id.toLowerCase() === preferred ? ' (current)' : ''),
-                hint: 'Set Hermes reasoning effort to ' + id,
-                meta: id,
-                keywords: 'hermes effort reasoning ' + id,
-                modelId: id,
-                hermesEffort: true,
-            }))
-            .filter((item) => (effortFilter ? slashPaletteItemMatches(item, effortFilter) : true));
+        return agentControls.buildHermesEffortPaletteItems(filterLower);
     }
 
     /** anyChat: load even without an /opencode chip (user typed "opencode" in the palette). */
     function loadOpenCodeModelsForPalette(anyChat, opts) {
-        if (!anyChat && !hasActiveOpenCodeAgentChip()) return;
-        const key = currentSessionId != null ? String(currentSessionId) : '';
-        const forceRefresh = !!(opts && opts.refresh);
-        if (
-            !forceRefresh
-            && (
-                slashPaletteSupplement.opencodeModelsLoading
-                || (slashPaletteSupplement.opencodeModels.length
-                    && slashPaletteSupplement.opencodeModelsKey === key)
-                || slashPaletteSupplement.opencodeModelsTried === key
-            )
-        ) {
-            return;
-        }
-        const modelsGeneration = beginSupplementFetch('opencodeModelsGen');
-        slashPaletteSupplement.opencodeModelsLoading = true;
-        const params = new URLSearchParams();
-        if (key) params.set('session', key);
-        if (forceRefresh) params.set('refresh', '1');
-        const qs = params.toString();
-        const url = qs ? '/api/opencode/models?' + qs : '/api/opencode/models';
-        const mutationToken = sessionMutations.capture(currentSessionId, 'opencode:model:read', _loadSessionSeq);
-        fetch(url, { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.opencodeModels =
-                    j && j.success && Array.isArray(j.models) ? j.models : [];
-                if (!slashPaletteSupplement.opencodeModelDirty && isCurrentSupplementFetch('opencodeModelsGen', modelsGeneration)) {
-                    slashPaletteSupplement.opencodeModel = (j && j.preferredModel) || '';
-                }
-                slashPaletteSupplement.opencodeModelsKey = key;
-                slashPaletteSupplement.opencodeModelsSource =
-                    (j && j.source) || '';
-                slashPaletteSupplement.opencodeModelsCount =
-                    (j && (j.count != null ? j.count : slashPaletteSupplement.opencodeModels.length)) || 0;
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                repaintOpenCodeUserBadges();
-                persistStickySlashForCurrentSession();
-                refreshHistoryAgentChips();
-                if (forceRefresh && window.showToast) {
-                    const n = slashPaletteSupplement.opencodeModelsCount || 0;
-                    const err = j && j.error ? String(j.error) : '';
-                    window.showToast(
-                        err && !n
-                            ? ('OpenCode models refresh failed: ' + err)
-                            : ('OpenCode models refreshed (' + n + ')'),
-                        err && !n ? 'error' : 'success'
-                    );
-                }
-            })
-            .catch(() => {})
-            .finally(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.opencodeModelsLoading = false;
-                slashPaletteSupplement.opencodeModelsTried = key; // empty/failed: don't refetch per render
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                const welcomeInput = document.getElementById('welcomeChatInput');
-                const chatInput = document.getElementById('chatInput');
-                if (welcomeInput && document.activeElement === welcomeInput) {
-                    syncSlashMenuFromInput(welcomeInput);
-                }
-                if (chatInput && document.activeElement === chatInput) {
-                    syncSlashMenuFromInput(chatInput);
-                }
-            });
+        return agentControls.loadOpenCodeModelsForPalette(anyChat, opts);
     }
 
     function persistOpenCodeModelSelection(modelId) {
-        const id = String(modelId || '').trim();
-        if (!id) return;
-        slashPaletteSupplement.opencodeModelsLoading = false;
-        beginSupplementFetch('opencodeModelsGen');
-        if (id.toLowerCase() === 'refresh' || id.toLowerCase() === '__refresh__') {
-            slashPaletteSupplement.opencodeModelsKey = '';
-            slashPaletteSupplement.opencodeModels = [];
-            loadOpenCodeModelsForPalette(true, { refresh: true });
-            return;
-        }
-        slashPaletteSupplement.opencodeModel = id;
-        slashPaletteSupplement.opencodeModels = (slashPaletteSupplement.opencodeModels || []).map((m) => ({
-            ...m,
-            current: String(m && m.id) === id,
-        }));
-        const sid = currentSessionId != null ? String(currentSessionId) : '';
-        if (!sid) {
-            slashPaletteSupplement.opencodeModelDirty = true;
-            slashPaletteSupplement.opencodeModelsKey = '';
-            return;
-        }
-        slashPaletteSupplement.opencodeModelDirty = true;
-        const mutationToken = sessionMutations.capture(currentSessionId, 'opencode:model', _loadSessionSeq);
-        sessionMutationFetch('/api/opencode/model', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session: sid, model: id }),
-        })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (j && j.success) {
-                    slashPaletteSupplement.opencodeModel = id;
-                    slashPaletteSupplement.opencodeModelDirty = false;
-                    slashPaletteSupplement.opencodeModelsKey = sid;
-                    repaintOpenCodeUserBadges();
-                    persistStickySlashForCurrentSession();
-                    refreshHistoryAgentChips();
-                }
-            })
-            .catch(() => {});
+        return agentControls.persistOpenCodeModelSelection(modelId);
     }
 
     function buildOpenCodeModelPaletteItems(filterLower, opts) {
-        if (!hasActiveOpenCodeAgentChip()) return [];
-        const f = (filterLower || '').toLowerCase().trim();
-        if (!f) return [];
-        loadOpenCodeModelsForPalette(true);
-        const models = slashPaletteSupplement.opencodeModels || [];
-        let modelFilter = f
-            .replace(/^opencode\s+/, '')
-            .replace(/^models?\b\s*/, '')
-            .trim();
-        if (modelFilter === 'opencode') modelFilter = '';
-        const preferred = String(slashPaletteSupplement.opencodeModel || '').toLowerCase();
-        // Stage as nested cmd chip — composes as `/opencode /model refresh`
-        // under the sticky agent (same as Codex / Muse / Cursor).
-        const refreshItem = {
-            category: 'opencode-cmd',
-            prefix: '/model refresh',
-            label: 'Refresh models',
-            hint: 'Fetch latest OpenCode models (models.dev). Staged as /model refresh — send to run.',
-            meta: 'cmd',
-            keywords: 'opencode model refresh reload sync catalog models.dev openrouter',
-        };
-        const items = [];
-        if (
-            !modelFilter
-            || slashPaletteItemMatches(refreshItem, modelFilter)
-        ) {
-            items.push(refreshItem);
-        }
-        if (slashPaletteSupplement.opencodeModelsLoading && !models.length) {
-            items.push({
-                category: 'opencode-model',
-                prefix: '/opencode model',
-                label: 'Loading OpenCode models…',
-                hint: 'Fetching opencode models catalog',
-                meta: '',
-                keywords: 'opencode model loading',
-                modelId: '',
-                opencodeModel: true,
-                disabled: true,
-            });
-            return items;
-        }
-        const mapped = models
-            .map((m) => {
-                const id = String((m && m.id) || '').trim();
-                if (!id) return null;
-                const label = String((m && m.label) || id).trim() || id;
-                const current = id.toLowerCase() === preferred;
-                const fav = !!(m && (m.favorite === true || m.favorite === '1' || m.favorite === 1));
-                return {
-                    category: 'opencode-model',
-                    prefix: '/opencode model ' + id,
-                    label: (fav ? '★ ' : '') + label + (current ? ' (current)' : ''),
-                    hint: (m && m.description) || ('Set OpenCode model to ' + id),
-                    meta: id,
-                    keywords: 'opencode model ' + id + ' ' + label + ' ' + id.replace(/[-_/]+/g, ' '),
-                    modelId: id,
-                    opencodeModel: true,
-                };
-            })
-            .filter(Boolean)
-            .filter((item) => (modelFilter ? slashPaletteItemMatches(item, modelFilter) : true));
-        // Keep the palette usable when the filter is broad (hundreds of OpenRouter ids).
-        // The searchable chip-config dropdown asks for the full catalog.
-        const MAX = (opts && opts.full) ? Infinity : 40;
-        // Rank before clipping so a name hit cannot be hidden by description hits.
-        mapped.sort((a, b) => CuttleChatSlash.slashPaletteItemSearchRank(a, f)
-            - CuttleChatSlash.slashPaletteItemSearchRank(b, f));
-        const clipped = mapped.length > MAX ? mapped.slice(0, MAX) : mapped;
-        if (mapped.length > MAX) {
-            items.push({
-                category: 'opencode-model',
-                prefix: '/opencode model',
-                label: '… ' + (mapped.length - MAX) + ' more — type to narrow (e.g. deepseek)',
-                hint: 'OpenCode catalog has ' + (slashPaletteSupplement.opencodeModelsCount || mapped.length) + ' models',
-                meta: '',
-                keywords: 'opencode model more filter',
-                modelId: '',
-                opencodeModel: true,
-                disabled: true,
-            });
-        }
-        return items.concat(clipped);
+        return agentControls.buildOpenCodeModelPaletteItems(filterLower, opts);
     }
 
-    const OPENCODE_EFFORT_LEVELS = [
-        'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max',
-    ];
-
     function seedOpenCodeSupplementFromSessionData(data, sessionId) {
-        if (!data || typeof data !== 'object') return;
-        const key = sessionId != null ? String(sessionId) : '';
-        const serverModel = sessionPin(data, 'opencode', 'model');
-        if (serverModel && !slashPaletteSupplement.opencodeModelDirty) {
-            slashPaletteSupplement.opencodeModel = serverModel;
-            if (key) slashPaletteSupplement.opencodeModelsKey = key;
-        }
-        const serverEffort = sessionPin(data, 'opencode', 'effort').toLowerCase();
-        if (serverEffort && !slashPaletteSupplement.opencodeEffortDirty) {
-            slashPaletteSupplement.opencodeEffort = serverEffort;
-            if (key) slashPaletteSupplement.opencodeEffortKey = key;
-        } else if (!slashPaletteSupplement.opencodeEffortDirty && key && data && ((data.agent_pins && data.agent_pins.opencode) || ('opencode_effort' in data))) {
-            slashPaletteSupplement.opencodeEffort = '';
-            slashPaletteSupplement.opencodeEffortKey = key;
-        }
+        return agentControls.seedOpenCodeSupplementFromSessionData(data, sessionId);
     }
 
     function loadOpenCodeEffortForPalette() {
-        if (slashPaletteSupplement.opencodeEffortDirty) return;
-        if (!hasActiveOpenCodeAgentChip()) return;
-        const key = currentSessionId != null ? String(currentSessionId) : '';
-        if (
-            slashPaletteSupplement.opencodeEffortLoading
-            || (slashPaletteSupplement.opencodeEffortKey === key && key)
-        ) {
-            return;
-        }
-        const effortGeneration = beginSupplementFetch('opencodeEffortGen');
-        slashPaletteSupplement.opencodeEffortLoading = true;
-        const url = key
-            ? '/api/opencode/effort?session=' + encodeURIComponent(key)
-            : '/api/opencode/effort';
-        const mutationToken = sessionMutations.capture(currentSessionId, 'opencode:effort:read', _loadSessionSeq);
-        fetch(url, { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                // Don't clobber a palette pick that hasn't finished POSTing yet.
-                if (slashPaletteSupplement.opencodeEffortDirty || !isCurrentSupplementFetch('opencodeEffortGen', effortGeneration)) return;
-                slashPaletteSupplement.opencodeEffort =
-                    (j && j.preferredEffort) || '';
-                slashPaletteSupplement.opencodeEffortKey = key;
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                repaintOpenCodeUserBadges();
-                persistStickySlashForCurrentSession();
-                refreshHistoryAgentChips();
-            })
-            .catch(() => {})
-            .finally(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.opencodeEffortLoading = false;
-            });
+        return agentControls.loadOpenCodeEffortForPalette();
     }
 
     function persistOpenCodeEffortSelection(effort) {
-        const id = String(effort || '').trim().toLowerCase();
-        if (!id) return;
-        slashPaletteSupplement.opencodeEffortLoading = false;
-        beginSupplementFetch('opencodeEffortGen');
-        slashPaletteSupplement.opencodeEffort = id;
-        const sid = currentSessionId != null ? String(currentSessionId) : '';
-        if (!sid) {
-            slashPaletteSupplement.opencodeEffortDirty = true;
-            slashPaletteSupplement.opencodeEffortKey = '';
-            return;
-        }
-        // Optimistic key so a concurrent GET cannot wipe the pick before POST lands.
-        slashPaletteSupplement.opencodeEffortKey = sid;
-        slashPaletteSupplement.opencodeEffortDirty = true;
-        const mutationToken = sessionMutations.capture(currentSessionId, 'opencode:effort', _loadSessionSeq);
-        sessionMutationFetch('/api/opencode/effort', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session: sid, effort: id }),
-        })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (j && j.success) {
-                    slashPaletteSupplement.opencodeEffortKey = sid;
-                    slashPaletteSupplement.opencodeEffortDirty = false;
-                }
-            })
-            .catch(() => {});
+        return agentControls.persistOpenCodeEffortSelection(effort);
     }
 
     function buildOpenCodeEffortPaletteItems(filterLower) {
-        if (!agentSupportsEffort('opencode')) return [];
-        if (!hasActiveOpenCodeAgentChip()) return [];
-        const f = (filterLower || '').toLowerCase().trim();
-        if (!f) return [];
-        loadOpenCodeEffortForPalette();
-        let effortFilter = f
-            .replace(/^opencode\s+/, '')
-            .replace(/^efforts?\b\s*/, '')
-            .trim();
-        if (effortFilter === 'effort') effortFilter = '';
-        const preferred = String(slashPaletteSupplement.opencodeEffort || '').toLowerCase();
-        return OPENCODE_EFFORT_LEVELS
-            .map((id) => ({
-                category: 'opencode-effort',
-                prefix: '/opencode effort ' + id,
-                label: 'Effort ' + id + (id.toLowerCase() === preferred ? ' (current)' : ''),
-                hint: 'Set OpenCode reasoning effort (--variant) to ' + id,
-                meta: id,
-                keywords: 'opencode effort reasoning variant ' + id,
-                modelId: id,
-                opencodeEffort: true,
-            }))
-            .filter((item) => (effortFilter ? slashPaletteItemMatches(item, effortFilter) : true));
+        return agentControls.buildOpenCodeEffortPaletteItems(filterLower);
     }
 
     /** anyChat: load even without a /codex chip (user typed "codex" in the palette). */
     function loadCodexModelsForPalette(anyChat, opts) {
-        if (!anyChat && !hasActiveCodexAgentChip()) return;
-        const key = currentSessionId != null ? String(currentSessionId) : '';
-        const forceRefresh = !!(opts && opts.refresh);
-        if (
-            !forceRefresh
-            && (
-                slashPaletteSupplement.codexModelsLoading
-                || (slashPaletteSupplement.codexModels.length
-                    && slashPaletteSupplement.codexModelsKey === key)
-                || slashPaletteSupplement.codexModelsTried === key
-            )
-        ) {
-            return;
-        }
-        const modelsGeneration = beginSupplementFetch('codexModelsGen');
-        slashPaletteSupplement.codexModelsLoading = true;
-        const params = new URLSearchParams();
-        if (key) params.set('session', key);
-        if (forceRefresh) params.set('refresh', '1');
-        const qs = params.toString();
-        const url = qs ? '/api/codex/models?' + qs : '/api/codex/models';
-        const mutationToken = sessionMutations.capture(currentSessionId, 'codex:model:read', _loadSessionSeq);
-        fetch(url, { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.codexModels =
-                    j && j.success && Array.isArray(j.models) ? j.models : [];
-                if (!slashPaletteSupplement.codexModelDirty && isCurrentSupplementFetch('codexModelsGen', modelsGeneration)) {
-                    slashPaletteSupplement.codexModel = (j && j.preferredModel) || '';
-                }
-                slashPaletteSupplement.codexModelsKey = key;
-                slashPaletteSupplement.codexModelsSource =
-                    (j && j.source) || '';
-                slashPaletteSupplement.codexModelsCount =
-                    (j && (j.count != null ? j.count : slashPaletteSupplement.codexModels.length)) || 0;
-                slashPaletteSupplement.codexCommonEfforts =
-                    j && Array.isArray(j.commonEfforts) ? j.commonEfforts : [];
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                repaintCodexUserBadges();
-                persistStickySlashForCurrentSession();
-                refreshHistoryAgentChips();
-                if (forceRefresh && window.showToast) {
-                    const n = slashPaletteSupplement.codexModelsCount || 0;
-                    const err = j && j.error ? String(j.error) : '';
-                    window.showToast(
-                        err && !n
-                            ? ('Codex models refresh failed: ' + err)
-                            : ('Codex models and effort support refreshed (' + n + ')'),
-                        err && !n ? 'error' : 'success'
-                    );
-                }
-            })
-            .catch(() => {})
-            .finally(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.codexModelsLoading = false;
-                slashPaletteSupplement.codexModelsTried = key; // empty/failed: don't refetch per render
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                const welcomeInput = document.getElementById('welcomeChatInput');
-                const chatInput = document.getElementById('chatInput');
-                if (welcomeInput && document.activeElement === welcomeInput) {
-                    syncSlashMenuFromInput(welcomeInput);
-                }
-                if (chatInput && document.activeElement === chatInput) {
-                    syncSlashMenuFromInput(chatInput);
-                }
-            });
+        return agentControls.loadCodexModelsForPalette(anyChat, opts);
     }
 
     function persistCodexModelSelection(modelId) {
-        const id = String(modelId || '').trim();
-        if (!id) return;
-        slashPaletteSupplement.codexModelsLoading = false;
-        beginSupplementFetch('codexModelsGen');
-        if (id.toLowerCase() === 'refresh' || id.toLowerCase() === '__refresh__') {
-            slashPaletteSupplement.codexModelsKey = '';
-            slashPaletteSupplement.codexModels = [];
-            loadCodexModelsForPalette(true, { refresh: true });
-            return;
-        }
-        slashPaletteSupplement.codexModel = id;
-        slashPaletteSupplement.codexModels = (slashPaletteSupplement.codexModels || []).map((m) => ({
-            ...m,
-            current: String(m && m.id) === id,
-        }));
-        const sid = currentSessionId != null ? String(currentSessionId) : '';
-        if (!sid) {
-            slashPaletteSupplement.codexModelDirty = true;
-            slashPaletteSupplement.codexModelsKey = '';
-            return;
-        }
-        slashPaletteSupplement.codexModelDirty = true;
-        const mutationToken = sessionMutations.capture(currentSessionId, 'codex:model', _loadSessionSeq);
-        sessionMutationFetch('/api/codex/model', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session: sid, model: id }),
-        })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (j && j.success) {
-                    slashPaletteSupplement.codexModel = id;
-                    slashPaletteSupplement.codexModelDirty = false;
-                    slashPaletteSupplement.codexModelsKey = sid;
-                    repaintCodexUserBadges();
-                    persistStickySlashForCurrentSession();
-                    refreshHistoryAgentChips();
-                }
-            })
-            .catch(() => {});
+        return agentControls.persistCodexModelSelection(modelId);
     }
 
     function buildCodexModelPaletteItems(filterLower, opts) {
-        if (!hasActiveCodexAgentChip()) return [];
-        const f = (filterLower || '').toLowerCase().trim();
-        if (!f) return [];
-        loadCodexModelsForPalette(true);
-        const models = slashPaletteSupplement.codexModels || [];
-        let modelFilter = f
-            .replace(/^codex\s+/, '')
-            .replace(/^models?\b\s*/, '')
-            .trim();
-        if (modelFilter === 'codex') modelFilter = '';
-        const preferred = String(slashPaletteSupplement.codexModel || '').toLowerCase();
-        // Stage as nested cmd chip — no instant run (CH-000482). Composes as
-        // `/codex /model refresh` after the sticky agent prefix.
-        const refreshItem = {
-            category: 'codex-cmd',
-            prefix: '/model refresh',
-            label: 'Refresh Codex models',
-            hint: 'Refresh Codex models and per-model effort levels from codex debug models',
-            meta: 'refresh',
-            keywords: 'codex model refresh reload sync catalog debug models',
-        };
-        const items = [];
-        if (
-            !modelFilter
-            || slashPaletteItemMatches(refreshItem, modelFilter)
-        ) {
-            items.push(refreshItem);
-        }
-        if (slashPaletteSupplement.codexModelsLoading && !models.length) {
-            items.push({
-                category: 'codex-model',
-                prefix: '/codex model',
-                label: 'Loading Codex models…',
-                hint: 'Fetching codex debug models catalog',
-                meta: '',
-                keywords: 'codex model loading',
-                modelId: '',
-                codexModel: true,
-                disabled: true,
-            });
-            return items;
-        }
-        const mapped = models
-            .map((m) => {
-                const id = String((m && m.id) || '').trim();
-                if (!id) return null;
-                const label = String((m && m.label) || id).trim() || id;
-                const current = id.toLowerCase() === preferred;
-                const fav = !!(m && (m.favorite === true || m.favorite === '1' || m.favorite === 1));
-                const modelEfforts = Array.isArray(m && m.efforts) ? m.efforts : [];
-                const effortHint = modelEfforts.length
-                    ? 'Supported efforts: ' + modelEfforts.join(', ')
-                    : 'No verified effort levels in the Codex CLI catalog';
-                return {
-                    category: 'codex-model',
-                    prefix: '/codex model ' + id,
-                    label: (fav ? '★ ' : '') + label + (current ? ' (current)' : ''),
-                    hint: [
-                        (m && m.description) || ('Set Codex model to ' + id),
-                        effortHint,
-                    ].filter(Boolean).join(' · '),
-                    meta: id,
-                    keywords: 'codex model ' + id + ' ' + label + ' ' + id.replace(/[-_/]+/g, ' '),
-                    modelId: id,
-                    codexModel: true,
-                };
-            })
-            .filter(Boolean)
-            .filter((item) => (modelFilter ? slashPaletteItemMatches(item, modelFilter) : true));
-        const MAX = (opts && opts.full) ? Infinity : 40;
-        // Rank before clipping so a name hit cannot be hidden by description hits.
-        mapped.sort((a, b) => CuttleChatSlash.slashPaletteItemSearchRank(a, f)
-            - CuttleChatSlash.slashPaletteItemSearchRank(b, f));
-        const clipped = mapped.length > MAX ? mapped.slice(0, MAX) : mapped;
-        if (mapped.length > MAX) {
-            items.push({
-                category: 'codex-model',
-                prefix: '/codex model',
-                label: '… ' + (mapped.length - MAX) + ' more — type to narrow (e.g. gpt-5)',
-                hint: 'Codex catalog has ' + (slashPaletteSupplement.codexModelsCount || mapped.length) + ' models',
-                meta: '',
-                keywords: 'codex model more filter',
-                modelId: '',
-                codexModel: true,
-                disabled: true,
-            });
-        }
-        return items.concat(clipped);
+        return agentControls.buildCodexModelPaletteItems(filterLower, opts);
     }
 
     function seedCodexSupplementFromSessionData(data, sessionId) {
-        if (!data || typeof data !== 'object') return;
-        const key = sessionId != null ? String(sessionId) : '';
-        const serverModel = sessionPin(data, 'codex', 'model');
-        if (serverModel && !slashPaletteSupplement.codexModelDirty) {
-            slashPaletteSupplement.codexModel = serverModel;
-            if (key) slashPaletteSupplement.codexModelsKey = key;
-        }
-        const serverEffort = sessionPin(data, 'codex', 'effort').toLowerCase();
-        if (serverEffort && !slashPaletteSupplement.codexEffortDirty) {
-            slashPaletteSupplement.codexEffort = serverEffort;
-            if (key) slashPaletteSupplement.codexEffortKey = key;
-        } else if (!slashPaletteSupplement.codexEffortDirty && key && data && ((data.agent_pins && data.agent_pins.codex) || ('codex_effort' in data))) {
-            slashPaletteSupplement.codexEffort = '';
-            slashPaletteSupplement.codexEffortKey = key;
-        }
+        return agentControls.seedCodexSupplementFromSessionData(data, sessionId);
     }
 
     function loadCodexEffortForPalette() {
-        if (slashPaletteSupplement.codexEffortDirty) return;
-        if (!hasActiveCodexAgentChip()) return;
-        const key = currentSessionId != null ? String(currentSessionId) : '';
-        if (
-            slashPaletteSupplement.codexEffortLoading
-            || (slashPaletteSupplement.codexEffortKey === key && key)
-        ) {
-            return;
-        }
-        const effortGeneration = beginSupplementFetch('codexEffortGen');
-        slashPaletteSupplement.codexEffortLoading = true;
-        const url = key
-            ? '/api/codex/effort?session=' + encodeURIComponent(key)
-            : '/api/codex/effort';
-        const mutationToken = sessionMutations.capture(currentSessionId, 'codex:effort:read', _loadSessionSeq);
-        fetch(url, { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (slashPaletteSupplement.codexEffortDirty || !isCurrentSupplementFetch('codexEffortGen', effortGeneration)) return;
-                slashPaletteSupplement.codexEffort =
-                    (j && j.preferredEffort) || '';
-                slashPaletteSupplement.codexEffortKey = key;
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                repaintCodexUserBadges();
-                persistStickySlashForCurrentSession();
-                refreshHistoryAgentChips();
-            })
-            .catch(() => {})
-            .finally(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.codexEffortLoading = false;
-            });
+        return agentControls.loadCodexEffortForPalette();
     }
 
     /**
@@ -6146,24 +4694,7 @@
      * right before the badge snapshot, then flush the corrupted value on adopt.
      */
     async function ensureCodexEffortForSend(message) {
-        const gate = CuttleChatAgentModel.codexEffortFetchForSend({
-            messageText: message,
-            hasCodexChip: hasActiveCodexAgentChip(),
-            codexEffortDirty: slashPaletteSupplement.codexEffortDirty,
-            sessionKey: currentSessionId != null ? String(currentSessionId) : '',
-            effortKey: slashPaletteSupplement.codexEffortKey,
-        });
-        if (!gate.fetch) return;
-        const key = currentSessionId != null ? String(currentSessionId) : '';
-        try {
-            const response = await fetch(gate.url, { cache: 'no-store' });
-            const result = await response.json();
-            if (!result || !result.success) return;
-            // A palette click may have set dirty while this fetch was in flight.
-            if (slashPaletteSupplement.codexEffortDirty) return;
-            slashPaletteSupplement.codexEffort = String(result.preferredEffort || '');
-            slashPaletteSupplement.codexEffortKey = key;
-        } catch (_) {}
+        return agentControls.ensureCodexEffortForSend(message);
     }
 
     /**
@@ -6180,743 +4711,110 @@
      * Other agents still attach when dirty so a pre-session pick is not lost.
      */
     function attachAgentIdentityToRequest(requestBody) {
-        if (!requestBody || typeof requestBody !== 'object') return;
-        const S = slashPaletteSupplement;
-        const pins = CuttleChatAgentModel.buildAgentPinsForRequest({
-            message: requestBody.message,
-            models: {
-                muse: {
-                    model: S.museModel, effort: S.museEffort,
-                    modelDirty: S.museModelDirty, effortDirty: S.museEffortDirty,
-                },
-                hermes: {
-                    model: S.hermesModel, effort: S.hermesEffort,
-                    modelDirty: S.hermesModelDirty, effortDirty: S.hermesEffortDirty,
-                },
-                opencode: {
-                    model: S.opencodeModel, effort: S.opencodeEffort,
-                    modelDirty: S.opencodeModelDirty, effortDirty: S.opencodeEffortDirty,
-                },
-                codex: {
-                    model: S.codexModel, effort: S.codexEffort,
-                    modelDirty: S.codexModelDirty, effortDirty: S.codexEffortDirty,
-                },
-                claude: {
-                    model: S.claudeModel, effort: S.claudeEffort,
-                    modelDirty: S.claudeModelDirty, effortDirty: S.claudeEffortDirty,
-                },
-            },
-        });
-        if (Object.keys(pins).length) requestBody.agent_pins = pins;
+        return agentControls.attachAgentIdentityToRequest(requestBody);
     }
 
     function persistCodexEffortSelection(effort) {
-        const id = String(effort || '').trim().toLowerCase();
-        if (!id) return;
-        slashPaletteSupplement.codexEffortLoading = false;
-        beginSupplementFetch('codexEffortGen');
-        slashPaletteSupplement.codexEffort = id;
-        const sid = currentSessionId != null ? String(currentSessionId) : '';
-        if (!sid) {
-            slashPaletteSupplement.codexEffortDirty = true;
-            slashPaletteSupplement.codexEffortKey = '';
-            return;
-        }
-        slashPaletteSupplement.codexEffortKey = sid;
-        slashPaletteSupplement.codexEffortDirty = true;
-        const mutationToken = sessionMutations.capture(currentSessionId, 'codex:effort', _loadSessionSeq);
-        sessionMutationFetch('/api/codex/effort', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                session: sid,
-                effort: id,
-                model: slashPaletteSupplement.codexModel || '',
-            }),
-        })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (j && j.success) {
-                    slashPaletteSupplement.codexEffortKey = sid;
-                    slashPaletteSupplement.codexEffortDirty = false;
-                }
-            })
-            .catch(() => {});
+        return agentControls.persistCodexEffortSelection(effort);
     }
 
     function buildCodexEffortPaletteItems(filterLower) {
-        if (!agentSupportsEffort('codex')) return [];
-        if (!hasActiveCodexAgentChip()) return [];
-        const f = (filterLower || '').toLowerCase().trim();
-        if (!f) return [];
-        loadCodexEffortForPalette();
-        let effortFilter = f
-            .replace(/^codex\s+/, '')
-            .replace(/^efforts?\b\s*/, '')
-            .trim();
-        if (effortFilter === 'effort') effortFilter = '';
-        const preferred = String(slashPaletteSupplement.codexEffort || '').toLowerCase();
-        const selectedModel = String(slashPaletteSupplement.codexModel || '').toLowerCase();
-        const selectedRow = selectedModel
-            ? (slashPaletteSupplement.codexModels || []).find((m) =>
-                String(m && m.id || '').toLowerCase() === selectedModel
-            )
-            : null;
-        const levels = selectedRow && Array.isArray(selectedRow.efforts)
-            ? selectedRow.efforts
-            : selectedModel
-                ? []
-                : (slashPaletteSupplement.codexCommonEfforts || []);
-        if (!levels.length) {
-            return [{
-                category: 'codex-effort',
-                prefix: '/codex effort',
-                label: slashPaletteSupplement.codexModelsLoading
-                    ? 'Loading Codex effort support…'
-                    : 'No verified effort levels for ' + (selectedModel || 'the CLI default'),
-                hint: slashPaletteSupplement.codexModelsLoading
-                    ? 'Reading per-model levels from codex debug models'
-                    : 'Refresh the Codex model catalog to read current per-model effort support',
-                meta: '',
-                keywords: 'codex effort loading supported levels refresh',
-                modelId: '',
-                codexEffort: true,
-                disabled: true,
-            }];
-        }
-        const items = levels
-            .map((id) => ({
-                category: 'codex-effort',
-                prefix: '/codex effort ' + id,
-                label: 'Effort ' + id + (id.toLowerCase() === preferred ? ' (current)' : ''),
-                hint: 'Set Codex reasoning effort (model_reasoning_effort) to ' + id
-                    + (selectedModel ? ' for ' + selectedModel : ' (supported across the CLI catalog)'),
-                meta: id,
-                keywords: 'codex effort reasoning ' + id,
-                modelId: id,
-                codexEffort: true,
-            }))
-            .filter((item) => (effortFilter ? slashPaletteItemMatches(item, effortFilter) : true));
-        if (!items.length && effortFilter) {
-            return [{
-                category: 'codex-effort',
-                prefix: '/codex effort',
-                label: '`' + effortFilter + '` is not supported'
-                    + (selectedModel ? ' by ' + selectedModel : ' across all models'),
-                hint: 'Supported: ' + levels.join(', '),
-                meta: '',
-                keywords: 'codex effort unsupported ' + effortFilter,
-                modelId: '',
-                codexEffort: true,
-                disabled: true,
-            }];
-        }
-        return items;
+        return agentControls.buildCodexEffortPaletteItems(filterLower);
     }
 
     /** anyChat: load even without a /claude chip (user typed "claude" in the palette). */
     function loadClaudeModelsForPalette(anyChat, opts) {
-        const key = currentSessionId != null ? String(currentSessionId) : '';
-        const forceRefresh = !!(opts && opts.refresh);
-        const gate = CuttleChatAgentModel.claudeModelsFetchForPalette({
-            anyChat,
-            hasClaudeChip: hasActiveHarnessAgentChip('claude'),
-            loading: slashPaletteSupplement.claudeModelsLoading,
-            modelsLength: (slashPaletteSupplement.claudeModels || []).length,
-            modelsKey: slashPaletteSupplement.claudeModelsKey,
-            triedKey: slashPaletteSupplement.claudeModelsTried,
-            sessionKey: key,
-            forceRefresh,
-        });
-        if (!gate.fetch) return;
-        const modelsGeneration = beginSupplementFetch('claudeModelsGen');
-        slashPaletteSupplement.claudeModelsLoading = true;
-        const mutationToken = sessionMutations.capture(currentSessionId, 'claude:model:read', _loadSessionSeq);
-        fetch(gate.url, { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                const applied = CuttleChatAgentModel.applyClaudeModelsResponse(j, {
-                    modelDirty: slashPaletteSupplement.claudeModelDirty || !isCurrentSupplementFetch('claudeModelsGen', modelsGeneration),
-                });
-                slashPaletteSupplement.claudeModels = applied.models;
-                if (applied.model !== null) {
-                    slashPaletteSupplement.claudeModel = applied.model;
-                }
-                slashPaletteSupplement.claudeModelsKey = key;
-                slashPaletteSupplement.claudeModelsSource = applied.source;
-                slashPaletteSupplement.claudeModelsCount = applied.count;
-                slashPaletteSupplement.claudeCommonEfforts = applied.commonEfforts;
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                repaintClaudeUserBadges();
-                persistStickySlashForCurrentSession();
-                refreshHistoryAgentChips();
-                if (forceRefresh && window.showToast) {
-                    const n = slashPaletteSupplement.claudeModelsCount || 0;
-                    const err = applied.error;
-                    window.showToast(
-                        err && !n
-                            ? ('Claude Code models refresh failed: ' + err)
-                            : ('Claude Code models and effort support refreshed (' + n + ')'),
-                        err && !n ? 'error' : 'success'
-                    );
-                }
-            })
-            .catch(() => {})
-            .finally(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.claudeModelsLoading = false;
-                slashPaletteSupplement.claudeModelsTried = key; // empty/failed: don't refetch per render
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                const welcomeInput = document.getElementById('welcomeChatInput');
-                const chatInput = document.getElementById('chatInput');
-                if (welcomeInput && document.activeElement === welcomeInput) {
-                    syncSlashMenuFromInput(welcomeInput);
-                }
-                if (chatInput && document.activeElement === chatInput) {
-                    syncSlashMenuFromInput(chatInput);
-                }
-            });
+        return agentControls.loadClaudeModelsForPalette(anyChat, opts);
     }
 
     function persistClaudeModelSelection(modelId) {
-        const id = String(modelId || '').trim();
-        if (!id) return;
-        slashPaletteSupplement.claudeModelsLoading = false;
-        beginSupplementFetch('claudeModelsGen');
-        if (CuttleChatAgentModel.isClaudeModelRefreshPick(id)) {
-            slashPaletteSupplement.claudeModelsKey = '';
-            slashPaletteSupplement.claudeModels = [];
-            loadClaudeModelsForPalette(true, { refresh: true });
-            return;
-        }
-        slashPaletteSupplement.claudeModel = id;
-        slashPaletteSupplement.claudeModels =
-            CuttleChatAgentModel.markClaudeCurrentModel(
-                slashPaletteSupplement.claudeModels, id);
-        const sid = currentSessionId != null ? String(currentSessionId) : '';
-        if (!sid) {
-            slashPaletteSupplement.claudeModelDirty = true;
-            slashPaletteSupplement.claudeModelsKey = '';
-            return;
-        }
-        slashPaletteSupplement.claudeModelDirty = true;
-        const mutationToken = sessionMutations.capture(currentSessionId, 'claude:model', _loadSessionSeq);
-        sessionMutationFetch('/api/claude/model', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session: sid, model: id }),
-        })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (j && j.success) {
-                    slashPaletteSupplement.claudeModel = id;
-                    slashPaletteSupplement.claudeModelDirty = false;
-                    slashPaletteSupplement.claudeModelsKey = sid;
-                    repaintClaudeUserBadges();
-                    persistStickySlashForCurrentSession();
-                    refreshHistoryAgentChips();
-                }
-            })
-            .catch(() => {});
+        return agentControls.persistClaudeModelSelection(modelId);
     }
 
     function buildClaudeModelPaletteItems(filterLower, opts) {
-        if (!hasActiveHarnessAgentChip('claude')) return [];
-        const f = (filterLower || '').toLowerCase().trim();
-        if (!f) return [];
-        loadClaudeModelsForPalette(true);
-        const models = slashPaletteSupplement.claudeModels || [];
-        const modelFilter = CuttleChatAgentModel.claudeModelFilterForPalette(f);
-        const preferred = String(slashPaletteSupplement.claudeModel || '').toLowerCase();
-        // Stage as nested cmd chip — no instant run (same as Codex). Composes as
-        // `/claude /model refresh` after the sticky agent prefix.
-        const refreshItem = {
-            category: 'claude-cmd',
-            prefix: '/model refresh',
-            label: 'Refresh Claude Code models',
-            hint: 'Refresh Claude Code models and per-model effort levels from the installed CLI',
-            meta: 'refresh',
-            keywords: 'claude model refresh reload sync catalog',
-        };
-        const items = [];
-        if (
-            !modelFilter
-            || slashPaletteItemMatches(refreshItem, modelFilter)
-        ) {
-            items.push(refreshItem);
-        }
-        if (slashPaletteSupplement.claudeModelsLoading && !models.length) {
-            items.push({
-                category: 'claude-model',
-                prefix: '/claude model',
-                label: 'Loading Claude Code models…',
-                hint: 'Reading the Claude Code CLI model catalog',
-                meta: '',
-                keywords: 'claude model loading',
-                modelId: '',
-                claudeModel: true,
-                disabled: true,
-            });
-            return items;
-        }
-        const mapped = models
-            .map((m) => CuttleChatAgentModel.buildClaudeModelRow(m, preferred))
-            .filter(Boolean)
-            .filter((item) => (modelFilter ? slashPaletteItemMatches(item, modelFilter) : true));
-        const MAX = (opts && opts.full) ? Infinity : 40;
-        // Rank before clipping so a name hit cannot be hidden by description hits.
-        mapped.sort((a, b) => CuttleChatSlash.slashPaletteItemSearchRank(a, f)
-            - CuttleChatSlash.slashPaletteItemSearchRank(b, f));
-        const clipped = mapped.length > MAX ? mapped.slice(0, MAX) : mapped;
-        if (mapped.length > MAX) {
-            items.push({
-                category: 'claude-model',
-                prefix: '/claude model',
-                label: '… ' + (mapped.length - MAX) + ' more — type to narrow (e.g. opus)',
-                hint: 'Claude Code catalog has ' + (slashPaletteSupplement.claudeModelsCount || mapped.length) + ' models',
-                meta: '',
-                keywords: 'claude model more filter',
-                modelId: '',
-                claudeModel: true,
-                disabled: true,
-            });
-        }
-        return items.concat(clipped);
+        return agentControls.buildClaudeModelPaletteItems(filterLower, opts);
     }
 
     function seedClaudeSupplementFromSessionData(data, sessionId) {
-        if (!data || typeof data !== 'object') return;
-        const patch = CuttleChatAgentModel.claudeSeedPatchFromSessionData(data, {
-            modelDirty: slashPaletteSupplement.claudeModelDirty,
-            effortDirty: slashPaletteSupplement.claudeEffortDirty,
-            sessionKey: sessionId != null ? String(sessionId) : '',
-        });
-        if (patch.model !== undefined) slashPaletteSupplement.claudeModel = patch.model;
-        if (patch.modelsKey !== undefined) slashPaletteSupplement.claudeModelsKey = patch.modelsKey;
-        if (patch.effort !== undefined) slashPaletteSupplement.claudeEffort = patch.effort;
-        if (patch.effortKey !== undefined) slashPaletteSupplement.claudeEffortKey = patch.effortKey;
+        return agentControls.seedClaudeSupplementFromSessionData(data, sessionId);
     }
 
     function loadClaudeEffortForPalette() {
-        if (slashPaletteSupplement.claudeEffortDirty) return;
-        const key = currentSessionId != null ? String(currentSessionId) : '';
-        const gate = CuttleChatAgentModel.claudeEffortFetchForPalette({
-            hasClaudeChip: hasActiveHarnessAgentChip('claude'),
-            loading: slashPaletteSupplement.claudeEffortLoading,
-            effortKey: slashPaletteSupplement.claudeEffortKey,
-            sessionKey: key,
-        });
-        if (!gate.fetch) return;
-        const effortGeneration = beginSupplementFetch('claudeEffortGen');
-        slashPaletteSupplement.claudeEffortLoading = true;
-        const mutationToken = sessionMutations.capture(currentSessionId, 'claude:effort:read', _loadSessionSeq);
-        fetch(gate.url, { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (slashPaletteSupplement.claudeEffortDirty || !isCurrentSupplementFetch('claudeEffortGen', effortGeneration)) return;
-                slashPaletteSupplement.claudeEffort =
-                    CuttleChatAgentModel.applyClaudeEffortResponse(j);
-                slashPaletteSupplement.claudeEffortKey = key;
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                repaintClaudeUserBadges();
-                persistStickySlashForCurrentSession();
-                refreshHistoryAgentChips();
-            })
-            .catch(() => {})
-            .finally(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.claudeEffortLoading = false;
-            });
+        return agentControls.loadClaudeEffortForPalette();
     }
 
     function persistClaudeEffortSelection(effort) {
-        const id = String(effort || '').trim().toLowerCase();
-        if (!id) return;
-        slashPaletteSupplement.claudeEffortLoading = false;
-        beginSupplementFetch('claudeEffortGen');
-        slashPaletteSupplement.claudeEffort = id;
-        const sid = currentSessionId != null ? String(currentSessionId) : '';
-        if (!sid) {
-            slashPaletteSupplement.claudeEffortDirty = true;
-            slashPaletteSupplement.claudeEffortKey = '';
-            return;
-        }
-        slashPaletteSupplement.claudeEffortKey = sid;
-        slashPaletteSupplement.claudeEffortDirty = true;
-        const mutationToken = sessionMutations.capture(currentSessionId, 'claude:effort', _loadSessionSeq);
-        sessionMutationFetch('/api/claude/effort', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                session: sid,
-                effort: id,
-                model: slashPaletteSupplement.claudeModel || '',
-            }),
-        })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (j && j.success) {
-                    slashPaletteSupplement.claudeEffortKey = sid;
-                    slashPaletteSupplement.claudeEffortDirty = false;
-                }
-            })
-            .catch(() => {});
+        return agentControls.persistClaudeEffortSelection(effort);
     }
 
     function buildClaudeEffortPaletteItems(filterLower) {
-        if (!agentSupportsEffort('claude')) return [];
-        if (!hasActiveHarnessAgentChip('claude')) return [];
-        const f = (filterLower || '').toLowerCase().trim();
-        if (!f) return [];
-        loadClaudeEffortForPalette();
-        const effortFilter = CuttleChatAgentModel.claudeEffortFilterForPalette(f);
-        const preferred = String(slashPaletteSupplement.claudeEffort || '').toLowerCase();
-        const selectedModel = String(slashPaletteSupplement.claudeModel || '').toLowerCase();
-        const levels = CuttleChatAgentModel.claudeEffortLevelsForModel({
-            selectedModel,
-            models: slashPaletteSupplement.claudeModels,
-            commonEfforts: slashPaletteSupplement.claudeCommonEfforts,
-        });
-        if (!levels.length) {
-            return [{
-                category: 'claude-effort',
-                prefix: '/claude effort',
-                label: slashPaletteSupplement.claudeModelsLoading
-                    ? 'Loading Claude Code effort support…'
-                    : 'No verified effort levels for ' + (selectedModel || 'the CLI default'),
-                hint: slashPaletteSupplement.claudeModelsLoading
-                    ? 'Reading per-model levels from the Claude Code CLI'
-                    : 'This model takes no --effort level; refresh the Claude Code catalog if that looks wrong',
-                meta: '',
-                keywords: 'claude effort loading supported levels refresh',
-                modelId: '',
-                claudeEffort: true,
-                disabled: true,
-            }];
-        }
-        const items = levels
-            .map((id) => CuttleChatAgentModel.buildClaudeEffortRow(id, {
-                preferredLower: preferred,
-                selectedModel,
-            }))
-            .filter((item) => (effortFilter ? slashPaletteItemMatches(item, effortFilter) : true));
-        if (!items.length && effortFilter) {
-            return [{
-                category: 'claude-effort',
-                prefix: '/claude effort',
-                label: '`' + effortFilter + '` is not supported'
-                    + (selectedModel ? ' by ' + selectedModel : ' by the CLI default model'),
-                hint: 'Supported: ' + levels.join(', '),
-                meta: '',
-                keywords: 'claude effort unsupported ' + effortFilter,
-                modelId: '',
-                claudeEffort: true,
-                disabled: true,
-            }];
-        }
-        return items;
+        return agentControls.buildClaudeEffortPaletteItems(filterLower);
     }
 
     /** `/restart <mode>` entries. Native Cuttle control — never an agent prompt. */
-    function buildRestartPaletteItems(filterLower) {
-        const f = (filterLower || '').trim();
-        if (!f) return [];
-        const defs = [
-            ['/restart status', 'Restart status', 'Show restart state and active work — no agent call'],
-            ['/restart graceful', 'Restart Flask (graceful)', 'Restart now if no other work is active'],
-            ['/restart when-idle', 'Restart Flask (when idle)', 'Restart once active work finishes'],
-            ['/restart force --yes', 'Restart Flask (force)', 'Interrupt active work and restart now'],
-        ];
-        return defs.map(([command, label, hint]) => ({
-            category: 'command',
-            prefix: command,
-            label: label,
-            hint: hint,
-            meta: command,
-            keywords: 'restart flask daemon reload ' + command.replace(/^\//, ''),
-            controlCommand: true,
-        }));
-    }
+    // Slash palette controller: menu DOM, keyboard navigation, filtering, the
+    // selection apply logic and the dismiss lifecycle are owned by
+    // chat_slash_palette.js (CuttleChatSlashPalette). The page shares the
+    // palette state so composer chips keep working, keeps the
+    // `applySlashSelection` draft choke point, and passes every page-owned
+    // capability in.
+    const slashPalette = CuttleChatSlashPalette.create({
+        win: window,
+        escapeHtmlInline,
+        clamp,
+        availableSlashCommands,
+        cursorAgentSlashCommandsForPalette,
+        harnessUsageSlashCommandsForPalette,
+        buildProjectPaletteItems,
+        buildProjectCommandPaletteItems,
+        agentControls,
+        readStarredSlashPrefixes,
+        readStarredProject,
+        normalizeStarredProjectPath,
+        isSlashCommandStarred,
+        isAgentDefaultStarred,
+        isProjectStarred,
+        toggleStarredProject,
+        toggleStarredAgentDefault,
+        toggleStarredSlashCommand,
+        getModelStarSpec: (cat) => MODEL_STAR_SPEC_BY_CATEGORY[cat],
+        loadAgentCapabilities,
+        loadCursorStarredDefault,
+        loadAllStarredDefaults,
+        loadSlashPaletteSupplement,
+        isPaletteLoading: () => slashPaletteSupplement.loading,
+        hasActiveCursorAgentChip,
+        loadCursorAgentModelsForPalette,
+        applySlashSelection,
+        saveDraft: () => saveComposerDraft(currentSessionId || 'new'),
+        findProjectById,
+        setChatProject,
+        autoResizeTextarea,
+        autoResizeWelcomeTextarea,
+        renderSlashChips,
+        markStickyAgentCleared,
+        persistStickySlashForCurrentSession,
+        isOrphanedCompanionChip,
+        onCursorModelPick,
+    });
+    slashPalette.bind();
 
-    /** Split a slash filter into tokens; all tokens must match (AND). */
-    function slashPaletteFilterTokens(filterLower) {
-        return CuttleChatSlash.slashPaletteFilterTokens(filterLower);
-    }
-
-    function slashPaletteItemHaystack(item) {
-        return CuttleChatSlash.slashPaletteItemHaystack(item);
-    }
-
-    function slashPaletteItemMatches(item, filterLower) {
-        return CuttleChatSlash.slashPaletteItemMatches(item, filterLower);
-    }
-
-    function filterSlashPaletteItems(filter) {
-        const f = (filter || '').toLowerCase();
-        const cmds = availableSlashCommands().filter((c) => slashPaletteItemMatches(c, f));
-        const cursorCmds = cursorAgentSlashCommandsForPalette().filter((c) =>
-            slashPaletteItemMatches(c, f)
-        );
-        const harnessUsageCmds = harnessUsageSlashCommandsForPalette().filter((c) =>
-            slashPaletteItemMatches(c, f)
-        );
-        const projs = buildProjectPaletteItems().filter((p) => slashPaletteItemMatches(p, f));
-        const projCmds = buildProjectCommandPaletteItems().filter((p) => slashPaletteItemMatches(p, f));
-        const cursorModels = buildCursorModelPaletteItems(f);
-        const museModels = buildMuseModelPaletteItems(f);
-        const museEfforts = buildMuseEffortPaletteItems(f);
-        const hermesModels = buildHermesModelPaletteItems(f);
-        const hermesEfforts = buildHermesEffortPaletteItems(f);
-        const opencodeModels = buildOpenCodeModelPaletteItems(f);
-        const opencodeEfforts = buildOpenCodeEffortPaletteItems(f);
-        const codexModels = buildCodexModelPaletteItems(f);
-        const codexEfforts = buildCodexEffortPaletteItems(f);
-        const claudeModels = buildClaudeModelPaletteItems(f);
-        const claudeEfforts = buildClaudeEffortPaletteItems(f);
-        const restartCmds = buildRestartPaletteItems(f).filter((c) =>
-            slashPaletteItemMatches(c, f)
-        );
-
-        const starredSet = new Set(readStarredSlashPrefixes());
-        const starredProject = readStarredProject();
-        const starredProjectPath = normalizeStarredProjectPath(
-            starredProject && starredProject.path
-        );
-        const starredProjectId =
-            starredProject && starredProject.id != null
-                ? String(starredProject.id)
-                : null;
-        function starredRank(item) {
-            // Single implementation lives in chat_slash.js; the closure
-            // supplies prefs gathered above.
-            return CuttleChatSlash.starredRank(item, {
-                prefixes: Array.from(starredSet),
-                projectId: starredProjectId,
-                projectPath: starredProjectPath,
-            });
-        }
-
-        function sortGroup(arr) {
-            return arr.slice().sort((a, b) => {
-                const disabled = Number(!!a.disabled) - Number(!!b.disabled);
-                if (disabled !== 0) return disabled;
-                const relevance = CuttleChatSlash.slashPaletteItemSearchRank(a, f)
-                    - CuttleChatSlash.slashPaletteItemSearchRank(b, f);
-                if (relevance !== 0) return relevance;
-                const sr = starredRank(a) - starredRank(b);
-                if (sr !== 0) return sr;
-                return String(a.label || '').localeCompare(String(b.label || ''), undefined, {
-                    sensitivity: 'base',
-                });
-            });
-        }
-
-        let merged;
-        if (!f) {
-            merged = []
-                .concat(sortGroup(cmds))
-                .concat(sortGroup(cursorCmds))
-                .concat(sortGroup(harnessUsageCmds))
-                .concat(sortGroup(projCmds))
-                .concat(sortGroup(projs));
-        } else {
-            merged = sortGroup(
-                cmds
-                    .concat(restartCmds)
-                    .concat(cursorCmds)
-                    .concat(harnessUsageCmds)
-                    .concat(projCmds)
-                    .concat(projs)
-                    .concat(cursorModels)
-                    .concat(museModels)
-                    .concat(museEfforts)
-                    .concat(hermesModels)
-                    .concat(hermesEfforts)
-                    .concat(opencodeModels)
-                    .concat(opencodeEfforts)
-                    .concat(codexModels)
-                    .concat(codexEfforts)
-                    .concat(claudeModels)
-                    .concat(claudeEfforts)
-            );
-        }
-
-        // Counts for type badges (before applying the active type filter).
-        const typeCounts = {};
-        merged.forEach((item) => {
-            const b = slashPaletteTypeBucket(item.category);
-            typeCounts[b] = (typeCounts[b] || 0) + 1;
-        });
-
-        const active = slashPaletteTypeFilter || 'all';
-        const filtered =
-            active === 'all'
-                ? merged
-                : merged.filter((item) => slashPaletteTypeBucket(item.category) === active);
-
-        return { items: filtered, allItems: merged, typeCounts: typeCounts };
-    }
-
-    const slashCtx = {
-        welcome: {
-            chips: [],
-            selectedIndex: 0,
-            filtered: [],
-            typeCounts: {},
-            replaceRange: null,
-            paletteDismissed: false,
-        },
-        chat: {
-            chips: [],
-            selectedIndex: 0,
-            filtered: [],
-            typeCounts: {},
-            replaceRange: null,
-            paletteDismissed: false,
-        },
-    };
+    const slashCtx = slashPalette.ctx;
 
     function slashContextKey(textarea) {
-        if (!textarea) return null;
-        if (textarea.id === 'welcomeChatInput') return 'welcome';
-        if (textarea.id === 'chatInput') return 'chat';
-        return null;
+        return slashPalette.contextKey(textarea);
     }
 
     function slashChipsRowId(key) {
-        return key === 'welcome' ? 'welcomeSlashChipsRow' : 'chatSlashChipsRow';
+        return slashPalette.chipsRowId(key);
     }
 
     function slashMenuId(key) {
-        return key === 'welcome' ? 'welcomeSlashCommandMenu' : 'chatSlashCommandMenu';
-    }
-
-    function parseSlashAtCursor(textarea) {
-        const v = textarea.value;
-        const cursor = textarea.selectionStart;
-        const lineStart = v.lastIndexOf('\n', cursor - 1) + 1;
-        const beforeInLine = v.slice(lineStart, cursor);
-        // Allow spaces in the query so `/model Sonnet 4.6` and `/1M medium` keep
-        // the palette open (previously [\w.-]* closed the menu on first space).
-        const re = /(?:^|\s)(\/[^\n]*)$/;
-        const m = beforeInLine.match(re);
-        if (!m) return null;
-        const full = m[0];
-        const afterSlash = m[1].slice(1); // drop leading /
-        return {
-            filter: (afterSlash || '').toLowerCase(),
-            replaceFrom: cursor - full.length,
-            replaceTo: cursor,
-        };
+        return slashPalette.menuId(key);
     }
 
     function hideSlashMenu(key, opts) {
-        const el = document.getElementById(slashMenuId(key));
-        if (el) {
-            el.hidden = true;
-            el.innerHTML = '';
-        }
-        slashCtx[key].replaceRange = null;
-        slashCtx[key].filtered = [];
-        slashCtx[key].typeCounts = {};
-        // Escape / outside-click: keep closed while the same `/…` token remains.
-        if (opts && opts.dismiss) {
-            slashCtx[key].paletteDismissed = true;
-        }
-    }
-
-    // Click / tap outside an open palette (and outside its composer) closes it
-    // like Escape: the `/…` token stays, but the menu won't reopen until the
-    // token changes. Capture phase so menu-item picks (handled on click) and
-    // textarea focus are unaffected — both targets are skipped below.
-    document.addEventListener('pointerdown', (e) => {
-        const pairs = { chat: 'chatInput', welcome: 'welcomeChatInput' };
-        for (const key of Object.keys(pairs)) {
-            const menu = document.getElementById(slashMenuId(key));
-            if (!menu || menu.hidden) continue;
-            const ta = document.getElementById(pairs[key]);
-            const t = e.target;
-            if ((ta && (t === ta || ta.contains(t))) || menu.contains(t)) continue;
-            hideSlashMenu(key, { dismiss: true });
-        }
-    }, true);
-
-    // Focus leaving this iframe also means clicking off the palette, e.g.
-    // into a neighboring pane or the shell's navigation rail.
-    window.addEventListener('blur', () => {
-        for (const key of ['chat', 'welcome']) {
-            const menu = document.getElementById(slashMenuId(key));
-            if (menu && !menu.hidden) hideSlashMenu(key, { dismiss: true });
-        }
-    });
-
-    function buildSlashPaletteFilterBarHtml(typeCounts) {
-        const counts = typeCounts || {};
-        const total = Object.keys(counts).reduce((n, k) => n + (counts[k] || 0), 0);
-        const active = slashPaletteTypeFilter || 'all';
-        const badges = [];
-        badges.push({
-            id: 'all',
-            label: 'All',
-            count: total,
-            active: active === 'all',
-        });
-        SLASH_PALETTE_TYPE_ORDER.forEach((bucket) => {
-            const n = counts[bucket] || 0;
-            if (!n) return;
-            badges.push({
-                id: bucket,
-                label: slashPaletteTypeBadgeLabel(bucket),
-                count: n,
-                active: active === bucket,
-            });
-        });
-        // If the saved filter points at an empty bucket, still show it so the
-        // user can see why the list is empty and switch back.
-        if (active !== 'all' && !(counts[active] > 0)) {
-            badges.push({
-                id: active,
-                label: slashPaletteTypeBadgeLabel(active),
-                count: 0,
-                active: true,
-            });
-        }
-        return (
-            '<div class="slash-palette-filters" role="tablist" aria-label="Filter command types">' +
-            badges
-                .map((b) => {
-                    return (
-                        '<button type="button" class="slash-palette-filter-badge' +
-                        (b.active ? ' is-active' : '') +
-                        '" role="tab" aria-selected="' +
-                        (b.active ? 'true' : 'false') +
-                        '" data-slash-type-filter="' +
-                        escapeHtmlInline(b.id) +
-                        '" data-kind="' +
-                        escapeHtmlInline(b.id) +
-                        '" title="' +
-                        escapeHtmlInline(b.label) +
-                        '">' +
-                        '<span class="slash-palette-filter-label">' +
-                        escapeHtmlInline(b.label) +
-                        '</span>' +
-                        '<span class="slash-palette-filter-count">' +
-                        b.count +
-                        '</span>' +
-                        '</button>'
-                    );
-                })
-                .join('') +
-            '</div>'
-        );
+        return slashPalette.hideMenu(key, opts);
     }
 
     function buildProjectChipHtml() {
@@ -7126,7 +5024,7 @@
         if (!visibleChips.length && !projChipHtml) {
             row.hidden = true;
             row.innerHTML = '';
-            scheduleAgentContextGaugeRefresh(60);
+            contextGauge.scheduleRefresh(60);
             return;
         }
         row.hidden = false;
@@ -7279,27 +5177,27 @@
             })
             .join('');
         if (hasActiveCursorAgentChip(key)) {
-            loadCursorAgentModelsForPalette();
+            agentControls.loadCursorAgentModelsForPalette();
         }
         if (hasActiveMuseAgentChip(key)) {
-            loadMuseModelsForPalette();
-            loadMuseEffortForPalette();
+            agentControls.loadMuseModelsForPalette();
+            agentControls.loadMuseEffortForPalette();
         }
         if (hasActiveHermesAgentChip(key)) {
-            loadHermesModelsForPalette();
-            loadHermesEffortForPalette();
+            agentControls.loadHermesModelsForPalette();
+            agentControls.loadHermesEffortForPalette();
         }
         if (hasActiveOpenCodeAgentChip(key)) {
-            loadOpenCodeModelsForPalette();
-            loadOpenCodeEffortForPalette();
+            agentControls.loadOpenCodeModelsForPalette();
+            agentControls.loadOpenCodeEffortForPalette();
         }
         if (hasActiveCodexAgentChip(key)) {
-            loadCodexModelsForPalette();
-            loadCodexEffortForPalette();
+            agentControls.loadCodexModelsForPalette();
+            agentControls.loadCodexEffortForPalette();
         }
         if (hasActiveHarnessAgentChip('claude', key)) {
-            loadClaudeModelsForPalette();
-            loadClaudeEffortForPalette();
+            agentControls.loadClaudeModelsForPalette();
+            agentControls.loadClaudeEffortForPalette();
         }
         row.querySelectorAll('.slash-chip-remove').forEach((btn) => {
             btn.addEventListener('click', () => {
@@ -7324,7 +5222,7 @@
             composerChipAgentId,
         });
         scheduleSlashChipCompactLabels(row);
-        scheduleAgentContextGaugeRefresh(60);
+        contextGauge.scheduleRefresh(60);
     }
 
     // ── Chip click menus ────────────────────────────────────────────────────
@@ -7336,19 +5234,19 @@
     function agentMenuSpec(id) {
         const S = slashPaletteSupplement;
         const models = {
-            cursor: { build: () => buildCursorModelPaletteItems('model'), load: () => loadCursorAgentModelsForPalette(true), set: (v) => { S.preferredModel = v; beginSupplementFetch('cursorModelsGen'); }, current: () => String(S.preferredModel || 'auto').toLowerCase() },
-            muse: { build: () => buildMuseModelPaletteItems('model'), load: () => loadMuseModelsForPalette(true), set: persistMuseModelSelection, current: () => String(S.museModel || '').toLowerCase() },
-            hermes: { build: () => buildHermesModelPaletteItems('model'), load: () => loadHermesModelsForPalette(true), set: persistHermesModelSelection, current: () => String(S.hermesModel || '').toLowerCase() },
-            opencode: { build: (opts) => buildOpenCodeModelPaletteItems('model', opts), load: () => loadOpenCodeModelsForPalette(true), set: persistOpenCodeModelSelection, current: () => String(S.opencodeModel || '').toLowerCase() },
-            codex: { build: (opts) => buildCodexModelPaletteItems('model', opts), load: () => loadCodexModelsForPalette(true), set: persistCodexModelSelection, current: () => String(S.codexModel || '').toLowerCase() },
-            claude: { build: (opts) => buildClaudeModelPaletteItems('model', opts), load: () => loadClaudeModelsForPalette(true), set: persistClaudeModelSelection, current: () => String(S.claudeModel || '').toLowerCase() },
+            cursor: { build: () => agentControls.buildCursorModelPaletteItems('model'), load: () => agentControls.loadCursorAgentModelsForPalette(true), set: (v) => { S.preferredModel = v; beginSupplementFetch('cursorModelsGen'); }, current: () => String(S.preferredModel || 'auto').toLowerCase() },
+            muse: { build: () => agentControls.buildMuseModelPaletteItems('model'), load: () => agentControls.loadMuseModelsForPalette(true), set: persistMuseModelSelection, current: () => String(S.museModel || '').toLowerCase() },
+            hermes: { build: () => agentControls.buildHermesModelPaletteItems('model'), load: () => agentControls.loadHermesModelsForPalette(true), set: persistHermesModelSelection, current: () => String(S.hermesModel || '').toLowerCase() },
+            opencode: { build: (opts) => agentControls.buildOpenCodeModelPaletteItems('model', opts), load: () => agentControls.loadOpenCodeModelsForPalette(true), set: persistOpenCodeModelSelection, current: () => String(S.opencodeModel || '').toLowerCase() },
+            codex: { build: (opts) => agentControls.buildCodexModelPaletteItems('model', opts), load: () => agentControls.loadCodexModelsForPalette(true), set: persistCodexModelSelection, current: () => String(S.codexModel || '').toLowerCase() },
+            claude: { build: (opts) => agentControls.buildClaudeModelPaletteItems('model', opts), load: () => agentControls.loadClaudeModelsForPalette(true), set: persistClaudeModelSelection, current: () => String(S.claudeModel || '').toLowerCase() },
         }[id];
         const efforts = {
-            muse: { build: () => buildMuseEffortPaletteItems('effort'), load: () => loadMuseEffortForPalette(), set: persistMuseEffortSelection, current: () => String(S.museEffort || '').toLowerCase(), repaint: repaintMuseUserBadges },
-            hermes: { build: () => buildHermesEffortPaletteItems('effort'), load: () => loadHermesEffortForPalette(), set: persistHermesEffortSelection, current: () => String(S.hermesEffort || '').toLowerCase(), repaint: repaintHermesUserBadges },
-            opencode: { build: () => buildOpenCodeEffortPaletteItems('effort'), load: () => loadOpenCodeEffortForPalette(), set: persistOpenCodeEffortSelection, current: () => String(S.opencodeEffort || '').toLowerCase(), repaint: repaintOpenCodeUserBadges },
-            codex: { build: () => buildCodexEffortPaletteItems('effort'), load: () => loadCodexEffortForPalette(), set: persistCodexEffortSelection, current: () => String(S.codexEffort || '').toLowerCase(), repaint: repaintCodexUserBadges },
-            claude: { build: () => buildClaudeEffortPaletteItems('effort'), load: () => loadClaudeEffortForPalette(), set: persistClaudeEffortSelection, current: () => String(S.claudeEffort || '').toLowerCase(), repaint: repaintClaudeUserBadges },
+            muse: { build: () => agentControls.buildMuseEffortPaletteItems('effort'), load: () => agentControls.loadMuseEffortForPalette(), set: persistMuseEffortSelection, current: () => String(S.museEffort || '').toLowerCase(), repaint: repaintMuseUserBadges },
+            hermes: { build: () => agentControls.buildHermesEffortPaletteItems('effort'), load: () => agentControls.loadHermesEffortForPalette(), set: persistHermesEffortSelection, current: () => String(S.hermesEffort || '').toLowerCase(), repaint: repaintHermesUserBadges },
+            opencode: { build: () => agentControls.buildOpenCodeEffortPaletteItems('effort'), load: () => agentControls.loadOpenCodeEffortForPalette(), set: persistOpenCodeEffortSelection, current: () => String(S.opencodeEffort || '').toLowerCase(), repaint: repaintOpenCodeUserBadges },
+            codex: { build: () => agentControls.buildCodexEffortPaletteItems('effort'), load: () => agentControls.loadCodexEffortForPalette(), set: persistCodexEffortSelection, current: () => String(S.codexEffort || '').toLowerCase(), repaint: repaintCodexUserBadges },
+            claude: { build: () => agentControls.buildClaudeEffortPaletteItems('effort'), load: () => agentControls.loadClaudeEffortForPalette(), set: persistClaudeEffortSelection, current: () => String(S.claudeEffort || '').toLowerCase(), repaint: repaintClaudeUserBadges },
         }[id];
         if (!models && !efforts) return null;
         return { models: models || null, efforts: efforts || null };
@@ -7405,665 +5303,19 @@
         renderSlashChips('chat', document.getElementById('chatInput'));
     }
 
-    function renderSlashMenu(key, textarea) {
-        loadAgentCapabilities();
-        loadCursorStarredDefault();
-        loadAllStarredDefaults();
-        const menu = document.getElementById(slashMenuId(key));
-        if (!menu) return;
-        const ctx = slashCtx[key];
-        const items = ctx.filtered || [];
-        const typeCounts = ctx.typeCounts || {};
-        const sel = clamp(ctx.selectedIndex, 0, Math.max(0, items.length - 1));
-        ctx.selectedIndex = items.length ? sel : 0;
-
-        const filterBar = buildSlashPaletteFilterBarHtml(typeCounts);
-        let listHtml = '';
-        if (!items.length) {
-            listHtml =
-                '<div class="slash-command-menu-status" role="status">No matches in this filter</div>';
-        } else {
-            listHtml = items
-                .map((cmd, i) => {
-                    const active = i === sel ? ' is-active' : '';
-                    const cat = cmd.category || 'command';
-                    const catClass =
-                        cat === 'skill'
-                              ? ' slash-command-item--skill'
-                              : cat === 'project-cmd'
-                                ? ' slash-command-item--project-cmd'
-                                : cat === 'project'
-                                  ? ' slash-command-item--project'
-                                  : cat === 'cursor' || cat === 'cursor-model' || cat === 'cursor-cmd'
-                                    ? ' slash-command-item--cursor'
-                                    : cat === 'muse' || cat === 'muse-model' || cat === 'muse-effort' || cat === 'muse-cmd'
-                                      ? ' slash-command-item--muse'
-                                      : cat === 'hermes' || cat === 'hermes-model' || cat === 'hermes-effort' || cat === 'hermes-cmd'
-                                        ? ' slash-command-item--hermes'
-                                        : cat === 'opencode' || cat === 'opencode-model' || cat === 'opencode-effort' || cat === 'opencode-cmd'
-                                          ? ' slash-command-item--opencode'
-                                          : cat === 'codex' || cat === 'codex-model' || cat === 'codex-effort' || cat === 'codex-cmd'
-                                            ? ' slash-command-item--codex'
-                                      : ' slash-command-item--command';
-                    const kind = escapeHtmlInline(slashPaletteCategoryLabel(cat));
-                    const meta =
-                        cat === 'command' || cat === 'cursor' || cat === 'muse'
-                            || cat === 'hermes' || cat === 'opencode' || cat === 'codex'
-                            ? escapeHtmlInline(cmd.prefix.replace(/\s+$/, ''))
-                            : escapeHtmlInline(cmd.meta || cmd.prefix.trim());
-                    const hint = cmd.hint ? escapeHtmlInline(cmd.hint) : '';
-                    const hintBlock = hint
-                        ? '<span class="slash-cmd-hint">' + hint + '</span>'
-                        : '';
-                    const canStar =
-                        !!cmd.stickySession || cat === 'project' || !!MODEL_STAR_SPEC_BY_CATEGORY[cat];
-                    const _modelStarSpec = MODEL_STAR_SPEC_BY_CATEGORY[cat];
-                    const starred = canStar
-                        && (_modelStarSpec
-                            ? isAgentDefaultStarred(_modelStarSpec, cmd)
-                            : (cat === 'project'
-                            ? isProjectStarred({
-                                id: cmd.projectId,
-                                path: cmd.projectPath,
-                                name: cmd.projectName,
-                            })
-                            : isSlashCommandStarred(cmd.prefix)));
-                    const starBtn = canStar
-                        ? (
-                            '<button type="button" class="slash-star-btn' +
-                            (starred ? ' is-starred' : '') +
-                            '" data-slash-star-idx="' +
-                            i +
-                            '" title="' +
-                            (cat === 'project'
-                                ? (starred
-                                    ? 'Unstar — stop using as default for new chats'
-                                    : 'Star — default working project for new chats (only one)')
-                                : (starred
-                                    ? 'Unstar — stop applying to new chats'
-                                    : 'Star — apply to new Cuttle chats')) +
-                            '" aria-label="' +
-                            (starred
-                                ? (cat === 'project' ? 'Unstar project' : 'Unstar command')
-                                : (cat === 'project' ? 'Star project' : 'Star command')) +
-                            '" aria-pressed="' +
-                            (starred ? 'true' : 'false') +
-                            '">' +
-                            (starred ? '★' : '☆') +
-                            '</button>'
-                        )
-                        : '';
-                    return (
-                        '<div role="option" class="slash-command-item' +
-                        catClass +
-                        active +
-                        '" data-slash-idx="' +
-                        i +
-                        '" id="slash-opt-' +
-                        key +
-                        '-' +
-                        i +
-                        '">' +
-                        '<button type="button" class="slash-command-item-main">' +
-                        '<span class="slash-cmd-block">' +
-                        '<span class="slash-cmd-row">' +
-                        '<span class="slash-palette-kind" data-kind="' +
-                        cat +
-                        '">' +
-                        kind +
-                        '</span>' +
-                        '<span class="slash-cmd-title">' +
-                        escapeHtmlInline(cmd.label) +
-                        '</span>' +
-                        '</span>' +
-                        hintBlock +
-                        '</span>' +
-                        '<span class="slash-cmd-meta" translate="no">' +
-                        meta +
-                        '</span>' +
-                        '</button>' +
-                        starBtn +
-                        '</div>'
-                    );
-                })
-                .join('');
-        }
-
-        menu.innerHTML =
-            '<div class="slash-palette-list" role="listbox">' +
-            listHtml +
-            '</div>' +
-            filterBar;
-        menu.hidden = false;
-
-        menu.querySelectorAll('[data-slash-type-filter]').forEach((btn) => {
-            btn.addEventListener('mousedown', (e) => e.preventDefault());
-            btn.addEventListener('click', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                const next = btn.getAttribute('data-slash-type-filter') || 'all';
-                setSlashPaletteTypeFilter(next);
-                syncSlashMenuFromInput(textarea);
-            });
-        });
-
-        menu.querySelectorAll('.slash-command-item-main').forEach((btn) => {
-            btn.addEventListener('mousedown', (e) => e.preventDefault());
-            btn.addEventListener('click', () => {
-                const row = btn.closest('[data-slash-idx]');
-                const idx = parseInt(row && row.getAttribute('data-slash-idx'), 10);
-                if (!Number.isNaN(idx)) applySlashSelection(textarea, key, idx);
-            });
-        });
-        menu.querySelectorAll('.slash-star-btn').forEach((btn) => {
-            btn.addEventListener('mousedown', (e) => e.preventDefault());
-            btn.addEventListener('click', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                const idx = parseInt(btn.getAttribute('data-slash-star-idx'), 10);
-                const cmd = ctx.filtered[idx];
-                if (!cmd) return;
-                if (cmd.category === 'project') {
-                    toggleStarredProject({
-                        id: cmd.projectId,
-                        path: cmd.projectPath,
-                        name: cmd.projectName,
-                    });
-                    renderSlashMenu(key, textarea);
-                    return;
-                }
-                const _starSpec = MODEL_STAR_SPEC_BY_CATEGORY[cmd.category || ''];
-                if (_starSpec) {
-                    toggleStarredAgentDefault(_starSpec.agent, _starSpec.kind, cmd.modelId, textarea, key);
-                    consumePaletteFilterText(textarea);
-                    return;
-                }
-                if (!cmd.stickySession) return;
-                toggleStarredSlashCommand(cmd.prefix);
-                if (!consumePaletteFilterText(textarea)) renderSlashMenu(key, textarea);
-            });
-        });
-        const activeEl = menu.querySelector('.slash-command-item.is-active');
-        if (activeEl) activeEl.scrollIntoView({ block: 'nearest' });
-    }
-
-    function applySlashSelectionInner(textarea, key, idx) {
-        const ctx = slashCtx[key];
-        const cmd = ctx.filtered[idx];
-        if (!cmd || !ctx.replaceRange) return;
-        const { from, to } = ctx.replaceRange;
-        const v = textarea.value;
-
-        // Project entries set the chat's working project (cwd) instead of
-        // inserting a sticky command chip into the message text.
-        if (cmd.category === 'project') {
-            textarea.value = v.slice(0, from) + v.slice(to);
-            ctx.replaceRange = null;
-            ctx.filtered = [];
-            ctx.paletteDismissed = false;
-            hideSlashMenu(key);
-            const proj =
-                findProjectById(cmd.projectId) || {
-                    id: cmd.projectId,
-                    name: cmd.projectName,
-                    path: cmd.projectPath,
-                };
-            setChatProject(proj);
-            try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-            if (key === 'chat') autoResizeTextarea();
-            else autoResizeWelcomeTextarea();
-            return;
-        }
-
-        // Muse model picks are a chat setting, not part of the next message: apply
-        // and relabel the Muse chip. These entries only appear while the Muse
-        // badge is applied, so no chip auto-add here.
-        if (cmd.category === 'muse-model') {
-            textarea.value = v.slice(0, from) + v.slice(to);
-            const mid =
-                String(cmd.modelId || '').trim()
-                || String(cmd.prefix || '').replace(/^\/muse\s+model\s+/i, '').trim();
-            if (!mid || mid === '__refresh__' || cmd.museRefresh || cmd.disabled) {
-                if (mid === '__refresh__' || cmd.museRefresh) {
-                    persistMuseModelSelection('__refresh__');
-                }
-                ctx.replaceRange = null;
-                ctx.filtered = [];
-                ctx.paletteDismissed = false;
-                hideSlashMenu(key);
-                try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-                if (key === 'chat') autoResizeTextarea();
-                else autoResizeWelcomeTextarea();
-                return;
-            }
-            persistMuseModelSelection(mid);
-            ctx.replaceRange = null;
-            ctx.filtered = [];
-            ctx.paletteDismissed = false;
-            hideSlashMenu(key);
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            (window.showToast || function () {})(
-                'Muse Code model: ' + museModelLabel(mid),
-                'success'
-            );
-            try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-            if (key === 'chat') autoResizeTextarea();
-            else autoResizeWelcomeTextarea();
-            return;
-        }
-
-        // Muse effort picks are a chat setting like model picks: apply, toast,
-        // send no message. Badge-gated, so no chip auto-add here either.
-        if (cmd.category === 'muse-effort') {
-            textarea.value = v.slice(0, from) + v.slice(to);
-            const eid =
-                String(cmd.modelId || '').trim()
-                || String(cmd.prefix || '').replace(/^\/muse\s+effort\s+/i, '').trim();
-            persistMuseEffortSelection(eid);
-            ctx.replaceRange = null;
-            ctx.filtered = [];
-            ctx.paletteDismissed = false;
-            hideSlashMenu(key);
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            repaintMuseUserBadges();
-            (window.showToast || function () {})(
-                'Muse Code reasoning effort: ' + (eid || 'default'),
-                'success'
-            );
-            try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-            if (key === 'chat') autoResizeTextarea();
-            else autoResizeWelcomeTextarea();
-            return;
-        }
-
-        // Hermes model picks — chat setting, no message sent (badge-gated).
-        if (cmd.category === 'hermes-model') {
-            textarea.value = v.slice(0, from) + v.slice(to);
-            const mid =
-                String(cmd.modelId || '').trim()
-                || String(cmd.prefix || '').replace(/^\/hermes\s+model\s+/i, '').trim();
-            persistHermesModelSelection(mid);
-            ctx.replaceRange = null;
-            ctx.filtered = [];
-            ctx.paletteDismissed = false;
-            hideSlashMenu(key);
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            (window.showToast || function () {})(
-                'Hermes model: ' + hermesModelLabel(mid),
-                'success'
-            );
-            try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-            if (key === 'chat') autoResizeTextarea();
-            else autoResizeWelcomeTextarea();
-            return;
-        }
-
-        // Hermes effort picks — chat setting like model picks.
-        if (cmd.category === 'hermes-effort') {
-            textarea.value = v.slice(0, from) + v.slice(to);
-            const eid =
-                String(cmd.modelId || '').trim()
-                || String(cmd.prefix || '').replace(/^\/hermes\s+effort\s+/i, '').trim();
-            persistHermesEffortSelection(eid);
-            ctx.replaceRange = null;
-            ctx.filtered = [];
-            ctx.paletteDismissed = false;
-            hideSlashMenu(key);
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            repaintHermesUserBadges();
-            (window.showToast || function () {})(
-                'Hermes reasoning effort: ' + (eid || 'default'),
-                'success'
-            );
-            try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-            if (key === 'chat') autoResizeTextarea();
-            else autoResizeWelcomeTextarea();
-            return;
-        }
-
-        // OpenCode model picks — chat setting, no message sent (badge-gated).
-        if (cmd.category === 'opencode-model') {
-            textarea.value = v.slice(0, from) + v.slice(to);
-            const mid =
-                String(cmd.modelId || '').trim()
-                || String(cmd.prefix || '').replace(/^\/opencode\s+model\s+/i, '').trim();
-            if (!mid || mid === '__refresh__' || cmd.opencodeRefresh || cmd.disabled) {
-                if (mid === '__refresh__' || cmd.opencodeRefresh) {
-                    persistOpenCodeModelSelection('__refresh__');
-                }
-                ctx.replaceRange = null;
-                ctx.filtered = [];
-                ctx.paletteDismissed = false;
-                hideSlashMenu(key);
-                try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-                if (key === 'chat') autoResizeTextarea();
-                else autoResizeWelcomeTextarea();
-                return;
-            }
-            persistOpenCodeModelSelection(mid);
-            ctx.replaceRange = null;
-            ctx.filtered = [];
-            ctx.paletteDismissed = false;
-            hideSlashMenu(key);
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            (window.showToast || function () {})(
-                'OpenCode model: ' + opencodeModelLabel(mid),
-                'success'
-            );
-            try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-            if (key === 'chat') autoResizeTextarea();
-            else autoResizeWelcomeTextarea();
-            return;
-        }
-
-        // OpenCode effort picks — chat setting like model picks.
-        if (cmd.category === 'opencode-effort') {
-            textarea.value = v.slice(0, from) + v.slice(to);
-            const eid =
-                String(cmd.modelId || '').trim()
-                || String(cmd.prefix || '').replace(/^\/opencode\s+effort\s+/i, '').trim();
-            persistOpenCodeEffortSelection(eid);
-            ctx.replaceRange = null;
-            ctx.filtered = [];
-            ctx.paletteDismissed = false;
-            hideSlashMenu(key);
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            repaintOpenCodeUserBadges();
-            (window.showToast || function () {})(
-                'OpenCode reasoning effort: ' + (eid || 'default'),
-                'success'
-            );
-            try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-            if (key === 'chat') autoResizeTextarea();
-            else autoResizeWelcomeTextarea();
-            return;
-        }
-
-        // Codex model picks — chat setting, no message sent (badge-gated).
-        if (cmd.category === 'codex-model') {
-            textarea.value = v.slice(0, from) + v.slice(to);
-            const mid =
-                String(cmd.modelId || '').trim()
-                || String(cmd.prefix || '').replace(/^\/codex\s+model\s+/i, '').trim();
-            if (!mid || mid === '__refresh__' || cmd.codexRefresh || cmd.disabled) {
-                if (mid === '__refresh__' || cmd.codexRefresh) {
-                    persistCodexModelSelection('__refresh__');
-                }
-                ctx.replaceRange = null;
-                ctx.filtered = [];
-                ctx.paletteDismissed = false;
-                hideSlashMenu(key);
-                try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-                if (key === 'chat') autoResizeTextarea();
-                else autoResizeWelcomeTextarea();
-                return;
-            }
-            persistCodexModelSelection(mid);
-            ctx.replaceRange = null;
-            ctx.filtered = [];
-            ctx.paletteDismissed = false;
-            hideSlashMenu(key);
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            (window.showToast || function () {})(
-                'Codex model: ' + codexModelLabel(mid),
-                'success'
-            );
-            try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-            if (key === 'chat') autoResizeTextarea();
-            else autoResizeWelcomeTextarea();
-            return;
-        }
-
-        // Codex effort picks — chat setting like model picks.
-        if (cmd.category === 'codex-effort') {
-            if (cmd.disabled) return;
-            textarea.value = v.slice(0, from) + v.slice(to);
-            const eid =
-                String(cmd.modelId || '').trim()
-                || String(cmd.prefix || '').replace(/^\/codex\s+effort\s+/i, '').trim();
-            persistCodexEffortSelection(eid);
-            ctx.replaceRange = null;
-            ctx.filtered = [];
-            ctx.paletteDismissed = false;
-            hideSlashMenu(key);
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            repaintCodexUserBadges();
-            (window.showToast || function () {})(
-                'Codex reasoning effort: ' + (eid || 'default'),
-                'success'
-            );
-            try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-            if (key === 'chat') autoResizeTextarea();
-            else autoResizeWelcomeTextarea();
-            return;
-        }
-
-        // Claude model picks — chat setting, no message sent (badge-gated).
-        if (cmd.category === 'claude-model') {
-            textarea.value = v.slice(0, from) + v.slice(to);
-            const mid =
-                String(cmd.modelId || '').trim()
-                || String(cmd.prefix || '').replace(/^\/claude\s+model\s+/i, '').trim();
-            if (!mid || mid === '__refresh__' || cmd.claudeRefresh || cmd.disabled) {
-                if (mid === '__refresh__' || cmd.claudeRefresh) {
-                    persistClaudeModelSelection('__refresh__');
-                }
-                ctx.replaceRange = null;
-                ctx.filtered = [];
-                ctx.paletteDismissed = false;
-                hideSlashMenu(key);
-                try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-                if (key === 'chat') autoResizeTextarea();
-                else autoResizeWelcomeTextarea();
-                return;
-            }
-            persistClaudeModelSelection(mid);
-            ctx.replaceRange = null;
-            ctx.filtered = [];
-            ctx.paletteDismissed = false;
-            hideSlashMenu(key);
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            (window.showToast || function () {})(
-                'Claude Code model: ' + claudeModelLabel(mid),
-                'success'
-            );
-            try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-            if (key === 'chat') autoResizeTextarea();
-            else autoResizeWelcomeTextarea();
-            return;
-        }
-
-        // Claude effort picks — chat setting like model picks.
-        if (cmd.category === 'claude-effort') {
-            if (cmd.disabled) return;
-            textarea.value = v.slice(0, from) + v.slice(to);
-            const eid =
-                String(cmd.modelId || '').trim()
-                || String(cmd.prefix || '').replace(/^\/claude\s+effort\s+/i, '').trim();
-            persistClaudeEffortSelection(eid);
-            ctx.replaceRange = null;
-            ctx.filtered = [];
-            ctx.paletteDismissed = false;
-            hideSlashMenu(key);
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            repaintClaudeUserBadges();
-            (window.showToast || function () {})(
-                'Claude Code effort: ' + (eid || 'default'),
-                'success'
-            );
-            try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-            if (key === 'chat') autoResizeTextarea();
-            else autoResizeWelcomeTextarea();
-            return;
-        }
-
-        textarea.value = v.slice(0, from) + v.slice(to);
-        // Model picks compose as `/cursor /model <id>` but should not become a second
-        // visible badge — the Cursor Agent chip already shows the preferred model.
-        if (cmd.category === 'cursor-model') {
-            const mid =
-                String(cmd.modelId || '').trim() ||
-                String(cmd.prefix || '')
-                    .replace(/^\/model\s+/i, '')
-                    .trim();
-            // Catalog refresh is a cursor-cmd chip now (staged + send). Ignore
-            // any stale __refresh__ model rows.
-            if (!mid || mid === '__refresh__' || cmd.disabled) {
-                ctx.replaceRange = null;
-                ctx.filtered = [];
-                ctx.paletteDismissed = false;
-                hideSlashMenu(key);
-                try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-                if (key === 'chat') autoResizeTextarea();
-                else autoResizeWelcomeTextarea();
-                return;
-            }
-            textarea.value = v.slice(0, from) + v.slice(to);
-            if (mid) {
-                slashPaletteSupplement.preferredModel = mid;
-                beginSupplementFetch('cursorModelsGen');
-            }
-            // Drop any prior model chips so we don't stack /model entries.
-            ctx.chips = ctx.chips.filter((c) => (c.category || '') !== 'cursor-model');
-            ctx.chips.push({
-                prefix: cmd.prefix,
-                label: preferredModelLabel(mid) || String(cmd.label || mid).replace(/\s*\(current\)\s*$/i, '').trim(),
-                category: 'cursor-model',
-                modelId: mid || undefined,
-            });
-            const other = key === 'chat' ? 'welcome' : 'chat';
-            slashCtx[other].chips = ctx.chips.slice();
-            ctx.replaceRange = null;
-            ctx.filtered = [];
-            ctx.paletteDismissed = false;
-            hideSlashMenu(key);
-            renderSlashChips(other, document.getElementById(other === 'chat' ? 'chatInput' : 'welcomeChatInput'));
-            renderSlashChips(key, textarea);
-            try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-            if (key === 'chat') autoResizeTextarea();
-            else autoResizeWelcomeTextarea();
-            return;
-        }
-        // Exclusive sticky agent: only one agent badge at a time (Cursor vs Muse etc.)
-        const _stickyMatch = CuttleChatSlash.SLASH_COMMANDS.find((s) => s.prefix === cmd.prefix && s.stickySession);
-        if (_stickyMatch) {
-            ctx.chips = ctx.chips.filter((c) => {
-                const m = CuttleChatSlash.SLASH_COMMANDS.find((s) => s.prefix === c.prefix);
-                if (m && m.stickySession) return false;
-                return !isOrphanedCompanionChip(c, cmd);
-            });
-        }
-        ctx.chips.push({
-            prefix: cmd.prefix,
-            label: cmd.label,
-            category: cmd.category || 'command',
-        });
-        ctx.replaceRange = null;
-        ctx.filtered = [];
-        ctx.paletteDismissed = false;
-        hideSlashMenu(key);
-        // Sticky agent chips apply for the rest of the session — mirror to both composers.
-        const match = CuttleChatSlash.SLASH_COMMANDS.find((s) => s.prefix === cmd.prefix);
-        if (match && match.stickySession) {
-            const other = key === 'chat' ? 'welcome' : 'chat';
-            slashCtx[other].chips = ctx.chips.slice();
-            renderSlashChips(other, document.getElementById(other === 'chat' ? 'chatInput' : 'welcomeChatInput'));
-            markStickyAgentCleared(false);
-            persistStickySlashForCurrentSession(true);
-        }
-        renderSlashChips(key, textarea);
-        try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-        if (key === 'chat') autoResizeTextarea();
-        else autoResizeWelcomeTextarea();
-    }
-
     // Single choke point for every palette pick (click, Enter, Tab): the pick rewrites
     // the composer programmatically (typed filter text stripped), which fires no input
     // event, so the persisted draft would keep the stale slash fragment. That fragment
     // resurrects on New Chat and pops the palette open with the previously picked model
     // as raw slash text. Persist synchronously: a debounce would lose a fast New Chat click.
     function applySlashSelection(textarea, key, idx) {
-        applySlashSelectionInner(textarea, key, idx);
+        slashPalette.applySelection(textarea, key, idx);
         try {
             saveComposerDraft(currentSessionId || 'new', key);
         } catch (_) {}
     }
-    // Palette star actions consume the filter text that found the row (the chip
-    // or default is now applied), so it must not linger as raw slash text: it
-    // would double-compose on send and resurrect on New Chat (popping the
-    // palette) via the composer draft. Only consumes when the whole composer
-    // is the filter fragment — message body is never touched.
-    function consumePaletteFilterText(textarea) {
-        if (!textarea) return false;
-        const v = String(textarea.value || '');
-        if (!v.trim()) return false;
-        const parsed = parseSlashAtCursor(textarea);
-        if (!parsed) return false;
-        const token = v.slice(parsed.replaceFrom, parsed.replaceTo);
-        if (v.trim() !== token.trim()) return false;
-        textarea.value = '';
-        try { syncSlashMenuFromInput(textarea); } catch (_) {}
-        try { saveComposerDraft(currentSessionId || 'new'); } catch (_) {}
-        return true;
-    }
-
     function syncSlashMenuFromInput(textarea) {
-        const key = slashContextKey(textarea);
-        if (!key) return;
-        const menu = document.getElementById(slashMenuId(key));
-        if (!menu) return;
-        const parsed = parseSlashAtCursor(textarea);
-        if (!parsed) {
-            slashCtx[key].paletteDismissed = false;
-            hideSlashMenu(key);
-            return;
-        }
-        // After Escape (or outside click), do not reopen on every keystroke
-        // while the line still starts with `/…`. Cleared when the slash token
-        // disappears (user deletes `/` or moves off it).
-        if (slashCtx[key].paletteDismissed) {
-            return;
-        }
-        loadSlashPaletteSupplement();
-        if (hasActiveCursorAgentChip(key)) {
-            loadCursorAgentModelsForPalette();
-        }
-        const result = filterSlashPaletteItems(parsed.filter);
-        const items = result.items || [];
-        const allItems = result.allItems || [];
-        slashCtx[key].filtered = items;
-        slashCtx[key].typeCounts = result.typeCounts || {};
-        slashCtx[key].replaceRange = { from: parsed.replaceFrom, to: parsed.replaceTo };
-        const _syncFilter = String(parsed.filter || '');
-                if (slashCtx[key].lastFilter !== _syncFilter) slashCtx[key].selectedIndex = 0;
-                else slashCtx[key].selectedIndex = clamp(slashCtx[key].selectedIndex, 0, Math.max(0, items.length - 1));
-                slashCtx[key].lastFilter = _syncFilter;
-        // No matches at all (before type filter) — hide, or show loading.
-        // Type-filter-only empty still opens the menu so badges stay usable.
-        if (!allItems.length) {
-            if (slashPaletteSupplement.loading) {
-                const menuWait = document.getElementById(slashMenuId(key));
-                if (menuWait) {
-                    menuWait.hidden = false;
-                    menuWait.innerHTML =
-                        '<div class="slash-command-menu-status" role="status">Loading commands…</div>';
-                }
-            } else {
-                hideSlashMenu(key);
-            }
-            return;
-        }
-        renderSlashMenu(key, textarea);
+        return slashPalette.syncFromInput(textarea);
     }
 
     /** Native Cuttle control commands are handled by Cuttle itself, so a sticky
@@ -8091,8 +5343,8 @@
 
     function composeMessageWithSlashChip(textarea) {
         const key = slashContextKey(textarea);
-        if (!key) return (textarea.value || '').trim();
         const body = (textarea.value || '').trim();
+        if (!key) return body;
         let chips = (slashCtx[key].chips && slashCtx[key].chips.length
             ? slashCtx[key].chips
             : null);
@@ -8102,23 +5354,11 @@
                 chips = slashCtx[other].chips;
             }
         }
-        if (!chips || !chips.length) return body;
-        // A control chip (or a typed control command) outranks stacked sticky
-        // agent chips: Cuttle dispatches it locally.
-        const controlIdx = chips.findIndex((c) => isControlCommandPrefix(c.prefix));
-        if (controlIdx >= 0) {
-            chips = chips.slice(controlIdx);
-        } else if (isNativeControlCommand(body)) {
-            return body;
-        }
-        const prefixPart = chips.map((c) => c.prefix).join('');
-        if (!body) {
-            const t = prefixPart.replace(/\s+$/, '').trim();
-            return t || prefixPart.trim();
-        }
-        const last = chips[chips.length - 1];
-        if (last.prefix.endsWith(' ')) return prefixPart + body;
-        return prefixPart + ' ' + body;
+        // Owned by chat_composer.js — DOM/state gather, domain composes.
+        return CuttleChatComposer.composeMessageWithSlashChip(
+            { body, chips: chips || [] },
+            { isControl: isNativeControlCommand }
+        );
     }
 
     /**
@@ -8205,23 +5445,14 @@
         const chips = (slashCtx.chat.chips && slashCtx.chat.chips.length)
             ? slashCtx.chat.chips
             : (slashCtx.welcome.chips || []);
-        const sticky = (chips || []).filter((c) => {
-            const match = CuttleChatSlash.SLASH_COMMANDS.find((s) => s.prefix === c.prefix);
-            return match && match.stickySession;
+        // Owned by chat_composer.js — DOM/state gather, domain decides.
+        const selection = CuttleChatComposer.stickySessionSelection(chips, {
+            commands: CuttleChatSlash.SLASH_COMMANDS,
+            liveLabel: liveAgentBadgeLabelForChip,
+            paletteCategory: resolveSlashChipPaletteCategory,
+            clearedPending: stickyAgentClearedPending,
         });
-        if (sticky.length) stickyAgentClearedPending = false;
-        const selection = {
-            stickyChips: sticky.map((c) => {
-                const live = liveAgentBadgeLabelForChip(c);
-                const paletteCat = resolveSlashChipPaletteCategory(c);
-                return {
-                    prefix: c.prefix,
-                    label: live || c.label,
-                    category: paletteCat || c.category || 'command',
-                };
-            }),
-            stickyCleared: sticky.length ? false : stickyAgentClearedPending,
-        };
+        if (selection.stickyChips.length) stickyAgentClearedPending = false;
         updateSessionPrefs(prefsId, selection);
         if (publishShared) publishSharedComposerSelection(selection);
     }
@@ -8318,15 +5549,13 @@
         if (state && state.appliedRevision === revision && state.pins === pins) return;
         sharedComposerState.set(key, { ...state, revision, appliedRevision: revision, pins });
         const prefs = getSessionPrefs(sessionId);
-        const draft = prefs && prefs.composerDraft;
-        const composerDraft = CuttleChatComposer.draftWithSharedAgent(
-            draft, incoming, CuttleChatSlash.SLASH_COMMANDS
+        // Owned by chat_composer.js — server snapshot in, prefs patch out.
+        const patch = CuttleChatComposer.sharedSelectionPrefsPatch(
+            incoming,
+            prefs && prefs.composerDraft,
+            { commands: CuttleChatSlash.SLASH_COMMANDS }
         );
-        updateSessionPrefs(sessionId, {
-            stickyChips: incoming.stickyChips,
-            stickyCleared: !!incoming.stickyCleared,
-            composerDraft,
-        });
+        updateSessionPrefs(sessionId, patch);
         restoreSessionStickySlash(sessionId, []);
     }
 
@@ -8362,21 +5591,18 @@
     }
 
     function restoreSessionStickySlash(sessionId, messages) {
-        const prefs = getSessionPrefs(sessionId);
-        const cleared = !!(prefs && prefs.stickyCleared);
-        stickyAgentClearedPending = cleared;
-        let sticky = prefs && Array.isArray(prefs.stickyChips) ? prefs.stickyChips.slice() : [];
-        if (!sticky.length && !cleared) {
-            const inferred = inferStickyChipsFromUserMessages(messages);
-            if (inferred.length) {
-                sticky = inferred;
-                if (sessionId != null && sessionId !== '') {
-                    updateSessionPrefs(sessionId, { stickyChips: sticky });
-                }
-            }
+        // Owned by chat_composer.js — prefs/history snapshot in, chips out.
+        const restored = CuttleChatComposer.stickyChipsToRestore(
+            getSessionPrefs(sessionId),
+            messages,
+            { infer: inferStickyChipsFromUserMessages }
+        );
+        stickyAgentClearedPending = restored.cleared;
+        if (restored.inferred && sessionId != null && sessionId !== '') {
+            updateSessionPrefs(sessionId, { stickyChips: restored.chips });
         }
-        slashCtx.welcome.chips = sticky.slice();
-        slashCtx.chat.chips = sticky.slice();
+        slashCtx.welcome.chips = restored.chips.slice();
+        slashCtx.chat.chips = restored.chips.slice();
         restoreComposerDraftControls(sessionId);
         renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
         renderSlashChips('chat', document.getElementById('chatInput'));
@@ -8422,44 +5648,7 @@
     }
 
     function handleSlashKeyDown(event, textarea) {
-        const key = slashContextKey(textarea);
-        if (!key) return false;
-        const menu = document.getElementById(slashMenuId(key));
-        if (!menu || menu.hidden) return false;
-        const ctx = slashCtx[key];
-        const n = ctx.filtered.length;
-
-        // Allow Escape even when the type filter emptied the list.
-        if (event.key === 'Escape') {
-            event.preventDefault();
-            hideSlashMenu(key, { dismiss: true });
-            return true;
-        }
-        if (!n) return false;
-
-        if (event.key === 'ArrowDown') {
-            event.preventDefault();
-            ctx.selectedIndex = (ctx.selectedIndex + 1) % n;
-            renderSlashMenu(key, textarea);
-            return true;
-        }
-        if (event.key === 'ArrowUp') {
-            event.preventDefault();
-            ctx.selectedIndex = (ctx.selectedIndex - 1 + n) % n;
-            renderSlashMenu(key, textarea);
-            return true;
-        }
-        if (event.key === 'Enter' && !event.shiftKey) {
-            event.preventDefault();
-            applySlashSelection(textarea, key, ctx.selectedIndex);
-            return true;
-        }
-        if (event.key === 'Tab') {
-            event.preventDefault();
-            applySlashSelection(textarea, key, ctx.selectedIndex);
-            return true;
-        }
-        return false;
+        return slashPalette.handleKeyDown(event, textarea);
     }
 
     /**
@@ -8750,32 +5939,22 @@
     }
 
     function prettyCursorModelLabel(model) {
-        const raw = String(model || 'auto').trim() || 'auto';
-        if (/^auto$/i.test(raw) || /^default$/i.test(raw)) return 'Auto';
-        return raw;
+        return agentControls.prettyCursorModelLabel(model);
     }
 
     /** True for the unpinned/Auto model id (or an empty value meaning "not pinned"). */
     function isCursorAutoModelName(model) {
-        const raw = String(model || '').trim();
-        return !raw || /^auto$/i.test(raw) || /^default$/i.test(raw);
+        return agentControls.isCursorAutoModelName(model);
     }
 
     /** Canonical Cursor badge text everywhere (composer, queue, bubbles): "Cursor - Auto". */
     function cursorChipDisplayLabel(modelId) {
-        return 'Cursor - ' + preferredModelLabel(modelId);
+        return agentControls.cursorChipDisplayLabel(modelId);
     }
 
     /** Look up the human-readable label for a model ID from the loaded models list. */
     function preferredModelLabel(modelId) {
-        const id = String(modelId || 'auto').trim() || 'auto';
-        if (/^auto$/i.test(id) || /^default$/i.test(id)) return 'Auto';
-        const models = slashPaletteSupplement.cursorModels;
-        if (Array.isArray(models)) {
-            const found = models.find((m) => m && m.id === id);
-            if (found && found.label) return found.label;
-        }
-        return id;
+        return agentControls.preferredModelLabel(modelId);
     }
 
     /** Cursor Agent sticky or a model *setting* pick — not nested one-shots. */
@@ -8792,57 +5971,7 @@
      * 'auto' until /api/cursor-agent/models returns) was wiping Sonnet badges.
      */
     function collapseCursorSlashChips(chips, replacement) {
-        if (!Array.isArray(chips) || !chips.length) {
-            return replacement ? [replacement] : [];
-        }
-        const others = [];
-        let sawCursor = false;
-        let modelHint = null;
-        let existingCursor = null;
-        for (const c of chips) {
-            if (isCursorRelatedSlashChip(c)) {
-                sawCursor = true;
-                if (!existingCursor) existingCursor = c;
-                const src = String((c && (c.meta || c.prefix)) || '');
-                const m = src.match(/^\/model\s+(\S+)/i);
-                if (m) modelHint = m[1];
-                else if (c.category === 'cursor-model' && c.modelId) {
-                    modelHint = c.modelId;
-                }
-                continue;
-            }
-            others.push(c);
-        }
-        if (!sawCursor && !replacement) return chips.slice();
-        let chip = replacement || null;
-        if (!chip && modelHint) {
-            chip = {
-                label: cursorChipDisplayLabel(modelHint),
-                meta: '/model ' + modelHint,
-                category: 'cursor',
-            };
-        }
-        if (!chip && existingCursor) {
-            const lab = String(existingCursor.label || '').trim();
-            // Keep concrete badges ("Cursor - Sonnet…"); only upgrade bare sticky.
-            if (lab && !/^cursor(\s+agent)?$/i.test(lab)) {
-                chip = {
-                    label: lab,
-                    meta: existingCursor.meta || existingCursor.prefix || '/cursor',
-                    category: 'cursor',
-                };
-            }
-        }
-        if (!chip) {
-            chip = {
-                label: cursorChipDisplayLabel(
-                    slashPaletteSupplement.preferredModel || 'auto'
-                ),
-                meta: '/cursor',
-                category: 'cursor',
-            };
-        }
-        return [chip].concat(others);
+        return agentControls.collapseCursorSlashChips(chips, replacement);
     }
 
     /** True when sessionId refers to the currently open chat (live pins apply). */
@@ -9198,175 +6327,21 @@
     }
 
     function syncPreferredModelFromResponse(data) {
-        if (!data) return;
-        const eff = String((data && (data.agent_effort || data.muse_effort)) || '').trim();
-        if (eff && slashPaletteSupplement.museEffort !== eff) {
-            slashPaletteSupplement.museEffort = eff;
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-        }
-        const hermesEff = String((data && (data.agent_effort || data.hermes_effort)) || '').trim();
-        if (hermesEff && slashPaletteSupplement.hermesEffort !== hermesEff) {
-            slashPaletteSupplement.hermesEffort = hermesEff;
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-        }
-        const opencodeEff = String((data && (data.agent_effort || data.opencode_effort)) || '').trim();
-        if (opencodeEff && slashPaletteSupplement.opencodeEffort !== opencodeEff) {
-            slashPaletteSupplement.opencodeEffort = opencodeEff;
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-        }
-        const codexEff = String((data && (data.agent_effort || data.codex_effort)) || '').trim();
-        if (codexEff && slashPaletteSupplement.codexEffort !== codexEff) {
-            slashPaletteSupplement.codexEffort = codexEff;
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-        }
-        const hermesModel = String(
-            (data && (data.agent_model || data.hermes_model)) || ''
-        ).trim();
-        if (
-            hermesModel
-            && hasActiveHermesAgentChip()
-            && slashPaletteSupplement.hermesModel !== hermesModel
-        ) {
-            slashPaletteSupplement.hermesModel = hermesModel;
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-        }
-        const opencodeModel = String(
-            (data && (data.agent_model || data.opencode_model)) || ''
-        ).trim();
-        if (
-            opencodeModel
-            && hasActiveOpenCodeAgentChip()
-            && slashPaletteSupplement.opencodeModel !== opencodeModel
-        ) {
-            slashPaletteSupplement.opencodeModel = opencodeModel;
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-        }
-        const codexModel = String(
-            (data && (data.agent_model || data.codex_model)) || ''
-        ).trim();
-        if (
-            codexModel
-            && hasActiveCodexAgentChip()
-            && slashPaletteSupplement.codexModel !== codexModel
-        ) {
-            slashPaletteSupplement.codexModel = codexModel;
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-        }
-        if (String((data && data.agent_id) || '').toLowerCase() === 'claude'
-            || hasActiveHarnessAgentChip('claude')) {
-            const claudeModel = String((data && data.agent_model) || '').trim();
-            const claudeEff = String((data && data.agent_effort) || '').trim();
-            let claudeChanged = false;
-            if (claudeModel && slashPaletteSupplement.claudeModel !== claudeModel) {
-                slashPaletteSupplement.claudeModel = claudeModel;
-                claudeChanged = true;
-            }
-            if (claudeEff && slashPaletteSupplement.claudeEffort !== claudeEff) {
-                slashPaletteSupplement.claudeEffort = claudeEff;
-                claudeChanged = true;
-            }
-            if (claudeChanged) {
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-            }
-        }
-        const pref =
-            (data.preferred_model || data.preferredModel || '').trim()
-            || (
-                data.cursor_run
-                && (data.cursor_run.requested_model || '').trim()
-            )
-            || '';
-        if (!pref) return;
-        const prev = (slashPaletteSupplement.preferredModel || '').trim();
-        if (prev === pref) return;
-        slashPaletteSupplement.preferredModel = pref;
-        renderSlashChips('chat', document.getElementById('chatInput'));
-        renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
+        return agentControls.syncPreferredModelFromResponse(data);
     }
 
     /** Build / refresh assistant header chips using Cursor run meta (model badge). */
     function enrichSlashCommandWithCursorRun(replySlash, cursorRun, stickyCmd) {
-        const isCursor =
-            (stickyCmd && String(stickyCmd.prefix || '').toLowerCase().startsWith('/cursor'))
-            || (replySlash && Array.isArray(replySlash.chips) && replySlash.chips.some(isCursorRelatedSlashChip));
-        if (!isCursor && !cursorRun) return replySlash || null;
-
-        // Chip label = requested/configured model. Prefer cursor_run, then this
-        // chat's preferred model — never invent "auto" when Sonnet (etc.) is set.
-        const sessionPreferred =
-            (slashPaletteSupplement.preferredModel || '').trim() || '';
-        const requestedRaw =
-            (cursorRun && cursorRun.requested_model)
-            || sessionPreferred
-            || 'auto';
-        const reportedRaw = (cursorRun && cursorRun.reported_model) || null;
-        const model = preferredModelLabel(requestedRaw);
-        let label = cursorChipDisplayLabel(requestedRaw);
-        const tipParts = ['/cursor', 'requested ' + model];
-        if (reportedRaw) {
-            const reqLabel = preferredModelLabel(requestedRaw);
-            const repLabel = preferredModelLabel(reportedRaw);
-            if (
-                repLabel.toLowerCase() !== reqLabel.toLowerCase()
-                && reportedRaw.toLowerCase() !== String(requestedRaw).toLowerCase()
-            ) {
-                tipParts.push('CLI reported ' + repLabel);
-                // Unpinned turn that came back as a named model really ran that
-                // model (premium usage). Badging it "Auto" hid the spend.
-                if (isCursorAutoModelName(requestedRaw) && !isCursorAutoModelName(reportedRaw)) {
-                    label = cursorChipDisplayLabel(reportedRaw);
-                }
-            }
-        }
-        if (cursorRun && cursorRun.request_id) {
-            tipParts.push('req ' + String(cursorRun.request_id).slice(0, 8) + '…');
-        }
-        if (cursorRun && cursorRun.cwd) tipParts.push('cwd ' + cursorRun.cwd);
-        const tip = tipParts.join(' · ');
-        const cursorChip = { label: label, meta: tip, category: 'cursor' };
-
-        const storedLooksSpecific = replySlash && Array.isArray(replySlash.chips)
-            && replySlash.chips.some((c) => {
-                const lab = String((c && c.label) || '').toLowerCase();
-                return lab && !/(^|\s)auto(\s|$)/i.test(lab) && lab.indexOf(' - auto') < 0;
-            });
-        if (storedLooksSpecific && isCursorAutoModelName(requestedRaw)) {
-            return replySlash;
-        }
-        if (replySlash && Array.isArray(replySlash.chips) && replySlash.chips.length) {
-            return { chips: collapseCursorSlashChips(replySlash.chips, cursorChip) };
-        }
-        return { chips: [cursorChip] };
+        return agentControls.enrichSlashCommandWithCursorRun(replySlash, cursorRun, stickyCmd);
     }
 
     function prettyMuseModelLabel(model) {
-        const raw = String(model || '').trim() || '';
-        const known = (slashPaletteSupplement.museModels || []).find(
-            (m) => m && String(m.id).toLowerCase() === raw.toLowerCase()
-        );
-        if (known && known.label) return String(known.label).replace(/^Muse\s+/i, '');
-        if (/^muse-spark-1\.3-contributor$/i.test(raw)) return 'Spark 1.3 (Contributor)';
-        if (/^muse-spark-1\.3$/i.test(raw)) return 'Spark 1.3';
-        if (/^muse-spark-1\.2-contributor$/i.test(raw)) return 'Spark 1.2 (Contributor)';
-        if (/^muse-spark-1\.2$/i.test(raw)) return 'Spark 1.2';
-        return raw.replace(/^muse-/i, '').replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+        return agentControls.prettyMuseModelLabel(model);
     }
 
     /** Full palette label for a Muse model id (e.g. toasts). */
     function museModelLabel(model) {
-        const raw = String(model || '').trim();
-        const known = (slashPaletteSupplement.museModels || []).find(
-            (m) => m && String(m.id).toLowerCase() === raw.toLowerCase()
-        );
-        return (known && known.label) || raw || 'default';
+        return agentControls.museModelLabel(model);
     }
 
     /**
@@ -9374,14 +6349,7 @@
      * Returns '' when neither model nor effort is available (caller keeps stock label).
      */
     function agentModelEffortBadgeLabel(agentName, modelLabel, effort) {
-        const name = String(agentName || '').trim();
-        if (!name) return '';
-        const model = String(modelLabel || '').trim();
-        const eff = String(effort || '').trim();
-        if (!model && !eff) return '';
-        if (model && eff) return name + ' - ' + model + ' · ' + eff;
-        if (model) return name + ' - ' + model;
-        return name + ' · ' + eff;
+        return agentControls.agentModelEffortBadgeLabel(agentName, modelLabel, effort);
     }
 
     /**
@@ -9469,54 +6437,7 @@
      * richer stored badge when the palette pin is still loading.
      */
     function enrichSlashCommandWithAgentPin(replySlash, spec) {
-        if (!replySlash || !Array.isArray(replySlash.chips)) return replySlash || null;
-        const model = String((spec && spec.model) || '').trim();
-        const effort = String((spec && spec.effort) || '').trim();
-        if (!model && !effort) return replySlash;
-        const matchChip = spec && spec.matchChip;
-        const agentName = String((spec && spec.agentName) || '').trim();
-        const prettyModel = String((spec && spec.prettyModel) || model).trim();
-        const slashMeta = String((spec && spec.slashMeta) || '').trim();
-        const agentCategory = String((spec && spec.category) || '').trim()
-            || (/^muse/i.test(agentName) ? 'muse'
-                : /^hermes/i.test(agentName) ? 'hermes'
-                    : /^opencode/i.test(agentName) ? 'opencode'
-                        : /^codex/i.test(agentName) ? 'codex'
-                            : /^cursor/i.test(agentName) ? 'cursor'
-                                : 'command');
-        let found = false;
-        const chips = replySlash.chips.map((chip) => {
-            if (!matchChip || !matchChip(chip)) return chip;
-            found = true;
-            const existingLabel = String((chip && chip.label) || '');
-            const existingMeta = String((chip && chip.meta) || '');
-            const nextLabel = agentModelEffortBadgeLabel(agentName, prettyModel, effort)
-                || existingLabel;
-            const nextMeta = slashMeta
-                + (model ? ' · model ' + model : '')
-                + (effort ? ' · effort ' + effort : '');
-            // Keep a richer history badge when we would strip effort/model.
-            const existingHasEffort = /\beffort\s+\S/i.test(existingMeta)
-                || /\s·\s+\S+$/.test(existingLabel);
-            const existingHasModel = / - /.test(existingLabel) || /model\s+\S/i.test(existingMeta);
-            if (existingHasEffort && !effort) return chip;
-            if (existingHasModel && !model && !effort) return chip;
-            if (existingLabel === nextLabel) {
-                if ((chip.category || '') === agentCategory) return chip;
-                return Object.assign({}, chip, { category: agentCategory });
-            }
-            // Upgrade bare chips, or model-only chips when effort is now known.
-            if (existingHasModel && effort && existingLabel.indexOf(' · ' + effort) === -1) {
-                return { label: nextLabel, meta: nextMeta || existingMeta, category: agentCategory };
-            }
-            if (existingHasModel && !effort) return chip;
-            return {
-                label: nextLabel,
-                meta: nextMeta || existingMeta,
-                category: agentCategory,
-            };
-        });
-        return found ? { chips } : replySlash;
+        return agentControls.enrichSlashCommandWithAgentPin(replySlash, spec);
     }
 
     function repaintAgentUserBadges(matchLabelRe, nextLabel) {
@@ -9565,167 +6486,65 @@
      * pin fetch was in flight would otherwise keep stale defaults.
      */
     function repaintMuseUserBadges() {
-        const model = String(slashPaletteSupplement.museModel || '').trim();
-        const eff = String(slashPaletteSupplement.museEffort || '').trim();
-        const next = agentModelEffortBadgeLabel(
-            'Muse Code',
-            model ? prettyMuseModelLabel(model) : '',
-            eff
-        );
-        if (!next) return;
-        repaintAgentUserBadges(/^Muse Code/i, next);
+        return agentControls.repaintMuseUserBadges();
     }
 
     /** Add the actual Muse model (+ pinned effort) to its live reply badge. */
     function enrichSlashCommandWithMuseModel(replySlash, model, effort) {
-        return enrichSlashCommandWithAgentPin(replySlash, {
-            agentName: 'Muse Code',
-            category: 'muse',
-            model: model,
-            effort: effort,
-            prettyModel: prettyMuseModelLabel(model),
-            slashMeta: '/muse',
-            matchChip: (chip) => {
-                const src = String((chip && (chip.meta || chip.prefix || chip.label)) || '');
-                return /^\/muse\b/i.test(src) || /^Muse Code\b/i.test(String((chip && chip.label) || ''));
-            },
-        });
+        return agentControls.enrichSlashCommandWithMuseModel(replySlash, model, effort);
     }
 
     function prettyHermesModelLabel(model) {
-        const raw = String(model || '').trim();
-        if (!raw) return 'Hermes';
-        const known = (slashPaletteSupplement.hermesModels || []).find(
-            (m) => m && String(m.id).toLowerCase() === raw.toLowerCase()
-        );
-        if (known && known.label) return String(known.label);
-        const leaf = raw.includes('/') ? raw.split('/').pop() : raw;
-        return String(leaf || raw).replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+        return agentControls.prettyHermesModelLabel(model);
     }
 
     function hermesModelLabel(model) {
-        const raw = String(model || '').trim();
-        const known = (slashPaletteSupplement.hermesModels || []).find(
-            (m) => m && String(m.id).toLowerCase() === raw.toLowerCase()
-        );
-        return (known && known.label) || raw || 'default';
+        return agentControls.hermesModelLabel(model);
     }
 
     function repaintHermesUserBadges() {
-        const model = String(slashPaletteSupplement.hermesModel || '').trim();
-        const eff = String(slashPaletteSupplement.hermesEffort || '').trim();
-        const next = agentModelEffortBadgeLabel(
-            'Hermes',
-            model ? prettyHermesModelLabel(model) : '',
-            eff
-        );
-        if (!next) return;
-        repaintAgentUserBadges(/^Hermes\b/i, next);
+        return agentControls.repaintHermesUserBadges();
     }
 
     /** Add the actual Hermes model (+ pinned effort) to its live reply badge. */
     function enrichSlashCommandWithHermesModel(replySlash, model, effort) {
-        return enrichSlashCommandWithAgentPin(replySlash, {
-            agentName: 'Hermes',
-            category: 'hermes',
-            model: model,
-            effort: effort,
-            prettyModel: prettyHermesModelLabel(model),
-            slashMeta: '/hermes',
-            matchChip: (chip) => {
-                const src = String((chip && (chip.meta || chip.prefix || chip.label)) || '');
-                const label = String((chip && chip.label) || '');
-                return (
-                    /^\/hermes\b/i.test(src)
-                    || /^Hermes(\s+Agent)?\b/i.test(label)
-                    || /^Hermes -/i.test(label)
-                );
-            },
-        });
+        return agentControls.enrichSlashCommandWithHermesModel(replySlash, model, effort);
     }
 
     function prettyOpenCodeModelLabel(model) {
-        const raw = String(model || '').trim();
-        if (!raw) return 'OpenCode';
-        const known = (slashPaletteSupplement.opencodeModels || []).find(
-            (m) => m && String(m.id).toLowerCase() === raw.toLowerCase()
-        );
-        if (known && known.label) return String(known.label);
-        const leaf = raw.includes('/') ? raw.split('/').pop() : raw;
-        return String(leaf || raw).replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+        return agentControls.prettyOpenCodeModelLabel(model);
     }
 
     function opencodeModelLabel(model) {
-        const raw = String(model || '').trim();
-        const known = (slashPaletteSupplement.opencodeModels || []).find(
-            (m) => m && String(m.id).toLowerCase() === raw.toLowerCase()
-        );
-        return (known && known.label) || raw || 'default';
+        return agentControls.opencodeModelLabel(model);
     }
 
     function repaintOpenCodeUserBadges() {
-        const model = String(slashPaletteSupplement.opencodeModel || '').trim();
-        const eff = String(slashPaletteSupplement.opencodeEffort || '').trim();
-        const next = agentModelEffortBadgeLabel(
-            'OpenCode',
-            model ? prettyOpenCodeModelLabel(model) : '',
-            eff
-        );
-        if (!next) return;
-        repaintAgentUserBadges(/^OpenCode\b/i, next);
+        return agentControls.repaintOpenCodeUserBadges();
     }
 
     function prettyCodexModelLabel(model) {
-        const raw = String(model || '').trim();
-        if (!raw) return 'Codex';
-        const known = (slashPaletteSupplement.codexModels || []).find(
-            (m) => m && String(m.id).toLowerCase() === raw.toLowerCase()
-        );
-        if (known && known.label) return String(known.label);
-        const leaf = raw.includes('/') ? raw.split('/').pop() : raw;
-        return String(leaf || raw).replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+        return agentControls.prettyCodexModelLabel(model);
     }
 
     function codexModelLabel(model) {
-        const raw = String(model || '').trim();
-        const known = (slashPaletteSupplement.codexModels || []).find(
-            (m) => m && String(m.id).toLowerCase() === raw.toLowerCase()
-        );
-        return (known && known.label) || raw || 'default';
+        return agentControls.codexModelLabel(model);
     }
 
     function repaintCodexUserBadges() {
-        const model = String(slashPaletteSupplement.codexModel || '').trim();
-        const eff = String(slashPaletteSupplement.codexEffort || '').trim();
-        const next = agentModelEffortBadgeLabel(
-            'Codex',
-            model ? prettyCodexModelLabel(model) : '',
-            eff
-        );
-        if (!next) return;
-        repaintAgentUserBadges(/^Codex\b/i, next);
+        return agentControls.repaintCodexUserBadges();
     }
 
     function prettyClaudeModelLabel(model) {
-        return CuttleChatAgentModel.prettyClaudeModelLabel(
-            model, slashPaletteSupplement.claudeModels);
+        return agentControls.prettyClaudeModelLabel(model);
     }
 
     function claudeModelLabel(model) {
-        return CuttleChatAgentModel.claudeModelLabel(
-            model, slashPaletteSupplement.claudeModels);
+        return agentControls.claudeModelLabel(model);
     }
 
     function repaintClaudeUserBadges() {
-        const model = String(slashPaletteSupplement.claudeModel || '').trim();
-        const eff = String(slashPaletteSupplement.claudeEffort || '').trim();
-        const next = agentModelEffortBadgeLabel(
-            'Claude Code',
-            model ? prettyClaudeModelLabel(model) : '',
-            eff
-        );
-        if (!next) return;
-        repaintAgentUserBadges(/^Claude\b/i, next);
+        return agentControls.repaintClaudeUserBadges();
     }
 
     /**
@@ -9736,93 +6555,22 @@
      * Appends a warning chip when the run reports drift_warning / effort_ignored.
      */
     function enrichSlashCommandWithAgentBadge(replySlash, data, stickyCmd) {
-        if (!data) return replySlash || null;
-        const agentId = String((data && data.agent_id) || '').trim().toLowerCase();
-        const stickyPrefix = agentId ? '' : String((stickyCmd && stickyCmd.prefix) || '').trim().toLowerCase();
-        const isMuse = agentId === 'muse' || stickyPrefix.startsWith('/muse');
-        const isHermes = agentId === 'hermes' || stickyPrefix.startsWith('/hermes');
-        const isOpenCode = agentId === 'opencode' || stickyPrefix.startsWith('/opencode');
-        const isCodex = agentId === 'codex' || stickyPrefix.startsWith('/codex');
-        const isClaude = agentId === 'claude' || stickyPrefix.startsWith('/claude');
-        if (!isMuse && !isHermes && !isOpenCode && !isCodex && !isClaude) return replySlash || null;
-        const model = String(
-            (data && (data.agent_model || data.model)) || ''
-        ).trim();
-        const effort = CuttleChatAgentModel.resolveAgentEffortForBadge({
-            data,
-            pinnedEfforts: data.routing_badge ? [] : [
-                slashPaletteSupplement.museEffort,
-                slashPaletteSupplement.hermesEffort,
-                slashPaletteSupplement.opencodeEffort,
-                slashPaletteSupplement.codexEffort,
-                slashPaletteSupplement.claudeEffort,
-            ],
-        });
-        let out = replySlash || null;
-        if (isMuse) out = enrichSlashCommandWithMuseModel(out, model, effort);
-        else if (isHermes) out = enrichSlashCommandWithHermesModel(out, model, effort);
-        else if (isOpenCode) out = enrichSlashCommandWithOpenCodeModel(out, model, effort);
-        else if (isCodex) out = enrichSlashCommandWithCodexModel(out, model, effort);
-        else if (isClaude) out = enrichSlashCommandWithClaudeModel(out, model, effort);
-        const warn = String((data && (data.drift_warning || data.effort_ignored)) || '').trim();
-        if (warn) {
-            try { console.warn('[badge-drift]', warn); } catch (_) {}
-            const chips = (out && Array.isArray(out.chips)) ? out.chips.slice() : [];
-            chips.push({ label: '⚠️ badge drift', meta: warn, category: 'warning' });
-            out = { chips };
-        }
-        return out;
+        return agentControls.enrichSlashCommandWithAgentBadge(replySlash, data, stickyCmd);
     }
 
     /** Add the actual OpenCode model (+ pinned effort) to its live reply badge. */
     function enrichSlashCommandWithOpenCodeModel(replySlash, model, effort) {
-        return enrichSlashCommandWithAgentPin(replySlash, {
-            agentName: 'OpenCode',
-            category: 'opencode',
-            model: model,
-            effort: effort,
-            prettyModel: prettyOpenCodeModelLabel(model),
-            slashMeta: '/opencode',
-            matchChip: (chip) => {
-                const src = String((chip && (chip.meta || chip.prefix || chip.label)) || '');
-                const label = String((chip && chip.label) || '');
-                return /^\/opencode\b/i.test(src) || /^OpenCode\b/i.test(label);
-            },
-        });
+        return agentControls.enrichSlashCommandWithOpenCodeModel(replySlash, model, effort);
     }
 
     /** Add the actual Codex model (+ pinned effort) to its live reply badge. */
     function enrichSlashCommandWithCodexModel(replySlash, model, effort) {
-        return enrichSlashCommandWithAgentPin(replySlash, {
-            agentName: 'Codex',
-            category: 'codex',
-            model: model,
-            effort: effort,
-            prettyModel: prettyCodexModelLabel(model),
-            slashMeta: '/codex',
-            matchChip: (chip) => {
-                const src = String((chip && (chip.meta || chip.prefix || chip.label)) || '');
-                const label = String((chip && chip.label) || '');
-                return /^\/codex\b/i.test(src) || /^Codex\b/i.test(label);
-            },
-        });
+        return agentControls.enrichSlashCommandWithCodexModel(replySlash, model, effort);
     }
 
     /** Add the actual Claude model (+ pinned effort) to its live reply badge. */
     function enrichSlashCommandWithClaudeModel(replySlash, model, effort) {
-        return enrichSlashCommandWithAgentPin(replySlash, {
-            agentName: 'Claude Code',
-            category: 'claude',
-            model: model,
-            effort: effort,
-            prettyModel: prettyClaudeModelLabel(model),
-            slashMeta: '/claude',
-            matchChip: (chip) => {
-                const src = String((chip && (chip.meta || chip.prefix || chip.label)) || '');
-                const label = String((chip && chip.label) || '');
-                return /^\/claude\b/i.test(src) || /^Claude\b/i.test(label);
-            },
-        });
+        return agentControls.enrichSlashCommandWithClaudeModel(replySlash, model, effort);
     }
 
     /** Strip legacy Cursor banner/footer from older saved replies. */
@@ -11470,58 +8218,7 @@
             // Invalidate the per-session model cache before updating currentSessionId so
             // any render or send that follows picks up the correct model for the new session.
             if (currentSessionId !== sessionId) {
-                slashPaletteSupplement.preferredModel = 'auto';
-                slashPaletteSupplement.lastReportedModel = null;
-                slashPaletteSupplement.cursorModelsKey = '';
-                slashPaletteSupplement.cursorModelsLoaded = false;
-                // Same for Muse: don't carry previous session's contributor/plain pick
-                slashPaletteSupplement.museModel = '';
-                slashPaletteSupplement.museModels = [];
-                slashPaletteSupplement.museModelsKey = '';
-                slashPaletteSupplement.museModelsLoading = false;
-                slashPaletteSupplement.museModelDirty = false;
-                slashPaletteSupplement.museEffortDirty = false;
-                slashPaletteSupplement.museEffort = '';
-                slashPaletteSupplement.museEffortKey = '';
-                slashPaletteSupplement.museEffortLoading = false;
-                slashPaletteSupplement.hermesModel = '';
-                slashPaletteSupplement.hermesModels = [];
-                slashPaletteSupplement.hermesModelsKey = '';
-                slashPaletteSupplement.hermesModelsLoading = false;
-                slashPaletteSupplement.hermesModelDirty = false;
-                slashPaletteSupplement.hermesEffortDirty = false;
-                slashPaletteSupplement.hermesEffort = '';
-                slashPaletteSupplement.hermesEffortKey = '';
-                slashPaletteSupplement.hermesEffortLoading = false;
-                slashPaletteSupplement.opencodeModel = '';
-                slashPaletteSupplement.opencodeModels = [];
-                slashPaletteSupplement.opencodeModelsKey = '';
-                slashPaletteSupplement.opencodeModelsLoading = false;
-                slashPaletteSupplement.opencodeModelDirty = false;
-                slashPaletteSupplement.opencodeEffortDirty = false;
-                slashPaletteSupplement.opencodeEffort = '';
-                slashPaletteSupplement.opencodeEffortKey = '';
-                slashPaletteSupplement.opencodeEffortLoading = false;
-                slashPaletteSupplement.codexModel = '';
-                slashPaletteSupplement.codexModels = [];
-                slashPaletteSupplement.codexCommonEfforts = [];
-                slashPaletteSupplement.codexModelsKey = '';
-                slashPaletteSupplement.codexModelsLoading = false;
-                slashPaletteSupplement.codexModelDirty = false;
-                slashPaletteSupplement.codexEffortDirty = false;
-                slashPaletteSupplement.codexEffort = '';
-                slashPaletteSupplement.codexEffortKey = '';
-                slashPaletteSupplement.codexEffortLoading = false;
-                slashPaletteSupplement.claudeModel = '';
-                slashPaletteSupplement.claudeModels = [];
-                slashPaletteSupplement.claudeCommonEfforts = [];
-                slashPaletteSupplement.claudeModelsKey = '';
-                slashPaletteSupplement.claudeModelsLoading = false;
-                slashPaletteSupplement.claudeModelDirty = false;
-                slashPaletteSupplement.claudeEffortDirty = false;
-                slashPaletteSupplement.claudeEffort = '';
-                slashPaletteSupplement.claudeEffortKey = '';
-                slashPaletteSupplement.claudeEffortLoading = false;
+                agentControls.invalidateProviderCacheForSessionSwitch();
             }
             releaseManualUnreadHoldIfLeaving(sessionId);
             const prevSessionId = currentSessionId;
@@ -11728,8 +8425,8 @@
 
             // Proactively fetch the per-session model preference so the composer chip
             // and typing indicator show the correct model before the palette is opened.
-            loadCursorAgentModelsForPalette(true);
-            loadMuseModelsForPalette(true);
+            agentControls.loadCursorAgentModelsForPalette(true);
+            agentControls.loadMuseModelsForPalette(true);
 
             markChatSessionRead(sessionId);
             document.querySelectorAll('.chat-history-item').forEach(item => {
@@ -12009,46 +8706,7 @@
         // Persist a Muse model/effort picked while the chat had no id yet. Only
         // dirty picks persist here — persisting the in-memory default would
         // clobber the stored pin (e.g. Contributor reset to plain Spark 1.3).
-        if (slashPaletteSupplement.museModelDirty) {
-            slashPaletteSupplement.museModelDirty = false;
-            persistMuseModelSelection(slashPaletteSupplement.museModel);
-        }
-        if (slashPaletteSupplement.museEffortDirty) {
-            slashPaletteSupplement.museEffortDirty = false;
-            persistMuseEffortSelection(slashPaletteSupplement.museEffort);
-        }
-        if (slashPaletteSupplement.hermesModelDirty) {
-            slashPaletteSupplement.hermesModelDirty = false;
-            persistHermesModelSelection(slashPaletteSupplement.hermesModel);
-        }
-        if (slashPaletteSupplement.hermesEffortDirty) {
-            slashPaletteSupplement.hermesEffortDirty = false;
-            persistHermesEffortSelection(slashPaletteSupplement.hermesEffort);
-        }
-        if (slashPaletteSupplement.opencodeModelDirty) {
-            slashPaletteSupplement.opencodeModelDirty = false;
-            persistOpenCodeModelSelection(slashPaletteSupplement.opencodeModel);
-        }
-        if (slashPaletteSupplement.opencodeEffortDirty) {
-            slashPaletteSupplement.opencodeEffortDirty = false;
-            persistOpenCodeEffortSelection(slashPaletteSupplement.opencodeEffort);
-        }
-        if (slashPaletteSupplement.codexModelDirty) {
-            slashPaletteSupplement.codexModelDirty = false;
-            persistCodexModelSelection(slashPaletteSupplement.codexModel);
-        }
-        if (slashPaletteSupplement.codexEffortDirty) {
-            slashPaletteSupplement.codexEffortDirty = false;
-            persistCodexEffortSelection(slashPaletteSupplement.codexEffort);
-        }
-        if (slashPaletteSupplement.claudeModelDirty) {
-            slashPaletteSupplement.claudeModelDirty = false;
-            persistClaudeModelSelection(slashPaletteSupplement.claudeModel);
-        }
-        if (slashPaletteSupplement.claudeEffortDirty) {
-            slashPaletteSupplement.claudeEffortDirty = false;
-            persistClaudeEffortSelection(slashPaletteSupplement.claudeEffort);
-        }
+        agentControls.flushDirtyAgentSelectionsOnAdopt();
         // Owned by chat_generation.js — rebind the local lock to the newly
         // bound session while loading; idle means no lock to move.
         const rebound = CuttleChatGeneration.rebindGeneration(generation, sessionId);
@@ -18718,440 +15376,19 @@ function downloadTranscriptMarkdown(text, sessionId) {
         return '';
     }
 
-    // ── Agent context radial (Cursor / Muse / OpenCode / Codex) ─────────────
-    const CONTEXT_GAUGE_AGENTS = new Set(['cursor', 'muse', 'opencode', 'codex', 'antigravity', 'hermes', 'claude', 'deepseek']);
-    let _agentContextStatus = null;
-    let _agentContextFetchTimer = 0;
-    let _agentContextBusy = false;
-    let _contextGaugePopoverEl = null;
-
-    function stickyContextGaugeAgentId() {
-        for (const key of ['chat', 'welcome']) {
-            const chips = (slashCtx[key] && slashCtx[key].chips) || [];
-            for (const chip of chips) {
-                const prefix = String((chip && chip.prefix) || '').toLowerCase();
-                const meta = String((chip && chip.meta) || '').toLowerCase();
-                const cat = String((chip && chip.category) || '').toLowerCase();
-                const label = String((chip && chip.label) || '').toLowerCase();
-                for (const aid of CONTEXT_GAUGE_AGENTS) {
-                    if (
-                        prefix === '/' + aid
-                        || prefix.startsWith('/' + aid + ' ')
-                        || cat === aid
-                        || meta.startsWith('/' + aid)
-                        || (aid === 'muse' && label.startsWith('muse code'))
-                        || (aid === 'opencode' && label.startsWith('opencode'))
-                        || (aid === 'codex' && label.startsWith('codex'))
-                        || (aid === 'cursor' && (label.startsWith('cursor') || cat === 'cursor'))
-                    ) {
-                        return aid;
-                    }
-                }
-            }
-        }
-        return null;
-    }
-
-    function formatContextTokenCount(n) {
-        const v = Number(n) || 0;
-        if (v >= 1_000_000) {
-            const m = v / 1_000_000;
-            return (m >= 10 ? Math.round(m) : Math.round(m * 10) / 10) + 'M';
-        }
-        if (v >= 1000) {
-            const k = v / 1000;
-            return (k >= 100 ? Math.round(k) : Math.round(k * 10) / 10) + 'k';
-        }
-        return String(Math.round(v));
-    }
-
-    function applyContextGaugeDom(btn, status) {
-        if (!btn) return;
-        const arc = btn.querySelector('.context-gauge-arc');
-        const pct = Math.max(0, Math.min(100, Number(status && status.percent) || 0));
-        const used = Number(status && status.used_tokens) || 0;
-        const limit = Number(status && status.limit_tokens) || 0;
-        const agent = (status && status.agent_id) || stickyContextGaugeAgentId() || 'agent';
-        const aggregated = (status && status.token_source) === 'aggregated' && used <= 0;
-        if (arc) {
-            const filled = aggregated ? 0 : Math.round(pct * 10) / 10;
-            arc.setAttribute('stroke-dasharray', filled + ' ' + (100 - filled));
-        }
-        btn.classList.toggle('context-gauge--warn', !aggregated && pct >= 60 && pct < 85);
-        btn.classList.toggle('context-gauge--hot', !aggregated && pct >= 85);
-        const tipParts = [
-            agent.charAt(0).toUpperCase() + agent.slice(1) + ' context',
-        ];
-        if (aggregated) {
-            tipParts.push('awaiting next reply');
-        } else {
-            tipParts.push(Math.round(pct) + '%');
-            if (used || limit) {
-                tipParts.push(
-                    formatContextTokenCount(used) + ' / ' + formatContextTokenCount(limit)
-                );
-            }
-        }
-        if (status && status.hint) tipParts.push(status.hint);
-        tipParts.push('Click for details / Compact');
-        btn.title = tipParts.join(' · ');
-        btn.setAttribute(
-            'aria-label',
-            aggregated
-                ? agent + ' context awaiting next reply'
-                : (agent + ' context ' + Math.round(pct) + ' percent')
-        );
-    }
-
-    function setContextGaugeVisible(visible) {
-        ['chatContextGauge', 'welcomeContextGauge'].forEach((id) => {
-            const btn = document.getElementById(id);
-            if (!btn) return;
-            btn.hidden = !visible;
-            if (!visible) {
-                btn.classList.remove('context-gauge--warn', 'context-gauge--hot');
-                const arc = btn.querySelector('.context-gauge-arc');
-                if (arc) arc.setAttribute('stroke-dasharray', '0 100');
-            }
-        });
-        if (!visible) closeContextGaugePopover();
-    }
-
-    function paintContextGaugeFromStatus(status) {
-        _agentContextStatus = status && status.success ? status : null;
-        const agent = stickyContextGaugeAgentId();
-        if (!agent) {
-            setContextGaugeVisible(false);
-            return;
-        }
-        setContextGaugeVisible(true);
-        const payload = status && status.success
-            ? status
-            : {
-                success: true,
-                agent_id: agent,
-                percent: 0,
-                used_tokens: 0,
-                limit_tokens: 1000000,
-                hint: 'Waiting for the next turn to report context size.',
-            };
-        ['chatContextGauge', 'welcomeContextGauge'].forEach((id) => {
-            applyContextGaugeDom(document.getElementById(id), payload);
-        });
-        const pop = _contextGaugePopoverEl;
-        if (pop && !pop.hidden) renderContextGaugePopover(pop, payload);
-    }
-
-    function noteUsageForContextGauge(usage, agentHint) {
-        const u = normalizeUsagePayload(usage);
-        const agent = normalizeAgentHint(agentHint) || stickyContextGaugeAgentId();
-        if (!agent || !CONTEXT_GAUGE_AGENTS.has(agent)) return;
-        const raw = usage && typeof usage === 'object' ? usage : {};
-        const peak = Number(
-            raw.context_tokens != null ? raw.context_tokens
-                : (raw.peak_context_tokens != null ? raw.peak_context_tokens : raw.contextTokens)
-        ) || 0;
-        // Billing input is summed across calls. Only seed the ring from an
-        // explicit occupancy stamp; the API supplies live/transcript fallbacks.
-        let fill = peak;
-        if (agent === 'cursor' && peak > 0) {
-            const cr = Number(raw.cache_read_tokens || raw.cacheReadTokens || 0) || 0;
-            const cw = Number(raw.cache_write_tokens || raw.cacheWriteTokens || 0) || 0;
-            const sumIn = ((u && u.prompt_tokens) || 0) + cr + cw;
-            if (peak >= 400000 && cr >= 200000 && peak >= cr &&
-                    Math.abs(peak - sumIn) <= Math.max(2000, peak * 0.03)) fill = 0;
-        }
-        if (!fill) scheduleAgentContextGaugeRefresh(250);
-        if (!fill) return;
-        const prev = _agentContextStatus || {};
-        const limit = Number(prev.limit_tokens) || (
-            (agent === 'opencode' || agent === 'codex') ? 200000 : 1000000
-        );
-        const pct = Math.min(100, Math.round((1000 * fill) / limit) / 10);
-        paintContextGaugeFromStatus({
-            success: true,
-            agent_id: agent,
-            model: (u && u.model) || prev.model || '',
-            used_tokens: fill,
-            limit_tokens: limit,
-            percent: pct,
-            estimated: true,
-            compact_available: true,
-            hint: pct >= 85
-                ? 'Context is nearly full — compact soon to avoid overflows.'
-                : (pct >= 60
-                    ? 'Context is filling up — compact when the thread feels heavy.'
-                    : 'Context looks healthy.'),
-            has_resume: prev.has_resume,
-        });
-        scheduleAgentContextGaugeRefresh(250);
-    }
-
-    function normalizeAgentHint(raw) {
-        const s = String(raw || '').toLowerCase().replace(/^\//, '');
-        for (const aid of CONTEXT_GAUGE_AGENTS) {
-            if (s === aid || s.startsWith(aid + ' ') || s.startsWith(aid + '_')) return aid;
-        }
-        return null;
-    }
-
-    async function fetchAgentContextStatus(opts) {
-        const live = !!(opts && opts.live);
-        const agent = stickyContextGaugeAgentId();
-        if (!agent) {
-            setContextGaugeVisible(false);
-            _agentContextStatus = null;
-            return null;
-        }
-        setContextGaugeVisible(true);
-        if (!currentSessionId) {
-            paintContextGaugeFromStatus({
-                success: true,
-                agent_id: agent,
-                percent: 0,
-                used_tokens: 0,
-                limit_tokens: (agent === 'opencode' || agent === 'codex') ? 200000 : 1000000,
-                hint: 'No agent session yet — send a message to start tracking context.',
-            });
-            return _agentContextStatus;
-        }
-        const qs = new URLSearchParams();
-        qs.set('agent', agent);
-        qs.set('session', String(currentSessionId));
-        if (live) qs.set('live', '1');
-        const path = (currentProject && currentProject.path) ? String(currentProject.path) : '';
-        if (path) qs.set('path', path);
-        try {
-            const res = await fetch('/api/agent-context?' + qs.toString(), {
-                credentials: 'same-origin',
-            });
-            const data = await res.json().catch(() => ({}));
-            if (data && data.success) {
-                paintContextGaugeFromStatus(data);
-                return data;
-            }
-            paintContextGaugeFromStatus({
-                success: true,
-                agent_id: agent,
-                percent: (_agentContextStatus && _agentContextStatus.percent) || 0,
-                used_tokens: (_agentContextStatus && _agentContextStatus.used_tokens) || 0,
-                limit_tokens: (_agentContextStatus && _agentContextStatus.limit_tokens) || 1000000,
-                hint: (data && data.error) || 'Could not load context status.',
-            });
-        } catch (_) {
-            /* keep last paint */
-        }
-        return _agentContextStatus;
-    }
-
-    function scheduleAgentContextGaugeRefresh(delayMs) {
-        if (_agentContextFetchTimer) clearTimeout(_agentContextFetchTimer);
-        _agentContextFetchTimer = setTimeout(() => {
-            _agentContextFetchTimer = 0;
-            fetchAgentContextStatus();
-        }, delayMs == null ? 80 : delayMs);
-    }
-
-    function ensureContextGaugePopover() {
-        if (_contextGaugePopoverEl && _contextGaugePopoverEl.isConnected) {
-            return _contextGaugePopoverEl;
-        }
-        const el = document.createElement('div');
-        el.className = 'context-gauge-popover';
-        el.hidden = true;
-        el.setAttribute('role', 'dialog');
-        el.setAttribute('aria-label', 'Agent context usage');
-        document.body.appendChild(el);
-        _contextGaugePopoverEl = el;
-        return el;
-    }
-
-    function closeContextGaugePopover() {
-        const el = _contextGaugePopoverEl;
-        if (!el) return;
-        el.hidden = true;
-        el.innerHTML = '';
-        ['chatContextGauge', 'welcomeContextGauge'].forEach((id) => {
-            const btn = document.getElementById(id);
-            if (btn) btn.setAttribute('aria-expanded', 'false');
-        });
-    }
-
-    function renderContextGaugePopover(el, status) {
-        const agent = (status && status.agent_id) || stickyContextGaugeAgentId() || 'agent';
-        const pct = Math.round(Number(status && status.percent) || 0);
-        const used = Number(status && status.used_tokens) || 0;
-        const limit = Number(status && status.limit_tokens) || 0;
-        const model = (status && status.model) ? String(status.model) : '';
-        const hint = (status && status.hint) || '';
-        const aggregated = (status && status.token_source) === 'aggregated' && used <= 0;
-        const label = agent.charAt(0).toUpperCase() + agent.slice(1);
-        const meter = aggregated
-            ? `<strong>—</strong> · waiting for next reply`
-            : (`<strong>${pct}%</strong>` +
-                (used || limit
-                    ? ` · ${escapeHtml(formatContextTokenCount(used))} / ${escapeHtml(formatContextTokenCount(limit))}`
-                    : '') +
-                (model ? ` · ${escapeHtml(model)}` : ''));
-        const canCompact = !(status && status.compact_available === false);
-        el.innerHTML =
-            `<p class="context-gauge-popover-title">${escapeHtml(label)} context</p>` +
-            `<p class="context-gauge-popover-meter">${meter}</p>` +
-            (hint ? `<p class="context-gauge-popover-hint">${escapeHtml(hint)}</p>` : '') +
-            `<div class="context-gauge-popover-actions">` +
-            (canCompact
-                ? (`<button type="button" class="context-gauge-compact-btn" data-action="compact"` +
-                    (_agentContextBusy ? ' disabled' : '') +
-                    `>${_agentContextBusy ? 'Compacting…' : 'Compact'}</button>`)
-                : '') +
-            `<button type="button" class="context-gauge-popover-close" data-action="close">Close</button>` +
-            `</div>`;
-    }
-
-    function positionContextGaugePopover(anchorBtn, pop) {
-        const rect = anchorBtn.getBoundingClientRect();
-        const pad = 8;
-        pop.style.visibility = 'hidden';
-        pop.hidden = false;
-        const pw = pop.offsetWidth || 240;
-        const ph = pop.offsetHeight || 120;
-        let left = rect.right - pw;
-        let top = rect.top - ph - 8;
-        if (top < pad) top = rect.bottom + 8;
-        if (left < pad) left = pad;
-        if (left + pw > window.innerWidth - pad) {
-            left = Math.max(pad, window.innerWidth - pw - pad);
-        }
-        pop.style.left = Math.round(left) + 'px';
-        pop.style.top = Math.round(top) + 'px';
-        pop.style.visibility = '';
-    }
-
-    async function openContextGaugePopover(anchorBtn) {
-        const agent = stickyContextGaugeAgentId();
-        if (!agent || !anchorBtn) return;
-        const pop = ensureContextGaugePopover();
-        let status = _agentContextStatus;
-        const needsLive = agent === 'codex' && (
-            !status
-            || status.agent_id !== agent
-            || status.token_source === 'aggregated'
-            || !(Number(status.used_tokens) > 0)
-        );
-        if (!status || status.agent_id !== agent || needsLive) {
-            status = await fetchAgentContextStatus({ live: needsLive });
-        }
-        renderContextGaugePopover(pop, status || { agent_id: agent, percent: 0 });
-        positionContextGaugePopover(anchorBtn, pop);
-        anchorBtn.setAttribute('aria-expanded', 'true');
-        const compactBtn = pop.querySelector('[data-action="compact"]');
-        if (compactBtn) {
-            compactBtn.onclick = () => runAgentContextCompact(anchorBtn);
-        }
-        const closeBtn = pop.querySelector('[data-action="close"]');
-        if (closeBtn) closeBtn.onclick = () => closeContextGaugePopover();
-    }
-
-    async function runAgentContextCompact(anchorBtn) {
-        const agent = stickyContextGaugeAgentId();
-        if (!agent || _agentContextBusy) return;
-        if (!currentSessionId) {
-            try {
-                if (window.showToast) window.showToast('Send a message first so the agent session exists.', 'info');
-            } catch (_) {}
-            return;
-        }
-        _agentContextBusy = true;
-        ['chatContextGauge', 'welcomeContextGauge'].forEach((id) => {
-            const b = document.getElementById(id);
-            if (b) b.classList.add('context-gauge--busy');
-        });
-        const pop = ensureContextGaugePopover();
-        if (!pop.hidden) {
-            renderContextGaugePopover(pop, _agentContextStatus || { agent_id: agent, percent: 0 });
-            if (anchorBtn) positionContextGaugePopover(anchorBtn, pop);
-        }
-        try {
-            const body = {
-                agent,
-                session: currentSessionId,
-                path: (currentProject && currentProject.path) ? String(currentProject.path) : '',
-            };
-            const res = await fetch('/api/agent-context/compact', {
-                method: 'POST',
-                credentials: 'same-origin',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
-            });
-            const data = await res.json().catch(() => ({}));
-            if (data && data.success) {
-                try {
-                    if (window.showToast) {
-                        window.showToast(
-                            (agent.charAt(0).toUpperCase() + agent.slice(1)) + ' context compacted',
-                            'success'
-                        );
-                    }
-                } catch (_) {}
-                if (data.status && data.status.success) {
-                    paintContextGaugeFromStatus(data.status);
-                } else {
-                    scheduleAgentContextGaugeRefresh(400);
-                }
-            } else {
-                const err = (data && data.error) || 'Compact failed';
-                try {
-                    if (window.showToast) window.showToast(err, 'error');
-                } catch (_) {}
-            }
-        } catch (e) {
-            try {
-                if (window.showToast) window.showToast(String(e && e.message || e), 'error');
-            } catch (_) {}
-        } finally {
-            _agentContextBusy = false;
-            ['chatContextGauge', 'welcomeContextGauge'].forEach((id) => {
-                const b = document.getElementById(id);
-                if (b) b.classList.remove('context-gauge--busy');
-            });
-            if (anchorBtn && _contextGaugePopoverEl && !_contextGaugePopoverEl.hidden) {
-                openContextGaugePopover(anchorBtn);
-            } else {
-                closeContextGaugePopover();
-            }
-        }
-    }
-
-    function initContextGaugeControls() {
-        ['chatContextGauge', 'welcomeContextGauge'].forEach((id) => {
-            const btn = document.getElementById(id);
-            if (!btn || btn.dataset.contextGaugeBound) return;
-            btn.dataset.contextGaugeBound = '1';
-            btn.addEventListener('click', (ev) => {
-                ev.preventDefault();
-                ev.stopPropagation();
-                if (btn.getAttribute('aria-expanded') === 'true'
-                    && _contextGaugePopoverEl
-                    && !_contextGaugePopoverEl.hidden) {
-                    closeContextGaugePopover();
-                    return;
-                }
-                openContextGaugePopover(btn);
-            });
-        });
-        document.addEventListener('click', (ev) => {
-            const pop = _contextGaugePopoverEl;
-            if (!pop || pop.hidden) return;
-            const t = ev.target;
-            if (pop.contains(t)) return;
-            if (t && t.closest && t.closest('.context-gauge-btn')) return;
-            closeContextGaugePopover();
-        });
-        document.addEventListener('keydown', (ev) => {
-            if (ev.key === 'Escape') closeContextGaugePopover();
-        });
-        scheduleAgentContextGaugeRefresh(200);
-    }
+    // Agent context radial (Cursor / Muse / OpenCode / Codex …): owned by
+    // chat_context_gauge.js. The page supplies page scope as capabilities; the
+    // controller owns the status/timer/popover state.
+    const contextGauge = CuttleChatContextGauge.create({
+        win: window,
+        fetch: (url, opts) => fetch(url, opts),
+        escapeHtml,
+        normalizeUsage: normalizeUsagePayload,
+        getSlashCtx: () => slashCtx,
+        getSessionId: () => currentSessionId,
+        getProjectPath: () => (currentProject && currentProject.path) ? String(currentProject.path) : '',
+        toast: (message, variant) => (window.showToast || function () {})(message, variant),
+    });
 
     // Transcript navigation: follow-latest scroll, nav rail + pins, jumps,
     // ?msg= deep links and message refs (chat_transcript_nav.js).
@@ -20607,7 +16844,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
         setupChatAttentionListeners();
         transcriptNav.updateJumpToBottomVisibility();
         updateSessionTitleUnreadDot();
-        try { initContextGaugeControls(); } catch (e) { LOG_ERR('context gauge init', e); }
+        try { contextGauge.init(); } catch (e) { LOG_ERR('context gauge init', e); }
 
         LOG('DOMContentLoaded: init complete. In iframe=', window !== window.parent);
     });

@@ -18,6 +18,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CHAT_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_page.js"
 SLASH_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_slash.js"
+COMPOSER_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_composer.js"
 
 pytestmark = pytest.mark.skipif(
     shutil.which("node") is None, reason="node not available"
@@ -44,8 +45,10 @@ def _run_composer(chips, body):
     )
 
     slash_mod = str(SLASH_JS)
+    composer_mod = str(COMPOSER_JS)
     harness = f"""
 const CuttleChatSlash = require({json.dumps(str(slash_mod))});
+const CuttleChatComposer = require({json.dumps(str(composer_mod))});
 {commands}
 {control}
 const slashCtx = {{

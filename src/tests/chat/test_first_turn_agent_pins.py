@@ -18,6 +18,9 @@ CHAT_JS = Path(__file__).resolve().parents[2] / "web" / "js" / "chat/chat_page.j
 AGENT_MODEL_JS = (
     Path(__file__).resolve().parents[2] / "web" / "js" / "chat/chat_agent_model.js"
 )
+AGENT_CONTROLS_JS = (
+    Path(__file__).resolve().parents[2] / "web" / "js" / "chat/chat_agent_controls.js"
+)
 
 # Harnesses that pin reasoning effort (Cursor bakes effort into the model id).
 EFFORT_AGENTS = ("muse", "hermes", "opencode", "codex")
@@ -69,16 +72,25 @@ def effort_agent(request):
 
 
 def test_chat_request_attaches_active_identity_even_when_not_dirty():
-    """Active harness composer pins always go on the POST — not only *Dirty."""
+    """Active harness composer pins always go on the POST — not only *Dirty.
+
+    Slice 2A stage 3 moved the pin attachment into CuttleChatAgentControls; the
+    page keeps a thin delegate that the send path still calls.
+    """
     src = CHAT_JS.read_text(encoding="utf-8")
+    controls = AGENT_CONTROLS_JS.read_text(encoding="utf-8")
     assert "function attachAgentIdentityToRequest(requestBody)" in src
-    start = src.index("function attachAgentIdentityToRequest(requestBody)")
-    end = src.index("\n    function ", start + 10)
-    body = src[start:end]
+    delegate = "return agentControls.attachAgentIdentityToRequest(requestBody);"
+    assert delegate in src
+    # Pin-building behavior lives on the controller owner; the page only gathers
+    # the send request and delegates.
+    start = controls.index("function attachAgentIdentityToRequest(requestBody)")
+    end = controls.index("\n        function ", start + 10)
+    body = controls[start:end]
     assert "requestBody.agent_pins" in body
     assert "CuttleChatAgentModel.buildAgentPinsForRequest" in body
     # Pins-building decisions live in the owned Agent/Model module
-    # (Phase 3 Slice 7); the page only gathers supplement state.
+    # (Phase 3 Slice 7); the controller only gathers supplement state.
     mod = AGENT_MODEL_JS.read_text(encoding="utf-8")
     assert "function buildAgentPinsForRequest(parts)" in mod
     assert "else if (aid === 'codex') put('codex', S.codex)" in mod

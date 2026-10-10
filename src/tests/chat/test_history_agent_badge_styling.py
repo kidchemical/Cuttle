@@ -27,6 +27,9 @@ def _extract(src: str, start_marker: str, end_marker: str) -> str:
 
 def test_frontend_wires_unified_history_badge_path():
     text = CHAT_JS.read_text(encoding="utf-8")
+    # Slice 2A stage 3 moved the label/repaint/enrichment families into
+    # CuttleChatAgentControls; assert the wiring across page + owner.
+    text += "\n" + (CHAT_JS.parent / "chat_agent_controls.js").read_text(encoding="utf-8")
     assert "resolveSlashChipPaletteCategory" in text
     assert "normalizeAgentSlashChips" in text
     assert "normalizeAgentSlashChips(chips, sessionId)" in text

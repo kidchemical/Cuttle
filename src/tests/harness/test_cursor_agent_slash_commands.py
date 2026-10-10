@@ -357,6 +357,9 @@ def test_handle_model_refresh(monkeypatch):
 def test_cursor_model_refresh_palette_wired():
     js = Path(__file__).resolve().parents[2] / "web" / "js" / "chat/chat_page.js"
     text = js.read_text(encoding="utf-8")
+    # Slice 2A moved the model palette builder into the
+    # CuttleChatAgentControls owner; assert across page + owner.
+    text += "\n" + (js.parent / "chat_agent_controls.js").read_text(encoding="utf-8")
     assert "/model refresh" in text
     # Staged as cursor-cmd (not instant cursorRefresh on pick).
     assert "category: 'cursor-cmd'" in text

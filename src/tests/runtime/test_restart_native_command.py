@@ -75,25 +75,33 @@ def test_restart_is_registered_in_the_shared_slash_command_list():
 
 
 def test_restart_subcommands_are_searchable_palette_entries():
-    src = CHAT_JS.read_text(encoding="utf-8")
-    assert "function buildRestartPaletteItems" in src
+    # Palette assembly (and the /restart subcommand rows) moved to
+    # chat_slash_palette.js (CuttleChatSlashPalette).
+    palette_src = (CHAT_JS.parent / "chat_slash_palette.js").read_text(encoding="utf-8")
+    assert "function buildRestartPaletteItems" in palette_src
     for cmd in ("/restart status", "/restart graceful", "/restart when-idle", "/restart force --yes"):
-        assert f"'{cmd}'" in src
+        assert f"'{cmd}'" in palette_src
     # Wired into the one palette builder every other command source feeds.
-    assert "buildRestartPaletteItems(f)" in src
-    assert ".concat(restartCmds)" in src
+    assert "buildRestartPaletteItems(f)" in palette_src
+    assert ".concat(restartCmds)" in palette_src
 
 
 # ── 12/13. chip rendering + sticky agents survive ────────────────────────────
 
 def test_control_command_uses_the_existing_chip_mechanism_and_keeps_sticky_agent():
     src = CHAT_JS.read_text(encoding="utf-8")
+    palette_src = (CHAT_JS.parent / "chat_slash_palette.js").read_text(encoding="utf-8")
     # Palette entries are category 'command', i.e. the normal chip/badge path.
-    assert "category: 'command'," in src
-    # Sticky agent chips are not prepended onto a control command...
+    assert "category: 'command'," in palette_src
+    # Sticky agent chips are not prepended onto a control command. The
+    # composition decision lives in chat_composer.js; the page adapter
+    # passes the native-control classifier.
     compose = src.split("function composeMessageWithSlashChip", 1)[1].split("\n    }", 1)[0]
-    assert "isControlCommandPrefix" in compose
-    assert "isNativeControlCommand(body)" in compose
+    assert "CuttleChatComposer.composeMessageWithSlashChip" in compose
+    assert "isControl: isNativeControlCommand" in compose
+    composer_src = (CHAT_JS.parent / "chat_composer.js").read_text(encoding="utf-8")
+    assert "isControl(c.prefix)" in composer_src
+    assert "isControl(body)" in composer_src
     # ...and are not evicted by sending one.
     sticky = src.split("function applyStickySlashAfterComposerSend", 1)[1].split("\n    }", 1)[0]
     assert "isNativeControlCommand(message)" in sticky
