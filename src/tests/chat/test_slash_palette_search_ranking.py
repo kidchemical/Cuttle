@@ -13,23 +13,33 @@ pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node not a
 
 def run_js(body):
     page = (ROOT / "src/web/js/chat/chat_page.js").read_text(encoding="utf-8")
-    names = ["filterSlashPaletteItems", "buildCodexEffortPaletteItems",
-             "buildCodexModelPaletteItems", "buildOpenCodeModelPaletteItems",
-             "buildRestartPaletteItems"]
-    blocks = []
-    for name in names:
-        start = page.index(f"    function {name}(")
-        end = page.index("\n    function ", start + 10)
-        blocks.append(page[start:end])
+    controls = (ROOT / "src/web/js/chat/chat_agent_controls.js").read_text(encoding="utf-8")
+    # filterSlashPaletteItems stays page-owned; the model/effort builders it
+    # dispatches now live on CuttleChatAgentControls.
+    start = page.index("    function filterSlashPaletteItems(")
+    end = page.index("\n    function ", start + 10)
+    blocks = [page[start:end]]
+    for name in ("buildCodexEffortPaletteItems", "buildCodexModelPaletteItems",
+                 "buildOpenCodeModelPaletteItems", "buildRestartPaletteItems"):
+        source = controls if name.startswith("buildCodex") or name == "buildOpenCodeModelPaletteItems" else page
+        marker = "        function " if source is controls else "    function "
+        s = source.index(f"{marker}{name}(")
+        e = source.index(f"\n{marker}", s + 10)
+        blocks.append(source[s:e])
     setup = """
 const CuttleChatSlash = require('./src/web/js/chat/chat_slash.js');
 const S = CuttleChatSlash;
+const slashApi = S;
 const slashPaletteItemMatches = S.slashPaletteItemMatches;
+const itemMatches = S.slashPaletteItemMatches;
 const slashPaletteTypeBucket = S.slashPaletteTypeBucket;
 const slashPaletteTypeFilter = 'all';
-const slashPaletteSupplement = {codexModels: [], codexCommonEfforts: ['low','medium','high','xhigh'],
+const state = {codexModels: [], codexCommonEfforts: ['low','medium','high','xhigh'],
     opencodeModels: []};
+const slashPaletteSupplement = state;
+const d = {hasActiveCodex: () => true, hasActiveOpenCode: () => true};
 const agentSupportsEffort = () => true;
+const supportsEffort = () => true;
 const hasActiveCodexAgentChip = () => true;
 const hasActiveOpenCodeAgentChip = () => true;
 const loadCodexEffortForPalette = () => {};
@@ -44,17 +54,22 @@ const cursorAgentSlashCommandsForPalette = () => cursorCommands;
 const harnessUsageSlashCommandsForPalette = () => [];
 const buildProjectPaletteItems = () => [];
 const buildProjectCommandPaletteItems = () => projectCommands;
-const buildCursorModelPaletteItems = () => [];
-const buildMuseModelPaletteItems = () => [];
-const buildMuseEffortPaletteItems = () => [];
-const buildHermesModelPaletteItems = () => [];
-const buildHermesEffortPaletteItems = () => [];
-const buildOpenCodeEffortPaletteItems = () => [];
-const buildClaudeModelPaletteItems = () => [];
-const buildClaudeEffortPaletteItems = () => [];
 const readStarredSlashPrefixes = () => stars;
 const readStarredProject = () => null;
 const normalizeStarredProjectPath = () => '';
+const agentControls = {
+  buildCodexModelPaletteItems: (...a) => buildCodexModelPaletteItems(...a),
+  buildOpenCodeModelPaletteItems: (...a) => buildOpenCodeModelPaletteItems(...a),
+  buildCodexEffortPaletteItems: (...a) => buildCodexEffortPaletteItems(...a),
+  buildCursorModelPaletteItems: () => [],
+  buildMuseModelPaletteItems: () => [],
+  buildMuseEffortPaletteItems: () => [],
+  buildHermesModelPaletteItems: () => [],
+  buildHermesEffortPaletteItems: () => [],
+  buildOpenCodeEffortPaletteItems: () => [],
+  buildClaudeModelPaletteItems: () => [],
+  buildClaudeEffortPaletteItems: () => [],
+};
 """
     result = subprocess.run(["node", "-e", setup + "\n".join(blocks) + body],
                             cwd=ROOT, capture_output=True, text=True, encoding="utf-8", timeout=30)

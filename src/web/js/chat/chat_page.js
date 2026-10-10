@@ -4271,93 +4271,65 @@
         return !wasStarred;
     }
 
-    const slashPaletteSupplement = {
-        cursorModels: [],
-        preferredModel: 'auto',
-        lastReportedModel: null,
-        projectCommands: [],
-        projectCommandsPath: '',
-        loading: false,
-        loaded: false,
-        cursorModelsLoading: false,
-        cursorModelsLoaded: false,
-        cursorModelsKey: '',
-        cursorModelsCount: 0,
-        museModels: [],
-        museModel: '',
-        museModelsLoading: false,
-        museModelsKey: '',
-        museModelsCount: 0,
-        museModelsSource: '',
-        museModelDirty: false,
-        museEffortDirty: false,
-        museEffort: '',
-        museEffortLoading: false,
-        museEffortKey: '',
-        hermesModels: [],
-        hermesModel: '',
-        hermesModelsLoading: false,
-        hermesModelsKey: '',
-        hermesModelDirty: false,
-        hermesEffortDirty: false,
-        hermesEffort: '',
-        hermesEffortLoading: false,
-        hermesEffortKey: '',
-        opencodeModels: [],
-        opencodeModel: '',
-        opencodeModelsLoading: false,
-        opencodeModelsKey: '',
-        opencodeModelsSource: '',
-        opencodeModelsCount: 0,
-        opencodeModelDirty: false,
-        opencodeEffortDirty: false,
-        opencodeEffort: '',
-        opencodeEffortLoading: false,
-        opencodeEffortKey: '',
-        codexModels: [],
-        codexModel: '',
-        codexModelsLoading: false,
-        codexModelsKey: '',
-        codexModelsSource: '',
-        codexModelsCount: 0,
-        codexCommonEfforts: [],
-        codexModelDirty: false,
-        codexEffortDirty: false,
-        codexEffort: '',
-        codexEffortLoading: false,
-        codexEffortKey: '',
-        claudeModels: [],
-        claudeModel: '',
-        claudeModelsLoading: false,
-        claudeModelsKey: '',
-        claudeModelsSource: '',
-        claudeModelsCount: 0,
-        claudeCommonEfforts: [],
-        claudeModelDirty: false,
-        claudeEffortDirty: false,
-        claudeEffort: '',
-        claudeEffortLoading: false,
-        claudeEffortKey: '',
-        projectCommandsLoading: false,
-        harnessAgents: [],
-        harnessAgentsPath: '',
-        harnessAgentsLoading: false,
-        harnessAgentsLoaded: false,
-        starredAgentModels: {},
-        starredAgentEfforts: {},
-        agentCapabilities: null,
-        agentCapabilitiesLoading: false,
-        cursorStarredLoaded: false,
-        starredDefaultsLoading: false,
-        starredDefaultsLoaded: false,
-        sessionIdentity: null,
-        cursorModelsGen: 0,
-        museModelsGen: 0,
-        hermesModelsGen: 0,
-        opencodeModelsGen: 0,
-        codexModelsGen: 0,
-        claudeModelsGen: 0,
-    };
+    const slashPaletteSupplement = Object.assign(
+        CuttleChatAgentControls.createProviderState(),
+        {
+            projectCommands: [],
+            projectCommandsPath: '',
+            loading: false,
+            loaded: false,
+            projectCommandsLoading: false,
+            harnessAgents: [],
+            harnessAgentsPath: '',
+            harnessAgentsLoading: false,
+            harnessAgentsLoaded: false,
+        }
+    );
+
+    /**
+     * Model/effort control owner. Owns the provider state above and the
+     * six provider model/effort loaders + palette-item builders; the page
+     * keeps thin wrappers plus project-command/harness-agent supplement
+     * state, persistence setters, seeding/reset and badge helpers.
+     */
+    const agentControls = CuttleChatAgentControls.create({
+        state: slashPaletteSupplement,
+        getSessionId: () => currentSessionId,
+        getProjectPath: () => (currentProject && currentProject.path ? String(currentProject.path) : ''),
+        hasActiveCursor: () => hasActiveCursorAgentChip(),
+        hasActiveMuse: () => hasActiveMuseAgentChip(),
+        hasActiveHermes: () => hasActiveHermesAgentChip(),
+        hasActiveOpenCode: () => hasActiveOpenCodeAgentChip(),
+        hasActiveCodex: () => hasActiveCodexAgentChip(),
+        hasActiveHarness: (id) => hasActiveHarnessAgentChip(id),
+        hasCursorModelChip: () => slashCtx.chat.chips.concat(slashCtx.welcome.chips).some((c) => c.category === 'cursor-model'),
+        supportsEffort: (id) => agentSupportsEffort(id),
+        beginFetch: (field) => beginSupplementFetch(field),
+        isCurrentFetch: (field, gen) => isCurrentSupplementFetch(field, gen),
+        captureMutation: (sid, label) => sessionMutations.capture(sid, label, _loadSessionSeq),
+        isMutationCurrent: (tok) => sessionMutations.current(tok, currentSessionId, _loadSessionSeq),
+        renderSlashChips: () => {
+            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
+            renderSlashChips('chat', document.getElementById('chatInput'));
+        },
+        syncActiveSlashMenu: () => {
+            const welcomeInput = document.getElementById('welcomeChatInput');
+            const chatInput = document.getElementById('chatInput');
+            if (welcomeInput && document.activeElement === welcomeInput) syncSlashMenuFromInput(welcomeInput);
+            if (chatInput && document.activeElement === chatInput) syncSlashMenuFromInput(chatInput);
+        },
+        repaintUserBadges: (id) => {
+            if (id === 'muse') repaintMuseUserBadges();
+            else if (id === 'hermes') repaintHermesUserBadges();
+            else if (id === 'opencode') repaintOpenCodeUserBadges();
+            else if (id === 'codex') repaintCodexUserBadges();
+            else if (id === 'claude') repaintClaudeUserBadges();
+        },
+        persistStickySlashForCurrentSession: () => persistStickySlashForCurrentSession(),
+        refreshHistoryAgentChips: () => refreshHistoryAgentChips(),
+        fetch: (url, opts) => fetch(url, opts),
+        toast: (msg, type) => (window.showToast ? window.showToast(msg, type) : undefined),
+    });
 
     function cursorAgentSessionOptionsKey() {
         const path = currentProject && currentProject.path ? String(currentProject.path) : '';
@@ -4529,35 +4501,35 @@
             slashPaletteSupplement.museModelsKey = '';
             slashPaletteSupplement.museModelsTried = null;
             slashPaletteSupplement.museEffortKey = '';
-            loadMuseModelsForPalette(true);
-            loadMuseEffortForPalette();
+            agentControls.loadMuseModelsForPalette(true);
+            agentControls.loadMuseEffortForPalette();
         } else if (aid === 'hermes') {
             slashPaletteSupplement.hermesModelsKey = '';
             slashPaletteSupplement.hermesModelsTried = null;
             slashPaletteSupplement.hermesEffortKey = '';
-            loadHermesModelsForPalette(true);
-            loadHermesEffortForPalette();
+            agentControls.loadHermesModelsForPalette(true);
+            agentControls.loadHermesEffortForPalette();
         } else if (aid === 'opencode') {
             slashPaletteSupplement.opencodeModelsKey = '';
             slashPaletteSupplement.opencodeModelsTried = null;
             slashPaletteSupplement.opencodeEffortKey = '';
-            loadOpenCodeModelsForPalette(true);
-            loadOpenCodeEffortForPalette();
+            agentControls.loadOpenCodeModelsForPalette(true);
+            agentControls.loadOpenCodeEffortForPalette();
         } else if (aid === 'codex') {
             slashPaletteSupplement.codexModelsKey = '';
             slashPaletteSupplement.codexModelsTried = null;
             slashPaletteSupplement.codexEffortKey = '';
-            loadCodexModelsForPalette(true);
-            loadCodexEffortForPalette();
+            agentControls.loadCodexModelsForPalette(true);
+            agentControls.loadCodexEffortForPalette();
         } else if (aid === 'claude') {
             slashPaletteSupplement.claudeModelsKey = '';
             slashPaletteSupplement.claudeModelsTried = null;
             slashPaletteSupplement.claudeEffortKey = '';
-            loadClaudeModelsForPalette(true);
-            loadClaudeEffortForPalette();
+            agentControls.loadClaudeModelsForPalette(true);
+            agentControls.loadClaudeEffortForPalette();
         } else if (aid === 'cursor') {
             slashPaletteSupplement.cursorModelsLoaded = false;
-            loadCursorAgentModelsForPalette(true);
+            agentControls.loadCursorAgentModelsForPalette(true);
         }
         }
 
@@ -4569,31 +4541,31 @@
         if (/\b\/muse\b/.test(low) || hasActiveMuseAgentChip()) {
             slashPaletteSupplement.museModelsKey = '';
             slashPaletteSupplement.museModels = [];
-            loadMuseModelsForPalette(true, { refresh: true });
+            agentControls.loadMuseModelsForPalette(true, { refresh: true });
             return;
         }
         if (/\b\/codex\b/.test(low) || hasActiveCodexAgentChip()) {
             slashPaletteSupplement.codexModelsKey = '';
             slashPaletteSupplement.codexModels = [];
-            loadCodexModelsForPalette(true, { refresh: true });
+            agentControls.loadCodexModelsForPalette(true, { refresh: true });
             return;
         }
         if (/\b\/claude\b/.test(low) || hasActiveHarnessAgentChip('claude')) {
             slashPaletteSupplement.claudeModelsKey = '';
             slashPaletteSupplement.claudeModels = [];
-            loadClaudeModelsForPalette(true, { refresh: true });
+            agentControls.loadClaudeModelsForPalette(true, { refresh: true });
             return;
         }
         if (/\b\/opencode\b/.test(low) || hasActiveOpenCodeAgentChip()) {
             slashPaletteSupplement.opencodeModelsKey = '';
             slashPaletteSupplement.opencodeModels = [];
-            loadOpenCodeModelsForPalette(true, { refresh: true });
+            agentControls.loadOpenCodeModelsForPalette(true, { refresh: true });
             return;
         }
         slashPaletteSupplement.cursorModelsKey = '';
         slashPaletteSupplement.cursorModelsLoaded = false;
         slashPaletteSupplement.cursorModels = [];
-        loadCursorAgentModelsForPalette(true, { refresh: true });
+        agentControls.loadCursorAgentModelsForPalette(true, { refresh: true });
     }
 
     function maybeRefreshCursorModelsCatalogFromOutbound(message) {
@@ -4601,158 +4573,12 @@
     }
 
     function loadCursorAgentModelsForPalette(force, opts) {
-        // A forced load (session open) hydrates the session's preferred model from
-        // the server even with no chip yet — /model is no longer kept in the
-        // transcript, so history can't supply it and the chip would show "Auto".
-        const forceRefresh = !!(opts && opts.refresh);
-        if (!force && !forceRefresh && !hasActiveCursorAgentChip()) return;
-        const key = cursorAgentSessionOptionsKey();
-        if (
-            !force &&
-            !forceRefresh &&
-            (slashPaletteSupplement.cursorModelsLoading ||
-                (slashPaletteSupplement.cursorModelsLoaded &&
-                    slashPaletteSupplement.cursorModelsKey === key))
-        ) {
-            return;
-        }
-        const _cursorModelsGen = beginSupplementFetch('cursorModelsGen');
-        slashPaletteSupplement.cursorModelsLoading = true;
-        const qs = new URLSearchParams();
-        if (currentProject && currentProject.path) qs.set('path', String(currentProject.path));
-        if (currentSessionId != null && currentSessionId !== '') {
-            qs.set('session', String(currentSessionId));
-        }
-        if (forceRefresh) qs.set('refresh', '1');
-        const url = qs.toString()
-            ? '/api/cursor-agent/models?' + qs.toString()
-            : '/api/cursor-agent/models';
-        const mutationToken = sessionMutations.capture(currentSessionId, 'cursor:model:read', _loadSessionSeq);
-        fetch(url, { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.cursorModels =
-                    j && j.success && Array.isArray(j.models) ? j.models : [];
-                slashPaletteSupplement.preferredModel =
-                    (!slashCtx.chat.chips.concat(slashCtx.welcome.chips).some((c) => c.category === 'cursor-model') && isCurrentSupplementFetch('cursorModelsGen', _cursorModelsGen) && j && j.success ? j.preferredModel : null) || slashPaletteSupplement.preferredModel || 'auto';
-                slashPaletteSupplement.lastReportedModel =
-                    (j && j.lastReportedModel) || null;
-                slashPaletteSupplement.cursorModelsKey = key;
-                slashPaletteSupplement.cursorModelsCount =
-                    (j && (j.count != null ? j.count : slashPaletteSupplement.cursorModels.length)) || 0;
-                if (forceRefresh && window.showToast) {
-                    const n = slashPaletteSupplement.cursorModelsCount || 0;
-                    const err = j && j.error ? String(j.error) : '';
-                    window.showToast(
-                        err && !n
-                            ? ('Cursor models refresh failed: ' + err)
-                            : ('Cursor models refreshed (' + n + ')'),
-                        err && !n ? 'error' : 'success'
-                    );
-                }
-            })
-            .catch(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.cursorModels = [];
-                if (forceRefresh && window.showToast) {
-                    window.showToast('Cursor models refresh failed', 'error');
-                }
-            })
-            .finally(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.cursorModelsLoaded = true;
-                slashPaletteSupplement.cursorModelsLoading = false;
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                const welcomeInput = document.getElementById('welcomeChatInput');
-                const chatInput = document.getElementById('chatInput');
-                if (welcomeInput && document.activeElement === welcomeInput) {
-                    syncSlashMenuFromInput(welcomeInput);
-                }
-                if (chatInput && document.activeElement === chatInput) {
-                    syncSlashMenuFromInput(chatInput);
-                }
-            });
+        return agentControls.loadCursorAgentModelsForPalette(force, opts);
     }
 
     /** anyChat: load even without a /muse chip (user typed "muse" in the palette). */
     function loadMuseModelsForPalette(anyChat, opts) {
-        if (!anyChat && !hasActiveMuseAgentChip()) return;
-        const key = currentSessionId != null ? String(currentSessionId) : '';
-        const forceRefresh = !!(opts && opts.refresh);
-        if (
-            !forceRefresh
-            && (
-                slashPaletteSupplement.museModelsLoading
-                || (slashPaletteSupplement.museModels.length
-                    && slashPaletteSupplement.museModelsKey === key)
-                || slashPaletteSupplement.museModelsTried === key
-            )
-        ) {
-            return;
-        }
-        const _museModelsGen = beginSupplementFetch('museModelsGen');
-        slashPaletteSupplement.museModelsLoading = true;
-        const params = new URLSearchParams();
-        if (key) params.set('session', key);
-        if (forceRefresh) params.set('refresh', '1');
-        const qs = params.toString();
-        const url = qs ? '/api/muse/models?' + qs : '/api/muse/models';
-        const mutationToken = sessionMutations.capture(currentSessionId, 'muse:model:read', _loadSessionSeq);
-        fetch(url, { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.museModels =
-                    j && j.success && Array.isArray(j.models) ? j.models : [];
-                slashPaletteSupplement.museModel =
-                    (!slashPaletteSupplement.museModelDirty && isCurrentSupplementFetch('museModelsGen', _museModelsGen) && j && j.success ? (j.preferredModel || j.defaultModel) : null) || slashPaletteSupplement.museModel || '';
-                slashPaletteSupplement.museModelsKey = key;
-                slashPaletteSupplement.museModelsCount =
-                    (j && (j.count != null ? j.count : slashPaletteSupplement.museModels.length)) || 0;
-                slashPaletteSupplement.museModelsSource = (j && j.source) || '';
-                // Badges may have rendered with defaults while this was in
-                // flight — repaint composer and history with the real pin.
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                repaintMuseUserBadges();
-                persistStickySlashForCurrentSession();
-                refreshHistoryAgentChips();
-                if (forceRefresh && window.showToast) {
-                    const n = slashPaletteSupplement.museModelsCount || 0;
-                    const err = j && j.error ? String(j.error) : '';
-                    const src = slashPaletteSupplement.museModelsSource || '';
-                    window.showToast(
-                        err && !n
-                            ? ('Muse models refresh failed: ' + err)
-                            : ('Muse models refreshed (' + n
-                                + (src ? ', ' + src : '') + ')'),
-                        err && !n ? 'error' : 'success'
-                    );
-                }
-            })
-            .catch(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (forceRefresh && window.showToast) {
-                    window.showToast('Muse models refresh failed', 'error');
-                }
-            })
-            .finally(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.museModelsLoading = false;
-                slashPaletteSupplement.museModelsTried = key; // empty/failed: don't refetch per render
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                const welcomeInput = document.getElementById('welcomeChatInput');
-                const chatInput = document.getElementById('chatInput');
-                if (welcomeInput && document.activeElement === welcomeInput) {
-                    syncSlashMenuFromInput(welcomeInput);
-                }
-                if (chatInput && document.activeElement === chatInput) {
-                    syncSlashMenuFromInput(chatInput);
-                }
-            });
+        return agentControls.loadMuseModelsForPalette(anyChat, opts);
     }
 
     /** Persist the chat's Muse model pick (palette click — no message sent). */
@@ -4763,7 +4589,7 @@
         if (id.toLowerCase() === 'refresh' || id.toLowerCase() === '__refresh__') {
             slashPaletteSupplement.museModelsKey = '';
             slashPaletteSupplement.museModels = [];
-            loadMuseModelsForPalette(true, { refresh: true });
+            agentControls.loadMuseModelsForPalette(true, { refresh: true });
             return;
         }
         slashPaletteSupplement.museModel = id;
@@ -4804,54 +4630,7 @@
 
     /** anyChat: load even without a /hermes chip (user typed "hermes" in the palette). */
     function loadHermesModelsForPalette(anyChat) {
-        if (!anyChat && !hasActiveHermesAgentChip()) return;
-        const key = currentSessionId != null ? String(currentSessionId) : '';
-        if (
-            slashPaletteSupplement.hermesModelsLoading
-            || (slashPaletteSupplement.hermesModels.length
-                && slashPaletteSupplement.hermesModelsKey === key)
-            || slashPaletteSupplement.hermesModelsTried === key
-        ) {
-            return;
-        }
-        const modelsGeneration = beginSupplementFetch('hermesModelsGen');
-        slashPaletteSupplement.hermesModelsLoading = true;
-        const url = key
-            ? '/api/hermes/models?session=' + encodeURIComponent(key)
-            : '/api/hermes/models';
-        const mutationToken = sessionMutations.capture(currentSessionId, 'hermes:model:read', _loadSessionSeq);
-        fetch(url, { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.hermesModels =
-                    j && j.success && Array.isArray(j.models) ? j.models : [];
-                if (!slashPaletteSupplement.hermesModelDirty && isCurrentSupplementFetch('hermesModelsGen', modelsGeneration)) {
-                    slashPaletteSupplement.hermesModel = (j && j.preferredModel) || '';
-                }
-                slashPaletteSupplement.hermesModelsKey = key;
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                repaintHermesUserBadges();
-                persistStickySlashForCurrentSession();
-                refreshHistoryAgentChips();
-            })
-            .catch(() => {})
-            .finally(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.hermesModelsLoading = false;
-                slashPaletteSupplement.hermesModelsTried = key; // empty/failed: don't refetch per render
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                const welcomeInput = document.getElementById('welcomeChatInput');
-                const chatInput = document.getElementById('chatInput');
-                if (welcomeInput && document.activeElement === welcomeInput) {
-                    syncSlashMenuFromInput(welcomeInput);
-                }
-                if (chatInput && document.activeElement === chatInput) {
-                    syncSlashMenuFromInput(chatInput);
-                }
-            });
+        return agentControls.loadHermesModelsForPalette(anyChat);
     }
 
     /** Persist the chat's Hermes model pick (palette click — no message sent). */
@@ -5005,87 +4784,7 @@
     }
 
     function buildCursorModelPaletteItems(filterLower) {
-        if (!hasActiveCursorAgentChip()) return [];
-        const f = (filterLower || '').toLowerCase().trim();
-        // Avoid flooding the empty `/` menu — only surface models when the user
-        // is filtering (e.g. `/mod`, `/sonnet`, `/1m`, `/model sonnet 4.6`).
-        if (!f) return [];
-        // `/model` or `/model ` → list all; `/model sonnet 1m` → filter by remainder.
-        let modelFilter = f;
-        if (modelFilter === 'model') {
-            modelFilter = '';
-        } else if (modelFilter.startsWith('model ')) {
-            modelFilter = modelFilter.slice(6).trim();
-        }
-        const showAllForModel = !modelFilter;
-        loadCursorAgentModelsForPalette(false);
-        // Session preferred model (Cuttle chat), not Cursor CLI's global "(current)".
-        const preferred = String(slashPaletteSupplement.preferredModel || 'auto')
-            .trim()
-            .toLowerCase() || 'auto';
-        // Stage as a normal nested command chip (same as /usage) — do not
-        // instantly refresh on palette pick (CH-000482).
-        const refreshItem = {
-            category: 'cursor-cmd',
-            prefix: '/model refresh',
-            label: 'Refresh Cursor models',
-            hint: 'Re-run agent models and reload the slash palette catalog',
-            meta: 'refresh',
-            keywords: 'cursor model refresh reload sync catalog agent models',
-        };
-        const items = [];
-        if (
-            !modelFilter
-            || slashPaletteItemMatches(refreshItem, modelFilter)
-        ) {
-            items.push(refreshItem);
-        }
-        const models = slashPaletteSupplement.cursorModels || [];
-        if (slashPaletteSupplement.cursorModelsLoading && !models.length) {
-            items.push({
-                category: 'cursor-model',
-                prefix: '/model',
-                label: 'Loading Cursor models…',
-                hint: 'Fetching agent models catalog',
-                meta: '',
-                keywords: 'cursor model loading',
-                modelId: '',
-                disabled: true,
-            });
-            return items;
-        }
-        const mapped = models
-            .map((m) => {
-                const id = String(m.id || '').trim();
-                if (!id) return null;
-                const label = String(m.label || id).trim() || id;
-                const current = id.toLowerCase() === preferred;
-                // Extra searchable bits: compact id/label + context tokens (1m, 200k).
-                const contextBits = (label.match(/\b\d+\s*[km]\b/gi) || []).join(' ');
-                return {
-                    category: 'cursor-model',
-                    prefix: '/model ' + id,
-                    label: label + (current ? ' (current)' : ''),
-                    hint: 'Set Cursor Agent model to ' + id,
-                    meta: id,
-                    keywords:
-                        'cursor model ' +
-                        id +
-                        ' ' +
-                        label +
-                        ' ' +
-                        id.replace(/[-_]+/g, ' ') +
-                        ' ' +
-                        contextBits,
-                    modelId: id,
-                };
-            })
-            .filter(Boolean)
-            .filter((item) => {
-                if (showAllForModel) return true;
-                return slashPaletteItemMatches(item, modelFilter);
-            });
-        return items.concat(mapped);
+        return agentControls.buildCursorModelPaletteItems(filterLower);
     }
 
     /**
@@ -5094,75 +4793,8 @@
      * the next message, so it works while `/muse` is sticky.
      */
     function buildMuseModelPaletteItems(filterLower) {
-        // Gated on the Muse badge like Cursor's `/model` is on its chip: badge
-        // commands only appear when that harness is applied to this chat.
-        if (!hasActiveMuseAgentChip()) return [];
-        const f = (filterLower || '').toLowerCase().trim();
-        if (!f) return [];
-        loadMuseModelsForPalette(true);
-        const models = slashPaletteSupplement.museModels || [];
-        let modelFilter = f
-            .replace(/^muse\s+/, '')
-            .replace(/^models?\b\s*/, '')
-            .trim();
-        if (modelFilter === 'muse') modelFilter = '';
-        const preferred = String(slashPaletteSupplement.museModel || '').toLowerCase();
-        // Stage as a nested cmd chip (same as Cursor /model refresh) — do not
-        // instantly refresh on palette pick (CH-000482). Prefix is `/model refresh`
-        // so compose with sticky `/muse ` yields `/muse /model refresh` (adapter
-        // peels the agent token and matches `model refresh`).
-        const refreshItem = {
-            category: 'muse-cmd',
-            prefix: '/model refresh',
-            label: 'Refresh Muse models',
-            hint: 'Re-fetch Muse Spark ids from Meta Model API and reload the slash palette',
-            meta: 'refresh',
-            keywords: 'muse model refresh reload sync catalog meta api spark',
-        };
-        const items = [];
-        if (
-            !modelFilter
-            || slashPaletteItemMatches(refreshItem, modelFilter)
-        ) {
-            items.push(refreshItem);
-        }
-        if (slashPaletteSupplement.museModelsLoading && !models.length) {
-            items.push({
-                category: 'muse-model',
-                prefix: '/muse model',
-                label: 'Loading Muse models…',
-                hint: 'Fetching Muse Spark catalog',
-                meta: '',
-                keywords: 'muse model loading',
-                modelId: '',
-                museModel: true,
-                disabled: true,
-            });
-            return items;
-        }
-        const mapped = models
-            .map((m) => {
-                const id = String((m && m.id) || '').trim();
-                if (!id) return null;
-                const label = String((m && m.label) || id).trim() || id;
-                const current = id.toLowerCase() === preferred;
-                return {
-                    category: 'muse-model',
-                    prefix: '/muse model ' + id,
-                    label: label + (current ? ' (current)' : ''),
-                    hint: (m && m.description) || ('Set Muse Code model to ' + id),
-                    meta: id,
-                    keywords: 'muse model spark ' + id + ' ' + label + ' ' + id.replace(/[-_]+/g, ' '),
-                    modelId: id,
-                    museModel: true,
-                };
-            })
-            .filter(Boolean)
-            .filter((item) => (modelFilter ? slashPaletteItemMatches(item, modelFilter) : true));
-        return items.concat(mapped);
+        return agentControls.buildMuseModelPaletteItems(filterLower);
     }
-
-    const MUSE_EFFORT_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
 
     /**
      * Seed the Muse supplement from a session payload (messages response)
@@ -5318,40 +4950,7 @@
 
     /** Hydrate this chat's pinned Muse reasoning effort (badge-gated like models). */
     function loadMuseEffortForPalette() {
-        if (slashPaletteSupplement.museEffortDirty) return;
-        if (!hasActiveMuseAgentChip()) return;
-        const key = currentSessionId != null ? String(currentSessionId) : '';
-        if (
-            slashPaletteSupplement.museEffortLoading
-            || (slashPaletteSupplement.museEffortKey === key && key)
-        ) {
-            return;
-        }
-        const effortGeneration = beginSupplementFetch('museEffortGen');
-        slashPaletteSupplement.museEffortLoading = true;
-        const url = key
-            ? '/api/muse/effort?session=' + encodeURIComponent(key)
-            : '/api/muse/effort';
-        const mutationToken = sessionMutations.capture(currentSessionId, 'muse:effort:read', _loadSessionSeq);
-        fetch(url, { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (slashPaletteSupplement.museEffortDirty || !isCurrentSupplementFetch('museEffortGen', effortGeneration)) return;
-                slashPaletteSupplement.museEffort =
-                    (j && j.preferredEffort) || '';
-                slashPaletteSupplement.museEffortKey = key;
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                repaintMuseUserBadges();
-                persistStickySlashForCurrentSession();
-                refreshHistoryAgentChips();
-            })
-            .catch(() => {})
-            .finally(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.museEffortLoading = false;
-            });
+        return agentControls.loadMuseEffortForPalette();
     }
 
     /** Persist the chat's Muse reasoning-effort pick (palette click — no message sent). */
@@ -5391,32 +4990,7 @@
      * appear while the Muse chip is applied to this chat.
      */
     function buildMuseEffortPaletteItems(filterLower) {
-        if (!agentSupportsEffort('muse')) return [];
-        if (!hasActiveMuseAgentChip()) return [];
-        const f = (filterLower || '').toLowerCase().trim();
-        if (!f) return [];
-        // Listed alongside `/muse model …` whenever the Muse badge is on (e.g.
-        // bare `/muse`); plain `/mod` still means model — effort entries carry
-        // no "model" token in label, hint, keywords, or prefix.
-        loadMuseEffortForPalette();
-        let effortFilter = f
-            .replace(/^muse\s+/, '')
-            .replace(/^efforts?\b\s*/, '')
-            .trim();
-        if (effortFilter === 'effort') effortFilter = '';
-        const preferred = String(slashPaletteSupplement.museEffort || '').toLowerCase();
-        return MUSE_EFFORT_LEVELS
-            .map((id) => ({
-                category: 'muse-effort',
-                prefix: '/muse effort ' + id,
-                label: 'Effort ' + id + (id.toLowerCase() === preferred ? ' (current)' : ''),
-                hint: 'Set Muse Code reasoning effort to ' + id,
-                meta: id,
-                keywords: 'muse effort reasoning ' + id,
-                modelId: id,
-                museEffort: true,
-            }))
-            .filter((item) => (effortFilter ? slashPaletteItemMatches(item, effortFilter) : true));
+        return agentControls.buildMuseEffortPaletteItems(filterLower);
     }
 
     /**
@@ -5424,40 +4998,8 @@
      * setting change (POST + chip relabel), not a composed chip.
      */
     function buildHermesModelPaletteItems(filterLower) {
-        if (!hasActiveHermesAgentChip()) return [];
-        const f = (filterLower || '').toLowerCase().trim();
-        if (!f) return [];
-        loadHermesModelsForPalette(true);
-        const models = slashPaletteSupplement.hermesModels || [];
-        if (!models.length) return [];
-        let modelFilter = f
-            .replace(/^hermes\s+/, '')
-            .replace(/^models?\b\s*/, '')
-            .trim();
-        if (modelFilter === 'hermes') modelFilter = '';
-        const preferred = String(slashPaletteSupplement.hermesModel || '').toLowerCase();
-        return models
-            .map((m) => {
-                const id = String((m && m.id) || '').trim();
-                if (!id) return null;
-                const label = String((m && m.label) || id).trim() || id;
-                const current = id.toLowerCase() === preferred;
-                return {
-                    category: 'hermes-model',
-                    prefix: '/hermes model ' + id,
-                    label: label + (current ? ' (current)' : ''),
-                    hint: (m && m.description) || ('Set Hermes model to ' + id),
-                    meta: id,
-                    keywords: 'hermes model glm qwen ' + id + ' ' + label + ' ' + id.replace(/[-_]+/g, ' '),
-                    modelId: id,
-                    hermesModel: true,
-                };
-            })
-            .filter(Boolean)
-            .filter((item) => (modelFilter ? slashPaletteItemMatches(item, modelFilter) : true));
+        return agentControls.buildHermesModelPaletteItems(filterLower);
     }
-
-    const HERMES_EFFORT_LEVELS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'];
 
     /** Seed Hermes supplement from a session payload (messages response). */
     function seedHermesSupplementFromSessionData(data, sessionId) {
@@ -5479,41 +5021,7 @@
     }
 
     function loadHermesEffortForPalette() {
-        if (slashPaletteSupplement.hermesEffortDirty) return;
-        if (!hasActiveHermesAgentChip()) return;
-        const key = currentSessionId != null ? String(currentSessionId) : '';
-        if (
-            slashPaletteSupplement.hermesEffortLoading
-            || (slashPaletteSupplement.hermesEffortKey === key && key)
-        ) {
-            return;
-        }
-        const effortGeneration = beginSupplementFetch('hermesEffortGen');
-        slashPaletteSupplement.hermesEffortLoading = true;
-        const url = key
-            ? '/api/hermes/effort?session=' + encodeURIComponent(key)
-            : '/api/hermes/effort';
-        const mutationToken = sessionMutations.capture(currentSessionId, 'hermes:effort:read', _loadSessionSeq);
-        fetch(url, { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                // Don't clobber a palette pick that hasn't finished POSTing yet.
-                if (slashPaletteSupplement.hermesEffortDirty || !isCurrentSupplementFetch('hermesEffortGen', effortGeneration)) return;
-                slashPaletteSupplement.hermesEffort =
-                    (j && j.preferredEffort) || '';
-                slashPaletteSupplement.hermesEffortKey = key;
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                repaintHermesUserBadges();
-                persistStickySlashForCurrentSession();
-                refreshHistoryAgentChips();
-            })
-            .catch(() => {})
-            .finally(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.hermesEffortLoading = false;
-            });
+        return agentControls.loadHermesEffortForPalette();
     }
 
     function persistHermesEffortSelection(effort) {
@@ -5552,101 +5060,12 @@
      * `/hermes effort <level>` entries. Badge-gated like `/hermes model`.
      */
     function buildHermesEffortPaletteItems(filterLower) {
-        if (!agentSupportsEffort('hermes')) return [];
-        if (!hasActiveHermesAgentChip()) return [];
-        const f = (filterLower || '').toLowerCase().trim();
-        if (!f) return [];
-        loadHermesEffortForPalette();
-        let effortFilter = f
-            .replace(/^hermes\s+/, '')
-            .replace(/^efforts?\b\s*/, '')
-            .trim();
-        if (effortFilter === 'effort') effortFilter = '';
-        const preferred = String(slashPaletteSupplement.hermesEffort || '').toLowerCase();
-        return HERMES_EFFORT_LEVELS
-            .map((id) => ({
-                category: 'hermes-effort',
-                prefix: '/hermes effort ' + id,
-                label: 'Effort ' + id + (id.toLowerCase() === preferred ? ' (current)' : ''),
-                hint: 'Set Hermes reasoning effort to ' + id,
-                meta: id,
-                keywords: 'hermes effort reasoning ' + id,
-                modelId: id,
-                hermesEffort: true,
-            }))
-            .filter((item) => (effortFilter ? slashPaletteItemMatches(item, effortFilter) : true));
+        return agentControls.buildHermesEffortPaletteItems(filterLower);
     }
 
     /** anyChat: load even without an /opencode chip (user typed "opencode" in the palette). */
     function loadOpenCodeModelsForPalette(anyChat, opts) {
-        if (!anyChat && !hasActiveOpenCodeAgentChip()) return;
-        const key = currentSessionId != null ? String(currentSessionId) : '';
-        const forceRefresh = !!(opts && opts.refresh);
-        if (
-            !forceRefresh
-            && (
-                slashPaletteSupplement.opencodeModelsLoading
-                || (slashPaletteSupplement.opencodeModels.length
-                    && slashPaletteSupplement.opencodeModelsKey === key)
-                || slashPaletteSupplement.opencodeModelsTried === key
-            )
-        ) {
-            return;
-        }
-        const modelsGeneration = beginSupplementFetch('opencodeModelsGen');
-        slashPaletteSupplement.opencodeModelsLoading = true;
-        const params = new URLSearchParams();
-        if (key) params.set('session', key);
-        if (forceRefresh) params.set('refresh', '1');
-        const qs = params.toString();
-        const url = qs ? '/api/opencode/models?' + qs : '/api/opencode/models';
-        const mutationToken = sessionMutations.capture(currentSessionId, 'opencode:model:read', _loadSessionSeq);
-        fetch(url, { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.opencodeModels =
-                    j && j.success && Array.isArray(j.models) ? j.models : [];
-                if (!slashPaletteSupplement.opencodeModelDirty && isCurrentSupplementFetch('opencodeModelsGen', modelsGeneration)) {
-                    slashPaletteSupplement.opencodeModel = (j && j.preferredModel) || '';
-                }
-                slashPaletteSupplement.opencodeModelsKey = key;
-                slashPaletteSupplement.opencodeModelsSource =
-                    (j && j.source) || '';
-                slashPaletteSupplement.opencodeModelsCount =
-                    (j && (j.count != null ? j.count : slashPaletteSupplement.opencodeModels.length)) || 0;
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                repaintOpenCodeUserBadges();
-                persistStickySlashForCurrentSession();
-                refreshHistoryAgentChips();
-                if (forceRefresh && window.showToast) {
-                    const n = slashPaletteSupplement.opencodeModelsCount || 0;
-                    const err = j && j.error ? String(j.error) : '';
-                    window.showToast(
-                        err && !n
-                            ? ('OpenCode models refresh failed: ' + err)
-                            : ('OpenCode models refreshed (' + n + ')'),
-                        err && !n ? 'error' : 'success'
-                    );
-                }
-            })
-            .catch(() => {})
-            .finally(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.opencodeModelsLoading = false;
-                slashPaletteSupplement.opencodeModelsTried = key; // empty/failed: don't refetch per render
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                const welcomeInput = document.getElementById('welcomeChatInput');
-                const chatInput = document.getElementById('chatInput');
-                if (welcomeInput && document.activeElement === welcomeInput) {
-                    syncSlashMenuFromInput(welcomeInput);
-                }
-                if (chatInput && document.activeElement === chatInput) {
-                    syncSlashMenuFromInput(chatInput);
-                }
-            });
+        return agentControls.loadOpenCodeModelsForPalette(anyChat, opts);
     }
 
     function persistOpenCodeModelSelection(modelId) {
@@ -5657,7 +5076,7 @@
         if (id.toLowerCase() === 'refresh' || id.toLowerCase() === '__refresh__') {
             slashPaletteSupplement.opencodeModelsKey = '';
             slashPaletteSupplement.opencodeModels = [];
-            loadOpenCodeModelsForPalette(true, { refresh: true });
+            agentControls.loadOpenCodeModelsForPalette(true, { refresh: true });
             return;
         }
         slashPaletteSupplement.opencodeModel = id;
@@ -5694,94 +5113,8 @@
     }
 
     function buildOpenCodeModelPaletteItems(filterLower, opts) {
-        if (!hasActiveOpenCodeAgentChip()) return [];
-        const f = (filterLower || '').toLowerCase().trim();
-        if (!f) return [];
-        loadOpenCodeModelsForPalette(true);
-        const models = slashPaletteSupplement.opencodeModels || [];
-        let modelFilter = f
-            .replace(/^opencode\s+/, '')
-            .replace(/^models?\b\s*/, '')
-            .trim();
-        if (modelFilter === 'opencode') modelFilter = '';
-        const preferred = String(slashPaletteSupplement.opencodeModel || '').toLowerCase();
-        // Stage as nested cmd chip — composes as `/opencode /model refresh`
-        // under the sticky agent (same as Codex / Muse / Cursor).
-        const refreshItem = {
-            category: 'opencode-cmd',
-            prefix: '/model refresh',
-            label: 'Refresh models',
-            hint: 'Fetch latest OpenCode models (models.dev). Staged as /model refresh — send to run.',
-            meta: 'cmd',
-            keywords: 'opencode model refresh reload sync catalog models.dev openrouter',
-        };
-        const items = [];
-        if (
-            !modelFilter
-            || slashPaletteItemMatches(refreshItem, modelFilter)
-        ) {
-            items.push(refreshItem);
-        }
-        if (slashPaletteSupplement.opencodeModelsLoading && !models.length) {
-            items.push({
-                category: 'opencode-model',
-                prefix: '/opencode model',
-                label: 'Loading OpenCode models…',
-                hint: 'Fetching opencode models catalog',
-                meta: '',
-                keywords: 'opencode model loading',
-                modelId: '',
-                opencodeModel: true,
-                disabled: true,
-            });
-            return items;
-        }
-        const mapped = models
-            .map((m) => {
-                const id = String((m && m.id) || '').trim();
-                if (!id) return null;
-                const label = String((m && m.label) || id).trim() || id;
-                const current = id.toLowerCase() === preferred;
-                const fav = !!(m && (m.favorite === true || m.favorite === '1' || m.favorite === 1));
-                return {
-                    category: 'opencode-model',
-                    prefix: '/opencode model ' + id,
-                    label: (fav ? '★ ' : '') + label + (current ? ' (current)' : ''),
-                    hint: (m && m.description) || ('Set OpenCode model to ' + id),
-                    meta: id,
-                    keywords: 'opencode model ' + id + ' ' + label + ' ' + id.replace(/[-_/]+/g, ' '),
-                    modelId: id,
-                    opencodeModel: true,
-                };
-            })
-            .filter(Boolean)
-            .filter((item) => (modelFilter ? slashPaletteItemMatches(item, modelFilter) : true));
-        // Keep the palette usable when the filter is broad (hundreds of OpenRouter ids).
-        // The searchable chip-config dropdown asks for the full catalog.
-        const MAX = (opts && opts.full) ? Infinity : 40;
-        // Rank before clipping so a name hit cannot be hidden by description hits.
-        mapped.sort((a, b) => CuttleChatSlash.slashPaletteItemSearchRank(a, f)
-            - CuttleChatSlash.slashPaletteItemSearchRank(b, f));
-        const clipped = mapped.length > MAX ? mapped.slice(0, MAX) : mapped;
-        if (mapped.length > MAX) {
-            items.push({
-                category: 'opencode-model',
-                prefix: '/opencode model',
-                label: '… ' + (mapped.length - MAX) + ' more — type to narrow (e.g. deepseek)',
-                hint: 'OpenCode catalog has ' + (slashPaletteSupplement.opencodeModelsCount || mapped.length) + ' models',
-                meta: '',
-                keywords: 'opencode model more filter',
-                modelId: '',
-                opencodeModel: true,
-                disabled: true,
-            });
-        }
-        return items.concat(clipped);
+        return agentControls.buildOpenCodeModelPaletteItems(filterLower, opts);
     }
-
-    const OPENCODE_EFFORT_LEVELS = [
-        'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max',
-    ];
 
     function seedOpenCodeSupplementFromSessionData(data, sessionId) {
         if (!data || typeof data !== 'object') return;
@@ -5802,41 +5135,7 @@
     }
 
     function loadOpenCodeEffortForPalette() {
-        if (slashPaletteSupplement.opencodeEffortDirty) return;
-        if (!hasActiveOpenCodeAgentChip()) return;
-        const key = currentSessionId != null ? String(currentSessionId) : '';
-        if (
-            slashPaletteSupplement.opencodeEffortLoading
-            || (slashPaletteSupplement.opencodeEffortKey === key && key)
-        ) {
-            return;
-        }
-        const effortGeneration = beginSupplementFetch('opencodeEffortGen');
-        slashPaletteSupplement.opencodeEffortLoading = true;
-        const url = key
-            ? '/api/opencode/effort?session=' + encodeURIComponent(key)
-            : '/api/opencode/effort';
-        const mutationToken = sessionMutations.capture(currentSessionId, 'opencode:effort:read', _loadSessionSeq);
-        fetch(url, { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                // Don't clobber a palette pick that hasn't finished POSTing yet.
-                if (slashPaletteSupplement.opencodeEffortDirty || !isCurrentSupplementFetch('opencodeEffortGen', effortGeneration)) return;
-                slashPaletteSupplement.opencodeEffort =
-                    (j && j.preferredEffort) || '';
-                slashPaletteSupplement.opencodeEffortKey = key;
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                repaintOpenCodeUserBadges();
-                persistStickySlashForCurrentSession();
-                refreshHistoryAgentChips();
-            })
-            .catch(() => {})
-            .finally(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.opencodeEffortLoading = false;
-            });
+        return agentControls.loadOpenCodeEffortForPalette();
     }
 
     function persistOpenCodeEffortSelection(effort) {
@@ -5872,103 +5171,12 @@
     }
 
     function buildOpenCodeEffortPaletteItems(filterLower) {
-        if (!agentSupportsEffort('opencode')) return [];
-        if (!hasActiveOpenCodeAgentChip()) return [];
-        const f = (filterLower || '').toLowerCase().trim();
-        if (!f) return [];
-        loadOpenCodeEffortForPalette();
-        let effortFilter = f
-            .replace(/^opencode\s+/, '')
-            .replace(/^efforts?\b\s*/, '')
-            .trim();
-        if (effortFilter === 'effort') effortFilter = '';
-        const preferred = String(slashPaletteSupplement.opencodeEffort || '').toLowerCase();
-        return OPENCODE_EFFORT_LEVELS
-            .map((id) => ({
-                category: 'opencode-effort',
-                prefix: '/opencode effort ' + id,
-                label: 'Effort ' + id + (id.toLowerCase() === preferred ? ' (current)' : ''),
-                hint: 'Set OpenCode reasoning effort (--variant) to ' + id,
-                meta: id,
-                keywords: 'opencode effort reasoning variant ' + id,
-                modelId: id,
-                opencodeEffort: true,
-            }))
-            .filter((item) => (effortFilter ? slashPaletteItemMatches(item, effortFilter) : true));
+        return agentControls.buildOpenCodeEffortPaletteItems(filterLower);
     }
 
     /** anyChat: load even without a /codex chip (user typed "codex" in the palette). */
     function loadCodexModelsForPalette(anyChat, opts) {
-        if (!anyChat && !hasActiveCodexAgentChip()) return;
-        const key = currentSessionId != null ? String(currentSessionId) : '';
-        const forceRefresh = !!(opts && opts.refresh);
-        if (
-            !forceRefresh
-            && (
-                slashPaletteSupplement.codexModelsLoading
-                || (slashPaletteSupplement.codexModels.length
-                    && slashPaletteSupplement.codexModelsKey === key)
-                || slashPaletteSupplement.codexModelsTried === key
-            )
-        ) {
-            return;
-        }
-        const modelsGeneration = beginSupplementFetch('codexModelsGen');
-        slashPaletteSupplement.codexModelsLoading = true;
-        const params = new URLSearchParams();
-        if (key) params.set('session', key);
-        if (forceRefresh) params.set('refresh', '1');
-        const qs = params.toString();
-        const url = qs ? '/api/codex/models?' + qs : '/api/codex/models';
-        const mutationToken = sessionMutations.capture(currentSessionId, 'codex:model:read', _loadSessionSeq);
-        fetch(url, { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.codexModels =
-                    j && j.success && Array.isArray(j.models) ? j.models : [];
-                if (!slashPaletteSupplement.codexModelDirty && isCurrentSupplementFetch('codexModelsGen', modelsGeneration)) {
-                    slashPaletteSupplement.codexModel = (j && j.preferredModel) || '';
-                }
-                slashPaletteSupplement.codexModelsKey = key;
-                slashPaletteSupplement.codexModelsSource =
-                    (j && j.source) || '';
-                slashPaletteSupplement.codexModelsCount =
-                    (j && (j.count != null ? j.count : slashPaletteSupplement.codexModels.length)) || 0;
-                slashPaletteSupplement.codexCommonEfforts =
-                    j && Array.isArray(j.commonEfforts) ? j.commonEfforts : [];
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                repaintCodexUserBadges();
-                persistStickySlashForCurrentSession();
-                refreshHistoryAgentChips();
-                if (forceRefresh && window.showToast) {
-                    const n = slashPaletteSupplement.codexModelsCount || 0;
-                    const err = j && j.error ? String(j.error) : '';
-                    window.showToast(
-                        err && !n
-                            ? ('Codex models refresh failed: ' + err)
-                            : ('Codex models and effort support refreshed (' + n + ')'),
-                        err && !n ? 'error' : 'success'
-                    );
-                }
-            })
-            .catch(() => {})
-            .finally(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.codexModelsLoading = false;
-                slashPaletteSupplement.codexModelsTried = key; // empty/failed: don't refetch per render
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                const welcomeInput = document.getElementById('welcomeChatInput');
-                const chatInput = document.getElementById('chatInput');
-                if (welcomeInput && document.activeElement === welcomeInput) {
-                    syncSlashMenuFromInput(welcomeInput);
-                }
-                if (chatInput && document.activeElement === chatInput) {
-                    syncSlashMenuFromInput(chatInput);
-                }
-            });
+        return agentControls.loadCodexModelsForPalette(anyChat, opts);
     }
 
     function persistCodexModelSelection(modelId) {
@@ -5979,7 +5187,7 @@
         if (id.toLowerCase() === 'refresh' || id.toLowerCase() === '__refresh__') {
             slashPaletteSupplement.codexModelsKey = '';
             slashPaletteSupplement.codexModels = [];
-            loadCodexModelsForPalette(true, { refresh: true });
+            agentControls.loadCodexModelsForPalette(true, { refresh: true });
             return;
         }
         slashPaletteSupplement.codexModel = id;
@@ -6016,94 +5224,7 @@
     }
 
     function buildCodexModelPaletteItems(filterLower, opts) {
-        if (!hasActiveCodexAgentChip()) return [];
-        const f = (filterLower || '').toLowerCase().trim();
-        if (!f) return [];
-        loadCodexModelsForPalette(true);
-        const models = slashPaletteSupplement.codexModels || [];
-        let modelFilter = f
-            .replace(/^codex\s+/, '')
-            .replace(/^models?\b\s*/, '')
-            .trim();
-        if (modelFilter === 'codex') modelFilter = '';
-        const preferred = String(slashPaletteSupplement.codexModel || '').toLowerCase();
-        // Stage as nested cmd chip — no instant run (CH-000482). Composes as
-        // `/codex /model refresh` after the sticky agent prefix.
-        const refreshItem = {
-            category: 'codex-cmd',
-            prefix: '/model refresh',
-            label: 'Refresh Codex models',
-            hint: 'Refresh Codex models and per-model effort levels from codex debug models',
-            meta: 'refresh',
-            keywords: 'codex model refresh reload sync catalog debug models',
-        };
-        const items = [];
-        if (
-            !modelFilter
-            || slashPaletteItemMatches(refreshItem, modelFilter)
-        ) {
-            items.push(refreshItem);
-        }
-        if (slashPaletteSupplement.codexModelsLoading && !models.length) {
-            items.push({
-                category: 'codex-model',
-                prefix: '/codex model',
-                label: 'Loading Codex models…',
-                hint: 'Fetching codex debug models catalog',
-                meta: '',
-                keywords: 'codex model loading',
-                modelId: '',
-                codexModel: true,
-                disabled: true,
-            });
-            return items;
-        }
-        const mapped = models
-            .map((m) => {
-                const id = String((m && m.id) || '').trim();
-                if (!id) return null;
-                const label = String((m && m.label) || id).trim() || id;
-                const current = id.toLowerCase() === preferred;
-                const fav = !!(m && (m.favorite === true || m.favorite === '1' || m.favorite === 1));
-                const modelEfforts = Array.isArray(m && m.efforts) ? m.efforts : [];
-                const effortHint = modelEfforts.length
-                    ? 'Supported efforts: ' + modelEfforts.join(', ')
-                    : 'No verified effort levels in the Codex CLI catalog';
-                return {
-                    category: 'codex-model',
-                    prefix: '/codex model ' + id,
-                    label: (fav ? '★ ' : '') + label + (current ? ' (current)' : ''),
-                    hint: [
-                        (m && m.description) || ('Set Codex model to ' + id),
-                        effortHint,
-                    ].filter(Boolean).join(' · '),
-                    meta: id,
-                    keywords: 'codex model ' + id + ' ' + label + ' ' + id.replace(/[-_/]+/g, ' '),
-                    modelId: id,
-                    codexModel: true,
-                };
-            })
-            .filter(Boolean)
-            .filter((item) => (modelFilter ? slashPaletteItemMatches(item, modelFilter) : true));
-        const MAX = (opts && opts.full) ? Infinity : 40;
-        // Rank before clipping so a name hit cannot be hidden by description hits.
-        mapped.sort((a, b) => CuttleChatSlash.slashPaletteItemSearchRank(a, f)
-            - CuttleChatSlash.slashPaletteItemSearchRank(b, f));
-        const clipped = mapped.length > MAX ? mapped.slice(0, MAX) : mapped;
-        if (mapped.length > MAX) {
-            items.push({
-                category: 'codex-model',
-                prefix: '/codex model',
-                label: '… ' + (mapped.length - MAX) + ' more — type to narrow (e.g. gpt-5)',
-                hint: 'Codex catalog has ' + (slashPaletteSupplement.codexModelsCount || mapped.length) + ' models',
-                meta: '',
-                keywords: 'codex model more filter',
-                modelId: '',
-                codexModel: true,
-                disabled: true,
-            });
-        }
-        return items.concat(clipped);
+        return agentControls.buildCodexModelPaletteItems(filterLower, opts);
     }
 
     function seedCodexSupplementFromSessionData(data, sessionId) {
@@ -6125,40 +5246,7 @@
     }
 
     function loadCodexEffortForPalette() {
-        if (slashPaletteSupplement.codexEffortDirty) return;
-        if (!hasActiveCodexAgentChip()) return;
-        const key = currentSessionId != null ? String(currentSessionId) : '';
-        if (
-            slashPaletteSupplement.codexEffortLoading
-            || (slashPaletteSupplement.codexEffortKey === key && key)
-        ) {
-            return;
-        }
-        const effortGeneration = beginSupplementFetch('codexEffortGen');
-        slashPaletteSupplement.codexEffortLoading = true;
-        const url = key
-            ? '/api/codex/effort?session=' + encodeURIComponent(key)
-            : '/api/codex/effort';
-        const mutationToken = sessionMutations.capture(currentSessionId, 'codex:effort:read', _loadSessionSeq);
-        fetch(url, { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (slashPaletteSupplement.codexEffortDirty || !isCurrentSupplementFetch('codexEffortGen', effortGeneration)) return;
-                slashPaletteSupplement.codexEffort =
-                    (j && j.preferredEffort) || '';
-                slashPaletteSupplement.codexEffortKey = key;
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                repaintCodexUserBadges();
-                persistStickySlashForCurrentSession();
-                refreshHistoryAgentChips();
-            })
-            .catch(() => {})
-            .finally(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.codexEffortLoading = false;
-            });
+        return agentControls.loadCodexEffortForPalette();
     }
 
     /**
@@ -6271,140 +5359,12 @@
     }
 
     function buildCodexEffortPaletteItems(filterLower) {
-        if (!agentSupportsEffort('codex')) return [];
-        if (!hasActiveCodexAgentChip()) return [];
-        const f = (filterLower || '').toLowerCase().trim();
-        if (!f) return [];
-        loadCodexEffortForPalette();
-        let effortFilter = f
-            .replace(/^codex\s+/, '')
-            .replace(/^efforts?\b\s*/, '')
-            .trim();
-        if (effortFilter === 'effort') effortFilter = '';
-        const preferred = String(slashPaletteSupplement.codexEffort || '').toLowerCase();
-        const selectedModel = String(slashPaletteSupplement.codexModel || '').toLowerCase();
-        const selectedRow = selectedModel
-            ? (slashPaletteSupplement.codexModels || []).find((m) =>
-                String(m && m.id || '').toLowerCase() === selectedModel
-            )
-            : null;
-        const levels = selectedRow && Array.isArray(selectedRow.efforts)
-            ? selectedRow.efforts
-            : selectedModel
-                ? []
-                : (slashPaletteSupplement.codexCommonEfforts || []);
-        if (!levels.length) {
-            return [{
-                category: 'codex-effort',
-                prefix: '/codex effort',
-                label: slashPaletteSupplement.codexModelsLoading
-                    ? 'Loading Codex effort support…'
-                    : 'No verified effort levels for ' + (selectedModel || 'the CLI default'),
-                hint: slashPaletteSupplement.codexModelsLoading
-                    ? 'Reading per-model levels from codex debug models'
-                    : 'Refresh the Codex model catalog to read current per-model effort support',
-                meta: '',
-                keywords: 'codex effort loading supported levels refresh',
-                modelId: '',
-                codexEffort: true,
-                disabled: true,
-            }];
-        }
-        const items = levels
-            .map((id) => ({
-                category: 'codex-effort',
-                prefix: '/codex effort ' + id,
-                label: 'Effort ' + id + (id.toLowerCase() === preferred ? ' (current)' : ''),
-                hint: 'Set Codex reasoning effort (model_reasoning_effort) to ' + id
-                    + (selectedModel ? ' for ' + selectedModel : ' (supported across the CLI catalog)'),
-                meta: id,
-                keywords: 'codex effort reasoning ' + id,
-                modelId: id,
-                codexEffort: true,
-            }))
-            .filter((item) => (effortFilter ? slashPaletteItemMatches(item, effortFilter) : true));
-        if (!items.length && effortFilter) {
-            return [{
-                category: 'codex-effort',
-                prefix: '/codex effort',
-                label: '`' + effortFilter + '` is not supported'
-                    + (selectedModel ? ' by ' + selectedModel : ' across all models'),
-                hint: 'Supported: ' + levels.join(', '),
-                meta: '',
-                keywords: 'codex effort unsupported ' + effortFilter,
-                modelId: '',
-                codexEffort: true,
-                disabled: true,
-            }];
-        }
-        return items;
+        return agentControls.buildCodexEffortPaletteItems(filterLower);
     }
 
     /** anyChat: load even without a /claude chip (user typed "claude" in the palette). */
     function loadClaudeModelsForPalette(anyChat, opts) {
-        const key = currentSessionId != null ? String(currentSessionId) : '';
-        const forceRefresh = !!(opts && opts.refresh);
-        const gate = CuttleChatAgentModel.claudeModelsFetchForPalette({
-            anyChat,
-            hasClaudeChip: hasActiveHarnessAgentChip('claude'),
-            loading: slashPaletteSupplement.claudeModelsLoading,
-            modelsLength: (slashPaletteSupplement.claudeModels || []).length,
-            modelsKey: slashPaletteSupplement.claudeModelsKey,
-            triedKey: slashPaletteSupplement.claudeModelsTried,
-            sessionKey: key,
-            forceRefresh,
-        });
-        if (!gate.fetch) return;
-        const modelsGeneration = beginSupplementFetch('claudeModelsGen');
-        slashPaletteSupplement.claudeModelsLoading = true;
-        const mutationToken = sessionMutations.capture(currentSessionId, 'claude:model:read', _loadSessionSeq);
-        fetch(gate.url, { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                const applied = CuttleChatAgentModel.applyClaudeModelsResponse(j, {
-                    modelDirty: slashPaletteSupplement.claudeModelDirty || !isCurrentSupplementFetch('claudeModelsGen', modelsGeneration),
-                });
-                slashPaletteSupplement.claudeModels = applied.models;
-                if (applied.model !== null) {
-                    slashPaletteSupplement.claudeModel = applied.model;
-                }
-                slashPaletteSupplement.claudeModelsKey = key;
-                slashPaletteSupplement.claudeModelsSource = applied.source;
-                slashPaletteSupplement.claudeModelsCount = applied.count;
-                slashPaletteSupplement.claudeCommonEfforts = applied.commonEfforts;
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                repaintClaudeUserBadges();
-                persistStickySlashForCurrentSession();
-                refreshHistoryAgentChips();
-                if (forceRefresh && window.showToast) {
-                    const n = slashPaletteSupplement.claudeModelsCount || 0;
-                    const err = applied.error;
-                    window.showToast(
-                        err && !n
-                            ? ('Claude Code models refresh failed: ' + err)
-                            : ('Claude Code models and effort support refreshed (' + n + ')'),
-                        err && !n ? 'error' : 'success'
-                    );
-                }
-            })
-            .catch(() => {})
-            .finally(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.claudeModelsLoading = false;
-                slashPaletteSupplement.claudeModelsTried = key; // empty/failed: don't refetch per render
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                const welcomeInput = document.getElementById('welcomeChatInput');
-                const chatInput = document.getElementById('chatInput');
-                if (welcomeInput && document.activeElement === welcomeInput) {
-                    syncSlashMenuFromInput(welcomeInput);
-                }
-                if (chatInput && document.activeElement === chatInput) {
-                    syncSlashMenuFromInput(chatInput);
-                }
-            });
+        return agentControls.loadClaudeModelsForPalette(anyChat, opts);
     }
 
     function persistClaudeModelSelection(modelId) {
@@ -6415,7 +5375,7 @@
         if (CuttleChatAgentModel.isClaudeModelRefreshPick(id)) {
             slashPaletteSupplement.claudeModelsKey = '';
             slashPaletteSupplement.claudeModels = [];
-            loadClaudeModelsForPalette(true, { refresh: true });
+            agentControls.loadClaudeModelsForPalette(true, { refresh: true });
             return;
         }
         slashPaletteSupplement.claudeModel = id;
@@ -6451,67 +5411,7 @@
     }
 
     function buildClaudeModelPaletteItems(filterLower, opts) {
-        if (!hasActiveHarnessAgentChip('claude')) return [];
-        const f = (filterLower || '').toLowerCase().trim();
-        if (!f) return [];
-        loadClaudeModelsForPalette(true);
-        const models = slashPaletteSupplement.claudeModels || [];
-        const modelFilter = CuttleChatAgentModel.claudeModelFilterForPalette(f);
-        const preferred = String(slashPaletteSupplement.claudeModel || '').toLowerCase();
-        // Stage as nested cmd chip — no instant run (same as Codex). Composes as
-        // `/claude /model refresh` after the sticky agent prefix.
-        const refreshItem = {
-            category: 'claude-cmd',
-            prefix: '/model refresh',
-            label: 'Refresh Claude Code models',
-            hint: 'Refresh Claude Code models and per-model effort levels from the installed CLI',
-            meta: 'refresh',
-            keywords: 'claude model refresh reload sync catalog',
-        };
-        const items = [];
-        if (
-            !modelFilter
-            || slashPaletteItemMatches(refreshItem, modelFilter)
-        ) {
-            items.push(refreshItem);
-        }
-        if (slashPaletteSupplement.claudeModelsLoading && !models.length) {
-            items.push({
-                category: 'claude-model',
-                prefix: '/claude model',
-                label: 'Loading Claude Code models…',
-                hint: 'Reading the Claude Code CLI model catalog',
-                meta: '',
-                keywords: 'claude model loading',
-                modelId: '',
-                claudeModel: true,
-                disabled: true,
-            });
-            return items;
-        }
-        const mapped = models
-            .map((m) => CuttleChatAgentModel.buildClaudeModelRow(m, preferred))
-            .filter(Boolean)
-            .filter((item) => (modelFilter ? slashPaletteItemMatches(item, modelFilter) : true));
-        const MAX = (opts && opts.full) ? Infinity : 40;
-        // Rank before clipping so a name hit cannot be hidden by description hits.
-        mapped.sort((a, b) => CuttleChatSlash.slashPaletteItemSearchRank(a, f)
-            - CuttleChatSlash.slashPaletteItemSearchRank(b, f));
-        const clipped = mapped.length > MAX ? mapped.slice(0, MAX) : mapped;
-        if (mapped.length > MAX) {
-            items.push({
-                category: 'claude-model',
-                prefix: '/claude model',
-                label: '… ' + (mapped.length - MAX) + ' more — type to narrow (e.g. opus)',
-                hint: 'Claude Code catalog has ' + (slashPaletteSupplement.claudeModelsCount || mapped.length) + ' models',
-                meta: '',
-                keywords: 'claude model more filter',
-                modelId: '',
-                claudeModel: true,
-                disabled: true,
-            });
-        }
-        return items.concat(clipped);
+        return agentControls.buildClaudeModelPaletteItems(filterLower, opts);
     }
 
     function seedClaudeSupplementFromSessionData(data, sessionId) {
@@ -6528,37 +5428,7 @@
     }
 
     function loadClaudeEffortForPalette() {
-        if (slashPaletteSupplement.claudeEffortDirty) return;
-        const key = currentSessionId != null ? String(currentSessionId) : '';
-        const gate = CuttleChatAgentModel.claudeEffortFetchForPalette({
-            hasClaudeChip: hasActiveHarnessAgentChip('claude'),
-            loading: slashPaletteSupplement.claudeEffortLoading,
-            effortKey: slashPaletteSupplement.claudeEffortKey,
-            sessionKey: key,
-        });
-        if (!gate.fetch) return;
-        const effortGeneration = beginSupplementFetch('claudeEffortGen');
-        slashPaletteSupplement.claudeEffortLoading = true;
-        const mutationToken = sessionMutations.capture(currentSessionId, 'claude:effort:read', _loadSessionSeq);
-        fetch(gate.url, { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (slashPaletteSupplement.claudeEffortDirty || !isCurrentSupplementFetch('claudeEffortGen', effortGeneration)) return;
-                slashPaletteSupplement.claudeEffort =
-                    CuttleChatAgentModel.applyClaudeEffortResponse(j);
-                slashPaletteSupplement.claudeEffortKey = key;
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                repaintClaudeUserBadges();
-                persistStickySlashForCurrentSession();
-                refreshHistoryAgentChips();
-            })
-            .catch(() => {})
-            .finally(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.claudeEffortLoading = false;
-            });
+        return agentControls.loadClaudeEffortForPalette();
     }
 
     function persistClaudeEffortSelection(effort) {
@@ -6597,57 +5467,7 @@
     }
 
     function buildClaudeEffortPaletteItems(filterLower) {
-        if (!agentSupportsEffort('claude')) return [];
-        if (!hasActiveHarnessAgentChip('claude')) return [];
-        const f = (filterLower || '').toLowerCase().trim();
-        if (!f) return [];
-        loadClaudeEffortForPalette();
-        const effortFilter = CuttleChatAgentModel.claudeEffortFilterForPalette(f);
-        const preferred = String(slashPaletteSupplement.claudeEffort || '').toLowerCase();
-        const selectedModel = String(slashPaletteSupplement.claudeModel || '').toLowerCase();
-        const levels = CuttleChatAgentModel.claudeEffortLevelsForModel({
-            selectedModel,
-            models: slashPaletteSupplement.claudeModels,
-            commonEfforts: slashPaletteSupplement.claudeCommonEfforts,
-        });
-        if (!levels.length) {
-            return [{
-                category: 'claude-effort',
-                prefix: '/claude effort',
-                label: slashPaletteSupplement.claudeModelsLoading
-                    ? 'Loading Claude Code effort support…'
-                    : 'No verified effort levels for ' + (selectedModel || 'the CLI default'),
-                hint: slashPaletteSupplement.claudeModelsLoading
-                    ? 'Reading per-model levels from the Claude Code CLI'
-                    : 'This model takes no --effort level; refresh the Claude Code catalog if that looks wrong',
-                meta: '',
-                keywords: 'claude effort loading supported levels refresh',
-                modelId: '',
-                claudeEffort: true,
-                disabled: true,
-            }];
-        }
-        const items = levels
-            .map((id) => CuttleChatAgentModel.buildClaudeEffortRow(id, {
-                preferredLower: preferred,
-                selectedModel,
-            }))
-            .filter((item) => (effortFilter ? slashPaletteItemMatches(item, effortFilter) : true));
-        if (!items.length && effortFilter) {
-            return [{
-                category: 'claude-effort',
-                prefix: '/claude effort',
-                label: '`' + effortFilter + '` is not supported'
-                    + (selectedModel ? ' by ' + selectedModel : ' by the CLI default model'),
-                hint: 'Supported: ' + levels.join(', '),
-                meta: '',
-                keywords: 'claude effort unsupported ' + effortFilter,
-                modelId: '',
-                claudeEffort: true,
-                disabled: true,
-            }];
-        }
-        return items;
+        return agentControls.buildClaudeEffortPaletteItems(filterLower);
     }
 
     /** `/restart <mode>` entries. Native Cuttle control — never an agent prompt. */
@@ -6695,17 +5515,17 @@
         );
         const projs = buildProjectPaletteItems().filter((p) => slashPaletteItemMatches(p, f));
         const projCmds = buildProjectCommandPaletteItems().filter((p) => slashPaletteItemMatches(p, f));
-        const cursorModels = buildCursorModelPaletteItems(f);
-        const museModels = buildMuseModelPaletteItems(f);
-        const museEfforts = buildMuseEffortPaletteItems(f);
-        const hermesModels = buildHermesModelPaletteItems(f);
-        const hermesEfforts = buildHermesEffortPaletteItems(f);
-        const opencodeModels = buildOpenCodeModelPaletteItems(f);
-        const opencodeEfforts = buildOpenCodeEffortPaletteItems(f);
-        const codexModels = buildCodexModelPaletteItems(f);
-        const codexEfforts = buildCodexEffortPaletteItems(f);
-        const claudeModels = buildClaudeModelPaletteItems(f);
-        const claudeEfforts = buildClaudeEffortPaletteItems(f);
+        const cursorModels = agentControls.buildCursorModelPaletteItems(f);
+        const museModels = agentControls.buildMuseModelPaletteItems(f);
+        const museEfforts = agentControls.buildMuseEffortPaletteItems(f);
+        const hermesModels = agentControls.buildHermesModelPaletteItems(f);
+        const hermesEfforts = agentControls.buildHermesEffortPaletteItems(f);
+        const opencodeModels = agentControls.buildOpenCodeModelPaletteItems(f);
+        const opencodeEfforts = agentControls.buildOpenCodeEffortPaletteItems(f);
+        const codexModels = agentControls.buildCodexModelPaletteItems(f);
+        const codexEfforts = agentControls.buildCodexEffortPaletteItems(f);
+        const claudeModels = agentControls.buildClaudeModelPaletteItems(f);
+        const claudeEfforts = agentControls.buildClaudeEffortPaletteItems(f);
         const restartCmds = buildRestartPaletteItems(f).filter((c) =>
             slashPaletteItemMatches(c, f)
         );
@@ -7304,27 +6124,27 @@
             })
             .join('');
         if (hasActiveCursorAgentChip(key)) {
-            loadCursorAgentModelsForPalette();
+            agentControls.loadCursorAgentModelsForPalette();
         }
         if (hasActiveMuseAgentChip(key)) {
-            loadMuseModelsForPalette();
-            loadMuseEffortForPalette();
+            agentControls.loadMuseModelsForPalette();
+            agentControls.loadMuseEffortForPalette();
         }
         if (hasActiveHermesAgentChip(key)) {
-            loadHermesModelsForPalette();
-            loadHermesEffortForPalette();
+            agentControls.loadHermesModelsForPalette();
+            agentControls.loadHermesEffortForPalette();
         }
         if (hasActiveOpenCodeAgentChip(key)) {
-            loadOpenCodeModelsForPalette();
-            loadOpenCodeEffortForPalette();
+            agentControls.loadOpenCodeModelsForPalette();
+            agentControls.loadOpenCodeEffortForPalette();
         }
         if (hasActiveCodexAgentChip(key)) {
-            loadCodexModelsForPalette();
-            loadCodexEffortForPalette();
+            agentControls.loadCodexModelsForPalette();
+            agentControls.loadCodexEffortForPalette();
         }
         if (hasActiveHarnessAgentChip('claude', key)) {
-            loadClaudeModelsForPalette();
-            loadClaudeEffortForPalette();
+            agentControls.loadClaudeModelsForPalette();
+            agentControls.loadClaudeEffortForPalette();
         }
         row.querySelectorAll('.slash-chip-remove').forEach((btn) => {
             btn.addEventListener('click', () => {
@@ -7361,19 +6181,19 @@
     function agentMenuSpec(id) {
         const S = slashPaletteSupplement;
         const models = {
-            cursor: { build: () => buildCursorModelPaletteItems('model'), load: () => loadCursorAgentModelsForPalette(true), set: (v) => { S.preferredModel = v; beginSupplementFetch('cursorModelsGen'); }, current: () => String(S.preferredModel || 'auto').toLowerCase() },
-            muse: { build: () => buildMuseModelPaletteItems('model'), load: () => loadMuseModelsForPalette(true), set: persistMuseModelSelection, current: () => String(S.museModel || '').toLowerCase() },
-            hermes: { build: () => buildHermesModelPaletteItems('model'), load: () => loadHermesModelsForPalette(true), set: persistHermesModelSelection, current: () => String(S.hermesModel || '').toLowerCase() },
-            opencode: { build: (opts) => buildOpenCodeModelPaletteItems('model', opts), load: () => loadOpenCodeModelsForPalette(true), set: persistOpenCodeModelSelection, current: () => String(S.opencodeModel || '').toLowerCase() },
-            codex: { build: (opts) => buildCodexModelPaletteItems('model', opts), load: () => loadCodexModelsForPalette(true), set: persistCodexModelSelection, current: () => String(S.codexModel || '').toLowerCase() },
-            claude: { build: (opts) => buildClaudeModelPaletteItems('model', opts), load: () => loadClaudeModelsForPalette(true), set: persistClaudeModelSelection, current: () => String(S.claudeModel || '').toLowerCase() },
+            cursor: { build: () => agentControls.buildCursorModelPaletteItems('model'), load: () => agentControls.loadCursorAgentModelsForPalette(true), set: (v) => { S.preferredModel = v; beginSupplementFetch('cursorModelsGen'); }, current: () => String(S.preferredModel || 'auto').toLowerCase() },
+            muse: { build: () => agentControls.buildMuseModelPaletteItems('model'), load: () => agentControls.loadMuseModelsForPalette(true), set: persistMuseModelSelection, current: () => String(S.museModel || '').toLowerCase() },
+            hermes: { build: () => agentControls.buildHermesModelPaletteItems('model'), load: () => agentControls.loadHermesModelsForPalette(true), set: persistHermesModelSelection, current: () => String(S.hermesModel || '').toLowerCase() },
+            opencode: { build: (opts) => agentControls.buildOpenCodeModelPaletteItems('model', opts), load: () => agentControls.loadOpenCodeModelsForPalette(true), set: persistOpenCodeModelSelection, current: () => String(S.opencodeModel || '').toLowerCase() },
+            codex: { build: (opts) => agentControls.buildCodexModelPaletteItems('model', opts), load: () => agentControls.loadCodexModelsForPalette(true), set: persistCodexModelSelection, current: () => String(S.codexModel || '').toLowerCase() },
+            claude: { build: (opts) => agentControls.buildClaudeModelPaletteItems('model', opts), load: () => agentControls.loadClaudeModelsForPalette(true), set: persistClaudeModelSelection, current: () => String(S.claudeModel || '').toLowerCase() },
         }[id];
         const efforts = {
-            muse: { build: () => buildMuseEffortPaletteItems('effort'), load: () => loadMuseEffortForPalette(), set: persistMuseEffortSelection, current: () => String(S.museEffort || '').toLowerCase(), repaint: repaintMuseUserBadges },
-            hermes: { build: () => buildHermesEffortPaletteItems('effort'), load: () => loadHermesEffortForPalette(), set: persistHermesEffortSelection, current: () => String(S.hermesEffort || '').toLowerCase(), repaint: repaintHermesUserBadges },
-            opencode: { build: () => buildOpenCodeEffortPaletteItems('effort'), load: () => loadOpenCodeEffortForPalette(), set: persistOpenCodeEffortSelection, current: () => String(S.opencodeEffort || '').toLowerCase(), repaint: repaintOpenCodeUserBadges },
-            codex: { build: () => buildCodexEffortPaletteItems('effort'), load: () => loadCodexEffortForPalette(), set: persistCodexEffortSelection, current: () => String(S.codexEffort || '').toLowerCase(), repaint: repaintCodexUserBadges },
-            claude: { build: () => buildClaudeEffortPaletteItems('effort'), load: () => loadClaudeEffortForPalette(), set: persistClaudeEffortSelection, current: () => String(S.claudeEffort || '').toLowerCase(), repaint: repaintClaudeUserBadges },
+            muse: { build: () => agentControls.buildMuseEffortPaletteItems('effort'), load: () => agentControls.loadMuseEffortForPalette(), set: persistMuseEffortSelection, current: () => String(S.museEffort || '').toLowerCase(), repaint: repaintMuseUserBadges },
+            hermes: { build: () => agentControls.buildHermesEffortPaletteItems('effort'), load: () => agentControls.loadHermesEffortForPalette(), set: persistHermesEffortSelection, current: () => String(S.hermesEffort || '').toLowerCase(), repaint: repaintHermesUserBadges },
+            opencode: { build: () => agentControls.buildOpenCodeEffortPaletteItems('effort'), load: () => agentControls.loadOpenCodeEffortForPalette(), set: persistOpenCodeEffortSelection, current: () => String(S.opencodeEffort || '').toLowerCase(), repaint: repaintOpenCodeUserBadges },
+            codex: { build: () => agentControls.buildCodexEffortPaletteItems('effort'), load: () => agentControls.loadCodexEffortForPalette(), set: persistCodexEffortSelection, current: () => String(S.codexEffort || '').toLowerCase(), repaint: repaintCodexUserBadges },
+            claude: { build: () => agentControls.buildClaudeEffortPaletteItems('effort'), load: () => agentControls.loadClaudeEffortForPalette(), set: persistClaudeEffortSelection, current: () => String(S.claudeEffort || '').toLowerCase(), repaint: repaintClaudeUserBadges },
         }[id];
         if (!models && !efforts) return null;
         return { models: models || null, efforts: efforts || null };
@@ -8061,7 +6881,7 @@
         }
         loadSlashPaletteSupplement();
         if (hasActiveCursorAgentChip(key)) {
-            loadCursorAgentModelsForPalette();
+            agentControls.loadCursorAgentModelsForPalette();
         }
         const result = filterSlashPaletteItems(parsed.filter);
         const items = result.items || [];
@@ -11727,8 +10547,8 @@
 
             // Proactively fetch the per-session model preference so the composer chip
             // and typing indicator show the correct model before the palette is opened.
-            loadCursorAgentModelsForPalette(true);
-            loadMuseModelsForPalette(true);
+            agentControls.loadCursorAgentModelsForPalette(true);
+            agentControls.loadMuseModelsForPalette(true);
 
             markChatSessionRead(sessionId);
             document.querySelectorAll('.chat-history-item').forEach(item => {

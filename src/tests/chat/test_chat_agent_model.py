@@ -23,6 +23,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[3]
 MOD_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_agent_model.js"
 CHAT_PAGE_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_page.js"
+CONTROLS_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_agent_controls.js"
 
 node_only = pytest.mark.skipif(
     shutil.which("node") is None, reason="node not available"
@@ -172,49 +173,60 @@ def test_chat_agent_model_module_parses():
 
 
 def test_page_delegates_agent_model_decisions_to_owned_module():
-    """Narrow page adapters: same signatures, no duplicated decision logic."""
+    """Narrow page adapters: same signatures, no duplicated decision logic.
+
+    The model/effort palette loaders + builders moved to the page's
+    ``CuttleChatAgentControls`` owner (chat_agent_controls.js); the page keeps
+    thin delegating wrappers and the persistence/seed/label adapters that call
+    the pure ``CuttleChatAgentModel`` decisions directly.
+    """
     src = CHAT_PAGE_JS.read_text(encoding="utf-8")
-    for adapter, owned in (
-        ("function sessionPin(data, agent, kind)", "CuttleChatAgentModel.sessionPin"),
-        ("function starredAgentModel(agentId)", "CuttleChatAgentModel.starredAgentModel"),
-        ("function starredAgentEffort(agentId)", "CuttleChatAgentModel.starredAgentEffort"),
-        ("function isAgentDefaultStarred(spec, cmd)",
-         "CuttleChatAgentModel.isAgentDefaultStarred"),
-        ("function attachAgentIdentityToRequest(requestBody)",
-         "CuttleChatAgentModel.buildAgentPinsForRequest"),
-        ("async function ensureCodexEffortForSend(message)",
-         "CuttleChatAgentModel.codexEffortFetchForSend"),
-        ("function loadClaudeModelsForPalette(anyChat, opts)",
-         "CuttleChatAgentModel.claudeModelsFetchForPalette"),
-        ("function loadClaudeModelsForPalette(anyChat, opts)",
-         "CuttleChatAgentModel.applyClaudeModelsResponse"),
-        ("function persistClaudeModelSelection(modelId)",
-         "CuttleChatAgentModel.isClaudeModelRefreshPick"),
-        ("function persistClaudeModelSelection(modelId)",
-         "CuttleChatAgentModel.markClaudeCurrentModel"),
-        ("function buildClaudeModelPaletteItems(filterLower, opts)",
-         "CuttleChatAgentModel.claudeModelFilterForPalette"),
-        ("function buildClaudeModelPaletteItems(filterLower, opts)",
-         "CuttleChatAgentModel.buildClaudeModelRow"),
-        ("function seedClaudeSupplementFromSessionData(data, sessionId)",
-         "CuttleChatAgentModel.claudeSeedPatchFromSessionData"),
-        ("function loadClaudeEffortForPalette()",
-         "CuttleChatAgentModel.claudeEffortFetchForPalette"),
-        ("function loadClaudeEffortForPalette()",
-         "CuttleChatAgentModel.applyClaudeEffortResponse"),
-        ("function buildClaudeEffortPaletteItems(filterLower)",
-         "CuttleChatAgentModel.claudeEffortFilterForPalette"),
-        ("function buildClaudeEffortPaletteItems(filterLower)",
-         "CuttleChatAgentModel.claudeEffortLevelsForModel"),
-        ("function buildClaudeEffortPaletteItems(filterLower)",
-         "CuttleChatAgentModel.buildClaudeEffortRow"),
-        ("function prettyClaudeModelLabel(model)",
-         "CuttleChatAgentModel.prettyClaudeModelLabel"),
-        ("function claudeModelLabel(model)",
-         "CuttleChatAgentModel.claudeModelLabel"),
+    controls = CONTROLS_JS.read_text(encoding="utf-8")
+    for adapter in (
+        "function sessionPin(data, agent, kind)",
+        "function starredAgentModel(agentId)",
+        "function starredAgentEffort(agentId)",
+        "function isAgentDefaultStarred(spec, cmd)",
+        "function attachAgentIdentityToRequest(requestBody)",
+        "async function ensureCodexEffortForSend(message)",
+        "function loadClaudeModelsForPalette(anyChat, opts)",
+        "function persistClaudeModelSelection(modelId)",
+        "function buildClaudeModelPaletteItems(filterLower, opts)",
+        "function seedClaudeSupplementFromSessionData(data, sessionId)",
+        "function loadClaudeEffortForPalette()",
+        "function buildClaudeEffortPaletteItems(filterLower)",
+        "function prettyClaudeModelLabel(model)",
+        "function claudeModelLabel(model)",
     ):
         assert adapter in src, f"page adapter {adapter} must stay (same signature)"
+    # Page-kept adapters that call the pure model directly.
+    for owned in (
+        "CuttleChatAgentModel.sessionPin",
+        "CuttleChatAgentModel.starredAgentModel",
+        "CuttleChatAgentModel.starredAgentEffort",
+        "CuttleChatAgentModel.isAgentDefaultStarred",
+        "CuttleChatAgentModel.buildAgentPinsForRequest",
+        "CuttleChatAgentModel.codexEffortFetchForSend",
+        "CuttleChatAgentModel.isClaudeModelRefreshPick",
+        "CuttleChatAgentModel.markClaudeCurrentModel",
+        "CuttleChatAgentModel.claudeSeedPatchFromSessionData",
+        "CuttleChatAgentModel.prettyClaudeModelLabel",
+        "CuttleChatAgentModel.claudeModelLabel",
+    ):
         assert owned in src, f"page must delegate to {owned}"
+    # Provider loaders/builders now live on the controller owner.
+    for owned in (
+        "CuttleChatAgentModel.claudeModelsFetchForPalette",
+        "CuttleChatAgentModel.applyClaudeModelsResponse",
+        "CuttleChatAgentModel.claudeModelFilterForPalette",
+        "CuttleChatAgentModel.buildClaudeModelRow",
+        "CuttleChatAgentModel.claudeEffortFetchForPalette",
+        "CuttleChatAgentModel.applyClaudeEffortResponse",
+        "CuttleChatAgentModel.claudeEffortFilterForPalette",
+        "CuttleChatAgentModel.claudeEffortLevelsForModel",
+        "CuttleChatAgentModel.buildClaudeEffortRow",
+    ):
+        assert owned in controls, f"controller must own {owned}"
     assert "CuttleChatAgentModel.resolveAgentEffortForBadge" in src
 
 
