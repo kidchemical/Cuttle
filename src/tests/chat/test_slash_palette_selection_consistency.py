@@ -33,6 +33,7 @@ CHAT_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_page.js"
 CONTROLS_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_agent_controls.js"
 SLASH_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_slash.js"
 COMPOSER_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_composer.js"
+PALETTE_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_slash_palette.js"
 CHAT_HTML = REPO_ROOT / "src" / "web" / "chat_page.html"
 
 pytestmark = pytest.mark.skipif(
@@ -46,6 +47,18 @@ def _src() -> str:
 
 def _controls_src() -> str:
     return CONTROLS_JS.read_text(encoding="utf-8")
+
+
+def _palette_src() -> str:
+    return PALETTE_JS.read_text(encoding="utf-8")
+
+
+def _apply_selection_src() -> str:
+    """The moved ``applySelection`` (was chat_page.js ``applySlashSelectionInner``)."""
+    src = _palette_src()
+    apply_start = src.index("function applySelection(")
+    apply_end = src.index("\n        return {", apply_start)
+    return src[apply_start:apply_end]
 
 
 def _extract(src: str, start_marker: str, end_marker: str) -> str:
@@ -314,9 +327,8 @@ def test_model_refresh_palette_item_is_staged_not_instant():
     assert "cursorRefresh: true" not in src
     assert "cursorRefresh: true" not in ctl
     # Selection path must not special-case instant refresh for Cursor.
-    apply_start = src.index("function applySlashSelectionInner(")
-    apply_end = src.index("function applySlashSelection(", apply_start)
-    apply = src[apply_start:apply_end]
+    # The apply logic moved to chat_slash_palette.js (applySelection).
+    apply = _apply_selection_src()
     assert "loadCursorAgentModelsForPalette(true, { refresh: true })" not in apply
 
 
@@ -751,9 +763,8 @@ process.stdout.write(JSON.stringify(out));
 def test_muse_codex_opencode_refresh_not_instant_on_palette_pick():
     """Palette pick must stage a chip — not call persist*('__refresh__') inline."""
     src = _src()
-    apply_start = src.index("function applySlashSelectionInner(")
-    apply_end = src.index("function applySlashSelection(", apply_start)
-    apply = src[apply_start:apply_end]
+    # The apply logic moved to chat_slash_palette.js (applySelection).
+    apply = _apply_selection_src()
     # Instant refresh on pick used to live in the *-model branches.
     assert "persistMuseModelSelection('__refresh__')" not in apply or (
         # Dead leftover on stale __refresh__ model rows is OK only if refresh

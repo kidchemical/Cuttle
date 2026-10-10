@@ -16,9 +16,11 @@
    `ctx`, `contextKey`, `menuId`, `chipsRowId`, `parseAtCursor`,
    `hideMenu`, `filterItems`, `renderMenu`, `syncFromInput`,
    `consumeFilterText`, `handleKeyDown`, `setTypeFilter`, `getTypeFilter`,
-   `bind`. The page keeps the composer chips (`ctx.*.chips`), applies a
-   selection (`applySlashSelectionInner` still page-owned this stage) and
-   passes every other page symbol in as a capability.
+   `applySelection`, `bind`. The page keeps the composer chips
+   (`ctx.*.chips`) via `renderSlashChips` and passes every page symbol in
+   as a capability. `applySlashSelectionInner` (405 lines) moved here as
+   `applySelection` in Phase 2B stage 2; the page keeps the thin
+   `applySlashSelection` choke point that also persists the draft.
 
    deps: { win, escapeHtmlInline, clamp,
            availableSlashCommands, cursorAgentSlashCommandsForPalette,
@@ -32,7 +34,12 @@
            loadAgentCapabilities, loadCursorStarredDefault,
            loadAllStarredDefaults, loadSlashPaletteSupplement,
            isPaletteLoading, hasActiveCursorAgentChip,
-           loadCursorAgentModelsForPalette, applySlashSelection, saveDraft }.
+           loadCursorAgentModelsForPalette, applySlashSelection, saveDraft,
+           findProjectById, setChatProject,
+           autoResizeTextarea, autoResizeWelcomeTextarea,
+           renderSlashChips, markStickyAgentCleared,
+           persistStickySlashForCurrentSession, isOrphanedCompanionChip,
+           onCursorModelPick }.
    Loaded before chat_page.js.
    ================================================================ */
 (function (root) {
@@ -87,6 +94,15 @@
         const loadCursorAgentModelsForPalette = deps.loadCursorAgentModelsForPalette;
         const applySlashSelection = deps.applySlashSelection;
         const saveDraft = deps.saveDraft;
+        const findProjectById = deps.findProjectById;
+        const setChatProject = deps.setChatProject;
+        const autoResizeTextarea = deps.autoResizeTextarea;
+        const autoResizeWelcomeTextarea = deps.autoResizeWelcomeTextarea;
+        const renderSlashChips = deps.renderSlashChips;
+        const markStickyAgentCleared = deps.markStickyAgentCleared;
+        const persistStickySlashForCurrentSession = deps.persistStickySlashForCurrentSession;
+        const isOrphanedCompanionChip = deps.isOrphanedCompanionChip;
+        const onCursorModelPick = deps.onCursorModelPick;
 
         const ctx = {
             welcome: {
@@ -680,6 +696,354 @@
             return false;
         }
 
+        /**
+         * Apply a palette pick (click / Enter / Tab) to the composer. Strips the
+         * typed `/…` filter fragment, then either performs a project/agent
+         * setting change or stages a composer chip. Moved verbatim from
+         * chat_page.js `applySlashSelectionInner` (Phase 2B stage 2): the page
+         * keeps the `applySlashSelection` choke point that also persists the
+         * draft.
+         */
+        function applySelection(textarea, key, idx) {
+            const state = ctx[key];
+            const cmd = state.filtered[idx];
+            if (!cmd || !state.replaceRange) return;
+            const from = state.replaceRange.from;
+            const to = state.replaceRange.to;
+            const v = textarea.value;
+
+            function finish() {
+                try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
+                if (key === 'chat') autoResizeTextarea();
+                else autoResizeWelcomeTextarea();
+            }
+
+            function renderBoth() {
+                renderSlashChips('welcome', doc.getElementById('welcomeChatInput'));
+                renderSlashChips('chat', doc.getElementById('chatInput'));
+            }
+
+            function toast(msg, type) {
+                (win.showToast || function () {})(msg, type);
+            }
+
+            // Project entries set the chat's working project (cwd) instead of
+            // inserting a sticky command chip into the message text.
+            if (cmd.category === 'project') {
+                textarea.value = v.slice(0, from) + v.slice(to);
+                state.replaceRange = null;
+                state.filtered = [];
+                state.paletteDismissed = false;
+                hideMenu(key);
+                const proj = findProjectById(cmd.projectId) || {
+                    id: cmd.projectId,
+                    name: cmd.projectName,
+                    path: cmd.projectPath,
+                };
+                setChatProject(proj);
+                finish();
+                return;
+            }
+
+            // Muse model picks are a chat setting, not part of the next message:
+            // apply and relabel the Muse chip. These entries only appear while
+            // the Muse badge is applied, so no chip auto-add here.
+            if (cmd.category === 'muse-model') {
+                textarea.value = v.slice(0, from) + v.slice(to);
+                const mid =
+                    String(cmd.modelId || '').trim()
+                    || String(cmd.prefix || '').replace(/^\/muse\s+model\s+/i, '').trim();
+                if (!mid || mid === '__refresh__' || cmd.museRefresh || cmd.disabled) {
+                    if (mid === '__refresh__' || cmd.museRefresh) {
+                        agentControls.persistMuseModelSelection('__refresh__');
+                    }
+                    state.replaceRange = null;
+                    state.filtered = [];
+                    state.paletteDismissed = false;
+                    hideMenu(key);
+                    finish();
+                    return;
+                }
+                agentControls.persistMuseModelSelection(mid);
+                state.replaceRange = null;
+                state.filtered = [];
+                state.paletteDismissed = false;
+                hideMenu(key);
+                renderBoth();
+                toast('Muse Code model: ' + agentControls.museModelLabel(mid), 'success');
+                finish();
+                return;
+            }
+
+            // Muse effort picks are a chat setting like model picks: apply,
+            // toast, send no message. Badge-gated, so no chip auto-add either.
+            if (cmd.category === 'muse-effort') {
+                textarea.value = v.slice(0, from) + v.slice(to);
+                const eid =
+                    String(cmd.modelId || '').trim()
+                    || String(cmd.prefix || '').replace(/^\/muse\s+effort\s+/i, '').trim();
+                agentControls.persistMuseEffortSelection(eid);
+                state.replaceRange = null;
+                state.filtered = [];
+                state.paletteDismissed = false;
+                hideMenu(key);
+                renderBoth();
+                agentControls.repaintMuseUserBadges();
+                toast('Muse Code reasoning effort: ' + (eid || 'default'), 'success');
+                finish();
+                return;
+            }
+
+            // Hermes model picks — chat setting, no message sent (badge-gated).
+            if (cmd.category === 'hermes-model') {
+                textarea.value = v.slice(0, from) + v.slice(to);
+                const mid =
+                    String(cmd.modelId || '').trim()
+                    || String(cmd.prefix || '').replace(/^\/hermes\s+model\s+/i, '').trim();
+                agentControls.persistHermesModelSelection(mid);
+                state.replaceRange = null;
+                state.filtered = [];
+                state.paletteDismissed = false;
+                hideMenu(key);
+                renderBoth();
+                toast('Hermes model: ' + agentControls.hermesModelLabel(mid), 'success');
+                finish();
+                return;
+            }
+
+            // Hermes effort picks — chat setting like model picks.
+            if (cmd.category === 'hermes-effort') {
+                textarea.value = v.slice(0, from) + v.slice(to);
+                const eid =
+                    String(cmd.modelId || '').trim()
+                    || String(cmd.prefix || '').replace(/^\/hermes\s+effort\s+/i, '').trim();
+                agentControls.persistHermesEffortSelection(eid);
+                state.replaceRange = null;
+                state.filtered = [];
+                state.paletteDismissed = false;
+                hideMenu(key);
+                renderBoth();
+                agentControls.repaintHermesUserBadges();
+                toast('Hermes reasoning effort: ' + (eid || 'default'), 'success');
+                finish();
+                return;
+            }
+
+            // OpenCode model picks — chat setting, no message sent (badge-gated).
+            if (cmd.category === 'opencode-model') {
+                textarea.value = v.slice(0, from) + v.slice(to);
+                const mid =
+                    String(cmd.modelId || '').trim()
+                    || String(cmd.prefix || '').replace(/^\/opencode\s+model\s+/i, '').trim();
+                if (!mid || mid === '__refresh__' || cmd.opencodeRefresh || cmd.disabled) {
+                    if (mid === '__refresh__' || cmd.opencodeRefresh) {
+                        agentControls.persistOpenCodeModelSelection('__refresh__');
+                    }
+                    state.replaceRange = null;
+                    state.filtered = [];
+                    state.paletteDismissed = false;
+                    hideMenu(key);
+                    finish();
+                    return;
+                }
+                agentControls.persistOpenCodeModelSelection(mid);
+                state.replaceRange = null;
+                state.filtered = [];
+                state.paletteDismissed = false;
+                hideMenu(key);
+                renderBoth();
+                toast('OpenCode model: ' + agentControls.opencodeModelLabel(mid), 'success');
+                finish();
+                return;
+            }
+
+            // OpenCode effort picks — chat setting like model picks.
+            if (cmd.category === 'opencode-effort') {
+                textarea.value = v.slice(0, from) + v.slice(to);
+                const eid =
+                    String(cmd.modelId || '').trim()
+                    || String(cmd.prefix || '').replace(/^\/opencode\s+effort\s+/i, '').trim();
+                agentControls.persistOpenCodeEffortSelection(eid);
+                state.replaceRange = null;
+                state.filtered = [];
+                state.paletteDismissed = false;
+                hideMenu(key);
+                renderBoth();
+                agentControls.repaintOpenCodeUserBadges();
+                toast('OpenCode reasoning effort: ' + (eid || 'default'), 'success');
+                finish();
+                return;
+            }
+
+            // Codex model picks — chat setting, no message sent (badge-gated).
+            if (cmd.category === 'codex-model') {
+                textarea.value = v.slice(0, from) + v.slice(to);
+                const mid =
+                    String(cmd.modelId || '').trim()
+                    || String(cmd.prefix || '').replace(/^\/codex\s+model\s+/i, '').trim();
+                if (!mid || mid === '__refresh__' || cmd.codexRefresh || cmd.disabled) {
+                    if (mid === '__refresh__' || cmd.codexRefresh) {
+                        agentControls.persistCodexModelSelection('__refresh__');
+                    }
+                    state.replaceRange = null;
+                    state.filtered = [];
+                    state.paletteDismissed = false;
+                    hideMenu(key);
+                    finish();
+                    return;
+                }
+                agentControls.persistCodexModelSelection(mid);
+                state.replaceRange = null;
+                state.filtered = [];
+                state.paletteDismissed = false;
+                hideMenu(key);
+                renderBoth();
+                toast('Codex model: ' + agentControls.codexModelLabel(mid), 'success');
+                finish();
+                return;
+            }
+
+            // Codex effort picks — chat setting like model picks.
+            if (cmd.category === 'codex-effort') {
+                if (cmd.disabled) return;
+                textarea.value = v.slice(0, from) + v.slice(to);
+                const eid =
+                    String(cmd.modelId || '').trim()
+                    || String(cmd.prefix || '').replace(/^\/codex\s+effort\s+/i, '').trim();
+                agentControls.persistCodexEffortSelection(eid);
+                state.replaceRange = null;
+                state.filtered = [];
+                state.paletteDismissed = false;
+                hideMenu(key);
+                renderBoth();
+                agentControls.repaintCodexUserBadges();
+                toast('Codex reasoning effort: ' + (eid || 'default'), 'success');
+                finish();
+                return;
+            }
+
+            // Claude model picks — chat setting, no message sent (badge-gated).
+            if (cmd.category === 'claude-model') {
+                textarea.value = v.slice(0, from) + v.slice(to);
+                const mid =
+                    String(cmd.modelId || '').trim()
+                    || String(cmd.prefix || '').replace(/^\/claude\s+model\s+/i, '').trim();
+                if (!mid || mid === '__refresh__' || cmd.claudeRefresh || cmd.disabled) {
+                    if (mid === '__refresh__' || cmd.claudeRefresh) {
+                        agentControls.persistClaudeModelSelection('__refresh__');
+                    }
+                    state.replaceRange = null;
+                    state.filtered = [];
+                    state.paletteDismissed = false;
+                    hideMenu(key);
+                    finish();
+                    return;
+                }
+                agentControls.persistClaudeModelSelection(mid);
+                state.replaceRange = null;
+                state.filtered = [];
+                state.paletteDismissed = false;
+                hideMenu(key);
+                renderBoth();
+                toast('Claude Code model: ' + agentControls.claudeModelLabel(mid), 'success');
+                finish();
+                return;
+            }
+
+            // Claude effort picks — chat setting like model picks.
+            if (cmd.category === 'claude-effort') {
+                if (cmd.disabled) return;
+                textarea.value = v.slice(0, from) + v.slice(to);
+                const eid =
+                    String(cmd.modelId || '').trim()
+                    || String(cmd.prefix || '').replace(/^\/claude\s+effort\s+/i, '').trim();
+                agentControls.persistClaudeEffortSelection(eid);
+                state.replaceRange = null;
+                state.filtered = [];
+                state.paletteDismissed = false;
+                hideMenu(key);
+                renderBoth();
+                agentControls.repaintClaudeUserBadges();
+                toast('Claude Code effort: ' + (eid || 'default'), 'success');
+                finish();
+                return;
+            }
+
+            textarea.value = v.slice(0, from) + v.slice(to);
+            // Model picks compose as `/cursor /model <id>` but should not become a
+            // second visible badge — the Cursor Agent chip already shows the
+            // preferred model.
+            if (cmd.category === 'cursor-model') {
+                const mid =
+                    String(cmd.modelId || '').trim() ||
+                    String(cmd.prefix || '')
+                        .replace(/^\/model\s+/i, '')
+                        .trim();
+                // Catalog refresh is a cursor-cmd chip now (staged + send). Ignore
+                // any stale __refresh__ model rows.
+                if (!mid || mid === '__refresh__' || cmd.disabled) {
+                    state.replaceRange = null;
+                    state.filtered = [];
+                    state.paletteDismissed = false;
+                    hideMenu(key);
+                    finish();
+                    return;
+                }
+                textarea.value = v.slice(0, from) + v.slice(to);
+                if (mid) {
+                    onCursorModelPick(mid);
+                }
+                // Drop any prior model chips so we don't stack /model entries.
+                state.chips = state.chips.filter((c) => (c.category || '') !== 'cursor-model');
+                state.chips.push({
+                    prefix: cmd.prefix,
+                    label: agentControls.preferredModelLabel(mid)
+                        || String(cmd.label || mid).replace(/\s*\(current\)\s*$/i, '').trim(),
+                    category: 'cursor-model',
+                    modelId: mid || undefined,
+                });
+                const other = key === 'chat' ? 'welcome' : 'chat';
+                ctx[other].chips = state.chips.slice();
+                state.replaceRange = null;
+                state.filtered = [];
+                state.paletteDismissed = false;
+                hideMenu(key);
+                renderSlashChips(other, doc.getElementById(other === 'chat' ? 'chatInput' : 'welcomeChatInput'));
+                renderSlashChips(key, textarea);
+                finish();
+                return;
+            }
+            // Exclusive sticky agent: only one agent badge at a time (Cursor vs Muse etc.)
+            const _stickyMatch = S.SLASH_COMMANDS.find((s) => s.prefix === cmd.prefix && s.stickySession);
+            if (_stickyMatch) {
+                state.chips = state.chips.filter((c) => {
+                    const m = S.SLASH_COMMANDS.find((s) => s.prefix === c.prefix);
+                    if (m && m.stickySession) return false;
+                    return !isOrphanedCompanionChip(c, cmd);
+                });
+            }
+            state.chips.push({
+                prefix: cmd.prefix,
+                label: cmd.label,
+                category: cmd.category || 'command',
+            });
+            state.replaceRange = null;
+            state.filtered = [];
+            state.paletteDismissed = false;
+            hideMenu(key);
+            // Sticky agent chips apply for the rest of the session — mirror to both composers.
+            const match = S.SLASH_COMMANDS.find((s) => s.prefix === cmd.prefix);
+            if (match && match.stickySession) {
+                const other = key === 'chat' ? 'welcome' : 'chat';
+                ctx[other].chips = state.chips.slice();
+                renderSlashChips(other, doc.getElementById(other === 'chat' ? 'chatInput' : 'welcomeChatInput'));
+                markStickyAgentCleared(false);
+                persistStickySlashForCurrentSession(true);
+            }
+            renderSlashChips(key, textarea);
+            finish();
+        }
+
         return {
             ctx,
             contextKey,
@@ -694,6 +1058,7 @@
             handleKeyDown,
             setTypeFilter,
             getTypeFilter,
+            applySelection,
             bind,
         };
     }

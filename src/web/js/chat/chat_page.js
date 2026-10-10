@@ -4547,6 +4547,16 @@
     }
 
     /**
+     * Palette pick of a Cursor model id: record the preference and invalidate
+     * any in-flight models fetch. The palette controller owns the selection
+     * logic; this keeps the preferred-model state page-owned.
+     */
+    function onCursorModelPick(mid) {
+        slashPaletteSupplement.preferredModel = mid;
+        beginSupplementFetch('cursorModelsGen');
+    }
+
+    /**
      * Neutralize cached agent preferences when the session identity changes.
      * prev/next are '' for the unsent composer: '' → id keeps dirty user
      * picks (same unsent chat gaining an id); anything else fully resets so a
@@ -4742,11 +4752,12 @@
     }
 
     /** `/restart <mode>` entries. Native Cuttle control — never an agent prompt. */
-    // Slash palette controller: menu DOM, keyboard navigation, filtering and
-    // the dismiss lifecycle are owned by chat_slash_palette.js
-    // (CuttleChatSlashPalette). The page shares the palette state so composer
-    // chips and the (still page-owned) applySlashSelectionInner keep working,
-    // and passes every page-owned capability in.
+    // Slash palette controller: menu DOM, keyboard navigation, filtering, the
+    // selection apply logic and the dismiss lifecycle are owned by
+    // chat_slash_palette.js (CuttleChatSlashPalette). The page shares the
+    // palette state so composer chips keep working, keeps the
+    // `applySlashSelection` draft choke point, and passes every page-owned
+    // capability in.
     const slashPalette = CuttleChatSlashPalette.create({
         win: window,
         escapeHtmlInline,
@@ -4776,6 +4787,15 @@
         loadCursorAgentModelsForPalette,
         applySlashSelection,
         saveDraft: () => saveComposerDraft(currentSessionId || 'new'),
+        findProjectById,
+        setChatProject,
+        autoResizeTextarea,
+        autoResizeWelcomeTextarea,
+        renderSlashChips,
+        markStickyAgentCleared,
+        persistStickySlashForCurrentSession,
+        isOrphanedCompanionChip,
+        onCursorModelPick,
     });
     slashPalette.bind();
 
@@ -5283,413 +5303,13 @@
         renderSlashChips('chat', document.getElementById('chatInput'));
     }
 
-    function applySlashSelectionInner(textarea, key, idx) {
-        const ctx = slashCtx[key];
-        const cmd = ctx.filtered[idx];
-        if (!cmd || !ctx.replaceRange) return;
-        const { from, to } = ctx.replaceRange;
-        const v = textarea.value;
-
-        // Project entries set the chat's working project (cwd) instead of
-        // inserting a sticky command chip into the message text.
-        if (cmd.category === 'project') {
-            textarea.value = v.slice(0, from) + v.slice(to);
-            ctx.replaceRange = null;
-            ctx.filtered = [];
-            ctx.paletteDismissed = false;
-            hideSlashMenu(key);
-            const proj =
-                findProjectById(cmd.projectId) || {
-                    id: cmd.projectId,
-                    name: cmd.projectName,
-                    path: cmd.projectPath,
-                };
-            setChatProject(proj);
-            try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-            if (key === 'chat') autoResizeTextarea();
-            else autoResizeWelcomeTextarea();
-            return;
-        }
-
-        // Muse model picks are a chat setting, not part of the next message: apply
-        // and relabel the Muse chip. These entries only appear while the Muse
-        // badge is applied, so no chip auto-add here.
-        if (cmd.category === 'muse-model') {
-            textarea.value = v.slice(0, from) + v.slice(to);
-            const mid =
-                String(cmd.modelId || '').trim()
-                || String(cmd.prefix || '').replace(/^\/muse\s+model\s+/i, '').trim();
-            if (!mid || mid === '__refresh__' || cmd.museRefresh || cmd.disabled) {
-                if (mid === '__refresh__' || cmd.museRefresh) {
-                    persistMuseModelSelection('__refresh__');
-                }
-                ctx.replaceRange = null;
-                ctx.filtered = [];
-                ctx.paletteDismissed = false;
-                hideSlashMenu(key);
-                try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-                if (key === 'chat') autoResizeTextarea();
-                else autoResizeWelcomeTextarea();
-                return;
-            }
-            persistMuseModelSelection(mid);
-            ctx.replaceRange = null;
-            ctx.filtered = [];
-            ctx.paletteDismissed = false;
-            hideSlashMenu(key);
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            (window.showToast || function () {})(
-                'Muse Code model: ' + museModelLabel(mid),
-                'success'
-            );
-            try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-            if (key === 'chat') autoResizeTextarea();
-            else autoResizeWelcomeTextarea();
-            return;
-        }
-
-        // Muse effort picks are a chat setting like model picks: apply, toast,
-        // send no message. Badge-gated, so no chip auto-add here either.
-        if (cmd.category === 'muse-effort') {
-            textarea.value = v.slice(0, from) + v.slice(to);
-            const eid =
-                String(cmd.modelId || '').trim()
-                || String(cmd.prefix || '').replace(/^\/muse\s+effort\s+/i, '').trim();
-            persistMuseEffortSelection(eid);
-            ctx.replaceRange = null;
-            ctx.filtered = [];
-            ctx.paletteDismissed = false;
-            hideSlashMenu(key);
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            repaintMuseUserBadges();
-            (window.showToast || function () {})(
-                'Muse Code reasoning effort: ' + (eid || 'default'),
-                'success'
-            );
-            try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-            if (key === 'chat') autoResizeTextarea();
-            else autoResizeWelcomeTextarea();
-            return;
-        }
-
-        // Hermes model picks — chat setting, no message sent (badge-gated).
-        if (cmd.category === 'hermes-model') {
-            textarea.value = v.slice(0, from) + v.slice(to);
-            const mid =
-                String(cmd.modelId || '').trim()
-                || String(cmd.prefix || '').replace(/^\/hermes\s+model\s+/i, '').trim();
-            persistHermesModelSelection(mid);
-            ctx.replaceRange = null;
-            ctx.filtered = [];
-            ctx.paletteDismissed = false;
-            hideSlashMenu(key);
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            (window.showToast || function () {})(
-                'Hermes model: ' + hermesModelLabel(mid),
-                'success'
-            );
-            try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-            if (key === 'chat') autoResizeTextarea();
-            else autoResizeWelcomeTextarea();
-            return;
-        }
-
-        // Hermes effort picks — chat setting like model picks.
-        if (cmd.category === 'hermes-effort') {
-            textarea.value = v.slice(0, from) + v.slice(to);
-            const eid =
-                String(cmd.modelId || '').trim()
-                || String(cmd.prefix || '').replace(/^\/hermes\s+effort\s+/i, '').trim();
-            persistHermesEffortSelection(eid);
-            ctx.replaceRange = null;
-            ctx.filtered = [];
-            ctx.paletteDismissed = false;
-            hideSlashMenu(key);
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            repaintHermesUserBadges();
-            (window.showToast || function () {})(
-                'Hermes reasoning effort: ' + (eid || 'default'),
-                'success'
-            );
-            try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-            if (key === 'chat') autoResizeTextarea();
-            else autoResizeWelcomeTextarea();
-            return;
-        }
-
-        // OpenCode model picks — chat setting, no message sent (badge-gated).
-        if (cmd.category === 'opencode-model') {
-            textarea.value = v.slice(0, from) + v.slice(to);
-            const mid =
-                String(cmd.modelId || '').trim()
-                || String(cmd.prefix || '').replace(/^\/opencode\s+model\s+/i, '').trim();
-            if (!mid || mid === '__refresh__' || cmd.opencodeRefresh || cmd.disabled) {
-                if (mid === '__refresh__' || cmd.opencodeRefresh) {
-                    persistOpenCodeModelSelection('__refresh__');
-                }
-                ctx.replaceRange = null;
-                ctx.filtered = [];
-                ctx.paletteDismissed = false;
-                hideSlashMenu(key);
-                try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-                if (key === 'chat') autoResizeTextarea();
-                else autoResizeWelcomeTextarea();
-                return;
-            }
-            persistOpenCodeModelSelection(mid);
-            ctx.replaceRange = null;
-            ctx.filtered = [];
-            ctx.paletteDismissed = false;
-            hideSlashMenu(key);
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            (window.showToast || function () {})(
-                'OpenCode model: ' + opencodeModelLabel(mid),
-                'success'
-            );
-            try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-            if (key === 'chat') autoResizeTextarea();
-            else autoResizeWelcomeTextarea();
-            return;
-        }
-
-        // OpenCode effort picks — chat setting like model picks.
-        if (cmd.category === 'opencode-effort') {
-            textarea.value = v.slice(0, from) + v.slice(to);
-            const eid =
-                String(cmd.modelId || '').trim()
-                || String(cmd.prefix || '').replace(/^\/opencode\s+effort\s+/i, '').trim();
-            persistOpenCodeEffortSelection(eid);
-            ctx.replaceRange = null;
-            ctx.filtered = [];
-            ctx.paletteDismissed = false;
-            hideSlashMenu(key);
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            repaintOpenCodeUserBadges();
-            (window.showToast || function () {})(
-                'OpenCode reasoning effort: ' + (eid || 'default'),
-                'success'
-            );
-            try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-            if (key === 'chat') autoResizeTextarea();
-            else autoResizeWelcomeTextarea();
-            return;
-        }
-
-        // Codex model picks — chat setting, no message sent (badge-gated).
-        if (cmd.category === 'codex-model') {
-            textarea.value = v.slice(0, from) + v.slice(to);
-            const mid =
-                String(cmd.modelId || '').trim()
-                || String(cmd.prefix || '').replace(/^\/codex\s+model\s+/i, '').trim();
-            if (!mid || mid === '__refresh__' || cmd.codexRefresh || cmd.disabled) {
-                if (mid === '__refresh__' || cmd.codexRefresh) {
-                    persistCodexModelSelection('__refresh__');
-                }
-                ctx.replaceRange = null;
-                ctx.filtered = [];
-                ctx.paletteDismissed = false;
-                hideSlashMenu(key);
-                try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-                if (key === 'chat') autoResizeTextarea();
-                else autoResizeWelcomeTextarea();
-                return;
-            }
-            persistCodexModelSelection(mid);
-            ctx.replaceRange = null;
-            ctx.filtered = [];
-            ctx.paletteDismissed = false;
-            hideSlashMenu(key);
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            (window.showToast || function () {})(
-                'Codex model: ' + codexModelLabel(mid),
-                'success'
-            );
-            try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-            if (key === 'chat') autoResizeTextarea();
-            else autoResizeWelcomeTextarea();
-            return;
-        }
-
-        // Codex effort picks — chat setting like model picks.
-        if (cmd.category === 'codex-effort') {
-            if (cmd.disabled) return;
-            textarea.value = v.slice(0, from) + v.slice(to);
-            const eid =
-                String(cmd.modelId || '').trim()
-                || String(cmd.prefix || '').replace(/^\/codex\s+effort\s+/i, '').trim();
-            persistCodexEffortSelection(eid);
-            ctx.replaceRange = null;
-            ctx.filtered = [];
-            ctx.paletteDismissed = false;
-            hideSlashMenu(key);
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            repaintCodexUserBadges();
-            (window.showToast || function () {})(
-                'Codex reasoning effort: ' + (eid || 'default'),
-                'success'
-            );
-            try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-            if (key === 'chat') autoResizeTextarea();
-            else autoResizeWelcomeTextarea();
-            return;
-        }
-
-        // Claude model picks — chat setting, no message sent (badge-gated).
-        if (cmd.category === 'claude-model') {
-            textarea.value = v.slice(0, from) + v.slice(to);
-            const mid =
-                String(cmd.modelId || '').trim()
-                || String(cmd.prefix || '').replace(/^\/claude\s+model\s+/i, '').trim();
-            if (!mid || mid === '__refresh__' || cmd.claudeRefresh || cmd.disabled) {
-                if (mid === '__refresh__' || cmd.claudeRefresh) {
-                    persistClaudeModelSelection('__refresh__');
-                }
-                ctx.replaceRange = null;
-                ctx.filtered = [];
-                ctx.paletteDismissed = false;
-                hideSlashMenu(key);
-                try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-                if (key === 'chat') autoResizeTextarea();
-                else autoResizeWelcomeTextarea();
-                return;
-            }
-            persistClaudeModelSelection(mid);
-            ctx.replaceRange = null;
-            ctx.filtered = [];
-            ctx.paletteDismissed = false;
-            hideSlashMenu(key);
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            (window.showToast || function () {})(
-                'Claude Code model: ' + claudeModelLabel(mid),
-                'success'
-            );
-            try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-            if (key === 'chat') autoResizeTextarea();
-            else autoResizeWelcomeTextarea();
-            return;
-        }
-
-        // Claude effort picks — chat setting like model picks.
-        if (cmd.category === 'claude-effort') {
-            if (cmd.disabled) return;
-            textarea.value = v.slice(0, from) + v.slice(to);
-            const eid =
-                String(cmd.modelId || '').trim()
-                || String(cmd.prefix || '').replace(/^\/claude\s+effort\s+/i, '').trim();
-            persistClaudeEffortSelection(eid);
-            ctx.replaceRange = null;
-            ctx.filtered = [];
-            ctx.paletteDismissed = false;
-            hideSlashMenu(key);
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            repaintClaudeUserBadges();
-            (window.showToast || function () {})(
-                'Claude Code effort: ' + (eid || 'default'),
-                'success'
-            );
-            try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-            if (key === 'chat') autoResizeTextarea();
-            else autoResizeWelcomeTextarea();
-            return;
-        }
-
-        textarea.value = v.slice(0, from) + v.slice(to);
-        // Model picks compose as `/cursor /model <id>` but should not become a second
-        // visible badge — the Cursor Agent chip already shows the preferred model.
-        if (cmd.category === 'cursor-model') {
-            const mid =
-                String(cmd.modelId || '').trim() ||
-                String(cmd.prefix || '')
-                    .replace(/^\/model\s+/i, '')
-                    .trim();
-            // Catalog refresh is a cursor-cmd chip now (staged + send). Ignore
-            // any stale __refresh__ model rows.
-            if (!mid || mid === '__refresh__' || cmd.disabled) {
-                ctx.replaceRange = null;
-                ctx.filtered = [];
-                ctx.paletteDismissed = false;
-                hideSlashMenu(key);
-                try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-                if (key === 'chat') autoResizeTextarea();
-                else autoResizeWelcomeTextarea();
-                return;
-            }
-            textarea.value = v.slice(0, from) + v.slice(to);
-            if (mid) {
-                slashPaletteSupplement.preferredModel = mid;
-                beginSupplementFetch('cursorModelsGen');
-            }
-            // Drop any prior model chips so we don't stack /model entries.
-            ctx.chips = ctx.chips.filter((c) => (c.category || '') !== 'cursor-model');
-            ctx.chips.push({
-                prefix: cmd.prefix,
-                label: preferredModelLabel(mid) || String(cmd.label || mid).replace(/\s*\(current\)\s*$/i, '').trim(),
-                category: 'cursor-model',
-                modelId: mid || undefined,
-            });
-            const other = key === 'chat' ? 'welcome' : 'chat';
-            slashCtx[other].chips = ctx.chips.slice();
-            ctx.replaceRange = null;
-            ctx.filtered = [];
-            ctx.paletteDismissed = false;
-            hideSlashMenu(key);
-            renderSlashChips(other, document.getElementById(other === 'chat' ? 'chatInput' : 'welcomeChatInput'));
-            renderSlashChips(key, textarea);
-            try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-            if (key === 'chat') autoResizeTextarea();
-            else autoResizeWelcomeTextarea();
-            return;
-        }
-        // Exclusive sticky agent: only one agent badge at a time (Cursor vs Muse etc.)
-        const _stickyMatch = CuttleChatSlash.SLASH_COMMANDS.find((s) => s.prefix === cmd.prefix && s.stickySession);
-        if (_stickyMatch) {
-            ctx.chips = ctx.chips.filter((c) => {
-                const m = CuttleChatSlash.SLASH_COMMANDS.find((s) => s.prefix === c.prefix);
-                if (m && m.stickySession) return false;
-                return !isOrphanedCompanionChip(c, cmd);
-            });
-        }
-        ctx.chips.push({
-            prefix: cmd.prefix,
-            label: cmd.label,
-            category: cmd.category || 'command',
-        });
-        ctx.replaceRange = null;
-        ctx.filtered = [];
-        ctx.paletteDismissed = false;
-        hideSlashMenu(key);
-        // Sticky agent chips apply for the rest of the session — mirror to both composers.
-        const match = CuttleChatSlash.SLASH_COMMANDS.find((s) => s.prefix === cmd.prefix);
-        if (match && match.stickySession) {
-            const other = key === 'chat' ? 'welcome' : 'chat';
-            slashCtx[other].chips = ctx.chips.slice();
-            renderSlashChips(other, document.getElementById(other === 'chat' ? 'chatInput' : 'welcomeChatInput'));
-            markStickyAgentCleared(false);
-            persistStickySlashForCurrentSession(true);
-        }
-        renderSlashChips(key, textarea);
-        try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-        if (key === 'chat') autoResizeTextarea();
-        else autoResizeWelcomeTextarea();
-    }
-
     // Single choke point for every palette pick (click, Enter, Tab): the pick rewrites
     // the composer programmatically (typed filter text stripped), which fires no input
     // event, so the persisted draft would keep the stale slash fragment. That fragment
     // resurrects on New Chat and pops the palette open with the previously picked model
     // as raw slash text. Persist synchronously: a debounce would lose a fast New Chat click.
     function applySlashSelection(textarea, key, idx) {
-        applySlashSelectionInner(textarea, key, idx);
+        slashPalette.applySelection(textarea, key, idx);
         try {
             saveComposerDraft(currentSessionId || 'new', key);
         } catch (_) {}
