@@ -1322,7 +1322,7 @@
                 if (chipMeta && Array.isArray(chipMeta.chips) && chipMeta.chips[0]) {
                     agentHint = chipMeta.chips[0].prefix || chipMeta.chips[0].meta || '';
                 }
-                noteUsageForContextGauge(usage, agentHint || stickyContextGaugeAgentId());
+                contextGauge.noteUsage(usage, agentHint || contextGauge.stickyAgentId());
             } catch (_) {}
         }
         if (meta.subagents) {
@@ -7126,7 +7126,7 @@
         if (!visibleChips.length && !projChipHtml) {
             row.hidden = true;
             row.innerHTML = '';
-            scheduleAgentContextGaugeRefresh(60);
+            contextGauge.scheduleRefresh(60);
             return;
         }
         row.hidden = false;
@@ -7324,7 +7324,7 @@
             composerChipAgentId,
         });
         scheduleSlashChipCompactLabels(row);
-        scheduleAgentContextGaugeRefresh(60);
+        contextGauge.scheduleRefresh(60);
     }
 
     // ── Chip click menus ────────────────────────────────────────────────────
@@ -18718,440 +18718,19 @@ function downloadTranscriptMarkdown(text, sessionId) {
         return '';
     }
 
-    // ── Agent context radial (Cursor / Muse / OpenCode / Codex) ─────────────
-    const CONTEXT_GAUGE_AGENTS = new Set(['cursor', 'muse', 'opencode', 'codex', 'antigravity', 'hermes', 'claude', 'deepseek']);
-    let _agentContextStatus = null;
-    let _agentContextFetchTimer = 0;
-    let _agentContextBusy = false;
-    let _contextGaugePopoverEl = null;
-
-    function stickyContextGaugeAgentId() {
-        for (const key of ['chat', 'welcome']) {
-            const chips = (slashCtx[key] && slashCtx[key].chips) || [];
-            for (const chip of chips) {
-                const prefix = String((chip && chip.prefix) || '').toLowerCase();
-                const meta = String((chip && chip.meta) || '').toLowerCase();
-                const cat = String((chip && chip.category) || '').toLowerCase();
-                const label = String((chip && chip.label) || '').toLowerCase();
-                for (const aid of CONTEXT_GAUGE_AGENTS) {
-                    if (
-                        prefix === '/' + aid
-                        || prefix.startsWith('/' + aid + ' ')
-                        || cat === aid
-                        || meta.startsWith('/' + aid)
-                        || (aid === 'muse' && label.startsWith('muse code'))
-                        || (aid === 'opencode' && label.startsWith('opencode'))
-                        || (aid === 'codex' && label.startsWith('codex'))
-                        || (aid === 'cursor' && (label.startsWith('cursor') || cat === 'cursor'))
-                    ) {
-                        return aid;
-                    }
-                }
-            }
-        }
-        return null;
-    }
-
-    function formatContextTokenCount(n) {
-        const v = Number(n) || 0;
-        if (v >= 1_000_000) {
-            const m = v / 1_000_000;
-            return (m >= 10 ? Math.round(m) : Math.round(m * 10) / 10) + 'M';
-        }
-        if (v >= 1000) {
-            const k = v / 1000;
-            return (k >= 100 ? Math.round(k) : Math.round(k * 10) / 10) + 'k';
-        }
-        return String(Math.round(v));
-    }
-
-    function applyContextGaugeDom(btn, status) {
-        if (!btn) return;
-        const arc = btn.querySelector('.context-gauge-arc');
-        const pct = Math.max(0, Math.min(100, Number(status && status.percent) || 0));
-        const used = Number(status && status.used_tokens) || 0;
-        const limit = Number(status && status.limit_tokens) || 0;
-        const agent = (status && status.agent_id) || stickyContextGaugeAgentId() || 'agent';
-        const aggregated = (status && status.token_source) === 'aggregated' && used <= 0;
-        if (arc) {
-            const filled = aggregated ? 0 : Math.round(pct * 10) / 10;
-            arc.setAttribute('stroke-dasharray', filled + ' ' + (100 - filled));
-        }
-        btn.classList.toggle('context-gauge--warn', !aggregated && pct >= 60 && pct < 85);
-        btn.classList.toggle('context-gauge--hot', !aggregated && pct >= 85);
-        const tipParts = [
-            agent.charAt(0).toUpperCase() + agent.slice(1) + ' context',
-        ];
-        if (aggregated) {
-            tipParts.push('awaiting next reply');
-        } else {
-            tipParts.push(Math.round(pct) + '%');
-            if (used || limit) {
-                tipParts.push(
-                    formatContextTokenCount(used) + ' / ' + formatContextTokenCount(limit)
-                );
-            }
-        }
-        if (status && status.hint) tipParts.push(status.hint);
-        tipParts.push('Click for details / Compact');
-        btn.title = tipParts.join(' · ');
-        btn.setAttribute(
-            'aria-label',
-            aggregated
-                ? agent + ' context awaiting next reply'
-                : (agent + ' context ' + Math.round(pct) + ' percent')
-        );
-    }
-
-    function setContextGaugeVisible(visible) {
-        ['chatContextGauge', 'welcomeContextGauge'].forEach((id) => {
-            const btn = document.getElementById(id);
-            if (!btn) return;
-            btn.hidden = !visible;
-            if (!visible) {
-                btn.classList.remove('context-gauge--warn', 'context-gauge--hot');
-                const arc = btn.querySelector('.context-gauge-arc');
-                if (arc) arc.setAttribute('stroke-dasharray', '0 100');
-            }
-        });
-        if (!visible) closeContextGaugePopover();
-    }
-
-    function paintContextGaugeFromStatus(status) {
-        _agentContextStatus = status && status.success ? status : null;
-        const agent = stickyContextGaugeAgentId();
-        if (!agent) {
-            setContextGaugeVisible(false);
-            return;
-        }
-        setContextGaugeVisible(true);
-        const payload = status && status.success
-            ? status
-            : {
-                success: true,
-                agent_id: agent,
-                percent: 0,
-                used_tokens: 0,
-                limit_tokens: 1000000,
-                hint: 'Waiting for the next turn to report context size.',
-            };
-        ['chatContextGauge', 'welcomeContextGauge'].forEach((id) => {
-            applyContextGaugeDom(document.getElementById(id), payload);
-        });
-        const pop = _contextGaugePopoverEl;
-        if (pop && !pop.hidden) renderContextGaugePopover(pop, payload);
-    }
-
-    function noteUsageForContextGauge(usage, agentHint) {
-        const u = normalizeUsagePayload(usage);
-        const agent = normalizeAgentHint(agentHint) || stickyContextGaugeAgentId();
-        if (!agent || !CONTEXT_GAUGE_AGENTS.has(agent)) return;
-        const raw = usage && typeof usage === 'object' ? usage : {};
-        const peak = Number(
-            raw.context_tokens != null ? raw.context_tokens
-                : (raw.peak_context_tokens != null ? raw.peak_context_tokens : raw.contextTokens)
-        ) || 0;
-        // Billing input is summed across calls. Only seed the ring from an
-        // explicit occupancy stamp; the API supplies live/transcript fallbacks.
-        let fill = peak;
-        if (agent === 'cursor' && peak > 0) {
-            const cr = Number(raw.cache_read_tokens || raw.cacheReadTokens || 0) || 0;
-            const cw = Number(raw.cache_write_tokens || raw.cacheWriteTokens || 0) || 0;
-            const sumIn = ((u && u.prompt_tokens) || 0) + cr + cw;
-            if (peak >= 400000 && cr >= 200000 && peak >= cr &&
-                    Math.abs(peak - sumIn) <= Math.max(2000, peak * 0.03)) fill = 0;
-        }
-        if (!fill) scheduleAgentContextGaugeRefresh(250);
-        if (!fill) return;
-        const prev = _agentContextStatus || {};
-        const limit = Number(prev.limit_tokens) || (
-            (agent === 'opencode' || agent === 'codex') ? 200000 : 1000000
-        );
-        const pct = Math.min(100, Math.round((1000 * fill) / limit) / 10);
-        paintContextGaugeFromStatus({
-            success: true,
-            agent_id: agent,
-            model: (u && u.model) || prev.model || '',
-            used_tokens: fill,
-            limit_tokens: limit,
-            percent: pct,
-            estimated: true,
-            compact_available: true,
-            hint: pct >= 85
-                ? 'Context is nearly full — compact soon to avoid overflows.'
-                : (pct >= 60
-                    ? 'Context is filling up — compact when the thread feels heavy.'
-                    : 'Context looks healthy.'),
-            has_resume: prev.has_resume,
-        });
-        scheduleAgentContextGaugeRefresh(250);
-    }
-
-    function normalizeAgentHint(raw) {
-        const s = String(raw || '').toLowerCase().replace(/^\//, '');
-        for (const aid of CONTEXT_GAUGE_AGENTS) {
-            if (s === aid || s.startsWith(aid + ' ') || s.startsWith(aid + '_')) return aid;
-        }
-        return null;
-    }
-
-    async function fetchAgentContextStatus(opts) {
-        const live = !!(opts && opts.live);
-        const agent = stickyContextGaugeAgentId();
-        if (!agent) {
-            setContextGaugeVisible(false);
-            _agentContextStatus = null;
-            return null;
-        }
-        setContextGaugeVisible(true);
-        if (!currentSessionId) {
-            paintContextGaugeFromStatus({
-                success: true,
-                agent_id: agent,
-                percent: 0,
-                used_tokens: 0,
-                limit_tokens: (agent === 'opencode' || agent === 'codex') ? 200000 : 1000000,
-                hint: 'No agent session yet — send a message to start tracking context.',
-            });
-            return _agentContextStatus;
-        }
-        const qs = new URLSearchParams();
-        qs.set('agent', agent);
-        qs.set('session', String(currentSessionId));
-        if (live) qs.set('live', '1');
-        const path = (currentProject && currentProject.path) ? String(currentProject.path) : '';
-        if (path) qs.set('path', path);
-        try {
-            const res = await fetch('/api/agent-context?' + qs.toString(), {
-                credentials: 'same-origin',
-            });
-            const data = await res.json().catch(() => ({}));
-            if (data && data.success) {
-                paintContextGaugeFromStatus(data);
-                return data;
-            }
-            paintContextGaugeFromStatus({
-                success: true,
-                agent_id: agent,
-                percent: (_agentContextStatus && _agentContextStatus.percent) || 0,
-                used_tokens: (_agentContextStatus && _agentContextStatus.used_tokens) || 0,
-                limit_tokens: (_agentContextStatus && _agentContextStatus.limit_tokens) || 1000000,
-                hint: (data && data.error) || 'Could not load context status.',
-            });
-        } catch (_) {
-            /* keep last paint */
-        }
-        return _agentContextStatus;
-    }
-
-    function scheduleAgentContextGaugeRefresh(delayMs) {
-        if (_agentContextFetchTimer) clearTimeout(_agentContextFetchTimer);
-        _agentContextFetchTimer = setTimeout(() => {
-            _agentContextFetchTimer = 0;
-            fetchAgentContextStatus();
-        }, delayMs == null ? 80 : delayMs);
-    }
-
-    function ensureContextGaugePopover() {
-        if (_contextGaugePopoverEl && _contextGaugePopoverEl.isConnected) {
-            return _contextGaugePopoverEl;
-        }
-        const el = document.createElement('div');
-        el.className = 'context-gauge-popover';
-        el.hidden = true;
-        el.setAttribute('role', 'dialog');
-        el.setAttribute('aria-label', 'Agent context usage');
-        document.body.appendChild(el);
-        _contextGaugePopoverEl = el;
-        return el;
-    }
-
-    function closeContextGaugePopover() {
-        const el = _contextGaugePopoverEl;
-        if (!el) return;
-        el.hidden = true;
-        el.innerHTML = '';
-        ['chatContextGauge', 'welcomeContextGauge'].forEach((id) => {
-            const btn = document.getElementById(id);
-            if (btn) btn.setAttribute('aria-expanded', 'false');
-        });
-    }
-
-    function renderContextGaugePopover(el, status) {
-        const agent = (status && status.agent_id) || stickyContextGaugeAgentId() || 'agent';
-        const pct = Math.round(Number(status && status.percent) || 0);
-        const used = Number(status && status.used_tokens) || 0;
-        const limit = Number(status && status.limit_tokens) || 0;
-        const model = (status && status.model) ? String(status.model) : '';
-        const hint = (status && status.hint) || '';
-        const aggregated = (status && status.token_source) === 'aggregated' && used <= 0;
-        const label = agent.charAt(0).toUpperCase() + agent.slice(1);
-        const meter = aggregated
-            ? `<strong>—</strong> · waiting for next reply`
-            : (`<strong>${pct}%</strong>` +
-                (used || limit
-                    ? ` · ${escapeHtml(formatContextTokenCount(used))} / ${escapeHtml(formatContextTokenCount(limit))}`
-                    : '') +
-                (model ? ` · ${escapeHtml(model)}` : ''));
-        const canCompact = !(status && status.compact_available === false);
-        el.innerHTML =
-            `<p class="context-gauge-popover-title">${escapeHtml(label)} context</p>` +
-            `<p class="context-gauge-popover-meter">${meter}</p>` +
-            (hint ? `<p class="context-gauge-popover-hint">${escapeHtml(hint)}</p>` : '') +
-            `<div class="context-gauge-popover-actions">` +
-            (canCompact
-                ? (`<button type="button" class="context-gauge-compact-btn" data-action="compact"` +
-                    (_agentContextBusy ? ' disabled' : '') +
-                    `>${_agentContextBusy ? 'Compacting…' : 'Compact'}</button>`)
-                : '') +
-            `<button type="button" class="context-gauge-popover-close" data-action="close">Close</button>` +
-            `</div>`;
-    }
-
-    function positionContextGaugePopover(anchorBtn, pop) {
-        const rect = anchorBtn.getBoundingClientRect();
-        const pad = 8;
-        pop.style.visibility = 'hidden';
-        pop.hidden = false;
-        const pw = pop.offsetWidth || 240;
-        const ph = pop.offsetHeight || 120;
-        let left = rect.right - pw;
-        let top = rect.top - ph - 8;
-        if (top < pad) top = rect.bottom + 8;
-        if (left < pad) left = pad;
-        if (left + pw > window.innerWidth - pad) {
-            left = Math.max(pad, window.innerWidth - pw - pad);
-        }
-        pop.style.left = Math.round(left) + 'px';
-        pop.style.top = Math.round(top) + 'px';
-        pop.style.visibility = '';
-    }
-
-    async function openContextGaugePopover(anchorBtn) {
-        const agent = stickyContextGaugeAgentId();
-        if (!agent || !anchorBtn) return;
-        const pop = ensureContextGaugePopover();
-        let status = _agentContextStatus;
-        const needsLive = agent === 'codex' && (
-            !status
-            || status.agent_id !== agent
-            || status.token_source === 'aggregated'
-            || !(Number(status.used_tokens) > 0)
-        );
-        if (!status || status.agent_id !== agent || needsLive) {
-            status = await fetchAgentContextStatus({ live: needsLive });
-        }
-        renderContextGaugePopover(pop, status || { agent_id: agent, percent: 0 });
-        positionContextGaugePopover(anchorBtn, pop);
-        anchorBtn.setAttribute('aria-expanded', 'true');
-        const compactBtn = pop.querySelector('[data-action="compact"]');
-        if (compactBtn) {
-            compactBtn.onclick = () => runAgentContextCompact(anchorBtn);
-        }
-        const closeBtn = pop.querySelector('[data-action="close"]');
-        if (closeBtn) closeBtn.onclick = () => closeContextGaugePopover();
-    }
-
-    async function runAgentContextCompact(anchorBtn) {
-        const agent = stickyContextGaugeAgentId();
-        if (!agent || _agentContextBusy) return;
-        if (!currentSessionId) {
-            try {
-                if (window.showToast) window.showToast('Send a message first so the agent session exists.', 'info');
-            } catch (_) {}
-            return;
-        }
-        _agentContextBusy = true;
-        ['chatContextGauge', 'welcomeContextGauge'].forEach((id) => {
-            const b = document.getElementById(id);
-            if (b) b.classList.add('context-gauge--busy');
-        });
-        const pop = ensureContextGaugePopover();
-        if (!pop.hidden) {
-            renderContextGaugePopover(pop, _agentContextStatus || { agent_id: agent, percent: 0 });
-            if (anchorBtn) positionContextGaugePopover(anchorBtn, pop);
-        }
-        try {
-            const body = {
-                agent,
-                session: currentSessionId,
-                path: (currentProject && currentProject.path) ? String(currentProject.path) : '',
-            };
-            const res = await fetch('/api/agent-context/compact', {
-                method: 'POST',
-                credentials: 'same-origin',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
-            });
-            const data = await res.json().catch(() => ({}));
-            if (data && data.success) {
-                try {
-                    if (window.showToast) {
-                        window.showToast(
-                            (agent.charAt(0).toUpperCase() + agent.slice(1)) + ' context compacted',
-                            'success'
-                        );
-                    }
-                } catch (_) {}
-                if (data.status && data.status.success) {
-                    paintContextGaugeFromStatus(data.status);
-                } else {
-                    scheduleAgentContextGaugeRefresh(400);
-                }
-            } else {
-                const err = (data && data.error) || 'Compact failed';
-                try {
-                    if (window.showToast) window.showToast(err, 'error');
-                } catch (_) {}
-            }
-        } catch (e) {
-            try {
-                if (window.showToast) window.showToast(String(e && e.message || e), 'error');
-            } catch (_) {}
-        } finally {
-            _agentContextBusy = false;
-            ['chatContextGauge', 'welcomeContextGauge'].forEach((id) => {
-                const b = document.getElementById(id);
-                if (b) b.classList.remove('context-gauge--busy');
-            });
-            if (anchorBtn && _contextGaugePopoverEl && !_contextGaugePopoverEl.hidden) {
-                openContextGaugePopover(anchorBtn);
-            } else {
-                closeContextGaugePopover();
-            }
-        }
-    }
-
-    function initContextGaugeControls() {
-        ['chatContextGauge', 'welcomeContextGauge'].forEach((id) => {
-            const btn = document.getElementById(id);
-            if (!btn || btn.dataset.contextGaugeBound) return;
-            btn.dataset.contextGaugeBound = '1';
-            btn.addEventListener('click', (ev) => {
-                ev.preventDefault();
-                ev.stopPropagation();
-                if (btn.getAttribute('aria-expanded') === 'true'
-                    && _contextGaugePopoverEl
-                    && !_contextGaugePopoverEl.hidden) {
-                    closeContextGaugePopover();
-                    return;
-                }
-                openContextGaugePopover(btn);
-            });
-        });
-        document.addEventListener('click', (ev) => {
-            const pop = _contextGaugePopoverEl;
-            if (!pop || pop.hidden) return;
-            const t = ev.target;
-            if (pop.contains(t)) return;
-            if (t && t.closest && t.closest('.context-gauge-btn')) return;
-            closeContextGaugePopover();
-        });
-        document.addEventListener('keydown', (ev) => {
-            if (ev.key === 'Escape') closeContextGaugePopover();
-        });
-        scheduleAgentContextGaugeRefresh(200);
-    }
+    // Agent context radial (Cursor / Muse / OpenCode / Codex …): owned by
+    // chat_context_gauge.js. The page supplies page scope as capabilities; the
+    // controller owns the status/timer/popover state.
+    const contextGauge = CuttleChatContextGauge.create({
+        win: window,
+        fetch: (url, opts) => fetch(url, opts),
+        escapeHtml,
+        normalizeUsage: normalizeUsagePayload,
+        getSlashCtx: () => slashCtx,
+        getSessionId: () => currentSessionId,
+        getProjectPath: () => (currentProject && currentProject.path) ? String(currentProject.path) : '',
+        toast: (message, variant) => (window.showToast || function () {})(message, variant),
+    });
 
     // Transcript navigation: follow-latest scroll, nav rail + pins, jumps,
     // ?msg= deep links and message refs (chat_transcript_nav.js).
@@ -20607,7 +20186,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
         setupChatAttentionListeners();
         transcriptNav.updateJumpToBottomVisibility();
         updateSessionTitleUnreadDot();
-        try { initContextGaugeControls(); } catch (e) { LOG_ERR('context gauge init', e); }
+        try { contextGauge.init(); } catch (e) { LOG_ERR('context gauge init', e); }
 
         LOG('DOMContentLoaded: init complete. In iframe=', window !== window.parent);
     });
