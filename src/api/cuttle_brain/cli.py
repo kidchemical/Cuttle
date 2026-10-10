@@ -26,6 +26,7 @@ def _cmd_compile(args: argparse.Namespace) -> int:
             from_agent=args.from_agent or None,
             limit=args.handoff_limit,
             current_prompt=args.prompt or None,
+            project_path=args.project,
         )
 
     compiled = compile_context(

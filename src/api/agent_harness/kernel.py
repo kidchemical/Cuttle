@@ -329,6 +329,7 @@ def _compile_agent_prompt(
             to_agent=manifest.id,
             current_prompt=prompt,
             full_history=not manifest.resume,
+            project_path=cwd,
         )
     except Exception as exc:
         # A failed handoff means the agent misses unseen conversation, not
@@ -973,7 +974,7 @@ def run_agent_web_command(
                 try:
                     from api.cuttle_brain.handoff import record_last_agent
 
-                    record_last_agent(sid, manifest.id)
+                    record_last_agent(sid, manifest.id, project_path=cwd)
                 except Exception:
                     pass
             else:
