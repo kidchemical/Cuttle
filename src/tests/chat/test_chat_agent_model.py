@@ -175,10 +175,10 @@ def test_chat_agent_model_module_parses():
 def test_page_delegates_agent_model_decisions_to_owned_module():
     """Narrow page adapters: same signatures, no duplicated decision logic.
 
-    The model/effort palette loaders + builders moved to the page's
-    ``CuttleChatAgentControls`` owner (chat_agent_controls.js); the page keeps
-    thin delegating wrappers and the persistence/seed/label adapters that call
-    the pure ``CuttleChatAgentModel`` decisions directly.
+    Model/effort palette loaders + builders AND the label/repaint/badge
+    enrichment, send-identity, capability and starred-default families moved to
+    the page's ``CuttleChatAgentControls`` owner (chat_agent_controls.js); the
+    page keeps thin delegating wrappers over the controller.
     """
     src = CHAT_PAGE_JS.read_text(encoding="utf-8")
     controls = CONTROLS_JS.read_text(encoding="utf-8")
@@ -199,19 +199,22 @@ def test_page_delegates_agent_model_decisions_to_owned_module():
         "function claudeModelLabel(model)",
     ):
         assert adapter in src, f"page adapter {adapter} must stay (same signature)"
-    # Page-kept adapters that call the pure model directly.
-    for owned in (
-        "CuttleChatAgentModel.sessionPin",
-        "CuttleChatAgentModel.starredAgentModel",
-        "CuttleChatAgentModel.starredAgentEffort",
-        "CuttleChatAgentModel.isAgentDefaultStarred",
-        "CuttleChatAgentModel.buildAgentPinsForRequest",
-        "CuttleChatAgentModel.prettyClaudeModelLabel",
-        "CuttleChatAgentModel.claudeModelLabel",
+    # Page-kept adapter that calls the pure model directly.
+    assert "CuttleChatAgentModel.sessionPin" in src
+    # Page delegates the starred/capability/label decisions to the controller.
+    for delegated in (
+        "agentControls.starredAgentModel(agentId)",
+        "agentControls.starredAgentEffort(agentId)",
+        "agentControls.isAgentDefaultStarred(spec, cmd)",
+        "agentControls.prettyClaudeModelLabel(model)",
+        "agentControls.claudeModelLabel(model)",
+        "agentControls.loadAgentCapabilities()",
+        "agentControls.agentSupportsModelPin(agentId)",
+        "agentControls.agentSupportsEffort(agentId)",
     ):
-        assert owned in src, f"page must delegate to {owned}"
-    # Provider loaders/builders plus persistence/seed/gate decisions now live
-    # on the controller owner (Slice 2A stages 1–2).
+        assert delegated in src, f"page must delegate to {delegated}"
+    # Provider loaders/builders plus persistence/seed/gate decisions live on the
+    # controller owner (Slice 2A stages 1–2).
     for owned in (
         "CuttleChatAgentModel.claudeModelsFetchForPalette",
         "CuttleChatAgentModel.applyClaudeModelsResponse",
@@ -228,7 +231,25 @@ def test_page_delegates_agent_model_decisions_to_owned_module():
         "CuttleChatAgentModel.claudeSeedPatchFromSessionData",
     ):
         assert owned in controls, f"controller must own {owned}"
-    assert "CuttleChatAgentModel.resolveAgentEffortForBadge" in src
+    # Slice 2A stage 3: label / repaint / badge / request / starred families.
+    for owned in (
+        "CuttleChatAgentModel.starredAgentModel",
+        "CuttleChatAgentModel.starredAgentEffort",
+        "CuttleChatAgentModel.isAgentDefaultStarred",
+        "CuttleChatAgentModel.buildAgentPinsForRequest",
+        "CuttleChatAgentModel.resolveAgentEffortForBadge",
+        "CuttleChatAgentModel.prettyClaudeModelLabel",
+        "CuttleChatAgentModel.claudeModelLabel",
+        "function enrichSlashCommandWithAgentPin(replySlash, spec)",
+        "function enrichSlashCommandWithAgentBadge(replySlash, data, stickyCmd)",
+        "function repaintMuseUserBadges()",
+        "function attachAgentIdentityToRequest(requestBody)",
+        "function syncPreferredModelFromResponse(data)",
+        "function loadAgentCapabilities()",
+        "function toggleStarredAgentDefault(agentId, kind, value, textarea, key)",
+        "function maybeRefreshModelsCatalogFromOutbound(message)",
+    ):
+        assert owned in controls, f"controller must own {owned}"
 
 
 CLAUDE_HARNESS = """

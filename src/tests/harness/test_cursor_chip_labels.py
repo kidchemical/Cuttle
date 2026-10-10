@@ -11,6 +11,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CHAT_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_page.js"
+CONTROLS_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_agent_controls.js"
 
 node_only = pytest.mark.skipif(
     shutil.which("node") is None, reason="node not available"
@@ -25,29 +26,27 @@ def _extract(src: str, start_marker: str, end_marker: str) -> str:
 
 @node_only
 def test_cursor_chip_display_label_is_canonical():
-    src = CHAT_JS.read_text(encoding="utf-8")
-    helpers = _extract(
-        src,
-        "    /** Canonical Cursor badge text everywhere",
-        "    /** Cursor Agent sticky or a model *setting* pick — not nested one-shots. */",
-    )
-
+    # Sliced into CuttleChatAgentControls (chat_agent_controls.js) — Slice 2A
+    # stage 3; the controller owns Cursor label/collapse decisions.
     harness = f"""
-const slashPaletteSupplement = {{
+const C = require({str(CONTROLS_JS)!r});
+const state = {{
     preferredModel: 'auto',
     cursorModels: [
         {{ id: 'auto', label: 'Auto' }},
         {{ id: 'gpt-5.6', label: 'GPT-5.6' }},
     ],
 }};
-{helpers}
+const ctl = C.create({{ state: state, getSessionId: () => null }});
 process.stdout.write(JSON.stringify({{
-    auto: cursorChipDisplayLabel('auto'),
-    gpt: cursorChipDisplayLabel('gpt-5.6'),
-    bare: cursorChipDisplayLabel(''),
+    auto: ctl.cursorChipDisplayLabel('auto'),
+    gpt: ctl.cursorChipDisplayLabel('gpt-5.6'),
+    bare: ctl.cursorChipDisplayLabel(''),
 }}));
 """
-    proc = subprocess.run(
+    import subprocess as _sp
+
+    proc = _sp.run(
         ["node", "-e", harness], capture_output=True, text=True, encoding="utf-8", timeout=30
     )
     assert proc.returncode == 0, proc.stderr

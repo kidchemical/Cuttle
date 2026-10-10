@@ -262,6 +262,7 @@ def test_subagent_fleet_cards_clip_to_card():
 
 def test_subagent_markup_present():
     js = CHAT_JS.read_text(encoding="utf-8")
+    controls_js = (CHAT_JS.parent / "chat_agent_controls.js").read_text(encoding="utf-8")
     css = CHAT_CSS.read_text(encoding="utf-8")
     fleet_js = FLEET_JS.read_text(encoding="utf-8")
     launchers_js = LAUNCHERS_JS.read_text(encoding="utf-8")
@@ -297,4 +298,5 @@ def test_subagent_markup_present():
     assert ".typing-orbit-core--glyph" in css
     assert "parentSpeaker ? null" in js
     assert "stickyChipsFromAssistantSlash" in js
-    assert "storedLooksSpecific" in js
+    # Cursor badge enrichment moved to the CuttleChatAgentControls owner (2A).
+    assert "storedLooksSpecific" in controls_js

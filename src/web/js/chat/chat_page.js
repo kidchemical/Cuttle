@@ -4303,7 +4303,6 @@
         hasActiveCodex: () => hasActiveCodexAgentChip(),
         hasActiveHarness: (id) => hasActiveHarnessAgentChip(id),
         hasCursorModelChip: () => slashCtx.chat.chips.concat(slashCtx.welcome.chips).some((c) => c.category === 'cursor-model'),
-        supportsEffort: (id) => agentSupportsEffort(id),
         beginFetch: (field) => beginSupplementFetch(field),
         isCurrentFetch: (field, gen) => isCurrentSupplementFetch(field, gen),
         captureMutation: (sid, label) => sessionMutations.capture(sid, label, _loadSessionSeq),
@@ -4319,13 +4318,10 @@
             if (welcomeInput && document.activeElement === welcomeInput) syncSlashMenuFromInput(welcomeInput);
             if (chatInput && document.activeElement === chatInput) syncSlashMenuFromInput(chatInput);
         },
-        repaintUserBadges: (id) => {
-            if (id === 'muse') repaintMuseUserBadges();
-            else if (id === 'hermes') repaintHermesUserBadges();
-            else if (id === 'opencode') repaintOpenCodeUserBadges();
-            else if (id === 'codex') repaintCodexUserBadges();
-            else if (id === 'claude') repaintClaudeUserBadges();
-        },
+        syncSlashInput: (textarea) => syncSlashMenuFromInput(textarea),
+        // DOM rendering stays in the page; the controller only decides which
+        // user-bubble badge labels to repaint.
+        paintAgentUserBadges: (matchLabelRe, nextLabel) => repaintAgentUserBadges(matchLabelRe, nextLabel),
         persistStickySlashForCurrentSession: () => persistStickySlashForCurrentSession(),
         refreshHistoryAgentChips: () => refreshHistoryAgentChips(),
         fetch: (url, opts) => fetch(url, opts),
@@ -4364,96 +4360,36 @@
     };
 
     function loadAgentCapabilities() {
-        if (slashPaletteSupplement.agentCapabilities || slashPaletteSupplement.agentCapabilitiesLoading) return;
-        slashPaletteSupplement.agentCapabilitiesLoading = true;
-        fetch('/api/agents', { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                const map = {};
-                if (j && j.success && Array.isArray(j.agents)) {
-                    j.agents.forEach((a) => {
-                        if (!a || !a.id) return;
-                        map[String(a.id).toLowerCase()] = {
-                            supports_model_pin: a.supports_model_pin !== false,
-                            supports_effort: a.supports_effort !== false,
-                        };
-                    });
-                }
-                slashPaletteSupplement.agentCapabilities = map;
-            })
-            .catch(() => { slashPaletteSupplement.agentCapabilities = {}; })
-            .finally(() => { slashPaletteSupplement.agentCapabilitiesLoading = false; });
+        return agentControls.loadAgentCapabilities();
     }
 
     function agentSupportsModelPin(agentId) {
-        const caps = slashPaletteSupplement.agentCapabilities;
-        if (!caps) return true;
-        const c = caps[String(agentId || '').toLowerCase()];
-        if (!c) return true;
-        return c.supports_model_pin !== false;
+        return agentControls.agentSupportsModelPin(agentId);
     }
 
     function agentSupportsEffort(agentId) {
-        const caps = slashPaletteSupplement.agentCapabilities;
-        if (!caps) return true;
-        const c = caps[String(agentId || '').toLowerCase()];
-        if (!c) return true;
-        return c.supports_effort !== false;
+        return agentControls.agentSupportsEffort(agentId);
     }
 
     function starredAgentModel(agentId) {
-        return CuttleChatAgentModel.starredAgentModel(
-            slashPaletteSupplement.starredAgentModels, agentId);
+        return agentControls.starredAgentModel(agentId);
     }
 
     function starredAgentEffort(agentId) {
-        return CuttleChatAgentModel.starredAgentEffort(
-            slashPaletteSupplement.starredAgentEfforts, agentId);
+        return agentControls.starredAgentEffort(agentId);
     }
 
     /** True when this model/effort row is the agent's global starred default. */
-    
     function isAgentDefaultStarred(spec, cmd) {
-        if (!spec) return false;
-        const star = spec.kind === 'effort' ? starredAgentEffort(spec.agent) : starredAgentModel(spec.agent);
-        return CuttleChatAgentModel.isAgentDefaultStarred(spec, cmd, star);
+        return agentControls.isAgentDefaultStarred(spec, cmd);
     }
 
-    /** Starred muse/hermes/opencode/codex/claude defaults (cursor has its own loader above). */
     function loadAllStarredDefaults() {
-        if (slashPaletteSupplement.starredDefaultsLoaded || slashPaletteSupplement.starredDefaultsLoading) return;
-        slashPaletteSupplement.starredDefaultsLoading = true;
-        const agents = ['muse', 'hermes', 'opencode', 'codex', 'claude'];
-        Promise.all(agents.map((a) =>
-            fetch('/api/agent-defaults/' + a, { cache: 'no-store' })
-                .then((r) => r.json())
-                .catch(() => null)
-        ))
-            .then((rows) => {
-                (rows || []).forEach((j, i) => {
-                    if (!j || !j.success) return;
-                    const aid = agents[i];
-                    slashPaletteSupplement.starredAgentModels[aid] = String(j.starredModel || '');
-                    slashPaletteSupplement.starredAgentEfforts[aid] = String(j.starredEffort || '');
-                    slashPaletteSupplement.starredDefaultsLoaded = true;
-                });
-            })
-            .catch(() => {})
-            .finally(() => { slashPaletteSupplement.starredDefaultsLoading = false; });
+        return agentControls.loadAllStarredDefaults();
     }
 
-/** Cursor has no models endpoint — its star lives behind /api/agent-defaults. */
     function loadCursorStarredDefault() {
-        if (slashPaletteSupplement.cursorStarredLoaded) return;
-        slashPaletteSupplement.cursorStarredLoaded = true;
-        fetch('/api/agent-defaults/cursor', { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                if (j && j.success) {
-                    slashPaletteSupplement.starredAgentModels.cursor = String(j.starredModel || '');
-                }
-            })
-            .catch(() => {});
+        return agentControls.loadCursorStarredDefault();
     }
 
     /**
@@ -4461,112 +4397,17 @@
      * Clicking the filled star clears it back to the CLI default.
      */
     function toggleStarredAgentDefault(agentId, kind, value, textarea, key) {
-        const aid = String(agentId || '').toLowerCase();
-        const val = String(value || '').trim();
-        if (!aid || !val) return;
-        const isEffort = kind === 'effort';
-        const current = isEffort ? starredAgentEffort(aid) : starredAgentModel(aid);
-        const next = (current && current.toLowerCase() === val.toLowerCase()) ? '' : val;
-        const body = {};
-        body[isEffort ? 'starred_effort' : 'starred_model'] = next;
-        fetch('/api/agent-defaults/' + encodeURIComponent(aid), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
-        })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!j || !j.success) throw new Error((j && j.error) || 'star failed');
-                if (isEffort) slashPaletteSupplement.starredAgentEfforts[aid] = next;
-                else slashPaletteSupplement.starredAgentModels[aid] = next;
-                refreshAgentPreferenceAfterStar(aid);
-                (window.showToast || function () {})(
-                    next
-                        ? 'Starred ' + aid + ' ' + kind + ': ' + next
-                        : 'Cleared starred ' + aid + ' ' + kind + ' (CLI default wins)',
-                    'success'
-                );
-                syncSlashMenuFromInput(textarea);
-            })
-            .catch((e) => {
-                (window.showToast || function () {})(
-                    'Could not star ' + aid + ' ' + kind + ': ' + String((e && e.message) || e),
-                    'error'
-                );
-            });
+        return agentControls.toggleStarredAgentDefault(agentId, kind, value, textarea, key);
     }
 
     /** Re-resolve the effective preference after a star change. */
     function refreshAgentPreferenceAfterStar(aid) {
-        if (aid === 'muse') {
-            slashPaletteSupplement.museModelsKey = '';
-            slashPaletteSupplement.museModelsTried = null;
-            slashPaletteSupplement.museEffortKey = '';
-            agentControls.loadMuseModelsForPalette(true);
-            agentControls.loadMuseEffortForPalette();
-        } else if (aid === 'hermes') {
-            slashPaletteSupplement.hermesModelsKey = '';
-            slashPaletteSupplement.hermesModelsTried = null;
-            slashPaletteSupplement.hermesEffortKey = '';
-            agentControls.loadHermesModelsForPalette(true);
-            agentControls.loadHermesEffortForPalette();
-        } else if (aid === 'opencode') {
-            slashPaletteSupplement.opencodeModelsKey = '';
-            slashPaletteSupplement.opencodeModelsTried = null;
-            slashPaletteSupplement.opencodeEffortKey = '';
-            agentControls.loadOpenCodeModelsForPalette(true);
-            agentControls.loadOpenCodeEffortForPalette();
-        } else if (aid === 'codex') {
-            slashPaletteSupplement.codexModelsKey = '';
-            slashPaletteSupplement.codexModelsTried = null;
-            slashPaletteSupplement.codexEffortKey = '';
-            agentControls.loadCodexModelsForPalette(true);
-            agentControls.loadCodexEffortForPalette();
-        } else if (aid === 'claude') {
-            slashPaletteSupplement.claudeModelsKey = '';
-            slashPaletteSupplement.claudeModelsTried = null;
-            slashPaletteSupplement.claudeEffortKey = '';
-            agentControls.loadClaudeModelsForPalette(true);
-            agentControls.loadClaudeEffortForPalette();
-        } else if (aid === 'cursor') {
-            slashPaletteSupplement.cursorModelsLoaded = false;
-            agentControls.loadCursorAgentModelsForPalette(true);
-        }
-        }
+        return agentControls.refreshAgentPreferenceAfterStar(aid);
+    }
 
     /** When the user sends ``/model refresh``, reload the active agent's catalog. */
     function maybeRefreshModelsCatalogFromOutbound(message) {
-        const t = String(message || '');
-        if (!/\/model\s+refresh\b/i.test(t)) return;
-        const low = t.toLowerCase();
-        if (/\b\/muse\b/.test(low) || hasActiveMuseAgentChip()) {
-            slashPaletteSupplement.museModelsKey = '';
-            slashPaletteSupplement.museModels = [];
-            agentControls.loadMuseModelsForPalette(true, { refresh: true });
-            return;
-        }
-        if (/\b\/codex\b/.test(low) || hasActiveCodexAgentChip()) {
-            slashPaletteSupplement.codexModelsKey = '';
-            slashPaletteSupplement.codexModels = [];
-            agentControls.loadCodexModelsForPalette(true, { refresh: true });
-            return;
-        }
-        if (/\b\/claude\b/.test(low) || hasActiveHarnessAgentChip('claude')) {
-            slashPaletteSupplement.claudeModelsKey = '';
-            slashPaletteSupplement.claudeModels = [];
-            agentControls.loadClaudeModelsForPalette(true, { refresh: true });
-            return;
-        }
-        if (/\b\/opencode\b/.test(low) || hasActiveOpenCodeAgentChip()) {
-            slashPaletteSupplement.opencodeModelsKey = '';
-            slashPaletteSupplement.opencodeModels = [];
-            agentControls.loadOpenCodeModelsForPalette(true, { refresh: true });
-            return;
-        }
-        slashPaletteSupplement.cursorModelsKey = '';
-        slashPaletteSupplement.cursorModelsLoaded = false;
-        slashPaletteSupplement.cursorModels = [];
-        agentControls.loadCursorAgentModelsForPalette(true, { refresh: true });
+        return agentControls.maybeRefreshModelsCatalogFromOutbound(message);
     }
 
     function maybeRefreshCursorModelsCatalogFromOutbound(message) {
@@ -4896,34 +4737,7 @@
      * Other agents still attach when dirty so a pre-session pick is not lost.
      */
     function attachAgentIdentityToRequest(requestBody) {
-        if (!requestBody || typeof requestBody !== 'object') return;
-        const S = slashPaletteSupplement;
-        const pins = CuttleChatAgentModel.buildAgentPinsForRequest({
-            message: requestBody.message,
-            models: {
-                muse: {
-                    model: S.museModel, effort: S.museEffort,
-                    modelDirty: S.museModelDirty, effortDirty: S.museEffortDirty,
-                },
-                hermes: {
-                    model: S.hermesModel, effort: S.hermesEffort,
-                    modelDirty: S.hermesModelDirty, effortDirty: S.hermesEffortDirty,
-                },
-                opencode: {
-                    model: S.opencodeModel, effort: S.opencodeEffort,
-                    modelDirty: S.opencodeModelDirty, effortDirty: S.opencodeEffortDirty,
-                },
-                codex: {
-                    model: S.codexModel, effort: S.codexEffort,
-                    modelDirty: S.codexModelDirty, effortDirty: S.codexEffortDirty,
-                },
-                claude: {
-                    model: S.claudeModel, effort: S.claudeEffort,
-                    modelDirty: S.claudeModelDirty, effortDirty: S.claudeEffortDirty,
-                },
-            },
-        });
-        if (Object.keys(pins).length) requestBody.agent_pins = pins;
+        return agentControls.attachAgentIdentityToRequest(requestBody);
     }
 
     function persistCodexEffortSelection(effort) {
@@ -7062,32 +6876,22 @@
     }
 
     function prettyCursorModelLabel(model) {
-        const raw = String(model || 'auto').trim() || 'auto';
-        if (/^auto$/i.test(raw) || /^default$/i.test(raw)) return 'Auto';
-        return raw;
+        return agentControls.prettyCursorModelLabel(model);
     }
 
     /** True for the unpinned/Auto model id (or an empty value meaning "not pinned"). */
     function isCursorAutoModelName(model) {
-        const raw = String(model || '').trim();
-        return !raw || /^auto$/i.test(raw) || /^default$/i.test(raw);
+        return agentControls.isCursorAutoModelName(model);
     }
 
     /** Canonical Cursor badge text everywhere (composer, queue, bubbles): "Cursor - Auto". */
     function cursorChipDisplayLabel(modelId) {
-        return 'Cursor - ' + preferredModelLabel(modelId);
+        return agentControls.cursorChipDisplayLabel(modelId);
     }
 
     /** Look up the human-readable label for a model ID from the loaded models list. */
     function preferredModelLabel(modelId) {
-        const id = String(modelId || 'auto').trim() || 'auto';
-        if (/^auto$/i.test(id) || /^default$/i.test(id)) return 'Auto';
-        const models = slashPaletteSupplement.cursorModels;
-        if (Array.isArray(models)) {
-            const found = models.find((m) => m && m.id === id);
-            if (found && found.label) return found.label;
-        }
-        return id;
+        return agentControls.preferredModelLabel(modelId);
     }
 
     /** Cursor Agent sticky or a model *setting* pick — not nested one-shots. */
@@ -7104,57 +6908,7 @@
      * 'auto' until /api/cursor-agent/models returns) was wiping Sonnet badges.
      */
     function collapseCursorSlashChips(chips, replacement) {
-        if (!Array.isArray(chips) || !chips.length) {
-            return replacement ? [replacement] : [];
-        }
-        const others = [];
-        let sawCursor = false;
-        let modelHint = null;
-        let existingCursor = null;
-        for (const c of chips) {
-            if (isCursorRelatedSlashChip(c)) {
-                sawCursor = true;
-                if (!existingCursor) existingCursor = c;
-                const src = String((c && (c.meta || c.prefix)) || '');
-                const m = src.match(/^\/model\s+(\S+)/i);
-                if (m) modelHint = m[1];
-                else if (c.category === 'cursor-model' && c.modelId) {
-                    modelHint = c.modelId;
-                }
-                continue;
-            }
-            others.push(c);
-        }
-        if (!sawCursor && !replacement) return chips.slice();
-        let chip = replacement || null;
-        if (!chip && modelHint) {
-            chip = {
-                label: cursorChipDisplayLabel(modelHint),
-                meta: '/model ' + modelHint,
-                category: 'cursor',
-            };
-        }
-        if (!chip && existingCursor) {
-            const lab = String(existingCursor.label || '').trim();
-            // Keep concrete badges ("Cursor - Sonnet…"); only upgrade bare sticky.
-            if (lab && !/^cursor(\s+agent)?$/i.test(lab)) {
-                chip = {
-                    label: lab,
-                    meta: existingCursor.meta || existingCursor.prefix || '/cursor',
-                    category: 'cursor',
-                };
-            }
-        }
-        if (!chip) {
-            chip = {
-                label: cursorChipDisplayLabel(
-                    slashPaletteSupplement.preferredModel || 'auto'
-                ),
-                meta: '/cursor',
-                category: 'cursor',
-            };
-        }
-        return [chip].concat(others);
+        return agentControls.collapseCursorSlashChips(chips, replacement);
     }
 
     /** True when sessionId refers to the currently open chat (live pins apply). */
@@ -7510,175 +7264,21 @@
     }
 
     function syncPreferredModelFromResponse(data) {
-        if (!data) return;
-        const eff = String((data && (data.agent_effort || data.muse_effort)) || '').trim();
-        if (eff && slashPaletteSupplement.museEffort !== eff) {
-            slashPaletteSupplement.museEffort = eff;
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-        }
-        const hermesEff = String((data && (data.agent_effort || data.hermes_effort)) || '').trim();
-        if (hermesEff && slashPaletteSupplement.hermesEffort !== hermesEff) {
-            slashPaletteSupplement.hermesEffort = hermesEff;
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-        }
-        const opencodeEff = String((data && (data.agent_effort || data.opencode_effort)) || '').trim();
-        if (opencodeEff && slashPaletteSupplement.opencodeEffort !== opencodeEff) {
-            slashPaletteSupplement.opencodeEffort = opencodeEff;
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-        }
-        const codexEff = String((data && (data.agent_effort || data.codex_effort)) || '').trim();
-        if (codexEff && slashPaletteSupplement.codexEffort !== codexEff) {
-            slashPaletteSupplement.codexEffort = codexEff;
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-        }
-        const hermesModel = String(
-            (data && (data.agent_model || data.hermes_model)) || ''
-        ).trim();
-        if (
-            hermesModel
-            && hasActiveHermesAgentChip()
-            && slashPaletteSupplement.hermesModel !== hermesModel
-        ) {
-            slashPaletteSupplement.hermesModel = hermesModel;
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-        }
-        const opencodeModel = String(
-            (data && (data.agent_model || data.opencode_model)) || ''
-        ).trim();
-        if (
-            opencodeModel
-            && hasActiveOpenCodeAgentChip()
-            && slashPaletteSupplement.opencodeModel !== opencodeModel
-        ) {
-            slashPaletteSupplement.opencodeModel = opencodeModel;
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-        }
-        const codexModel = String(
-            (data && (data.agent_model || data.codex_model)) || ''
-        ).trim();
-        if (
-            codexModel
-            && hasActiveCodexAgentChip()
-            && slashPaletteSupplement.codexModel !== codexModel
-        ) {
-            slashPaletteSupplement.codexModel = codexModel;
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-        }
-        if (String((data && data.agent_id) || '').toLowerCase() === 'claude'
-            || hasActiveHarnessAgentChip('claude')) {
-            const claudeModel = String((data && data.agent_model) || '').trim();
-            const claudeEff = String((data && data.agent_effort) || '').trim();
-            let claudeChanged = false;
-            if (claudeModel && slashPaletteSupplement.claudeModel !== claudeModel) {
-                slashPaletteSupplement.claudeModel = claudeModel;
-                claudeChanged = true;
-            }
-            if (claudeEff && slashPaletteSupplement.claudeEffort !== claudeEff) {
-                slashPaletteSupplement.claudeEffort = claudeEff;
-                claudeChanged = true;
-            }
-            if (claudeChanged) {
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-            }
-        }
-        const pref =
-            (data.preferred_model || data.preferredModel || '').trim()
-            || (
-                data.cursor_run
-                && (data.cursor_run.requested_model || '').trim()
-            )
-            || '';
-        if (!pref) return;
-        const prev = (slashPaletteSupplement.preferredModel || '').trim();
-        if (prev === pref) return;
-        slashPaletteSupplement.preferredModel = pref;
-        renderSlashChips('chat', document.getElementById('chatInput'));
-        renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
+        return agentControls.syncPreferredModelFromResponse(data);
     }
 
     /** Build / refresh assistant header chips using Cursor run meta (model badge). */
     function enrichSlashCommandWithCursorRun(replySlash, cursorRun, stickyCmd) {
-        const isCursor =
-            (stickyCmd && String(stickyCmd.prefix || '').toLowerCase().startsWith('/cursor'))
-            || (replySlash && Array.isArray(replySlash.chips) && replySlash.chips.some(isCursorRelatedSlashChip));
-        if (!isCursor && !cursorRun) return replySlash || null;
-
-        // Chip label = requested/configured model. Prefer cursor_run, then this
-        // chat's preferred model — never invent "auto" when Sonnet (etc.) is set.
-        const sessionPreferred =
-            (slashPaletteSupplement.preferredModel || '').trim() || '';
-        const requestedRaw =
-            (cursorRun && cursorRun.requested_model)
-            || sessionPreferred
-            || 'auto';
-        const reportedRaw = (cursorRun && cursorRun.reported_model) || null;
-        const model = preferredModelLabel(requestedRaw);
-        let label = cursorChipDisplayLabel(requestedRaw);
-        const tipParts = ['/cursor', 'requested ' + model];
-        if (reportedRaw) {
-            const reqLabel = preferredModelLabel(requestedRaw);
-            const repLabel = preferredModelLabel(reportedRaw);
-            if (
-                repLabel.toLowerCase() !== reqLabel.toLowerCase()
-                && reportedRaw.toLowerCase() !== String(requestedRaw).toLowerCase()
-            ) {
-                tipParts.push('CLI reported ' + repLabel);
-                // Unpinned turn that came back as a named model really ran that
-                // model (premium usage). Badging it "Auto" hid the spend.
-                if (isCursorAutoModelName(requestedRaw) && !isCursorAutoModelName(reportedRaw)) {
-                    label = cursorChipDisplayLabel(reportedRaw);
-                }
-            }
-        }
-        if (cursorRun && cursorRun.request_id) {
-            tipParts.push('req ' + String(cursorRun.request_id).slice(0, 8) + '…');
-        }
-        if (cursorRun && cursorRun.cwd) tipParts.push('cwd ' + cursorRun.cwd);
-        const tip = tipParts.join(' · ');
-        const cursorChip = { label: label, meta: tip, category: 'cursor' };
-
-        const storedLooksSpecific = replySlash && Array.isArray(replySlash.chips)
-            && replySlash.chips.some((c) => {
-                const lab = String((c && c.label) || '').toLowerCase();
-                return lab && !/(^|\s)auto(\s|$)/i.test(lab) && lab.indexOf(' - auto') < 0;
-            });
-        if (storedLooksSpecific && isCursorAutoModelName(requestedRaw)) {
-            return replySlash;
-        }
-        if (replySlash && Array.isArray(replySlash.chips) && replySlash.chips.length) {
-            return { chips: collapseCursorSlashChips(replySlash.chips, cursorChip) };
-        }
-        return { chips: [cursorChip] };
+        return agentControls.enrichSlashCommandWithCursorRun(replySlash, cursorRun, stickyCmd);
     }
 
     function prettyMuseModelLabel(model) {
-        const raw = String(model || '').trim() || '';
-        const known = (slashPaletteSupplement.museModels || []).find(
-            (m) => m && String(m.id).toLowerCase() === raw.toLowerCase()
-        );
-        if (known && known.label) return String(known.label).replace(/^Muse\s+/i, '');
-        if (/^muse-spark-1\.3-contributor$/i.test(raw)) return 'Spark 1.3 (Contributor)';
-        if (/^muse-spark-1\.3$/i.test(raw)) return 'Spark 1.3';
-        if (/^muse-spark-1\.2-contributor$/i.test(raw)) return 'Spark 1.2 (Contributor)';
-        if (/^muse-spark-1\.2$/i.test(raw)) return 'Spark 1.2';
-        return raw.replace(/^muse-/i, '').replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+        return agentControls.prettyMuseModelLabel(model);
     }
 
     /** Full palette label for a Muse model id (e.g. toasts). */
     function museModelLabel(model) {
-        const raw = String(model || '').trim();
-        const known = (slashPaletteSupplement.museModels || []).find(
-            (m) => m && String(m.id).toLowerCase() === raw.toLowerCase()
-        );
-        return (known && known.label) || raw || 'default';
+        return agentControls.museModelLabel(model);
     }
 
     /**
@@ -7686,14 +7286,7 @@
      * Returns '' when neither model nor effort is available (caller keeps stock label).
      */
     function agentModelEffortBadgeLabel(agentName, modelLabel, effort) {
-        const name = String(agentName || '').trim();
-        if (!name) return '';
-        const model = String(modelLabel || '').trim();
-        const eff = String(effort || '').trim();
-        if (!model && !eff) return '';
-        if (model && eff) return name + ' - ' + model + ' · ' + eff;
-        if (model) return name + ' - ' + model;
-        return name + ' · ' + eff;
+        return agentControls.agentModelEffortBadgeLabel(agentName, modelLabel, effort);
     }
 
     /**
@@ -7781,54 +7374,7 @@
      * richer stored badge when the palette pin is still loading.
      */
     function enrichSlashCommandWithAgentPin(replySlash, spec) {
-        if (!replySlash || !Array.isArray(replySlash.chips)) return replySlash || null;
-        const model = String((spec && spec.model) || '').trim();
-        const effort = String((spec && spec.effort) || '').trim();
-        if (!model && !effort) return replySlash;
-        const matchChip = spec && spec.matchChip;
-        const agentName = String((spec && spec.agentName) || '').trim();
-        const prettyModel = String((spec && spec.prettyModel) || model).trim();
-        const slashMeta = String((spec && spec.slashMeta) || '').trim();
-        const agentCategory = String((spec && spec.category) || '').trim()
-            || (/^muse/i.test(agentName) ? 'muse'
-                : /^hermes/i.test(agentName) ? 'hermes'
-                    : /^opencode/i.test(agentName) ? 'opencode'
-                        : /^codex/i.test(agentName) ? 'codex'
-                            : /^cursor/i.test(agentName) ? 'cursor'
-                                : 'command');
-        let found = false;
-        const chips = replySlash.chips.map((chip) => {
-            if (!matchChip || !matchChip(chip)) return chip;
-            found = true;
-            const existingLabel = String((chip && chip.label) || '');
-            const existingMeta = String((chip && chip.meta) || '');
-            const nextLabel = agentModelEffortBadgeLabel(agentName, prettyModel, effort)
-                || existingLabel;
-            const nextMeta = slashMeta
-                + (model ? ' · model ' + model : '')
-                + (effort ? ' · effort ' + effort : '');
-            // Keep a richer history badge when we would strip effort/model.
-            const existingHasEffort = /\beffort\s+\S/i.test(existingMeta)
-                || /\s·\s+\S+$/.test(existingLabel);
-            const existingHasModel = / - /.test(existingLabel) || /model\s+\S/i.test(existingMeta);
-            if (existingHasEffort && !effort) return chip;
-            if (existingHasModel && !model && !effort) return chip;
-            if (existingLabel === nextLabel) {
-                if ((chip.category || '') === agentCategory) return chip;
-                return Object.assign({}, chip, { category: agentCategory });
-            }
-            // Upgrade bare chips, or model-only chips when effort is now known.
-            if (existingHasModel && effort && existingLabel.indexOf(' · ' + effort) === -1) {
-                return { label: nextLabel, meta: nextMeta || existingMeta, category: agentCategory };
-            }
-            if (existingHasModel && !effort) return chip;
-            return {
-                label: nextLabel,
-                meta: nextMeta || existingMeta,
-                category: agentCategory,
-            };
-        });
-        return found ? { chips } : replySlash;
+        return agentControls.enrichSlashCommandWithAgentPin(replySlash, spec);
     }
 
     function repaintAgentUserBadges(matchLabelRe, nextLabel) {
@@ -7877,167 +7423,65 @@
      * pin fetch was in flight would otherwise keep stale defaults.
      */
     function repaintMuseUserBadges() {
-        const model = String(slashPaletteSupplement.museModel || '').trim();
-        const eff = String(slashPaletteSupplement.museEffort || '').trim();
-        const next = agentModelEffortBadgeLabel(
-            'Muse Code',
-            model ? prettyMuseModelLabel(model) : '',
-            eff
-        );
-        if (!next) return;
-        repaintAgentUserBadges(/^Muse Code/i, next);
+        return agentControls.repaintMuseUserBadges();
     }
 
     /** Add the actual Muse model (+ pinned effort) to its live reply badge. */
     function enrichSlashCommandWithMuseModel(replySlash, model, effort) {
-        return enrichSlashCommandWithAgentPin(replySlash, {
-            agentName: 'Muse Code',
-            category: 'muse',
-            model: model,
-            effort: effort,
-            prettyModel: prettyMuseModelLabel(model),
-            slashMeta: '/muse',
-            matchChip: (chip) => {
-                const src = String((chip && (chip.meta || chip.prefix || chip.label)) || '');
-                return /^\/muse\b/i.test(src) || /^Muse Code\b/i.test(String((chip && chip.label) || ''));
-            },
-        });
+        return agentControls.enrichSlashCommandWithMuseModel(replySlash, model, effort);
     }
 
     function prettyHermesModelLabel(model) {
-        const raw = String(model || '').trim();
-        if (!raw) return 'Hermes';
-        const known = (slashPaletteSupplement.hermesModels || []).find(
-            (m) => m && String(m.id).toLowerCase() === raw.toLowerCase()
-        );
-        if (known && known.label) return String(known.label);
-        const leaf = raw.includes('/') ? raw.split('/').pop() : raw;
-        return String(leaf || raw).replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+        return agentControls.prettyHermesModelLabel(model);
     }
 
     function hermesModelLabel(model) {
-        const raw = String(model || '').trim();
-        const known = (slashPaletteSupplement.hermesModels || []).find(
-            (m) => m && String(m.id).toLowerCase() === raw.toLowerCase()
-        );
-        return (known && known.label) || raw || 'default';
+        return agentControls.hermesModelLabel(model);
     }
 
     function repaintHermesUserBadges() {
-        const model = String(slashPaletteSupplement.hermesModel || '').trim();
-        const eff = String(slashPaletteSupplement.hermesEffort || '').trim();
-        const next = agentModelEffortBadgeLabel(
-            'Hermes',
-            model ? prettyHermesModelLabel(model) : '',
-            eff
-        );
-        if (!next) return;
-        repaintAgentUserBadges(/^Hermes\b/i, next);
+        return agentControls.repaintHermesUserBadges();
     }
 
     /** Add the actual Hermes model (+ pinned effort) to its live reply badge. */
     function enrichSlashCommandWithHermesModel(replySlash, model, effort) {
-        return enrichSlashCommandWithAgentPin(replySlash, {
-            agentName: 'Hermes',
-            category: 'hermes',
-            model: model,
-            effort: effort,
-            prettyModel: prettyHermesModelLabel(model),
-            slashMeta: '/hermes',
-            matchChip: (chip) => {
-                const src = String((chip && (chip.meta || chip.prefix || chip.label)) || '');
-                const label = String((chip && chip.label) || '');
-                return (
-                    /^\/hermes\b/i.test(src)
-                    || /^Hermes(\s+Agent)?\b/i.test(label)
-                    || /^Hermes -/i.test(label)
-                );
-            },
-        });
+        return agentControls.enrichSlashCommandWithHermesModel(replySlash, model, effort);
     }
 
     function prettyOpenCodeModelLabel(model) {
-        const raw = String(model || '').trim();
-        if (!raw) return 'OpenCode';
-        const known = (slashPaletteSupplement.opencodeModels || []).find(
-            (m) => m && String(m.id).toLowerCase() === raw.toLowerCase()
-        );
-        if (known && known.label) return String(known.label);
-        const leaf = raw.includes('/') ? raw.split('/').pop() : raw;
-        return String(leaf || raw).replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+        return agentControls.prettyOpenCodeModelLabel(model);
     }
 
     function opencodeModelLabel(model) {
-        const raw = String(model || '').trim();
-        const known = (slashPaletteSupplement.opencodeModels || []).find(
-            (m) => m && String(m.id).toLowerCase() === raw.toLowerCase()
-        );
-        return (known && known.label) || raw || 'default';
+        return agentControls.opencodeModelLabel(model);
     }
 
     function repaintOpenCodeUserBadges() {
-        const model = String(slashPaletteSupplement.opencodeModel || '').trim();
-        const eff = String(slashPaletteSupplement.opencodeEffort || '').trim();
-        const next = agentModelEffortBadgeLabel(
-            'OpenCode',
-            model ? prettyOpenCodeModelLabel(model) : '',
-            eff
-        );
-        if (!next) return;
-        repaintAgentUserBadges(/^OpenCode\b/i, next);
+        return agentControls.repaintOpenCodeUserBadges();
     }
 
     function prettyCodexModelLabel(model) {
-        const raw = String(model || '').trim();
-        if (!raw) return 'Codex';
-        const known = (slashPaletteSupplement.codexModels || []).find(
-            (m) => m && String(m.id).toLowerCase() === raw.toLowerCase()
-        );
-        if (known && known.label) return String(known.label);
-        const leaf = raw.includes('/') ? raw.split('/').pop() : raw;
-        return String(leaf || raw).replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+        return agentControls.prettyCodexModelLabel(model);
     }
 
     function codexModelLabel(model) {
-        const raw = String(model || '').trim();
-        const known = (slashPaletteSupplement.codexModels || []).find(
-            (m) => m && String(m.id).toLowerCase() === raw.toLowerCase()
-        );
-        return (known && known.label) || raw || 'default';
+        return agentControls.codexModelLabel(model);
     }
 
     function repaintCodexUserBadges() {
-        const model = String(slashPaletteSupplement.codexModel || '').trim();
-        const eff = String(slashPaletteSupplement.codexEffort || '').trim();
-        const next = agentModelEffortBadgeLabel(
-            'Codex',
-            model ? prettyCodexModelLabel(model) : '',
-            eff
-        );
-        if (!next) return;
-        repaintAgentUserBadges(/^Codex\b/i, next);
+        return agentControls.repaintCodexUserBadges();
     }
 
     function prettyClaudeModelLabel(model) {
-        return CuttleChatAgentModel.prettyClaudeModelLabel(
-            model, slashPaletteSupplement.claudeModels);
+        return agentControls.prettyClaudeModelLabel(model);
     }
 
     function claudeModelLabel(model) {
-        return CuttleChatAgentModel.claudeModelLabel(
-            model, slashPaletteSupplement.claudeModels);
+        return agentControls.claudeModelLabel(model);
     }
 
     function repaintClaudeUserBadges() {
-        const model = String(slashPaletteSupplement.claudeModel || '').trim();
-        const eff = String(slashPaletteSupplement.claudeEffort || '').trim();
-        const next = agentModelEffortBadgeLabel(
-            'Claude Code',
-            model ? prettyClaudeModelLabel(model) : '',
-            eff
-        );
-        if (!next) return;
-        repaintAgentUserBadges(/^Claude\b/i, next);
+        return agentControls.repaintClaudeUserBadges();
     }
 
     /**
@@ -8048,93 +7492,22 @@
      * Appends a warning chip when the run reports drift_warning / effort_ignored.
      */
     function enrichSlashCommandWithAgentBadge(replySlash, data, stickyCmd) {
-        if (!data) return replySlash || null;
-        const agentId = String((data && data.agent_id) || '').trim().toLowerCase();
-        const stickyPrefix = agentId ? '' : String((stickyCmd && stickyCmd.prefix) || '').trim().toLowerCase();
-        const isMuse = agentId === 'muse' || stickyPrefix.startsWith('/muse');
-        const isHermes = agentId === 'hermes' || stickyPrefix.startsWith('/hermes');
-        const isOpenCode = agentId === 'opencode' || stickyPrefix.startsWith('/opencode');
-        const isCodex = agentId === 'codex' || stickyPrefix.startsWith('/codex');
-        const isClaude = agentId === 'claude' || stickyPrefix.startsWith('/claude');
-        if (!isMuse && !isHermes && !isOpenCode && !isCodex && !isClaude) return replySlash || null;
-        const model = String(
-            (data && (data.agent_model || data.model)) || ''
-        ).trim();
-        const effort = CuttleChatAgentModel.resolveAgentEffortForBadge({
-            data,
-            pinnedEfforts: data.routing_badge ? [] : [
-                slashPaletteSupplement.museEffort,
-                slashPaletteSupplement.hermesEffort,
-                slashPaletteSupplement.opencodeEffort,
-                slashPaletteSupplement.codexEffort,
-                slashPaletteSupplement.claudeEffort,
-            ],
-        });
-        let out = replySlash || null;
-        if (isMuse) out = enrichSlashCommandWithMuseModel(out, model, effort);
-        else if (isHermes) out = enrichSlashCommandWithHermesModel(out, model, effort);
-        else if (isOpenCode) out = enrichSlashCommandWithOpenCodeModel(out, model, effort);
-        else if (isCodex) out = enrichSlashCommandWithCodexModel(out, model, effort);
-        else if (isClaude) out = enrichSlashCommandWithClaudeModel(out, model, effort);
-        const warn = String((data && (data.drift_warning || data.effort_ignored)) || '').trim();
-        if (warn) {
-            try { console.warn('[badge-drift]', warn); } catch (_) {}
-            const chips = (out && Array.isArray(out.chips)) ? out.chips.slice() : [];
-            chips.push({ label: '⚠️ badge drift', meta: warn, category: 'warning' });
-            out = { chips };
-        }
-        return out;
+        return agentControls.enrichSlashCommandWithAgentBadge(replySlash, data, stickyCmd);
     }
 
     /** Add the actual OpenCode model (+ pinned effort) to its live reply badge. */
     function enrichSlashCommandWithOpenCodeModel(replySlash, model, effort) {
-        return enrichSlashCommandWithAgentPin(replySlash, {
-            agentName: 'OpenCode',
-            category: 'opencode',
-            model: model,
-            effort: effort,
-            prettyModel: prettyOpenCodeModelLabel(model),
-            slashMeta: '/opencode',
-            matchChip: (chip) => {
-                const src = String((chip && (chip.meta || chip.prefix || chip.label)) || '');
-                const label = String((chip && chip.label) || '');
-                return /^\/opencode\b/i.test(src) || /^OpenCode\b/i.test(label);
-            },
-        });
+        return agentControls.enrichSlashCommandWithOpenCodeModel(replySlash, model, effort);
     }
 
     /** Add the actual Codex model (+ pinned effort) to its live reply badge. */
     function enrichSlashCommandWithCodexModel(replySlash, model, effort) {
-        return enrichSlashCommandWithAgentPin(replySlash, {
-            agentName: 'Codex',
-            category: 'codex',
-            model: model,
-            effort: effort,
-            prettyModel: prettyCodexModelLabel(model),
-            slashMeta: '/codex',
-            matchChip: (chip) => {
-                const src = String((chip && (chip.meta || chip.prefix || chip.label)) || '');
-                const label = String((chip && chip.label) || '');
-                return /^\/codex\b/i.test(src) || /^Codex\b/i.test(label);
-            },
-        });
+        return agentControls.enrichSlashCommandWithCodexModel(replySlash, model, effort);
     }
 
     /** Add the actual Claude model (+ pinned effort) to its live reply badge. */
     function enrichSlashCommandWithClaudeModel(replySlash, model, effort) {
-        return enrichSlashCommandWithAgentPin(replySlash, {
-            agentName: 'Claude Code',
-            category: 'claude',
-            model: model,
-            effort: effort,
-            prettyModel: prettyClaudeModelLabel(model),
-            slashMeta: '/claude',
-            matchChip: (chip) => {
-                const src = String((chip && (chip.meta || chip.prefix || chip.label)) || '');
-                const label = String((chip && chip.label) || '');
-                return /^\/claude\b/i.test(src) || /^Claude\b/i.test(label);
-            },
-        });
+        return agentControls.enrichSlashCommandWithClaudeModel(replySlash, model, effort);
     }
 
     /** Strip legacy Cursor banner/footer from older saved replies. */
@@ -9782,58 +9155,7 @@
             // Invalidate the per-session model cache before updating currentSessionId so
             // any render or send that follows picks up the correct model for the new session.
             if (currentSessionId !== sessionId) {
-                slashPaletteSupplement.preferredModel = 'auto';
-                slashPaletteSupplement.lastReportedModel = null;
-                slashPaletteSupplement.cursorModelsKey = '';
-                slashPaletteSupplement.cursorModelsLoaded = false;
-                // Same for Muse: don't carry previous session's contributor/plain pick
-                slashPaletteSupplement.museModel = '';
-                slashPaletteSupplement.museModels = [];
-                slashPaletteSupplement.museModelsKey = '';
-                slashPaletteSupplement.museModelsLoading = false;
-                slashPaletteSupplement.museModelDirty = false;
-                slashPaletteSupplement.museEffortDirty = false;
-                slashPaletteSupplement.museEffort = '';
-                slashPaletteSupplement.museEffortKey = '';
-                slashPaletteSupplement.museEffortLoading = false;
-                slashPaletteSupplement.hermesModel = '';
-                slashPaletteSupplement.hermesModels = [];
-                slashPaletteSupplement.hermesModelsKey = '';
-                slashPaletteSupplement.hermesModelsLoading = false;
-                slashPaletteSupplement.hermesModelDirty = false;
-                slashPaletteSupplement.hermesEffortDirty = false;
-                slashPaletteSupplement.hermesEffort = '';
-                slashPaletteSupplement.hermesEffortKey = '';
-                slashPaletteSupplement.hermesEffortLoading = false;
-                slashPaletteSupplement.opencodeModel = '';
-                slashPaletteSupplement.opencodeModels = [];
-                slashPaletteSupplement.opencodeModelsKey = '';
-                slashPaletteSupplement.opencodeModelsLoading = false;
-                slashPaletteSupplement.opencodeModelDirty = false;
-                slashPaletteSupplement.opencodeEffortDirty = false;
-                slashPaletteSupplement.opencodeEffort = '';
-                slashPaletteSupplement.opencodeEffortKey = '';
-                slashPaletteSupplement.opencodeEffortLoading = false;
-                slashPaletteSupplement.codexModel = '';
-                slashPaletteSupplement.codexModels = [];
-                slashPaletteSupplement.codexCommonEfforts = [];
-                slashPaletteSupplement.codexModelsKey = '';
-                slashPaletteSupplement.codexModelsLoading = false;
-                slashPaletteSupplement.codexModelDirty = false;
-                slashPaletteSupplement.codexEffortDirty = false;
-                slashPaletteSupplement.codexEffort = '';
-                slashPaletteSupplement.codexEffortKey = '';
-                slashPaletteSupplement.codexEffortLoading = false;
-                slashPaletteSupplement.claudeModel = '';
-                slashPaletteSupplement.claudeModels = [];
-                slashPaletteSupplement.claudeCommonEfforts = [];
-                slashPaletteSupplement.claudeModelsKey = '';
-                slashPaletteSupplement.claudeModelsLoading = false;
-                slashPaletteSupplement.claudeModelDirty = false;
-                slashPaletteSupplement.claudeEffortDirty = false;
-                slashPaletteSupplement.claudeEffort = '';
-                slashPaletteSupplement.claudeEffortKey = '';
-                slashPaletteSupplement.claudeEffortLoading = false;
+                agentControls.invalidateProviderCacheForSessionSwitch();
             }
             releaseManualUnreadHoldIfLeaving(sessionId);
             const prevSessionId = currentSessionId;
