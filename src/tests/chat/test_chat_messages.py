@@ -31,6 +31,7 @@ MOD_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_messages.js"
 MOD_MD = REPO_ROOT / "src" / "web" / "js" / "chat/chat_markdown.js"
 MOD_USAGE = REPO_ROOT / "src" / "web" / "js" / "chat/chat_usage_live.js"
 CHAT_PAGE_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_page.js"
+CHAT_MEDIA_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_media.js"
 
 node_only = pytest.mark.skipif(
     shutil.which("node") is None, reason="node not available"
@@ -233,7 +234,7 @@ CHAT_SLASH_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_slash.js"
 # REAL page leaf bodies that the formatter consumes (extracted by exact
 # markers, never copied): escapeHtmlInline, parseButtonClickFromContent
 # (+ real button labels), formatFormReplyHtml (+ real icon),
-# buildMessageAttachmentsHtml (+ real mediaDownloadUrl) and the REAL
+# buildMessageAttachmentsHtml (+ real chat_media.js mediaDownloadUrl) and the REAL
 # attachments/slash modules. Only the markdown renderer and the slash
 # chip HTML leaves are thin labeled stubs — their own units own their
 # internals; the assertions pin the formatter's dispatch structure,
@@ -256,8 +257,7 @@ eval(span('    function parseButtonClickFromContent(content) {',
           '    function parseButtonClickFromMessage(msg) {'));
 eval(span('    function formatFormReplyHtml(content) {',
           '    function formatUserMessageForDisplay(content, opts = {}) {'));
-eval(span('    function mediaDownloadUrl(src) {',
-          '    function mediaDownloadFilename(src, title) {'));
+globalThis.CuttleChatMedia = require(process.env.CHAT_MEDIA_JS);
 eval(span('    function buildMessageAttachmentsHtml(attachments) {',
           '    function formatMessageWithAttachments(message, attachments) {'));
 for (const iconName of ['FORM_REPLY_ICON_PICK', 'FORM_REPLY_ICON_ANSWERS']) {
@@ -308,7 +308,7 @@ def _run_format():
         ["node", "-e", FORMAT_HARNESS],
         capture_output=True, text=True, encoding="utf-8", timeout=30,
         env={"PATH": os.environ["PATH"], "MOD_JS": str(MOD_JS),
-             "CHAT_PAGE_JS": str(CHAT_PAGE_JS),
+             "CHAT_PAGE_JS": str(CHAT_PAGE_JS), "CHAT_MEDIA_JS": str(CHAT_MEDIA_JS),
              "CHAT_ATTACHMENTS_JS": str(CHAT_ATTACHMENTS_JS),
              "CHAT_SLASH_JS": str(CHAT_SLASH_JS)},
     )
@@ -370,6 +370,7 @@ const fs = require('fs');
 const SRC = fs.readFileSync(process.env.CHAT_PAGE_JS, 'utf-8');
 const span = (s, e) => SRC.slice(SRC.indexOf(s), SRC.indexOf(e, SRC.indexOf(s)));
 const A = require(process.env.MOD_JS);
+globalThis.CuttleChatMarkdown = require(process.env.MOD_MD);
 eval(span('    function escapeHtmlInline(s) {',
           '    function windowsPathToFileUrl(path) {'));
 eval(span('    function clamp(n, min, max) {',
@@ -404,8 +405,8 @@ out.mediaImg = T('<media src="pic.png" title="P"></media>');
 out.mediaNoSrc = T('<media type="image" title="P"></media>');
 out.vegaTag = T('<vega>{"mark": "point"}</vega>');
 out.vegaFence = T('```vega\\n{"mark": "x"}\\n```');
-out.vegaEmpty = A.buildVegaWrapHtml('   ', deps);
-out.vegaXss = A.buildVegaWrapHtml('{"a": "</div><script>}', deps);
+out.vegaEmpty = CuttleChatMarkdown.buildVegaWrapHtml('   ', deps);
+out.vegaXss = CuttleChatMarkdown.buildVegaWrapHtml('{"a": "</div><script>}', deps);
 out.empty = E('');
 out.nullText = T(null);
 const combined = {};
@@ -416,8 +417,8 @@ out.restored = A.restoreStructuredBlocks(
   out.think.text + ' ' + out.tool.text + ' ' + out.tail.text, combined);
 out.restoreUnknown = A.restoreStructuredBlocks('keep {{CUTTLE_NOPE_0}} here', {});
 out.restoreEmpty = A.restoreStructuredBlocks('plain', { think: [], tool: [] });
-out.copyClean = A.cleanCodeCopyText
-  ? A.cleanCodeCopyText('a\\u200Bb\\u00A0c\\r\\n\\n')
+out.copyClean = CuttleChatMarkdown.cleanCodeCopyText
+  ? CuttleChatMarkdown.cleanCodeCopyText('a\\u200Bb\\u00A0c\\r\\n\\n')
   : 'module-has-no-cleanCodeCopyText';
 // Post-paint activation lives in chat_activate.js (test_chat_activate.py
 // executes it); planning coverage here stops at the wrap HTML above.
@@ -431,7 +432,8 @@ def _run_structured():
         ["node", "-e", STRUCTURED_HARNESS],
         capture_output=True, text=True, encoding="utf-8", timeout=30,
         env={"PATH": os.environ["PATH"], "MOD_JS": str(MOD_JS),
-             "CHAT_PAGE_JS": str(CHAT_PAGE_JS)},
+             "CHAT_PAGE_JS": str(CHAT_PAGE_JS), "CHAT_MEDIA_JS": str(CHAT_MEDIA_JS),
+             "MOD_MD": str(MOD_MD)},
     )
     assert proc.returncode == 0, proc.stderr or proc.stdout
     return json.loads(proc.stdout)
@@ -565,7 +567,7 @@ def _run_codelink():
         ["node", "-e", CODELINK_HARNESS],
         capture_output=True, text=True, encoding="utf-8", timeout=30,
         env={"PATH": os.environ["PATH"], "MOD_JS": str(MOD_JS),
-             "CHAT_PAGE_JS": str(CHAT_PAGE_JS)},
+             "CHAT_PAGE_JS": str(CHAT_PAGE_JS), "CHAT_MEDIA_JS": str(CHAT_MEDIA_JS)},
     )
     assert proc.returncode == 0, proc.stderr or proc.stdout
     return json.loads(proc.stdout)
@@ -621,7 +623,8 @@ eval(span('    function mdLinkChipLabel(label, url) {', '    function renderMdLi
 eval(span('    function renderMdLinkChip(label, url) {', '    async function openFileInDefaultApp(href) {'));
 eval(span('    function safeJsonParse(s) {', '    function availableSlashCommands() {'));
 eval(span('    function clamp(n, min, max) {', '    function safeJsonParse(s) {'));
-eval(span('    function mediaKindFromUrl(url) {', '    function mediaPosterUrl(src) {'));
+globalThis.CuttleChatMedia = require(process.env.CHAT_MEDIA_JS);
+const mediaKindFromUrl = CuttleChatMedia.mediaKindFromUrl;
 // Block/inline markdown + tables moved to chat_markdown.js (Slice 8E);
 // the pipeline executes the real module, not page spans.
 globalThis.CuttleChatMarkdown = require(process.env.MOD_MD);
@@ -640,6 +643,7 @@ const linkifyChatHandlesInText = rec('handles', (t) => t);
 const renderActionFormCard = rec('afcard', () => '<afcard>');
 const renderCuttlePricingHtml = (r) => '<price:' + r + '>';
 const buildMediaThumbHtml = (s, o) => '<thumb src="' + s + '">';
+const chatMedia = { buildMediaThumbHtml };
 globalThis.CuttleChatMessages = require(process.env.MOD_JS);
 globalThis.CuttleChatAttachments = require(process.env.CHAT_ATTACHMENTS_JS);
 globalThis.window = { CuttleSupervised: {
@@ -676,7 +680,7 @@ def _run_full_pipeline():
         ["node", "-e", FULL_PIPELINE_HARNESS],
         capture_output=True, text=True, encoding="utf-8", timeout=30,
         env={"PATH": os.environ["PATH"], "MOD_JS": str(MOD_JS),
-             "CHAT_PAGE_JS": str(CHAT_PAGE_JS),
+             "CHAT_PAGE_JS": str(CHAT_PAGE_JS), "CHAT_MEDIA_JS": str(CHAT_MEDIA_JS),
              "CHAT_ATTACHMENTS_JS": str(CHAT_ATTACHMENTS_JS),
              "MOD_MD": str(MOD_MD), "MOD_USAGE": str(MOD_USAGE)},
     )
@@ -771,9 +775,11 @@ def test_page_delegates_message_history_decisions_to_owned_module():
         ("function transcriptEndsWithAssistant(messages)",
          "CuttleChatMessages.transcriptEndsWithAssistant"),
         ("function buildVegaWrapHtml(rawSpec)",
-         "CuttleChatMessages.buildVegaWrapHtml"),
+         "CuttleChatMarkdown.buildVegaWrapHtml"),
         ("function cleanCodeCopyText(raw)",
-         "CuttleChatMessages.cleanCodeCopyText"),
+         "CuttleChatMarkdown.cleanCodeCopyText"),
+        ("function renderCuttlePricingHtml(rawBody)",
+         "CuttleChatMessages.renderCuttlePricingHtml"),
     ):
         assert adapter in src, f"page adapter {adapter} must stay (same signature)"
         assert owned in src, f"page must delegate to {owned}"
@@ -789,8 +795,8 @@ eval(span('    function escapeHtmlInline(s) {', '    function windowsPathToFileU
 eval(span('    function normalizeMdHref(url) {', '    function isSafeMdHref(url) {'));
 eval(span('    function isSafeMdHref(url) {', '    function mdLinkChipLabel(label, url) {'));
 eval(span('    function mdLinkChipLabel(label, url) {', '    function renderMdLinkChip(label, url) {'));
-eval(span('    function renderMdLinkChip(label, url) {', '    function mediaKindFromUrl(url) {'));
-const buildMediaThumbHtml = (src, opts) => '<img src="' + src + '">';
+eval(span('    function renderMdLinkChip(label, url) {', '    async function openFileInDefaultApp(href) {'));
+const chatMedia = { buildMediaThumbHtml: (src, opts) => '<img src="' + src + '">' };
 // --- real page extract call-site (module call + live linkChips bind) ---
 let text = 'Talk {{CUTTLE_FORM_0}} here\\n```\\nvalue {{CUTTLE_FORM_0}} and {{CUTTLE_LINK_7}}\\n```';
 const structuredBlocks = {};
@@ -816,7 +822,7 @@ def _run_order():
         ["node", "-e", ORDER_HARNESS],
         capture_output=True, text=True, encoding="utf-8", timeout=30,
         env={"PATH": os.environ["PATH"], "MOD_JS": str(MOD_JS),
-             "CHAT_PAGE_JS": str(CHAT_PAGE_JS)},
+             "CHAT_PAGE_JS": str(CHAT_PAGE_JS), "CHAT_MEDIA_JS": str(CHAT_MEDIA_JS)},
     )
     assert proc.returncode == 0, proc.stderr or proc.stdout
     return json.loads(proc.stdout)

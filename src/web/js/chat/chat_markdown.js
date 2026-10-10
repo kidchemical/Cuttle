@@ -1,10 +1,11 @@
 /* ================================================================
    Cuttle Chat — markdown block/inline rendering (chat_markdown.js).
-   Owner: pure markdown planning — inline spans, GFM pipe tables, and
-   the block line loop (headers, rules, tables, quotes, lists,
-   paragraphs, block-placeholder passthrough). No document, no window,
-   no state: takes already-escaped text, returns HTML strings; the page
-   keeps escapeHtml, placeholder restore order, and DOM activation.
+   Owner: pure markdown planning — inline spans, GFM pipe tables, the
+   block line loop (headers, rules, tables, quotes, lists, paragraphs,
+   block-placeholder passthrough), the Vega chart placeholder wrap, and
+   the code-copy text cleaner. No document, no window, no state: takes
+   already-escaped text, returns HTML strings; the page keeps
+   escapeHtml, placeholder restore order, and DOM activation.
    New block placeholder kinds (owner: whoever mints the placeholder)
    must extend BLOCK_PLACEHOLDER_RE below to keep <p>-wrapping off.
    Loaded after chat_messages.js, before chat_page.js.
@@ -279,6 +280,36 @@
         return formatted.join('');
     }
 
+    /**
+     * Vega chart placeholder wrap (planning half; the DOM embed half
+     * stays in the page's `activateVegaEmbeds`, which consumes the
+     * `data-vega-spec` attribute produced here).
+     */
+    function buildVegaWrapHtml(rawSpec, deps) {
+        const d = deps || {};
+        const raw = String(rawSpec ?? '').trim();
+        if (!raw) {
+            return '<div class="vega-wrap vega-wrap--error">Empty Vega chart</div>';
+        }
+        // No ui-card chrome — charts sit flush in the bubble (transparent bg).
+        return (
+            '<div class="vega-wrap" data-vega-spec="' +
+            d.escapeHtmlInline(raw) +
+            '"><div class="vega-pending" aria-hidden="true">Loading chart…</div></div>'
+        );
+    }
+
+    // Invisible characters that survive a rendered-text copy and show up as
+    // garbage in terminals: zero-width/BOM/soft hyphen dropped, exotic spaces
+    // flattened to ASCII space.
+    function cleanCodeCopyText(raw) {
+        return String(raw ?? '')
+            .replace(/\r\n?/g, '\n')
+            .replace(/[\u200B-\u200D\u2060\uFEFF\u00AD]/g, '')
+            .replace(/[\u00A0\u2007\u202F]/g, ' ')
+            .replace(/\n+$/, '');
+    }
+
     const api = {
         formatInlineMarkdown,
         splitMarkdownTableRow,
@@ -287,6 +318,8 @@
         markdownTableAlignFromSep,
         renderMarkdownTableHtml,
         renderMarkdownBlocks,
+        buildVegaWrapHtml,
+        cleanCodeCopyText,
     };
 
     const ns = (root.CuttleChatMarkdown = root.CuttleChatMarkdown || {});

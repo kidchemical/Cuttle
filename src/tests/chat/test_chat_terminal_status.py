@@ -44,7 +44,7 @@ const ctx = {
   setHistorySessionRunning: (sid, value) => {running = value},
   addRemoteWaitingIndicator: () => {remote = true},
   removeRemoteWaitingIndicator: () => {remote = false},
-  updateRemoteWaitingStatus: () => {}, syncSubagentOrbs: () => {},
+  updateRemoteWaitingStatus: () => {}, subagentLaunchers: {syncLive: () => {}},
   syncComposerStopWithWatch: () => {},
   scheduleFollowupDrain: () => {},
 };

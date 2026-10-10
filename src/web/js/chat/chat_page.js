@@ -706,13 +706,6 @@
         window.addEventListener('pagehide', event => { if (!event.persisted) vfxController.dispose(); });
     }
 
-    /** Distance from the bottom that still counts as following the conversation. */
-    const AUTOSCROLL_STICK_PX = 120;
-    /** Sticky follow: measured on user scroll, not after we insert a tall bubble. */
-    let chatPinnedToBottom = true;
-    let _ignoreChatScrollPinUntil = 0;
-    /** Blocks autoScroll-to-bottom while a CH-…-N deep-link jump settles. */
-    let _suppressAutoScrollUntil = 0;
     /**
      * In-session attention (title unread + jump glow). Separate from history
      * hasUnread: stays until the user scrolls to the new content and/or clicks
@@ -725,10 +718,6 @@
     /** Once true for this open session, new bottom-pinned replies won't re-nag the title. */
     let chatViewportActivated = true;
     let _suppressChatAttention = 0;
-    /** Right-side message nav (numbered circles) — same sticky-follow behavior, don't steal hover/scroll. */
-    let messageNavPinnedToBottom = true;
-    let _ignoreNavScrollPinUntil = 0;
-    const NAV_AUTOSCROLL_STICK_PX = 24;
     // Busy-generation lock { loading, localSessionId, seq }, owned by
     // chat_generation.js. Exactly one instance; all transitions go through
     // CuttleChatGeneration (token-scoped release) — never direct writes.
@@ -746,7 +735,6 @@
     let deferOpenChatGeneratingFromSessions = false;
     let agentName = 'Cuttle';
     let currentAgentIdentity = { displayName: '', avatar: '', profileId: '', parentSessionId: null, origin: '' };
-    let _subagentOrbList = [];
     let currentProject = null;
     // Bound worktree checkout for this chat (experimental). '' = Local/primary.
     let currentCheckoutUid = '';
@@ -1296,7 +1284,7 @@
                 contentEl.innerHTML = formatMessage(display);
                 try { activateEnhancements(el); } catch (_) {}
             }
-            autoScrollChatToBottom();
+            transcriptNav.autoScrollChatToBottom();
         }
         const statusHeader = el.querySelector('.message-header-row');
         if (statusHeader) {
@@ -1338,7 +1326,7 @@
             } catch (_) {}
         }
         if (meta.subagents) {
-            try { mountSubagentLaunchers(el, meta.subagents); } catch (_) {}
+            try { subagentLaunchers.mount(el, meta.subagents); } catch (_) {}
         }
         return el;
     }
@@ -1526,7 +1514,7 @@
                     '" data-kind="image" data-title="' +
                     name +
                     '" data-download="' +
-                    escapeHtmlInline(mediaDownloadUrl(url)).replace(/"/g, '&quot;') +
+                    escapeHtmlInline(CuttleChatMedia.mediaDownloadUrl(url)).replace(/"/g, '&quot;') +
                     '" title="' +
                     name +
                     '">' +
@@ -1994,7 +1982,7 @@
         if (_suppressChatAttention > 0) return;
         applyChatAttention(CuttleChatActivity.attentionAfterFinalized(snapshotChatAttention(), {
             isError: !!(opts && opts.isError),
-            scrolledAway: !chatPinnedToBottom || isChatScrolledUp(140),
+            scrolledAway: !transcriptNav.isFollowingLatest() || transcriptNav.isChatScrolledUp(140),
         }));
         syncChatAttentionIndicators();
     }
@@ -2002,7 +1990,7 @@
     // Owned by chat_activity.js — DOM/state gather, domain decides.
     function clearChatUnseenBelow() {
         if (!chatUnseenBelow) {
-            updateJumpToBottomVisibility();
+            transcriptNav.updateJumpToBottomVisibility();
             return;
         }
         applyChatAttention(CuttleChatActivity.attentionAfterClearUnseen(snapshotChatAttention()));
@@ -2081,7 +2069,7 @@
     }
 
     function syncChatAttentionIndicators() {
-        updateJumpToBottomVisibility();
+        transcriptNav.updateJumpToBottomVisibility();
         updateSessionTitleUnreadDot();
         try { scheduleChatActivityBroadcast(); } catch (_) {}
     }
@@ -3655,7 +3643,7 @@
         const parsed = parseChatHandleToken(raw);
         if (!parsed) return false;
         if (parsed.messageIndex) {
-            queueMessageJump(parsed.messageIndex);
+            transcriptNav.queueMessageJump(parsed.messageIndex);
             try {
                 const url = new URL(window.location.href);
                 url.searchParams.set('msg', String(parsed.messageIndex));
@@ -3664,7 +3652,7 @@
         }
         if (sessionIdsEqual(currentSessionId, parsed.sessionId)) {
             if (parsed.messageIndex) {
-                consumePendingMessageJump();
+                transcriptNav.consumePendingMessageJump();
             }
             return true;
         }
@@ -3761,118 +3749,6 @@
                 },
             });
         }, true);
-    }
-
-    function normalizeSubagentList(raw) {
-        if (!raw) return [];
-        let list = raw;
-        if (typeof list === 'string') {
-            try { list = JSON.parse(list); } catch (_) { return []; }
-        }
-        if (!Array.isArray(list)) return [];
-        const out = [];
-        list.forEach((item) => {
-            if (!item || typeof item !== 'object') return;
-            const handleRaw = String(item.handle || '').trim();
-            const sid = item.session_id != null ? String(item.session_id) : '';
-            const token = handleRaw || (sid ? ('CH-' + String(sid).padStart(6, '0')) : '');
-            const parsed = parseChatHandleToken(token);
-            if (!parsed) return;
-            out.push({
-                handle: parsed.display,
-                sessionId: parsed.sessionId,
-                label: String(item.label || item.title || item.display_name || parsed.display).trim() || parsed.display,
-                agent: String(item.agent || '').trim(),
-                model: String(item.model || '').trim(),
-                status: String(item.status || '').trim(),
-                generating: !!item.generating,
-                avatar: String(item.avatar || '').trim(),
-                // Fleet-card fields (server-owned outcome; see chat_subagent_fleet.js).
-                fleet: !!item.fleet,
-                outcome: String(item.outcome || '').trim(),
-                summary: String(item.summary || ''),
-                detail: String(item.detail || ''),
-                effort: String(item.effort || '').trim(),
-                displayName: String(item.display_name || '').trim(),
-                startedAt: String(item.started_at || ''),
-                finishedAt: String(item.finished_at || ''),
-                liveStatusAt: String(item.live_status_at || ''),
-            });
-        });
-        return out;
-    }
-
-    function parentRefsFromOpts(opts) {
-        if (!opts) return [];
-        const handleRaw = String(opts.parent_handle || '').trim();
-        const sid = opts.parent_session_id != null && opts.parent_session_id !== ''
-            ? String(opts.parent_session_id)
-            : '';
-        if (!handleRaw && !sid) return [];
-        return [{
-            handle: handleRaw,
-            session_id: sid,
-            label: String(opts.parent_label || 'Parent chat').trim() || 'Parent chat',
-            agent: '',
-            generating: false,
-            avatar: String(opts.avatar || 'cuttle').trim(),
-        }];
-    }
-
-    /**
-     * Minimal shared agent chip for fleet cards: agent label only, with
-     * `{agent} | {model} | {effort}` in the tip. Same `slash-command-chip`
-     * chrome as the header/composer badges (label from the
-     * `CuttleChatSlash.SLASH_COMMANDS` registry, palette class from the
-     * harness id) — never the old bespoke fleet pill.
-     */
-    function fleetAgentChipHtml(s) {
-        const agentId = String((s && s.agent) || '').trim().toLowerCase();
-        if (!agentId) return '';
-        const reg = globalThis.CuttleChatSlash && globalThis.CuttleChatSlash.SLASH_COMMANDS;
-        const hit = Array.isArray(reg)
-            ? reg.find((c) => String((c && c.prefix) || '').trim().toLowerCase() === '/' + agentId)
-            : null;
-        const rawAgent = String(s.agent || '').trim();
-        const label = (hit && hit.label) ? String(hit.label) : rawAgent;
-        const bits = [label, s.model, s.effort].map((x) => String(x || '').trim()).filter(Boolean);
-        const tip = bits.join(' | ');
-        return '<span class="slash-command-chip slash-command-chip--header'
-            + slashCommandChipCategoryClass(agentId)
-            + ' slash-command-chip--no-shorten" role="img" aria-label="'
-            + escapeHtmlInline('Agent: ' + tip) + '" title="'
-            + escapeHtmlInline(tip) + '" data-full-label="'
-            + escapeHtmlInline(label) + '" data-tip="'
-            + escapeHtmlInline(tip) + '">'
-            + '<span class="slash-chip-label">' + escapeHtmlInline(label) + '</span></span>';
-    }
-
-    function renderSubagentLaunchersHtml(subagents, opts) {
-        const list = normalizeSubagentList(subagents);
-        if (!list.length) return '';
-        const isParent = !!(opts && opts.kind === 'parent');
-        const fleet = globalThis.CuttleChatSubagentFleet;
-        if (!isParent && fleet && fleet.hasFleet(list)) {
-            return fleet.renderFleetHtml(list, { esc: escapeHtmlInline, avatarHtml: profileAvatarInnerHtml, chipHtml: fleetAgentChipHtml });
-        }
-        const buttons = list.map((s) => {
-            const handle = escapeHtmlInline(s.handle);
-            const label = escapeHtmlInline(s.label);
-            const title = escapeHtmlInline((isParent ? 'Open parent ' : 'Open ') + s.handle + (s.label ? ' — ' + s.label : ''));
-            const agent = (!isParent && s.agent) ? escapeHtmlInline(s.agent) : '';
-            const busy = s.generating ? ' is-generating' : '';
-            const kindClass = isParent ? ' is-parent' : '';
-            return (
-                '<button type="button" class="subagent-launcher' + kindClass + busy + '" data-chat-handle="' + handle + '" title="' + title + '">' +
-                '<span class="subagent-launcher-orb" aria-hidden="true"></span>' +
-                '<span class="subagent-launcher-label">' + label + '</span>' +
-                (agent ? '<span class="subagent-launcher-agent">' + agent + '</span>' : '') +
-                '</button>'
-            );
-        }).join('');
-        const aria = isParent ? 'Parent chats' : 'Sub-agent chats';
-        const wrapClass = isParent ? 'subagent-launchers is-parent' : 'subagent-launchers';
-        return '<div class="' + wrapClass + '" role="group" aria-label="' + aria + '">' + buttons + '</div>';
     }
 
     function historyEntryParentId(entry) {
@@ -3989,1275 +3865,25 @@
         return (expanded ? 'Hide ' : 'Show ') + amount;
     }
 
-    function mountSubagentLaunchers(messageEl, subagents, opts) {
-        if (!messageEl) return;
-        const wrap = messageEl.querySelector('.message-content-wrapper');
-        if (!wrap) return;
-        const html = renderSubagentLaunchersHtml(subagents, opts);
-        const existing = wrap.querySelector('.subagent-launchers');
-        if (!html) {
-            if (existing) existing.remove();
-            return;
-        }
-        // Tooltips promote title attributes after mounting. Comparing outerHTML
-        // to our source then replaces unchanged cards on every history poll.
-        if (existing && existing.__cuttleLaunchersHtml === html) return;
-        const template = document.createElement('template');
-        template.innerHTML = html;
-        const next = template.content.firstElementChild;
-        if (existing) {
-            // Keep the group and its buttons mounted. Re-focusing replacement
-            // buttons can scroll an iPad iframe back to a fleet above the reader.
-            existing.className = next.className;
-            existing.setAttribute('aria-label', next.getAttribute('aria-label'));
-            const cards = new Map(Array.from(existing.children).map((el) => [el.getAttribute('data-chat-handle'), el]));
-            const kept = new Set();
-            let cursor = existing.firstElementChild;
-            Array.from(next.children).forEach((wanted) => {
-                const handle = wanted.getAttribute('data-chat-handle');
-                const card = handle && cards.get(handle);
-                const node = card || wanted;
-                const source = wanted.outerHTML;
-                if (card && card.__cuttleLauncherHtml !== source) {
-                    Array.from(card.attributes).forEach((attr) => {
-                        if (!wanted.hasAttribute(attr.name)) card.removeAttribute(attr.name);
-                    });
-                    Array.from(wanted.attributes).forEach((attr) => {
-                        if (card.getAttribute(attr.name) !== attr.value) card.setAttribute(attr.name, attr.value);
-                    });
-                    if (card.__cuttleLauncherBodyHtml !== wanted.innerHTML) card.innerHTML = wanted.innerHTML;
-                }
-                node.__cuttleLauncherHtml = source;
-                node.__cuttleLauncherBodyHtml = wanted.innerHTML;
-                kept.add(node);
-                if (node !== cursor) existing.insertBefore(node, cursor);
-                cursor = node.nextElementSibling;
-            });
-            Array.from(existing.children).forEach((el) => {
-                if (!kept.has(el)) el.remove();
-            });
-            existing.__cuttleLaunchersHtml = html;
-            return;
-        }
-        next.__cuttleLaunchersHtml = html;
-        Array.from(next.children).forEach((el) => {
-            el.__cuttleLauncherHtml = el.outerHTML;
-            el.__cuttleLauncherBodyHtml = el.innerHTML;
-        });
-        const footer = wrap.querySelector('.message-footer');
-        if (footer) wrap.insertBefore(next, footer);
-        else wrap.appendChild(next);
-    }
-
-    function mountMessageLaunchers(messageEl, role, opts) {
-        if (!messageEl) return;
-        if (role === 'assistant') {
-            mountSubagentLaunchers(messageEl, opts && opts.subagents);
-            return;
-        }
-        if (role === 'user') {
-            mountSubagentLaunchers(messageEl, parentRefsFromOpts(opts), { kind: 'parent' });
-        }
-    }
-
-    // --- Chat media thumbs + lightbox (images / video, per-bubble gallery) ---
-
-    function mediaKindFromUrl(url) {
-        const path = String(url || '').split('?')[0].split('#')[0].toLowerCase();
-        if (/\.(mp4|webm|mov|m4v|ogg|ogv)$/i.test(path)) return 'video';
-        return 'image';
-    }
-
-    /** Conventional mid-frame poster for staged videos: foo.mp4 → foo.poster.jpg */
-    function mediaPosterUrl(src) {
-        const u = String(src || '').trim().split('?')[0].split('#')[0];
-        if (!u.startsWith('/output/shared/')) return '';
-        if (!/\.(mp4|webm|mov|m4v|ogg|ogv)$/i.test(u)) return '';
-        return u.replace(/\.[^.\/]+$/i, '.poster.jpg');
-    }
-
-    function isSafeMediaSrc(url) {
-        const u = String(url || '').trim();
-        if (!u) return false;
-        if (/^(javascript|data|vbscript):/i.test(u)) return false;
-        if (/^https?:\/\//i.test(u)) return true;
-        if (u.startsWith('/output/')) return true;
-        // Same-origin site paths (avatars, static), not protocol-relative
-        if (u.charAt(0) === '/' && u.charAt(1) !== '/') return true;
-        return false;
-    }
-
-    function mediaDownloadUrl(src) {
-        const u = String(src || '').trim();
-        if (!u) return '';
-        if (u.startsWith('/output/')) {
-            return u + (u.includes('?') ? '&' : '?') + 'download=1';
-        }
-        return u;
-    }
-
-    function mediaDownloadFilename(src, title) {
-        const t = String(title || '').trim();
-        if (t && /\.[a-z0-9]{2,5}$/i.test(t)) return t;
-        try {
-            const path = String(src || '').split('?')[0];
-            const base = path.split('/').filter(Boolean).pop() || 'download';
-            return decodeURIComponent(base);
-        } catch (_) {
-            return 'download';
-        }
-    }
-
-    /** Parse ``url`` / ``url "description"`` / ``url 'description'`` from markdown image dest. */
-    function parseMdImageDest(raw) {
-        let dest = String(raw || '').trim();
-        let description = '';
-        const titleMatch = dest.match(/\s+("([^"]*)"|'([^']*)')\s*$/);
-        if (titleMatch) {
-            description = titleMatch[2] != null ? titleMatch[2] : (titleMatch[3] || '');
-            dest = dest.slice(0, titleMatch.index).trim();
-        }
-        return { href: dest, description: description };
-    }
-
-    /** True when alt/title looks like prose context, not a bare filename. */
-    function mediaAltLooksLikeDescription(text) {
-        const s = String(text || '').trim();
-        if (!s) return false;
-        if (/^[\w.\-]+\.[a-z0-9]{2,5}$/i.test(s)) return false;
-        if (/-[a-f0-9]{8,12}\.[^.]+$/i.test(s)) return false;
-        if (s.length >= 28) return true;
-        return /\s/.test(s);
-    }
-
-    function buildMediaThumbHtml(src, opts) {
-        const o = opts || {};
-        const rawSrc = String(src || '').trim();
-        if (!isSafeMediaSrc(rawSrc)) {
-            return escapeHtmlInline(o.alt || o.title || rawSrc || '');
-        }
-        const kind = o.kind || mediaKindFromUrl(rawSrc);
-        const title = escapeHtmlInline(o.title || o.alt || '');
-        const description = String(o.description || '').trim();
-        const safeDesc = description ? escapeHtmlInline(description) : '';
-        const safeSrc = escapeHtmlInline(rawSrc).replace(/"/g, '&quot;');
-        const dl = escapeHtmlInline(mediaDownloadUrl(rawSrc)).replace(/"/g, '&quot;');
-        const poster = (o.poster && isSafeMediaSrc(o.poster))
-            ? String(o.poster).trim()
-            : (kind === 'video' ? mediaPosterUrl(rawSrc) : '');
-        const safePoster = poster ? escapeHtmlInline(poster).replace(/"/g, '&quot;') : '';
-        const cls = 'cuttle-media-thumb' + (kind === 'video' ? ' cuttle-media-thumb--video' : '');
-        let inner;
-        if (kind === 'video') {
-            // Prefer mid-frame poster JPEG; fall back to muted video frame if missing.
-            if (safePoster) {
-                inner =
-                    '<img class="cuttle-media-poster" src="' +
-                    safePoster +
-                    '" alt="' +
-                    title +
-                    '" loading="lazy" onerror="window.CuttleMediaThumbFallback&&window.CuttleMediaThumbFallback(this)">' +
-                    '<span class="cuttle-media-play" aria-hidden="true">▶</span>';
-            } else {
-                inner =
-                    '<video src="' +
-                    safeSrc +
-                    '" muted preload="metadata" playsinline></video>' +
-                    '<span class="cuttle-media-play" aria-hidden="true">▶</span>';
-            }
-        } else {
-            inner =
-                '<img src="' +
-                safeSrc +
-                '" alt="' +
-                title +
-                '" loading="lazy" onerror="this.closest(\'.cuttle-media-thumb\')?.classList.add(\'cuttle-media-thumb--broken\')">';
-        }
-        const tip = safeDesc || title || 'Open media';
-        let html =
-            '<button type="button" class="' +
-            cls +
-            '" data-src="' +
-            safeSrc +
-            '" data-kind="' +
-            escapeHtmlInline(kind) +
-            '" data-title="' +
-            title +
-            '"' +
-            (safeDesc ? ' data-description="' + safeDesc.replace(/"/g, '&quot;') + '"' : '') +
-            (safePoster ? ' data-poster="' + safePoster + '"' : '') +
-            ' data-download="' +
-            dl +
-            '" title="' +
-            tip +
-            '">' +
-            inner +
-            '</button>';
-        if (safeDesc) {
-            html =
-                '<figure class="cuttle-media-figure">' +
-                html +
-                '<figcaption class="cuttle-media-caption">' +
-                safeDesc +
-                '</figcaption>' +
-                '</figure>';
-        }
-        return html;
-    }
-
-    // Poster missing / broken → swap to <video preload=metadata> stills.
-    window.CuttleMediaThumbFallback = function (imgEl) {
-        try {
-            const thumb = imgEl && imgEl.closest && imgEl.closest('.cuttle-media-thumb');
-            if (!thumb) return;
-            const src = thumb.getAttribute('data-src') || '';
-            if (!src) {
-                thumb.classList.add('cuttle-media-thumb--broken');
-                return;
-            }
-            const video = document.createElement('video');
-            video.src = src;
-            video.muted = true;
-            video.preload = 'metadata';
-            video.setAttribute('playsinline', '');
-            imgEl.replaceWith(video);
-        } catch (_) {
-            try {
-                imgEl.closest('.cuttle-media-thumb')?.classList.add('cuttle-media-thumb--broken');
-            } catch (__) {}
-        }
-    };
-
-    let _cuttleLightbox = null;
-    let _lightboxItems = [];
-    let _lightboxIndex = 0;
-    // Zoom: mode 'fit' (contain) or 'actual' (1:1 px); userZoom multiplies the base.
-    let _lightboxMode = 'fit';
-    let _lightboxUserZoom = 1;
-    let _lightboxFitScale = 1;
-    let _lightboxNatW = 0;
-    let _lightboxNatH = 0;
-    let _lightboxPanX = 0;
-    let _lightboxPanY = 0;
-    let _lightboxDrag = null;
-    /** Active pointers for pan + pinch (pointerId → {x,y}). */
-    let _lightboxPointers = new Map();
-    let _lightboxPinch = null;
-    const _LIGHTBOX_ZOOM_MIN = 0.25; // 25% of natural pixels
-    const _LIGHTBOX_ZOOM_MAX = 8;
-    const _LIGHTBOX_ZOOM_STEP = 1.25;
-    let _lightboxHostKeyBound = false;
-    let _lightboxHostResizeBound = false;
-
-    /** Prefer the app-shell parent so the overlay covers every split pane. */
-    function lightboxHostWindow() {
-        try {
-            if (window.parent && window.parent !== window && window.parent.document && window.parent.document.body) {
-                // Same-origin probe (throws if cross-origin).
-                void window.parent.document.documentElement;
-                return window.parent;
-            }
-        } catch (_) {}
-        return window;
-    }
-
-    function lightboxHostDocument() {
-        try {
-            return lightboxHostWindow().document;
-        } catch (_) {
-            return document;
-        }
-    }
-
-    function lightboxSetOpenClass(on) {
-        const docs = [document];
-        try {
-            const hostDoc = lightboxHostDocument();
-            if (hostDoc && hostDoc !== document) docs.push(hostDoc);
-        } catch (_) {}
-        docs.forEach(function (doc) {
-            try {
-                if (on) doc.documentElement.classList.add('cuttle-lightbox-open');
-                else doc.documentElement.classList.remove('cuttle-lightbox-open');
-            } catch (_) {}
-        });
-    }
-
-    function ensureCuttleLightbox() {
-        const hostDoc = lightboxHostDocument();
-        const hostBody = hostDoc.body || document.body;
-
-        // Another chat pane may have left a shell lightbox — drop it so this
-        // pane owns the handlers (avoid stale closures from a sibling iframe).
-        if (!_cuttleLightbox || !hostBody.contains(_cuttleLightbox)) {
-            try {
-                const existing = hostDoc.getElementById('cuttle-shell-lightbox');
-                if (existing && existing !== _cuttleLightbox) {
-                    existing.remove();
-                }
-            } catch (_) {}
-            _cuttleLightbox = null;
-        }
-
-        if (_cuttleLightbox && hostBody.contains(_cuttleLightbox)) {
-            // Rebuild if an older shell is missing caption slots or zoom chrome.
-            if (
-                _cuttleLightbox.querySelector('.cuttle-lightbox-path')
-                && _cuttleLightbox.querySelector('.cuttle-lightbox-desc')
-                && _cuttleLightbox.querySelector('.cuttle-lightbox-zoom')
-            ) {
-                return _cuttleLightbox;
-            }
-            try {
-                _cuttleLightbox.remove();
-            } catch (_) {}
-            _cuttleLightbox = null;
-        }
-
-        const el = hostDoc.createElement('div');
-        el.id = 'cuttle-shell-lightbox';
-        el.className = 'cuttle-lightbox';
-        el.hidden = true;
-        el.tabIndex = -1;
-        el.setAttribute('role', 'dialog');
-        el.setAttribute('aria-modal', 'true');
-        el.setAttribute('aria-label', 'Media viewer');
-        el.innerHTML =
-            '<div class="cuttle-lightbox-backdrop" data-lb-action="close"></div>' +
-            '<button type="button" class="cuttle-lightbox-close" data-lb-action="close" aria-label="Close">×</button>' +
-            '<button type="button" class="cuttle-lightbox-nav cuttle-lightbox-prev" data-lb-action="prev" aria-label="Previous">‹</button>' +
-            '<button type="button" class="cuttle-lightbox-nav cuttle-lightbox-next" data-lb-action="next" aria-label="Next">›</button>' +
-            '<div class="cuttle-lightbox-stage"></div>' +
-            '<div class="cuttle-lightbox-bar">' +
-            '<div class="cuttle-lightbox-caption">' +
-            '<span class="cuttle-lightbox-title"></span>' +
-            '<span class="cuttle-lightbox-desc" hidden></span>' +
-            '<span class="cuttle-lightbox-path" hidden></span>' +
-            '</div>' +
-            '<div class="cuttle-lightbox-zoom" role="group" aria-label="Zoom">' +
-            '<button type="button" class="cuttle-lightbox-zoom-btn" data-lb-action="zoom-out" aria-label="Zoom out" title="Zoom out (−)">−</button>' +
-            '<button type="button" class="cuttle-lightbox-zoom-toggle" data-lb-action="zoom-toggle" aria-label="Toggle fit and actual size" title="Toggle fit / actual size">Fit</button>' +
-            '<button type="button" class="cuttle-lightbox-zoom-btn" data-lb-action="zoom-in" aria-label="Zoom in" title="Zoom in (+)">+</button>' +
-            '</div>' +
-            '<span class="cuttle-lightbox-counter"></span>' +
-            '<a class="cuttle-lightbox-download" href="#" download>Download</a>' +
-            '</div>';
-        hostBody.appendChild(el);
-        el.addEventListener('click', function (e) {
-            const btn = e.target && e.target.closest && e.target.closest('[data-lb-action]');
-            if (!btn) return;
-            const action = btn.getAttribute('data-lb-action');
-            if (action === 'close') closeCuttleLightbox();
-            else if (action === 'prev') showLightboxIndex(_lightboxIndex - 1);
-            else if (action === 'next') showLightboxIndex(_lightboxIndex + 1);
-            else if (action === 'zoom-in') lightboxZoomBy(_LIGHTBOX_ZOOM_STEP);
-            else if (action === 'zoom-out') lightboxZoomBy(1 / _LIGHTBOX_ZOOM_STEP);
-            else if (action === 'zoom-toggle') toggleLightboxSizeMode();
-        });
-        const stage = el.querySelector('.cuttle-lightbox-stage');
-        if (stage) {
-            stage.addEventListener('pointerdown', onLightboxPointerDown);
-            stage.addEventListener('pointermove', onLightboxPointerMove);
-            stage.addEventListener('pointerup', onLightboxPointerUp);
-            stage.addEventListener('pointercancel', onLightboxPointerUp);
-            stage.addEventListener('wheel', onLightboxWheel, { passive: false });
-            stage.addEventListener('dblclick', onLightboxDblClick);
-            // Legacy iOS gesture stream (no-ops on Android / Capacitor Chromium).
-            stage.addEventListener('gesturestart', onLightboxGesture, { passive: false });
-            stage.addEventListener('gesturechange', onLightboxGesture, { passive: false });
-            stage.addEventListener('gestureend', onLightboxGesture, { passive: false });
-            // Right-click Copy / Save on the full-size image (host doc when shelled).
-            stage.addEventListener('contextmenu', onMediaContextMenu);
-        }
-        _cuttleLightbox = el;
-        return el;
-    }
-
-    function lightboxMediaEl() {
-        const root = _cuttleLightbox;
-        if (!root) return null;
-        return root.querySelector('.cuttle-lightbox-stage img, .cuttle-lightbox-stage video');
-    }
-
-    function lightboxZoomBase() {
-        return _lightboxMode === 'actual' ? 1 : (_lightboxFitScale || 1);
-    }
-
-    function lightboxEffectiveScale() {
-        return lightboxZoomBase() * (_lightboxUserZoom || 1);
-    }
-
-    /** Smallest allowed scale vs natural size: 25%, or Fit when Fit is already smaller. */
-    function lightboxMinEffectiveScale() {
-        const fit = _lightboxFitScale > 0 ? _lightboxFitScale : 1;
-        return Math.min(_LIGHTBOX_ZOOM_MIN, fit);
-    }
-
-    function resetLightboxZoomState() {
-        _lightboxMode = 'fit';
-        _lightboxUserZoom = 1;
-        _lightboxFitScale = 1;
-        _lightboxNatW = 0;
-        _lightboxNatH = 0;
-        _lightboxPanX = 0;
-        _lightboxPanY = 0;
-        _lightboxDrag = null;
-        _lightboxPinch = null;
-        if (_lightboxPointers && _lightboxPointers.clear) _lightboxPointers.clear();
-    }
-
-    function lightboxPinchDistance(pts) {
-        const arr = [];
-        pts.forEach(function (p) { arr.push(p); });
-        if (arr.length < 2) return 0;
-        const dx = arr[0].x - arr[1].x;
-        const dy = arr[0].y - arr[1].y;
-        return Math.hypot(dx, dy) || 0;
-    }
-
-    function lightboxPinchMidpoint(pts) {
-        const arr = [];
-        pts.forEach(function (p) { arr.push(p); });
-        if (arr.length < 2) return { x: 0, y: 0 };
-        return {
-            x: (arr[0].x + arr[1].x) / 2,
-            y: (arr[0].y + arr[1].y) / 2,
-        };
-    }
-
-    function lightboxSetEffectiveScale(nextEff) {
-        const base = Math.max(lightboxZoomBase(), 0.0001);
-        const clamped = clamp(
-            nextEff,
-            lightboxMinEffectiveScale(),
-            _LIGHTBOX_ZOOM_MAX
-        );
-        _lightboxUserZoom = clamped / base;
-    }
-
-    function measureLightboxFitScale() {
-        const root = _cuttleLightbox;
-        const media = lightboxMediaEl();
-        if (!root || !media) return;
-        const natW = media.naturalWidth || media.videoWidth || 0;
-        const natH = media.naturalHeight || media.videoHeight || 0;
-        if (!natW || !natH) return;
-        _lightboxNatW = natW;
-        _lightboxNatH = natH;
-        const stage = root.querySelector('.cuttle-lightbox-stage');
-        const sw = (stage && stage.clientWidth) || Math.max(1, lightboxHostWindow().innerWidth - 112);
-        const sh = (stage && stage.clientHeight) || Math.max(1, lightboxHostWindow().innerHeight - 160);
-        _lightboxFitScale = Math.min(sw / natW, sh / natH, 1);
-        if (!Number.isFinite(_lightboxFitScale) || _lightboxFitScale <= 0) {
-            _lightboxFitScale = 1;
-        }
-    }
-
-    function clampLightboxPan() {
-        const media = lightboxMediaEl();
-        if (!media || !_lightboxNatW || !_lightboxNatH) {
-            _lightboxPanX = 0;
-            _lightboxPanY = 0;
-            return;
-        }
-        const root = _cuttleLightbox;
-        const stage = root && root.querySelector('.cuttle-lightbox-stage');
-        const sw = (stage && stage.clientWidth) || lightboxHostWindow().innerWidth;
-        const sh = (stage && stage.clientHeight) || lightboxHostWindow().innerHeight;
-        const scale = lightboxEffectiveScale();
-        const dispW = _lightboxNatW * scale;
-        const dispH = _lightboxNatH * scale;
-        const maxX = Math.max(0, (dispW - sw) / 2);
-        const maxY = Math.max(0, (dispH - sh) / 2);
-        _lightboxPanX = clamp(_lightboxPanX, -maxX, maxX);
-        _lightboxPanY = clamp(_lightboxPanY, -maxY, maxY);
-    }
-
-    function updateLightboxZoomUi() {
-        const root = _cuttleLightbox;
-        if (!root) return;
-        const toggle = root.querySelector('.cuttle-lightbox-zoom-toggle');
-        const pct = Math.round(lightboxEffectiveScale() * 100);
-        if (toggle) {
-            if (_lightboxMode === 'actual' && Math.abs(_lightboxUserZoom - 1) < 0.02) {
-                toggle.textContent = 'Actual';
-                toggle.title = 'Switch to fit (default size)';
-                toggle.setAttribute('aria-pressed', 'true');
-            } else if (_lightboxMode === 'fit' && Math.abs(_lightboxUserZoom - 1) < 0.02) {
-                toggle.textContent = 'Fit';
-                toggle.title = 'Switch to actual size (1:1)';
-                toggle.setAttribute('aria-pressed', 'false');
-            } else {
-                toggle.textContent = pct + '%';
-                toggle.title = _lightboxMode === 'actual'
-                    ? 'Reset to actual size'
-                    : 'Reset to fit (default size)';
-                toggle.setAttribute('aria-pressed', _lightboxMode === 'actual' ? 'true' : 'false');
-            }
-        }
-        const stage = root.querySelector('.cuttle-lightbox-stage');
-        if (stage) {
-            const scale = lightboxEffectiveScale();
-            const canPan = !!(_lightboxNatW && _lightboxNatH
-                && ((_lightboxNatW * scale > (stage.clientWidth || 0) + 1)
-                    || (_lightboxNatH * scale > (stage.clientHeight || 0) + 1)));
-            stage.classList.toggle('is-pannable', canPan);
-        }
-    }
-
-    function applyLightboxZoom() {
-        const media = lightboxMediaEl();
-        if (!media) return;
-        if (!_lightboxNatW || !_lightboxNatH) {
-            measureLightboxFitScale();
-        }
-        if (!_lightboxNatW || !_lightboxNatH) return;
-        clampLightboxPan();
-        const scale = lightboxEffectiveScale();
-        media.style.width = _lightboxNatW + 'px';
-        media.style.height = _lightboxNatH + 'px';
-        media.style.maxWidth = 'none';
-        media.style.maxHeight = 'none';
-        media.style.transform =
-            'translate(' + _lightboxPanX + 'px,' + _lightboxPanY + 'px) scale(' + scale + ')';
-        media.style.transformOrigin = 'center center';
-        updateLightboxZoomUi();
-    }
-
-    function lightboxZoomBy(factor) {
-        if (!_cuttleLightbox || _cuttleLightbox.hidden) return;
-        lightboxSetEffectiveScale(lightboxEffectiveScale() * factor);
-        applyLightboxZoom();
-    }
-
-    function setLightboxSizeMode(mode) {
-        if (!_cuttleLightbox || _cuttleLightbox.hidden) return;
-        measureLightboxFitScale();
-        _lightboxMode = mode === 'actual' ? 'actual' : 'fit';
-        _lightboxUserZoom = 1;
-        _lightboxPanX = 0;
-        _lightboxPanY = 0;
-        applyLightboxZoom();
-    }
-
-    function toggleLightboxSizeMode() {
-        if (!_cuttleLightbox || _cuttleLightbox.hidden) return;
-        // If already zoomed away from the mode's 1x, first reset to that mode's default.
-        if (Math.abs(_lightboxUserZoom - 1) > 0.02) {
-            _lightboxUserZoom = 1;
-            _lightboxPanX = 0;
-            _lightboxPanY = 0;
-            applyLightboxZoom();
-            return;
-        }
-        setLightboxSizeMode(_lightboxMode === 'actual' ? 'fit' : 'actual');
-    }
-
-    function onLightboxMediaReady(media) {
-        if (!media) return;
-        const apply = function () {
-            measureLightboxFitScale();
-            _lightboxUserZoom = 1;
-            _lightboxPanX = 0;
-            _lightboxPanY = 0;
-            applyLightboxZoom();
-        };
-        if (media.tagName === 'VIDEO') {
-            if (media.videoWidth) apply();
-            else media.addEventListener('loadedmetadata', apply, { once: true });
-        } else if (media.complete && media.naturalWidth) {
-            apply();
-        } else {
-            media.addEventListener('load', apply, { once: true });
-        }
-    }
-
-    function onLightboxPointerDown(e) {
-        if (!_cuttleLightbox || _cuttleLightbox.hidden) return;
-        if (e.button != null && e.button !== 0) return;
-        const stage = e.currentTarget;
-        if (!stage) return;
-        // Don't steal gestures from native video controls.
-        const media = lightboxMediaEl();
-        if (!media || media.tagName === 'VIDEO') return;
-
-        _lightboxPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-        try {
-            stage.setPointerCapture(e.pointerId);
-        } catch (_) {}
-
-        if (_lightboxPointers.size >= 2) {
-            // Two fingers → pinch (works from Fit, not only when already pannable).
-            _lightboxDrag = null;
-            const dist = lightboxPinchDistance(_lightboxPointers) || 1;
-            const mid = lightboxPinchMidpoint(_lightboxPointers);
-            _lightboxPinch = {
-                startDist: dist,
-                startEff: lightboxEffectiveScale(),
-                startPanX: _lightboxPanX,
-                startPanY: _lightboxPanY,
-                startMidX: mid.x,
-                startMidY: mid.y,
-            };
-            stage.classList.add('is-dragging');
-            e.preventDefault();
-            return;
-        }
-
-        // Single finger pan when the image overflows the stage.
-        if (stage.classList.contains('is-pannable')) {
-            _lightboxPinch = null;
-            _lightboxDrag = {
-                pointerId: e.pointerId,
-                startX: e.clientX,
-                startY: e.clientY,
-                originX: _lightboxPanX,
-                originY: _lightboxPanY,
-                moved: false,
-            };
-            stage.classList.add('is-dragging');
-            e.preventDefault();
-        }
-    }
-
-    function onLightboxPointerMove(e) {
-        if (!_lightboxPointers.has(e.pointerId)) return;
-        _lightboxPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-
-        if (_lightboxPinch && _lightboxPointers.size >= 2) {
-            const dist = lightboxPinchDistance(_lightboxPointers);
-            const mid = lightboxPinchMidpoint(_lightboxPointers);
-            const ratio = dist / (_lightboxPinch.startDist || 1);
-            lightboxSetEffectiveScale(_lightboxPinch.startEff * ratio);
-            _lightboxPanX = _lightboxPinch.startPanX + (mid.x - _lightboxPinch.startMidX);
-            _lightboxPanY = _lightboxPinch.startPanY + (mid.y - _lightboxPinch.startMidY);
-            applyLightboxZoom();
-            e.preventDefault();
-            return;
-        }
-
-        if (!_lightboxDrag || e.pointerId !== _lightboxDrag.pointerId) return;
-        if (_lightboxPointers.size !== 1) return;
-        const dx = e.clientX - _lightboxDrag.startX;
-        const dy = e.clientY - _lightboxDrag.startY;
-        if (Math.abs(dx) + Math.abs(dy) > 3) _lightboxDrag.moved = true;
-        _lightboxPanX = _lightboxDrag.originX + dx;
-        _lightboxPanY = _lightboxDrag.originY + dy;
-        applyLightboxZoom();
-        e.preventDefault();
-    }
-
-    function onLightboxPointerUp(e) {
-        if (!_lightboxPointers.has(e.pointerId) && !_lightboxDrag && !_lightboxPinch) return;
-        const stage = e.currentTarget;
-        _lightboxPointers.delete(e.pointerId);
-        try {
-            if (stage) stage.releasePointerCapture(e.pointerId);
-        } catch (_) {}
-
-        if (_lightboxPointers.size >= 2) {
-            // Still pinching with remaining fingers — reseat pinch baseline.
-            const dist = lightboxPinchDistance(_lightboxPointers) || 1;
-            const mid = lightboxPinchMidpoint(_lightboxPointers);
-            _lightboxPinch = {
-                startDist: dist,
-                startEff: lightboxEffectiveScale(),
-                startPanX: _lightboxPanX,
-                startPanY: _lightboxPanY,
-                startMidX: mid.x,
-                startMidY: mid.y,
-            };
-            _lightboxDrag = null;
-            return;
-        }
-
-        _lightboxPinch = null;
-
-        if (_lightboxPointers.size === 1) {
-            // One finger left — continue as pan if oversized.
-            const entry = _lightboxPointers.entries().next().value;
-            if (entry && stage && stage.classList.contains('is-pannable')) {
-                _lightboxDrag = {
-                    pointerId: entry[0],
-                    startX: entry[1].x,
-                    startY: entry[1].y,
-                    originX: _lightboxPanX,
-                    originY: _lightboxPanY,
-                    moved: false,
-                };
-                return;
-            }
-        }
-
-        _lightboxDrag = null;
-        if (stage) stage.classList.remove('is-dragging');
-    }
-
-    function onLightboxWheel(e) {
-        if (!_cuttleLightbox || _cuttleLightbox.hidden) return;
-        e.preventDefault();
-        const delta = e.deltaY;
-        if (delta < 0) lightboxZoomBy(_LIGHTBOX_ZOOM_STEP);
-        else if (delta > 0) lightboxZoomBy(1 / _LIGHTBOX_ZOOM_STEP);
-    }
-
-    function onLightboxDblClick(e) {
-        if (!_cuttleLightbox || _cuttleLightbox.hidden) return;
-        if (e.target && e.target.closest && e.target.closest('video')) return;
-        e.preventDefault();
-        toggleLightboxSizeMode();
-    }
-
-    function onLightboxGesture(e) {
-        // iOS Safari legacy gesture events — keep the page from stealing pinch.
-        if (!_cuttleLightbox || _cuttleLightbox.hidden) return;
-        e.preventDefault();
-    }
-
-    function mediaBasenameFromSrc(src) {
-        try {
-            const path = String(src || '').split('?')[0].split('#')[0];
-            return decodeURIComponent(path.split('/').filter(Boolean).pop() || '') || '';
-        } catch (_) {
-            return '';
-        }
-    }
-
-    /** Strip staging suffix: ``Jambit_intro-44c426b348.mp4`` → ``Jambit_intro.mp4``. */
-    function originalNameFromStaged(srcOrName) {
-        const base = mediaBasenameFromSrc(srcOrName) || String(srcOrName || '');
-        return base.replace(/-[a-f0-9]{8,12}(\.[^.]+)$/i, '$1');
-    }
-
-    function applyLightboxCaption(item, meta) {
-        const root = ensureCuttleLightbox();
-        const titleEl = root.querySelector('.cuttle-lightbox-title');
-        const descEl = root.querySelector('.cuttle-lightbox-desc');
-        const pathEl = root.querySelector('.cuttle-lightbox-path');
-        if (!titleEl || !pathEl) return;
-        const m = meta && typeof meta === 'object' ? meta : null;
-        const origName = String((m && m.original_name) || '').trim();
-        const origPath = String((m && m.original_path) || item.originalPath || '').trim();
-        const guessedName = originalNameFromStaged(item.src);
-        const alt = String(item.title || '').trim();
-        const explicitDesc = String(item.description || '').trim();
-        // Prefer real original filename from sidecar; never prefer the uuid staged name.
-        const displayName =
-            origName
-            || (alt && !mediaAltLooksLikeDescription(alt) && !/-[a-f0-9]{8,12}\.[^.]+$/i.test(alt) ? alt : '')
-            || guessedName
-            || 'Media';
-        titleEl.textContent = displayName;
-        let desc = explicitDesc;
-        if (!desc && mediaAltLooksLikeDescription(alt) && alt !== displayName) {
-            desc = alt;
-        }
-        if (descEl) {
-            if (desc) {
-                descEl.textContent = desc;
-                descEl.hidden = false;
-                descEl.title = desc;
-            } else {
-                descEl.textContent = '';
-                descEl.hidden = true;
-                descEl.removeAttribute('title');
-            }
-        }
-        // Path line is ONLY the source disk path — never /output/shared/…
-        if (origPath && !origPath.startsWith('/output/')) {
-            pathEl.textContent = origPath;
-            pathEl.hidden = false;
-            pathEl.title = origPath;
-        } else {
-            pathEl.textContent = '';
-            pathEl.hidden = true;
-        }
-        const dl = root.querySelector('.cuttle-lightbox-download');
-        if (dl) {
-            dl.setAttribute('download', origName || displayName || mediaDownloadFilename(item.src, item.title));
-        }
-    }
-
-    const _lightboxMetaCache = Object.create(null);
-
-    async function fetchSharedMediaMeta(src) {
-        const u = String(src || '').trim().split('?')[0];
-        if (!u.startsWith('/output/shared/')) return null;
-        if (Object.prototype.hasOwnProperty.call(_lightboxMetaCache, u)) {
-            return _lightboxMetaCache[u];
-        }
-        try {
-            const resp = await fetch(
-                '/api/shared-media/meta?url=' + encodeURIComponent(u),
-                { credentials: 'include' }
-            );
-            const data = await resp.json().catch(function () { return null; });
-            if (data && data.success && data.meta) {
-                _lightboxMetaCache[u] = data.meta;
-                return data.meta;
-            }
-        } catch (_) {}
-        _lightboxMetaCache[u] = null;
-        return null;
-    }
-
-    function collectBubbleMediaItems(fromEl) {
-        const bubble = fromEl && fromEl.closest && fromEl.closest('.message');
-        const root = bubble || fromEl;
-        if (!root) return [];
-        const nodes = root.querySelectorAll('.cuttle-media-thumb[data-src]');
-        const items = [];
-        nodes.forEach(function (node) {
-            const src = node.getAttribute('data-src') || '';
-            if (!src || !isSafeMediaSrc(src)) return;
-            items.push({
-                src: src,
-                kind: node.getAttribute('data-kind') || mediaKindFromUrl(src),
-                title: node.getAttribute('data-title') || '',
-                description: node.getAttribute('data-description') || '',
-                download: node.getAttribute('data-download') || mediaDownloadUrl(src),
-                originalPath: node.getAttribute('data-original-path') || '',
-            });
-        });
-        return items;
-    }
-
-    function showLightboxIndex(idx) {
-        if (!_lightboxItems.length) return;
-        const n = _lightboxItems.length;
-        _lightboxIndex = ((idx % n) + n) % n;
-        const item = _lightboxItems[_lightboxIndex];
-        const root = ensureCuttleLightbox();
-        const stage = root.querySelector('.cuttle-lightbox-stage');
-        const counterEl = root.querySelector('.cuttle-lightbox-counter');
-        const dl = root.querySelector('.cuttle-lightbox-download');
-        const prevBtn = root.querySelector('.cuttle-lightbox-prev');
-        const nextBtn = root.querySelector('.cuttle-lightbox-next');
-        const shownIndex = _lightboxIndex;
-        hideMediaCtxMenu();
-        resetLightboxZoomState();
-        stage.innerHTML = '';
-        stage.classList.remove('is-pannable', 'is-dragging', 'is-video');
-        const ownerDoc = root.ownerDocument || lightboxHostDocument();
-        let media = null;
-        if (item.kind === 'video') {
-            stage.classList.add('is-video');
-            const video = ownerDoc.createElement('video');
-            video.src = item.src;
-            video.controls = true;
-            video.autoplay = true;
-            video.playsInline = true;
-            video.setAttribute('controlsList', 'nodownload');
-            stage.appendChild(video);
-            media = video;
-        } else {
-            const img = ownerDoc.createElement('img');
-            img.src = item.src;
-            img.alt = item.title || '';
-            img.draggable = false;
-            stage.appendChild(img);
-            media = img;
-        }
-        applyLightboxCaption(item, null);
-        counterEl.textContent = n > 1 ? (_lightboxIndex + 1) + ' / ' + n : '';
-        const href = item.download || mediaDownloadUrl(item.src);
-        dl.href = href;
-        dl.setAttribute('download', mediaDownloadFilename(item.src, item.title));
-        dl.style.display = href ? '' : 'none';
-        const multi = n > 1;
-        prevBtn.hidden = !multi;
-        nextBtn.hidden = !multi;
-        root.hidden = false;
-        lightboxSetOpenClass(true);
-        updateLightboxZoomUi();
-        onLightboxMediaReady(media);
-        try {
-            root.focus({ preventScroll: true });
-        } catch (_) {
-            try { root.focus(); } catch (__) {}
-        }
-
-        // Fill original filename + source path from staging sidecar (async).
-        if (String(item.src || '').startsWith('/output/shared/')) {
-            fetchSharedMediaMeta(item.src).then(function (meta) {
-                if (_lightboxIndex !== shownIndex) return;
-                if (meta) applyLightboxCaption(item, meta);
-            });
-        }
-    }
-
-    function openCuttleLightbox(items, startIndex) {
-        _lightboxItems = Array.isArray(items) ? items.filter(Boolean) : [];
-        if (!_lightboxItems.length) return;
-        showLightboxIndex(startIndex || 0);
-    }
-
-    function closeCuttleLightbox() {
-        hideMediaCtxMenu();
-        const root = _cuttleLightbox;
-        if (!root) return;
-        const video = root.querySelector('video');
-        if (video) {
-            try {
-                video.pause();
-            } catch (_) {}
-        }
-        const stage = root.querySelector('.cuttle-lightbox-stage');
-        if (stage) {
-            stage.innerHTML = '';
-            stage.classList.remove('is-pannable', 'is-dragging', 'is-video');
-        }
-        root.hidden = true;
-        lightboxSetOpenClass(false);
-        _lightboxItems = [];
-        _lightboxIndex = 0;
-        resetLightboxZoomState();
-    }
-
-    function onLightboxKeydown(e) {
-        if (_mediaCtxMenu) {
-            if (e.key === 'Escape') {
-                e.preventDefault();
-                hideMediaCtxMenu();
-            }
-            return;
-        }
-        if (!_cuttleLightbox || _cuttleLightbox.hidden || !_cuttleLightbox.isConnected) return;
-        if (e.key === 'Escape') {
-            e.preventDefault();
-            closeCuttleLightbox();
-        } else if (e.key === 'ArrowLeft') {
-            e.preventDefault();
-            showLightboxIndex(_lightboxIndex - 1);
-        } else if (e.key === 'ArrowRight') {
-            e.preventDefault();
-            showLightboxIndex(_lightboxIndex + 1);
-        } else if (e.key === '+' || e.key === '=' || e.code === 'NumpadAdd') {
-            e.preventDefault();
-            lightboxZoomBy(_LIGHTBOX_ZOOM_STEP);
-        } else if (e.key === '-' || e.key === '_' || e.code === 'NumpadSubtract') {
-            e.preventDefault();
-            lightboxZoomBy(1 / _LIGHTBOX_ZOOM_STEP);
-        } else if (e.key === '0' || e.code === 'Numpad0') {
-            e.preventDefault();
-            setLightboxSizeMode('fit');
-        } else if (e.key === '1' || e.code === 'Numpad1') {
-            e.preventDefault();
-            setLightboxSizeMode('actual');
-        }
-    }
-
-    function onLightboxHostResize() {
-        if (!_cuttleLightbox || _cuttleLightbox.hidden || !_cuttleLightbox.isConnected) return;
-        measureLightboxFitScale();
-        applyLightboxZoom();
-    }
-
-    // --- Image right-click menu (Copy / Save) for thumbs + lightbox ---
-
-    let _mediaCtxMenu = null;
-    let _mediaCtxMenuDoc = null;
-    let _mediaCtxDismissBound = false;
-
-    function mediaCtxToast(msg, kind) {
-        try {
-            if (typeof window.showToast === 'function') {
-                window.showToast(msg, kind || 'info');
-                return;
-            }
-        } catch (_) {}
-        try {
-            const hostWin = lightboxHostWindow();
-            if (hostWin && hostWin !== window && typeof hostWin.showToast === 'function') {
-                hostWin.showToast(msg, kind || 'info');
-            }
-        } catch (__) {}
-    }
-
-    function hideMediaCtxMenu() {
-        if (_mediaCtxMenu && _mediaCtxMenu.parentNode) {
-            try {
-                _mediaCtxMenu.parentNode.removeChild(_mediaCtxMenu);
-            } catch (_) {}
-        }
-        _mediaCtxMenu = null;
-        _mediaCtxMenuDoc = null;
-    }
-
-    function onMediaCtxDismiss(e) {
-        if (!_mediaCtxMenu) return;
-        if (e && e.type === 'keydown' && e.key !== 'Escape') return;
-        if (e && e.type === 'pointerdown') {
-            if (_mediaCtxMenu.contains && _mediaCtxMenu.contains(e.target)) return;
-        }
-        hideMediaCtxMenu();
-    }
-
-    function bindMediaCtxDismiss(doc) {
-        if (_mediaCtxDismissBound) return;
-        _mediaCtxDismissBound = true;
-        const opts = { capture: true };
-        document.addEventListener('pointerdown', onMediaCtxDismiss, opts);
-        document.addEventListener('scroll', onMediaCtxDismiss, true);
-        document.addEventListener('keydown', onMediaCtxDismiss, opts);
-        try {
-            const hostDoc = lightboxHostDocument();
-            if (hostDoc && hostDoc !== document) {
-                const hostOpts = { capture: true, signal: parentListenersAbort.signal };
-                hostDoc.addEventListener('pointerdown', onMediaCtxDismiss, hostOpts);
-                hostDoc.addEventListener('scroll', onMediaCtxDismiss, hostOpts);
-                hostDoc.addEventListener('keydown', onMediaCtxDismiss, hostOpts);
-            }
-        } catch (_) {}
-        void doc;
-    }
-
-    function blobToPngBlob(blob, win) {
-        return new Promise(function (resolve, reject) {
-            if (!blob) {
-                reject(new Error('No image data'));
-                return;
-            }
-            if (blob.type === 'image/png') {
-                resolve(blob);
-                return;
-            }
-            const w = win || window;
-            const doc = w.document || document;
-            const url = (w.URL || URL).createObjectURL(blob);
-            const img = new (w.Image || Image)();
-            img.onload = function () {
-                try {
-                    const canvas = doc.createElement('canvas');
-                    canvas.width = img.naturalWidth || img.width;
-                    canvas.height = img.naturalHeight || img.height;
-                    if (!canvas.width || !canvas.height) {
-                        (w.URL || URL).revokeObjectURL(url);
-                        reject(new Error('Empty image'));
-                        return;
-                    }
-                    const ctx = canvas.getContext('2d');
-                    ctx.drawImage(img, 0, 0);
-                    canvas.toBlob(function (png) {
-                        (w.URL || URL).revokeObjectURL(url);
-                        if (png) resolve(png);
-                        else reject(new Error('PNG encode failed'));
-                    }, 'image/png');
-                } catch (err) {
-                    (w.URL || URL).revokeObjectURL(url);
-                    reject(err);
-                }
-            };
-            img.onerror = function () {
-                (w.URL || URL).revokeObjectURL(url);
-                reject(new Error('Image load failed'));
-            };
-            img.src = url;
-        });
-    }
-
-    async function copyImageToClipboard(src, win) {
-        const u = String(src || '').trim();
-        if (!u || !isSafeMediaSrc(u)) throw new Error('Invalid image');
-        const w = win || window;
-        const nav = w.navigator || navigator;
-        if (!nav.clipboard || typeof nav.clipboard.write !== 'function') {
-            throw new Error('Clipboard image copy is not supported here');
-        }
-        const ClipItem = w.ClipboardItem || (typeof ClipboardItem === 'function' ? ClipboardItem : null);
-        if (typeof ClipItem !== 'function') throw new Error('ClipboardItem not available');
-
-        // Pass a Promise into ClipboardItem so write() stays in the user-gesture
-        // turn while fetch + PNG encode finish asynchronously.
-        const pngPromise = (async function () {
-            const resp = await w.fetch(u, { credentials: 'include', cache: 'force-cache' });
-            if (!resp.ok) throw new Error('Could not fetch image (' + resp.status + ')');
-            const raw = await resp.blob();
-            if (!raw || !String(raw.type || '').startsWith('image/')) {
-                throw new Error('Not an image');
-            }
-            return blobToPngBlob(raw, w);
-        })();
-
-        await nav.clipboard.write([new ClipItem({ 'image/png': pngPromise })]);
-    }
-
-    function saveMediaFile(src, title, downloadHref, ownerDoc) {
-        const href = String(downloadHref || mediaDownloadUrl(src) || src || '').trim();
-        if (!href) throw new Error('Nothing to save');
-        const filename = mediaDownloadFilename(src, title);
-        const doc = (ownerDoc && ownerDoc.body) ? ownerDoc : document;
-        const a = doc.createElement('a');
-        a.href = href;
-        a.download = filename;
-        a.rel = 'noopener';
-        a.style.display = 'none';
-        (doc.body || document.body).appendChild(a);
-        a.click();
-        try {
-            a.remove();
-        } catch (_) {}
-    }
-
-    function mediaCtxTargetFromEvent(e) {
-        const t = e && e.target;
-        if (!t || !t.closest) return null;
-
-        const thumb = t.closest('.cuttle-media-thumb[data-src]');
-        if (thumb) {
-            const src = thumb.getAttribute('data-src') || '';
-            if (!src || !isSafeMediaSrc(src)) return null;
-            const kind = thumb.getAttribute('data-kind') || mediaKindFromUrl(src);
-            if (kind !== 'image') return null;
-            return {
-                src: src,
-                title: thumb.getAttribute('data-title') || '',
-                download: thumb.getAttribute('data-download') || mediaDownloadUrl(src),
-                kind: 'image',
-            };
-        }
-
-        const lbImg = t.closest('.cuttle-lightbox-stage img');
-        if (lbImg && _lightboxItems && _lightboxItems.length) {
-            const item = _lightboxItems[_lightboxIndex];
-            if (!item || item.kind === 'video') return null;
-            const src = item.src || lbImg.getAttribute('src') || '';
-            if (!src || !isSafeMediaSrc(src)) return null;
-            return {
-                src: src,
-                title: item.title || lbImg.getAttribute('alt') || '',
-                download: item.download || mediaDownloadUrl(src),
-                kind: 'image',
-            };
-        }
-        return null;
-    }
-
-    function showMediaCtxMenu(clientX, clientY, media, ownerDoc) {
-        hideMediaCtxMenu();
-        const doc = ownerDoc || document;
-        const menu = doc.createElement('div');
-        menu.className = 'cuttle-media-ctx-menu';
-        menu.setAttribute('role', 'menu');
-        menu.innerHTML =
-            '<button type="button" class="cuttle-media-ctx-item" data-media-ctx="copy" role="menuitem">Copy</button>' +
-            '<button type="button" class="cuttle-media-ctx-item" data-media-ctx="save" role="menuitem">Save</button>';
-        (doc.body || document.body).appendChild(menu);
-        _mediaCtxMenu = menu;
-        _mediaCtxMenuDoc = doc;
-        bindMediaCtxDismiss(doc);
-
-        // Position, then clamp inside the viewport.
-        menu.style.left = '0px';
-        menu.style.top = '0px';
-        const rect = menu.getBoundingClientRect();
-        const pad = 8;
-        const vw = doc.defaultView ? doc.defaultView.innerWidth : window.innerWidth;
-        const vh = doc.defaultView ? doc.defaultView.innerHeight : window.innerHeight;
-        let x = Number(clientX) || 0;
-        let y = Number(clientY) || 0;
-        if (x + rect.width + pad > vw) x = Math.max(pad, vw - rect.width - pad);
-        if (y + rect.height + pad > vh) y = Math.max(pad, vh - rect.height - pad);
-        if (x < pad) x = pad;
-        if (y < pad) y = pad;
-        menu.style.left = x + 'px';
-        menu.style.top = y + 'px';
-
-        menu.addEventListener('click', function (ev) {
-            const btn = ev.target && ev.target.closest && ev.target.closest('[data-media-ctx]');
-            if (!btn) return;
-            ev.preventDefault();
-            ev.stopPropagation();
-            const action = btn.getAttribute('data-media-ctx');
-            const win = (doc.defaultView) || window;
-            hideMediaCtxMenu();
-            if (action === 'copy') {
-                copyImageToClipboard(media.src, win)
-                    .then(function () {
-                        mediaCtxToast('Image copied', 'success');
-                    })
-                    .catch(function (err) {
-                        mediaCtxToast(
-                            (err && err.message) || 'Could not copy image',
-                            'error'
-                        );
-                    });
-            } else if (action === 'save') {
-                try {
-                    saveMediaFile(media.src, media.title, media.download, doc);
-                } catch (err) {
-                    mediaCtxToast(
-                        (err && err.message) || 'Could not save image',
-                        'error'
-                    );
-                }
-            }
-        });
-    }
-
-    function onMediaContextMenu(e) {
-        const media = mediaCtxTargetFromEvent(e);
-        if (!media) return;
-        e.preventDefault();
-        e.stopPropagation();
-        const ownerDoc = (e.target && e.target.ownerDocument) || document;
-        showMediaCtxMenu(e.clientX, e.clientY, media, ownerDoc);
-    }
-
-    function bindCuttleMediaLightbox() {
-        document.addEventListener(
-            'click',
-            function (e) {
-                const thumb =
-                    e.target && e.target.closest && e.target.closest('.cuttle-media-thumb[data-src]');
-                if (!thumb) return;
-                if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
-                e.preventDefault();
-                e.stopPropagation();
-                const items = collectBubbleMediaItems(thumb);
-                const src = thumb.getAttribute('data-src') || '';
-                let idx = items.findIndex(function (it) {
-                    return it.src === src;
-                });
-                if (idx < 0) {
-                    items.unshift({
-                        src: src,
-                        kind: thumb.getAttribute('data-kind') || mediaKindFromUrl(src),
-                        title: thumb.getAttribute('data-title') || '',
-                        description: thumb.getAttribute('data-description') || '',
-                        download: thumb.getAttribute('data-download') || mediaDownloadUrl(src),
-                    });
-                    idx = 0;
-                }
-                openCuttleLightbox(items, idx);
-            },
-            true
-        );
-        // Right-click Copy / Save on markdown + attachment image thumbs.
-        document.addEventListener('contextmenu', onMediaContextMenu, true);
-        // Chat iframe (focused composer) + host shell (lightbox has focus when open).
-        document.addEventListener('keydown', onLightboxKeydown);
-        if (!_lightboxHostKeyBound) {
-            try {
-                const hostDoc = lightboxHostDocument();
-                if (hostDoc && hostDoc !== document) {
-                    hostDoc.addEventListener('keydown', onLightboxKeydown, { signal: parentListenersAbort.signal });
-                    _lightboxHostKeyBound = true;
-                }
-            } catch (_) {}
-        }
-        if (!_lightboxHostResizeBound) {
-            try {
-                lightboxHostWindow().addEventListener('resize', onLightboxHostResize, {
-                    signal: parentListenersAbort.signal,
-                });
-                _lightboxHostResizeBound = true;
-            } catch (_) {
-                window.addEventListener('resize', onLightboxHostResize);
-                _lightboxHostResizeBound = true;
-            }
-        }
-    }
+    // Sub-agent launcher rows + live in-progress badges: chat_subagent_launchers.js.
+    const subagentLaunchers = CuttleChatSubagentLaunchers.create({
+        win: window,
+        escapeHtmlInline,
+        parseChatHandleToken,
+        avatarHtml: profileAvatarInnerHtml,
+        chipCategoryClass: slashCommandChipCategoryClass,
+    });
+
+    // Media thumbs, lightbox and image Copy / Save menu: owned by chat_media.js.
+    // Host-document listeners ride the frame teardown signal.
+    const chatMedia = CuttleChatMedia.create({
+        win: window,
+        escapeHtmlInline,
+        clamp,
+        hostTeardownSignal: parentListenersAbort.signal,
+    });
+    // Inline `onerror` hook on video poster thumbs (see buildMediaThumbHtml).
+    window.CuttleMediaThumbFallback = chatMedia.thumbFallback;
 
     function clamp(n, min, max) {
         const x = Number(n);
@@ -11357,7 +9983,7 @@
     }
 
     function buildVegaWrapHtml(rawSpec) {
-        return CuttleChatMessages.buildVegaWrapHtml(rawSpec, { escapeHtmlInline });
+        return CuttleChatMarkdown.buildVegaWrapHtml(rawSpec, { escapeHtmlInline });
     }
 
     function activateVegaEmbeds(containerEl) {
@@ -11370,7 +9996,7 @@
     // garbage in terminals: zero-width/BOM/soft hyphen dropped, exotic spaces
     // flattened to ASCII space.
     function cleanCodeCopyText(raw) {
-        return CuttleChatMessages.cleanCodeCopyText(raw);
+        return CuttleChatMarkdown.cleanCodeCopyText(raw);
     }
 
     function attachCodeCopyButtons(containerEl) {
@@ -12068,7 +10694,7 @@
                     const content = existing.querySelector('.system-message');
                     if (content) content.textContent = message;
                     existing.dataset.rawContent = String(message ?? '');
-                    if (!opts.skipScroll) autoScrollChatToBottom();
+                    if (!opts.skipScroll) transcriptNav.autoScrollChatToBottom();
                     // Already durable — do not POST a duplicate row on text tweak.
                     if (opts.persist && !existing.dataset.messageId) {
                         durablePersistSystemMessage(existing, message, opts);
@@ -12098,7 +10724,7 @@
         } else {
             messagesContainer.appendChild(messageDiv);
         }
-        if (!opts.skipScroll) autoScrollChatToBottom();
+        if (!opts.skipScroll) transcriptNav.autoScrollChatToBottom();
 
         // Sticky notices (e.g. Stopped generating) stay until the next send.
         // ``persist`` also means durable: write to the auth chat log so refresh /
@@ -12543,8 +11169,7 @@
         // Drop prior session's lazy-history offset — otherwise new-chat numbers
         // keep starting at older_visible_count+1 from the chat we left.
         resetChatHistoryWindow();
-        messageNavPinnedToBottom = true;
-        updateMessageNav();
+        transcriptNav.resetNav();
 
         document.getElementById('welcomeScreen').style.display = 'flex';
         document.getElementById('chatArea').style.display = 'none';
@@ -12644,7 +11269,7 @@
         // Send the message through the main chat flow
         const userTs = Date.now();
         addMessageToUI(displayMessage, 'user', { timestamp: userTs, attachments });
-        autoScrollChatToBottom(true);
+        transcriptNav.autoScrollChatToBottom(true);
         saveChatSession(displayMessage, 'user', { attachments });
         recordPromptHistory(message || displayMessage);
 
@@ -12718,8 +11343,7 @@
         const chatMessages = document.getElementById('chatMessages');
         if (chatMessages) chatMessages.innerHTML = '';
         resetChatHistoryWindow();
-        messageNavPinnedToBottom = true;
-        updateMessageNav();
+        transcriptNav.resetNav();
         releaseManualUnreadHoldIfLeaving(null);
         currentSessionId = null;
         adoptFollowupQueue(currentSessionId);
@@ -13044,7 +11668,7 @@
                     } finally {
                         endSuppressChatAttention();
                     }
-                    updateMessageNav();
+                    transcriptNav.updateMessageNav();
                     // Server follow-ups travel with /messages — apply on open so a
                     // stuck queue (e.g. CH-000441) drains without waiting for sync.
                     applyServerFollowups(data.followups, data.followup_revision);
@@ -13114,23 +11738,7 @@
             applyHistorySubagentExpandState();
             syncHistoryUnreadIndicators();
             syncChatAttentionIndicators();
-            if (pendingMessageJump) consumePendingMessageJump();
-            else {
-                chatPinnedToBottom = true;
-                _ignoreChatScrollPinUntil = Date.now() + 300;
-                autoScrollChatToBottom(true);
-                messageNavPinnedToBottom = true;
-                _ignoreNavScrollPinUntil = Date.now() + 300;
-                autoScrollMessageNavToBottom(true);
-                requestAnimationFrame(() => {
-                    autoScrollChatToBottom(true);
-                    autoScrollMessageNavToBottom(true);
-                });
-                setTimeout(() => {
-                    autoScrollChatToBottom(true);
-                    autoScrollMessageNavToBottom(true);
-                }, 250);
-            }
+            transcriptNav.settleAfterLoad();
             setupChatHistoryLazyLoad();
             // Re-apply after messages/sessions settle (server project beats stale empty local path).
             reconcileChatProject();
@@ -13220,7 +11828,7 @@
             } finally {
                 endSuppressChatAttention();
             }
-            updateMessageNav();
+            transcriptNav.updateMessageNav();
             reconcileCuttleButtonLocks(session.messages);
         }
         
@@ -13241,23 +11849,7 @@
         syncChatAttentionIndicators();
         
         // Scroll to bottom (or deep-linked message) - default stays pinned to bottom
-        if (pendingMessageJump) consumePendingMessageJump();
-        else {
-            chatPinnedToBottom = true;
-            _ignoreChatScrollPinUntil = Date.now() + 300;
-            autoScrollChatToBottom(true);
-            messageNavPinnedToBottom = true;
-            _ignoreNavScrollPinUntil = Date.now() + 300;
-            autoScrollMessageNavToBottom(true);
-            requestAnimationFrame(() => {
-                autoScrollChatToBottom(true);
-                autoScrollMessageNavToBottom(true);
-            });
-            setTimeout(() => {
-                autoScrollChatToBottom(true);
-                autoScrollMessageNavToBottom(true);
-            }, 250);
-        }
+        transcriptNav.settleAfterLoad();
     }
     
     // The server auto-names sessions (fallback + background LLM title) shortly
@@ -13307,11 +11899,11 @@
         // Batch live-status is the Electron strip's revision pulse — forward it.
         noteWidgetsRevision(live);
 
-        try { syncSubagentOrbs(live.subagents); } catch (_) {}
+        try { subagentLaunchers.syncLive(live.subagents); } catch (_) {}
         if (isLoadingThisSession()) {
             const statusLabel = live.status || undefined;
             ensureLocalTypingIndicator(statusLabel);
-            try { paintSubagentOrbs(); } catch (_) {}
+            try { subagentLaunchers.paintLive(); } catch (_) {}
         }
 
         if (live.status && (isLoadingThisSession() || document.getElementById('typing-indicator-remote'))) {
@@ -13671,11 +12263,11 @@
             }
 
             applyChatHistoryPageMeta(pageMeta || {}, msgs);
-            updateMessageNav();
+            transcriptNav.updateMessageNav();
 
             const newHeight = box.scrollHeight;
             box.scrollTop = prevTop + (newHeight - prevHeight);
-            _ignoreChatScrollPinUntil = Date.now() + 200;
+            transcriptNav.holdScrollPin(200);
             return true;
         } catch (e) {
             console.warn('[Cuttle Chat] load older messages failed:', e);
@@ -13693,7 +12285,7 @@
         box.addEventListener('scroll', () => {
             if (!isAuthMode() || currentSessionId == null) return;
             if (!chatHistoryHasMore || chatHistoryLoadingOlder) return;
-            if (Date.now() < _ignoreChatScrollPinUntil) return;
+            if (transcriptNav.isScrollPinHeld()) return;
             if (box.scrollTop > 72) return;
             loadOlderChatMessages();
         }, { passive: true });
@@ -13795,7 +12387,7 @@
         }
         const disclosure = el.querySelector('.supervised-activity-disclosure, .supervised-activity-card');
         if (disclosure) wireSupervisedActivityCard(disclosure);
-        try { mountMessageLaunchers(el, msg.role, opts); } catch (_) {}
+        try { subagentLaunchers.mountForMessage(el, msg.role, opts); } catch (_) {}
         if (changed && notifyTerminal && opts.supervised_terminal) {
             showSupervisedJumpNotification({
                 task_id: opts.supervised_task_id,
@@ -13957,8 +12549,8 @@
         `;
         messagesContainer.appendChild(typingDiv);
         scheduleSlashChipCompactLabels(typingDiv);
-        autoScrollChatToBottom();
-        try { paintSubagentOrbs(); } catch (_) {}
+        transcriptNav.autoScrollChatToBottom();
+        try { subagentLaunchers.paintLive(); } catch (_) {}
     }
 
     function ensureLocalTypingIndicator(statusText) {
@@ -14298,7 +12890,7 @@
             if (!isImmediateControlLaneMessage(outbound)) return;
             const userTs = Date.now();
             addMessageToUI(outbound, 'user', { timestamp: userTs });
-            autoScrollChatToBottom(true);
+            transcriptNav.autoScrollChatToBottom(true);
             await processMessage(outbound, { controlLane: true });
         } finally {
             if (onceKey) dispatchSupervisedControlMessage._inflight.delete(onceKey);
@@ -14397,7 +12989,7 @@
             const statusLabel = (liveStatus && liveStatus.status) || undefined;
             ensureLocalTypingIndicator(statusLabel);
             setHistorySessionRunning(currentSessionId, true);
-            try { syncSubagentOrbs(liveStatus && liveStatus.subagents); } catch (_) {}
+            try { subagentLaunchers.syncLive(liveStatus && liveStatus.subagents); } catch (_) {}
             return;
         }
         // Generating in another chat in this tab — don't steal that stream's UI.
@@ -14409,7 +13001,7 @@
                 const statusLabel = (liveStatus && liveStatus.status) || 'Waiting for reply…';
                 addRemoteWaitingIndicator(statusLabel);
                 updateRemoteWaitingStatus(statusLabel, liveStatus && liveStatus.report_url);
-                try { syncSubagentOrbs(liveStatus && liveStatus.subagents); } catch (_) {}
+                try { subagentLaunchers.syncLive(liveStatus && liveStatus.subagents); } catch (_) {}
             }
             return;
         }
@@ -14445,7 +13037,7 @@
         if (liveActive) {
             addRemoteWaitingIndicator(statusLabel);
             updateRemoteWaitingStatus(statusLabel, liveStatus && liveStatus.report_url);
-            try { syncSubagentOrbs(liveStatus && liveStatus.subagents); } catch (_) {}
+            try { subagentLaunchers.syncLive(liveStatus && liveStatus.subagents); } catch (_) {}
             // Offer Stop for remote/other-tab runs too.
             const stopButton = document.getElementById('stopButton');
             if (stopButton) {
@@ -15182,7 +13774,7 @@
                 reconcileCuttleButtonLocks(data.messages);
             }
 
-            if (addedAny) autoScrollChatToBottom();
+            if (addedAny) transcriptNav.autoScrollChatToBottom();
         } catch (e) {
             console.warn('[Cuttle Chat] message sync failed:', e);
         } finally {
@@ -18413,7 +17005,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 steered: true,
                 steered_agent: data.agent,
             });
-            autoScrollChatToBottom(true);
+            transcriptNav.autoScrollChatToBottom(true);
             saveChatSession(text, 'user');
         }
         recordPromptHistory(text);
@@ -18553,7 +17145,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
             if (typeof window.__cuttlePinChatLayout === 'function') window.__cuttlePinChatLayout();
         }
         addMessageToUI(displayMessage, 'user', { timestamp: Date.now(), attachments: atts });
-        autoScrollChatToBottom(true);
+        transcriptNav.autoScrollChatToBottom(true);
         saveChatSession(displayMessage, 'user', { attachments: atts });
         recordPromptHistory(message);
         await processMessage(message, { attachments: atts });
@@ -18730,7 +17322,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
         // New turn owns the typing indicator — drop the previous turn's
         // sub-agent orbs first so they never bleed into a turn that uses none.
         // Live-status / stream syncs repopulate when this turn spawns sub-agents.
-        try { clearSubagentOrbs(); } catch (_) {}
+        try { subagentLaunchers.clearLive(); } catch (_) {}
         // Add typing indicator — pass slash meta so chip appears immediately
         const pendingSlash = replySlash
             ? pendingSlashForTypingIndicator(replySlash, stickyCmd)
@@ -19378,7 +17970,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                             usage: normalizeUsagePayload(data.usage) || undefined,
                         });
                     }
-                    autoScrollChatToBottom();
+                    transcriptNav.autoScrollChatToBottom();
                 }
                 if (!controlLane) {
                 saveChatSession(data.response, 'assistant', {
@@ -19632,7 +18224,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
             // Add user message to UI
             const userTs = Date.now();
             addMessageToUI(displayMessage, 'user', { timestamp: userTs, attachments });
-            autoScrollChatToBottom(true);
+            transcriptNav.autoScrollChatToBottom(true);
 
             // Save to session
             saveChatSession(displayMessage, 'user', { attachments });
@@ -19684,7 +18276,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
         }
         const looksUrl = /^https?:\/\//i.test(a) || (a.charAt(0) === '/' && a.charAt(1) !== '/');
         if (looksUrl) {
-            if (typeof isSafeMediaSrc === 'function' && !isSafeMediaSrc(a)) {
+            if (!CuttleChatMedia.isSafeMediaSrc(a)) {
                 return '<img src="/img/cuttle-avatar.png?v=3" alt="" class="assistant-avatar-img">';
             }
             return '<img src="' + escapeHtmlInline(a) + '" alt="" class="assistant-avatar-img">';
@@ -19869,7 +18461,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                     <span class="message-sender-group">
                         <span class="message-sender">${sender}</span>
                         ${headerChip}
-                        ${role === 'assistant' ? getTtsPlayButtonHtml() : ''}
+                        ${role === 'assistant' ? chatTts.playButtonHtml() : ''}
                     </span>
                     <span class="message-timestamp" data-ts="${ts}">${timeLabel}</span>
                 </div>
@@ -19890,14 +18482,14 @@ function downloadTranscriptMarkdown(text, sessionId) {
         try {
             activateEnhancements(messageDiv);
         } catch (_) {}
-        try { mountMessageLaunchers(messageDiv, role, opts); } catch (_) {}
+        try { subagentLaunchers.mountForMessage(messageDiv, role, opts); } catch (_) {}
         scheduleSlashChipCompactLabels(messageDiv);
-        if (!opts.skipNav) updateMessageNav();
+        if (!opts.skipNav) transcriptNav.updateMessageNav();
         if (!opts.skipScroll) {
-            autoScrollChatToBottom();
-            if (role === 'assistant' && chatPinnedToBottom) {
+            transcriptNav.autoScrollChatToBottom();
+            if (role === 'assistant' && transcriptNav.isFollowingLatest()) {
                 // Late layout (code blocks, images) can grow the bubble after paint.
-                requestAnimationFrame(() => autoScrollChatToBottom(true));
+                requestAnimationFrame(() => transcriptNav.autoScrollChatToBottom(true));
             }
         }
         return messageDiv;
@@ -19924,251 +18516,15 @@ function downloadTranscriptMarkdown(text, sessionId) {
     const THUMB_DOWN_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M17 14V2"/><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z"/>
     </svg>`;
-    const TTS_PLAY_ICON = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>`;
-    const TTS_STOP_ICON = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>`;
-    const TTS_LOADING_ICON = `<svg class="message-tts-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9" opacity="0.25"/><path d="M21 12a9 9 0 0 0-9-9"/></svg>`;
 
-    /** Cached chat TTS prefs (play button visibility). */
-    let chatTtsPrefs = { enabled: true };
-
-    function applyChatTtsPrefsToUi() {
-        const root = document.getElementById('chatMessages');
-        if (root) root.classList.toggle('chat-tts-disabled', !chatTtsPrefs.enabled);
-        document.querySelectorAll('.message-tts-btn').forEach((btn) => {
-            btn.hidden = !chatTtsPrefs.enabled;
-        });
-    }
-
-    function loadChatTtsPrefs() {
-        fetch('/api/settings/chat-tts')
-            .then((r) => (r.ok ? r.json() : null))
-            .then((d) => {
-                if (d && d.success && d.chat_tts) {
-                    chatTtsPrefs = {
-                        enabled: d.chat_tts.enabled !== false,
-                        tts_model: d.chat_tts.tts_model,
-                        voice: d.chat_tts.voice,
-                        summarize: d.chat_tts.summarize !== false,
-                    };
-                }
-                applyChatTtsPrefsToUi();
-            })
-            .catch(() => {});
-    }
-
-    function getTtsPlayButtonHtml() {
-        const hidden = chatTtsPrefs && chatTtsPrefs.enabled === false ? ' hidden' : '';
-        return (
-            `<button type="button" class="message-tts-btn message-icon-btn"${hidden} ` +
-            `title="Listen (summarize + speak)" aria-label="Listen to message" ` +
-            `onclick="window.chatPageSpeakMessage(this)">${TTS_PLAY_ICON}</button>`
-        );
-    }
-
-    let _chatTtsAudio = null;
-    let _chatTtsActiveBtn = null;
-
-    function _resetTtsButton(btn) {
-        if (!btn) return;
-        btn.classList.remove('is-loading', 'is-playing');
-        btn.innerHTML = TTS_PLAY_ICON;
-        btn.title = 'Listen (summarize + speak)';
-        btn.disabled = false;
-    }
-
-    function stopChatTtsPlayback(exceptBtn) {
-        if (_chatTtsAudio) {
-            try {
-                _chatTtsAudio.pause();
-                _chatTtsAudio.onended = null;
-                _chatTtsAudio.onerror = null;
-                _chatTtsAudio.removeAttribute('src');
-                _chatTtsAudio.load();
-            } catch (_) {}
-            _chatTtsAudio = null;
-        }
-        if (_chatTtsActiveBtn && _chatTtsActiveBtn !== exceptBtn) {
-            _resetTtsButton(_chatTtsActiveBtn);
-        }
-        if (_chatTtsActiveBtn !== exceptBtn) {
-            _chatTtsActiveBtn = null;
-        }
-    }
-
-    /**
-     * On first successful speak: show expanded Transcript (spoken text) above
-     * Progress, and collapse the original body under "Full summary".
-     */
-    function applyTtsTranscriptLayout(messageEl, spokenText) {
-        const content = messageEl && messageEl.querySelector
-            ? messageEl.querySelector('.message-content')
-            : null;
-        const spoken = String(spokenText || '').trim();
-        if (!content || !spoken) return;
-
-        let transcript = content.querySelector(':scope > .tts-transcript-block');
-        if (transcript) {
-            const line = transcript.querySelector('.tts-transcript-body');
-            if (line) line.textContent = spoken;
-            transcript.open = true;
-            const full = content.querySelector(':scope > .tts-full-summary-block');
-            if (full) full.open = false;
-            return;
-        }
-
-        const keepClass = (el) =>
-            el.classList.contains('thinking-block')
-            || el.classList.contains('tool-block')
-            || el.classList.contains('pipeline-trace-block')
-            || el.classList.contains('tts-transcript-block')
-            || el.classList.contains('tts-full-summary-block');
-
-        const toWrap = [];
-        Array.from(content.childNodes).forEach((node) => {
-            if (node.nodeType === 1) {
-                if (!keepClass(node)) toWrap.push(node);
-            } else if (node.nodeType === 3 && String(node.textContent || '').trim()) {
-                toWrap.push(node);
-            }
-        });
-
-        transcript = document.createElement('details');
-        transcript.className = 'thinking-block tts-transcript-block';
-        transcript.open = true;
-        const tSum = document.createElement('summary');
-        tSum.textContent = 'Transcript';
-        const tInner = document.createElement('div');
-        tInner.className = 'thinking-inner';
-        const tLine = document.createElement('div');
-        tLine.className = 'thinking-line tts-transcript-body';
-        tLine.textContent = spoken;
-        tInner.appendChild(tLine);
-        transcript.appendChild(tSum);
-        transcript.appendChild(tInner);
-
-        const full = document.createElement('details');
-        full.className = 'thinking-block tts-full-summary-block';
-        full.open = false;
-        const fSum = document.createElement('summary');
-        fSum.textContent = 'Full summary';
-        const fBody = document.createElement('div');
-        fBody.className = 'tts-full-summary-body thinking-inner';
-        toWrap.forEach((n) => fBody.appendChild(n));
-        full.appendChild(fSum);
-        full.appendChild(fBody);
-
-        // Transcript first (above Progress); full body last (collapsed).
-        content.insertBefore(transcript, content.firstChild);
-        content.appendChild(full);
-        messageEl.classList.add('has-tts-transcript');
-    }
-
-    async function speakMessageFromButton(btn) {
-        const messageEl = btn && btn.closest ? btn.closest('.message') : null;
-        if (!messageEl || !messageEl.classList.contains('assistant')) return;
-
-        // Toggle stop if this bubble is already playing.
-        if (btn.classList.contains('is-playing') && _chatTtsActiveBtn === btn) {
-            stopChatTtsPlayback();
-            _resetTtsButton(btn);
-            return;
-        }
-        stopChatTtsPlayback(btn);
-
-        // Reuse cached audio for this bubble.
-        const cachedUrl = messageEl._cuttleTtsUrl;
-        if (cachedUrl) {
-            if (messageEl._cuttleTtsSpoken) {
-                applyTtsTranscriptLayout(messageEl, messageEl._cuttleTtsSpoken);
-            }
-            _playTtsUrl(btn, cachedUrl, {
-                summarized: !!messageEl._cuttleTtsSummarized,
-            });
-            return;
-        }
-
-        const text = getMessageSpeakText(btn);
-        if (!text || !String(text).trim()) {
-            (window.showToast || function () {})('Nothing to speak in this message', 'error');
-            return;
-        }
-
-        btn.classList.add('is-loading');
-        btn.disabled = true;
-        btn.innerHTML = TTS_LOADING_ICON;
-        btn.title = 'Generating speech…';
-        _chatTtsActiveBtn = btn;
-
-        try {
-            const r = await fetch('/api/chat/tts', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text: text }),
-            });
-            const d = await r.json().catch(() => ({}));
-            if (!r.ok || !d.success || !d.audio_base64) {
-                throw new Error((d && d.error) || ('TTS failed (' + r.status + ')'));
-            }
-            const bin = atob(d.audio_base64);
-            const bytes = new Uint8Array(bin.length);
-            for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-            const blob = new Blob([bytes], { type: d.content_type || 'audio/mpeg' });
-            const url = URL.createObjectURL(blob);
-            messageEl._cuttleTtsUrl = url;
-            messageEl._cuttleTtsSpoken = d.spoken_text || '';
-            messageEl._cuttleTtsSummarized = !!d.summarized;
-            applyTtsTranscriptLayout(messageEl, messageEl._cuttleTtsSpoken);
-            _playTtsUrl(btn, url, { summarized: !!d.summarized });
-        } catch (e) {
-            _resetTtsButton(btn);
-            _chatTtsActiveBtn = null;
-            (window.showToast || function () {})(String(e.message || e), 'error');
-        }
-    }
-
-    function _playTtsUrl(btn, url, meta) {
-        meta = meta || {};
-        stopChatTtsPlayback(btn);
-        const audio = new Audio(url);
-        _chatTtsAudio = audio;
-        _chatTtsActiveBtn = btn;
-        btn.classList.remove('is-loading');
-        btn.classList.add('is-playing');
-        btn.disabled = false;
-        btn.innerHTML = TTS_STOP_ICON;
-        btn.title = meta.summarized ? 'Playing summary — click to stop' : 'Stop';
-        audio.onended = function () {
-            if (_chatTtsActiveBtn === btn) {
-                _resetTtsButton(btn);
-                _chatTtsActiveBtn = null;
-            }
-            _chatTtsAudio = null;
-            if (typeof meta.onEnded === 'function') {
-                try { meta.onEnded(); } catch (_) {}
-            }
-        };
-        audio.onerror = function () {
-            _resetTtsButton(btn);
-            _chatTtsActiveBtn = null;
-            _chatTtsAudio = null;
-            (window.showToast || function () {})('Audio playback failed', 'error');
-            if (typeof meta.onError === 'function') {
-                try { meta.onError(); } catch (_) {}
-            }
-        };
-        audio.play().catch((err) => {
-            _resetTtsButton(btn);
-            _chatTtsActiveBtn = null;
-            _chatTtsAudio = null;
-            (window.showToast || function () {})(String(err.message || err), 'error');
-            if (typeof meta.onError === 'function') {
-                try { meta.onError(err); } catch (_) {}
-            }
-        });
-        if (typeof meta.onPlay === 'function') {
-            try { meta.onPlay(audio); } catch (_) {}
-        }
-    }
+    // Bubble speech: prefs, speaker buttons and the shared audio channel (chat_tts.js).
+    const chatTts = CuttleChatTts.create({
+        win: window,
+        fetch: (url, opts) => fetch(url, opts),
+        toast: (message, variant) => (window.showToast || function () {})(message, variant),
+        speakTextFor: getMessageSpeakText,
+        normalizeUsage: normalizeUsagePayload,
+    });
 
     // ── Voice mode: owned by chat_voice.js; the page supplies chat send + TTS ──
     function lastAssistantMessageEl() {
@@ -20214,131 +18570,6 @@ function downloadTranscriptMarkdown(text, sessionId) {
         await processMessage(message, { controlLane });
     }
 
-    /** Cached per bubble, shared with the bubble's speaker button. */
-    async function voiceSpeechForMessage(messageEl) {
-        if (messageEl._cuttleTtsUrl) {
-            return {
-                url: messageEl._cuttleTtsUrl,
-                spoken: messageEl._cuttleTtsSpoken || '',
-                summarized: !!messageEl._cuttleTtsSummarized,
-                voiceUsage: messageEl._cuttleVoiceUsage || null,
-            };
-        }
-        const btn = messageEl.querySelector('.message-tts-btn');
-        const text = btn
-            ? getMessageSpeakText(btn)
-            : String(messageEl.dataset.rawContent || '').trim();
-        if (!text) return null;
-        const r = await fetch('/api/chat/tts', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: text }),
-        });
-        const d = await r.json().catch(() => ({}));
-        if (!r.ok || !d.success || !d.audio_base64) {
-            throw new Error((d && d.error) || ('TTS failed (' + r.status + ')'));
-        }
-        const bin = atob(d.audio_base64);
-        const bytes = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-        const blob = new Blob([bytes], { type: d.content_type || 'audio/mpeg' });
-        messageEl._cuttleTtsUrl = URL.createObjectURL(blob);
-        messageEl._cuttleTtsSpoken = d.spoken_text || text;
-        messageEl._cuttleTtsSummarized = !!d.summarized;
-        try {
-            messageEl._cuttleVoiceUsage = (d.usage && typeof d.usage === 'object')
-                ? normalizeUsagePayload(d.usage)
-                : null;
-        } catch (_) {
-            messageEl._cuttleVoiceUsage = null;
-        }
-        applyTtsTranscriptLayout(messageEl, messageEl._cuttleTtsSpoken);
-        return {
-            url: messageEl._cuttleTtsUrl,
-            spoken: messageEl._cuttleTtsSpoken,
-            summarized: messageEl._cuttleTtsSummarized,
-            voiceUsage: messageEl._cuttleVoiceUsage || null,
-        };
-    }
-
-    function playVoiceSpeech(messageEl, speech) {
-        const btn = messageEl.querySelector('.message-tts-btn');
-        return playVoiceAudio(speech.url, btn, !!speech.summarized);
-    }
-
-    /** Playback analyser feeding the voice ring; null-safe when unavailable. */
-    let _voiceAudioCtx = null;
-    let _voicePlaybackAnalyser = null;
-    let _voicePlaybackFrame = null;
-
-    function voicePlaybackLevel() {
-        if (!_voicePlaybackAnalyser || !_voicePlaybackFrame) return null;
-        try {
-            _voicePlaybackAnalyser.getFloatTimeDomainData(_voicePlaybackFrame);
-            let sum = 0;
-            for (let i = 0; i < _voicePlaybackFrame.length; i++) {
-                sum += _voicePlaybackFrame[i] * _voicePlaybackFrame[i];
-            }
-            return Math.sqrt(sum / (_voicePlaybackFrame.length || 1));
-        } catch (_) {
-            return null;
-        }
-    }
-
-    /** One audio channel for replies, narration and bubble speakers. */
-    function playVoiceAudio(url, btn, summarized) {
-        stopChatTtsPlayback(btn || null);
-        const audio = new Audio(url);
-        _chatTtsAudio = audio;
-        try {
-            const Ctx = window.AudioContext || window.webkitAudioContext;
-            if (Ctx) {
-                if (!_voiceAudioCtx) _voiceAudioCtx = new Ctx();
-                if (_voiceAudioCtx && _voiceAudioCtx.state === 'suspended') {
-                    _voiceAudioCtx.resume().catch(() => {});
-                }
-                const src = _voiceAudioCtx.createMediaElementSource(audio);
-                const analyser = _voiceAudioCtx.createAnalyser();
-                analyser.fftSize = 1024;
-                src.connect(analyser);
-                analyser.connect(_voiceAudioCtx.destination);
-                _voicePlaybackAnalyser = analyser;
-                _voicePlaybackFrame = new Float32Array(analyser.fftSize);
-            }
-        } catch (_) {
-            _voicePlaybackAnalyser = null;
-            _voicePlaybackFrame = null;
-        }
-        if (btn) {
-            _chatTtsActiveBtn = btn;
-            btn.classList.remove('is-loading');
-            btn.classList.add('is-playing');
-            btn.disabled = false;
-            btn.innerHTML = TTS_STOP_ICON;
-            btn.title = summarized ? 'Playing summary — click to stop' : 'Stop';
-        }
-        return new Promise((resolve) => {
-            let settled = false;
-            const finish = (outcome) => {
-                if (settled) return;
-                settled = true;
-                if (btn && _chatTtsActiveBtn === btn) {
-                    _resetTtsButton(btn);
-                    _chatTtsActiveBtn = null;
-                }
-                if (_chatTtsAudio === audio) _chatTtsAudio = null;
-                _voicePlaybackAnalyser = null;
-                _voicePlaybackFrame = null;
-                resolve(outcome);
-            };
-            audio.onended = () => finish('ended');
-            audio.onerror = () => finish('error');
-            // stopChatTtsPlayback pauses and drops onended; settle so the caller never hangs.
-            audio.addEventListener('pause', () => finish(audio.ended ? 'ended' : 'stopped'));
-            audio.play().catch(() => finish('blocked'));
-        });
-    }
-
     const chatVoice = CuttleChatVoice.create({
         closeMenus: closeAllSessionMenus,
         isGenerating: isSessionGenerating,
@@ -20349,11 +18580,11 @@ function downloadTranscriptMarkdown(text, sessionId) {
         enqueue: (message, spoken) => enqueueFollowup(message, { rawMessage: spoken }),
         submit: submitVoiceTurn,
         lastAssistantMessage: lastAssistantMessageEl,
-        speechFor: voiceSpeechForMessage,
-        play: playVoiceSpeech,
-        stopSpeech: () => stopChatTtsPlayback(),
-        playClip: (url) => playVoiceAudio(url, null, false),
-        playbackLevel: voicePlaybackLevel,
+        speechFor: chatTts.speechForMessage,
+        play: chatTts.playSpeech,
+        stopSpeech: () => chatTts.stop(),
+        playClip: (url) => chatTts.playAudio(url, null, false),
+        playbackLevel: chatTts.playbackLevel,
         usageFor: (el) => (el && el._cuttleUsage) || null,
         sumUsage: (parts) => CuttleChatUsage.sum(parts),
         usageHtml: (usage) => getMessageUsageHtml(usage),
@@ -20922,60 +19153,25 @@ function downloadTranscriptMarkdown(text, sessionId) {
         scheduleAgentContextGaugeRefresh(200);
     }
 
-    /** Compact share id: CH-000102-9 (chat display id + 1-based bubble index). */
-    function formatMessageRef(sessionId, messageIndex) {
-        const chatId = formatChatDisplayId(sessionId);
-        const idx = Number(messageIndex);
-        if (!chatId || !Number.isFinite(idx) || idx < 1) return null;
-        return chatId + '-' + Math.floor(idx);
-    }
+    // Transcript navigation: follow-latest scroll, nav rail + pins, jumps,
+    // ?msg= deep links and message refs (chat_transcript_nav.js).
+    const transcriptNav = CuttleChatTranscriptNav.create({
+        win: window,
+        storage: localStorage,
+        escapeHtmlInline,
+        recordSelector: CHAT_RECORD_SELECTOR,
+        currentSessionId: () => currentSessionId,
+        formatChatDisplayId,
+        olderVisibleCount: () => chatHistoryOlderVisibleCount,
+        hasOlderMessages: () => chatHistoryHasMore,
+        loadOlderMessages: loadOlderChatMessages,
+        unseenBelow: () => chatUnseenBelow,
+        attentionIsError: () => chatAttentionIsError,
+        clearUnseenBelow: clearChatUnseenBelow,
+        activateViewport: activateChatViewport,
+        copyText: copyTextToClipboard,
+    });
 
-    function parseMessageRef(raw) {
-        const s = String(raw || '').trim();
-        const m = s.match(/^(CH-[A-Z0-9]+)-(\d+)$/i);
-        if (!m) return null;
-        const idx = parseInt(m[2], 10);
-        if (!Number.isFinite(idx) || idx < 1) return null;
-        return { chatId: m[1].toUpperCase(), messageIndex: idx };
-    }
-
-    function getMessageRefForButton(btn) {
-        const messageEl = btn && btn.closest ? btn.closest('.message') : null;
-        if (!messageEl || messageEl.dataset.stopped === 'true') return null;
-        let idx = parseInt(messageEl.dataset.messageIndex || '', 10);
-        if (!Number.isFinite(idx) || idx < 1) {
-            const box = document.getElementById('chatMessages');
-            const list = box
-                ? Array.from(box.querySelectorAll(CHAT_RECORD_SELECTOR + ':not(.system)'))
-                : [];
-            idx = list.indexOf(messageEl) + 1;
-            if (idx > 0) messageEl.dataset.messageIndex = String(idx);
-        }
-        return formatMessageRef(currentSessionId, idx);
-    }
-
-    function buildMessageShareUrl(ref) {
-        if (!ref) return '';
-        try {
-            const url = new URL(window.location.href);
-            const parsed = parseMessageRef(ref);
-            if (!parsed) return '';
-            url.searchParams.set('chat', parsed.chatId);
-            url.searchParams.set('msg', String(parsed.messageIndex));
-            url.searchParams.delete('session');
-            return url.pathname + url.search + url.hash;
-        } catch (_) {
-            return '';
-        }
-    }
-
-    async function copyMessageRefToClipboard(btn) {
-        const ref = getMessageRefForButton(btn);
-        if (!ref) return { ok: false, ref: null };
-        const ok = await copyTextToClipboard(ref);
-        return { ok, ref };
-    }
-    
     function formatTimeAgo(ts) {
         if (!ts || ts <= 0) return 'now';
         const diff = Date.now() - ts;
@@ -21102,454 +19298,6 @@ function downloadTranscriptMarkdown(text, sessionId) {
         return Promise.resolve(copyTextFallback(text));
     }
     
-    const MESSAGE_PINS_STORAGE_KEY = 'chat_message_pins_v1';
-    const MESSAGE_NAV_PIN_SVG =
-        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" '
-        + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
-        + '<path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.13-1.87V5a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v3.89a2 2 0 0 1-1.13 1.87L12 13z"/>'
-        + '<path d="M7 5h10"/>'
-        + '</svg>';
-
-    function readPinnedMessageKeys() {
-        try {
-            const sid = currentSessionId != null ? String(currentSessionId) : '';
-            if (!sid) return new Set();
-            const raw = localStorage.getItem(MESSAGE_PINS_STORAGE_KEY);
-            const map = raw ? JSON.parse(raw) : {};
-            const list = Array.isArray(map[sid]) ? map[sid] : [];
-            return new Set(list.map(String));
-        } catch (_) {
-            return new Set();
-        }
-    }
-
-    function writePinnedMessageKeys(keySet) {
-        try {
-            const sid = currentSessionId != null ? String(currentSessionId) : '';
-            if (!sid) return;
-            const raw = localStorage.getItem(MESSAGE_PINS_STORAGE_KEY);
-            const map = raw ? JSON.parse(raw) : {};
-            map[sid] = Array.from(keySet);
-            localStorage.setItem(MESSAGE_PINS_STORAGE_KEY, JSON.stringify(map));
-        } catch (_) {}
-    }
-
-    function getMessagePinKey(el, idx) {
-        if (!el) return 'idx:' + idx;
-        if (el.dataset.messageId) return 'id:' + el.dataset.messageId;
-        const role = el.classList.contains('user') ? 'u' : 'a';
-        const tsEl = el.querySelector('[data-ts]');
-        const ts = tsEl && tsEl.dataset.ts ? String(tsEl.dataset.ts) : '';
-        const text = ((el.querySelector('.message-content') || {}).textContent || '')
-            .replace(/\s+/g, ' ')
-            .trim()
-            .slice(0, 80);
-        if (ts || text) return 'fp:' + role + ':' + ts + ':' + text;
-        return 'idx:' + idx;
-    }
-
-    function updateMessageNav() {
-        const nav = document.getElementById('messageNav');
-        const messagesContainer = document.getElementById('chatMessages');
-        if (!nav || !messagesContainer) return;
-
-        const messages = Array.from(messagesContainer.querySelectorAll(CHAT_RECORD_SELECTOR + ':not(.system)'));
-        if (messages.length === 0) {
-            nav.innerHTML = '';
-            nav.style.display = 'none';
-            updateJumpToBottomVisibility();
-            return;
-        }
-
-        const pinnedKeys = readPinnedMessageKeys();
-        const indexBase = Math.max(0, Number(chatHistoryOlderVisibleCount) || 0);
-        const items = messages.map((el, i) => {
-            const idx = indexBase + i + 1;
-            const pinKey = getMessagePinKey(el, idx);
-            el.dataset.messageIndex = String(idx);
-            el.dataset.pinKey = pinKey;
-            const pinned = pinnedKeys.has(pinKey);
-            el.classList.toggle('is-pinned-message', pinned);
-            const ref = formatMessageRef(currentSessionId, idx);
-            if (ref) {
-                el.querySelectorAll('.message-share-ref-btn').forEach((btn) => {
-                    btn.title = 'Copy message ref (' + ref + ')';
-                    btn.setAttribute('aria-label', 'Copy message reference ' + ref);
-                });
-            }
-            return { idx, pinKey, pinned };
-        });
-
-        const pinnedItems = items.filter((it) => it.pinned);
-        const restItems = items.filter((it) => !it.pinned);
-
-        const renderItem = (it) => (
-            `<button type="button" class="message-nav-item${it.pinned ? ' is-pinned' : ''}" `
-            + `data-index="${it.idx}" data-pin-key="${escapeHtmlInline(it.pinKey)}" `
-            + `title="Jump to message ${it.idx}">`
-            + `<span class="message-nav-pin" data-pin-toggle="1" title="${it.pinned ? 'Unpin' : 'Pin for quick jump'}" `
-            + `aria-label="${it.pinned ? 'Unpin message' : 'Pin message'}">${MESSAGE_NAV_PIN_SVG}</span>`
-            + `<span class="message-nav-num">${it.idx}</span>`
-            + `</button>`
-        );
-
-        let html = pinnedItems.map(renderItem).join('');
-        if (pinnedItems.length && restItems.length) {
-            html += '<div class="message-nav-sep" aria-hidden="true"></div>';
-        }
-        html += restItems.map(renderItem).join('');
-
-        nav.style.display = 'flex';
-        const wasPinned = messageNavPinnedToBottom;
-        // Preserve scroll position across rebuild — innerHTML resets scrollTop to 0.
-        const prevTop = nav.scrollTop;
-        const prevHeight = nav.scrollHeight;
-        nav.innerHTML = html;
-        setupMessageNavScrollSync();
-        setupMessageNavClicks();
-        updateJumpToBottomVisibility();
-        // Default to bottom on first paint; otherwise follow only when on standby
-        // (not scrolled up, not hovered/focused).
-        if (wasPinned && !isMessageNavInteracting()) {
-            autoScrollMessageNavToBottom(true);
-        } else if (!wasPinned) {
-            // Restore where user was if we shouldn't auto-follow.
-            try {
-                // If content grew, keep same visual offset; otherwise restore absolute top.
-                const newHeight = nav.scrollHeight;
-                nav.scrollTop = prevTop + (newHeight - prevHeight);
-            } catch (_) {}
-        }
-    }
-
-    let _messageNavClickSetup = false;
-    function setupMessageNavClicks() {
-        const nav = document.getElementById('messageNav');
-        if (!nav || _messageNavClickSetup) return;
-        _messageNavClickSetup = true;
-        nav.addEventListener('click', (e) => {
-            const pinBtn = e.target && e.target.closest
-                ? e.target.closest('[data-pin-toggle]')
-                : null;
-            if (pinBtn) {
-                e.preventDefault();
-                e.stopPropagation();
-                const item = pinBtn.closest('.message-nav-item');
-                if (!item) return;
-                toggleMessagePin(item.dataset.pinKey);
-                return;
-            }
-            const item = e.target && e.target.closest
-                ? e.target.closest('.message-nav-item')
-                : null;
-            if (!item) return;
-            e.preventDefault();
-            jumpToMessage(parseInt(item.dataset.index, 10));
-        });
-    }
-
-    function toggleMessagePin(pinKey) {
-        if (!pinKey) return;
-        const keys = readPinnedMessageKeys();
-        if (keys.has(pinKey)) keys.delete(pinKey);
-        else keys.add(pinKey);
-        writePinnedMessageKeys(keys);
-        updateMessageNav();
-    }
-
-    let _messageNavScrollSetup = false;
-    function setupMessageNavScrollSync() {
-        const messagesContainer = document.getElementById('chatMessages');
-        if (!messagesContainer || _messageNavScrollSetup) return;
-        _messageNavScrollSetup = true;
-
-        const checkActive = () => {
-            syncChatPinnedFromScroll();
-            syncMessageNavPinnedFromScroll();
-            const messages = Array.from(messagesContainer.querySelectorAll(CHAT_RECORD_SELECTOR + ':not(.system)'));
-            const navItems = document.querySelectorAll('.message-nav-item');
-            if (navItems.length) {
-                const rect = messagesContainer.getBoundingClientRect();
-                const containerMid = rect.top + rect.height * 0.4;
-                let activeIdx = null;
-                messages.forEach((el) => {
-                    const r = el.getBoundingClientRect();
-                    if (r.top <= containerMid) {
-                        const idx = parseInt(el.dataset.messageIndex, 10);
-                        if (Number.isFinite(idx)) activeIdx = idx;
-                    }
-                });
-                navItems.forEach((btn) => {
-                    btn.classList.toggle(
-                        'active',
-                        activeIdx != null && parseInt(btn.dataset.index, 10) === activeIdx
-                    );
-                });
-            }
-            updateJumpToBottomVisibility();
-        };
-        messagesContainer.addEventListener('scroll', checkActive, { passive: true });
-        // Also track nav's own scroll/hover so we don't steal interaction
-        const nav = document.getElementById('messageNav');
-        if (nav) {
-            nav.addEventListener('scroll', syncMessageNavPinnedFromScroll, { passive: true });
-            nav.addEventListener('mouseenter', syncMessageNavPinnedFromScroll, { passive: true });
-            nav.addEventListener('wheel', syncMessageNavPinnedFromScroll, { passive: true });
-            nav.addEventListener('touchstart', syncMessageNavPinnedFromScroll, { passive: true });
-        }
-        checkActive();
-    }
-
-    function isChatScrolledUp(thresholdPx) {
-        const box = document.getElementById('chatMessages');
-        if (!box) return false;
-        const gap = box.scrollHeight - box.scrollTop - box.clientHeight;
-        return gap > (thresholdPx == null ? 140 : thresholdPx);
-    }
-
-    function syncChatPinnedFromScroll() {
-        if (Date.now() < _ignoreChatScrollPinUntil) return;
-        chatPinnedToBottom = !isChatScrolledUp(AUTOSCROLL_STICK_PX);
-        if (chatPinnedToBottom) {
-            // Reached the latest content — clear jump glow only (title may still need ack).
-            clearChatUnseenBelow();
-        }
-    }
-
-    function isMessageNavScrolledUp(thresholdPx) {
-        const nav = document.getElementById('messageNav');
-        if (!nav) return false;
-        // Hidden or not scrollable → treat as pinned
-        if (nav.style.display === 'none' || nav.scrollHeight <= nav.clientHeight + 4) return false;
-        const gap = nav.scrollHeight - nav.scrollTop - nav.clientHeight;
-        return gap > (thresholdPx == null ? NAV_AUTOSCROLL_STICK_PX : thresholdPx);
-    }
-
-    function isMessageNavInteracting() {
-        const nav = document.getElementById('messageNav');
-        if (!nav) return false;
-        try {
-            if (nav.matches(':hover')) return true;
-            if (nav.matches(':focus-within')) return true;
-            // Any child focused (keyboard nav)
-            if (document.activeElement && nav.contains(document.activeElement)) return true;
-        } catch (_) {}
-        return false;
-    }
-
-    function syncMessageNavPinnedFromScroll() {
-        if (Date.now() < _ignoreNavScrollPinUntil) return;
-        // If user is actively hovering/interacting, don't flip pinned just yet —
-        // wait until they leave / scroll to bottom.
-        if (isMessageNavInteracting() && isMessageNavScrolledUp(4)) {
-            messageNavPinnedToBottom = false;
-            return;
-        }
-        messageNavPinnedToBottom = !isMessageNavScrolledUp(NAV_AUTOSCROLL_STICK_PX);
-    }
-
-    function autoScrollMessageNavToBottom(force) {
-        const nav = document.getElementById('messageNav');
-        if (!nav) return;
-        if (nav.style.display === 'none') return;
-        if (!force && !messageNavPinnedToBottom) return;
-        if (!force && isMessageNavInteracting()) return;
-        if (!force && isMessageNavScrolledUp(NAV_AUTOSCROLL_STICK_PX)) return;
-        _ignoreNavScrollPinUntil = Date.now() + 150;
-        nav.scrollTop = nav.scrollHeight;
-        messageNavPinnedToBottom = true;
-        requestAnimationFrame(() => {
-            nav.scrollTop = nav.scrollHeight;
-            messageNavPinnedToBottom = true;
-        });
-    }
-
-    /**
-     * Follow new content only while the reader is parked at the bottom. Pin is
-     * remembered from the last user scroll — measuring gap *after* inserting a
-     * tall reply always looks like they scrolled away. Pass true for their own
-     * actions (send, open chat, jump-to-bottom).
-     */
-    function autoScrollChatToBottom(force) {
-        const box = document.getElementById('chatMessages');
-        if (!box) return;
-        // Message-ref jumps (CH-000430-99) must win over late bottom scrolls.
-        if (Date.now() < _suppressAutoScrollUntil) {
-            updateJumpToBottomVisibility();
-            return;
-        }
-        if (!force && !chatPinnedToBottom) {
-            updateJumpToBottomVisibility();
-            return;
-        }
-        _ignoreChatScrollPinUntil = Date.now() + 150;
-        box.scrollTop = box.scrollHeight;
-        chatPinnedToBottom = true;
-        clearChatUnseenBelow();
-        requestAnimationFrame(() => {
-            if (Date.now() < _suppressAutoScrollUntil) {
-                updateJumpToBottomVisibility();
-                return;
-            }
-            box.scrollTop = box.scrollHeight;
-            chatPinnedToBottom = true;
-            clearChatUnseenBelow();
-            updateJumpToBottomVisibility();
-        });
-    }
-
-    function updateJumpToBottomVisibility() {
-        const btn = document.getElementById('chatJumpBottom');
-        const box = document.getElementById('chatMessages');
-        if (!btn || !box) return;
-        const area = document.getElementById('chatArea');
-        const chatVisible = area && area.style.display !== 'none';
-        const show = chatVisible && box.scrollHeight > box.clientHeight + 40 && isChatScrolledUp(140);
-        btn.hidden = !show;
-        btn.classList.toggle('is-visible', show);
-        // Glow only when a finalized reply landed while scrolled up (not mere ack / scroll).
-        const hasUnseen = show && chatUnseenBelow;
-        btn.classList.toggle('has-unseen', hasUnseen);
-        btn.classList.toggle('has-unseen-error', hasUnseen && chatAttentionIsError);
-        btn.title = hasUnseen
-            ? (chatAttentionIsError ? 'Error — jump to latest' : 'New messages — jump to latest')
-            : 'Jump to latest';
-        btn.setAttribute(
-            'aria-label',
-            hasUnseen
-                ? (chatAttentionIsError ? 'Error — jump to latest' : 'New messages — jump to latest')
-                : 'Jump to latest messages'
-        );
-    }
-
-    function jumpToBottom(smooth) {
-        const box = document.getElementById('chatMessages');
-        if (!box) return;
-        _suppressAutoScrollUntil = 0;
-        chatPinnedToBottom = true;
-        _ignoreChatScrollPinUntil = Date.now() + 400;
-        clearChatUnseenBelow();
-        activateChatViewport();
-        box.scrollTo({
-            top: box.scrollHeight,
-            behavior: smooth === false ? 'auto' : 'smooth',
-        });
-        requestAnimationFrame(() => {
-            chatPinnedToBottom = true;
-            clearChatUnseenBelow();
-            updateJumpToBottomVisibility();
-        });
-    }
-
-    function jumpToMessage(index, opts) {
-        const messagesContainer = document.getElementById('chatMessages');
-        const el = messagesContainer?.querySelector(`.message[data-message-index="${index}"]`);
-        if (!el) return false;
-        chatPinnedToBottom = false;
-        _suppressAutoScrollUntil = Date.now() + 600;
-        _ignoreChatScrollPinUntil = Date.now() + 600;
-        const instant = !!(opts && opts.instant);
-        // Scroll the chat box itself — scrollIntoView can move outer shell/iframe
-        // ancestors and loses to pending autoScroll rAFs after session load.
-        try {
-            const boxRect = messagesContainer.getBoundingClientRect();
-            const elRect = el.getBoundingClientRect();
-            const delta = (elRect.top + elRect.height / 2) - (boxRect.top + boxRect.height / 2);
-            messagesContainer.scrollTo({
-                top: Math.max(0, messagesContainer.scrollTop + delta),
-                behavior: instant ? 'auto' : 'smooth',
-            });
-        } catch (_) {
-            try {
-                el.scrollIntoView({
-                    behavior: instant ? 'auto' : 'smooth',
-                    block: 'center',
-                });
-            } catch (__) {}
-        }
-        if (!(opts && opts.skipFlash)) {
-            el.classList.remove('message-ref-flash');
-            // Restart CSS animation if the same bubble is targeted twice.
-            void el.offsetWidth;
-            el.classList.add('message-ref-flash');
-            setTimeout(() => {
-                try { el.classList.remove('message-ref-flash'); } catch (_) {}
-            }, 2200);
-        }
-        updateJumpToBottomVisibility();
-        return true;
-    }
-
-    /** Pending ?msg=N (or CH-xxx-N) jump after the transcript finishes painting. */
-    let pendingMessageJump = null;
-
-    function queueMessageJump(messageIndex) {
-        const idx = parseInt(messageIndex, 10);
-        if (!Number.isFinite(idx) || idx < 1) {
-            pendingMessageJump = null;
-            return;
-        }
-        pendingMessageJump = idx;
-        // Hold bottom-stick while the session paints so load-time scrolls can't win.
-        _suppressAutoScrollUntil = Date.now() + 1200;
-    }
-
-    function consumePendingMessageJump() {
-        const idx = pendingMessageJump;
-        if (!idx) return;
-        pendingMessageJump = null;
-        _suppressAutoScrollUntil = Date.now() + 1200;
-        // Indices are assigned in updateMessageNav — call after messages are in the DOM.
-        // Older bubbles may still be behind the lazy window; load pages until found.
-        (async () => {
-            const settle = (found) => {
-                if (!found) {
-                    _clearMsgQueryParam();
-                    return;
-                }
-                // Re-assert after layout/rAF so late autoScroll or image layout
-                // cannot yank the viewport back to the bottom.
-                requestAnimationFrame(() => {
-                    jumpToMessage(idx, { instant: true, skipFlash: true });
-                    requestAnimationFrame(() => {
-                        jumpToMessage(idx, { instant: true, skipFlash: true });
-                    });
-                });
-                setTimeout(() => jumpToMessage(idx, { instant: true, skipFlash: true }), 80);
-                setTimeout(() => jumpToMessage(idx, { instant: true, skipFlash: true }), 280);
-                _clearMsgQueryParam();
-            };
-
-            updateMessageNav();
-            if (jumpToMessage(idx, { instant: true })) {
-                settle(true);
-                return;
-            }
-            let guard = 40;
-            while (chatHistoryHasMore && guard-- > 0) {
-                const loaded = await loadOlderChatMessages();
-                updateMessageNav();
-                if (jumpToMessage(idx, { instant: true })) {
-                    settle(true);
-                    return;
-                }
-                if (!loaded) break;
-            }
-            updateMessageNav();
-            settle(!!jumpToMessage(idx, { instant: true }));
-        })();
-    }
-
-    function _clearMsgQueryParam() {
-        try {
-            const url = new URL(window.location.href);
-            if (url.searchParams.has('msg')) {
-                url.searchParams.delete('msg');
-                history.replaceState(null, '', url.pathname + url.search + url.hash);
-            }
-        } catch (_) {}
-    }
-    
     function addTypingIndicator(slashMeta) {
         const messagesContainer = document.getElementById('chatMessages');
         if (!messagesContainer) return;
@@ -21595,9 +19343,9 @@ function downloadTranscriptMarkdown(text, sessionId) {
         
         messagesContainer.appendChild(typingDiv);
         scheduleSlashChipCompactLabels(typingDiv);
-        updateMessageNav();
-        autoScrollChatToBottom();
-        try { paintSubagentOrbs(); } catch (_) {}
+        transcriptNav.updateMessageNav();
+        transcriptNav.autoScrollChatToBottom();
+        try { subagentLaunchers.paintLive(); } catch (_) {}
         armConnectingWatchdog();
         // Keep tool/status text moving even when the SSE body stalls (Electron HTTPS).
         armStreamStatusPoll();
@@ -21646,7 +19394,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 }
                 updateTypingStatus(live.status);
             }
-            try { syncSubagentOrbs(live.subagents); } catch (_) {}
+            try { subagentLaunchers.syncLive(live.subagents); } catch (_) {}
             if (live.report_url) updateTypingIndicatorQueryLink(live.report_url);
 
             const stillGoing = liveStatusLooksActive(live);
@@ -21828,38 +19576,6 @@ function downloadTranscriptMarkdown(text, sessionId) {
         }, 12000);
     }
 
-    function rememberSubagentOrbList(raw) {
-        if (raw === undefined) return;
-        _subagentOrbList = normalizeSubagentList(raw);
-    }
-
-    // Orbs live inside the fleet cards now (running/queued cards render the
-    // mini orbit); the indicator keeps only the parent orbit + status line.
-    // Badges still mount onto the in-progress bubble as soon as a child attaches.
-    function paintSubagentOrbs() {
-        mountLiveSubagentBadges();
-    }
-
-    function syncSubagentOrbs(subagents) {
-        rememberSubagentOrbList(subagents);
-        paintSubagentOrbs();
-    }
-
-    function clearSubagentOrbs() {
-        _subagentOrbList = [];
-        paintSubagentOrbs();
-    }
-
-    function mountLiveSubagentBadges() {
-        if (typeof document === 'undefined' || !document.querySelectorAll) return;
-        // Badges link to the child sessions as soon as they attach — mount
-        // onto the in-progress bubble, not just the finalized reply.
-        // Empty list unmounts (mountSubagentLaunchers removes on empty html).
-        document.querySelectorAll('#typing-indicator, #typing-indicator-remote').forEach((el) => {
-            try { mountSubagentLaunchers(el, _subagentOrbList); } catch (_) {}
-        });
-    }
-
     function updateTypingStatus(statusText) {
         const next = statusText || 'Connecting...';
         chatVoice.onAgentStatus(next);
@@ -21876,7 +19592,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
             el.textContent = next;
             el.style.display = 'block';
             el.style.visibility = 'visible';
-            autoScrollChatToBottom();
+            transcriptNav.autoScrollChatToBottom();
         } else {
             clearConnectingWatchdog();
         }
@@ -21932,115 +19648,13 @@ function downloadTranscriptMarkdown(text, sessionId) {
         const indicator = document.getElementById('typing-indicator');
         if (indicator) {
             indicator.remove();
-            autoScrollChatToBottom();
+            transcriptNav.autoScrollChatToBottom();
         }
     }
     
-    function fmtPricingRate(v) {
-        if (v === null || v === undefined || v === '') return '—';
-        const n = Number(v);
-        if (!Number.isFinite(n)) return '—';
-        if (n === 0) return 'Free';
-        if (n >= 1 || Math.abs(n * 100 - Math.round(n * 100)) < 1e-9) return '$' + n.toFixed(2);
-        return '$' + n.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
-    }
-
-    function fmtPricingContext(v) {
-        const n = Number(v);
-        if (!Number.isFinite(n) || n <= 0) return '';
-        if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
-        if (n >= 1e3) return Math.round(n / 1e3) + 'K';
-        return String(n);
-    }
-
-    /** ``<cuttle_pricing>`` JSON → table; the active model's row is highlighted. */
+    /** ``<cuttle_pricing>`` JSON → table; owned by CuttleChatMessages. */
     function renderCuttlePricingHtml(rawBody) {
-        let payload = null;
-        try {
-            payload = JSON.parse(String(rawBody || '').trim());
-        } catch (_) {
-            payload = null;
-        }
-        const rows = payload && Array.isArray(payload.rows) ? payload.rows : [];
-        if (!rows.length) return '';
-        const has = (key) => rows.some((r) => r && r[key] !== undefined && r[key] !== null && r[key] !== '');
-        const showTask = has('task');
-        const showBench = has('bench_cost');
-        const showScore = showBench && has('bench_score');
-        const bench = (payload && payload.bench) || {};
-        const benchLabel = String(bench.label || 'Benchmark');
-        const showCache = has('cache_read');
-        const showCtx = has('context');
-        const showNotes = has('note') || has('variants');
-        const inline = (s) => CuttleChatMarkdown.formatInlineMarkdown(escapeHtmlInline(String(s || '')));
-        let html = '<div class="message-table-wrap cuttle-pricing-wrap">'
-            + '<table class="message-table cuttle-pricing"><thead><tr>'
-            + '<th>Model</th>'
-            + '<th style="text-align:right">Input</th>'
-            + '<th style="text-align:right">Output</th>'
-            + (showBench
-                ? '<th style="text-align:right" title="'
-                    + escapeHtmlInline('Measured mean cost per task on ' + benchLabel
-                        + (bench.credit ? ' (data: ' + bench.credit + ')' : ''))
-                    + '">$ / task<br><span class="cuttle-pricing-sub">'
-                    + escapeHtmlInline(benchLabel) + '</span></th>'
-                : '')
-            + (showScore ? '<th style="text-align:right">Solved</th>' : '')
-            + (showTask
-                ? '<th style="text-align:right" title="'
-                    + escapeHtmlInline('Estimated cost of one typical agentic coding task: '
-                        + String((payload && payload.task_basis) || ''))
-                    + '">≈ / task</th>'
-                : '')
-            + (showCache ? '<th style="text-align:right">Cache read</th>' : '')
-            + (showCtx ? '<th style="text-align:right">Context</th>' : '')
-            + (showNotes ? '<th>Notes</th>' : '')
-            + '</tr></thead><tbody>';
-        rows.forEach((r) => {
-            if (!r || typeof r !== 'object') return;
-            const active = !!r.active;
-            const label = String(r.label || r.model || '').trim();
-            const model = String(r.model || '').trim();
-            const modelCell = '<span class="cuttle-pricing-label">' + escapeHtmlInline(label) + '</span>'
-                + (active ? ' <span class="cuttle-pricing-badge">Active</span>' : '')
-                + (model && model !== label
-                    ? '<br><code class="cuttle-pricing-id">' + escapeHtmlInline(model) + '</code>'
-                    : '');
-            const notes = [r.variants, r.note].filter((s) => s).map(inline).join('<br>');
-            html += '<tr class="cuttle-pricing-row' + (active ? ' is-active' : '') + '">'
-                + '<td>' + modelCell + '</td>'
-                + '<td class="cuttle-pricing-num">' + escapeHtmlInline(fmtPricingRate(r.input)) + '</td>'
-                + '<td class="cuttle-pricing-num">' + escapeHtmlInline(fmtPricingRate(r.output)) + '</td>'
-                + (showBench
-                    ? '<td class="cuttle-pricing-num cuttle-pricing-task">'
-                        + escapeHtmlInline(fmtPricingRate(r.bench_cost))
-                        + (r.bench_cost !== undefined && r.bench_effort
-                            ? '<br><span class="cuttle-pricing-sub">' + escapeHtmlInline(r.bench_effort) + '</span>'
-                            : '')
-                        + '</td>'
-                    : '')
-                + (showScore
-                    ? '<td class="cuttle-pricing-num">'
-                        + (r.bench_score !== undefined && r.bench_score !== null
-                            ? escapeHtmlInline(Number(r.bench_score).toFixed(1) + '%')
-                            : '—')
-                        + '</td>'
-                    : '')
-                + (showTask
-                    ? '<td class="cuttle-pricing-num cuttle-pricing-task">'
-                        + escapeHtmlInline(fmtPricingRate(r.task)) + '</td>'
-                    : '')
-                + (showCache
-                    ? '<td class="cuttle-pricing-num">' + escapeHtmlInline(fmtPricingRate(r.cache_read)) + '</td>'
-                    : '')
-                + (showCtx
-                    ? '<td class="cuttle-pricing-num">' + escapeHtmlInline(fmtPricingContext(r.context)) + '</td>'
-                    : '')
-                + (showNotes ? '<td class="cuttle-pricing-note">' + notes + '</td>' : '')
-                + '</tr>';
-        });
-        html += '</tbody></table></div>';
-        return html;
+        return CuttleChatMessages.renderCuttlePricingHtml(rawBody, { escapeHtmlInline });
     }
 
 
@@ -22051,8 +19665,8 @@ function downloadTranscriptMarkdown(text, sessionId) {
             clamp,
             renderMdLinkChip,
             renderCuttlePricingHtml,
-            mediaKindFromUrl,
-            buildMediaThumbHtml,
+            mediaKindFromUrl: CuttleChatMedia.mediaKindFromUrl,
+            buildMediaThumbHtml: chatMedia.buildMediaThumbHtml,
         };
     }
 
@@ -22472,7 +20086,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
             escapeHtmlInline,
             renderMdLinkChip,
             isSafeMdHref,
-            buildMediaThumbHtml,
+            buildMediaThumbHtml: chatMedia.buildMediaThumbHtml,
         });
         text = codeLinkStructured.text;
         // Live array: handle/git linking below pushes chips the restore
@@ -22613,14 +20227,14 @@ function downloadTranscriptMarkdown(text, sessionId) {
         initializeTheme();
 
         // Chat TTS play-button prefs (Settings → Chat voice)
-        loadChatTtsPrefs();
+        chatTts.loadPrefs();
 
         // file:// chips → host OS default application
         bindMdLinkChipClicks();
         bindChatHandleLinkClicks();
         bindGitCommitLinkClicks();
         // Markdown / attachment image+video lightbox
-        bindCuttleMediaLightbox();
+        chatMedia.bind();
         
         // Load agent name from settings
         agentName = localStorage.getItem('agentName') || 'Cuttle';
@@ -22698,13 +20312,13 @@ function downloadTranscriptMarkdown(text, sessionId) {
         const urlParams = new URLSearchParams(window.location.search);
         const sessionParam = urlParams.get('chat') || urlParams.get('session');
         const msgParam = urlParams.get('msg');
-        if (msgParam) queueMessageJump(msgParam);
+        if (msgParam) transcriptNav.queueMessageJump(msgParam);
         // Also accept compact refs in hash: #CH-000102-9 or #msg-9
         try {
             const hash = String(window.location.hash || '').replace(/^#/, '');
-            const fromHash = parseMessageRef(hash);
+            const fromHash = transcriptNav.parseMessageRef(hash);
             if (fromHash) {
-                queueMessageJump(fromHash.messageIndex);
+                transcriptNav.queueMessageJump(fromHash.messageIndex);
                 if (!sessionParam) {
                     // If only a hash ref was given, still open that chat.
                     waitForAuthReady().then(function () {
@@ -22713,7 +20327,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 }
             } else {
                 const mOnly = hash.match(/^msg-?(\d+)$/i);
-                if (mOnly) queueMessageJump(mOnly[1]);
+                if (mOnly) transcriptNav.queueMessageJump(mOnly[1]);
             }
         } catch (_) {}
 
@@ -22986,12 +20600,12 @@ function downloadTranscriptMarkdown(text, sessionId) {
         if (jumpBottomBtn) {
             jumpBottomBtn.addEventListener('click', (e) => {
                 e.preventDefault();
-                jumpToBottom(true);
+                transcriptNav.jumpToBottom(true);
             });
         }
-        setupMessageNavScrollSync();
+        transcriptNav.setupMessageNavScrollSync();
         setupChatAttentionListeners();
-        updateJumpToBottomVisibility();
+        transcriptNav.updateJumpToBottomVisibility();
         updateSessionTitleUnreadDot();
         try { initContextGaugeControls(); } catch (e) { LOG_ERR('context gauge init', e); }
 
@@ -23170,10 +20784,10 @@ function downloadTranscriptMarkdown(text, sessionId) {
     window.sendMessage = sendMessage;
     window.handleInputKeyDown = handleInputKeyDown;
     window.autoResizeTextarea = autoResizeTextarea;
-    window.chatPageJumpToMessage = jumpToMessage;
-    window.chatPageJumpToBottom = jumpToBottom;
+    window.chatPageJumpToMessage = transcriptNav.jumpToMessage;
+    window.chatPageJumpToBottom = transcriptNav.jumpToBottom;
     window.chatPageCopyMessageRef = async function(btn) {
-        const { ok, ref } = await copyMessageRefToClipboard(btn);
+        const { ok, ref } = await transcriptNav.copyMessageRefToClipboard(btn);
         if (ok && ref) {
             btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>';
             btn.title = 'Copied ' + ref;
@@ -23221,7 +20835,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
         }
     };
     window.chatPageSpeakMessage = function(btn) {
-        return speakMessageFromButton(btn);
+        return chatTts.speakFromButton(btn);
     };
     window.chatPageEnterVoiceMode = chatVoice.enter;
     window.chatPageExitVoiceMode = chatVoice.exit;
@@ -23386,12 +21000,12 @@ function downloadTranscriptMarkdown(text, sessionId) {
     try {
         window._e2eChat = {
             addMessageToUI,
-            updateMessageNav,
-            autoScrollMessageNavToBottom,
-            autoScrollChatToBottom,
-            isMessageNavScrolledUp,
-            isMessageNavInteracting,
-            syncMessageNavPinnedFromScroll,
+            updateMessageNav: transcriptNav.updateMessageNav,
+            autoScrollMessageNavToBottom: transcriptNav.autoScrollMessageNavToBottom,
+            autoScrollChatToBottom: transcriptNav.autoScrollChatToBottom,
+            isMessageNavScrolledUp: transcriptNav.isMessageNavScrolledUp,
+            isMessageNavInteracting: transcriptNav.isMessageNavInteracting,
+            syncMessageNavPinnedFromScroll: transcriptNav.syncMessageNavPinnedFromScroll,
             getNav: () => document.getElementById('messageNav'),
             getChat: () => document.getElementById('chatMessages'),
             getSlashCtx: () => slashCtx,

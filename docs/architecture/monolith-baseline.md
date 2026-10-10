@@ -377,13 +377,16 @@ These numbers set the cost of moving code:
 - 43 chat-page test files run page code in Node, 3 in a browser, and 30 only
   assert on source text. Including the Node/browser files that also inspect
   source, there are about 500 source-text assertions.
-- **31 test files slice 91 named monolith functions** out of the source and
-  execute them (`_extract(src, "name")`, `_fn_body`, …). Moving one of those
-  functions breaks its test even when behavior is unchanged.
-  - By slice: 2A 16, 3A 11, Spaces UI 10, 2B 9, 3C 7, 4A 7, 3B 6, 1B 5,
-    other 20.
-  - Phase 1A has none, so Phase 1 starts with the cheapest migration.
-  - The full list is in the plan's appendix.
+- **34 test files slice 139 named monolith functions** out of the source and
+  execute them. They use either a name (`_extract(src, "name")`, `_fn_body`,
+  …) or a `span('    function name(', '    function next(')` marker pair.
+  Moving one of those functions, or a function used as a span end marker,
+  breaks its test even when behavior is unchanged.
+  - By slice: 2B 20, 2A 16, 3A 14, 1B 12, Spaces UI 10, 3C 9, composer 9,
+    4A 9, 2C 7, 3B 7, project binding 5, 1A 2, other 19.
+  - The remaining list is in the plan's appendix.
+  - *Correction:* Phase 0 first reported 31 files / 91 names because it
+    missed the `span(` marker style. Phase 1A found the gap.
 
 Existing architecture gates:
 - `test_architecture_boundaries.py`: reverse imports, acyclic `src/api`,
