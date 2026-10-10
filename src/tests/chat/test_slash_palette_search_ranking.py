@@ -12,28 +12,25 @@ pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node not a
 
 
 def run_js(body):
-    page = (ROOT / "src/web/js/chat/chat_page.js").read_text(encoding="utf-8")
     controls = (ROOT / "src/web/js/chat/chat_agent_controls.js").read_text(encoding="utf-8")
-    # filterSlashPaletteItems stays page-owned; the model/effort builders it
-    # dispatches now live on CuttleChatAgentControls.
-    start = page.index("    function filterSlashPaletteItems(")
-    end = page.index("\n    function ", start + 10)
-    blocks = [page[start:end]]
+    # filterSlashPaletteItems is owned by chat_slash_palette.js
+    # (CuttleChatSlashPalette); the model/effort builders it dispatches live on
+    # CuttleChatAgentControls.
+    blocks = []
     for name in ("buildCodexEffortPaletteItems", "buildCodexModelPaletteItems",
-                 "buildOpenCodeModelPaletteItems", "buildRestartPaletteItems"):
-        source = controls if name.startswith("buildCodex") or name == "buildOpenCodeModelPaletteItems" else page
-        marker = "        function " if source is controls else "    function "
-        s = source.index(f"{marker}{name}(")
-        e = source.index(f"\n{marker}", s + 10)
-        blocks.append(source[s:e])
+                 "buildOpenCodeModelPaletteItems"):
+        marker = "        function "
+        s = controls.index(f"{marker}{name}(")
+        e = controls.index(f"\n{marker}", s + 10)
+        blocks.append(controls[s:e])
     setup = """
 const CuttleChatSlash = require('./src/web/js/chat/chat_slash.js');
+const Palette = require('./src/web/js/chat/chat_slash_palette.js');
 const S = CuttleChatSlash;
 const slashApi = S;
 const slashPaletteItemMatches = S.slashPaletteItemMatches;
 const itemMatches = S.slashPaletteItemMatches;
 const slashPaletteTypeBucket = S.slashPaletteTypeBucket;
-const slashPaletteTypeFilter = 'all';
 const state = {codexModels: [], codexCommonEfforts: ['low','medium','high','xhigh'],
     opencodeModels: []};
 const slashPaletteSupplement = state;
@@ -70,6 +67,37 @@ const agentControls = {
   buildClaudeModelPaletteItems: () => [],
   buildClaudeEffortPaletteItems: () => [],
 };
+const palette = Palette.create({
+  win: {},
+  escapeHtmlInline: (s) => String(s ?? ''),
+  clamp: (n, min, max) => Math.min(max, Math.max(min, Number(n) || 0)),
+  availableSlashCommands,
+  cursorAgentSlashCommandsForPalette,
+  harnessUsageSlashCommandsForPalette,
+  buildProjectPaletteItems,
+  buildProjectCommandPaletteItems,
+  agentControls,
+  readStarredSlashPrefixes,
+  readStarredProject,
+  normalizeStarredProjectPath,
+  isSlashCommandStarred: () => false,
+  isAgentDefaultStarred: () => false,
+  isProjectStarred: () => false,
+  toggleStarredProject: () => {},
+  toggleStarredAgentDefault: () => {},
+  toggleStarredSlashCommand: () => {},
+  getModelStarSpec: () => null,
+  loadAgentCapabilities: () => {},
+  loadCursorStarredDefault: () => {},
+  loadAllStarredDefaults: () => {},
+  loadSlashPaletteSupplement: () => {},
+  isPaletteLoading: () => false,
+  hasActiveCursorAgentChip: () => false,
+  loadCursorAgentModelsForPalette: () => {},
+  applySlashSelection: () => {},
+  saveDraft: () => {},
+});
+const filterSlashPaletteItems = (...a) => palette.filterItems(...a);
 """
     result = subprocess.run(["node", "-e", setup + "\n".join(blocks) + body],
                             cwd=ROOT, capture_output=True, text=True, encoding="utf-8", timeout=30)

@@ -398,7 +398,7 @@ def test_codex_model_palette_wired_into_chat_page():
     text = js.read_text(encoding="utf-8")
     # Slice 2A moved the model/effort palette builders into the
     # CuttleChatAgentControls owner; assert across page + owner.
-    text += "\n" + (js.parent / "chat_agent_controls.js").read_text(encoding="utf-8")
+    text += "\n" + (js.parent / "chat_agent_controls.js").read_text(encoding="utf-8") + "\n" + (js.parent / "chat_slash_palette.js").read_text(encoding="utf-8")
     assert "function buildCodexModelPaletteItems" in text
     assert ".concat(codexModels)" in text
     assert "cmd.category === 'codex-model'" in text

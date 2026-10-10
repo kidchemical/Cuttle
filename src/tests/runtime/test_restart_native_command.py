@@ -75,21 +75,24 @@ def test_restart_is_registered_in_the_shared_slash_command_list():
 
 
 def test_restart_subcommands_are_searchable_palette_entries():
-    src = CHAT_JS.read_text(encoding="utf-8")
-    assert "function buildRestartPaletteItems" in src
+    # Palette assembly (and the /restart subcommand rows) moved to
+    # chat_slash_palette.js (CuttleChatSlashPalette).
+    palette_src = (CHAT_JS.parent / "chat_slash_palette.js").read_text(encoding="utf-8")
+    assert "function buildRestartPaletteItems" in palette_src
     for cmd in ("/restart status", "/restart graceful", "/restart when-idle", "/restart force --yes"):
-        assert f"'{cmd}'" in src
+        assert f"'{cmd}'" in palette_src
     # Wired into the one palette builder every other command source feeds.
-    assert "buildRestartPaletteItems(f)" in src
-    assert ".concat(restartCmds)" in src
+    assert "buildRestartPaletteItems(f)" in palette_src
+    assert ".concat(restartCmds)" in palette_src
 
 
 # ── 12/13. chip rendering + sticky agents survive ────────────────────────────
 
 def test_control_command_uses_the_existing_chip_mechanism_and_keeps_sticky_agent():
     src = CHAT_JS.read_text(encoding="utf-8")
+    palette_src = (CHAT_JS.parent / "chat_slash_palette.js").read_text(encoding="utf-8")
     # Palette entries are category 'command', i.e. the normal chip/badge path.
-    assert "category: 'command'," in src
+    assert "category: 'command'," in palette_src
     # Sticky agent chips are not prepended onto a control command. The
     # composition decision lives in chat_composer.js; the page adapter
     # passes the native-control classifier.

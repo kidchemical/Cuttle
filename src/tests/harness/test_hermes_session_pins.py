@@ -109,7 +109,7 @@ def test_hermes_palette_wired_into_chat_page():
     text = js.read_text(encoding="utf-8")
     # Slice 2A moved persistence transport into the CuttleChatAgentControls
     # owner; assert across page + owner.
-    text += "\n" + (js.parent / "chat_agent_controls.js").read_text(encoding="utf-8")
+    text += "\n" + (js.parent / "chat_agent_controls.js").read_text(encoding="utf-8") + "\n" + (js.parent / "chat_slash_palette.js").read_text(encoding="utf-8")
     assert "function buildHermesModelPaletteItems" in text
     assert "function buildHermesEffortPaletteItems" in text
     assert ".concat(hermesModels)" in text
@@ -128,7 +128,7 @@ def test_opencode_effort_palette_wired_into_chat_page():
     text = js.read_text(encoding="utf-8")
     # Slice 2A moved persistence transport into the CuttleChatAgentControls
     # owner; assert across page + owner.
-    text += "\n" + (js.parent / "chat_agent_controls.js").read_text(encoding="utf-8")
+    text += "\n" + (js.parent / "chat_agent_controls.js").read_text(encoding="utf-8") + "\n" + (js.parent / "chat_slash_palette.js").read_text(encoding="utf-8")
     assert "function buildOpenCodeEffortPaletteItems" in text
     assert "function buildOpenCodeModelPaletteItems" in text
     assert ".concat(opencodeEfforts)" in text
