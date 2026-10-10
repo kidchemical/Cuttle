@@ -53,6 +53,18 @@ def test_save_chat_session_keep_search_moved_to_owner():
     assert "return sessionLifecycle().saveChatSession(message, role, opts);" in text
 
 
+def test_load_chat_session_moved_to_owner():
+    """3B step 3 moved loadChatSession into chat_session.js (CuttleChatSession
+    .createLoader); the page keeps a thin delegating call site."""
+    text = CHAT_JS.read_text(encoding="utf-8")
+    owner = (CHAT_JS.parent / "chat_session.js").read_text(encoding="utf-8")
+    assert "function createLoader(session, host) {" in owner
+    assert "async function loadChatSession(sessionId, opts = {})" in owner
+    assert "return { loadChatSession: loadChatSession };" in owner
+    assert "createLoader: createLoader" in owner
+    assert "return sessionLoader().loadChatSession(sessionId, opts);" in text
+
+
 def test_chat_page_html_loads_busted_script():
     html = CHAT_HTML.read_text(encoding="utf-8")
     assert 'src="/js/chat/chat_page.js?v=' in html

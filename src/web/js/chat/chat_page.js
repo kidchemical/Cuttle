@@ -8188,370 +8188,12 @@
         }
     }
 
-    // The session navigation sequence (_loadSessionSeq) is owned by
-    // chat_session.js: session.open() advances it, session.navSeq() reads it.
+    // loadChatSession is owned by chat_session.js (CuttleChatSession.createLoader).
+    // The page builds the capability host lazily and keeps this thin call site.
     async function loadChatSession(sessionId, opts = {}) {
-        // Persist unsent text from the chat we're leaving (survives refresh).
-        if (session.current() != null && !sessionIdsEqual(session.current(), sessionId)) {
-            saveComposerDraft(session.current());
-        } else if (session.current() == null) {
-            saveComposerDraft('new');
-        }
-        clearAllSlashChips();
-        CuttleStopState.clearWaitingSuppression(stopState);
-        sessionId = canonicalizeChatSessionId(sessionId);
-        // Close immediately on tap — don't wait for message fetch (felt stuck open on mobile).
-        closeChatHistoryPanel();
-
-        // Leaving a different chat's local stream — detach UI so this session
-        // isn't treated as generating (false follow-up queue).
-        if (
-            generation.loading
-            && (
-                generation.localSessionId == null
-                || !sessionIdsEqual(generation.localSessionId, sessionId)
-            )
-        ) {
-            detachLocalGenerationForNavigation();
-        }
-
-        // assumeAuth: the boot prefetch already got a 200 from the auth-only
-        // messages endpoint, so the cookie is valid even if auth.js hasn't emitted yet.
-        if (isAuthMode() || opts.assumeAuth) {
-            // Invalidate the per-session model cache before updating currentSessionId so
-            // any render or send that follows picks up the correct model for the new session.
-            if (session.current() !== sessionId) {
-                agentControls.invalidateProviderCacheForSessionSwitch();
-            }
-            releaseManualUnreadHoldIfLeaving(sessionId);
-            const prevSessionId = session.current();
-            const switchingAway = prevSessionId != null
-                && !sessionIdsEqual(prevSessionId, sessionId);
-            // Opening this chat — stop any background completion poll for it.
-            cancelDetachedSessionCompletionWatch(sessionId);
-            const loadSeq = session.open(sessionId);
-            adoptFollowupQueue(session.current());
-            // Opened chat defaults to idle until the one-shot live-status (below)
-            // confirms generating. Stale runningSessionIds / hub cache from a
-            // prior visit used to flash the purple title + history spinner for
-            // a few seconds while waiting on the shell heartbeat poll.
-            // Owned by chat_generation.js — an opened chat defaults to idle
-            // until the one-shot live-status confirms generating.
-            const openFlags = CuttleChatGeneration.decideSessionOpen({ switchingAway });
-            if (openFlags.clearHubCache) hubLiveStatusCache = null;
-            if (openFlags.deferGenerating) deferOpenChatGeneratingFromSessions = true;
-            if (openFlags.markIdle) setHistorySessionRunning(sessionId, false);
-            if (switchingAway) {
-                // Form-awaiting is DOM-derived; cleared messages must not keep
-                // the old chat's pending-form spinner on this title.
-                _mutateSessionIdSet(formAwaitingSessionIds, sessionId, false);
-            }
-            updateChatIdBadge(sessionId);
-            if (window.CuttleAuth && window.CuttleAuth.setCurrentChatSession) {
-                window.CuttleAuth.setCurrentChatSession(sessionId);
-            }
-            loadPromptHistoryForSession(String(sessionId));
-            localStorage.setItem('lastChatSessionId', String(sessionId));
-            localStorage.setItem('autoResumeSession', 'true');
-            syncChatUrl(sessionId);
-            refreshChatWidgets();
-            // Prefs-only sticky restore BEFORE shell live-status can paint the
-            // working bubble (phone hub race). Transcript inference runs again
-            // after /messages below.
-            restoreSessionStickySlash(sessionId, []);
-            reportSessionToShell(sessionId, { preferFocus: true });
-            const loadT0 = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
-            // Capture before markChatSessionRead so the title unread can survive open.
-            const openNeedsAck = sessionPrefsHasUnreadFlag(sessionId);
-            resetChatAttentionState({
-                needsAck: openNeedsAck,
-                isError: openNeedsAck && sessionPrefsUnreadIsError(sessionId),
-            });
-            // Don't block transcript load on refreshing the full session list —
-            // under a busy connection pool that await made reopen feel like 10–60s.
-            const sessionsRefresh = (window.CuttleAuth && typeof window.CuttleAuth.loadChatSessions === 'function')
-                ? Promise.resolve(window.CuttleAuth.loadChatSessions()).catch(() => {})
-                : Promise.resolve();
-
-            document.getElementById('welcomeScreen').style.display = 'none';
-            document.getElementById('chatArea').style.display = 'flex';
-            if (typeof window.__cuttlePinChatLayout === 'function') window.__cuttlePinChatLayout();
-
-            const chatMessages = document.getElementById('chatMessages');
-            chatMessages.innerHTML = '';
-            lastSeenServerMessageId = 0;
-            resetChatHistoryWindow();
-            removeRemoteWaitingIndicator();
-            stopMessageSync();
-            // Drop a prior chat's hydrate so findAuthServerSession cannot briefly
-            // resolve the wrong project while this session's /messages is in flight.
-            if (
-                lastHydratedSessionProject
-                && !sessionIdsEqual(lastHydratedSessionProject.id, sessionId)
-            ) {
-                lastHydratedSessionProject = null;
-            }
-
-            const authSid = toAuthDbSessionId(sessionId);
-            let loadedMessages = [];
-            try {
-                // Boot deep-links already have this transcript in flight (started in
-                // chat_page.html) — reuse it instead of paying for a second round trip.
-                let data = opts.prefetched || null;
-                if (!data && opts.prefetchPromise) {
-                    try { data = await opts.prefetchPromise; } catch (_) { data = null; }
-                }
-                if (!data) {
-                    const prefetch = takeChatTranscriptPrefetch(sessionId);
-                    if (prefetch) data = await prefetch;
-                }
-                if (!data) {
-                    const response = await fetchWithTimeout(
-                        sessionMessagesUrl(authSid, { limit: CHAT_HISTORY_PAGE_SIZE }),
-                        { credentials: 'include', cache: 'no-store' },
-                        12000
-                    );
-                    if (!response.ok) {
-                        throw new Error(`HTTP ${response.status}`);
-                    }
-                    data = await response.json();
-                }
-                // A newer loadChatSession started while we were fetching — drop this result.
-                if (loadSeq !== session.navSeq()) return;
-                if (data.success && Array.isArray(data.messages)) {
-                    loadedMessages = windowChatHistoryMessages(data);
-                    annotateMessageProjects(loadedMessages);
-                    if (data.project_id != null || data.project_path || data.project_name) {
-                        lastHydratedSessionProject = {
-                            id: authSid,
-                            project_id: data.project_id,
-                            project_name: data.project_name,
-                            project_path: data.project_path,
-                        };
-                    }
-                    // Apply this session's project BEFORE the generating bubble is
-                    // painted — otherwise the chip shows the previous chat's project
-                    // (common on phone when switching projects mid-run).
-                    reconcileChatProject();
-                    // Early refreshChatWidgets() above often still had the prior
-                    // chip path; re-fetch now that project matches this session.
-                    refreshChatWidgets();
-                    // Hydrate preferred model from transcript before painting so
-                    // collapse/composer don't flash "Cursor - Auto" while the
-                    // models API is still in flight.
-                    const fromHistory = preferredModelFromMessages(loadedMessages);
-                    if (fromHistory) {
-                        slashPaletteSupplement.preferredModel = fromHistory;
-                    }
-                    // Same for Muse: the messages payload carries the session
-                    // pins, so badges paint correctly on the first pass with
-                    // no /api/muse/* round trip (and no heal flicker).
-                    hydrateAgentSelectionFromSessionData(data, sessionId);
-                    applySessionIdentity(data);
-                    // Title from the same payload — don't wait for the session
-                    // list (history panel) or the delayed title-refresh timers.
-                    if (data.session_name) {
-                        rememberChatSessionTitle(sessionId, data.session_name);
-                        updateChatSessionTitle(sessionId);
-                    }
-                    beginSuppressChatAttention();
-                    try {
-                        // skipScroll/skipNav: bulk paint must not schedule bottom
-                        // autoScroll rAFs that race a pending CH-…-N message jump.
-                        loadedMessages.forEach(msg => {
-                            appendServerMessageToUI(msg, {
-                                announce: false,
-                                skipScroll: true,
-                                skipNav: true,
-                            });
-                        });
-                    } finally {
-                        endSuppressChatAttention();
-                    }
-                    transcriptNav.updateMessageNav();
-                    // Server follow-ups travel with /messages — apply on open so a
-                    // stuck queue (e.g. CH-000441) drains without waiting for sync.
-                    applyServerFollowups(data.followups, data.followup_revision);
-                    acceptSessionAttention(sessionId, data.attention);
-                    // Transcript is on screen — drop the restore veil before the
-                    // live-status round trip, which nobody needs to wait behind.
-                    clearChatRestoreVeil();
-                    reconcileCuttleButtonLocks(loadedMessages);
-                    // Sticky agent BEFORE remote-waiting paint — otherwise
-                    // currentTypingSlashMeta() sees empty/other-chat chips and
-                    // the working bubble reopens without the agent badge.
-                    restoreSessionStickySlash(sessionId, loadedMessages);
-                    const liveStatus = await fetchChatLiveStatus(sessionId);
-                    if (loadSeq !== session.navSeq()) return;
-                    deferOpenChatGeneratingFromSessions = false;
-                    updateRemoteWaitingFromMessages(loadedMessages, liveStatus);
-                    healStaleGeneratingState();
-                    if (
-                        followupQueue.items.some((x) => !x.paused)
-                        && !isSessionGenerating()
-                        && !editingFollowupId
-                    ) {
-                        scheduleFollowupDrain(120);
-                    }
-                    refreshTypingIndicatorHeaderBadges();
-                }
-            } catch (e) {
-                if (loadSeq !== session.navSeq()) return;
-                deferOpenChatGeneratingFromSessions = false;
-                console.error('Failed to load auth session messages:', e);
-            }
-
-            clearChatRestoreVeil();
-                    if (loadSeq !== session.navSeq()) return;
-
-            try { await sessionsRefresh; } catch (_) {}
-                    if (loadSeq !== session.navSeq()) return;
-            // One-shot generating flags for *other* chats (history rows). The open
-            // chat stays idle until fetchChatLiveStatus above confirms — do not
-            // wait for HISTORY_GENERATING_POLL_MS / shell heartbeat.
-            try {
-                const list = (window.CuttleAuth && window.CuttleAuth.getSessions
-                    && window.CuttleAuth.getSessions()) || [];
-                if (list.length) applyGeneratingFlagsFromSessions(list);
-            } catch (_) {}
-            // Session list may have landed after the early chrome paint — refresh
-            // the open-chat title now that getSessions() is populated.
-            updateChatSessionTitle(sessionId);
-            reconcileChatProject();
-
-            // Idempotent re-apply (also covers the messages-load failure path
-            // where the early restore above never ran). Composer chips must
-            // match this session even when there is no generating bubble.
-            restoreSessionStickySlash(sessionId, loadedMessages);
-            _restorePendingAttachments();
-            restoreComposerDraft(sessionId, { force: true });
-
-            // Proactively fetch the per-session model preference so the composer chip
-            // and typing indicator show the correct model before the palette is opened.
-            agentControls.loadCursorAgentModelsForPalette(true);
-            agentControls.loadMuseModelsForPalette(true);
-
-            markChatSessionRead(sessionId);
-            document.querySelectorAll('.chat-history-item').forEach(item => {
-                item.classList.toggle('active', sessionIdsEqual(item.dataset.sessionId, sessionId));
-            });
-            applyHistorySubagentExpandState();
-            syncHistoryUnreadIndicators();
-            syncChatAttentionIndicators();
-            transcriptNav.settleAfterLoad();
-            setupChatHistoryLazyLoad();
-            // Re-apply after messages/sessions settle (server project beats stale empty local path).
-            reconcileChatProject();
-            startMessageSync();
-            try {
-                const ms = Math.round(
-                    ((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()) - loadT0
-                );
-                window.CuttleNetDebug && window.CuttleNetDebug.event(
-                    'chat-load',
-                    'session=' + sessionId + ' msgs=' + loadedMessages.length + ' ' + ms + 'ms'
-                );
-            } catch (_) {}
-            return;
-        }
-
-        // Load messages for this session from localStorage
-        const sessions = JSON.parse(localStorage.getItem('chatSessions') || '{}');
-        const session = sessions[sessionId];
-        
-        if (!session) {
-            console.error('Session not found:', sessionId);
-            closeChatHistoryPanel();
-            clearChatRestoreVeil();
-            return;
-        }
-        
-        releaseManualUnreadHoldIfLeaving(sessionId);
-        const prevSessionId = session.current();
-        const switchingAway = prevSessionId != null
-            && !sessionIdsEqual(prevSessionId, sessionId);
-        session.open(sessionId);
-        adoptFollowupQueue(session.current());
-        if (switchingAway) {
-            hubLiveStatusCache = null;
-            setHistorySessionRunning(sessionId, false);
-            _mutateSessionIdSet(formAwaitingSessionIds, sessionId, false);
-        }
-        updateChatIdBadge(sessionId);
-        loadPromptHistoryForSession(sessionId);
-        _restorePendingAttachments();
-        restoreComposerDraft(sessionId, { force: true });
-        localStorage.setItem('lastChatSessionId', sessionId);
-        syncChatUrl(sessionId);
-        reportSessionToShell(sessionId, { preferFocus: true });
-        refreshChatWidgets();
-        const openNeedsAck = sessionPrefsHasUnreadFlag(sessionId);
-        resetChatAttentionState({
-            needsAck: openNeedsAck,
-            isError: openNeedsAck && sessionPrefsUnreadIsError(sessionId),
-        });
-        
-        // Re-enable auto-resume since user explicitly loaded this session
-        localStorage.setItem('autoResumeSession', 'true');
-        
-        // Show chat area
-        clearChatRestoreVeil();
-        document.getElementById('welcomeScreen').style.display = 'none';
-        document.getElementById('chatArea').style.display = 'flex';
-        if (typeof window.__cuttlePinChatLayout === 'function') window.__cuttlePinChatLayout();
-        
-        // Load messages
-        const chatMessages = document.getElementById('chatMessages');
-        chatMessages.innerHTML = '';
-        
-        if (session.messages && session.messages.length > 0) {
-            beginSuppressChatAttention();
-            try {
-                session.messages.forEach(msg => {
-                    if (msg.role === 'assistant' && consumeCancelledAgentReply(msg.content, { announce: false })) return;
-                    const reportUrl = msg.report_url || (
-                        msg.query_id ? `/query_log.html?id=${msg.query_id}` : null
-                    );
-                    addMessageToUI(msg.content, msg.role, {
-                        report_url: reportUrl,
-                        query_id: msg.query_id,
-                        timestamp: msg.timestamp,
-                        slash_command: msg.slash_command,
-                        slash_command_failed: msg.slash_command_failed,
-                        attachments: msg.attachments,
-                        routing_badge: msg.routing_badge || undefined,
-                        usage: normalizeUsagePayload(msg.usage) || undefined,
-                        skipScroll: true,
-                        skipNav: true,
-                    });
-                });
-            } finally {
-                endSuppressChatAttention();
-            }
-            transcriptNav.updateMessageNav();
-            reconcileCuttleButtonLocks(session.messages);
-        }
-        
-        // Update active state in sidebar
-        document.querySelectorAll('.chat-history-item').forEach(item => {
-            item.classList.remove('active');
-            if (item.dataset.sessionId === sessionId) {
-                item.classList.add('active');
-            }
-        });
-        applyHistorySubagentExpandState();
-
-        // Restore the project (cwd) this conversation was using
-        reconcileChatProject();
-        restoreSessionStickySlash(sessionId, session.messages);
-        markChatSessionRead(sessionId);
-        syncHistoryUnreadIndicators();
-        syncChatAttentionIndicators();
-        
-        // Scroll to bottom (or deep-linked message) - default stays pinned to bottom
-        transcriptNav.settleAfterLoad();
+        return sessionLoader().loadChatSession(sessionId, opts);
     }
-    
+
     // The server auto-names sessions (fallback + background LLM title) shortly
     // after each assistant reply; re-pull the list so the sidebar picks it up.
     // OpenAI titles are usually ready in ~1s; later ticks catch slower local models.
@@ -8705,6 +8347,99 @@
             });
         }
         return _sessionLifecycle;
+    }
+
+    // loadChatSession host (CuttleChatSession.createLoader). The page supplies
+    // every capability the loader needs plus the mutable page state it advances.
+    // Built lazily on first load so page constants declared later are initialized.
+    let _sessionLoader = null;
+    function sessionLoader() {
+        if (!_sessionLoader) {
+            _sessionLoader = CuttleChatSession.createLoader(session, {
+                sessionIdsEqual: sessionIdsEqual,
+                saveComposerDraft: saveComposerDraft,
+                clearAllSlashChips: clearAllSlashChips,
+                canonicalizeChatSessionId: canonicalizeChatSessionId,
+                closeChatHistoryPanel: closeChatHistoryPanel,
+                detachLocalGenerationForNavigation: detachLocalGenerationForNavigation,
+                isAuthMode: isAuthMode,
+                releaseManualUnreadHoldIfLeaving: releaseManualUnreadHoldIfLeaving,
+                cancelDetachedSessionCompletionWatch: cancelDetachedSessionCompletionWatch,
+                adoptFollowupQueue: adoptFollowupQueue,
+                setHistorySessionRunning: setHistorySessionRunning,
+                updateChatIdBadge: updateChatIdBadge,
+                loadPromptHistoryForSession: loadPromptHistoryForSession,
+                syncChatUrl: syncChatUrl,
+                refreshChatWidgets: refreshChatWidgets,
+                restoreSessionStickySlash: restoreSessionStickySlash,
+                reportSessionToShell: reportSessionToShell,
+                sessionPrefsHasUnreadFlag: sessionPrefsHasUnreadFlag,
+                resetChatAttentionState: resetChatAttentionState,
+                sessionPrefsUnreadIsError: sessionPrefsUnreadIsError,
+                resetChatHistoryWindow: resetChatHistoryWindow,
+                removeRemoteWaitingIndicator: removeRemoteWaitingIndicator,
+                stopMessageSync: stopMessageSync,
+                toAuthDbSessionId: toAuthDbSessionId,
+                takeChatTranscriptPrefetch: takeChatTranscriptPrefetch,
+                fetchWithTimeout: fetchWithTimeout,
+                sessionMessagesUrl: sessionMessagesUrl,
+                windowChatHistoryMessages: windowChatHistoryMessages,
+                annotateMessageProjects: annotateMessageProjects,
+                reconcileChatProject: reconcileChatProject,
+                preferredModelFromMessages: preferredModelFromMessages,
+                hydrateAgentSelectionFromSessionData: hydrateAgentSelectionFromSessionData,
+                applySessionIdentity: applySessionIdentity,
+                rememberChatSessionTitle: rememberChatSessionTitle,
+                updateChatSessionTitle: updateChatSessionTitle,
+                beginSuppressChatAttention: beginSuppressChatAttention,
+                appendServerMessageToUI: appendServerMessageToUI,
+                endSuppressChatAttention: endSuppressChatAttention,
+                applyServerFollowups: applyServerFollowups,
+                acceptSessionAttention: acceptSessionAttention,
+                clearChatRestoreVeil: clearChatRestoreVeil,
+                reconcileCuttleButtonLocks: reconcileCuttleButtonLocks,
+                fetchChatLiveStatus: fetchChatLiveStatus,
+                updateRemoteWaitingFromMessages: updateRemoteWaitingFromMessages,
+                healStaleGeneratingState: healStaleGeneratingState,
+                isSessionGenerating: isSessionGenerating,
+                scheduleFollowupDrain: scheduleFollowupDrain,
+                refreshTypingIndicatorHeaderBadges: refreshTypingIndicatorHeaderBadges,
+                applyGeneratingFlagsFromSessions: applyGeneratingFlagsFromSessions,
+                _restorePendingAttachments: _restorePendingAttachments,
+                restoreComposerDraft: restoreComposerDraft,
+                markChatSessionRead: markChatSessionRead,
+                applyHistorySubagentExpandState: applyHistorySubagentExpandState,
+                syncHistoryUnreadIndicators: syncHistoryUnreadIndicators,
+                syncChatAttentionIndicators: syncChatAttentionIndicators,
+                setupChatHistoryLazyLoad: setupChatHistoryLazyLoad,
+                startMessageSync: startMessageSync,
+                consumeCancelledAgentReply: consumeCancelledAgentReply,
+                addMessageToUI: addMessageToUI,
+                normalizeUsagePayload: normalizeUsagePayload,
+                _mutateSessionIdSet: _mutateSessionIdSet,
+                CHAT_HISTORY_PAGE_SIZE: CHAT_HISTORY_PAGE_SIZE,
+                stopState: stopState,
+                transcriptNav: transcriptNav,
+                agentControls: agentControls,
+                formAwaitingSessionIds: formAwaitingSessionIds,
+                slashPaletteSupplement: slashPaletteSupplement,
+                generation: generation,
+                storage: localStorage,
+                pinChatLayout: function () {
+                    if (typeof window.__cuttlePinChatLayout === 'function') window.__cuttlePinChatLayout();
+                },
+                getAuth: function () { return window.CuttleAuth; },
+                getNetDebug: function () { return window.CuttleNetDebug; },
+                getFollowupQueue: function () { return followupQueue; },
+                getEditingFollowupId: function () { return editingFollowupId; },
+                setHubLiveStatusCache: function (v) { hubLiveStatusCache = v; },
+                setLastSeenServerMessageId: function (v) { lastSeenServerMessageId = v; },
+                setDeferOpenChatGeneratingFromSessions: function (v) { deferOpenChatGeneratingFromSessions = v; },
+                getLastHydratedSessionProject: function () { return lastHydratedSessionProject; },
+                setLastHydratedSessionProject: function (v) { lastHydratedSessionProject = v; },
+            });
+        }
+        return _sessionLoader;
     }
 
     function adoptChatSessionId(sessionId) {

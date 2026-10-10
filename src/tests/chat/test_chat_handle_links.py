@@ -18,6 +18,7 @@ node_only = pytest.mark.skipif(
 )
 
 CHAT_JS = Path(__file__).resolve().parents[2] / "web" / "js" / "chat/chat_page.js"
+SESSION_JS = CHAT_JS.parent / "chat_session.js"
 NAV_JS = Path(__file__).resolve().parents[2] / "web" / "js" / "chat/chat_transcript_nav.js"
 ACTIVITY_JS = Path(__file__).resolve().parents[2] / "web" / "js" / "chat/chat_activity.js"
 CHAT_CSS = Path(__file__).resolve().parents[2] / "web" / "css" / "chat_page.css"
@@ -146,6 +147,8 @@ def test_chat_handle_link_css_and_wiring_present():
     nav = NAV_JS.read_text(encoding="utf-8")
     assert "skipScroll: true" in js
     assert "transcriptNav.queueMessageJump(" in js
-    assert "transcriptNav.settleAfterLoad()" in js
+    # 3B step 3: loadChatSession (and its settle-after-load) moved to the owner.
+    session_js = SESSION_JS.read_text(encoding="utf-8")
+    assert "transcriptNav.settleAfterLoad()" in session_js
     assert "_suppressAutoScrollUntil" in nav
     assert "function consumePendingMessageJump(" in nav

@@ -25,6 +25,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 MOD_GEN = REPO_ROOT / "src" / "web" / "js" / "chat/chat_generation.js"
 CHAT_PAGE_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_page.js"
+CHAT_SESSION_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_session.js"
 CHAT_PAGE_HTML = REPO_ROOT / "src" / "web" / "chat_page.html"
 
 node_only = pytest.mark.skipif(
@@ -334,9 +335,12 @@ def test_page_delegates_generation_to_owner():
         "CuttleChatGeneration.isLoadingForSession(",
         "CuttleChatGeneration.decideSyncDelayMs(",
         "CuttleChatGeneration.classifyDetachedPoll(",
-        "CuttleChatGeneration.decideSessionOpen(",
     ]:
         assert call in src, f"missing delegation {call}"
+    # 3B step 3: the session-open flag decision moved with loadChatSession into
+    # chat_session.js (CuttleChatSession.createLoader).
+    session_src = CHAT_SESSION_JS.read_text(encoding="utf-8")
+    assert "CuttleChatGeneration.decideSessionOpen(" in session_src
     # Thin adapters keep behavior; direct busy-lock writes must be gone —
     # all transitions go through the single owned state object.
     for gone in [
