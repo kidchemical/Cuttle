@@ -8661,67 +8661,54 @@
         }
     }
 
+    // Session lifecycle writers (adopt/save) are owned by chat_session.js
+    // (CuttleChatSession.createLifecycle). The host is built lazily on first
+    // use so page constants declared later in this IIFE are initialized; the
+    // page keeps only these thin call sites.
+    let _sessionLifecycle = null;
+    function sessionLifecycle() {
+        if (!_sessionLifecycle) {
+            _sessionLifecycle = CuttleChatSession.createLifecycle(session, {
+                canonicalizeChatSessionId: canonicalizeChatSessionId,
+                sessionIdsEqual: sessionIdsEqual,
+                toAuthDbSessionId: toAuthDbSessionId,
+                isAuthMode: isAuthMode,
+                migratePromptHistorySession: migratePromptHistorySession,
+                migrateSessionPrefs: migrateSessionPrefs,
+                migrateComposerDraft: migrateComposerDraft,
+                migrateLocalChatSession: migrateLocalChatSession,
+                turnBadgeBySession: turnBadgeBySession,
+                getCompletionNotifications: () => window.CuttleCompletionNotifications,
+                generation: generation,
+                getCompletionNotificationPendingId: () => completionNotificationPendingId,
+                releaseManualUnreadHoldIfLeaving: releaseManualUnreadHoldIfLeaving,
+                adoptFollowupQueue: adoptFollowupQueue,
+                updateChatIdBadge: updateChatIdBadge,
+                storage: localStorage,
+                getAuth: () => window.CuttleAuth,
+                syncChatUrl: syncChatUrl,
+                reportSessionToShell: reportSessionToShell,
+                clearSessionPrefs: clearSessionPrefs,
+                newComposerPrefsId: newComposerPrefsId,
+                persistProjectForCurrentSession: persistProjectForCurrentSession,
+                persistStickySlashForCurrentSession: persistStickySlashForCurrentSession,
+                flushDirtyAgentSelectionsOnAdopt: () => agentControls.flushDirtyAgentSelectionsOnAdopt(),
+                rebindGeneration: (g, sid) => CuttleChatGeneration.rebindGeneration(g, sid),
+                setHistorySessionRunning: setHistorySessionRunning,
+                refreshChatHistoryList: refreshChatHistoryList,
+                scheduleHistoryTitleRefresh: scheduleHistoryTitleRefresh,
+                startMessageSync: startMessageSync,
+                generateLocalChatId: generateLocalChatId,
+                getCurrentProject: () => currentProject,
+                normalizeAttachmentList: normalizeAttachmentList,
+                reloadHistoryListKeepingSearch: reloadHistoryListKeepingSearch,
+            });
+        }
+        return _sessionLifecycle;
+    }
+
     function adoptChatSessionId(sessionId) {
-        if (sessionId == null || sessionId === '') return;
-        sessionId = canonicalizeChatSessionId(sessionId);
-        const prev = session.current();
-        if (prev && !sessionIdsEqual(sessionId, prev)) {
-            const prevBare = toAuthDbSessionId(prev);
-            const nextBare = toAuthDbSessionId(sessionId);
-            // Already bound to a Cuttle chat. Do not jump to a different numeric
-            // id — that painted this turn under another session's chrome (phone
-            // notification / CH- vs numeric remap / agent CLI session_id).
-            if (
-                prevBare && nextBare
-                && /^\d+$/.test(prevBare) && /^\d+$/.test(nextBare)
-                && prevBare !== nextBare
-            ) {
-                return;
-            }
-            migratePromptHistorySession(prev, sessionId);
-            migrateSessionPrefs(prev, sessionId);
-            migrateComposerDraft(prev, sessionId);
-            if (!isAuthMode()) migrateLocalChatSession(prev, sessionId);
-        }
-        const previousBadgeKey = String(canonicalizeChatSessionId(prev) || '');
-        if (previousBadgeKey !== String(sessionId) && turnBadgeBySession.has(previousBadgeKey)) {
-            turnBadgeBySession.set(String(sessionId), turnBadgeBySession.get(previousBadgeKey));
-            turnBadgeBySession.delete(previousBadgeKey);
-        }
-        const wasNew = session.current() == null || !sessionIdsEqual(session.current(), sessionId);
-        if (window.CuttleCompletionNotifications && generation.loading) {
-            window.CuttleCompletionNotifications.broker().adopt(prev || completionNotificationPendingId, sessionId);
-        }
-        releaseManualUnreadHoldIfLeaving(sessionId);
-        session.adopt(sessionId);
-        adoptFollowupQueue(session.current(), {transfer: prev == null || !/^\d+$/.test(String(toAuthDbSessionId(prev)))});
-        updateChatIdBadge(sessionId);
-        localStorage.setItem('lastChatSessionId', String(sessionId));
-        if (window.CuttleAuth && window.CuttleAuth.setCurrentChatSession) {
-            window.CuttleAuth.setCurrentChatSession(sessionId);
-        }
-        syncChatUrl(sessionId);
-        reportSessionToShell(sessionId);
-        if (prev == null) clearSessionPrefs(newComposerPrefsId);
-        // Persist project / sticky agent chosen before the server assigned an id.
-        persistProjectForCurrentSession();
-        persistStickySlashForCurrentSession(wasNew);
-        // Persist a Muse model/effort picked while the chat had no id yet. Only
-        // dirty picks persist here — persisting the in-memory default would
-        // clobber the stored pin (e.g. Contributor reset to plain Spark 1.3).
-        agentControls.flushDirtyAgentSelectionsOnAdopt();
-        // Owned by chat_generation.js — rebind the local lock to the newly
-        // bound session while loading; idle means no lock to move.
-        const rebound = CuttleChatGeneration.rebindGeneration(generation, sessionId);
-        if (rebound) {
-            if (rebound.prev) setHistorySessionRunning(rebound.prev, false);
-            setHistorySessionRunning(rebound.sessionId, true);
-        }
-        if (wasNew) {
-            refreshChatHistoryList();
-            scheduleHistoryTitleRefresh();
-            startMessageSync();
-        }
+        return sessionLifecycle().adoptChatSessionId(sessionId);
     }
 
     // Owned by chat_generation.js — thin adapter: cadence decision lives
@@ -10447,61 +10434,9 @@
         }
     }
 
+    // Owned by chat_session.js (CuttleChatSession.createLifecycle) — thin adapter.
     function saveChatSession(message, role, opts = {}) {
-        // Authenticated chats are persisted server-side in /api/chat
-        if (isAuthMode()) {
-            if (session.current() != null) {
-                localStorage.setItem('lastChatSessionId', String(session.current()));
-            }
-            localStorage.setItem('autoResumeSession', 'true');
-            if (role === 'assistant') scheduleHistoryTitleRefresh();
-            return;
-        }
-
-        if (!session.current()) {
-            // Create new session (CH-XXXXXX for anonymous local chats)
-            clearSessionPrefs(newComposerPrefsId);
-            session.create(generateLocalChatId());
-            adoptFollowupQueue(session.current());
-            localStorage.setItem('lastChatSessionId', session.current());
-            updateChatIdBadge(session.current());
-        }
-        
-        const sessions = JSON.parse(localStorage.getItem('chatSessions') || '{}');
-        
-        if (!sessions[session.current()]) {
-            sessions[session.current()] = {
-                id: session.current(),
-                title: message.substring(0, 50) + (message.length > 50 ? '...' : ''),
-                created: Date.now(),
-                updated: Date.now(),
-                messages: [],
-                projectId: currentProject ? currentProject.id : null,
-                projectPath: currentProject ? currentProject.path : '',
-                projectName: currentProject ? currentProject.name : '',
-            };
-        }
-        
-        const msg = { content: message, role: role, timestamp: Date.now() };
-        if (opts.query_id) msg.query_id = opts.query_id;
-        if (opts.report_url) msg.report_url = opts.report_url;
-        if (opts.slash_command) msg.slash_command = opts.slash_command;
-        if (opts.slash_command_failed) msg.slash_command_failed = true;
-        if (opts.usage) msg.usage = opts.usage;
-        if (opts.routing_badge) msg.routing_badge = opts.routing_badge;
-        const atts = normalizeAttachmentList(opts.attachments);
-        if (atts.length) msg.attachments = atts;
-        sessions[session.current()].messages.push(msg);
-        
-        sessions[session.current()].updated = Date.now();
-        
-        localStorage.setItem('chatSessions', JSON.stringify(sessions));
-        
-        // Re-enable auto-resume since user is actively chatting
-        localStorage.setItem('autoResumeSession', 'true');
-        
-        // Reload chat history to update sidebar (keep active search/filters)
-        reloadHistoryListKeepingSearch();
+        return sessionLifecycle().saveChatSession(message, role, opts);
     }
 
     function _historyActionIcons() {

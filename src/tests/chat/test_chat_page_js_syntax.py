@@ -41,19 +41,16 @@ def test_history_action_icons_function_present():
     """Guard the exact deletion that broke parse: header must precede its body."""
     text = CHAT_JS.read_text(encoding="utf-8")
     assert "function _historyActionIcons() {" in text
-    # Anchor on saveChatSession's keep-search call (the edit that ate the header).
-    marker = (
-        "// Reload chat history to update sidebar (keep active search/filters)\n"
-        "        reloadHistoryListKeepingSearch();\n"
-        "    }\n"
-    )
-    idx = text.find(marker)
-    assert idx >= 0, "saveChatSession keep-search reload marker missing"
-    after = text[idx + len(marker) : idx + len(marker) + 120]
-    assert after.lstrip().startswith("function _historyActionIcons() {"), (
-        "orphaned _historyActionIcons body — function header missing after "
-        "saveChatSession (browser SyntaxError: Unexpected identifier 'let')"
-    )
+
+
+def test_save_chat_session_keep_search_moved_to_owner():
+    """3B step 2 moved saveChatSession (and its keep-search reload anchor) into
+    chat_session.js; the page keeps a delegating call site."""
+    text = CHAT_JS.read_text(encoding="utf-8")
+    owner = (CHAT_JS.parent / "chat_session.js").read_text(encoding="utf-8")
+    assert "// Reload chat history to update sidebar (keep active search/filters)" in owner
+    assert "h.reloadHistoryListKeepingSearch();" in owner
+    assert "return sessionLifecycle().saveChatSession(message, role, opts);" in text
 
 
 def test_chat_page_html_loads_busted_script():
