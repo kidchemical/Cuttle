@@ -54,6 +54,34 @@ def test_list_and_stats(client, monkeypatch):
     assert all(set(j) >= {"kind", "id", "label", "status"} for j in inflight)
 
 
+def test_stats_timeline_buckets(monkeypatch):
+    runs = FakeRuns()
+    mesh = FakeMesh()
+    monkeypatch.setattr(service, "_agent_events_store", lambda: runs)
+    monkeypatch.setattr(service, "_mesh_store", lambda: mesh)
+    now = time.time()
+
+    def run_at(qid, status, age_min):
+        row = run_row(qid, status=status)
+        row["started_at"] = now - age_min * 60
+        row["finished_at"] = now - age_min * 60 + 5
+        return row
+
+    runs.rows = [
+        run_at("a", "ok", 30),
+        run_at("b", "failed", 30),
+        run_at("c", "ok", 90),
+    ]
+    out = service.job_stats(hours=24)
+    tl = out["timeline"]
+    assert tl["bucket_hours"] == 1
+    assert len(tl["buckets"]) == 24
+    assert sum(b["ok"] + b["failed"] for b in tl["buckets"]) == 3
+    assert tl["buckets"][-1]["ok"] == 1 and tl["buckets"][-1]["failed"] == 1
+    assert tl["buckets"][-2]["ok"] == 1
+    assert "mesh_timeline" in out and out["mesh_timeline"]["buckets"]
+
+
 def test_cancel_route(client, monkeypatch):
     monkeypatch.setattr(service, "_mesh_store", lambda: FakeMesh([mesh_row("m1", status="running")]))
     monkeypatch.setattr("api.experimental.is_enabled", lambda flag: True)

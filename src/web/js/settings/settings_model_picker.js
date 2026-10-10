@@ -15,6 +15,11 @@
         select.title = levels.length ? 'Effort for this provider and model.' : 'This model does not advertise named effort levels.';
     }
     function create({document: doc, fetch, select, custom, effort, status, operation, provider, changed}) {
+        if (root.CuttleSearchableSelect && select) {
+            root.CuttleSearchableSelect.enhance(select, {
+                label: (select.getAttribute && select.getAttribute('aria-label')) || 'Model',
+            });
+        }
         let rows = [], ticket = 0, current = {}, effortModel = '', efforts = {};
         const value = () => select.value === CUSTOM ? custom.value.trim() : select.value;
         const effective = () => value() || current.effective_model || current.default_model || '';

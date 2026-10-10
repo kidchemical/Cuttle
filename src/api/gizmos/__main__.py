@@ -39,7 +39,7 @@ def _json_arg(raw: Optional[str], name: str) -> Dict[str, Any]:
 
 def _config_from(args: argparse.Namespace) -> Dict[str, Any]:
     config = _json_arg(getattr(args, "config", None), "config")
-    for key in ("agent", "window", "show"):
+    for key in ("agent", "window", "show", "metric"):
         value = getattr(args, key, None)
         if value is not None:
             config[key] = value
@@ -79,6 +79,8 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--agent", help="usage_meter: codex | claude | cursor | …")
         p.add_argument("--window", help="usage_meter: 'tightest' or a window id (five_hour, weekly, …)")
         p.add_argument("--show", choices=["remaining", "used"])
+        p.add_argument("--metric", choices=["auto", "amount", "percent"],
+                       help="usage_meter readout: dollar amount, percent, or provider default")
         p.add_argument("--notify-on-unblock", dest="notify_on_unblock",
                        action="store_true", default=None,
                        help="notify (tray + UI toast) when a blocked account unblocks")

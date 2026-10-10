@@ -103,7 +103,9 @@ def test_lookups_and_mappers():
     assert res["defaultStarred"]["id"] == 7
     assert res["defaultPlain"]["id"] == 4  # Cuttle-name fallback
     assert res["defaultEmpty"] is None
-    assert res["storedFields"] == {"projectId": 7, "projectName": "", "projectPath": ""}
+    assert res["storedFields"] == {
+        "projectId": 7, "projectName": "", "projectPath": "", "checkoutUid": ""
+    }
     assert res["storedNull"] is None
     assert res["storedObj"] == {"id": 7, "name": "Escape Purgatory", "path": "E:\\Projects\\DemoGame"}
     assert res["storedNameOnly"]["id"] == 7

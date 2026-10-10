@@ -10,6 +10,7 @@ from core.agent_cli_env import agent_cli_env
 def test_real_child_isolated_while_parent_keeps_credentials(monkeypatch):
     keys = ('ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'META_API_KEY',
             'DEEPSEEK_API_KEY', 'CURSOR_API_KEY', 'OPENROUTER_API_KEY',
+            'OPENROUTER_MANAGEMENT_KEY',
             'GEMINI_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN',
             'AZURE_OPENAI_API_KEY', 'AWS_SECRET_ACCESS_KEY')
     for key in keys:

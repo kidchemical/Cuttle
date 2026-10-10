@@ -204,6 +204,11 @@ function targetPicker(target, { allowNone = false, noneLabel = '(none)', default
     wrap.appendChild(msel);
     if (esel) wrap.appendChild(esel);
     wrap.appendChild(avail);
+    if (window.CuttleSearchableSelect) {
+        window.CuttleSearchableSelect.enhance(sel, { className: 'cuttle-combo--agent', label: 'Agent' });
+        window.CuttleSearchableSelect.enhance(msel, { className: 'cuttle-combo--model', label: 'Model' });
+        if (esel) window.CuttleSearchableSelect.enhance(esel, { className: 'cuttle-combo--effort', label: 'Effort' });
+    }
     paintAvail();
     return wrap;
 }

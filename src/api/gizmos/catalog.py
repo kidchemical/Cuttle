@@ -53,6 +53,9 @@ def types_payload() -> List[Dict[str, Any]]:
 # ── usage_meter ──────────────────────────────────────────────────────────────
 
 USAGE_SHOW = ("remaining", "used")
+# How a meter reads out: a dollar amount, a percent, or the provider default
+# (``auto`` = amount for readout providers like OpenRouter, else percent).
+USAGE_METRICS = ("auto", "amount", "percent")
 
 
 def _truthy(value: Any) -> bool:
@@ -79,11 +82,15 @@ def _usage_config(raw: Dict[str, Any], existing: Optional[Dict[str, Any]] = None
     show = str(raw.get("show", base.get("show", "remaining")) or "remaining").strip().lower()
     if show not in USAGE_SHOW:
         raise ValueError("show must be 'remaining' or 'used'")
+    metric = str(raw.get("metric", base.get("metric", "auto")) or "auto").strip().lower()
+    if metric not in USAGE_METRICS:
+        raise ValueError("metric must be 'auto', 'amount', or 'percent'")
     if "notify_on_unblock" in raw:
         notify = _truthy(raw.get("notify_on_unblock"))
     else:
         notify = _truthy(base.get("notify_on_unblock", False))
-    return {"agent": agent, "window": window, "show": show, "notify_on_unblock": notify}
+    return {"agent": agent, "window": window, "show": show,
+            "metric": metric, "notify_on_unblock": notify}
 
 
 def _usage_title(config: Dict[str, Any]) -> str:
@@ -96,7 +103,8 @@ def _usage_data(config: Dict[str, Any], refresh: bool) -> Dict[str, Any]:
 
 
 def _usage_options() -> Dict[str, Any]:
-    return {"agents": usage.providers(), "show": list(USAGE_SHOW)}
+    return {"agents": usage.providers(), "show": list(USAGE_SHOW),
+            "metrics": list(USAGE_METRICS)}
 
 
 register_type(GizmoType(

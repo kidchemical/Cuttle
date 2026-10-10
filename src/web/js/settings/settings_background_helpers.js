@@ -102,6 +102,12 @@
             tuning.appendChild(label('Authentication', auth)); tuning.appendChild(label('Reasoning effort', effort)); tuning.appendChild(label('Temperature', temperature));
             controls.append(target, model, custom, refresh, up, remove);
             card.append(controls, tuning, status, explanation); el('backgroundChain').appendChild(card);
+            if (root.CuttleSearchableSelect) {
+                root.CuttleSearchableSelect.enhance(target, {
+                    label: target.getAttribute('aria-label') || 'Executor' });
+                root.CuttleSearchableSelect.enhance(model, {
+                    label: model.getAttribute('aria-label') || 'Model' });
+            }
             let rows = [], defaultEfforts = [], ticket = 0, draft = {...saved};
             const current = () => targets.find(t => t.key === target.value);
             const valueModel = () => model.value === '__custom__' ? custom.value.trim() : model.value;

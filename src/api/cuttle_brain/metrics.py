@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS context_turns (
     delta_chars INTEGER,
     handoff_chars INTEGER,
     handoff_messages INTEGER,
+    handoff_mode TEXT,
     layer_chars TEXT,
     context_tokens INTEGER,
     context_limit INTEGER,
@@ -51,9 +52,16 @@ CREATE INDEX IF NOT EXISTS idx_context_turns_chat ON context_turns(chat_session_
 _COLUMNS = (
     "ts", "chat_session_id", "agent_id", "model", "project_path", "mode",
     "full_reason", "prompt_chars", "envelope_chars", "delta_chars",
-    "handoff_chars", "handoff_messages", "layer_chars", "context_tokens",
-    "context_limit", "compacted", "success", "query_id", "source",
+    "handoff_chars", "handoff_messages", "handoff_mode", "layer_chars",
+    "context_tokens", "context_limit", "compacted", "success", "query_id",
+    "source",
 )
+
+# Columns added after the table shipped; ``connect`` backfills them on an
+# existing DB so old installs keep working without a destructive rebuild.
+_ADDED_COLUMNS = {
+    "handoff_mode": "TEXT",
+}
 
 
 def database_path() -> Path:
@@ -63,12 +71,21 @@ def database_path() -> Path:
     return runtime_state_path("brain", "context_metrics.db")
 
 
+def _ensure_columns(conn: sqlite3.Connection) -> None:
+    have = {row[1] for row in conn.execute("PRAGMA table_info(context_turns)")}
+    for name, decl in _ADDED_COLUMNS.items():
+        if name not in have:
+            conn.execute(f"ALTER TABLE context_turns ADD COLUMN {name} {decl}")
+    conn.commit()
+
+
 def connect(db_path: Optional[Path] = None) -> sqlite3.Connection:
     path = Path(db_path or database_path())
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path, timeout=10.0)
     conn.row_factory = sqlite3.Row
     conn.executescript(_SCHEMA)
+    _ensure_columns(conn)
     return conn
 
 
@@ -95,6 +112,9 @@ def _row(**fields: Any) -> Dict[str, Any]:
         "delta_chars": _int(fields.get("delta_chars")),
         "handoff_chars": _int(fields.get("handoff_chars")),
         "handoff_messages": _int(fields.get("handoff_messages")),
+        "handoff_mode": (str(fields.get("handoff_mode")).strip() or None)
+        if fields.get("handoff_mode")
+        else None,
         "layer_chars": json.dumps(layers) if isinstance(layers, dict) and layers else None,
         "context_tokens": _int(fields.get("context_tokens")) or None,
         "context_limit": _int(fields.get("context_limit")) or None,
@@ -202,6 +222,7 @@ def backfill_from_query_logs(logs_dir: Optional[Path] = None) -> Dict[str, int]:
             envelope_chars=brain.get("envelope_chars"),
             delta_chars=brain.get("delta_chars"),
             handoff_messages=brain.get("handoff_messages"),
+            handoff_mode=brain.get("handoff_mode"),
             success=data.get("success"),
             query_id=data.get("query_id") or path.stem[len("query_data_"):],
             source="backfill",

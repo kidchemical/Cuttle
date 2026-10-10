@@ -286,6 +286,7 @@ def _record_context_metrics(
                 else (brain_meta.get("layer_chars") or {}).get("handoff")
             ),
             handoff_messages=brain_meta.get("handoff_messages"),
+            handoff_mode=brain_meta.get("handoff_mode"),
             layer_chars=brain_meta.get("layer_chars"),
             context_tokens=fill,
             context_limit=limit,
@@ -488,6 +489,7 @@ def _compile_agent_prompt(
             "handoff_from": meta.get("handoff_from"),
             "handoff_to": meta.get("handoff_to"),
             "handoff_messages": handoff.message_count if handoff else 0,
+            "handoff_mode": getattr(handoff, "mode", None) if handoff else None,
             "layer_chars": dict(meta.get("layer_chars") or {}),
         }
         ranked_meta = meta.get("ranked_context")

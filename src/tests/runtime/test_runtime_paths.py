@@ -15,6 +15,8 @@ from core.runtime_paths import (
     rewrite_windows_lab_path,
     venv_bin_dir,
     venv_python,
+    worktree_path,
+    worktrees_dir,
 )
 
 REPO = Path(__file__).resolve().parents[3]
@@ -106,3 +108,32 @@ def test_electron_launch_argv_is_none_or_existing():
 def test_desktop_state_dir_is_named_cuttle_desktop():
     path = desktop_state_dir()
     assert path.name == "cuttle-desktop"
+
+
+def test_worktrees_dir_defaults_under_cuttle_home(tmp_path, monkeypatch):
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path / "home"))
+    assert worktrees_dir() == tmp_path / "home" / "worktrees"
+    # Branch-independent: identity is the worktree id, not a branch name.
+    assert worktree_path("myrepo", "abc123") == (
+        tmp_path / "home" / "worktrees" / "myrepo" / "abc123"
+    )
+
+
+def test_rewrite_leaves_windows_cuttle_home_alone():
+    if is_windows():
+        return
+    home_state = r"C:\Users\dev\AppData\Local\Cuttle\config\settings.json"
+    assert rewrite_windows_cuttle_path(home_state, REPO) == home_state
+    worktree = r"C:\Users\dev\AppData\Local\Cuttle\worktrees\myrepo\abc123"
+    assert rewrite_windows_cuttle_path(worktree, REPO) == worktree
+    # A real checkout on the same drive still maps onto this machine's root.
+    assert rewrite_windows_cuttle_path(r"C:\Projects\Cuttle\src", REPO) == str((REPO / "src").resolve())
+
+
+def test_rewrite_protected_prefixes_skip_configured_root(tmp_path, monkeypatch):
+    if is_windows():
+        return
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path / "home"))
+    worktree = r"D:\worktrees\Cuttle\abc123"
+    # Without protection the "Cuttle" segment would rewrite it onto REPO.
+    assert rewrite_windows_cuttle_path(worktree, REPO, protected_prefixes=(r"D:\worktrees",)) == worktree

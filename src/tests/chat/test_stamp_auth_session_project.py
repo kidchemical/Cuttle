@@ -38,6 +38,7 @@ def test_stamp_writes_client_project(monkeypatch):
         project_id=7,
         project_name="Demo Game",
         project_path=r"E:\Projects\DemoGame",
+        checkout_uid=None,
     )
 
 
@@ -91,4 +92,5 @@ def test_stamp_updates_when_client_switches_project(monkeypatch):
         project_id=7,
         project_name="Demo Game",
         project_path=r"E:\Projects\DemoGame",
+        checkout_uid=None,
     )

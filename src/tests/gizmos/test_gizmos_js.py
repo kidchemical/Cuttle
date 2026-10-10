@@ -65,6 +65,33 @@ out.escaped = html.every(h => !h.includes('<usage>'));
 out.variants = html.map(h => /gizmo--(\w+)/.exec(h)[1]);
 out.cardRows = (html[4].match(/gizmo-row /g) || []).length;
 out.detail = M.renderDetailHtml(g, data, now).includes('Plan: plus');
+const orG = {id: 'or', type: 'usage_meter', title: 'OpenRouter', config: {agent: 'openrouter', window: 'tightest', show: 'remaining'},
+  placement: {dock: 'float', order: 0}};
+const orData = {label: 'OpenRouter', plan: 'Credits', blocked: false, updated_at: 1_800_000_000,
+  windows: [], readout: {label: 'Credit balance', value: '$74.25', value_label: 'left', used_value: '$25.75', used_label: 'used', pct: 74.25}};
+const orModel = M.meterModel(orG, orData, now);
+out.readout = {pct: orModel.pct, value: orModel.value, valueLabel: orModel.valueLabel, hasBar: orModel.hasBar,
+  tone: orModel.tone, state: orModel.state, caption: orModel.caption, metric: orModel.metric};
+const orUsed = M.meterModel({...orG, config: {...orG.config, show: 'used'}}, orData, now);
+out.readoutUsed = {pct: orUsed.pct, value: orUsed.value, valueLabel: orUsed.valueLabel};
+const orPct = M.meterModel({...orG, config: {...orG.config, metric: 'percent'}}, orData, now);
+out.readoutPercent = {hasBar: orPct.hasBar, pct: orPct.pct, value: orPct.value, valueLabel: orPct.valueLabel,
+  caption: orPct.caption, metric: orPct.metric};
+const orPctUsed = M.meterModel({...orG, config: {...orG.config, metric: 'percent', show: 'used'}}, orData, now);
+out.readoutPercentUsed = {pct: orPctUsed.pct, value: orPctUsed.value};
+out.railPercent = M.renderGizmoHtml({...orG, config: {...orG.config, metric: 'percent'}}, orData, 'rail', now).includes('gizmo-ring');
+const codexAmount = M.meterModel({...g, config: {...g.config, metric: 'amount'}}, data, now);
+out.amountFallback = {metric: codexAmount.metric, hasBar: codexAmount.hasBar, value: codexAmount.value};
+const noPct = {...orData, readout: {label: 'Credit balance', value: '$74.25', value_label: 'left'}};
+const noPctModel = M.meterModel(orG, noPct, now);
+out.readoutNoPct = {hasBar: noPctModel.hasBar, pct: noPctModel.pct, value: noPctModel.value,
+  tone: noPctModel.tone, state: noPctModel.state};
+out.readoutNoBar = ['titlebar', 'rail', 'float', 'card'].map(v => M.renderGizmoHtml(orG, noPct, v, now))
+  .every(h => !h.includes('gizmo-bar'));
+out.railText = M.renderGizmoHtml(orG, noPct, 'rail', now).includes('gizmo-ring-value--text');
+out.readoutDetail = M.renderDetailHtml(orG, noPct, now).includes('$74.25');
+out.orBlocked = M.meterModel(orG, {...orData, blocked: true, unblock_at: null,
+  readout: {...orData.readout, value: '$0.00', pct: 0}}, now).state;
 console.log(JSON.stringify(out));
 """
 
@@ -113,9 +140,42 @@ def test_markup(harness):
     assert harness["detail"] is True
 
 
+def test_readout_headline_drives_meter(harness):
+    # auto => a dollar readout provider reads out amount, not a ratio.
+    assert harness["readout"] == {"pct": 74.25, "value": "$74.25", "valueLabel": "left",
+                                  "hasBar": False, "tone": "ok", "state": "ok",
+                                  "caption": "Credit balance", "metric": "amount"}
+    assert harness["readoutUsed"] == {"pct": 25.75, "value": "$25.75", "valueLabel": "used"}
+    # explicit percent restores the bar/ring and a % headline.
+    assert harness["readoutPercent"] == {"hasBar": True, "pct": 74.25, "value": "74%",
+                                         "valueLabel": "left", "caption": "Credit balance",
+                                         "metric": "percent"}
+    assert harness["readoutPercentUsed"] == {"pct": 25.75, "value": "26%"}
+    assert harness["railPercent"] is True
+    # amount is meaningless without dollars; a window provider stays percent.
+    assert harness["amountFallback"] == {"metric": "percent", "hasBar": True, "value": "18%"}
+    assert harness["readoutNoPct"] == {"hasBar": False, "pct": 0, "value": "$74.25",
+                                       "tone": "ok", "state": "ok"}
+    assert harness["readoutNoBar"] is True
+    assert harness["railText"] is True
+    assert harness["readoutDetail"] is True
+    assert harness["orBlocked"] == "blocked"
+
+
 # ---------------------------------------------------------------------------
 # static wiring
 # ---------------------------------------------------------------------------
+def test_meter_dropdowns_bind_native_color_scheme():
+    """Native <option> lists follow color-scheme; the dark popover/page would
+    otherwise render light text on a light list (unreadable)."""
+    popover = (WEB / "css" / "gizmos.css").read_text(encoding="utf-8")
+    page = (WEB / "css" / "gizmos_page.css").read_text(encoding="utf-8")
+    assert ".shell-gizmo-popover-field select { color-scheme: dark; }" in popover
+    assert "body.light-mode .shell-gizmo-popover-field select { color-scheme: light; }" in popover
+    assert ".gizmos-page select { color-scheme: dark; }" in page
+    assert "body.light-mode .gizmos-page select { color-scheme: light; }" in page
+
+
 def test_shell_loads_gizmos_after_app_shell():
     html = (WEB / "app_shell.html").read_text(encoding="utf-8")
     shell = html.index("/js/shell/app_shell.js")

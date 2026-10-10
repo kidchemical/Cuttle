@@ -99,6 +99,60 @@ def _cost(value) -> Optional[float]:
         return None
 
 
+# Raw source status -> stacked series. Keeps the chart vocabulary small while
+# still rolling the many mesh states into a handful of columns.
+_RUN_SERIES = ("ok", "failed", "cancelled", "running")
+_RUN_STATUS_MAP = {s: s for s in _RUN_SERIES}
+_MESH_SERIES = ("succeeded", "failed", "cancelled", "active")
+_MESH_STATUS_MAP = {
+    "succeeded": "succeeded",
+    "failed": "failed",
+    "cancelled": "cancelled",
+    "expired": "cancelled",
+    "queued": "active",
+    "claimed": "active",
+    "running": "active",
+}
+
+
+def _bucket_hours(hours: int) -> int:
+    """Aim for ~24 columns across the window."""
+    if hours <= 48:
+        return 1
+    if hours <= 24 * 14:
+        return 6
+    return 24
+
+
+def _timeline(items, ts_key, since, hours, series, status_map):
+    """Count items per time bucket, stacked by normalized series."""
+    span_hours = _bucket_hours(hours)
+    span = span_hours * 3600
+    count = max(1, int(round(hours / span_hours)))
+    buckets = []
+    for i in range(count):
+        row = {"t": round(since + i * span)}
+        for s in series:
+            row[s] = 0
+        buckets.append(row)
+    for item in items:
+        ts = item.get(ts_key)
+        if ts is None:
+            continue
+        try:
+            idx = int((float(ts) - since) // span)
+        except (TypeError, ValueError):
+            continue
+        if idx < 0:
+            idx = 0
+        elif idx >= count:
+            idx = count - 1
+        series_name = status_map.get(str(item.get("status") or "unknown"))
+        if series_name:
+            buckets[idx][series_name] += 1
+    return {"bucket_hours": span_hours, "buckets": buckets}
+
+
 def job_stats(*, hours: int = 24) -> Dict[str, Any]:
     """Aggregations over the unified ledger for the telemetry pane."""
     try:
@@ -199,4 +253,6 @@ def job_stats(*, hours: int = 24) -> Dict[str, Any]:
         },
         "by_agent": by_agent_out,
         "by_type": [{"type": k, "count": v} for k, v in sorted(by_type.items(), key=lambda x: -x[1])],
+        "timeline": _timeline(runs, "started_at", since, hours, _RUN_SERIES, _RUN_STATUS_MAP),
+        "mesh_timeline": _timeline(mesh, "created_at", since, hours, _MESH_SERIES, _MESH_STATUS_MAP),
     }

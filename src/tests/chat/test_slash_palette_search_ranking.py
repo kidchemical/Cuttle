@@ -135,3 +135,22 @@ const builder = agent === 'codex' ? buildCodexModelPaletteItems : buildOpenCodeM
 process.stdout.write(JSON.stringify(builder('needle').map(i => i.modelId)));
 """ % json.dumps(agent))
     assert "needle" in result
+
+
+@pytest.mark.parametrize("agent", ["codex", "opencode"])
+def test_full_option_returns_whole_catalog_for_searchable_dropdown(agent):
+    """The chip-config combobox asks for the full catalog (`{full:true}`);
+    the slash palette still clips to 40."""
+    result = run_js("""
+const agent = %s;
+slashPaletteSupplement[agent + 'Models'] = Array.from({length:45}, (_, i) => ({
+  id:'m' + i, label:'Model ' + i
+}));
+const builder = agent === 'codex' ? buildCodexModelPaletteItems : buildOpenCodeModelPaletteItems;
+const real = items => items.filter(i => i.modelId).length;
+process.stdout.write(JSON.stringify({
+  full: real(builder('model', {full:true})),
+  clipped: real(builder('model')),
+}));
+""" % json.dumps(agent))
+    assert result == {"full": 45, "clipped": 40}

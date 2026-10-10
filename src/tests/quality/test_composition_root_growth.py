@@ -29,7 +29,11 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 # path -> ceiling (lines). Baseline 2026-10-08 after the release-readiness
 # extractions: chat_page.js 23250, app_shell.js 8159, web_chat_api.py 7722.
 CEILINGS = {
-    "src/web/js/chat/chat_page.js": 23300,
+    # +80 (2026-10-10): worktree composer wiring (W3b) + checkout-aware Pending
+    # changes/git path — page-owned state/effects only (currentCheckoutUid/Path,
+    # setChatCheckout, effectiveGitPath, chip host caps, persistence/serialize).
+    # Decisions live in chat_project.js / chat_worktrees.js / chat_chip_config.js.
+    "src/web/js/chat/chat_page.js": 23380,
     "src/web/js/shell/app_shell.js": 8200,
     "src/api/web_chat_api.py": 7750,
 }

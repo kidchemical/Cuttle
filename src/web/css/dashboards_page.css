@@ -330,6 +330,7 @@ body.light-mode .dash-usage-dates input { color-scheme: light; }
     border-radius: 10px; border: 1px solid var(--border-color); background: var(--section-bg);
     padding: 10px 12px 6px; min-width: 0;
 }
+.dash-usage-card--wide { grid-column: 1 / -1; }
 .dash-usage-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .dash-usage-card-head h3 { margin: 0; font-size: 0.85rem; font-weight: 650; }
 .dash-usage-card-head span { font-size: 10px; color: var(--text-tertiary); text-align: right; }

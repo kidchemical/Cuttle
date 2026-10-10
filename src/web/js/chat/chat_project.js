@@ -101,8 +101,14 @@
             : (serverSession.projectId != null ? serverSession.projectId : null);
         const name = serverSession.project_name || serverSession.projectName || '';
         const path = serverSession.project_path || serverSession.projectPath || '';
-        if (id == null && !name && !path) return null;
-        return { projectId: id, projectName: name, projectPath: path };
+        const checkoutUid = serverSession.checkout_uid || serverSession.checkoutUid || '';
+        if (id == null && !name && !path && !checkoutUid) return null;
+        return {
+            projectId: id,
+            projectName: name,
+            projectPath: path,
+            checkoutUid: checkoutUid || '',
+        };
     }
 
     /**
@@ -321,11 +327,15 @@
     }
 
     /** Stamp the outbound project onto a chat request body. */
-    function applyOutboundProjectToRequest(requestBody, proj) {
+    function applyOutboundProjectToRequest(requestBody, proj, checkoutUid) {
         if (!requestBody || !proj) return;
         if (proj.id != null) requestBody.project_id = proj.id;
         if (proj.name) requestBody.project_name = proj.name;
         if (proj.path) requestBody.project_path = proj.path;
+        // Bound worktree checkout (experimental): the turn's cwd is the
+        // checkout; project fields above stay the project identity.
+        const uid = String(checkoutUid || (proj && proj.checkoutUid) || '').trim();
+        if (uid) requestBody.checkout_uid = uid;
     }
 
     function currentProjectPathKey(proj) {

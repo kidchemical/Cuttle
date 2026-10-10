@@ -212,3 +212,45 @@ def test_voice_key_test_dispatch_and_format(tmp_path, monkeypatch):
     assert res.status_code == 200
     assert res.get_json()["success"] is False
     assert seen.get("elevenlabs") == "e" * 32
+
+
+def test_openrouter_management_key_round_trip(tmp_path, monkeypatch):
+    client = _owner_client(tmp_path, monkeypatch)
+    monkeypatch.delenv("OPENROUTER_MANAGEMENT_KEY", raising=False)
+    secret = "sk-or-v1-" + "a" * 40
+
+    res = client.post(
+        "/api/save-api-key",
+        json={"api_type": "openrouter", "api_key": secret},
+    )
+    assert res.status_code == 200, res.get_json()
+    text = (tmp_path / "home" / ".env").read_text(encoding="utf-8")
+    assert "OPENROUTER_MANAGEMENT_KEY=" in text
+    assert secret not in res.get_data(as_text=True)
+
+    raw = client.get("/api/load-api-keys").get_data(as_text=True)
+    body = client.get("/api/load-api-keys").get_json()
+    assert body["configured"]["openrouter"] is True
+    assert body["api_keys"]["openrouter"].startswith("sk-o")
+    assert secret not in raw
+
+
+def test_openrouter_test_endpoint_reports_balance(tmp_path, monkeypatch):
+    from api import openrouter_management
+
+    client = _owner_client(tmp_path, monkeypatch)
+    seen = {}
+
+    def fake_probe(key=None):
+        seen["key"] = key
+        return {"success": True, "message": "Valid OpenRouter management key — $5.00 credit left"}
+
+    monkeypatch.setattr(openrouter_management, "probe", fake_probe)
+    res = client.post(
+        "/api/test-api-key", json={"api_type": "openrouter", "api_key": ""}
+    )
+    assert res.status_code == 200
+    body = res.get_json()
+    assert body["success"] is True
+    assert "credit left" in body["message"]
+    assert seen["key"] is None

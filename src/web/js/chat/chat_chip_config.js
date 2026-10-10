@@ -1,10 +1,12 @@
 /* ================================================================
    Cuttle Chat — composer chip controller (chat_chip_config.js).
    Owner: everything a composer chip opens or shows on click —
-   the centered project/agent config modal (modal DOM, one dropdown
-   per chip part: Project + Branch, or Agent + Model + Effort),
-   chip-row click/keyboard binding, the branch list/switch transport,
-   and the segmented project chip's branch cache.
+   the centered project/agent config modal (modal DOM, one native
+   <select> per chip part: Project + Branch, or Agent + Model + Effort,
+   each upgraded to a searchable combobox by the shared
+   js/shared/searchable_select.js), chip-row click/keyboard binding, the
+   branch list/switch transport, and the segmented project chip's branch
+   cache.
 
    Composed once per page by chat_page.js:
    `CuttleChipConfig.create(host)` returns
@@ -58,7 +60,7 @@
         const setting = spec && spec[kind];
         if (!setting || typeof setting.build !== 'function') return [];
         let items = [];
-        try { items = setting.build() || []; } catch (_) { items = []; }
+        try { items = setting.build({ full: true }) || []; } catch (_) { items = []; }
         return items
             .filter((it) => it && it.modelId !== undefined && it.modelId !== '')
             .map((it) => ({
@@ -140,19 +142,45 @@
             ).join('');
         }
 
+        // Field markup: a label + a native <select>. The shared
+        // CuttleSearchableSelect (wired in enhanceSelects) turns the select
+        // into a searchable, lazily-paged combobox while it stays the single
+        // source of value/change for the page handlers and tests.
         function selectHtml(id, label, options, selected, disabled) {
-            return '<label class="chip-config-field">' +
+            return '<div class="chip-config-field">' +
                 '<span class="chip-config-field-label">' + esc(label) + '</span>' +
                 '<select class="chip-config-select" id="' + id + '"' + (disabled ? ' disabled' : '') + '>' +
-                optionsHtml(options, selected) + '</select></label>';
+                optionsHtml(options, selected) + '</select></div>';
         }
 
-        // Refill policy: never rewrite a focused select (an open native
-        // Android picker holds focus; replacing option nodes dismisses and
-        // reopens it — a visible flicker), and skip identical options.
+        // Free-text field (used only for a new worktree's branch name).
+        function inputHtml(id, label, value, placeholder) {
+            return '<div class="chip-config-field">' +
+                '<span class="chip-config-field-label">' + esc(label) + '</span>' +
+                '<input class="chip-config-input" type="text" id="' + id + '" autocomplete="off" ' +
+                'value="' + esc(value == null ? '' : value) + '" ' +
+                'placeholder="' + esc(placeholder || '') + '"></div>';
+        }
+
+        // Wire the shared searchable combobox onto each rendered select. The
+        // component owns the trigger/search/lazy list; the native select stays
+        // the value/change source (see js/shared/searchable_select.js).
+        function enhanceSelects(rootEl) {
+            if (!rootEl || !root.CuttleSearchableSelect) return;
+            rootEl.querySelectorAll('select.chip-config-select').forEach((sel) => {
+                const field = sel.closest ? sel.closest('.chip-config-field') : null;
+                const labelEl = field ? field.querySelector('.chip-config-field-label') : null;
+                root.CuttleSearchableSelect.enhance(sel, {
+                    label: labelEl ? labelEl.textContent : '',
+                });
+            });
+        }
+
+        // Refill policy: skip identical options. The shared searchable-select
+        // observes the select, so the trigger label and any open list refresh
+        // on their own after a refill.
         function fillSelect(sel, options, selected) {
             if (!sel) return;
-            if (typeof document !== 'undefined' && sel === document.activeElement) return;
             const html = optionsHtml(options, selected);
             if (sel._chipConfigSig === html) return;
             sel._chipConfigSig = html;
@@ -203,6 +231,7 @@
             host_.querySelectorAll('.chip-config-select').forEach((sel) => {
                 sel._chipConfigSig = sel.innerHTML;
             });
+            enhanceSelects(host_);
             el.classList.add('active');
             if (onMount) onMount(el);
             return el;
@@ -235,6 +264,28 @@
                 sel.innerHTML = '<option value="">Could not load branches</option>';
                 sel.disabled = true;
             }
+        }
+
+        async function loadWorktrees(sel, projectId, selectedUid) {
+            if (!sel) return;
+            sel.disabled = true;
+            sel.innerHTML = '<option value="">Loading…</option>';
+            let items = [];
+            try {
+                items = await Promise.resolve(h.getWorktrees ? h.getWorktrees(projectId) : []);
+            } catch (_) {
+                items = [];
+            }
+            const list = Array.isArray(items) ? items : [];
+            sel._worktrees = list;
+            const opts = list
+                .filter((w) => w && w.checkout_uid && w.state !== 'missing')
+                .map((w) => ({
+                    value: w.checkout_uid,
+                    label: (w.branch || w.checkout_uid) + (w.checkout_uid === selectedUid ? '  ✓' : ''),
+                }));
+            opts.push({ value: '__new__', label: '➕ New worktree…' });
+            fillSelect(sel, opts, selectedUid || '__new__');
         }
 
         async function switchBranch(name, sel, projectId) {
@@ -275,25 +326,89 @@
                 label: ((p && isStarred(p)) ? '★ ' : '') + ((p && p.name) || ('Project ' + (p && p.id))),
             })).filter((o) => o.value !== '');
             const curId = current && current.id != null ? String(current.id) : '';
-            const fields =
-                selectHtml('chipConfigProject', 'Project', projOptions, curId, !projOptions.length) +
-                selectHtml('chipConfigBranch', 'Branch', [], '', true);
+            const wtEnabled = typeof h.worktreesEnabled === 'function' && h.worktreesEnabled();
+            const currentCheckout = h.getChatCheckout ? (h.getChatCheckout() || '') : '';
+            const mode = currentCheckout ? 'worktree' : 'local';
+            const defBranch = h.defaultWorktreeBranch ? h.defaultWorktreeBranch() : '';
+            let fields = selectHtml('chipConfigProject', 'Project', projOptions, curId, !projOptions.length);
+            if (wtEnabled) {
+                fields += selectHtml('chipConfigMode', 'Mode', [
+                    { value: 'local', label: 'Local — shared checkout' },
+                    { value: 'worktree', label: 'Worktree — isolated branch' },
+                ], mode);
+            }
+            fields += selectHtml('chipConfigBranch', 'Branch', [], '', true);
+            if (wtEnabled) {
+                fields += inputHtml('chipConfigNewBranch', 'New worktree branch', defBranch, 'cuttle/feature');
+            }
             openModal(
                 'Working project',
-                'Choose the project and branch for this chat.',
+                'Choose the project, mode, and branch for this chat.',
                 fields,
                 (el) => {
                     const projSel = el.querySelector('#chipConfigProject');
+                    const modeSel = el.querySelector('#chipConfigMode');
                     const branchSel = el.querySelector('#chipConfigBranch');
+                    const newBranchInput = el.querySelector('#chipConfigNewBranch');
+                    const currentMode = () => (wtEnabled && modeSel ? modeSel.value : 'local');
+                    const setNewBranchVisible = (visible) => {
+                        const field = newBranchInput && newBranchInput.closest
+                            ? newBranchInput.closest('.chip-config-field') : null;
+                        if (field) field.style.display = visible ? '' : 'none';
+                    };
+                    const syncBranch = () => {
+                        if (currentMode() === 'worktree') {
+                            setNewBranchVisible(true);
+                            loadWorktrees(branchSel, projSel.value,
+                                h.getChatCheckout ? h.getChatCheckout() : '');
+                        } else {
+                            setNewBranchVisible(false);
+                            loadBranches(branchSel, projSel.value);
+                        }
+                    };
                     projSel.addEventListener('change', () => {
                         const proj = h.findProjectById ? h.findProjectById(projSel.value) : null;
                         if (proj && h.setChatProject) h.setChatProject(proj);
-                        loadBranches(branchSel, projSel.value);
+                        if (newBranchInput && h.defaultWorktreeBranch) {
+                            newBranchInput.value = h.defaultWorktreeBranch();
+                        }
+                        syncBranch();
                     });
+                    if (modeSel) {
+                        modeSel.addEventListener('change', () => {
+                            if (currentMode() === 'local' && h.setChatCheckout) h.setChatCheckout(null);
+                            syncBranch();
+                        });
+                    }
                     branchSel.addEventListener('change', () => {
-                        switchBranch(branchSel.value, branchSel, projSel.value);
+                        const value = branchSel.value;
+                        if (currentMode() !== 'worktree') {
+                            switchBranch(value, branchSel, projSel.value);
+                            return;
+                        }
+                        if (value === '__new__') {
+                            const name = ((newBranchInput && newBranchInput.value) || '').trim()
+                                || (h.defaultWorktreeBranch ? h.defaultWorktreeBranch() : '');
+                            if (!name) return;
+                            Promise.resolve(h.createWorktree ? h.createWorktree(projSel.value, name) : null)
+                                .then((created) => {
+                                    if (created && created.checkout_uid) {
+                                        if (h.setChatCheckout) h.setChatCheckout(created);
+                                        toast('Worktree ready: ' + (created.branch || name), 'success');
+                                    } else {
+                                        toast((created && created.error) || 'Worktree creation failed', 'error');
+                                    }
+                                    loadWorktrees(branchSel, projSel.value, created && created.checkout_uid);
+                                })
+                                .catch(() => loadWorktrees(branchSel, projSel.value, ''));
+                            return;
+                        }
+                        if (value) {
+                            const picked = (branchSel._worktrees || []).find((w) => w.checkout_uid === value);
+                            if (picked && h.setChatCheckout) h.setChatCheckout(picked);
+                        }
                     });
-                    loadBranches(branchSel, curId);
+                    syncBranch();
                 }
             );
         }
@@ -364,10 +479,18 @@
                             }
                         }, ms));
                         const cancel = () => timers.forEach((t) => clearTimeout(t));
+                        const cancelTargets = [agentSel, modelSel, effortSel];
                         [agentSel, modelSel, effortSel].forEach((sel) => {
-                            if (!sel) return;
-                            sel.addEventListener('pointerdown', cancel, { once: true });
-                            sel.addEventListener('focus', cancel, { once: true });
+                            const combo = sel && sel.closest ? sel.closest('.cuttle-combo') : null;
+                            if (!combo) return;
+                            cancelTargets.push(
+                                combo.querySelector('.cuttle-combo-trigger'),
+                                combo.querySelector('.cuttle-combo-search'));
+                        });
+                        cancelTargets.forEach((node) => {
+                            if (!node) return;
+                            node.addEventListener('pointerdown', cancel, { once: true });
+                            node.addEventListener('focus', cancel, { once: true });
                         });
                     }
                 }
@@ -410,6 +533,9 @@
         }
 
         if (typeof document !== 'undefined') {
+            // Escape closes the modal. When a searchable-select panel is open,
+            // the shared component (js/shared/searchable_select.js) closes it
+            // first and stops the event, so the modal stays up.
             document.addEventListener('keydown', (e) => {
                 if (e.key === 'Escape') close();
             });

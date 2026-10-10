@@ -13,6 +13,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CHAT_JS = REPO_ROOT / "src" / "web" / "js" / "chat" / "chat_page.js"
 MODULE_JS = REPO_ROOT / "src" / "web" / "js" / "chat" / "chat_chip_config.js"
+SHARED_JS = REPO_ROOT / "src" / "web" / "js" / "shared" / "searchable_select.js"
+SHARED_CSS = REPO_ROOT / "src" / "web" / "css" / "searchable_select.css"
 CHAT_CSS = REPO_ROOT / "src" / "web" / "css" / "chat_page.css"
 CHAT_HTML = REPO_ROOT / "src" / "web" / "chat_page.html"
 
@@ -91,3 +93,41 @@ def test_chip_modal_css_exists():
     assert ".chip-config-modal" in css
     assert ".chip-config-select" in css
     assert ".chip-config-field-label" in css
+
+
+def test_chip_modal_dropdowns_use_the_shared_searchable_select():
+    # The chip modal delegates to the shared component; it does not own a
+    # private combobox implementation.
+    mod = MODULE_JS.read_text(encoding="utf-8")
+    assert "CuttleSearchableSelect.enhance" in mod
+    assert "function enhanceSelects" in mod
+    for leak in ("chip-combo", "function initCombos", "function buildComboList"):
+        assert leak not in mod, f"{leak} should live in the shared component"
+
+    shared = SHARED_JS.read_text(encoding="utf-8")
+    for token in (
+        "function enhance",
+        "cuttle-combo-trigger",
+        "cuttle-combo-search",
+        "cuttle-combo-option",
+        "MutationObserver",
+    ):
+        assert token in shared, token
+
+    css = SHARED_CSS.read_text(encoding="utf-8")
+    for token in (
+        ".cuttle-combo-trigger",
+        ".cuttle-combo-panel",
+        ".cuttle-combo-search",
+        ".cuttle-combo-option",
+    ):
+        assert token in css, token
+
+
+def test_chat_page_loads_the_shared_select_before_the_chip_modal():
+    html = CHAT_HTML.read_text(encoding="utf-8")
+    assert "/js/shared/searchable_select.js" in html
+    assert "css/searchable_select.css" in html
+    shared_at = html.index("/js/shared/searchable_select.js")
+    mod_at = html.index("/js/chat/chat_chip_config.js")
+    assert shared_at < mod_at

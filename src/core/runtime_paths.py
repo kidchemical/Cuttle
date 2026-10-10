@@ -58,7 +58,8 @@ def cuttle_home() -> Path:
 
     Layout: ``.env``, ``config/`` (settings), ``db/``, ``sessions/``,
     ``brain/``, ``cache/``, ``agent_events/``, ``supervised_tasks/``,
-    ``edit_attribution/``, ``output/``, ``logs/``, ``secrets/``, ``personal/``.
+    ``edit_attribution/``, ``worktrees/``, ``output/``, ``logs/``,
+    ``secrets/``, ``personal/``.
     """
     override = (os.environ.get("CUTTLE_HOME") or "").strip()
     if override:
@@ -83,6 +84,24 @@ def data_db_dir() -> Path:
     d = cuttle_home() / "db"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def worktrees_dir() -> Path:
+    """Default root for Cuttle-managed git worktrees (``<home>/worktrees``). Pure.
+
+    A configured override lives in ``settings.json`` (owned by ``api.worktrees``);
+    this helper only names the default so callers never join onto ``__file__``.
+    """
+    return cuttle_home() / "worktrees"
+
+
+def worktree_path(slug: str, worktree_id: str) -> Path:
+    """Stable, branch-independent worktree dir ``<home>/worktrees/<slug>/<id>``. Pure.
+
+    Identity is ``worktree_id`` (never the branch), so a rename or rebranch does
+    not move the directory. Callers validate ``slug``/``worktree_id`` segments.
+    """
+    return worktrees_dir() / slug / worktree_id
 
 
 def runtime_state_path(owner: str, name: str = "") -> Path:
@@ -267,7 +286,40 @@ def _join_under(root: Path, rest: str) -> str:
     return str((root / rest).resolve())
 
 
-def rewrite_windows_cuttle_path(path: str, project_root: Optional[Path] = None) -> str:
+def _is_foreign_cuttle_home(parts: List[str], idx: int) -> bool:
+    """True when ``parts[idx]`` is the repo folder but the path is a Cuttle *home*.
+
+    The home never belongs to the checkout heuristic:
+    - ``…/AppData/(Local|Roaming)/<repo>/…`` is the Windows per-user home, and
+    - ``…/<repo>/worktrees/…`` is the default home worktree root.
+
+    Rewriting either onto the project root would relocate state and worktrees
+    into the install tree on a foreign machine.
+    """
+    if idx + 1 < len(parts) and parts[idx + 1].lower() == "worktrees":
+        return True
+    return (
+        idx >= 2
+        and parts[idx - 2].lower() == "appdata"
+        and parts[idx - 1].lower() in ("local", "roaming")
+    )
+
+
+def _under_any_prefix(text: str, prefixes) -> bool:
+    normalized = text.replace("\\", "/").rstrip("/").lower()
+    for prefix in prefixes or ():
+        p = str(prefix).replace("\\", "/").rstrip("/").lower()
+        if p and (normalized == p or normalized.startswith(p + "/")):
+            return True
+    return False
+
+
+def rewrite_windows_cuttle_path(
+    path: str,
+    project_root: Optional[Path] = None,
+    *,
+    protected_prefixes=None,
+) -> str:
     """Map a Windows Cuttle checkout path onto this machine's project root.
 
     On POSIX, copied settings / session cwd still look like ``C:/Projects/Cuttle``.
@@ -275,6 +327,10 @@ def rewrite_windows_cuttle_path(path: str, project_root: Optional[Path] = None) 
     (usually ``Cuttle``) maps onto ``project_root``. Extra prefixes that do not
     contain that folder name live in gitignored
     ``<home>/personal/path-aliases.json`` (or ``CUTTLE_WINDOWS_PREFIXES``).
+
+    Paths under ``protected_prefixes`` (e.g. configured worktree roots) and the
+    per-user Cuttle home (``…/AppData/(Local|Roaming)/Cuttle`` or a
+    ``…/Cuttle/worktrees`` path) are never treated as the checkout.
     """
     raw = (path or "").strip()
     if not raw or is_windows():
@@ -286,6 +342,10 @@ def rewrite_windows_cuttle_path(path: str, project_root: Optional[Path] = None) 
     # alone: /home/runner/work/Cuttle/Cuttle would otherwise match the first
     # "Cuttle" segment and be rewritten to …/Cuttle/Cuttle/Cuttle.
     if not (re.match(r"^[A-Za-z]:", text) or "\\" in raw or text.startswith("//")):
+        return raw
+
+    builtin_protected = (str(worktrees_dir()),)
+    if _under_any_prefix(text, builtin_protected) or _under_any_prefix(text, protected_prefixes):
         return raw
 
     prefixes = []
@@ -305,6 +365,8 @@ def rewrite_windows_cuttle_path(path: str, project_root: Optional[Path] = None) 
         needle = name.lower()
         idx = next((i for i, part in enumerate(parts) if part.lower() == needle), -1)
         if idx >= 0:
+            if _is_foreign_cuttle_home(parts, idx):
+                return raw
             rest = "/".join(parts[idx + 1 :])
             return _join_under(root, rest)
     return raw
@@ -333,13 +395,18 @@ def path_mappings(project_root: Optional[Path] = None) -> List[tuple]:
     return out
 
 
-def rewrite_windows_lab_path(path: str, project_root: Optional[Path] = None) -> str:
+def rewrite_windows_lab_path(
+    path: str,
+    project_root: Optional[Path] = None,
+    *,
+    protected_prefixes=None,
+) -> str:
     """Rewrite a Windows path onto this machine: Cuttle checkout, then ``path_mappings``."""
     raw = (path or "").strip()
     if not raw or is_windows():
         return raw
     repo = Path(project_root) if project_root is not None else _repo_root()
-    mapped = rewrite_windows_cuttle_path(raw, repo)
+    mapped = rewrite_windows_cuttle_path(raw, repo, protected_prefixes=protected_prefixes)
     if mapped != raw and Path(mapped).exists():
         return mapped
     text = raw.replace("\\", "/")

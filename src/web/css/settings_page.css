@@ -820,3 +820,27 @@ body.compact-shell-page button.cuttle-info {
 .background-executor { padding: 12px; margin: 8px 0; border: 1px solid var(--border-color, #555); border-radius: 8px; }
 .background-executor .provider-picker { margin-bottom: 8px; }
 .background-executor input[type="number"] { width: 125px; }
+
+/* Shared searchable select (js/shared/searchable_select.js) in Settings. */
+.setting-control--column > .cuttle-combo,
+.setting-item .cuttle-combo {
+    width: 100%;
+    max-width: 100%;
+}
+
+.provider-picker .cuttle-combo {
+    flex: 1 1 220px;
+    min-width: 220px;
+    max-width: 100%;
+}
+
+.provider-picker .cuttle-combo-trigger {
+    width: 100%;
+}
+
+@media (max-width: 640px) {
+    .provider-picker .cuttle-combo {
+        min-width: 0;
+        width: 100%;
+    }
+}

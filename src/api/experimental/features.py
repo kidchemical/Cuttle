@@ -114,3 +114,9 @@ register_flag(FlagSpec(
     # Experimental or the CUTTLE_EXPERIMENTAL kill switch.
     default=True, category="ui", risk="low", since="0.0.0", needs_restart=False,
 ))
+
+register_flag(FlagSpec(
+    id="worktrees", label="Worktrees",
+    description="Run a chat in its own git worktree and branch instead of the shared checkout, so parallel chats cannot fight over one working tree. Default worktrees live under the Cuttle home; creating and removing one is a deliberate action.",
+    default=False, category="agents", risk="medium", since="0.0.0", needs_restart=False,
+))

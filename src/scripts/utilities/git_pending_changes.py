@@ -1245,6 +1245,21 @@ def resolve_allowed_project_cwd(
                     return str(want), current_project, None
             except OSError:
                 pass
+        # A registered worktree checkout of a project is allowed (experimental);
+        # its owning project comes from the checkouts registry, never the whole
+        # worktrees root.
+        try:
+            from api.worktrees import registry as _checkout_registry
+            checkout = _checkout_registry.checkout_for_path(str(want))
+        except Exception:
+            checkout = None
+        if checkout is not None:
+            owner = next(
+                (p for p in projects or [] if str(p.get("id")) == str(checkout.project_id)),
+                None,
+            )
+            if owner is not None and want.is_dir():
+                return str(want), owner, None
         # Path given but not registered — fall through to project_id before failing
         if project_id is None:
             return None, None, "Path is not a registered project"

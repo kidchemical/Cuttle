@@ -4745,6 +4745,35 @@ pre.has-code-copy:hover .code-copy-btn,
     color: #e2e8f0;
 }
 
+.chip-config-input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 11px 12px;
+    border-radius: 10px;
+    background-color: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    color: #e2e8f0;
+    font-size: 14px;
+    font-family: inherit;
+    appearance: none;
+    -webkit-appearance: none;
+}
+
+.chip-config-input::placeholder {
+    color: rgba(160, 174, 192, 0.65);
+}
+
+.chip-config-input:focus {
+    outline: none;
+    border-color: rgba(139, 92, 246, 0.6);
+    box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.25);
+}
+
+/* Searchable combobox (js/shared/searchable_select.js) fills the field. */
+.chip-config-field .cuttle-combo {
+    width: 100%;
+}
+
 .chip-config-actions {
     display: flex;
     flex-direction: column;

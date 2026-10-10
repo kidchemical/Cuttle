@@ -90,6 +90,25 @@ def test_compact_overview_expand_effort_and_save(surface):
     assert not errors
 
 
+def test_lane_model_dropdown_is_searchable(surface):
+    page,api,errors=surface
+    page.get_by_role('button',name='Writing',exact=True).click()
+    detail=page.locator('#lane-detail-2')
+    combo=detail.locator('.cuttle-combo--model').first
+    combo.locator('.cuttle-combo-trigger').click()
+    search=combo.locator('.cuttle-combo-search')
+    search.wait_for(state='visible')
+    search.fill('op')
+    page.wait_for_timeout(50)
+    texts=combo.locator('.cuttle-combo-option').all_inner_texts()
+    assert any('opus' in t for t in texts), texts
+    assert all('sonnet' not in t for t in texts), texts
+    combo.locator('.cuttle-combo-option').first.click()
+    page.wait_for_timeout(50)
+    assert detail.locator('.model').first.input_value()=='opus'
+    assert not errors
+
+
 def test_preview_live_brain_errors_flow_and_mobile(surface):
     page,api,errors=surface
     page.locator('#try-prompt').fill('Write release notes')

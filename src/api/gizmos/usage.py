@@ -114,7 +114,7 @@ def finalize(body: Dict[str, Any], now: float) -> Dict[str, Any]:
     if blocked:
         # Every exhausted window has to reset before ordinary usage runs again.
         unblock_at = max(exhausted) if exhausted else (min(future) if future else None)
-    return {
+    out = {
         "plan": str(body.get("plan") or ""),
         "windows": windows,
         "blocked": blocked,
@@ -123,6 +123,12 @@ def finalize(body: Dict[str, Any], now: float) -> Dict[str, Any]:
         "extras": body.get("extras") if isinstance(body.get("extras"), dict) else {},
         "error": body.get("error") or None,
     }
+    # Optional provider headline that is not a percent window (e.g. an
+    # OpenRouter credit balance in dollars). Absent for window-based agents.
+    readout = body.get("readout")
+    if isinstance(readout, dict):
+        out["readout"] = readout
+    return out
 
 
 def normalize_codex(data: Dict[str, Any], now: float) -> Dict[str, Any]:
@@ -209,6 +215,43 @@ def normalize_cursor(data: Dict[str, Any], now: float) -> Dict[str, Any]:
             "blocked": False, "extras": extras}
 
 
+def normalize_openrouter(data: Dict[str, Any], now: float) -> Dict[str, Any]:
+    """OpenRouter is a prepaid dollar balance, not a plan window.
+
+    ``total_credits`` is lifetime credits purchased and ``total_usage`` is
+    lifetime spend, so ``balance = total_credits - total_usage``. There is no
+    cycle reset, so this publishes a dollar **readout** (headline) instead of a
+    percent window; the bar, when shown, is ``balance / total_credits`` — an
+    indicative share of credits ever purchased, not a spendable budget.
+    """
+    if not isinstance(data, dict) or not data.get("success"):
+        return {"error": str((data or {}).get("error") or "OpenRouter credits unavailable")[:240]}
+    total = _num(data.get("total_credits"))
+    used = _num(data.get("total_usage"))
+    balance = _num(data.get("balance"))
+    if balance is None and total is not None and used is not None:
+        balance = round(total - used, 6)
+    readout: Dict[str, Any] = {
+        "label": "Credit balance",
+        "value": f"${balance:,.2f}" if balance is not None else "—",
+        "value_label": "left",
+    }
+    if used is not None:
+        # ``show: used`` on the meter flips the headline to spend-to-date.
+        readout["used_value"] = f"${used:,.2f}"
+        readout["used_label"] = "used"
+    if total and total > 0 and balance is not None:
+        readout["pct"] = round(max(0.0, min(100.0, balance / total * 100.0)), 2)
+    extras: Dict[str, Any] = {}
+    if balance is not None:
+        extras["credits"] = f"${balance:,.2f} left"
+    if total is not None and used is not None:
+        extras["note"] = f"${used:,.2f} of ${total:,.2f} lifetime credits used"
+    blocked = balance is not None and balance <= 0
+    return {"plan": "Credits", "windows": [], "readout": readout,
+            "blocked": blocked, "extras": extras}
+
+
 # ── built-in providers ──────────────────────────────────────────────────────
 
 def _fetch_codex() -> Dict[str, Any]:
@@ -229,9 +272,16 @@ def _fetch_cursor() -> Dict[str, Any]:
     return normalize_cursor(fetch_cursor_account_usage(), time.time())
 
 
+def _fetch_openrouter() -> Dict[str, Any]:
+    from api.openrouter_management import fetch_credits
+
+    return normalize_openrouter(fetch_credits(), time.time())
+
+
 register_provider("codex", "Codex", _fetch_codex)
 register_provider("claude", "Claude Code", _fetch_claude)
 register_provider("cursor", "Cursor", _fetch_cursor)
+register_provider("openrouter", "OpenRouter", _fetch_openrouter)
 
 
 # ── cache ────────────────────────────────────────────────────────────────────

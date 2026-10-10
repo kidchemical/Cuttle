@@ -906,7 +906,10 @@
                     const name = (data.project && data.project.name)
                         || (currentProject() && currentProject().name)
                         || '';
-                    branchEl.textContent = [name, br].filter(Boolean).join(' · ');
+                    const worktree = currentProject() && currentProject().worktree;
+                    branchEl.textContent = worktree
+                        ? ('\uD83C\uDF3F ' + (br || 'worktree'))
+                        : [name, br].filter(Boolean).join(' · ');
                     branchEl.title = String(repoRoot || '') + (br ? ' (' + br + ')' : '');
                 }
                 if (list) {

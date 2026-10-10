@@ -128,6 +128,7 @@ def cuttle_context(
     layer_sum = {l["id"]: [0] * len(days) for l in LAYERS}
     layer_n = [0] * len(days)
     reasons: Counter = Counter()
+    handoff_modes: Counter = Counter()
     handoffs = compactions = 0
     full_all: List[int] = []
 
@@ -139,8 +140,13 @@ def cuttle_context(
         if mode in modes:
             modes[mode][i] += 1
         if mode == "full" and t.get("envelope_chars"):
-            full_sizes[i].append(int(t["envelope_chars"]))
-            full_all.append(int(t["envelope_chars"]))
+            # Briefing size, not briefing + injected conversation: a
+            # project-switch reset or agent handoff rides inside the envelope,
+            # so net the transcript out to keep this a "is the briefing
+            # growing" series instead of a transcript-size series.
+            size = max(0, int(t["envelope_chars"]) - int(t.get("handoff_chars") or 0))
+            full_sizes[i].append(size)
+            full_all.append(size)
             if t.get("full_reason"):
                 reasons[t["full_reason"]] += 1
             layers = t.get("layer_chars") or {}
@@ -150,6 +156,7 @@ def cuttle_context(
                     layer_sum[key][i] += int(layers.get(key) or 0)
         if t.get("handoff_messages"):
             handoffs += 1
+            handoff_modes[str(t.get("handoff_mode") or "unrecorded")] += 1
         if t.get("compacted"):
             compactions += 1
 
@@ -178,6 +185,9 @@ def cuttle_context(
             if any(layer_sum[l["id"]])
         ],
         "full_reasons": [{"id": k, "count": v} for k, v in reasons.most_common()],
+        "handoff_modes": [
+            {"id": k, "count": v} for k, v in handoff_modes.most_common()
+        ],
         "sessions": _session_series(turns),
         "rules": _rule_sizes(),
         "stats": {
@@ -185,6 +195,8 @@ def cuttle_context(
             "full": sum(modes["full"]),
             "full_median_chars": int(median(full_all)) if full_all else None,
             "handoffs": handoffs,
+            "handoffs_reset": handoff_modes.get("reset", 0),
+            "handoffs_switch": handoff_modes.get("switch", 0),
             "compactions": compactions,
             "median_fill_pct": round(median(fills), 1) if fills else None,
             "with_fill": sum(1 for t in turns if t.get("context_tokens")),

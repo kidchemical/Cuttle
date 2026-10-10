@@ -68,6 +68,28 @@ def _parent_row(db, parent_session_id: int) -> Dict[str, Any]:
     return row
 
 
+def _execution_path_for_parent(parent: Dict[str, Any]) -> str:
+    """cwd for child turns: the parent's bound worktree checkout, else its path.
+
+    The child's stored ``project_path`` stays the project identity; only the
+    execution cwd follows the parent's checkout.
+    """
+    project_path = str(parent.get("project_path") or "")
+    checkout_uid = str(parent.get("checkout_uid") or "")
+    if not checkout_uid:
+        return project_path
+    try:
+        from api.worktrees import binding
+        pid = parent.get("project_id")
+        try:
+            pid_int = int(pid) if pid not in (None, "") else None
+        except (TypeError, ValueError):
+            pid_int = None
+        return binding.resolve_bound_checkout_path(checkout_uid, pid_int) or project_path
+    except Exception:
+        return project_path
+
+
 def _refresh(db, batch_id: str) -> BatchRecord:
     batch = store.get_batch(db, batch_id)
     if not batch:
@@ -206,6 +228,8 @@ def spawn(
     project_path = str(parent.get("project_path") or "")
     project_id = parent.get("project_id")
     project_name = parent.get("project_name") or ""
+    checkout_uid = str(parent.get("checkout_uid") or "")
+    run_path = _execution_path_for_parent(parent)
 
     watch_id = ""
     widget_id = ""
@@ -239,7 +263,7 @@ def spawn(
     for i, spec in enumerate(specs):
         if route or spec.route:
             spec = apply_router(
-                spec, session_id=parent_session_id, project_path=project_path
+                spec, session_id=parent_session_id, project_path=run_path
             )
         sid = db.create_subagent_chat_session(
             user_id,
@@ -248,6 +272,7 @@ def spawn(
             project_id=project_id,
             project_name=project_name,
             project_path=project_path,
+            checkout_uid=checkout_uid,
             display_name=spec.display_name or spec.title,
             avatar=spec.avatar,
             agent_profile_id=spec.profile_id or None,
@@ -270,14 +295,14 @@ def spawn(
     timed_out = False
     if collect_n == COLLECT_SERIAL:
         if wait:
-            _run_serial(db, batch, created, runner=runner, project_path=project_path)
+            _run_serial(db, batch, created, runner=runner, project_path=run_path)
             waited = wait_batch(batch.id, timeout=timeout, db=db, runner=None, start=False)
             timed_out = bool(waited.get("timed_out"))
         else:
             # Start only the first; wait/message will continue.
             spec0, child0 = created[0]["spec"], created[0]["child"]
             run_child_turn_async(
-                db, child0, spec0, project_path=project_path, runner=runner
+                db, child0, spec0, project_path=run_path, runner=runner
             )
     else:
         for item in created:
@@ -285,7 +310,7 @@ def spawn(
                 db,
                 item["child"],
                 item["spec"],
-                project_path=project_path,
+                project_path=run_path,
                 runner=runner,
             )
         if wait:
@@ -383,7 +408,7 @@ def wait_batch(
 
 def _kick_pending(db, batch: BatchRecord, *, runner: Optional[TurnRunner]) -> None:
     parent = _parent_row(db, batch.parent_session_id)
-    project_path = str(parent.get("project_path") or "")
+    project_path = _execution_path_for_parent(parent)
     if batch.collect == COLLECT_SERIAL:
         _kick_next_serial(db, batch, runner=runner)
         return
@@ -408,7 +433,7 @@ def _kick_next_serial(db, batch: BatchRecord, *, runner: Optional[TurnRunner]) -
     if any(c.status == STATUS_RUNNING for c in batch.children):
         return
     parent = _parent_row(db, batch.parent_session_id)
-    project_path = str(parent.get("project_path") or "")
+    project_path = _execution_path_for_parent(parent)
     for child in batch.children:
         if child.status == "pending":
             spec = ChildSpec(
@@ -462,7 +487,7 @@ def message_child(
     project_path = ""
     if parent:
         prow = db.get_chat_session_by_id(parent.parent_session_id) or {}
-        project_path = str(prow.get("project_path") or "")
+        project_path = _execution_path_for_parent(prow)
         if parent.status in TERMINAL_BATCH:
             store.update_batch(db, parent.id, status=STATUS_RUNNING)
     if wait:

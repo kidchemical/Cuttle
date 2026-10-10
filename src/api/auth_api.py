@@ -987,17 +987,22 @@ def patch_chat_session(session_id):
             out['archived'] = archived
             touched = True
 
-        project_keys = ('project_id', 'project_name', 'project_path', 'projectId', 'projectName', 'projectPath')
+        project_keys = (
+            'project_id', 'project_name', 'project_path', 'checkout_uid',
+            'projectId', 'projectName', 'projectPath', 'checkoutUid',
+        )
         if any(k in data for k in project_keys):
             pid = data.get('project_id', data.get('projectId'))
             pname = data.get('project_name', data.get('projectName'))
             ppath = data.get('project_path', data.get('projectPath'))
+            cuid = data.get('checkout_uid', data.get('checkoutUid'))
             success = db.set_session_project(
                 session_id,
                 user['id'],
                 project_id=pid,
                 project_name=pname,
                 project_path=ppath,
+                checkout_uid=cuid,
             )
             if not success:
                 return jsonify({
@@ -1007,12 +1012,13 @@ def patch_chat_session(session_id):
             out['project_id'] = pid
             out['project_name'] = (pname or '').strip() or None
             out['project_path'] = (ppath or '').strip() or None
+            out['checkout_uid'] = (str(cuid).strip() or None) if cuid is not None else None
             touched = True
 
         if not touched:
             return jsonify({
                 'success': False,
-                'error': 'No supported fields to update (expected session_name, starred, archived, and/or project_id/project_name/project_path)'
+                'error': 'No supported fields to update (expected session_name, starred, archived, and/or project_id/project_name/project_path/checkout_uid)'
             }), 400
 
         return jsonify(out)
@@ -1227,7 +1233,7 @@ def get_session_messages(session_id):
                     msg['report_url'] = meta['report_url']
                 if meta.get('query_id') and not msg.get('query_id'):
                     msg['query_id'] = meta['query_id']
-                for key in ('project_id', 'project_name', 'project_path'):
+                for key in ('project_id', 'project_name', 'project_path', 'checkout_uid'):
                     if meta.get(key) not in (None, '') and not msg.get(key):
                         msg[key] = meta[key]
                 if meta.get('kind') and not msg.get('kind'):
@@ -1337,6 +1343,7 @@ def get_session_messages(session_id):
             'project_id': session.get('project_id'),
             'project_name': session.get('project_name'),
             'project_path': session.get('project_path'),
+            'checkout_uid': session.get('checkout_uid'),
             'followups': followup_state['followups'],
             'followup_revision': followup_state['revision'],
             'attention': db.get_attention(session_id, user['id']),

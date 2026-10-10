@@ -207,6 +207,12 @@ class AgentHandoff:
     text: str
     message_count: int = 0
     truncated_count: int = 0
+    # Why this transcript was injected: "switch" (agent changed), "reset"
+    # (same agent, project/workspace changed so the per-cwd resume is gone),
+    # or "history" (agent keeps no native session). Consumers use it to keep
+    # conversation out of briefing-size metrics.
+    mode: str = "switch"
+
 
 
 def _numeric_session_id(chat_session_id: Any) -> Optional[int]:
@@ -292,6 +298,27 @@ def fetch_recent_transcript(
 
 def _norm(text: str) -> str:
     return " ".join((text or "").split()).lower()
+
+
+def _older_visible_count(chat_session_id: Any, oldest_id: Any) -> int:
+    """Visible rows older than the oldest fetched row.
+
+    The window-limited paths fetch only the newest ``limit`` rows, so turns
+    before that window are never seen by ``_fit_budget`` and would otherwise
+    be dropped without the ``chat_cli`` pointer. Best-effort (0 on any error);
+    ``message_page_meta`` already counts non-system rows the same way the
+    rendered transcript does.
+    """
+    sid = _numeric_session_id(chat_session_id)
+    if sid is None or oldest_id is None:
+        return 0
+    try:
+        from api.auth_db import get_auth_db
+
+        meta = get_auth_db().message_page_meta(sid, int(oldest_id))
+        return int(meta.get("older_visible_count") or 0)
+    except Exception:
+        return 0
 
 
 def _drop_current_turn(
@@ -469,12 +496,19 @@ def build_handoff(
         and not _same_project(prev_project, project_path)
     )
     mode = "switch"
+    # Window-limited paths fetch only the newest ``limit`` rows; turns before
+    # that window must still be reported as omitted (with the chat_cli pointer)
+    # rather than silently dropped. The cursor path fetches everything since the
+    # cursor, so its head is covered and needs no such count.
+    window_limited = False
     if full_history:
         mode = "history"
         messages = fetch_recent_transcript(chat_session_id, limit=limit)
+        window_limited = True
     elif project_changed:
         mode = "reset"
         messages = fetch_recent_transcript(chat_session_id, limit=limit)
+        window_limited = True
     elif cursor is not None and from_agent is None:
         messages = _skip_own_reply(
             fetch_recent_transcript(chat_session_id, after_id=cursor)
@@ -485,15 +519,21 @@ def build_handoff(
         if from_agent is not None and (not previous or previous == target):
             return None
         messages = fetch_recent_transcript(chat_session_id, limit=limit)
+        window_limited = True
     messages = _drop_current_turn(messages, current_prompt)
     if not messages:
         return None
+    head_dropped = (
+        _older_visible_count(chat_session_id, messages[0].get("id"))
+        if window_limited
+        else 0
+    )
     kept, omitted, truncated = _fit_budget(messages)
     text = format_handoff_delta(
         from_agent=previous,
         to_agent=target,
         messages=kept,
-        omitted=omitted,
+        omitted=omitted + head_dropped,
         truncated=truncated,
         chat_handle=_chat_handle(chat_session_id),
         mode=mode,
@@ -504,4 +544,5 @@ def build_handoff(
         text=text,
         message_count=len(kept),
         truncated_count=truncated,
+        mode=mode,
     )

@@ -80,28 +80,17 @@
             title, agentLabel, show, pct: 0, value: '…', valueLabel: show === 'used' ? 'used' : 'left',
             caption: '', resetText: '', rows: [], tone: 'unknown', state: 'loading',
             error: '', stale: false, plan: '', updatedAt: null, unblockAt: null, extras: {},
-            notifyArmed: !!cfg.notify_on_unblock,
+            hasBar: false, metric: 'percent', notifyArmed: !!cfg.notify_on_unblock,
         };
         if (!data) return base;
         const windows = Array.isArray(data.windows) ? data.windows : [];
-        if (!windows.length) {
+        const readout = (data.readout && typeof data.readout === 'object') ? data.readout : null;
+        if (!windows.length && !readout) {
             return { ...base, state: 'error', value: '—', error: data.error || 'No usage windows reported',
                 resetText: data.error || 'No usage windows reported', plan: data.plan || '',
                 updatedAt: data.updated_at || null };
         }
         const win = pickWindow(data, cfg);
-        const remaining = clampPct(win.remaining_percent);
-        const pct = show === 'used' ? 100 - remaining : remaining;
-        let resetText = '';
-        if (data.blocked && data.unblock_at) resetText = 'Unblocks ' + relative(data.unblock_at, nowMs);
-        else if (data.blocked) resetText = 'Limit reached';
-        else if (win.reset_at) resetText = win.label + ' resets ' + relative(win.reset_at, nowMs);
-        if (data.stale) {
-            const now = (nowMs == null ? Date.now() : nowMs) / 1000;
-            if (windows.some(w => w.reset_at && w.reset_at <= now))
-                resetText = 'Scheduled reset passed; awaiting verification';
-            else resetText = 'Expected: ' + resetText;
-        }
         const rows = windows.map(w => {
             const left = clampPct(w.remaining_percent);
             return {
@@ -110,12 +99,59 @@
                 resetText: w.reset_at ? relative(w.reset_at, nowMs) : '',
                 resetAbs: absolute(w.reset_at),
                 tone: toneFor(left, left <= 0 && !!data.blocked),
-                active: w.id === win.id,
+                active: !!win && w.id === win.id,
             };
         });
+        // Percent source: a readout pct, else the picked window's remaining.
+        let remainingPct = null;
+        if (readout && Number.isFinite(Number(readout.pct))) remainingPct = clampPct(readout.pct);
+        else if (win) remainingPct = clampPct(win.remaining_percent);
+        // Effective readout unit. `auto` = the provider's natural headline
+        // (amount for a dollar readout, percent for plan windows); `amount`
+        // falls back to percent when the provider reports no dollars.
+        const wantMetric = ['amount', 'percent'].includes(cfg.metric) ? cfg.metric : 'auto';
+        let metric = wantMetric === 'auto' ? (readout ? 'amount' : 'percent') : wantMetric;
+        if (metric === 'amount' && !readout) metric = 'percent';
+        if (metric === 'percent' && remainingPct == null && readout && readout.value) metric = 'amount';
+        const wantUsed = show === 'used';
+        const state = data.blocked ? 'blocked' : 'ok';
+        let resetText = '';
+        if (data.blocked) {
+            resetText = data.unblock_at ? 'Unblocks ' + relative(data.unblock_at, nowMs) : 'Limit reached';
+        } else if (readout && readout.note) {
+            resetText = readout.note;
+        } else if (win && win.reset_at) {
+            resetText = win.label + ' resets ' + relative(win.reset_at, nowMs);
+        }
+        if (data.stale) {
+            const now = (nowMs == null ? Date.now() : nowMs) / 1000;
+            if (windows.some(w => w.reset_at && w.reset_at <= now))
+                resetText = 'Scheduled reset passed; awaiting verification';
+            else if (resetText) resetText = 'Expected: ' + resetText;
+        }
+
+        if (metric === 'amount') {
+            const amount = wantUsed ? (readout.used_value != null ? readout.used_value : readout.value) : readout.value;
+            const valueLabel = wantUsed ? (readout.used_label || 'used') : (readout.value_label || '');
+            const tone = state === 'blocked' ? 'blocked'
+                : (['ok', 'low', 'critical', 'unknown'].includes(readout.tone)
+                    ? readout.tone : (remainingPct != null ? toneFor(remainingPct, false) : 'ok'));
+            return {
+                ...base, hasBar: false, metric,
+                pct: wantUsed ? 100 - (remainingPct == null ? 0 : remainingPct) : (remainingPct == null ? 0 : remainingPct),
+                value: String(amount == null ? '—' : amount), valueLabel: String(valueLabel),
+                caption: String(readout.label || ''), resetText, rows, tone, state,
+                error: data.error || '', stale: !!data.stale, plan: data.plan || '',
+                updatedAt: data.updated_at || null, unblockAt: data.unblock_at || null,
+                extras: data.extras || {},
+            };
+        }
+        const rem = remainingPct == null ? 0 : remainingPct;
+        const pct = wantUsed ? 100 - rem : rem;
         return {
-            ...base, pct, value: Math.round(pct) + '%', caption: win.label, resetText, rows,
-            tone: toneFor(remaining, !!data.blocked), state: data.blocked ? 'blocked' : 'ok',
+            ...base, hasBar: true, metric, pct, value: Math.round(pct) + '%',
+            caption: win ? win.label : String((readout && readout.label) || ''), resetText, rows,
+            tone: toneFor(rem, !!data.blocked), state,
             error: data.error || '', stale: !!data.stale, plan: data.plan || '',
             updatedAt: data.updated_at || null, unblockAt: data.unblock_at || null,
             extras: data.extras || {},
@@ -125,6 +161,9 @@
     function tooltipText(model) {
         const lines = [model.title];
         if (model.plan) lines.push('Plan: ' + model.plan);
+        if (!model.hasBar && model.value && model.value !== '…') {
+            lines.push(model.value + (model.valueLabel ? ' ' + model.valueLabel : ''));
+        }
         model.rows.forEach(r => lines.push(r.label + ': ' + Math.round(r.remaining) + '% left'
             + (r.resetText ? ' · resets ' + r.resetText : '')));
         if (model.resetText && model.state === 'blocked') lines.push(model.resetText);
@@ -151,6 +190,11 @@
         return s.length > 7 ? s.slice(0, 6) + '…' : s;
     }
 
+    function compactValue(value) {
+        const s = String(value == null ? '' : value);
+        return s.length > 8 ? s.slice(0, 7) + '…' : s;
+    }
+
     function renderRows(model) {
         return '<div class="gizmo-rows">' + model.rows.map(r =>
             '<div class="gizmo-row tone-' + r.tone + (r.active ? ' is-active' : '') + '">'
@@ -170,16 +214,20 @@
         if (variant === 'titlebar') {
             return '<div class="' + cls + '"' + attrs + '>'
                 + '<span class="gizmo-agent">' + escape(shortLabel(model.agentLabel)) + '</span>'
-                + bar(model.pct)
+                + (model.hasBar ? bar(model.pct) : '')
                 + '<span class="gizmo-value">' + escape(model.value) + '</span>'
                 + (model.state === 'blocked' && model.unblockAt
                     ? '<span class="gizmo-reset">' + escape(relative(model.unblockAt).replace(/^in /, '')) + '</span>' : '')
                 + '</div>';
         }
         if (variant === 'rail') {
+            const visual = model.hasBar
+                ? ringSvg(model.pct, 36)
+                    + '<span class="gizmo-ring-value">' + escape(model.state === 'loading' ? '…' : Math.round(model.pct)) + '</span>'
+                : '<span class="gizmo-ring-value gizmo-ring-value--text">'
+                    + escape(model.state === 'loading' ? '…' : compactValue(model.value)) + '</span>';
             return '<div class="' + cls + '"' + attrs + '>'
-                + '<span class="gizmo-ring-wrap">' + ringSvg(model.pct, 36)
-                + '<span class="gizmo-ring-value">' + escape(model.state === 'loading' ? '…' : Math.round(model.pct)) + '</span></span>'
+                + '<span class="gizmo-ring-wrap">' + visual + '</span>'
                 + '<span class="gizmo-agent">' + escape(shortLabel(model.agentLabel)) + '</span>'
                 + '</div>';
         }
@@ -192,7 +240,8 @@
             + (model.stale ? '<span class="gizmo-stale" title="' + escape(model.error) + '">stale</span>' : '')
             + '</div>';
         const rows = variant === 'card' && model.rows.length ? renderRows(model) : '';
-        return '<div class="' + cls + '"' + attrs + '>' + head + bar(model.pct, 'gizmo-bar--main') + foot + rows + '</div>';
+        return '<div class="' + cls + '"' + attrs + '>' + head
+            + (model.hasBar ? bar(model.pct, 'gizmo-bar--main') : '') + foot + rows + '</div>';
     }
 
     function renderGizmoHtml(gizmo, data, variant, nowMs) {
@@ -221,10 +270,20 @@
             ? 'Updated ' + new Date(model.updatedAt * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
         const armed = model.notifyArmed
             ? '<div class="gizmo-detail-notes">Will notify when this account unblocks.</div>' : '';
+        let body;
+        if (model.rows.length) {
+            body = renderRows(model);
+        } else if (model.state === 'error') {
+            body = '<div class="gizmo-detail-empty">' + escape(model.error || 'Loading…') + '</div>';
+        } else {
+            const readout = (model.value && model.value !== '…' ? model.value : '')
+                + (model.valueLabel ? ' ' + model.valueLabel : '');
+            body = '<div class="gizmo-detail-empty">' + escape(readout || 'Loading…') + '</div>';
+        }
         return '<div class="gizmo-detail">'
             + '<div class="gizmo-detail-title">' + escape(model.title) + '</div>'
             + status
-            + (model.rows.length ? renderRows(model) : '<div class="gizmo-detail-empty">' + escape(model.error || 'Loading…') + '</div>')
+            + body
             + (notes.length ? '<div class="gizmo-detail-notes">' + notes.map(escape).join(' · ') + '</div>' : '')
             + armed
             + '<div class="gizmo-detail-meta">' + escape(updated)
@@ -259,7 +318,7 @@
     const api = {
         DOCKS, DOCK_LABELS, escape, clampPct, formatDuration, relative, absolute, toneFor,
         pickWindow, dataKey, meterModel, tooltipText, renderGizmoHtml, renderDetailHtml,
-        effectiveDock, sortForDock, orderBetween,
+        effectiveDock, sortForDock, orderBetween, compactValue,
     };
     root.CuttleGizmos = api;
     if (typeof module !== 'undefined' && module.exports) module.exports = api;

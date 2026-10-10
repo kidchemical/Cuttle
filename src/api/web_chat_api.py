@@ -334,6 +334,13 @@ try:
 except Exception as _projects_err:
     print(f"[PROJECTS] Failed to register routes: {_projects_err}")
 
+# Worktrees (transport owned by api.worktrees.routes; decisions in api.worktrees)
+try:
+    from api.worktrees.routes import worktrees_bp
+    app.register_blueprint(worktrees_bp)
+except Exception as _worktrees_err:
+    print(f"[WORKTREES] Failed to register routes: {_worktrees_err}")
+
 # Action forms (transport owned by api.action_form_routes; logic in api.action_forms)
 try:
     from api.action_form_routes import action_forms_bp
@@ -877,6 +884,16 @@ def _resolve_request_project_path(data: Optional[dict] = None) -> str:
         return g.project_turn_path
     data = data or {}
 
+    # A bound worktree checkout is the turn's working directory; the project
+    # identity stays in the registry (api.worktrees.binding).
+    try:
+        from api.worktrees import binding as _wt, is_worktrees_enabled as _wt_on
+        _bound = _wt.resolve_request_checkout_path(data) if _wt_on() else ''
+    except Exception:
+        _bound = ''
+    if _bound:
+        return _bound
+
     pid = data.get('project_id')
     if pid is not None and str(pid).strip() != '' and project_manager is not None:
         try:
@@ -1008,6 +1025,9 @@ def _project_fields_from_mapping(data: Optional[dict]) -> Dict[str, Any]:
     ppath = data.get('project_path') or data.get('projectPath')
     if isinstance(ppath, str) and ppath.strip():
         out['project_path'] = ppath.strip()
+    cuid = data.get('checkout_uid') or data.get('checkoutUid')
+    if isinstance(cuid, str) and cuid.strip():
+        out['checkout_uid'] = cuid.strip()
     return out
 
 
@@ -1051,7 +1071,7 @@ def _project_snapshot_for_turn(
             stored = get_auth_db().get_session_project(int(session_id)) or {}
         except Exception:
             stored = {}
-        for key in ('project_id', 'project_name', 'project_path'):
+        for key in ('project_id', 'project_name', 'project_path', 'checkout_uid'):
             val = stored.get(key)
             if val not in (None, ''):
                 snap[key] = val
@@ -1077,51 +1097,10 @@ def _merge_project_into_meta(
 
 
 def _stamp_auth_session_project(user, session_id, data) -> None:
-    """Write project onto an auth chat from an explicit client chip.
+    """Persist the client's project/checkout chip (owner: api.chat_session_project)."""
+    from api.chat_session_project import stamp_auth_session_project
 
-    Fills an empty session on first send, and updates when the client sends a
-    different project (``/project`` mid-chat). Never invents Cuttle when the
-    body omitted project fields — that used to stamp the default over an EP chip.
-    """
-    if not user or session_id is None:
-        return
-    sid = int(session_id)
-    db = get_auth_db()
-    stored = db.get_session_project(sid) or {}
-    data = data or {}
-    pid = data.get('project_id')
-    pname = data.get('project_name') or data.get('projectName')
-    ppath = data.get('project_path') or data.get('projectPath')
-    # Only stamp what the client actually sent.
-    if pid is None and not (pname or ppath):
-        return
-
-    def _norm_path(p):
-        return str(p or '').strip().replace('\\', '/').rstrip('/').lower()
-
-    stored_pid = stored.get('project_id')
-    stored_path = (stored.get('project_path') or '').strip()
-    if stored_pid is not None or stored_path:
-        if pid is not None and stored_pid is not None and str(pid) == str(stored_pid):
-            return
-        if ppath and _norm_path(ppath) == _norm_path(stored_path):
-            return
-        if (
-            pid is None
-            and not ppath
-            and pname
-            and str(stored.get('project_name') or '').strip().lower()
-            == str(pname).strip().lower()
-        ):
-            return
-
-    db.set_session_project(
-        sid,
-        user['id'],
-        project_id=pid,
-        project_name=pname,
-        project_path=ppath,
-    )
+    stamp_auth_session_project(user, session_id, data, db=get_auth_db())
 
 
 def _match_harness_slash(message: str, project_path=None):
@@ -2527,6 +2506,17 @@ def test_api_key():
         data = request.get_json()
         api_type = data.get('api_type')
         api_key = (data.get('api_key') or '').strip()
+        # OpenRouter's management key is owned by api.openrouter_management
+        # (env then <home>/.env). Empty input tests the saved key and reports
+        # the live credit balance.
+        if api_type == 'openrouter':
+            from api import openrouter_management
+            result = openrouter_management.probe(api_key or None)
+            return jsonify({
+                'success': bool(result.get('success')),
+                'message': result.get('message') or 'OpenRouter test failed',
+            })
+
         # Empty input tests the saved key (env, then <home>/.env).
         saved_names = {
             'openai': ('OPENAI_API_KEY', 'API_KEY'),
@@ -2680,6 +2670,7 @@ def save_api_key():
             'discord': 'DISCORD_BOT_TOKEN',
             'elevenlabs': 'ELEVENLABS_API_KEY',
             'google': 'GEMINI_API_KEY',
+            'openrouter': 'OPENROUTER_MANAGEMENT_KEY',
         }
         if api_type not in _key_names:
             return jsonify({
@@ -2812,6 +2803,9 @@ def load_api_keys():
         discord_val = _read_env_credential(('DISCORD_BOT_TOKEN', 'DISCORD_TOKEN'))
         elevenlabs_val = _read_env_credential('ELEVENLABS_API_KEY')
         google_val = _read_env_credential(('GEMINI_API_KEY', 'GOOGLE_API_KEY'))
+        # Owned by api.openrouter_management (env then <home>/.env).
+        from api import openrouter_management
+        openrouter_val = openrouter_management.management_key()
 
         hints = {
             'openai': _mask_credential_for_display(openai_val),
@@ -2819,6 +2813,7 @@ def load_api_keys():
             'discord': _mask_credential_for_display(discord_val),
             'elevenlabs': _mask_credential_for_display(elevenlabs_val),
             'google': _mask_credential_for_display(google_val),
+            'openrouter': _mask_credential_for_display(openrouter_val),
         }
         return jsonify({
             'success': True,
@@ -2829,6 +2824,7 @@ def load_api_keys():
                 'discord': bool(discord_val),
                 'elevenlabs': bool(elevenlabs_val),
                 'google': bool(google_val),
+                'openrouter': bool(openrouter_val),
             },
         })
 

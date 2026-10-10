@@ -102,6 +102,18 @@ class SettingsManager:
                     "ordered": [{"agent": "codex", "model": ""}]
                 },
             },
+            # Per-chat git worktrees (experimental). ``root`` empty means the
+            # built-in ``<home>/worktrees``; a configured root must be an
+            # absolute path on this host. ``previous_roots`` keeps old locations
+            # managed after the setting changes. Owner: api.worktrees.
+            "worktrees": {
+                "root": "",
+                "previous_roots": [],
+                "setup_hook_requires_auth": True,
+                "cleanup": "off",
+                "keep_when": "uncommitted-changes",
+                "branch_prefix": "cuttle",
+            },
             # Experimental feature flags: {flag_id: bool}. Owned by
             # api.experimental (registry + resolver live there); this key is
             # just the storage. Absent ids fall back to the registry default.

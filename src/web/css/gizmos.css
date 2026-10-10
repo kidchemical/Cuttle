@@ -82,6 +82,7 @@
     font-variant-numeric: tabular-nums;
 }
 .gizmo--rail .gizmo-agent { font-size: 9px; max-width: 48px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gizmo-ring-value--text { font-size: 9px; letter-spacing: -0.02em; padding: 0 1px; text-align: center; }
 
 /* Floating / desktop / App card */
 .gizmo--float, .gizmo--popout, .gizmo--card {
@@ -198,6 +199,13 @@ body.gizmo-dragging .shell-titlebar { box-shadow: inset 0 0 0 1px rgba(102, 126,
     padding: 4px 8px;
     cursor: pointer;
 }
+/* The popover is a dark surface; without a dark color-scheme the native
+   <option> list renders light-on-light (the option text inherits the light
+   select color). Bind the popup to the theme's base class. */
+.shell-gizmo-popover-field select { color-scheme: dark; }
+.shell-gizmo-popover-field option { background: var(--panel-bg, #16213e); color: var(--rail-icon-hover, #c9d1d9); }
+body.light-mode .shell-gizmo-popover-field select { color-scheme: light; }
+body.light-mode .shell-gizmo-popover-field option { background: var(--panel-bg, #fafafc); color: #1f2430; }
 .shell-gizmo-popover-section { margin-top: 12px; margin-bottom: 6px; color: var(--rail-icon, #8b949e); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
 .shell-gizmo-popover-docks { display: flex; flex-wrap: wrap; gap: 6px; }
 .shell-gizmo-popover button:hover { background: rgba(255, 255, 255, 0.12); }

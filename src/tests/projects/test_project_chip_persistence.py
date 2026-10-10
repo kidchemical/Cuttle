@@ -139,6 +139,9 @@ function renderProjectChips() {{}}
 function refreshTypingIndicatorHeaderBadges() {{}}
 function schedulePendingChangesRefresh() {{}}
 function reportProjectToShell() {{}}
+let currentCheckoutUid = '';
+let currentCheckoutPath = '';
+function effectiveGitPath() {{ return currentCheckoutPath || (currentProject && currentProject.path ? String(currentProject.path) : ''); }}
 function refreshChatWidgets() {{}}
 function loadProjectCommandsForPalette() {{}}
 function loadHarnessAgentsForPalette() {{}}

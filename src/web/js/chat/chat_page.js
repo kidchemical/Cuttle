@@ -392,7 +392,8 @@
     let _gitReposCache = { path: '', repos: [], at: 0 };
 
     function currentProjectPathKey() {
-        return CuttleChatProject.currentProjectPathKey(currentProject);
+        // Git/branch scope: the bound worktree checkout, else the project path.
+        return effectiveGitPath();
     }
 
     /** Sync known repos for the current project (cache or pending-changes panel). */
@@ -747,6 +748,9 @@
     let currentAgentIdentity = { displayName: '', avatar: '', profileId: '', parentSessionId: null, origin: '' };
     let _subagentOrbList = [];
     let currentProject = null;
+    // Bound worktree checkout for this chat (experimental). '' = Local/primary.
+    let currentCheckoutUid = '';
+    let currentCheckoutPath = '';
     /** Project fields from the last /messages load — used when the sessions list is empty or stale. */
     let lastHydratedSessionProject = null;
     let projects = [];
@@ -3731,9 +3735,7 @@
         }
         window.CuttleGitCommitViewer.initChat({
             getProjectPath: function () {
-                return (typeof currentProject !== 'undefined' && currentProject && currentProject.path)
-                    ? String(currentProject.path)
-                    : '';
+                return effectiveGitPath();
             },
         });
     }
@@ -7040,7 +7042,7 @@
             .catch(() => {});
     }
 
-    function buildOpenCodeModelPaletteItems(filterLower) {
+    function buildOpenCodeModelPaletteItems(filterLower, opts) {
         if (!hasActiveOpenCodeAgentChip()) return [];
         const f = (filterLower || '').toLowerCase().trim();
         if (!f) return [];
@@ -7104,7 +7106,8 @@
             .filter(Boolean)
             .filter((item) => (modelFilter ? slashPaletteItemMatches(item, modelFilter) : true));
         // Keep the palette usable when the filter is broad (hundreds of OpenRouter ids).
-        const MAX = 40;
+        // The searchable chip-config dropdown asks for the full catalog.
+        const MAX = (opts && opts.full) ? Infinity : 40;
         // Rank before clipping so a name hit cannot be hidden by description hits.
         mapped.sort((a, b) => CuttleChatSlash.slashPaletteItemSearchRank(a, f)
             - CuttleChatSlash.slashPaletteItemSearchRank(b, f));
@@ -7361,7 +7364,7 @@
             .catch(() => {});
     }
 
-    function buildCodexModelPaletteItems(filterLower) {
+    function buildCodexModelPaletteItems(filterLower, opts) {
         if (!hasActiveCodexAgentChip()) return [];
         const f = (filterLower || '').toLowerCase().trim();
         if (!f) return [];
@@ -7431,7 +7434,7 @@
             })
             .filter(Boolean)
             .filter((item) => (modelFilter ? slashPaletteItemMatches(item, modelFilter) : true));
-        const MAX = 40;
+        const MAX = (opts && opts.full) ? Infinity : 40;
         // Rank before clipping so a name hit cannot be hidden by description hits.
         mapped.sort((a, b) => CuttleChatSlash.slashPaletteItemSearchRank(a, f)
             - CuttleChatSlash.slashPaletteItemSearchRank(b, f));
@@ -7796,7 +7799,7 @@
             .catch(() => {});
     }
 
-    function buildClaudeModelPaletteItems(filterLower) {
+    function buildClaudeModelPaletteItems(filterLower, opts) {
         if (!hasActiveHarnessAgentChip('claude')) return [];
         const f = (filterLower || '').toLowerCase().trim();
         if (!f) return [];
@@ -7839,7 +7842,7 @@
             .map((m) => CuttleChatAgentModel.buildClaudeModelRow(m, preferred))
             .filter(Boolean)
             .filter((item) => (modelFilter ? slashPaletteItemMatches(item, modelFilter) : true));
-        const MAX = 40;
+        const MAX = (opts && opts.full) ? Infinity : 40;
         // Rank before clipping so a name hit cannot be hidden by description hits.
         mapped.sort((a, b) => CuttleChatSlash.slashPaletteItemSearchRank(a, f)
             - CuttleChatSlash.slashPaletteItemSearchRank(b, f));
@@ -8301,8 +8304,9 @@
         const pathBit = proj.path || proj.name || '';
         const starred = isProjectStarred(proj);
         const showBranch = !!opts.composer && !opts.header;
+        const worktreeChip = showBranch && !!currentCheckoutUid;
         const branch = showBranch ? currentProjectBranch() : '';
-        const branchBit = branch ? ' · branch ' + branch : '';
+        const branchBit = branch ? ((worktreeChip ? ' · worktree ' : ' · branch ') + branch) : '';
         const tip = escapeHtmlInline(
             (opts.composer
                 ? (starred
@@ -8323,7 +8327,9 @@
               '</span>'
             : '';
         const projectIcon =
-            '<span class="slash-chip-icon" aria-hidden="true">\uD83D\uDCC1</span>';
+            '<span class="slash-chip-icon" aria-hidden="true">' +
+            (worktreeChip ? '\uD83C\uDF3F' : '\uD83D\uDCC1') +
+            '</span>';
         // Composer chip is segmented (★ | 📁 name | branch); the header/history
         // variant stays flat so message meta keeps its compact layout.
         const labelHtml = opts.composer
@@ -8699,9 +8705,9 @@
             cursor: { build: () => buildCursorModelPaletteItems('model'), load: () => loadCursorAgentModelsForPalette(true), set: (v) => { S.preferredModel = v; beginSupplementFetch('cursorModelsGen'); }, current: () => String(S.preferredModel || 'auto').toLowerCase() },
             muse: { build: () => buildMuseModelPaletteItems('model'), load: () => loadMuseModelsForPalette(true), set: persistMuseModelSelection, current: () => String(S.museModel || '').toLowerCase() },
             hermes: { build: () => buildHermesModelPaletteItems('model'), load: () => loadHermesModelsForPalette(true), set: persistHermesModelSelection, current: () => String(S.hermesModel || '').toLowerCase() },
-            opencode: { build: () => buildOpenCodeModelPaletteItems('model'), load: () => loadOpenCodeModelsForPalette(true), set: persistOpenCodeModelSelection, current: () => String(S.opencodeModel || '').toLowerCase() },
-            codex: { build: () => buildCodexModelPaletteItems('model'), load: () => loadCodexModelsForPalette(true), set: persistCodexModelSelection, current: () => String(S.codexModel || '').toLowerCase() },
-            claude: { build: () => buildClaudeModelPaletteItems('model'), load: () => loadClaudeModelsForPalette(true), set: persistClaudeModelSelection, current: () => String(S.claudeModel || '').toLowerCase() },
+            opencode: { build: (opts) => buildOpenCodeModelPaletteItems('model', opts), load: () => loadOpenCodeModelsForPalette(true), set: persistOpenCodeModelSelection, current: () => String(S.opencodeModel || '').toLowerCase() },
+            codex: { build: (opts) => buildCodexModelPaletteItems('model', opts), load: () => loadCodexModelsForPalette(true), set: persistCodexModelSelection, current: () => String(S.codexModel || '').toLowerCase() },
+            claude: { build: (opts) => buildClaudeModelPaletteItems('model', opts), load: () => loadClaudeModelsForPalette(true), set: persistClaudeModelSelection, current: () => String(S.claudeModel || '').toLowerCase() },
         }[id];
         const efforts = {
             muse: { build: () => buildMuseEffortPaletteItems('effort'), load: () => loadMuseEffortForPalette(), set: persistMuseEffortSelection, current: () => String(S.museEffort || '').toLowerCase(), repaint: repaintMuseUserBadges },
@@ -8727,8 +8733,21 @@
         applyAgent: (entry) => applyStickyAgentCommand(entry),
         rerenderChips: () => { renderSlashChips('welcome', document.getElementById('welcomeChatInput')); renderSlashChips('chat', document.getElementById('chatInput')); },
         refreshBranch: () => refreshProjectBranch(true),
+        worktreesEnabled: () => !!(window.CuttleChatWorktrees && window.CuttleChatWorktrees.isEnabled()),
+        getWorktrees: (projectId) => (window.CuttleChatWorktrees
+            ? window.CuttleChatWorktrees.list(projectId) : Promise.resolve([])),
+        createWorktree: (projectId, branch) => (window.CuttleChatWorktrees
+            ? window.CuttleChatWorktrees.create(projectId, branch) : Promise.resolve(null)),
+        defaultWorktreeBranch: () => (window.CuttleChatWorktrees
+            ? window.CuttleChatWorktrees.defaultBranch(currentProject) : ''),
+        getChatCheckout: () => currentCheckoutUid,
+        setChatCheckout,
         showToast: (msg, kind) => (window.showToast || function () {})(msg, kind),
     });
+
+    // Probe the worktrees feature once (server 404s it when disabled) so the
+    // composer modal can show the Local/Worktree selector when available.
+    try { if (window.CuttleChatWorktrees) window.CuttleChatWorktrees.probe(); } catch (_) {}
 
     function applyStickyAgentCommand(entry) {
         const chip = {
@@ -9740,6 +9759,8 @@
             projectId: currentProject ? currentProject.id : null,
             projectPath: currentProject ? currentProject.path : '',
             projectName: currentProject ? currentProject.name : '',
+            checkoutUid: currentCheckoutUid || null,
+            checkoutPath: currentCheckoutPath || null,
         };
         // Keep hydrate/list caches aligned so a later reconcile cannot resurrect
         // the previous project (CH-000204: EP chip → Cuttle on send).
@@ -9760,6 +9781,7 @@
                     project_id: payload.projectId,
                     project_name: payload.projectName,
                     project_path: payload.projectPath,
+                    checkout_uid: payload.checkoutUid,
                 }),
             })).catch((e) => console.warn('[Cuttle Chat] persist session project failed:', e));
         }
@@ -11717,6 +11739,7 @@
                 project_id: proj.id != null ? proj.id : null,
                 project_name: proj.name || '',
                 project_path: proj.path || '',
+                checkout_uid: currentCheckoutUid || null,
             };
         } else if (
             lastHydratedSessionProject
@@ -11732,6 +11755,7 @@
                 row.project_id = proj && proj.id != null ? proj.id : null;
                 row.project_name = proj ? (proj.name || null) : null;
                 row.project_path = proj ? (proj.path || null) : null;
+                row.checkout_uid = currentCheckoutUid || null;
             }
         } catch (_) {}
     }
@@ -11745,8 +11769,12 @@
                 proj = { id: byId.id, name: byId.name || proj.name, path: byId.path || proj.path || '' };
             }
         }
+        const prevProjectId = currentProject && currentProject.id != null ? String(currentProject.id) : '';
         currentProject = proj || null;
-        reportProjectToShell(currentProject && currentProject.path);
+        const nextProjectId = currentProject && currentProject.id != null ? String(currentProject.id) : '';
+        // A different project starts fresh (Local); the chip can rebind a worktree.
+        if (prevProjectId !== nextProjectId) { currentCheckoutUid = ''; currentCheckoutPath = ''; }
+        reportProjectToShell(effectiveGitPath());
         if (currentSessionId) {
             rememberSessionProject(currentSessionId, proj);
             try {
@@ -11775,12 +11803,44 @@
         }
     }
 
+    /** Bind this chat to a worktree checkout (null/empty = Local/primary). */
+    function setChatCheckout(checkout) {
+        const uid = checkout && checkout.checkout_uid ? String(checkout.checkout_uid) : '';
+        currentCheckoutUid = uid;
+        currentCheckoutPath = checkout && checkout.path ? String(checkout.path) : '';
+        if (currentSessionId) {
+            persistProjectForCurrentSession();
+            try {
+                const sessions = JSON.parse(localStorage.getItem('chatSessions') || '{}');
+                if (sessions[currentSessionId]) {
+                    sessions[currentSessionId].checkoutUid = uid || null;
+                    sessions[currentSessionId].checkoutPath = currentCheckoutPath || null;
+                    localStorage.setItem('chatSessions', JSON.stringify(sessions));
+                }
+            } catch (_) {}
+        }
+        renderProjectChips();
+        reportProjectToShell(effectiveGitPath());
+        if (uid) {
+            const branch = checkout && checkout.branch ? checkout.branch : uid;
+            addSystemMessage(`\u{1F33F} Worktree: ${branch}`, { persist: true });
+        } else {
+            addSystemMessage('\u{1F4C1} Local checkout', { persist: true });
+        }
+    }
+
     // --- Pending changes strip (shared module; multi-repo aware) ---
     let pendingChangesCtl = null;
 
     function schedulePendingChangesRefresh(delayMs, refreshOpts) {
         if (!pendingChangesCtl) return;
         pendingChangesCtl.scheduleRefresh(delayMs, refreshOpts);
+    }
+
+    /** Git-facing path for this chat: the bound checkout, else the project. */
+    function effectiveGitPath() {
+        return currentCheckoutPath
+            || (currentProject && currentProject.path ? String(currentProject.path) : '');
     }
 
     function reportProjectToShell(projectPath) {
@@ -11803,7 +11863,14 @@
             pendingChangesCtl = null;
         }
         pendingChangesCtl = window.CuttlePendingChangesPanel.create({
-            getProject: function () { return currentProject; },
+            getProject: function () {
+                // Pending changes / git target the bound checkout when present.
+                if (!currentProject) return null;
+                return Object.assign({}, currentProject, {
+                    path: effectiveGitPath(),
+                    worktree: currentCheckoutUid ? (currentProjectBranch() || true) : '',
+                });
+            },
             getSessionId: function () { return currentSessionId; },
             getPrompts: function () {
                 try {
@@ -11827,7 +11894,7 @@
             useShellHub: !!inAppShell,
             isPageBackgrounded: function () { return document.hidden; },
         });
-        reportProjectToShell(currentProject && currentProject.path);
+        reportProjectToShell(effectiveGitPath());
         if (!inAppShell) schedulePendingChangesRefresh(120);
     }
 
@@ -11878,7 +11945,14 @@
         const proj = decided.proj;
         const hadStored = decided.hadStored;
         currentProject = proj || null;
-        reportProjectToShell(currentProject && currentProject.path);
+        reportProjectToShell(effectiveGitPath());
+        // Restore the chat's bound worktree checkout (server row, then prefs).
+        const storedCheckout = (serverProj && serverProj.checkoutUid)
+            || (mergedPrefs && mergedPrefs.checkoutUid)
+            || (stored && stored.checkoutUid) || '';
+        currentCheckoutUid = String(storedCheckout || '').trim();
+        currentCheckoutPath = String((mergedPrefs && mergedPrefs.checkoutPath)
+            || (stored && stored.checkoutPath) || '').trim();
         // Stamp the default onto prefs so history grouping matches the cwd chip
         // (auth sessions do not store project_id on the server).
         if (currentSessionId && currentProject && !hadStored
@@ -11921,7 +11995,7 @@
 
     function applyOutboundProjectToRequest(requestBody) {
         CuttleChatProject.applyOutboundProjectToRequest(
-            requestBody, resolveOutboundProject());
+            requestBody, resolveOutboundProject(), currentCheckoutUid);
     }
     
     async function switchChatProject() {
