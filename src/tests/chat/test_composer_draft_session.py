@@ -11,6 +11,7 @@ empty — that is the leak.
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -22,6 +23,7 @@ node_only = pytest.mark.skipif(
 )
 
 CHAT_JS = Path(__file__).resolve().parents[2] / "web" / "js" / "chat/chat_page.js"
+COMPOSER_JS = CHAT_JS.parent / "chat_composer.js"
 
 
 def _extract_range(src: str, start: str, end: str) -> str:
@@ -211,7 +213,13 @@ def test_switch_to_chat_without_draft_clears_composer(tmp_path):
     src = CHAT_JS.read_text(encoding="utf-8")
     helpers = _helpers_src(src)
     harness = (
-        _HARNESS.replace("__HELPERS__", helpers).replace("__CASES__", _DRIVER_CASES)
+        _HARNESS
+        .replace(
+            "const CuttleChatComposer = {draftChips: chips => chips.slice()};",
+            "const CuttleChatComposer = require(" + json.dumps(str(COMPOSER_JS)) + ");",
+        )
+        .replace("__HELPERS__", helpers)
+        .replace("__CASES__", _DRIVER_CASES)
     )
     driver = tmp_path / "composer-draft-session.js"
     driver.write_text(harness, encoding="utf-8")

@@ -19,7 +19,10 @@ Two coupled bugs observed in chat:
 Control commands (``/restart …``) must remain sendable with or without a
 sticky agent chip.
 
-Runs real helpers from ``chat_page.js`` under Node (skipped if node is absent).
+Phase 2 slice 2C moved the composer decisions into ``chat_composer.js``
+(``CuttleChatComposer.*``) and the slash decisions into ``chat_slash.js``;
+this suite runs those real owner modules under Node (skipped if node is
+absent) instead of slicing chat_page.js by name.
 """
 
 from __future__ import annotations
@@ -41,12 +44,6 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _extract(src: str, start_marker: str, end_marker: str) -> str:
-    head = src.index(start_marker)
-    tail = src.index(end_marker, head)
-    return src[head:tail]
-
-
 def _extract_inclusive(src: str, start_marker: str, end_marker: str) -> str:
     head = src.index(start_marker)
     tail = src.index(end_marker, head) + len(end_marker)
@@ -63,30 +60,14 @@ MODEL_CHIP = {
 
 
 def _run_js(script: str, *, chips=None) -> dict:
-    """Stub UI; run real compose / sticky helpers from chat_page.js."""
-    src = CHAT_JS.read_text(encoding="utf-8")
+    """Run the composer/slash owner modules with the UI stubbed.
+
+    The page adapters (compose over the active composer's resolved chips,
+    send eligibility, sticky resolution after send) are expressed here as
+    thin calls into the owner modules — the same delegation the page does.
+    """
     slash_src = SLASH_JS.read_text(encoding="utf-8")
     commands = _extract_inclusive(slash_src, "const SLASH_COMMANDS = [", "\n];")
-    control = _extract(
-        src,
-        "    function isNativeControlCommand(text) {",
-        "    const isControlCommandPrefix = isNativeControlCommand;",
-    )
-    compose = _extract_inclusive(
-        src, "    function composeMessageWithSlashChip(textarea) {", "\n    }\n"
-    )
-    sendable = _extract_inclusive(
-        src, "    function isSendableComposerMessage(message, attachments) {", "\n    }\n"
-    )
-    clear_chips = _extract_inclusive(
-        src, "    function clearAllSlashChips() {", "\n    }\n"
-    )
-    # Stop before `let stickyAgentClearedPending` (declared in the harness).
-    sticky_helpers = _extract(
-        src,
-        "    function applyStickySlashAfterComposerSend(message) {",
-        "\n    let stickyAgentClearedPending = false;",
-    )
 
     chips_json = json.dumps(chips if chips is not None else [CURSOR_CHIP])
     slash_mod = str(SLASH_JS)
@@ -95,32 +76,33 @@ def _run_js(script: str, *, chips=None) -> dict:
 const CuttleChatSlash = require({json.dumps(str(slash_mod))});
 const CuttleChatComposer = require({json.dumps(str(composer_mod))});
 {commands}
-{control}
-const isControlCommandPrefix = isNativeControlCommand;
-const slashCtx = {{
-    chat: {{ chips: {chips_json} }},
-    welcome: {{ chips: {chips_json} }},
-}};
-let currentSessionId = 'CH-000450';
-const prefsMap = {{}};
-let stickyAgentClearedPending = false;
-function slashContextKey() {{ return 'chat'; }}
-function hideSlashMenu() {{}}
-function renderSlashChips() {{}}
-function getSessionPrefs(id) {{
-    return prefsMap[String(id)] || null;
+const CHIPS = {chips_json};
+
+// chat_page.js adapters: resolve the active composer's chips from page
+// state, then delegate the decision to the owner module.
+function composeMessageWithSlashChip(textarea) {{
+    return CuttleChatComposer.composeMessageWithSlashChip(
+        {{ body: String((textarea && textarea.value) || '').trim(), chips: CHIPS }},
+        {{ isControl: CuttleChatSlash.isNativeControlCommand }}
+    );
 }}
-function updateSessionPrefs(id, patch) {{
-    prefsMap[String(id)] = Object.assign({{}}, prefsMap[String(id)] || {{}}, patch || {{}});
+function isSendableComposerMessage(message, attachments) {{
+    return CuttleChatComposer.isSendableComposerMessage(message, attachments, {{
+        stickyOf: CuttleChatSlash.getStickySlashCommandFromMessage,
+        isControl: CuttleChatSlash.isNativeControlCommand,
+    }});
 }}
-function liveAgentBadgeLabelForChip(c) {{ return c && c.label; }}
-function resolveSlashChipPaletteCategory(c) {{ return c && c.category; }}
-function publishSharedComposerSelection() {{}}
-const document = {{ getElementById: () => null }};
-{compose}
-{clear_chips}
-{sticky_helpers}
-{sendable}
+function stickyCommandAfterSend(message) {{
+    return CuttleChatComposer.stickyCommandAfterSend(
+        {{ message }}, {{ stickyOf: CuttleChatSlash.getStickySlashCommandFromMessage }}
+    );
+}}
+function getStickySlashCommandFromMessage(message) {{
+    return CuttleChatSlash.getStickySlashCommandFromMessage(message);
+}}
+function isNativeControlCommand(text) {{
+    return CuttleChatSlash.isNativeControlCommand(text);
+}}
 
 {script}
 """
@@ -308,28 +290,28 @@ process.stdout.write(JSON.stringify({ found: !!cmd, prefix: cmd && cmd.prefix })
 
 
 def test_apply_sticky_after_bare_cursor_keeps_chip():
-    """Queue/send of compose('/cursor') must not clearAllSlashChips."""
+    """Queue/send of compose('/cursor') must keep the sticky agent chip."""
     res = _run_js(
         """
-slashCtx.chat.chips = [{ prefix: '/cursor ', label: 'Cursor Agent', category: 'command' }];
-slashCtx.welcome.chips = slashCtx.chat.chips.slice();
-applyStickySlashAfterComposerSend('/cursor');
+const cmd = stickyCommandAfterSend('/cursor');
+const sel = CuttleChatComposer.stickySessionSelection(CHIPS, {
+    commands: SLASH_COMMANDS,
+    clearedPending: false,
+});
 process.stdout.write(JSON.stringify({
-    chips: slashCtx.chat.chips.map((c) => c.prefix),
-    prefs: prefsMap['CH-000450'] || null,
-    stickyAgentClearedPending,
+    found: !!cmd,
+    prefix: cmd ? cmd.prefix : null,
+    stickyCleared: sel.stickyCleared,
+    stickyPrefixes: sel.stickyChips.map((c) => c.prefix),
 }));
 """,
         chips=[CURSOR_CHIP],
     )
-    assert res["chips"] == ["/cursor "]
+    assert res["found"] is True
+    assert res["prefix"] == "/cursor "
     # Bare /cursor must not look like "user cleared the badge".
-    assert res["stickyAgentClearedPending"] is False
-    if res["prefs"] is not None:
-        assert res["prefs"].get("stickyCleared") is not True
-        sticky = res["prefs"].get("stickyChips") or []
-        if sticky:
-            assert sticky[0]["prefix"] == "/cursor "
+    assert res["stickyCleared"] is False
+    assert res["stickyPrefixes"] == ["/cursor "]
 
 
 def test_apply_sticky_after_queued_bare_cursor_keeps_chip():
@@ -337,34 +319,46 @@ def test_apply_sticky_after_queued_bare_cursor_keeps_chip():
     res = _run_js(
         """
 const composed = composeMessageWithSlashChip({ value: '' });
-applyStickySlashAfterComposerSend(composed);
+const cmd = stickyCommandAfterSend(composed);
+const sel = CuttleChatComposer.stickySessionSelection(CHIPS, {
+    commands: SLASH_COMMANDS,
+    clearedPending: false,
+});
 process.stdout.write(JSON.stringify({
     composed,
-    chips: slashCtx.chat.chips.map((c) => c.prefix),
-    stickyCleared: !!(prefsMap['CH-000450'] && prefsMap['CH-000450'].stickyCleared),
+    found: !!cmd,
+    stickyCleared: sel.stickyCleared,
+    stickyPrefixes: sel.stickyChips.map((c) => c.prefix),
 }));
 """,
         chips=[CURSOR_CHIP],
     )
     assert res["composed"] == "/cursor"
-    assert res["chips"] == ["/cursor "]
+    assert res["found"] is True
     assert res["stickyCleared"] is False
+    assert res["stickyPrefixes"] == ["/cursor "]
 
 
 def test_apply_sticky_after_restart_keeps_agent_chip():
-    """Control send must not evict the sticky agent (existing restart contract)."""
+    """Control send must not evict the sticky agent (existing restart contract).
+
+    chat_page.js keeps the agent chip on its control branch; the owner
+    decisions are the control classification (true) and the absent sticky
+    command (null), which together route to that branch.
+    """
     res = _run_js(
         """
-slashCtx.chat.chips = [{ prefix: '/cursor ', label: 'Cursor Agent', category: 'command' }];
-slashCtx.welcome.chips = slashCtx.chat.chips.slice();
-applyStickySlashAfterComposerSend('/restart status');
+const isControl = isNativeControlCommand('/restart status');
+const cmd = stickyCommandAfterSend('/restart status');
 process.stdout.write(JSON.stringify({
-    chips: slashCtx.chat.chips.map((c) => c.prefix),
+    isControl,
+    cmd: cmd ? cmd.prefix : null,
 }));
 """,
         chips=[CURSOR_CHIP],
     )
-    assert res["chips"] == ["/cursor "]
+    assert res["isControl"] is True
+    assert res["cmd"] is None
 
 
 def test_python_sticky_prefix_already_accepts_bare_cursor():

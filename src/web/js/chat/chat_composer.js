@@ -1,8 +1,11 @@
 /* ================================================================
    Cuttle Chat — composer / send-planning domain (chat_composer.js).
    Owner: send eligibility, keyboard-submit interpretation, sticky
-   resolution after send, control-lane text classification, and the
-   send-dispatch plan as pure decisions over explicit inputs: no
+   resolution after send, control-lane text classification, the
+   send-dispatch plan, chip composition, and the sticky/shared-composer
+   selection decisions (what to persist after send, what to restore on a
+   chat switch, and how a server `composer_selection` snapshot merges
+   into session prefs) as pure decisions over explicit inputs: no
    document, no window, no localStorage, no fetch here. Loaded before
    chat_page.js; the page owns textarea DOM, focus/caret, event
    wiring, draft persistence, fetch/SSE initiation, streaming,
@@ -180,6 +183,114 @@
         };
     }
 
+    /**
+     * Compose the outbound message from resolved composer chips and body.
+     * `parts` = { body, chips } (the page resolves the active composer's
+     * chips, with welcome fallback, and owns slashCtx/DOM); `deps` =
+     * { isControl(text) → bool }. A trailing control chip (or a typed
+     * control body) outranks stacked sticky agent chips. Returns the body
+     * unchanged when no chips apply. Mirrors the page's original shape.
+     */
+    function composeMessageWithSlashChip(parts, deps) {
+        const p = parts || {};
+        const d = deps || {};
+        const isControl = typeof d.isControl === 'function' ? d.isControl : null;
+        const body = String(p.body || '').trim();
+        let chips = Array.isArray(p.chips) ? p.chips.slice() : [];
+        if (!chips.length) return body;
+        const controlIdx = chips.findIndex((c) => isControl && isControl(c.prefix));
+        if (controlIdx >= 0) {
+            chips = chips.slice(controlIdx);
+        } else if (isControl && isControl(body)) {
+            return body;
+        }
+        const prefixPart = chips.map((c) => c.prefix).join('');
+        if (!body) {
+            const t = prefixPart.replace(/\s+$/, '').trim();
+            return t || prefixPart.trim();
+        }
+        const last = chips[chips.length - 1];
+        if (last.prefix.endsWith(' ')) return prefixPart + body;
+        return prefixPart + ' ' + body;
+    }
+
+    /**
+     * Sticky/session persisted selection from the current composer chips.
+     * `deps` = { commands, liveLabel(chip) → label, paletteCategory(chip)
+     * → category, clearedPending }. Only registry entries marked
+     * `stickySession` survive; when none do, the cleared flag carries
+     * through. Mirrors the page's post-send persistence shape.
+     */
+    function stickySessionSelection(chips, deps) {
+        const d = deps || {};
+        const commands = Array.isArray(d.commands) ? d.commands : [];
+        const sticky = (Array.isArray(chips) ? chips : []).filter((c) => {
+            const match = commands.find((s) => s.prefix === c.prefix);
+            return match && match.stickySession;
+        });
+        return {
+            stickyChips: sticky.map((c) => ({
+                prefix: c.prefix,
+                label: (typeof d.liveLabel === 'function' && d.liveLabel(c)) || c.label,
+                category: (typeof d.paletteCategory === 'function' && d.paletteCategory(c))
+                    || c.category || 'command',
+            })),
+            stickyCleared: sticky.length ? false : !!d.clearedPending,
+        };
+    }
+
+    /**
+     * Chips to restore when a chat opens or switches. `prefs` is the
+     * session-prefs snapshot; when it holds no sticky chips and the user
+     * never cleared the badge, recent history may re-seed one through
+     * `deps.infer(messages) → chips[]`. Returns { cleared, chips, inferred }.
+     */
+    function stickyChipsToRestore(prefs, messages, deps) {
+        const d = deps || {};
+        const cleared = !!(prefs && prefs.stickyCleared);
+        let chips = prefs && Array.isArray(prefs.stickyChips) ? prefs.stickyChips.slice() : [];
+        let inferred = false;
+        if (!chips.length && !cleared) {
+            const found = typeof d.infer === 'function' ? d.infer(messages) : [];
+            if (found && found.length) {
+                chips = found;
+                inferred = true;
+            }
+        }
+        return { cleared, chips, inferred };
+    }
+
+    /**
+     * Draft restore plan: the chips/pins to reapply from a saved composer
+     * draft. Returns null when there is no draft. `deps.draftChips(chips)`
+     * clones the staged chips; the cursor model companion is reported so
+     * the page can seed its model supplement.
+     */
+    function composerDraftRestorePlan(draft, deps) {
+        if (!draft) return null;
+        const d = deps || {};
+        const chips = typeof d.draftChips === 'function'
+            ? d.draftChips(draft.chips)
+            : draftChips(draft.chips);
+        const cursorModel = chips.find((c) => c.category === 'cursor-model') || null;
+        return { chips, pins: draft.pins || null, cursorModel };
+    }
+
+    /**
+     * Session-prefs patch adopted from a server `composer_selection`
+     * snapshot. The saved draft merges through draftWithSharedAgent so a
+     * sticky chip already staged locally is not duplicated.
+     */
+    function sharedSelectionPrefsPatch(incoming, existingDraft, deps) {
+        const d = deps || {};
+        const selection = incoming || {};
+        return {
+            stickyChips: selection.stickyChips,
+            stickyCleared: !!selection.stickyCleared,
+            composerDraft: draftWithSharedAgent(existingDraft, selection, d.commands || []),
+        };
+    }
+
     const api = {
         draftWithSharedAgent,
         draftChips,
@@ -188,6 +299,11 @@
         isImmediateControlLaneText,
         stickyCommandAfterSend,
         composerSendPlan,
+        composeMessageWithSlashChip,
+        stickySessionSelection,
+        stickyChipsToRestore,
+        composerDraftRestorePlan,
+        sharedSelectionPrefsPatch,
     };
 
     const ns = (root.CuttleChatComposer = root.CuttleChatComposer || {});

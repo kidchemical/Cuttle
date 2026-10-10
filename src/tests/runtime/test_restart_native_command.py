@@ -90,10 +90,15 @@ def test_control_command_uses_the_existing_chip_mechanism_and_keeps_sticky_agent
     src = CHAT_JS.read_text(encoding="utf-8")
     # Palette entries are category 'command', i.e. the normal chip/badge path.
     assert "category: 'command'," in src
-    # Sticky agent chips are not prepended onto a control command...
+    # Sticky agent chips are not prepended onto a control command. The
+    # composition decision lives in chat_composer.js; the page adapter
+    # passes the native-control classifier.
     compose = src.split("function composeMessageWithSlashChip", 1)[1].split("\n    }", 1)[0]
-    assert "isControlCommandPrefix" in compose
-    assert "isNativeControlCommand(body)" in compose
+    assert "CuttleChatComposer.composeMessageWithSlashChip" in compose
+    assert "isControl: isNativeControlCommand" in compose
+    composer_src = (CHAT_JS.parent / "chat_composer.js").read_text(encoding="utf-8")
+    assert "isControl(c.prefix)" in composer_src
+    assert "isControl(body)" in composer_src
     # ...and are not evicted by sending one.
     sticky = src.split("function applyStickySlashAfterComposerSend", 1)[1].split("\n    }", 1)[0]
     assert "isNativeControlCommand(message)" in sticky

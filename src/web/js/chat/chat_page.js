@@ -900,14 +900,17 @@
 
     function restoreComposerDraftControls(sid) {
         const prefs = getSessionPrefs(sid === 'new' ? newComposerPrefsId : sid);
-        const draft = prefs && prefs.composerDraft;
-        if (!draft) return;
-        const chips = CuttleChatComposer.draftChips(draft.chips);
-        Object.assign(slashPaletteSupplement, CuttleChatAgentModel.draftSupplementPatch(draft.pins));
-        const cursorModel = chips.find((c) => c.category === 'cursor-model');
-        if (cursorModel) {
-            slashPaletteSupplement.preferredModel = cursorModel.modelId
-                || cursorModel.prefix.replace(/^\/model\s+/i, '').trim();
+        // Owned by chat_composer.js — prefs snapshot in, chips/pins out.
+        const plan = CuttleChatComposer.composerDraftRestorePlan(
+            prefs && prefs.composerDraft,
+            { draftChips: CuttleChatComposer.draftChips }
+        );
+        if (!plan) return;
+        const chips = plan.chips;
+        Object.assign(slashPaletteSupplement, CuttleChatAgentModel.draftSupplementPatch(plan.pins));
+        if (plan.cursorModel) {
+            slashPaletteSupplement.preferredModel = plan.cursorModel.modelId
+                || plan.cursorModel.prefix.replace(/^\/model\s+/i, '').trim();
             beginSupplementFetch('cursorModelsGen');
         }
         slashCtx.welcome.chips = chips.slice();
@@ -8091,8 +8094,8 @@
 
     function composeMessageWithSlashChip(textarea) {
         const key = slashContextKey(textarea);
-        if (!key) return (textarea.value || '').trim();
         const body = (textarea.value || '').trim();
+        if (!key) return body;
         let chips = (slashCtx[key].chips && slashCtx[key].chips.length
             ? slashCtx[key].chips
             : null);
@@ -8102,23 +8105,11 @@
                 chips = slashCtx[other].chips;
             }
         }
-        if (!chips || !chips.length) return body;
-        // A control chip (or a typed control command) outranks stacked sticky
-        // agent chips: Cuttle dispatches it locally.
-        const controlIdx = chips.findIndex((c) => isControlCommandPrefix(c.prefix));
-        if (controlIdx >= 0) {
-            chips = chips.slice(controlIdx);
-        } else if (isNativeControlCommand(body)) {
-            return body;
-        }
-        const prefixPart = chips.map((c) => c.prefix).join('');
-        if (!body) {
-            const t = prefixPart.replace(/\s+$/, '').trim();
-            return t || prefixPart.trim();
-        }
-        const last = chips[chips.length - 1];
-        if (last.prefix.endsWith(' ')) return prefixPart + body;
-        return prefixPart + ' ' + body;
+        // Owned by chat_composer.js — DOM/state gather, domain composes.
+        return CuttleChatComposer.composeMessageWithSlashChip(
+            { body, chips: chips || [] },
+            { isControl: isNativeControlCommand }
+        );
     }
 
     /**
@@ -8205,23 +8196,14 @@
         const chips = (slashCtx.chat.chips && slashCtx.chat.chips.length)
             ? slashCtx.chat.chips
             : (slashCtx.welcome.chips || []);
-        const sticky = (chips || []).filter((c) => {
-            const match = CuttleChatSlash.SLASH_COMMANDS.find((s) => s.prefix === c.prefix);
-            return match && match.stickySession;
+        // Owned by chat_composer.js — DOM/state gather, domain decides.
+        const selection = CuttleChatComposer.stickySessionSelection(chips, {
+            commands: CuttleChatSlash.SLASH_COMMANDS,
+            liveLabel: liveAgentBadgeLabelForChip,
+            paletteCategory: resolveSlashChipPaletteCategory,
+            clearedPending: stickyAgentClearedPending,
         });
-        if (sticky.length) stickyAgentClearedPending = false;
-        const selection = {
-            stickyChips: sticky.map((c) => {
-                const live = liveAgentBadgeLabelForChip(c);
-                const paletteCat = resolveSlashChipPaletteCategory(c);
-                return {
-                    prefix: c.prefix,
-                    label: live || c.label,
-                    category: paletteCat || c.category || 'command',
-                };
-            }),
-            stickyCleared: sticky.length ? false : stickyAgentClearedPending,
-        };
+        if (selection.stickyChips.length) stickyAgentClearedPending = false;
         updateSessionPrefs(prefsId, selection);
         if (publishShared) publishSharedComposerSelection(selection);
     }
@@ -8318,15 +8300,13 @@
         if (state && state.appliedRevision === revision && state.pins === pins) return;
         sharedComposerState.set(key, { ...state, revision, appliedRevision: revision, pins });
         const prefs = getSessionPrefs(sessionId);
-        const draft = prefs && prefs.composerDraft;
-        const composerDraft = CuttleChatComposer.draftWithSharedAgent(
-            draft, incoming, CuttleChatSlash.SLASH_COMMANDS
+        // Owned by chat_composer.js — server snapshot in, prefs patch out.
+        const patch = CuttleChatComposer.sharedSelectionPrefsPatch(
+            incoming,
+            prefs && prefs.composerDraft,
+            { commands: CuttleChatSlash.SLASH_COMMANDS }
         );
-        updateSessionPrefs(sessionId, {
-            stickyChips: incoming.stickyChips,
-            stickyCleared: !!incoming.stickyCleared,
-            composerDraft,
-        });
+        updateSessionPrefs(sessionId, patch);
         restoreSessionStickySlash(sessionId, []);
     }
 
@@ -8362,21 +8342,18 @@
     }
 
     function restoreSessionStickySlash(sessionId, messages) {
-        const prefs = getSessionPrefs(sessionId);
-        const cleared = !!(prefs && prefs.stickyCleared);
-        stickyAgentClearedPending = cleared;
-        let sticky = prefs && Array.isArray(prefs.stickyChips) ? prefs.stickyChips.slice() : [];
-        if (!sticky.length && !cleared) {
-            const inferred = inferStickyChipsFromUserMessages(messages);
-            if (inferred.length) {
-                sticky = inferred;
-                if (sessionId != null && sessionId !== '') {
-                    updateSessionPrefs(sessionId, { stickyChips: sticky });
-                }
-            }
+        // Owned by chat_composer.js — prefs/history snapshot in, chips out.
+        const restored = CuttleChatComposer.stickyChipsToRestore(
+            getSessionPrefs(sessionId),
+            messages,
+            { infer: inferStickyChipsFromUserMessages }
+        );
+        stickyAgentClearedPending = restored.cleared;
+        if (restored.inferred && sessionId != null && sessionId !== '') {
+            updateSessionPrefs(sessionId, { stickyChips: restored.chips });
         }
-        slashCtx.welcome.chips = sticky.slice();
-        slashCtx.chat.chips = sticky.slice();
+        slashCtx.welcome.chips = restored.chips.slice();
+        slashCtx.chat.chips = restored.chips.slice();
         restoreComposerDraftControls(sessionId);
         renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
         renderSlashChips('chat', document.getElementById('chatInput'));
