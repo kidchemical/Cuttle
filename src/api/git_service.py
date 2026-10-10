@@ -627,3 +627,15 @@ def worktree_prune(cwd: str, *, expire: Optional[str] = None) -> Dict[str, bool]
         args += ['--expire', str(expire)]
     _check(_run(args, cwd), 'Cannot prune worktrees')
     return {'pruned': True}
+
+
+def branch_delete(cwd: str, branch: str, *, force: bool = True) -> Dict[str, Any]:
+    """Delete a local branch (``force`` uses ``-D``). Refuses if checked out."""
+    from core.git_refs import validate_branch_name
+
+    name = validate_branch_name(branch)
+    proc = _run(['branch', '-D' if force else '-d', name], cwd)
+    if proc.returncode != 0:
+        raise GitError(f"git branch delete failed: {proc.stderr}",
+                       returncode=proc.returncode, stderr=proc.stderr)
+    return {'branch': name, 'deleted': True}

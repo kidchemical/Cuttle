@@ -8297,15 +8297,28 @@
         return projectChipHtml(currentProject, { composer: true });
     }
 
+    /** Branch to label a history row's checkout: the bound worktree's branch. */
+    function historyBranchFor(session) {
+        const uid = String((session && session.checkout_uid) || '').trim();
+        if (!uid || !window.CuttleChatWorktrees || !window.CuttleChatWorktrees.branchForUid) {
+            return '';
+        }
+        return window.CuttleChatWorktrees.branchForUid(uid) || '';
+    }
+
     function projectChipHtml(proj, opts) {
         opts = opts || {};
         if (!proj || !(proj.name || proj.path)) return '';
         const safe = escapeHtmlInline(proj.name || 'Project');
         const pathBit = proj.path || proj.name || '';
         const starred = isProjectStarred(proj);
-        const showBranch = !!opts.composer && !opts.header;
-        const worktreeChip = showBranch && !!currentCheckoutUid;
-        const branch = showBranch ? currentProjectBranch() : '';
+        const showBranch = !!opts.composer || !!opts.header || !!opts.history;
+        const worktreeChip = opts.worktree !== undefined
+            ? (showBranch && !!opts.worktree)
+            : (showBranch && !!currentCheckoutUid);
+        const branch = !showBranch
+            ? ''
+            : (opts.branch !== undefined ? String(opts.branch || '') : currentProjectBranch());
         const branchBit = branch ? ((worktreeChip ? ' · worktree ' : ' · branch ') + branch) : '';
         const tip = escapeHtmlInline(
             (opts.composer
@@ -8314,7 +8327,9 @@
                     : 'Working project (type /project or /cd to change): ')
                 : 'Project used for this message: ') + pathBit + branchBit
         ).replace(/"/g, '&quot;');
-        const headerClass = opts.header ? ' slash-command-chip--header' : '';
+        // One chip, one style — the project chip looks identical in the composer,
+        // message headers and history rows (no per-surface variant classes).
+        const headerClass = '';
         const starredClass = starred ? ' slash-command-chip--starred' : '';
         const starIcon = starred
             ? '<span class="slash-chip-star" aria-hidden="true">★</span>'
@@ -8323,26 +8338,19 @@
             ? '<span class="slash-chip-seg slash-chip-seg--branch" title="' +
               escapeHtmlInline(branch).replace(/"/g, '&quot;') +
               '">' +
+              (worktreeChip ? '\uD83C\uDF3F ' : '') +
               escapeHtmlInline(branch) +
               '</span>'
             : '';
         const projectIcon =
-            '<span class="slash-chip-icon" aria-hidden="true">' +
-            (worktreeChip ? '\uD83C\uDF3F' : '\uD83D\uDCC1') +
-            '</span>';
-        // Composer chip is segmented (★ | 📁 name | branch); the header/history
-        // variant stays flat so message meta keeps its compact layout.
-        const labelHtml = opts.composer
-            ? '<span class="slash-chip-seg slash-chip-seg--project">' +
-              projectIcon +
-              '<span class="slash-chip-label">' + safe + '</span>' +
-              '</span>' +
-              branchSeg
-            : projectIcon +
-              '<span class="slash-chip-label">' + safe + '</span>';
-        const segmentedClass = opts.composer
-            ? ' slash-command-chip--segmented'
-            : '';
+            '<span class="slash-chip-icon" aria-hidden="true">\uD83D\uDCC1</span>';
+        const labelHtml =
+            '<span class="slash-chip-seg slash-chip-seg--project">' +
+            projectIcon +
+            '<span class="slash-chip-label">' + safe + '</span>' +
+            '</span>' +
+            branchSeg;
+        const segmentedClass = ' slash-command-chip--segmented';
         return (
             '<span class="slash-command-chip slash-command-chip--project' +
             segmentedClass +
@@ -11947,12 +11955,16 @@
         currentProject = proj || null;
         reportProjectToShell(effectiveGitPath());
         // Restore the chat's bound worktree checkout (server row, then prefs).
-        const storedCheckout = (serverProj && serverProj.checkoutUid)
-            || (mergedPrefs && mergedPrefs.checkoutUid)
-            || (stored && stored.checkoutUid) || '';
-        currentCheckoutUid = String(storedCheckout || '').trim();
-        currentCheckoutPath = String((mergedPrefs && mergedPrefs.checkoutPath)
-            || (stored && stored.checkoutPath) || '').trim();
+        // An unsaved new chat has no session row yet: keep the in-memory pick
+        // instead of clearing it, or the chip snaps back to the primary branch.
+        if (currentSessionId) {
+            const storedCheckout = (serverProj && serverProj.checkoutUid)
+                || (mergedPrefs && mergedPrefs.checkoutUid)
+                || (stored && stored.checkoutUid) || '';
+            currentCheckoutUid = String(storedCheckout || '').trim();
+            currentCheckoutPath = String((mergedPrefs && mergedPrefs.checkoutPath)
+                || (stored && stored.checkoutPath) || '').trim();
+        }
         // Stamp the default onto prefs so history grouping matches the cwd chip
         // (auth sessions do not store project_id on the server).
         if (currentSessionId && currentProject && !hadStored
@@ -17125,6 +17137,14 @@ function downloadTranscriptMarkdown(text, sessionId) {
         const subagentBadge = (origin === 'subagent' || parentId)
             ? `<span class="history-kind-badge history-subagent-badge" title="Sub-agent of ${escapeHtml(parentId ? ('CH-' + String(parentId).padStart(6, '0')) : 'parent chat')}">Subagent</span>`
             : '';
+        const projInfo = resolveSessionProjectInfo(sid, s);
+        const projectChip = projInfo
+            ? projectChipHtml(projInfo, {
+                history: true,
+                worktree: !!String(s.checkout_uid || '').trim(),
+                branch: historyBranchFor(s),
+            })
+            : '';
         const badge = count > 0
             ? `<span class="history-msg-badge" title="${count} message${count === 1 ? '' : 's'}" aria-label="${count} messages">
                 <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
@@ -17162,7 +17182,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
             ${historyAttentionIconHTML(attention)}
             ${subToggle}
             <div class="history-item-body">
-                ${historyItemMetaHTML([parts.chipsHtml, discordBadge, subagentBadge, contentBadge, subCountBadge, badge, starredIcon, runningIcon])}
+                ${historyItemMetaHTML([parts.chipsHtml, projectChip, discordBadge, subagentBadge, contentBadge, subCountBadge, badge, starredIcon, runningIcon])}
                 <div class="chat-title">${parts.titleHtml}</div>
                 ${snippetHtml}
             </div>
@@ -17186,9 +17206,18 @@ function downloadTranscriptMarkdown(text, sessionId) {
         const snippetHtml = snippetText
             ? `<div class="history-search-snippet${isContentMatch ? ' is-content-match' : ''}">${escapeHtml(snippetText)}</div>`
             : '';
+        const projInfo = resolveSessionProjectInfo(session.id, session);
+        const projectChip = projInfo
+            ? projectChipHtml(projInfo, {
+                history: true,
+                worktree: !!String(session.checkout_uid || '').trim(),
+                branch: historyBranchFor(session),
+            })
+            : '';
         const meta = historyItemMetaHTML([
             '<span class="chat-icon">💬</span>',
             parts.chipsHtml,
+            projectChip,
             contentBadge,
             starred ? historyStarredIconHTML() : '',
             running ? historyRunningIconHTML() : '',

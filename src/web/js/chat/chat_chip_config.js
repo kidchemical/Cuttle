@@ -98,7 +98,7 @@
             return;
         }
         const now = Date.now();
-        if (!force && branchCache.path === path && (now - branchCache.at) < 15000) return;
+        if (!force && branchCache.path === path && (now - branchCache.at) < 5000) return;
         if (branchInFlight) return;
         branchInFlight = true;
         const prev = branchCache.path === path ? branchCache.branch : '';
@@ -220,6 +220,10 @@
             modalEl.classList.remove('active');
             const fields = modalEl.querySelector('#chipConfigFields');
             if (fields) fields.innerHTML = '';
+            // A project/worktree change may have moved the branch — refresh the chip.
+            if (typeof h.refreshBranch === 'function') {
+                try { h.refreshBranch(); } catch (_) {}
+            }
         }
 
         function openModal(title, subtitle, fieldsHtml, onMount) {
@@ -284,7 +288,7 @@
                     value: w.checkout_uid,
                     label: (w.branch || w.checkout_uid) + (w.checkout_uid === selectedUid ? '  ✓' : ''),
                 }));
-            opts.push({ value: '__new__', label: '➕ New worktree…' });
+            opts.push({ value: '__new__', label: '➕ Create new worktree…' });
             fillSelect(sel, opts, selectedUid || '__new__');
         }
 
@@ -330,6 +334,7 @@
             const currentCheckout = h.getChatCheckout ? (h.getChatCheckout() || '') : '';
             const mode = currentCheckout ? 'worktree' : 'local';
             const defBranch = h.defaultWorktreeBranch ? h.defaultWorktreeBranch() : '';
+
             let fields = selectHtml('chipConfigProject', 'Project', projOptions, curId, !projOptions.length);
             if (wtEnabled) {
                 fields += selectHtml('chipConfigMode', 'Mode', [
@@ -339,76 +344,102 @@
             }
             fields += selectHtml('chipConfigBranch', 'Branch', [], '', true);
             if (wtEnabled) {
+                fields += selectHtml('chipConfigWorktree', 'Worktree', [], '', true);
                 fields += inputHtml('chipConfigNewBranch', 'New worktree branch', defBranch, 'cuttle/feature');
+                fields += '<div class="chip-config-field">' +
+                    '<button type="button" class="chip-config-create" id="chipConfigCreate">Create worktree</button>' +
+                    '</div>';
             }
+
             openModal(
                 'Working project',
-                'Choose the project, mode, and branch for this chat.',
+                wtEnabled
+                    ? 'Local = shared checkout. Worktree = an isolated branch for this chat.'
+                    : 'Choose the project and branch for this chat.',
                 fields,
                 (el) => {
                     const projSel = el.querySelector('#chipConfigProject');
                     const modeSel = el.querySelector('#chipConfigMode');
                     const branchSel = el.querySelector('#chipConfigBranch');
+                    const wtSel = el.querySelector('#chipConfigWorktree');
                     const newBranchInput = el.querySelector('#chipConfigNewBranch');
+                    const createBtn = el.querySelector('#chipConfigCreate');
                     const currentMode = () => (wtEnabled && modeSel ? modeSel.value : 'local');
-                    const setNewBranchVisible = (visible) => {
-                        const field = newBranchInput && newBranchInput.closest
-                            ? newBranchInput.closest('.chip-config-field') : null;
+                    const setVisible = (node, visible) => {
+                        const field = node && node.closest ? node.closest('.chip-config-field') : null;
                         if (field) field.style.display = visible ? '' : 'none';
                     };
-                    const syncBranch = () => {
-                        if (currentMode() === 'worktree') {
-                            setNewBranchVisible(true);
-                            loadWorktrees(branchSel, projSel.value,
-                                h.getChatCheckout ? h.getChatCheckout() : '');
-                        } else {
-                            setNewBranchVisible(false);
+                    const showCreate = () => !!(wtSel && wtSel.value === '__new__');
+                    const toggleCreate = () => {
+                        setVisible(newBranchInput, showCreate());
+                        setVisible(createBtn, showCreate());
+                    };
+                    const sync = () => {
+                        const local = currentMode() !== 'worktree';
+                        setVisible(branchSel, local);
+                        setVisible(wtSel, !local);
+                        if (local) {
+                            setVisible(newBranchInput, false);
+                            setVisible(createBtn, false);
                             loadBranches(branchSel, projSel.value);
+                        } else {
+                            loadWorktrees(wtSel, projSel.value, h.getChatCheckout ? h.getChatCheckout() : '')
+                                .then(toggleCreate);
                         }
                     };
+
                     projSel.addEventListener('change', () => {
                         const proj = h.findProjectById ? h.findProjectById(projSel.value) : null;
                         if (proj && h.setChatProject) h.setChatProject(proj);
                         if (newBranchInput && h.defaultWorktreeBranch) {
                             newBranchInput.value = h.defaultWorktreeBranch();
                         }
-                        syncBranch();
+                        sync();
                     });
                     if (modeSel) {
                         modeSel.addEventListener('change', () => {
                             if (currentMode() === 'local' && h.setChatCheckout) h.setChatCheckout(null);
-                            syncBranch();
+                            sync();
                         });
                     }
                     branchSel.addEventListener('change', () => {
-                        const value = branchSel.value;
-                        if (currentMode() !== 'worktree') {
-                            switchBranch(value, branchSel, projSel.value);
-                            return;
-                        }
-                        if (value === '__new__') {
+                        if (branchSel.value) switchBranch(branchSel.value, branchSel, projSel.value);
+                    });
+                    if (wtSel) {
+                        wtSel.addEventListener('change', () => {
+                            if (wtSel.value === '__new__') {
+                                toggleCreate();
+                                return;
+                            }
+                            const picked = (wtSel._worktrees || []).find((w) => w.checkout_uid === wtSel.value);
+                            if (picked && h.setChatCheckout) h.setChatCheckout(picked);
+                            toggleCreate();
+                        });
+                    }
+                    if (createBtn) {
+                        createBtn.addEventListener('click', () => {
                             const name = ((newBranchInput && newBranchInput.value) || '').trim()
                                 || (h.defaultWorktreeBranch ? h.defaultWorktreeBranch() : '');
                             if (!name) return;
+                            createBtn.disabled = true;
                             Promise.resolve(h.createWorktree ? h.createWorktree(projSel.value, name) : null)
                                 .then((created) => {
+                                    createBtn.disabled = false;
                                     if (created && created.checkout_uid) {
                                         if (h.setChatCheckout) h.setChatCheckout(created);
                                         toast('Worktree ready: ' + (created.branch || name), 'success');
                                     } else {
                                         toast((created && created.error) || 'Worktree creation failed', 'error');
                                     }
-                                    loadWorktrees(branchSel, projSel.value, created && created.checkout_uid);
+                                    loadWorktrees(wtSel, projSel.value, created && created.checkout_uid);
                                 })
-                                .catch(() => loadWorktrees(branchSel, projSel.value, ''));
-                            return;
-                        }
-                        if (value) {
-                            const picked = (branchSel._worktrees || []).find((w) => w.checkout_uid === value);
-                            if (picked && h.setChatCheckout) h.setChatCheckout(picked);
-                        }
-                    });
-                    syncBranch();
+                                .catch((err) => {
+                                    createBtn.disabled = false;
+                                    toast((err && err.message) || 'Worktree creation failed', 'error');
+                                });
+                        });
+                    }
+                    sync();
                 }
             );
         }

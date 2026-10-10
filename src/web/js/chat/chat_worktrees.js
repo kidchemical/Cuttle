@@ -10,6 +10,19 @@
     'use strict';
 
     let enabled = null; // null = unknown, true/false after a probe
+    // uid -> branch, populated from every probe/list/create so other surfaces
+    // (history rows, message chips) can label a bound checkout without a fetch.
+    const branchByUid = {};
+
+    function rememberWorktrees(items) {
+        (items || []).forEach((w) => {
+            if (w && w.checkout_uid) branchByUid[String(w.checkout_uid)] = String(w.branch || '');
+        });
+    }
+
+    function branchForUid(uid) {
+        return branchByUid[String(uid || '')] || '';
+    }
 
     function slug(name) {
         const s = String(name || '')
@@ -39,7 +52,13 @@
                 credentials: 'include',
                 cache: 'no-store',
             });
-            enabled = resp.status === 200;
+            if (resp.status === 200) {
+                enabled = true;
+                const data = await resp.json().catch(() => null);
+                if (data && Array.isArray(data.worktrees)) rememberWorktrees(data.worktrees);
+            } else {
+                enabled = false;
+            }
         } catch (_) {
             enabled = false;
         }
@@ -56,6 +75,7 @@
             });
             const data = await resp.json().catch(() => null);
             const items = data && data.success && Array.isArray(data.worktrees) ? data.worktrees : [];
+            rememberWorktrees(items);
             return items;
         } catch (_) {
             return [];
@@ -74,7 +94,10 @@
                 body: JSON.stringify(body),
             });
             const data = await resp.json().catch(() => null);
-            if (resp.ok && data && data.success) return data.worktree || null;
+            if (resp.ok && data && data.success) {
+                rememberWorktrees([data.worktree]);
+                return data.worktree || null;
+            }
             return { error: (data && data.error) || ('Worktree creation failed (' + resp.status + ')') };
         } catch (err) {
             return { error: (err && err.message) || 'Worktree creation failed' };
@@ -95,7 +118,7 @@
         }
     }
 
-    const api = { slug, defaultBranch, isEnabled, probe, list, create, remove };
+    const api = { slug, defaultBranch, isEnabled, probe, list, create, remove, branchForUid };
     const ns = (root.CuttleChatWorktrees = root.CuttleChatWorktrees || {});
     Object.assign(ns, api);
     if (typeof module !== 'undefined' && module.exports) module.exports = api;

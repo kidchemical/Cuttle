@@ -4769,6 +4769,29 @@ pre.has-code-copy:hover .code-copy-btn,
     box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.25);
 }
 
+.chip-config-create {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 11px 12px;
+    border-radius: 10px;
+    border: 1px solid rgba(139, 92, 246, 0.6);
+    background: rgba(139, 92, 246, 0.18);
+    color: #e2e8f0;
+    font-size: 14px;
+    font-family: inherit;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.chip-config-create:hover {
+    background: rgba(139, 92, 246, 0.3);
+}
+
+.chip-config-create:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+
 /* Searchable combobox (js/shared/searchable_select.js) fills the field. */
 .chip-config-field .cuttle-combo {
     width: 100%;

@@ -98,10 +98,16 @@ def remove_worktree(
     *,
     primary_path: str,
     force: bool = False,
+    delete_branch: bool = True,
     db_path_override: Optional[Path] = None,
     prune: bool = True,
 ) -> Dict[str, Any]:
-    """Remove a registered worktree. Refuses dirty state unless ``force``."""
+    """Remove a registered worktree and (by default) its branch.
+
+    Refuses dirty state unless ``force``. The branch is deleted after the
+    worktree is gone so it can't linger in the shared branch list; a branch
+    still checked out elsewhere is left alone (git refuses).
+    """
     checkout = registry.get_checkout(checkout_uid, db_path_override=db_path_override)
     if checkout is None:
         raise WorktreeError("Unknown checkout.")
@@ -109,13 +115,20 @@ def remove_worktree(
         result = git_service.worktree_remove(primary_path, checkout.path, force=force)
     except GitError as exc:
         raise WorktreeError(str(exc)) from exc
+    branch_deleted = False
+    if delete_branch and checkout.branch:
+        try:
+            git_service.branch_delete(primary_path, checkout.branch, force=True)
+            branch_deleted = True
+        except GitError:
+            branch_deleted = False
     registry.remove_checkout(checkout_uid, db_path_override=db_path_override)
     if prune:
         try:
             git_service.worktree_prune(primary_path)
         except GitError:
             pass
-    return {"checkout_uid": checkout_uid, **result}
+    return {"checkout_uid": checkout_uid, "branch_deleted": branch_deleted, **result}
 
 
 def discover_worktrees(

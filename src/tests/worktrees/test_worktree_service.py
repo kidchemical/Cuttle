@@ -105,3 +105,21 @@ def test_reconcile_marks_missing(tmp_path, monkeypatch):
     out = service.reconcile_worktrees(primary_path=str(repo), db_path_override=_db(tmp_path))
     assert checkout.checkout_uid in out["marked_missing"]
     assert registry.get_checkout(checkout.checkout_uid, db_path_override=_db(tmp_path)).state == "missing"
+
+
+def _branch_exists(repo, branch):
+    proc = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "--verify", f"refs/heads/{branch}"],
+        capture_output=True, text=True,
+    )
+    return proc.returncode == 0
+
+
+def test_remove_deletes_worktree_branch(tmp_path, monkeypatch):
+    repo, checkout = _create(tmp_path, monkeypatch)
+    assert _branch_exists(repo, checkout.branch) is True
+    out = service.remove_worktree(
+        checkout.checkout_uid, primary_path=str(repo), db_path_override=_db(tmp_path)
+    )
+    assert out["removed"] is True and out["branch_deleted"] is True
+    assert _branch_exists(repo, checkout.branch) is False
