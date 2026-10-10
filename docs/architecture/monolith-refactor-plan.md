@@ -51,8 +51,8 @@ Each slice follows these five steps, in order:
    the slice, or before it.
 2. **Move.** Move the code to its owner. The page keeps a thin adapter or a
    call site and no private state for the moved feature.
-3. **Migrate the tests that pin the old location.** 31 test files slice 91
-   monolith functions out of the source by name (appendix A).
+3. **Migrate the tests that pin the old location.** At the baseline, 34 test
+   files sliced 139 monolith functions out of the source (appendix A).
    - Point each one at the owner module's public interface.
    - Don't re-slice it from the new file by name.
    - Source-text assertions that only pin *where* code lives are rewritten to
@@ -67,6 +67,21 @@ Each slice follows these five steps, in order:
    - **Quality gates:** `test_architecture_boundaries.py`,
      `test_composition_root_growth.py`, `test_frontend_assets.py`,
      `test_chat_page_js_syntax.py`.
+   - **Run the gate on the commit, not the working tree.** A suite reads
+     source files as it goes, so editing during a run mixes states. Gate
+     each slice commit in a throwaway worktree:
+     `git worktree add --detach temp/worktrees/<name>/Cuttle <rev>`.
+     - The checkout directory must be named `Cuttle`; two path-rewrite
+       tests expect it.
+     - Symlink `.venv` into it, because the restart-script test looks for
+       it.
+     - Run pytest with the main checkout's interpreter by its real path,
+       not through the symlink. The shadow-instance read guard otherwise
+       denies the venv prefix and 35 shadow tests fail to boot.
+   - Run gates one at a time. `test_atomic_claim_across_connections` is
+     load-sensitive when two suites run at once.
+   - Browser checks assert `not errors` (page errors). That catches a page
+     reference to a function that moved, which `node --check` cannot.
 5. **Smoke-test the real UI.** The user hard-refreshes for JS slices, or
    restarts Flask through the action form for Python slices, and exercises
    the slice's listed journeys. No paid or live vendor runs unless the user
@@ -80,7 +95,7 @@ Phase 0 exit gate ("every planned extraction has a destination owner") holds.
 | Domain | Lines | Coupling out/in | Destination | Phase |
 |---|---:|---|---|---|
 | Transcript nav: pins, scroll, jump, copy, share | 564 | 14 / 40 | new `chat_transcript_nav.js` (`CuttleChatTranscriptNav`) | 1D |
-| Subagent launchers/orbs | 196 | 4 / 8 | existing `chat_subagent_fleet.js` | 1E |
+| Subagent launchers/orbs | 196 | 4 / 8 | new `chat_subagent_launchers.js` over the pure `chat_subagent_fleet.js` | 1E |
 | Composer state: drafts, attachments, prompt history, enhance | 751 | 32 / 48 | existing `chat_composer.js`, `chat_attachments.js`, `chat_prompt_history.js` (finish half-done delegation) | 2D |
 | Context gauge | 402 | 6 / 3 | new `chat_context_gauge.js` (`CuttleChatContextGauge`) | 2E |
 | Chat project binding: cwd, pending changes, git push menu | 1,014 | 19 / 48 | existing `chat_project.js`; git push menu → existing `git/git_push_report.js` family | 3E |
@@ -110,7 +125,7 @@ Deliverables are this plan and `monolith-baseline.md`. No production change.
 Order: 1A → 1C → 1E → 1D → 1B. 1B is more coupled than the original
 estimate, so it goes last.
 
-**1A — Media and lightbox** (1,129 lines, out 4 / in 6, 0 sliced tests).
+**1A — Media and lightbox** (1,129 lines, out 4 / in 6, 2 sliced functions).
 The cleanest first extraction.
 - **Destination:** new `chat_media.js` (`CuttleChatMedia`). The master plan
   proposed `chat_media_controller.js`; repo convention is `chat_<domain>.js`
@@ -151,18 +166,27 @@ The cleanest first extraction.
   - Journeys: speaker button, voice mode reply playback, stop on navigation.
 
 **1E — Subagent launchers and orbs** (196 lines, out 4 / in 8).
-- Moves into existing `chat_subagent_fleet.js`.
+- **Destination (revised in 1E):** new controller `chat_subagent_launchers.js`.
+  `chat_subagent_fleet.js` is a documented pure markup module (no DOM), and
+  the launchers mount DOM and hold the live list. So they follow the
+  pure-module-plus-controller pattern and call the fleet module for cards.
 - Verify with e2e `test_subagent_fleet_cards.py`.
 
 **1D — Transcript navigation** (564 lines, out 14 / in 40).
-- **Destination:** new `chat_transcript_nav.js`, covering message nav rail,
-  pins, scroll-pin state, jump-to-message, message refs, and copy/share.
-- **The page keeps:** `chatPinnedToBottom` reads through the owner.
+- **Destination:** new `chat_transcript_nav.js`, covering follow-latest
+  scroll state, the message nav rail and pins, jump-to-bottom,
+  jump-to-message, `?msg=` deep links and message refs.
+- **Revised in 1D:** message copy/speak text and the clipboard fallback are
+  message *actions*, not navigation. They stay in the page for 1B.
+- **The page keeps:** a narrow API instead of shared variables
+  (`isFollowingLatest`, `holdScrollPin`, `settleAfterLoad`, `resetNav`).
+  The two identical "settle at bottom after load" blocks are now one owner
+  method.
 - **Verify:**
   - Characterize pin storage and ref parsing.
   - e2e `test_verify_nav_history.py`, `test_chat_history_scroll.py`.
 
-**1B — Message presentation** (1,408 lines, out 51 / in 63, 5 sliced tests).
+**1B — Message presentation** (1,408 lines, out 51 / in 63, 12 sliced functions).
 - **Destination:** existing `chat_markdown.js` (md link chips, chat-handle
   linkify, Vega wrap, code-copy text) and `chat_messages.js` (footer and
   button HTML, usage/query-log footers, pricing HTML). No new renderer.
@@ -180,8 +204,8 @@ holds none of their private state.
 
 ### Phase 2: Agent selection and composer (medium risk)
 
-**2A — Model/effort controls** (2,777 lines, out 26 / in 108, 16 sliced tests;
-the largest test migration).
+**2A — Model/effort controls** (2,777 lines, out 26 / in 108, 16 sliced
+functions).
 - **Destination:** new controller `chat_agent_controls.js`
   (`CuttleChatAgentControls`) over the pure `chat_agent_model.js`.
 - **What moves:**
@@ -210,8 +234,8 @@ the largest test migration).
   - e2e `test_chat_badge_identity.py`, `test_chat_badge_starring.py`,
     `test_chat_draft_agent.py`.
 
-**2B — Slash palette controller** (2,418 lines, out 115 / in 76, 9 sliced
-tests).
+**2B — Slash palette controller** (2,418 lines, out 115 / in 76, 20 sliced
+functions; the largest test migration).
 - **Destination:** new `chat_slash_palette.js` (DOM, keyboard, filtering
   effects, lifecycle) over pure `chat_slash.js`.
 - `applySlashSelectionInner` (405 lines) and `renderSlashChips` /
@@ -221,8 +245,8 @@ tests).
     `test_agent_usage_slash.py`.
   - e2e `test_chat_draft_controls.py`.
 
-**2C — Sticky agent and shared composer selection** (418 lines, 2 sliced
-tests).
+**2C — Sticky agent and shared composer selection** (418 lines, 7 sliced
+functions).
 - **Destination:** existing `chat_composer.js`, which already owns
   `draftWithSharedAgent`.
 - Server `composer_selection` stays the owner of persisted selection.
@@ -262,7 +286,7 @@ owner, with no parallel model-selection implementations.
   - e2e `test_chat_sync_lifetime.py`, `test_app_shell_navigation.py`,
     `test_welcome_ui_sanity.py`.
 
-**3A — History panel** (3,485 lines, out 83 / in 98, 11 sliced tests).
+**3A — History panel** (3,485 lines, out 83 / in 98, 14 sliced functions).
 - **Split into four commits:**
   1. Search and filters (`searchChats`, filter chips, history slash palette).
   2. Item rendering, menus, and rename/delete modals.
@@ -276,7 +300,7 @@ owner, with no parallel model-selection implementations.
   - e2e `test_chat_history_search_panel.py`, `test_chat_history_scroll.py`,
     `test_shadow_chat_status_dots.py`.
 
-**3C — Message sync** (753 lines, 7 sliced tests).
+**3C — Message sync** (753 lines, 9 sliced functions).
 - This reopens a decision recorded as "page-side by design" (sync timer
   mechanics; baseline §8).
 - Do it only if 3B leaves the timer as the last thing tying the page to
@@ -307,7 +331,7 @@ resend, and reload before it moves anything.
 
 - **4A — Turn lifecycle** (1,560 lines). `processMessage` (828 lines) splits
   by stage (prepare → submit → stream → finalize) behind
-  `chat_generation.js` / `chat_turn_guard.js` / `chat_stop_state.js`. Seven
+  `chat_generation.js` / `chat_turn_guard.js` / `chat_stop_state.js`. Nine
   functions are sliced by tests.
 - **4B — Stream transport** (711 lines). This covers the status poll,
   connecting watchdog, pool-stall detection and typing indicator.
@@ -461,11 +485,27 @@ Open:
    3D and Phase 5 either point it at the shadow instance (`api.dev_instance`)
    or add an isolated equivalent first.
 
+## 6. Findings log
+
+Pre-existing issues found while moving code. Each is recorded here and left
+unchanged (no behavior change during the refactor), unless the user schedules
+a fix.
+
+| Found in | Finding |
+|---|---|
+| 1A | With the image menu open over the lightbox, one Escape closes both. The menu's capture-phase dismiss listener clears the menu before the lightbox keydown handler checks for it. Pinned by `test_chat_media_lightbox.py`. |
+| 1A | The lightbox element's own listeners (click, pointer, wheel, contextmenu) live on an element in the host body and close over the frame that built it. They are not signal-bound, so an unloaded chat frame stays reachable until another pane rebuilds the lightbox (`ensureCuttleLightbox` removes stale ones). Host window/document listeners are correctly torn down. |
+| 1A | `parseMdImageDest` had no callers anywhere; it was dropped instead of moved. |
+| 1C | Two near-duplicate `/api/chat/tts` request paths: `speakMessageFromButton` (bubble button) and `voiceSpeechForMessage` (voice mode). Both now live in `chat_tts.js`; they differ in their spoken-text fallback and voice-usage capture, so they were moved as-is rather than merged. |
+
 ## Appendix A: Tests that slice monolith functions by name
 
 Each row is a test file that extracts these functions from `chat_page.js` /
-`app_shell.js` source. A slice that moves a listed function migrates that test
-to the owner's interface in the same commit.
+`app_shell.js` source, either by name (`_extract(src, "name")`) or between
+`span('    function name(', …)` markers. A slice that moves a listed function
+migrates that test to the owner's interface in the same commit. A slice that
+moves a function used as a span *end* marker must also update that marker.
+The table lists what remains; slices remove rows as they migrate them.
 
 | Test file | Monolith functions sliced |
 |---|---|
@@ -475,15 +515,16 @@ to the owner's interface in the same commit.
 | `test_agent_router_palette.py` | `buildCursorModelPaletteItems`, `cursorAgentSlashCommandsForPalette`, `filterSlashPaletteItems`, `harnessUsageSlashCommandsForPalette` |
 | `test_agent_usage_slash.py` | `composerChipAgentId`, `filterSlashPaletteItems`, `harnessUsageSlashCommandsForPalette`, `isSendableComposerMessage` |
 | `test_apps_list_footer.py` | `getAppsList` |
-| `test_assistant_badge_all_harnesses.py` | `escapeHtml`, `escapeHtmlInline`, `parseStoredSlashCommandHead` |
-| `test_bare_sticky_agent_send.py` | `isSendableComposerMessage`, `sendMessage`, `sendWelcomeMessage` |
+| `test_assistant_badge_all_harnesses.py` | `chatTitleParts`, `escapeHtml`, `escapeHtmlInline`, `isBareAgentChipLabel`, `normalizeAgentSlashChips`, `parseProjectOrGenericSlashHead`, `parseStoredSlashCommandHead`, `parseTitleSlashChips`, `sessionPrefsForHistory`, `stickyTitleChipsForSession`, `titleChipKey` |
+| `test_bare_sticky_agent_send.py` | `applyStickySlashAfterComposerSend`, `clearAllSlashChips`, `composeMessageWithSlashChip`, `isNativeControlCommand`, `isSendableComposerMessage`, `sendMessage`, `sendWelcomeMessage` |
 | `test_chat_agent_model.py` | `attachAgentIdentityToRequest`, `buildClaudeEffortPaletteItems`, `buildClaudeModelPaletteItems`, `claudeModelLabel`, `ensureCodexEffortForSend`, `isAgentDefaultStarred`, `loadClaudeEffortForPalette`, `loadClaudeModelsForPalette`, `persistClaudeModelSelection`, `prettyClaudeModelLabel`, `seedClaudeSupplementFromSessionData`, `sessionPin`, `starredAgentEffort`, `starredAgentModel` |
 | `test_chat_archived_badge.py` | `refreshArchivedSessions`, `updateChatSessionArchivedBadge`, `updateChatSessionTitle` |
 | `test_chat_attention_dots.py` | `notifyAssistantResponseReady` |
+| `test_chat_composer.py` | `claimUnmarkedMessageEl`, `clearPendingAttachments`, `isImageAttachment`, `normalizeMessageContentForMatch`, `sendMessage`, `userAvatarInnerHtmlForChat` |
 | `test_chat_followup_heal.py` | `createNewChat`, `healStaleGeneratingState`, `isSessionGenerating`, `loadChatSession`, `pageIsBackgrounded`, `setWelcomeComposerEnabled`, `thisTurnHasAssistantReply`, `turnAlreadyShowsAssistantReply` |
 | `test_chat_history_delete_modal.py` | `openHistoryDeleteModal`, `requestDeleteChatSession` |
 | `test_chat_history_search.py` | `historySearchQueryActive`, `loadChatHistory`, `loadProjects`, `reloadHistoryListKeepingSearch`, `softRefreshHistorySearchIndicators` |
-| `test_chat_messages.py` | `annotateMessageProjects`, `applyChatHistoryPageMeta`, `authMessageOptsFromServer`, `buildVegaWrapHtml`, `cleanCodeCopyText`, `countVisibleChatMessages`, `formatMessage`, `isTouchComposer`, `preferredModelFromMessages`, `projectFromMessageRecord`, `transcriptEndsWithAssistant`, `windowChatHistoryMessages` |
+| `test_chat_messages.py` | `annotateMessageProjects`, `applyChatHistoryPageMeta`, `authMessageOptsFromServer`, `availableSlashCommands`, `buildMessageAttachmentsHtml`, `buildVegaWrapHtml`, `clamp`, `cleanCodeCopyText`, `countVisibleChatMessages`, `escapeHtmlInline`, `formatFormReplyHtml`, `formatMessage`, `formatMessageWithAttachments`, `formatUserMessageForDisplay`, `isSafeMdHref`, `isTouchComposer`, `mdLinkChipLabel`, `normalizeMdHref`, `openFileInDefaultApp`, `parseButtonClickFromContent`, `parseButtonClickFromMessage`, `preferredModelFromMessages`, `projectFromMessageRecord`, `renderMdLinkChip`, `safeJsonParse`, `transcriptEndsWithAssistant`, `windowChatHistoryMessages`, `windowsPathToFileUrl` |
 | `test_chat_page_js_syntax.py` | `_historyActionIcons` |
 | `test_chat_terminal_status.py` | `remoteLiveStatusLooksActive` |
 | `test_chat_widgets.py` | `applyHubLiveStatusPayload`, `createNewChat` |
@@ -491,12 +532,14 @@ to the owner's interface in the same commit.
 | `test_composer_draft_session.py` | `restoreComposerDraft` |
 | `test_first_turn_agent_pins.py` | `attachAgentIdentityToRequest` |
 | `test_gizmos_js.py` | `migrateUILayout` |
-| `test_history_agent_badge_styling.py` | `escapeHtmlInline` |
+| `test_history_agent_badge_styling.py` | `escapeHtmlInline`, `slashCommandChipHistoryHtml` |
 | `test_pane_space_drag.py` | `appendLayoutLeafToEnd`, `exchangeCarriedPaneWithLive`, `moveDraggedPaneToSpace` |
-| `test_project_chip_persistence.py` | `canonicalizeChatSessionId`, `sessionIdsEqual`, `toAuthDbSessionId` |
+| `test_project_chip_persistence.py` | `canonicalizeChatSessionId`, `clearSessionPrefs`, `findAuthServerSession`, `handleSlashKeyDown`, `isHistoryProjectSectionExpanded`, `persistProjectForCurrentSession`, `resolveSessionProjectInfo`, `sessionHasStoredProject`, `sessionIdsEqual`, `switchChatProject`, `toAuthDbSessionId` |
 | `test_rail_edit_mode.py` | `setRailEditing` |
+| `test_restart_composer_js.py` | `composeMessageWithSlashChip`, `isNativeControlCommand` |
 | `test_retired_pages.py` | `canonicalizeShellPage` |
-| `test_slash_palette_selection_consistency.py` | `applySlashSelection`, `applySlashSelectionInner`, `buildCursorModelPaletteItems`, `buildMuseModelPaletteItems`, `isCursorNestedCommandChip`, `isHarnessNestedCommandChip`, `isStickyAgentChip`, `isStickyCursorAgentChip` |
+| `test_slash_palette_selection_consistency.py` | `applySlashSelection`, `applySlashSelectionInner`, `buildCursorModelPaletteItems`, `buildMuseModelPaletteItems`, `composeMessageWithSlashChip`, `composerChipAgentId`, `getStickySlashCommandFromMessage`, `isAgentHeaderChip`, `isCursorNestedCommandChip`, `isCursorRelatedSlashChip`, `isHarnessNestedCommandChip`, `isNativeControlCommand`, `isSendableComposerMessage`, `isStickyAgentChip`, `isStickyCursorAgentChip` |
 | `test_space_activity_dots.py` | `collectChatActivitySnapshot`, `scheduleChatActivityBroadcast` |
 | `test_space_tab_groups.py` | `deleteSpaceGroupWithSpaces`, `dissolveSpaceGroup`, `isSpaceCtxOpen`, `measureSpaceDropLanes`, `openSpaceGroupBubbleFor`, `openSpaceTabMenu`, `placeDraggedSpaceTab`, `spaceGroupPillHtml`, `toggleSpaceGroupCollapsed` |
 | `test_split_agent_feed.py` | `applyAgentFeedAvailability`, `mountNewLeafFrame` |
+| `test_starred_agent_removal.py` | `getStickySlashCommandFromMessage`, `persistProjectForCurrentSession`, `restoreComposerDraftControls`, `saveComposerDraft` |
