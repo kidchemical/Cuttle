@@ -454,3 +454,217 @@ def test_sync_lane_suppresses_after_run_when_cancelled():
     assert status == 200 and body["response"] == "too late"
     assert calls == []
     chat_delivery.end(sid)
+
+
+def test_launch_gate_lane_ignores_normal_message():
+    """Non-gate messages return None so the route continues dispatch."""
+    from api.chat_turn_workflow import run_launch_gate_lane
+
+    assert run_launch_gate_lane(
+        "hello",
+        session_id=1,
+        auth_user=dict(USER),
+        get_auth_db=lambda: None,
+        button_click_history=lambda m: (m, None),
+    ) is None
+
+
+def test_launch_gate_lane_project_action_persists(monkeypatch):
+    """A project-action button is handled + persisted by the owner."""
+    from api.chat_turn_workflow import run_launch_gate_lane
+    import api.project_actions as project_actions
+
+    monkeypatch.setattr(
+        project_actions,
+        "handle_project_action_button",
+        lambda msg, session_id=None: {
+            "success": True, "response": "done", "type": "project_action",
+        },
+    )
+    db = FakeDB()
+    body = run_launch_gate_lane(
+        "[button:project-action-confirm] abc123",
+        session_id=777,
+        auth_user=dict(USER),
+        get_auth_db=lambda: db,
+        button_click_history=lambda m: (m, None),
+    )
+    assert body is not None
+    assert body["response"] == "done"
+    assert body["session_id"] == 777
+    assert [r["role"] for r in db.rows] == ["user", "assistant"]
+    assert db.rows[1]["content"] == "done"
+
+
+def test_launch_gate_lane_silent_form_locks_without_history(monkeypatch):
+    """Silent owned forms lock in history; no user/assistant rows are written."""
+    from api.chat_turn_workflow import run_launch_gate_lane
+    import api.action_forms as action_forms
+
+    marked = {}
+    monkeypatch.setattr(
+        action_forms,
+        "handle_action_form_chat_message",
+        lambda msg, session_id=None: {
+            "success": True, "response": "locked", "type": "action_form",
+            "silent": True, "lock": "form", "form_id": "f1",
+        },
+    )
+    monkeypatch.setattr(
+        action_forms,
+        "mark_action_form_consumed_in_history",
+        lambda **kw: marked.update(kw),
+    )
+    db = FakeDB()
+    body = run_launch_gate_lane(
+        "[action-form:f1]",
+        session_id=777,
+        auth_user=dict(USER),
+        get_auth_db=lambda: db,
+        button_click_history=lambda m: (m, None),
+    )
+    assert body is not None and body["session_id"] == 777
+    assert db.rows == []
+    assert marked.get("form_id") == "f1"
+    assert marked.get("session_id") == "db_session_777"
+
+
+def test_launch_gate_lane_wired_into_chat_route(workflow_env, monkeypatch):
+    """POST /api/chat routes a project-action button through the owner lane."""
+    wca, db = workflow_env
+    import api.project_actions as project_actions
+
+    monkeypatch.setattr(
+        project_actions,
+        "handle_project_action_button",
+        lambda msg, session_id=None: {
+            "success": True, "response": "gate-ok", "type": "project_action",
+        },
+    )
+    res = _post(wca, "[button:project-action-confirm] abc123")
+    assert res.status_code == 200
+    body = res.get_json()
+    assert body["response"] == "gate-ok"
+    assert body["session_id"] == 777
+
+
+def _shell_lane(*args, **kwargs):
+    from api.chat_turn_workflow import run_shell_action_lane
+    return run_shell_action_lane(*args, **kwargs)
+
+
+def test_shell_action_lane_prompt_action_replaces_message(monkeypatch):
+    """A prompt project command expands into the message; never terminal."""
+    import api.project_commands as pc
+
+    monkeypatch.setattr(
+        pc,
+        "try_expand_message_project_command",
+        lambda msg, path: {
+            "action": "prompt", "message": "EXPANDED", "command": {"name": "build"},
+        },
+    )
+    body, mc, busy = _shell_lane(
+        "/build",
+        session_id=777,
+        auth_user=dict(USER),
+        data={},
+        resolve_project_path=lambda d: "/tmp/proj",
+        persist_user_turn=lambda sid: None,
+        make_saver=lambda sid: None,
+        rewrite_actions=lambda *a, **k: None,
+    )
+    assert body is None and mc == "EXPANDED" and busy is False
+
+
+def test_shell_action_lane_shell_action_persists(monkeypatch):
+    """A shell project command runs as no-LLM, persists, and returns a body."""
+    import api.project_commands as pc
+
+    monkeypatch.setattr(
+        pc,
+        "try_expand_message_project_command",
+        lambda msg, path: {
+            "action": "shell", "command": {"name": "deploy"}, "args": "prod",
+        },
+    )
+    monkeypatch.setattr(
+        pc, "run_project_command_shell",
+        lambda cmd, args, session_id=None: {"success": True, "output": "ok"},
+    )
+    monkeypatch.setattr(
+        pc, "format_project_command_shell_reply",
+        lambda cmd, result: "output-body",
+    )
+    persisted, saved = [], []
+    body, mc, busy = _shell_lane(
+        "/deploy prod",
+        session_id=777,
+        auth_user=dict(USER),
+        data={},
+        resolve_project_path=lambda d: "/tmp/proj",
+        persist_user_turn=lambda sid: persisted.append(sid),
+        make_saver=lambda sid: (lambda b: saved.append(b)),
+        rewrite_actions=lambda *a, **k: None,
+    )
+    assert body["response"] == "output-body" and body["session_id"] == 777
+    assert persisted == [777]
+    assert saved and saved[0]["response"] == "output-body"
+    assert busy is False
+
+
+def test_shell_action_lane_shell_busy_signals_route(monkeypatch):
+    """A busy chat returns the busy signal instead of running the shell."""
+    from api import chat_delivery
+    import api.project_commands as pc
+
+    sid = "b1-shell-busy"
+    monkeypatch.setattr(
+        pc,
+        "try_expand_message_project_command",
+        lambda msg, path: {
+            "action": "shell", "command": {"name": "deploy"}, "args": "",
+        },
+    )
+    assert chat_delivery.try_begin(sid) is True
+    try:
+        body, _mc, busy = _shell_lane(
+            "/deploy",
+            session_id=sid,
+            auth_user=dict(USER),
+            data={},
+            resolve_project_path=lambda d: "/tmp/proj",
+            persist_user_turn=lambda s: None,
+            make_saver=lambda s: None,
+            rewrite_actions=lambda *a, **k: None,
+        )
+        assert body is None and busy is True
+    finally:
+        chat_delivery.end(sid)
+
+
+def test_shell_action_lane_wired_into_chat_route(workflow_env, monkeypatch):
+    """POST /api/chat routes a shell project command through the owner lane."""
+    wca, db = workflow_env
+    import api.project_commands as pc
+
+    monkeypatch.setattr(
+        pc,
+        "try_expand_message_project_command",
+        lambda msg, path: {
+            "action": "shell", "command": {"name": "deploy"}, "args": "",
+        },
+    )
+    monkeypatch.setattr(
+        pc, "run_project_command_shell",
+        lambda cmd, args, session_id=None: {"success": True, "output": "ok"},
+    )
+    monkeypatch.setattr(
+        pc, "format_project_command_shell_reply",
+        lambda cmd, result: "cmd-output",
+    )
+    res = _post(wca, "/deploy")
+    assert res.status_code == 200
+    body = res.get_json()
+    assert body["response"] == "cmd-output"
+    assert body["type"] == "project_command"

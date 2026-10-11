@@ -715,24 +715,6 @@ def _rewrite_assistant_response_actions(res: Optional[dict], session_id, project
     return _owned_rewrite(res, session_id, project_path or '')
 
 
-def _persist_auth_launch_gate_reply(db, chat_session_id, user_message: str, launch_reply: dict) -> None:
-    """Save button-click + launch-gate assistant reply for authenticated web chat."""
-    if not db or chat_session_id is None or not launch_reply:
-        return
-    hist_user, user_meta = _button_click_history(user_message)
-    asst_meta = {'type': launch_reply.get('type')}
-    try:
-        db.add_message(chat_session_id, 'user', hist_user, metadata=user_meta)
-        db.add_message(
-            chat_session_id,
-            'assistant',
-            launch_reply.get('response', '') or '',
-            metadata=asst_meta if asst_meta.get('type') else None,
-        )
-    except Exception as e:
-        print(f"[CHAT] persist launch-gate reply failed: {e}")
-
-
 def process_message_with_bot(
     message_content,
     session_id,
@@ -3792,145 +3774,47 @@ def chat_endpoint():
                 request_data=_current_request_data(),
             )
 
-        _launch_gate_sid = (
-            f"db_session_{chat_session_id}" if _auth_user and chat_session_id is not None
-            else (str(chat_session_id) if chat_session_id is not None else None)
+        # No-LLM launch gates — project-action confirm buttons and dynamic
+        # action forms. Owned by api.chat_turn_workflow.run_launch_gate_lane;
+        # the route only frames jsonify. Returns None for non-gate messages.
+        from api.chat_turn_workflow import (
+            run_launch_gate_lane as _run_launch_gate_lane,
         )
-        _mc_stripped = (message_content or '').strip()
 
-        # Project confirm actions (no LLM) — e.g. Discord post after <cuttle_confirm>.
-        if _launch_gate_sid and _mc_stripped.startswith('[button:project-action-'):
-            try:
-                from api.project_actions import handle_project_action_button
-                _action_reply = handle_project_action_button(
-                    _mc_stripped,
-                    session_id=str(_launch_gate_sid),
-                )
-            except Exception as _pa_err:
-                print(f"[CHAT] project action button failed: {_pa_err}", flush=True)
-                _action_reply = {
-                    'success': False,
-                    'response': f'Action failed: {_pa_err}',
-                    'type': 'project_action',
-                }
-            if _action_reply is not None:
-                body = dict(_action_reply)
-                body['session_id'] = chat_session_id
-                if _auth_user and chat_session_id is not None:
-                    try:
-                        _persist_auth_launch_gate_reply(
-                            get_auth_db(), chat_session_id, _mc_stripped, _action_reply
-                        )
-                    except Exception as _pe:
-                        print(f"[CHAT] persist project action reply failed: {_pe}", flush=True)
-                return jsonify(body)
-
-        # Dynamic action forms (no LLM) — choice / multi / form → allowlisted actions.
-        if _launch_gate_sid and _mc_stripped.startswith('[action-form:'):
-            try:
-                from api.action_forms import handle_action_form_chat_message
-                _form_reply = handle_action_form_chat_message(
-                    _mc_stripped,
-                    session_id=str(_launch_gate_sid),
-                )
-            except Exception as _af_err:
-                print(f"[CHAT] action form failed: {_af_err}", flush=True)
-                _form_reply = {
-                    'success': False,
-                    'response': f'Action form failed: {_af_err}',
-                    'type': 'action_form',
-                    'silent': False,
-                }
-            if _form_reply is not None:
-                body = dict(_form_reply)
-                body['session_id'] = chat_session_id
-                # Silent forms: toast + card lock only — no "Selected: …" user bubble.
-                if _auth_user and chat_session_id is not None and not body.get('silent'):
-                    try:
-                        _persist_auth_launch_gate_reply(
-                            get_auth_db(), chat_session_id, _mc_stripped, _form_reply
-                        )
-                    except Exception as _pe:
-                        print(f"[CHAT] persist action form reply failed: {_pe}", flush=True)
-                elif (
-                    _auth_user
-                    and chat_session_id is not None
-                    and body.get('silent')
-                    and body.get('success')
-                    and not body.get('reusable')
-                    and (body.get('lock') or 'form') == 'form'
-                    and body.get('form_id')
-                ):
-                    try:
-                        from api.action_forms import mark_action_form_consumed_in_history
-                        mark_action_form_consumed_in_history(
-                            session_id=f'db_session_{chat_session_id}',
-                            form_id=str(body.get('form_id')),
-                            selected=list(body.get('selected') or []),
-                            toast=str(body.get('toast') or ''),
-                        )
-                    except Exception as _pe:
-                        print(f"[CHAT] action form lock persist failed: {_pe}", flush=True)
-                return jsonify(body)
+        _launch_gate_body = _run_launch_gate_lane(
+            message_content,
+            session_id=chat_session_id,
+            auth_user=_auth_user,
+            get_auth_db=get_auth_db,
+            button_click_history=_button_click_history,
+        )
+        if _launch_gate_body is not None:
+            return jsonify(_launch_gate_body)
 
         # Expand project-local ``.cuttle/commands/*.md`` (e.g. /build, /cmd deploy).
         # Runs before /cursor handlers so ``/cursor /build`` becomes a full agent prompt.
-        try:
-            from api.project_commands import (
-                try_expand_message_project_command,
-                run_project_command_shell,
-                format_project_command_shell_reply,
-            )
-            _proj_path = _resolve_request_project_path({
-                **(data or {}),
-                'session_id': chat_session_id if chat_session_id is not None else data.get('session_id'),
-            })
-            _expanded = try_expand_message_project_command(message_content, _proj_path)
-            if _expanded and _expanded.get('action') == 'shell':
-                _cmd = _expanded.get('command') or {}
-                busy_resp = _reject_if_chat_busy(chat_session_id, wants_stream)
-                if busy_resp is not None:
-                    return busy_resp
-                result = run_project_command_shell(
-                    _cmd,
-                    _expanded.get('args') or '',
-                    session_id=chat_session_id,
-                )
-                body = format_project_command_shell_reply(_cmd, result)
-                reply = {
-                    'success': bool(result.get('success')),
-                    'response': body,
-                    'session_id': chat_session_id,
-                    'type': 'project_command',
-                }
-                if chat_session_id is not None:
-                    reply = _rewrite_assistant_response_actions(
-                        reply,
-                        f'db_session_{chat_session_id}',
-                        _proj_path or '',
-                    ) or reply
-                if _auth_user and chat_session_id is not None:
-                    try:
-                        _persist_user_turn(chat_session_id)
-                        _saver = _make_auth_assistant_saver(chat_session_id)
-                        if _saver:
-                            _saver({
-                                'success': bool(reply.get('success')),
-                                'response': reply.get('response') or body,
-                                'type': 'project_command',
-                            })
-                    except Exception as _pe:
-                        print(f"[CHAT] project command persist failed: {_pe}", flush=True)
-                return jsonify(reply)
-            if _expanded and _expanded.get('action') == 'prompt' and _expanded.get('message'):
-                print(
-                    f"[CHAT] project command /{(_expanded.get('command') or {}).get('name')} "
-                    f"expanded (sticky={_expanded.get('sticky')!r}) cwd={_proj_path!r}",
-                    flush=True,
-                )
-                message_content = _expanded['message']
-        except Exception as _pc_err:
-            print(f"[CHAT] project command expand failed: {_pc_err}", flush=True)
+        # Owned by api.chat_turn_workflow.run_shell_action_lane; the route keeps
+        # request capture, the busy SSE/409 transport and jsonify.
+        from api.chat_turn_workflow import (
+            run_shell_action_lane as _run_shell_action_lane,
+        )
+
+        _shell_body, message_content, _shell_busy = _run_shell_action_lane(
+            message_content,
+            session_id=chat_session_id,
+            auth_user=_auth_user,
+            data=data,
+            resolve_project_path=_resolve_request_project_path,
+            persist_user_turn=_persist_user_turn,
+            make_saver=_make_auth_assistant_saver,
+            rewrite_actions=_rewrite_assistant_response_actions,
+        )
+        if _shell_busy:
+            busy_resp = _reject_if_chat_busy(chat_session_id, wants_stream)
+            if busy_resp is not None:
+                return busy_resp
+        if _shell_body is not None:
+            return jsonify(_shell_body)
 
         # Agent router: /router (config), /route, /retry, /coordinator, /coordinate
         try:

@@ -734,3 +734,238 @@ def run_supervised_control_lane(
             # Recognized control must NEVER fall through (prevents double apply).
             return _supervised_control_error_body(chat_session_id, _sc_err)
         return None
+
+
+# ---------------------------------------------------------------------------
+# Launch-gate lane (Phase 6B slice 2)
+# ---------------------------------------------------------------------------
+
+
+def _persist_launch_gate_reply(
+    db: Any,
+    chat_session_id: Any,
+    user_message: str,
+    launch_reply: Dict[str, Any],
+    *,
+    button_click_history: Callable[[str], Any],
+) -> None:
+    """Save button-click + launch-gate assistant reply for authenticated web chat.
+
+    Moved verbatim from the Flask ingress; ``button_click_history`` is the
+    route's history shaping helper (still used by the not-yet-moved pipeline
+    lane), injected so this owner never imports the entry module.
+    """
+    if not db or chat_session_id is None or not launch_reply:
+        return
+    hist_user, user_meta = button_click_history(user_message)
+    asst_meta = {'type': launch_reply.get('type')}
+    try:
+        db.add_message(chat_session_id, 'user', hist_user, metadata=user_meta)
+        db.add_message(
+            chat_session_id,
+            'assistant',
+            launch_reply.get('response', '') or '',
+            metadata=asst_meta if asst_meta.get('type') else None,
+        )
+    except Exception as e:
+        print(f"[CHAT] persist launch-gate reply failed: {e}")
+
+
+def run_launch_gate_lane(
+    message_content: str,
+    *,
+    session_id: Any,
+    auth_user: Any,
+    get_auth_db: Callable[[], Any],
+    button_click_history: Callable[[str], Any],
+) -> Optional[Dict[str, Any]]:
+    """No-LLM launch gates: project confirm buttons and dynamic action forms.
+
+    Moved verbatim from the ``/api/chat`` ingress: a user message that is a
+    project-action button (``[button:project-action-…]``) or an action-form
+    interaction (``[action-form:…]``) is handled by its existing owner
+    (``api.project_actions`` / ``api.action_forms``), the reply is persisted,
+    and a terminal body is returned. Returns ``None`` when the message is not
+    a launch-gate message, so the route continues its dispatch chain. The
+    Flask ingress keeps request capture, auth, SSE framing and ``jsonify``.
+    """
+    launch_gate_sid = (
+        f"db_session_{session_id}" if auth_user and session_id is not None
+        else (str(session_id) if session_id is not None else None)
+    )
+    mc_stripped = (message_content or '').strip()
+
+    # Project confirm actions (no LLM) — e.g. Discord post after <cuttle_confirm>.
+    if launch_gate_sid and mc_stripped.startswith('[button:project-action-'):
+        try:
+            from api.project_actions import handle_project_action_button
+            action_reply = handle_project_action_button(
+                mc_stripped,
+                session_id=str(launch_gate_sid),
+            )
+        except Exception as pa_err:
+            print(f"[CHAT] project action button failed: {pa_err}", flush=True)
+            action_reply = {
+                'success': False,
+                'response': f'Action failed: {pa_err}',
+                'type': 'project_action',
+            }
+        if action_reply is not None:
+            body = dict(action_reply)
+            body['session_id'] = session_id
+            if auth_user and session_id is not None:
+                try:
+                    _persist_launch_gate_reply(
+                        get_auth_db(), session_id, mc_stripped, action_reply,
+                        button_click_history=button_click_history,
+                    )
+                except Exception as pe:
+                    print(f"[CHAT] persist project action reply failed: {pe}", flush=True)
+            return body
+
+    # Dynamic action forms (no LLM) — choice / multi / form → allowlisted actions.
+    if launch_gate_sid and mc_stripped.startswith('[action-form:'):
+        try:
+            from api.action_forms import handle_action_form_chat_message
+            form_reply = handle_action_form_chat_message(
+                mc_stripped,
+                session_id=str(launch_gate_sid),
+            )
+        except Exception as af_err:
+            print(f"[CHAT] action form failed: {af_err}", flush=True)
+            form_reply = {
+                'success': False,
+                'response': f'Action form failed: {af_err}',
+                'type': 'action_form',
+                'silent': False,
+            }
+        if form_reply is not None:
+            body = dict(form_reply)
+            body['session_id'] = session_id
+            # Silent forms: toast + card lock only — no "Selected: …" user bubble.
+            if auth_user and session_id is not None and not body.get('silent'):
+                try:
+                    _persist_launch_gate_reply(
+                        get_auth_db(), session_id, mc_stripped, form_reply,
+                        button_click_history=button_click_history,
+                    )
+                except Exception as pe:
+                    print(f"[CHAT] persist action form reply failed: {pe}", flush=True)
+            elif (
+                auth_user
+                and session_id is not None
+                and body.get('silent')
+                and body.get('success')
+                and not body.get('reusable')
+                and (body.get('lock') or 'form') == 'form'
+                and body.get('form_id')
+            ):
+                try:
+                    from api.action_forms import mark_action_form_consumed_in_history
+                    mark_action_form_consumed_in_history(
+                        session_id=f'db_session_{session_id}',
+                        form_id=str(body.get('form_id')),
+                        selected=list(body.get('selected') or []),
+                        toast=str(body.get('toast') or ''),
+                    )
+                except Exception as pe:
+                    print(f"[CHAT] action form lock persist failed: {pe}", flush=True)
+            return body
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Shell action expansion lane (Phase 6B slice 3)
+# ---------------------------------------------------------------------------
+
+
+def run_shell_action_lane(
+    message_content: str,
+    *,
+    session_id: Any,
+    auth_user: Any,
+    data: Any,
+    resolve_project_path: Callable[[Any], Any],
+    persist_user_turn: Callable[[Any], None],
+    make_saver: Callable[[Any], Optional[Callable[[Dict[str, Any]], None]]],
+    rewrite_actions: Callable[..., Optional[Dict[str, Any]]],
+) -> Tuple[Optional[Dict[str, Any]], str, bool]:
+    """Expand project-local ``.cuttle/commands/*.md`` (shell action or prompt).
+
+    Moved verbatim from the ``/api/chat`` ingress: a project command either
+    runs as a no-LLM shell action (terminal) or expands into an agent prompt
+    (falls through). Returns ``(terminal_body, message_content, busy)``:
+
+    * shell action → ``(reply_body, message_content, False)``; the route
+      jsonifies. When the chat is busy first, ``(None, message_content, True)``
+      and the transport-owning route frames its own busy SSE/409 response.
+    * prompt action → ``(None, expanded_message, False)``; the route continues
+      with the expanded prompt (never terminal).
+    * anything else → ``(None, message_content, False)`` (unchanged).
+    """
+    try:
+        from api.project_commands import (
+            try_expand_message_project_command,
+            run_project_command_shell,
+            format_project_command_shell_reply,
+        )
+        proj_path = resolve_project_path({
+            **(data or {}),
+            'session_id': (
+                session_id
+                if session_id is not None
+                else (data or {}).get('session_id')
+            ),
+        })
+        expanded = try_expand_message_project_command(message_content, proj_path)
+        if expanded and expanded.get('action') == 'shell':
+            cmd = expanded.get('command') or {}
+            # Busy gate is transport-owned; signal it for the route to frame.
+            from api import chat_delivery as _delivery
+            if session_id is not None and _delivery.is_busy(session_id):
+                return None, message_content, True
+            result = run_project_command_shell(
+                cmd,
+                expanded.get('args') or '',
+                session_id=session_id,
+            )
+            body = format_project_command_shell_reply(cmd, result)
+            reply = {
+                'success': bool(result.get('success')),
+                'response': body,
+                'session_id': session_id,
+                'type': 'project_command',
+            }
+            if session_id is not None:
+                reply = rewrite_actions(
+                    reply,
+                    f'db_session_{session_id}',
+                    proj_path or '',
+                ) or reply
+            if auth_user and session_id is not None:
+                try:
+                    persist_user_turn(session_id)
+                    saver = make_saver(session_id)
+                    if saver:
+                        saver({
+                            'success': bool(reply.get('success')),
+                            'response': reply.get('response') or body,
+                            'type': 'project_command',
+                        })
+                except Exception as pe:
+                    print(f"[CHAT] project command persist failed: {pe}", flush=True)
+            return reply, message_content, False
+        if (
+            expanded
+            and expanded.get('action') == 'prompt'
+            and expanded.get('message')
+        ):
+            print(
+                f"[CHAT] project command /{(expanded.get('command') or {}).get('name')} "
+                f"expanded (sticky={expanded.get('sticky')!r}) cwd={proj_path!r}",
+                flush=True,
+            )
+            return None, expanded['message'], False
+    except Exception as pc_err:
+        print(f"[CHAT] project command expand failed: {pc_err}", flush=True)
+    return None, message_content, False

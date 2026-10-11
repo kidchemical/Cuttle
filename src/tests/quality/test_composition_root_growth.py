@@ -38,8 +38,11 @@ CEILINGS = {
     # pure channel/role decisions live in shell/desktop_update_policy.js.
     "src/web/js/shell/app_shell.js": 8280,
     # -533 (2026-10-11): Phase 6B slice 1 — supervised control lane moved to
-    # api.agent_router.supervised.control_lane; route keeps capture/SSE/jsonify.
-    "src/api/web_chat_api.py": 6217,
+    # api.chat_turn_workflow.run_supervised_control_lane; route keeps capture/SSE/jsonify.
+    # -116 more (2026-10-11): Phase 6B slices 2-3 — launch-gate lane
+    # (project-action/action-form) and shell-action-expansion lane moved to
+    # api.chat_turn_workflow; route keeps request capture, busy SSE/409, jsonify.
+    "src/api/web_chat_api.py": 6101,
 }
 NET_GROWTH_LIMIT = 150
 TRAILER = "Composition-Root-Growth:"
