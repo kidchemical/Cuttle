@@ -11752,12 +11752,12 @@ function downloadTranscriptMarkdown(text, sessionId) {
         saveChatSession(message, 'user');
         recordPromptHistory(spokenText || message);
         applyStickySlashAfterComposerSend(message);
-        const controlLane = isImmediateControlLaneMessage(message);
-        if (!controlLane) {
-            beginLocalGeneration();
-            inFlightUserMessage = message;
-        }
-        await processMessage(message, { controlLane });
+        // Turn lifecycle (control-lane classification, busy-lock begin, in-flight
+        // tracking, prepare/submit/stream/finalize) is owned by the shared
+        // turn-submission interface: processMessage over chat_generation. Voice
+        // is a thin submitter, exactly like the terminal/button/action-card and
+        // supervised lanes — never a second execution lifecycle.
+        await processMessage(message);
     }
 
     const chatVoice = CuttleChatVoice.create({

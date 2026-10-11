@@ -32,6 +32,40 @@ VOICE_CSS = WEB / "css" / "chat_voice.css"
 node_only = pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
 
 
+def _fn_body(src: str, name: str) -> str:
+    start = src.find(name)
+    assert start >= 0, f"missing {name!r}"
+    paren = src.find("(", start + len(name))
+    assert paren >= 0
+    depth = 0
+    i = paren
+    while i < len(src):
+        ch = src[i]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                break
+        i += 1
+    else:
+        raise AssertionError(f"unbalanced parens for {name!r}")
+    brace = src.find("{", i)
+    assert brace >= 0
+    depth = 0
+    j = brace
+    while j < len(src):
+        ch = src[j]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return src[brace + 1 : j]
+        j += 1
+    raise AssertionError(f"unbalanced braces for {name!r}")
+
+
 def _node(script: str) -> None:
     proc = subprocess.run(
         ["node", "-e", script, str(SEGMENTS_JS), str(STARS_JS), str(NARRATOR_JS), str(VOICE_JS), str(RECORDER_JS)],
@@ -512,6 +546,27 @@ def test_chat_page_does_not_own_voice_state():
     for owned in ("SpeechRecognition", "voiceModePhase", "voiceModeActive", "_voiceHoldOwner"):
         assert owned not in page, f"{owned} belongs in chat_voice.js, not chat_page.js"
     assert "CuttleChatVoice.create(" in page
+
+
+def test_voice_submits_through_shared_turn_interface():
+    """4E: voice must not own a second turn lifecycle.
+
+    ``submitVoiceTurn`` is a thin submitter over ``processMessage`` — the one
+    shared turn-submission interface (over chat_generation's busy-lock) also
+    used by terminal inputs, cuttle buttons, action cards and the supervised
+    lane. It used to write ``inFlightUserMessage`` and begin generation itself;
+    both belong to processMessage's PREPARE/SUBMIT path, so voice no longer
+    duplicates them.
+    """
+    page = PAGE_JS.read_text(encoding="utf-8")
+    body = _fn_body(page, "function submitVoiceTurn")
+    assert "processMessage(message" in body
+    assert "beginLocalGeneration" not in body, "busy-lock begin belongs to processMessage"
+    assert "inFlightUserMessage" not in body, "in-flight tracking belongs to processMessage"
+    # The shared interface still owns the busy-lock begin + in-flight write.
+    proc = _fn_body(page, "function processMessage")
+    assert "beginLocalGeneration()" in proc
+    assert "inFlightUserMessage = message" in proc
 
 
 @node_only
