@@ -36,6 +36,13 @@
    the state machine and re-checks ``session.navSeq()`` after every await so a
    superseded load cannot paint into the chat we just left.
 
+   ``createSessionBoot(session, host)`` owns the new-chat splash and the
+   ``?chat=`` deep-link restore (the page's former ``createNewChat`` and
+   ``bootRestoreSession``). It is the only writer of the ``chatRestoreAbandoned``
+   flag, which the page reads through ``isRestoreAbandoned()``. It reads/writes
+   identity only through the state machine and takes every page capability
+   (storage, transport, render, timers, DOM hooks) from the injected ``host``.
+
    Loaded before chat_page.js. */
 
 (function (root) {
@@ -629,7 +636,145 @@
         return { loadChatSession: loadChatSession };
     }
 
-    const api = { create: create, createLifecycle: createLifecycle, createLoader: createLoader };
+
+    // ``createSessionBoot(session, host)`` — the new-chat splash and the
+    // ``?chat=`` deep-link restore (the page's former ``createNewChat`` and
+    // ``bootRestoreSession``). It owns the ``chatRestoreAbandoned`` flag — set
+    // when a new chat opens or a slow restore gives up — and the page reads it
+    // through ``isRestoreAbandoned()``. Identity changes go through the state
+    // machine; every page capability comes from the injected ``host``.
+    function createSessionBoot(session, host) {
+        const h = host || {};
+        const CHAT_RESTORE_TIMEOUT_MS = 10000;
+        let chatRestoreAbandoned = false;
+
+        function isRestoreAbandoned() {
+            return chatRestoreAbandoned;
+        }
+
+        async function createNewChat() {
+            if (session.current() != null) h.saveComposerDraft(session.current());
+            h.applyStarredSlashChips();
+            chatRestoreAbandoned = true;
+            h.clearChatRestoreVeil();
+            h.storage.setItem('autoResumeSession', 'false');
+
+            // Detach prior chat's local stream UI first — otherwise welcome stays
+            // disabled (processMessage) and/or isLoading parks the first send.
+            h.detachLocalGenerationForNavigation();
+
+            const chatMessages = document.getElementById('chatMessages');
+            if (chatMessages) {
+                chatMessages.innerHTML = '';
+            }
+            // Drop prior session's lazy-history offset — otherwise new-chat numbers
+            // keep starting at older_visible_count+1 from the chat we left.
+            h.resetChatHistoryWindow();
+            h.transcriptNav.resetNav();
+
+            document.getElementById('welcomeScreen').style.display = 'flex';
+            document.getElementById('chatArea').style.display = 'none';
+
+            document.querySelectorAll('.chat-history-item').forEach(item => {
+                item.classList.remove('active');
+            });
+
+            // Drop the previous chat id before reconcile. Otherwise the welcome
+            // screen inherits that session's project, then the first send (still
+            // unsaved) snaps to the Cuttle default.
+            h.releaseManualUnreadHoldIfLeaving(null);
+            session.create(null);
+            h.adoptFollowupQueue(session.current());
+            h.applyHistorySubagentExpandState();
+            h.applySessionIdentity(null);
+            h.setCurrentProject(null);
+            h.setHubLiveStatusCache(null);
+            h.reconcileChatProject();
+            // Prior chat's Tasks strip must not stick on welcome / new chat.
+            h.refreshChatWidgets();
+            h.closeChatHistoryPanel();
+
+            // Don't persist an empty session — wait until the user sends a message.
+            h.updateChatIdBadge(null);
+            h.loadPromptHistoryForSession(null);
+            h.storage.removeItem('lastChatSessionId');
+            const auth = h.getAuth();
+            if (auth && auth.setCurrentChatSession) {
+                auth.setCurrentChatSession(null);
+            }
+            h.stopMessageSync({ resetCursor: true });
+            h.clearFollowupQueue();
+            CuttleStopState.clearWaitingSuppression(h.stopState);
+            h.syncChatUrl(null);
+            h.reportSessionToShell(null);
+            h.restoreWelcomeStickySlash();
+            h.restoreComposerDraft('new', { force: true });
+            h.pinChatLayout();
+            h.resetChatAttentionState();
+            h.focusWelcomeComposer();
+            console.log('New chat ready (not saved until first message)');
+        }
+
+        async function bootRestoreSession(sessionParam) {
+            // Never leave a spinner up, whatever happens below.
+            setTimeout(h.clearChatRestoreVeil, CHAT_RESTORE_TIMEOUT_MS + 2000);
+            const prefetch = h.takeChatTranscriptPrefetch(sessionParam);
+            let prefetchData = null;
+            const prefetchReady = prefetch
+                ? prefetch.then((data) => {
+                    if (data && data.success) {
+                        prefetchData = data;
+                        return 'prefetch';
+                    }
+                    return null;
+                }).catch(() => null)
+                : null;
+            const authReady = h.waitForAuthReady(CHAT_RESTORE_TIMEOUT_MS)
+                .then((ok) => (ok ? 'auth' : null));
+
+            const winner = await h.firstTruthy([prefetchReady, authReady], CHAT_RESTORE_TIMEOUT_MS);
+            if (chatRestoreAbandoned) return;
+
+            if (winner) {
+                try {
+                    await h.loadChatSession(sessionParam, {
+                        assumeAuth: winner === 'prefetch',
+                        prefetched: prefetchData,
+                        prefetchPromise: prefetch,
+                    });
+                } finally {
+                    h.clearChatRestoreVeil();
+                }
+                return;
+            }
+
+            // Anonymous chats live in localStorage and need no auth at all.
+            try {
+                const local = JSON.parse(h.storage.getItem('chatSessions') || '{}');
+                if (local && local[sessionParam]) {
+                    await h.loadChatSession(sessionParam);
+                    return;
+                }
+            } catch (_) {}
+
+            chatRestoreAbandoned = true;
+            h.showWelcomeSplash();
+            h.showToast('Chat took too long to load — starting a new chat.', 'warning');
+        }
+
+        return {
+            createNewChat: createNewChat,
+            bootRestoreSession: bootRestoreSession,
+            isRestoreAbandoned: isRestoreAbandoned,
+        };
+    }
+
+    const api = {
+        create: create,
+        createLifecycle: createLifecycle,
+        createLoader: createLoader,
+        createSessionBoot: createSessionBoot,
+    };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     root.CuttleChatSession = api;
 })(globalThis);

@@ -38,7 +38,11 @@ def test_is_session_generating_scopes_local_loading():
 
 def test_create_new_chat_reables_welcome_composer():
     src = CHAT_JS.read_text(encoding="utf-8")
-    create = src.split("async function createNewChat()", 1)[1].split("\n    function ", 1)[0]
+    # 3B step 4 moved createNewChat into chat_session.js; the page keeps a thin
+    # call site, so assert the moved body on the owner.
+    create = SESSION_JS.read_text(encoding="utf-8").split(
+        "async function createNewChat()", 1
+    )[1].split("\n    function ", 1)[0]
     assert "detachLocalGenerationForNavigation()" in create
     assert "focusWelcomeComposer()" in create
     assert "function setWelcomeComposerEnabled(enabled)" in src

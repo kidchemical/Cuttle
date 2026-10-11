@@ -7903,66 +7903,10 @@
         } catch (_) {}
     }
 
+    // createNewChat is owned by chat_session.js (CuttleChatSession.createSessionBoot).
+    // The page builds the capability host lazily and keeps this thin call site.
     async function createNewChat() {
-        if (session.current() != null) saveComposerDraft(session.current());
-        applyStarredSlashChips();
-        chatRestoreAbandoned = true;
-        clearChatRestoreVeil();
-        localStorage.setItem('autoResumeSession', 'false');
-
-        // Detach prior chat's local stream UI first — otherwise welcome stays
-        // disabled (processMessage) and/or isLoading parks the first send.
-        detachLocalGenerationForNavigation();
-
-        const chatMessages = document.getElementById('chatMessages');
-        if (chatMessages) {
-            chatMessages.innerHTML = '';
-        }
-        // Drop prior session's lazy-history offset — otherwise new-chat numbers
-        // keep starting at older_visible_count+1 from the chat we left.
-        resetChatHistoryWindow();
-        transcriptNav.resetNav();
-
-        document.getElementById('welcomeScreen').style.display = 'flex';
-        document.getElementById('chatArea').style.display = 'none';
-
-        document.querySelectorAll('.chat-history-item').forEach(item => {
-            item.classList.remove('active');
-        });
-
-        // Drop the previous chat id before reconcile. Otherwise the welcome
-        // screen inherits that session's project, then the first send (still
-        // unsaved) snaps to the Cuttle default.
-        releaseManualUnreadHoldIfLeaving(null);
-        session.create(null);
-        adoptFollowupQueue(session.current());
-        applyHistorySubagentExpandState();
-        applySessionIdentity(null);
-        currentProject = null;
-        hubLiveStatusCache = null;
-        reconcileChatProject();
-        // Prior chat's Tasks strip must not stick on welcome / new chat.
-        refreshChatWidgets();
-        closeChatHistoryPanel();
-
-        // Don't persist an empty session — wait until the user sends a message.
-        updateChatIdBadge(null);
-        loadPromptHistoryForSession(null);
-        localStorage.removeItem('lastChatSessionId');
-        if (window.CuttleAuth && window.CuttleAuth.setCurrentChatSession) {
-            window.CuttleAuth.setCurrentChatSession(null);
-        }
-        stopMessageSync({ resetCursor: true });
-        clearFollowupQueue();
-        CuttleStopState.clearWaitingSuppression(stopState);
-        syncChatUrl(null);
-        reportSessionToShell(null);
-        restoreWelcomeStickySlash();
-        restoreComposerDraft('new', { force: true });
-        if (typeof window.__cuttlePinChatLayout === 'function') window.__cuttlePinChatLayout();
-        resetChatAttentionState();
-        focusWelcomeComposer();
-        console.log('New chat ready (not saved until first message)');
+        return sessionBoot().createNewChat();
     }
     
     async function sendWelcomeMessage() {
@@ -8065,8 +8009,6 @@
     // ── Deep-link restore (?chat=) ─────────────────────────────
     // chat_page.html raises data-chat-restoring and kicks off the transcript
     // fetch before this file even parses; everything below consumes that.
-    const CHAT_RESTORE_TIMEOUT_MS = 10000;
-    let chatRestoreAbandoned = false;
 
     function clearChatRestoreVeil() {
         try { document.documentElement.removeAttribute('data-chat-restoring'); } catch (_) {}
@@ -8134,58 +8076,10 @@
         });
     }
 
-    /**
-     * Open the chat named by ?chat= as soon as *either* signal lands: the
-     * prefetched transcript (a 200 means the cookie is good, so we don't wait on
-     * auth.js) or auth settling. Neither within 10s → show the new-chat splash.
-     */
+    // bootRestoreSession is owned by chat_session.js (CuttleChatSession.createSessionBoot).
+    // The page builds the capability host lazily and keeps this thin call site.
     async function bootRestoreSession(sessionParam) {
-        // Never leave a spinner up, whatever happens below.
-        setTimeout(clearChatRestoreVeil, CHAT_RESTORE_TIMEOUT_MS + 2000);
-        const prefetch = takeChatTranscriptPrefetch(sessionParam);
-        let prefetchData = null;
-        const prefetchReady = prefetch
-            ? prefetch.then((data) => {
-                if (data && data.success) {
-                    prefetchData = data;
-                    return 'prefetch';
-                }
-                return null;
-            }).catch(() => null)
-            : null;
-        const authReady = waitForAuthReady(CHAT_RESTORE_TIMEOUT_MS)
-            .then((ok) => (ok ? 'auth' : null));
-
-        const winner = await firstTruthy([prefetchReady, authReady], CHAT_RESTORE_TIMEOUT_MS);
-        if (chatRestoreAbandoned) return;
-
-        if (winner) {
-            try {
-                await loadChatSession(sessionParam, {
-                    assumeAuth: winner === 'prefetch',
-                    prefetched: prefetchData,
-                    prefetchPromise: prefetch,
-                });
-            } finally {
-                clearChatRestoreVeil();
-            }
-            return;
-        }
-
-        // Anonymous chats live in localStorage and need no auth at all.
-        try {
-            const local = JSON.parse(localStorage.getItem('chatSessions') || '{}');
-            if (local && local[sessionParam]) {
-                await loadChatSession(sessionParam);
-                return;
-            }
-        } catch (_) {}
-
-        chatRestoreAbandoned = true;
-        showWelcomeSplash();
-        if (typeof window.showToast === 'function') {
-            window.showToast('Chat took too long to load — starting a new chat.', 'warning');
-        }
+        return sessionBoot().bootRestoreSession(sessionParam);
     }
 
     // loadChatSession is owned by chat_session.js (CuttleChatSession.createLoader).
@@ -8440,6 +8334,58 @@
             });
         }
         return _sessionLoader;
+    }
+
+    // createNewChat / bootRestoreSession host (CuttleChatSession.createSessionBoot).
+    // The page supplies every capability these paths need plus the mutable page
+    // state they advance. Built lazily on first use so page constants declared
+    // later in this IIFE are initialized.
+    let _sessionBoot = null;
+    function sessionBoot() {
+        if (!_sessionBoot) {
+            _sessionBoot = CuttleChatSession.createSessionBoot(session, {
+                saveComposerDraft: saveComposerDraft,
+                applyStarredSlashChips: applyStarredSlashChips,
+                clearChatRestoreVeil: clearChatRestoreVeil,
+                storage: localStorage,
+                detachLocalGenerationForNavigation: detachLocalGenerationForNavigation,
+                resetChatHistoryWindow: resetChatHistoryWindow,
+                transcriptNav: transcriptNav,
+                releaseManualUnreadHoldIfLeaving: releaseManualUnreadHoldIfLeaving,
+                adoptFollowupQueue: adoptFollowupQueue,
+                applyHistorySubagentExpandState: applyHistorySubagentExpandState,
+                applySessionIdentity: applySessionIdentity,
+                setCurrentProject: function (v) { currentProject = v; },
+                setHubLiveStatusCache: function (v) { hubLiveStatusCache = v; },
+                reconcileChatProject: reconcileChatProject,
+                refreshChatWidgets: refreshChatWidgets,
+                closeChatHistoryPanel: closeChatHistoryPanel,
+                updateChatIdBadge: updateChatIdBadge,
+                loadPromptHistoryForSession: loadPromptHistoryForSession,
+                getAuth: function () { return window.CuttleAuth; },
+                stopMessageSync: stopMessageSync,
+                clearFollowupQueue: clearFollowupQueue,
+                stopState: stopState,
+                syncChatUrl: syncChatUrl,
+                reportSessionToShell: reportSessionToShell,
+                restoreWelcomeStickySlash: restoreWelcomeStickySlash,
+                restoreComposerDraft: restoreComposerDraft,
+                pinChatLayout: function () {
+                    if (typeof window.__cuttlePinChatLayout === 'function') window.__cuttlePinChatLayout();
+                },
+                resetChatAttentionState: resetChatAttentionState,
+                focusWelcomeComposer: focusWelcomeComposer,
+                takeChatTranscriptPrefetch: takeChatTranscriptPrefetch,
+                waitForAuthReady: waitForAuthReady,
+                firstTruthy: firstTruthy,
+                loadChatSession: loadChatSession,
+                showWelcomeSplash: showWelcomeSplash,
+                showToast: function (message, type) {
+                    if (typeof window.showToast === 'function') window.showToast(message, type);
+                },
+            });
+        }
+        return _sessionBoot;
     }
 
     function adoptChatSessionId(sessionId) {
@@ -16176,7 +16122,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
             if (!wanted || !isAuthMode()) return;
             // The restore already gave up and handed the user a new chat — don't
             // yank them into the old one when auth finally settles.
-            if (chatRestoreAbandoned) return;
+            if (sessionBoot().isRestoreAbandoned()) return;
             // Only settle the deep link before a chat is open. Auth refreshes
             // fire repeatedly; once the user is reading a chat, re-reading the
             // URL could yank them into a different one mid-click.

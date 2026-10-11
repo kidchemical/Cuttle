@@ -21,6 +21,7 @@ from api.chat_widgets import (
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CHAT_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_page.js"
+SESSION_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_session.js"
 WIDGETS_JS = REPO_ROOT / "src" / "web" / "js" / "gizmos/tasks_gizmo.js"
 
 node_only = pytest.mark.skipif(
@@ -459,7 +460,9 @@ def test_create_new_chat_refreshes_widget_strip():
     not call refreshChatWidgets(), so the strip kept rendering the prior chat's
     tasks until something else happened to refresh.
     """
-    src = CHAT_JS.read_text(encoding="utf-8")
+    # 3B step 4 moved createNewChat into chat_session.js; the page keeps a thin
+    # call site, so assert the moved body on the owner.
+    src = SESSION_JS.read_text(encoding="utf-8")
     body = _extract_function(src, "createNewChat")
     assert "refreshChatWidgets()" in body, (
         "createNewChat must refresh/clear the widgets strip so a prior chat's "

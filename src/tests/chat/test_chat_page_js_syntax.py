@@ -65,6 +65,19 @@ def test_load_chat_session_moved_to_owner():
     assert "return sessionLoader().loadChatSession(sessionId, opts);" in text
 
 
+def test_create_new_chat_and_boot_restore_moved_to_owner():
+    """3B step 4 moved createNewChat and bootRestoreSession into chat_session.js
+    (CuttleChatSession.createSessionBoot); the page keeps thin call sites."""
+    text = CHAT_JS.read_text(encoding="utf-8")
+    owner = (CHAT_JS.parent / "chat_session.js").read_text(encoding="utf-8")
+    assert "function createSessionBoot(session, host) {" in owner
+    assert "async function createNewChat()" in owner
+    assert "async function bootRestoreSession(sessionParam)" in owner
+    assert "createSessionBoot: createSessionBoot" in owner
+    assert "return sessionBoot().createNewChat();" in text
+    assert "return sessionBoot().bootRestoreSession(sessionParam);" in text
+
+
 def test_chat_page_html_loads_busted_script():
     html = CHAT_HTML.read_text(encoding="utf-8")
     assert 'src="/js/chat/chat_page.js?v=' in html
