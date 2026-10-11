@@ -65,7 +65,7 @@ while read -r pid; do
   if [[ "$cmd" == *cuttle_daemon.py* || "$cmd" == *web_chat_api* ]]; then
     continue
   fi
-  if [[ "$DO_DAEMON" -eq 1 && ( "$cmd" == *"$REPO/src/scripts/cuttle_client_daemon.py"* || "$cmd" == *"$REPO/src/scripts/cuttle_device_worker.py"* ) ]]; then
+  if [[ "$DO_DAEMON" -eq 1 && ( "$cmd" == *"$REPO/src/scripts/cuttle_client_daemon.py"* || "$cmd" == *"$REPO/src/scripts/cuttle_device_worker.py"* || "$cmd" == *"cuttle-desktop-client/device-worker"* || "$cmd" == *"cuttle-desktop-host/device-worker"* || "$cmd" == *"cuttle-desktop/device-worker"* ) ]]; then
     log "stopping pid=$pid"
     kill "$pid" 2>/dev/null || true
     continue

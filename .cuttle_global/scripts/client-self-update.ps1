@@ -51,8 +51,15 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
     $clientWorker = [regex]::Escape((Join-Path $Repo 'src\scripts\cuttle_device_worker.py'))
     $electronRoot = [regex]::Escape((Join-Path $Repo 'electron\'))
     $exe = [string]$_.ExecutablePath
-    if ($doDaemon -and ($cmd -match $clientDaemon -or $cmd -match $clientWorker)) { return $true }
-    if ($doElectron -and ($exe -match "^$electronRoot" -or $cmd -match $electronRoot)) { return $true }
+    # The Electron sidecar is copied to Electron's userData (cuttle-desktop*\
+    # device-worker\) and run from there, not the repo path, so match that too.
+    # Only Cuttle-specific patterns (never a bare electron.exe / *.py basename).
+    $isClientWorker = $cmd -match $clientDaemon -or $cmd -match $clientWorker `
+        -or $cmd -match 'cuttle-desktop[-a-z]*[\\/]device-worker'
+    $isElectron = $exe -match "^$electronRoot" -or $cmd -match $electronRoot `
+        -or $exe -match '[\\/]Cuttle\.exe$'
+    if ($doDaemon -and $isClientWorker) { return $true }
+    if ($doElectron -and $isElectron) { return $true }
     return $false
 } | ForEach-Object {
     Log "stopping pid=$($_.ProcessId) name=$($_.Name)"

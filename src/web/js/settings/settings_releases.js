@@ -202,7 +202,8 @@
                     setDeviceStatus(
                         (jr.advanced === false)
                             ? (jr.note || 'Already at the latest — restarted.')
-                            : ('Updated to ' + (jr.head || 'the latest') + ' — restarting.'),
+                            : ('Updated to ' + (jr.head || 'the latest')
+                                + '. If Cuttle does not restart on its own, quit and reopen it to finish applying.'),
                         'ok'
                     );
                 } catch (error) {
