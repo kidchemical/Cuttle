@@ -37,7 +37,9 @@ CEILINGS = {
     # deferred-restart modal merged from dev (Phase 1). Shell-owned DOM wiring;
     # pure channel/role decisions live in shell/desktop_update_policy.js.
     "src/web/js/shell/app_shell.js": 8280,
-    "src/api/web_chat_api.py": 7750,
+    # -533 (2026-10-11): Phase 6B slice 1 — supervised control lane moved to
+    # api.agent_router.supervised.control_lane; route keeps capture/SSE/jsonify.
+    "src/api/web_chat_api.py": 6217,
 }
 NET_GROWTH_LIMIT = 150
 TRAILER = "Composition-Root-Growth:"

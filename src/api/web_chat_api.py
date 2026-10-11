@@ -3601,274 +3601,39 @@ def chat_endpoint():
         # Must run even while a child worker is active; never waits on chat busy
         # or the pending-prompt queue (frontend also bypasses for these).
         #
-        # Exactly-once contract:
-        #   parse → authorize → mutate once → persist control id → terminal return.
-        # Never fall through into router/agent dispatch after recognizing a control
-        # command (even if post-mutation persist/formatting fails).
-        _sup_control_recognized = False
-        try:
-            from api.agent_router.supervised.control import (
-                classify_supervised_message,
-                is_supervised_control_message,
-                strip_sticky_agent_prefix as _strip_sup,
-            )
-            from api.agent_router.supervised.commands import (
-                handle_coordinate_command as _h_coord_task,
-                handle_coordinator_command as _h_coord_cfg,
-            )
+        # Exactly-once contract: classify/authorize/mutate/persist/terminal-return
+        # owned by api.chat_turn_workflow.run_supervised_control_lane; the route
+        # only frames SSE and jsonify. A recognized control always returns a body.
+        from api.chat_turn_workflow import (
+            run_supervised_control_lane as _run_supervised_control_lane,
+        )
 
-            _sup_msg = _strip_sup(message_content)
-            if is_supervised_control_message(_sup_msg):
-                _sup_control_recognized = True
-                message_content = _sup_msg
-                # Authorize / resolve session BEFORE mutation or _auth_user use.
-                _auth_user, chat_session_id, _created_new_session = _resolve_auth_chat_session(
-                    chat_session_id
+        _sup_body = _run_supervised_control_lane(
+            message_content,
+            session_id=chat_session_id,
+            data=data,
+            control_id_header=request.headers.get('X-Cuttle-Control-Id'),
+            resolve_auth_chat_session=_resolve_auth_chat_session,
+            resolve_project_path=_resolve_request_project_path,
+            get_auth_db=get_auth_db,
+        )
+        if _sup_body is not None:
+            _sup_sid = _sup_body.get('session_id', chat_session_id)
+            if wants_stream:
+                def _sup_control_stream():
+                    yield _sse_session_event(_sup_sid)
+                    yield f"data: {json.dumps({'type': 'response', **_sup_body}, ensure_ascii=False, default=str)}\n\n"
+                    yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                return Response(
+                    stream_with_context(_sup_control_stream()),
+                    mimetype="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "X-Accel-Buffering": "no",
+                        "Connection": "keep-alive",
+                    },
                 )
-                _kind, _args = classify_supervised_message(message_content)
-                _router_proj = _resolve_request_project_path({
-                    **(data or {}),
-                    'session_id': chat_session_id if chat_session_id is not None else data.get('session_id'),
-                })
-                _control_id = (
-                    (data or {}).get('control_request_id')
-                    or (data or {}).get('idempotency_key')
-                    or request.headers.get('X-Cuttle-Control-Id')
-                    or ''
-                )
-                _control_id = str(_control_id or '').strip()
-                # For /coordinate <prompt> starts: persist the user row first so the
-                # canonical coordinator bubble is created after it (correct order).
-                _pre_user_id = None
-                _is_coord_start = (
-                    _kind == "coordinate_start"
-                    and _auth_user
-                    and chat_session_id is not None
-                    and bool((_args or "").strip())
-                )
-                if _is_coord_start:
-                    try:
-                        _pre_user_id = get_auth_db().add_message(
-                            chat_session_id,
-                            "user",
-                            message_content,
-                            metadata={
-                                "origin": "supervised_control",
-                                "control_request_id": _control_id or None,
-                                "control_lane": True,
-                            },
-                        )
-                    except Exception as _upe:
-                        print(f"[CHAT] pre-persist supervised user failed: {_upe}")
-                if _kind == "coordinator_control":
-                    _sr = _h_coord_cfg(_args or "", session_id=chat_session_id) or {}
-                else:
-                    _sr = _h_coord_task(
-                        _args or "",
-                        session_id=chat_session_id,
-                        project_path=_router_proj,
-                        control_request_id=_control_id or None,
-                    ) or {}
-                _sr = dict(_sr)
-                if _pre_user_id is not None:
-                    _sr["parent_user_message_id"] = _pre_user_id
-                    _sr["user_message_id"] = _pre_user_id
-                    if _sr.get("task_id"):
-                        try:
-                            from api.agent_router.supervised.bubble import bind_canonical_bubble
-                            from api.agent_router.supervised.orchestrator import (
-                                ensure_canonical_response,
-                                update_canonical_response,
-                            )
-                            from api.agent_router.supervised.store import load_task as _lt0
-
-                            _t0 = _lt0(_sr["task_id"])
-                            if _t0:
-                                bind_canonical_bubble(
-                                    _t0, parent_user_message_id=_pre_user_id
-                                )
-                                ensure_canonical_response(_t0)
-                                update_canonical_response(_t0, _sr.get("response"))
-                                _sr["coordinator_response_message_id"] = (
-                                    _t0.coordinator_response_message_id
-                                )
-                                _sr["assistant_message_id"] = (
-                                    _t0.coordinator_response_message_id
-                                )
-                        except Exception as _be:
-                            print(f"[CHAT] early bind supervised bubble failed: {_be}")
-                _sr["session_id"] = chat_session_id
-                _sr["control_lane"] = True
-                _sr["control_handled"] = True
-                if _control_id:
-                    _sr["control_request_id"] = _control_id
-                # Persist is best-effort AFTER mutation; failures must still return.
-                # Exactly-once history: never append a second user/assistant pair for
-                # an idempotent control_request_id or when delivery already owns the row.
-                _skip_persist = bool(
-                    _sr.get("skip_history_persist")
-                    or _sr.get("reconcile_only")
-                    or _sr.get("idempotent")
-                    or _sr.get("delivery_handled")
-                )
-                if (
-                    (not _skip_persist)
-                    and _auth_user
-                    and chat_session_id is not None
-                    and _sr.get("response")
-                ):
-                    try:
-                        _user_meta = {
-                            "origin": "supervised_control",
-                            "control_request_id": _control_id or None,
-                            "control_lane": True,
-                        }
-                        _uid = get_auth_db().add_message(
-                            chat_session_id,
-                            "user",
-                            message_content,
-                            metadata=_user_meta,
-                        )
-                        _asst_meta = {
-                            "origin": "supervised_control",
-                            "control_request_id": _control_id or None,
-                            "control_lane": True,
-                            "supervised_task_id": _sr.get("task_id"),
-                            "supervised_delivery_event_id": _sr.get(
-                                "supervised_delivery_event_id"
-                            ),
-                        }
-                        _aid = get_auth_db().add_message(
-                            chat_session_id,
-                            "assistant",
-                            _sr.get("response") or "",
-                            metadata=_asst_meta,
-                        )
-                        _sr["user_message_id"] = _uid
-                        _sr["assistant_message_id"] = _aid
-                        # Stamp control event with history ids when possible.
-                        if _control_id and _sr.get("task_id"):
-                            try:
-                                from api.agent_router.supervised.store import (
-                                    load_task as _lt,
-                                    record_control_event as _rce,
-                                )
-
-                                _t = _lt(_sr["task_id"])
-                                if _t:
-                                    _rce(
-                                        _t,
-                                        control_id=_control_id,
-                                        kind=str(_sr.get("type") or "control"),
-                                        result=_sr,
-                                        user_message_id=_uid,
-                                        assistant_message_id=_aid,
-                                    )
-                            except Exception:
-                                pass
-                    except Exception as _pe:
-                        print(f"[CHAT] persist supervised control failed: {_pe}")
-                        _sr["persist_error"] = str(_pe)[:200]
-                elif _skip_persist:
-                    _sr["history_reconcile_only"] = True
-                    # Canonical supervised bubble: persist the user turn once and
-                    # refresh the existing coordinator assistant row (never append).
-                    if (
-                        _auth_user
-                        and chat_session_id is not None
-                        and _sr.get("type") in (
-                            "supervised_started",
-                            "supervised_complete",
-                            "supervised_paid_blocked",
-                        )
-                        and _sr.get("task_id")
-                    ):
-                        try:
-                            from api.agent_router.supervised.bubble import bind_canonical_bubble
-                            from api.agent_router.supervised.orchestrator import (
-                                update_canonical_response,
-                            )
-                            from api.agent_router.supervised.store import load_task as _lt2
-
-                            _uid = None
-                            if not _sr.get("parent_user_message_id"):
-                                _uid = get_auth_db().add_message(
-                                    chat_session_id,
-                                    "user",
-                                    message_content,
-                                    metadata={
-                                        "origin": "supervised_control",
-                                        "control_request_id": _control_id or None,
-                                        "control_lane": True,
-                                        "supervised_task_id": _sr.get("task_id"),
-                                    },
-                                )
-                                _sr["parent_user_message_id"] = _uid
-                                _sr["user_message_id"] = _uid
-                            _t = _lt2(_sr["task_id"])
-                            if _t:
-                                bind_canonical_bubble(
-                                    _t,
-                                    parent_user_message_id=_sr.get("parent_user_message_id"),
-                                    coordinator_response_message_id=_sr.get(
-                                        "coordinator_response_message_id"
-                                    ),
-                                )
-                                update_canonical_response(_t, _sr.get("response"))
-                                _sr["coordinator_response_message_id"] = (
-                                    _t.coordinator_response_message_id
-                                )
-                                _sr["assistant_message_id"] = (
-                                    _t.coordinator_response_message_id
-                                )
-                        except Exception as _pe2:
-                            print(f"[CHAT] bind supervised canonical bubble failed: {_pe2}")
-                            _sr["persist_error"] = str(_pe2)[:200]
-                if wants_stream:
-                    def _sup_control_stream():
-                        yield _sse_session_event(chat_session_id)
-                        yield f"data: {json.dumps({'type': 'response', **_sr}, ensure_ascii=False, default=str)}\n\n"
-                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
-                    return Response(
-                        stream_with_context(_sup_control_stream()),
-                        mimetype="text/event-stream",
-                        headers={
-                            "Cache-Control": "no-cache",
-                            "X-Accel-Buffering": "no",
-                            "Connection": "keep-alive",
-                        },
-                    )
-                return jsonify(_sr)
-        except Exception as _sc_err:
-            print(f"[CHAT] supervised control handler failed: {_sc_err}", flush=True)
-            if _sup_control_recognized:
-                # Recognized control must NEVER fall through (prevents double apply).
-                _err_body = {
-                    'success': True,
-                    'response': (
-                        f"❌ Supervised control command failed after recognition: {_sc_err}. "
-                        "No further router/agent dispatch will run for this request."
-                    ),
-                    'type': 'supervised_control_error',
-                    'control_lane': True,
-                    'control_handled': True,
-                    'session_id': chat_session_id,
-                }
-                if wants_stream:
-                    def _sup_err_stream():
-                        yield _sse_session_event(chat_session_id)
-                        yield f"data: {json.dumps({'type': 'response', **_err_body}, ensure_ascii=False, default=str)}\n\n"
-                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
-                    return Response(
-                        stream_with_context(_sup_err_stream()),
-                        mimetype="text/event-stream",
-                        headers={
-                            "Cache-Control": "no-cache",
-                            "X-Accel-Buffering": "no",
-                            "Connection": "keep-alive",
-                        },
-                    )
-                return jsonify(_err_body)
+            return jsonify(_sup_body)
 
         # Check for slash commands
         if message_content.startswith('/help'):
