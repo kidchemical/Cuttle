@@ -73,14 +73,10 @@ def _fast_forward(repo: Path, target: bytes) -> None:
     git(repo, 'merge', '--ff-only', '--no-overwrite-ignore', target)
 
 
-def _read_desktop_config() -> dict:
-    """The Client's Electron desktop-config (host + pinned TLS identity).
+_CONFIG_DIAG = []
 
-    Electron sets ``userData`` to ``~/.config/cuttle-desktop-{client,host}`` on
-    every platform (electron/main.js), while the daemon/sidecar use
-    ``%LOCALAPPDATA%\\cuttle-desktop``. Check both so the paired host, httpsPort
-    and TLS pins are found wherever the app wrote them.
-    """
+
+def _desktop_config_candidates():
     home = Path.home()
     xdg = os.environ.get('XDG_CONFIG_HOME') or str(home / '.config')
     cands = []
@@ -89,28 +85,84 @@ def _read_desktop_config() -> dict:
             cands.append(Path(base) / 'cuttle-desktop' / 'desktop-config.json')
     for name in ('cuttle-desktop-client', 'cuttle-desktop-host', 'cuttle-desktop'):
         cands.append(Path(xdg) / name / 'desktop-config.json')
+    return cands
+
+
+def _read_desktop_config() -> dict:
+    """The Client's Electron desktop-config (host + pinned TLS identity).
+
+    Electron sets ``userData`` to ``~/.config/cuttle-desktop-{client,host}`` on
+    every platform (electron/main.js), while the daemon/sidecar use
+    ``%LOCALAPPDATA%\\cuttle-desktop``. Check all of them and merge ``tlsPins``
+    so the paired host, httpsPort and pins are found wherever the app wrote them.
+    """
+    global _CONFIG_DIAG
+    _CONFIG_DIAG = []
     primary = {}
     merged_pins = {}
-    for path in cands:
-        try:
-            if not path.is_file():
-                continue
-            data = json.loads(path.read_text(encoding='utf-8')) or {}
-            if not isinstance(data, dict):
-                continue
-            pins = data.get('tlsPins')
-            if isinstance(pins, dict):
-                merged_pins.update(pins)
-            if not str(primary.get('host') or '').strip() and str(data.get('host') or '').strip():
-                primary = data
-            elif not primary and data:
-                primary = data
-        except Exception:
+    seen = set()
+    for path in _desktop_config_candidates():
+        if str(path) in seen:
             continue
+        seen.add(str(path))
+        note = {'path': str(path), 'exists': path.is_file(), 'host': '', 'pins': 0}
+        try:
+            if path.is_file():
+                data = json.loads(path.read_text(encoding='utf-8')) or {}
+                if isinstance(data, dict):
+                    pins = data.get('tlsPins')
+                    if isinstance(pins, dict):
+                        merged_pins.update(pins)
+                        note['pins'] = len(pins)
+                    note['host'] = str(data.get('host') or '')
+                    if not str(primary.get('host') or '').strip() and str(data.get('host') or '').strip():
+                        primary = data
+                    elif not primary and data:
+                        primary = data
+        except Exception as exc:
+            note['error'] = str(exc)
+        _CONFIG_DIAG.append(note)
     out = dict(primary)
     if merged_pins:
         out['tlsPins'] = {**merged_pins, **(out.get('tlsPins') or {})}
     return out
+
+
+def _resolve_host_pin(cfg: dict, host: str, port: int) -> str:
+    """The Host's pinned SPKI from the Client's config, env, or port match."""
+    pins = cfg.get('tlsPins') if isinstance(cfg.get('tlsPins'), dict) else {}
+    try:
+        from api.tls_cert import desktop_pin
+        exact = desktop_pin(pins, host, port)
+        if exact:
+            return exact
+    except Exception:
+        pass
+    # The pin key may use a different host string (hostname vs IP): accept a
+    # single entry that matches the port.
+    if port:
+        suffix = f':{int(port)}'
+        matches = [
+            str(v.get('spki')) for k, v in pins.items()
+            if str(k).lower().endswith(suffix) and isinstance(v, dict) and v.get('spki')
+        ]
+        if len(matches) == 1:
+            return matches[0]
+    return (os.environ.get('CUTTLE_COORDINATOR_TLS_SPKI_SHA256') or '').strip()
+
+
+def _host_pin_diag(cfg: dict, host: str, port: int) -> str:
+    pins = cfg.get('tlsPins') if isinstance(cfg.get('tlsPins'), dict) else {}
+    bits = [
+        f'host={host!r} port={port}',
+        'pinKeys=' + (','.join(sorted(str(k) for k in pins)) or 'none'),
+        'env=' + ('set' if (os.environ.get('CUTTLE_COORDINATOR_TLS_SPKI_SHA256') or '').strip() else 'unset'),
+    ]
+    for note in _CONFIG_DIAG:
+        bits.append(
+            f"{note['path']} exists={note['exists']} host={note.get('host','')!r} pins={note['pins']}"
+        )
+    return ' | '.join(bits)
 
 
 def _download_host_bundle(repo: Path, host_base: str, spki: str) -> 'tuple[str, str]':
@@ -164,16 +216,17 @@ def update_checkout(
             cfg = _read_desktop_config()
             host_name = (host or str(cfg.get('host') or '')).strip()
             if not host_name:
-                raise UpdateRefused('host source: no paired host in desktop-config.json')
+                raise UpdateRefused(
+                    'host source: no paired host found. ' + _host_pin_diag(cfg, host, 0)
+                )
             port = int(cfg.get('httpsPort') or 0) or 0
             base = f'https://{host_name}:{port}' if port else f'https://{host_name}'
-            pin = spki or EMBEDDED_HOST_SPKI
+            pin = spki or EMBEDDED_HOST_SPKI or _resolve_host_pin(cfg, host_name, port)
             if not pin:
-                try:
-                    from api.tls_cert import desktop_pin
-                    pin = desktop_pin(cfg.get('tlsPins') or {}, host_name, port) or ''
-                except Exception:
-                    pin = ''
+                raise UpdateRefused(
+                    f'host source: no pinned certificate key for {host_name}:{port}. '
+                    + _host_pin_diag(cfg, host_name, port)
+                )
             bundle_path, manifest_branch = _download_host_bundle(repo, base, pin)
             want = want or manifest_branch
         if not bundle_path or not Path(bundle_path).is_file():
