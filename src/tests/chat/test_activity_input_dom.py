@@ -26,7 +26,7 @@ def test_input_card_submit_and_remove_update_title_history_and_space():
           <div id="chatMessages"><div class="cuttle-action-form" data-session-id="42" data-locked="0">
           <button data-action-form-submit="1">Submit</button></div></div>''')
         page.add_style_tag(path=str(WEB / 'css/chat_page.css'))
-        for asset in ['js/chat/chat_session.js', 'js/chat/chat_activity.js', 'js/chat/chat_action_forms.js', 'js/chat/chat_action_cards.js', 'js/spaces/spaces_activity.js']:
+        for asset in ['js/chat/chat_session.js', 'js/chat/chat_attention.js', 'js/chat/chat_activity.js', 'js/chat/chat_action_forms.js', 'js/chat/chat_action_cards.js', 'js/spaces/spaces_activity.js']:
             page.add_script_tag(path=str(WEB / asset))
         page.evaluate('''() => { document.getElementById('chatMessages').innerHTML =
           CuttleChatActionForms.renderActionFormCardHtml({spec:{session_id:'42', mode:'choice',
@@ -45,10 +45,30 @@ def test_input_card_submit_and_remove_update_title_history_and_space():
         const chatAttentionActive = () => false; const chatAttentionIsError = false;
         const isAuthMode = () => true; const findAuthServerSession = () => null;
         const sessionHistoryAttentionKind = sid => CuttleChatActivity.sessionHistoryAttentionKind({prefs: getSessionPrefs(sid)});
-        const syncHistorySubagentAttention = () => {};
-        const historyPanel = { syncHistorySubagentAttention: () => {} };
         const scheduleChatActivityBroadcast = () => {};
         const syncHistoryRunningIndicators = () => {};
+        // Slice 3A commit 4: history/title attention DOM projection lives in the
+        // CuttleChatAttention controller (chat_attention.js); wire a host with
+        // the page's capabilities and keep the page's inline-handler names as
+        // thin globals the injected syncHistoryFormAwaitingFromDom can call.
+        const attention = CuttleChatAttention.create({
+          doc: document,
+          escapeHtmlInline: String,
+          sessionIdsEqual,
+          openPaneSnapshot: () => [],
+          sessionObjFor: () => null,
+          attentionKindFor: (sid, sessionObj) => sessionHistoryAttentionKind(sid, sessionObj),
+          syncSubagentAttention: () => {},
+          scheduleBroadcast: () => {},
+          currentSessionId: () => session.current(),
+          attentionPrefsFor,
+          attentionActive: chatAttentionActive,
+          attentionIsError: () => chatAttentionIsError,
+          hasActiveFollowup: () => false,
+          hasPausedFollowup: () => false,
+        });
+        const syncHistoryUnreadIndicators = () => attention.syncHistoryUnreadIndicators();
+        const updateSessionTitleUnreadDot = () => attention.updateSessionTitleUnreadDot();
         const ctl = CuttleChatActionCards.mountCards(document.getElementById('chatMessages'), {
           request: () => Promise.reject(), sendAnswerText: () => {}, resumeWithStatus: () => {},
           sendControlCommand: () => {}, context: () => ({sessionId:'42'}), notify: () => {},
@@ -63,10 +83,10 @@ def test_input_card_submit_and_remove_update_title_history_and_space():
           return CuttleSpaces.selectSpaceActivity(['42','43'], id =>
             id === '43' ? {running:true} : CuttleSpaces.lookupSessionActivity(id), true, new Set(['42','43'])); };
         ''')
-        for name in ['historyUnreadIconHTML', 'historyQueuedIconHTML', 'historyPausedIconHTML',
-                     'historyAttentionIconHTML', 'updateSessionTitleUnreadDot',
-                     'syncHistoryProjectAttentionIndicators', 'syncHistoryUnreadIndicators', 'syncHistoryFormAwaitingFromDom']:
-            page.add_script_tag(content=_function(name))
+        # syncHistoryFormAwaitingFromDom still lives in the page; it calls the
+        # page-global syncHistoryUnreadIndicators defined above, which delegates
+        # to the CuttleChatAttention controller.
+        page.add_script_tag(content=_function('syncHistoryFormAwaitingFromDom'))
         page.evaluate('syncHistoryFormAwaitingFromDom()')
         assert page.evaluate('spaceKind()') == 'input'
         assert page.locator('#chatSessionInputIcon').is_visible()

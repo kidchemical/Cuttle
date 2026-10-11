@@ -1784,6 +1784,8 @@
 
     const sessionPrefsStore = CuttleSessionPrefs.create(localStorage);
     const sessionMutations = CuttleChatMutations.create();
+    // Server attention persistence + history/title DOM projection. The page
+    // injects its capabilities; the controller never reads page globals.
     const serverAttention = CuttleChatAttention.create({
         prefs: sessionPrefsStore,
         id: () => Date.now() + ':' + Math.random().toString(36).slice(2),
@@ -1796,6 +1798,29 @@
             return response.json();
         },
         changed: () => { syncHistoryUnreadIndicators(); scheduleChatActivityBroadcast(); },
+        // ---- history/title projection capabilities ----
+        doc: document,
+        escapeHtmlInline,
+        sessionIdsEqual,
+        openPaneSnapshot: () => localOpenPanes,
+        sessionObjFor: (sid) => {
+            if (isAuthMode()) return findAuthServerSession(sid);
+            try {
+                const sessions = JSON.parse(localStorage.getItem('chatSessions') || '{}');
+                return sessions[sid] || null;
+            } catch (_) {
+                return null;
+            }
+        },
+        attentionKindFor: (sid, sessionObj) => sessionHistoryAttentionKind(sid, sessionObj),
+        syncSubagentAttention: () => historyPanel.syncHistorySubagentAttention(),
+        scheduleBroadcast: () => scheduleChatActivityBroadcast(),
+        currentSessionId: () => session.current(),
+        attentionPrefsFor,
+        attentionActive: () => chatAttentionActive(),
+        attentionIsError: () => chatAttentionIsError,
+        hasActiveFollowup: (sid) => sessionHasActiveFollowup(sid, null),
+        hasPausedFollowup: (sid) => sessionHasPausedFollowup(sid, null),
     });
 
     function attentionPrefsFor(sessionId, sessionObj) {
@@ -2038,49 +2063,10 @@
         syncChatAttentionIndicators();
     }
 
+    // Slice 3A commit 4: title-level unread dot projection now lives in the
+    // CuttleChatAttention controller (chat_attention.js); the page delegates.
     function updateSessionTitleUnreadDot() {
-        const unreadIcon = document.getElementById('chatSessionUnreadIcon');
-        const queuedIcon = document.getElementById('chatSessionQueuedIcon');
-        const pausedIcon = document.getElementById('chatSessionPausedIcon');
-        const wrap = document.getElementById('chatSessionTitle');
-        if (!unreadIcon && !queuedIcon && !pausedIcon) return;
-        const titleVisible = !!(wrap && !wrap.hidden);
-        const showInput = !!(titleVisible && session.current() != null && (attentionPrefsFor(session.current()) || {}).awaitingInput);
-        const inputIcon = document.getElementById('chatSessionInputIcon');
-        if (inputIcon) inputIcon.hidden = !showInput;
-        const showUnread = !!(titleVisible && !showInput && chatAttentionActive());
-        const showUnreadError = !!(showUnread && chatAttentionIsError);
-        // Queue dots only when unread is not already showing (green/red wins).
-        // Amber = active (unpaused) queue; yellow = paused (see CH-000439-14 legend).
-        const showQueued = !!(
-            titleVisible
-            && !showInput
-            && !showUnread
-            && session.current() != null
-            && sessionHasActiveFollowup(session.current(), null)
-        );
-        const showPaused = !!(
-            titleVisible
-            && !showInput
-            && !showUnread
-            && !showQueued
-            && session.current() != null
-            && sessionHasPausedFollowup(session.current(), null)
-        );
-        if (unreadIcon) {
-            unreadIcon.hidden = !showUnread;
-            unreadIcon.classList.toggle('is-error', showUnreadError);
-            unreadIcon.title = showUnreadError ? 'Unread error' : 'Unread';
-            unreadIcon.setAttribute('aria-label', showUnreadError ? 'Unread error' : 'Unread');
-        }
-        if (queuedIcon) queuedIcon.hidden = !showQueued;
-        if (pausedIcon) pausedIcon.hidden = !showPaused;
-        if (wrap) {
-            wrap.classList.toggle('has-unread', showUnread);
-            wrap.classList.toggle('has-unread-error', showUnreadError);
-            wrap.classList.toggle('has-queued', showQueued);
-            wrap.classList.toggle('has-paused-queue', showPaused);
-        }
+        return serverAttention.updateSessionTitleUnreadDot();
     }
 
     function updateSessionTitleRunningIcon() {
@@ -2573,31 +2559,15 @@
         historyPanel.reloadKeepingSearch();
     }
 
-    function historyUnreadIconHTML(isError) {
-        const err = !!isError;
-        return `<span class="history-unread-icon${err ? ' is-error' : ''}" title="${err ? 'Unread error' : 'Unread'}" aria-label="${err ? 'Unread error' : 'Unread'}"></span>`;
-    }
-
-    function historyQueuedIconHTML() {
-        return `<span class="history-queued-icon" title="Queued prompt" aria-label="Queued prompt"></span>`;
-    }
-
-    function historyPausedIconHTML() {
-        return `<span class="history-paused-icon" title="Paused queue" aria-label="Paused queued prompt"></span>`;
-    }
-
-    function historyAttentionIconHTML(kind) {
-        if (kind === 'input') return '<span class="history-input-icon" title="Awaiting your input" aria-label="Awaiting your input"></span>';
-        if (kind === 'error') return historyUnreadIconHTML(true);
-        if (kind === 'unread') return historyUnreadIconHTML(false);
-        if (kind === 'queued') return historyQueuedIconHTML();
-        if (kind === 'paused') return historyPausedIconHTML();
-        return '';
-    }
+    // Slice 3A commit 4: the history attention icon markup, row/section/title
+    // projection and the open-pane badge now live in the CuttleChatAttention
+    // controller (chat_attention.js). The page keeps the pane-snapshot helpers
+    // (the `cuttle-open-panes` postMessage protocol stays here) and thin
+    // delegating wrappers so page call sites and injected deps are unchanged.
 
     function applyLocalOpenPanes(panes) {
         localOpenPanes = Array.isArray(panes) ? panes.filter((p) => p && p.sessionId) : [];
-        syncHistoryOpenPaneIndicators();
+        serverAttention.syncHistoryOpenPaneIndicators();
     }
 
     function snapshotLocalOpenPanes() {
@@ -2629,217 +2599,8 @@
         return localOpenPanes.filter((p) => sessionIdsEqual(p.sessionId, sessionId));
     }
 
-    /** Unique split-pane numbers currently showing a chat/terminal in this window. */
-    function historyOpenPaneCount() {
-        return [...new Set(
-            (localOpenPanes || []).map((p) => Number(p.pane) || 0).filter((n) => n > 0)
-        )].length;
-    }
-
-    function historyOpenPaneBadgeHTML(sessionId) {
-        // A "1" badge is noise when there is only one pane.
-        if (historyOpenPaneCount() < 2) return '';
-        const hits = openPaneEntriesForSession(sessionId);
-        if (!hits.length) return '';
-        const panes = [...new Set(hits.map((p) => Number(p.pane) || 0).filter((n) => n > 0))].sort((a, b) => a - b);
-        if (!panes.length) return '';
-        const text = panes.join('+');
-        const title = panes.length === 1
-            ? ('Open in pane ' + panes[0] + ' (this window)')
-            : ('Open in panes ' + panes.join(', ') + ' (this window)');
-        return `<span class="history-open-pane-badge" title="${escapeHtmlInline(title)}" aria-label="${escapeHtmlInline(title)}">${escapeHtmlInline(text)}</span>`;
-    }
-
-    function syncHistoryOpenPaneIndicators() {
-        document.querySelectorAll('.chat-history-item').forEach((item) => {
-            const sid = item.dataset.sessionId;
-            const hits = openPaneEntriesForSession(sid);
-            item.classList.toggle('is-open-pane', hits.length > 0);
-            const actions = item.querySelector('.chat-actions');
-            let badge = item.querySelector('.history-open-pane-badge');
-            const html = historyOpenPaneBadgeHTML(sid);
-            if (!html) {
-                if (badge) badge.remove();
-                return;
-            }
-            if (!badge) {
-                const wrap = document.createElement('div');
-                wrap.innerHTML = html;
-                badge = wrap.firstElementChild;
-                if (actions) actions.insertBefore(badge, actions.firstChild);
-                else item.appendChild(badge);
-            } else {
-                const wrap = document.createElement('div');
-                wrap.innerHTML = html;
-                const next = wrap.firstElementChild;
-                if (next) {
-                    badge.title = next.title;
-                    badge.setAttribute('aria-label', next.getAttribute('aria-label') || '');
-                    badge.textContent = next.textContent;
-                }
-            }
-        });
-    }
-
     function syncHistoryUnreadIndicators() {
-        document.querySelectorAll('.chat-history-item').forEach((item) => {
-            const sid = item.dataset.sessionId;
-            if (sid == null) return;
-            let sessionObj = null;
-            if (isAuthMode()) {
-                sessionObj = findAuthServerSession(sid);
-            } else {
-                try {
-                    const sessions = JSON.parse(localStorage.getItem('chatSessions') || '{}');
-                    sessionObj = sessions[sid] || null;
-                } catch (_) {}
-            }
-            const kind = sessionHistoryAttentionKind(sid, sessionObj);
-            item.classList.toggle('has-unread', kind === 'unread' || kind === 'error');
-            item.classList.toggle('has-unread-error', kind === 'error');
-            item.classList.toggle('has-queued', kind === 'queued');
-            item.classList.toggle('has-paused-queue', kind === 'paused');
-            let inputIcon = item.querySelector('.history-input-icon');
-            if (kind !== 'input' && inputIcon) { inputIcon.remove(); inputIcon = null; }
-            item.classList.toggle('has-input', kind === 'input');
-            let unreadIcon = item.querySelector('.history-unread-icon');
-            let queuedIcon = item.querySelector('.history-queued-icon');
-            let pausedIcon = item.querySelector('.history-paused-icon');
-            const clearAll = () => {
-                if (unreadIcon) { unreadIcon.remove(); unreadIcon = null; }
-                if (queuedIcon) { queuedIcon.remove(); queuedIcon = null; }
-                if (pausedIcon) { pausedIcon.remove(); pausedIcon = null; }
-            };
-            if (kind === 'input') {
-                clearAll();
-                if (!inputIcon) item.insertAdjacentHTML('afterbegin', historyAttentionIconHTML('input'));
-            } else if (kind === 'error' || kind === 'unread') {
-                if (queuedIcon) queuedIcon.remove();
-                if (pausedIcon) pausedIcon.remove();
-                if (!unreadIcon) {
-                    unreadIcon = document.createElement('span');
-                    unreadIcon.className = 'history-unread-icon';
-                    item.insertBefore(unreadIcon, item.firstChild);
-                }
-                unreadIcon.classList.toggle('is-error', kind === 'error');
-                unreadIcon.title = kind === 'error' ? 'Unread error' : 'Unread';
-                unreadIcon.setAttribute('aria-label', kind === 'error' ? 'Unread error' : 'Unread');
-            } else if (kind === 'queued') {
-                if (unreadIcon) unreadIcon.remove();
-                if (pausedIcon) pausedIcon.remove();
-                if (!queuedIcon) {
-                    queuedIcon = document.createElement('span');
-                    queuedIcon.className = 'history-queued-icon';
-                    queuedIcon.title = 'Queued prompt';
-                    queuedIcon.setAttribute('aria-label', 'Queued prompt');
-                    item.insertBefore(queuedIcon, item.firstChild);
-                }
-            } else if (kind === 'paused') {
-                if (unreadIcon) unreadIcon.remove();
-                if (queuedIcon) queuedIcon.remove();
-                if (!pausedIcon) {
-                    pausedIcon = document.createElement('span');
-                    pausedIcon.className = 'history-paused-icon';
-                    pausedIcon.title = 'Paused queue';
-                    pausedIcon.setAttribute('aria-label', 'Paused queued prompt');
-                    item.insertBefore(pausedIcon, item.firstChild);
-                }
-            } else {
-                clearAll();
-            }
-        });
-        syncHistoryProjectAttentionIndicators();
-        historyPanel.syncHistorySubagentAttention();
-        updateSessionTitleUnreadDot();
-        try { scheduleChatActivityBroadcast(); } catch (_) {}
-    }
-
-    function syncHistoryProjectAttentionIndicators() {
-        document.querySelectorAll('.history-section[data-project-key]').forEach((section) => {
-            const items = section.querySelectorAll('.chat-history-item');
-            let hasInput = false;
-            let hasError = false;
-            let hasUnread = false;
-            let hasQueued = false;
-            let hasPaused = false;
-            items.forEach((item) => {
-                if (item.classList.contains('has-input')) hasInput = true;
-                if (item.classList.contains('has-unread-error')) hasError = true;
-                if (item.classList.contains('has-unread')) hasUnread = true;
-                if (item.classList.contains('has-queued')) hasQueued = true;
-                if (item.classList.contains('has-paused-queue')) hasPaused = true;
-            });
-            if (!items.length) {
-                hasError = section.getAttribute('data-has-error') === '1';
-                hasUnread = section.getAttribute('data-has-unread') === '1';
-                hasQueued = section.getAttribute('data-has-queued') === '1';
-                hasPaused = section.getAttribute('data-has-paused') === '1';
-            }
-            const showInput = hasInput;
-            const showError = !showInput && hasError;
-            const showUnread = !showInput && !showError && hasUnread;
-            const showQueued = !showInput && !showError && !showUnread && hasQueued;
-            const showPaused = !showInput && !showError && !showUnread && !showQueued && hasPaused;
-            section.classList.toggle('has-input', showInput);
-            section.classList.toggle('has-unread-error', showError);
-            section.classList.toggle('has-unread', showError || showUnread);
-            section.classList.toggle('has-queued', showQueued);
-            section.classList.toggle('has-paused-queue', showPaused);
-            const count = section.querySelector('.history-section-count');
-            if (count) {
-                count.classList.toggle('has-input', showInput);
-                count.classList.toggle('has-unread-error', showError);
-                count.classList.toggle('has-unread', showError || showUnread);
-                count.classList.toggle('has-queued', showQueued);
-                count.classList.toggle('has-paused-queue', showPaused);
-            }
-            let unreadDot = section.querySelector('.history-section-unread-dot');
-            let queuedDot = section.querySelector('.history-section-queued-dot');
-            let pausedDot = section.querySelector('.history-section-paused-dot');
-            const titleEl = section.querySelector('.history-section-title');
-            const removeDots = () => {
-                if (unreadDot) { unreadDot.remove(); unreadDot = null; }
-                if (queuedDot) { queuedDot.remove(); queuedDot = null; }
-                if (pausedDot) { pausedDot.remove(); pausedDot = null; }
-            };
-            if (showInput || showError || showUnread) {
-                if (queuedDot) queuedDot.remove();
-                if (pausedDot) pausedDot.remove();
-                if (!unreadDot && titleEl) {
-                    unreadDot = document.createElement('span');
-                    unreadDot.className = 'history-section-unread-dot';
-                    titleEl.insertBefore(unreadDot, titleEl.firstChild);
-                }
-                if (unreadDot) {
-                    unreadDot.classList.toggle('is-input', showInput);
-                    unreadDot.classList.toggle('is-error', showError);
-                    unreadDot.title = showInput ? 'Awaiting your input' : showError ? 'Unread error' : 'Unread';
-                    unreadDot.setAttribute('aria-label', showInput ? 'Awaiting your input' : showError ? 'Unread error' : 'Unread');
-                }
-            } else if (showQueued) {
-                if (unreadDot) unreadDot.remove();
-                if (pausedDot) pausedDot.remove();
-                if (!queuedDot && titleEl) {
-                    queuedDot = document.createElement('span');
-                    queuedDot.className = 'history-section-queued-dot';
-                    queuedDot.title = 'Queued prompt';
-                    queuedDot.setAttribute('aria-label', 'Queued prompt');
-                    titleEl.insertBefore(queuedDot, titleEl.firstChild);
-                }
-            } else if (showPaused) {
-                if (unreadDot) unreadDot.remove();
-                if (queuedDot) queuedDot.remove();
-                if (!pausedDot && titleEl) {
-                    pausedDot = document.createElement('span');
-                    pausedDot.className = 'history-section-paused-dot';
-                    pausedDot.title = 'Paused queue';
-                    pausedDot.setAttribute('aria-label', 'Paused queued prompt');
-                    titleEl.insertBefore(pausedDot, titleEl.firstChild);
-                }
-            } else {
-                removeDots();
-            }
-        });
+        return serverAttention.syncHistoryUnreadIndicators();
     }
 
 
@@ -4283,9 +4044,9 @@
         projectChipHtml,
         historyBranchFor,
         chatTitleParts,
-        historyAttentionIconHTML,
+        historyAttentionIconHTML: serverAttention.historyAttentionIconHTML,
         openPaneEntriesForSession,
-        historyOpenPaneBadgeHTML,
+        historyOpenPaneBadgeHTML: serverAttention.historyOpenPaneBadgeHTML,
         historySubagentToggleTitle: CuttleChatHistoryView.historySubagentToggleTitle,
         formatHistoryLastMessageAge,
         resolveHistoryLastMessageMs,
